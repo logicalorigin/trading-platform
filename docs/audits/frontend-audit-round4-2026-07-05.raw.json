@@ -1,0 +1,462 @@
+[
+  {
+    "area": "gex",
+    "file": "artifacts/pyrus/src/features/gex/HeatmapColorLegend.jsx",
+    "line": 56,
+    "category": "semantic",
+    "severity": "high",
+    "issue": "The 'Call-heavy' legend swatch uses CSS_COLOR.green, but the heatmap paints call-heavy cells with GEX_BULLISH_TONE = toneForDirectionalIntent('bullish') = SEMANTIC_TONE.directionBuy = CSS_COLOR.blue (verified: 'bullish' in BLUE_DIRECTION_TOKENS, semanticToneModel.js:112/127; cellColor GexScreen.jsx:557-558). Green also violates the doctrine rule reserving green for financial-gain/operational-health, never directional intent. The legend both drifts and actively mislabels the chart (cells blue, swatch green).",
+    "fix": "Replace CSS_COLOR.green with GEX_BULLISH_TONE (or toneForOptionSide('call')/toneForDirectionalIntent('bullish')). Route the red 'Put-heavy' swatch (line 54) through GEX_BEARISH_TONE for the same consistency.",
+    "rank": 1
+  },
+  {
+    "area": "gex",
+    "file": "artifacts/pyrus/src/features/gex/HeatmapColorLegend.jsx",
+    "line": 69,
+    "category": "semantic",
+    "severity": "high",
+    "issue": "The Magnitude GradientStrip terminates at cssColorMix(CSS_COLOR.green, 80) for the call-heavy end, so the legend fades red->neutral->green while the heatmap magnitude fades red->neutral->blue (rgba(GEX_BULLISH_TONE,...) at GexScreen.jsx:558). Same directional-green misuse and same render mismatch.",
+    "fix": "Use to={cssColorMix(GEX_BULLISH_TONE, 80)} and mirror the red end via GEX_BEARISH_TONE so the strip encodes the same tones cellColor() uses.",
+    "rank": 2
+  },
+  {
+    "area": "account",
+    "file": "artifacts/pyrus/src/screens/account/TradingAnalysisWorkbench.jsx",
+    "line": 1812,
+    "category": "shading",
+    "severity": "medium",
+    "issue": "Filter-drawer surface hand-rolls depth with a raw drop-shadow literal `0 24px 64px ${cssColorMix(CSS_COLOR.bg0,35)}` (plus a 1px border ring) instead of an ELEVATION token. Depth must come only from ELEVATION tokens; ELEVATION.lg exists (uiTokens.jsx:215) and the sibling overlay PositionRowActionMenu.jsx:343 uses `var(--ra-elevation-lg)` for the identical job. This is the flagged old shadow-literal drift on a visible fixed dialog.",
+    "fix": "Use ELEVATION.lg (`var(--ra-elevation-lg)`) for depth alongside the 1px border ring, ideally via surfaceStyle({elevated:true})/SurfacePanel rather than a bespoke bg1+border+shadow div.",
+    "rank": 3
+  },
+  {
+    "area": "algo",
+    "file": "artifacts/pyrus/src/screens/algo/AlgoLivePage.jsx",
+    "line": 1484,
+    "category": "shading",
+    "severity": "medium",
+    "issue": "Confirmed: mobile settings bottom-drawer uses `boxShadow: \\`0 -18px 42px ${cssColorMix(CSS_COLOR.bg0, 45)}\\`` (line 1484). Same raw-geometry-shadow drift as the column drawer.",
+    "fix": "Use an ELEVATION token for the drawer lift; drop the bespoke `0 -18px 42px` literal.",
+    "rank": 4
+  },
+  {
+    "area": "algo",
+    "file": "artifacts/pyrus/src/screens/algo/AlgoSettingsRegion.jsx",
+    "line": 2107,
+    "category": "shading",
+    "severity": "medium",
+    "issue": "Confirmed: slider value popover float uses `boxShadow: \\`0 12px 28px ${cssColorMix(CSS_COLOR.bg0, 70)}\\`` (line 2107) instead of an ELEVATION token. Raw shadow geometry = drift.",
+    "fix": "Use `boxShadow: ELEVATION.md` (or `.lg`) for the popover elevation.",
+    "rank": 5
+  },
+  {
+    "area": "algo",
+    "file": "artifacts/pyrus/src/screens/algo/OperationsSignalTable.jsx",
+    "line": 1284,
+    "category": "shading",
+    "severity": "medium",
+    "issue": "Confirmed: column-config drawer popover uses `boxShadow: \\`0 18px 48px ${cssColorMix(CSS_COLOR.bg0, 60)}\\`` (line 1284). Color is token-backed but the raw `0 18px 48px` geometry bypasses the ELEVATION scale — the exact raw-boxShadow drift signature. File does not import ELEVATION, yet CreateDeploymentModal (same folder) uses ELEVATION.lg.",
+    "fix": "Import and use `boxShadow: ELEVATION.lg` instead of the hand-authored literal.",
+    "rank": 6
+  },
+  {
+    "area": "algo",
+    "file": "artifacts/pyrus/src/screens/algo/PipelineStrip.jsx",
+    "line": 114,
+    "category": "surface",
+    "severity": "medium",
+    "issue": "Confirmed: unselected pipeline-stage pill background is `linear-gradient(180deg, ${CSS_COLOR.bg2} 0%, ${CSS_COLOR.bg1} 100%)` (line 114). A two-stop vertical bg-token gradient for depth is the explicitly-named 'old' drift signature; flat surfaces should take depth only from ELEVATION tokens. Reads inconsistently next to flat SurfacePanel/Card surfaces.",
+    "fix": "Use a solid surface token (`background: CSS_COLOR.bg1`); if a raised feel is wanted add `boxShadow: ELEVATION.sm`.",
+    "rank": 7
+  },
+  {
+    "area": "backtest",
+    "file": "artifacts/pyrus/src/features/backtesting/BacktestingPanels.tsx",
+    "line": 2750,
+    "category": "surface",
+    "severity": "medium",
+    "issue": "Sticky header wrapper uses backdropFilter: 'blur(10px)' over a translucent cssColorAlpha(theme.bg1,'f2') fill — a decorative glass-blur surface. Doctrine explicitly names backdrop blur as decoration as old drift; migrated sticky/overlay surfaces use opaque bg tokens + border/ELEVATION, not glass.",
+    "fix": "Drop backdropFilter, use an opaque bg token (theme.bg1/bg2); if separation is needed use a border or ELEVATION token.",
+    "rank": 8
+  },
+  {
+    "area": "backtest",
+    "file": "artifacts/pyrus/src/features/backtesting/BacktestingPanels.tsx",
+    "line": 2757,
+    "category": "shading",
+    "severity": "medium",
+    "issue": "Sticky Research Workbench card spreads cardStyle() with a raw hand-rolled offset drop shadow boxShadow: `0 10px 24px ${cssColorAlpha(theme.bg0,'33')}`. File imports only cssColorAlpha/CSS_COLOR/RADII from uiTokens — no ELEVATION import — confirming it predates the elevation-token migration. Token-backed color does not save the raw offset-shadow geometry, which is the exact 'old' depth-drift signature the doctrine calls out.",
+    "fix": "Remove the inline boxShadow and use an ELEVATION token (ELEVATION.md/ELEVATION.lg) for the raised sticky card.",
+    "rank": 9
+  },
+  {
+    "area": "flow",
+    "file": "artifacts/pyrus/src/screens/FlowScreen.jsx",
+    "line": 3944,
+    "category": "shading",
+    "severity": "medium",
+    "issue": "Column-drawer popover Card (non-mobile branch) carries the same raw shadow literal `0 18px 48px ${cssColorMix(CSS_COLOR.bg0, 80)}` for depth instead of an elevation token. A Card primitive lifting itself with bespoke box-shadow geometry is stray old shadow styling.",
+    "fix": "Use boxShadow: ELEVATION.lg (or the Card elevation prop) so depth resolves through the elevation token layer.",
+    "rank": 10
+  },
+  {
+    "area": "flow",
+    "file": "artifacts/pyrus/src/screens/FlowScreen.jsx",
+    "line": 4758,
+    "category": "shading",
+    "severity": "medium",
+    "issue": "Overlay filter panel wrapper uses raw hand-rolled shadow geometry boxShadow: `0 18px 48px ${cssColorMix(CSS_COLOR.bg0, 80)}` for float depth instead of an elevation token. ELEVATION.lg (var(--ra-elevation-lg)) is the sanctioned theme-aware depth path; the bespoke recipe is exactly the old surface-depth drift and will not match migrated panels. Color is token-backed but the shadow recipe is not.",
+    "fix": "Replace with boxShadow: ELEVATION.lg from lib/uiTokens.jsx.",
+    "rank": 11
+  },
+  {
+    "area": "flow",
+    "file": "artifacts/pyrus/src/screens/FlowScreen.jsx",
+    "line": 5673,
+    "category": "semantic",
+    "severity": "medium",
+    "issue": "News sentiment colored item.sentimentScore>0 ? CSS_COLOR.green : <0 ? CSS_COLOR.red : textDim. The codebase's own semanticToneModel classifies 'bullish' in BLUE_DIRECTION_TOKENS (resolves to directionBuy=CSS_COLOR.blue), so positive/bullish sentiment is directional intent that the system colors blue, not green. Applying gain-green to a directional sentiment signal is a genuine semantic-color inconsistency, and it bypasses the tone model.",
+    "fix": "Route through the tone model (e.g. toneForFinancialDelta) rather than raw CSS_COLOR.green/red, and reconcile with the bullish=blue directional convention.",
+    "rank": 12
+  },
+  {
+    "area": "gex",
+    "file": "artifacts/pyrus/src/features/gex/gexGlossary.js",
+    "line": 157,
+    "category": "semantic",
+    "severity": "medium",
+    "issue": "The heatmapColors glossary definition states 'green = positive/call-heavy, red = negative/put-heavy', but the migrated heatmap paints call-heavy blue (GEX_BULLISH_TONE = CSS_COLOR.blue). This entry feeds the heatmap InfoTooltipIcon (GexScreen.jsx:567), so the in-product tooltip contradicts what renders.",
+    "fix": "Update copy to 'blue = positive/call-heavy, red = negative/put-heavy' to match toneForDirectionalIntent output.",
+    "rank": 13
+  },
+  {
+    "area": "market",
+    "file": "artifacts/pyrus/src/features/market/MarketInternalsRail.jsx",
+    "line": 65,
+    "category": "typography",
+    "severity": "medium",
+    "issue": "Confirmed: imports only `{ CSS_COLOR, RADII, T, cssColorMix, sp }` (line 16) — no textSize/FONT_WEIGHTS. Raw literals: fontSize:12 (65,108,147,153), fontSize:11 (125,162,209), fontWeight:600 (147). Off the token scale and un-density-scaled. Genuine type drift.",
+    "fix": "Route sizes through textSize() roles and use FONT_WEIGHTS.semibold for 600.",
+    "rank": 14
+  },
+  {
+    "area": "market",
+    "file": "artifacts/pyrus/src/features/market/MarketUniverseTable.jsx",
+    "line": 105,
+    "category": "typography",
+    "severity": "medium",
+    "issue": "Confirmed: module imports only `{ CSS_COLOR, T, cssColorMix, sp }` from uiTokens (line 30) — no textSize/FONT_WEIGHTS. Raw type literals present: fontSize:12 (105,135,142,165,292,340), fontSize:11 (121,152,460), fontWeight:700 (291). These bypass the type-scale roles and SCALE_FACTOR density scaling, unlike migrated screens (MarketScreen uses textSize()/FONT_WEIGHTS). Genuine type drift per doctrine ('Drift = raw px, ad-hoc sizes').",
+    "fix": "Import and use textSize() roles (bodyStrong for 11, body/metric for the numeric 12s) and FONT_WEIGHTS.bold for 700.",
+    "rank": 15
+  },
+  {
+    "area": "platform-shell",
+    "file": "artifacts/pyrus/src/features/platform/PlatformWatchlist.jsx",
+    "line": 1515,
+    "category": "semantic",
+    "severity": "medium",
+    "issue": "Desktop 'Default' watchlist button uses CSS_COLOR.green for its isDefault active state (text at 1515, tinted fill cssColorMix(CSS_COLOR.green, 7) at 1513). Marking a watchlist default is a preference/selection state, not financial-gain or operational-health; doctrine reserves green for gain/health only.",
+    "fix": "Switch active/default state to CSS_COLOR.accent (text/border) with cssColorMix(CSS_COLOR.accent, 7) fill, matching the accent-selection pattern used elsewhere in this same file.",
+    "rank": 16
+  },
+  {
+    "area": "platform-shell",
+    "file": "artifacts/pyrus/src/features/platform/PlatformWatchlist.jsx",
+    "line": 1864,
+    "category": "semantic",
+    "severity": "medium",
+    "issue": "Mobile variant of the 'Default' watchlist button repeats the green misuse: border CSS_COLOR.green (1864), fill cssColorMix(CSS_COLOR.green, 7) (1866), text CSS_COLOR.green (1867) for the isDefault state. Same generic-selection-as-green semantic drift.",
+    "fix": "Use CSS_COLOR.accent for border/text and cssColorMix(CSS_COLOR.accent, 7) for fill to match the flat accent-selection convention.",
+    "rank": 17
+  },
+  {
+    "area": "research",
+    "file": "artifacts/pyrus/src/features/research/components/ResearchCalendarView.jsx",
+    "line": 168,
+    "category": "shading",
+    "severity": "medium",
+    "issue": "Active theme-filter button uses raw shadow literal `boxShadow: active ? `0 1px 3px ${t.accent}22` : \"none\"` instead of an ELEVATION token — same old drop-shadow drift as the switcher.",
+    "fix": "boxShadow: active ? ELEVATION.sm : \"none\".",
+    "rank": 18
+  },
+  {
+    "area": "research",
+    "file": "artifacts/pyrus/src/features/research/components/ResearchThemeSwitcher.jsx",
+    "line": 28,
+    "category": "shading",
+    "severity": "medium",
+    "issue": "Active theme chip uses a raw hand-rolled drop-shadow literal `boxShadow: active ? `0 1px 4px ${t.accent}22` : \"none\"`. This file has no ELEVATION import and hand-rolls the shadow, while sibling research code (PhotonicsObservatory.jsx:2461,4236) draws depth from ELEVATION.md. Raw `0 Npx` accent-tinted shadow is the old depth-drift signature.",
+    "fix": "boxShadow: active ? ELEVATION.sm : \"none\" (import ELEVATION from uiTokens).",
+    "rank": 19
+  },
+  {
+    "area": "research",
+    "file": "artifacts/pyrus/src/features/research/PhotonicsObservatory.jsx",
+    "line": 4242,
+    "category": "surface",
+    "severity": "medium",
+    "issue": "Workspace card header fills its surface with an accent linear-gradient `linear-gradient(180deg, ${theme.accent}10 0%, ${toneAlpha(CSS_COLOR.bg1, 0.96)} 100%)`. Surface gradients are the primary old drift signature; the parent card at line 4232-4238 is already correctly flat (bg1 + border + ELEVATION.md), so this gradient header is inconsistent within its own card. Also builds the tint by appending raw hex-alpha `10` to the theme accent hex.",
+    "fix": "background: CSS_COLOR.bg1 (or a single flat cssColorAlpha(theme.accent, ...) tint). Drop the vertical gradient and manual hex-alpha suffix.",
+    "rank": 20
+  },
+  {
+    "area": "research",
+    "file": "artifacts/pyrus/src/features/research/PhotonicsObservatory.jsx",
+    "line": 4637,
+    "category": "surface",
+    "severity": "medium",
+    "issue": "Header renders a decorative absolute-positioned dual radial-gradient 'glow' overlay (accent ellipse + blue) behind the title, height 200px, pointerEvents none. Decorative ambient light is old styling; the flat system draws hierarchy from ELEVATION not painted glow. Also appends raw hex-alpha `${currentTheme.accent}14`.",
+    "fix": "Remove the glow overlay; let the flat bg1 header stand. If a brand tint is wanted use a single flat cssColorAlpha(CSS_COLOR.accent, ...) fill, not a radial glow with a hardcoded hex-alpha.",
+    "rank": 21
+  },
+  {
+    "area": "settings",
+    "file": "artifacts/pyrus/src/screens/SettingsScreen.jsx",
+    "line": 375,
+    "category": "primitive",
+    "severity": "medium",
+    "issue": "smallButton() (lines 375-391) is a bespoke button-style factory hand-rolling border/background/pill-radius/padding/font/weight, used 25 times across the screen. Verified: it IS a reimplementation of the Button primitive that the same file already imports (line 97) and uses correctly in the action bar (Button variant=secondary size=sm at 3247/3255/3263). The Button primitive carries hover/focus/disabled states, an ELEVATION-backed variant scale, and a SIZES scale (xs/sm/md/lg) that smallButton lacks, so smallButton call sites drift from the migrated buttons. Note smallButton itself uses tokens correctly (CSS_COLOR, cssColorMix, RADII.pill, sp, T.sans) — the drift is purely the hand-rolled primitive, not color/token misuse.",
+    "fix": "Replace smallButton() call sites with <Button size=\"xs\"/\"sm\" variant=\"secondary\"> (variant=\"danger\" for the danger flag), driving active/dirty state via variant/color rather than a custom accent fill; delete smallButton once callers migrate.",
+    "rank": 22
+  },
+  {
+    "area": "signals",
+    "file": "artifacts/pyrus/src/screens/SignalsScreen.jsx",
+    "line": 328,
+    "category": "semantic",
+    "severity": "medium",
+    "issue": "Local `toneForDirection` (buy=CSS_COLOR.blue, sell=CSS_COLOR.red, else=CSS_COLOR.textDim) is a hand-rolled duplicate of the canonical `toneForDirectionalIntent`. Verified: SignalsScreen imports NOTHING from semanticToneModel (grep for the module/its exports returns zero hits), while FlowScreen, GexScreen, TradeScreen, MarketScreen and algo/* all import it. Output is byte-identical to the canonical helper (buy->directionBuy blue, sell->directionSell red, else->neutral textDim), so this is a genuine shared-semantic-model bypass. Called at 629, 1221, 1691, 1924, 2419, 2776, 2799, 3299, 4941.",
+    "fix": "Import { toneForDirectionalIntent } from ../features/platform/semanticToneModel.js and replace toneForDirection(...) call sites with it; delete the local helper.",
+    "rank": 23
+  },
+  {
+    "area": "account",
+    "file": "artifacts/pyrus/src/features/account/PositionProtectionEditor.jsx",
+    "line": 199,
+    "category": "surface",
+    "severity": "low",
+    "issue": "Modal scrim applies a decorative `backdropFilter: 'blur(8px)'` over a token wash (cssColorMix(bg0,72)). Backdrop blur as decoration is an explicitly flagged old-drift signature, and it is inconsistent with sibling account modal scrims that use a plain token wash with no blur (TradingAnalysisWorkbench.jsx:1823) or elevation tokens (PositionRowActionMenu.jsx:343).",
+    "fix": "Drop backdropFilter and rely on the token scrim wash alone (cssColorMix(CSS_COLOR.bg0, N)) to match the other account modal scrims and the flat doctrine.",
+    "rank": 24
+  },
+  {
+    "area": "algo",
+    "file": "artifacts/pyrus/src/screens/algo/AlgoLivePage.jsx",
+    "line": 312,
+    "category": "color-token",
+    "severity": "low",
+    "issue": "Confirmed: chip active background hand-writes `color-mix(in srgb, ${color} 18%, transparent)` (line 312) instead of the `cssColorAlpha`/`cssColorMix` token helper. The `color` input is token-backed (defaults to CSS_COLOR.textMuted) but the raw inline color-mix string bypasses the helper the rest of the area uses to tint tokens.",
+    "fix": "Use `cssColorAlpha(color, \"2e\")` (~18%) instead of the inline `color-mix(...)` literal.",
+    "rank": 25
+  },
+  {
+    "area": "algo",
+    "file": "artifacts/pyrus/src/screens/algo/AlgoLivePage.jsx",
+    "line": 316,
+    "category": "typography",
+    "severity": "low",
+    "issue": "Confirmed: `headerChipStyle` hardcodes `fontWeight: 600` (line 316); same raw literal repeats across the area — AlgoLivePage:1152, OperationsSignalTable:1304/1900, AlgoOperationsPrimitives:111/570/1009/1062, OperationsStatusOrb:153, HaltStrip:639, OperationsAttentionStrip:122, PipelineStrip:257 (all verified present). Doctrine routes TYPE weight via FONT_WEIGHTS. AlgoOperationsPrimitives and HaltStrip already import FONT_WEIGHTS, so their raw 600 is directly inconsistent drift; the other files (incl. AlgoLivePage) don't import it.",
+    "fix": "Replace raw `fontWeight: 600` with `FONT_WEIGHTS.label` (700→emphasis, 500→medium) from lib/uiTokens.",
+    "rank": 26
+  },
+  {
+    "area": "algo",
+    "file": "artifacts/pyrus/src/screens/algo/CreateDeploymentModal.jsx",
+    "line": 164,
+    "category": "surface",
+    "severity": "low",
+    "issue": "Confirmed: modal scrim adds `backdropFilter: \"blur(8px)\"` (line 164) on top of an already-darkening `cssColorMix(CSS_COLOR.bg0, 72)` overlay. Decorative backdrop blur is an explicitly-named old drift signature; this otherwise-migrated modal (uses ELEVATION.lg at line 179) should rely on the darkened scrim alone.",
+    "fix": "Drop `backdropFilter: blur(8px)`; keep only the token-mixed scrim background.",
+    "rank": 27
+  },
+  {
+    "area": "algo",
+    "file": "artifacts/pyrus/src/screens/algo/OperationsSignalRow.jsx",
+    "line": 3004,
+    "category": "shading",
+    "severity": "low",
+    "issue": "Confirmed: fresh/hot compact signal row paints `linear-gradient(90deg, ${cssColorAlpha(verdict.tone, \"12\")} 0%, transparent 70%)` (line 3004; repeated line 3109 at 55%). The tone is token-backed and semantically fine, but the decorative fading gradient *form* diverges from the flat system, which uses solid low-alpha tints. An `inset 2px 0 0 ${direction.tone}` rail already carries the accent.",
+    "fix": "Replace with a flat tint (`background: cssColorAlpha(verdict.tone, \"0e\")`) and let the existing inset rail carry the directional accent.",
+    "rank": 28
+  },
+  {
+    "area": "backtest",
+    "file": "artifacts/pyrus/src/features/backtesting/BacktestingPanels.tsx",
+    "line": 2774,
+    "category": "typography",
+    "severity": "low",
+    "issue": "Raw fontWeight: 400 literal (54 occurrences in the file). The file never imports FONT_WEIGHTS, whereas the migrated sibling PatternDiscoveryPanel.tsx uses FONT_WEIGHTS.regular for the same intent — stray pre-token styling.",
+    "fix": "Import FONT_WEIGHTS and replace numeric weight literals with FONT_WEIGHTS.* tokens.",
+    "rank": 29
+  },
+  {
+    "area": "flow",
+    "file": "artifacts/pyrus/src/features/flow/OrderFlowVisuals.jsx",
+    "line": 27,
+    "category": "semantic",
+    "severity": "low",
+    "issue": "Order-flow donut buy segments use SEMANTIC_TONE.directionBuy but sell segments (lines 27-30) use raw CSS_COLOR.red instead of the symmetric SEMANTIC_TONE.directionSell. Both resolve to red today, but bypassing the semantic token for one side is an asymmetric inconsistency that drifts if the token remaps.",
+    "fix": "Use SEMANTIC_TONE.directionSell for sell segments to mirror the buy side.",
+    "rank": 30
+  },
+  {
+    "area": "gex",
+    "file": "artifacts/pyrus/src/screens/GexScreen.jsx",
+    "line": 1050,
+    "category": "semantic",
+    "severity": "low",
+    "issue": "The squeeze-setup score meter fill uses a raw ternary value >= 18 ? CSS_COLOR.green : value >= 10 ? CSS_COLOR.amber : CSS_COLOR.red, hand-rolling an operational good/attention/bad ramp instead of routing through semanticToneModel, unlike the rest of the screen (e.g. toneForNetGex at GexScreen.jsx:96-97). Green is legitimate here (operational-health/quality), so this is routing drift, not a wrong color.",
+    "fix": "Derive from SEMANTIC_TONE.operationalGood/operationalAttention/operationalBad (or toneForRiskState) so the ramp tracks shared token semantics.",
+    "rank": 31
+  },
+  {
+    "area": "market",
+    "file": "artifacts/pyrus/src/features/market/MultiChartGrid.jsx",
+    "line": 1746,
+    "category": "color-token",
+    "severity": "low",
+    "issue": "Confirmed: idle/hover branches of the resize-divider handles use hardcoded black rgba ring literals `0 0 0 1px rgba(0,0,0,0.18)` (1746,1824) and `0 0 0 1px rgba(0,0,0,0.28)` (1902), while the sibling active/hover branches right beside them use token-based rings (`${CSS_COLOR.bg0}` + `cssColorMix(CSS_COLOR.accent,35/40)`). cssColorMix and CSS_COLOR are already imported. Raw rgba() color literal = drift per doctrine ('Drift = hardcoded #hex / rgba()').",
+    "fix": "Derive the hairline ring from a token, e.g. cssColorMix(CSS_COLOR.border, ...) or cssColorAlpha(CSS_COLOR.bg0, ...), instead of rgba(0,0,0,...).",
+    "rank": 32
+  },
+  {
+    "area": "market",
+    "file": "artifacts/pyrus/src/screens/MarketDemoScreen.jsx",
+    "line": 96,
+    "category": "typography",
+    "severity": "low",
+    "issue": "Confirmed: imports only `{ CSS_COLOR, RADII, T, sp }` (line 33) — no textSize/FONT_WEIGHTS. Raw literals: fontSize:15 + fontWeight:700 (96-97), fontSize:12 (187). Genuine raw-px type drift. Low severity kept because this is the standalone demo/dev screen (screen=market-demo), not a primary production surface.",
+    "fix": "Use a display role (textSize('displaySmall')) + FONT_WEIGHTS.bold for the wordmark and textSize('metric') for the 12px label.",
+    "rank": 33
+  },
+  {
+    "area": "market",
+    "file": "artifacts/pyrus/src/screens/MarketScreen.jsx",
+    "line": 1012,
+    "category": "typography",
+    "severity": "low",
+    "issue": "Partially valid. fs(12) (1012,1019) and fs(15) (774) pass ad-hoc sizes that match NO authored role (roles: caption=9, body/metric=10, bodyStrong=11, paragraphMuted=13, displaySmall=16) — genuine minor 'ad-hoc size' drift, especially since the same file uses textSize('body')/('caption') on adjacent lines. NOTE the fs(10) sub-claim (1064,1185,1269) is a FALSE POSITIVE: fs() is a sanctioned exported density helper (uiTokens line 366) and fs(10) is numerically identical to textSize('body') (body role = 10), so those produce correct role-equivalent output.",
+    "fix": "Map fs(12)/fs(15) onto the nearest authored roles (bodyStrong / a display role) rather than raw numbers. Leave fs(10) as-is or rename to textSize('body') for readability — no behavioral change.",
+    "rank": 34
+  },
+  {
+    "area": "platform-shell",
+    "file": "artifacts/pyrus/src/features/platform/NotificationsDrawer.jsx",
+    "line": 392,
+    "category": "color-token",
+    "severity": "low",
+    "issue": "Drawer scrim uses hardcoded color literal background: \"rgba(0, 0, 0, 0.4)\" instead of a token-derived scrim. A token-backed scrim convention exists in the same tree (components/platform/BottomSheet.jsx:60 uses color-mix(in srgb, var(--ra-surface-0) 72%, transparent)), and this raw rgba will not track theme changes.",
+    "fix": "Use a token-backed scrim (e.g. cssColorMix(CSS_COLOR.bg0, 72) / cssColorAlpha on a token) to match the BottomSheet scrim convention.",
+    "rank": 35
+  },
+  {
+    "area": "research",
+    "file": "artifacts/pyrus/src/features/research/components/ResearchThemeSwitcher.jsx",
+    "line": 23,
+    "category": "semantic",
+    "severity": "low",
+    "issue": "A non-active 'meta' theme option is tinted with CSS_COLOR.greenBg as a decorative category highlight (`t.meta ? CSS_COLOR.greenBg : \"transparent\"`). Doctrine reserves green for financial-gain/operational-health; here it marks a non-financial theme category/selection state — generic-selection green misuse.",
+    "fix": "Use a neutral/accent selection tint (cssColorAlpha(CSS_COLOR.accent, ...) or bg2) or a SEMANTIC_TONE token rather than greenBg.",
+    "rank": 36
+  },
+  {
+    "area": "research",
+    "file": "artifacts/pyrus/src/features/research/components/ResearchThemeSwitcher.jsx",
+    "line": 24,
+    "category": "color-token",
+    "severity": "low",
+    "issue": "Active-chip border builds a translucent accent by string-concatenating a raw hex-alpha suffix onto a hex color (`1px solid ${t.accent}66`); same manual pattern at ResearchCalendarView.jsx:164. This bypasses cssColorAlpha and hardcodes the alpha channel as a hex literal.",
+    "fix": "cssColorAlpha(t.accent, \"66\") (or cssColorMix) instead of concatenating the hex-alpha suffix.",
+    "rank": 37
+  },
+  {
+    "area": "research",
+    "file": "artifacts/pyrus/src/features/research/PhotonicsObservatory.jsx",
+    "line": 2463,
+    "category": "surface",
+    "severity": "low",
+    "issue": "Company panel header paints a subtle top-to-transparent linear-gradient scrim `linear-gradient(to bottom, ${toneAlpha(CSS_COLOR.text, 0.01)}, transparent)` over its surface. Token-backed and very faint (0.01 alpha) but still a surface gradient adding faux depth rather than a flat bg token; the panel already has a bottom border for separation.",
+    "fix": "Drop the gradient; leave the header on the flat CSS_COLOR.bg1 with its existing bottom border.",
+    "rank": 38
+  },
+  {
+    "area": "research",
+    "file": "artifacts/pyrus/src/features/research/PhotonicsObservatory.jsx",
+    "line": 4598,
+    "category": "surface",
+    "severity": "low",
+    "issue": "Research root scroll container sets a decorative dual radial-gradient backgroundImage (accent 0.02 + blue 0.015 ambient glows). Alphas are token-backed via toneAlpha, but page-background 'atmosphere' gradients are old-system decoration inconsistent with the flat migrated screens.",
+    "fix": "Remove the ambient radial gradients; keep flat CSS_COLOR.bg1 and rely on ELEVATION on cards for hierarchy.",
+    "rank": 39
+  },
+  {
+    "area": "settings",
+    "file": "artifacts/pyrus/src/screens/SettingsScreen.jsx",
+    "line": 387,
+    "category": "typography",
+    "severity": "low",
+    "issue": "fontWeight: active || danger ? 600 : 500 uses raw numeric literals instead of FONT_WEIGHTS tokens. Confirmed FONT_WEIGHTS exists (label:600, medium:500, regular:400) and the same file uses FONT_WEIGHTS.medium/.regular elsewhere (e.g. lines 401, 508). Bypasses the typography weight scale.",
+    "fix": "Use FONT_WEIGHTS.label (600) / FONT_WEIGHTS.medium (500) — or let the Button primitive own the weight once smallButton is migrated.",
+    "rank": 40
+  },
+  {
+    "area": "settings",
+    "file": "artifacts/pyrus/src/screens/SettingsScreen.jsx",
+    "line": 3335,
+    "category": "typography",
+    "severity": "low",
+    "issue": "Tab-nav button sets fontWeight: activeTab === tab.id ? 600 : 500 inline raw literals, while the child label div on line 3346 correctly uses FONT_WEIGHTS.regular. Diverges from the FONT_WEIGHTS token scale within the same element.",
+    "fix": "Swap 600/500 for FONT_WEIGHTS.label / FONT_WEIGHTS.medium tokens.",
+    "rank": 41
+  },
+  {
+    "area": "signals",
+    "file": "artifacts/pyrus/src/screens/SignalsScreen.jsx",
+    "line": 375,
+    "category": "semantic",
+    "severity": "low",
+    "issue": "Local `toneForTrend` (bullish=blue, bearish=red, else textDim) is a second hand-rolled directional-intent mapping. Verified against semanticToneModel: 'bullish' is in BLUE_DIRECTION_TOKENS and 'bearish' is in RED_DIRECTION_TOKENS, so toneForDirectionalIntent('bullish'|'bearish') yields identical output. Same shared-helper bypass as toneForDirection.",
+    "fix": "Route through toneForDirectionalIntent (covers bullish/bearish) instead of the bespoke ternary.",
+    "rank": 42
+  },
+  {
+    "area": "signals",
+    "file": "artifacts/pyrus/src/screens/SignalsScreen.jsx",
+    "line": 2839,
+    "category": "shading",
+    "severity": "low",
+    "issue": "Confirmed the per-timeframe freshness meter bar fills with `linear-gradient(90deg, ${cssColorMix(tone,72)}, ${CSS_COLOR.bg3})`. The bar spans gridColumn 1/-1 at height 3px and is NOT a proportional-width value fill — the gradient just fades the tone into the bg3 track, a decorative fade. Sibling meter SignalsSplitBar (~line 655) uses FLAT token fills (background: segment.color) on a bg3 track. The fade-to-background gradient diverges from the flat-surface doctrine and the flat meter pattern used elsewhere in the same file.",
+    "fix": "Use a flat fill (background: cssColorMix(tone, 72)) on the bg3 track like SignalsSplitBar.",
+    "rank": 43
+  },
+  {
+    "area": "trade",
+    "file": "artifacts/pyrus/src/features/trade/TradePositionsPanel.jsx",
+    "line": 2010,
+    "category": "spacing",
+    "severity": "low",
+    "issue": "Raw pixel padding \"0 4px\" hardcoded on the Broker-executions header row while the same style block uses token helpers (gap: sp(3), textSize(\"caption\"), CSS_COLOR.textMuted). The literal padding bypasses sp()/density scaling.",
+    "fix": "padding: sp(\"0 4px\") to track workspace density/scale like the neighboring sp(3) gap.",
+    "rank": 44
+  },
+  {
+    "area": "trade",
+    "file": "artifacts/pyrus/src/features/trade/TradePositionsPanel.jsx",
+    "line": 2204,
+    "category": "spacing",
+    "severity": "low",
+    "issue": "Raw pixel padding \"0 4px\" hardcoded on the Live-broker-orders header row, duplicate of line 2010, again beside gap: sp(3)/textSize/CSS_COLOR tokens. Bypasses sp().",
+    "fix": "padding: sp(\"0 4px\") to match the token-driven spacing used for gap in the same block.",
+    "rank": 45
+  },
+  {
+    "area": "trade",
+    "file": "artifacts/pyrus/src/features/trade/TradeStrategyGreeksPanel.jsx",
+    "line": 185,
+    "category": "spacing",
+    "severity": "low",
+    "issue": "Raw pixel padding string \"2px 0\" hardcoded inline on the GreekBar grid, bypassing sp(). The very same file routes multi-value padding through sp() (e.g. sp(\"8px 10px\") at lines 103/146/272) and uses sp(4) for the adjacent gap on line 184, so this literal escapes the density/scale factor every other spacing value in the block respects. Genuine surface drift.",
+    "fix": "padding: sp(\"2px 0\") — sp() accepts multi-value strings (uiTokens.jsx line 379), matching the file's existing sp(\"8px 10px\") usage.",
+    "rank": 46
+  }
+]
