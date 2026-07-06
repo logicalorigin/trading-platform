@@ -1,8 +1,9 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { db, userPreferenceProfilesTable } from "@workspace/db";
+import { requireCurrentAppUserId } from "./app-user-context";
 import {
   DEFAULT_USER_PREFERENCES,
   USER_PREFERENCES_PROFILE_KEY,
@@ -27,13 +28,13 @@ const readRecord = (value: unknown): Record<string, unknown> =>
     ? (value as Record<string, unknown>)
     : {};
 
-const fallbackFile = () =>
+const fallbackFile = (userId: string) =>
   process.env["PYRUS_USER_PREFERENCES_FILE"] ||
-  join(tmpdir(), "pyrus", "user-preferences.json");
+  join(tmpdir(), "pyrus", `user-preferences-${userId}.json`);
 
-const readFallback = (): PreferenceSnapshot => {
+const readFallback = (userId: string): PreferenceSnapshot => {
   try {
-    const parsed = JSON.parse(readFileSync(fallbackFile(), "utf8")) as unknown;
+    const parsed = JSON.parse(readFileSync(fallbackFile(userId), "utf8")) as unknown;
     const record = readRecord(parsed);
     return {
       profileKey:
@@ -59,7 +60,10 @@ const readFallback = (): PreferenceSnapshot => {
   }
 };
 
-const writeFallback = (preferences: UserPreferences): PreferenceSnapshot => {
+const writeFallback = (
+  userId: string,
+  preferences: UserPreferences,
+): PreferenceSnapshot => {
   const updatedAt = new Date().toISOString();
   const snapshot: PreferenceSnapshot = {
     profileKey: USER_PREFERENCES_PROFILE_KEY,
@@ -68,7 +72,7 @@ const writeFallback = (preferences: UserPreferences): PreferenceSnapshot => {
     source: "fallback",
     updatedAt,
   };
-  const file = fallbackFile();
+  const file = fallbackFile(userId);
   mkdirSync(dirname(file), { recursive: true });
   writeFileSync(
     file,
@@ -100,20 +104,33 @@ const toSnapshot = (row: {
   updatedAt: row.updatedAt.toISOString(),
 });
 
-let cachedPreferenceSnapshot: PreferenceSnapshot | null = null;
-let preferenceSnapshotReadPromise: Promise<PreferenceSnapshot> | null = null;
+// Per-user (Slice 5.4): the snapshot cache and in-flight read dedupe are keyed by
+// app user id so one user's preferences can never be served to another. A single
+// shared cache slot would leak across users under the previously-global singleton.
+const cachedPreferenceSnapshots = new Map<string, PreferenceSnapshot>();
+const preferenceSnapshotReadPromises = new Map<
+  string,
+  Promise<PreferenceSnapshot>
+>();
 
 export function __clearUserPreferencesCacheForTests(): void {
-  cachedPreferenceSnapshot = null;
-  preferenceSnapshotReadPromise = null;
+  cachedPreferenceSnapshots.clear();
+  preferenceSnapshotReadPromises.clear();
 }
 
-async function loadUserPreferencesSnapshot(): Promise<PreferenceSnapshot> {
+async function loadUserPreferencesSnapshot(
+  userId: string,
+): Promise<PreferenceSnapshot> {
   try {
     const rows = await db
       .select()
       .from(userPreferenceProfilesTable)
-      .where(eq(userPreferenceProfilesTable.profileKey, USER_PREFERENCES_PROFILE_KEY))
+      .where(
+        and(
+          eq(userPreferenceProfilesTable.appUserId, userId),
+          eq(userPreferenceProfilesTable.profileKey, USER_PREFERENCES_PROFILE_KEY),
+        ),
+      )
       .limit(1);
     if (rows[0]) {
       return toSnapshot(rows[0]);
@@ -121,6 +138,7 @@ async function loadUserPreferencesSnapshot(): Promise<PreferenceSnapshot> {
     const [created] = await db
       .insert(userPreferenceProfilesTable)
       .values({
+        appUserId: userId,
         profileKey: USER_PREFERENCES_PROFILE_KEY,
         version: USER_PREFERENCES_VERSION,
         preferences: DEFAULT_USER_PREFERENCES,
@@ -128,32 +146,37 @@ async function loadUserPreferencesSnapshot(): Promise<PreferenceSnapshot> {
       .returning();
     return toSnapshot(created);
   } catch {
-    return readFallback();
+    return readFallback(userId);
   }
 }
 
 export async function getUserPreferencesSnapshot(): Promise<PreferenceSnapshot> {
-  if (cachedPreferenceSnapshot) {
-    return cachedPreferenceSnapshot;
+  const userId = requireCurrentAppUserId();
+  const cached = cachedPreferenceSnapshots.get(userId);
+  if (cached) {
+    return cached;
   }
-  if (preferenceSnapshotReadPromise) {
-    return preferenceSnapshotReadPromise;
+  const inflight = preferenceSnapshotReadPromises.get(userId);
+  if (inflight) {
+    return inflight;
   }
 
-  preferenceSnapshotReadPromise = loadUserPreferencesSnapshot()
+  const promise = loadUserPreferencesSnapshot(userId)
     .then((snapshot) => {
-      cachedPreferenceSnapshot = snapshot;
+      cachedPreferenceSnapshots.set(userId, snapshot);
       return snapshot;
     })
     .finally(() => {
-      preferenceSnapshotReadPromise = null;
+      preferenceSnapshotReadPromises.delete(userId);
     });
-  return preferenceSnapshotReadPromise;
+  preferenceSnapshotReadPromises.set(userId, promise);
+  return promise;
 }
 
 export async function updateUserPreferencesSnapshot(
   input: unknown,
 ): Promise<PreferenceSnapshot> {
+  const userId = requireCurrentAppUserId();
   const patch = readRecord(input);
   const current = await getUserPreferencesSnapshot();
   const merged = deepMergeRecords(
@@ -166,13 +189,17 @@ export async function updateUserPreferencesSnapshot(
     const [updated] = await db
       .insert(userPreferenceProfilesTable)
       .values({
+        appUserId: userId,
         profileKey: USER_PREFERENCES_PROFILE_KEY,
         version: USER_PREFERENCES_VERSION,
         preferences,
         updatedAt: new Date(),
       })
       .onConflictDoUpdate({
-        target: userPreferenceProfilesTable.profileKey,
+        // Conflict on the per-user partial-unique (one row per user), so a repeat
+        // save updates the caller's own row instead of colliding.
+        target: userPreferenceProfilesTable.appUserId,
+        targetWhere: sql`${userPreferenceProfilesTable.appUserId} is not null`,
         set: {
           version: USER_PREFERENCES_VERSION,
           preferences,
@@ -181,11 +208,11 @@ export async function updateUserPreferencesSnapshot(
       })
       .returning();
     const snapshot = toSnapshot(updated);
-    cachedPreferenceSnapshot = snapshot;
+    cachedPreferenceSnapshots.set(userId, snapshot);
     return snapshot;
   } catch {
-    const snapshot = writeFallback(preferences);
-    cachedPreferenceSnapshot = snapshot;
+    const snapshot = writeFallback(userId, preferences);
+    cachedPreferenceSnapshots.set(userId, snapshot);
     return snapshot;
   }
 }

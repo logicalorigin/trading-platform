@@ -1,0 +1,15 @@
+-- Slice 5.4: user preferences per-user isolation.
+--
+-- Slice 3 (20260705_shadow_watchlist_preference_user_scope.sql) added app_user_id
+-- and a per-user partial-unique index (user_preference_profiles_app_user_idx) to
+-- user_preference_profiles, but left the legacy GLOBAL unique on profile_key in
+-- place. Because every user shares the same profile_key ('default'), that global
+-- unique physically blocks a second user from ever owning a preferences row
+-- (their INSERT collides on profile_key). Drop it: the existing per-user
+-- partial-unique on app_user_id already enforces one preferences row per user,
+-- which is the correct per-user constraint and the upsert conflict target.
+--
+-- Additive + safe: the current single backfilled row (founding admin) is
+-- unaffected; this only removes a constraint that would otherwise reject a
+-- second user's row.
+DROP INDEX IF EXISTS user_preference_profiles_profile_key_idx;

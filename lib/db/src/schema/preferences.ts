@@ -25,9 +25,9 @@ export const userPreferenceProfilesTable = pgTable(
     ...timestamps,
   },
   (table) => [
-    uniqueIndex("user_preference_profiles_profile_key_idx").on(
-      table.profileKey,
-    ),
+    // Per-user: one preferences row per user (Slice 5.4). The legacy global
+    // unique on profile_key was dropped — it blocked a second user from ever
+    // owning a row since every user shares profile_key 'default'.
     uniqueIndex("user_preference_profiles_app_user_idx")
       .on(table.appUserId)
       .where(sql`${table.appUserId} IS NOT NULL`),
