@@ -1505,9 +1505,9 @@ export const Watchlist = ({
             style={{
               padding: sp("6px 8px"),
               borderRadius: dim(RADII.sm),
-              background: activeWatchlist?.isDefault ? `${cssColorMix(CSS_COLOR.green, 7)}` : "transparent",
+              background: activeWatchlist?.isDefault ? `${cssColorMix(CSS_COLOR.accent, 7)}` : "transparent",
               border: "none",
-              color: activeWatchlist?.isDefault ? CSS_COLOR.green : CSS_COLOR.textSec,
+              color: activeWatchlist?.isDefault ? CSS_COLOR.accent : CSS_COLOR.textSec,
               cursor:
                 activeWatchlist && !activeWatchlist.isDefault && !busy
                   ? "pointer"
@@ -1856,10 +1856,10 @@ export const Watchlist = ({
               disabled={!activeWatchlist || activeWatchlist.isDefault || busy}
               style={{
                 minHeight: dim(42),
-                border: `1px solid ${activeWatchlist?.isDefault ? CSS_COLOR.green : CSS_COLOR.border}`,
+                border: `1px solid ${activeWatchlist?.isDefault ? CSS_COLOR.accent : CSS_COLOR.border}`,
                 borderRadius: dim(RADII.sm),
-                background: activeWatchlist?.isDefault ? `${cssColorMix(CSS_COLOR.green, 7)}` : CSS_COLOR.bg1,
-                color: activeWatchlist?.isDefault ? CSS_COLOR.green : CSS_COLOR.textSec,
+                background: activeWatchlist?.isDefault ? `${cssColorMix(CSS_COLOR.accent, 7)}` : CSS_COLOR.bg1,
+                color: activeWatchlist?.isDefault ? CSS_COLOR.accent : CSS_COLOR.textSec,
                 fontFamily: T.sans,
                 fontSize: textSize("caption"),
                 fontWeight: FONT_WEIGHTS.medium,
