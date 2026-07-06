@@ -10,7 +10,14 @@ import {
   GetIbkrPortalStatusResponse,
 } from "@workspace/api-zod";
 
-import { requireAdmin, requireAdminCsrf } from "./auth";
+import { requireUser, requireUserCsrf } from "./auth";
+import { HttpError } from "../lib/errors";
+import type { AuthenticatedSession } from "../services/auth";
+import {
+  ENTITLEMENTS,
+  isIbkrMemberConnectEnabled,
+  sessionHasEntitlement,
+} from "../services/entitlements";
 import {
   connectPortal,
   disconnectPortal,
@@ -43,8 +50,40 @@ function trace(entry: Record<string, unknown>): void {
   }
 }
 
+// Slice 7 (SPEC §6): the IBKR Client Portal stays OFF for members until the IBKR
+// ToS/OAuth-approval question clears. Admins bypass; a member needs BOTH the
+// kill-switch flag (IBKR_MEMBER_CONNECT_ENABLED) AND the `ibkr_access` entitlement.
+function assertIbkrPortalAccess(session: AuthenticatedSession): void {
+  if (session.user.role === "admin") return;
+  if (
+    isIbkrMemberConnectEnabled() &&
+    sessionHasEntitlement(session, ENTITLEMENTS.IBKR_ACCESS)
+  ) {
+    return;
+  }
+  throw new HttpError(403, "IBKR connections are not available.", {
+    code: "ibkr_member_connect_disabled",
+  });
+}
+
+async function requireIbkrPortalAccess(
+  req: Request,
+): Promise<AuthenticatedSession> {
+  const session = await requireUser(req);
+  assertIbkrPortalAccess(session);
+  return session;
+}
+
+async function requireIbkrPortalAccessCsrf(
+  req: Request,
+): Promise<AuthenticatedSession> {
+  const session = await requireUserCsrf(req);
+  assertIbkrPortalAccess(session);
+  return session;
+}
+
 router.get("/broker-execution/ibkr-portal/readiness", async (req, res) => {
-  const session = await requireAdmin(req);
+  const session = await requireIbkrPortalAccess(req);
   const data = GetIbkrPortalReadinessResponse.parse(
     await readPortalReadiness(session.user.id),
   );
@@ -52,7 +91,7 @@ router.get("/broker-execution/ibkr-portal/readiness", async (req, res) => {
 });
 
 router.get("/broker-execution/ibkr-portal/status", async (req, res) => {
-  const session = await requireAdmin(req);
+  const session = await requireIbkrPortalAccess(req);
   const data = GetIbkrPortalStatusResponse.parse(
     await getPortalStatus(session.user.id),
   );
@@ -60,7 +99,7 @@ router.get("/broker-execution/ibkr-portal/status", async (req, res) => {
 });
 
 router.post("/broker-execution/ibkr-portal/connect", async (req, res) => {
-  const session = await requireAdminCsrf(req);
+  const session = await requireIbkrPortalAccessCsrf(req);
   const data = ConnectIbkrPortalResponse.parse(
     await connectPortal(session.user.id),
   );
@@ -68,7 +107,7 @@ router.post("/broker-execution/ibkr-portal/connect", async (req, res) => {
 });
 
 router.post("/broker-execution/ibkr-portal/disconnect", async (req, res) => {
-  const session = await requireAdminCsrf(req);
+  const session = await requireIbkrPortalAccessCsrf(req);
   const data = DisconnectIbkrPortalResponse.parse(
     await disconnectPortal(session.user.id),
   );
@@ -137,7 +176,7 @@ async function proxyToGateway(req: Request, res: Response): Promise<void> {
   const tracePath = (req.originalUrl.slice(GW_BASE.length) || "/").split("?")[0];
   let session;
   try {
-    session = await requireAdmin(req);
+    session = await requireIbkrPortalAccess(req);
   } catch (error) {
     trace({
       method: req.method,

@@ -26,6 +26,7 @@ export type PublicAuthUser = {
   email: string;
   displayName: string | null;
   role: string;
+  entitlements: string[];
 };
 
 export type AuthenticatedSession = {
@@ -65,6 +66,7 @@ function publicUser(user: User): PublicAuthUser {
     email: user.email,
     displayName: user.displayName,
     role: user.role,
+    entitlements: user.entitlements,
   };
 }
 

@@ -6,6 +6,10 @@ import { db, launchTokenJtiTable, usersTable, type User } from "@workspace/db";
 import { HttpError } from "../lib/errors";
 import { logger } from "../lib/logger";
 import { createAuthSession, type AuthResult } from "./auth";
+import {
+  defaultEntitlementsForPlan,
+  normalizeEntitlements,
+} from "./entitlements";
 
 // Slice 6: the "Launch Platform" handoff. An external parent site mints a short-lived
 // signed JWT (RS256; parent holds the private key, we hold only the public key) that we
@@ -207,15 +211,19 @@ export async function launchSession(token: string): Promise<AuthResult> {
     claims.jti as string,
     new Date((claims.exp as number) * 1_000),
   );
-  const entitlements = Array.isArray(claims.entitlements)
-    ? claims.entitlements.filter((e): e is string => typeof e === "string")
-    : [];
+  const plan = readStringClaim(claims.plan);
+  // Token entitlements are the source of truth; fall back to a plan-derived
+  // default only when the token omits an explicit array (Slice 7).
+  let entitlements = normalizeEntitlements(claims.entitlements);
+  if (entitlements.length === 0) {
+    entitlements = defaultEntitlementsForPlan(plan);
+  }
   const user = await provisionLaunchUser({
     issuer: claims.iss as string,
     sub: claims.sub as string,
     email: (claims.email as string).trim(),
     name: readStringClaim(claims.name),
-    plan: readStringClaim(claims.plan),
+    plan,
     entitlements,
   });
   return createAuthSession({ userId: user.id });

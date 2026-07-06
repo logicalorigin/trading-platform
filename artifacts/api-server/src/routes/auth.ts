@@ -10,6 +10,10 @@ import {
   type AuthenticatedSession,
 } from "../services/auth";
 import { isLaunchAuthConfigured, launchSession } from "../services/auth-launch";
+import {
+  sessionHasEntitlement,
+  type Entitlement,
+} from "../services/entitlements";
 
 export const AUTH_SESSION_COOKIE = "pyrus_session";
 export const AUTH_CSRF_HEADER = "x-csrf-token";
@@ -179,6 +183,37 @@ export async function requireUserCsrf(
   req: Request,
 ): Promise<AuthenticatedSession> {
   return requireAuthCsrf(req);
+}
+
+// Slice 7: gate a member-facing route on a specific entitlement. Curried so it
+// composes like the other guards (`await requireEntitlement("broker_connect")(req)`).
+// Admins bypass (sessionHasEntitlement); members without the key get 403.
+export function requireEntitlement(
+  key: Entitlement,
+): (req: Request) => Promise<AuthenticatedSession> {
+  return async (req: Request) => {
+    const session = await requireUser(req);
+    if (!sessionHasEntitlement(session, key)) {
+      throw new HttpError(403, "This feature requires an upgraded plan.", {
+        code: "entitlement_required",
+      });
+    }
+    return session;
+  };
+}
+
+export function requireEntitlementCsrf(
+  key: Entitlement,
+): (req: Request) => Promise<AuthenticatedSession> {
+  return async (req: Request) => {
+    const session = await requireUserCsrf(req);
+    if (!sessionHasEntitlement(session, key)) {
+      throw new HttpError(403, "This feature requires an upgraded plan.", {
+        code: "entitlement_required",
+      });
+    }
+    return session;
+  };
 }
 
 router.get("/auth/session", async (req, res) => {

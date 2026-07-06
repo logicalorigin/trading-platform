@@ -181,7 +181,9 @@ test("SnapTrade routes reject authenticated non-admin sessions", async () => {
           );
           assert.equal(readiness.status, 403);
           const readinessBody = (await readiness.json()) as { code?: string };
-          assert.equal(readinessBody.code, "admin_required");
+          // Slice 7: a member without the broker_connect entitlement is rejected
+          // by the entitlement guard (was admin_required before Slice 7).
+          assert.equal(readinessBody.code, "entitlement_required");
           assert.equal(called, false);
 
           const brokerages = await previousFetch(
@@ -210,6 +212,133 @@ test("SnapTrade routes reject authenticated non-admin sessions", async () => {
         }
       }),
     ),
+  );
+});
+
+test("SnapTrade connect lifecycle is gated by the broker_connect entitlement", async () => {
+  await withSnapTradeEnv(async () =>
+    withTestDb(async () =>
+      withServer(async (baseUrl) => {
+        const previousFetch = globalThis.fetch;
+        // Stub the SnapTrade client probe so an entitled caller's readiness resolves 200.
+        globalThis.fetch = (async () =>
+          new Response(
+            JSON.stringify({
+              slug: "s",
+              name: "n",
+              redirect_uri: "",
+              can_access_trades: true,
+              can_access_holdings: true,
+              can_access_account_history: true,
+              can_access_reference_data: true,
+              can_access_portfolio_management: false,
+              can_access_orders: true,
+              allowed_brokerages: [],
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          )) as typeof fetch;
+        try {
+          const readinessUrl = `${baseUrl}/broker-execution/snaptrade/readiness`;
+
+          // Member WITHOUT the entitlement → blocked with entitlement_required.
+          const [plain] = await db
+            .insert(usersTable)
+            .values({
+              email: "st-plain@example.com",
+              passwordHash: "unused",
+              role: "member",
+            })
+            .returning();
+          const plainSession = await createAuthSession({ userId: plain!.id });
+          const blocked = await previousFetch(readinessUrl, {
+            headers: { cookie: `pyrus_session=${plainSession.sessionToken}` },
+          });
+          assert.equal(blocked.status, 403);
+          assert.equal(
+            ((await blocked.json()) as { code?: string }).code,
+            "entitlement_required",
+          );
+
+          // Member WITH broker_connect → passes the guard and reaches the handler.
+          const [entitled] = await db
+            .insert(usersTable)
+            .values({
+              email: "st-entitled@example.com",
+              passwordHash: "unused",
+              role: "member",
+              entitlements: ["broker_connect"],
+            })
+            .returning();
+          const entitledSession = await createAuthSession({
+            userId: entitled!.id,
+          });
+          const allowed = await previousFetch(readinessUrl, {
+            headers: { cookie: `pyrus_session=${entitledSession.sessionToken}` },
+          });
+          assert.equal(allowed.status, 200);
+        } finally {
+          globalThis.fetch = previousFetch;
+        }
+      }),
+    ),
+  );
+});
+
+test("IBKR portal stays off for members without the compliance flag (SPEC §6)", async () => {
+  await withTestDb(async () =>
+    withServer(async (baseUrl) => {
+      const previousFlag = process.env["IBKR_MEMBER_CONNECT_ENABLED"];
+      delete process.env["IBKR_MEMBER_CONNECT_ENABLED"];
+      try {
+        const readinessUrl = `${baseUrl}/broker-execution/ibkr-portal/readiness`;
+
+        // A member WITH ibkr_access is STILL blocked while the kill-switch is
+        // off — the compliance flag is required, not just the entitlement.
+        const [entitled] = await db
+          .insert(usersTable)
+          .values({
+            email: "ibkr-member@example.com",
+            passwordHash: "unused",
+            role: "member",
+            entitlements: ["ibkr_access"],
+          })
+          .returning();
+        const entitledSession = await createAuthSession({ userId: entitled!.id });
+        const entitledResp = await fetch(readinessUrl, {
+          headers: { cookie: `pyrus_session=${entitledSession.sessionToken}` },
+        });
+        assert.equal(entitledResp.status, 403);
+        assert.equal(
+          ((await entitledResp.json()) as { code?: string }).code,
+          "ibkr_member_connect_disabled",
+        );
+
+        // A plain member is likewise blocked.
+        const [plain] = await db
+          .insert(usersTable)
+          .values({
+            email: "ibkr-plain@example.com",
+            passwordHash: "unused",
+            role: "member",
+          })
+          .returning();
+        const plainSession = await createAuthSession({ userId: plain!.id });
+        const plainResp = await fetch(readinessUrl, {
+          headers: { cookie: `pyrus_session=${plainSession.sessionToken}` },
+        });
+        assert.equal(plainResp.status, 403);
+        assert.equal(
+          ((await plainResp.json()) as { code?: string }).code,
+          "ibkr_member_connect_disabled",
+        );
+      } finally {
+        if (previousFlag === undefined) {
+          delete process.env["IBKR_MEMBER_CONNECT_ENABLED"];
+        } else {
+          process.env["IBKR_MEMBER_CONNECT_ENABLED"] = previousFlag;
+        }
+      }
+    }),
   );
 });
 

@@ -23,7 +23,12 @@ import {
   SyncSnapTradeBrokerageConnectionsResponse,
 } from "@workspace/api-zod";
 
-import { requireAdmin, requireAdminCsrf } from "./auth";
+import {
+  requireAdmin,
+  requireAdminCsrf,
+  requireEntitlement,
+  requireEntitlementCsrf,
+} from "./auth";
 import { readIbkrOAuthReadiness } from "../services/ibkr-oauth-readiness";
 import { syncRobinhoodConnections } from "../services/robinhood-account-sync";
 import {
@@ -48,7 +53,9 @@ import {
   submitSnapTradeEquityOrder,
 } from "../services/snaptrade-equity-orders";
 import { HttpError } from "../lib/errors";
+import { logger } from "../lib/logger";
 import { getSnapTradeAccountHistory } from "../services/snaptrade-account-history";
+import { refreshSnapTradeAccountHistoryForUser } from "../services/snaptrade-history-scheduler";
 import { listSnapTradeBrokerages } from "../services/snaptrade-brokerages";
 import { syncSnapTradeBrokerageConnections } from "../services/snaptrade-account-sync";
 import { readSnapTradeReadiness } from "../services/snaptrade-readiness";
@@ -103,7 +110,7 @@ function readOptionalHistoryRange(value: unknown): string | null {
 }
 
 router.get("/broker-execution/snaptrade/readiness", async (req, res) => {
-  const session = await requireAdmin(req);
+  const session = await requireEntitlement("broker_connect")(req);
   const data = GetSnapTradeReadinessResponse.parse(
     {
       ...(await readSnapTradeReadiness()),
@@ -120,7 +127,7 @@ router.get("/broker-execution/ibkr/oauth/readiness", async (req, res) => {
 });
 
 router.get("/broker-execution/robinhood/readiness", async (req, res) => {
-  const session = await requireAdmin(req);
+  const session = await requireEntitlement("broker_connect")(req);
   const data = GetRobinhoodReadinessResponse.parse({
     ...(await readRobinhoodReadiness()),
     user: await readRobinhoodUserReadiness(session.user.id),
@@ -129,7 +136,7 @@ router.get("/broker-execution/robinhood/readiness", async (req, res) => {
 });
 
 router.post("/broker-execution/robinhood/connect", async (req, res) => {
-  const session = await requireAdminCsrf(req);
+  const session = await requireEntitlementCsrf("broker_connect")(req);
   const data = StartRobinhoodConnectResponse.parse(
     await startRobinhoodConnect({
       appUserId: session.user.id,
@@ -142,7 +149,7 @@ router.post("/broker-execution/robinhood/connect", async (req, res) => {
 // contract): Robinhood sends the user's browser here after consent. Outcomes
 // redirect back to Settings with a status flag instead of surfacing JSON.
 router.get("/broker-execution/robinhood/oauth/callback", async (req, res) => {
-  const session = await requireAdmin(req);
+  const session = await requireEntitlement("broker_connect")(req);
   const code = typeof req.query["code"] === "string" ? req.query["code"] : "";
   const state =
     typeof req.query["state"] === "string" ? req.query["state"] : "";
@@ -170,7 +177,7 @@ router.get("/broker-execution/robinhood/oauth/callback", async (req, res) => {
 });
 
 router.post("/broker-execution/robinhood/sync", async (req, res) => {
-  const session = await requireAdminCsrf(req);
+  const session = await requireEntitlementCsrf("broker_connect")(req);
   const data = SyncRobinhoodConnectionsResponse.parse(
     await syncRobinhoodConnections({
       appUserId: session.user.id,
@@ -180,7 +187,7 @@ router.post("/broker-execution/robinhood/sync", async (req, res) => {
 });
 
 router.get("/broker-execution/schwab/readiness", async (req, res) => {
-  const session = await requireAdmin(req);
+  const session = await requireEntitlement("broker_connect")(req);
   const data = GetSchwabReadinessResponse.parse({
     ...(await readSchwabReadiness()),
     user: await readSchwabUserReadiness(session.user.id),
@@ -189,7 +196,7 @@ router.get("/broker-execution/schwab/readiness", async (req, res) => {
 });
 
 router.post("/broker-execution/schwab/connect", async (req, res) => {
-  const session = await requireAdminCsrf(req);
+  const session = await requireEntitlementCsrf("broker_connect")(req);
   const data = StartSchwabConnectResponse.parse(
     await startSchwabConnect({
       appUserId: session.user.id,
@@ -202,7 +209,7 @@ router.post("/broker-execution/schwab/connect", async (req, res) => {
 // contract): Schwab sends the user's browser here after consent. Outcomes
 // redirect back to Settings with a status flag instead of surfacing JSON.
 router.get("/broker-execution/schwab/oauth/callback", async (req, res) => {
-  const session = await requireAdmin(req);
+  const session = await requireEntitlement("broker_connect")(req);
   const code = typeof req.query["code"] === "string" ? req.query["code"] : "";
   const state =
     typeof req.query["state"] === "string" ? req.query["state"] : "";
@@ -230,7 +237,7 @@ router.get("/broker-execution/schwab/oauth/callback", async (req, res) => {
 });
 
 router.post("/broker-execution/schwab/sync", async (req, res) => {
-  const session = await requireAdminCsrf(req);
+  const session = await requireEntitlementCsrf("broker_connect")(req);
   const data = SyncSchwabConnectionsResponse.parse(
     await syncSchwabConnections({
       appUserId: session.user.id,
@@ -240,7 +247,7 @@ router.post("/broker-execution/schwab/sync", async (req, res) => {
 });
 
 router.get("/broker-execution/snaptrade/brokerages", async (req, res) => {
-  await requireAdmin(req);
+  await requireEntitlement("broker_connect")(req);
   const data = ListSnapTradeBrokeragesResponse.parse(
     await listSnapTradeBrokerages(),
   );
@@ -248,7 +255,7 @@ router.get("/broker-execution/snaptrade/brokerages", async (req, res) => {
 });
 
 router.post("/broker-execution/snaptrade/users/current", async (req, res) => {
-  const session = await requireAdminCsrf(req);
+  const session = await requireEntitlementCsrf("broker_connect")(req);
   const data = RegisterSnapTradeCurrentUserResponse.parse(
     await registerSnapTradeCurrentUser({
       appUserId: session.user.id,
@@ -258,7 +265,7 @@ router.post("/broker-execution/snaptrade/users/current", async (req, res) => {
 });
 
 router.post("/broker-execution/snaptrade/connection-portal", async (req, res) => {
-  const session = await requireAdminCsrf(req);
+  const session = await requireEntitlementCsrf("broker_connect")(req);
   const body = GenerateSnapTradeConnectionPortalBody.parse(req.body ?? {});
   const data = GenerateSnapTradeConnectionPortalResponse.parse(
     await generateSnapTradeConnectionPortal({
@@ -270,19 +277,29 @@ router.post("/broker-execution/snaptrade/connection-portal", async (req, res) =>
 });
 
 router.post("/broker-execution/snaptrade/sync", async (req, res) => {
-  const session = await requireAdminCsrf(req);
+  const session = await requireEntitlementCsrf("broker_connect")(req);
   const data = SyncSnapTradeBrokerageConnectionsResponse.parse(
     await syncSnapTradeBrokerageConnections({
       appUserId: session.user.id,
     }),
   );
+  // Kick off a background history backfill for the just-synced accounts so past
+  // P&L populates without the user opening each account page. Fire-and-forget:
+  // the sync response must not wait on the (potentially slow) SnapTrade activity
+  // pulls, and the scheduler also covers these accounts on its next cycle.
+  void refreshSnapTradeAccountHistoryForUser(session.user.id).catch((error) => {
+    logger.warn(
+      { err: error, appUserId: session.user.id },
+      "SnapTrade connect-time history backfill failed",
+    );
+  });
   res.json(data);
 });
 
 router.get(
   "/broker-execution/snaptrade/accounts/:accountId/portfolio",
   async (req, res) => {
-    const session = await requireAdmin(req);
+    const session = await requireEntitlement("broker_connect")(req);
     const data = GetSnapTradeAccountPortfolioResponse.parse(
       await getSnapTradeAccountPortfolio({
         appUserId: session.user.id,
@@ -296,7 +313,7 @@ router.get(
 router.get(
   "/broker-execution/snaptrade/accounts/:accountId/history",
   async (req, res) => {
-    const session = await requireAdmin(req);
+    const session = await requireEntitlement("broker_connect")(req);
     const data = GetSnapTradeAccountHistoryResponse.parse(
       await getSnapTradeAccountHistory({
         appUserId: session.user.id,
@@ -313,7 +330,7 @@ router.get(
 router.get(
   "/broker-execution/snaptrade/accounts/:accountId/orders/recent",
   async (req, res) => {
-    const session = await requireAdmin(req);
+    const session = await requireEntitlement("broker_connect")(req);
     const data = GetSnapTradeRecentOrdersResponse.parse(
       await listSnapTradeRecentOrders({
         appUserId: session.user.id,
@@ -328,7 +345,7 @@ router.get(
 router.get(
   "/broker-execution/snaptrade/accounts/:accountId/symbols/search",
   async (req, res) => {
-    const session = await requireAdmin(req);
+    const session = await requireEntitlement("broker_connect")(req);
     const data = SearchSnapTradeAccountSymbolsResponse.parse(
       await searchSnapTradeAccountSymbols({
         appUserId: session.user.id,
