@@ -13,7 +13,7 @@ import {
   toneForFinancialDelta,
 } from "../platform/semanticToneModel.js";
 import { fmtM, formatSignedPercent, isFiniteNumber } from "../../lib/formatters.js";
-import { CSS_COLOR, RADII, T, cssColorMix, sp } from "../../lib/uiTokens.jsx";
+import { CSS_COLOR, FONT_WEIGHTS, RADII, T, cssColorMix, sp, textSize } from "../../lib/uiTokens.jsx";
 
 // Matches MarketUniverseTable's cap so the universe + quotes queries share keys
 // (react-query dedupe → no extra network for the movers columns).
@@ -62,7 +62,7 @@ const SectorFlowList = ({ sectorFlow }) => {
               style={{
                 color: CSS_COLOR.textSec,
                 fontFamily: T.sans,
-                fontSize: 12,
+                fontSize: textSize("bodyStrong"),
                 overflow: "hidden",
                 textOverflow: "ellipsis",
                 whiteSpace: "nowrap",
@@ -105,7 +105,7 @@ const SectorFlowList = ({ sectorFlow }) => {
               style={{
                 color: tone,
                 fontFamily: T.sans,
-                fontSize: 12,
+                fontSize: textSize("bodyStrong"),
                 textAlign: "right",
                 fontVariantNumeric: "tabular-nums",
               }}
@@ -122,7 +122,7 @@ const SectorFlowList = ({ sectorFlow }) => {
 
 const MoversColumn = ({ title, rows, onSelectSymbol }) => (
   <div style={{ display: "flex", flexDirection: "column", gap: sp("3px"), minWidth: 0 }}>
-    <div style={{ color: CSS_COLOR.textDim, fontSize: 11, fontFamily: T.sans }}>
+    <div style={{ color: CSS_COLOR.textDim, fontSize: textSize("body"), fontFamily: T.sans }}>
       {title}
     </div>
     {rows.length ? (
@@ -144,13 +144,13 @@ const MoversColumn = ({ title, rows, onSelectSymbol }) => (
             fontFamily: T.sans,
           }}
         >
-          <span style={{ color: CSS_COLOR.text, fontSize: 12, fontWeight: 600 }}>
+          <span style={{ color: CSS_COLOR.text, fontSize: textSize("bodyStrong"), fontWeight: FONT_WEIGHTS.label }}>
             {row.symbol}
           </span>
           <span
             style={{
               color: toneForFinancialDelta(row.changePercent),
-              fontSize: 12,
+              fontSize: textSize("bodyStrong"),
               fontVariantNumeric: "tabular-nums",
             }}
           >
@@ -159,7 +159,7 @@ const MoversColumn = ({ title, rows, onSelectSymbol }) => (
         </button>
       ))
     ) : (
-      <span style={{ color: CSS_COLOR.textMuted, fontSize: 11 }}>—</span>
+      <span style={{ color: CSS_COLOR.textMuted, fontSize: textSize("body") }}>—</span>
     )}
   </div>
 );
@@ -206,7 +206,7 @@ export default function MarketInternalsRail({ isVisible = false, onSelectSymbol 
         }}
       >
         <div style={{ display: "flex", flexDirection: "column", gap: sp("6px"), minWidth: 0 }}>
-          <div style={{ color: CSS_COLOR.textDim, fontSize: 11, fontFamily: T.sans }}>
+          <div style={{ color: CSS_COLOR.textDim, fontSize: textSize("body"), fontFamily: T.sans }}>
             Sector flow
           </div>
           <SectorFlowList sectorFlow={sectorFlow} />

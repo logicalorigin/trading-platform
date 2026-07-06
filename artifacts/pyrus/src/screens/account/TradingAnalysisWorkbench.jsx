@@ -34,6 +34,7 @@ import { normalizeAccountPositionTypeFilter } from "../../features/account/accou
 import {
   CSS_COLOR,
   cssColorMix,
+  ELEVATION,
   FONT_WEIGHTS,
   PYRUS_STORAGE_KEY,
   RADII,
@@ -1809,7 +1810,7 @@ const MobileFilterDrawer = ({ open, onClose, children }) => {
         gridTemplateColumns: "minmax(0, 320px) minmax(0, 1fr)",
       }}
     >
-      <div style={{ background: CSS_COLOR.bg1, boxShadow: `0 0 0 1px ${CSS_COLOR.border}, 0 24px 64px ${cssColorMix(CSS_COLOR.bg0, 35)}`, overflowY: "auto" }}>
+      <div style={{ background: CSS_COLOR.bg1, boxShadow: `0 0 0 1px ${CSS_COLOR.border}, ${ELEVATION.lg}`, overflowY: "auto" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: sp(4), borderBottom: `1px solid ${CSS_COLOR.border}` }}>
           <div style={{ color: CSS_COLOR.text, fontFamily: T.sans, fontWeight: FONT_WEIGHTS.label }}>Filters</div>
           <Button size="xs" variant="ghost" onClick={onClose}>Close</Button>

@@ -384,7 +384,7 @@ function smallButton({ active = false, danger = false } = {}) {
     padding: sp("6px 12px"),
     fontFamily: T.sans,
     fontSize: fs(10),
-    fontWeight: active || danger ? 600 : 500,
+    fontWeight: active || danger ? FONT_WEIGHTS.label : FONT_WEIGHTS.medium,
     letterSpacing: "0.02em",
     cursor: "pointer",
   };
@@ -3332,7 +3332,7 @@ export default function SettingsScreen({
                   border: "none",
                   background: activeTab === tab.id ? CSS_COLOR.bg2 : "transparent",
                   color: activeTab === tab.id ? CSS_COLOR.text : CSS_COLOR.textSec,
-                  fontWeight: activeTab === tab.id ? 600 : 500,
+                  fontWeight: activeTab === tab.id ? FONT_WEIGHTS.label : FONT_WEIGHTS.medium,
                   borderRadius: dim(settingsIsPhone ? RADII.sm : RADII.pill),
                   padding: sp(settingsIsPhone ? "7px 10px" : "8px 12px"),
                   textAlign: "left",

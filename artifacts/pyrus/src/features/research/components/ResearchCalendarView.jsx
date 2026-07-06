@@ -10,6 +10,7 @@ import { DataUnavailableState, SegmentedControl, Skeleton } from "../../../compo
 import {
   CSS_COLOR,
   cssColorMix,
+  ELEVATION,
   FONT_WEIGHTS,
   RADII,
   T,
@@ -165,7 +166,7 @@ export function CalendarView({ cos, liveData, apiKey, onSelect, themes, vx }) {
                 borderRadius: RADII.sm, padding: sp("4px 9px"), fontSize: fs(10),
                 color: active ? t.accent : CSS_COLOR.textDim, cursor: "pointer", fontWeight: FONT_WEIGHTS.regular,
                 display: "inline-flex", alignItems: "center", gap: sp(3),
-                boxShadow: active ? `0 1px 3px ${t.accent}22` : "none",
+                boxShadow: active ? ELEVATION.sm : "none",
               }}>
                 <span style={{ fontSize: textSize("caption") }}>{t.icon}</span>
                 {t.title.replace(/^The /, "")}

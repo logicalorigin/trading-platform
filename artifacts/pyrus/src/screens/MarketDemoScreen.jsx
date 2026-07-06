@@ -30,7 +30,7 @@ import {
   toneForDirectionalIntent,
   toneForFinancialDelta,
 } from "../features/platform/semanticToneModel.js";
-import { CSS_COLOR, RADII, T, sp } from "../lib/uiTokens.jsx";
+import { CSS_COLOR, FONT_WEIGHTS, RADII, T, sp, textSize } from "../lib/uiTokens.jsx";
 
 const SORT_OPTIONS = [
   { value: "flow", label: "Flow" },
@@ -93,8 +93,8 @@ const HeroBand = ({ flow, sortMode, onSortModeChange, filterText, onFilterChange
         <div
           style={{
             fontFamily: T.sans,
-            fontSize: 15,
-            fontWeight: 700,
+            fontSize: textSize("displaySmall"),
+            fontWeight: FONT_WEIGHTS.emphasis,
             letterSpacing: 0.5,
             color: CSS_COLOR.text,
           }}
@@ -184,7 +184,7 @@ const NewsRail = ({ isVisible, safeQaMode }) => {
                 textDecoration: "none",
                 color: CSS_COLOR.text,
                 fontFamily: T.sans,
-                fontSize: 12,
+                fontSize: textSize("metric"),
               }}
             >
               <span

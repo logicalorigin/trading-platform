@@ -2007,7 +2007,7 @@ export const TradePositionsPanel = ({
                   fontSize: textSize("caption"),
                   color: CSS_COLOR.textMuted,
                   letterSpacing: "0.04em",
-                  padding: "0 4px",
+                  padding: sp("0 4px"),
                 }}
               >
                 <span role="columnheader">SYM</span>
@@ -2201,7 +2201,7 @@ export const TradePositionsPanel = ({
                   fontSize: textSize("caption"),
                   color: CSS_COLOR.textMuted,
                   letterSpacing: "0.04em",
-                  padding: "0 4px",
+                  padding: sp("0 4px"),
                 }}
               >
                 <span role="columnheader">SYM</span>

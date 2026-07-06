@@ -66,6 +66,7 @@ import {
 import { buildFailurePoint } from "../features/platform/failurePointModel.js";
 import { collectCoverageDataIssues } from "../features/platform/dataIssueModel.js";
 import {
+  SEMANTIC_TONE,
   toneForDirectionalIntent,
   toneForFinancialDelta,
   toneForOptionSide,
@@ -1047,7 +1048,12 @@ const SqueezeCard = ({ squeeze, source }) => {
                   style={{
                     width: `${Math.max(0, Math.min(100, ((value || 0) / 25) * 100))}%`,
                     height: "100%",
-                    background: value >= 18 ? CSS_COLOR.green : value >= 10 ? CSS_COLOR.amber : CSS_COLOR.red,
+                    background:
+                      value >= 18
+                        ? SEMANTIC_TONE.operationalGood
+                        : value >= 10
+                          ? SEMANTIC_TONE.operationalAttention
+                          : SEMANTIC_TONE.operationalBad,
                   }}
                 />
               </div>

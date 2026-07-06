@@ -27,7 +27,7 @@ import {
   formatSignedPercent,
   isFiniteNumber,
 } from "../../lib/formatters.js";
-import { CSS_COLOR, T, cssColorMix, sp } from "../../lib/uiTokens.jsx";
+import { CSS_COLOR, FONT_WEIGHTS, T, cssColorMix, sp, textSize } from "../../lib/uiTokens.jsx";
 import { useValueFlash } from "../../lib/motion.jsx";
 
 // Hard cap on rows so the quote snapshot fan-out and the bulk GEX read stay
@@ -102,7 +102,7 @@ const FlashCell = ({ value, color, children }) => {
       className={flash ? `${flash} ra-value-flash--quick` : undefined}
       style={{
         fontVariantNumeric: "tabular-nums",
-        fontSize: 12,
+        fontSize: textSize("metric"),
         ...(color ? { color } : null),
       }}
     >
@@ -118,7 +118,7 @@ const SparkCell = ({ symbol }) => {
       ? snapshot.sparkBars
       : snapshot?.spark) || [];
   if (!data.length) {
-    return <span style={{ color: CSS_COLOR.textMuted, fontSize: 11 }}>—</span>;
+    return <span style={{ color: CSS_COLOR.textMuted, fontSize: textSize("bodyStrong") }}>—</span>;
   }
   return <MicroSparkline data={data} width={56} height={18} />;
 };
@@ -132,14 +132,14 @@ const GexCell = ({ netGex, pending }) => {
   }
   if (!isFiniteNumber(netGex)) {
     return (
-      <span style={{ color: CSS_COLOR.textMuted, fontVariantNumeric: "tabular-nums", fontSize: 12 }}>
+      <span style={{ color: CSS_COLOR.textMuted, fontVariantNumeric: "tabular-nums", fontSize: textSize("metric") }}>
         —
       </span>
     );
   }
   const tone = toneForFinancialDelta(netGex);
   return (
-    <span style={{ color: tone, fontVariantNumeric: "tabular-nums", fontSize: 12 }}>
+    <span style={{ color: tone, fontVariantNumeric: "tabular-nums", fontSize: textSize("metric") }}>
       {netGex > 0 ? "+" : ""}
       {fmtCompactNumber(netGex)}
     </span>
@@ -149,7 +149,7 @@ const GexCell = ({ netGex, pending }) => {
 const FlowHeatCell = ({ row }) => {
   const hasFlow = isFiniteNumber(row.total) && row.total > 0;
   if (!hasFlow) {
-    return <span style={{ color: CSS_COLOR.textMuted, fontSize: 11 }}>—</span>;
+    return <span style={{ color: CSS_COLOR.textMuted, fontSize: textSize("bodyStrong") }}>—</span>;
   }
   const tone = toneForDirectionalIntent(row.net >= 0 ? "bullish" : "bearish");
   return (
@@ -162,7 +162,7 @@ const FlowHeatCell = ({ row }) => {
         height={12}
         showNumber={false}
       />
-      <span style={{ color: tone, fontVariantNumeric: "tabular-nums", fontSize: 12 }}>
+      <span style={{ color: tone, fontVariantNumeric: "tabular-nums", fontSize: textSize("metric") }}>
         {row.net >= 0 ? "▲" : "▼"} {fmtM(Math.abs(row.net))}
       </span>
     </div>
@@ -288,8 +288,8 @@ export default function MarketUniverseTable({
         cell: ({ row }) => (
           <span
             style={{
-              fontWeight: 700,
-              fontSize: 12,
+              fontWeight: FONT_WEIGHTS.emphasis,
+              fontSize: textSize("metric"),
               color:
                 row.original.symbol === activeSym
                   ? CSS_COLOR.accent
@@ -337,7 +337,7 @@ export default function MarketUniverseTable({
         align: "right",
         sortable: true,
         cell: ({ row }) => (
-          <span style={{ fontVariantNumeric: "tabular-nums", fontSize: 12 }}>
+          <span style={{ fontVariantNumeric: "tabular-nums", fontSize: textSize("metric") }}>
             {isFiniteNumber(row.original.volume)
               ? fmtCompactNumber(row.original.volume)
               : "—"}
@@ -457,7 +457,7 @@ export default function MarketUniverseTable({
           justifyContent: "space-between",
           alignItems: "baseline",
           color: CSS_COLOR.textDim,
-          fontSize: 11,
+          fontSize: textSize("bodyStrong"),
           fontFamily: T.sans,
         }}
       >

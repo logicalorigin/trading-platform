@@ -1743,7 +1743,7 @@ export const MultiChartGrid = ({
                       boxShadow: isActive
                         ? `0 0 0 1px ${CSS_COLOR.bg0}, 0 0 12px ${cssColorMix(CSS_COLOR.accent, 35)}`
                         : isHovered
-                          ? `0 0 0 1px rgba(0,0,0,0.18)`
+                          ? `0 0 0 1px ${cssColorMix(CSS_COLOR.border, 60)}`
                           : "none",
                       opacity: isActive ? 1 : isHovered ? 0.92 : 0.78,
                       transition:
@@ -1821,7 +1821,7 @@ export const MultiChartGrid = ({
                       boxShadow: isActive
                         ? `0 0 0 1px ${CSS_COLOR.bg0}, 0 0 12px ${cssColorMix(CSS_COLOR.accent, 35)}`
                         : isHovered
-                          ? `0 0 0 1px rgba(0,0,0,0.18)`
+                          ? `0 0 0 1px ${cssColorMix(CSS_COLOR.border, 60)}`
                           : "none",
                       opacity: isActive ? 1 : isHovered ? 0.92 : 0.78,
                       transition:
@@ -1899,7 +1899,7 @@ export const MultiChartGrid = ({
                           ? `0 0 0 1px ${CSS_COLOR.bg0}, 0 0 14px ${cssColorMix(CSS_COLOR.accent, 40)}`
                           : isHovered
                             ? `0 0 0 1px ${CSS_COLOR.bg0}`
-                            : `0 0 0 1px rgba(0,0,0,0.28)`,
+                            : `0 0 0 1px ${cssColorMix(CSS_COLOR.border, 80)}`,
                         opacity: isActive ? 1 : isHovered ? 0.92 : 0.8,
                         transition:
                           "opacity var(--ra-motion-fast) ease, background var(--ra-motion-fast) ease, box-shadow var(--ra-motion-fast) ease",

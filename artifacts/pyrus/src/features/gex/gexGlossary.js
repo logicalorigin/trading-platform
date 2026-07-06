@@ -154,7 +154,7 @@ export const GEX_GLOSSARY = Object.freeze({
   heatmapColors: {
     label: "Heatmap Colors",
     definition:
-      "Each strike-expiration cell uses its own net GEX for color: green = positive/call-heavy, red = negative/put-heavy, brightness = magnitude.",
+      "Each strike-expiration cell uses its own net GEX for color: blue = positive/call-heavy, red = negative/put-heavy, brightness = magnitude.",
     interpretation:
       "Use the heatmap to spot strike-and-date concentrations the strike profile alone would average out.",
   },

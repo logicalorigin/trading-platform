@@ -133,6 +133,7 @@ import {
   normalizeSignalStatus,
 } from "../features/signals/signalStateFreshness.js";
 import { useRuntimeTickerSnapshots } from "../features/platform/runtimeTickerStore";
+import { toneForDirectionalIntent } from "../features/platform/semanticToneModel.js";
 
 const SIGNALS_EVENT_LIMIT = 250;
 const SIGNAL_STATUS_FILTERS = [
@@ -325,13 +326,6 @@ const resolveRuntimeSignalSparklineBars = (snapshot) => {
   return EMPTY_SPARKLINE_SERIES;
 };
 
-const toneForDirection = (direction) =>
-  direction === "buy"
-    ? CSS_COLOR.blue
-    : direction === "sell"
-      ? CSS_COLOR.red
-      : CSS_COLOR.textDim;
-
 const latestSignalSparklineEventDirection = (signalEvents) => {
   const events = Array.isArray(signalEvents) ? signalEvents : EMPTY_SIGNAL_EVENTS;
   for (let index = events.length - 1; index >= 0; index -= 1) {
@@ -371,13 +365,6 @@ const toneForStatus = (status) => {
       return CSS_COLOR.textMuted;
   }
 };
-
-const toneForTrend = (trendDirection) =>
-  trendDirection === "bullish"
-    ? CSS_COLOR.blue
-    : trendDirection === "bearish"
-      ? CSS_COLOR.red
-      : CSS_COLOR.textDim;
 
 const toneForMatrixReadiness = (readiness) => {
   switch (readiness) {
@@ -626,7 +613,7 @@ function DirectionBadge({ direction, stale = false }) {
   // last-known direction, matching the SignalDots MTF matrix. Direction
   // otherwise drives the color (buy = blue, sell = red).
   const isDirectional = direction === "buy" || direction === "sell";
-  const tone = stale && isDirectional ? CSS_COLOR.amber : toneForDirection(direction);
+  const tone = stale && isDirectional ? CSS_COLOR.amber : toneForDirectionalIntent(direction);
   const Icon = direction === "sell" ? ArrowDown : direction === "buy" ? ArrowUp : Clock3;
   return (
     <span
@@ -1218,7 +1205,7 @@ function CompactSignalBreadthPanel({
   const advancingPct = activeBuySell ? Math.round((advancing / activeBuySell) * 100) : 0;
   const net = Number.isFinite(netBias?.net) ? netBias.net : advancing - declining;
   const direction = net > 0 ? "buy" : net < 0 ? "sell" : null;
-  const netTone = toneForDirection(direction);
+  const netTone = toneForDirectionalIntent(direction);
   const netLabel =
     direction === "buy"
       ? `Buy +${formatCount(Math.abs(net))}`
@@ -1688,7 +1675,7 @@ function CompactIntervalCell({
     rowDirection,
     latestSignalSparklineEventDirection(signalEvents),
   );
-  const tone = problem ? CSS_COLOR.red : toneForDirection(direction);
+  const tone = problem ? CSS_COLOR.red : toneForDirectionalIntent(direction);
   const usesFetchedSparklineData =
     Array.isArray(sparklineData) && sparklineData.length >= 2;
   // When real bars aren't available we render a neutral placeholder (never a
@@ -1921,7 +1908,7 @@ function StackCell({ row }) {
   const tone =
     stack.direction === "mixed"
       ? CSS_COLOR.amber
-      : toneForDirection(stack.direction);
+      : toneForDirectionalIntent(stack.direction);
   return (
     <AppTooltip
       content={`${stack.buyCount || 0} buy, ${stack.sellCount || 0} sell, ${stack.freshCount || 0} fresh across ${stack.totalCount || SIGNALS_TABLE_TIMEFRAMES.length} intervals`}
@@ -1956,7 +1943,7 @@ function TrendCell({ row }) {
       <span
         style={{
           ...cellTextStyle,
-          color: toneForTrend(dashboard.trendDirection),
+          color: toneForDirectionalIntent(dashboard.trendDirection),
           fontSize: textSize("captionStrong"),
           fontWeight: FONT_WEIGHTS.label,
         }}
@@ -2416,7 +2403,7 @@ function SignalDenseSection({ title, action, children, testId, style }) {
 
 function SignalContextChart({ row, barsQuery, timeframe }) {
   const statusTone = toneForStatus(row.status);
-  const directionTone = toneForDirection(row.direction);
+  const directionTone = toneForDirectionalIntent(row.direction);
   const bars = Array.isArray(barsQuery.data?.bars) ? barsQuery.data.bars : [];
   const chartWidth = 720;
   const chartHeight = 218;
@@ -2702,7 +2689,7 @@ function SignalContextChart({ row, barsQuery, timeframe }) {
 
 function SignalThesisRail({ row }) {
   const statusTone = toneForStatus(row.status);
-  const trendTone = toneForTrend(row.dashboardSummary?.trendDirection);
+  const trendTone = toneForDirectionalIntent(row.dashboardSummary?.trendDirection);
   const latestEvent = row.latestEvent;
 
   return (
@@ -2773,7 +2760,7 @@ function SignalThesisRail({ row }) {
             <span style={{ color: CSS_COLOR.textMuted, fontSize: fs(10), fontWeight: FONT_WEIGHTS.label, textTransform: "uppercase" }}>
               Latest Event
             </span>
-            <span style={{ color: toneForDirection(latestEvent.direction), fontWeight: FONT_WEIGHTS.medium }}>
+            <span style={{ color: toneForDirectionalIntent(latestEvent.direction), fontWeight: FONT_WEIGHTS.medium }}>
               {`${String(latestEvent.direction || "none").toUpperCase()} · ${latestEvent.timeframe || MISSING_VALUE}`}
             </span>
             <span style={{ color: CSS_COLOR.textDim }}>
@@ -2796,7 +2783,7 @@ function SignalIntervalMatrix({ matrixEntries }) {
       <div style={{ display: "grid", gap: sp(5) }}>
         {matrixEntries.map(({ timeframe, state }) => {
           const direction = getCurrentSignalDirection(state);
-          const tone = toneForDirection(direction);
+          const tone = toneForDirectionalIntent(direction);
           const fresh = Boolean(state?.fresh);
           return (
             <div
@@ -2835,9 +2822,7 @@ function SignalIntervalMatrix({ matrixEntries }) {
                   gridColumn: "1 / -1",
                   height: dim(3),
                   borderRadius: dim(RADII.pill),
-                  background: state
-                    ? `linear-gradient(90deg, ${cssColorMix(tone, 72)}, ${CSS_COLOR.bg3})`
-                    : CSS_COLOR.bg3,
+                  background: state ? cssColorMix(tone, 72) : CSS_COLOR.bg3,
                 }}
               />
             </div>
@@ -2881,7 +2866,7 @@ function SignalGateMatrix({ row }) {
               <span style={{ color: CSS_COLOR.textMuted, fontWeight: FONT_WEIGHTS.label }}>
                 {entry.timeframe}
               </span>
-              <span style={{ color: toneForTrend(entry.direction), fontWeight: FONT_WEIGHTS.medium }}>
+              <span style={{ color: toneForDirectionalIntent(entry.direction), fontWeight: FONT_WEIGHTS.medium }}>
                 {formatTrend(entry.direction)}
               </span>
               <span
@@ -3221,7 +3206,7 @@ function SignalsRowDrilldown({ row, onJumpToTrade, phone }) {
   }
 
   const statusTone = toneForStatus(row.status);
-  const directionTone = toneForDirection(row.direction);
+  const directionTone = toneForDirectionalIntent(row.direction);
   const directionRailTone =
     row.direction === "buy" || row.direction === "sell"
       ? `inset 3px 0 0 ${directionTone}`
@@ -3296,7 +3281,7 @@ function SignalsRowDrilldown({ row, onJumpToTrade, phone }) {
               {row.symbol}
             </span>
           </div>
-          <SignalDenseFact label="Side" value={row.direction || "none"} tone={toneForDirection(row.direction)} />
+          <SignalDenseFact label="Side" value={row.direction || "none"} tone={toneForDirectionalIntent(row.direction)} />
           <SignalDenseFact label="Bars" value={formatBars(row.barsSinceSignal)} />
           <SignalDenseFact label="Signal" value={formatTime(row.currentSignalAt)} />
           <SignalDenseFact label="Price" value={formatCompactPrice(row.currentSignalPrice)} />
@@ -4938,7 +4923,7 @@ export default function SignalsScreen({
                   const activeRow = row.symbol === selectedRow?.symbol;
                   const expandedRow = row.symbol === expandedSymbol;
                   const tone = toneForStatus(row.status);
-                  const directionTone = toneForDirection(row.direction);
+                  const directionTone = toneForDirectionalIntent(row.direction);
                   const directionRailTone =
                     row.direction === "buy" || row.direction === "sell"
                       ? `inset 3px 0 0 ${directionTone}`

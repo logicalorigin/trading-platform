@@ -1,4 +1,11 @@
 import { CSS_COLOR, cssColorMix, RADII, T, dim, sp, textSize } from "../../lib/uiTokens.jsx";
+import { toneForDirectionalIntent } from "../platform/semanticToneModel.js";
+
+// Mirror the heatmap's directional tones (GexScreen GEX_BULLISH_TONE/GEX_BEARISH_TONE)
+// so the legend encodes the same tones cellColor() paints: call-heavy = bullish (blue),
+// put-heavy = bearish (red). Green is reserved for financial-gain/operational-health.
+const CALL_HEAVY_TONE = toneForDirectionalIntent("bullish");
+const PUT_HEAVY_TONE = toneForDirectionalIntent("bearish");
 
 const Swatch = ({ color, label }) => (
   <span
@@ -51,9 +58,9 @@ export const HeatmapColorLegend = ({ compact = false }) => (
       borderTop: compact ? "none" : `1px dashed ${CSS_COLOR.border}`,
     }}
   >
-    <Swatch color={CSS_COLOR.red} label="Put-heavy" />
+    <Swatch color={PUT_HEAVY_TONE} label="Put-heavy" />
     {compact ? null : <Swatch color={CSS_COLOR.bg2} label="Neutral" />}
-    <Swatch color={CSS_COLOR.green} label="Call-heavy" />
+    <Swatch color={CALL_HEAVY_TONE} label="Call-heavy" />
     {compact ? null : (
       <span
         style={{
@@ -66,7 +73,7 @@ export const HeatmapColorLegend = ({ compact = false }) => (
         }}
       >
         Magnitude
-        <GradientStrip from={`${cssColorMix(CSS_COLOR.red, 20)}`} via={CSS_COLOR.bg2} to={`${cssColorMix(CSS_COLOR.green, 80)}`} />
+        <GradientStrip from={`${cssColorMix(PUT_HEAVY_TONE, 20)}`} via={CSS_COLOR.bg2} to={`${cssColorMix(CALL_HEAVY_TONE, 80)}`} />
       </span>
     )}
   </div>

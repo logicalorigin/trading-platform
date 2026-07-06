@@ -771,7 +771,7 @@ const MarketScreenInner = ({
                     style={{
                       color: item.tone,
                       fontFamily: T.sans,
-                      fontSize: fs(15),
+                      fontSize: textSize("displaySmall"),
                       fontWeight: FONT_WEIGHTS.regular,
                       marginTop: sp(4),
                     }}
@@ -1009,14 +1009,14 @@ const MarketScreenInner = ({
           <Card style={{ padding: sp("7px 10px") }}>
             <CardTitle>Breadth</CardTitle>
             <div style={{ display: "flex", alignItems: "center", gap: sp(6), marginBottom: sp(6) }}>
-              <span style={{ color: CSS_COLOR.green, fontFamily: T.sans, fontSize: fs(12), fontWeight: FONT_WEIGHTS.regular }}>
+              <span style={{ color: CSS_COLOR.green, fontFamily: T.sans, fontSize: textSize("bodyStrong"), fontWeight: FONT_WEIGHTS.regular }}>
                 {breadth.total ? breadth.advancers : MISSING_VALUE}
               </span>
               <span style={{ flex: 1, display: "flex", height: dim(8), background: CSS_COLOR.bg1, overflow: "hidden" }}>
                 <span style={{ width: `${upPct}%`, background: CSS_COLOR.green }} />
                 <span style={{ width: `${downPct}%`, background: CSS_COLOR.red }} />
               </span>
-              <span style={{ color: CSS_COLOR.red, fontFamily: T.sans, fontSize: fs(12), fontWeight: FONT_WEIGHTS.regular }}>
+              <span style={{ color: CSS_COLOR.red, fontFamily: T.sans, fontSize: textSize("bodyStrong"), fontWeight: FONT_WEIGHTS.regular }}>
                 {breadth.total ? breadth.decliners : MISSING_VALUE}
               </span>
             </div>

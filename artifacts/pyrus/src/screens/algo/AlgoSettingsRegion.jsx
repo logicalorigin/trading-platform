@@ -9,6 +9,7 @@ import { buildAlgoTuningImpact } from "../../features/platform/algoTuningImpactM
 import {
   CSS_COLOR,
   cssColorMix,
+  ELEVATION,
   FONT_WEIGHTS,
   RADII,
   T,
@@ -2104,7 +2105,7 @@ export const ExitLadderTrack = ({
               border: `1px solid ${CSS_COLOR.border}`,
               borderRadius: dim(RADII.sm),
               background: CSS_COLOR.bg2,
-              boxShadow: `0 12px 28px ${cssColorMix(CSS_COLOR.bg0, 70)}`,
+              boxShadow: ELEVATION.lg,
             }}
           >
             <span

@@ -24,10 +24,10 @@ export const OrderFlowDonut = ({ flow, size = 110, thickness = 18 }) => {
     { value: flow.buyL, color: rgba(SEMANTIC_TONE.directionBuy, 0.95) },
     { value: flow.buyM, color: rgba(SEMANTIC_TONE.directionBuy, 0.72) },
     { value: flow.buyS, color: rgba(SEMANTIC_TONE.directionBuy, 0.46) },
-    { value: flow.sellS, color: rgba(CSS_COLOR.red, 0.38) },
-    { value: flow.sellM, color: rgba(CSS_COLOR.red, 0.58) },
-    { value: flow.sellL, color: rgba(CSS_COLOR.red, 0.78) },
-    { value: flow.sellXL, color: rgba(CSS_COLOR.red, 0.94) },
+    { value: flow.sellS, color: rgba(SEMANTIC_TONE.directionSell, 0.38) },
+    { value: flow.sellM, color: rgba(SEMANTIC_TONE.directionSell, 0.58) },
+    { value: flow.sellL, color: rgba(SEMANTIC_TONE.directionSell, 0.78) },
+    { value: flow.sellXL, color: rgba(SEMANTIC_TONE.directionSell, 0.94) },
   ];
 
   const cx = size / 2;

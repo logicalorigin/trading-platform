@@ -1,7 +1,7 @@
 import {
   AppTooltip,
 } from "@/components/ui/tooltip";
-import { CSS_COLOR, FONT_WEIGHTS, RADII, T, fs, sp, textSize } from "../../../lib/uiTokens.jsx";
+import { CSS_COLOR, ELEVATION, FONT_WEIGHTS, RADII, T, cssColorAlpha, fs, sp, textSize } from "../../../lib/uiTokens.jsx";
 
 export function ThemeSwitcher({ themeId, setThemeId, themes, themeOrder }) {
   return (
@@ -20,12 +20,12 @@ export function ThemeSwitcher({ themeId, setThemeId, themes, themeOrder }) {
               disabled={unavailable}
               style={{
                 display: "inline-flex", alignItems: "center", gap: sp(5),
-                background: active ? CSS_COLOR.bg1 : unavailable ? CSS_COLOR.bg2 : t.meta ? CSS_COLOR.greenBg : "transparent",
-                border: active ? `1px solid ${t.accent}66` : t.meta ? `1px dashed ${CSS_COLOR.border}` : "1px solid transparent",
+                background: active ? CSS_COLOR.bg1 : unavailable ? CSS_COLOR.bg2 : t.meta ? cssColorAlpha(CSS_COLOR.accent, "14") : "transparent",
+                border: active ? `1px solid ${cssColorAlpha(t.accent, "66")}` : t.meta ? `1px dashed ${CSS_COLOR.border}` : "1px solid transparent",
                 borderRadius: RADII.sm, padding: sp("4px 10px"),
                 fontSize: fs(11), color: active ? t.accent : unavailable ? CSS_COLOR.textMuted : CSS_COLOR.textSec,
                 cursor: unavailable ? "not-allowed" : "pointer", fontWeight: FONT_WEIGHTS.regular,
-                boxShadow: active ? `0 1px 4px ${t.accent}22` : "none",
+                boxShadow: active ? ELEVATION.sm : "none",
                 transition: "background-color var(--ra-motion-fast) ease, border-color var(--ra-motion-fast) ease, color var(--ra-motion-fast) ease, box-shadow var(--ra-motion-fast) ease, transform var(--ra-motion-fast) ease", letterSpacing: 0.2,
                 opacity: unavailable ? 0.6 : 1,
               }}>

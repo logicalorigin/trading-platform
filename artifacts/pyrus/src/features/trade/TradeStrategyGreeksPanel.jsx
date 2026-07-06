@@ -182,7 +182,7 @@ export const TradeStrategyGreeksPanel = ({
           gridTemplateColumns: `${dim(32)}px 1fr ${dim(64)}px`,
           alignItems: "center",
           gap: sp(4),
-          padding: "2px 0",
+          padding: sp("2px 0"),
         }}
       >
         <span

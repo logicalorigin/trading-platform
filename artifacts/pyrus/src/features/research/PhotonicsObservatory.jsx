@@ -2460,7 +2460,7 @@ function Detail({ co, onClose, onSelect, liveData = {}, liveHist = {}, apiKey, o
   return (
     <div style={{ background: CSS_COLOR.bg1, borderRadius: RADII.lg, border: `1px solid ${CSS_COLOR.border}`, overflow: "hidden", animation: "slideUp 0.3s ease", boxShadow: ELEVATION.md }}>
       {/* ── HEADER ── */}
-      <div style={{ padding: sp("12px 16px 10px"), background: `linear-gradient(to bottom, ${toneAlpha(CSS_COLOR.text, 0.01)}, transparent)`, borderBottom: `1px solid ${CSS_COLOR.border}` }}>
+      <div style={{ padding: sp("12px 16px 10px"), background: CSS_COLOR.bg1, borderBottom: `1px solid ${CSS_COLOR.border}` }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
           <div>
             <div style={{ fontSize: fs(11), color: CSS_COLOR.textDim }}>{vc.n} &middot; {co.s}</div>
@@ -4239,7 +4239,7 @@ function ResearchLoadingState({ theme }) {
         <div style={{
           padding: sp("18px 20px 14px"),
           borderBottom: `1px solid ${CSS_COLOR.border}`,
-          background: `linear-gradient(180deg, ${theme.accent}10 0%, ${toneAlpha(CSS_COLOR.bg1, 0.96)} 100%)`,
+          background: CSS_COLOR.bg1,
         }}>
           <div style={{ fontSize: fs(11), color: theme.accent, letterSpacing: 3, textTransform: "uppercase", fontWeight: FONT_WEIGHTS.regular }}>
             Research
@@ -4595,7 +4595,7 @@ export default function PhotonicsObservatory({
   const subs = vf ? (currentTheme.verticals[vf]?.subs || []) : [];
 
   return (
-    <div data-testid="research-screen" className="photonics-research-root" style={{ background: CSS_COLOR.bg1, height: "100%", minHeight: 0, overflowY: "auto", color: CSS_COLOR.text, backgroundImage: `radial-gradient(circle at 20% 50%, ${toneAlpha(CSS_COLOR.accent, 0.02)} 0%, transparent 50%), radial-gradient(circle at 80% 20%, ${toneAlpha(CSS_COLOR.blue, 0.015)} 0%, transparent 50%)` }}>
+    <div data-testid="research-screen" className="photonics-research-root" style={{ background: CSS_COLOR.bg1, height: "100%", minHeight: 0, overflowY: "auto", color: CSS_COLOR.text }}>
       <style>{`
         .photonics-research-root, .photonics-research-root * { box-sizing: border-box; margin: 0; padding: 0; }
         .photonics-research-root { font-family: var(--ra-font-sans); }
@@ -4634,8 +4634,6 @@ export default function PhotonicsObservatory({
 
       {/* Header */}
       <div className="photonics-research-header" style={{ padding: isPhone ? sp("10px 10px 0") : sp("14px 14px 0"), position: "relative" }}>
-        <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: 200, background: `radial-gradient(ellipse at 30% -30%, ${currentTheme.accent}14 0%, transparent 55%), radial-gradient(ellipse at 90% 20%, ${toneAlpha(CSS_COLOR.blue, 0.03)} 0%, transparent 40%)`, pointerEvents: "none" }} />
-
         {researchMetaReady ? (
           <ThemeSwitcher themeId={themeId} setThemeId={setThemeId} themes={themeMap} themeOrder={themeOrder} />
         ) : (

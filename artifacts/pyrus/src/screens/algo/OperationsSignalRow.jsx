@@ -3001,7 +3001,7 @@ export const OperationsSignalRow = ({
             lineHeight: 1.12,
             boxShadow: `inset 2px 0 0 ${direction.tone}`,
             background: freshAndHot
-              ? `linear-gradient(90deg, ${cssColorAlpha(verdict.tone, "12")} 0%, transparent 70%)`
+              ? cssColorAlpha(verdict.tone, "0e")
               : "transparent",
           }}
         >
@@ -3106,7 +3106,7 @@ export const OperationsSignalRow = ({
           lineHeight: 1.08,
           boxShadow: `inset 2px 0 0 ${direction.tone}`,
           background: freshAndHot
-            ? `linear-gradient(90deg, ${cssColorAlpha(verdict.tone, "12")} 0%, transparent 55%)`
+            ? cssColorAlpha(verdict.tone, "0e")
             : "transparent",
         }}
       >

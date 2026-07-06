@@ -196,7 +196,6 @@ export const PositionProtectionEditor = ({
         justifyContent: "center",
         padding: sp(16),
         background: cssColorMix(CSS_COLOR.bg0, 72),
-        backdropFilter: "blur(8px)",
       }}
     >
       <div

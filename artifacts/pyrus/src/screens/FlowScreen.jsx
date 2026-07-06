@@ -44,6 +44,7 @@ import {
 } from "../features/platform/flowSourceState.js";
 import {
   toneForDirectionalIntent,
+  toneForFinancialDelta,
   toneForOptionSide,
 } from "../features/platform/semanticToneModel.js";
 import { ContractDetailInline } from "../features/flow/ContractDetailInline.jsx";
@@ -99,6 +100,7 @@ import {
   CSS_COLOR,
   cssColorAlpha,
   cssColorMix,
+  ELEVATION,
   FONT_WEIGHTS,
   PYRUS_WORKSPACE_SETTINGS_EVENT,
   MISSING_VALUE,
@@ -3941,7 +3943,7 @@ const FlowOverviewPanel = ({
         display: "flex",
         flexDirection: "column",
         gap: sp(7),
-        boxShadow: isMobileFlowLayout ? undefined : `0 18px 48px ${cssColorMix(CSS_COLOR.bg0, 80)}`,
+        boxShadow: isMobileFlowLayout ? undefined : ELEVATION.lg,
         maxHeight: isMobileFlowLayout ? undefined : "calc(100vh - 128px)",
         overflowY: isMobileFlowLayout ? "visible" : "auto",
       }}
@@ -4755,7 +4757,7 @@ const FlowOverviewPanel = ({
               left: dim(8),
               right: dim(8),
               zIndex: 18,
-              boxShadow: `0 18px 48px ${cssColorMix(CSS_COLOR.bg0, 80)}`,
+              boxShadow: ELEVATION.lg,
             }}
           >
             {filterPanel}
@@ -5668,12 +5670,10 @@ const FlowOverviewPanel = ({
                                 style={{
                                   fontSize: textSize("body"),
                                   fontFamily: T.sans,
-                                  color:
-                                    item.sentimentScore > 0
-                                      ? CSS_COLOR.green
-                                      : item.sentimentScore < 0
-                                        ? CSS_COLOR.red
-                                        : CSS_COLOR.textDim,
+                                  color: toneForFinancialDelta(
+                                    item.sentimentScore,
+                                    CSS_COLOR.textDim,
+                                  ),
                                 }}
                               >
                                 {item.time}

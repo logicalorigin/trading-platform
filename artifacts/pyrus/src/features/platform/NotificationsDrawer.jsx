@@ -389,7 +389,7 @@ const NotificationsDrawerInner = ({
       style={{
         position: "fixed",
         inset: 0,
-        background: "rgba(0, 0, 0, 0.4)",
+        background: cssColorMix(CSS_COLOR.bg0, 72),
         zIndex: 1000,
         display: "flex",
         justifyContent: "flex-end",
