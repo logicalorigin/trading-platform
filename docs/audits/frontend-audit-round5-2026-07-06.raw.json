@@ -1,0 +1,470 @@
+{
+ "screensReviewed": 11,
+ "totalRealFindings": 57,
+ "shortlist": [
+  {
+   "rank": 1,
+   "title": "Algo Monitor loading state repeats itself 2-3x + leaks raw timer",
+   "screens": [
+    "market",
+    "trade",
+    "account",
+    "backtest",
+    "diagnostics",
+    "settings",
+    "algo"
+   ],
+   "severity": "high",
+   "category": "redundancy",
+   "issue": "The shared Algo Monitor / DataUnavailableState loading component prints the same copy twice or three times in every right-rail across the app: a title ('Loading algo monitor'), a subtitle ('Pulling deployment cockpit data.'), then a third concatenated wait-line re-emitting title+detail verbatim plus a raw elapsed counter ('\u2026 - 0.0s' / '11.1s'). This appears on 7+ screens, so a routine loading state reads as broken everywhere, and surfacing raw internal timings (and, on account, module/implementation debug copy) breaks the calm-workspace doctrine.",
+   "fix": "Fix once at the source: in formatLoadingWaitLine, when the visible title/detail already render above the wait-line, suppress the duplicate and show only a subtle elapsed timer (or fold '\u00b7 0.0s' into the detail). Gate the raw seconds + module/implementation copy behind a diagnostics flag.",
+   "files": [
+    "artifacts/pyrus/src/components/platform/ContainerLoadingStatus.jsx",
+    "artifacts/pyrus/src/features/platform/PlatformAlgoMonitorSidebar.jsx"
+   ],
+   "effort": "mechanical"
+  },
+  {
+   "rank": 2,
+   "title": "Per-cell chart chrome dominates the market grid (controls louder than data)",
+   "screens": [
+    "market"
+   ],
+   "severity": "high",
+   "category": "density-crowding",
+   "issue": "Each of the six MultiChartGrid cells wraps its price panel in ~25 unlabeled icon-only controls (top toolbar, 7-icon left rail, bottom-right cluster, footer) tiled 6x, so the grid reads as a dense field of tiny affordances while the primary read \u2014 price action \u2014 is the quietest thing on the page. Hierarchy is inverted and tap targets are cramped.",
+   "fix": "Demote per-cell chrome to hover/focus reveal (show only ticker + timeframe + expand at rest; surface drawing/indicator toolbars on cell focus). Collapse undo/redo/camera/gear/+4 into one overflow menu, add aria-labels to icon controls, and let the price panel own the visual weight.",
+   "files": [
+    "artifacts/pyrus/src/features/market/MarketChartCell.jsx",
+    "artifacts/pyrus/src/features/charting/ResearchChartSurface.tsx"
+   ],
+   "effort": "significant"
+  },
+  {
+   "rank": 3,
+   "title": "One broker-down fact re-announced ~5x on Algo screen",
+   "screens": [
+    "algo"
+   ],
+   "severity": "high",
+   "category": "redundancy",
+   "issue": "The 'bridge is down' state is broadcast by four+ competing surfaces at once: WARNING + BROKER OFF + OFFLINE header pills (WARNING and OFFLINE are the same derived state, BROKER OFF is its cause), the left status strip (NO SIGNAL DATA / NO ALGO EVENTS), the WIRE TRAIL 'ARMED' pill, and the center GATEWAY 'Start the broker bridge' callout. A trader scanning for the single actionable state sees a cluster of red/amber chips that all mean one thing, burying the primary read.",
+   "fix": "Collapse to one authoritative status chip (e.g. amber 'BROKER OFF') and drop the redundant WARNING+OFFLINE pills; let the single GATEWAY callout own the start-the-bridge next-action. Don't re-render the same broker state in the status strip and WIRE TRAIL.",
+   "files": [
+    "artifacts/pyrus/src/screens/algo/AlgoLivePage.jsx",
+    "artifacts/pyrus/src/screens/algo/AlgoStatusBar.jsx"
+   ],
+   "effort": "moderate"
+  },
+  {
+   "rank": 4,
+   "title": "Flow Scanner clips its live status mid-word while empty Algo Monitor hogs equal width",
+   "screens": [
+    "flow"
+   ],
+   "severity": "high",
+   "category": "density-crowding",
+   "issue": "During active scanning the Flow Scanner truncates the exact content a trader is watching \u2014 'SCANNIN', 'warmi\u2026', ticker pills clipped to 'ASML scan..', 'Q..', 'M..' \u2014 because the equally-wide Algo Monitor beside it sits completely empty ('No algo deployment'). Space is misallocated so the primary live read (which symbols the scanner covers + coverage state) is unreadable.",
+   "fix": "Give the Flow Scanner column enough width to render labels + pills, reclaiming width from the empty Algo Monitor (collapse it to a thin strip until a deployment exists, or stack both right panels in one fixed-width rail instead of competing horizontally).",
+   "files": [
+    "artifacts/pyrus/src/features/flow/FlowScannerStatusPanel.jsx",
+    "artifacts/pyrus/src/features/platform/PlatformAlgoMonitorSidebar.jsx"
+   ],
+   "effort": "moderate"
+  },
+  {
+   "rank": 5,
+   "title": "Theme setting exposed twice with two paradigms showing conflicting values",
+   "screens": [
+    "settings"
+   ],
+   "severity": "high",
+   "category": "redundancy",
+   "issue": "Theme is controlled by two separate widgets that disagree: a segmented Dark/Light toggle in 'App Preferences' (showing LIGHT) and a System/Dark/Light dropdown in 'Appearance' (showing System). A trader sees the same setting reported as both 'Light' and 'System' and can't tell which is authoritative \u2014 and it blurs why 'App Preferences' and 'Appearance' are separate sections at all.",
+   "fix": "Expose theme through ONE control (keep the Appearance System/Dark/Light dropdown as single source synced to the live theme, or keep one quick-toggle and drop the dropdown). Never show conflicting values.",
+   "files": [
+    "artifacts/pyrus/src/screens/SettingsScreen.jsx"
+   ],
+   "effort": "moderate"
+  },
+  {
+   "rank": 6,
+   "title": "Green 'healthy' color painted on unknown/error states",
+   "screens": [
+    "settings",
+    "diagnostics"
+   ],
+   "severity": "high",
+   "category": "color-semantic",
+   "issue": "Status chips fall through to green (healthy) for non-healthy states: the Settings Diagnostics chip renders GREEN while reading 'unknown' (only severity==='warning' turns amber; unknown/error/critical stay green), and the Diagnostics top-row spends buy/bullish BLUE on a neutral 'UNKNOWN' state. Color is the only cue and it misrepresents system health in a workspace whose whole job is trustable freshness.",
+   "fix": "Map unknown/missing/degraded to amber and error/critical to red; reserve green for verified-healthy. Use amber/neutral (not blue) for UNKNOWN. Add a non-color cue (icon/word) so severity isn't hue-only.",
+   "files": [
+    "artifacts/pyrus/src/screens/SettingsScreen.jsx",
+    "artifacts/pyrus/src/screens/DiagnosticsScreen.jsx"
+   ],
+   "effort": "mechanical"
+  },
+  {
+   "rank": 7,
+   "title": "Account performance summary is a cryptic single-line ticker of ~13 equal-weight KPIs",
+   "screens": [
+    "account"
+   ],
+   "severity": "high",
+   "category": "hierarchy",
+   "issue": "The Account screen's primary read is one thin line of ~13 uppercase abbreviated metrics at equal weight ('ADJ RETURN \u2014 \u00b7 P&L \u0394 \u2014 \u00b7 TRADES 0 \u00b7 \u2026 PF \u2014 \u00b7 EXP \u2014 \u00b7 CURDD \u2014 \u00b7 DEV \u2014 \u00b7 INT \u2014'), most values em-dashes. The two truly primary numbers read the same size as 11 tertiary ratios, so a trader can't scan account health and must decode abbreviations.",
+   "fix": "Promote 2-3 headline metrics (Adj return, P&L \u0394, Trades/Win) into a real StatTile row with larger value type; demote PF/Exp/MaxDD/CurDD/Fees/Dev/Int into a labeled secondary cluster or 'more stats' disclosure. Spell out / tooltip the abbreviations.",
+   "files": [
+    "artifacts/pyrus/src/screens/account/AccountHeroBlock.jsx"
+   ],
+   "effort": "moderate"
+  },
+  {
+   "rank": 8,
+   "title": "Research relationship map is unreadable where it matters (overlapping bubbles + colliding labels)",
+   "screens": [
+    "research"
+   ],
+   "severity": "high",
+   "category": "density-crowding",
+   "issue": "The force-directed graph \u2014 the entire point of the Graph view \u2014 collapses its densest region (center-left) into an illegible pile: 2-letter node codes stack on top of each other and company labels collide into strings like 'PANW 50 NOVT / SBGSY / CRWD / COIN', while the right third sits nearly empty. The primary read is unusable.",
+   "fix": "Increase node collision radius / charge repulsion and spread nodes across the full canvas width instead of clumping. Suppress labels below a size threshold (show on hover/selection) so small-node text stops colliding.",
+   "files": [
+    "artifacts/pyrus/src/features/research/PhotonicsObservatory.jsx"
+   ],
+   "effort": "significant"
+  },
+  {
+   "rank": 9,
+   "title": "Backtest leads with an empty section and duplicates the 'create study' action",
+   "screens": [
+    "backtest"
+   ],
+   "severity": "high",
+   "category": "redundancy",
+   "issue": "The configure\u2192run\u2192inspect screen leads with an empty 'Promoted Drafts' results band ('No promoted draft strategies yet'), pushing the actual work below it. Then two stacked surfaces both claim to create a study: Research Workbench's empty state with a [Create study] button and the Backtest Inputs form directly below with its own [Save Study] button (both call handleCreateStudy). A trader can't tell which is authoritative or how the two actions differ.",
+   "fix": "Move Promoted Drafts below the config + charts workspace (or collapse to a thin strip). Collapse to one study-creation surface: the Research Workbench 'Create study' button should scroll/focus the Backtest Inputs form, and both button labels should match.",
+   "files": [
+    "artifacts/pyrus/src/features/backtesting/BacktestingPanels.tsx"
+   ],
+   "effort": "moderate"
+  },
+  {
+   "rank": 10,
+   "title": "Signals screen has no single primary read \u2014 interval/idle state echoed across 3+ surfaces",
+   "screens": [
+    "signals"
+   ],
+   "severity": "high",
+   "category": "redundancy",
+   "issue": "The identical 1M/2M/5M/15M/1H/1D idle set is rendered three times on one screen \u2014 interval tiles ('idle / B 0 \u2014 S 0'), the hydration-strip chips ('1M idle 2M idle \u2026'), and the header 'Intervals idle' pill \u2014 plus a summary stat row (BUY/SELL/NET 0) that overlaps the per-interval tiles' B/net/S. Everything reads '0' at equal weight, so there is no authoritative surface and no primary read.",
+   "fix": "Pick one home for per-interval hydration/idle (fold the hydration-strip chips into the tiles, or only render the strip while actively hydrating; let the header pill be the single summary). Don't decompose BUY/SELL/NET in both the summary row and the tiles.",
+   "files": [
+    "artifacts/pyrus/src/screens/SignalsScreen.jsx"
+   ],
+   "effort": "moderate"
+  },
+  {
+   "rank": 11,
+   "title": "Research bubbles carry two conflicting red/green encodings that fight the app palette",
+   "screens": [
+    "research"
+   ],
+   "severity": "medium",
+   "category": "color-semantic",
+   "issue": "Each node uses red/green twice for different meanings: fill = categorical 'Vertical' (NVDA green, AMD red) while a separate outer ring = profitability (green profitable / red unprofitable). So red/green means sector on the fill but P&L on the ring, colliding with the app's own palette (blue=buy, red=sell, green=P&L) \u2014 a giant green NVDA beside a red AMD reads as bullish-vs-bearish when it's neither. The ring legend only shows in non-default color modes, so the default view's rings are unexplained and the key sits below the fold.",
+   "fix": "Always show the ring legend and co-locate the color key next to the color-mode toggle. Stop using red/green for categorical vertical fills \u2014 reserve red/green for the P&L ring and give verticals a distinct hue ramp.",
+   "files": [
+    "artifacts/pyrus/src/features/research/PhotonicsObservatory.jsx"
+   ],
+   "effort": "moderate"
+  },
+  {
+   "rank": 12,
+   "title": "Diagnostics diagram uses 5 cryptic glyphs + 'n/o' jargon with no legend",
+   "screens": [
+    "diagnostics"
+   ],
+   "severity": "medium",
+   "category": "affordance-a11y",
+   "issue": "The primary Backend Data Machine diagram mixes five status glyphs (?, \u2713, !, \u2013, \u25cb) plus the unexplained 'n/o' abbreviation with no legend anywhere. '?' reads as 'help', repeated '? n/o' on Broker Feed / Signals / Algo Engine gives no plain meaning, and a trader can't map the 'Degraded \u2014 4 states need attention' header to which glyph counts as attention.",
+   "fix": "Add a compact glyph legend (OK / warn / unknown / idle / info) near the title and replace 'n/o' with 'no data' / 'not reporting'. Distinguish unknown/not-observed from help (hollow dot or amber 'stale' tag).",
+   "files": [
+    "artifacts/pyrus/src/screens/diagnostics/MachineStateDiagram.jsx",
+    "artifacts/pyrus/src/screens/diagnostics/machineStateDiagramModel.js"
+   ],
+   "effort": "moderate"
+  },
+  {
+   "rank": 13,
+   "title": "Flow preset chips duplicate the Filters panel with no active-state link",
+   "screens": [
+    "flow"
+   ],
+   "severity": "medium",
+   "category": "redundancy",
+   "issue": "Flow-type and premium-threshold controls are duplicated across two co-visible surfaces: the PRESET SCANS chip row (Sweeps/Blocks/Repeats/Golden, $50K+/$250K+) repeats the Filters panel directly below (Sweep/Block/Repeat/Golden; $50K/$100K/$250K). Two overlapping ways to set the same filter, stacked, with no indication of precedence or which is active.",
+   "fix": "Make presets a true shortcut layer that visibly sets the Filters-panel chips (panel = single source of truth), or drop the overlapping chips from one surface. Show one active-filter summary, not two independent control sets.",
+   "files": [
+    "artifacts/pyrus/src/screens/FlowScreen.jsx"
+   ],
+   "effort": "moderate"
+  },
+  {
+   "rank": 14,
+   "title": "Nested cards + double-labeled loading overlays in market/trade chart surfaces",
+   "screens": [
+    "market",
+    "trade"
+   ],
+   "severity": "medium",
+   "category": "empty-state",
+   "issue": "Loading placeholders render as bordered, shadowed boxes floated inside already-bordered chart cells (a card inside a card) \u2014 six identical pop-out panels on market, and a dashed box inside the panel's own dashed border on the trade option chain. They also double-label ('SPOT FEED' eyebrow above 'LOADING' title). The trade spot-feed variant uses an opaque card bleeding over ghost candles that reads like a render glitch.",
+   "fix": "Render loading copy as a flat centered label directly on the skeleton (no border/bg/shadow) so it reads as part of the chart surface. Drop the redundant eyebrow or merge into one line. Remove the double dashed frame on the option chain.",
+   "files": [
+    "artifacts/pyrus/src/features/charting/ResearchChartSurface.tsx",
+    "artifacts/pyrus/src/features/trade/TradeChainPanel.jsx",
+    "artifacts/pyrus/src/features/trade/TradeEquityPanel.jsx"
+   ],
+   "effort": "moderate"
+  },
+  {
+   "rank": 15,
+   "title": "Trade chart band shows three inconsistent empty/loading paradigms side by side",
+   "screens": [
+    "trade"
+   ],
+   "severity": "medium",
+   "category": "inconsistency",
+   "issue": "The three adjacent chart/chain panels each use a different empty-state kit: spot chart = left-aligned solid gray card, uppercase-mono, no spinner; option chart = left-aligned sentence-case bare text, no card, no spinner; option chain = center-aligned amber with spinner in a dashed box. Different alignment, casing, container, and spinner rule in one band that should read as one calm system.",
+   "fix": "Standardize one empty/loading treatment across the band: same alignment, type case, container, and a consistent spinner rule (spinner for 'loading', static prompt for 'awaiting user action').",
+   "files": [
+    "artifacts/pyrus/src/features/trade/TradeEquityPanel.jsx",
+    "artifacts/pyrus/src/features/trade/TradeChainPanel.jsx"
+   ],
+   "effort": "moderate"
+  },
+  {
+   "rank": 16,
+   "title": "Watchlist editor chrome duplicated onto screens where it has no job",
+   "screens": [
+    "account",
+    "signals"
+   ],
+   "severity": "medium",
+   "category": "redundancy",
+   "issue": "The full watchlist-management rail (W\u2026 truncated selector, RENAME/DEFAULT/DELETE, MANUAL/SIGNAL/%CHG/A-Z tabs, Filter, DESC, +ADD) is crowded into a narrow rail with tiny targets, and on the Account screen it serves none of the account/positions job while duplicating the ticker set already in the global tape. The active list name is truncated to 'W\u2026' so a trader can't read which list is active.",
+   "fix": "Show the full watchlist name; consolidate the sort tabs + rename/default/delete into an overflow menu. On Account, hide the management chrome or reduce the rail to a passive account-context list so account data owns the primary column.",
+   "files": [
+    "artifacts/pyrus/src/features/platform/PlatformWatchlist.jsx"
+   ],
+   "effort": "moderate"
+  },
+  {
+   "rank": 17,
+   "title": "GEX 13-panel stack has inconsistent, incomplete section headings + shifting grid widths",
+   "screens": [
+    "gex"
+   ],
+   "severity": "medium",
+   "category": "hierarchy",
+   "issue": "The primary gamma family (Strike Profile, DEX, Heatmap, Gamma-by-Expiry) gets NO group heading while secondary Greeks get full-width heading bands; 'Open Interest Analysis' is nested inside a grid column at a different indent and wrongly files Volume Profile under it. Separately, independent auto-fit grids give charts different column counts row to row (3-up \u2192 full-width \u2192 2-up), reading as a shifting mosaic instead of a steady workspace.",
+   "fix": "Give every chart group a consistent top-level full-width SectionHeading at the same nesting level; move the OI heading out of the grid column. Standardize the analytics area on one predictable grid so charts keep uniform width down the page.",
+   "files": [
+    "artifacts/pyrus/src/screens/GexScreen.jsx"
+   ],
+   "effort": "moderate"
+  },
+  {
+   "rank": 18,
+   "title": "Section headers/counts contradict the content they label (loading vs error conflation)",
+   "screens": [
+    "flow",
+    "market"
+   ],
+   "severity": "medium",
+   "category": "hierarchy",
+   "issue": "Headers describe a state the body contradicts: the Flow 'Options Flow Tape \u00b7 0 / 0 shown \u00b7 Loading' header sits atop a fully-rendered 12-ticker distribution grid (the count describes the still-loading tape below, not what fills the panel), and it pairs a blue 'Loading' pill with an amber \u26a0 triangle \u2014 conflating 'in progress' with 'data issue'. On market, the charts band reads '0 visible' while six cells are on screen.",
+   "fix": "Give the distribution grid its own header separate from the tape's '0 shown' count so the count describes visible content. Separate loading (spinner/blue) from a real degradation warning (amber \u26a0 only on actual issue). Relabel '0 visible' to what it means (e.g. '6 charts \u00b7 0 hydrated').",
+   "files": [
+    "artifacts/pyrus/src/screens/FlowScreen.jsx",
+    "artifacts/pyrus/src/features/market/MultiChartGrid.jsx"
+   ],
+   "effort": "mechanical"
+  },
+  {
+   "rank": 19,
+   "title": "Algo settings panel mixes control paradigms with sub-44px cramped targets",
+   "screens": [
+    "algo"
+   ],
+   "severity": "medium",
+   "category": "affordance-a11y",
+   "issue": "The AlgoSettingsRegion mixes label+toggle rows with label+toggle+number-field rows where the toggle floats between label and value, so its relationship to the number is ambiguous (does it enable the field or gate the limit?) and toggle/value columns don't align across rows. Rows are tightly packed with decorative icons and switches well under 44px, making a dense config wall hard to scan and click.",
+   "fix": "Align into consistent columns (label | toggle | value), tie the number field visually to its toggle (disabled-dim when off), give rows uniform rhythm and larger hit areas, and drop the decorative per-row icons.",
+   "files": [
+    "artifacts/pyrus/src/screens/algo/AlgoSettingsRegion.jsx"
+   ],
+   "effort": "moderate"
+  },
+  {
+   "rank": 20,
+   "title": "Signals & account filter bands: unlabeled icon buttons + unlabeled chip groups over empty data",
+   "screens": [
+    "signals",
+    "account"
+   ],
+   "severity": "medium",
+   "category": "affordance-a11y",
+   "issue": "Dense control bands crowd tiny unlabeled affordances above zero-row tables. Signals packs eight dropdowns then four icon-only buttons (filter/power/expand/refresh) with no labels \u2014 power-toggle is indistinguishable from refresh. Account stacks two unlabeled chip groups (ALL\u00b7EQUITY\u00b7STOCK\u00b7ETF\u00b7OPTION running into ALL SOURCES\u00b7MANUAL\u00b7AUTOMATION\u00b7\u2026) with two different 'All' pills and no separator, louder than the empty data they filter.",
+   "fix": "Give icon buttons visible/tooltip labels + adequate hit area. Group filters into primary + a 'More filters' overflow, and add group labels ('Type', 'Source') or dividers between chip groups. De-emphasize the filter band when the table is empty.",
+   "files": [
+    "artifacts/pyrus/src/screens/SignalsScreen.jsx",
+    "artifacts/pyrus/src/screens/account/PositionsPanel.jsx"
+   ],
+   "effort": "moderate"
+  },
+  {
+   "rank": 21,
+   "title": "Backtest bands carry design-doc prose instead of concrete status",
+   "screens": [
+    "backtest"
+   ],
+   "severity": "medium",
+   "category": "decoration",
+   "issue": "Every band opens with a paragraph of internal layout-rationale narration ('This keeps the main page analysis-first while still putting the warning inputs above the chart workspace.', 'The spot chart is the primary visual truth surface.'). Four such paragraphs stack down the page, leaking design language into the product and adding heavy reading load that breaks the calm scan.",
+   "fix": "Delete the layout-rationale prose. Keep at most a short concrete hint per band; move any genuine onboarding into a one-time help affordance, not persistent body text.",
+   "files": [
+    "artifacts/pyrus/src/features/backtesting/BacktestingPanels.tsx"
+   ],
+   "effort": "mechanical"
+  },
+  {
+   "rank": 22,
+   "title": "GEX primary symbol selector is the weakest-looking control on the screen",
+   "screens": [
+    "gex"
+   ],
+   "severity": "medium",
+   "category": "affordance-a11y",
+   "issue": "The most important control \u2014 which underlying you analyze \u2014 is an 82px borderless transparent text input with only a 14px search glyph, sitting left of two loud SegmentedControls. It reads as static text, not an editable/searchable field, has no dropdown affordance, and the whole row is right-aligned leaving the prime top-left empty with no screen/symbol title anchoring 'GEX'.",
+   "fix": "Promote the symbol selector to the primary control (bordered field, focus ring, chevron/search affordance, more weight than the Graph/Table toggle) and anchor the top-left with a screen/symbol title (e.g. 'SPY \u00b7 Gamma Exposure').",
+   "files": [
+    "artifacts/pyrus/src/screens/GexScreen.jsx"
+   ],
+   "effort": "moderate"
+  }
+ ],
+ "crossCuttingThemes": [
+  "Shared loading/empty-state component (ContainerLoadingStatus + Algo Monitor sidebar) duplicates its own copy and leaks raw timers/module debug strings on 7+ screens \u2014 one source-level fix removes the single most pervasive polish defect app-wide.",
+  "The same value/status/control is repeatedly rendered in two or more places with no single authoritative surface (broker state x5 on algo, interval idle x3 on signals, theme x2 on settings, flow filters x2, restart count x2, watchlist tickers duplicating the tape) \u2014 the app lacks a single-source-of-truth discipline for status.",
+  "Semantic color is applied by fall-through rather than by meaning: green leaks onto unknown/error states, blue onto neutral, amber onto live values, and red/green get reused categorically in research \u2014 color is frequently the only cue and it misrepresents health/direction.",
+  "Inverted hierarchy: controls and chrome are consistently louder than data (market chart chrome, algo settings wall, account KPI ticker, GEX symbol input), so the primary read is buried on multiple screens.",
+  "Cards-inside-cards and inconsistent empty/loading paradigms (nested dashed frames, floated pop-out boxes, three different kits in one band) break the calm unframed-workspace doctrine.",
+  "Icon-only and unlabeled affordances (chart toolbars, signals/account filter bars, diagnostics glyphs) force decoding and fail a11y label/hit-area rules.",
+  "Right rails are poorly budgeted: empty Algo Monitor panels claim width that live scanners/data need, then anchor otherwise-blank dead space."
+ ],
+ "perScreenWorst": [
+  {
+   "screen": "market",
+   "worst": "Per-cell chart chrome (~25 unlabeled icon controls x6 cells) dominates the grid so it reads controls-first, price-action-last \u2014 hierarchy inverted."
+  },
+  {
+   "screen": "signals",
+   "worst": "No single primary read \u2014 the same interval/idle state is duplicated across interval tiles, the hydration strip, and the header pill, with every tile showing an equal-weight '0'."
+  },
+  {
+   "screen": "flow",
+   "worst": "The live Flow Scanner clips its own status and ticker pills mid-word while the equally-wide empty Algo Monitor beside it wastes the space the scanner needs."
+  },
+  {
+   "screen": "gex",
+   "worst": "The primary gamma content (Strike Profile/DEX/Heatmap/Expiry) carries no section heading while secondary Greeks do, so a ~13-panel stack is chunked inconsistently and headings can't be trusted to navigate."
+  },
+  {
+   "screen": "trade",
+   "worst": "The option-chain panel restates its loading message twice inside two nested dashed frames \u2014 the shared loading component repeating itself."
+  },
+  {
+   "screen": "account",
+   "worst": "The primary performance summary is a cryptic single-line ticker of ~13 equal-weight abbreviated KPIs, so nothing anchors the eye and it must be decoded."
+  },
+  {
+   "screen": "research",
+   "worst": "The 'AI Trade' relationship map \u2014 the point of the Graph view \u2014 collapses into an illegible pile of overlapping bubbles and colliding labels in its densest region while the right third sits empty."
+  },
+  {
+   "screen": "algo",
+   "worst": "The single 'broker/gateway bridge is down' fact is announced ~5 times (WARNING + BROKER OFF + OFFLINE pills, status strip, GATEWAY callout), so the actionable indicator can't be identified."
+  },
+  {
+   "screen": "backtest",
+   "worst": "An empty 'Promoted Drafts' band leads the page while two overlapping 'create a study' surfaces (Research Workbench empty state + Backtest Inputs form) both claim the primary action."
+  },
+  {
+   "screen": "diagnostics",
+   "worst": "The right-rail Algo Monitor loading panel prints the exact same sentence twice; the diagram's cryptic glyph vocabulary (no legend, 'n/o' jargon) is a close second."
+  },
+  {
+   "screen": "settings",
+   "worst": "Theme exists as two different controls in two sections (segmented LIGHT vs dropdown System) showing conflicting values, so the trader can't tell which is authoritative."
+  }
+ ],
+ "rawByScreen": [
+  {
+   "screen": "market",
+   "count": 5,
+   "read": "Hierarchy reads inverted: the six chart cells' unlabeled control chrome (top toolbar + left rail + bottom clusters per cell) dominates while the price panels (the primary read) sit empty/loading \u2014 worst single problem is the wall of per-cell icon chrome making the grid read as controls-first, charts-second."
+  },
+  {
+   "screen": "signals",
+   "count": 6,
+   "read": "Hierarchy reads muddled: the screen has no clear single primary read \u2014 the same interval/idle state is echoed across 3+ surfaces and every tile shows \\\"0\\\" with equal weight. Worst single problem: per-interval idle status is duplicated in the interval tiles, the hydration strip, and the header pill (no single source of truth)."
+  },
+  {
+   "screen": "flow",
+   "count": 6,
+   "read": "The center premium-distribution grid reads cleanly (good blue=buy/red=sell donuts + diverging bars), but the screen's worst problem is the right rail: the live Flow Scanner clips its own labels and ticker pills mid-word while the equally-wide Algo Monitor beside it sits empty \u2014 the trader can't read the scanner state that matters most."
+  },
+  {
+   "screen": "gex",
+   "count": 4,
+   "read": "Method caveat: the provided screenshot path was broken (undefined/screen-gex.png) and the screen is behind a real auth wall with no dev bypass, so these are grounded in current source + the app's rendered conventions, not a live current capture. Hierarchy reads unevenly: the PRIMARY gamma content (Strike Profile, DEX, Heatmap, Gamma-by-Expiry) carries NO section heading while the secondary Greeks (Implied Volatility, Vega & Theta) get full-width heading bands \u2014 the worst single problem is that a ~13-panel vertical stack is chunked inconsistently, so a trader can't rely on headings to navigate."
+  },
+  {
+   "screen": "trade",
+   "count": 3,
+   "read": "Hierarchy is workspace-appropriate (dense pro tool, not a card mosaic) and the screen is mostly in legitimate loading/empty states, so the emptiness itself is not the problem. Worst single problem: the option-chain panel restates its own loading message twice (spinner card + a concatenated wait-line beneath it) inside two nested dashed frames \u2014 an unpolished 'UI repeating itself' moment; secondary theme is that the three center chart/chain empty states use three inconsistent paradigms."
+  },
+  {
+   "screen": "account",
+   "count": 6,
+   "read": "Hierarchy reads poorly: the account's primary summary is a cryptic single-line ticker of ~13 equal-weight abbreviated KPIs, so nothing anchors the eye. Worst single problem is that muddled, decode-required KPI strip; a close second is the debug/duplicated loading copy ('\u2026 panel module - reads \u2026 - 4.7s', triple-repeated on the algo monitor) that makes routine loading states feel broken."
+  },
+  {
+   "screen": "research",
+   "count": 5,
+   "read": "The primary read \u2014 the \"AI Trade\" relationship map \u2014 is compromised: its densest zone (center-left) collapses into an illegible pile of overlapping bubbles and colliding labels while the right third sits nearly empty. Worst single problem: the force layout is imbalanced and unreadable where it matters most."
+  },
+  {
+   "screen": "algo",
+   "count": 6,
+   "read": "Four dark, equally-dense columns (watchlist / signal-options data / settings toggle-wall / Algo Monitor) with no clear primary read \u2014 the config panel is as loud as the signal data. Worst single problem: the one fact \"broker/gateway bridge is down\" is announced ~5 times (WARNING + BROKER OFF + OFFLINE pills, the left status strip, and a GATEWAY callout), so a trader can't tell which indicator is the actionable one."
+  },
+  {
+   "screen": "backtest",
+   "count": 6,
+   "read": "Hierarchy reads flat: four equal-weight bordered bands stacked vertically, each opening with a paragraph of design-doc prose, with no primary focus. Worst single problem \u2014 an empty 'Promoted Drafts' band leads the page while two overlapping 'create a study' surfaces (Research Workbench empty-state + Backtest Inputs form) both claim the primary action."
+  },
+  {
+   "screen": "diagnostics",
+   "count": 6,
+   "read": "The Backend Data Machine diagram is clearly the primary read, but its status vocabulary is cryptic (?, \u2713, !, \u2013, \u25cb plus \"n/o\" jargon, no legend) so the \"4 states need attention\" header can't be mapped to a node. Worst single problem: the right-rail Algo Monitor loading panel prints the exact same sentence twice."
+  },
+  {
+   "screen": "settings",
+   "count": 6,
+   "read": "Hierarchy is workable \u2014 a scannable nav column + stacked form sections \u2014 but the top ~90px is all status/controls before the first setting, and the single worst issue is that \"Theme\" exists as two different controls in two sections showing conflicting values (segmented LIGHT vs dropdown System)."
+  }
+ ]
+}
