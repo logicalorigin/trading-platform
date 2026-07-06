@@ -7,7 +7,9 @@ import {
   __expandStoredRowsLimitForTests,
   __handleMarketDataStoreErrorForTests,
   __resetMarketDataStoreBackoffForTests,
+  normalizeBarsToStoreTimeframe,
   shouldUseDurableMarketDataStore,
+  type MarketDataStoreBarInput,
 } from "./market-data-store";
 
 const REQUEST = { symbol: "AAPL", timeframe: "1m" } as const;
@@ -70,6 +72,46 @@ test("fixed-step reader alignment matches timeframe seconds", () => {
   assert.equal(__storedBarAlignmentSecondsForTests("15s"), 15);
   assert.equal(__storedBarAlignmentSecondsForTests("15m"), 900);
   assert.equal(__storedBarAlignmentSecondsForTests("1h"), 3600);
+});
+
+test("write normalization floors off-grid timestamps onto the epoch grid (guards the 2026-04 corruption)", () => {
+  // A retired backfill wrote minute-resolution Massive-history timestamps (:59/:04/
+  // :09) under 5m/15m WITHOUT flooring, so raw off-grid rows coexisted with the
+  // canonical aligned bars under the (instrument,timeframe,source,starts_at) unique
+  // key (~13k rows across SPY/QQQ/AAPL). The live writer already floors via
+  // normalizeBarsToStoreTimeframe; this pins that invariant so it cannot regress.
+  const bar = (iso: string, close: number): MarketDataStoreBarInput => ({
+    timestamp: new Date(iso),
+    open: close,
+    high: close,
+    low: close,
+    close,
+    volume: 1,
+  });
+  for (const [timeframe, stepMs] of [
+    ["5m", 300_000],
+    ["15m", 900_000],
+  ] as const) {
+    const out = normalizeBarsToStoreTimeframe(
+      [
+        bar("2026-04-27T22:59:00Z", 1),
+        bar("2026-04-27T23:04:00Z", 2),
+        bar("2026-04-27T23:09:00Z", 3),
+      ],
+      timeframe,
+    );
+    assert.ok(out.length > 0, `${timeframe} produced no bars`);
+    for (const b of out) {
+      assert.equal(
+        b.timestamp.getTime() % stepMs,
+        0,
+        `${timeframe}: ${b.timestamp.toISOString()} must land on the epoch grid`,
+      );
+    }
+  }
+  // Specific floor: a :59 bar lands in the :55 5m bucket, never a new :59 row.
+  const floored = normalizeBarsToStoreTimeframe([bar("2026-04-27T22:59:00Z", 42)], "5m");
+  assert.equal(floored[0]?.timestamp.toISOString(), "2026-04-27T22:55:00.000Z");
 });
 
 test("multi-symbol bar-cache writer resolves instruments in one batch", () => {
