@@ -6,8 +6,6 @@ import {
 } from "./IbkrConnectionStatus.jsx";
 import {
   normalizeMassiveRuntimeDiagnostics,
-  normalizeAdmissionDiagnostics,
-  selectRuntimeAdmissionDiagnostics,
 } from "./runtimeControlModel.js";
 import { canonicalizeStreamState, streamStateTokenVar } from "./streamSemantics";
 
@@ -298,95 +296,9 @@ const formatHeaderTimeAgo = (value) => {
   return `${Math.round(ageMs / 3_600_000)}h ago`;
 };
 
-const buildLineUsageRows = (admission, lineUsageSnapshot) => {
-  const normalized = normalizeAdmissionDiagnostics(admission, lineUsageSnapshot);
-  return {
-    available: normalized.available,
-    summary: normalized.summary,
-    activeLineCount: normalized.activeLineCount,
-    requestedLineCount: normalized.requestedLineCount,
-    pendingLineCount: normalized.pendingLineCount,
-    foregroundPendingLineCount: normalized.foregroundPendingLineCount,
-    requestedSummary: normalized.requestedSummary,
-    demandSummary: normalized.demandSummary,
-    bridgeSummary: normalized.bridgeSummary,
-    warnings: normalized.warnings,
-    rows: normalized.rows,
-    bridge: normalized.bridge,
-    drift: normalized.drift,
-    warmup: normalized.warmup,
-    allocation: normalized.allocation,
-    pressure: normalized.pressure,
-  };
-};
 
-const buildCompactLineUsage = (lineUsage) => {
-  if (!lineUsage?.available) {
-    return null;
-  }
-
-  const source = lineUsage.bridge || {};
-  const used = Number.isFinite(source?.used) ? Math.max(0, source.used) : null;
-  const allocation = lineUsage.allocation || {};
-  const targetFillLines = Number.isFinite(allocation.targetFillLines)
-    ? Math.max(0, allocation.targetFillLines)
-    : null;
-  const capSource = source?.effectiveCap ?? source?.cap;
-  const cap = Number.isFinite(capSource) ? Math.max(0, capSource) : null;
-  const computedFree = cap != null && used != null ? cap - used : null;
-  const freeSource = source?.free ?? computedFree;
-  const free = Number.isFinite(freeSource) ? Math.max(0, freeSource) : null;
-  const reserveLineCount =
-    Number.isFinite(cap) &&
-    Number.isFinite(targetFillLines) &&
-    cap > targetFillLines
-      ? cap - targetFillLines
-      : null;
-  const tradeOptionsChainReserveLineCount = Number.isFinite(
-    allocation.tradeOptionsChainReserveLineCount,
-  )
-    ? Math.max(0, allocation.tradeOptionsChainReserveLineCount)
-    : null;
-  const percent =
-    cap && used != null
-      ? Math.max(0, Math.min(100, (used / cap) * 100))
-      : 0;
-  // Full utilization (free === 0) is normal, not an issue: the background flow
-  // scanner is designed to fill the line budget and yields its reserve to
-  // higher-priority demand, so "no free lines" must NOT paint the chip amber.
-  // Flag amber only on genuine capacity pressure: the bridge reporting a real
-  // stream state, or a legacy broker pressure shed. Mere full utilization stays
-  // healthy because the Massive-backed scanner is designed to fill spare budget.
-  const state =
-    source?.streamState ||
-    (lineUsage.pressure?.recentIbkrPressureShed === true
-      ? "capacity-limited"
-      : "healthy");
-
-  return {
-    used,
-    cap,
-    free,
-    percent,
-    targetFillLines,
-    reserveLineCount,
-    tradeOptionsChainReserveLineCount,
-    summary:
-      Number.isFinite(used) && Number.isFinite(cap)
-        ? `${formatHeaderCount(used)} of ${formatHeaderCount(cap)}`
-        : source?.summary || lineUsage.bridgeSummary || MISSING_VALUE,
-    tone: source?.tone || streamStateTokenVar(state),
-  };
-};
-
-const buildProviderRows = ({
-  runtimeDiagnostics,
-  lineUsageSnapshot,
-}) => {
-  const massive = normalizeMassiveRuntimeDiagnostics(
-    runtimeDiagnostics,
-    lineUsageSnapshot,
-  );
+const buildProviderRows = ({ runtimeDiagnostics }) => {
+  const massive = normalizeMassiveRuntimeDiagnostics(runtimeDiagnostics);
   const hasMassiveProvider =
     massive.configured || massive.providerIdentity === "massive";
   const stockProviderLabel = hasMassiveProvider ? "Massive" : null;
@@ -594,7 +506,6 @@ export const buildHeaderIbkrTriggerModel = ({
   connection,
   runtimeDiagnostics,
   runtimeError,
-  lineUsageSnapshot = null,
 }) => {
   const runtime = runtimeDiagnostics?.ibkr;
   const detailConnection = buildHeaderIbkrDetailConnection({
@@ -615,25 +526,11 @@ export const buildHeaderIbkrTriggerModel = ({
     runtime?.streamStateReason,
     connection?.streamStateReason,
   );
-  const lineUsage = lineUsageSnapshot
-    ? buildLineUsageRows(
-        selectRuntimeAdmissionDiagnostics({ runtimeDiagnostics, lineUsageSnapshot }),
-        lineUsageSnapshot,
-      )
-    : null;
-  const compactLineUsage = buildCompactLineUsage(lineUsage);
-
   return {
     health,
     issue,
     tiles: [],
     providerRows: [],
-    lineUsage,
-    compactLineUsage,
-    // Massive provider status comes from runtimeDiagnostics (polled every ~5s
-    // regardless of popover state), not from line usage. Keep it populated in the
-    // trigger model so the always-visible footer shows live provider status
-    // instead of "No checks yet" while the popover is closed.
     massive: normalizeMassiveRuntimeDiagnostics(runtimeDiagnostics),
     detailGroups: [],
     priorityDetailGroup: getPriorityDetailGroup({
@@ -650,8 +547,6 @@ export const buildHeaderIbkrPopoverModel = ({
   latencyStats,
   runtimeDiagnostics,
   runtimeError,
-  lineUsage: normalizedLineUsage,
-  lineUsageSnapshot,
 }) => {
   const runtime = runtimeDiagnostics?.ibkr;
   const detailConnection = buildHeaderIbkrDetailConnection({
@@ -801,24 +696,11 @@ export const buildHeaderIbkrPopoverModel = ({
       : liveMarketDataAvailable === false
         ? "Delayed"
         : marketDataMode || "Unknown";
-  const providerRows = buildProviderRows({
-    runtimeDiagnostics,
-    lineUsageSnapshot,
-  });
+  const providerRows = buildProviderRows({ runtimeDiagnostics });
   const gatewayHealthPending =
     health.status === "stale" &&
     /health pending/i.test(String(health.label || ""));
-  const lineUsage =
-    normalizedLineUsage ||
-    buildLineUsageRows(
-      selectRuntimeAdmissionDiagnostics({ runtimeDiagnostics, lineUsageSnapshot }),
-      lineUsageSnapshot,
-    );
-  const compactLineUsage = buildCompactLineUsage(lineUsage);
-  const massive = normalizeMassiveRuntimeDiagnostics(
-    runtimeDiagnostics,
-    lineUsageSnapshot,
-  );
+  const massive = normalizeMassiveRuntimeDiagnostics(runtimeDiagnostics);
 
   const issue = buildHeaderIbkrIssue({
     connection,
@@ -1244,8 +1126,6 @@ export const buildHeaderIbkrPopoverModel = ({
     issue,
     tiles,
     providerRows,
-    lineUsage,
-    compactLineUsage,
     massive,
     detailGroups,
     priorityDetailGroup,

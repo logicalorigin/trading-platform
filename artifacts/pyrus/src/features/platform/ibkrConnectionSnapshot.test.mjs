@@ -61,7 +61,6 @@ test("builds a ready broker runtime view from warm session state", () => {
   });
 
   assert.equal(snapshot.available, true);
-  assert.equal(snapshot.lineUsageEnabled, true);
   assert.equal(snapshot.runtimeDiagnostics.ibkr.configured, true);
   assert.equal(snapshot.runtimeDiagnostics.ibkr.bridgeReachable, true);
   assert.equal(snapshot.runtimeDiagnostics.ibkr.socketConnected, true);
@@ -116,7 +115,6 @@ test("keeps launch activity visible before the bridge is connected", () => {
 
   assert.equal(snapshot.available, true);
   assert.equal(snapshot.activityPresent, true);
-  assert.equal(snapshot.lineUsageEnabled, true);
   assert.equal(snapshot.runtimeDiagnostics.ibkr.connected, false);
   assert.equal(snapshot.runtimeDiagnostics.ibkr.activation.active, true);
 });

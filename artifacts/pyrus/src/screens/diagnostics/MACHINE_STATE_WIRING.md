@@ -25,7 +25,6 @@ Locked with Riley in the Phase 0 walkthrough (8 rounds + follow-ups), 2026-06-12
    provider's declared idle and the session-quiet flow scanner.
 6. **Coerced booleans need corroboration.** The runtime-control hook coerces
    missing broker freshness to `fresh:false`; the model treats `fresh:false`
-   as observed-stale only when `lastEventAt` exists. `lineUsage.available ===
    false` means "not observed", not "zero lines".
 
 ## Vocabulary pins
@@ -55,8 +54,6 @@ Locked with Riley in the Phase 0 walkthrough (8 rounds + follow-ups), 2026-06-12
 
 Other relevant cadences: runtime-control React Query poll 5s
 (useRuntimeControlSnapshot.js:38-40, enabled on Overview per
-DiagnosticsScreen.jsx:724-731); backend line-usage refresh 2s
-(ibkr-line-usage.ts:78).
 
 ## Master model groups (13) and child sensors (dynamic broker rows) — visual structure
 
@@ -113,7 +110,6 @@ they live once, on the boundary/consumer rail. The retired governor bubble is
 intentionally absent; broker/account/order health stays on the
 broker and account cards. Status ICONS replace colored dots and corner status words:
 healthy ✓, checking ◌, degraded !, down ✕, idle –, unknown ?. The
-position-quotes bubble still carries a live/shadow split in the model, but the
 card renders a single worst-of glyph; the live and shadow line counts are shown
 in the card footer detail rather than as a doubled glyph.
 
@@ -126,7 +122,6 @@ as their own cards, Equities/Options channel split, massive equity quote
 fallback into Account.
 
 Lane additions: **Trade Chain** bubble (Trade Options Chain line pool — only
-exposed at `lineUsage.pools.visible` in the live payload, NOT top-level;
 same for `pools.automation` — the model reads pools-first to avoid the
 phantom). **GEX Projection** bubble: sensor is the client-side React Query
 cache state for `gex-dashboard`/`gex-projection`/`gex-zero-gamma` keys —
@@ -153,7 +148,6 @@ observed directly in the browser.
 |---|---|---|---|
 | account-stream "Account State" | SnapTrade broker connections when any non-disconnected SnapTrade broker row is observed; otherwise `runtimeControl.streams.account` legacy freshness | SnapTrade `accounts`/`positions` capability rows use broker connection status (`connected` healthy, `configured` checking, `error` down); legacy fallback keeps fresh+lastEventAt → healthy/degraded, lastEventAt only → checking, neither → unknown (rule 6) | runtime |
 | order-stream "Order State" | SnapTrade broker connections when any non-disconnected SnapTrade broker row is observed; otherwise `runtimeControl.streams.order` legacy freshness | SnapTrade `orders`/`executions`/`execution-ready` capability rows use broker connection status; if SnapTrade is present but no trading capability is advertised, this row is idle rather than a legacy stream failure | runtime |
-| position-quotes "Position Quotes" (SPLIT bubble) | `lineUsage.accountMonitor` (live half) + `lineUsage.shadowAccount` (shadow half, incl. massiveFallbackLineCount) | per-half pool status; bubble = worst half | runtime |
 | account-view "Account View" | `latest` accounts/orders probe snapshots (visibility failures, diagnostics.ts:3826/3835) + legacy `streams.tradingFresh` only when SnapTrade broker rows are absent | probe severity + failure counts + stale legacy trading → degraded. In SnapTrade mode, broker connection/readiness evidence supersedes retired IBKR SSE freshness | latest |
 
 ### Market Data — `market`
@@ -167,7 +161,6 @@ health. Verified provider mapping: Realtime Equities = Massive; Realtime
 Options = Massive; Historical Equities/Options = Massive.
 
 **Trade Chain folded in.** The former `trade` master group (Trade Chain line
-pool, child `trade-chain`) is no longer rendered as a standalone card. It stays
 in `MACHINE_STATE_GROUPS` so its child sensor and derived edges survive, but it
 is not positioned in `GROUP_XY` and is folded conceptually into the Market Data
 card. (`trade-mgmt` "Trade Mgmt" remains a distinct execution-layer card.)
@@ -180,7 +173,6 @@ the Equities bubble and Massive card amber simultaneously. Gap fields are
 bridge-pure. `streamState: "quiet"` is the backend's session-aware idle.
 | market-equities "Equities Stream" | massive* channel fields of the market-data snapshot (`massiveWebSocketStatus`, `massiveLastSocketMessageAgeMs`, `massiveSubscribedSymbolCount`) | quiet → idle; ws status (idle-aware); socket age > 5s → degraded | latest |
 | market-options "Options Stream" | bridge-side fields (`recentMaxGapMs`/`maxGapMs`, `cachedQuoteCount`, `lastEventAgeMs`) + blended `freshnessAgeMs` + `streamState` | quiet → idle; freshness > 2s or gap > 5s → degraded; reconnectScheduled → checking | latest |
-| flow-scanner "Flow Scanner" | `runtimeControl.flowScanner` + `lineUsage.flowScanner`; structured `sessionBlockedReason` (runtimeControlModel.js:1536-1556, added with this work) | session-quiet → idle; enabled-but-inactive → checking; pool state | runtime |
 
 ### Signals / Algo / Trade Mgmt — `signals`, `algo`, `trade-mgmt`
 All three read the `latest` automation snapshot (classifyAutomationSnapshot
@@ -189,7 +181,6 @@ sensors:
 | Bubble | Sensor | Status rule | Source |
 |---|---|---|---|
 | signal-engine "Signals" | freshSignalCount / staleSignalCount / unavailableSignalCount / latestScanAgeMs | stale/unavailable inputs → checking, with degraded-input ratio in detail when >=10% | latest |
-| algo-engine "Algo Engine" | workerRunning / scan staleness / active-long-scan / candidateCount / scan duration / gatewayBlockedCount / failureCount + `lineUsage.automation` | gateway blocks, scan failures, stale/long worker scans, or algo line pressure → degraded. Broad automation snapshot severity is not applied here because it also includes signal-input quality owned by the Signals bubble | latest |
 | trade-management "Trade Mgmt" | shadowExitCount / expirationMaintenanceDueCount / orders failureCount | order failures → degraded; expirations due → checking | latest |
 
 ### Diagnostics — `diagnostics`
@@ -236,15 +227,12 @@ rail rule above before drawing.
 
 | Edge | Label | Code path |
 |---|---|---|
-| broker→account | broker REST/SSE + quote lines | SnapTrade broker rows or fallback broker runtime feed account/order state; /api/streams/orders platform.ts:2978; lineUsage account/shadow quote pools |
 | broker→flow | chains + line budget | options-flow-scanner.ts:36 plus broker line usage |
-| broker→trade | chain line budget | Trade Options Chain pool (`lineUsage.pools.visible`) |
 | broker→algo | algo budget | signal-options-automation.ts:104-106 admission leases |
 | broker→client | pressure/backoff | route-admission inputs derived from broker pressure; hidden unless broker needs attention |
 | massive→market | Massive WS | massive-stock-quote-stream.ts:14 |
 | massive→flow | chains + quotes | flow scanner option-chain/quote source from Massive provider diagnostics |
 | massive→gex | option chains | GEX projection cache queries depend on Massive option-chain fetches |
-| massive→account | equity quote fallback | EQUITY marks only, live + shadow: live marks tagged source==="massive" (account.ts:2627, non-option branch only) + shadowAccount.massiveFallbackLineCount (ibkr-line-usage.ts:1632). |
 | market→account | quote marks | account.ts:5-6 (stock + option quote snapshots → position marks) |
 | market→signals | bars/quotes | signal-monitor.ts:49,73 |
 | flow→signals | flow events | signal-monitor flow-event hydration |
@@ -253,7 +241,6 @@ rail rule above before drawing.
 | algo→trade-mgmt | decisions | algo-engine decisions feed trade-management state |
 | account→trade-mgmt | positions/fills | order stream + account view feed exits/status/maintenance |
 | market→client | market model | REST handlers serving market/options models; hidden unless market needs attention |
-| trade→client | chain snapshots | API Link serves trade-chain snapshots; hidden unless trade chain needs attention |
 | flow→client | flow model | API Link serves flow model; hidden unless flow needs attention |
 | gex→client | gex model | API Link serves GEX projection model; hidden unless GEX needs attention |
 | signals→client | signal model | API Link serves signal model; hidden unless signals need attention |
@@ -327,7 +314,6 @@ no driver) when its data did not arrive — the truth bias holds.
   `lastEventAt` fields where available. Acceptable: the poll is 5s and React
   Query stops polling when the tab is hidden.
 - The hook-level `Boolean()` freshness coercion (runtimeControlModel.js:
-  1504-1505) and fabricated empty pools (normalizeAdmissionDiagnostics) are
   compensated in this model (rule 6) rather than changed at the hook — the
   hook is shared by five other screens.
 - Intentionally omitted flows (internal/secondary): shadow stop-loss feedback

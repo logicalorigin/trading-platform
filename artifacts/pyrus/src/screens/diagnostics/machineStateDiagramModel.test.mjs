@@ -81,23 +81,6 @@ const baseLatest = () => ({
 });
 
 const baseRuntimeControl = () => ({
-  lineUsage: {
-    available: true,
-    warnings: 0,
-    total: { used: 24, cap: 120, streamState: "healthy" },
-    accountMonitor: { used: 6, cap: 30, free: 24, streamState: "healthy" },
-    shadowAccount: {
-      used: 2,
-      cap: 20,
-      free: 18,
-      streamState: "healthy",
-      massiveFallbackLineCount: 0,
-    },
-    flowScanner: { used: 3, cap: 20, free: 17, streamState: "healthy" },
-    automation: { used: 2, cap: 16, free: 14, streamState: "healthy" },
-    pressure: { state: "normal", policy: "normal", budgetSource: "diagnostics" },
-    drift: { available: true, summary: "aligned", admissionVsBridgeLineDelta: 0 },
-  },
   streams: {
     account: { fresh: true, lastEventAt: FRESH_MS },
     order: { fresh: true, lastEventAt: FRESH_MS },
@@ -518,23 +501,6 @@ test("buildMachineStateDiagramModel keeps a stuck enabled scanner as checking", 
   assert.equal(nodeById(model, "flow-scanner").status, "checking");
 });
 
-test("buildMachineStateDiagramModel splits live and shadow quote pool statuses", () => {
-  const runtimeControl = baseRuntimeControl();
-  runtimeControl.lineUsage.shadowAccount = {
-    used: 19,
-    cap: 20,
-    free: 1,
-    streamState: "capacity-limited",
-    massiveFallbackLineCount: 3,
-  };
-  const model = buildModel({ runtimeControl });
-  const quotes = nodeById(model, "position-quotes");
-  assert.equal(quotes.split.live.status, "healthy");
-  assert.equal(quotes.split.shadow.status, "degraded");
-  assert.equal(quotes.status, "degraded");
-  assert.match(quotes.detail, /3 Massive fallback/);
-});
-
 test("buildMachineStateDiagramModel reads browser memory against backend thresholds", () => {
   const model = buildModel({
     memoryPressureState: {
@@ -569,22 +535,6 @@ test("buildMachineStateDiagramModel expires stale healthy statuses to unknown, k
   assert.match(nodeById(model, "api-runtime").detail, /snapshot .* old/);
   // Known problems must never wash out.
   assert.equal(nodeById(model, "ibkr-bridge").status, "down");
-});
-
-test("buildMachineStateDiagramModel reads trade-chain and automation pools from lineUsage.pools", () => {
-  const runtimeControl = baseRuntimeControl();
-  // Real payload shape: these pools exist ONLY under lineUsage.pools
-  // (runtimeControlModel.js:1455-1474), not as top-level keys.
-  delete runtimeControl.lineUsage.automation;
-  runtimeControl.lineUsage.pools = {
-    visible: { used: 96, cap: 100, streamState: "capacity-limited" },
-    automation: { used: 2, cap: 16, streamState: "healthy" },
-  };
-  const model = buildModel({ runtimeControl });
-  const tradeChain = nodeById(model, "trade-chain");
-  assert.equal(tradeChain.status, "degraded");
-  assert.match(tradeChain.detail, /96 of 100/);
-  assert.equal(nodeById(model, "algo-engine").status, "healthy");
 });
 
 test("buildMachineStateDiagramModel keeps gex unknown without cache observation, idle with zero queries", () => {
@@ -645,7 +595,7 @@ test("buildMachineStateDiagramGroups surfaces a degraded child in its master", (
   assert.equal(edge.status, "down");
 });
 
-test("buildMachineStateDiagramGroups derives the 22 locked master edges", () => {
+test("buildMachineStateDiagramGroups derives the locked master edges", () => {
   const model = buildModel();
   const ids = model.groups.edges.map((edge) => edge.id);
   assert.deepEqual([...ids].sort(), [
@@ -659,16 +609,13 @@ test("buildMachineStateDiagramGroups derives the 22 locked master edges", () => 
     "flow->client",
     "flow->signals",
     "gex->client",
-    "market->account",
     "market->client",
     "market->signals",
-    "massive->account",
     "massive->flow",
     "massive->gex",
     "massive->market",
     "signals->algo",
     "signals->client",
-    "trade->client",
     "trade-mgmt->client",
     "trade-mgmt->diagnostics",
   ].sort());

@@ -905,18 +905,8 @@ export default function PlatformApp() {
   const memoryPressureSignal = useMemoryPressureMonitor();
   const footerApiSourceRuntime = useRuntimeControlSnapshot({
     enabled: platformRealtimeWorkActive,
-    runtimeDiagnosticsEnabled: false,
+    runtimeDiagnosticsEnabled: true,
     runtimeDiagnosticsQueryKey: "footer-api-sources",
-    // Footer Massive/IBKR source bars read provider status from line usage
-    // (/api/settings/ibkr-line-usage carries providers.massive). Keep it enabled —
-    // disabling it left the footer with no Massive data source ("No checks yet").
-    // Keep footer/header IBKR line counts on the same stream; polling is fallback.
-    lineUsageStreamEnabled: true,
-    // The SSE stream already carries live line-usage updates; the REST poll is only
-    // a fallback. Hammering /api/settings/ibkr-line-usage every 2s on every screen
-    // was steady backend load competing with page loads. Back it off, and stop
-    // entirely when the tab is hidden.
-    lineUsagePollInterval: pageVisible ? 15_000 : false,
     memoryPressure: memoryPressureSignal,
   });
   const userPreferences = useUserPreferences();

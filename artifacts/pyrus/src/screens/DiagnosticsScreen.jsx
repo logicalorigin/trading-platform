@@ -1170,12 +1170,10 @@ export default function DiagnosticsScreen({
     enabled: runtimeDiagnosticsActive,
     runtimeDiagnostics: runtimeIbkr ? { ibkr: runtimeIbkr } : null,
     runtimeDiagnosticsEnabled: false,
-    lineUsageEnabled: true,
     workloadStats,
     hydrationStats: hydrationCoordinatorStats,
     memoryPressure: memoryPressureState,
   });
-  const runtimeLineUsage = runtimeControl.lineUsage;
   const quoteCoverage =
     Number.isFinite(state.requestedQuotes) && state.requestedQuotes > 0
       ? `${state.returnedQuotes ?? state.acceptedQuotes ?? 0}/${state.requestedQuotes}`
@@ -1712,28 +1710,6 @@ export default function DiagnosticsScreen({
             <StateRow label="API->React p95" value={formatMs(latencyStats.apiToReactMs?.p95)} />
             <StateRow label="Total p50" value={formatMs(latencyStats.totalMs?.p50)} />
             <StateRow label="Total p95" value={formatMs(latencyStats.totalMs?.p95)} />
-          </Panel>
-          <Panel title="Market Data Lines">
-            {runtimeLineUsage.rows.length ? (
-              runtimeLineUsage.rows.map((row) => (
-                <StateRow
-                  key={row.id}
-                  label={row.label}
-                  value={
-                    row.id === "account-monitor"
-                      ? `${formatCount(row.covered ?? row.used)} of ${formatCount(row.needed ?? row.used)} covered`
-                      : row.id === "flow-scanner"
-                        ? `${formatCount(row.used)} active · ${formatCount(row.effectiveCap ?? row.cap)} available`
-                        : row.id === "total"
-                          ? `${formatCount(row.used)} of ${formatCount(row.cap)} IBKR-budgeted`
-                          : formatCount(row.used)
-                  }
-                  tone={row.tone}
-                />
-              ))
-            ) : (
-              <StateRow label="Line usage" value={MISSING_VALUE} />
-            )}
           </Panel>
           <Panel title="Work Planner">
             <StateRow label="Generation" value={marketDataWorkPlan.generation || MISSING_VALUE} />

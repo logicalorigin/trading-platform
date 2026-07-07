@@ -5,8 +5,6 @@ import {
   buildHeaderIbkrPopoverModel,
   buildHeaderIbkrTriggerModel,
 } from "./ibkrPopoverModel.js";
-import { normalizeAdmissionDiagnostics } from "./runtimeControlModel.js";
-
 const readyConnection = {
   configured: true,
   reachable: true,
@@ -23,39 +21,6 @@ const readyConnection = {
   strictReady: true,
   lastPingMs: 42,
 };
-
-const compactLineUsageSnapshot = {
-  admission: {
-    activeLineCount: 12,
-    accountMonitorLineCount: 4,
-    budget: {
-      maxLines: 200,
-      accountMonitorLineCap: 30,
-      bridgeLineBudget: 200,
-    },
-    poolUsage: {
-      "account-monitor": {
-        id: "account-monitor",
-        activeLineCount: 4,
-        maxLines: 30,
-      },
-    },
-  },
-  bridge: {
-    activeLineCount: 12,
-    lineBudget: 200,
-    remainingLineCount: 188,
-  },
-  drift: {
-    reconciliation: {
-      status: "matched",
-      apiLineCount: 12,
-      bridgeLineCount: 12,
-      matchedLineCount: 12,
-    },
-  },
-};
-
 test("closed IBKR trigger model avoids detailed popover diagnostics", () => {
   const model = buildHeaderIbkrTriggerModel({
     connection: readyConnection,
@@ -67,107 +32,6 @@ test("closed IBKR trigger model avoids detailed popover diagnostics", () => {
   assert.deepEqual(model.tiles, []);
   assert.deepEqual(model.providerRows, []);
   assert.deepEqual(model.detailGroups, []);
-  assert.equal(model.lineUsage, null);
-  assert.equal(model.compactLineUsage, null);
-});
-
-test("closed IBKR trigger model exposes compact line usage when a snapshot is available", () => {
-  const model = buildHeaderIbkrTriggerModel({
-    connection: readyConnection,
-    runtimeDiagnostics: null,
-    runtimeError: null,
-    lineUsageSnapshot: compactLineUsageSnapshot,
-  });
-
-  assert.equal(model.health.status, "healthy");
-  assert.equal(model.lineUsage?.summary, "12 of 200");
-  assert.equal(model.compactLineUsage?.summary, "12 of 200");
-});
-
-test("closed IBKR trigger treats full matched bridge usage as healthy", () => {
-  const model = buildHeaderIbkrTriggerModel({
-    connection: readyConnection,
-    runtimeDiagnostics: null,
-    runtimeError: null,
-    lineUsageSnapshot: {
-      ...compactLineUsageSnapshot,
-      admission: {
-        ...compactLineUsageSnapshot.admission,
-        activeLineCount: 200,
-      },
-      bridge: {
-        activeLineCount: 200,
-        lineBudget: 200,
-        remainingLineCount: 0,
-      },
-      drift: {
-        reconciliation: {
-          status: "matched",
-          apiLineCount: 200,
-          bridgeLineCount: 200,
-          matchedLineCount: 200,
-        },
-      },
-    },
-  });
-
-  assert.equal(model.lineUsage?.bridge?.streamState, "healthy");
-  assert.equal(model.lineUsage?.bridge?.tone, "var(--ra-stream-healthy)");
-  assert.equal(model.compactLineUsage?.summary, "200 of 200");
-  assert.equal(model.compactLineUsage?.tone, "var(--ra-stream-healthy)");
-});
-
-test("closed IBKR trigger shows settling line churn without hard drift tone", () => {
-  const model = buildHeaderIbkrTriggerModel({
-    connection: readyConnection,
-    runtimeDiagnostics: null,
-    runtimeError: null,
-    lineUsageSnapshot: {
-      ...compactLineUsageSnapshot,
-      drift: {
-        reconciliation: {
-          status: "settling",
-          settling: true,
-          apiLineCount: 200,
-          bridgeLineCount: 200,
-          matchedLineCount: 134,
-          apiOnlyLineCount: 66,
-          bridgeOnlyLineCount: 66,
-          persistentApiOnlyLineCount: 0,
-          persistentBridgeOnlyLineCount: 0,
-        },
-      },
-    },
-  });
-
-  assert.equal(model.lineUsage?.drift?.status, "settling");
-  assert.equal(model.lineUsage?.drift?.state, "checking");
-  assert.equal(model.lineUsage?.drift?.tone, "var(--ra-stream-checking)");
-});
-
-test("closed IBKR trigger does not fall back to app demand when bridge usage is unavailable", () => {
-  const model = buildHeaderIbkrTriggerModel({
-    connection: readyConnection,
-    runtimeDiagnostics: null,
-    runtimeError: null,
-    lineUsageSnapshot: {
-      admission: {
-        activeLineCount: 2,
-        budget: {
-          maxLines: 200,
-        },
-      },
-      bridge: {
-        activeLineCount: null,
-        lineBudget: null,
-        remainingLineCount: null,
-        error: "HTTP 502 Bad Gateway: error code: 502",
-      },
-    },
-  });
-
-  assert.equal(model.lineUsage?.summary, "2 of 200");
-  assert.equal(model.compactLineUsage?.summary, "—");
 });
 
 test("closed IBKR trigger treats unreachable backed off bridge health as offline", () => {
@@ -281,7 +145,6 @@ test("open IBKR popover labels active bridge health checks as pending, not serve
       },
     },
     runtimeError: null,
-    lineUsageSnapshot: null,
   });
 
   const gatewayTile = model.tiles.find((tile) => tile.label === "Gateway");
@@ -376,7 +239,6 @@ test("open IBKR popover does not call active bridge health backoff server offlin
       },
     },
     runtimeError: null,
-    lineUsageSnapshot: null,
   });
 
   const gatewayTile = model.tiles.find((tile) => tile.label === "Gateway");
@@ -428,232 +290,6 @@ test("closed IBKR trigger still marks an unreachable inactive bridge offline", (
   assert.equal(model.issue.severity, "error");
 });
 
-test("line usage rows display shared app headroom instead of per-pool ceilings", () => {
-  const normalized = normalizeAdmissionDiagnostics({
-    activeLineCount: 5,
-    grossActiveLineCount: 30,
-    accountMonitorLineCount: 5,
-    flowScannerLineCount: 25,
-    automationExecutionLineCount: 0,
-    automationLineCount: 0,
-    accountMonitor: {
-      neededLineCount: 5,
-      coveredLineCount: 5,
-    },
-    budget: {
-      maxLines: 200,
-      flowScannerLineCap: 200,
-    },
-    pressure: {
-      activeLineCount: 5,
-      grossActiveLineCount: 30,
-    },
-    poolUsage: {
-      automation: {
-        id: "automation",
-        activeLineCount: 0,
-        maxLines: 200,
-        effectiveMaxLines: 200,
-        remainingLineCount: 200,
-      },
-      "account-monitor": {
-        id: "account-monitor",
-        activeLineCount: 5,
-        maxLines: 200,
-        effectiveMaxLines: 200,
-        remainingLineCount: 195,
-      },
-      visible: {
-        id: "visible",
-        activeLineCount: 0,
-        maxLines: 200,
-        effectiveMaxLines: 200,
-        remainingLineCount: 200,
-      },
-      "flow-scanner": {
-        id: "flow-scanner",
-        activeLineCount: 25,
-        maxLines: 200,
-        effectiveMaxLines: 195,
-        remainingLineCount: 170,
-      },
-    },
-  });
-
-  const rows = Object.fromEntries(normalized.rows.map((row) => [row.id, row]));
-
-  assert.equal(rows.visible.label, "Trade Options Chain");
-  assert.deepEqual(
-    {
-      active: rows["account-monitor"].displayActive,
-      usable: rows["account-monitor"].displayAvailable,
-      headroom: rows["account-monitor"].displayFree,
-    },
-    { active: 5, usable: 5, headroom: 0 },
-  );
-  assert.deepEqual(
-    {
-      active: rows.visible.displayActive,
-      usable: rows.visible.displayAvailable,
-      headroom: rows.visible.displayFree,
-    },
-    { active: 0, usable: 195, headroom: 195 },
-  );
-  assert.deepEqual(
-    {
-      active: rows["flow-scanner"].displayActive,
-      usable: rows["flow-scanner"].displayAvailable,
-      headroom: rows["flow-scanner"].displayFree,
-    },
-    { active: 25, usable: 195, headroom: 170 },
-  );
-  assert.deepEqual(
-    {
-      active: rows.total.displayActive,
-      usable: rows.total.displayAvailable,
-      headroom: rows.total.displayFree,
-    },
-    { active: 5, usable: 200, headroom: 195 },
-  );
-  assert.equal(normalized.total.grossActiveLineCount, 30);
-});
-
-test("line usage warning count ignores expected scanner rotation demotions", () => {
-  const normalized = normalizeAdmissionDiagnostics({
-    activeLineCount: 200,
-    budget: {
-      maxLines: 200,
-    },
-    counters: {
-      "flow-scanner-live": {
-        admitted: 300,
-        rejected: 0,
-        demoted: 270,
-        released: 0,
-        expired: 0,
-        fallback: 0,
-      },
-    },
-    recentEvents: [
-      {
-        action: "demoted",
-        reason: "flow_scanner_rotated",
-        intent: "flow-scanner-live",
-        pool: "flow-scanner",
-      },
-      {
-        action: "demoted",
-        reason: "flow_scanner_underlying_rotated",
-        intent: "flow-scanner-live",
-        pool: "flow-scanner",
-      },
-    ],
-  });
-
-  assert.equal(normalized.warnings, 0);
-  assert.equal(normalized.total.streamState, "capacity-limited");
-});
-
-test("line usage warning count keeps real recent admission failures", () => {
-  const normalized = normalizeAdmissionDiagnostics({
-    activeLineCount: 199,
-    budget: {
-      maxLines: 200,
-    },
-    counters: {
-      "flow-scanner-live": {
-        admitted: 300,
-        rejected: 0,
-        demoted: 270,
-        released: 0,
-        expired: 0,
-        fallback: 0,
-      },
-    },
-    recentEvents: [
-      {
-        action: "rejected",
-        reason: "budget",
-        intent: "flow-scanner-live",
-        pool: "flow-scanner",
-      },
-    ],
-  });
-
-  assert.equal(normalized.warnings, 1);
-});
-
-test("Trade Options Chain demand is derived from live allocation, not budget defaults", () => {
-  const normalized = normalizeAdmissionDiagnostics({
-    activeLineCount: 0,
-    budget: {
-      maxLines: 200,
-      visibleOptionQuoteLineReserve: 41,
-      targetFillLines: 200,
-    },
-    poolUsage: {
-      visible: {
-        id: "visible",
-        activeLineCount: 0,
-        maxLines: 200,
-        effectiveMaxLines: 200,
-        remainingLineCount: 200,
-      },
-      "flow-scanner": {
-        id: "flow-scanner",
-        activeLineCount: 0,
-        maxLines: 200,
-        effectiveMaxLines: 200,
-        remainingLineCount: 200,
-      },
-    },
-  });
-
-  assert.equal(normalized.allocation.tradeOptionsChainReserveLineCount, null);
-  assert.equal(normalized.allocation.optionReserveLineCount, null);
-});
-
-test("account monitor needed count falls back to warm-up target demand", () => {
-  const normalized = normalizeAdmissionDiagnostics(
-    {
-      activeLineCount: 0,
-      accountMonitorLineCount: 0,
-      accountMonitor: {
-        neededLineCount: 0,
-        coveredLineCount: 0,
-      },
-      budget: {
-        maxLines: 200,
-        accountMonitorLineCap: 200,
-      },
-      poolUsage: {
-        "account-monitor": {
-          id: "account-monitor",
-          activeLineCount: 0,
-          maxLines: 200,
-          effectiveMaxLines: 200,
-          remainingLineCount: 200,
-        },
-      },
-    },
-    {
-      accountMonitor: {
-        targetLineCount: 8,
-        pendingLineCount: 8,
-      },
-      warmup: {
-        accountTargetLineCount: 8,
-        accountPendingLineCount: 8,
-      },
-    },
-  );
-
-  const rows = Object.fromEntries(normalized.rows.map((row) => [row.id, row]));
-
-  assert.equal(rows["account-monitor"].needed, 8);
-  assert.equal(rows["account-monitor"].covered, 0);
-  assert.equal(rows["account-monitor"].detail, "0 covered of 8 needed");
-});
 
 test("closed IBKR trigger model surfaces live Massive provider status", () => {
   // Regression: the trigger model used to hardcode massive:null, so the
@@ -700,7 +336,6 @@ test("open IBKR popover model keeps detailed stream diagnostics", () => {
     },
     runtimeDiagnostics: null,
     runtimeError: null,
-    lineUsageSnapshot: null,
   });
 
   const streamTile = model.tiles.find((tile) => tile.label === "Stream");

@@ -1,10 +1,6 @@
 import { useCallback, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { getRuntimeDiagnostics } from "@workspace/api-client-react";
-import {
-  IBKR_LINE_USAGE_FALLBACK_POLL_INTERVAL_MS,
-  useIbkrLineUsageSnapshot,
-} from "./useIbkrLineUsageSnapshot.js";
 import { useBrokerStreamFreshnessSnapshot } from "./live-streams";
 import { useFlowScannerControlState } from "./marketFlowStore";
 import { buildRuntimeControlSnapshot } from "./runtimeControlModel.js";
@@ -25,11 +21,6 @@ export const useRuntimeControlSnapshot = ({
   runtimeDiagnosticsEnabled = true,
   runtimeDiagnosticsQueryKey = "runtime-control",
   runtimeDiagnosticsRefetchInterval = 5_000,
-  lineUsageSnapshot = null,
-  lineUsageEnabled = true,
-  lineUsageStreamEnabled = true,
-  lineUsagePollInterval = IBKR_LINE_USAGE_FALLBACK_POLL_INTERVAL_MS,
-  lineUsageDetail = "compact",
   workloadStats = null,
   hydrationStats = null,
   memoryPressure = null,
@@ -50,19 +41,6 @@ export const useRuntimeControlSnapshot = ({
     staleTime: Math.min(2_000, runtimeDiagnosticsRefetchInterval),
   });
 
-  const {
-    lineUsageSnapshot: effectiveLineUsage,
-    loading: lineUsageLoading,
-    error: lineUsageError,
-    reload: reloadLineUsage,
-  } = useIbkrLineUsageSnapshot({
-    enabled: active && lineUsageEnabled,
-    lineUsageSnapshot,
-    lineUsageStreamEnabled,
-    lineUsagePollInterval,
-    lineUsageDetail,
-  });
-
   const brokerStreamFreshness = useBrokerStreamFreshnessSnapshot(active);
   const flowScannerControl = useFlowScannerControlState({ subscribe: active });
   const effectiveRuntimeDiagnostics =
@@ -71,7 +49,6 @@ export const useRuntimeControlSnapshot = ({
     () =>
       buildRuntimeControlSnapshot({
         runtimeDiagnostics: effectiveRuntimeDiagnostics,
-        lineUsageSnapshot: effectiveLineUsage,
         brokerStreamFreshness,
         flowScannerControl,
         workloadStats,
@@ -80,7 +57,6 @@ export const useRuntimeControlSnapshot = ({
       }),
     [
       brokerStreamFreshness,
-      effectiveLineUsage,
       effectiveRuntimeDiagnostics,
       flowScannerControl,
       hydrationStats,
@@ -94,32 +70,20 @@ export const useRuntimeControlSnapshot = ({
     if (shouldFetchRuntimeDiagnostics) {
       pending.push(runtimeDiagnosticsQuery.refetch());
     }
-    if (active && lineUsageEnabled && !lineUsageSnapshot) {
-      pending.push(reloadLineUsage().catch(() => null));
-    }
     return Promise.all(pending);
   }, [
-    active,
-    lineUsageEnabled,
-    lineUsageSnapshot,
-    reloadLineUsage,
     runtimeDiagnosticsQuery,
     shouldFetchRuntimeDiagnostics,
   ]);
 
   return {
     snapshot,
-    lineUsage: snapshot.lineUsage,
     streams: snapshot.streams,
     flowScanner: snapshot.flowScanner,
     runtimeDiagnostics: effectiveRuntimeDiagnostics,
-    lineUsageSnapshot: effectiveLineUsage,
-    loading:
-      runtimeDiagnosticsQuery.isLoading ||
-      lineUsageLoading,
+    loading: runtimeDiagnosticsQuery.isLoading,
     runtimeError: runtimeDiagnosticsQuery.error || null,
-    lineUsageError,
-    error: runtimeDiagnosticsQuery.error || lineUsageError,
+    error: runtimeDiagnosticsQuery.error || null,
     reload,
   };
 };

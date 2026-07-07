@@ -627,21 +627,6 @@ const writeAccountWorkspaceDefault = (key, value) => {
   } catch {}
 };
 
-const summarizeLineOwnerClassesForTiming = (ownerClasses) => {
-  const summaries = ownerClasses?.summaries || {};
-  return Object.fromEntries(
-    [
-      "account-monitor",
-      "visible",
-      "flow-scanner",
-      "automation",
-    ].map((key) => [
-      key,
-      Number(summaries[key]?.activeLineCount || 0),
-    ]),
-  );
-};
-
 const ShadowWatchlistBacktestPanel = ({
   mutation,
   currency,
@@ -1473,13 +1458,7 @@ const AccountScreenInner = ({
         accountPrimaryReady,
     ),
     runtimeDiagnosticsEnabled: false,
-    lineUsageEnabled: isVisible,
-    lineUsageStreamEnabled: isVisible,
-    lineUsagePollInterval: 10_000,
   });
-  const accountWarmupPending = Boolean(
-    accountRuntimeControl.lineUsage?.warmup?.accountPendingLineCount > 0,
-  );
   const markAccountTiming = useCallback((stage, detail) => {
     if (accountTimingStagesRef.current.has(stage)) {
       return;
@@ -1493,22 +1472,11 @@ const AccountScreenInner = ({
     }
     markAccountTiming("route-module-loaded");
   }, [isVisible, markAccountTiming]);
-  const accountTimingDetail = useMemo(() => {
-    const lineUsage = accountRuntimeControl.lineUsage || {};
-    return {
-      bridgeActiveLineCount: lineUsage.bridge?.activeLineCount ?? null,
-      bridgeLineBudget: lineUsage.bridge?.lineBudget ?? null,
-      ownerClasses: summarizeLineOwnerClassesForTiming(lineUsage.ownerClasses),
-    };
-  }, [
-    accountRuntimeControl.lineUsage,
-  ]);
   useEffect(() => {
     if (!isVisible || !accountPrimaryReady) {
       return;
     }
     markAccountTiming("primary-data-ready", {
-      ...accountTimingDetail,
       source: accountPageStreamFreshness.accountPrimaryFresh
         ? "stream"
         : "rest-fallback",
@@ -1516,7 +1484,6 @@ const AccountScreenInner = ({
   }, [
     accountPrimaryReady,
     accountPageStreamFreshness.accountPrimaryFresh,
-    accountTimingDetail,
     isVisible,
     markAccountTiming,
   ]);
@@ -1525,7 +1492,6 @@ const AccountScreenInner = ({
       return;
     }
     markAccountTiming("derived-data-ready", {
-      ...accountTimingDetail,
       source: accountPageStreamFreshness.accountDerivedFresh
         ? "stream"
         : "rest-fallback",
@@ -1533,7 +1499,6 @@ const AccountScreenInner = ({
   }, [
     accountDerivedReady,
     accountPageStreamFreshness.accountDerivedFresh,
-    accountTimingDetail,
     isVisible,
     markAccountTiming,
   ]);
@@ -1542,13 +1507,11 @@ const AccountScreenInner = ({
       buildAccountRefreshPolicy({
         isVisible,
         accountPageStreamFresh: accountPageStreamFreshness.accountPrimaryFresh,
-        accountWarmupPending,
         accountStreamFresh: brokerStreamFreshness.accountFresh,
         orderStreamFresh: brokerStreamFreshness.orderFresh,
         shadowMode,
       }),
     [
-      accountWarmupPending,
       accountPageStreamFreshness.accountPrimaryFresh,
       brokerStreamFreshness.accountFresh,
       brokerStreamFreshness.orderFresh,

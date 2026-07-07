@@ -213,7 +213,6 @@ export const buildIbkrConnectionSnapshot = ({
   return {
     available: activityPresent,
     activityPresent,
-    lineUsageEnabled: Boolean(configured || activityPresent),
     source: "session",
     runtimeDiagnostics: {
       timestamp: session?.timestamp || new Date(nowMs).toISOString(),

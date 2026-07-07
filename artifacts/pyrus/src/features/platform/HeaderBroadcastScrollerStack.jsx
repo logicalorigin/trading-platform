@@ -1514,9 +1514,6 @@ export const HeaderBroadcastScrollerStack = memo(({
   const flowRuntimeControl = useRuntimeControlSnapshot({
     enabled: Boolean(enabled && !safeQaMode && broadScanEnabled),
     runtimeDiagnosticsEnabled: false,
-    lineUsageEnabled: false,
-    lineUsageStreamEnabled: false,
-    lineUsagePollInterval: 10_000,
   });
   const broadScanRuntimeActive = Boolean(
     broadScanOwnerActive || flowRuntimeControl.flowScanner?.active,

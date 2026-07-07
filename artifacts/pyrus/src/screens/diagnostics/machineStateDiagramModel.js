@@ -310,24 +310,6 @@ const streamFreshnessNode = ({ id, label, lane, stream, nowMs, observedAt }) => 
   });
 };
 
-const statusFromLineUsage = (lineUsage) => {
-  const record = safeRecord(lineUsage);
-  const state = firstString(record.streamState, record.state).toLowerCase();
-  const used = firstFiniteNumber(record.used, record.activeLineCount);
-  const cap = firstFiniteNumber(record.cap, record.effectiveCap, record.maxLines);
-  if (["capacity-limited", "limited", "degraded", "protected"].includes(state)) {
-    return "degraded";
-  }
-  if (["checking", "warming", "pending"].includes(state)) return "checking";
-  if (state === "healthy") return "healthy";
-  if (Number.isFinite(used) && Number.isFinite(cap) && cap > 0) {
-    const ratio = used / cap;
-    if (ratio >= 0.85) return "degraded";
-    return "healthy";
-  }
-  return "unknown";
-};
-
 const statusFromProviderRecord = (provider) => {
   const record = safeRecord(provider);
   const rest = safeRecord(record.rest);
@@ -560,15 +542,6 @@ const buildSnapTradeBrokerConnectionNodes = ({
     );
 };
 
-const lineUsageDetail = (lineUsage) => {
-  const record = safeRecord(lineUsage);
-  const used = firstFiniteNumber(record.used, record.activeLineCount);
-  const cap = firstFiniteNumber(record.cap, record.effectiveCap, record.maxLines);
-  const free = firstFiniteNumber(record.free, record.displayFree);
-  const detail = `${formatCount(used)} of ${formatCount(cap)}`;
-  return free == null ? detail : `${detail} / ${formatCount(free)} free`;
-};
-
 const admissionNode = ({ latest, memoryPressureState, footerSignal, observedAt }) => {
   const resourcePressureSnapshot = snapshotBySubsystem(latest, "resource-pressure");
   const resourceMetrics = safeRecord(resourcePressureSnapshot?.metrics);
@@ -789,11 +762,6 @@ export const MACHINE_STATE_GROUPS = Object.freeze([
     children: Object.freeze(["market-equities", "market-options"]),
   },
   {
-    id: "trade",
-    label: "Trade Chain",
-    children: Object.freeze(["trade-chain"]),
-  },
-  {
     id: "flow",
     label: "Flow",
     children: Object.freeze(["flow-scanner"]),
@@ -819,7 +787,6 @@ export const MACHINE_STATE_GROUPS = Object.freeze([
     children: Object.freeze([
       "account-stream",
       "order-stream",
-      "position-quotes",
       "account-view",
     ]),
   },
@@ -1096,7 +1063,6 @@ export const buildMachineStateDiagramModel = ({
     }
   }
   const runtimeSnapshot = runtimeSnapshotFrom(runtimeControl);
-  const lineUsage = safeRecord(runtimePart(runtimeControl, "lineUsage"));
   const streams = safeRecord(runtimePart(runtimeControl, "streams"));
   const flowScanner = safeRecord(runtimePart(runtimeControl, "flowScanner"));
   const runtimeMassive = safeRecord(runtimePart(runtimeControl, "massive"));
@@ -1210,19 +1176,6 @@ export const buildMachineStateDiagramModel = ({
       safeRecord(streams.order).lastEventAt != null);
   const massiveObserved = hasRecordKeys(massiveRecord);
   const massiveStatus = statusFromProviderRecord(massiveRecord);
-  const accountMonitorUsage = safeRecord(lineUsage.accountMonitor);
-  const shadowAccountUsage = safeRecord(lineUsage.shadowAccount);
-  const flowScannerUsage = safeRecord(lineUsage.flowScanner);
-  // The live lineUsage payload exposes automation and the Trade Options Chain
-  // pool only under lineUsage.pools (runtimeControlModel.js:1455-1474); the
-  // top-level keys exist in fixtures/legacy shapes only.
-  const linePools = safeRecord(lineUsage.pools);
-  const automationUsage = hasRecordKeys(safeRecord(lineUsage.automation))
-    ? safeRecord(lineUsage.automation)
-    : safeRecord(linePools.automation);
-  const tradeChainUsage = hasRecordKeys(safeRecord(linePools.visible))
-    ? safeRecord(linePools.visible)
-    : safeRecord(lineUsage.visible);
   const gexRecord = safeRecord(gexClientState);
   const gexQueryCount = firstFiniteNumber(gexRecord.queryCount);
   const gexUpdatedAgeMs =
@@ -1247,15 +1200,11 @@ export const buildMachineStateDiagramModel = ({
   const sessionQuiet = flowScanner.sessionBlockedReason === "market-session-quiet";
   const flowScannerStatus = sessionQuiet
     ? "idle"
-    : worstStatus(
-        statusFromLineUsage(flowScannerUsage),
-        flowScanner.enabled && !flowScanner.active ? "checking" : "unknown",
-      );
-  const liveQuoteStatus = statusFromLineUsage(accountMonitorUsage);
-  const shadowQuoteStatus = statusFromLineUsage(shadowAccountUsage);
-  const positionQuoteStatus = worstStatus(liveQuoteStatus, shadowQuoteStatus);
-  const positionQuoteObserved =
-    hasRecordKeys(accountMonitorUsage) || hasRecordKeys(shadowAccountUsage);
+    : flowScanner.active
+      ? "healthy"
+      : flowScanner.enabled
+        ? "checking"
+        : "unknown";
   const accountProbeStatus = statusFromSnapshot(accountSnapshot);
   const orderProbeStatus = statusFromSnapshot(orderSnapshot);
   const accountViewStatus = worstStatus(
@@ -1391,7 +1340,6 @@ export const buildMachineStateDiagramModel = ({
           ? "healthy"
           : "unknown",
         algoWorkerStatus,
-        statusFromLineUsage(automationUsage),
       )
     : "unknown";
   const orderFailureCount = firstFiniteNumber(orderMetrics.failureCount);
@@ -1452,45 +1400,6 @@ export const buildMachineStateDiagramModel = ({
     }),
     accountStreamNode,
     orderStreamNode,
-    makeNode({
-      id: "position-quotes",
-      label: "Position Quotes",
-      lane: "Account & Trading",
-      canonicalState: positionQuoteStatus === "degraded" || positionQuoteStatus === "down"
-        ? "SourceUnavailable"
-        : "Normalized",
-      status: positionQuoteStatus,
-      detail: metricDetail([
-        hasRecordKeys(accountMonitorUsage)
-          ? `live ${lineUsageDetail(accountMonitorUsage)}`
-          : null,
-        hasRecordKeys(shadowAccountUsage)
-          ? `shadow ${lineUsageDetail(shadowAccountUsage)}`
-          : null,
-        firstFiniteNumber(shadowAccountUsage.massiveFallbackLineCount) > 0
-          ? `${formatCount(firstFiniteNumber(shadowAccountUsage.massiveFallbackLineCount))} Massive fallback`
-          : null,
-      ]),
-      observedAt,
-      evidence: positionQuoteObserved ? "observed" : "unknown",
-      source: "runtime",
-      split: {
-        live: {
-          label: "Live",
-          status: liveQuoteStatus,
-          detail: hasRecordKeys(accountMonitorUsage)
-            ? lineUsageDetail(accountMonitorUsage)
-            : "not observed",
-        },
-        shadow: {
-          label: "Shadow",
-          status: shadowQuoteStatus,
-          detail: hasRecordKeys(shadowAccountUsage)
-            ? lineUsageDetail(shadowAccountUsage)
-            : "not observed",
-        },
-      },
-    }),
     makeNode({
       id: "account-view",
       label: "Account View",
@@ -1563,20 +1472,6 @@ export const buildMachineStateDiagramModel = ({
       evidence: marketDataSnapshot ? "observed" : "unknown",
     }),
     makeNode({
-      id: "trade-chain",
-      label: "Trade Chain",
-      lane: "Market / Trade",
-      canonicalState:
-        statusFromLineUsage(tradeChainUsage) === "degraded" ? "AdmissionShed" : "SourceRead",
-      status: statusFromLineUsage(tradeChainUsage),
-      detail: hasRecordKeys(tradeChainUsage)
-        ? `${lineUsageDetail(tradeChainUsage)} chain lines`
-        : "trade chain pool not observed",
-      observedAt,
-      evidence: hasRecordKeys(tradeChainUsage) ? "observed" : "unknown",
-      source: "runtime",
-    }),
-    makeNode({
       id: "flow-scanner",
       label: "Flow Scanner",
       lane: "Flow",
@@ -1596,12 +1491,9 @@ export const buildMachineStateDiagramModel = ({
             : flowScanner.enabled
               ? "waiting"
               : null,
-        hasRecordKeys(flowScannerUsage)
-          ? `${lineUsageDetail(flowScannerUsage)} scanner lines`
-          : null,
       ]),
       observedAt,
-      evidence: Object.keys(flowScanner).length || Object.keys(flowScannerUsage).length
+      evidence: Object.keys(flowScanner).length
         ? "observed"
         : "unknown",
       source: "runtime",
@@ -1679,9 +1571,6 @@ export const buildMachineStateDiagramModel = ({
               ? `${formatCount(gatewayBlockedCount)} gateway blocked`
               : null,
             failureCount > 0 ? `${formatCount(failureCount)} failures` : null,
-            hasRecordKeys(automationUsage)
-              ? `${lineUsageDetail(automationUsage)} algo lines`
-              : null,
           ])
         : "algo orchestration snapshot not observed",
       observedAt,
@@ -1947,9 +1836,6 @@ export const buildMachineStateDiagramModel = ({
     { from: "massive-feed", to: "market-options", label: "chains/quotes" },
     { from: "massive-feed", to: "flow-scanner", label: "chains/quotes" },
     { from: "massive-feed", to: "gex-projection", label: "option chains" },
-    { from: "massive-feed", to: "position-quotes", label: "equity quote fallback" },
-    { from: "market-equities", to: "position-quotes", label: "stock marks" },
-    { from: "market-options", to: "position-quotes", label: "option marks" },
     { from: "market-equities", to: "signal-engine", label: "bars/quotes" },
     { from: "flow-scanner", to: "signal-engine", label: "flow events" },
     { from: "signal-engine", to: "algo-engine", label: "worker state" },
@@ -1957,12 +1843,10 @@ export const buildMachineStateDiagramModel = ({
     { from: "algo-engine", to: "trade-management", label: "decisions" },
     { from: "account-stream", to: "account-view", label: "account state" },
     { from: "order-stream", to: "account-view", label: "orders/fills" },
-    { from: "position-quotes", to: "account-view", label: "quote marks" },
     { from: "order-stream", to: "trade-management", label: "fills/status" },
     { from: "account-view", to: "trade-management", label: "positions/risk" },
     { from: "market-equities", to: "api-runtime", label: "market model" },
     { from: "market-options", to: "api-runtime", label: "options model" },
-    { from: "trade-chain", to: "api-runtime", label: "chain snapshots" },
     { from: "flow-scanner", to: "api-runtime", label: "flow model" },
     { from: "gex-projection", to: "api-runtime", label: "gex model" },
     { from: "signal-engine", to: "api-runtime", label: "signal model" },

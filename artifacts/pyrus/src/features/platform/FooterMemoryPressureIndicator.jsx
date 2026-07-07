@@ -13,7 +13,6 @@ import { MEMORY_PRESSURE_THRESHOLDS } from "./memoryPressureModel";
 import { buildMemoryPressurePopoverModel } from "./memoryPressurePopoverModel.js";
 import { useMemoryPressurePreferences } from "./memoryPressurePreferences";
 import { buildMemoryPressureFailurePoint } from "./failurePointModel.js";
-import { TRADE_OPTIONS_CHAIN_LABEL } from "./runtimeControlModel";
 
 const PRESSURE_TOKEN_BY_LEVEL = {
   normal: "--ra-pressure-normal",
@@ -192,14 +191,6 @@ const sourceNumber = (value) => {
   return Number.isFinite(number) ? number : null;
 };
 
-const firstSourceNumber = (...values) => {
-  for (const value of values) {
-    const number = sourceNumber(value);
-    if (number !== null) return number;
-  }
-  return null;
-};
-
 const formatSourceCount = (value) =>
   Number.isFinite(value) ? Math.round(value).toLocaleString() : "--";
 
@@ -252,66 +243,6 @@ const streamAgeFillPercent = (ageMs, fallbackPercent) => {
   const ms = sourceNumber(ageMs);
   if (ms === null) return fallbackPercent;
   return Math.round(clamp((ms / 60_000) * 100, 4, 100));
-};
-
-const sourceLevelFromLineUsage = ({ used, cap, limited }) => {
-  if (!Number.isFinite(used) || !Number.isFinite(cap) || cap <= 0) {
-    return "normal";
-  }
-  if (limited) {
-    return "high";
-  }
-  return "normal";
-};
-
-const buildIbkrSourcePressureBar = (runtimeControl) => {
-  const lineUsage = runtimeControl?.lineUsage || {};
-  const bridge = lineUsage.bridge || {};
-  const allocation = lineUsage.allocation || {};
-  const used = sourceNumber(bridge.used);
-  const cap = firstSourceNumber(bridge.effectiveCap, bridge.cap);
-  const computedFree =
-    Number.isFinite(used) && Number.isFinite(cap) ? Math.max(0, cap - used) : null;
-  const free = firstSourceNumber(bridge.free, computedFree);
-  const state = String(
-    bridge.streamState || lineUsage.pressure?.state || "",
-  ).toLowerCase();
-  const limited =
-    Number(lineUsage.warnings) > 0 ||
-    state.includes("limited") ||
-    state.includes("backoff") ||
-    state.includes("stalled");
-  const fillPercent =
-    Number.isFinite(used) && Number.isFinite(cap) && cap > 0
-      ? Math.round(clamp((used / cap) * 100, 0, 100))
-      : 0;
-  const tradeOptionsChainReserveLineCount = firstSourceNumber(
-    allocation.tradeOptionsChainReserveLineCount,
-    lineUsage.pressure?.tradeOptionsChainReserveLineCount,
-  );
-  const tradeOptionsChainReserveDetail =
-    Number.isFinite(tradeOptionsChainReserveLineCount) &&
-    tradeOptionsChainReserveLineCount > 0
-      ? ` · ${formatSourceCount(tradeOptionsChainReserveLineCount)} ${TRADE_OPTIONS_CHAIN_LABEL} active`
-      : "";
-  const level = sourceLevelFromLineUsage({ used, cap, limited });
-  const hasRatio = Number.isFinite(used) && Number.isFinite(cap);
-  const label = hasRatio
-    ? `IBKR ${formatSourceCount(used)}/${formatSourceCount(cap)}`
-    : "IBKR --";
-  const detail = hasRatio
-    ? `IBKR ${formatSourceCount(used)} of ${formatSourceCount(cap)}${
-        Number.isFinite(free) ? ` · ${formatSourceCount(free)} free` : ""
-      }${tradeOptionsChainReserveDetail}`
-    : "IBKR line usage unavailable";
-
-  return {
-    key: "ibkr",
-    level,
-    fillPercent,
-    label,
-    detail,
-  };
 };
 
 const normalizeProviderStatus = (status) =>
@@ -475,7 +406,6 @@ const buildMassiveSourcePressureBar = (runtimeControl, nowMs) => {
 };
 
 export const buildApiSourcePressureBars = (runtimeControl, nowMs) => [
-  buildIbkrSourcePressureBar(runtimeControl),
   buildMassiveSourcePressureBar(runtimeControl, nowMs),
 ];
 
