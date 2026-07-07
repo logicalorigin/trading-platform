@@ -1,38 +1,61 @@
-# Session Handoff — 2026-07-05
+# Session Handoff — 2026-07-06
 
 ## Session Metadata
 
-- Session ID: `182a4859-3a9a-4166-a21c-d05fec4e58f6`
-- Saved At (MT): `2026-07-05 18:10:03 MDT`
-- Saved At (UTC): `2026-07-06T00:10:03.961Z`
-- Summary: 2026-07-05 18:10:03 MDT | 182a4859-3a9a-4166-a21c-d05fec4e58f6 | please diagnose the reason for the replit container recent moments ago
+- Session ID: `adc68b55-16da-434d-9a66-fc4a4b40af90`
+- Saved At (MT): `2026-07-06 11:58:18 MDT`
+- Saved At (UTC): `2026-07-06T17:58:18.366Z`
+- Summary: 2026-07-06 11:58:18 MDT | adc68b55-16da-434d-9a66-fc4a4b40af90 | please find the 5 most recent sessions that dropped (recent session handoffs and work)
 - Runtime: `claude`
 - Repo Root: `/home/runner/workspace`
 - Thread CWD: `/home/runner/workspace`
-- Transcript Path: `/home/runner/.claude/projects/-home-runner-workspace/182a4859-3a9a-4166-a21c-d05fec4e58f6.jsonl`
+- Transcript Path: `/home/runner/.claude/projects/-home-runner-workspace/adc68b55-16da-434d-9a66-fc4a4b40af90.jsonl`
 - Branch: `main`
-- HEAD: `3609d1518fec3a53948cd757322ace47bfa694fe`
-- Latest Commit: `test(market-data): guard the write-side epoch-grid flooring invariant`
+- HEAD: `9ec12d78f1109fb85d065e54b4a8315d9c09734c`
+- Latest Commit: `refactor(pyrus): Round-4 #16/#17 — Watchlist "Default" green→accent`
 - Latest Commit Session ID: `unknown`
-- Title: please diagnose the reason for the replit container recent moments ago
+- Title: please find the 5 most recent sessions that dropped (recent session handoffs and work)
 - Model: `claude-opus-4-8`
 - Reasoning Effort: `unknown`
 - Tokens Used: `unknown`
 
 ## Current User Request
 
-please diagnose the reason for the replit container recent moments ago
+please find the 5 most recent sessions that dropped (recent session handoffs and work)
 
 ## Prior Handoffs
 
+- `SESSION_HANDOFF_2026-07-06_e89674ed-76b4-4979-a13d-ffb784f9a28d.md`
+- `SESSION_HANDOFF_2026-07-06_df03e38d-88b8-4467-ab9e-df15f1c03a3c.md`
+- `SESSION_HANDOFF_2026-07-06_ca9f4967-61a3-4e1c-b09d-9a7b0f0892d6.md`
+- `SESSION_HANDOFF_2026-07-06_907ad490-5048-4d4b-826d-27a74395aee7.md`
+- `SESSION_HANDOFF_2026-07-06_7013d59a-1551-44f7-aa2e-661e31ed2316.md`
+- `SESSION_HANDOFF_2026-07-06_662a18d9-e915-4a80-a97a-4392ec3aee60.md`
+- `SESSION_HANDOFF_2026-07-06_63e4317b-e5a6-4cd6-9caf-0a7fd723cf6a.md`
+- `SESSION_HANDOFF_2026-07-06_24557ffb-3bb2-44c3-9eb9-4db3775df4b6.md`
+- `SESSION_HANDOFF_2026-07-06_242a10dc-de69-44b3-b08c-00c1d0471796.md`
+- `SESSION_HANDOFF_2026-07-06_13073e07-2d43-4d89-8e44-bed92d9f0362.md`
 - `SESSION_HANDOFF_2026-07-05_d6cc55a2-d861-4e14-8fb4-556e5452bb5f.md`
+- `SESSION_HANDOFF_2026-07-05_d378bab2-87ad-4e12-8e67-1acd7567bb83.md`
 - `SESSION_HANDOFF_2026-07-05_bd9a1871-55fc-460c-a1d2-83b4331f5e91.md`
 - `SESSION_HANDOFF_2026-07-05_b9dafa30-72f6-415e-a500-95045ce2a39e.md`
 - `SESSION_HANDOFF_2026-07-05_ab9da6d4-d271-40eb-b78d-7f1b87a9f36e.md`
 - `SESSION_HANDOFF_2026-07-05_a5ff26eb-0eb2-4088-9960-2f6966fad2e4.md`
+- `SESSION_HANDOFF_2026-07-05_82f9cebc-58c7-4ae0-a1ac-be06b4787f96.md`
+- `SESSION_HANDOFF_2026-07-05_7943526c-b016-4b6b-87e3-c12b3b04f503.md`
+- `SESSION_HANDOFF_2026-07-05_6765f941-f062-4a70-b852-fb42f1d5c54a.md`
+- `SESSION_HANDOFF_2026-07-05_627f9c4a-d576-41ba-be7b-345670c3b6f6.md`
+- `SESSION_HANDOFF_2026-07-05_60473da9-4bce-4a67-ab18-ff1acaca29de.md`
+- `SESSION_HANDOFF_2026-07-05_5de488c2-8ff8-4413-8789-b3f9b29eab00.md`
+- `SESSION_HANDOFF_2026-07-05_5c7aa51d-8dd1-4203-b82f-9e43ad57fbb8.md`
 - `SESSION_HANDOFF_2026-07-05_45ad4715-669e-4d4b-b117-9efbb977226a.md`
+- `SESSION_HANDOFF_2026-07-05_3031a953-6144-4a63-ae27-9f21173d48f6.md`
 - `SESSION_HANDOFF_2026-07-05_300e9ad4-653e-489f-bdf4-3290b8f796c8.md`
+- `SESSION_HANDOFF_2026-07-05_30002be4-9321-42dc-bd0a-424f277061ca.md`
 - `SESSION_HANDOFF_2026-07-05_1ffe77d2-bb80-4068-b903-49134e66784f.md`
+- `SESSION_HANDOFF_2026-07-05_182a4859-3a9a-4166-a21c-d05fec4e58f6.md`
+- `SESSION_HANDOFF_2026-07-05_134896bd-a1eb-47f1-b0ab-d6bca2e6be12.md`
+- `SESSION_HANDOFF_2026-07-05_113d7d20-310a-4f34-8886-b650d04d28d0.md`
 - `SESSION_HANDOFF_2026-07-05_0a16f7cc-0030-4762-8ef5-fd97147754d7.md`
 - `SESSION_HANDOFF_2026-07-04_fa22886b-de00-47f1-8f95-0789b04b265b.md`
 - `SESSION_HANDOFF_2026-07-04_f69295c0-a190-4633-bcb0-971124d597c4.md`
@@ -554,38 +577,38 @@ please diagnose the reason for the replit container recent moments ago
 
 ## Recent User Messages
 
-- `2026-07-05 15:52:28 MDT` short and simple/laymans explanation for me please
-- `2026-07-05 15:57:45 MDT` lets take a look at the main thing you found
-- `2026-07-05 16:07:47 MDT` <task-notification> <task-id>w1siywz9i</task-id> <tool-use-id>toolu_01BmSkZDvBcKt5jMMnMPpgg1</tool-use-id> <output-file>/tmp/claude-1000/-home-runner-workspace/182a4859-3a9a-4166-a21c-d05fec4e58f6/tasks/w1siywz9i.output</output-file> <status>completed</status> <summary>Dynamic workflow "Determine what drives the 2.83M/day bar_cache reads, how redundant they are, and the safest highest-leverage fix" completed</summary> <result>{"redundancy":{"fallbackIsRareOrCommon":"RARE (structurally a miss-path), but UNCOUNTED so not empirically provable from current diagnostics. The per-symbol pg fallback in readStoredBars (signal-monitor-local-bar-cache.ts:908-925) is only reached when (a) loadSignalMonitorLocalBarCache's memory-first gate misses (memory rolled bars &lt; limit, :1333-1335), AND (b) no…
-- `2026-07-05 16:11:48 MDT` please take a look at what youve found. use 5 whys approach. you're glossing over things, and accepting bad coding/engineering as fact, when you should be making sure that its sound. examine all aspects, no items is sacred and beyond fixing. do now accept poor performance, seek to impprove it
-- `2026-07-05 16:33:39 MDT` <task-notification> <task-id>w7bu4895a</task-id> <tool-use-id>toolu_013FxLmdNSVMfi2XZh4iBqWY</tool-use-id> <output-file>/tmp/claude-1000/-home-runner-workspace/182a4859-3a9a-4166-a21c-d05fec4e58f6/tasks/w7bu4895a.output</output-file> <status>completed</status> <summary>Dynamic workflow "5-Whys root-cause audit that adversarially challenges every inherited bar_cache/DB constraint and ranks real fixes" completed</summary> <result>{"challenges":[{"key":"timescale","r":{"createExtensionFeasible":"TECHNICALLY YES, but pointless as framed. Privilege is not a blocker: current_user=postgres with rolsuper=t, timescaledb 2.13.0 is available and already in shared_preload_libraries (timescaledb,helium). CREATE EXTENSION timescaledb would run. The blocker is the BUILD: the installed extension is the A…
-- `2026-07-05 16:45:23 MDT` lets get an outside voice/audit of these findigns with a claude agent using /fable-mode and /karpathy-guidelines
-- `2026-07-05 17:11:49 MDT` <task-notification> <task-id>wtennq6za</task-id> <tool-use-id>toolu_018g6cskYazENo2QFo4o3nLM</tool-use-id> <output-file>/tmp/claude-1000/-home-runner-workspace/182a4859-3a9a-4166-a21c-d05fec4e58f6/tasks/wtennq6za.output</output-file> <status>completed</status> <summary>Dynamic workflow "Adversarial fact-first audit: 4 fresh agents reproduce evidence for each claim, then skeptical synthesis" completed</summary> <result>{"verifiers":[{"key":"phase1","claims":"P1, P2","r":{"p1":{"verdict":"PARTIALLY-TRUE (core mechanism CONFIRMED; the \"behavior-identical for all live callers\" sub-claim is REFUTED for the marketing dashboard caller)","evidence":"CONFIRMED mechanism: automation.ts:1198 includePayload=input.includePayload===true; ledgerColumns (1207-1219) and diagnosticsColumns (1220-1232) ea…
-- `2026-07-05 17:19:03 MDT` laymans on each of these please
-- `2026-07-05 17:21:08 MDT` i want you to do all of these, one at a time, checkint your work and committing on main after each fix
-- `2026-07-05 17:44:20 MDT` lets check item 5 (duplicates) to make sure that we're safe to remove, and we also want to figure out what is causing the duplicate write and solve it
-- `2026-07-05 17:54:50 MDT` <task-notification> <task-id>wv1ap2noi</task-id> <tool-use-id>toolu_01EYDcUG2taYxmDVSub5DfSW</tool-use-id> <output-file>/tmp/claude-1000/-home-runner-workspace/182a4859-3a9a-4166-a21c-d05fec4e58f6/tasks/wv1ap2noi.output</output-file> <status>completed</status> <summary>Dynamic workflow "Prove off-grid bar_cache rows are safe to delete AND root-cause + fix the write path creating them" completed</summary> <result>{"data":{"offGridCounts":"Off-grid = rows where extract(epoch from starts_at)::bigint % stepSeconds &lt;&gt; 0 (step: 1m=60,5m=300,15m=900,1h=3600). Counts as offgrid/total per (symbol,tf,source), all off-grid on source='massive-history':\nSPY 5m: 4220/16818; SPY 15m: 2200/16756.\nQQQ 5m: 2496/14981; QQQ 15m: 1248/5537.\nAAPL 5m: 1800/14326; AAPL 15m: 1248/5537.\nZERO off-grid at…
-- `2026-07-05 18:07:19 MDT` no need to back up, go ahead and purge
+- `2026-07-06 09:52:36 MDT` <task-notification> <task-id>ab0333f54efd6be03</task-id> <tool-use-id>toolu_01EHNpAiR2oosQi4dFWDAc1B</tool-use-id> <output-file>/tmp/claude-1000/-home-runner-workspace/adc68b55-16da-434d-9a66-fc4a4b40af90/tasks/ab0333f54efd6be03.output</output-file> <status>completed</status> <summary>Agent "Map frontend auth/boot surface for Slice 8" finished</summary> <note>A task-notification fires each time this agent stops with no live background children of its own. The user can send it another message and resume it, so the same task-id may notify more than once.</note> <result>I now have a complete picture. Here is the precise map. --- # PYRUS Frontend Login-Gate Map (Slice 8) All paths under `/home/runner/workspace/artifacts/pyrus/`. ## 1. App boot / root render The mount chain (each is a lazy bou…
+- `2026-07-06 09:54:41 MDT` checking in
+- `2026-07-06 10:04:52 MDT` <task-notification> <task-id>w8hmqwk1h</task-id> <tool-use-id>toolu_01RHb268F5qogbyTakvRrhTN</tool-use-id> <output-file>/tmp/claude-1000/-home-runner-workspace/adc68b55-16da-434d-9a66-fc4a4b40af90/tasks/w8hmqwk1h.output</output-file> <status>completed</status> <summary>Dynamic workflow "Adversarial audit of multi-user Slice 7 (entitlements/authz layer, commit d25b6901)" completed</summary> <result>{"surviving":[{"title":"No regression test locks trade-submit routes as admin-only; existing 'reject non-admin' test would still pass if they were downgraded to an entitlement guard","dim":"coverage-simplify","category":"test-coverage","file":"artifacts/api-server/src/routes/broker-execution.test.ts","line":196,"severity":"medium","verdict":"CONFIRMED","detail":"The trade-submit routes /accounts…
+- `2026-07-06 10:39:56 MDT` you need to check/test the pnl backfilling before you commit. im seeing a timeout, and not seeing the backfilled data
+- `2026-07-06 10:51:53 MDT` [Request interrupted by user for tool use]
+- `2026-07-06 10:52:01 MDT` ask again please
+- `2026-07-06 11:32:08 MDT` <task-notification> <task-id>a993541ea79f7a982</task-id> <tool-use-id>toolu_016jaWb9KKQPTun23u4XhTiP</tool-use-id> <output-file>/tmp/claude-1000/-home-runner-workspace/adc68b55-16da-434d-9a66-fc4a4b40af90/tasks/a993541ea79f7a982.output</output-file> <status>completed</status> <summary>Agent "Map algo page positions container" finished</summary> <note>A task-notification fires each time this agent stops with no live background children of its own. The user can send it another message and resume it, so the same task-id may notify more than once.</note> <result>I have a complete map. Here are the findings. ## ALGO page positions rendering map ### 1. Entry + component tree — which component renders the POSITIONS container - `src/screens/AlgoScreen.jsx:341` — `AlgoScreen` component. Imports `A…
+- `2026-07-06 11:33:02 MDT` <task-notification> <task-id>a85d7d05df213bdcb</task-id> <tool-use-id>toolu_011MjyxkCnKgoRZhbUAMwnog</tool-use-id> <output-file>/tmp/claude-1000/-home-runner-workspace/adc68b55-16da-434d-9a66-fc4a4b40af90/tasks/a85d7d05df213bdcb.output</output-file> <status>completed</status> <summary>Agent "Map SnapTrade account metadata + onboarding" finished</summary> <note>A task-notification fires each time this agent stops with no live background children of its own. The user can send it another message and resume it, so the same task-id may notify more than once.</note> <result>I have a complete picture. Here is the report. --- ## Summary The stored data has **no account-type/category field at all** — crypto/futures/prediction accounts are indistinguishable from equity accounts except by the free-t…
+- `2026-07-06 11:34:45 MDT` we also need to audit the data in the accounts to make sure its right you can lok at etrade to test: Symbol Spot Qty Avg Price Bid / Ask SL TRL Day Unreal Exposure Δ/θ Sig SIVEF 4.87 1,400 3.95 4.87 — / — — Unprotected — Inactive — 0.00% +$1,285 0.00% $6,818 Wt 38.61% — — Trade OPTX 10.71 375 5.39 10.71 — / — — Unprotected — Inactive — 0.00% +$1,992 0.00% $4,014 Wt 22.74% — — Trade FRMI 8/21/26 5 CALL 8.42 10 1.92 3.85 3.60 / 4.10 — Unprotected — Inactive +$0 0.00% +$1,927 +100.20% $3,850 Wt 21.81% Δ.88 θ-.01 — Trade F 9/18/26 14 CALL 13.84 15 1.21 0.93 0.91 / 0.94 — Unprotected — Inactive +$375 +36.23% -$426 -23.50% $1,388 Wt 7.86% Δ.51 θ-.01 — Trade TEM 8/21/26 60 CALL 61.22 1 3.71 7.75 7.50 / 8.00 — Unprotected — Inactive +$50 +6.94% +$404 +109.17% $775 Wt 4.39% Δ.59 θ-.08 — Trade NOK…
+- `2026-07-06 11:52:44 MDT` lets stop the workflow and prepare this session for handoff and clean pikcup by the next agnet
+- `2026-07-06 11:57:49 MDT` [Request interrupted by user]
+- `2026-07-06 11:57:49 MDT` stop. i asked for a handoff with this, not more work
 
 ## Session Activity Summary
 
-- `2026-07-05 12:18:07 MDT` User: please diagnose the reason for the replit container recent moments ago
-- `2026-07-05 12:18:19 MDT` Agent: I'll diagnose this by gathering live runtime evidence first, then trace the root cause. Let me load the diagnostic tools and scout the system state in parallel.
-- `2026-07-05 12:18:21 MDT` Tool: ToolSearch {"query":"select:mcp__pyrus__get_flight_recorder,mcp__pyrus__list_recorder_incidents,mcp__pyrus__get_supervisor_state,m…
-- `2026-07-05 12:18:23 MDT` Tool: Bash echo "=== UPTIME ==="; uptime; echo "=== CONTAINER/PROC1 START ==="; ps -o pid,ppid,etimes,cmd -p 1 2>/dev/null; echo "=== BOOT TIME ==="; cat /proc/stat | gre…
-- `2026-07-05 12:18:26 MDT` Tool: Bash echo "=== dmesg OOM (may be denied in container) ==="; dmesg -T 2>/dev/null | grep -iE "oom|kill|memory|out of memory" | tail -30 || echo "dmesg denied/empty";…
-- `2026-07-05 12:18:28 MDT` Tool: Bash echo "=== Running node/supervisor procs ==="; ps -eo pid,ppid,etimes,rss,cmd --sort=etimes 2>/dev/null | grep -iE "node|runDevApp|supervisor|pyrus" | grep -v g…
-- … 372 lower-signal transcript events omitted …
-- `2026-07-05 18:03:45 MDT` Agent: No worries — let me explain it plainly. ## What "shifted-grid OHLCV" means A price "bar" is one row summarizing a fixed time window — for 5-minute bars, the windows are **10:00–10…
-- `2026-07-05 18:07:19 MDT` User: no need to back up, go ahead and purge
-- `2026-07-05 18:07:44 MDT` Agent: On it — executing the guarded purge for the 6 SPY/QQQ/AAPL slices, one at a time, capturing each delete count and verifying zero off-grid rows remain afterward.
-- `2026-07-05 18:07:44 MDT` Tool: TaskUpdate {"taskId":"10","status":"in_progress"}
-- `2026-07-05 18:07:51 MDT` Tool: Bash cd /home/runner/workspace total=0 for slice in "SPY 5m 300 4220" "SPY 15m 900 2200" "QQQ 5m 300 2496" "QQQ 15m 900 1248" "AAPL 5m 300 1800" "AAPL 15m 900 1248"…
-- `2026-07-05 18:09:05 MDT` Agent: All 6 slices deleted exactly the expected counts (13,212 total) with 0 remaining inline. Now the independent "make sure it's all purged" check the user asked for — I'll re-verify…
-- `2026-07-05 18:09:13 MDT` Tool: Bash cd /home/runner/workspace echo "=== FRESH off-grid + total counts, all timeframes (off-grid must be 0 everywhere; total must equal prior ON-GRID count) ===" pr…
-- `2026-07-05 18:09:35 MDT` Agent: Independent verification is clean: **0 off-grid rows across all 12 slices**, and every purged slice's total exactly equals its prior on-grid count (e.g. SPY 5m 12598 = 16818 − 422…
-- `2026-07-05 18:09:39 MDT` Tool: Bash cd /home/runner/workspace echo "=== live app read of a PURGED slice (SPY 5m) — canonical bars still serve ===" curl -s "http://127.0.0.1:8080/api/bars?symbol=S…
-- `2026-07-05 18:10:01 MDT` Agent: Confirmed — the purge is complete and verified end-to-end: | Check | Result | |---|---| | Deleted (6 slices, guarded) | **13,212** rows, exactly matching the dry-run | | Off-grid…
+- `2026-07-06 09:31:22 MDT` User: please find the 5 most recent sessions that dropped (recent session handoffs and work)
+- `2026-07-06 09:31:33 MDT` Agent: I'll find the most recent session handoffs. Let me gather the data directly.
+- `2026-07-06 09:31:34 MDT` Tool: Bash ls -1t SESSION_HANDOFF_*.md 2>/dev/null | head -20
+- `2026-07-06 09:31:35 MDT` Tool: Bash echo "=== By filename date (newest first) ===" && ls -1 SESSION_HANDOFF_2026-*.md 2>/dev/null | sort -r | head -12
+- `2026-07-06 09:31:44 MDT` Agent: Let me check the authoritative catalog and precise timestamps.
+- `2026-07-06 09:31:45 MDT` Tool: Bash echo "=== MASTER catalog head ===" && head -60 SESSION_HANDOFF_MASTER.md
+- … 360 lower-signal transcript events omitted …
+- `2026-07-06 11:54:09 MDT` Tool: Read /home/runner/workspace/SESSION_HANDOFF_2026-07-06_adc68b55-16da-434d-9a66-fc4a4b40af90.md
+- `2026-07-06 11:55:06 MDT` Agent: The audit pinned the headline bug: **`positionDisplayModel.js:97`** — `buildQuote()` uses an **OR** guard (`bid>0 || ask>0`) then `mid=(bid+ask)/2`, so OPTT's garbage `0.00/5.00`…
+- `2026-07-06 11:55:47 MDT` Tool: Edit /home/runner/workspace/SESSION_HANDOFF_2026-07-06_adc68b55-16da-434d-9a66-fc4a4b40af90.md
+- `2026-07-06 11:56:07 MDT` Agent: Handoff written. Final cleanup + verification pass to ensure a clean pickup:
+- `2026-07-06 11:56:11 MDT` Tool: Bash cd /home/runner/workspace echo "===== stray temp/diag files in repo? (should be none) =====" git status --porcelain | rg -i '__diag|\.mts$|scratch|\.tmp' || ec…
+- `2026-07-06 11:57:21 MDT` Agent: Two things to resolve: a stray temp file I didn't create, and the CURRENT pointer. Let me inspect.
+- `2026-07-06 11:57:24 MDT` Tool: Bash cd /home/runner/workspace echo "===== what is __mint-agent-session.mts (I didn't create this — mine were __diag-*) =====" head -15 artifacts/api-server/__mint-…
+- `2026-07-06 11:57:49 MDT` User: [Request interrupted by user]
+- `2026-07-06 11:57:49 MDT` User: stop. i asked for a handoff with this, not more work
+- `2026-07-06 11:58:10 MDT` Agent: Stopping. The handoff is done — I over-stepped by poking at that stray file. Here's the state: **Handoff prepared** in `SESSION_HANDOFF_2026-07-06_adc68b55-16da-434d-9a66-fc4a4b40…
 
 ## High-Signal Changed Files
 
@@ -597,33 +620,33 @@ please diagnose the reason for the replit container recent moments ago
 - `SESSION_HANDOFF_CURRENT.md`
 - `SESSION_HANDOFF_LIVE_2026-07-03_ibkr-client-portal-hosted-connector.md`
 - `SESSION_HANDOFF_MASTER.md`
+- `artifacts/api-server/src/index.ts`
+- `artifacts/api-server/src/providers/schwab/trader-api-client.ts`
+- `artifacts/api-server/src/routes/broker-execution.test.ts`
+- `artifacts/api-server/src/routes/broker-execution.ts`
+- `artifacts/api-server/src/services/auth-launch.ts`
+- `artifacts/api-server/src/services/background-worker-pressure.test.ts`
+- `artifacts/api-server/src/services/entitlements.test.ts`
+- `artifacts/api-server/src/services/entitlements.ts`
+- `artifacts/api-server/src/services/ibkr-oauth-readiness.test.ts`
+- `artifacts/api-server/src/services/ibkr-oauth-readiness.ts`
+- `artifacts/api-server/src/services/overnight-spot-execution.ts`
+- `artifacts/api-server/src/services/overnight-spot-worker.ts`
+- `artifacts/api-server/src/services/resource-pressure.test.ts`
+- `artifacts/api-server/src/services/resource-pressure.ts`
+- `artifacts/api-server/src/services/signal-monitor-evaluation-worker.ts`
+- `artifacts/api-server/src/services/signal-monitor-local-bar-cache-prefetch.test.ts`
+- `artifacts/api-server/src/services/signal-monitor-local-bar-cache.ts`
 - `artifacts/api-server/src/services/signal-options-automation.ts`
+- `artifacts/api-server/src/services/signal-options-worker.ts`
+- `artifacts/api-server/src/services/snaptrade-account-history.test.ts`
+- `artifacts/api-server/src/services/snaptrade-account-history.ts`
 - `artifacts/mcp-server/src/host/procinfo.test.mjs`
-- `artifacts/mcp-server/src/host/procinfo.ts`
-- `artifacts/pyrus/scripts/flightRecorder.mjs`
-- `artifacts/pyrus/scripts/runDevApp.mjs`
-- `artifacts/pyrus/src/components/platform/signal-language/SignalDots.jsx`
-- `artifacts/pyrus/src/features/backtesting/BacktestingPanels.tsx`
-- `artifacts/pyrus/src/features/flow/ContractDetailInline.jsx`
-- `artifacts/pyrus/src/features/platform/MobileMoreSheet.jsx`
-- `artifacts/pyrus/src/features/research/PhotonicsObservatory.jsx`
-- `artifacts/pyrus/src/features/research/components/ResearchCalendarView.jsx`
-- `artifacts/pyrus/src/features/signals/signalStateFreshness.js`
-- `artifacts/pyrus/src/features/signals/signalStateFreshness.test.mjs`
-- `artifacts/pyrus/src/features/signals/signalsRowModel.js`
-- `artifacts/pyrus/src/features/signals/signalsRowModel.test.mjs`
-- `artifacts/pyrus/src/screens/AccountScreen.jsx`
-- `artifacts/pyrus/src/screens/DiagnosticsScreen.jsx`
-- `artifacts/pyrus/src/screens/FlowScreen.jsx`
-- `artifacts/pyrus/src/screens/GexScreen.jsx`
-- `artifacts/pyrus/src/screens/SettingsScreen.jsx`
-- `artifacts/pyrus/src/screens/SignalsScreen.jsx`
-- `artifacts/pyrus/src/screens/algo/OperationsSignalTable.test.mjs`
 
 ## Repo State Snapshot
 
 ```text
-## main...origin/main [ahead 5]
+## main...origin/main [ahead 4]
  M .env.example
  M CLAUDE.md
  M SESSION_HANDOFF_2026-07-05_182a4859-3a9a-4166-a21c-d05fec4e58f6.md
@@ -632,89 +655,269 @@ please diagnose the reason for the replit container recent moments ago
  M SESSION_HANDOFF_CURRENT.md
  M SESSION_HANDOFF_LIVE_2026-07-03_ibkr-client-portal-hosted-connector.md
  M SESSION_HANDOFF_MASTER.md
+ M artifacts/api-server/src/index.ts
+ M artifacts/api-server/src/providers/schwab/trader-api-client.ts
+ M artifacts/api-server/src/routes/broker-execution.test.ts
+ M artifacts/api-server/src/routes/broker-execution.ts
+ M artifacts/api-server/src/services/auth-launch.ts
+ M artifacts/api-server/src/services/background-worker-pressure.test.ts
+ M artifacts/api-server/src/services/entitlements.test.ts
+ M artifacts/api-server/src/services/entitlements.ts
+ M artifacts/api-server/src/services/ibkr-oauth-readiness.test.ts
+ M artifacts/api-server/src/services/ibkr-oauth-readiness.ts
+ M artifacts/api-server/src/services/overnight-spot-execution.ts
+ M artifacts/api-server/src/services/overnight-spot-worker.ts
+ M artifacts/api-server/src/services/resource-pressure.test.ts
+ M artifacts/api-server/src/services/resource-pressure.ts
+ M artifacts/api-server/src/services/signal-monitor-evaluation-worker.ts
+ M artifacts/api-server/src/services/signal-monitor-local-bar-cache-prefetch.test.ts
+ M artifacts/api-server/src/services/signal-monitor-local-bar-cache.ts
  M artifacts/api-server/src/services/signal-options-automation.ts
+ M artifacts/api-server/src/services/signal-options-worker.ts
+ M artifacts/api-server/src/services/snaptrade-account-history.test.ts
+ M artifacts/api-server/src/services/snaptrade-account-history.ts
  M artifacts/mcp-server/src/host/procinfo.test.mjs
  M artifacts/mcp-server/src/host/procinfo.ts
  M artifacts/pyrus/scripts/flightRecorder.mjs
  M artifacts/pyrus/scripts/runDevApp.mjs
+ M artifacts/pyrus/src/app/AppContent.tsx
+ M artifacts/pyrus/src/app/AppProviders.tsx
+ M artifacts/pyrus/src/components/platform/primitives.jsx
  M artifacts/pyrus/src/components/platform/signal-language/SignalDots.jsx
- M artifacts/pyrus/src/features/backtesting/BacktestingPanels.tsx
- M artifacts/pyrus/src/features/flow/ContractDetailInline.jsx
- M artifacts/pyrus/src/features/platform/MobileMoreSheet.jsx
- M artifacts/pyrus/src/features/research/PhotonicsObservatory.jsx
- M artifacts/pyrus/src/features/research/components/ResearchCalendarView.jsx
+ M artifacts/pyrus/src/components/platform/signal-language/SignalDots.test.mjs
+ M artifacts/pyrus/src/features/platform/PlatformWatchlist.jsx
+ M artifacts/pyrus/src/features/platform/signalFrameState.js
  M artifacts/pyrus/src/features/signals/signalStateFreshness.js
  M artifacts/pyrus/src/features/signals/signalStateFreshness.test.mjs
  M artifacts/pyrus/src/features/signals/signalsRowModel.js
  M artifacts/pyrus/src/features/signals/signalsRowModel.test.mjs
+ M artifacts/pyrus/src/lib/formatters.js
  M artifacts/pyrus/src/screens/AccountScreen.jsx
- M artifacts/pyrus/src/screens/DiagnosticsScreen.jsx
- M artifacts/pyrus/src/screens/FlowScreen.jsx
- M artifacts/pyrus/src/screens/GexScreen.jsx
- M artifacts/pyrus/src/screens/SettingsScreen.jsx
- M artifacts/pyrus/src/screens/SignalsScreen.jsx
  M artifacts/pyrus/src/screens/algo/OperationsSignalTable.test.mjs
+ M artifacts/pyrus/src/screens/algo/algoHelpers.js
+ M lib/api-client-react/src/generated/api.schemas.ts
+ M lib/api-spec/openapi.yaml
+ M lib/api-zod/src/generated/api.ts
+ M lib/api-zod/src/generated/types/ibkrOAuthCredentialReadiness.ts
+ M lib/api-zod/src/generated/types/ibkrOAuthReadinessStatus.ts
+ M scripts/headless-shot.mjs
 ?? SESSION_HANDOFF_2026-07-05_0a16f7cc-0030-4762-8ef5-fd97147754d7.md
+?? SESSION_HANDOFF_2026-07-05_113d7d20-310a-4f34-8886-b650d04d28d0.md
+?? SESSION_HANDOFF_2026-07-05_134896bd-a1eb-47f1-b0ab-d6bca2e6be12.md
+?? SESSION_HANDOFF_2026-07-05_30002be4-9321-42dc-bd0a-424f277061ca.md
+?? SESSION_HANDOFF_2026-07-05_3031a953-6144-4a63-ae27-9f21173d48f6.md
+?? SESSION_HANDOFF_2026-07-05_5c7aa51d-8dd1-4203-b82f-9e43ad57fbb8.md
+?? SESSION_HANDOFF_2026-07-05_5de488c2-8ff8-4413-8789-b3f9b29eab00.md
+?? SESSION_HANDOFF_2026-07-05_60473da9-4bce-4a67-ab18-ff1acaca29de.md
+?? SESSION_HANDOFF_2026-07-05_627f9c4a-d576-41ba-be7b-345670c3b6f6.md
+?? SESSION_HANDOFF_2026-07-05_6765f941-f062-4a70-b852-fb42f1d5c54a.md
+?? SESSION_HANDOFF_2026-07-05_7943526c-b016-4b6b-87e3-c12b3b04f503.md
+?? SESSION_HANDOFF_2026-07-05_82f9cebc-58c7-4ae0-a1ac-be06b4787f96.md
+?? SESSION_HANDOFF_2026-07-05_d378bab2-87ad-4e12-8e67-1acd7567bb83.md
 ?? SESSION_HANDOFF_2026-07-05_d6cc55a2-d861-4e14-8fb4-556e5452bb5f.md
+?? SESSION_HANDOFF_2026-07-06_13073e07-2d43-4d89-8e44-bed92d9f0362.md
+?? SESSION_HANDOFF_2026-07-06_242a10dc-de69-44b3-b08c-00c1d0471796.md
+?? SESSION_HANDOFF_2026-07-06_24557ffb-3bb2-44c3-9eb9-4db3775df4b6.md
+?? SESSION_HANDOFF_2026-07-06_63e4317b-e5a6-4cd6-9caf-0a7fd723cf6a.md
+?? SESSION_HANDOFF_2026-07-06_662a18d9-e915-4a80-a97a-4392ec3aee60.md
+?? SESSION_HANDOFF_2026-07-06_7013d59a-1551-44f7-aa2e-661e31ed2316.md
+?? SESSION_HANDOFF_2026-07-06_907ad490-5048-4d4b-826d-27a74395aee7.md
+?? SESSION_HANDOFF_2026-07-06_adc68b55-16da-434d-9a66-fc4a4b40af90.md
+?? SESSION_HANDOFF_2026-07-06_ca9f4967-61a3-4e1c-b09d-9a7b0f0892d6.md
+?? SESSION_HANDOFF_2026-07-06_df03e38d-88b8-4467-ab9e-df15f1c03a3c.md
+?? SESSION_HANDOFF_2026-07-06_e89674ed-76b4-4979-a13d-ffb784f9a28d.md
 ?? artifacts/api-server/__mint-agent-session.mts
+?? artifacts/api-server/src/providers/ibkr/oauth-live-session.test.ts
+?? artifacts/api-server/src/providers/ibkr/oauth-live-session.ts
+?? artifacts/api-server/src/providers/ibkr/oauth-signer.test.ts
+?? artifacts/api-server/src/providers/ibkr/oauth-signer.ts
+?? artifacts/api-server/src/providers/schwab/trader-api-client.test.ts
+?? artifacts/api-server/src/services/schwab-equity-orders.test.ts
+?? artifacts/api-server/src/services/schwab-equity-orders.ts
+?? artifacts/api-server/src/services/signal-options-candidate-display.test.ts
+?? artifacts/api-server/src/services/snaptrade-history-scheduler.ts
+?? artifacts/pyrus/src/features/auth/
+?? docs/plans/2026-07-06-signal-options-seen-signal-dedup-store.md
+?? docs/plans/ibkr-approval-readiness.md
 ?? docs/plans/ibkr-connector-local-setup-spec.md
 ?? docs/plans/ibkr-oauth-selfservice-runbook.md
 ?? docs/plans/ibkr-third-party-oauth-scope.md
+?? docs/plans/ibkr-vm-hosting-research.md
+?? docs/plans/schwab-make-tradable-audit.md
 ```
 
 ## Diff Summary
 
 ```text
- .env.example                    |   17 +-
- CLAUDE.md                       |   16 +-
- ...9a-4166-a21c-d05fec4e58f6.md | 1310 +------
- ...9e-4d4b-b117-9efbb977226a.md | 1311 +-------
- ...f6-415e-a500-95045ce2a39e.md | 1279 +------
- SESSION_HANDOFF_CURRENT.md      |   17 +-
- ...t-portal-hosted-connector.md |  147 +
- SESSION_HANDOFF_MASTER.md       |    8 +-
- ...signal-options-automation.ts |   19 +-
- .../src/host/procinfo.test.mjs  |   18 +-
- .../src/host/procinfo.ts        |   28 +-
- .../scripts/flightRecorder.mjs  |   63 +-
- .../pyrus/scripts/runDevApp.mjs |    4 +
- .../SignalDots.jsx              |   20 +-
- .../BacktestingPanels.tsx       |  206 +-
- .../ContractDetailInline.jsx    |   73 +-
- .../MobileMoreSheet.jsx         |   75 +-
- .../PhotonicsObservatory.jsx    |   97 +-
- .../ResearchCalendarView.jsx    |   92 +-
- .../signalStateFreshness.js     |   19 +-
- ...ignalStateFreshness.test.mjs |   17 +
- .../signals/signalsRowModel.js  |   38 +-
- .../signalsRowModel.test.mjs    |   72 +-
- .../screens/AccountScreen.jsx   |   87 +-
- .../DiagnosticsScreen.jsx       |  244 +-
- .../src/screens/FlowScreen.jsx  |   83 +-
- .../src/screens/GexScreen.jsx   |   48 +-
- .../screens/SettingsScreen.jsx  |  382 ++-
- .../screens/SignalsScreen.jsx   |  124 +-
- ...erationsSignalTable.test.mjs |   24 +-
- 30 files changed, 1397 insertions(+), 4541 deletions(-)
+ .env.example           |   29 +-
+ CLAUDE.md              |   16 +-
+ ...21c-d05fec4e58f6.md | 1318 +-----
+ ...117-9efbb977226a.md | 1311 +----
+ ...500-95045ce2a39e.md | 1303 +----
+ ..._HANDOFF_CURRENT.md |   27 +-
+ ...hosted-connector.md |  266 ++
+ ...N_HANDOFF_MASTER.md |   31 +-
+ .../src/index.ts       |    2 +
+ ...rader-api-client.ts |  216 +-
+ ...r-execution.test.ts |  153 +-
+ ...broker-execution.ts |   11 +-
+ .../auth-launch.ts     |   29 +-
+ ...er-pressure.test.ts |   71 +-
+ ...ntitlements.test.ts |   64 +
+ .../entitlements.ts    |   20 +-
+ ...h-readiness.test.ts |   47 +
+ ...-oauth-readiness.ts |   87 +-
+ ...t-spot-execution.ts |   14 +-
+ ...ight-spot-worker.ts |   41 +-
+ ...ce-pressure.test.ts |   52 +-
+ ...esource-pressure.ts |   19 +-
+ ...valuation-worker.ts |  187 +-
+ ...he-prefetch.test.ts |   52 +
+ ...-local-bar-cache.ts |   21 +
+ ...tions-automation.ts |  152 +-
+ ...l-options-worker.ts |   60 +-
+ ...unt-history.test.ts |   37 +-
+ ...-account-history.ts |   99 +-
+ .../procinfo.test.mjs  |   18 +-
+ .../host/procinfo.ts   |   28 +-
+ .../flightRecorder.mjs |   63 +-
+ .../runDevApp.mjs      |    4 +
+ .../app/AppContent.tsx |   15 +-
+ .../AppProviders.tsx   |    3 +-
+ .../primitives.jsx     |   31 +-
+ .../SignalDots.jsx     |   32 +-
+ ...SignalDots.test.mjs |   36 +-
+ ...atformWatchlist.jsx |    7 +-
+ ...signalFrameState.js |   10 +-
+ ...alStateFreshness.js |   19 +-
+ ...eFreshness.test.mjs |   17 +
+ .../signalsRowModel.js |   67 +-
+ ...lsRowModel.test.mjs |   72 +-
+ .../lib/formatters.js  |   23 +
+ .../AccountScreen.jsx  |  102 -
+ ...ignalTable.test.mjs |   24 +-
+ .../algoHelpers.js     |    8 +-
+ .../api.schemas.ts     |    5 +
+ .../openapi.yaml       |   18 +-
+ .../generated/api.ts   |    8 +-
+ ...dentialReadiness.ts |    4 +
+ ...hReadinessStatus.ts |    1 +
+ .../headless-shot.mjs  |   15 +-
+ 54 files changed, 2197 insertions(+), 4168 deletions(-)
 ```
 
 ## Validations Detected In Transcript
 
-- `2026-07-05 12:49:36 MDT` cd /home/runner/workspace/artifacts/mcp-server && pnpm test src/host/procinfo.test.mjs 2>&1 | tail -15 && pnpm typecheck 2>&1 | tail -5 (ok)
-- `2026-07-05 12:50:03 MDT` pnpm build 2>&1 | tail -3 (ok)
-- `2026-07-05 12:54:09 MDT` cd /home/runner/workspace/artifacts/pyrus && node --check scripts/flightRecorder.mjs && node --check scripts/runDevApp.mjs && echo "syntax OK" && node --input-… (ok)
-- `2026-07-05 17:38:13 MDT` cd /home/runner/workspace/artifacts/api-server echo "=== typecheck ===" pnpm typecheck 2>&1 | tail -5 echo "=== market-data-store tests (read/persist/equality)… (ok)
-- `2026-07-05 18:01:04 MDT` cd /home/runner/workspace/artifacts/api-server echo "=== typecheck ===" pnpm typecheck 2>&1 | tail -4 echo "=== run the new + existing alignment tests ===" nod… (ok)
+- `2026-07-06 10:11:57 MDT` cd /home/runner/workspace/artifacts/api-server echo "===== typecheck api-server =====" pnpm run typecheck 2>&1 | tail -25 (ok)
+- `2026-07-06 10:12:34 MDT` cd /home/runner/workspace/artifacts/api-server pnpm run typecheck > /tmp/claude-1000/-home-runner-workspace/adc68b55-16da-434d-9a66-fc4a4b40af90/scratchpad/tc.… (ok)
+- `2026-07-06 10:31:21 MDT` cd /home/runner/workspace/artifacts/pyrus pnpm run typecheck > /tmp/claude-1000/-home-runner-workspace/adc68b55-16da-434d-9a66-fc4a4b40af90/scratchpad/pyrus-tc… (ok)
+- `2026-07-06 10:34:38 MDT` cd /home/runner/workspace/artifacts/pyrus pnpm run typecheck > /tmp/claude-1000/-home-runner-workspace/adc68b55-16da-434d-9a66-fc4a4b40af90/scratchpad/pyrus-tc… (ok)
+- `2026-07-06 10:37:38 MDT` cd /home/runner/workspace/artifacts/pyrus pnpm run typecheck > /tmp/claude-1000/-home-runner-workspace/adc68b55-16da-434d-9a66-fc4a4b40af90/scratchpad/pyrus-tc… (ok)
+- `2026-07-06 11:05:24 MDT` cd /home/runner/workspace/artifacts/api-server echo "===== typecheck =====" pnpm run typecheck > /tmp/claude-1000/-home-runner-workspace/adc68b55-16da-434d-9a6… (ok)
 
 ## What Changed This Session
 
-- Replace this section with the concrete product and code changes completed in the session.
+Multi-user rollout continued. **ALL work below is UNCOMMITTED** — user explicitly chose "keep
+holding all commits." Nothing staged/pushed. Commit each slice staging ONLY its files (large
+unrelated dirty tree present; never `git add -A`).
+
+**Slice 7 hardening (entitlements/authz) — DONE, verified, uncommitted. Files:**
+`artifacts/api-server/src/services/entitlements.ts`, `services/auth-launch.ts`,
+`services/entitlements.test.ts`, `routes/broker-execution.test.ts`.
+- Adversarial audit (15-agent workflow) of committed Slice 7 (`d25b6901`): 9 findings survived (mostly
+  low + 1 medium test-coverage), no live authz bypass. Fixes applied:
+  - `entitlements.ts`: new `resolveLaunchEntitlements({claim, tokenPlan, existingPlan})` — honors an
+    EXPLICIT `[]` (was silently overridden by plan default) and derives the re-launch default from the
+    EFFECTIVE (stored) plan so a bare re-launch no longer wipes a paid user. Deleted dead
+    `KNOWN_ENTITLEMENTS`.
+  - `auth-launch.ts`: `provisionLaunchUser` now takes the raw `entitlementsClaim` and resolves via
+    `resolveLaunchEntitlements` per branch.
+  - Tests: `resolveLaunchEntitlements` units; trade-submit-stays-admin-only regression test; IBKR §6
+    allow-path test.
+- Verified: api-server typecheck clean; entitlements 8/8; SIGUSR2 reload healthz 200.
+
+**Slice 8 — frontend login gate — DONE, verified, uncommitted. Files:**
+NEW `artifacts/pyrus/src/features/auth/authSession.jsx` (+`.d.ts`),
+NEW `features/auth/LoginGate.jsx` (+`.d.ts`), M `src/app/AppProviders.tsx`, M `src/app/AppContent.tsx`.
+- `AuthProvider`/`useAuthSession()` = one canonical `/auth/session` source, surfaces `entitlements` +
+  `hasEntitlement` (mirrors backend admin-bypass). `LoginGate` = full-screen wall (sign-in + first-run
+  bootstrap), reuses `headerSessionModel` helpers + public `/auth/login`,`/auth/bootstrap`.
+- Gate wraps `PlatformApp` in BOTH AppContent render paths (Suspense + the preloaded fast-path — the
+  fast-path was an ungated **login-wall bypass** I caught & fixed). Labs stay ungated.
+- `.jsx` imports into `.tsx` need companion `.d.ts` (allowJs is off; mirrors `platformContexts.d.ts`).
+- Verified: pyrus typecheck clean; wall renders (screenshot); `PlatformApp` not mounted when signed out.
+- ⚠️ The gate is **LIVE in the preview** (hot-reloaded). Operator must sign in with admin creds OR
+  first-run bootstrap (`PYRUS_AUTH_BOOTSTRAP_TOKEN` secret). Members arrive pre-authed via `/auth/launch`.
+- Deferred (noted): migrate the 6 duplicate `["auth-session"]` fetchers to `useAuthSession`; actually
+  apply `hasEntitlement` to gate member-facing UI.
+
+**P&L backfill fix — DONE, verified, uncommitted. Files:**
+`?? services/snaptrade-history-scheduler.ts` (untracked), M `services/snaptrade-account-history.ts`,
+M `services/snaptrade-account-history.test.ts`, M `routes/broker-execution.ts`, M `src/index.ts`.
+- ROOT CAUSE (runtime-verified): `getSnapTradeAccountHistory` did a **~17s synchronous live SnapTrade
+  ingest** on every open, past the client's **20s** GET timeout → timeout + no data. Scheduler alone
+  didn't help (read re-ingested regardless).
+- Fix = **stored-first read + throttled background refresh**: `getSnapTradeAccountHistory` now reads
+  STORED activities + balance snapshots (new `readStoredBalanceSnapshots`); the route fires a throttled
+  (5min/account) fire-and-forget `refreshSnapTradeAccountHistoryOnRead` (added to the scheduler).
+- Verified at runtime: read **17s → ~70–130ms**; returns **971 closed trades / $63,381 realized P&L**
+  for the Roth IRA. typecheck clean (my files); service tests 2/2; broker-execution route suite 37/38.
+- Equity CURVE stays empty = upstream SnapTrade `403 code 1141 "Feature is not enabled for this
+  customer/connection"` (vendor action to enable, NOT a code bug).
 
 ## Current Status
 
-- Replace this section with current validation status, blockers, and any known runtime gaps.
+- **Everything uncommitted** (user holding all commits). Live app reloaded with P&L fix + login gate
+  (healthz 200).
+- **HEAD does NOT cleanly build** from a clean checkout: committed `broker-execution.ts` (Slice 7)
+  imports the UNTRACKED `snaptrade-history-scheduler.ts`. Landing the P&L slice resolves this.
+- **Pre-existing dirty-tree failures — NOT mine, do not fix as part of these slices:**
+  - `services/ibkr-oauth-readiness.ts` (M) emits 8 readiness fields vs HEAD's 4 → breaks the "IBKR OAuth
+    readiness route" test (the 1 failing test in the 37/38 route suite). IBKR-OAuth workstream's
+    incomplete uncommitted work; the test block is unchanged from HEAD, so it passes at my commit.
+  - `services/signal-options-candidate-display.test.ts` (?? untracked) has 5 TS errors (signal-options
+    workstream) — the only api-server typecheck errors; none in my files.
+- Task-list state: #1–#4 completed (uncommitted), #5 in progress (fully investigated), #6/#7 pending.
 
 ## Next Recommended Steps
 
-1. Replace this item with the highest-priority next step.
-2. Replace this item with the next validation or bring-up step.
+1. **Commit (when authorized) each ready slice, staging ONLY its files** (see file lists above). Order:
+   P&L backfill FIRST (fixes the HEAD build gap) → Slice 7 → Slice 8. Note: `broker-execution.test.ts`
+   carries BOTH Slice-7 tests and the P&L `/history` test fix — decide the split or commit together.
+2. **Task #5 (algo tabs + hide prediction/crypto + onboarding) — investigated, ready to build:**
+   - Algo tabs: reuse `AccountTabs` (`screens/account/AccountTabs.jsx`) + `useAccountTab`
+     (`features/platform/useAccountTab.js`) — SAME components as the account page (user confirmed).
+     Insert above `OperationsPositionsTable` (`AlgoLivePage.jsx:1431`); parameterize the hardcoded
+     `useGetAccountPositions("shadow", …)` (`AlgoScreen.jsx:638`) by the selected tab (mirror
+     `AccountScreen`'s `accountRequestId`). `accounts` already on `AlgoScreen` (prop :344).
+   - Hide prediction/crypto: **no account-type is stored today** (only free-text `displayName`).
+     SnapTrade payload carries `meta.type`/`raw_type` (CRYPTO/FUTURES) but `normalizeAccount`
+     (`snaptrade-account-sync.ts:466`) DROPS it. Backend-first: parse it → store in a new
+     `broker_accounts.accountType` col (populate the existing-but-null `BrokerAccount.accountType` wire
+     field) → filter in `getSnapTradeBackedAccounts` (`account.ts:4191-4240`) and/or frontend
+     `PlatformApp.jsx:1964/1989` (flows to ALL screens; filter there, NOT inside `AccountTabs`).
+   - Onboarding picker: needs a per-account included/hidden flag + a "set included accounts" endpoint;
+     slots between sync and `writeSnapTradeExecutionAccountState` (`SnapTradeConnectPanel.jsx:670`).
+   - OPEN DECISION: auto-hide crypto/prediction by category (default) + a user selection feature (user
+     wants both).
+3. **Task #7 (data-correctness audit) — HIGH VALUE, partially root-caused (workflow stopped early):**
+   - **HEADLINE BUG (root-caused): `artifacts/pyrus/src/features/account/positionDisplayModel.js:97`** —
+     `buildQuote()` guard is `bid>0 || ask>0` (OR) then `mid=(bid+ask)/2`, so a garbage quote (OPTT bid
+     0.00 / ask 5.00) yields mid **2.50**. FIX: require BOTH sides valid (`bid>0 && ask>0`) for a mid,
+     else fall back to the broker mark / render "—".
+   - Two-source split: displayed **Price** = Massive display-quote model
+     (denseDisplayQuote→buildPositionDisplayModel→getPositionQuote→buildQuote); **Exposure**
+     (`PositionsPanel.jsx:2860` `row.marketValue`) + **Unrealized** (`row.unrealizedPnl`) = broker marks.
+     Diverges (FRMI displayed +$1,927 vs broker +$1,627; OPTT Price 2.50 vs P&L from 0.02).
+   - STILL TO AUDIT (workflow stopped before these 2 dims finished): **Day change** missing for 6/9
+     positions (stocks "—", options "+$0" — trace prior-close source; is "+$0" real or missing?);
+     **NLV reconciliation** (broker balance 17,656 vs backend summed 17,585 vs frontend Massive
+     exposure+cash 17,877). Re-run the stopped audit workflow (`resumeFromRunId: wf_636934e1-9cb`) or
+     read its journal for the 2 completed dims.
+   - Ground truth captured in task #7 description: E*Trade ROTH IRA `9197da68` / user `272b0024`,
+     9 positions, backend-vs-displayed table.
+   - KEY PRODUCT DECISION: should displayed price/P&L/exposure/NLV all use broker marks (SnapTrade
+     truth) with Massive as a clearly-labeled LIVE overlay, or Massive consistently? Currently a mix.
+4. **Task #6 (clear old IBKR bridge deps):** backend first; footer pressure bar LAST. Ref
+   `SESSION_HANDOFF_LIVE_2026-07-02_ibkr-datapath-removal.md`. Distinguish retired **bridge** (remove)
+   from kept **portal/broker** (`ibkr-portal-*`, `ibkr-oauth-*` — leave).

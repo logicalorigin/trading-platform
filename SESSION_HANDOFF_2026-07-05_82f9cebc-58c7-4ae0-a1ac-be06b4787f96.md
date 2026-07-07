@@ -2,37 +2,49 @@
 
 ## Session Metadata
 
-- Session ID: `182a4859-3a9a-4166-a21c-d05fec4e58f6`
-- Saved At (MT): `2026-07-05 18:10:03 MDT`
-- Saved At (UTC): `2026-07-06T00:10:03.961Z`
-- Summary: 2026-07-05 18:10:03 MDT | 182a4859-3a9a-4166-a21c-d05fec4e58f6 | please diagnose the reason for the replit container recent moments ago
+- Session ID: `82f9cebc-58c7-4ae0-a1ac-be06b4787f96`
+- Saved At (MT): `2026-07-05 22:03:46 MDT`
+- Saved At (UTC): `2026-07-06T04:03:46.205Z`
+- Summary: 2026-07-05 22:03:46 MDT | 82f9cebc-58c7-4ae0-a1ac-be06b4787f96 | please find and resume the session that was working on removing duplicate bar cache stuff. i need it resumed with…
 - Runtime: `claude`
 - Repo Root: `/home/runner/workspace`
 - Thread CWD: `/home/runner/workspace`
-- Transcript Path: `/home/runner/.claude/projects/-home-runner-workspace/182a4859-3a9a-4166-a21c-d05fec4e58f6.jsonl`
+- Transcript Path: `/home/runner/.claude/projects/-home-runner-workspace/82f9cebc-58c7-4ae0-a1ac-be06b4787f96.jsonl`
 - Branch: `main`
-- HEAD: `3609d1518fec3a53948cd757322ace47bfa694fe`
-- Latest Commit: `test(market-data): guard the write-side epoch-grid flooring invariant`
+- HEAD: `89f979e9fc1c5cdbbc7363df59fffaa99a9a4c79`
+- Latest Commit: `feat(api): multi-user Slice 5.5 part 2 — per-user shadow-account isolation (the flip)`
 - Latest Commit Session ID: `unknown`
-- Title: please diagnose the reason for the replit container recent moments ago
+- Title: please find and resume the session that was working on removing duplicate bar cache stuff. i need it resumed with full…
 - Model: `claude-opus-4-8`
 - Reasoning Effort: `unknown`
 - Tokens Used: `unknown`
 
 ## Current User Request
 
-please diagnose the reason for the replit container recent moments ago
+please find and resume the session that was working on removing duplicate bar cache stuff. i need it resumed with full context. its from a few monutea go (pre container reset). find it direst
 
 ## Prior Handoffs
 
 - `SESSION_HANDOFF_2026-07-05_d6cc55a2-d861-4e14-8fb4-556e5452bb5f.md`
+- `SESSION_HANDOFF_2026-07-05_d378bab2-87ad-4e12-8e67-1acd7567bb83.md`
 - `SESSION_HANDOFF_2026-07-05_bd9a1871-55fc-460c-a1d2-83b4331f5e91.md`
 - `SESSION_HANDOFF_2026-07-05_b9dafa30-72f6-415e-a500-95045ce2a39e.md`
 - `SESSION_HANDOFF_2026-07-05_ab9da6d4-d271-40eb-b78d-7f1b87a9f36e.md`
 - `SESSION_HANDOFF_2026-07-05_a5ff26eb-0eb2-4088-9960-2f6966fad2e4.md`
+- `SESSION_HANDOFF_2026-07-05_7943526c-b016-4b6b-87e3-c12b3b04f503.md`
+- `SESSION_HANDOFF_2026-07-05_6765f941-f062-4a70-b852-fb42f1d5c54a.md`
+- `SESSION_HANDOFF_2026-07-05_627f9c4a-d576-41ba-be7b-345670c3b6f6.md`
+- `SESSION_HANDOFF_2026-07-05_60473da9-4bce-4a67-ab18-ff1acaca29de.md`
+- `SESSION_HANDOFF_2026-07-05_5de488c2-8ff8-4413-8789-b3f9b29eab00.md`
+- `SESSION_HANDOFF_2026-07-05_5c7aa51d-8dd1-4203-b82f-9e43ad57fbb8.md`
 - `SESSION_HANDOFF_2026-07-05_45ad4715-669e-4d4b-b117-9efbb977226a.md`
+- `SESSION_HANDOFF_2026-07-05_3031a953-6144-4a63-ae27-9f21173d48f6.md`
 - `SESSION_HANDOFF_2026-07-05_300e9ad4-653e-489f-bdf4-3290b8f796c8.md`
+- `SESSION_HANDOFF_2026-07-05_30002be4-9321-42dc-bd0a-424f277061ca.md`
 - `SESSION_HANDOFF_2026-07-05_1ffe77d2-bb80-4068-b903-49134e66784f.md`
+- `SESSION_HANDOFF_2026-07-05_182a4859-3a9a-4166-a21c-d05fec4e58f6.md`
+- `SESSION_HANDOFF_2026-07-05_134896bd-a1eb-47f1-b0ab-d6bca2e6be12.md`
+- `SESSION_HANDOFF_2026-07-05_113d7d20-310a-4f34-8886-b650d04d28d0.md`
 - `SESSION_HANDOFF_2026-07-05_0a16f7cc-0030-4762-8ef5-fd97147754d7.md`
 - `SESSION_HANDOFF_2026-07-04_fa22886b-de00-47f1-8f95-0789b04b265b.md`
 - `SESSION_HANDOFF_2026-07-04_f69295c0-a190-4633-bcb0-971124d597c4.md`
@@ -554,38 +566,36 @@ please diagnose the reason for the replit container recent moments ago
 
 ## Recent User Messages
 
-- `2026-07-05 15:52:28 MDT` short and simple/laymans explanation for me please
-- `2026-07-05 15:57:45 MDT` lets take a look at the main thing you found
-- `2026-07-05 16:07:47 MDT` <task-notification> <task-id>w1siywz9i</task-id> <tool-use-id>toolu_01BmSkZDvBcKt5jMMnMPpgg1</tool-use-id> <output-file>/tmp/claude-1000/-home-runner-workspace/182a4859-3a9a-4166-a21c-d05fec4e58f6/tasks/w1siywz9i.output</output-file> <status>completed</status> <summary>Dynamic workflow "Determine what drives the 2.83M/day bar_cache reads, how redundant they are, and the safest highest-leverage fix" completed</summary> <result>{"redundancy":{"fallbackIsRareOrCommon":"RARE (structurally a miss-path), but UNCOUNTED so not empirically provable from current diagnostics. The per-symbol pg fallback in readStoredBars (signal-monitor-local-bar-cache.ts:908-925) is only reached when (a) loadSignalMonitorLocalBarCache's memory-first gate misses (memory rolled bars &lt; limit, :1333-1335), AND (b) no…
-- `2026-07-05 16:11:48 MDT` please take a look at what youve found. use 5 whys approach. you're glossing over things, and accepting bad coding/engineering as fact, when you should be making sure that its sound. examine all aspects, no items is sacred and beyond fixing. do now accept poor performance, seek to impprove it
-- `2026-07-05 16:33:39 MDT` <task-notification> <task-id>w7bu4895a</task-id> <tool-use-id>toolu_013FxLmdNSVMfi2XZh4iBqWY</tool-use-id> <output-file>/tmp/claude-1000/-home-runner-workspace/182a4859-3a9a-4166-a21c-d05fec4e58f6/tasks/w7bu4895a.output</output-file> <status>completed</status> <summary>Dynamic workflow "5-Whys root-cause audit that adversarially challenges every inherited bar_cache/DB constraint and ranks real fixes" completed</summary> <result>{"challenges":[{"key":"timescale","r":{"createExtensionFeasible":"TECHNICALLY YES, but pointless as framed. Privilege is not a blocker: current_user=postgres with rolsuper=t, timescaledb 2.13.0 is available and already in shared_preload_libraries (timescaledb,helium). CREATE EXTENSION timescaledb would run. The blocker is the BUILD: the installed extension is the A…
-- `2026-07-05 16:45:23 MDT` lets get an outside voice/audit of these findigns with a claude agent using /fable-mode and /karpathy-guidelines
-- `2026-07-05 17:11:49 MDT` <task-notification> <task-id>wtennq6za</task-id> <tool-use-id>toolu_018g6cskYazENo2QFo4o3nLM</tool-use-id> <output-file>/tmp/claude-1000/-home-runner-workspace/182a4859-3a9a-4166-a21c-d05fec4e58f6/tasks/wtennq6za.output</output-file> <status>completed</status> <summary>Dynamic workflow "Adversarial fact-first audit: 4 fresh agents reproduce evidence for each claim, then skeptical synthesis" completed</summary> <result>{"verifiers":[{"key":"phase1","claims":"P1, P2","r":{"p1":{"verdict":"PARTIALLY-TRUE (core mechanism CONFIRMED; the \"behavior-identical for all live callers\" sub-claim is REFUTED for the marketing dashboard caller)","evidence":"CONFIRMED mechanism: automation.ts:1198 includePayload=input.includePayload===true; ledgerColumns (1207-1219) and diagnosticsColumns (1220-1232) ea…
-- `2026-07-05 17:19:03 MDT` laymans on each of these please
-- `2026-07-05 17:21:08 MDT` i want you to do all of these, one at a time, checkint your work and committing on main after each fix
-- `2026-07-05 17:44:20 MDT` lets check item 5 (duplicates) to make sure that we're safe to remove, and we also want to figure out what is causing the duplicate write and solve it
-- `2026-07-05 17:54:50 MDT` <task-notification> <task-id>wv1ap2noi</task-id> <tool-use-id>toolu_01EYDcUG2taYxmDVSub5DfSW</tool-use-id> <output-file>/tmp/claude-1000/-home-runner-workspace/182a4859-3a9a-4166-a21c-d05fec4e58f6/tasks/wv1ap2noi.output</output-file> <status>completed</status> <summary>Dynamic workflow "Prove off-grid bar_cache rows are safe to delete AND root-cause + fix the write path creating them" completed</summary> <result>{"data":{"offGridCounts":"Off-grid = rows where extract(epoch from starts_at)::bigint % stepSeconds &lt;&gt; 0 (step: 1m=60,5m=300,15m=900,1h=3600). Counts as offgrid/total per (symbol,tf,source), all off-grid on source='massive-history':\nSPY 5m: 4220/16818; SPY 15m: 2200/16756.\nQQQ 5m: 2496/14981; QQQ 15m: 1248/5537.\nAAPL 5m: 1800/14326; AAPL 15m: 1248/5537.\nZERO off-grid at…
-- `2026-07-05 18:07:19 MDT` no need to back up, go ahead and purge
+- `2026-07-05 18:38:39 MDT` please find and resume the session that was working on removing duplicate bar cache stuff. i need it resumed with full context. its from a few monutea go (pre container reset). find it direst
+- `2026-07-05 18:38:46 MDT` please find and resume the session that was working on removing duplicate bar cache stuff. i need it resumed with full context. its from a few monutea go (pre container reset). find it first
+- `2026-07-05 18:39:58 MDT` [Request interrupted by user]
+- `2026-07-05 18:40:00 MDT` it will be in the most recent ahdnoffs
+- `2026-07-05 18:48:35 MDT` can you check to see what else this session was working as well? i think there were a couple others items that we db/elu-loop/pressure related but im not sure
+- `2026-07-05 19:13:56 MDT` i rebuilt, please check and finish the purge and finish this sssions work
+- `2026-07-05 19:46:26 MDT` a and b please
+- `2026-07-05 20:04:14 MDT` 2 please
+- `2026-07-05 20:36:30 MDT` 1
+- `2026-07-05 21:58:12 MDT` please continue
 
 ## Session Activity Summary
 
-- `2026-07-05 12:18:07 MDT` User: please diagnose the reason for the replit container recent moments ago
-- `2026-07-05 12:18:19 MDT` Agent: I'll diagnose this by gathering live runtime evidence first, then trace the root cause. Let me load the diagnostic tools and scout the system state in parallel.
-- `2026-07-05 12:18:21 MDT` Tool: ToolSearch {"query":"select:mcp__pyrus__get_flight_recorder,mcp__pyrus__list_recorder_incidents,mcp__pyrus__get_supervisor_state,m…
-- `2026-07-05 12:18:23 MDT` Tool: Bash echo "=== UPTIME ==="; uptime; echo "=== CONTAINER/PROC1 START ==="; ps -o pid,ppid,etimes,cmd -p 1 2>/dev/null; echo "=== BOOT TIME ==="; cat /proc/stat | gre…
-- `2026-07-05 12:18:26 MDT` Tool: Bash echo "=== dmesg OOM (may be denied in container) ==="; dmesg -T 2>/dev/null | grep -iE "oom|kill|memory|out of memory" | tail -30 || echo "dmesg denied/empty";…
-- `2026-07-05 12:18:28 MDT` Tool: Bash echo "=== Running node/supervisor procs ==="; ps -eo pid,ppid,etimes,rss,cmd --sort=etimes 2>/dev/null | grep -iE "node|runDevApp|supervisor|pyrus" | grep -v g…
-- … 372 lower-signal transcript events omitted …
-- `2026-07-05 18:03:45 MDT` Agent: No worries — let me explain it plainly. ## What "shifted-grid OHLCV" means A price "bar" is one row summarizing a fixed time window — for 5-minute bars, the windows are **10:00–10…
-- `2026-07-05 18:07:19 MDT` User: no need to back up, go ahead and purge
-- `2026-07-05 18:07:44 MDT` Agent: On it — executing the guarded purge for the 6 SPY/QQQ/AAPL slices, one at a time, capturing each delete count and verifying zero off-grid rows remain afterward.
-- `2026-07-05 18:07:44 MDT` Tool: TaskUpdate {"taskId":"10","status":"in_progress"}
-- `2026-07-05 18:07:51 MDT` Tool: Bash cd /home/runner/workspace total=0 for slice in "SPY 5m 300 4220" "SPY 15m 900 2200" "QQQ 5m 300 2496" "QQQ 15m 900 1248" "AAPL 5m 300 1800" "AAPL 15m 900 1248"…
-- `2026-07-05 18:09:05 MDT` Agent: All 6 slices deleted exactly the expected counts (13,212 total) with 0 remaining inline. Now the independent "make sure it's all purged" check the user asked for — I'll re-verify…
-- `2026-07-05 18:09:13 MDT` Tool: Bash cd /home/runner/workspace echo "=== FRESH off-grid + total counts, all timeframes (off-grid must be 0 everywhere; total must equal prior ON-GRID count) ===" pr…
-- `2026-07-05 18:09:35 MDT` Agent: Independent verification is clean: **0 off-grid rows across all 12 slices**, and every purged slice's total exactly equals its prior on-grid count (e.g. SPY 5m 12598 = 16818 − 422…
-- `2026-07-05 18:09:39 MDT` Tool: Bash cd /home/runner/workspace echo "=== live app read of a PURGED slice (SPY 5m) — canonical bars still serve ===" curl -s "http://127.0.0.1:8080/api/bars?symbol=S…
-- `2026-07-05 18:10:01 MDT` Agent: Confirmed — the purge is complete and verified end-to-end: | Check | Result | |---|---| | Deleted (6 slices, guarded) | **13,212** rows, exactly matching the dry-run | | Off-grid…
+- `2026-07-05 18:38:39 MDT` User: please find and resume the session that was working on removing duplicate bar cache stuff. i need it resumed with full context. its from a few monutea go (pre container reset). fi…
+- `2026-07-05 18:38:46 MDT` User: please find and resume the session that was working on removing duplicate bar cache stuff. i need it resumed with full context. its from a few monutea go (pre container reset). fi…
+- `2026-07-05 18:38:55 MDT` Agent: I'll find that session first. Let me search the session handoffs and transcripts for the duplicate bar cache work.
+- `2026-07-05 18:38:57 MDT` Tool: Bash rg -l -i 'duplicate.{0,40}bar|bar.{0,20}cache|barcache|bar_cache|dedup.{0,20}bar' --glob 'SESSION_HANDOFF*.md' 2>/dev/null | head -50
+- `2026-07-05 18:38:58 MDT` Tool: Bash ls -lt SESSION_HANDOFF*.md 2>/dev/null | head -40
+- `2026-07-05 18:38:59 MDT` Tool: Bash ls -la /home/runner/.claude/projects/-home-runner-workspace/ 2>/dev/null | head -60
+- … 287 lower-signal transcript events omitted …
+- `2026-07-05 22:01:00 MDT` Tool: Bash cd /home/runner/workspace/artifacts/api-server echo "=== tests importing the evaluation worker ===" rg -l 'signal-monitor-evaluation-worker' src --glob '*.test…
+- `2026-07-05 22:01:22 MDT` Agent: Deployed. Let me run the worker-pressure test (which imports the worker) for correctness, and take a first post-fix counter reading.
+- `2026-07-05 22:01:25 MDT` Tool: Bash cd /home/runner/workspace/artifacts/api-server echo "=== background-worker-pressure test ===" node --import tsx --test src/services/background-worker-pressure.…
+- `2026-07-05 22:01:59 MDT` Agent: **The fix works** — post-reload the worker's reads are now **100% prefetch hits (66 hits, 0 fallback)**. The un-prefetched per-symbol pooled reads are eliminated. **But 2 tests fa…
+- `2026-07-05 22:02:02 MDT` Tool: Bash cd /home/runner/workspace echo "=== stash ONLY the worker file, re-run the pressure test on the clean (HEAD) worker ===" git stash push -- artifacts/api-server…
+- `2026-07-05 22:02:28 MDT` Agent: Confirmed pre-existing: with my worker change stashed (clean HEAD), the **same 2 tests still fail** — so they're from the entangled tree (HEAD moved to `89f979e9 Slice 5.5 part 2`…
+- `2026-07-05 22:02:32 MDT` Tool: Bash cd /home/runner/workspace sample() { curl -s "http://127.0.0.1:8080/api/diagnostics/runtime" 2>/dev/null | python3 -c "import sys,json d=json.load(sys.stdin) d…
+- `2026-07-05 22:03:21 MDT` Agent: **Fix verified working and stable:** | | prefetchHit | fallback | noPrefetch | mismatch | |---|---|---|---|---| | **Before** (worker un-wrapped) | 0 | ~1/sec, climbing | 100% | 0…
+- `2026-07-05 22:03:28 MDT` Tool: Edit /home/runner/.claude/projects/-home-runner-workspace/memory/signal-monitor-stored-bars-fallback-instrumentation.md
+- `2026-07-05 22:03:45 MDT` Agent: Done — the fix is applied, deployed, and verified. ## What I changed Wrapped the signal-monitor evaluation worker's per-symbol history loop (`signal-monitor-evaluation-worker.ts:3…
 
 ## High-Signal Changed Files
 
@@ -597,33 +607,33 @@ please diagnose the reason for the replit container recent moments ago
 - `SESSION_HANDOFF_CURRENT.md`
 - `SESSION_HANDOFF_LIVE_2026-07-03_ibkr-client-portal-hosted-connector.md`
 - `SESSION_HANDOFF_MASTER.md`
+- `artifacts/api-server/package.json`
+- `artifacts/api-server/src/routes/auth.ts`
+- `artifacts/api-server/src/services/signal-monitor-evaluation-worker.ts`
+- `artifacts/api-server/src/services/signal-monitor-local-bar-cache-prefetch.test.ts`
+- `artifacts/api-server/src/services/signal-monitor-local-bar-cache.ts`
 - `artifacts/api-server/src/services/signal-options-automation.ts`
 - `artifacts/mcp-server/src/host/procinfo.test.mjs`
 - `artifacts/mcp-server/src/host/procinfo.ts`
 - `artifacts/pyrus/scripts/flightRecorder.mjs`
 - `artifacts/pyrus/scripts/runDevApp.mjs`
 - `artifacts/pyrus/src/components/platform/signal-language/SignalDots.jsx`
-- `artifacts/pyrus/src/features/backtesting/BacktestingPanels.tsx`
-- `artifacts/pyrus/src/features/flow/ContractDetailInline.jsx`
-- `artifacts/pyrus/src/features/platform/MobileMoreSheet.jsx`
-- `artifacts/pyrus/src/features/research/PhotonicsObservatory.jsx`
-- `artifacts/pyrus/src/features/research/components/ResearchCalendarView.jsx`
+- `artifacts/pyrus/src/components/platform/signal-language/SignalDots.test.mjs`
+- `artifacts/pyrus/src/features/platform/PlatformWatchlist.jsx`
+- `artifacts/pyrus/src/features/platform/signalFrameState.js`
 - `artifacts/pyrus/src/features/signals/signalStateFreshness.js`
 - `artifacts/pyrus/src/features/signals/signalStateFreshness.test.mjs`
 - `artifacts/pyrus/src/features/signals/signalsRowModel.js`
 - `artifacts/pyrus/src/features/signals/signalsRowModel.test.mjs`
-- `artifacts/pyrus/src/screens/AccountScreen.jsx`
-- `artifacts/pyrus/src/screens/DiagnosticsScreen.jsx`
-- `artifacts/pyrus/src/screens/FlowScreen.jsx`
-- `artifacts/pyrus/src/screens/GexScreen.jsx`
-- `artifacts/pyrus/src/screens/SettingsScreen.jsx`
-- `artifacts/pyrus/src/screens/SignalsScreen.jsx`
+- `artifacts/pyrus/src/lib/formatters.js`
 - `artifacts/pyrus/src/screens/algo/OperationsSignalTable.test.mjs`
+- `lib/db/src/schema/auth.ts`
+- `pnpm-lock.yaml`
 
 ## Repo State Snapshot
 
 ```text
-## main...origin/main [ahead 5]
+## main...origin/main [ahead 10]
  M .env.example
  M CLAUDE.md
  M SESSION_HANDOFF_2026-07-05_182a4859-3a9a-4166-a21c-d05fec4e58f6.md
@@ -632,79 +642,97 @@ please diagnose the reason for the replit container recent moments ago
  M SESSION_HANDOFF_CURRENT.md
  M SESSION_HANDOFF_LIVE_2026-07-03_ibkr-client-portal-hosted-connector.md
  M SESSION_HANDOFF_MASTER.md
+ M artifacts/api-server/package.json
+ M artifacts/api-server/src/routes/auth.ts
+ M artifacts/api-server/src/services/signal-monitor-evaluation-worker.ts
+ M artifacts/api-server/src/services/signal-monitor-local-bar-cache-prefetch.test.ts
+ M artifacts/api-server/src/services/signal-monitor-local-bar-cache.ts
  M artifacts/api-server/src/services/signal-options-automation.ts
  M artifacts/mcp-server/src/host/procinfo.test.mjs
  M artifacts/mcp-server/src/host/procinfo.ts
  M artifacts/pyrus/scripts/flightRecorder.mjs
  M artifacts/pyrus/scripts/runDevApp.mjs
  M artifacts/pyrus/src/components/platform/signal-language/SignalDots.jsx
- M artifacts/pyrus/src/features/backtesting/BacktestingPanels.tsx
- M artifacts/pyrus/src/features/flow/ContractDetailInline.jsx
- M artifacts/pyrus/src/features/platform/MobileMoreSheet.jsx
- M artifacts/pyrus/src/features/research/PhotonicsObservatory.jsx
- M artifacts/pyrus/src/features/research/components/ResearchCalendarView.jsx
+ M artifacts/pyrus/src/components/platform/signal-language/SignalDots.test.mjs
+ M artifacts/pyrus/src/features/platform/PlatformWatchlist.jsx
+ M artifacts/pyrus/src/features/platform/signalFrameState.js
  M artifacts/pyrus/src/features/signals/signalStateFreshness.js
  M artifacts/pyrus/src/features/signals/signalStateFreshness.test.mjs
  M artifacts/pyrus/src/features/signals/signalsRowModel.js
  M artifacts/pyrus/src/features/signals/signalsRowModel.test.mjs
- M artifacts/pyrus/src/screens/AccountScreen.jsx
- M artifacts/pyrus/src/screens/DiagnosticsScreen.jsx
- M artifacts/pyrus/src/screens/FlowScreen.jsx
- M artifacts/pyrus/src/screens/GexScreen.jsx
- M artifacts/pyrus/src/screens/SettingsScreen.jsx
- M artifacts/pyrus/src/screens/SignalsScreen.jsx
+ M artifacts/pyrus/src/lib/formatters.js
  M artifacts/pyrus/src/screens/algo/OperationsSignalTable.test.mjs
+ M lib/db/src/schema/auth.ts
+ M pnpm-lock.yaml
+?? FRONTEND_AUDIT_ROUND4.md
 ?? SESSION_HANDOFF_2026-07-05_0a16f7cc-0030-4762-8ef5-fd97147754d7.md
+?? SESSION_HANDOFF_2026-07-05_113d7d20-310a-4f34-8886-b650d04d28d0.md
+?? SESSION_HANDOFF_2026-07-05_134896bd-a1eb-47f1-b0ab-d6bca2e6be12.md
+?? SESSION_HANDOFF_2026-07-05_30002be4-9321-42dc-bd0a-424f277061ca.md
+?? SESSION_HANDOFF_2026-07-05_3031a953-6144-4a63-ae27-9f21173d48f6.md
+?? SESSION_HANDOFF_2026-07-05_5c7aa51d-8dd1-4203-b82f-9e43ad57fbb8.md
+?? SESSION_HANDOFF_2026-07-05_5de488c2-8ff8-4413-8789-b3f9b29eab00.md
+?? SESSION_HANDOFF_2026-07-05_60473da9-4bce-4a67-ab18-ff1acaca29de.md
+?? SESSION_HANDOFF_2026-07-05_627f9c4a-d576-41ba-be7b-345670c3b6f6.md
+?? SESSION_HANDOFF_2026-07-05_6765f941-f062-4a70-b852-fb42f1d5c54a.md
+?? SESSION_HANDOFF_2026-07-05_7943526c-b016-4b6b-87e3-c12b3b04f503.md
+?? SESSION_HANDOFF_2026-07-05_82f9cebc-58c7-4ae0-a1ac-be06b4787f96.md
+?? SESSION_HANDOFF_2026-07-05_d378bab2-87ad-4e12-8e67-1acd7567bb83.md
 ?? SESSION_HANDOFF_2026-07-05_d6cc55a2-d861-4e14-8fb4-556e5452bb5f.md
 ?? artifacts/api-server/__mint-agent-session.mts
+?? artifacts/api-server/src/services/auth-launch.ts
+?? docs/audits/frontend-audit-round4-2026-07-05.raw.json
 ?? docs/plans/ibkr-connector-local-setup-spec.md
 ?? docs/plans/ibkr-oauth-selfservice-runbook.md
 ?? docs/plans/ibkr-third-party-oauth-scope.md
+?? lib/db/migrations/20260705_launch_token_jti.sql
 ```
 
 ## Diff Summary
 
 ```text
- .env.example                    |   17 +-
+ .env.example                    |   21 +-
  CLAUDE.md                       |   16 +-
- ...9a-4166-a21c-d05fec4e58f6.md | 1310 +------
- ...9e-4d4b-b117-9efbb977226a.md | 1311 +-------
- ...f6-415e-a500-95045ce2a39e.md | 1279 +------
- SESSION_HANDOFF_CURRENT.md      |   17 +-
+ ...9a-4166-a21c-d05fec4e58f6.md | 1318 +-------
+ ...9e-4d4b-b117-9efbb977226a.md | 1311 +------
+ ...f6-415e-a500-95045ce2a39e.md | 1303 +------
+ SESSION_HANDOFF_CURRENT.md      |   10 +-
  ...t-portal-hosted-connector.md |  147 +
- SESSION_HANDOFF_MASTER.md       |    8 +-
+ SESSION_HANDOFF_MASTER.md       |   20 +-
+ .../api-server/package.json     |    1 +
+ .../src/routes/auth.ts          |   50 +
+ ...monitor-evaluation-worker.ts |  187 +-
+ ...l-bar-cache-prefetch.test.ts |   52 +
+ ...l-monitor-local-bar-cache.ts |   21 +
  ...signal-options-automation.ts |   19 +-
  .../src/host/procinfo.test.mjs  |   18 +-
  .../src/host/procinfo.ts        |   28 +-
  .../scripts/flightRecorder.mjs  |   63 +-
  .../pyrus/scripts/runDevApp.mjs |    4 +
- .../SignalDots.jsx              |   20 +-
- .../BacktestingPanels.tsx       |  206 +-
- .../ContractDetailInline.jsx    |   73 +-
- .../MobileMoreSheet.jsx         |   75 +-
- .../PhotonicsObservatory.jsx    |   97 +-
- .../ResearchCalendarView.jsx    |   92 +-
+ .../SignalDots.jsx              |   32 +-
+ .../SignalDots.test.mjs         |   36 +-
+ .../PlatformWatchlist.jsx       |    7 +-
+ .../signalFrameState.js         |   10 +-
  .../signalStateFreshness.js     |   19 +-
  ...ignalStateFreshness.test.mjs |   17 +
- .../signals/signalsRowModel.js  |   38 +-
+ .../signals/signalsRowModel.js  |   57 +-
  .../signalsRowModel.test.mjs    |   72 +-
- .../screens/AccountScreen.jsx   |   87 +-
- .../DiagnosticsScreen.jsx       |  244 +-
- .../src/screens/FlowScreen.jsx  |   83 +-
- .../src/screens/GexScreen.jsx   |   48 +-
- .../screens/SettingsScreen.jsx  |  382 ++-
- .../screens/SignalsScreen.jsx   |  124 +-
+ .../pyrus/src/lib/formatters.js |   23 +
  ...erationsSignalTable.test.mjs |   24 +-
- 30 files changed, 1397 insertions(+), 4541 deletions(-)
+ lib/db/src/schema/auth.ts       |   15 +
+ pnpm-lock.yaml                  |    3 +
+ 30 files changed, 1089 insertions(+), 3815 deletions(-)
 ```
 
 ## Validations Detected In Transcript
 
-- `2026-07-05 12:49:36 MDT` cd /home/runner/workspace/artifacts/mcp-server && pnpm test src/host/procinfo.test.mjs 2>&1 | tail -15 && pnpm typecheck 2>&1 | tail -5 (ok)
-- `2026-07-05 12:50:03 MDT` pnpm build 2>&1 | tail -3 (ok)
-- `2026-07-05 12:54:09 MDT` cd /home/runner/workspace/artifacts/pyrus && node --check scripts/flightRecorder.mjs && node --check scripts/runDevApp.mjs && echo "syntax OK" && node --input-… (ok)
-- `2026-07-05 17:38:13 MDT` cd /home/runner/workspace/artifacts/api-server echo "=== typecheck ===" pnpm typecheck 2>&1 | tail -5 echo "=== market-data-store tests (read/persist/equality)… (ok)
-- `2026-07-05 18:01:04 MDT` cd /home/runner/workspace/artifacts/api-server echo "=== typecheck ===" pnpm typecheck 2>&1 | tail -4 echo "=== run the new + existing alignment tests ===" nod… (ok)
+- `2026-07-05 19:50:52 MDT` cd /home/runner/workspace/artifacts/api-server echo "===== typecheck =====" pnpm typecheck 2>&1 | tail -8 echo echo "===== VACUUM2 status =====" cat /tmp/claud… (ok)
+- `2026-07-05 19:52:59 MDT` cd /home/runner/workspace/artifacts/api-server echo "===== run the prefetch test file (incl. new counter test) =====" pnpm test src/services/signal-monitor-loc… (ok)
+- `2026-07-05 19:53:13 MDT` cd /home/runner/workspace/artifacts/api-server echo "=== test script ==="; node -e "console.log(require('./package.json').scripts.test)" 2>/dev/null echo "===… (ok)
+- `2026-07-05 20:13:10 MDT` cd /home/runner/workspace/artifacts/api-server echo "=== typecheck ===" pnpm typecheck 2>&1 | tail -4 echo "=== SIGUSR2 reload ===" kill -USR2 56877 && echo "r… (ok)
+- `2026-07-05 20:16:05 MDT` cd /home/runner/workspace echo "=== any TEMP-ATTRIBUTION or lastFallbackNoPrefetchSample left? (should be empty) ===" rg -n 'TEMP-ATTRIBUTION|lastFallbackNoPre… (ok)
+- `2026-07-05 20:41:46 MDT` cd /home/runner/workspace F=artifacts/api-server/src/services/signal-monitor-evaluation-worker.ts echo "=== prettier available? ===" ls node_modules/.bin/prett… (ok)
+- `2026-07-05 21:59:54 MDT` cd /home/runner/workspace/artifacts/api-server && pnpm typecheck 2>&1 | tail -8 (ok)
 
 ## What Changed This Session
 

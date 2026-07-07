@@ -457,3 +457,269 @@ but unsupported); persistent-per-user = standing cost per connected user (VM mus
 session via tickle). PHASING: Phase 1 = app-side subpath-proxy retirement (provider-agnostic, safe); Phase 2 =
 Fly Machines orchestration (provision/persist/reap per user, DB map, popup->VM URL); Phase 3 = e2e verify.
 Awaiting user: confirm Fly.io (or other provider) + green-light Phase 1.
+
+## RESUMED 2026-07-05 (~12:2x MDT) by b9dafa30-72f6-415e-a500-95045ce2a39e — per-user microVM construction PLANNING
+User resumed to PLAN how we construct the per-user microVMs. Answers: lifecycle = PERSISTENT always-on per user;
+provisioning = ON-DEMAND on Connect. On provider, user wants to "handle this internally — publishing on a Replit
+RESERVED VM" and asked: can we spawn our own sub-VMs per user INSIDE that Reserved VM?
+VERIFIED LOCAL FACTS (this dev container, probed directly — strong proxy for, not identical to, the Reserved VM
+deploy target):
+  - REPL_IN_MICROVM=true — we ALREADY run inside a Replit-managed microVM.
+  - NO /dev/kvm; CapEff=0x20 (CAP_KILL only) => CANNOT nest real VMs (Firecracker/QEMU/KVM) inside it.
+  - Docker daemon DOES respond (ServerVersion 27.5.1, overlay2) => per-user CONTAINERS are possible, but they
+    share our kernel (namespace isolation, NOT VM-grade) and do NOT get their own external origin.
+  - .replit external ports = FIXED 2-entry allowlist (8080->8080, 18747->3000); REPLIT_DOMAINS = ONE hostname.
+    => No dynamic per-user hostnames/ports from inside a Replit deployment.
+PRELIMINARY CONCLUSION (pending doc verification): CANNOT host the per-user gateway fleet inside the Replit
+Reserved VM — not because of nesting alone, but because the fleet needs an OWN EXTERNAL ORIGIN PER USER to
+dissolve the SPA-base + cookie-fragmentation login bugs, and Replit gives exactly one origin. Gateways inside
+Replit => forced back to the subpath proxy => the exact bug we are escaping returns. Replit Reserved VM CAN be
+the always-on CONTROL PLANE (orchestrator + user->gateway map + tickle); the gateway fleet must live where WE
+own the network edge (own wildcard DNS / arbitrary ports / own KVM).
+RUNNING: Workflow wf_f4280070-4f7 (4 research agents + fable synthesis + adversarial verify) to (a) confirm the
+Reserved-VM DEPLOYMENT specifics vs the dev container, and (b) produce ranked, costed construction options:
+  (1) per-user CONTAINERS on one self-owned VM behind a wildcard-subdomain reverse proxy (Caddy/Traefik),
+  (2) Fly.io Machines per-user Firecracker microVM, (3) Firecracker on our own KVM-capable box.
+NEXT: read workflow output -> present verified answer + recommendation; user picks where the fleet lives. All
+connector code still intact + uncommitted on perf/elu-loop-pressure-fixes; no code changed this session yet.
+
+## WORKFLOW VERDICT 2026-07-05 (wf_f4280070-4f7, 4 research + fable synth + adversarial verify) — HIGH confidence
+ANSWER (verified, HIGH): CANNOT spawn per-user sub-VMs OR usefully sub-containers inside a Replit Reserved VM.
+Two independent blockers (both from Replit docs + local probes):
+  A. Isolation ceiling: no /dev/kvm, no CAP_SYS_ADMIN, no tenant nested-virt flag => no Firecracker/QEMU/KVM;
+     and deployments have NO docker daemon (the dev workspace's docker 27.5.1 is workspace-only). Max = shared-
+     kernel child processes on ONE lifecycle (a redeploy drops every user's authed session at once).
+  B. Network edge (the R1-fatal one): a Replit deployment exposes exactly ONE external hostname + ONE external
+     port to ONE process; NO wildcard custom domains (each subdomain is a manual Domains-tab entry) and the edge
+     cannot route subdomain->internal-port. So minting https://u-<slug>.../ per user ON CONNECT is impossible
+     inside Replit. Docs: docs.replit.com ports + custom-domains + reserved-vm-deployments.
+Reserved VM Reserved-VM tiers: $20 (0.5vCPU/2GB) / $40 (1/4) / $80 (2/8) / $160 (4/16); good as CONTROL PLANE only.
+RECOMMENDATION (option a, one recommended:true): keep PYRUS on the Replit Reserved VM as control plane; move the
+per-user gateway FLEET to ONE small self-owned VM (Hetzner ~$8-17/mo FLAT) running per-user Docker containers
+behind a Caddy WILDCARD-subdomain reverse proxy -> each user gets a real own origin https://u-<slug>.gw.<domain>.
+This fully + dynamically satisfies R1 (own-origin root => SPA seg1='sso' + host-only cookies, ZERO rewriting),
+upgrades R2 to capped/network-segmented containers on OUR kernel, is cheap, and REUSES nearly all code: session/
+tickle/context unchanged; gateway-manager gains a remote "provisioner driver"; only routes/ibkr-portal.ts
+proxyToGateway dies (keep the 4 control endpoints). Same Docker image later runs on Fly Machines (b, true per-user
+microVM, ~$7/user/mo) or Firecracker on our own KVM box (c, 2-4 wks, max isolation) — both clean upgrade paths.
+CHEAPEST DE-RISK (do FIRST, before building — validates the premise never yet tested with a real login): spawn one
+gateway on loopback (:5200) and `cloudflared tunnel --url http://127.0.0.1:5200` to publish it at an own-origin
+ROOT; user does ONE real IBKR login+2FA. PASS = SPA seg1 resolves 'sso', x-sess-uuid host-only (no fragmentation),
+post-2FA bind registers, /status->connected, 55s tickle holds. Also exercises the residual X-Forwarded-Proto /
+SSO-redirect path. If it passes, option (a) is de-risked for the price of one command.
+RESIDUALS (config-level, not architecture): Caddy must PRESERVE Host + not rewrite Set-Cookie (its defaults do);
+verify X-Forwarded-Proto=https so gateway absolute redirects during 2FA stay https; exercise /v1/api/ws WebSocket.
+OPEN DECISIONS: fleet provider+size+user ceiling; wildcard zone domain + slug secrecy; topology (PYRUS on Replit +
+separate fleet VM vs consolidate all onto the self-owned VM); control/tickle transport (agent vs Docker API/mTLS,
+public TLS vs WireGuard); pre-login gate (capability slug vs forward_auth one-time token); reaper TTL; VM-isolation
+end-state trigger. Also land a DB-backed gateway map + boot reconciler regardless (today's in-memory Map loses the
+fleet on every API restart).
+
+## STRATEGIC PIVOT 2026-07-05 (~12:4x MDT) by b9dafa30 — DROP central hosting; OAuth (durable) + local self-host (interim)
+After the verdict, user pivoted AWAY from us-hosting the gateway fleet. Root insight (agreed): every wall this
+workstream hit traces to ONE cause — IBKR CP Gateway is designed to run on the END USER'S OWN MACHINE and fights
+central hosting. Two supported ways to stop fighting it, and the user chose BOTH in parallel:
+  TRACK A (durable): IBKR OAuth third-party approval + a from-scratch OAuth-1.0a build. ibkr-oauth-readiness.ts is
+    a STUB today (self-reports implementation_not_complete). Officially-supported, cloud-native, works UNATTENDED.
+    Cost = IBKR vendor approval (weeks, gated) + real build. Start approval in motion now.
+  TRACK B (interim): make it EASY for users to run Client Portal on THEIR OWN machine. User is ATTENDED-ONLY for
+    the interim (overnight auto-trader stays on its existing path until OAuth lands). Local = same-machine =
+    IBKR's supported model => login "just works" (localhost origin, root path; ALL the origin/cookie/subpath bugs
+    evaporate). User's concrete idea: a ONE-CLICK DOWNLOAD of "what they need" + a WALKTHROUGH/WIZARD.
+DESIGN (Track B, proposed): download = a self-contained per-OS "PYRUS IBKR Connector" = bundled JRE 17 +
+clientportal.gw + a small AGENT that launches the gateway, opens the local login, and dials OUTBOUND to PYRUS
+(heartbeat + request tunnel) — because cloud PYRUS cannot reach the user's localhost:5000. This revives the retired
+Windows-helper/bridge pattern (bridge-client.ts:145 "helper is heartbeating ... tunnel/runtime handoff"). Wizard =
+4 steps that AUTO-ADVANCE on live detection: Download -> Run (waits for heartbeat) -> IBKR login+2FA (local, just
+works) -> Connected (poll readiness via tunnel). REUSE: ensure-ibkr-portal-runtime.mjs + gateway-manager conf/
+spawn/health logic move client-side; bridge-client/ibkr-bridge-runtime/platform-bridge-health = the tunnel+health
+contract; ibkr-portal-session readiness/tickle reused with baseUrl->tunnel; routes/ibkr-portal.ts DELETES the
+subpath proxy (login is local now), keeps 4 control endpoints, adds pairing+tunnel endpoints; ibkrPortalConnectModel
++ Settings tile -> the wizard. HARD PARTS (us): code-signing (Win Authenticode + Apple notarization), PYRUS tunnel-
+relay endpoint, cross-OS builds, auto-update. PHASING: P1 bundle+wizard+local-login+heartbeat; P2 REST relay over
+tunnel (server-side account/trade); P3 signing/auto-update/polish.
+OPEN FORK (asked user): download SHAPE = bundled-agent-with-outbound-tunnel (recommended; server-side trading
+works) vs thin gateway-only browser-relay (lighter, attended, but display/browser-initiated only). After answer:
+write a build-ready spec (likely via /spec). No code changed this session; connector code still uncommitted.
+
+## PROGRESS 2026-07-05 (~13:xx MDT) by b9dafa30 — connector plan SAVED; pivot to Track A (IBKR third-party OAuth)
+REPO-STATE CORRECTION: the ibkr-portal connector files are NO LONGER uncommitted — the branch moved from
+perf/elu-loop-pressure-fixes@378e4d3 to main@f654d5f (reflog: "chore(snapshot): consolidate in-flight working
+tree..." + merge origin/main); all four ibkr-portal-*.ts are now TRACKED on main (no data loss). USER DIRECTIVE:
+all work on main, NO side-branching.
+TRACK B (interim local connector): build-ready plan SAVED to docs/plans/ibkr-connector-local-setup-spec.md
+(bundled Bun-binary connector + outbound WS tunnel + 4-step wizard; reuses ensure-ibkr-portal-runtime.mjs +
+gateway-manager + retired ibkr-bridge-runtime registration/heartbeat surface; deletes the subpath proxy). D1-D5
+decisions = working defaults (Bun binary; thin agent fetches JRE+gw on first run; Windows-first; own reverse WS;
+single-use pairing token). NOT yet implemented.
+TRACK A (durable, now active): scoping IBKR THIRD-PARTY OAuth. Repo grounding: ibkr-oauth-readiness.ts is a STUB
+(implementation_not_complete; oauth1a_third_party; approvalRequired:true); route WIRED GET /broker-execution/ibkr/
+oauth/readiness (broker-execution.ts:116); env scaffolding .env.example:90-94; broker-provider-classification.ts
+has providerKey "ibkr_oauth" (note: third-party requires IBKR approval + compliance onboarding). schwab/robinhood
+OAuth are OAuth2 (patterns only; 1.0a RSA/DH signing is NET NEW). Full SnapTrade integration exists — PIVOTAL open
+Q: does SnapTrade already reach IBKR for unattended TRADING (would obviate a from-scratch build)? ADR-002 exists.
+RUNNING: Workflow wf_b3e15f66-634 (4 research: approval-process / oauth1a-flow / snaptrade-alternatives /
+code-build-scope; fable synthesis; adversarial verify) -> will produce a scope doc (build-vs-buy, approval gates
+the user can start NOW, technical build map, phased plan, effort). NEXT: read output -> write
+docs/plans/ibkr-third-party-oauth-scope.md + surface the build-vs-buy recommendation + any do-now approval steps.
+
+## OAUTH SCOPE DONE 2026-07-05 (wf_b3e15f66-634) — BUILD (SnapTrade can't trade IBKR); self-service de-risks 80% pre-approval
+Scope doc WRITTEN: docs/plans/ibkr-third-party-oauth-scope.md. VERDICT (HIGH conf): BUILD direct IBKR OAuth 1.0a
+third-party; do NOT rely on SnapTrade (its IBKR = INTERACTIVE-BROKERS-FLEX, read-only Flex Query, NO order
+placement — confirmed by SnapTrade docs + our own snaptrade plan doc:83-96). KEY UNLOCK: the SELF-SERVICE
+(first-party) OAuth path needs NO IBKR approval and uses the IDENTICAL DH->LST->HMAC crypto, so ~80% of the build
+(signer, LST, session mgr, signed reads, order placement) is provable on OUR OWN IBKR account before approval.
+FLOW: request_token->authorize->access_token (third-party only, RSA-SHA256) -> live_session_token via Diffie-
+Hellman (2048-bit p, g=2; LST=HMAC-SHA1(K, decrypted secret)) -> ssodh/init -> all API calls HMAC-SHA256 keyed by
+LST; ~60s tickle, ~24h LST re-auth. BUILD MAP (Node crypto only, 0 new deps): NEW providers/ibkr/oauth-signer.ts
+(2-3d) + oauth-live-session.ts (1-2d) + services/ibkr-oauth-session.ts (3-4d) + services/ibkr-oauth-connect.ts
+(Phase 4, gated on approval); REUSE providers/ibkr/client.ts (3825 lines, buildHeaders:985/request:1026, add a
+per-request signing hook) — whole endpoint+order surface carries over; EXTEND ibkr-oauth-readiness.ts + .env.example
+(add IBKR_OAUTH_ENCRYPTION_KEY + IBKR_OAUTH_DH_PARAM) + broker-provider-classification.ts. EFFORT ~2-3 eng-wks to
+paper-validated unattended trading on self-service, +~1wk third-party flow post-approval. CALENDAR dominated by IBKR
+approval ~3-6 wks (IBKR's own estimate; business-owned; docs 403 to bots so a human must read them).
+DO NOW (user-owned, long poles): (1) submit IBKR third-party OAuth/compliance application (api@ibkr.com/campus);
+(2) enable SELF-SERVICE OAuth on PYRUS's own IBKR account (openssl: 2x RSA-2048 keypairs + 2048-bit DH params,
+register public halves) -> unblocks all crypto dev; (3) human reads the 2 campus docs to settle the request/access
+signature-method ambiguity (RSA-SHA256 vs HMAC — the one real tech risk); (4) confirm a paper account.
+CHEAPEST DE-RISK: prove ONE live_session_token round-trip with self-service creds (LST signature validates) — ~1-2d,
+validates the 80%-pre-approval assumption AND resolves the signature ambiguity empirically.
+NEXT: await user pick — (A) start crypto core now (signer+LST, unit-tested vs OSS vectors, no creds needed) in
+parallel with approval, (B) do-now runbook (openssl cmds + self-service setup + draft IBKR application), (C) review.
+Both plan docs saved on main; no code changed this session.
+
+## DO-NOW RUNBOOK DELIVERED 2026-07-05 by b9dafa30 (research agent aafbf2cb, 3 OSS impls: ibind/quentinadam/marchenko)
+WRITTEN: docs/plans/ibkr-oauth-selfservice-runbook.md. Two parallel tracks: Part A (self-service OAuth on our own
+IBKR account — openssl keygen + IBKR SSO-URL registration + token issue/decrypt — unblocks ALL crypto dev, no
+approval) and Part B (draft third-party application email, the 3-6wk long pole). RESOLVED FACTS: (1) signature
+ambiguity settled — RSA-SHA256 for request/access/live_session_token, HMAC-SHA256 (base64-decoded LST key) for API
+calls; (2) SELF-SERVICE SKIPS the 3-legged request_token/authorize/access_token flow — the IBKR portal ISSUES the
+access token + RSA-encrypted secret directly, so Part A validates ~80% of the build with zero approval. Creds:
+consumer key = 9-char A-Z (self-service; 25-hex = third-party); realm limited_poa; upload public_signature.pem +
+public_encryption.pem + dhparam.pem at SSO URL action=OAUTH. Signer gotchas: HMAC the DECRYPTED secret bytes;
+big-endian two's-complement (leading 0x00) on the DH shared secret. Missing env vars to add: IBKR_OAUTH_ENCRYPTION_KEY,
+IBKR_OAUTH_DH_PARAM (+ ACCESS_TOKEN/SECRET). SECURITY: private keys + secret can trade + bypass 2FA — never commit/
+paste; secrets store only.
+NEXT: (offered) apply the .env.example scaffolding (2 missing vars); then user runs Part A on IBKR -> hands back
+consumer key + confirms secrets populated -> I build providers/ibkr/oauth-signer.ts + oauth-live-session.ts and prove
+one live LST round-trip (the cheapest de-risk). 3 IBKR plan docs now on main: connector-local-setup-spec, third-party-
+oauth-scope, oauth-selfservice-runbook.
+
+## OWN-ORIGIN DE-RISK CHAPTER 2026-07-05 (~18:31–20:35 MDT) by 134896bd — reconstructed from gateway logs (transcript wiped)
+134896bd resumed b9dafa30 and went BACK to the CP-Gateway own-origin de-risk (the cheapest test that gates BOTH the
+per-user-VM plan and the local-connector plan): serve one loopback gateway at its OWN ROOT ORIGIN via a cloudflared
+quick tunnel (no subpath proxy) and have the user do ONE real login+2FA. Its own transcript + workflow journals were
+WIPED by a container reset; this entry is reconstructed from the surviving gateway logs + the per-session handoff's
+recent-user-messages.
+- Tunnel #1 `treatment-laboratories-mining-shuttle.trycloudflare.com` → user got DNS_PROBE_FINISHED_NXDOMAIN (18:51).
+- A working own-origin tunnel → user did a REAL login, 2FA SUCCEEDED per IBKR screen, but the tunnel URL STILL bounced
+  back to the login page after 2FA (19:48, re-confirmed 19:55). NOT a clean refutation of own-origin: same browser,
+  reused across all prior subpath attempts, was carrying ~17 stale x-sess-uuid cookies (the long-flagged confound).
+- Agent ran a diagnostic workflow (wf_852ed314) + hand-synthesized a diagnosis at 20:15 (TEXT LOST with the transcript),
+  then stood up a FRESH HTTPS tunnel `amsterdam-rod-tiles-brakes.trycloudflare.com` (instance `derisk-tunnel`, gw log
+  survives) and armed a bind watcher for a CLEAN INCOGNITO re-test. At the 20:35 drop the watcher showed ZERO login
+  traffic — the clean re-test was never attempted.
+- SURVIVING GATEWAY-LOG EVIDENCE (.pyrus-runtime/ibkr-cpg/instances/derisk-tunnel/logs/gw.2026-07-05.log): only the
+  agent's own curl smoke-probes of the amsterdam tunnel (Client login succeeds=0, sso/validate=0, Access Denied=0), so
+  no completed real login landed on THAT instance. NOTE the gateway's OWN BaseServiceProxy still logs `Remapping
+  Set-cookies […] -> ∅` even at own-origin — i.e. the cookie-blanking is the gateway's internal behavior, so own-origin
+  alone does NOT self-evidently resolve the p=0.45 cookie-binding theory. The CLEAN incognito own-origin login is what
+  settles it.
+- NET STATE: the own-origin de-risk is SET UP BUT NOT CLEANLY COMPLETED. The one real attempt bounced but was confounded
+  (stale cookies + tunnel-#1 NXDOMAIN). The fresh tunnel + gateway were EPHEMERAL and are now DEAD (verified: no JVM/
+  cloudflared running; cloudflared not on PATH; gateway jar + Java 17 still present).
+
+## RESUMED 2026-07-06 (~06:5x MDT) by df03e38d — clean own-origin login test + VM-hosting research FIRST
+User asked to resume 134896bd and "attempt a paper login for the new method." Confirmed direction = CLEAN OWN-ORIGIN
+LOGIN TEST (re-spawn fresh loopback gateway + fresh cloudflared tunnel → user does ONE incognito login+2FA with PAPER
+creds → watch gw log for the post-2FA bind verdict). BLOCKER HIT: the auto-mode safety classifier DENIED the cloudflared
+download/run as an "External Ingress Tunnel" (public exposure of a trading gateway needs explicit human approval) — the
+tunnel is essential to own-origin (gateway is 127.0.0.1-only; browser is remote; Replit's own URL reintroduces the
+subpath bug). Surfaced to user; awaiting permission grant for the cloudflared step. Spawn recipe confirmed from
+gateway-manager.ts (listenSsl:false, --conf ../root/conf.yaml, DEBUG cookie logging); will spawn a FRESH instance (not
+reuse derisk-tunnel's stale state).
+BEFORE the login attempt, user asked for RESEARCH on how others successfully run IBKR CP Gateway / TWS / IB Gateway on
+VMs/cloud instead of a local machine. RUNNING: Workflow wf_50acaad9-42a (6 web-research angles: cpgw-cloud [IBeam],
+ibgw-headless [IBC + ib-gateway-docker], auth-2fa-ip walls, reverse-proxy/own-origin, multiuser-scale, provider-reports
+→ adversarial verify → fable synthesis). NEXT: read workflow output → present cited report + whether evidence predicts
+the own-origin de-risk will succeed → then (pending tunnel permission) run the clean login test. No code changed this
+session; connector code intact on main.
+
+## RESEARCH DONE 2026-07-06 by df03e38d — VM/cloud IBKR hosting: report at docs/plans/ibkr-vm-hosting-research.md
+Workflow wf_50acaad9-42a completed research but a SCHEMA-FORCING BUG made 5/6 agents emit a "test" stub as their FINAL
+StructuredOutput (they kept omitting the required `claims` array → harness rejected → degraded to stub). The real
+research (5 WebSearch + 5 WebFetch per agent) was RECOVERED from the agent transcripts' summary fields (~65KB) — no
+re-run needed. Stopped the doomed run (TaskStop). [Workflow-authoring lesson: forcing a large multi-field `claims`
+schema on general-purpose research agents is fragile; prefer TEXT return + a separate parse/synth stage, or a smaller
+schema.] Full cited report written to docs/plans/ibkr-vm-hosting-research.md.
+KEY FINDINGS bearing on the own-origin de-risk:
+  - NO primary source proves own-root serving FIXES the post-2FA loop (reverse-proxy angle: plausible but unproven).
+  - The "session active but not authenticated" post-2FA loop is a KNOWN, often-unresolved IBeam bug that occurs even in
+    CLEAN OWN-ORIGIN Docker (no proxy) — IBeam #152/#267 — so own-origin is NOT predicted to fix it.
+  - IBKR officially: CP Gateway is a same-machine tool; remote/proxy operation "is not a supported practice."
+  - Single-session-per-username rule (incl. IBKR Mobile) silently kills the gateway session — strong alt-cause we can
+    CONTROL for in the clean test.
+  - "Access Denied" = gateway's OWN conf.yaml ips/allow, NOT a datacenter-IP block (confirms IP theory dead).
+  - Mature proven paths: IBKR OAuth 1.0a (blessed, no gateway fleet — our Track A) and IB Gateway/TWS headless
+    (IBC + gnzsnz/ib-gateway-docker, socket API — production-grade). SnapTrade IBKR = read-only, no trading (confirmed).
+TEST HYGIENE for the clean login (from research): PAPER account (paper CP login typically skips IBKR-Mobile 2FA →
+removes the single-session confound, isolating the pure cookie/own-origin variable); nothing else logged in for that
+account; CHROME incognito (Firefox reported broken); consider /demo#/-first; watch gw DEBUG for whether server-side
+sso/validate?gw=1 carries x-sess-uuid.
+RECOMMENDATION surfaced to user: run ONE clean paper own-origin login as a DECISIVE FORK (pass → interim viable; fail →
+commit to OAuth 1.0a / IB Gateway). Still pending: cloudflared tunnel permission grant. Awaiting user decision.
+
+## OWN-ORIGIN LOGIN EXECUTED 2026-07-06 (~10:27 MDT) by ca9f4967 — FAIL at own-origin, as research predicted
+User granted the cloudflared permission and did the login. Setup: fresh standalone gateway (instance `clean-origin-test`,
+loopback :5210, listenSsl:false, DEBUG cookie/HTTP logging) exposed at its OWN ROOT origin via cloudflared quick tunnel
+`describe-schedule-creature-municipal.trycloudflare.com` (NO subpath proxy). Login driven from the PYRUS app's IBKR tile —
+the tile's Connect button was TEMP-wired to open the tunnel root URL directly (SnapTradeConnectPanel.jsx; REVERTED after,
+git-clean). User did the real login in Chrome; popup bounced back to the login screen.
+DECISIVE GATEWAY-LOG EVIDENCE (instances/clean-origin-test/logs/gw.2026-07-06.log, gw.message.*):
+  - User's browser reached the gateway at own-origin from residential IP (Cf-Connecting-Ip 2600:8800:6289…, Comcast IPv6),
+    Referer = the PYRUS replit.dev app → the own-origin tunnel path worked; SPA seg1='sso' (no /api→/sso corruption).
+  - 10:27:42 IBKR set `web=4163083674` (authenticated user cookie) → CREDENTIALS + 2FA SUCCEEDED at IBKR.
+  - `Client login succeeds`=0, `sso/validate`=0 (gw=1 bind), `Access Denied`=0, `competing`=0 → the gateway NEVER made its
+    server-side session-bind call. After /sso/Dispatcher (post-2FA) the login-page assets (login.min.css, xyz.bundle.min.js)
+    RELOADED → bounce to login. Same "session active but not authenticated" post-2FA loop as before — now at OWN ORIGIN.
+  - The gateway's BaseServiceProxy still `Remapping Set-cookies […] -> ∅` (its normal internal behavior, per prior note).
+VERDICT: own-origin serving did NOT fix the post-2FA loop — EXACTLY the research prediction (docs/plans/ibkr-vm-hosting-
+research.md: IBeam #152/#267 loop occurs even in clean own-origin Docker; own-origin not predicted to fix). This exhausts
+the last hope for central CP Gateway hosting.
+CONFOUND (honest, NOT fully controlled): `web=4163083674` is the SAME value as the 2026-07-04 attempts → almost certainly the
+SAME IBKR account (07-04 = live U24762790), and a 2FA/Dispatcher challenge fired (research: paper logins TYPICALLY skip the
+IBKR-Mobile 2FA) → this was likely the LIVE account, not a fresh paper account; browser also carried a prior JSESSIONID
+(maybe not pristine incognito). So the single-session/competing-login confound is not fully ruled out. It does NOT change the
+strategic call: whether the killer is the post-2FA bind loop OR a competing session, central CP Gateway hosting is not viable.
+TEARDOWN: tunnel + gateway killed (no standing public exposure); cloudflared binary left in scratchpad; connector code
+git-clean (test hack reverted). NEXT (awaiting user): (A) commit to Track A IBKR OAuth 1.0a — ~80% buildable NOW via
+self-service, no approval (docs/plans/ibkr-third-party-oauth-scope.md + ibkr-oauth-selfservice-runbook.md); or (B) one more
+TRULY-clean paper retry (dedicated paper account, IBKR Mobile fully OFF, brand-new incognito) to close the confound before
+abandoning CP Gateway — but literature says it likely won't flip.
+
+## TRACK A STARTED 2026-07-06 (~11:xx MDT) by ca9f4967 — OAuth 1.0a crypto core BUILT + tested (Phase 1 code)
+User chose (A): commit to IBKR OAuth 1.0a. Built the crypto core (the ~80% provable pre-approval), Node stdlib crypto only,
+0 new deps, ground-truthed against Voyz/ibind `ibind/oauth/oauth1a.py` (fetched the actual source):
+- NEW `artifacts/api-server/src/providers/ibkr/oauth-signer.ts` — quotePlus (exact Python quote_plus), 16-char nonce,
+  unix-sec timestamp, IBKR non-standard double-encoded base string (method + quote_plus(url) + quote_plus(sorted k=v joined
+  by &), optional prepend), rsaSha256Sign (PKCS1v15+SHA256→base64), hmacSha256Sign (key=base64-decoded LST, msg=base string),
+  buildAuthorizationHeader (OAuth realm + sorted oauth_* k="v"), signRsaRequest/signHmacRequest composers.
+- NEW `providers/ibkr/oauth-live-session.ts` — modPow (BigInt), computeDhChallenge (A=g^a mod p), computeSharedSecret,
+  toTwosComplementBytes (Java BigInteger.toByteArray sign-byte: leading 0x00 when bitlen%8==0 — the classic LST-reject cause),
+  computeLiveSessionToken (HMAC-SHA1(key=K bytes, msg=decrypted secret bytes)→base64), validateLiveSessionToken
+  (HMAC-SHA1(key=base64dec(LST), msg=consumer_key).hex==sig), decryptAccessTokenSecret (RSA PKCS1v15), parseDhParams (PEM|hex).
+- NEW `*.test.ts` for both: 18/18 PASS. Strongest: DH two-party agreement over our REAL 2048-bit prime; both parties derive
+  the SAME LST; RSA sign→verify; RSA encrypt→decrypt secret; toTwosComplement KATs; exact base-string KAT. api-server tsc = 0.
+- RESOLVED the one flagged ambiguity from source: BOTH RSA and HMAC oauth_signature are quote_plus-encoded in the header once;
+  our header builder does the quote_plus (sign fns return raw base64) → net byte-identical to ibind. No double-encoding.
+- STATE: env scaffolding (.env.example:99-107) + local key material (.pyrus-runtime/ibkr-oauth/{private,public}_{signature,
+  encryption}.pem + dhparam.pem) already existed from b9dafa30. ALL six IBKR_OAUTH_* env secrets are EMPTY (verified) — the
+  IBKR portal self-service registration is NOT yet done. New OAuth files are UNCOMMITTED on main (user directive: main, no branch).
+- USER-GATED NEXT (Phase 1 exit = cheapest de-risk): user does Runbook Part A2-A4 — log into
+  https://ndcdyn.interactivebrokers.com/sso/Login?action=OAUTH&RL=1&ip2loc=US, pick a 9-char A-Z consumer key, upload the 3
+  existing public files (public_signature.pem, public_encryption.pem, dhparam.pem), generate Access Token + encrypted Secret,
+  populate the 6 IBKR_OAUTH_* secrets (realm=limited_poa). Then (agent) prove ONE live live_session_token round-trip vs
+  api.ibkr.com (LST signature validates). Part B (third-party approval email) can be submitted in parallel anytime.
+- DEFERRED (agent, when resumed): task#4 readiness stub → self-service (ibkr-oauth-readiness.ts, keep third-party approval gate);
+  Phase 2 = services/ibkr-oauth-session.ts (ssodh/init + 60s tickle + 24h re-auth) + signing hook in providers/ibkr/client.ts
+  (buildHeaders:984/request:1021); Phase 3 = paper order via existing order surface (ADR-002 gated).

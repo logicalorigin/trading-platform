@@ -2,37 +2,49 @@
 
 ## Session Metadata
 
-- Session ID: `182a4859-3a9a-4166-a21c-d05fec4e58f6`
-- Saved At (MT): `2026-07-05 18:10:03 MDT`
-- Saved At (UTC): `2026-07-06T00:10:03.961Z`
-- Summary: 2026-07-05 18:10:03 MDT | 182a4859-3a9a-4166-a21c-d05fec4e58f6 | please diagnose the reason for the replit container recent moments ago
+- Session ID: `134896bd-a1eb-47f1-b0ab-d6bca2e6be12`
+- Saved At (MT): `2026-07-05 20:35:51 MDT`
+- Saved At (UTC): `2026-07-06T02:35:51.660Z`
+- Summary: 2026-07-05 20:35:51 MDT | 134896bd-a1eb-47f1-b0ab-d6bca2e6be12 | can you find and resume with full context the session b9dafa30 (ibkr client portal gateway work). full context ple…
 - Runtime: `claude`
 - Repo Root: `/home/runner/workspace`
 - Thread CWD: `/home/runner/workspace`
-- Transcript Path: `/home/runner/.claude/projects/-home-runner-workspace/182a4859-3a9a-4166-a21c-d05fec4e58f6.jsonl`
+- Transcript Path: `/home/runner/.claude/projects/-home-runner-workspace/134896bd-a1eb-47f1-b0ab-d6bca2e6be12.jsonl`
 - Branch: `main`
-- HEAD: `3609d1518fec3a53948cd757322ace47bfa694fe`
-- Latest Commit: `test(market-data): guard the write-side epoch-grid flooring invariant`
+- HEAD: `89f979e9fc1c5cdbbc7363df59fffaa99a9a4c79`
+- Latest Commit: `feat(api): multi-user Slice 5.5 part 2 — per-user shadow-account isolation (the flip)`
 - Latest Commit Session ID: `unknown`
-- Title: please diagnose the reason for the replit container recent moments ago
+- Title: can you find and resume with full context the session b9dafa30 (ibkr client portal gateway work). full context please
 - Model: `claude-opus-4-8`
 - Reasoning Effort: `unknown`
 - Tokens Used: `unknown`
 
 ## Current User Request
 
-please diagnose the reason for the replit container recent moments ago
+can you find and resume with full context the session b9dafa30 (ibkr client portal gateway work). full context please
 
 ## Prior Handoffs
 
 - `SESSION_HANDOFF_2026-07-05_d6cc55a2-d861-4e14-8fb4-556e5452bb5f.md`
+- `SESSION_HANDOFF_2026-07-05_d378bab2-87ad-4e12-8e67-1acd7567bb83.md`
 - `SESSION_HANDOFF_2026-07-05_bd9a1871-55fc-460c-a1d2-83b4331f5e91.md`
 - `SESSION_HANDOFF_2026-07-05_b9dafa30-72f6-415e-a500-95045ce2a39e.md`
 - `SESSION_HANDOFF_2026-07-05_ab9da6d4-d271-40eb-b78d-7f1b87a9f36e.md`
 - `SESSION_HANDOFF_2026-07-05_a5ff26eb-0eb2-4088-9960-2f6966fad2e4.md`
+- `SESSION_HANDOFF_2026-07-05_82f9cebc-58c7-4ae0-a1ac-be06b4787f96.md`
+- `SESSION_HANDOFF_2026-07-05_7943526c-b016-4b6b-87e3-c12b3b04f503.md`
+- `SESSION_HANDOFF_2026-07-05_6765f941-f062-4a70-b852-fb42f1d5c54a.md`
+- `SESSION_HANDOFF_2026-07-05_627f9c4a-d576-41ba-be7b-345670c3b6f6.md`
+- `SESSION_HANDOFF_2026-07-05_60473da9-4bce-4a67-ab18-ff1acaca29de.md`
+- `SESSION_HANDOFF_2026-07-05_5de488c2-8ff8-4413-8789-b3f9b29eab00.md`
+- `SESSION_HANDOFF_2026-07-05_5c7aa51d-8dd1-4203-b82f-9e43ad57fbb8.md`
 - `SESSION_HANDOFF_2026-07-05_45ad4715-669e-4d4b-b117-9efbb977226a.md`
+- `SESSION_HANDOFF_2026-07-05_3031a953-6144-4a63-ae27-9f21173d48f6.md`
 - `SESSION_HANDOFF_2026-07-05_300e9ad4-653e-489f-bdf4-3290b8f796c8.md`
+- `SESSION_HANDOFF_2026-07-05_30002be4-9321-42dc-bd0a-424f277061ca.md`
 - `SESSION_HANDOFF_2026-07-05_1ffe77d2-bb80-4068-b903-49134e66784f.md`
+- `SESSION_HANDOFF_2026-07-05_182a4859-3a9a-4166-a21c-d05fec4e58f6.md`
+- `SESSION_HANDOFF_2026-07-05_113d7d20-310a-4f34-8886-b650d04d28d0.md`
 - `SESSION_HANDOFF_2026-07-05_0a16f7cc-0030-4762-8ef5-fd97147754d7.md`
 - `SESSION_HANDOFF_2026-07-04_fa22886b-de00-47f1-8f95-0789b04b265b.md`
 - `SESSION_HANDOFF_2026-07-04_f69295c0-a190-4633-bcb0-971124d597c4.md`
@@ -554,38 +566,38 @@ please diagnose the reason for the replit container recent moments ago
 
 ## Recent User Messages
 
-- `2026-07-05 15:52:28 MDT` short and simple/laymans explanation for me please
-- `2026-07-05 15:57:45 MDT` lets take a look at the main thing you found
-- `2026-07-05 16:07:47 MDT` <task-notification> <task-id>w1siywz9i</task-id> <tool-use-id>toolu_01BmSkZDvBcKt5jMMnMPpgg1</tool-use-id> <output-file>/tmp/claude-1000/-home-runner-workspace/182a4859-3a9a-4166-a21c-d05fec4e58f6/tasks/w1siywz9i.output</output-file> <status>completed</status> <summary>Dynamic workflow "Determine what drives the 2.83M/day bar_cache reads, how redundant they are, and the safest highest-leverage fix" completed</summary> <result>{"redundancy":{"fallbackIsRareOrCommon":"RARE (structurally a miss-path), but UNCOUNTED so not empirically provable from current diagnostics. The per-symbol pg fallback in readStoredBars (signal-monitor-local-bar-cache.ts:908-925) is only reached when (a) loadSignalMonitorLocalBarCache's memory-first gate misses (memory rolled bars &lt; limit, :1333-1335), AND (b) no…
-- `2026-07-05 16:11:48 MDT` please take a look at what youve found. use 5 whys approach. you're glossing over things, and accepting bad coding/engineering as fact, when you should be making sure that its sound. examine all aspects, no items is sacred and beyond fixing. do now accept poor performance, seek to impprove it
-- `2026-07-05 16:33:39 MDT` <task-notification> <task-id>w7bu4895a</task-id> <tool-use-id>toolu_013FxLmdNSVMfi2XZh4iBqWY</tool-use-id> <output-file>/tmp/claude-1000/-home-runner-workspace/182a4859-3a9a-4166-a21c-d05fec4e58f6/tasks/w7bu4895a.output</output-file> <status>completed</status> <summary>Dynamic workflow "5-Whys root-cause audit that adversarially challenges every inherited bar_cache/DB constraint and ranks real fixes" completed</summary> <result>{"challenges":[{"key":"timescale","r":{"createExtensionFeasible":"TECHNICALLY YES, but pointless as framed. Privilege is not a blocker: current_user=postgres with rolsuper=t, timescaledb 2.13.0 is available and already in shared_preload_libraries (timescaledb,helium). CREATE EXTENSION timescaledb would run. The blocker is the BUILD: the installed extension is the A…
-- `2026-07-05 16:45:23 MDT` lets get an outside voice/audit of these findigns with a claude agent using /fable-mode and /karpathy-guidelines
-- `2026-07-05 17:11:49 MDT` <task-notification> <task-id>wtennq6za</task-id> <tool-use-id>toolu_018g6cskYazENo2QFo4o3nLM</tool-use-id> <output-file>/tmp/claude-1000/-home-runner-workspace/182a4859-3a9a-4166-a21c-d05fec4e58f6/tasks/wtennq6za.output</output-file> <status>completed</status> <summary>Dynamic workflow "Adversarial fact-first audit: 4 fresh agents reproduce evidence for each claim, then skeptical synthesis" completed</summary> <result>{"verifiers":[{"key":"phase1","claims":"P1, P2","r":{"p1":{"verdict":"PARTIALLY-TRUE (core mechanism CONFIRMED; the \"behavior-identical for all live callers\" sub-claim is REFUTED for the marketing dashboard caller)","evidence":"CONFIRMED mechanism: automation.ts:1198 includePayload=input.includePayload===true; ledgerColumns (1207-1219) and diagnosticsColumns (1220-1232) ea…
-- `2026-07-05 17:19:03 MDT` laymans on each of these please
-- `2026-07-05 17:21:08 MDT` i want you to do all of these, one at a time, checkint your work and committing on main after each fix
-- `2026-07-05 17:44:20 MDT` lets check item 5 (duplicates) to make sure that we're safe to remove, and we also want to figure out what is causing the duplicate write and solve it
-- `2026-07-05 17:54:50 MDT` <task-notification> <task-id>wv1ap2noi</task-id> <tool-use-id>toolu_01EYDcUG2taYxmDVSub5DfSW</tool-use-id> <output-file>/tmp/claude-1000/-home-runner-workspace/182a4859-3a9a-4166-a21c-d05fec4e58f6/tasks/wv1ap2noi.output</output-file> <status>completed</status> <summary>Dynamic workflow "Prove off-grid bar_cache rows are safe to delete AND root-cause + fix the write path creating them" completed</summary> <result>{"data":{"offGridCounts":"Off-grid = rows where extract(epoch from starts_at)::bigint % stepSeconds &lt;&gt; 0 (step: 1m=60,5m=300,15m=900,1h=3600). Counts as offgrid/total per (symbol,tf,source), all off-grid on source='massive-history':\nSPY 5m: 4220/16818; SPY 15m: 2200/16756.\nQQQ 5m: 2496/14981; QQQ 15m: 1248/5537.\nAAPL 5m: 1800/14326; AAPL 15m: 1248/5537.\nZERO off-grid at…
-- `2026-07-05 18:07:19 MDT` no need to back up, go ahead and purge
+- `2026-07-05 18:35:41 MDT` i think the last think this session was doing was putting the ibkr laucnh process that we're building for our hosted vm for teir client prtal into the button for ibkr in the settings rea broker connection. please confirm by finding that in the session
+- `2026-07-05 18:41:10 MDT` i think thats where we were, i need you to review recent handoffs to be sure
+- `2026-07-05 18:43:17 MDT` yes please resume this
+- `2026-07-05 18:51:03 MDT` so am i testing this in settings or?
+- `2026-07-05 18:51:48 MDT` this is what i get: This site can’t be reached Check if there is a typo in treatment-laboratories-mining-shuttle. If spelling is correct, try running Windows Network Diagnostics. DNS_PROBE_FINISHED_NXDOMAIN
+- `2026-07-05 19:10:14 MDT` <task-notification> <task-id>bss2vmnto</task-id> <tool-use-id>toolu_018PxwfuNo7hSvScgY4zHxpE</tool-use-id> <output-file>/tmp/claude-1000/-home-runner-workspace/134896bd-a1eb-47f1-b0ab-d6bca2e6be12/tasks/bss2vmnto.output</output-file> <status>failed</status> <summary>Background command "Background-watch gateway for post-2FA bind verdict" failed with exit code 3</summary> </task-notification>
+- `2026-07-05 19:30:34 MDT` okay i did it. did we get ibkr connected?
+- `2026-07-05 19:48:00 MDT` 1. yes, 2fa received, succeeded per ibkr screen. 2. our tunnel url goes back to login page after 2fa
+- `2026-07-05 19:55:18 MDT` i tested, seems like same thing on my end (back to credential entry)
+- `2026-07-05 20:05:24 MDT` i assume you've already been through this: https://www.interactivebrokers.com/campus/ibkr-api-page/cpapi-v1/#introduction
+- `2026-07-05 20:12:25 MDT` <task-notification> <task-id>w9t5ixinf</task-id> <tool-use-id>toolu_01W6xW5CZLKScmCmCdytypsU</tool-use-id> <output-file>/tmp/claude-1000/-home-runner-workspace/134896bd-a1eb-47f1-b0ab-d6bca2e6be12/tasks/w9t5ixinf.output</output-file> <status>completed</status> <summary>Dynamic workflow "Diagnose why the self-hosted IBKR Client Portal Gateway never binds a session after a successful browser login+2FA (bounces to login)" completed</summary> <result>{"synth":null,"verify":null,"researchCount":4}</result> <diagnostics>Per-agent results: /home/runner/.claude/projects/-home-runner-workspace/134896bd-a1eb-47f1-b0ab-d6bca2e6be12/subagents/workflows/wf_852ed314-edd/journal.jsonl — one {"type":"result",...} line per completed agent with its full return value. If the result above is empty or unexpec…
+- `2026-07-05 20:35:02 MDT` <task-notification> <task-id>bw4r7g0g0</task-id> <tool-use-id>toolu_01XPoCh5yoU2KXz2sh9LMDUx</tool-use-id> <output-file>/tmp/claude-1000/-home-runner-workspace/134896bd-a1eb-47f1-b0ab-d6bca2e6be12/tasks/bw4r7g0g0.output</output-file> <status>failed</status> <summary>Background command "Arm HTTPS-aware bind watcher" failed with exit code 3</summary> </task-notification>
 
 ## Session Activity Summary
 
-- `2026-07-05 12:18:07 MDT` User: please diagnose the reason for the replit container recent moments ago
-- `2026-07-05 12:18:19 MDT` Agent: I'll diagnose this by gathering live runtime evidence first, then trace the root cause. Let me load the diagnostic tools and scout the system state in parallel.
-- `2026-07-05 12:18:21 MDT` Tool: ToolSearch {"query":"select:mcp__pyrus__get_flight_recorder,mcp__pyrus__list_recorder_incidents,mcp__pyrus__get_supervisor_state,m…
-- `2026-07-05 12:18:23 MDT` Tool: Bash echo "=== UPTIME ==="; uptime; echo "=== CONTAINER/PROC1 START ==="; ps -o pid,ppid,etimes,cmd -p 1 2>/dev/null; echo "=== BOOT TIME ==="; cat /proc/stat | gre…
-- `2026-07-05 12:18:26 MDT` Tool: Bash echo "=== dmesg OOM (may be denied in container) ==="; dmesg -T 2>/dev/null | grep -iE "oom|kill|memory|out of memory" | tail -30 || echo "dmesg denied/empty";…
-- `2026-07-05 12:18:28 MDT` Tool: Bash echo "=== Running node/supervisor procs ==="; ps -eo pid,ppid,etimes,rss,cmd --sort=etimes 2>/dev/null | grep -iE "node|runDevApp|supervisor|pyrus" | grep -v g…
-- … 372 lower-signal transcript events omitted …
-- `2026-07-05 18:03:45 MDT` Agent: No worries — let me explain it plainly. ## What "shifted-grid OHLCV" means A price "bar" is one row summarizing a fixed time window — for 5-minute bars, the windows are **10:00–10…
-- `2026-07-05 18:07:19 MDT` User: no need to back up, go ahead and purge
-- `2026-07-05 18:07:44 MDT` Agent: On it — executing the guarded purge for the 6 SPY/QQQ/AAPL slices, one at a time, capturing each delete count and verifying zero off-grid rows remain afterward.
-- `2026-07-05 18:07:44 MDT` Tool: TaskUpdate {"taskId":"10","status":"in_progress"}
-- `2026-07-05 18:07:51 MDT` Tool: Bash cd /home/runner/workspace total=0 for slice in "SPY 5m 300 4220" "SPY 15m 900 2200" "QQQ 5m 300 2496" "QQQ 15m 900 1248" "AAPL 5m 300 1800" "AAPL 15m 900 1248"…
-- `2026-07-05 18:09:05 MDT` Agent: All 6 slices deleted exactly the expected counts (13,212 total) with 0 remaining inline. Now the independent "make sure it's all purged" check the user asked for — I'll re-verify…
-- `2026-07-05 18:09:13 MDT` Tool: Bash cd /home/runner/workspace echo "=== FRESH off-grid + total counts, all timeframes (off-grid must be 0 everywhere; total must equal prior ON-GRID count) ===" pr…
-- `2026-07-05 18:09:35 MDT` Agent: Independent verification is clean: **0 off-grid rows across all 12 slices**, and every purged slice's total exactly equals its prior on-grid count (e.g. SPY 5m 12598 = 16818 − 422…
-- `2026-07-05 18:09:39 MDT` Tool: Bash cd /home/runner/workspace echo "=== live app read of a PURGED slice (SPY 5m) — canonical bars still serve ===" curl -s "http://127.0.0.1:8080/api/bars?symbol=S…
-- `2026-07-05 18:10:01 MDT` Agent: Confirmed — the purge is complete and verified end-to-end: | Check | Result | |---|---| | Deleted (6 slices, guarded) | **13,212** rows, exactly matching the dry-run | | Off-grid…
+- `2026-07-05 18:31:08 MDT` User: can you find and resume with full context the session b9dafa30 (ibkr client portal gateway work). full context please
+- `2026-07-05 18:31:20 MDT` Agent: I'll resume session b9dafa30 with full context. This matches the session-handoff skill, so let me invoke it first.
+- `2026-07-05 18:31:20 MDT` Tool: Skill {"skill":"session-handoff","args":"resume b9dafa30 (ibkr client portal gateway work) — full context"}
+- `2026-07-05 18:31:32 MDT` Agent: Let me start by reading the anchor files: the master index, the primary session handoff for b9dafa30, and the live IBKR note.
+- `2026-07-05 18:31:33 MDT` Tool: Read /home/runner/workspace/SESSION_HANDOFF_2026-07-05_b9dafa30-72f6-415e-a500-95045ce2a39e.md
+- `2026-07-05 18:31:34 MDT` Tool: Read /home/runner/workspace/SESSION_HANDOFF_LIVE_2026-07-03_ibkr-client-portal-hosted-connector.md
+- … 142 lower-signal transcript events omitted …
+- `2026-07-05 20:14:46 MDT` Tool: Bash cd /home/runner/workspace SB="/tmp/claude-1000/-home-runner-workspace/134896bd-a1eb-47f1-b0ab-d6bca2e6be12/scratchpad" URL="https://amsterdam-rod-tiles-brakes.…
+- `2026-07-05 20:14:52 MDT` Agent: HTTPS end-to-end tunnel is live and serving the form. Re-arming the watcher:
+- `2026-07-05 20:14:54 MDT` Tool: Bash node /tmp/claude-1000/-home-runner-workspace/134896bd-a1eb-47f1-b0ab-d6bca2e6be12/scratchpad/monitor-https.mjs
+- `2026-07-05 20:15:26 MDT` Agent: The diagnostic paid off. Since the Fable synthesizer hit a usage limit, I read the four research angles directly and synthesized them myself. Here's where it lands. ## Diagnosis (…
+- `2026-07-05 20:35:02 MDT` User: <task-notification> <task-id>bw4r7g0g0</task-id> <tool-use-id>toolu_01XPoCh5yoU2KXz2sh9LMDUx</tool-use-id> <output-file>/tmp/claude-1000/-home-runner-workspace/134896bd-a1eb-47f1-…
+- `2026-07-05 20:35:11 MDT` Agent: The HTTPS watcher timed out after 20 min. Let me check whether a login actually came through on the HTTPS tunnel or if it's still pending.
+- `2026-07-05 20:35:17 MDT` Tool: Bash cd /home/runner/workspace SB="/tmp/claude-1000/-home-runner-workspace/134896bd-a1eb-47f1-b0ab-d6bca2e6be12/scratchpad" LOG=.pyrus-runtime/ibkr-cpg/instances/de…
+- `2026-07-05 20:35:37 MDT` Agent: Quick status: the watcher just timed out its 20-min window, but importantly **I see zero login traffic on the HTTPS tunnel** — no real browser has hit it yet (the only `Authentica…
+- `2026-07-05 20:35:38 MDT` Tool: Bash node /tmp/claude-1000/-home-runner-workspace/134896bd-a1eb-47f1-b0ab-d6bca2e6be12/scratchpad/monitor-https.mjs
+- `2026-07-05 20:35:48 MDT` Agent: Watcher's live again. Since no attempt has landed yet, two possibilities: you haven't gone yet (all good, take your time), or the **new URL is getting blocked/NXDOMAIN on your net…
 
 ## High-Signal Changed Files
 
@@ -597,33 +609,28 @@ please diagnose the reason for the replit container recent moments ago
 - `SESSION_HANDOFF_CURRENT.md`
 - `SESSION_HANDOFF_LIVE_2026-07-03_ibkr-client-portal-hosted-connector.md`
 - `SESSION_HANDOFF_MASTER.md`
+- `artifacts/api-server/src/services/signal-monitor-local-bar-cache-prefetch.test.ts`
+- `artifacts/api-server/src/services/signal-monitor-local-bar-cache.ts`
 - `artifacts/api-server/src/services/signal-options-automation.ts`
 - `artifacts/mcp-server/src/host/procinfo.test.mjs`
 - `artifacts/mcp-server/src/host/procinfo.ts`
 - `artifacts/pyrus/scripts/flightRecorder.mjs`
 - `artifacts/pyrus/scripts/runDevApp.mjs`
 - `artifacts/pyrus/src/components/platform/signal-language/SignalDots.jsx`
-- `artifacts/pyrus/src/features/backtesting/BacktestingPanels.tsx`
-- `artifacts/pyrus/src/features/flow/ContractDetailInline.jsx`
-- `artifacts/pyrus/src/features/platform/MobileMoreSheet.jsx`
-- `artifacts/pyrus/src/features/research/PhotonicsObservatory.jsx`
-- `artifacts/pyrus/src/features/research/components/ResearchCalendarView.jsx`
+- `artifacts/pyrus/src/components/platform/signal-language/SignalDots.test.mjs`
+- `artifacts/pyrus/src/features/platform/PlatformWatchlist.jsx`
+- `artifacts/pyrus/src/features/platform/signalFrameState.js`
 - `artifacts/pyrus/src/features/signals/signalStateFreshness.js`
 - `artifacts/pyrus/src/features/signals/signalStateFreshness.test.mjs`
 - `artifacts/pyrus/src/features/signals/signalsRowModel.js`
 - `artifacts/pyrus/src/features/signals/signalsRowModel.test.mjs`
-- `artifacts/pyrus/src/screens/AccountScreen.jsx`
-- `artifacts/pyrus/src/screens/DiagnosticsScreen.jsx`
-- `artifacts/pyrus/src/screens/FlowScreen.jsx`
-- `artifacts/pyrus/src/screens/GexScreen.jsx`
-- `artifacts/pyrus/src/screens/SettingsScreen.jsx`
-- `artifacts/pyrus/src/screens/SignalsScreen.jsx`
+- `artifacts/pyrus/src/lib/formatters.js`
 - `artifacts/pyrus/src/screens/algo/OperationsSignalTable.test.mjs`
 
 ## Repo State Snapshot
 
 ```text
-## main...origin/main [ahead 5]
+## main...origin/main [ahead 10]
  M .env.example
  M CLAUDE.md
  M SESSION_HANDOFF_2026-07-05_182a4859-3a9a-4166-a21c-d05fec4e58f6.md
@@ -632,29 +639,36 @@ please diagnose the reason for the replit container recent moments ago
  M SESSION_HANDOFF_CURRENT.md
  M SESSION_HANDOFF_LIVE_2026-07-03_ibkr-client-portal-hosted-connector.md
  M SESSION_HANDOFF_MASTER.md
+ M artifacts/api-server/src/services/signal-monitor-local-bar-cache-prefetch.test.ts
+ M artifacts/api-server/src/services/signal-monitor-local-bar-cache.ts
  M artifacts/api-server/src/services/signal-options-automation.ts
  M artifacts/mcp-server/src/host/procinfo.test.mjs
  M artifacts/mcp-server/src/host/procinfo.ts
  M artifacts/pyrus/scripts/flightRecorder.mjs
  M artifacts/pyrus/scripts/runDevApp.mjs
  M artifacts/pyrus/src/components/platform/signal-language/SignalDots.jsx
- M artifacts/pyrus/src/features/backtesting/BacktestingPanels.tsx
- M artifacts/pyrus/src/features/flow/ContractDetailInline.jsx
- M artifacts/pyrus/src/features/platform/MobileMoreSheet.jsx
- M artifacts/pyrus/src/features/research/PhotonicsObservatory.jsx
- M artifacts/pyrus/src/features/research/components/ResearchCalendarView.jsx
+ M artifacts/pyrus/src/components/platform/signal-language/SignalDots.test.mjs
+ M artifacts/pyrus/src/features/platform/PlatformWatchlist.jsx
+ M artifacts/pyrus/src/features/platform/signalFrameState.js
  M artifacts/pyrus/src/features/signals/signalStateFreshness.js
  M artifacts/pyrus/src/features/signals/signalStateFreshness.test.mjs
  M artifacts/pyrus/src/features/signals/signalsRowModel.js
  M artifacts/pyrus/src/features/signals/signalsRowModel.test.mjs
- M artifacts/pyrus/src/screens/AccountScreen.jsx
- M artifacts/pyrus/src/screens/DiagnosticsScreen.jsx
- M artifacts/pyrus/src/screens/FlowScreen.jsx
- M artifacts/pyrus/src/screens/GexScreen.jsx
- M artifacts/pyrus/src/screens/SettingsScreen.jsx
- M artifacts/pyrus/src/screens/SignalsScreen.jsx
+ M artifacts/pyrus/src/lib/formatters.js
  M artifacts/pyrus/src/screens/algo/OperationsSignalTable.test.mjs
 ?? SESSION_HANDOFF_2026-07-05_0a16f7cc-0030-4762-8ef5-fd97147754d7.md
+?? SESSION_HANDOFF_2026-07-05_113d7d20-310a-4f34-8886-b650d04d28d0.md
+?? SESSION_HANDOFF_2026-07-05_134896bd-a1eb-47f1-b0ab-d6bca2e6be12.md
+?? SESSION_HANDOFF_2026-07-05_30002be4-9321-42dc-bd0a-424f277061ca.md
+?? SESSION_HANDOFF_2026-07-05_3031a953-6144-4a63-ae27-9f21173d48f6.md
+?? SESSION_HANDOFF_2026-07-05_5c7aa51d-8dd1-4203-b82f-9e43ad57fbb8.md
+?? SESSION_HANDOFF_2026-07-05_5de488c2-8ff8-4413-8789-b3f9b29eab00.md
+?? SESSION_HANDOFF_2026-07-05_60473da9-4bce-4a67-ab18-ff1acaca29de.md
+?? SESSION_HANDOFF_2026-07-05_627f9c4a-d576-41ba-be7b-345670c3b6f6.md
+?? SESSION_HANDOFF_2026-07-05_6765f941-f062-4a70-b852-fb42f1d5c54a.md
+?? SESSION_HANDOFF_2026-07-05_7943526c-b016-4b6b-87e3-c12b3b04f503.md
+?? SESSION_HANDOFF_2026-07-05_82f9cebc-58c7-4ae0-a1ac-be06b4787f96.md
+?? SESSION_HANDOFF_2026-07-05_d378bab2-87ad-4e12-8e67-1acd7567bb83.md
 ?? SESSION_HANDOFF_2026-07-05_d6cc55a2-d861-4e14-8fb4-556e5452bb5f.md
 ?? artifacts/api-server/__mint-agent-session.mts
 ?? docs/plans/ibkr-connector-local-setup-spec.md
@@ -665,46 +679,37 @@ please diagnose the reason for the replit container recent moments ago
 ## Diff Summary
 
 ```text
- .env.example                    |   17 +-
- CLAUDE.md                       |   16 +-
- ...9a-4166-a21c-d05fec4e58f6.md | 1310 +------
- ...9e-4d4b-b117-9efbb977226a.md | 1311 +-------
- ...f6-415e-a500-95045ce2a39e.md | 1279 +------
- SESSION_HANDOFF_CURRENT.md      |   17 +-
- ...t-portal-hosted-connector.md |  147 +
- SESSION_HANDOFF_MASTER.md       |    8 +-
- ...signal-options-automation.ts |   19 +-
- .../src/host/procinfo.test.mjs  |   18 +-
- .../src/host/procinfo.ts        |   28 +-
- .../scripts/flightRecorder.mjs  |   63 +-
- .../pyrus/scripts/runDevApp.mjs |    4 +
- .../SignalDots.jsx              |   20 +-
- .../BacktestingPanels.tsx       |  206 +-
- .../ContractDetailInline.jsx    |   73 +-
- .../MobileMoreSheet.jsx         |   75 +-
- .../PhotonicsObservatory.jsx    |   97 +-
- .../ResearchCalendarView.jsx    |   92 +-
- .../signalStateFreshness.js     |   19 +-
- ...ignalStateFreshness.test.mjs |   17 +
- .../signals/signalsRowModel.js  |   38 +-
- .../signalsRowModel.test.mjs    |   72 +-
- .../screens/AccountScreen.jsx   |   87 +-
- .../DiagnosticsScreen.jsx       |  244 +-
- .../src/screens/FlowScreen.jsx  |   83 +-
- .../src/screens/GexScreen.jsx   |   48 +-
- .../screens/SettingsScreen.jsx  |  382 ++-
- .../screens/SignalsScreen.jsx   |  124 +-
- ...erationsSignalTable.test.mjs |   24 +-
- 30 files changed, 1397 insertions(+), 4541 deletions(-)
+ .env.example                         |   21 +-
+ CLAUDE.md                            |   16 +-
+ ...59-3a9a-4166-a21c-d05fec4e58f6.md | 1318 +----------
+ ...15-669e-4d4b-b117-9efbb977226a.md | 1311 +---------
+ ...30-72f6-415e-a500-95045ce2a39e.md | 1303 +---------
+ SESSION_HANDOFF_CURRENT.md           |   15 +-
+ ...client-portal-hosted-connector.md |  147 ++
+ SESSION_HANDOFF_MASTER.md            |   20 +-
+ ...-local-bar-cache-prefetch.test.ts |   52 +
+ ...signal-monitor-local-bar-cache.ts |   21 +
+ .../signal-options-automation.ts     |   19 +-
+ .../src/host/procinfo.test.mjs       |   18 +-
+ .../mcp-server/src/host/procinfo.ts  |   28 +-
+ .../pyrus/scripts/flightRecorder.mjs |   63 +-
+ .../pyrus/scripts/runDevApp.mjs      |    4 +
+ .../signal-language/SignalDots.jsx   |   32 +-
+ .../SignalDots.test.mjs              |   36 +-
+ .../platform/PlatformWatchlist.jsx   |    7 +-
+ .../platform/signalFrameState.js     |   10 +-
+ .../signals/signalStateFreshness.js  |   19 +-
+ .../signalStateFreshness.test.mjs    |   17 +
+ .../signals/signalsRowModel.js       |   38 +-
+ .../signals/signalsRowModel.test.mjs |   72 +-
+ .../pyrus/src/lib/formatters.js      |   23 +
+ .../OperationsSignalTable.test.mjs   |   24 +-
+ 25 files changed, 907 insertions(+), 3727 deletions(-)
 ```
 
 ## Validations Detected In Transcript
 
-- `2026-07-05 12:49:36 MDT` cd /home/runner/workspace/artifacts/mcp-server && pnpm test src/host/procinfo.test.mjs 2>&1 | tail -15 && pnpm typecheck 2>&1 | tail -5 (ok)
-- `2026-07-05 12:50:03 MDT` pnpm build 2>&1 | tail -3 (ok)
-- `2026-07-05 12:54:09 MDT` cd /home/runner/workspace/artifacts/pyrus && node --check scripts/flightRecorder.mjs && node --check scripts/runDevApp.mjs && echo "syntax OK" && node --input-… (ok)
-- `2026-07-05 17:38:13 MDT` cd /home/runner/workspace/artifacts/api-server echo "=== typecheck ===" pnpm typecheck 2>&1 | tail -5 echo "=== market-data-store tests (read/persist/equality)… (ok)
-- `2026-07-05 18:01:04 MDT` cd /home/runner/workspace/artifacts/api-server echo "=== typecheck ===" pnpm typecheck 2>&1 | tail -4 echo "=== run the new + existing alignment tests ===" nod… (ok)
+- None detected in this session transcript.
 
 ## What Changed This Session
 
