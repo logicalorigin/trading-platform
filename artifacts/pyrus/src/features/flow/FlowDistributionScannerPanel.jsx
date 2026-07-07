@@ -337,6 +337,18 @@ export const FlowDistributionScannerPanel = ({
           minWidth: 0,
         }}
       >
+        <div style={{ display: "flex", flexDirection: "column", gap: sp(2) }}>
+          <span
+            style={{
+              fontSize: fs(12),
+              fontWeight: FONT_WEIGHTS.regular,
+              fontFamily: T.sans,
+              color: CSS_COLOR.text,
+            }}
+          >
+            Premium Distribution
+          </span>
+        </div>
         {headerRow}
         {widgetGrid}
       </div>

@@ -1331,7 +1331,7 @@ export const MultiChartGrid = ({
       ? `${renderedSlotEntries[0]?.slot?.ticker || activeSym} focused · ${cfg.count} charts`
     : layout === "1x1"
       ? visibleSlotEntries[0]?.slot?.ticker || activeSym
-      : `${cfg.count} visible`;
+      : `${cfg.count} charts · ${visibleSlotEntries.length} hydrated`;
 
   return (
     <Card
