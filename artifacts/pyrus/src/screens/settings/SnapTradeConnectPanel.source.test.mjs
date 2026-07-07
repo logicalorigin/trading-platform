@@ -36,6 +36,7 @@ test("SnapTrade connect panel keeps portal launch admin gated and trade-if-avail
   assert.match(source, /executionBlockers/);
   assert.match(source, /label="Selected execution"/);
   assert.match(source, /openBrokerPopup\(portal\.redirectUri, "snaptrade-portal"\)/);
+  assert.match(source, /showConnectHandoff\(\{\s*brokerKey: targetBroker,[\s\S]*url: portal\.redirectUri,[\s\S]*expiresAt: portal\.expiresAt,/);
   assert.match(source, /x-csrf-token/);
   // Actions live on each broker card (docs/plans/broker-connection-ux-plan.md).
   assert.match(source, /label: "Sync now"/);
@@ -45,6 +46,24 @@ test("SnapTrade connect panel keeps portal launch admin gated and trade-if-avail
   assert.match(source, />\s*Load Portfolio\s*</);
   assert.match(source, /aria-label="SnapTrade portfolio account"/);
   assert.match(source, /aria-label="SnapTrade portfolio positions"/);
+});
+
+test("SnapTrade connect panel exposes copy-link and QR handoff for broker launches", () => {
+  const source = readLocalSource("./SnapTradeConnectPanel.jsx");
+
+  assert.match(source, /buildBrokerConnectQrDataUri/);
+  assert.match(source, /copyBrokerConnectLaunchUrl\(connectHandoff\.url\)/);
+  assert.match(source, /copyStatus === "copied" \? "Copied" : "Copy link"/);
+  assert.match(source, /broker connect QR code/);
+  assert.match(source, /Open this link in a <strong>desktop browser<\/strong>/);
+
+  assert.match(source, /url: start\.authorizationUrl,[\s\S]*expiresAt: start\.expiresAt,/);
+  assert.match(source, /brokerKey: ROBINHOOD_BROKER_CHOICE\.value,[\s\S]*url: start\.authorizationUrl,/);
+  assert.match(source, /brokerKey: SCHWAB_BROKER_CHOICE\.value,[\s\S]*url: start\.authorizationUrl,/);
+  assert.match(source, /brokerKey: IBKR_PORTAL_BROKER_CHOICE\.value,[\s\S]*url: loginPath,/);
+  assert.match(source, /clearConnectHandoff\(ROBINHOOD_BROKER_CHOICE\.value\)/);
+  assert.match(source, /clearConnectHandoff\(SCHWAB_BROKER_CHOICE\.value\)/);
+  assert.match(source, /clearConnectHandoff\(IBKR_PORTAL_BROKER_CHOICE\.value\)/);
 });
 
 test("broker picker hydrates connected edges from server truth on load, unioned with sync freshness", () => {

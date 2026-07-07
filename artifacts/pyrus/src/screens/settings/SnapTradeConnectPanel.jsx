@@ -29,6 +29,7 @@ import {
 } from "@workspace/api-client-react";
 import {
   Check,
+  Copy,
   DatabaseZap,
   ExternalLink,
   PlugZap,
@@ -81,6 +82,10 @@ import {
   errorFlashKeys,
   successFlashKeys,
 } from "./brokerConnectionLifecycle.js";
+import {
+  buildBrokerConnectQrDataUri,
+  copyBrokerConnectLaunchUrl,
+} from "./brokerConnectHandoffQr.js";
 
 // Robinhood feather mark, inlined as a self-contained SVG data URI so the tile
 // carries no external/CDN image dependency. Rendered on the same white logo
@@ -344,6 +349,101 @@ function StatusRow({ label, value, tone = CSS_COLOR.textSec }) {
       >
         {value ?? MISSING_VALUE}
       </span>
+    </div>
+  );
+}
+
+function BrokerConnectHandoff({ handoff, copyStatus, onCopy }) {
+  const qrDataUri = useMemo(
+    () => buildBrokerConnectQrDataUri(handoff?.url || ""),
+    [handoff?.url],
+  );
+
+  if (!handoff?.url) return null;
+
+  return (
+    <div
+      aria-label={`${handoff.label} desktop handoff`}
+      style={{
+        border: `1px solid ${cssColorMix(CSS_COLOR.border, 60)}`,
+        borderRadius: dim(RADII.sm),
+        background: CSS_COLOR.bg1,
+        padding: sp(10),
+        display: "grid",
+        gridTemplateColumns: `minmax(0, 1fr) ${dim(116)}`,
+        gap: sp(12),
+        alignItems: "center",
+      }}
+    >
+      <div style={{ display: "grid", gap: sp(8), minWidth: 0 }}>
+        <div
+          style={{
+            color: CSS_COLOR.textSec,
+            fontFamily: T.sans,
+            fontSize: textSize("caption"),
+            lineHeight: 1.45,
+          }}
+        >
+          On desktop? The window opened automatically. On a phone or need
+          another device? Open this link in a <strong>desktop browser</strong> —
+          you'll stay signed in and it finishes here.
+        </div>
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: sp(8),
+            flexWrap: "wrap",
+          }}
+        >
+          <Button variant="secondary" size="sm" onClick={onCopy}>
+            <Copy size={13} strokeWidth={2} aria-hidden="true" />
+            {copyStatus === "copied" ? "Copied" : "Copy link"}
+          </Button>
+          <a
+            href={handoff.url}
+            target="_blank"
+            rel="noreferrer"
+            style={{
+              color: CSS_COLOR.accent,
+              fontFamily: T.sans,
+              fontSize: textSize("caption"),
+              overflowWrap: "anywhere",
+            }}
+          >
+            Open link
+          </a>
+          {copyStatus === "error" ? (
+            <span
+              role="status"
+              style={{
+                color: CSS_COLOR.amber,
+                fontFamily: T.sans,
+                fontSize: fs(10),
+              }}
+            >
+              Copy unavailable
+            </span>
+          ) : null}
+        </div>
+      </div>
+      {qrDataUri ? (
+        <img
+          src={qrDataUri}
+          alt={`${handoff.label} broker connect QR code`}
+          width="116"
+          height="116"
+          style={{
+            width: dim(116),
+            height: dim(116),
+            background: "#fff",
+            border: `1px solid ${cssColorMix(CSS_COLOR.border, 45)}`,
+            borderRadius: dim(RADII.sm),
+            padding: dim(6),
+            boxSizing: "border-box",
+          }}
+        />
+      ) : null}
     </div>
   );
 }
@@ -615,6 +715,8 @@ export function SnapTradeConnectPanel({ enabled = true }) {
   // working / awaiting-user ring phases on that card only).
   const [activeConnectKey, setActiveConnectKey] = useState("");
   const [popupBrokerKey, setPopupBrokerKey] = useState("");
+  const [connectHandoff, setConnectHandoff] = useState(null);
+  const [connectHandoffCopyStatus, setConnectHandoffCopyStatus] = useState("");
 
   const authSession = useAuthSession();
   const canManage = canManageSnapTradeConnections(authSession.user);
@@ -1237,6 +1339,45 @@ export function SnapTradeConnectPanel({ enabled = true }) {
     [],
   );
 
+  useEffect(() => {
+    if (!connectHandoff?.expiresAt) return undefined;
+    const expiresAtMs = new Date(connectHandoff.expiresAt).getTime();
+    if (!Number.isFinite(expiresAtMs)) return undefined;
+    const delayMs = expiresAtMs - Date.now();
+    if (delayMs <= 0) {
+      setConnectHandoff(null);
+      setConnectHandoffCopyStatus("");
+      return undefined;
+    }
+    const timer = window.setTimeout(() => {
+      setConnectHandoff(null);
+      setConnectHandoffCopyStatus("");
+    }, delayMs);
+    return () => window.clearTimeout(timer);
+  }, [connectHandoff?.expiresAt]);
+
+  const showConnectHandoff = ({ brokerKey, label, url, expiresAt }) => {
+    setConnectHandoff({ brokerKey, label, url, expiresAt });
+    setConnectHandoffCopyStatus("");
+  };
+
+  const clearConnectHandoff = (brokerKey) => {
+    setConnectHandoff((current) =>
+      !brokerKey || current?.brokerKey === brokerKey ? null : current,
+    );
+    setConnectHandoffCopyStatus("");
+  };
+
+  const copyConnectHandoff = async () => {
+    if (!connectHandoff?.url) return;
+    try {
+      await copyBrokerConnectLaunchUrl(connectHandoff.url);
+      setConnectHandoffCopyStatus("copied");
+    } catch {
+      setConnectHandoffCopyStatus("error");
+    }
+  };
+
   const refresh = () => {
     setLocalError("");
     setPortalLaunchBlocked(false);
@@ -1274,6 +1415,14 @@ export function SnapTradeConnectPanel({ enabled = true }) {
         data: buildSnapTradeConnectionPortalBody(targetBroker),
       });
       setLastPortal(portal);
+      showConnectHandoff({
+        brokerKey: targetBroker,
+        label:
+          allChoices.find((choice) => choice.value === targetBroker)?.label ||
+          "SnapTrade",
+        url: portal.redirectUri,
+        expiresAt: portal.expiresAt,
+      });
       // Match the Robinhood flow: open the SnapTrade Connection Portal in a
       // popup window and refresh connection state when it closes.
       const popup = openBrokerPopup(portal.redirectUri, "snaptrade-portal");
@@ -1286,6 +1435,7 @@ export function SnapTradeConnectPanel({ enabled = true }) {
           pollRef: oauthPollRef,
           onClose: () => {
             setPopupBrokerKey("");
+            clearConnectHandoff(targetBroker);
             void readinessQuery.refetch();
             void queryClient.invalidateQueries({
               queryKey: getListBrokerConnectionsQueryKey(),
@@ -1355,12 +1505,17 @@ export function SnapTradeConnectPanel({ enabled = true }) {
       setLocalError("Robinhood authorization URL was not returned.");
       return;
     }
+    showConnectHandoff({
+      brokerKey: ROBINHOOD_BROKER_CHOICE.value,
+      label: ROBINHOOD_BROKER_CHOICE.label,
+      url: start.authorizationUrl,
+      expiresAt: start.expiresAt,
+    });
     // Robinhood's OAuth page cannot be iframed (X-Frame-Options: SAMEORIGIN), so
     // authorize in a popup window. The server callback 302s back to our origin
     // with ?robinhood=<outcome>, which we read once the popup returns same-origin.
     const popup = openBrokerPopup(start.authorizationUrl, "robinhood-oauth");
     if (!popup) {
-      setLocalError("Popup blocked. Allow popups for this site, then retry.");
       return;
     }
     setPopupBrokerKey(ROBINHOOD_BROKER_CHOICE.value);
@@ -1370,6 +1525,7 @@ export function SnapTradeConnectPanel({ enabled = true }) {
       originParamKey: "robinhood",
       onResult: (outcome) => {
         setPopupBrokerKey("");
+        clearConnectHandoff(ROBINHOOD_BROKER_CHOICE.value);
         setRobinhoodOutcome(outcome);
         void robinhoodReadinessQuery.refetch();
         void queryClient.invalidateQueries({
@@ -1381,6 +1537,7 @@ export function SnapTradeConnectPanel({ enabled = true }) {
       },
       onClose: () => {
         setPopupBrokerKey("");
+        clearConnectHandoff(ROBINHOOD_BROKER_CHOICE.value);
         void robinhoodReadinessQuery.refetch();
       },
     });
@@ -1429,12 +1586,17 @@ export function SnapTradeConnectPanel({ enabled = true }) {
       setLocalError("Schwab authorization URL was not returned.");
       return;
     }
+    showConnectHandoff({
+      brokerKey: SCHWAB_BROKER_CHOICE.value,
+      label: SCHWAB_BROKER_CHOICE.label,
+      url: start.authorizationUrl,
+      expiresAt: start.expiresAt,
+    });
     // Schwab's login page cannot be iframed either, so authorize in a popup
     // window. The server callback 302s back to our origin with
     // ?schwab=<outcome>, which we read once the popup returns same-origin.
     const popup = openBrokerPopup(start.authorizationUrl, "schwab-oauth");
     if (!popup) {
-      setLocalError("Popup blocked. Allow popups for this site, then retry.");
       return;
     }
     setPopupBrokerKey(SCHWAB_BROKER_CHOICE.value);
@@ -1444,6 +1606,7 @@ export function SnapTradeConnectPanel({ enabled = true }) {
       originParamKey: "schwab",
       onResult: (outcome) => {
         setPopupBrokerKey("");
+        clearConnectHandoff(SCHWAB_BROKER_CHOICE.value);
         setSchwabOutcome(outcome);
         void schwabReadinessQuery.refetch();
         void queryClient.invalidateQueries({
@@ -1455,6 +1618,7 @@ export function SnapTradeConnectPanel({ enabled = true }) {
       },
       onClose: () => {
         setPopupBrokerKey("");
+        clearConnectHandoff(SCHWAB_BROKER_CHOICE.value);
         void schwabReadinessQuery.refetch();
       },
     });
@@ -1518,6 +1682,12 @@ export function SnapTradeConnectPanel({ enabled = true }) {
       setLocalError("IBKR Client Portal login URL was not returned.");
       return;
     }
+    showConnectHandoff({
+      brokerKey: IBKR_PORTAL_BROKER_CHOICE.value,
+      label: IBKR_PORTAL_BROKER_CHOICE.label,
+      url: loginPath,
+      expiresAt: null,
+    });
     const popup = openBrokerPopup(loginPath, "ibkr-portal-login");
     if (!popup) {
       setIbkrPopupBlocked(true);
@@ -1534,6 +1704,7 @@ export function SnapTradeConnectPanel({ enabled = true }) {
     ibkrPollRef.current = window.setInterval(async () => {
       if (Date.now() - startedAt > timeoutMs || popup.closed) {
         stopIbkrPortalPoll();
+        clearConnectHandoff(IBKR_PORTAL_BROKER_CHOICE.value);
         void ibkrPortalReadinessQuery.refetch();
         return;
       }
@@ -1545,6 +1716,7 @@ export function SnapTradeConnectPanel({ enabled = true }) {
       }
       if (status?.status === "connected") {
         stopIbkrPortalPoll();
+        clearConnectHandoff(IBKR_PORTAL_BROKER_CHOICE.value);
         try {
           popup.close();
         } catch {
@@ -2294,7 +2466,8 @@ export function SnapTradeConnectPanel({ enabled = true }) {
             }}
           >
             <span>
-              Popup blocked. Allow popups for this site, then retry Connect.
+              Popup blocked. Use the handoff link below or allow popups for
+              this site, then retry Connect.
             </span>
           </div>
         ) : null}
@@ -2413,6 +2586,14 @@ export function SnapTradeConnectPanel({ enabled = true }) {
           >
             {visibleError}
           </div>
+        ) : null}
+
+        {connectHandoff?.url ? (
+          <BrokerConnectHandoff
+            handoff={connectHandoff}
+            copyStatus={connectHandoffCopyStatus}
+            onCopy={copyConnectHandoff}
+          />
         ) : null}
 
         {!isDirectBroker && portalLaunchBlocked && lastPortal?.redirectUri ? (
