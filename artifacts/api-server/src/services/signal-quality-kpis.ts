@@ -173,6 +173,25 @@ export type SignalScoreModelAlignment = {
   alignmentScore: number;
 };
 
+export type SignalScoreModelMagnitudeThreshold = {
+  mfeThresholdPercent: number;
+  bigMoverCount: number;
+  highScoreBigMoverCount: number;
+  recallAtScore90: number | null;
+  precisionAtScore90: number | null;
+};
+
+export type SignalScoreModelMagnitudeAlignment = {
+  highScoreThreshold: number;
+  highScoreSignalCount: number;
+  highScoreAvgMfePercent: number | null;
+  lowerScoreSignalCount: number;
+  lowerScoreAvgMfePercent: number | null;
+  highScoreMfeLiftPercent: number;
+  scoreMfePearson: number;
+  thresholds: SignalScoreModelMagnitudeThreshold[];
+};
+
 export type SignalScoreModelRecommendationSupportReason =
   | "min_observation_count"
   | "min_populated_bucket_count"
@@ -212,6 +231,7 @@ export type SignalScoreModelComparison = {
   byScoreRange: Record<string, SignalQualityKpiMetrics>;
   scoreBuckets: SignalQualityScoreBucket[];
   alignment: SignalScoreModelAlignment;
+  magnitudeAlignment: SignalScoreModelMagnitudeAlignment;
   recommendationSupport: SignalScoreModelRecommendationSupport;
 };
 
@@ -827,6 +847,91 @@ function buildScoreModelAlignment(
   };
 }
 
+const MAGNITUDE_ALIGNMENT_HIGH_SCORE_THRESHOLD = 90;
+const MAGNITUDE_ALIGNMENT_MFE_THRESHOLDS = [10, 20, 30] as const;
+
+function pearsonCorrelation(pairs: Array<{ x: number; y: number }>): number {
+  if (pairs.length < 2) {
+    return 0;
+  }
+  const meanX = mean(pairs.map((pair) => pair.x));
+  const meanY = mean(pairs.map((pair) => pair.y));
+  let numerator = 0;
+  let xVariance = 0;
+  let yVariance = 0;
+  for (const pair of pairs) {
+    const xDelta = pair.x - meanX;
+    const yDelta = pair.y - meanY;
+    numerator += xDelta * yDelta;
+    xVariance += xDelta ** 2;
+    yVariance += yDelta ** 2;
+  }
+  const denominator = Math.sqrt(xVariance * yVariance);
+  return denominator > 0 ? roundTo(numerator / denominator, 6) : 0;
+}
+
+function buildScoreModelMagnitudeAlignment(
+  observations: SignalObservation[],
+): SignalScoreModelMagnitudeAlignment {
+  const scored = observations.filter(
+    (observation): observation is SignalObservation & { score: number } =>
+      observation.score != null && Number.isFinite(observation.score),
+  );
+  const highScore = scored.filter(
+    (observation) =>
+      observation.score >= MAGNITUDE_ALIGNMENT_HIGH_SCORE_THRESHOLD,
+  );
+  const lowerScore = scored.filter(
+    (observation) =>
+      observation.score < MAGNITUDE_ALIGNMENT_HIGH_SCORE_THRESHOLD,
+  );
+  const highScoreAvgMfePercent = highScore.length
+    ? roundTo(mean(highScore.map((observation) => observation.mfePercent)), 6)
+    : null;
+  const lowerScoreAvgMfePercent = lowerScore.length
+    ? roundTo(mean(lowerScore.map((observation) => observation.mfePercent)), 6)
+    : null;
+  const highScoreMfeLiftPercent =
+    highScoreAvgMfePercent == null || lowerScoreAvgMfePercent == null
+      ? 0
+      : roundTo(highScoreAvgMfePercent - lowerScoreAvgMfePercent, 6);
+
+  return {
+    highScoreThreshold: MAGNITUDE_ALIGNMENT_HIGH_SCORE_THRESHOLD,
+    highScoreSignalCount: highScore.length,
+    highScoreAvgMfePercent,
+    lowerScoreSignalCount: lowerScore.length,
+    lowerScoreAvgMfePercent,
+    highScoreMfeLiftPercent,
+    scoreMfePearson: pearsonCorrelation(
+      scored.map((observation) => ({
+        x: observation.score,
+        y: observation.mfePercent,
+      })),
+    ),
+    thresholds: MAGNITUDE_ALIGNMENT_MFE_THRESHOLDS.map((mfeThresholdPercent) => {
+      const bigMovers = scored.filter(
+        (observation) => observation.mfePercent >= mfeThresholdPercent,
+      );
+      const highScoreBigMovers = bigMovers.filter(
+        (observation) =>
+          observation.score >= MAGNITUDE_ALIGNMENT_HIGH_SCORE_THRESHOLD,
+      );
+      return {
+        mfeThresholdPercent,
+        bigMoverCount: bigMovers.length,
+        highScoreBigMoverCount: highScoreBigMovers.length,
+        recallAtScore90: bigMovers.length
+          ? roundTo(highScoreBigMovers.length / bigMovers.length, 6)
+          : null,
+        precisionAtScore90: highScore.length
+          ? roundTo(highScoreBigMovers.length / highScore.length, 6)
+          : null,
+      };
+    }),
+  };
+}
+
 const DEFAULT_SCORE_MODEL_COMPARISON_KEYS: SignalScoreModelKey[] = [
   "sot-outcome-v1",
   "evidence-weighted-v2",
@@ -1128,6 +1233,7 @@ export function compareSignalScoreModels(
       byScoreRange,
       scoreBuckets,
       alignment: buildScoreModelAlignment(scoreBuckets),
+      magnitudeAlignment: buildScoreModelMagnitudeAlignment(scoredObservations),
     };
     return {
       ...model,

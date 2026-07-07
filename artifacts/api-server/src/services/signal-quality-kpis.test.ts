@@ -768,6 +768,70 @@ test("buildKpiResult exposes score-bucket outcome breakdowns", () => {
   );
 });
 
+test("compareSignalScoreModels exposes magnitude alignment separately from expectancy alignment", () => {
+  const comparison = compareSignalScoreModels(
+    [
+      {
+        symbol: "BIG1",
+        direction: "long",
+        score: 95,
+        realizedReturnPercent: -0.2,
+        mfePercent: 35,
+        maePercent: -1,
+      },
+      {
+        symbol: "BIG2",
+        direction: "long",
+        score: 92,
+        realizedReturnPercent: 0.1,
+        mfePercent: 25,
+        maePercent: -0.5,
+      },
+      {
+        symbol: "MID",
+        direction: "long",
+        score: 70,
+        realizedReturnPercent: 1,
+        mfePercent: 12,
+        maePercent: -0.2,
+      },
+      {
+        symbol: "LOW",
+        direction: "long",
+        score: 20,
+        realizedReturnPercent: 0.4,
+        mfePercent: 4,
+        maePercent: -0.1,
+      },
+    ],
+    ["observed-score"],
+    { minObservationCount: 1, minTopBucketSignalCount: 1 },
+  );
+  const [model] = comparison.models;
+
+  assert.equal(model.magnitudeAlignment.highScoreThreshold, 90);
+  assert.equal(model.magnitudeAlignment.highScoreSignalCount, 2);
+  assert.equal(model.magnitudeAlignment.highScoreAvgMfePercent, 30);
+  assert.equal(model.magnitudeAlignment.lowerScoreSignalCount, 2);
+  assert.equal(model.magnitudeAlignment.lowerScoreAvgMfePercent, 8);
+  assert.equal(model.magnitudeAlignment.highScoreMfeLiftPercent, 22);
+  assert.ok(model.magnitudeAlignment.scoreMfePearson > 0.9);
+  assert.deepEqual(
+    model.magnitudeAlignment.thresholds.map((threshold) => ({
+      mfe: threshold.mfeThresholdPercent,
+      bigMoverCount: threshold.bigMoverCount,
+      highScoreBigMoverCount: threshold.highScoreBigMoverCount,
+      recall: threshold.recallAtScore90,
+      precision: threshold.precisionAtScore90,
+    })),
+    [
+      { mfe: 10, bigMoverCount: 3, highScoreBigMoverCount: 2, recall: 0.666667, precision: 1 },
+      { mfe: 20, bigMoverCount: 2, highScoreBigMoverCount: 2, recall: 1, precision: 1 },
+      { mfe: 30, bigMoverCount: 1, highScoreBigMoverCount: 1, recall: 1, precision: 0.5 },
+    ],
+  );
+});
+
 test("buildFeatureSummaries exposes signal-time feature outcome separation", () => {
   const summaries = buildFeatureSummaries([
     {
