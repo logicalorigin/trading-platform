@@ -329,9 +329,12 @@ function pressureEvidence(previous) {
 
 function lastRelevantChildExit(events, previous) {
   const source = events.length ? events : [previous?.lastEvent].filter(Boolean);
+  // `expected` marks intentional kills (SIGUSR2 in-place reload, shutdown
+  // teardown). A stale expected exit in the tail must never be read as the
+  // run's terminal cause — that mislabeled reload exits as api-child-exit.
   return [...source]
     .reverse()
-    .find((entry) => entry?.event === "child-exit" && entry.childName);
+    .find((entry) => entry?.event === "child-exit" && entry.childName && !entry.expected);
 }
 
 function incidentSeverity(classification, contributingReasons) {
@@ -387,21 +390,9 @@ export function classifyPreviousRun(
     confidence = "high";
     shouldPersist = false;
     evidence = [`last-event:${lastEvent?.event ?? "shutdown-complete"}`];
-  } else if (childExit?.childName === "API") {
-    classification = "api-child-exit";
-    confidence = "high";
-    evidence = [
-      `api-exit:code=${childExit.code ?? "null"} signal=${childExit.signal ?? "null"}`,
-    ];
-  } else if (childExit?.childName === "PYRUS web") {
-    classification = "web-child-exit";
-    confidence = "high";
-    evidence = [
-      `web-exit:code=${childExit.code ?? "null"} signal=${childExit.signal ?? "null"}`,
-    ];
   } else if (
-    lastEvent?.event === "duplicate-start-noop" ||
-    lastEvent?.event === "duplicate-live-exit"
+    lastEvent?.event === "duplicate-check-complete" ||
+    lastEvent?.event === "duplicate-check-live"
   ) {
     classification = "duplicate-workflow-noop";
     confidence = "high";
@@ -415,6 +406,9 @@ export function classifyPreviousRun(
     confidence = "high";
     evidence = [`last-event:${lastEvent.event}`];
   } else if (
+    // Boot-id mismatch must outrank the child-exit branches: when the whole VM
+    // was replaced, any child-exit left in the tail (e.g. from an earlier
+    // in-place reload) predates the replacement and is not the terminal cause.
     previous.boot?.bootId &&
     currentBoot?.bootId &&
     previous.boot.bootId !== currentBoot.bootId
@@ -431,6 +425,18 @@ export function classifyPreviousRun(
     if (currentReplit.runtimeFiles?.pid1Flags?.mtimeIso) {
       evidence.push(`replit-pid1-flags-mtime:${currentReplit.runtimeFiles.pid1Flags.mtimeIso}`);
     }
+  } else if (childExit?.childName === "API") {
+    classification = "api-child-exit";
+    confidence = "high";
+    evidence = [
+      `api-exit:code=${childExit.code ?? "null"} signal=${childExit.signal ?? "null"}`,
+    ];
+  } else if (childExit?.childName === "PYRUS web") {
+    classification = "web-child-exit";
+    confidence = "high";
+    evidence = [
+      `web-exit:code=${childExit.code ?? "null"} signal=${childExit.signal ?? "null"}`,
+    ];
   } else if (pressure.length > 0) {
     classification = "suspected-resource-pressure";
     confidence = "medium";
@@ -585,16 +591,41 @@ export function createFlightRecorder(options) {
     });
   }
 
+  function previousSupervisorStillLive(previous) {
+    const pid = safeNumber(previous?.supervisor?.pid ?? previous?.lastEvent?.pid);
+    if (!pid || pid <= 0 || pid === process.pid) return false;
+    try {
+      const cmdline = readFileSync(`/proc/${pid}/cmdline`, "utf8");
+      return cmdline.includes("runDevApp.mjs");
+    } catch {
+      return false;
+    }
+  }
+
   function classifyAndPersistPreviousRun() {
     try {
       const previous = readPreviousCurrent();
+      // A duplicate/probe launch classifying a supervisor that is STILL ALIVE
+      // is not an incident: persisting here manufactured phantom
+      // same-container-supervisor-abrupt entries for healthy running apps
+      // (lastEvent=heartbeat, same boot) every time a second launch started.
+      if (previousSupervisorStillLive(previous)) {
+        return {
+          classification: "previous-supervisor-live",
+          confidence: "high",
+          shouldPersist: false,
+          contributingReasons: [],
+          evidence: [
+            `live-supervisor-pid:${previous?.supervisor?.pid ?? previous?.lastEvent?.pid}`,
+          ],
+        };
+      }
       const incident = classifyPreviousRun(
         previous,
         recentEvents(previous),
         readContainerBoot(),
         readReplitRuntimeSnapshot(env),
       );
-      appendEvent("previous-run-classified", { incident });
       if (incident.shouldPersist) {
         const persisted = {
           schemaVersion: SCHEMA_VERSION,

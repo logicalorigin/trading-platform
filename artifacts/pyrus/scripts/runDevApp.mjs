@@ -307,6 +307,10 @@ function spawnService(name, args, env) {
       childPid: child.pid || null,
       code,
       signal,
+      // Intentional kills (SIGUSR2 in-place reload, shutdown teardown) are
+      // marked so the next launch's classifier never reads a stale reload
+      // exit as the run's terminal cause (phantom api-child-exit incidents).
+      expected: reloadInProgress || shuttingDown || undefined,
     });
     children.delete(child);
   });
