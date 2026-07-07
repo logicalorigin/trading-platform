@@ -169,9 +169,9 @@ const toIso = (bar: PyrusSignalsBar): string =>
 const clamp = (value: number, min: number, max: number): number =>
   Math.min(max, Math.max(min, value));
 
-export const DEFAULT_PYRUS_SIGNALS_SIGNAL_SETTINGS: PyrusSignalsSignalSettings = {
-  timeHorizon: 10,
-  bosConfirmation: "close",
+export const DEFAULT_PYRUS_SIGNALS_CHART_SIGNAL_SETTINGS: PyrusSignalsSignalSettings = {
+  timeHorizon: 8,
+  bosConfirmation: "wicks",
   chochAtrBuffer: 0,
   chochBodyExpansionAtr: 0,
   chochVolumeGate: 0,
@@ -201,6 +201,9 @@ export const DEFAULT_PYRUS_SIGNALS_SIGNAL_SETTINGS: PyrusSignalsSignalSettings =
   waitForBarClose: true,
   signalOffsetAtr: 3.0,
 };
+
+export const DEFAULT_PYRUS_SIGNALS_SIGNAL_SETTINGS: PyrusSignalsSignalSettings =
+  DEFAULT_PYRUS_SIGNALS_CHART_SIGNAL_SETTINGS;
 
 const PYRUS_SIGNALS_BOS_CONFIRMATION_OPTIONS = ["close", "wicks"] as const;
 const PYRUS_SIGNALS_TIMEFRAME_OPTIONS = [

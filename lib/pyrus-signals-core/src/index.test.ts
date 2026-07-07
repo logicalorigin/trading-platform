@@ -3,6 +3,8 @@ import { test } from "node:test";
 import {
   aggregatePyrusSignalsBarsForTimeframe,
   buildPyrusSignalsDirectionalFeatures,
+  DEFAULT_PYRUS_SIGNALS_CHART_SIGNAL_SETTINGS,
+  DEFAULT_PYRUS_SIGNALS_SIGNAL_SETTINGS,
   evaluatePyrusSignalsSignals,
   resolvePyrusSignalsSignalSettings,
   resolvePyrusSignalsTrendDirection,
@@ -16,6 +18,16 @@ const mkBar = (
   l: number,
   c: number,
 ): PyrusSignalsBar => ({ time: 1_700_000_000 + i * 300, o, h, l, c, v: 1000 });
+
+test("signal defaults are the chart-visible defaults used by completed-bar callers", () => {
+  assert.deepEqual(
+    DEFAULT_PYRUS_SIGNALS_SIGNAL_SETTINGS,
+    DEFAULT_PYRUS_SIGNALS_CHART_SIGNAL_SETTINGS,
+  );
+  assert.equal(DEFAULT_PYRUS_SIGNALS_SIGNAL_SETTINGS.timeHorizon, 8);
+  assert.equal(DEFAULT_PYRUS_SIGNALS_SIGNAL_SETTINGS.bosConfirmation, "wicks");
+  assert.equal(DEFAULT_PYRUS_SIGNALS_SIGNAL_SETTINGS.waitForBarClose, true);
+});
 
 // A long mild downtrend that plants one clear swing high early, then breaks
 // decisively above it on the FINAL (forming) bar -> a single bullish CHOCH
