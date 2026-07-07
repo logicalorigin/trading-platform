@@ -33,16 +33,19 @@ export const isSignalStateCurrent = (state) => {
 };
 
 export const getCurrentSignalDirection = (state) => {
-  // The matrix reflects each cell's LIVE trend (the continuously re-evaluated
-  // stage direction the backend entry gate trades on via getTrendDirectionsForSymbol),
-  // not the sparse, stale-latching last crossover. currentSignalDirection latches
-  // the last discrete crossover (applyStoredSignalDirectionLatch) and can oppose
-  // the live trend for long stretches, so it is only a fallback when no trend is
-  // present. "Tradeable right now" stays distinguished by fresh/actionEligible.
+  // Show each cell's per-timeframe SIGNAL (the buy/sell crossover) FIRST — the
+  // same source the entry gate, STA filter, and KPI trade on, and what the
+  // backend REST display (stateToResponse) already shows crossover-first. The
+  // matrix *trend* ("stage") uses a basisLength=80 WMA that lags ~80 bars and
+  // reads bullish for genuine short-term decliners, so a trend-first arrow
+  // contradicted the row's signal direction (a SHORT row rendered three bullish
+  // up-arrows — mixed MTF instead of aligned). The trend is only a fallback when
+  // no crossover is present. "Tradeable right now" stays distinguished by
+  // fresh/actionEligible.
   const direction =
+    normalizeSignalDirection(state?.currentSignalDirection) ||
     normalizeTrendSignalDirection(state?.trendDirection) ||
-    normalizeTrendSignalDirection(state?.indicatorSnapshot?.trendDirection) ||
-    normalizeSignalDirection(state?.currentSignalDirection);
+    normalizeTrendSignalDirection(state?.indicatorSnapshot?.trendDirection);
   if (!direction || !state || state.active === false) return "";
   return SIGNAL_DIRECTION_DISPLAY_STATUSES.has(normalizeSignalStatus(state))
     ? direction

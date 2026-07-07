@@ -1,12 +1,13 @@
 import React from "react";
 import { ArrowDown, ArrowUp, Minus } from "lucide-react";
 import { AppTooltip } from "@/components/ui/tooltip";
-import { CSS_COLOR, cssColorMix, dim, FONT_WEIGHTS, fs, MISSING_VALUE, RADII, sp, T } from "../../../lib/uiTokens.jsx";
+import { CSS_COLOR, cssColorMix, dim, FONT_WEIGHTS, fs, RADII, sp, T } from "../../../lib/uiTokens.jsx";
 import {
   getCurrentSignalDirection,
   normalizeSignalDirection,
   normalizeSignalStatus,
 } from "../../../features/signals/signalStateFreshness.js";
+import { signalBarsSinceTokens } from "../../../lib/formatters";
 import { SIGNAL_TIMEFRAMES } from "./thresholds.js";
 
 const NON_HYDRATED_SIGNAL_DOT_STATUSES = new Set(["pending", "unknown"]);
@@ -28,21 +29,33 @@ export const resolveSignalDotHydrationMeta = (state) => {
   const status = hasState ? normalizeSignalStatus(record) : "unknown";
   const pending = !hasState || status === "pending";
   const storedDirection = normalizeSignalDirection(record.currentSignalDirection);
-  const stale =
-    status === "stale" ||
-    Boolean(storedDirection && record.fresh === false);
+  // "stale" is reserved for MISSING signals — a lane that stopped producing the
+  // bars it should (backend status="stale"). A present-but-old signal is "aged",
+  // NOT stale: it keeps its directional (blue=buy / red=sell) arrow, only dimmed
+  // by opacity, and is never recolored amber (amber = stale/missing only).
+  const stale = status === "stale";
+  const aged = !stale && Boolean(storedDirection && record.fresh === false);
   const unhydrated = Boolean(
     !hasState ||
       record.active === false ||
       NON_HYDRATED_SIGNAL_DOT_STATUSES.has(status) ||
       !hasSignalDotHydrationMarker(record),
   );
-  const hydrationState = unhydrated ? "unhydrated" : stale ? "stale" : "hydrated";
+  const hydrationState = unhydrated
+    ? "unhydrated"
+    : stale
+      ? "stale"
+      : aged
+        ? "aged"
+        : "hydrated";
   return {
     status,
     pending,
     stale,
+    aged,
     unhydrated,
+    // Aged is a normal dimmed directional arrow, NOT an attention state — only
+    // unhydrated / stale (missing) draw the amber attention treatment.
     attention: unhydrated || stale,
     hydrationState,
   };
@@ -179,12 +192,15 @@ export const SignalDots = ({
             ? CSS_COLOR.red
             : CSS_COLOR.textMuted;
       const fresh = Boolean(state?.fresh);
+      // Bars-since only exists for a discrete crossover; a trend-derived arrow has
+      // none, so signalBarsSinceTokens omits it and surfaces the time-since instead.
       const label = pending
         ? `${timeframe} pending`
         : hasDirection
-          ? `${timeframe} ${direction.toUpperCase()} ${
-              fresh ? "fresh" : "aged"
-            } - ${state?.barsSinceSignal ?? MISSING_VALUE} bars`
+          ? [
+              `${timeframe} ${direction.toUpperCase()} ${fresh ? "fresh" : "aged"}`,
+              ...signalBarsSinceTokens(state),
+            ].join(" · ")
           : `${timeframe} no signal - ${status}`;
       const attentionLabel = hydrationMeta.unhydrated
         ? "unhydrated"

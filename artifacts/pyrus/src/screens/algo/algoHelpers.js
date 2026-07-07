@@ -1282,10 +1282,12 @@ export const signalFreshnessLabel = (signal) => {
 };
 
 export const signalBarsSinceLabel = (signal) => {
+  // Reject null/"" before coercion: Number(null) === 0 is finite, which would
+  // render "0 bars" for a signal that has no crossover bar count at all.
   const barsSinceSignal = asRecord(signal).barsSinceSignal;
-  return Number.isFinite(Number(barsSinceSignal))
-    ? `${Number(barsSinceSignal)} bars`
-    : MISSING_VALUE;
+  if (barsSinceSignal == null || barsSinceSignal === "") return MISSING_VALUE;
+  const bars = Number(barsSinceSignal);
+  return Number.isFinite(bars) ? `${bars} bars` : MISSING_VALUE;
 };
 
 export const signalFilterStateLabel = (signal) => {

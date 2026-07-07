@@ -1,3 +1,5 @@
+import { signalBarsSinceTokens } from "../../lib/formatters";
+
 const normalizeSignalDirection = (value) => {
   const direction = String(value || "").trim().toLowerCase();
   if (direction === "buy" || direction === "long" || direction === "bullish") {
@@ -32,9 +34,11 @@ export const resolveSignalFrameState = (signalState, theme) => {
     direction: active ? direction : "none",
     color,
     label: active
-      ? `${String(direction).toUpperCase()} signal · ${
-          signalState?.timeframe || "monitor"
-        } · ${signalState?.barsSinceSignal ?? "?"} bars`
+      ? [
+          `${String(direction).toUpperCase()} signal`,
+          signalState?.timeframe || "monitor",
+          ...signalBarsSinceTokens(signalState),
+        ].join(" · ")
       : "No fresh signal",
   };
 };

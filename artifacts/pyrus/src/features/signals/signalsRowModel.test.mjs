@@ -123,9 +123,10 @@ test("Signals rows sort by the displayed profile signal, not hidden interval act
 const directionTrend = (direction) =>
   direction === "buy" ? "bullish" : direction === "sell" ? "bearish" : null;
 
-// Real matrix cells carry a live trendDirection (the source the verdict and the
-// backend entry gate both trade on); the crossover is only a display latch. The
-// fixture mirrors that so the verdict is exercised against realistic cells.
+// Real matrix cells carry both a crossover (currentSignalDirection) and a live
+// trendDirection. The verdict and MTF gate judge by the crossover signal (the
+// source the backend entry gate trades on); the fixture carries both so a
+// crossover/trend divergence can be modeled.
 const matrixState = (timeframe, direction) => ({
   symbol: "MU",
   timeframe,
@@ -138,10 +139,11 @@ const matrixState = (timeframe, direction) => ({
   latestBarAt: "2026-06-08T19:10:00.000Z",
 });
 
-// The gate now reads the cell's current trend (mirroring the backend entry
-// gate), so the fixture carries a trendDirection that matches the frame's
-// direction by default. `trend` can be overridden to model a divergence
-// between the displayed crossover and the live trend.
+// The gate reads the cell's per-timeframe crossover (currentSignalDirection),
+// mirroring the backend entry gate. `direction` sets the crossover; `trend` can
+// be overridden to model a divergence between the crossover and the live trend
+// (which the gate intentionally ignores — the basisLength=80 trend lags fine TFs
+// and never confirms shorts).
 const mtfState = (timeframe, direction, status = "ok", trend = direction) => ({
   symbol: "SPY",
   timeframe,
@@ -238,11 +240,11 @@ test("MTF alignment is not applicable when the gate is disabled or unconfigured"
   );
 });
 
-test("MTF alignment passes when the live trend confirms despite a stale/neutral crossover", () => {
-  // The bug: the gate read currentSignalDirection (a sparse, latch-stale
-  // crossover). Here the crossover is neutral/stale on every frame but the live
-  // trend confirms the buy on all three — the backend would enter, so the row
-  // must surface.
+test("MTF alignment does NOT align on a neutral crossover even when the live trend confirms", () => {
+  // The gate follows the per-timeframe crossover, not the trend. The crossover is
+  // neutral/absent on every frame (only the lagging trend confirms buy), so there
+  // is no signal confluence -> not aligned. Trend-following is intentionally not
+  // used: the basisLength=80 trend lags fine TFs and never confirms shorts.
   const matrixStatesByTimeframe = {
     "1m": mtfState("1m", null, "stale", "buy"),
     "2m": mtfState("2m", null, "ok", "buy"),
@@ -255,13 +257,15 @@ test("MTF alignment passes when the live trend confirms despite a stale/neutral 
     requiredCount: 3,
   });
   assert.equal(alignment.applicable, true);
-  assert.equal(alignment.aligned, true);
-  assert.equal(alignment.matches, 3);
+  assert.equal(alignment.aligned, false);
+  assert.equal(alignment.matches, 0);
+  assert.equal(alignment.neutral, 3);
 });
 
-test("MTF alignment fails when the live trend opposes the signal", () => {
-  // Crossover still reads buy on 5m, but the live trend has flipped to bearish.
-  // The backend gates on trend, so this opposing frame must block.
+test("MTF alignment aligns on crossover agreement even when the live trend diverges", () => {
+  // Crossover reads buy on all three frames; the 5m trend has flipped bearish.
+  // The gate follows the crossover, so the row aligns — the divergent (lagging)
+  // trend does not block.
   const matrixStatesByTimeframe = {
     "1m": mtfState("1m", "buy"),
     "2m": mtfState("2m", "buy"),
@@ -273,17 +277,18 @@ test("MTF alignment fails when the live trend opposes the signal", () => {
     timeframes: ["1m", "2m", "5m"],
     requiredCount: 3,
   });
-  assert.equal(alignment.aligned, false);
-  assert.equal(alignment.opposing, 1);
-  assert.deepEqual(alignment.opposingTimeframes, ["5m"]);
+  assert.equal(alignment.aligned, true);
+  assert.equal(alignment.matches, 3);
+  assert.equal(alignment.opposing, 0);
 });
 
-test("MTF alignment treats a null live trend as neutral", () => {
-  // No current trend on 5m (null) -> neutral, counts against full confluence.
+test("MTF alignment treats a null crossover frame as neutral", () => {
+  // No crossover on 5m -> neutral, counts against full confluence (the 5m trend
+  // is irrelevant to the gate).
   const matrixStatesByTimeframe = {
     "1m": mtfState("1m", "buy"),
     "2m": mtfState("2m", "buy"),
-    "5m": mtfState("5m", "buy", "ok", null),
+    "5m": mtfState("5m", null, "ok", "buy"),
   };
   const alignment = resolveConfiguredMtfAlignment({
     matrixStatesByTimeframe,
@@ -295,6 +300,27 @@ test("MTF alignment treats a null live trend as neutral", () => {
   assert.equal(alignment.matches, 2);
   assert.equal(alignment.neutral, 1);
   assert.equal(alignment.opposing, 0);
+});
+
+test("MTF alignment surfaces a short when the crossover is sell on every frame despite a seed-bullish trend (zero-sells regression guard)", () => {
+  // The zero-sells bug: the fine-TF trend seeds bullish, so a real sell crossover
+  // on a decliner was judged opposing and dropped. The gate now follows the
+  // crossover, so a 3-frame sell confluence aligns for a put even though every
+  // frame's trend reads bullish.
+  const matrixStatesByTimeframe = {
+    "1m": mtfState("1m", "sell", "ok", "buy"),
+    "2m": mtfState("2m", "sell", "ok", "buy"),
+    "5m": mtfState("5m", "sell", "ok", "buy"),
+  };
+  const alignment = resolveConfiguredMtfAlignment({
+    matrixStatesByTimeframe,
+    signalDirection: "sell",
+    timeframes: ["1m", "2m", "5m"],
+    requiredCount: 3,
+  });
+  assert.equal(alignment.applicable, true);
+  assert.equal(alignment.aligned, true);
+  assert.equal(alignment.matches, 3);
 });
 
 test("Signal matrix verdict ignores hidden non-trading timeframes", () => {

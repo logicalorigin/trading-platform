@@ -8,7 +8,6 @@ import {
   isStaleSignalState,
   normalizeSignalDirection,
   normalizeSignalStatus,
-  normalizeTrendSignalDirection,
 } from "./signalStateFreshness.js";
 import { preferSignalMatrixCellState } from "./signalMatrixStateMerge.js";
 
@@ -107,6 +106,12 @@ const stateActivityMs = (state) =>
   );
 
 const finiteNumberOrNull = (value) => {
+  // Reject null/undefined/"" BEFORE coercion: Number(null) === 0 and Number("")
+  // === 0 are both finite, which would make the null-last guards in
+  // compareNumberAsc/Desc dead for explicitly-null row fields (currentSignalPrice,
+  // barsSinceSignal, trendAgeBars, volatilityScore are set to null when absent) —
+  // sorting them as 0 floats no-signal rows to the top of ascending sorts.
+  if (value == null || value === "") return null;
   const number = Number(value);
   return Number.isFinite(number) ? number : null;
 };
@@ -390,15 +395,11 @@ const resolveDashboardSummary = (snapshotEntry) => {
     timeframe: snapshotEntry.timeframe || null,
     trendDirection: snapshot.trendDirection || null,
     signalDirection: normalizeIndicatorDirection(snapshot.trendDirection),
-    trendAgeBars: Number.isFinite(Number(snapshot.trendAgeBars))
-      ? Number(snapshot.trendAgeBars)
-      : null,
+    trendAgeBars: finiteNumberOrNull(snapshot.trendAgeBars),
     trendAgeBucket: snapshot.trendAgeBucket || null,
     strength: snapshot.strength || null,
-    adx: Number.isFinite(Number(snapshot.adx)) ? Number(snapshot.adx) : null,
-    volatilityScore: Number.isFinite(Number(snapshot.volatilityScore))
-      ? Number(snapshot.volatilityScore)
-      : null,
+    adx: finiteNumberOrNull(snapshot.adx),
+    volatilityScore: finiteNumberOrNull(snapshot.volatilityScore),
     mtf: Array.isArray(snapshot.mtf) ? snapshot.mtf : [],
     filterState: snapshot.filterState || null,
   };
@@ -517,25 +518,24 @@ const buildSignalMatrixVerdictLabel = ({
 
 const getMtfGateSignalDirection = (state) => {
   if (!state || state.active === false) return "";
-  // Gate on the cell's CURRENT trend (bullish/bearish), mirroring the backend
-  // entry gate. The backend re-evaluates trendDirection every bar and trades on
-  // it (getTrendDirectionsForSymbol -> evaluateSignalOptionsEntryGate), whereas
-  // currentSignalDirection is a sparse crossover that latches stale values. The
-  // top-level trendDirection is authored on both transports (REST symbol state
-  // and the matrix stream's wire boundary); fall back to the indicator snapshot
-  // for stream cells that predate the top-level field.
-  return normalizeTrendSignalDirection(
-    state.trendDirection ?? state.indicatorSnapshot?.trendDirection,
-  );
+  // Judge each MTF frame by its per-timeframe SIGNAL (the buy/sell crossover),
+  // matching the backend entry gate (getSignalDirectionsForSymbolAsOf ->
+  // evaluateSignalOptionsEntryGate). The matrix *trend* ("stage") uses a
+  // basisLength=80 WMA that lags ~80 bars, so on fine timeframes it reads bullish
+  // for genuine short-term decliners (a 1m decline still sits inside a rising
+  // 80-minute average) and structurally never confirms a short — it hid every
+  // sell row from the STA table + KPI. currentSignalDirection is the unbiased
+  // crossover, authored on both transports (REST symbol state + matrix stream wire).
+  return normalizeSignalDirection(state.currentSignalDirection);
 };
 
 // Frontend mirror of the backend signal-options MTF entry gate
 // (signal-options-automation.ts evaluateSignalOptionsEntryGate). For the
-// CONFIGURED MTF timeframes, count how many frames' CURRENT trend agrees with
-// the signal direction, using the same trendDirection source the backend entry
-// gate trades on. A frame with no current trend is neutral and cannot satisfy
-// the selected-frame confluence contract (consistent with the backend's
-// trendDirectionToSignalDirection(null)). Aligned when matches >= requiredCount,
+// CONFIGURED MTF timeframes, count how many frames' per-timeframe SIGNAL
+// (buy/sell crossover) agrees with the entry direction, using the same crossover
+// source the backend entry gate trades on (getSignalDirectionsForSymbolAsOf).
+// A frame with no current signal is neutral and cannot satisfy the selected-frame
+// confluence contract. Aligned when matches >= requiredCount,
 // matching the gate that actually decides entries.
 export const resolveConfiguredMtfAlignment = ({
   matrixStatesByTimeframe = {},
@@ -613,10 +613,10 @@ export const resolveSignalMatrixVerdict = ({
   });
   const entries = matrixTimeframes.map((timeframe) => {
     const state = hydratedMatrixStatesByTimeframe?.[timeframe] || null;
-    // Mirror the bot: the verdict counts each cell's LIVE trend (the same source
-    // the backend entry gate trades on, via getMtfGateSignalDirection), not the
-    // stale-latching crossover fallback. This keeps the verdict's direction/regime
-    // from contradicting the MTF-alignment override, which uses the same resolver.
+    // Mirror the bot: the verdict counts each cell's per-timeframe SIGNAL (the
+    // buy/sell crossover the backend entry gate trades on, via getMtfGateSignalDirection).
+    // This keeps the verdict's direction from contradicting the MTF-alignment
+    // override, which uses the same resolver.
     const direction = getMtfGateSignalDirection(state) || null;
     const current = isSignalStateCurrent(state);
     const problem = isProblemSignalState(state);
@@ -1145,11 +1145,14 @@ export const buildSignalsRows = ({
         freshTimeframes,
         activeTimeframeCount: activeTimeframes.length,
         freshTimeframeCount: freshTimeframes.length,
-        barsSinceSignal: Number.isFinite(Number(currentPrimaryState?.barsSinceSignal))
-          ? Number(currentPrimaryState.barsSinceSignal)
-          : Number.isFinite(Number(currentMatrixSignalState?.barsSinceSignal))
-            ? Number(currentMatrixSignalState.barsSinceSignal)
-            : null,
+        // A trend-only primary state carries barsSinceSignal:null (no crossover);
+        // finiteNumberOrNull rejects null before coercion so it falls through to
+        // the matrix signal state instead of resolving to a false 0 ("fired this
+        // bar") that would contradict displaySignalAt. A real 0 (fired this bar)
+        // is preserved by ?? since 0 is not nullish.
+        barsSinceSignal:
+          finiteNumberOrNull(currentPrimaryState?.barsSinceSignal) ??
+          finiteNumberOrNull(currentMatrixSignalState?.barsSinceSignal),
         currentSignalAt: displaySignalAt,
         currentSignalPrice: displaySignalPrice,
         currentSignalClose:

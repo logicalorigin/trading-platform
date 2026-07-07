@@ -27,6 +27,7 @@ import {
   formatQuotePrice,
   formatSignedPercent,
   isFiniteNumber,
+  signalBarsSinceTokens,
 } from "../../lib/formatters";
 import {
   joinMotionClasses,
@@ -504,7 +505,11 @@ const WatchlistRow = memo(
     const renderSignalPill = () =>
       hasSignal ? (
         <AppTooltip
-          content={`${signalDirection.toUpperCase()} ${signalFresh ? "fresh" : "stale"} signal - ${bestSignalState?.timeframe || "monitor"} - ${bestSignalState?.barsSinceSignal ?? MISSING_VALUE} bars`}
+          content={[
+            `${signalDirection.toUpperCase()} ${signalFresh ? "fresh" : "stale"} signal`,
+            bestSignalState?.timeframe || "monitor",
+            ...signalBarsSinceTokens(bestSignalState),
+          ].join(" - ")}
         >
           <button
             type="button"

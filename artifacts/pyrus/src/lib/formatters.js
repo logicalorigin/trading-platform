@@ -246,6 +246,29 @@ export const formatRelativeTimeShort = (value) => {
   return formatShortDate(date);
 };
 
+// Recency tokens shared by every signal-arrow tooltip (SignalDots, the header
+// signal tape, the watchlist pill, the frame label). "N bars" appears ONLY when
+// a discrete crossover bar count exists — a trend-derived arrow (drawn from
+// trendDirection when there is no crossover) or a crossover aged past the
+// backend's bar-count window has barsSinceSignal = null, so the bar count is
+// omitted rather than rendered as "— bars" (or, worse, "0 bars" from Number(null)).
+// "Xm ago" is the time since the signal / last activity. Returns a pre-filtered
+// array so callers spread it after their own direction/status prefix and join
+// with their own separator.
+export const signalBarsSinceTokens = (state) => {
+  const barsValue = state?.barsSinceSignal;
+  const barsToken =
+    barsValue != null && Number.isFinite(Number(barsValue))
+      ? `${Number(barsValue)} bars`
+      : null;
+  const sinceRaw = formatRelativeTimeShort(
+    state?.currentSignalAt || state?.latestBarAt || state?.lastEvaluatedAt,
+  );
+  const sinceToken =
+    sinceRaw && sinceRaw !== MISSING_VALUE ? `${sinceRaw} ago` : null;
+  return [barsToken, sinceToken].filter(Boolean);
+};
+
 export const formatEnumLabel = (value) =>
   String(value || MISSING_VALUE)
     .replace(/_/g, " ")
