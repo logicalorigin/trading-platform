@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+
 import {
   computeOptionGreeksFromPrice,
   resolveSignalOptionsExecutionProfile,
@@ -40,7 +42,7 @@ import {
   type AlgoDeployment,
   type ExecutionEvent,
 } from "@workspace/db";
-import { and, desc, eq, gte, inArray, isNotNull, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, isNotNull, sql } from "drizzle-orm";
 import { HttpError } from "../lib/errors";
 import { logger } from "../lib/logger";
 import { normalizeSymbol } from "../lib/values";
@@ -55,7 +57,6 @@ import {
   evaluateSignalMonitorProfileSymbols,
   getSignalMonitorProfileRow,
   getSignalDirectionsForSymbolAsOf,
-  getTrendDirectionsForSymbol,
   getSignalMonitorState,
   getSignalMonitorStoredState,
   getSignalMonitorTimeframeMs,
@@ -166,6 +167,48 @@ const signalOptionsActionCursors = new Map<
     signalIndex: number;
   }
 >();
+const SIGNAL_OPTIONS_PROJECTION_OVERLAP_MS = 5 * 60_000;
+type SignalOptionsPositionProjection = {
+  foldState: SignalOptionsPositionFoldState;
+  watermark: Date | null;
+  recentlyFoldedIds: Set<string>;
+  recentEvents: ExecutionEvent[];
+  configSignature: string;
+};
+const signalOptionsPositionProjections = new Map<
+  string,
+  SignalOptionsPositionProjection
+>();
+const signalOptionsRecentSkips = new Map<string, ExecutionEvent[]>();
+type SignalOptionsTallyMode = "off" | "shadow" | "on";
+let signalOptionsTallyDriftCount = 0;
+let signalOptionsTallyCompareCount = 0;
+let signalOptionsTallyDedupDriftCount = 0;
+let signalOptionsTallyPnlDriftCount = 0;
+let signalOptionsTallyControlDriftCount = 0;
+
+function signalOptionsTallyMode(): SignalOptionsTallyMode {
+  const raw = process.env.SIGNAL_OPTIONS_TALLY?.toLowerCase();
+  if (raw === "shadow") return "shadow";
+  if (raw === "on") return "on";
+  return "off";
+}
+
+function signalOptionsTallyAuthoritative(
+  mode: SignalOptionsTallyMode = signalOptionsTallyMode(),
+) {
+  return mode === "on";
+}
+
+function getSignalOptionsTallyDriftStats() {
+  return {
+    drift: signalOptionsTallyDriftCount,
+    dedupDrift: signalOptionsTallyDedupDriftCount,
+    pnlDrift: signalOptionsTallyPnlDriftCount,
+    controlDrift: signalOptionsTallyControlDriftCount,
+    compares: signalOptionsTallyCompareCount,
+  };
+}
 
 type SignalOptionsRunMetadata = {
   runId: string;
@@ -238,6 +281,7 @@ const SIGNAL_OPTIONS_EXTENDED_CLOSE_UNDERLYINGS = new Set([
   "SPY",
 ]);
 const SIGNAL_OPTIONS_STATE_EVENT_LIMIT = 2_500;
+const SIGNAL_OPTIONS_RECENT_SKIPS_LIMIT = SIGNAL_OPTIONS_STATE_EVENT_LIMIT;
 const SIGNAL_OPTIONS_SUMMARY_EVENT_LIMIT = 100;
 const SIGNAL_OPTIONS_SUMMARY_RESPONSE_EVENT_LIMIT = 20;
 const SIGNAL_OPTIONS_DASHBOARD_CACHE_TTL_MS = 2_000;
@@ -608,6 +652,10 @@ function dateOrNull(value: unknown): Date | null {
     return Number.isNaN(date.getTime()) ? null : date;
   }
   return null;
+}
+
+function dateTimeMsOrZero(value: unknown): number {
+  return dateOrNull(value)?.getTime() ?? 0;
 }
 
 function latestSignalDate(current: Date | null, value: unknown): Date | null {
@@ -2052,6 +2100,25 @@ async function listDeploymentEvents(deploymentId: string, limit = 500) {
     .limit(Math.min(Math.max(limit, 1), 10_000));
 }
 
+async function listDeploymentEventsSince(
+  deploymentId: string,
+  since: Date,
+  limit = 10_000,
+) {
+  return db
+    .select()
+    .from(executionEventsTable)
+    .where(
+      and(
+        eq(executionEventsTable.deploymentId, deploymentId),
+        sql`${executionEventsTable.eventType} LIKE 'signal_options_%'`,
+        gte(executionEventsTable.occurredAt, since),
+      ),
+    )
+    .orderBy(asc(executionEventsTable.occurredAt))
+    .limit(Math.min(Math.max(limit, 1), 10_000));
+}
+
 async function listDeploymentBackfillEvents(deploymentId: string) {
   return db
     .select()
@@ -2150,22 +2217,36 @@ async function insertSignalOptionsEvent(input: {
   ledgerSource?: "automation" | "signal_options_replay";
   ledgerMarkSource?: string;
 }) {
+  const occurredAt = input.occurredAt ?? new Date();
   const payload = signalOptionsPayloadWithRunMetadata({
     deployment: input.deployment,
     payload: input.payload,
   });
-  const [event] = await db
-    .insert(executionEventsTable)
-    .values({
-      deploymentId: input.deployment.id,
-      providerAccountId: input.deployment.providerAccountId,
-      symbol: input.symbol ? normalizeSymbol(input.symbol).toUpperCase() : null,
-      eventType: input.eventType,
-      summary: input.summary,
-      payload,
-      occurredAt: input.occurredAt ?? new Date(),
-    })
-    .returning();
+  const bufferedEvent = buildBufferedSignalOptionsEvent({
+    deployment: input.deployment,
+    symbol: input.symbol,
+    eventType: input.eventType,
+    summary: input.summary,
+    payload,
+    occurredAt,
+  });
+  const event = shouldPersistSignalOptionsEventToLedger({
+    event: bufferedEvent,
+  })
+    ? await db
+        .insert(executionEventsTable)
+        .values({
+          deploymentId: input.deployment.id,
+          providerAccountId: input.deployment.providerAccountId,
+          symbol: bufferedEvent.symbol,
+          eventType: input.eventType,
+          summary: input.summary,
+          payload,
+          occurredAt,
+        })
+        .returning()
+        .then((rows) => rows[0] ?? bufferedEvent)
+    : bufferedEvent;
 
   if (
     event.eventType === SIGNAL_OPTIONS_ENTRY_EVENT ||
@@ -2189,6 +2270,10 @@ async function insertSignalOptionsEvent(input: {
     mode: input.deployment.mode,
     reason: input.eventType,
   });
+
+  if (isSignalOptionsEntryCandidateSkip(event)) {
+    recordSignalOptionsRecentSkip(input.deployment.id, event);
+  }
 
   return event;
 }
@@ -2413,7 +2498,12 @@ async function loadSignalMonitorEventMetadataBySignalKey(
         eventKey: signalMonitorEventsTable.eventKey,
         id: signalMonitorEventsTable.id,
         source: signalMonitorEventsTable.source,
-        payload: signalMonitorEventsTable.payload,
+        // Project only the filterState subtree (the sole field used below) instead
+        // of the whole event payload jsonb, so this warm-poll read never parses the
+        // full payload on the event loop for every signal snapshot.
+        filterState: sql<
+          Record<string, unknown> | null
+        >`${signalMonitorEventsTable.payload} -> 'filterState'`,
         emittedAt: signalMonitorEventsTable.emittedAt,
       })
       .from(signalMonitorEventsTable)
@@ -2429,7 +2519,7 @@ async function loadSignalMonitorEventMetadataBySignalKey(
       eventByKey.set(event.eventKey, {
         eventId: event.id,
         source: event.source,
-        filterState: asRecord(asRecord(event.payload).filterState),
+        filterState: asRecord(event.filterState),
         emittedMs: dateOrNull(event.emittedAt)?.getTime() ?? 0,
       });
     }
@@ -6115,108 +6205,264 @@ function positionFromEntryPayload(
   };
 }
 
-function deriveActivePositions(events: ExecutionEvent[]) {
-  const positions = new Map<string, SignalOptionsPosition>();
-  const closedCandidateIds = new Set<string>();
-  const closedPositionIds = new Set<string>();
+// --- Position projection fold (Approach A: push-native running tally) --------
+// deriveActivePositions rebuilds positions from a full event window every tick.
+// The running-tally redesign needs to apply only NEW events as deltas onto
+// retained in-memory state and get the SAME result. To make divergence
+// impossible, the per-event effect lives in ONE place
+// (foldSignalOptionsPositionEvent) that BOTH the full derive (fold from empty)
+// and the incremental tally reuse. Do not fork this logic.
+type SignalOptionsPositionFoldState = {
+  positions: Map<string, SignalOptionsPosition>;
+  closedCandidateIds: Set<string>;
+  closedPositionIds: Set<string>;
+};
+
+function createSignalOptionsPositionFoldState(): SignalOptionsPositionFoldState {
+  return {
+    positions: new Map<string, SignalOptionsPosition>(),
+    closedCandidateIds: new Set<string>(),
+    closedPositionIds: new Set<string>(),
+  };
+}
+
+// Applies ONE event's effect to the projection. Exact behavior of the former
+// deriveActivePositions per-event body — keep it byte-faithful.
+function foldSignalOptionsPositionEvent(
+  state: SignalOptionsPositionFoldState,
+  event: ExecutionEvent,
+): void {
+  const { positions, closedCandidateIds, closedPositionIds } = state;
+  const symbol = normalizeSymbol(event.symbol ?? "").toUpperCase();
+  if (!symbol) {
+    return;
+  }
+  if (event.eventType === SIGNAL_OPTIONS_ENTRY_EVENT) {
+    const position = positionFromEntryPayload(event);
+    if (position) {
+      closedCandidateIds.delete(position.candidateId);
+      closedPositionIds.delete(position.id);
+      positions.set(symbol, position);
+    }
+    return;
+  }
+  if (event.eventType === SIGNAL_OPTIONS_EXIT_EVENT) {
+    if (!signalOptionsExitEventHasActionableOptionSession(event)) {
+      return;
+    }
+    const payload = asRecord(event.payload);
+    const position = asRecord(payload.position);
+    const candidateId = positionCandidateIdFromPayload(payload);
+    if (candidateId) {
+      closedCandidateIds.add(candidateId);
+    }
+    const positionId = compactString(position.id);
+    if (positionId) {
+      closedPositionIds.add(positionId);
+    }
+    positions.delete(symbol);
+    return;
+  }
+  const isPositionMarkSkip =
+    event.eventType === SIGNAL_OPTIONS_SKIPPED_EVENT &&
+    isSignalOptionsPositionMarkSkipReason(
+      compactString(
+        asRecord(event.payload).reason ?? asRecord(event.payload).skipReason,
+      ),
+    );
+  if (event.eventType === SIGNAL_OPTIONS_MARK_EVENT || isPositionMarkSkip) {
+    const payload = asRecord(event.payload);
+    const position = asRecord(payload.position);
+    const current = positions.get(symbol);
+    if (current && isPositionMarkSkip) {
+      return;
+    }
+    if (current) {
+      current.peakPrice = finiteNumber(position.peakPrice) ?? current.peakPrice;
+      current.stopPrice = finiteNumber(position.stopPrice) ?? current.stopPrice;
+      current.lastMarkPrice =
+        finiteNumber(position.lastMarkPrice) ?? current.lastMarkPrice;
+      current.lastMarkedAt =
+        toIsoString(position.lastMarkedAt) ??
+        toIsoString(event.occurredAt) ??
+        current.lastMarkedAt;
+      const lastStop = asRecord(position.lastStop ?? payload.stop);
+      const lastWireTrail = asRecord(
+        position.lastWireTrail ?? lastStop.wireTrail,
+      );
+      current.lastStop = Object.keys(lastStop).length
+        ? lastStop
+        : (current.lastStop ?? null);
+      current.lastWireTrail = Object.keys(lastWireTrail).length
+        ? lastWireTrail
+        : (current.lastWireTrail ?? null);
+      current.entryGreeks =
+        greekSnapshotFromQuote(asRecord(position.entryGreeks)) ??
+        current.entryGreeks ??
+        greekSnapshotFromQuote(asRecord(payload.quote));
+      current.greekBaselineSource =
+        position.greekBaselineSource === "first_mark" ||
+        position.greekBaselineSource === "entry"
+          ? position.greekBaselineSource
+          : current.greekBaselineSource;
+      return;
+    }
+
+    if (isPositionMarkSkip) {
+      return;
+    }
+
+    const recovered = positionFromEntryPayload(event);
+    if (
+      recovered &&
+      !closedCandidateIds.has(recovered.candidateId) &&
+      !closedPositionIds.has(recovered.id)
+    ) {
+      positions.set(symbol, recovered);
+    }
+  }
+}
+
+// Folds a batch of events (sorted by occurred_at, like the old full derive) into
+// the projection. Mutates and returns `state` so the incremental tally can keep
+// folding successive tail reads onto it.
+function foldSignalOptionsPositionEvents(
+  state: SignalOptionsPositionFoldState,
+  events: ExecutionEvent[],
+): SignalOptionsPositionFoldState {
   [...events]
     .sort(
       (left, right) => left.occurredAt.getTime() - right.occurredAt.getTime(),
     )
-    .forEach((event) => {
-      const symbol = normalizeSymbol(event.symbol ?? "").toUpperCase();
-      if (!symbol) {
-        return;
-      }
-      if (event.eventType === SIGNAL_OPTIONS_ENTRY_EVENT) {
-        const position = positionFromEntryPayload(event);
-        if (position) {
-          closedCandidateIds.delete(position.candidateId);
-          closedPositionIds.delete(position.id);
-          positions.set(symbol, position);
-        }
-        return;
-      }
-      if (event.eventType === SIGNAL_OPTIONS_EXIT_EVENT) {
-        if (!signalOptionsExitEventHasActionableOptionSession(event)) {
-          return;
-        }
-        const payload = asRecord(event.payload);
-        const position = asRecord(payload.position);
-        const candidateId = positionCandidateIdFromPayload(payload);
-        if (candidateId) {
-          closedCandidateIds.add(candidateId);
-        }
-        const positionId = compactString(position.id);
-        if (positionId) {
-          closedPositionIds.add(positionId);
-        }
-        positions.delete(symbol);
-        return;
-      }
-      const isPositionMarkSkip =
-        event.eventType === SIGNAL_OPTIONS_SKIPPED_EVENT &&
-        isSignalOptionsPositionMarkSkipReason(
-          compactString(
-            asRecord(event.payload).reason ??
-              asRecord(event.payload).skipReason,
-          ),
+    .forEach((event) => foldSignalOptionsPositionEvent(state, event));
+  return state;
+}
+
+function deriveActivePositions(events: ExecutionEvent[]) {
+  const state = foldSignalOptionsPositionEvents(
+    createSignalOptionsPositionFoldState(),
+    events,
+  );
+  return [...state.positions.values()];
+}
+
+const SIGNAL_OPTIONS_TALLY_DRIFT_EPSILON = 1e-9;
+
+function signalOptionsPositionDriftKey(position: SignalOptionsPosition) {
+  return normalizeSymbol(position.symbol).toUpperCase();
+}
+
+function signalOptionsPositionsDrift(
+  full: SignalOptionsPosition[],
+  projected: SignalOptionsPosition[],
+): string[] {
+  const diffs: string[] = [];
+  const fullBySymbol = new Map<string, SignalOptionsPosition>();
+  const projectedBySymbol = new Map<string, SignalOptionsPosition>();
+  const addBySymbol = (
+    source: "full" | "projected",
+    target: Map<string, SignalOptionsPosition>,
+    position: SignalOptionsPosition,
+  ) => {
+    const symbol = signalOptionsPositionDriftKey(position);
+    if (!symbol) {
+      diffs.push(`${source}: position ${position.id} has no symbol`);
+      return;
+    }
+    if (target.has(symbol)) {
+      diffs.push(`${source}: duplicate position for ${symbol}`);
+    }
+    target.set(symbol, position);
+  };
+
+  full.forEach((position) => addBySymbol("full", fullBySymbol, position));
+  projected.forEach((position) =>
+    addBySymbol("projected", projectedBySymbol, position),
+  );
+
+  const symbols = [
+    ...new Set([...fullBySymbol.keys(), ...projectedBySymbol.keys()]),
+  ].sort((left, right) => left.localeCompare(right));
+  const compareText = (
+    symbol: string,
+    field: "id" | "candidateId" | "direction",
+    fullPosition: SignalOptionsPosition,
+    projectedPosition: SignalOptionsPosition,
+  ) => {
+    if (fullPosition[field] !== projectedPosition[field]) {
+      diffs.push(
+        `${symbol}: ${field} differs full=${String(
+          fullPosition[field],
+        )} projected=${String(projectedPosition[field])}`,
+      );
+    }
+  };
+  const compareNumber = (
+    symbol: string,
+    field:
+      | "quantity"
+      | "entryPrice"
+      | "peakPrice"
+      | "stopPrice"
+      | "lastMarkPrice",
+    fullPosition: SignalOptionsPosition,
+    projectedPosition: SignalOptionsPosition,
+  ) => {
+    const fullValue = finiteNumber(fullPosition[field]);
+    const projectedValue = finiteNumber(projectedPosition[field]);
+    if (fullValue == null || projectedValue == null) {
+      if (fullValue !== projectedValue) {
+        diffs.push(
+          `${symbol}: ${field} differs full=${String(
+            fullPosition[field],
+          )} projected=${String(projectedPosition[field])}`,
         );
-      if (event.eventType === SIGNAL_OPTIONS_MARK_EVENT || isPositionMarkSkip) {
-        const payload = asRecord(event.payload);
-        const position = asRecord(payload.position);
-        const current = positions.get(symbol);
-        if (current && isPositionMarkSkip) {
-          return;
-        }
-        if (current) {
-          current.peakPrice =
-            finiteNumber(position.peakPrice) ?? current.peakPrice;
-          current.stopPrice =
-            finiteNumber(position.stopPrice) ?? current.stopPrice;
-          current.lastMarkPrice =
-            finiteNumber(position.lastMarkPrice) ?? current.lastMarkPrice;
-          current.lastMarkedAt =
-            toIsoString(position.lastMarkedAt) ??
-            toIsoString(event.occurredAt) ??
-            current.lastMarkedAt;
-          const lastStop = asRecord(position.lastStop ?? payload.stop);
-          const lastWireTrail = asRecord(
-            position.lastWireTrail ?? lastStop.wireTrail,
-          );
-          current.lastStop = Object.keys(lastStop).length
-            ? lastStop
-            : (current.lastStop ?? null);
-          current.lastWireTrail = Object.keys(lastWireTrail).length
-            ? lastWireTrail
-            : (current.lastWireTrail ?? null);
-          current.entryGreeks =
-            greekSnapshotFromQuote(asRecord(position.entryGreeks)) ??
-            current.entryGreeks ??
-            greekSnapshotFromQuote(asRecord(payload.quote));
-          current.greekBaselineSource =
-            position.greekBaselineSource === "first_mark" ||
-            position.greekBaselineSource === "entry"
-              ? position.greekBaselineSource
-              : current.greekBaselineSource;
-          return;
-        }
-
-        if (isPositionMarkSkip) {
-          return;
-        }
-
-        const recovered = positionFromEntryPayload(event);
-        if (
-          recovered &&
-          !closedCandidateIds.has(recovered.candidateId) &&
-          !closedPositionIds.has(recovered.id)
-        ) {
-          positions.set(symbol, recovered);
-        }
       }
-    });
-  return [...positions.values()];
+      return;
+    }
+    if (
+      Math.abs(fullValue - projectedValue) > SIGNAL_OPTIONS_TALLY_DRIFT_EPSILON
+    ) {
+      diffs.push(
+        `${symbol}: ${field} differs full=${fullValue} projected=${projectedValue}`,
+      );
+    }
+  };
+
+  for (const symbol of symbols) {
+    const fullPosition = fullBySymbol.get(symbol);
+    const projectedPosition = projectedBySymbol.get(symbol);
+    if (!fullPosition) {
+      diffs.push(`${symbol}: present in projection only`);
+      continue;
+    }
+    if (!projectedPosition) {
+      diffs.push(`${symbol}: missing from projection`);
+      continue;
+    }
+    compareText(symbol, "id", fullPosition, projectedPosition);
+    compareText(symbol, "candidateId", fullPosition, projectedPosition);
+    compareText(symbol, "direction", fullPosition, projectedPosition);
+    compareNumber(symbol, "quantity", fullPosition, projectedPosition);
+    compareNumber(symbol, "entryPrice", fullPosition, projectedPosition);
+    compareNumber(symbol, "peakPrice", fullPosition, projectedPosition);
+    compareNumber(symbol, "stopPrice", fullPosition, projectedPosition);
+    compareNumber(symbol, "lastMarkPrice", fullPosition, projectedPosition);
+  }
+
+  return diffs;
+}
+
+function createSignalOptionsPositionProjection(
+  configSignature: string,
+): SignalOptionsPositionProjection {
+  return {
+    foldState: createSignalOptionsPositionFoldState(),
+    watermark: null,
+    recentlyFoldedIds: new Set(),
+    recentEvents: [],
+    configSignature,
+  };
 }
 
 function signalOptionsShadowOrderDeploymentId(
@@ -6240,8 +6486,8 @@ function latestShadowMarkForPosition(
     .filter((mark) => finiteNumber(mark.mark) != null)
     .sort(
       (left, right) =>
-        right.asOf.getTime() - left.asOf.getTime() ||
-        right.createdAt.getTime() - left.createdAt.getTime(),
+        dateTimeMsOrZero(right.asOf) - dateTimeMsOrZero(left.asOf) ||
+        dateTimeMsOrZero(right.createdAt) - dateTimeMsOrZero(left.createdAt),
     )[0] ?? null;
 }
 
@@ -6378,22 +6624,43 @@ function recoverActivePositionsFromShadowLedgerRows(input: {
 
 async function recoverActivePositionsFromShadowLedger(input: {
   deploymentId: string;
+  // Optionally reuse shadow_positions already loaded this state build (from the
+  // shadow index) instead of re-querying the same table. The index loads every
+  // accountId=shadow row, so filtering to open options in memory is identical to
+  // the query below.
+  shadowPositions?: Array<typeof shadowPositionsTable.$inferSelect>;
 }) {
-  const positions = await db
-    .select()
-    .from(shadowPositionsTable)
-    .where(
-      and(
-        eq(shadowPositionsTable.accountId, "shadow"),
-        eq(shadowPositionsTable.assetClass, "option"),
-        eq(shadowPositionsTable.status, "open"),
-      ),
-    );
+  const positions = input.shadowPositions
+    ? input.shadowPositions.filter(
+        (position) =>
+          position.accountId === "shadow" &&
+          position.assetClass === "option" &&
+          position.status === "open",
+      )
+    : await db
+        .select()
+        .from(shadowPositionsTable)
+        .where(
+          and(
+            eq(shadowPositionsTable.accountId, "shadow"),
+            eq(shadowPositionsTable.assetClass, "option"),
+            eq(shadowPositionsTable.status, "open"),
+          ),
+        );
   if (!positions.length) {
     return [];
   }
 
   const positionIds = positions.map((position) => position.id);
+  // Bound the automation option-buy order read to the symbols of the open
+  // positions we're recovering. recoverActivePositionsFromShadowLedgerRows only
+  // ever matches an order to a position by shadowPositionKey (symbol+contract), so
+  // an order for any other symbol can never contribute — reading EVERY automation
+  // option-buy order ever placed (no symbol/deployment bound) was pure pool+parse
+  // waste on every cold state build and worker scan.
+  const openPositionSymbols = Array.from(
+    new Set(positions.map((position) => position.symbol)),
+  );
   const [orders, marks] = await Promise.all([
     db
       .select()
@@ -6405,14 +6672,74 @@ async function recoverActivePositionsFromShadowLedger(input: {
           eq(shadowOrdersTable.assetClass, "option"),
           eq(shadowOrdersTable.side, "buy"),
           isNotNull(shadowOrdersTable.sourceEventId),
+          inArray(shadowOrdersTable.symbol, openPositionSymbols),
         ),
       )
       .orderBy(desc(shadowOrdersTable.placedAt)),
+    // Only the LATEST mark (max as_of, tie-break created_at) and the PEAK mark
+    // (lifetime max) per open position are consumed downstream:
+    // latestShadowMarkForPosition / peakShadowMarkForPosition collapse each
+    // position's marks to exactly those two scalars. Fetching the full
+    // per-position mark history (append-only, no retention; ~735 rows/position,
+    // one at ~28k) only to reduce it to two values was the ~18.9s pool-starving
+    // scan. Two index-backed top-1 lateral probes return <=2 rows/position
+    // (shadow_position_marks_position_as_of_idx serves the latest probe,
+    // shadow_position_marks_position_mark_idx serves the peak probe); the
+    // existing helpers derive the identical latest+peak from those rows.
     db
-      .select()
-      .from(shadowPositionMarksTable)
-      .where(inArray(shadowPositionMarksTable.positionId, positionIds))
-      .orderBy(desc(shadowPositionMarksTable.asOf)),
+      .execute(
+        sql<typeof shadowPositionMarksTable.$inferSelect>`
+          select
+            m.id,
+            m.account_id     as "accountId",
+            m.position_id    as "positionId",
+            m.mark,
+            m.market_value   as "marketValue",
+            m.unrealized_pnl as "unrealizedPnl",
+            m.source,
+            m.as_of          as "asOf",
+            m.created_at     as "createdAt",
+            m.updated_at     as "updatedAt"
+          from unnest(array[${sql.join(
+            positionIds.map((id) => sql`${id}`),
+            sql`, `,
+          )}]::uuid[]) as requested(position_id)
+          cross join lateral (
+            select *
+            from shadow_position_marks
+            where position_id = requested.position_id
+            order by as_of desc, created_at desc
+            limit 1
+          ) m
+          union
+          select
+            m.id,
+            m.account_id     as "accountId",
+            m.position_id    as "positionId",
+            m.mark,
+            m.market_value   as "marketValue",
+            m.unrealized_pnl as "unrealizedPnl",
+            m.source,
+            m.as_of          as "asOf",
+            m.created_at     as "createdAt",
+            m.updated_at     as "updatedAt"
+          from unnest(array[${sql.join(
+            positionIds.map((id) => sql`${id}`),
+            sql`, `,
+          )}]::uuid[]) as requested(position_id)
+          cross join lateral (
+            select *
+            from shadow_position_marks
+            where position_id = requested.position_id
+            order by mark desc
+            limit 1
+          ) m
+        `,
+      )
+      .then(
+        (result) =>
+          result.rows as Array<typeof shadowPositionMarksTable.$inferSelect>,
+      ),
   ]);
 
   return recoverActivePositionsFromShadowLedgerRows({
@@ -6479,10 +6806,230 @@ function isSignalOptionsReplayEvent(event: ExecutionEvent) {
   );
 }
 
+function isSignalOptionsEntryCandidateSkip(event: ExecutionEvent): boolean {
+  if (event.eventType !== SIGNAL_OPTIONS_SKIPPED_EVENT) return false;
+  if (isSignalOptionsReplayEvent(event)) return false;
+  const reason = compactString(
+    asRecord(event.payload).reason ?? asRecord(event.payload).skipReason,
+  );
+  if (!reason) return false;
+  if (
+    isSignalOptionsPositionMarkSkipReason(reason) ||
+    reason === "position_mark_feed_degraded"
+  ) {
+    return false;
+  }
+  return true;
+}
+
+function recordSignalOptionsRecentSkip(
+  deploymentId: string,
+  event: ExecutionEvent,
+): void {
+  const list = signalOptionsRecentSkips.get(deploymentId) ?? [];
+  const existingIndex = list.findIndex((existing) => existing.id === event.id);
+  if (existingIndex >= 0) {
+    list[existingIndex] = event;
+  } else {
+    list.push(event);
+  }
+  list.sort((a, b) => a.occurredAt.getTime() - b.occurredAt.getTime());
+  if (list.length > SIGNAL_OPTIONS_RECENT_SKIPS_LIMIT) {
+    list.splice(0, list.length - SIGNAL_OPTIONS_RECENT_SKIPS_LIMIT);
+  }
+  signalOptionsRecentSkips.set(deploymentId, list);
+}
+
+function listSignalOptionsRecentSkips(deploymentId: string): ExecutionEvent[] {
+  return signalOptionsRecentSkips.get(deploymentId) ?? [];
+}
+
+function mergeSignalOptionsRecentSkipsIntoEvents(input: {
+  deploymentId: string;
+  events: ExecutionEvent[];
+  limit?: number;
+}) {
+  const byId = new Map<string, ExecutionEvent>();
+  for (const event of input.events) {
+    byId.set(event.id, event);
+  }
+  for (const event of listSignalOptionsRecentSkips(input.deploymentId)) {
+    byId.set(event.id, event);
+  }
+  return [...byId.values()]
+    .sort((left, right) => right.occurredAt.getTime() - left.occurredAt.getTime())
+    .slice(0, input.limit ?? SIGNAL_OPTIONS_STATE_EVENT_LIMIT);
+}
+
+function signalOptionsEventsWithRecentSkips(input: {
+  deploymentId: string;
+  events: ExecutionEvent[];
+  limit?: number;
+  mode?: SignalOptionsTallyMode;
+}) {
+  if (!signalOptionsTallyAuthoritative(input.mode)) {
+    return input.events;
+  }
+  return mergeSignalOptionsRecentSkipsIntoEvents(input);
+}
+
+function shouldPersistSignalOptionsEventToLedger(input: {
+  event: ExecutionEvent;
+  mode?: SignalOptionsTallyMode;
+}) {
+  return !(
+    signalOptionsTallyAuthoritative(input.mode) &&
+    isSignalOptionsEntryCandidateSkip(input.event)
+  );
+}
+
+function buildBufferedSignalOptionsEvent(input: {
+  deployment: AlgoDeployment;
+  symbol?: string | null;
+  eventType: string;
+  summary: string;
+  payload: Record<string, unknown>;
+  occurredAt: Date;
+}): ExecutionEvent {
+  const timestamp = new Date();
+  return {
+    id: randomUUID(),
+    deploymentId: input.deployment.id,
+    algoRunId: null,
+    providerAccountId: input.deployment.providerAccountId,
+    symbol: input.symbol ? normalizeSymbol(input.symbol).toUpperCase() : null,
+    eventType: input.eventType,
+    summary: input.summary,
+    payload: input.payload,
+    occurredAt: input.occurredAt,
+    createdAt: timestamp,
+    updatedAt: timestamp,
+  };
+}
+
 function runtimeSignalOptionsEvents(events: ExecutionEvent[]) {
   return signalOptionsEvents(events).filter(
     (event) => !isSignalOptionsReplayEvent(event),
   );
+}
+
+function foldTailIntoSignalOptionsProjection(
+  projection: SignalOptionsPositionProjection,
+  events: ExecutionEvent[],
+): void {
+  const sorted = runtimeSignalOptionsEvents(events).sort(
+    (left, right) => left.occurredAt.getTime() - right.occurredAt.getTime(),
+  );
+  if (!sorted.length) {
+    return;
+  }
+
+  for (const event of sorted) {
+    if (projection.recentlyFoldedIds.has(event.id)) {
+      continue;
+    }
+    foldSignalOptionsPositionEvent(projection.foldState, event);
+  }
+
+  const recentById = new Map<string, ExecutionEvent>();
+  for (const event of projection.recentEvents) {
+    recentById.set(event.id, event);
+  }
+  for (const event of sorted) {
+    recentById.set(event.id, event);
+  }
+  projection.recentEvents = [...recentById.values()].sort(
+    (left, right) => left.occurredAt.getTime() - right.occurredAt.getTime(),
+  );
+  if (projection.recentEvents.length > SIGNAL_OPTIONS_STATE_EVENT_LIMIT) {
+    projection.recentEvents.splice(
+      0,
+      projection.recentEvents.length - SIGNAL_OPTIONS_STATE_EVENT_LIMIT,
+    );
+  }
+
+  const newWatermark = sorted.reduce<Date | null>((latest, event) => {
+    if (!latest || event.occurredAt.getTime() > latest.getTime()) {
+      return event.occurredAt;
+    }
+    return latest;
+  }, null);
+  if (
+    newWatermark &&
+    (!projection.watermark ||
+      newWatermark.getTime() > projection.watermark.getTime())
+  ) {
+    projection.watermark = newWatermark;
+  }
+
+  if (!projection.watermark) {
+    return;
+  }
+  const overlapStart =
+    projection.watermark.getTime() - SIGNAL_OPTIONS_PROJECTION_OVERLAP_MS;
+  projection.recentlyFoldedIds = new Set(
+    sorted
+      .filter((event) => event.occurredAt.getTime() >= overlapStart)
+      .map((event) => event.id),
+  );
+}
+
+async function updateSignalOptionsPositionProjection(
+  deploymentId: string,
+  configSignature: string,
+): Promise<SignalOptionsPosition[]> {
+  const existing = signalOptionsPositionProjections.get(deploymentId);
+  if (
+    !existing ||
+    existing.configSignature !== configSignature ||
+    existing.watermark === null
+  ) {
+    const all = await listDeploymentEvents(
+      deploymentId,
+      SIGNAL_OPTIONS_STATE_EVENT_LIMIT,
+    );
+    for (const event of all) {
+      if (isSignalOptionsEntryCandidateSkip(event)) {
+        recordSignalOptionsRecentSkip(deploymentId, event);
+      }
+    }
+    const projection =
+      createSignalOptionsPositionProjection(configSignature);
+    foldTailIntoSignalOptionsProjection(projection, all);
+    signalOptionsPositionProjections.set(deploymentId, projection);
+    return [...projection.foldState.positions.values()];
+  }
+
+  const since = new Date(
+    existing.watermark.getTime() - SIGNAL_OPTIONS_PROJECTION_OVERLAP_MS,
+  );
+  const tail = await listDeploymentEventsSince(
+    deploymentId,
+    since,
+    SIGNAL_OPTIONS_STATE_EVENT_LIMIT,
+  );
+  foldTailIntoSignalOptionsProjection(existing, tail);
+  return [...existing.foldState.positions.values()];
+}
+
+async function readSignalOptionsProjectedDecisionState(input: {
+  deploymentId: string;
+  configSignature: string;
+}) {
+  const positions = await updateSignalOptionsPositionProjection(
+    input.deploymentId,
+    input.configSignature,
+  );
+  const projection = signalOptionsPositionProjections.get(input.deploymentId);
+  return {
+    positions,
+    events: signalOptionsEventsWithRecentSkips({
+      deploymentId: input.deploymentId,
+      events: projection?.recentEvents ?? [],
+      mode: "on",
+    }),
+    projection: projection ?? null,
+  };
 }
 
 function positionCandidateIdFromPayload(payload: Record<string, unknown>) {
@@ -6637,6 +7184,20 @@ function computeSignalOptionsDailyPnl(
   );
 }
 
+function projectionDailyPnl(
+  projection: SignalOptionsPositionProjection,
+  positions: SignalOptionsPosition[],
+  now: Date,
+) {
+  return computeSignalOptionsDailyPnl(projection.recentEvents, positions, now);
+}
+
+function projectionControlUpdatedAt(
+  projection: SignalOptionsPositionProjection,
+) {
+  return latestSignalOptionsControlUpdatedAt(projection.recentEvents);
+}
+
 type SignalOptionsShadowCashState = {
   status: string | null;
   quantity: number | null;
@@ -6649,6 +7210,10 @@ type SignalOptionsShadowIndex = {
   // every shadow_positions row (any status), so a position whose entry event aged
   // out of the event window is still recognized as closed. The cash ledger wins.
   cashByPositionKey: Map<string, SignalOptionsShadowCashState>;
+  // The raw shadow_positions rows this index loaded (accountId=shadow, any status).
+  // Exposed so the ledger-recovery path can reuse them instead of re-querying the
+  // same table in the same state build.
+  shadowPositions: Array<typeof shadowPositionsTable.$inferSelect>;
 };
 
 function shadowLinkFromParts(input: {
@@ -6749,7 +7314,7 @@ async function buildSignalOptionsShadowIndex(
   );
 
   if (!eventIds.length && !openPositionSymbols.length) {
-    return { byEventId, byCandidateId, cashByPositionKey };
+    return { byEventId, byCandidateId, cashByPositionKey, shadowPositions };
   }
 
   const positionsByKey = new Map(
@@ -6856,7 +7421,7 @@ async function buildSignalOptionsShadowIndex(
     }
   }
 
-  return { byEventId, byCandidateId, cashByPositionKey };
+  return { byEventId, byCandidateId, cashByPositionKey, shadowPositions };
 }
 
 function shadowCashStateClosesPosition(
@@ -6932,6 +7497,9 @@ async function reconcileActivePositionsWithShadowLedger(input: {
   const ledgerPositions = input.deploymentId
     ? await recoverActivePositionsFromShadowLedger({
         deploymentId: input.deploymentId,
+        // When the caller already built the index (buildStatePayload), reuse the
+        // shadow_positions it loaded instead of re-querying the same table.
+        shadowPositions: input.shadowIndex?.shadowPositions,
       })
     : [];
   const positions = mergeActivePositionsWithShadowLedger(
@@ -7741,6 +8309,47 @@ function compareSignalOptionsCandidatesForDisplay(
     String(left.direction ?? "").localeCompare(String(right.direction ?? "")) ||
     left.id.localeCompare(right.id)
   );
+}
+
+export const SIGNAL_OPTIONS_CANDIDATE_DISPLAY_LIMIT = 75;
+
+// A candidate that carries an open shadow position (resolved positionId, or its
+// id matches an active position's candidateId) must never be truncated out of
+// the display by the activity-sorted cap — otherwise an open position silently
+// vanishes from the ops table under a busy universe. Pure + exported for tests.
+export function selectSignalOptionsCandidatesForDisplay<
+  T extends { id: string; shadowLink?: { positionId?: string | null } | null },
+>(
+  sortedCandidates: T[],
+  activePositions: readonly { candidateId?: string | null }[],
+  limit: number = SIGNAL_OPTIONS_CANDIDATE_DISPLAY_LIMIT,
+): T[] {
+  if (sortedCandidates.length <= limit) {
+    return sortedCandidates;
+  }
+  const activeCandidateIds = new Set(
+    activePositions
+      .map((position) => compactString(position.candidateId))
+      .filter((value): value is string => Boolean(value)),
+  );
+  const isPositionBearing = (candidate: T): boolean =>
+    Boolean(
+      compactString(candidate.shadowLink?.positionId) ||
+        (compactString(candidate.id) &&
+          activeCandidateIds.has(compactString(candidate.id) as string)),
+    );
+  const base = sortedCandidates.slice(0, limit);
+  const includedIds = new Set(base.map((candidate) => candidate.id));
+  // Keep the top `limit` by activity, then append any open-position candidate
+  // that fell below the cut so it stays visible (small, bounded overflow — one
+  // extra row per unshown open position).
+  const rescuedPositions = sortedCandidates
+    .slice(limit)
+    .filter(
+      (candidate) =>
+        !includedIds.has(candidate.id) && isPositionBearing(candidate),
+    );
+  return rescuedPositions.length ? [...base, ...rescuedPositions] : base;
 }
 
 function stageStatus(input: {
@@ -9984,10 +10593,14 @@ function startSignalOptionsPerformanceRefresh(input: {
   const work = (async () => {
     const deployment = await getDeploymentOrThrow(input.deploymentId);
     const profile = resolveDeploymentProfile(deployment);
-    const events = await listDeploymentEvents(
+    const ledgerEvents = await listDeploymentEvents(
       deployment.id,
       SIGNAL_OPTIONS_STATE_EVENT_LIMIT,
     );
+    const events = signalOptionsEventsWithRecentSkips({
+      deploymentId: deployment.id,
+      events: ledgerEvents,
+    });
     const state = await buildStatePayload({
       deployment,
       profile,
@@ -10224,7 +10837,7 @@ async function buildStatePayload(input: {
     ]);
   }
 
-  const candidates = Array.from(candidatesById.values())
+  const displayOrderedCandidates = Array.from(candidatesById.values())
     .map((candidate) => {
       const eventsForCandidate = candidateEvents.get(candidate.id) ?? [];
       const shadowLink =
@@ -10265,8 +10878,11 @@ async function buildStatePayload(input: {
     })
     .sort((left, right) => {
       return compareSignalOptionsCandidatesForDisplay(left, right);
-    })
-    .slice(0, 75);
+    });
+  const candidates = selectSignalOptionsCandidatesForDisplay(
+    displayOrderedCandidates,
+    activePositions,
+  );
   const openPremium = activePositions.reduce(
     (sum, position) => sum + position.premiumAtRisk,
     0,
@@ -10731,10 +11347,14 @@ async function getSignalOptionsFullDashboardSnapshot(input: {
   const work = (async () => {
     const deployment = await getDeploymentOrThrow(input.deploymentId);
     const profile = resolveDeploymentProfile(deployment);
-    const events = await listDeploymentEvents(
+    const ledgerEvents = await listDeploymentEvents(
       deployment.id,
       SIGNAL_OPTIONS_STATE_EVENT_LIMIT,
     );
+    const events = signalOptionsEventsWithRecentSkips({
+      deploymentId: deployment.id,
+      events: ledgerEvents,
+    });
     const state = await buildStatePayload({ deployment, profile, events });
     const cachedAt = new Date().toISOString();
     const snapshot = {
@@ -10840,10 +11460,15 @@ async function getSignalOptionsSummaryDashboardSnapshot(input: {
   const work = (async () => {
     const deployment = await getDeploymentOrThrow(input.deploymentId);
     const profile = resolveDeploymentProfile(deployment);
-    const events = await listDeploymentEvents(
+    const ledgerEvents = await listDeploymentEvents(
       deployment.id,
       SIGNAL_OPTIONS_SUMMARY_EVENT_LIMIT,
     );
+    const events = signalOptionsEventsWithRecentSkips({
+      deploymentId: deployment.id,
+      events: ledgerEvents,
+      limit: SIGNAL_OPTIONS_SUMMARY_EVENT_LIMIT,
+    });
     const state = compactSignalOptionsStatePayload(
       await buildStatePayload({ deployment, profile, events, view: "summary" }),
     );
@@ -11701,6 +12326,7 @@ async function refreshActivePosition(input: {
       markAt,
       timeframe: input.position.timeframe,
     }),
+    wireTrailEnforceEnabled: isSignalOptionsWireTrailEnforceEnabled(),
   });
   const stopPayload = {
     ...stop,
@@ -13024,15 +13650,21 @@ async function processEntryCandidate(input: {
     profile: input.profile,
     deployment: input.deployment,
   });
-  // Live MTF alignment reads the matrix's per-timeframe *trend* ("stage")
-  // direction from signal_monitor_symbol_states — the same continuously
-  // re-evaluated state the algo-control panel renders — so live entries align
-  // with what the Signal Matrix shows. (The backfill replay below keeps the
-  // point-in-time signal-event source, asOf = historical signal time.)
-  const mtfTimeframeDirections = await getTrendDirectionsForSymbol({
+  // Live MTF alignment reads each configured timeframe's per-timeframe *signal*
+  // (crossover) direction from signal_monitor_events, as of the candidate's own
+  // signal time — the same unbiased, event-driven source the backfill replay
+  // uses. The matrix *trend* ("stage") source (getTrendDirectionsForSymbol) uses
+  // a basisLength=80 WMA that lags ~80 bars, so on the fine timeframes it reads
+  // bullish for genuine short-term decliners and structurally never confirms a
+  // short: it painted the whole fine-timeframe book bullish on the 2000-symbol
+  // universe, so puts could never find bearish MTF confluence while calls passed
+  // trivially (the asymmetric zero-sells regression). Gating on the crossover
+  // signal judges calls and puts identically and does not depend on trend warmup.
+  const mtfTimeframeDirections = await getSignalDirectionsForSymbolAsOf({
     environment: resolveSignalSourceEnvironment(),
     symbol: input.candidate.symbol,
     timeframes: mtfTimeframes,
+    asOf: new Date(input.candidate.signalAt),
   });
   const entryGate = evaluateSignalOptionsEntryGate({
     candidate: input.candidate,
@@ -16163,6 +16795,7 @@ async function markBackfillPositionsThrough(input: {
           markAt: barAt,
           timeframe: position.timeframe,
         }),
+        wireTrailEnforceEnabled: isSignalOptionsWireTrailEnforceEnabled(),
       });
       position.peakPrice = peakPrice;
       position.stopPrice = stop.stopPrice;
@@ -16171,7 +16804,13 @@ async function markBackfillPositionsThrough(input: {
       position.lastStop = stop as unknown as Record<string, unknown>;
       position.lastWireTrail = asRecord(stop.wireTrail);
 
-      if (stop.exitReason) {
+      // Same shadow-first gating as the live mark path: with the enforce flag off a
+      // wire_structure_break stays telemetry (lastWireTrail) and must not close the
+      // backfilled position — otherwise backfill/replay diverges from live behavior.
+      const backfillWireBreakShadowed =
+        stop.exitReason === "wire_structure_break" &&
+        !isSignalOptionsWireTrailEnforceEnabled();
+      if (stop.exitReason && !backfillWireBreakShadowed) {
         const exitPrice = Number(markPrice.toFixed(2));
         await closeBackfillPosition({
           deployment: input.deployment,
@@ -17502,6 +18141,11 @@ export async function runSignalOptionsShadowScan(input: {
   preferStoredMonitorState?: boolean;
   responseMode?: SignalOptionsShadowScanResponseMode;
   skipActionWork?: boolean;
+  // Positions-only degrade: run position management (marks/exits) but skip the
+  // heavy entry-candidate work. Used by the worker under resource pressure so
+  // open positions stay managed without adding entry-scan load. Distinct from
+  // skipActionWork, which skips BOTH position and entry work.
+  skipEntryWork?: boolean;
   source?: "manual" | "worker";
   actionWorkBudgetMs?: number | null;
   actionWorkItemLimit?: number | null;
@@ -17574,6 +18218,7 @@ async function runSignalOptionsShadowScanUnlocked(input: {
   preferStoredMonitorState?: boolean;
   responseMode?: SignalOptionsShadowScanResponseMode;
   skipActionWork?: boolean;
+  skipEntryWork?: boolean;
   source?: "manual" | "worker";
   actionWorkBudgetMs?: number | null;
   actionWorkItemLimit?: number | null;
@@ -17706,15 +18351,45 @@ async function runSignalOptionsShadowScanUnlocked(input: {
     actionWorkItemLimit: input.actionWorkItemLimit,
   });
   const actionCursor = actionCursorForDeployment(deployment.id);
+  const tallyMode = signalOptionsTallyMode();
+  const useTallyAuthority = signalOptionsTallyAuthoritative(tallyMode);
+  const projectionSignature = deployment.updatedAt
+    ? deployment.updatedAt.toISOString()
+    : "none";
 
-  const initialEvents = await listDeploymentEvents(
-    deployment.id,
-    SIGNAL_OPTIONS_STATE_EVENT_LIMIT,
-  );
+  let initialSignalEvents: ExecutionEvent[];
+  let initialDerivedPositions: SignalOptionsPosition[];
+  if (useTallyAuthority) {
+    try {
+      const projected = await readSignalOptionsProjectedDecisionState({
+        deploymentId: deployment.id,
+        configSignature: projectionSignature,
+      });
+      initialSignalEvents = runtimeSignalOptionsEvents(projected.events);
+      initialDerivedPositions = projected.positions;
+    } catch (error) {
+      logger.warn?.(
+        { err: error, deploymentId: deployment.id },
+        "signal-options tally authority initial read failed; falling back to ledger",
+      );
+      const initialEvents = await listDeploymentEvents(
+        deployment.id,
+        SIGNAL_OPTIONS_STATE_EVENT_LIMIT,
+      );
+      initialSignalEvents = runtimeSignalOptionsEvents(initialEvents);
+      initialDerivedPositions = deriveActivePositions(initialSignalEvents);
+    }
+  } else {
+    const initialEvents = await listDeploymentEvents(
+      deployment.id,
+      SIGNAL_OPTIONS_STATE_EVENT_LIMIT,
+    );
+    initialSignalEvents = runtimeSignalOptionsEvents(initialEvents);
+    initialDerivedPositions = deriveActivePositions(initialSignalEvents);
+  }
   throwIfSignalOptionsScanAborted(input.signal);
-  const initialSignalEvents = runtimeSignalOptionsEvents(initialEvents);
   const initialPositions = await reconcileActivePositionsWithShadowLedger({
-    positions: deriveActivePositions(initialSignalEvents),
+    positions: initialDerivedPositions,
     events: initialSignalEvents,
     deploymentId: deployment.id,
   });
@@ -17798,7 +18473,10 @@ async function runSignalOptionsShadowScanUnlocked(input: {
   const signalFirstActionScan =
     source === "worker" &&
     !resumingSignalWork &&
-    hasPendingActionableSignals;
+    hasPendingActionableSignals &&
+    // Under a positions-only degrade, never defer positions to run entries first;
+    // position management (marks/exits) must always run this scan.
+    input.skipEntryWork !== true;
 
   if (signalFirstActionScan) {
     positionWorkDeferred = initialPositions.length > 0;
@@ -17888,9 +18566,13 @@ async function runSignalOptionsShadowScanUnlocked(input: {
   }
 
   if (
-    source === "worker" &&
-    positionPhaseBudgetExhausted &&
-    !hasPendingActionableSignals
+    // Positions-only resource-pressure degrade: positions were just managed
+    // above; return before the heavy entry work. Reuses this same positions-done
+    // path (cursor bookkeeping + summary) so entries resume on the next full scan.
+    input.skipEntryWork === true ||
+    (source === "worker" &&
+      positionPhaseBudgetExhausted &&
+      !hasPendingActionableSignals)
   ) {
     updateSignalOptionsRunMetadata(deployment.id, {
       heavyWorkDeferred: true,
@@ -17937,21 +18619,111 @@ async function runSignalOptionsShadowScanUnlocked(input: {
           .filter(Boolean)
       : [];
 
-  const eventsAfterMarks = await listDeploymentEvents(
-    deployment.id,
-    SIGNAL_OPTIONS_STATE_EVENT_LIMIT,
-  );
+  let eventsAfterMarksRuntime: ExecutionEvent[];
+  let activePositionsAfterMarks: SignalOptionsPosition[];
+  let authoritativeProjection: SignalOptionsPositionProjection | null = null;
+  if (useTallyAuthority) {
+    try {
+      const projected = await readSignalOptionsProjectedDecisionState({
+        deploymentId: deployment.id,
+        configSignature: projectionSignature,
+      });
+      authoritativeProjection = projected.projection;
+      eventsAfterMarksRuntime = runtimeSignalOptionsEvents(projected.events);
+      activePositionsAfterMarks =
+        await reconcileActivePositionsWithShadowLedger({
+          positions: projected.positions,
+          events: eventsAfterMarksRuntime,
+          deploymentId: deployment.id,
+        });
+    } catch (error) {
+      logger.warn?.(
+        { err: error, deploymentId: deployment.id },
+        "signal-options tally authority post-mark read failed; falling back to ledger",
+      );
+      const eventsAfterMarks = await listDeploymentEvents(
+        deployment.id,
+        SIGNAL_OPTIONS_STATE_EVENT_LIMIT,
+      );
+      eventsAfterMarksRuntime = runtimeSignalOptionsEvents(eventsAfterMarks);
+      activePositionsAfterMarks =
+        await reconcileActivePositionsWithShadowLedger({
+          positions: deriveActivePositions(eventsAfterMarksRuntime),
+          events: eventsAfterMarksRuntime,
+          deploymentId: deployment.id,
+        });
+    }
+  } else {
+    const eventsAfterMarks = await listDeploymentEvents(
+      deployment.id,
+      SIGNAL_OPTIONS_STATE_EVENT_LIMIT,
+    );
+    eventsAfterMarksRuntime = runtimeSignalOptionsEvents(eventsAfterMarks);
+    activePositionsAfterMarks =
+      await reconcileActivePositionsWithShadowLedger({
+        positions: deriveActivePositions(eventsAfterMarksRuntime),
+        events: eventsAfterMarksRuntime,
+        deploymentId: deployment.id,
+      });
+  }
   throwIfSignalOptionsScanAborted(input.signal);
-  const eventsAfterMarksRuntime = runtimeSignalOptionsEvents(eventsAfterMarks);
-  const activePositionsAfterMarks =
-    await reconcileActivePositionsWithShadowLedger({
-      positions: deriveActivePositions(eventsAfterMarksRuntime),
-      events: eventsAfterMarksRuntime,
-      deploymentId: deployment.id,
-    });
-  const profileUpdatedAt = latestSignalOptionsControlUpdatedAt(
-    eventsAfterMarksRuntime,
-  );
+  if (tallyMode === "shadow") {
+    try {
+      const projected = await updateSignalOptionsPositionProjection(
+        deployment.id,
+        projectionSignature,
+      );
+      const diffs = signalOptionsPositionsDrift(
+        deriveActivePositions(eventsAfterMarksRuntime),
+        projected,
+      );
+      signalOptionsTallyCompareCount += 1;
+      if (diffs.length) {
+        signalOptionsTallyDriftCount += 1;
+        logger.warn?.(
+          { deploymentId: deployment.id, diffs: diffs.slice(0, 10) },
+          "signal-options tally drift",
+        );
+      }
+    } catch (error) {
+      logger.warn?.(
+        { err: error, deploymentId: deployment.id },
+        "signal-options tally shadow-compare failed",
+      );
+    }
+  }
+  const profileUpdatedAt =
+    useTallyAuthority && authoritativeProjection
+      ? projectionControlUpdatedAt(authoritativeProjection)
+      : latestSignalOptionsControlUpdatedAt(eventsAfterMarksRuntime);
+  if (tallyMode === "shadow") {
+    const projection = signalOptionsPositionProjections.get(deployment.id);
+    if (projection) {
+      try {
+        const projected = projectionControlUpdatedAt(projection);
+        signalOptionsTallyCompareCount += 1;
+        if (
+          (projected?.getTime() ?? null) !==
+          (profileUpdatedAt?.getTime() ?? null)
+        ) {
+          signalOptionsTallyControlDriftCount += 1;
+          logger.warn?.(
+            {
+              deploymentId: deployment.id,
+              full: profileUpdatedAt,
+              projected,
+            },
+            "signal-options tally control-updated-at drift",
+          );
+        }
+      } catch (error) {
+        logger.warn?.(
+          { err: error, deploymentId: deployment.id },
+          "signal-options tally control-updated-at compare failed",
+        );
+      }
+    }
+  }
   // Per-scan trading-allowance budget. Reconstruct the deployment's available
   // capital from its lifetime, fee-aware realized P&L (shadow ledger) minus the
   // cost of its currently-open positions (in-memory, fresh marks); on the
@@ -17986,7 +18758,7 @@ async function runSignalOptionsShadowScanUnlocked(input: {
       ),
     };
   }
-  const seenSignals = seenSignalKeys(eventsAfterMarksRuntime, {
+  const seenSignalsOptions = {
     activePositions: activePositionsAfterMarks,
     currentPremiumCap: profile.riskCaps.maxPremiumPerEntry,
     dailyLossHaltEnabled: profile.riskHaltControls.dailyLossHaltEnabled,
@@ -18003,11 +18775,79 @@ async function runSignalOptionsShadowScanUnlocked(input: {
       profile.infrastructureHaltControls.contractResolutionBackoffEnabled,
     now: signalScanCompletedAt,
     profileUpdatedAt,
-  });
-  const dailyPnl = computeSignalOptionsDailyPnl(
+  };
+  const seenSignals = seenSignalKeys(
     eventsAfterMarksRuntime,
-    activePositionsAfterMarks,
+    seenSignalsOptions,
   );
+  if (tallyMode === "shadow") {
+    try {
+      const bufferSkips = listSignalOptionsRecentSkips(deployment.id);
+      const nonFirehose = eventsAfterMarksRuntime.filter(
+        (event) => !isSignalOptionsEntryCandidateSkip(event),
+      );
+      const bufferSeen = seenSignalKeys(
+        [...nonFirehose, ...bufferSkips],
+        seenSignalsOptions,
+      );
+      signalOptionsTallyCompareCount += 1;
+      const missing = [...seenSignals].filter((key) => !bufferSeen.has(key));
+      const extra = [...bufferSeen].filter((key) => !seenSignals.has(key));
+      if (missing.length || extra.length) {
+        signalOptionsTallyDedupDriftCount += 1;
+        logger.warn?.(
+          {
+            deploymentId: deployment.id,
+            missing: missing.slice(0, 10),
+            extra: extra.slice(0, 10),
+          },
+          "signal-options tally dedup drift",
+        );
+      }
+    } catch (error) {
+      logger.warn?.(
+        { err: error, deploymentId: deployment.id },
+        "signal-options tally dedup shadow-compare failed",
+      );
+    }
+  }
+  const dailyPnl =
+    useTallyAuthority && authoritativeProjection
+      ? projectionDailyPnl(
+          authoritativeProjection,
+          activePositionsAfterMarks,
+          signalScanCompletedAt,
+        )
+      : computeSignalOptionsDailyPnl(
+          eventsAfterMarksRuntime,
+          activePositionsAfterMarks,
+          signalScanCompletedAt,
+        );
+  if (tallyMode === "shadow") {
+    const projection = signalOptionsPositionProjections.get(deployment.id);
+    if (projection) {
+      try {
+        const projected = projectionDailyPnl(
+          projection,
+          activePositionsAfterMarks,
+          signalScanCompletedAt,
+        );
+        signalOptionsTallyCompareCount += 1;
+        if (Math.abs(projected - dailyPnl) > 1e-6) {
+          signalOptionsTallyPnlDriftCount += 1;
+          logger.warn?.(
+            { deploymentId: deployment.id, full: dailyPnl, projected },
+            "signal-options tally dailyPnl drift",
+          );
+        }
+      } catch (error) {
+        logger.warn?.(
+          { err: error, deploymentId: deployment.id },
+          "signal-options tally dailyPnl compare failed",
+        );
+      }
+    }
+  }
   const dailyLossBreached =
     dailyPnl <= -Math.abs(profile.riskCaps.maxDailyLoss);
   const dailyHaltActive =
@@ -18370,12 +19210,31 @@ export const __signalOptionsAutomationInternalsForTests = {
   markSignalOptionsScanActive,
   deriveCandidateActionStatus,
   deriveActivePositions,
+  createSignalOptionsPositionFoldState,
+  foldSignalOptionsPositionEvents,
+  createSignalOptionsPositionProjection,
+  foldTailIntoSignalOptionsProjection,
+  updateSignalOptionsPositionProjection,
+  projectionDailyPnl,
+  projectionControlUpdatedAt,
+  signalOptionsPositionsDrift,
+  getSignalOptionsTallyDriftStats,
+  signalOptionsPositionProjections,
+  signalOptionsRecentSkips,
+  signalOptionsTallyAuthoritative,
   recoverActivePositionsFromShadowLedgerRows,
   reconcileActivePositionsWithShadowLinks,
   reconcileActivePositionsWithShadowLedger,
+  isSignalOptionsEntryCandidateSkip,
+  recordSignalOptionsRecentSkip,
+  listSignalOptionsRecentSkips,
+  mergeSignalOptionsRecentSkipsIntoEvents,
+  signalOptionsEventsWithRecentSkips,
+  shouldPersistSignalOptionsEventToLedger,
   isSignalOptionsReplayEvent,
   runtimeSignalOptionsEvents,
   stateSignalOptionsEvents,
+  latestSignalOptionsControlUpdatedAt,
   computeSignalOptionsDailyPnl,
   computeSignalOptionsDailyRealizedPnl,
   computeSignalOptionsOpenUnrealizedPnl,
