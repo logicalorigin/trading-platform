@@ -7457,6 +7457,11 @@ function computeSignalOptionsDailyRealizedPnl(
   events: ExecutionEvent[],
   now = new Date(),
 ) {
+  // One realized P&L per position lifecycle: duplicate exit events for the same
+  // position (overlapping emitters — tick manager, flip close, maintenance) must
+  // not double-count into the daily-loss halt. Keyed by position id (falling back
+  // to candidate id); an exit with neither identity fails open and still counts.
+  const seenPositionKeys = new Set<string>();
   return events
     .filter(
       (event) =>
@@ -7464,6 +7469,20 @@ function computeSignalOptionsDailyRealizedPnl(
         isSameUtcDate(event.occurredAt, now) &&
         signalOptionsExitEventHasActionableOptionSession(event),
     )
+    .filter((event) => {
+      const payload = asRecord(event.payload);
+      const key =
+        compactString(asRecord(payload.position).id) ??
+        positionCandidateIdFromPayload(payload);
+      if (!key) {
+        return true;
+      }
+      if (seenPositionKeys.has(key)) {
+        return false;
+      }
+      seenPositionKeys.add(key);
+      return true;
+    })
     .reduce(
       (sum, event) => sum + (finiteNumber(asRecord(event.payload).pnl) ?? 0),
       0,
@@ -14082,6 +14101,30 @@ async function resolveSignalOptionsCandidateContract(input: {
       retryable: true,
     };
   }
+  // Baseline consistency: a LIVE quote without provider greeks previously left
+  // entryGreeks null (synthesis only ran on the shadow fallback path), silently
+  // deferring the greek trail's delta baseline to first_mark. Synthesize from the
+  // fill price here — the delta gate above already validated this same synthetic
+  // delta clears the tradeability floor.
+  if (!entryGreeks) {
+    const strike = finiteNumber(asRecord(selectedContract).strike);
+    const spot = finiteNumber(input.candidate.signalPrice);
+    const expirationDate = dateOrNull(asRecord(selectedContract).expirationDate);
+    const fillPrice = finiteNumber(orderPlan?.simulatedFillPrice);
+    if (strike != null && spot != null && expirationDate != null && fillPrice != null && fillPrice > 0) {
+      entryGreeks =
+        computeOptionGreeksFromPrice({
+          spot,
+          strike,
+          optionPrice: fillPrice,
+          right: input.candidate.optionRight,
+          at: new Date(),
+          expirationDate,
+          riskFreeRate: 0.05,
+          dividendYield: 0,
+        }) ?? null;
+    }
+  }
   const quote = quoteToPayload(selectedQuote);
   return {
     selectedExpiration,
@@ -14954,6 +14997,26 @@ async function closePositionForOppositeSignal(input: {
         position: input.position,
       },
     });
+    return false;
+  }
+  // Same claim map as the quote/tick exit path (see tryClaimSignalOptionsPositionExit):
+  // this close runs off a scan-start snapshot, so a concurrent tick-manager stop exit
+  // for the same position would otherwise emit a second pnl-bearing exit event and
+  // double-count the daily-loss halt.
+  if (
+    !tryClaimSignalOptionsPositionExit(
+      `${input.deployment.id}:${input.position.id}`,
+      now.getTime(),
+    )
+  ) {
+    logger.debug?.(
+      {
+        deploymentId: input.deployment.id,
+        positionId: input.position.id,
+        symbol: input.position.symbol,
+      },
+      "Signal-options opposite-signal close skipped; exit already claimed",
+    );
     return false;
   }
   await insertSignalOptionsEvent({
