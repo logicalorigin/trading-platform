@@ -86,6 +86,25 @@ test("Signals matrix hydration treats aged bars as hydrated and unavailable diag
   ]);
 });
 
+test("Signals matrix hydration treats idle cells as covered, not awaiting data", () => {
+  const plan = buildSignalsMatrixHydrationPlan({
+    symbols: ["SPY"],
+    currentStates: [
+      {
+        ...hydratedState("SPY", "5m"),
+        status: "idle",
+      },
+    ],
+    timeframes: ["5m"],
+  });
+
+  assert.equal(plan.hydratedCellCount, 1);
+  assert.equal(plan.missingCellCount, 0);
+  assert.deepEqual(plan.timeframeHydration, [
+    { timeframe: "5m", hydrated: 1, aged: 0, missing: 0, requested: 0, total: 1 },
+  ]);
+});
+
 test("Signals matrix hydration can refresh stale cells for active algo surfaces", () => {
   const plan = buildSignalsMatrixHydrationPlan({
     symbols: ["MRVL"],

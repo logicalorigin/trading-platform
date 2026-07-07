@@ -145,3 +145,21 @@ test("Signals interval sparklines hold the muted pending stroke until the cell h
     /: sparklineSignalColor \|\| hydrated\s*\?\s*"fallback"\s*:\s*"pending"/,
   );
 });
+
+test("Signals age column labels trend age and marks signal-bars fallback", () => {
+  const screenSource = source();
+
+  assert.match(screenSource, /header: "Trend age"/);
+  assert.match(screenSource, /displayAgeSource === "signal-bars"/);
+  assert.match(screenSource, /Signal bars fallback/);
+  assert.match(screenSource, /\$\{bars\}b\$\{fromSignalBars \? " sig" : ""\}/);
+});
+
+test("Signals screen surfaces scope truncation from existing matrix metadata", () => {
+  const screenSource = source();
+
+  assert.match(screenSource, /signalMatrixUniverse\?\.resolvedSymbols/);
+  assert.match(screenSource, /signalMatrixCoverage\?\.activeScopeSymbols/);
+  assert.match(screenSource, /symbols in scope/);
+  assert.match(screenSource, /\{scopeCoverageLabel\}/);
+});

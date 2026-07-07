@@ -375,8 +375,9 @@ const resolveStackSummary = (matrixStatesByTimeframe = {}) => {
   };
 };
 
-const resolveDashboardSummary = (snapshotEntry) => {
+const resolveDashboardSummary = (snapshotEntry, fallbackAgeBars = null) => {
   const snapshot = snapshotEntry?.snapshot || null;
+  const signalAgeBars = finiteNumberOrNull(fallbackAgeBars);
   if (!snapshot) {
     return {
       timeframe: null,
@@ -384,6 +385,8 @@ const resolveDashboardSummary = (snapshotEntry) => {
       signalDirection: null,
       trendAgeBars: null,
       trendAgeBucket: null,
+      displayAgeBars: signalAgeBars,
+      displayAgeSource: signalAgeBars == null ? null : "signal-bars",
       strength: null,
       adx: null,
       volatilityScore: null,
@@ -391,12 +394,20 @@ const resolveDashboardSummary = (snapshotEntry) => {
       filterState: null,
     };
   }
+  const trendAgeBars = finiteNumberOrNull(snapshot.trendAgeBars);
   return {
     timeframe: snapshotEntry.timeframe || null,
     trendDirection: snapshot.trendDirection || null,
     signalDirection: normalizeIndicatorDirection(snapshot.trendDirection),
-    trendAgeBars: finiteNumberOrNull(snapshot.trendAgeBars),
+    trendAgeBars,
     trendAgeBucket: snapshot.trendAgeBucket || null,
+    displayAgeBars: trendAgeBars ?? signalAgeBars,
+    displayAgeSource:
+      trendAgeBars != null
+        ? "trend-age"
+        : signalAgeBars != null
+          ? "signal-bars"
+          : null,
     strength: snapshot.strength || null,
     adx: finiteNumberOrNull(snapshot.adx),
     volatilityScore: finiteNumberOrNull(snapshot.volatilityScore),
@@ -1041,11 +1052,26 @@ export const buildSignalsRows = ({
       });
       const matrixStatus = resolveMatrixStatus(matrixStatesByTimeframe);
       const stackSummary = resolveStackSummary(matrixStatesByTimeframe);
+      const currentPrimaryState = isSignalStateCurrent(primaryState)
+        ? primaryState
+        : null;
+      const currentMatrixSignalState = Object.values(matrixStatesByTimeframe)
+        .filter(hasCurrentSignalDirection)
+        .reduce((latest, state) => preferLatestState(latest, state), null);
+      // A trend-only primary state carries barsSinceSignal:null (no crossover);
+      // finiteNumberOrNull rejects null before coercion so it falls through to
+      // the matrix signal state instead of resolving to a false 0 ("fired this
+      // bar") that would contradict displaySignalAt. A real 0 (fired this bar)
+      // is preserved by ?? since 0 is not nullish.
+      const displayBarsSinceSignal =
+        finiteNumberOrNull(currentPrimaryState?.barsSinceSignal) ??
+        finiteNumberOrNull(currentMatrixSignalState?.barsSinceSignal);
       const dashboardSummary = resolveDashboardSummary(
         resolveDashboardSnapshot({
           matrixStatesByTimeframe,
           profileTimeframe,
         }),
+        displayBarsSinceSignal,
       );
       const matrixVerdict = resolveSignalMatrixVerdict({
         primaryState,
@@ -1067,12 +1093,6 @@ export const buildSignalsRows = ({
         }) ||
         dashboardSummary?.signalDirection ||
         null;
-      const currentPrimaryState = isSignalStateCurrent(primaryState)
-        ? primaryState
-        : null;
-      const currentMatrixSignalState = Object.values(matrixStatesByTimeframe)
-        .filter(hasCurrentSignalDirection)
-        .reduce((latest, state) => preferLatestState(latest, state), null);
       const skipped = skippedSymbols.has(symbol);
       const rowStatus = resolveRowStatus({
         primaryState,
@@ -1145,14 +1165,7 @@ export const buildSignalsRows = ({
         freshTimeframes,
         activeTimeframeCount: activeTimeframes.length,
         freshTimeframeCount: freshTimeframes.length,
-        // A trend-only primary state carries barsSinceSignal:null (no crossover);
-        // finiteNumberOrNull rejects null before coercion so it falls through to
-        // the matrix signal state instead of resolving to a false 0 ("fired this
-        // bar") that would contradict displaySignalAt. A real 0 (fired this bar)
-        // is preserved by ?? since 0 is not nullish.
-        barsSinceSignal:
-          finiteNumberOrNull(currentPrimaryState?.barsSinceSignal) ??
-          finiteNumberOrNull(currentMatrixSignalState?.barsSinceSignal),
+        barsSinceSignal: displayBarsSinceSignal,
         currentSignalAt: displaySignalAt,
         currentSignalPrice: displaySignalPrice,
         currentSignalClose:
@@ -1312,8 +1325,8 @@ export const sortSignalsRows = (
     if (sortKey === "age") {
       return (
         compareNumberAsc(
-          left.dashboardSummary?.trendAgeBars,
-          right.dashboardSummary?.trendAgeBars,
+          left.dashboardSummary?.displayAgeBars,
+          right.dashboardSummary?.displayAgeBars,
           multiplier,
         ) || fallbackCompare(left, right)
       );

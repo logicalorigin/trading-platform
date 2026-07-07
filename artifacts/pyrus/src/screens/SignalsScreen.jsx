@@ -452,12 +452,13 @@ const formatTrend = (value) =>
 
 const formatAge = (dashboardSummary) => {
   if (!dashboardSummary) return MISSING_VALUE;
-  const bars = Number(dashboardSummary.trendAgeBars);
+  const bars = Number(dashboardSummary.displayAgeBars ?? dashboardSummary.trendAgeBars);
   if (!Number.isFinite(bars)) return MISSING_VALUE;
-  const bucket = dashboardSummary.trendAgeBucket
+  const fromSignalBars = dashboardSummary.displayAgeSource === "signal-bars";
+  const bucket = !fromSignalBars && dashboardSummary.trendAgeBucket
     ? `${dashboardSummary.trendAgeBucket} `
     : "";
-  return `${bucket}${bars}b`;
+  return `${bucket}${bars}b${fromSignalBars ? " sig" : ""}`;
 };
 
 const formatCount = (value) => new Intl.NumberFormat("en-US").format(value || 0);
@@ -4303,18 +4304,23 @@ export default function SignalsScreen({
         ? null
         : {
             id: "age",
-            header: "Age",
-            meta: { width: "54px", align: "right" },
-            cell: ({ row }) => (
-              <span
-                style={{
-                  color: CSS_COLOR.textSec,
-                  fontVariantNumeric: "tabular-nums",
-                }}
-              >
-                {formatAge(row.original.dashboardSummary)}
-              </span>
-            ),
+            header: "Trend age",
+            meta: { width: "72px", align: "right" },
+            cell: ({ row }) => {
+              const ageSource = row.original.dashboardSummary?.displayAgeSource;
+              const fallbackAge = ageSource === "signal-bars";
+              return (
+                <span
+                  title={fallbackAge ? "Signal bars fallback" : "Trend age"}
+                  style={{
+                    color: fallbackAge ? CSS_COLOR.textMuted : CSS_COLOR.textSec,
+                    fontVariantNumeric: "tabular-nums",
+                  }}
+                >
+                  {formatAge(row.original.dashboardSummary)}
+                </span>
+              );
+            },
           },
       compact
         ? null
@@ -4553,6 +4559,17 @@ export default function SignalsScreen({
   const matrixHydrationLabel = matrixHydrationTotal
     ? `Intervals ${matrixHydrationHydrated}/${matrixHydrationTotal}`
     : "Intervals idle";
+  const scopeResolvedSymbols = Number(signalMatrixUniverse?.resolvedSymbols);
+  const scopeActiveSymbols = Number(signalMatrixCoverage?.activeScopeSymbols);
+  const scopeSymbolCounts = [scopeResolvedSymbols, scopeActiveSymbols].filter(
+    (value) => Number.isFinite(value) && value > 0,
+  );
+  const scopeInView = scopeSymbolCounts.length ? Math.min(...scopeSymbolCounts) : 0;
+  const scopeTotal = scopeSymbolCounts.length ? Math.max(...scopeSymbolCounts) : 0;
+  const scopeCoverageLabel =
+    scopeInView > 0 && scopeTotal > scopeInView
+      ? `${formatCount(scopeInView)} of ${formatCount(scopeTotal)} symbols in scope`
+      : "";
   const minTableWidth = phone ? dim(900) : compact ? dim(1040) : dim(1360);
   // Stable identities for the virtual-table callbacks. Inline arrows here would
   // change every render, rebuilding the table's virtualRows/row model and
@@ -4666,6 +4683,11 @@ export default function SignalsScreen({
             <StatusPill color={matrixHydrationTone} variant="outline">
               {matrixHydrationLabel}
             </StatusPill>
+            {scopeCoverageLabel ? (
+              <StatusPill color={CSS_COLOR.amber} variant="outline">
+                {scopeCoverageLabel}
+              </StatusPill>
+            ) : null}
           </div>
         </div>
 

@@ -479,3 +479,65 @@ test("market-idle signal rows keep last-known direction without stale labeling",
   assert.equal(rows[0].currentSignalClose, 510.1);
   assert.equal(rows[0].barsSinceSignal, 1);
 });
+
+test("trend age display falls back to signal bars with a source flag and matching sort", () => {
+  const rows = buildSignalsRows({
+    stateResponse: {
+      profile: { timeframe: "5m" },
+      universeSymbols: ["TREND", "FALLBACK", "MISSING"],
+      states: [
+        {
+          symbol: "TREND",
+          timeframe: "5m",
+          status: "ok",
+          active: true,
+          currentSignalDirection: "buy",
+          currentSignalAt: "2026-06-12T16:00:00.000Z",
+          latestBarAt: "2026-06-12T16:20:00.000Z",
+          barsSinceSignal: 8,
+          indicatorSnapshot: {
+            trendDirection: "bullish",
+            trendAgeBars: 4,
+          },
+        },
+        {
+          symbol: "FALLBACK",
+          timeframe: "5m",
+          status: "ok",
+          active: true,
+          currentSignalDirection: "buy",
+          currentSignalAt: "2026-06-12T16:10:00.000Z",
+          latestBarAt: "2026-06-12T16:20:00.000Z",
+          barsSinceSignal: 2,
+          indicatorSnapshot: {
+            trendDirection: "bullish",
+            trendAgeBars: null,
+          },
+        },
+        {
+          symbol: "MISSING",
+          timeframe: "5m",
+          status: "ok",
+          active: true,
+          latestBarAt: "2026-06-12T16:20:00.000Z",
+          indicatorSnapshot: {
+            trendDirection: "bullish",
+            trendAgeBars: null,
+          },
+        },
+      ],
+    },
+  });
+  const bySymbol = new Map(rows.map((item) => [item.symbol, item]));
+
+  assert.equal(bySymbol.get("TREND").dashboardSummary.displayAgeBars, 4);
+  assert.equal(bySymbol.get("TREND").dashboardSummary.displayAgeSource, "trend-age");
+  assert.equal(bySymbol.get("FALLBACK").dashboardSummary.displayAgeBars, 2);
+  assert.equal(bySymbol.get("FALLBACK").dashboardSummary.displayAgeSource, "signal-bars");
+  assert.equal(bySymbol.get("MISSING").dashboardSummary.displayAgeBars, null);
+  assert.equal(bySymbol.get("MISSING").dashboardSummary.displayAgeSource, null);
+  assert.deepEqual(
+    sortSignalsRows(rows, { sortKey: "age" }).map((item) => item.symbol),
+    ["FALLBACK", "TREND", "MISSING"],
+  );
+});

@@ -20,7 +20,7 @@ const isRenderableMatrixState = (state, options = {}) => {
   }
   return Boolean(
     state?.active !== false &&
-      (status === "ok" || status === "stale") &&
+      (status === "ok" || status === "stale" || status === "idle") &&
       !state?.lastError &&
       (state?.latestBarAt || state?.currentSignalAt),
   );
