@@ -139,3 +139,23 @@ test("a fast success within the timeout still returns parsed JSON (happy path)",
   });
   assert.deepEqual(result, { cleared: true, reason: "no_override" });
 });
+
+test("non-2xx errors carry retryAfterMs from Retry-After headers", async () => {
+  globalThis.fetch = () =>
+    Promise.resolve({
+      ok: false,
+      status: 429,
+      headers: {
+        get: (name) => (name.toLowerCase() === "retry-after" ? "3" : null),
+      },
+      json: async () => ({ message: "Request shed" }),
+    });
+
+  await platformJsonRequest("/x").then(
+    () => assert.fail("should reject"),
+    (error) => {
+      assert.equal(error.status, 429);
+      assert.equal(error.retryAfterMs, 3_000);
+    },
+  );
+});

@@ -124,6 +124,36 @@ test("PlatformApp tags signal matrix stream states by bootstrap vs delta source"
   );
 });
 
+test("PlatformApp applies signal matrix stream frames as non-urgent React work", () => {
+  assert.match(
+    platformAppSource,
+    /import \{[\s\S]*startTransition,[\s\S]*\} from "react";/,
+    "large bootstrap/delta frames should use React transition scheduling",
+  );
+  assert.match(
+    platformAppSource,
+    /startTransition\(\(\) => setSignalMatrixSnapshot\(\(current\) => \{/,
+    "matrix stream state commits must be wrapped in startTransition",
+  );
+});
+
+test("PlatformApp signal monitor queries retain stale data and retry pressure sheds", () => {
+  const profileBlock =
+    platformAppSource.match(
+      /const signalMonitorProfileQuery = useGetSignalMonitorProfile\([\s\S]*?\n  \);/,
+    )?.[0] || "";
+  const eventsBlock =
+    platformAppSource.match(
+      /const signalMonitorEventsQuery = useQuery\(\{[\s\S]*?\n  \}\);/,
+    )?.[0] || "";
+
+  [profileBlock, eventsBlock].forEach((block) => {
+    assert.match(block, /retry:\s*retryUnlessTimeout\(2\)/);
+    assert.match(block, /retryDelay:\s*QUERY_DEFAULTS\.retryDelay/);
+    assert.match(block, /placeholderData:\s*\(previousData\) => previousData/);
+  });
+});
+
 test("signal monitor event history pauses during blocking API mutations", () => {
   assert.match(
     platformAppSource,

@@ -19,6 +19,7 @@ import {
   BARS_REQUEST_PRIORITY,
   HEAVY_PAYLOAD_GC_MS,
   buildBarsRequestOptions,
+  parseRetryAfterMs,
   retryUnlessTimeout,
 } from "./queryDefaults";
 import { useHydrationGate } from "./hydrationCoordinator";
@@ -243,17 +244,6 @@ const mergeSparklineBars = (...seriesList) => {
     .sort(([left], [right]) => left - right)
     .map(([, bar]) => bar);
   return [...untimed, ...timed];
-};
-
-const parseRetryAfterMs = (value) => {
-  if (!value) return null;
-  const seconds = Number(value);
-  if (Number.isFinite(seconds) && seconds >= 0) {
-    return Math.round(seconds * 1_000);
-  }
-  const timestamp = Date.parse(value);
-  if (!Number.isFinite(timestamp)) return null;
-  return Math.max(0, timestamp - Date.now());
 };
 
 const barsRetryDelay = BARS_QUERY_DEFAULTS.retryDelay;

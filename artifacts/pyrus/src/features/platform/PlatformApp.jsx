@@ -5,6 +5,7 @@ import {
   useCallback,
   useMemo,
   Suspense,
+  startTransition,
 } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { isPyrusSafeQaMode } from "../../app/qa-mode";
@@ -124,7 +125,7 @@ import {
   buildWatchlistQuoteRotationDiagnostics,
   resolveWatchlistQuoteStreamBatchSize,
 } from "./watchlistQuoteRotation.js";
-import { QUERY_DEFAULTS } from "./queryDefaults";
+import { QUERY_DEFAULTS, retryUnlessTimeout } from "./queryDefaults";
 import {
   bridgeRuntimeTone,
   resolveGatewayTradingReadiness,
@@ -3185,7 +3186,9 @@ export default function PlatformApp() {
         enabled: signalMonitorWorkVisible,
         staleTime: 60_000,
         refetchInterval: signalMonitorWorkVisible ? 60_000 : false,
-        retry: false,
+        retry: retryUnlessTimeout(2),
+        retryDelay: QUERY_DEFAULTS.retryDelay,
+        placeholderData: (previousData) => previousData,
       },
     },
   );
@@ -3321,7 +3324,8 @@ export default function PlatformApp() {
     refetchInterval: signalMonitorEventsReady
       ? signalMonitorRuntimePollMs
       : false,
-    retry: false,
+    retry: retryUnlessTimeout(2),
+    retryDelay: QUERY_DEFAULTS.retryDelay,
     placeholderData: (previousData) => previousData,
   });
   usePlatformFreshnessQueryHydration({
@@ -3605,7 +3609,7 @@ export default function PlatformApp() {
           ? { ...state, displayHydrationSource: hydrationSource }
           : state,
       );
-      setSignalMatrixSnapshot((current) => {
+      startTransition(() => setSignalMatrixSnapshot((current) => {
         const nextSnapshot = mergeSignalMatrixStreamSnapshot({
           currentSnapshot: current,
           incomingStates: taggedStates,
@@ -3618,7 +3622,7 @@ export default function PlatformApp() {
         signalMatrixStatesRef.current =
           nextSnapshot.states || EMPTY_SIGNAL_MONITOR_STATES;
         return nextSnapshot;
-      });
+      }));
     },
     [],
   );

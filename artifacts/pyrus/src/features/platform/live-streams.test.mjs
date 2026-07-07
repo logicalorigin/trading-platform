@@ -862,3 +862,13 @@ test("signal matrix stream forwards payload metadata with states", () => {
     /onStatesRef\.current\(payload\.states, kind, payload\)/,
   );
 });
+
+test("signal matrix stream terminal reconnect creates a fresh EventSource bootstrap", () => {
+  const source = readFileSync(new URL("./live-streams.ts", import.meta.url), "utf8");
+
+  assert.match(source, /const connect = \(\) => \{/);
+  assert.match(source, /const next = new EventSource\(streamUrl\)/);
+  assert.match(source, /next\.addEventListener\("bootstrap", handleBootstrap as EventListener\)/);
+  assert.match(source, /nextQuoteStreamReconnectDelayMs\(reconnectAttempt\)/);
+  assert.match(source, /connect\(\);/);
+});

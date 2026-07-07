@@ -163,3 +163,22 @@ test("Signals screen surfaces scope truncation from existing matrix metadata", (
   assert.match(screenSource, /symbols in scope/);
   assert.match(screenSource, /\{scopeCoverageLabel\}/);
 });
+
+test("Signals fallback REST queries keep stale data and retry 429 pressure sheds", () => {
+  const screenSource = source();
+  const queryNames = [
+    "profileQuery",
+    "stateQuery",
+    "eventsQuery",
+    "breadthHistoryQuery",
+  ];
+
+  queryNames.forEach((name) => {
+    const index = screenSource.indexOf(`const ${name} =`);
+    assert.notEqual(index, -1, `${name} missing`);
+    const block = screenSource.slice(index, index + 700);
+    assert.match(block, /retry:\s*retryUnlessTimeout\(2\)/, `${name} retries`);
+    assert.match(block, /retryDelay:\s*QUERY_DEFAULTS\.retryDelay/, `${name} uses shared retry delay`);
+    assert.match(block, /placeholderData:\s*\(previousData\) => previousData/, `${name} keeps stale data`);
+  });
+});

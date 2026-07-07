@@ -65,7 +65,9 @@ import { describeUserFacingRuntimeError } from "../features/platform/userFacingR
 import {
   BARS_QUERY_DEFAULTS,
   BARS_REQUEST_PRIORITY,
+  QUERY_DEFAULTS,
   buildBarsRequestOptions,
+  retryUnlessTimeout,
 } from "../features/platform/queryDefaults";
 import { markRouteDataTiming } from "../features/platform/performanceMetrics";
 import {
@@ -3438,7 +3440,9 @@ export default function SignalsScreen({
     query: {
       enabled: active && !platformManagedSignalData,
       staleTime: 15_000,
-      retry: false,
+      retry: retryUnlessTimeout(2),
+      retryDelay: QUERY_DEFAULTS.retryDelay,
+      placeholderData: (previousData) => previousData,
     },
   });
   const stateQuery = useGetSignalMonitorState(signalMonitorParams, {
@@ -3446,7 +3450,9 @@ export default function SignalsScreen({
       enabled: active && !platformManagedSignalData,
       staleTime: 10_000,
       refetchInterval: active && !platformManagedSignalData ? 15_000 : false,
-      retry: false,
+      retry: retryUnlessTimeout(2),
+      retryDelay: QUERY_DEFAULTS.retryDelay,
+      placeholderData: (previousData) => previousData,
     },
   });
   const eventsQuery = useListSignalMonitorEvents(signalMonitorEventsParams, {
@@ -3454,7 +3460,9 @@ export default function SignalsScreen({
       enabled: eventsQueryEnabled,
       staleTime: 10_000,
       refetchInterval: eventsQueryEnabled ? 15_000 : false,
-      retry: false,
+      retry: retryUnlessTimeout(2),
+      retryDelay: QUERY_DEFAULTS.retryDelay,
+      placeholderData: (previousData) => previousData,
     },
   });
   const breadthHistoryQuery = useListSignalMonitorBreadthHistory(
@@ -3464,7 +3472,9 @@ export default function SignalsScreen({
         enabled: active,
         staleTime: 15_000,
         refetchInterval: active ? 30_000 : false,
-        retry: false,
+        retry: retryUnlessTimeout(2),
+        retryDelay: QUERY_DEFAULTS.retryDelay,
+        placeholderData: (previousData) => previousData,
       },
     },
   );

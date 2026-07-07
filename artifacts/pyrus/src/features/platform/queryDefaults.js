@@ -14,11 +14,32 @@ export const retryUnlessTimeout =
   (maxRetries) => (failureCount, error) =>
     error?.name !== "TimeoutError" && failureCount < maxRetries;
 
+export const parseRetryAfterMs = (value, nowMs = Date.now()) => {
+  if (!value) return null;
+  const seconds = Number(value);
+  if (Number.isFinite(seconds) && seconds >= 0) {
+    return Math.round(seconds * 1_000);
+  }
+  const timestamp = Date.parse(value);
+  if (!Number.isFinite(timestamp)) return null;
+  return Math.max(0, timestamp - nowMs);
+};
+
+export const retryDelayWithRetryAfter =
+  (fallbackDelay) => (attempt, error) => {
+    if (error?.status === 429 && Number.isFinite(error.retryAfterMs)) {
+      return Math.max(0, error.retryAfterMs);
+    }
+    return fallbackDelay(attempt, error);
+  };
+
 export const QUERY_DEFAULTS = {
   staleTime: 15_000,
   refetchInterval: 15_000,
   retry: retryUnlessTimeout(2),
-  retryDelay: (attempt) => Math.min(1_000 * (attempt + 1), 5_000),
+  retryDelay: retryDelayWithRetryAfter((attempt) =>
+    Math.min(1_000 * (attempt + 1), 5_000),
+  ),
   refetchOnMount: true,
   gcTime: 30_000,
 };
@@ -29,7 +50,9 @@ export const BARS_QUERY_DEFAULTS = {
   refetchInterval: false,
   refetchOnMount: false,
   retry: retryUnlessTimeout(1),
-  retryDelay: (attempt) => Math.min(1_000 * (attempt + 1), 5_000),
+  retryDelay: retryDelayWithRetryAfter((attempt) =>
+    Math.min(1_000 * (attempt + 1), 5_000),
+  ),
 };
 
 export const BARS_REQUEST_PRIORITY_HEADER = HYDRATION_PRIORITY_HEADER;

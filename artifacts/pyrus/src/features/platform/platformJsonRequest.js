@@ -1,3 +1,5 @@
+import { parseRetryAfterMs } from "./queryDefaults.js";
+
 export const platformJsonRequest = async (
   path,
   { method = "GET", body, signal, timeoutMs = 0 } = {},
@@ -59,6 +61,9 @@ export const platformJsonRequest = async (
     requestError.status = response.status;
     requestError.code = payload?.code || null;
     requestError.payload = payload;
+    requestError.retryAfterMs = parseRetryAfterMs(
+      response.headers?.get?.("retry-after"),
+    );
     throw requestError;
   }
 
