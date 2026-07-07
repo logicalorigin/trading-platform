@@ -4310,9 +4310,12 @@ async function getRobinhoodBackedAccounts(
       eq(brokerConnectionsTable.id, brokerAccountsTable.connectionId),
     )
     .where(
+      // No ownedBy() here: the /accounts route sets no app-user context, so
+      // ownedBy() throws "Authentication required" and the merge is swallowed.
+      // Mirror getSnapTradeBackedAccounts, which is intentionally unscoped on
+      // this route. Route-level user-scoping for /accounts (covering SnapTrade
+      // + Robinhood together) is the WO-15 follow-up residual.
       and(
-        ownedBy(brokerAccountsTable),
-        ownedBy(brokerConnectionsTable),
         eq(brokerAccountsTable.mode, mode),
         eq(brokerAccountsTable.includedInTrading, true),
         eq(brokerConnectionsTable.brokerProvider, "robinhood"),
