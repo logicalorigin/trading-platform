@@ -757,7 +757,7 @@ export const MarketActivityPanel = ({
     title: `${row.directionLabel} · ${row.symbol}`,
     detail: `${row.timeframe} · ${formatQuotePrice(row.price)}`,
     meta: row.time ? formatRelativeTimeShort(row.time) : row.source.toUpperCase(),
-    color: row.direction === "buy" ? CSS_COLOR.green : CSS_COLOR.red,
+    color: row.direction === "buy" ? toneForDirectionalIntent("buy") : CSS_COLOR.red,
   }));
   const unusualRows = lanes.unusual.map((row) => {
     const scoreLabel =

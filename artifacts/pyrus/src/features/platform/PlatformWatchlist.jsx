@@ -1396,7 +1396,7 @@ export const Watchlist = ({
                   {watchlist.isDefault ? (
                     <span
                       style={{
-                        color: CSS_COLOR.green,
+                        color: CSS_COLOR.accent,
                         fontSize: textSize("caption"),
                         fontFamily: T.sans,
                         fontWeight: FONT_WEIGHTS.medium,

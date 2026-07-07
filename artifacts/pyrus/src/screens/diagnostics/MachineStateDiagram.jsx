@@ -196,15 +196,16 @@ const STATUS_META = Object.freeze({
 });
 
 // Single-char status glyphs from the wiring walkthrough, colored by
-// STATUS_META. Anything unmapped falls back to "?".
+// STATUS_META. Anything unmapped falls back to the legend's unknown marker.
 const STATUS_GLYPH = Object.freeze({
   healthy: "✓",
   checking: "◌",
   degraded: "!",
   down: "✕",
   idle: "–",
-  unknown: "?",
+  unknown: "·",
 });
+const UNKNOWN_STATUS_GLYPH = STATUS_GLYPH.unknown;
 
 const LEGEND_STATUSES = ["healthy", "checking", "degraded", "down", "idle", "unknown"];
 const LEGEND_EVIDENCE = ["observed", "inferred", "unknown"];
@@ -720,7 +721,7 @@ const FOOTER_ABBREVIATIONS = [
   [" scan age", " scan"],
   [" fresh signals", " fresh"],
   ["market session quiet", "session quiet"],
-  ["not observed", "n/o"],
+  ["not observed", "not observed"],
 ];
 
 // Render raw millisecond counts as seconds once they pass 1s, so attention
@@ -824,7 +825,7 @@ const MasterCard = ({ master, rect, pressureSource = false }) => {
   const single = master.children.length <= 1;
   const footerChars = Math.max(10, charsForWidth(rect.width - 24, CARD_DETAIL_SIZE, DETAIL_CHAR_EM));
   const footerLines = wrapLines(
-    `${STATUS_GLYPH[master.status] || "?"} ${abbreviateDetail(master.detail)}`,
+    `${STATUS_GLYPH[master.status] || UNKNOWN_STATUS_GLYPH} ${abbreviateDetail(master.detail)}`,
     footerChars,
     2,
   );
@@ -894,7 +895,7 @@ const MasterCard = ({ master, rect, pressureSource = false }) => {
                   fontSize={BUBBLE_LABEL_SIZE}
                   fontWeight={FONT_WEIGHTS.emphasis}
                 >
-                  {STATUS_GLYPH[child.status] || "?"}
+                  {STATUS_GLYPH[child.status] || UNKNOWN_STATUS_GLYPH}
                 </text>
                 <text
                   x={25}
@@ -1050,7 +1051,7 @@ const MarketDataCard = ({ master, rect, nodeById }) => {
                 fontSize={BUBBLE_LABEL_SIZE}
                 fontWeight={FONT_WEIGHTS.emphasis}
               >
-                {STATUS_GLYPH[child.status] || "?"}
+                {STATUS_GLYPH[child.status] || UNKNOWN_STATUS_GLYPH}
               </text>
             ) : null}
             <text
@@ -1110,7 +1111,7 @@ const ClientRailSignals = ({ master, rect }) => {
         fontSize={CARD_DETAIL_SIZE}
         fontWeight={FONT_WEIGHTS.emphasis}
       >
-        {STATUS_GLYPH[master.status] || "?"}
+        {STATUS_GLYPH[master.status] || UNKNOWN_STATUS_GLYPH}
       </text>
       <line
         x1="0"
@@ -1149,7 +1150,7 @@ const ClientRailSignals = ({ master, rect }) => {
               fontSize={BUBBLE_LABEL_SIZE}
               fontWeight={FONT_WEIGHTS.emphasis}
             >
-              {STATUS_GLYPH[row.child.status] || "?"}
+              {STATUS_GLYPH[row.child.status] || UNKNOWN_STATUS_GLYPH}
             </text>
             <text
               x="16"
@@ -1603,7 +1604,7 @@ export const MachineStateDiagram = memo(function MachineStateDiagram({ model }) 
                     whiteSpace: "nowrap",
                   }}
                 >
-                  <span aria-hidden="true">{STATUS_GLYPH[status] || "?"}</span>
+                  <span aria-hidden="true">{STATUS_GLYPH[status] || UNKNOWN_STATUS_GLYPH}</span>
                   {meta.label} {statusCounts[status] || 0}
                 </span>
               );
@@ -1667,7 +1668,7 @@ export const MachineStateDiagram = memo(function MachineStateDiagram({ model }) 
                   }}
                 >
                   <span aria-hidden="true" style={{ flex: "0 0 auto", color: meta.tone, fontWeight: FONT_WEIGHTS.emphasis }}>
-                    {STATUS_GLYPH[node.status] || "?"}
+                    {STATUS_GLYPH[node.status] || UNKNOWN_STATUS_GLYPH}
                   </span>
                   <span style={{ flex: "0 0 auto", color: meta.tone, fontSize: textSize("caption"), fontWeight: FONT_WEIGHTS.label, whiteSpace: "nowrap" }}>
                     {node.label}

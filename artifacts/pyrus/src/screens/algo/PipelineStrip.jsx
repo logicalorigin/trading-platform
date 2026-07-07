@@ -7,7 +7,7 @@ import {
   SlidersHorizontal,
   Target,
 } from "lucide-react";
-import { CSS_COLOR, RADII, T, cssColorAlpha, dim, fs, sp, textSize } from "../../lib/uiTokens.jsx";
+import { CSS_COLOR, FONT_WEIGHTS, RADII, T, cssColorAlpha, dim, fs, sp, textSize } from "../../lib/uiTokens.jsx";
 import { formatEnumLabel } from "../../lib/formatters";
 
 const stageColor = (status) => {
@@ -252,7 +252,7 @@ export const PipelineStrip = ({
                 style={{
                   color: alarmStatus ? color : CSS_COLOR.text,
                   fontVariantNumeric: "tabular-nums",
-                  fontWeight: 600,
+                  fontWeight: FONT_WEIGHTS.label,
                 }}
               >
                 {stage.count}
