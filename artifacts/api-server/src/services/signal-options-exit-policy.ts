@@ -137,6 +137,12 @@ const WIRE_RUNG_ORDER: SignalOptionsWireTrailRung[] = [
 ];
 
 function finiteNumber(value: unknown): number | null {
+  // null/"" coerce to 0 via Number(), which is finite — without this guard a null
+  // wire rung becomes a phantom $0 wire price (silently disabling long structure
+  // breaks and instantly firing short ones), ageMs: null reads as perfectly-fresh
+  // greeks, and a null delta scores as a real 0-delta. Matches the sibling helper
+  // in signal-options-automation.ts.
+  if (value == null || value === "") return null;
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
 }

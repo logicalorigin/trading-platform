@@ -4841,6 +4841,60 @@ function signalOptionsShadowMarkExitPositionPayload(input: {
   };
 }
 
+type SignalOptionsShadowExitEventCandidate = {
+  deploymentId: string;
+  symbol: string;
+  since: Date;
+};
+
+type SignalOptionsShadowExitEventRow = {
+  deploymentId: string | null;
+  symbol: string | null;
+  occurredAt: Date;
+};
+
+// Dedup rule shared by the force-close pass, the mark-time stop emitter, and the
+// expiration ledger-sync emitter: a candidate exit is a duplicate if a
+// SIGNAL_OPTIONS_SHADOW_EXIT_EVENT already exists for the same deployment+symbol
+// at/after the position's openedAt — one pnl-bearing exit per position lifecycle,
+// so the events-ledger daily-loss halt never double-counts the same close.
+function signalOptionsShadowExitEventIsDuplicate(
+  candidate: SignalOptionsShadowExitEventCandidate,
+  existingEvents: SignalOptionsShadowExitEventRow[],
+): boolean {
+  const normalizedSymbol = normalizeSymbol(candidate.symbol).toUpperCase();
+  return existingEvents.some(
+    (event) =>
+      event.deploymentId === candidate.deploymentId &&
+      event.symbol != null &&
+      normalizeSymbol(event.symbol).toUpperCase() === normalizedSymbol &&
+      event.occurredAt.getTime() >= candidate.since.getTime(),
+  );
+}
+
+async function hasExistingSignalOptionsShadowExitEvent(
+  candidate: SignalOptionsShadowExitEventCandidate,
+): Promise<boolean> {
+  const normalizedSymbol = normalizeSymbol(candidate.symbol).toUpperCase();
+  const existing = await db
+    .select({
+      deploymentId: executionEventsTable.deploymentId,
+      symbol: executionEventsTable.symbol,
+      occurredAt: executionEventsTable.occurredAt,
+    })
+    .from(executionEventsTable)
+    .where(
+      and(
+        eq(executionEventsTable.deploymentId, candidate.deploymentId),
+        eq(executionEventsTable.eventType, SIGNAL_OPTIONS_SHADOW_EXIT_EVENT),
+        eq(executionEventsTable.symbol, normalizedSymbol),
+        gte(executionEventsTable.occurredAt, candidate.since),
+      ),
+    )
+    .limit(1);
+  return signalOptionsShadowExitEventIsDuplicate(candidate, existing);
+}
+
 async function recordSignalOptionsShadowMarkExit(input: {
   position: ShadowPositionRow;
   contract: ShadowOptionContract;
@@ -4860,6 +4914,21 @@ async function recordSignalOptionsShadowMarkExit(input: {
     .where(eq(shadowPositionsTable.id, input.position.id))
     .limit(1);
   if (current?.status !== "open") {
+    return null;
+  }
+  // Dedup guard (same rule as the force-close pass): the mark-time stop chain
+  // only mutates shadow_positions via a downstream mirror-sell reaction to the
+  // event inserted below. If that mirror sell warn-swallows a failure, this row
+  // stays status='open' with the exit event already recorded — without this
+  // check the next mark refresh would re-breach the same stop and emit a SECOND
+  // pnl-bearing exit event, double-counting the daily-loss halt.
+  if (
+    await hasExistingSignalOptionsShadowExitEvent({
+      deploymentId: input.context.deployment.id,
+      symbol: input.position.symbol,
+      since: input.position.openedAt,
+    })
+  ) {
     return null;
   }
   const quantity = toNumber(input.position.quantity) ?? 0;
@@ -5300,7 +5369,22 @@ export async function runShadowOptionMaintenance(input: {
         !sourceEventMissing &&
         deploymentId != null &&
         deploymentIds.has(deploymentId);
-      if (isRealDeploymentExit) {
+      // Dedup guard (same rule as the force-close pass): a prior mark-time stop
+      // exit can leave this row status='open' if its mirror sell warn-swallowed a
+      // failure (see recordSignalOptionsShadowMarkExit). The settling sell above
+      // still runs unconditionally to actually close out shadow_positions, but
+      // skip this ledger-sync pnl event if one was already banked for this
+      // deployment+symbol since the position opened, so the daily-loss halt only
+      // counts the close once.
+      const alreadyExited =
+        isRealDeploymentExit && deploymentId != null
+          ? await hasExistingSignalOptionsShadowExitEvent({
+              deploymentId,
+              symbol: position.symbol,
+              since: position.openedAt,
+            })
+          : false;
+      if (isRealDeploymentExit && !alreadyExited) {
         const entryPayload = readRecord(sourceEntryEvent?.payload) ?? {};
         const entryPosition = readRecord(entryPayload.position) ?? {};
         const entryCandidate = readRecord(entryPayload.candidate) ?? {};
@@ -5422,19 +5506,12 @@ export async function runShadowOptionMaintenance(input: {
       // sell and the second pnl-bearing exit. Bounded to THIS position's lifecycle
       // (>= openedAt) so a prior entry->exit cycle's exit can't suppress it.
       const normalizedSymbol = normalizeSymbol(position.symbol).toUpperCase();
-      const [existingForceExit] = await db
-        .select({ id: executionEventsTable.id })
-        .from(executionEventsTable)
-        .where(
-          and(
-            eq(executionEventsTable.deploymentId, deploymentId),
-            eq(executionEventsTable.eventType, SIGNAL_OPTIONS_SHADOW_EXIT_EVENT),
-            eq(executionEventsTable.symbol, normalizedSymbol),
-            gte(executionEventsTable.occurredAt, position.openedAt),
-          ),
-        )
-        .limit(1);
-      if (existingForceExit) {
+      const alreadyExited = await hasExistingSignalOptionsShadowExitEvent({
+        deploymentId,
+        symbol: position.symbol,
+        since: position.openedAt,
+      });
+      if (alreadyExited) {
         continue;
       }
 
@@ -14500,6 +14577,7 @@ export const __shadowWatchlistBacktestInternalsForTests = {
   shadowQuoteMarkPrice,
   buildShadowOptionPricingPolicy,
   computeSignalOptionsShadowMarkExitDecision,
+  signalOptionsShadowExitEventIsDuplicate,
   shadowOptionQuoteValuationBlockReason,
   shadowOptionQuoteIdentifier,
   isPriorOptionExpiration,

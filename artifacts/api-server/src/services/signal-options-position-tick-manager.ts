@@ -123,6 +123,35 @@ function positionDemandOwner(input: {
   return `signal-options-position-mark:${input.deployment.id}:${input.position.id}:tick`;
 }
 
+function mergeActivePosition(
+  existing: SignalOptionsPosition,
+  snapshot: SignalOptionsPosition,
+): SignalOptionsPosition {
+  // The active-position snapshot is cached up to activePositionSnapshotTtlMs
+  // and can therefore be stale relative to ticks the runtime has already
+  // processed since it was loaded. Never let a stale snapshot lower a
+  // trailing-ratchet high; keep whichever mark is fresher.
+  const peakPrice = Math.max(existing.peakPrice, snapshot.peakPrice);
+  const existingMarkedAtMs = existing.lastMarkedAt
+    ? Date.parse(existing.lastMarkedAt)
+    : NaN;
+  const snapshotMarkedAtMs = snapshot.lastMarkedAt
+    ? Date.parse(snapshot.lastMarkedAt)
+    : NaN;
+  const preferExisting =
+    Number.isFinite(existingMarkedAtMs) &&
+    (!Number.isFinite(snapshotMarkedAtMs) ||
+      existingMarkedAtMs > snapshotMarkedAtMs);
+  return {
+    ...snapshot,
+    peakPrice,
+    lastMarkPrice: preferExisting
+      ? existing.lastMarkPrice
+      : snapshot.lastMarkPrice,
+    lastMarkedAt: preferExisting ? existing.lastMarkedAt : snapshot.lastMarkedAt,
+  };
+}
+
 function requiresGreeks(profile: SignalOptionsExecutionProfile): boolean {
   const exitPolicy = asRecord(profile.exitPolicy);
   const greekPositionManagement = asRecord(exitPolicy.greekPositionManagement);
@@ -186,6 +215,7 @@ export class SignalOptionsPositionTickManager {
   >();
   private timer: ReturnType<typeof setInterval> | null = null;
   private reconcileInFlight: Promise<void> | null = null;
+  private stopped = false;
 
   constructor(dependencies: SignalOptionsPositionTickManagerDependencies = {}) {
     this.listDeployments =
@@ -218,6 +248,7 @@ export class SignalOptionsPositionTickManager {
     if (this.timer) {
       return;
     }
+    this.stopped = false;
     this.timer = this.setIntervalFn(() => {
       void this.runOnce().catch((error: unknown) => {
         this.logger.warn?.(
@@ -236,6 +267,10 @@ export class SignalOptionsPositionTickManager {
   }
 
   stop(): void {
+    // Set before releasing anything so an in-flight reconcile — possibly
+    // paused mid-await on a DB call — bails out on resume instead of
+    // re-installing subscriptions after we've torn everything down.
+    this.stopped = true;
     if (this.timer) {
       this.clearIntervalFn(this.timer);
       this.timer = null;
@@ -262,67 +297,86 @@ export class SignalOptionsPositionTickManager {
 
   private async reconcile(): Promise<void> {
     const deployments = await this.listDeployments();
+    if (this.stopped) {
+      return;
+    }
     const desiredKeys = new Set<string>();
 
     for (const deployment of deployments) {
-      const profile = this.resolveProfile(deployment);
-      const activeSnapshot = await this.loadActivePositionSnapshot(deployment);
-      const pyrusSignalsSettings =
-        usesWireTrail(profile) && activeSnapshot.positions.length > 0
-          ? await this.safeLoadPyrusSignalsSettings(deployment)
-          : null;
-      const greekDemand = requiresGreeks(profile);
+      try {
+        const profile = this.resolveProfile(deployment);
+        const activeSnapshot = await this.loadActivePositionSnapshot(deployment);
+        if (this.stopped) {
+          return;
+        }
+        const pyrusSignalsSettings =
+          usesWireTrail(profile) && activeSnapshot.positions.length > 0
+            ? await this.safeLoadPyrusSignalsSettings(deployment)
+            : null;
+        if (this.stopped) {
+          return;
+        }
+        const greekDemand = requiresGreeks(profile);
 
-      for (const position of activeSnapshot.positions) {
-        const providerContractId = positionProviderContractId(position);
-        if (!providerContractId) {
-          continue;
-        }
-        // Position marks are kept warm in ALL sessions (time-of-day gates only
-        // execution, never market data). Renewing the live-demand lease here keeps the
-        // held-position quote subscription alive 24/7 so reads never hit the cold path.
-        // Actual exits/orders remain gated by the execution session checks in
-        // signal-options-automation (entry/exit/overnight-window).
-        const key = positionKey({
-          deployment,
-          position,
-          providerContractId,
-        });
-        desiredKeys.add(key);
-        const existing = this.runtimes.get(key);
-        if (existing && existing.requiresGreeks === greekDemand) {
-          existing.deployment = deployment;
-          existing.profile = profile;
-          existing.position = position;
-          existing.recentEvents = activeSnapshot.events;
-          existing.pyrusSignalsSettings = pyrusSignalsSettings;
-          continue;
-        }
-        // Greek-demand change: resubscribe. unsubscribe→subscribe runs in one
-        // synchronous turn so no callback can land in between; the only loss
-        // path is an undelivered pendingQuote on the old runtime — carry it
-        // across the swap so a buffered stop-trigger tick is never dropped.
-        const carriedQuote = existing?.pendingQuote ?? null;
-        if (existing) {
-          this.releaseRuntime(key);
-        }
-        this.installRuntime({
-          key,
-          deployment,
-          profile,
-          position,
-          providerContractId,
-          pyrusSignalsSettings,
-          recentEvents: activeSnapshot.events,
-          requiresGreeks: greekDemand,
-        });
-        if (carriedQuote) {
-          const installed = this.runtimes.get(key);
-          if (installed && !installed.pendingQuote) {
-            installed.pendingQuote = carriedQuote;
-            void this.drainQuoteQueue(key);
+        for (const position of activeSnapshot.positions) {
+          const providerContractId = positionProviderContractId(position);
+          if (!providerContractId) {
+            continue;
+          }
+          // Position marks are kept warm in ALL sessions (time-of-day gates only
+          // execution, never market data). Renewing the live-demand lease here keeps the
+          // held-position quote subscription alive 24/7 so reads never hit the cold path.
+          // Actual exits/orders remain gated by the execution session checks in
+          // signal-options-automation (entry/exit/overnight-window).
+          const key = positionKey({
+            deployment,
+            position,
+            providerContractId,
+          });
+          desiredKeys.add(key);
+          const existing = this.runtimes.get(key);
+          if (existing && existing.requiresGreeks === greekDemand) {
+            existing.deployment = deployment;
+            existing.profile = profile;
+            existing.position = mergeActivePosition(existing.position, position);
+            existing.recentEvents = activeSnapshot.events;
+            existing.pyrusSignalsSettings = pyrusSignalsSettings;
+            continue;
+          }
+          // Greek-demand change: resubscribe. unsubscribe→subscribe runs in one
+          // synchronous turn so no callback can land in between; the only loss
+          // path is an undelivered pendingQuote on the old runtime — carry it
+          // across the swap so a buffered stop-trigger tick is never dropped.
+          const carriedQuote = existing?.pendingQuote ?? null;
+          if (existing) {
+            this.releaseRuntime(key);
+          }
+          this.installRuntime({
+            key,
+            deployment,
+            profile,
+            position,
+            providerContractId,
+            pyrusSignalsSettings,
+            recentEvents: activeSnapshot.events,
+            requiresGreeks: greekDemand,
+          });
+          if (carriedQuote) {
+            const installed = this.runtimes.get(key);
+            if (installed && !installed.pendingQuote) {
+              installed.pendingQuote = carriedQuote;
+              void this.drainQuoteQueue(key);
+            }
           }
         }
+      } catch (error) {
+        // Never let one deployment's failure abort the loop before the
+        // stale-key sweep below runs — that sweep is what releases closed
+        // positions' subscriptions, and skipping it leaks them.
+        this.logger.warn?.(
+          { err: error, deploymentId: deployment.id },
+          "Signal-options position tick reconcile failed for deployment",
+        );
       }
     }
 
@@ -429,6 +483,19 @@ export class SignalOptionsPositionTickManager {
       return;
     }
     this.runtimes.delete(key);
+    // The demand owner is scoped to deployment+position, not the contract,
+    // so a contract change (new key, same owner) can leave a stale runtime
+    // for the old key coexisting with a fresh one for the new key. If some
+    // other live runtime still holds this owner, unsubscribing here would
+    // release *that* runtime's coordinator registration instead of this
+    // stale one's — skip it and let that runtime's own eventual release own
+    // the unsubscribe.
+    const ownerStillInUse = [...this.runtimes.values()].some(
+      (other) => other.owner === runtime.owner,
+    );
+    if (ownerStillInUse) {
+      return;
+    }
     try {
       runtime.unsubscribe();
     } catch (error) {
