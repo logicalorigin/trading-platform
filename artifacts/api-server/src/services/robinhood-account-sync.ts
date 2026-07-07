@@ -122,6 +122,13 @@ function extractAccountsPayload(payload: unknown): unknown[] {
       return record[key];
     }
   }
+  // Robinhood MCP get_accounts nests the list: { data: { accounts: [...] } }.
+  const nested = asRecord(record["data"]);
+  for (const key of ["accounts", "results"]) {
+    if (Array.isArray(nested[key])) {
+      return nested[key];
+    }
+  }
   throw invalidResponse();
 }
 
@@ -144,6 +151,8 @@ function accountLastFour(record: Record<string, unknown>): string | null {
 
 function detectAgentic(record: Record<string, unknown>): boolean | null {
   const explicit = readBoolean(record, [
+    "agentic_allowed",
+    "agenticAllowed",
     "is_agentic",
     "isAgentic",
     "agentic",
@@ -157,6 +166,7 @@ function detectAgentic(record: Record<string, unknown>): boolean | null {
     "accountType",
     "brokerage_account_type",
     "brokerageAccountType",
+    "nickname",
     "name",
     "display_name",
     "displayName",

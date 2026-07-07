@@ -234,7 +234,18 @@ router.get("/broker-execution/robinhood/oauth/callback", async (req, res) => {
       subject: { type: "broker_provider", id: "robinhood" },
     });
     res.redirect(302, "/?screen=settings&robinhood=connected");
-  } catch {
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    logger.error(
+      { err: message },
+      "robinhood oauth callback token exchange failed",
+    );
+    void recordAuditEvent({
+      appUserId: session.user.id,
+      eventType: "broker.connect_error",
+      subject: { type: "broker_provider", id: "robinhood" },
+      payload: { error: message },
+    });
     res.redirect(302, "/?screen=settings&robinhood=error");
   }
 });
