@@ -17,9 +17,6 @@ export const ENTITLEMENTS = {
 
 export type Entitlement = (typeof ENTITLEMENTS)[keyof typeof ENTITLEMENTS];
 
-export const KNOWN_ENTITLEMENTS: readonly Entitlement[] =
-  Object.values(ENTITLEMENTS);
-
 // Paid plans that imply broker_connect when a launch token carries a plan but no
 // explicit entitlements array. The one tunable business knob — adjust when the
 // parent site's plan names are finalized. ibkr_access is NEVER plan-granted.
@@ -47,6 +44,23 @@ export function defaultEntitlementsForPlan(plan: string | null): string[] {
   return BROKER_CONNECT_PLANS.has(normalized)
     ? [ENTITLEMENTS.BROKER_CONNECT]
     : [];
+}
+
+// Resolve the entitlements to persist for a launch / re-launch. The token's
+// `entitlements` claim is the source of truth: an EXPLICIT array — including an
+// empty `[]`, a deliberate "this user has zero entitlements" signal from the
+// trusted parent — is honored verbatim. Only when the claim is ABSENT (not an
+// array) do we derive a plan default, from the EFFECTIVE plan (this token's
+// plan, else the stored plan on re-launch) so a bare re-launch of a paid user
+// re-grants the plan default instead of silently wiping their access. The plan
+// path never yields ibkr_access (compliance — that must be explicit in a token).
+export function resolveLaunchEntitlements(input: {
+  claim: unknown;
+  tokenPlan: string | null;
+  existingPlan?: string | null;
+}): string[] {
+  if (Array.isArray(input.claim)) return normalizeEntitlements(input.claim);
+  return defaultEntitlementsForPlan(input.tokenPlan ?? input.existingPlan ?? null);
 }
 
 // Fail-closed entitlement check with admin bypass. Admins (platform operators)

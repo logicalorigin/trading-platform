@@ -6,10 +6,7 @@ import { db, launchTokenJtiTable, usersTable, type User } from "@workspace/db";
 import { HttpError } from "../lib/errors";
 import { logger } from "../lib/logger";
 import { createAuthSession, type AuthResult } from "./auth";
-import {
-  defaultEntitlementsForPlan,
-  normalizeEntitlements,
-} from "./entitlements";
+import { resolveLaunchEntitlements } from "./entitlements";
 
 // Slice 6: the "Launch Platform" handoff. An external parent site mints a short-lived
 // signed JWT (RS256; parent holds the private key, we hold only the public key) that we
@@ -140,7 +137,7 @@ async function provisionLaunchUser(input: {
   email: string;
   name: string | null;
   plan: string | null;
-  entitlements: string[];
+  entitlementsClaim: unknown;
 }): Promise<User> {
   const findExisting = async () => {
     const [row] = await db
@@ -164,7 +161,11 @@ async function provisionLaunchUser(input: {
         email: input.email,
         displayName: input.name ?? existing.displayName,
         plan: input.plan ?? existing.plan,
-        entitlements: input.entitlements,
+        entitlements: resolveLaunchEntitlements({
+          claim: input.entitlementsClaim,
+          tokenPlan: input.plan,
+          existingPlan: existing.plan,
+        }),
         updatedAt: new Date(),
       })
       .where(eq(usersTable.id, existing.id))
@@ -180,7 +181,10 @@ async function provisionLaunchUser(input: {
       externalIssuer: input.issuer,
       externalUserId: input.sub,
       plan: input.plan,
-      entitlements: input.entitlements,
+      entitlements: resolveLaunchEntitlements({
+        claim: input.entitlementsClaim,
+        tokenPlan: input.plan,
+      }),
       role: "member",
     })
     .onConflictDoNothing()
@@ -212,19 +216,16 @@ export async function launchSession(token: string): Promise<AuthResult> {
     new Date((claims.exp as number) * 1_000),
   );
   const plan = readStringClaim(claims.plan);
-  // Token entitlements are the source of truth; fall back to a plan-derived
-  // default only when the token omits an explicit array (Slice 7).
-  let entitlements = normalizeEntitlements(claims.entitlements);
-  if (entitlements.length === 0) {
-    entitlements = defaultEntitlementsForPlan(plan);
-  }
+  // The raw entitlements claim is resolved inside provisionLaunchUser, where the
+  // stored plan is known — so a bare re-launch derives its default from the
+  // effective plan rather than wiping a paid user's access (Slice 7).
   const user = await provisionLaunchUser({
     issuer: claims.iss as string,
     sub: claims.sub as string,
     email: (claims.email as string).trim(),
     name: readStringClaim(claims.name),
     plan,
-    entitlements,
+    entitlementsClaim: claims.entitlements,
   });
   return createAuthSession({ userId: user.id });
 }

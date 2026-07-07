@@ -7,6 +7,7 @@ import {
   defaultEntitlementsForPlan,
   isIbkrMemberConnectEnabled,
   normalizeEntitlements,
+  resolveLaunchEntitlements,
   sessionHasEntitlement,
 } from "./entitlements";
 
@@ -67,6 +68,69 @@ test("defaultEntitlementsForPlan: known paid plans grant broker_connect only", (
   // Compliance: a plan can never grant ibkr_access.
   assert.equal(
     defaultEntitlementsForPlan("pro").includes(ENTITLEMENTS.IBKR_ACCESS),
+    false,
+  );
+});
+
+test("resolveLaunchEntitlements: an EXPLICIT array (incl. empty) is honored verbatim over the plan default", () => {
+  // Explicit [] on a paid-plan token = deliberate "zero entitlements"; must NOT
+  // be overridden by the plan default (the omitted-vs-empty fix).
+  assert.deepEqual(
+    resolveLaunchEntitlements({ claim: [], tokenPlan: "pro" }),
+    [],
+  );
+  // Explicit array wins verbatim (trimmed/deduped), no plan merge.
+  assert.deepEqual(
+    resolveLaunchEntitlements({ claim: ["ibkr_access"], tokenPlan: "pro" }),
+    ["ibkr_access"],
+  );
+});
+
+test("resolveLaunchEntitlements: an ABSENT claim falls back to the effective-plan default", () => {
+  // Omitted claim + paid plan -> plan default.
+  assert.deepEqual(
+    resolveLaunchEntitlements({ claim: undefined, tokenPlan: "pro" }),
+    [ENTITLEMENTS.BROKER_CONNECT],
+  );
+  // Omitted claim + free/no plan -> nothing.
+  assert.deepEqual(
+    resolveLaunchEntitlements({ claim: undefined, tokenPlan: null }),
+    [],
+  );
+  // Malformed (non-array) claim is treated as absent, not as an explicit grant.
+  assert.deepEqual(
+    resolveLaunchEntitlements({ claim: "broker_connect", tokenPlan: "pro" }),
+    [ENTITLEMENTS.BROKER_CONNECT],
+  );
+});
+
+test("resolveLaunchEntitlements: bare re-launch derives from the STORED plan (no wipe)", () => {
+  // Re-launch token omits plan + entitlements; the stored plan re-grants the
+  // default instead of leaving a paid user unentitled.
+  assert.deepEqual(
+    resolveLaunchEntitlements({
+      claim: undefined,
+      tokenPlan: null,
+      existingPlan: "pro",
+    }),
+    [ENTITLEMENTS.BROKER_CONNECT],
+  );
+  // The token's own plan still takes precedence over the stored plan.
+  assert.deepEqual(
+    resolveLaunchEntitlements({
+      claim: undefined,
+      tokenPlan: "free",
+      existingPlan: "pro",
+    }),
+    [],
+  );
+  // Compliance: no plan path ever yields ibkr_access.
+  assert.equal(
+    resolveLaunchEntitlements({
+      claim: undefined,
+      tokenPlan: "pro",
+      existingPlan: "pro",
+    }).includes(ENTITLEMENTS.IBKR_ACCESS),
     false,
   );
 });
