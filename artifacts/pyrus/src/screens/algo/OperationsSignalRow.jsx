@@ -63,6 +63,7 @@ import {
   candidateBlockerLabel,
   candidateLatestActivityLabel,
   formatContractDetail,
+  formatGreekSelectorScoreSummary,
   formatMoney,
   mergeOptionQuoteSnapshot,
   optionProviderContractId,
@@ -2393,6 +2394,9 @@ export const OperationsSignalRow = ({
   );
   const QuoteIcon = quoteState.Icon;
   const rawGreeks = formatQuoteGreeksSummary(effectiveQuote);
+  const greekSelectorScores = formatGreekSelectorScoreSummary(
+    candidate?.contractSelection,
+  );
   const greeks = hasDisplayValue(rawGreeks.main)
     ? rawGreeks
     : missingGreeksDisplay({
@@ -2535,6 +2539,7 @@ export const OperationsSignalRow = ({
     greeks.main,
     greeks.detail,
     greeks.full,
+    greekSelectorScores?.title,
   ]);
   const decisionDetailMeta = resolveDecisionDetailMeta({
     signal: signalRecord,
@@ -2805,9 +2810,13 @@ export const OperationsSignalRow = ({
     contract: (
       <DataCell
         value={contract.main}
-        detail={contract.detail}
+        detail={compactJoin([contract.detail, greekSelectorScores?.main])}
         tone={contractTone}
-        titleValue={compactJoin([contract.main, contract.detail])}
+        titleValue={compactJoin([
+          contract.main,
+          contract.detail,
+          greekSelectorScores?.title,
+        ])}
         motionState={
           contractEvaluating
             ? "evaluating"
@@ -2873,9 +2882,18 @@ export const OperationsSignalRow = ({
     greeks: (
       <GreeksGridCell
         quote={effectiveQuote}
-        fallback={greeks}
+        fallback={{
+          ...greeks,
+          detail: compactJoin([greeks.detail, greekSelectorScores?.main]),
+          full: compactJoin([greeks.full, greekSelectorScores?.detail]),
+        }}
         tone={greeksTone}
-        titleValue={compactJoin([greeks.main, greeks.detail, greeks.full])}
+        titleValue={compactJoin([
+          greeks.main,
+          greeks.detail,
+          greeks.full,
+          greekSelectorScores?.title,
+        ])}
         motionState={
           greeksEvaluating
             ? "evaluating"

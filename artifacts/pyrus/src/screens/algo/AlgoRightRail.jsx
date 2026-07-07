@@ -188,6 +188,7 @@ const collectDirtyHaltFields = ({ profileDraft, profileBaseline }) =>
 export const AlgoRightRail = ({
   cockpit,
   signalOptionsPositions,
+  signalOptionsProfile,
   profileDraft,
   profileBaseline,
   profileDirty,
@@ -334,6 +335,7 @@ export const AlgoRightRail = ({
                 <AlgoSettingsRegion
                   cockpit={cockpit}
                   signalOptionsPositions={signalOptionsPositions}
+                  signalOptionsProfile={signalOptionsProfile}
                   profileDraft={profileDraft}
                   profileBaseline={profileBaseline}
                   strategySettingsDraft={strategySettingsDraft}

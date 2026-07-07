@@ -6,7 +6,9 @@ import {
   buildSignalIndicatorMetrics,
   buildStaSignalHistoryRows,
   buildVisibleSignalRows,
+  deriveSignalOptionsHaltControlStatus,
   findSignalOptionsCandidateForSignal,
+  formatGreekSelectorScoreSummary,
   resolveAlgoDeploymentKind,
   resolveDisplayCurrentPrice,
   resolveStableStaActionSnapshot,
@@ -72,6 +74,70 @@ test("resolveAlgoDeploymentKind routes deployments to the right control surface"
     resolveAlgoDeploymentKind(undefined),
     ALGO_DEPLOYMENT_KIND.OTHER,
   );
+});
+
+test("formatGreekSelectorScoreSummary exposes per-candidate totals, components, and status", () => {
+  const summary = formatGreekSelectorScoreSummary({
+    greekSelection: {
+      selectedScore: 82.4,
+      attempts: [
+        {
+          selectedContract: {
+            ticker: "AAPL 260710C00200000",
+            expirationDate: "2026-07-10",
+            strike: 200,
+            right: "call",
+          },
+          score: {
+            total: 82.4,
+            components: {
+              deltaFit: 20,
+              breakevenFit: 23.5,
+              gammaTheta: 18,
+              ivValue: 9.5,
+              liquidity: 11.4,
+              dataQuality: 10,
+            },
+            notes: [],
+          },
+          reason: null,
+        },
+        {
+          selectedContract: {
+            ticker: "AAPL 260710C00205000",
+            expirationDate: "2026-07-10",
+            strike: 205,
+            right: "call",
+          },
+          score: {
+            total: -100,
+            components: {
+              deltaFit: 0,
+              breakevenFit: 4,
+              gammaTheta: 1,
+              ivValue: 10,
+              liquidity: 2,
+              dataQuality: 10,
+            },
+            notes: ["below_min_tradeable_delta"],
+          },
+          reason: "greek_selector_below_min_score",
+        },
+      ],
+    },
+  });
+
+  assert.equal(summary.main, "Greek 82.4");
+  assert.equal(summary.detail, "1/2 qualified");
+  assert.match(summary.title, /score 82\.4/);
+  assert.match(summary.title, /qualified/);
+  assert.match(summary.title, /delta 20\.0/);
+  assert.match(summary.title, /breakeven 23\.5/);
+  assert.match(summary.title, /gamma\/theta 18\.0/);
+  assert.match(summary.title, /IV value 9\.5/);
+  assert.match(summary.title, /liquidity 11\.4/);
+  assert.match(summary.title, /data 10\.0/);
+  assert.match(summary.title, /disqualified: below min tradeable delta/);
 });
 
 test("poll-derived Signal Options state/candidates do not create STA rows (live matrix is the sole source)", () => {
@@ -1882,4 +1948,67 @@ test("resolveSignalScoreBreakdown returns null score (not the 46.4 fallback) whe
     signal: { filterState: { mtfDirections: [1, 1, 1], adx: 30 }, direction: "buy" },
   });
   assert.ok(Number.isFinite(scored.score));
+});
+
+test("Gateway halt does not fire on a shadow signal-options deployment (retired IBKR datapath)", () => {
+  // A shadow signal-options deployment never submits to a broker gateway, so the
+  // (retired) IBKR gateway-readiness check must not halt it — even though
+  // readiness.ready is false.
+  const gatewayControl = {
+    id: "gatewayReadiness",
+    section: "infrastructureHaltControls",
+    key: "gatewayReadinessBlockEnabled",
+    reasons: ["ibkr_not_configured", "algo_gateway_not_ready"],
+  };
+  const enabledProfile = {
+    infrastructureHaltControls: { gatewayReadinessBlockEnabled: true },
+  };
+  const disabledProfile = {
+    infrastructureHaltControls: { gatewayReadinessBlockEnabled: false },
+  };
+  const shadowCockpit = {
+    readiness: { ready: false, reason: "ibkr_not_configured" },
+    deployment: { config: { parameters: { executionMode: "signal_options" } } },
+  };
+
+  // Enabled but shadow -> ARMED (the readiness gate does not activate it).
+  assert.equal(
+    deriveSignalOptionsHaltControlStatus({
+      control: gatewayControl,
+      profile: enabledProfile,
+      cockpit: shadowCockpit,
+    }).state,
+    "armed",
+  );
+  // Disabled and shadow -> OFF, not the un-disable-able FORCED.
+  assert.equal(
+    deriveSignalOptionsHaltControlStatus({
+      control: gatewayControl,
+      profile: disabledProfile,
+      cockpit: shadowCockpit,
+    }).state,
+    "off",
+  );
+
+  // A broker-submitting (non-signal-options) deployment keeps the original gate.
+  const brokerCockpit = {
+    readiness: { ready: false, reason: "ibkr_not_configured" },
+    deployment: { config: {} },
+  };
+  assert.equal(
+    deriveSignalOptionsHaltControlStatus({
+      control: gatewayControl,
+      profile: enabledProfile,
+      cockpit: brokerCockpit,
+    }).state,
+    "active",
+  );
+  assert.equal(
+    deriveSignalOptionsHaltControlStatus({
+      control: gatewayControl,
+      profile: disabledProfile,
+      cockpit: brokerCockpit,
+    }).state,
+    "forced",
+  );
 });

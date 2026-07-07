@@ -2086,6 +2086,7 @@ export const AlgoScreen = ({
               <AlgoRightRail
                 cockpit={cockpit}
                 signalOptionsPositions={signalOptionsPositions}
+                signalOptionsProfile={signalOptionsProfile}
                 profileDraft={profileDraft}
                 profileBaseline={profileDraftState.baseline}
                 profileDirty={profileDirty}

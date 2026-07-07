@@ -106,7 +106,10 @@ test("STA table does not render cached action-source health", () => {
   assert.doesNotMatch(source, /sourceHealthBanner/);
   assert.doesNotMatch(source, /Action source degraded/);
   assert.doesNotMatch(source, /STA action source is currently unavailable/);
-  assert.doesNotMatch(source, /findSignalOptionsCandidateForSignal/);
+  assert.match(
+    source,
+    /const candidate = findSignalOptionsCandidateForSignal\(candidates, signal\)/,
+  );
 });
 
 test("STA stale scan banner only fires on a genuinely empty matrix", () => {
@@ -782,17 +785,17 @@ test("STA MTF alignment filter rejects stale partial required counts", () => {
   );
 });
 
-test("STA MTF alignment counts an in-trend selected frame without a fresh crossover (mirrors backend entry gate)", () => {
+test("STA MTF alignment does NOT count a selected frame without a fresh crossover (mirrors backend entry gate)", () => {
   const config = {
     enabled: true,
     timeframes: ["1m", "2m", "5m", "15m"],
     requiredCount: 4,
   };
   // The 2m frame is in a bullish trend but has no fresh crossover
-  // (currentSignalDirection null, currentSignalAt null). The gate reads the live
-  // trendDirection — the same source the backend entry gate trades on
-  // (getTrendDirectionsForSymbol) — so this frame counts as a buy match and all
-  // four configured frames align.
+  // (currentSignalDirection null). The gate reads the per-timeframe crossover
+  // signal — the same source the backend entry gate trades on
+  // (getSignalDirectionsForSymbolAsOf) — so this frame is NEUTRAL, not a match.
+  // With requiredCount 4 and only three crossover frames, the row does not align.
   const matrix = {
     MU: {
       "1m": matrixCell("1m", "buy"),
@@ -807,7 +810,7 @@ test("STA MTF alignment counts an in-trend selected frame without a fresh crosso
 
   assert.equal(
     staRowPassesMtfAlignment(buyRow("MU", "5m"), matrix, config),
-    true,
+    false,
   );
 });
 
@@ -817,10 +820,9 @@ test("all-selected MTF keeps 2m and 5m execution rows on the same aligned symbol
     timeframes: ["1m", "2m", "5m", "15m"],
     requiredCount: 4,
   };
-  // MSFT's 2m frame is in a bullish trend with no fresh crossover. Because the
-  // gate reads the live trendDirection (mirroring the backend entry gate), that
-  // frame counts, so MSFT aligns on all four frames — and does so regardless of
-  // which execution timeframe the row is on.
+  // Both symbols carry a buy crossover on all four frames, so both align on the
+  // crossover signal — and do so regardless of which execution timeframe the row
+  // is on (the aligned set is execution-timeframe-independent).
   const matrix = {
     AAPL: {
       "1m": matrixCell("1m", "buy"),
@@ -830,10 +832,7 @@ test("all-selected MTF keeps 2m and 5m execution rows on the same aligned symbol
     },
     MSFT: {
       "1m": matrixCell("1m", "buy"),
-      "2m": matrixCell("2m", null, {
-        trendDirection: "bullish",
-        currentSignalAt: null,
-      }),
+      "2m": matrixCell("2m", "buy"),
       "5m": matrixCell("5m", "buy"),
       "15m": matrixCell("15m", "buy"),
     },

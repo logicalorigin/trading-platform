@@ -28,6 +28,7 @@ import {
   formatMoney,
   formatProgressiveTrailSteps,
   formatWireTrailRungs,
+  buildSignalOptionsReadOnlyGateBadges,
   normalizeSignalOptionsStrikeSlots,
   numberFrom,
   parseChaseSteps,
@@ -3071,9 +3072,84 @@ const SectionSummaryStrip = ({
   );
 };
 
+const ReadOnlyGateBadgeStrip = ({ badges }) => {
+  if (!badges?.length) return null;
+  return (
+    <div
+      data-testid="algo-readonly-gate-badges"
+      className="algo-settings-grid"
+      style={{
+        minWidth: 0,
+        marginBottom: sp(4),
+      }}
+    >
+      {badges.map((badge) => {
+        const tone = badge.critical
+          ? CSS_COLOR.amber
+          : badge.active
+            ? CSS_COLOR.cyan
+            : CSS_COLOR.textMuted;
+        return (
+          <AppTooltip key={badge.id} content={`${badge.label}: ${badge.value}`}>
+            <span
+              data-testid={`algo-readonly-gate-badge-${badge.id}`}
+              style={{
+                minWidth: 0,
+                display: "grid",
+                gap: sp(1),
+                padding: sp("4px 5px"),
+                border: `1px solid ${
+                  badge.critical ? cssColorMix(CSS_COLOR.amber, 38) : CSS_COLOR.borderLight
+                }`,
+                borderRadius: dim(RADII.xs),
+                background: badge.critical
+                  ? cssColorMix(CSS_COLOR.amber, 7)
+                  : CSS_COLOR.bg1,
+              }}
+            >
+              <span
+                style={{
+                  color: CSS_COLOR.textMuted,
+                  fontFamily: T.sans,
+                  fontSize: textSize("caption"),
+                  fontWeight: FONT_WEIGHTS.label,
+                  lineHeight: 1,
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  textTransform: "uppercase",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {badge.label}
+              </span>
+              <span
+                className="tnum"
+                style={{
+                  color: tone,
+                  fontFamily: T.data,
+                  fontSize: textSize("caption"),
+                  fontWeight: FONT_WEIGHTS.emphasis,
+                  lineHeight: 1.15,
+                  minHeight: Math.round(textSize("caption") * 1.15),
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {badge.value}
+              </span>
+            </span>
+          </AppTooltip>
+        );
+      })}
+    </div>
+  );
+};
+
 export const AlgoSettingsRegion = ({
   cockpit,
   signalOptionsPositions,
+  signalOptionsProfile,
   profileDraft,
   profileBaseline,
   strategySettingsDraft,
@@ -3098,6 +3174,10 @@ export const AlgoSettingsRegion = ({
   );
   const dirtyFieldKeys = new Set(dirtyFields.map(fieldKey));
   const dirtyCounts = countDirtyFieldsBySection(dirtyFields);
+  const readOnlyGateBadges = useMemo(
+    () => buildSignalOptionsReadOnlyGateBadges(signalOptionsProfile ?? profileDraft),
+    [profileDraft, signalOptionsProfile],
+  );
   const [openSections, setOpenSections] = useState({});
   const disabled =
     !focusedDeployment ||
@@ -3145,6 +3225,9 @@ export const AlgoSettingsRegion = ({
                 setOpenSections((prev) => ({ ...prev, [section.id]: !open }))
               }
             />
+            {section.id === "gates" ? (
+              <ReadOnlyGateBadgeStrip badges={readOnlyGateBadges} />
+            ) : null}
             {!open ? (
               // Collapsed: summary chips are a value preview. Open: the editable
               // fields below ARE the detail, so the chips would just duplicate them.

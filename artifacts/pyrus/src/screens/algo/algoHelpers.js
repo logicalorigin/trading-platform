@@ -85,36 +85,39 @@ export const SIGNAL_OPTIONS_DEFAULT_MTF_TIMEFRAMES = [
   "1h",
 ];
 
+// Presets pick WHICH timeframes to watch; requiredCount stays a separate
+// user dial (matches needed, not unanimity — absent higher-TF data would
+// otherwise freeze entries).
 export const SIGNAL_OPTIONS_MTF_PRESETS = [
   {
     value: "custom",
     label: "Custom",
     timeframes: SIGNAL_OPTIONS_DEFAULT_MTF_TIMEFRAMES,
-    requiredCount: SIGNAL_OPTIONS_DEFAULT_MTF_TIMEFRAMES.length,
+    requiredCount: 2,
   },
   {
     value: "scalp",
     label: "Scalp",
     timeframes: ["1m", "2m", "5m"],
-    requiredCount: 3,
+    requiredCount: 2,
   },
   {
     value: "balanced",
     label: "Balanced",
     timeframes: ["5m", "15m", "1h"],
-    requiredCount: 3,
+    requiredCount: 2,
   },
   {
     value: "higher_timeframe",
     label: "Higher TF",
     timeframes: ["15m", "1h", "1d"],
-    requiredCount: 3,
+    requiredCount: 2,
   },
   {
     value: "six_frame",
     label: "Six",
     timeframes: SIGNAL_OPTIONS_MTF_TIMEFRAMES,
-    requiredCount: SIGNAL_OPTIONS_MTF_TIMEFRAMES.length,
+    requiredCount: 2,
   },
 ];
 
@@ -146,7 +149,7 @@ export const SIGNAL_OPTIONS_DEFAULT_PROFILE = {
   entryGate: {
     mtfAlignment: {
       enabled: true,
-      requiredCount: SIGNAL_OPTIONS_DEFAULT_MTF_TIMEFRAMES.length,
+      requiredCount: 2,
       timeframes: SIGNAL_OPTIONS_DEFAULT_MTF_TIMEFRAMES,
       preset: "custom",
     },
@@ -178,7 +181,9 @@ export const SIGNAL_OPTIONS_DEFAULT_PROFILE = {
     wireGreekTrail: {
       enabled: true,
       requireFreshGreeks: true,
-      greekMaxAgeMs: 15000,
+      // Default must exceed the worst-case greek poll interval (20s) with margin,
+      // else freshness gating silently disables all greek adjustments.
+      greekMaxAgeMs: 45000,
       deltaSizingEnabled: false,
       runnerPollIntervalSeconds: 20,
       rungByProfit: SIGNAL_OPTIONS_DEFAULT_WIRE_TRAIL_RUNGS,
@@ -286,6 +291,95 @@ export const normalizeSignalOptionsProfileStrikeSlots = (profile) => {
   optionSelection.putStrikeSlot = putStrikeSlots[0];
   profile.optionSelection = optionSelection;
   return profile;
+};
+
+const formatSignalOptionsPolicyValue = (value) => {
+  if (typeof value === "boolean") return value ? "ON" : "OFF";
+  if (value == null || value === "") return MISSING_VALUE;
+  const numericValue = Number(value);
+  if (Number.isFinite(numericValue)) {
+    return Number.isInteger(numericValue)
+      ? numericValue.toLocaleString()
+      : Number(numericValue.toFixed(2)).toLocaleString();
+  }
+  return formatEnumLabel(String(value));
+};
+
+const formatSignalOptionsMtfPattern = (pattern) => {
+  const entries = Object.entries(asRecord(pattern))
+    .filter(([, direction]) =>
+      direction === "buy" || direction === "sell" || direction === "any",
+    )
+    .sort(([left], [right]) => {
+      const leftIndex = SIGNAL_OPTIONS_MTF_TIMEFRAMES.indexOf(left);
+      const rightIndex = SIGNAL_OPTIONS_MTF_TIMEFRAMES.indexOf(right);
+      if (leftIndex !== -1 || rightIndex !== -1) {
+        return (
+          (leftIndex === -1 ? Number.MAX_SAFE_INTEGER : leftIndex) -
+          (rightIndex === -1 ? Number.MAX_SAFE_INTEGER : rightIndex)
+        );
+      }
+      return left.localeCompare(right);
+    });
+  if (!entries.length) return "no pattern";
+  return entries
+    .map(([timeframe, direction]) => `${timeframe} ${formatEnumLabel(direction)}`)
+    .join(" / ");
+};
+
+export const buildSignalOptionsReadOnlyGateBadges = (profile) => {
+  const optionSelection = asRecord(profile?.optionSelection);
+  const greekSelector = asRecord(optionSelection.greekSelector);
+  const greekEnabled = Boolean(greekSelector.enabled);
+  const badges = [
+    {
+      id: "greek-selector-enabled",
+      group: "greekSelector",
+      label: "Greek selector",
+      value: greekEnabled ? "ON" : "OFF",
+      active: greekEnabled,
+    },
+  ];
+
+  if (greekEnabled) {
+    [
+      ["greek-selector-mode", "Mode", greekSelector.mode],
+      ["greek-selector-min-score", "Min score", greekSelector.minScore],
+      ["greek-selector-max-candidates", "Max candidates", greekSelector.maxCandidates],
+      [
+        "greek-selector-live-greeks",
+        "Live Greeks",
+        greekSelector.requireLiveGreeks,
+      ],
+      [
+        "greek-selector-legacy-fallback",
+        "Legacy fallback",
+        greekSelector.fallbackToLegacy,
+      ],
+    ].forEach(([id, label, value]) => {
+      badges.push({
+        id,
+        group: "greekSelector",
+        label,
+        value: formatSignalOptionsPolicyValue(value),
+        active: true,
+      });
+    });
+  }
+
+  const mtfPattern = asRecord(asRecord(profile?.entryGate).mtfPattern);
+  if (mtfPattern.enabled) {
+    badges.push({
+      id: "mtf-pattern-gate-active",
+      group: "mtfPattern",
+      label: "MTF pattern gate active",
+      value: formatSignalOptionsMtfPattern(mtfPattern.pattern),
+      active: true,
+      critical: true,
+    });
+  }
+
+  return badges;
 };
 
 export const normalizeSignalOptionsMtfTimeframes = (
@@ -666,7 +760,7 @@ export const staRowPassesMtfAlignment = (
     matrixStatesByTimeframe: signalMatrixBySymbol?.[symbolUpper] || {},
     signalDirection: normalizeStaRowSignalDirection(signalRecord.direction),
     timeframes,
-    requiredCount: numberFrom(mtfAlignmentConfig?.requiredCount, timeframes.length),
+    requiredCount: timeframes.length || mtfAlignmentConfig?.requiredCount,
     enabled: mtfAlignmentConfig?.enabled !== false,
   });
   return !(result.applicable && !result.aligned);
@@ -3493,6 +3587,96 @@ export const formatQuoteGreeksSummary = (quote) => {
   };
 };
 
+const GREEK_SCORE_COMPONENT_LABELS = [
+  ["deltaFit", "delta"],
+  ["breakevenFit", "breakeven"],
+  ["gammaTheta", "gamma/theta"],
+  ["ivValue", "IV value"],
+  ["liquidity", "liquidity"],
+  ["dataQuality", "data"],
+];
+
+const formatGreekScoreNumber = (value) => {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric.toFixed(1) : MISSING_VALUE;
+};
+
+const greekScoreAttemptStatus = (attempt) => {
+  const record = asRecord(attempt);
+  const score = asRecord(record.score);
+  const notes = Array.isArray(score.notes) ? score.notes.map(String) : [];
+  const reason = firstText(record.reason);
+  if (notes.includes("below_min_tradeable_delta")) {
+    return {
+      label: "disqualified",
+      reason: "below min tradeable delta",
+    };
+  }
+  if (reason) {
+    return {
+      label: "disqualified",
+      reason: formatEnumLabel(reason),
+    };
+  }
+  return {
+    label: "qualified",
+    reason: "",
+  };
+};
+
+const greekScoreAttemptContractLabel = (attempt) => {
+  const record = asRecord(attempt);
+  const contract = asRecord(record.selectedContract);
+  const label = formatContractLabel(contract);
+  if (label !== MISSING_VALUE) return label;
+  const quoteContractLabel = formatContractLabel(asRecord(asRecord(record.quote).contract));
+  return quoteContractLabel !== MISSING_VALUE ? quoteContractLabel : "candidate";
+};
+
+export const formatGreekSelectorScoreSummary = (contractSelection) => {
+  const selection = asRecord(contractSelection);
+  const greekSelection = asRecord(selection.greekSelection);
+  const attempts = Array.isArray(greekSelection.attempts)
+    ? greekSelection.attempts
+    : Array.isArray(selection.attempts)
+      ? selection.attempts
+      : [];
+  const scoredAttempts = attempts
+    .map((attempt) => ({ attempt: asRecord(attempt), score: asRecord(asRecord(attempt).score) }))
+    .filter(({ score }) => Number.isFinite(Number(score.total)));
+  if (!scoredAttempts.length) return null;
+
+  const selectedScore =
+    firstFiniteNumber(greekSelection.selectedScore, selection.selectedScore) ??
+    Number(scoredAttempts[0].score.total);
+  const qualifiedCount = scoredAttempts.filter(
+    ({ attempt }) => greekScoreAttemptStatus(attempt).label === "qualified",
+  ).length;
+  const candidateLines = scoredAttempts.map(({ attempt, score }) => {
+    const status = greekScoreAttemptStatus(attempt);
+    const components = asRecord(score.components);
+    const componentText = GREEK_SCORE_COMPONENT_LABELS.map(([key, label]) => {
+      const formatted = formatGreekScoreNumber(components[key]);
+      return formatted === MISSING_VALUE ? null : `${label} ${formatted}`;
+    }).filter(Boolean);
+    const statusText = [status.label, status.reason].filter(Boolean).join(": ");
+    return [
+      greekScoreAttemptContractLabel(attempt),
+      `score ${formatGreekScoreNumber(score.total)}`,
+      statusText,
+      componentText.join(" / "),
+    ]
+      .filter(Boolean)
+      .join(" | ");
+  });
+
+  return {
+    main: `Greek ${formatGreekScoreNumber(selectedScore)}`,
+    detail: `${qualifiedCount}/${scoredAttempts.length} qualified`,
+    title: ["Greek selector ladder", ...candidateLines].join("\n"),
+  };
+};
+
 export const formatContractSelectionSummary = (selection) => {
   const record = asRecord(selection);
   const attempts = Array.isArray(record.attempts) ? record.attempts : [];
@@ -3848,8 +4032,17 @@ export const deriveSignalOptionsHaltControlStatus = ({
   const reasonCount = haltReasonCount(counts, control?.reasons);
   const openSymbols = Number(risk.openSymbols ?? kpis.openSymbols);
   const maxOpenSymbols = Number(risk.maxOpenSymbols ?? kpis.maxOpenSymbols);
+  // The broker/data "Gateway" gate reflects a retired IBKR datapath. Signal-options
+  // deployments always execute as shadow (the server hard-codes
+  // brokerSubmission:false) and never touch a broker gateway, so the gate must not
+  // halt them. Apply it only when the deployment actually submits to a broker.
+  const submitsToBroker =
+    resolveAlgoDeploymentKind(asRecord(record.deployment)) !==
+    ALGO_DEPLOYMENT_KIND.SIGNAL_OPTIONS;
   const gatewayNotReady =
-    control?.id === "gatewayReadiness" && readiness.ready === false;
+    control?.id === "gatewayReadiness" &&
+    readiness.ready === false &&
+    submitsToBroker;
   const breachedDailyLoss =
     control?.id === "dailyLoss" &&
     (risk.dailyHaltActive === true || risk.dailyLossBreached === true);
