@@ -14,6 +14,9 @@ import {
 } from "./signal-options-automation";
 import { getSignalMonitorProfile } from "./signal-monitor";
 type Unsubscribe = () => void;
+type AlgoCockpitChange = Parameters<
+  Parameters<typeof subscribeAlgoCockpitChanges>[0]
+>[0];
 
 export const ALGO_COCKPIT_STREAM_INTERVAL_MS = 5_000;
 export const ALGO_COCKPIT_STREAM_COALESCE_MS = 1_000;
@@ -50,6 +53,23 @@ const normalizeMode = (mode: RuntimeMode | undefined): RuntimeMode =>
 
 const normalizeEventLimit = (limit: number | undefined): number =>
   Math.min(Math.max(Math.floor(limit ?? 20), 1), 100);
+
+function normalizeAlgoCockpitStreamInputForKey(
+  input: AlgoCockpitStreamInput = {},
+): Required<AlgoCockpitStreamInput> & { deploymentId: string | null } {
+  return {
+    deploymentId:
+      typeof input.deploymentId === "string" && input.deploymentId.trim()
+        ? input.deploymentId.trim()
+        : null,
+    mode: normalizeMode(input.mode),
+    eventLimit: normalizeEventLimit(input.eventLimit),
+  };
+}
+
+function getAlgoCockpitStreamSharingKey(input: AlgoCockpitStreamInput): string {
+  return stableStringify(normalizeAlgoCockpitStreamInputForKey(input));
+}
 
 export function shouldUsePrimaryOnlyAlgoCockpitPayload(pressure: unknown): boolean {
   void pressure;
@@ -171,6 +191,188 @@ export async function fetchAlgoCockpitStreamPayload(
   };
 }
 
+type AlgoCockpitSnapshotSubscriber = {
+  input: AlgoCockpitStreamInput;
+  active: boolean;
+  lastSignature: string;
+  onSnapshot: (payload: AlgoCockpitStreamPayload) => void;
+  onPollSuccess?: (input: {
+    payload: AlgoCockpitStreamPayload;
+    changed: boolean;
+  }) => void | Promise<void>;
+};
+
+type AlgoCockpitSharedPoller = {
+  key: string;
+  input: AlgoCockpitStreamInput;
+  subscribers: Set<AlgoCockpitSnapshotSubscriber>;
+  active: boolean;
+  inFlight: boolean;
+  queued: boolean;
+  queuedTimer: ReturnType<typeof setTimeout> | null;
+  lastPayload: AlgoCockpitStreamPayload | null;
+  timer: ReturnType<typeof setInterval> | null;
+  unsubscribeChanges: Unsubscribe;
+  tick: () => Promise<void>;
+  start: () => void;
+  stop: () => void;
+  deliverToSubscriber: (
+    subscriber: AlgoCockpitSnapshotSubscriber,
+    payload: AlgoCockpitStreamPayload,
+  ) => Promise<void>;
+};
+
+const algoCockpitSharedPollers = new Map<string, AlgoCockpitSharedPoller>();
+
+function algoCockpitChangeMatchesSubscriber(
+  input: AlgoCockpitStreamInput,
+  change: AlgoCockpitChange,
+): boolean {
+  if (
+    input.deploymentId &&
+    change.deploymentId &&
+    change.deploymentId !== input.deploymentId
+  ) {
+    return false;
+  }
+  if (input.mode && change.mode && change.mode !== input.mode) {
+    return false;
+  }
+  return true;
+}
+
+function createAlgoCockpitSharedPoller(
+  key: string,
+  input: AlgoCockpitStreamInput,
+  options: {
+    fetchPayload: typeof fetchAlgoCockpitStreamPayload;
+    subscribeChanges: typeof subscribeAlgoCockpitChanges;
+    setInterval: typeof setInterval;
+    clearInterval: typeof clearInterval;
+    setTimeout: typeof setTimeout;
+    clearTimeout: typeof clearTimeout;
+    coalescedPollDelayMs: number;
+  },
+): AlgoCockpitSharedPoller {
+  const poller: AlgoCockpitSharedPoller = {
+    key,
+    input,
+    subscribers: new Set(),
+    active: true,
+    inFlight: false,
+    queued: false,
+    queuedTimer: null,
+    lastPayload: null,
+    timer: null,
+    unsubscribeChanges: () => {},
+    deliverToSubscriber: async (subscriber, payload) => {
+      if (!subscriber.active) {
+        return;
+      }
+      const signature = stableStringify({ ...payload, updatedAt: null });
+      const changed = signature !== subscriber.lastSignature;
+      let snapshotDelivered = true;
+      if (changed) {
+        subscriber.lastSignature = signature;
+        try {
+          subscriber.onSnapshot(payload);
+        } catch (error) {
+          snapshotDelivered = false;
+          logger.warn(
+            { err: error },
+            "Algo cockpit stream subscriber write failed",
+          );
+        }
+      }
+      if (!snapshotDelivered || !subscriber.active) {
+        return;
+      }
+      try {
+        await subscriber.onPollSuccess?.({ payload, changed });
+      } catch (error) {
+        logger.warn(
+          { err: error },
+          "Algo cockpit stream subscriber freshness write failed",
+        );
+      }
+    },
+    tick: async () => {
+      if (!poller.active) {
+        return;
+      }
+      if (poller.inFlight || poller.queuedTimer) {
+        poller.queued = true;
+        return;
+      }
+      poller.inFlight = true;
+      try {
+        poller.queued = false;
+        const payload = await options.fetchPayload(
+          poller.input,
+          "algo-cockpit-live",
+        );
+        if (!poller.active) {
+          return;
+        }
+        poller.lastPayload = payload;
+        for (const subscriber of [...poller.subscribers]) {
+          await poller.deliverToSubscriber(subscriber, payload);
+        }
+      } catch (error) {
+        logger.warn({ err: error }, "Algo cockpit stream polling failed");
+      } finally {
+        poller.inFlight = false;
+        if (poller.active && poller.queued) {
+          poller.queued = false;
+          if (!poller.queuedTimer) {
+            poller.queuedTimer = options.setTimeout(() => {
+              poller.queuedTimer = null;
+              if (!poller.active) {
+                return;
+              }
+              poller.queued = false;
+              void poller.tick();
+            }, options.coalescedPollDelayMs);
+            poller.queuedTimer.unref?.();
+          }
+        }
+      }
+    },
+    start: () => {
+      poller.timer = options.setInterval(() => {
+        void poller.tick();
+      }, ALGO_COCKPIT_STREAM_INTERVAL_MS);
+      poller.timer.unref?.();
+      poller.unsubscribeChanges = options.subscribeChanges((change) => {
+        for (const subscriber of poller.subscribers) {
+          if (algoCockpitChangeMatchesSubscriber(subscriber.input, change)) {
+            void poller.tick();
+            return;
+          }
+        }
+      });
+      void poller.tick();
+    },
+    stop: () => {
+      poller.active = false;
+      if (poller.timer) {
+        options.clearInterval(poller.timer);
+        poller.timer = null;
+      }
+      if (poller.queuedTimer) {
+        options.clearTimeout(poller.queuedTimer);
+        poller.queuedTimer = null;
+      }
+      poller.unsubscribeChanges();
+      if (algoCockpitSharedPollers.get(poller.key) === poller) {
+        algoCockpitSharedPollers.delete(poller.key);
+      }
+    },
+  };
+
+  return poller;
+}
+
 export function subscribeAlgoCockpitSnapshots(
   input: AlgoCockpitStreamInput,
   onSnapshot: (payload: AlgoCockpitStreamPayload) => void,
@@ -189,10 +391,6 @@ export function subscribeAlgoCockpitSnapshots(
     coalescedPollDelayMs?: number;
   } = {},
 ): Unsubscribe {
-  let active = true;
-  let inFlight = false;
-  let queued = false;
-  let queuedTimer: ReturnType<typeof setTimeout> | null = null;
   const fetchPayload = options.fetchPayload ?? fetchAlgoCockpitStreamPayload;
   const subscribeChanges =
     options.subscribeChanges ?? subscribeAlgoCockpitChanges;
@@ -204,88 +402,55 @@ export function subscribeAlgoCockpitSnapshots(
     0,
     Math.floor(options.coalescedPollDelayMs ?? ALGO_COCKPIT_STREAM_COALESCE_MS),
   );
-  let lastSignature = options.initialPayload
-    ? stableStringify({ ...options.initialPayload, updatedAt: null })
-    : "";
-
-  const scheduleQueuedPoll = () => {
-    if (!active || queuedTimer) {
-      return;
-    }
-    queuedTimer = setPollTimeout(() => {
-      queuedTimer = null;
-      if (!active) {
-        return;
-      }
-      queued = false;
-      void tick();
-    }, coalescedPollDelayMs);
-    queuedTimer.unref?.();
+  const subscriber: AlgoCockpitSnapshotSubscriber = {
+    input,
+    active: true,
+    onSnapshot,
+    onPollSuccess: options.onPollSuccess,
+    lastSignature: options.initialPayload
+      ? stableStringify({ ...options.initialPayload, updatedAt: null })
+      : "",
   };
 
-  const tick = async () => {
-    if (!active) {
-      return;
+  const key = getAlgoCockpitStreamSharingKey(input);
+  let poller = algoCockpitSharedPollers.get(key);
+  if (!poller) {
+    poller = createAlgoCockpitSharedPoller(
+      key,
+      normalizeAlgoCockpitStreamInputForKey(input),
+      {
+        fetchPayload,
+        subscribeChanges,
+        setInterval: setPollInterval,
+        clearInterval: clearPollInterval,
+        setTimeout: setPollTimeout,
+        clearTimeout: clearPollTimeout,
+        coalescedPollDelayMs,
+      },
+    );
+    algoCockpitSharedPollers.set(key, poller);
+    poller.subscribers.add(subscriber);
+    poller.start();
+  } else {
+    poller.subscribers.add(subscriber);
+    if (poller.lastPayload) {
+      const lastPayload = poller.lastPayload;
+      queueMicrotask(() => {
+        void poller?.deliverToSubscriber(subscriber, lastPayload);
+      });
+    } else if (!poller.inFlight) {
+      void poller.tick();
     }
-    if (inFlight || queuedTimer) {
-      queued = true;
-      return;
-    }
-    inFlight = true;
-    try {
-      queued = false;
-      const payload = await fetchPayload(
-        input,
-        "algo-cockpit-live",
-      );
-      if (!active) {
-        return;
-      }
-      const signature = stableStringify({ ...payload, updatedAt: null });
-      const changed = signature !== lastSignature;
-      if (changed) {
-        lastSignature = signature;
-        onSnapshot(payload);
-      }
-      await options.onPollSuccess?.({ payload, changed });
-    } catch (error) {
-      logger.warn({ err: error }, "Algo cockpit stream polling failed");
-    } finally {
-      inFlight = false;
-      if (active && queued) {
-        queued = false;
-        scheduleQueuedPoll();
-      }
-    }
-  };
-
-  const timer = setPollInterval(() => {
-    void tick();
-  }, ALGO_COCKPIT_STREAM_INTERVAL_MS);
-  timer.unref?.();
-  const unsubscribeChanges = subscribeChanges((change) => {
-    if (
-      input.deploymentId &&
-      change.deploymentId &&
-      change.deploymentId !== input.deploymentId
-    ) {
-      return;
-    }
-    if (input.mode && change.mode && change.mode !== input.mode) {
-      return;
-    }
-    void tick();
-  });
-
-  void tick();
+  }
 
   return () => {
-    active = false;
-    clearPollInterval(timer);
-    if (queuedTimer) {
-      clearPollTimeout(queuedTimer);
-      queuedTimer = null;
+    if (!subscriber.active) {
+      return;
     }
-    unsubscribeChanges();
+    subscriber.active = false;
+    poller?.subscribers.delete(subscriber);
+    if (poller && poller.subscribers.size === 0) {
+      poller.stop();
+    }
   };
 }
