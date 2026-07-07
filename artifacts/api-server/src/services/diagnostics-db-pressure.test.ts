@@ -48,6 +48,36 @@ test("diagnostics collector avoids DB bursts while recording snapshots and event
   assert.doesNotMatch(collectorBlock, /Promise\.all\(\s*activeEvents\.map/);
 });
 
+test("diagnostics heavy reads reuse cached telemetry under DB pool pressure", () => {
+  const saturationBlock = sourceBlock(
+    "function diagnosticsDbPoolIsSaturated",
+    "function compactDiagnosticRawValue",
+  );
+  assert.match(saturationBlock, /getPoolStats\(\)/);
+  assert.match(saturationBlock, /stats\.waiting > 0/);
+  assert.match(saturationBlock, /stats\.active >= stats\.max/);
+
+  const automationBlock = sourceBlock(
+    "async function readRecentAutomationEvents",
+    "async function buildAutomationMetrics",
+  );
+  assert.match(automationBlock, /automationRecentEventsCache/);
+  assert.match(automationBlock, /diagnosticsDbPoolIsSaturated\(\)/);
+  assert.match(
+    automationBlock,
+    /eventType\} LIKE 'signal_options_%'/,
+  );
+
+  const storageBlock = sourceBlock(
+    "async function buildStorageMetrics",
+    "function classifyStorageSnapshot",
+  );
+  assert.match(storageBlock, /storageMetricsCache/);
+  assert.match(storageBlock, /storageMetricsInFlight/);
+  assert.match(storageBlock, /diagnosticsDbPoolIsSaturated\(\)/);
+  assert.match(storageBlock, /storageStatsCacheStatus: "stale"/);
+});
+
 test("diagnostics event persistence yields to high resource pressure", () => {
   const upsertEventBlock = sourceBlock(
     "async function upsertEvent",

@@ -56,6 +56,8 @@ const SIGNAL_OPTIONS_GATEWAY_BLOCKED_EVENT =
   "signal_options_gateway_blocked";
 const SIGNAL_OPTIONS_SKIPPED_EVENT = "signal_options_candidate_skipped";
 const SIGNAL_OPTIONS_EXIT_EVENT = "signal_options_shadow_exit";
+const DIAGNOSTICS_HEAVY_READ_CACHE_TTL_MS = 60_000;
+const DIAGNOSTICS_HEAVY_READ_STALE_TTL_MS = 5 * 60_000;
 
 export type DiagnosticSeverity = "info" | "warning";
 export type DiagnosticStatus = "ok" | "degraded" | "down" | "unknown";
@@ -128,6 +130,17 @@ type DiagnosticEventInput = {
   dimensions?: JsonRecord;
   raw?: JsonRecord;
   countOccurrence?: boolean;
+};
+
+type AutomationRecentEventRow = {
+  eventType: string;
+  payload: unknown;
+  occurredAt: Date;
+};
+
+type CachedHeavyRead<T> = {
+  value: T;
+  cachedAt: number;
 };
 
 export type DiagnosticEventStatus = "open" | "resolved";
@@ -500,6 +513,55 @@ let latestPayload: DiagnosticsLatestPayload | null = null;
 let collectorTimer: NodeJS.Timeout | null = null;
 let lastDbWarningAt = 0;
 
+// Write-hygiene state (census R3+S12): collapse the observability system's own
+// per-tick DB churn.
+const DIAGNOSTIC_EVENT_PERSIST_TOUCH_MS = 5 * 60 * 1000;
+const DIAGNOSTIC_RETENTION_CLEANUP_INTERVAL_MS = 6 * 60 * 60 * 1000;
+
+type PersistedDiagnosticEventSignature = {
+  status: DiagnosticEventStatus;
+  severity: DiagnosticSeverity;
+  message: string;
+  lastSeenAtMs: number;
+};
+
+const lastPersistedDiagnosticEventByKey = new Map<
+  string,
+  PersistedDiagnosticEventSignature
+>();
+let lastDiagnosticsRetentionCleanupAt = 0;
+
+// Skip the diagnostic-event DB upsert when nothing material changed and the
+// persisted row's lastSeenAt is still within the coarse touch window. The 5-min
+// touch keeps the DB row fresh enough that the 24h retention DELETE never prunes
+// an active-but-unchanged incident.
+function shouldPersistDiagnosticEventToDb(
+  last: PersistedDiagnosticEventSignature | undefined,
+  next: PersistedDiagnosticEventSignature,
+  touchMs: number,
+): boolean {
+  if (!last) return true;
+  if (
+    last.status !== next.status ||
+    last.severity !== next.severity ||
+    last.message !== next.message
+  ) {
+    return true;
+  }
+  return next.lastSeenAtMs - last.lastSeenAtMs >= touchMs;
+}
+
+// 24h retention changes at most once/day, so the DELETEs do not need to run on
+// every 15s collector tick — a 6h cadence prunes eligible rows well within the
+// retention window while removing ~11.5k no-op DELETEs/day.
+function shouldRunDiagnosticsRetentionCleanup(
+  nowMs: number,
+  lastRunMs: number,
+  intervalMs: number,
+): boolean {
+  return nowMs - lastRunMs >= intervalMs;
+}
+
 function nowIso(): string {
   return new Date().toISOString();
 }
@@ -755,6 +817,11 @@ async function safeDb<T>(
     warnDbFailure(error, operation);
     return fallback;
   }
+}
+
+function diagnosticsDbPoolIsSaturated(): boolean {
+  const stats = getPoolStats();
+  return stats.waiting > 0 || (stats.max > 0 && stats.active >= stats.max);
 }
 
 function compactDiagnosticRawValue(value: unknown, depth = 0): unknown {
@@ -1757,6 +1824,13 @@ function buildIbkrDiagnosticEvents(
   metrics: JsonRecord,
 ): DiagnosticEventInput[] {
   const events: DiagnosticEventInput[] = [];
+  // The IBKR desktop bridge is retired by design (platform.ts hard-codes
+  // bridgeRuntimeStatus:"retired"), so every branch below would fire a
+  // vestigial warning (ibkr_bridge_required, health-stale, …) every 15s
+  // forever. No consumer keys on these codes; emit nothing when retired.
+  if (textValue(ibkrRaw["bridgeRuntimeStatus"]) === "retired") {
+    return events;
+  }
   const configured = booleanValue(metrics["configured"]);
   const bridgeUrlConfigured = booleanValue(ibkrRaw["bridgeUrlConfigured"]);
   const bridgeTokenConfigured = booleanValue(ibkrRaw["bridgeTokenConfigured"]);
@@ -2058,15 +2132,34 @@ function buildProbeMetrics(probes: JsonRecord): {
 }
 
 const SIGNAL_OPTIONS_SCAN_STALE_WARNING_MS = 120_000;
+let automationRecentEventsCache: CachedHeavyRead<AutomationRecentEventRow[]> | null =
+  null;
+let automationRecentEventsInFlight: Promise<AutomationRecentEventRow[]> | null =
+  null;
 
-async function buildAutomationMetrics(): Promise<{
-  metrics: JsonRecord;
-  raw: JsonRecord;
-}> {
-  const worker = getSignalOptionsWorkerSnapshot();
-  const nowMs = Date.now();
-  const recentSince = new Date(nowMs - 60 * 60 * 1000);
-  const recentEvents = await safeDb(
+async function readRecentAutomationEvents(
+  recentSince: Date,
+): Promise<AutomationRecentEventRow[]> {
+  const now = Date.now();
+  if (
+    automationRecentEventsCache &&
+    now - automationRecentEventsCache.cachedAt < DIAGNOSTICS_HEAVY_READ_CACHE_TTL_MS
+  ) {
+    return automationRecentEventsCache.value;
+  }
+  if (
+    automationRecentEventsCache &&
+    diagnosticsDbPoolIsSaturated() &&
+    now - automationRecentEventsCache.cachedAt <
+      DIAGNOSTICS_HEAVY_READ_STALE_TTL_MS
+  ) {
+    return automationRecentEventsCache.value;
+  }
+  if (automationRecentEventsInFlight) {
+    return automationRecentEventsInFlight;
+  }
+
+  const request = safeDb(
     "list automation diagnostic events",
     async () =>
       db
@@ -2076,14 +2169,37 @@ async function buildAutomationMetrics(): Promise<{
           occurredAt: executionEventsTable.occurredAt,
         })
         .from(executionEventsTable)
-        .where(gte(executionEventsTable.occurredAt, recentSince))
+        .where(
+          and(
+            gte(executionEventsTable.occurredAt, recentSince),
+            sql`${executionEventsTable.eventType} LIKE 'signal_options_%'`,
+          ),
+        )
         .orderBy(desc(executionEventsTable.occurredAt))
         .limit(1_000),
-    [],
-  );
-  const automationEvents = recentEvents.filter((event) =>
-    event.eventType.startsWith(SIGNAL_OPTIONS_EVENT_PREFIX),
-  );
+    automationRecentEventsCache?.value ?? [],
+  ).then((rows) => {
+    automationRecentEventsCache = { value: rows, cachedAt: Date.now() };
+    return rows;
+  });
+  automationRecentEventsInFlight = request;
+  try {
+    return await request;
+  } finally {
+    if (automationRecentEventsInFlight === request) {
+      automationRecentEventsInFlight = null;
+    }
+  }
+}
+
+async function buildAutomationMetrics(): Promise<{
+  metrics: JsonRecord;
+  raw: JsonRecord;
+}> {
+  const worker = getSignalOptionsWorkerSnapshot();
+  const nowMs = Date.now();
+  const recentSince = new Date(nowMs - 60 * 60 * 1000);
+  const automationEvents = await readRecentAutomationEvents(recentSince);
   const automationDeployments = await safeDb(
     "list automation deployments",
     async () =>
@@ -2901,6 +3017,9 @@ async function buildDatabaseStorageStats(): Promise<JsonRecord> {
   };
 }
 
+let storageMetricsCache: CachedHeavyRead<JsonRecord> | null = null;
+let storageMetricsInFlight: Promise<JsonRecord> | null = null;
+
 async function buildStorageMetrics(): Promise<JsonRecord> {
   const health = await refreshStorageHealthSnapshot();
   if (!health.reachable) {
@@ -2915,29 +3034,75 @@ async function buildStorageMetrics(): Promise<JsonRecord> {
     };
   }
 
+  const now = Date.now();
+  if (
+    storageMetricsCache &&
+    now - storageMetricsCache.cachedAt < DIAGNOSTICS_HEAVY_READ_CACHE_TTL_MS
+  ) {
+    return { ...storageMetricsCache.value, storageStatsCacheStatus: "hit" };
+  }
+  if (
+    storageMetricsCache &&
+    diagnosticsDbPoolIsSaturated() &&
+    now - storageMetricsCache.cachedAt < DIAGNOSTICS_HEAVY_READ_STALE_TTL_MS
+  ) {
+    return {
+      ...storageMetricsCache.value,
+      storageStatsCacheStatus: "stale",
+      storageStatsCacheAgeMs: now - storageMetricsCache.cachedAt,
+    };
+  }
+  if (storageMetricsInFlight) {
+    return storageMetricsInFlight;
+  }
+
+  const request = (async () => {
   try {
     const [monitoredTables, databaseStats] = await Promise.all([
       buildMonitoredStorageTableStats(),
       buildDatabaseStorageStats(),
     ]);
-    return {
+    const metrics = {
       ...health,
       ...databaseStats,
       snapshotRetentionDays: SNAPSHOT_RETENTION_DAYS,
       monitoredTables,
+      storageStatsCacheStatus: "miss",
     };
+    storageMetricsCache = { value: metrics, cachedAt: Date.now() };
+    return metrics;
   } catch (error) {
     warnDbFailure(error, "load monitored storage table stats");
     const degraded = markStorageHealthDegraded(
       "storage_table_stats_unavailable",
       error,
     );
-    return {
+    const fallback = {
       ...degraded,
       snapshotRetentionDays: SNAPSHOT_RETENTION_DAYS,
       monitoredTables: [],
       tableStatsError: summarizeTransientPostgresError(error),
     };
+    if (storageMetricsCache) {
+      return {
+        ...storageMetricsCache.value,
+        status: fallback.status,
+        reason: fallback.reason,
+        tableStatsError: fallback.tableStatsError,
+        storageStatsCacheStatus: "stale",
+        storageStatsCacheAgeMs: Date.now() - storageMetricsCache.cachedAt,
+      };
+    }
+    return fallback;
+  }
+  })();
+  storageMetricsInFlight = request;
+  try {
+    return await request;
+  } finally {
+    if (storageMetricsInFlight === request) {
+      storageMetricsInFlight = null;
+    }
   }
 }
 
@@ -3210,6 +3375,25 @@ async function upsertEvent(
     return payload;
   }
 
+  const nextSignature: PersistedDiagnosticEventSignature = {
+    status: payload.status,
+    severity: payload.severity,
+    message: payload.message,
+    lastSeenAtMs: Date.parse(payload.lastSeenAt),
+  };
+  if (
+    !shouldPersistDiagnosticEventToDb(
+      lastPersistedDiagnosticEventByKey.get(key),
+      nextSignature,
+      DIAGNOSTIC_EVENT_PERSIST_TOUCH_MS,
+    )
+  ) {
+    if (shouldBroadcast) {
+      broadcast({ type: "event", payload });
+    }
+    return payload;
+  }
+
   await safeDb(
     "upsert diagnostic event",
     async () => {
@@ -3248,6 +3432,7 @@ async function upsertEvent(
     },
     undefined,
   );
+  lastPersistedDiagnosticEventByKey.set(key, nextSignature);
 
   if (shouldBroadcast) {
     broadcast({ type: "event", payload });
@@ -3266,6 +3451,9 @@ async function resolveEvent(event: DiagnosticEventPayload): Promise<void> {
     lastSeenAt: nowIso(),
   };
   memoryEvents.set(event.incidentKey, resolved);
+  // Drop the persisted "open" signature so a later reopen is never skipped as
+  // "unchanged" and correctly flips the DB row back to open.
+  lastPersistedDiagnosticEventByKey.delete(event.incidentKey);
 
   await safeDb(
     "resolve diagnostic event",
@@ -4333,28 +4521,37 @@ export async function collectDiagnosticSnapshot(
   );
   activeThresholdKeys.forEach((key) => activeIncidentKeys.add(key));
   await resolveInactiveCollectorEvents(activeIncidentKeys);
-  await safeDb(
-    "diagnostics retention cleanup",
-    async () => {
-      await db
-        .delete(diagnosticSnapshotsTable)
-        .where(
-          lte(
-            diagnosticSnapshotsTable.observedAt,
-            new Date(Date.now() - SNAPSHOT_RETENTION_MS),
-          ),
-        );
-      await db
-        .delete(diagnosticEventsTable)
-        .where(
-          lte(
-            diagnosticEventsTable.lastSeenAt,
-            new Date(Date.now() - SNAPSHOT_RETENTION_MS),
-          ),
-        );
-    },
-    undefined,
-  );
+  if (
+    shouldRunDiagnosticsRetentionCleanup(
+      Date.now(),
+      lastDiagnosticsRetentionCleanupAt,
+      DIAGNOSTIC_RETENTION_CLEANUP_INTERVAL_MS,
+    )
+  ) {
+    lastDiagnosticsRetentionCleanupAt = Date.now();
+    await safeDb(
+      "diagnostics retention cleanup",
+      async () => {
+        await db
+          .delete(diagnosticSnapshotsTable)
+          .where(
+            lte(
+              diagnosticSnapshotsTable.observedAt,
+              new Date(Date.now() - SNAPSHOT_RETENTION_MS),
+            ),
+          );
+        await db
+          .delete(diagnosticEventsTable)
+          .where(
+            lte(
+              diagnosticEventsTable.lastSeenAt,
+              new Date(Date.now() - SNAPSHOT_RETENTION_MS),
+            ),
+          );
+      },
+      undefined,
+    );
+  }
 
   const events = Array.from(memoryEvents.values())
     .filter((event) => event.status === "open")
@@ -4696,6 +4893,9 @@ export function getLatestDiagnostics(): DiagnosticsLatestPayload | null {
 export const __diagnosticsInternalsForTests = {
   buildIbkrDiagnosticEvents,
   buildIbkrMetrics,
+  diagnosticsDbPoolIsSaturated,
+  shouldPersistDiagnosticEventToDb,
+  shouldRunDiagnosticsRetentionCleanup,
 };
 
 export function __resetDiagnosticsStateForTests(): void {
@@ -4703,6 +4903,12 @@ export function __resetDiagnosticsStateForTests(): void {
   memoryEvents.clear();
   clientMetrics.splice(0, clientMetrics.length);
   latestPayload = null;
+  lastPersistedDiagnosticEventByKey.clear();
+  lastDiagnosticsRetentionCleanupAt = 0;
+  automationRecentEventsCache = null;
+  automationRecentEventsInFlight = null;
+  storageMetricsCache = null;
+  storageMetricsInFlight = null;
 }
 
 export function subscribeDiagnostics(
