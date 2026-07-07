@@ -45,8 +45,6 @@ type MonitorSample = {
   frontendHealth: FetchResult;
   diagnostics: FetchResult;
   runtime: FetchResult;
-  lineUsage: FetchResult;
-  lanes: FetchResult | null;
   session: FetchResult | null;
   browser: BrowserSample | null;
   processes: ProcessSnapshot[];
@@ -103,13 +101,6 @@ export type MonitorReport = {
     consoleErrors: string[];
     requestFailures: string[];
     launchError: string | null;
-  };
-  ibkr: {
-    lineUtilization: RangeSummary;
-    admissionActiveLines: RangeSummary;
-    bridgeActiveLines: RangeSummary;
-    drift: RangeSummary;
-    schedulerPressureStates: string[];
   };
   processes: Record<string, {
     pid: number | null;
@@ -422,15 +413,6 @@ function processSummary(samples: MonitorSample[]): MonitorReport["processes"] {
   );
 }
 
-function schedulerPressureStates(samples: MonitorSample[]): string[] {
-  return distinctStrings(
-    samples.flatMap((sample) => {
-      const scheduler = asRecord(asRecord(asRecord(sample.lineUsage.value?.["bridge"])["diagnostics"])["scheduler"]);
-      return Object.values(scheduler).map((entry) => asRecord(entry)["pressure"]);
-    }),
-  );
-}
-
 function reportStatus(samples: MonitorSample[]): MonitorReport["verdict"] {
   const reasons: string[] = [];
   const latest = samples.at(-1);
@@ -478,9 +460,6 @@ function buildOptimizationCandidates(report: Omit<MonitorReport, "optimizationCa
       `Start with resource-pressure driver ${String(driver["label"] ?? driver["kind"])} (${String(driver["detail"] ?? driver["level"] ?? "no detail")}).`,
     );
   }
-  if ((report.ibkr.lineUtilization.max ?? 0) >= 0.85) {
-    candidates.push(`Tune market-data line allocation; utilization peaked at ${report.ibkr.lineUtilization.max}.`);
-  }
   return candidates.length ? candidates : ["No obvious hotspot crossed the monitor thresholds; compare raw samples before changing behavior."];
 }
 
@@ -491,9 +470,6 @@ export function buildReport(
   const browserSamples = samples
     .map((sample) => sample.browser)
     .filter((sample): sample is BrowserSample => Boolean(sample));
-  const lineUtilization = samples.map((sample) =>
-    numberValue(asRecord(asRecord(sample.lineUsage.value?.["admission"])["pressure"])["utilization"]),
-  );
   const cgroupEvents = asRecord(samples.at(-1)?.cgroup["events"]);
   const partial = {
     window: {
@@ -530,13 +506,6 @@ export function buildReport(
       consoleErrors: [],
       requestFailures: [],
       launchError: null,
-    },
-    ibkr: {
-      lineUtilization: numberRange(lineUtilization),
-      admissionActiveLines: numberRange(samples.map((sample) => numberValue(asRecord(sample.lineUsage.value?.["admission"])["activeLineCount"]))),
-      bridgeActiveLines: numberRange(samples.map((sample) => numberValue(asRecord(sample.lineUsage.value?.["bridge"])["activeLineCount"]))),
-      drift: numberRange(samples.map((sample) => numberValue(asRecord(sample.lineUsage.value?.["drift"])["admissionVsBridgeLineDelta"]))),
-      schedulerPressureStates: schedulerPressureStates(samples),
     },
     processes: processSummary(samples),
     cgroup: {
@@ -631,13 +600,6 @@ export function renderMarkdownReport(report: MonitorReport): string {
     `- Page errors: ${report.browser.pageErrors.length}`,
     `- Console errors: ${report.browser.consoleErrors.length}`,
     `- Request failures: ${report.browser.requestFailures.length}`,
-    "",
-    "## IBKR And Market Data",
-    `- Line utilization min/avg/max: ${formatRange(report.ibkr.lineUtilization)}`,
-    `- Admission active lines min/avg/max: ${formatRange(report.ibkr.admissionActiveLines)}`,
-    `- Bridge active lines min/avg/max: ${formatRange(report.ibkr.bridgeActiveLines)}`,
-    `- Drift min/avg/max: ${formatRange(report.ibkr.drift)}`,
-    `- Scheduler pressure states: ${report.ibkr.schedulerPressureStates.join(", ") || "none"}`,
     "",
     "## Resource Pressure",
     `- Levels observed: ${report.resourcePressure.levels.join(", ") || "none"}`,
@@ -803,8 +765,6 @@ async function collectSample(
     frontendHealth,
     diagnostics,
     runtime,
-    lineUsage,
-    lanes,
     session,
     processSnapshots,
     cgroup,
@@ -813,10 +773,6 @@ async function collectSample(
     fetchJson(frontendApiBase, "/healthz", 2_500, "frontend:/api/healthz"),
     fetchJson(options.apiBaseUrl, "/diagnostics/latest", 5_000),
     fetchJson(options.apiBaseUrl, "/diagnostics/runtime", 8_000),
-    fetchJson(options.apiBaseUrl, "/settings/ibkr-line-usage", 8_000),
-    deep
-      ? fetchJson(options.apiBaseUrl, "/settings/ibkr-lanes", 10_000)
-      : Promise.resolve(null),
     deep
       ? fetchJson(options.apiBaseUrl, "/session", 5_000)
       : Promise.resolve(null),
@@ -830,8 +786,6 @@ async function collectSample(
     frontendHealth,
     diagnostics,
     runtime,
-    lineUsage,
-    lanes,
     session,
     browser: null,
     processes: processSnapshots,

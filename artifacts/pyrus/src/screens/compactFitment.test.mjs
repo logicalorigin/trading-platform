@@ -9,9 +9,6 @@ test("wave one compact strips use packed intrinsic tracks", () => {
   const flowInlineSource = readLocalSource("../features/flow/ContractDetailInline.jsx");
   const diagnosticsSource = readLocalSource("./DiagnosticsScreen.jsx");
   const cashFundingSource = readLocalSource("./account/CashFundingPanel.jsx");
-  const laneArchitectureSource = readLocalSource(
-    "./settings/IbkrLaneArchitecturePanel.jsx",
-  );
 
   assert.ok(
     flowInlineSource.includes('data-testid="flow-inline-execution-quality"') &&
@@ -38,14 +35,4 @@ test("wave one compact strips use packed intrinsic tracks", () => {
     "Expected account cash summary metrics to pack to intrinsic width",
   );
 
-  assert.ok(
-    laneArchitectureSource.includes(
-      "data-testid={`settings-ibkr-lane-mini-metrics-${lane.laneId}`}",
-    ) &&
-      laneArchitectureSource.includes(
-        "gridTemplateColumns: `repeat(auto-fit, minmax(min(100%, ${dim(86)}px), max-content))`,",
-      ) &&
-      laneArchitectureSource.includes('justifyContent: "start",'),
-    "Expected IBKR lane mini metrics to pack to intrinsic width",
-  );
 });

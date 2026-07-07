@@ -17,10 +17,6 @@ import {
   useUpdateSignalMonitorProfile,
 } from "@workspace/api-client-react";
 import {
-  buildLanePresetPatch,
-  normalizeLaneSymbolList,
-} from "./settings/ibkrLaneUiModel";
-import {
   DiagnosticThresholdSettingsPanel,
 } from "./settings/DiagnosticThresholdSettingsPanel";
 import { SnapTradeConnectPanel } from "./settings/SnapTradeConnectPanel.jsx";
@@ -56,10 +52,6 @@ import {
   useFlowScannerControlState,
 } from "../features/platform/marketFlowStore";
 import { useToast } from "../features/platform/platformContexts.jsx";
-import {
-  IBKR_BRIDGE_SESSION_KEYS,
-  readIbkrBridgeSessionValue,
-} from "../features/platform/ibkrBridgeSession";
 import {
   getChartTimeframeOptions,
   resolveChartTimeframeFavorites,
@@ -1170,164 +1162,6 @@ function useDiagnosticAlertPreferences() {
   }, [commit]);
 
   return { preferences, patch, snooze, clearDismissals, reset };
-}
-
-function useIbkrLaneSettings({ enabled = true } = {}) {
-  const toast = useToast();
-  const [snapshot, setSnapshot] = useState(null);
-  const [drafts, setDrafts] = useState({});
-  const [policyDrafts, setPolicyDrafts] = useState({});
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState(null);
-
-  const load = useCallback(() => {
-    fetch("/api/settings/ibkr-lanes", { headers: { Accept: "application/json" } })
-      .then((response) =>
-        response.ok
-          ? response.json()
-          : response.json().then((payload) => Promise.reject(payload)),
-      )
-      .then((payload) => {
-        setSnapshot(payload);
-        setError(null);
-      })
-      .catch((err) => {
-        setError(err?.detail || err?.message || "IBKR lane architecture is unavailable.");
-      });
-  }, []);
-
-  useEffect(() => {
-    if (!enabled) return;
-    load();
-  }, [enabled, load]);
-
-  const applyPolicyPatch = useCallback((patch) => {
-    setPolicyDrafts((current) => {
-      const next = { ...current };
-      Object.entries(patch || {}).forEach(([laneId, lanePatch]) => {
-        next[laneId] = {
-          ...(next[laneId] || {}),
-          ...lanePatch,
-          sources: {
-            ...(next[laneId]?.sources || {}),
-            ...(lanePatch.sources || {}),
-          },
-          manualSymbols:
-            lanePatch.manualSymbols !== undefined
-              ? normalizeLaneSymbolList(lanePatch.manualSymbols)
-              : next[laneId]?.manualSymbols,
-          excludedSymbols:
-            lanePatch.excludedSymbols !== undefined
-              ? normalizeLaneSymbolList(lanePatch.excludedSymbols)
-              : next[laneId]?.excludedSymbols,
-          priority: Array.isArray(lanePatch.priority)
-            ? [...lanePatch.priority]
-            : next[laneId]?.priority,
-        };
-      });
-      return next;
-    });
-  }, []);
-
-  const save = useCallback(() => {
-    const managementToken = readIbkrBridgeSessionValue(
-      IBKR_BRIDGE_SESSION_KEYS.managementToken,
-    );
-    if (!managementToken) {
-      const message = "Start or reconnect IB Gateway before saving lane overrides.";
-      setError(message);
-      toast.push({
-        kind: "warn",
-        title: "Gateway required",
-        body: message,
-      });
-      return;
-    }
-    if (Object.keys(drafts).length === 0 && Object.keys(policyDrafts).length === 0) {
-      return;
-    }
-    setSaving(true);
-    setError(null);
-    fetch("/api/settings/ibkr-lanes", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json", Accept: "application/json" },
-      body: JSON.stringify({
-        managementToken,
-        overrides: drafts,
-        lanePolicy: policyDrafts,
-      }),
-    })
-      .then((response) =>
-        response.ok
-          ? response.json()
-          : response.json().then((payload) => Promise.reject(payload)),
-      )
-      .then((payload) => {
-        setSnapshot(payload);
-        setDrafts({});
-        setPolicyDrafts({});
-        toast.push({
-          kind: "success",
-          title: "IBKR lane settings saved",
-        });
-      })
-      .catch((err) => {
-        const message = err?.detail || err?.message || "Failed to save IBKR lane overrides.";
-        setError(message);
-        toast.push({
-          kind: "error",
-          title: "IBKR lane save failed",
-          body: message,
-        });
-      })
-      .finally(() => setSaving(false));
-  }, [drafts, policyDrafts, toast]);
-
-  return {
-    snapshot,
-    drafts,
-    policyDrafts,
-    saving,
-    error,
-    bridgeReady: Boolean(
-      readIbkrBridgeSessionValue(IBKR_BRIDGE_SESSION_KEYS.managementToken),
-    ),
-    onChange: (id, value) => setDrafts((current) => ({ ...current, [id]: value })),
-    onReset: (id) => setDrafts((current) => ({ ...current, [id]: null })),
-    onPolicyChange: (laneId, patch) =>
-      setPolicyDrafts((current) => ({
-        ...current,
-        [laneId]: {
-          ...(current[laneId] || {}),
-          ...patch,
-          sources: {
-            ...(current[laneId]?.sources || {}),
-            ...(patch.sources || {}),
-          },
-        },
-      })),
-    onResetPolicy: (laneId, defaultPolicy) => {
-      if (!defaultPolicy) return;
-      applyPolicyPatch({
-        [laneId]: {
-          ...defaultPolicy,
-          sources: { ...(defaultPolicy.sources || {}) },
-          manualSymbols: normalizeLaneSymbolList(defaultPolicy.manualSymbols || []),
-          excludedSymbols: normalizeLaneSymbolList(defaultPolicy.excludedSymbols || []),
-          priority: Array.isArray(defaultPolicy.priority)
-            ? [...defaultPolicy.priority]
-            : undefined,
-        },
-      });
-    },
-    onApplyPreset: (presetId, defaults) => applyPolicyPatch(buildLanePresetPatch(presetId, defaults)),
-    onDiscard: () => {
-      setDrafts({});
-      setPolicyDrafts({});
-    },
-    onSave: save,
-    onReload: load,
-  };
 }
 
 function StoragePrunePanel() {
@@ -3091,7 +2925,6 @@ export default function SettingsScreen({
                 </Panel>
                 <Panel title="Controls">
                   <StateRow label="Thresholds" value={summary.thresholdCount} />
-                  <StateRow label="IBKR lanes" value={summary.ibkrLaneCount} />
                 </Panel>
                 <Panel title="Workspace">
                   <StateRow label="Watchlists" value={summary.watchlistCount} />
