@@ -319,7 +319,7 @@ function breakevenMovePct(input: ScoreOptionGreekCandidateInput): number | null 
 // trade (the DIA 471P that triggered this work had |delta| ~= 0). Such a contract
 // is disqualified outright so the scorer never RANKS it as selectable, rather than
 // relying on a downstream moneyness guard to catch the pick after the fact.
-const MIN_TRADEABLE_ABS_DELTA = 0.15;
+export const MIN_TRADEABLE_ABS_DELTA = 0.15;
 
 export function scoreOptionGreekCandidate(input: ScoreOptionGreekCandidateInput): OptionGreekScore {
   const notes: string[] = [];
@@ -341,11 +341,18 @@ export function scoreOptionGreekCandidate(input: ScoreOptionGreekCandidateInput)
 
   const thetaDailyPct =
     input.entryPrice > 0 ? Math.abs(input.greeks.theta) / input.entryPrice : null;
-  const gammaMoveValue = input.greeks.gamma * input.spot * input.spot * 0.0001;
+  // Premium-fraction gained from gamma on a 1% underlying move. Dividing by the
+  // entry premium keeps the ratio with thetaDailyPct (premium-fraction lost per
+  // day) dimensionless, so the component compares gamma efficiency across
+  // underlying price levels instead of saturating on expensive underlyings.
+  const gammaMovePremiumFraction =
+    input.entryPrice > 0
+      ? (input.greeks.gamma * input.spot * input.spot * 0.0001) / input.entryPrice
+      : null;
   const gammaTheta =
-    thetaDailyPct == null
+    thetaDailyPct == null || gammaMovePremiumFraction == null
       ? 0
-      : clamp(gammaMoveValue / Math.max(thetaDailyPct, 0.002), 0, 1) * 15;
+      : clamp(gammaMovePremiumFraction / Math.max(thetaDailyPct, 0.002), 0, 1) * 15;
   if (thetaDailyPct != null && thetaDailyPct > 0.08) notes.push("high_theta_burden");
 
   const premiumMovePct = input.entryPrice / input.spot;

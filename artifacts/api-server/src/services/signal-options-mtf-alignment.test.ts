@@ -94,7 +94,7 @@ test("matrix MTF: every configured frame must align", () => {
     entryGate: {
       mtfAlignment: {
         enabled: true,
-        requiredCount: 2,
+        requiredCount: 3,
         timeframes: ["2m", "5m", "15m"],
       },
     },
@@ -106,10 +106,10 @@ test("matrix MTF: every configured frame must align", () => {
     } as Parameters<typeof signalOptionsEffectiveMtfTimeframes>[0]["deployment"],
   });
 
-  // requiredCount is a stored mirror of the frame count across the whole stack
-  // (frontend normalizeAlgoMtfRequiredCount + backend resolveSignalOptionsExecutionProfile
-  // both force it to the number of configured frames), so full alignment is
-  // required by design: 2-of-3 aligned still blocks.
+  // requiredCount is a configurable N-of-M confluence threshold (resolver clamps it to
+  // the frame count but does NOT force it there). With full alignment demanded
+  // (requiredCount = 3), a frame with no signal yet (2m: null) cannot satisfy the
+  // gate: 2-of-3 aligned still blocks.
   const gate = evaluateSignalOptionsEntryGate({
     candidate,
     profile: threeFrameProfile,

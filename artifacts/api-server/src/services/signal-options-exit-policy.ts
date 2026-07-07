@@ -349,6 +349,10 @@ export function computeSignalOptionsPositionStop(input: {
   barsSinceEntry?: number | null;
   signalQuality?: SignalOptionsEntryQuality | null;
   now?: Date | null;
+  // Shadow-first gate: unless the caller passes the operator enforce flag, the wire
+  // trail is telemetry-only — enforced stop behavior stays byte-for-byte identical to
+  // a wire-disabled profile (the contract pinned by signal-options-wire-trail-gate).
+  wireTrailEnforceEnabled?: boolean | null;
 }) {
   const { entryPrice, peakPrice, markPrice, profile } = input;
   const conditional = resolveConditionalExitPolicy({
@@ -420,10 +424,11 @@ export function computeSignalOptionsPositionStop(input: {
   const usesProgressiveTrail =
     profile.exitPolicy.progressiveTrailEnabled &&
     profile.exitPolicy.progressiveTrailSteps.length > 0;
-  const usesWireTrail =
+  const wireTrailEligible =
     profile.exitPolicy.wireGreekTrail.enabled &&
     wireBaselineStep != null &&
     selectedWire != null;
+  const usesWireTrail = wireTrailEligible && input.wireTrailEnforceEnabled === true;
   const greekManagementUnavailable =
     !input.currentGreeks ||
     greekManagementAdjustment.reasons.includes("greeks_unavailable");
@@ -442,22 +447,27 @@ export function computeSignalOptionsPositionStop(input: {
     progressiveTrailStep?.minLockedGainPct ?? profile.exitPolicy.minLockedGainPct;
   const givebackPct =
     progressiveTrailStep?.givebackPct ?? conditional.trailGivebackPct;
+  // Per-share premium giveback: |delta| × |spot − wire| is already in premium dollars
+  // per share (delta = premium move per $1 underlying move). No contract multiplier —
+  // peakPrice/markPrice are per-share premiums throughout this function.
   const deltaSizedGiveback =
     profile.exitPolicy.wireGreekTrail.deltaSizingEnabled &&
-    usesWireTrail &&
+    wireTrailEligible &&
     greekFreshness.fresh &&
     selectedWire &&
     (finiteNumber(input.underlyingSpot) ?? latestUnderlyingClose) != null &&
     finiteNumber(input.currentGreeks?.delta) != null
       ? Math.abs(finiteNumber(input.currentGreeks?.delta)!) *
-        Math.abs((finiteNumber(input.underlyingSpot) ?? latestUnderlyingClose)! - selectedWire.price) *
-        100
+        Math.abs((finiteNumber(input.underlyingSpot) ?? latestUnderlyingClose)! - selectedWire.price)
       : null;
+  // The candidate above is always visible as telemetry; it may shift the enforced trail
+  // only when the operator enforce flag admitted the wire trail.
+  const appliedDeltaSizedGiveback = usesWireTrail ? deltaSizedGiveback : null;
   const rawTrailStopPrice = trailActive
     ? Math.max(
         entryPrice * (1 + minLockedGainPct / 100),
-        deltaSizedGiveback != null
-          ? peakPrice - deltaSizedGiveback
+        appliedDeltaSizedGiveback != null
+          ? peakPrice - appliedDeltaSizedGiveback
           : peakPrice * (1 - givebackPct / 100),
       )
     : null;
@@ -516,7 +526,11 @@ export function computeSignalOptionsPositionStop(input: {
     },
     wireTrail: {
       enabled: profile.exitPolicy.wireGreekTrail.enabled,
-      active: usesWireTrail,
+      // active = the wire trail is configured, rung-eligible, and has a usable wire
+      // (what it WOULD do); enforced = the operator flag additionally admitted it to
+      // change real stop behavior this evaluation.
+      active: wireTrailEligible,
+      enforced: usesWireTrail,
       baselineStep: wireBaselineStep,
       baselineRung: wireBaselineStep?.rung ?? null,
       selectedRung: selectedWire?.rung ?? selectedWireRung,
