@@ -647,6 +647,34 @@ test("IBKR portal stays off for members without the compliance flag (SPEC §6)",
   );
 });
 
+test("IBKR portal re-anchors Authenticator-family root API escapes under the gateway mount", async () => {
+  await withServer(async (baseUrl) => {
+    const origin = baseUrl.slice(0, -"/api".length);
+    const mount = "/api/broker-execution/ibkr-portal/gateway";
+    const referer = `${origin}${mount}/sso/Login`;
+    const cases = [
+      ["/api/Authenticator", `${mount}/sso/Authenticator`],
+      ["/api/Dispatcher?locale=en", `${mount}/sso/Dispatcher?locale=en`],
+      ["/api/report", `${mount}/sso/report`],
+    ] as const;
+
+    for (const [path, expectedLocation] of cases) {
+      const resp = await fetch(`${origin}${path}`, {
+        method: "POST",
+        headers: {
+          referer,
+          "content-type": "application/x-www-form-urlencoded",
+        },
+        body: "username=demo",
+        redirect: "manual",
+      });
+
+      assert.equal(resp.status, 307);
+      assert.equal(resp.headers.get("location"), expectedLocation);
+    }
+  });
+});
+
 test("IBKR portal opens for admins (bypass) and for flag-on members with ibkr_access (SPEC §6 allow path)", async () => {
   // The deny-path test above proves the gate stays shut; this pins the two ALLOW
   // branches so a refactor that drops the admin short-circuit or inverts the flag

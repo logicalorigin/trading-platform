@@ -1,4 +1,10 @@
-import { Router, type IRouter, type Request, type Response } from "express";
+import {
+  Router,
+  type IRouter,
+  type NextFunction,
+  type Request,
+  type Response,
+} from "express";
 import { appendFileSync } from "node:fs";
 import { request as httpRequest } from "node:http";
 import path from "node:path";
@@ -31,6 +37,45 @@ import { findRepoRoot } from "../services/runtime-flight-recorder";
 const router: IRouter = Router();
 
 const GW_BASE = "/api/broker-execution/ibkr-portal/gateway";
+
+export function getIbkrGatewayReanchorLocation(
+  requestPath: string,
+  referer: string | undefined,
+): string | null {
+  if (!referer || requestPath.startsWith(GW_BASE)) {
+    return null;
+  }
+  try {
+    if (!new URL(referer).pathname.startsWith(GW_BASE)) {
+      return null;
+    }
+  } catch {
+    return null;
+  }
+
+  const fixed = requestPath.startsWith("/api/")
+    ? "/sso/" + requestPath.slice("/api/".length)
+    : requestPath;
+  return GW_BASE + fixed;
+}
+
+function reanchorGatewayEscapes(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): void {
+  const location = getIbkrGatewayReanchorLocation(
+    req.originalUrl,
+    req.headers.referer,
+  );
+  if (!location) {
+    next();
+    return;
+  }
+  res.redirect(307, location);
+}
+
+router.use(reanchorGatewayEscapes);
 
 // DEBUG TRAIL (diagnosing popup login failures): one JSONL line per proxied
 // request — method + path only (query strings stripped so SSO tokens and

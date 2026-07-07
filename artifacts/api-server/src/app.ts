@@ -20,6 +20,7 @@ import {
 } from "./services/route-admission";
 import { isRawJson } from "./lib/raw-json";
 import { readSessionToken } from "./routes/auth";
+import { getIbkrGatewayReanchorLocation } from "./routes/ibkr-portal";
 import { readAuthSessionFromToken } from "./services/auth";
 import { runWithIbkrPortalUser } from "./services/ibkr-portal-context";
 
@@ -243,31 +244,16 @@ app.use(gzipJsonResponses);
 // gateway mount back into the mount. 307 preserves method + body across the
 // redirect (302 would turn the credential POST into a bodyless GET). Mirrors
 // the dev-side guard in artifacts/pyrus/vite.config.ts.
-const ibkrGatewayMount = "/api/broker-execution/ibkr-portal/gateway";
 app.use((req, res, next) => {
-  const referer = req.headers.referer;
-  if (!referer || req.path.startsWith(ibkrGatewayMount)) {
+  const location = getIbkrGatewayReanchorLocation(
+    req.originalUrl,
+    req.headers.referer,
+  );
+  if (!location) {
     next();
     return;
   }
-  try {
-    if (new URL(referer).pathname.startsWith(ibkrGatewayMount)) {
-      // The SPA derives its API base from the page URL's FIRST path segment
-      // (host + "/" + pathname.split("/")[1] + "/"). Under this mount that
-      // segment is "api", so its auth calls arrive as /api/Authenticator when
-      // the gateway's real handler is /sso/Authenticator. Restore the intended
-      // "sso" prefix, then re-anchor under the mount. 307 preserves method +
-      // body (302 would turn the credential POST into a bodyless GET).
-      const fixed = req.originalUrl.startsWith("/api/")
-        ? "/sso/" + req.originalUrl.slice("/api/".length)
-        : req.originalUrl;
-      res.redirect(307, ibkrGatewayMount + fixed);
-      return;
-    }
-  } catch {
-    // Unparseable Referer — treat as unrelated.
-  }
-  next();
+  res.redirect(307, location);
 });
 
 app.use("/api", router);
