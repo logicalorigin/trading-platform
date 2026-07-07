@@ -3010,7 +3010,7 @@ function SignalsHydrationStrip({
     ? "Signal matrix idle"
     : complete
       ? "Signal matrix current"
-      : `${missing} outside freshness`;
+      : `${missing} cells awaiting data`;
   const timeframeRows = Array.isArray(timeframeHydration)
     ? timeframeHydration.filter((item) => item?.timeframe)
     : [];

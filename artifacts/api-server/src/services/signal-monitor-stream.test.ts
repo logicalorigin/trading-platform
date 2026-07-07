@@ -189,6 +189,88 @@ test("runtime-fallback stream profiles do not enqueue DB persistence", () => {
   );
 });
 
+test("response display freshness is derived from bar-window age", () => {
+  const state = {
+    id: "state-1",
+    profileId: "profile-test",
+    symbol: "AAPL",
+    timeframe: "5m",
+    currentSignalDirection: "buy",
+    currentSignalAt: new Date("2026-06-09T14:55:00.000Z"),
+    currentSignalPrice: "100",
+    currentSignalClose: "101",
+    currentSignalMfePercent: null,
+    currentSignalMaePercent: null,
+    filterState: null,
+    latestBarAt: new Date("2026-06-09T15:00:00.000Z"),
+    latestBarClose: "101",
+    barsSinceSignal: 2,
+    fresh: false,
+    status: "ok",
+    active: true,
+    lastEvaluatedAt: evaluatedAt,
+    lastError: null,
+    trendDirection: null,
+  } as any;
+
+  const inside = __signalMonitorInternalsForTests.stateToResponse(state, {
+    freshWindowBars: 3,
+  });
+  assert.equal(inside.fresh, true);
+
+  const aged = __signalMonitorInternalsForTests.stateToResponse(
+    { ...state, barsSinceSignal: 4 } as never,
+    { freshWindowBars: 3 },
+  );
+  assert.equal(aged.fresh, false);
+
+  const stale = __signalMonitorInternalsForTests.stateToResponse(
+    { ...state, status: "stale" } as never,
+    { freshWindowBars: 3 },
+  );
+  assert.equal(stale.fresh, false);
+
+  const unknownAge = __signalMonitorInternalsForTests.stateToResponse(
+    { ...state, barsSinceSignal: null } as never,
+    { freshWindowBars: 3 },
+  );
+  assert.equal(unknownAge.fresh, false);
+});
+
+test("matrix stream display freshness matches REST response freshness", () => {
+  const state = {
+    ...streamState("AAPL", "5m", "marker"),
+    currentSignalDirection: "buy",
+    currentSignalAt: new Date("2026-06-09T14:55:00.000Z"),
+    latestBarAt: new Date("2026-06-09T15:00:00.000Z"),
+    barsSinceSignal: 2,
+    status: "ok",
+    fresh: false,
+  } as any;
+
+  const streamed =
+    __signalMonitorInternalsForTests.withSignalMonitorMatrixStreamActionability(
+      state,
+      profile(),
+    );
+  const response = __signalMonitorInternalsForTests.stateToResponse(
+    {
+      ...state,
+      currentSignalPrice: null,
+      currentSignalClose: null,
+      currentSignalMfePercent: null,
+      currentSignalMaePercent: null,
+      filterState: null,
+      latestBarClose: null,
+      trendDirection: null,
+    } as never,
+    { freshWindowBars: 3 },
+  );
+
+  assert.equal(streamed.fresh, true);
+  assert.equal(streamed.fresh, response.fresh);
+});
+
 function profile(id = "profile-test") {
   return {
     id,
@@ -201,7 +283,7 @@ function profile(id = "profile-test") {
     pollIntervalSeconds: 60,
     maxSymbols: 500,
     evaluationConcurrency: 6,
-  } as never;
+  } as any;
 }
 
 function streamState(symbol: string, timeframe: string, marker: string) {
@@ -221,7 +303,7 @@ function streamState(symbol: string, timeframe: string, marker: string) {
     lastEvaluatedAt: evaluatedAt,
     lastError: marker,
     indicatorSnapshot: null,
-  } as never;
+  } as any;
 }
 
 function withSignalMonitorBarEvaluationEnabled<T>(run: () => T): T {
@@ -577,7 +659,7 @@ function directionalStreamState(
     indicatorSnapshot: null,
     canonicalSignalEvent: null,
     ...overrides,
-  } as never;
+  } as any;
 }
 
 test("stream deltas latch direction across directionless re-evaluations", () => {

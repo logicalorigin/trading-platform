@@ -838,6 +838,7 @@ test("non-current signal state snapshots preserve last-known direction for displ
       {
         timeframe: "1m",
         evaluatedAt: new Date("2026-06-09T20:00:00.000Z"),
+        freshWindowBars: 3,
         markNonCurrentStale: true,
       },
     );
@@ -883,6 +884,7 @@ test("trend-only signal state snapshots render a non-actionable display directio
       {
         timeframe: "2m",
         evaluatedAt: new Date("2026-06-23T17:59:00.000Z"),
+        freshWindowBars: 3,
         markNonCurrentStale: false,
       },
     );
@@ -926,6 +928,7 @@ test("non-RTH aged signal snapshots are market-idle, not stale", () => {
         timeframe: "5m",
         // 17:05 ET after-hours: no regular-session bar is expected.
         evaluatedAt: new Date("2026-06-08T21:05:00.000Z"),
+        freshWindowBars: 3,
         markNonCurrentStale: true,
       },
     );
@@ -969,6 +972,7 @@ test("RTH aged signal snapshots stay stale", () => {
         timeframe: "5m",
         // 10:45 ET regular session: a fresh 5m bar should have arrived.
         evaluatedAt: new Date("2026-06-09T14:45:00.000Z"),
+        freshWindowBars: 3,
         markNonCurrentStale: true,
       },
     );

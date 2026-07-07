@@ -1202,7 +1202,23 @@ function trendDirectionToSignalDirection(
   return null;
 }
 
-function stateToResponse(state: DbSignalMonitorSymbolState) {
+function signalMonitorResponseFresh(input: {
+  status: SignalMonitorStatus;
+  direction: SignalMonitorDirection | null;
+  barsSinceSignal: number | null;
+  freshWindowBars: number;
+}) {
+  return signalMonitorFresh({
+    barsSinceSignal: input.barsSinceSignal ?? Number.POSITIVE_INFINITY,
+    freshWindowBars: input.freshWindowBars,
+    stale: input.status !== "ok" || !input.direction,
+  });
+}
+
+function stateToResponse(
+  state: DbSignalMonitorSymbolState,
+  input: { freshWindowBars: number },
+) {
   const status: SignalMonitorStatus = [
     "ok",
     "idle",
@@ -1263,7 +1279,16 @@ function stateToResponse(state: DbSignalMonitorSymbolState) {
     // column's "current" side regardless of direction/freshness).
     latestBarClose: numericValueOrNull(state.latestBarClose),
     barsSinceSignal: hasStoredSignal ? (state.barsSinceSignal ?? null) : null,
-    fresh: current && hasStoredSignal ? state.fresh : false,
+    // Stored fresh = arrival/trigger semantics for automation; response fresh =
+    // bar-window display semantics for REST/SSE UI surfaces.
+    fresh: hasStoredSignal
+      ? signalMonitorResponseFresh({
+          status,
+          direction: storedDirection,
+          barsSinceSignal: state.barsSinceSignal ?? null,
+          freshWindowBars: input.freshWindowBars,
+        })
+      : false,
     status,
     active: state.active,
     lastEvaluatedAt: state.lastEvaluatedAt ?? null,
@@ -1281,11 +1306,12 @@ function stateToResponseForSnapshot(
   input: {
     timeframe: SignalMonitorMatrixTimeframe;
     evaluatedAt: Date;
+    freshWindowBars: number;
     markNonCurrentStale?: boolean;
   },
 ) {
   const response = {
-    ...stateToResponse(state),
+    ...stateToResponse(state, { freshWindowBars: input.freshWindowBars }),
     timeframe: input.timeframe,
   };
   // The live aggregate ring keeps streaming (incl. extended hours) even when the
@@ -9277,8 +9303,6 @@ function withSignalMonitorMatrixStreamActionability<
     freshWindowBars: profile.freshWindowBars,
     marketClosed: isSignalMonitorQuietMarketSessionNow(),
   });
-  // fresh stays as authored by the eval/latch path: a latched refresh is
-  // deliberately not fresh even when its bar age is inside the fresh window.
   return {
     ...state,
     trendDirection:
@@ -9286,6 +9310,12 @@ function withSignalMonitorMatrixStreamActionability<
       signalMonitorIndicatorDirectionOrNull(
         asRecord(state.indicatorSnapshot).trendDirection,
       ),
+    fresh: signalMonitorResponseFresh({
+      status: state.status,
+      direction: state.currentSignalDirection,
+      barsSinceSignal: state.barsSinceSignal,
+      freshWindowBars: profile.freshWindowBars,
+    }),
     actionEligible: actionability.actionEligible,
     actionBlocker: actionability.actionBlocker,
   } as T;
@@ -11629,7 +11659,11 @@ export async function evaluateSignalMonitorProfileUniverse(input: {
 
   return {
     profile: profileToResponse(updatedProfile),
-    states: evaluatedStates.map(stateToResponse),
+    states: evaluatedStates.map((state) =>
+      stateToResponse(state, {
+        freshWindowBars: updatedProfile.freshWindowBars,
+      }),
+    ),
     evaluatedAt,
     truncated: resolvedBatch.truncated,
     skippedSymbols: resolvedBatch.skippedSymbols,
@@ -11816,7 +11850,11 @@ export async function evaluateSignalMonitorProfileSymbols(input: {
 
   return {
     profile: profileToResponse(updatedProfile),
-    states: evaluatedStates.map(stateToResponse),
+    states: evaluatedStates.map((state) =>
+      stateToResponse(state, {
+        freshWindowBars: updatedProfile.freshWindowBars,
+      }),
+    ),
     evaluatedAt,
     truncated: resolved.truncated,
     skippedSymbols: resolved.skippedSymbols,
@@ -12495,6 +12533,7 @@ async function readCurrentSignalMonitorMatrixStates(input: {
       return stateToResponseForSnapshot(state, {
         timeframe,
         evaluatedAt: input.evaluatedAt,
+        freshWindowBars: input.profile.freshWindowBars,
         markNonCurrentStale: true,
       });
     });
@@ -13168,6 +13207,9 @@ export const __signalMonitorInternalsForTests = {
   isSignalMonitorDelayedBar,
   mergeSignalMonitorStockMinuteAggregates,
   hydrateSignalMonitorMatrixStatesFromStoredStates,
+  signalMonitorResponseFresh,
+  stateToResponse,
+  stateToResponseForSnapshot,
   hasCompleteSignalMonitorMatrixCoverage,
   buildSignalMonitorMatrixPendingCells,
   completeSignalMonitorStateSnapshotCoverage,
@@ -13200,6 +13242,7 @@ export const __signalMonitorInternalsForTests = {
   isFreshSignalMonitorMatrixStreamState,
   normalizeSignalMonitorMatrixStreamScope,
   signalMonitorMatrixStreamTimeframesForSymbol,
+  withSignalMonitorMatrixStreamActionability,
   signalMonitorMatrixStreamProfileSymbols,
   resolveSignalMonitorMatrixStreamProfileUniverseSymbols,
   resolveSignalMonitorMatrixStreamScope,
@@ -13236,7 +13279,6 @@ export const __signalMonitorInternalsForTests = {
   isSignalMonitorStateCurrentForLane,
   signalMonitorStreamLaneLatestCompletedBarAt,
   traceSignalMonitorLaneCurrentness,
-  stateToResponseForSnapshot,
   shouldBypassSignalMonitorCompletedBarsCache,
   shouldRetrySignalMonitorCompletedBars,
   expectedLatestCompletedIntradayBarAt,
@@ -13489,6 +13531,7 @@ async function readSignalMonitorPassiveStoredStateFresh(input: {
         state.timeframe || "",
       ) as SignalMonitorMatrixTimeframe,
       evaluatedAt,
+      freshWindowBars: input.profile.freshWindowBars,
       markNonCurrentStale: input.markNonCurrentStale,
     }),
   );
@@ -13597,6 +13640,7 @@ async function readSignalMonitorStateFresh(input: {
           state.timeframe || "",
         ) as SignalMonitorMatrixTimeframe,
         evaluatedAt,
+        freshWindowBars: hydratedProfile.freshWindowBars,
         markNonCurrentStale: input.markNonCurrentStale,
       }),
     );
@@ -13807,6 +13851,7 @@ export async function traceSignalMonitorPriceFreshness(
     const response = stateToResponseForSnapshot(state, {
       timeframe,
       evaluatedAt,
+      freshWindowBars: profile.freshWindowBars,
       markNonCurrentStale: true,
     });
     return {
