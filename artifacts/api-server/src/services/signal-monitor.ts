@@ -349,6 +349,7 @@ type SignalMonitorMatrixStreamSubscriber = {
   serverOwnedProducer: boolean;
   onEvent: (event: SignalMonitorMatrixStreamEvent) => void | Promise<void>;
   lastStateSignatures: Map<string, string>;
+  lastPersistDirtyKeys: Map<string, string>;
   // Last state emitted per cell: the wire-side signal latch. A directionless
   // re-evaluation must not erase a latched buy/sell on the stream any more
   // than it may in the DB (the DB latch lives in upsertSymbolState).
@@ -9418,6 +9419,37 @@ function changedSignalMonitorMatrixStreamStates<
   });
 }
 
+function signalMonitorMatrixStreamPersistDirtyKey(
+  state: SignalMonitorMatrixStreamState,
+) {
+  return [
+    normalizeSymbol(state.symbol).toUpperCase(),
+    state.timeframe,
+    dateOrNull(state.latestBarAt)?.toISOString() ?? "",
+    dateOrNull(state.currentSignalAt)?.toISOString() ?? "",
+    state.currentSignalDirection ?? "",
+    state.status,
+  ].join("|");
+}
+
+function changedSignalMonitorMatrixStreamPersistStates<
+  T extends SignalMonitorMatrixStreamState,
+>(
+  subscriber: SignalMonitorMatrixStreamSubscriber,
+  states: T[],
+) {
+  return states.filter((state) => {
+    const key = signalMonitorMatrixStreamStateKey(state);
+    const dirtyKey = signalMonitorMatrixStreamPersistDirtyKey(state);
+    if (subscriber.lastPersistDirtyKeys.get(key) === dirtyKey) {
+      return false;
+    }
+    subscriber.lastPersistDirtyKeys.set(key, dirtyKey);
+    subscriber.lastStates.set(key, state);
+    return true;
+  });
+}
+
 function signalMonitorMatrixStreamActiveScope() {
   const symbols = new Set<string>();
   let cells = 0;
@@ -9810,25 +9842,46 @@ export function emitSignalMonitorMatrixStreamAggregateDelta(input: {
       continue;
     }
     const latchedStates = states.map((state) =>
-      withSignalMonitorMatrixStreamActionability(
-        latchSignalMonitorMatrixStreamState(
-          subscriber.lastStates.get(
-            signalMonitorMatrixStreamStateKey(state),
-          ) ?? null,
-          state,
-        ),
-        subscriber.profile,
+      latchSignalMonitorMatrixStreamState(
+        subscriber.lastStates.get(signalMonitorMatrixStreamStateKey(state)) ??
+          null,
+        state,
       ),
+    );
+    if (subscriber.serverOwnedProducer) {
+      const changedPersistStates = changedSignalMonitorMatrixStreamPersistStates(
+        subscriber,
+        latchedStates,
+      );
+      if (
+        changedPersistStates.length &&
+        isSignalMonitorUuidLike(subscriber.profile.id)
+      ) {
+        const persisted = persistByProfile.get(subscriber.profile.id) ?? {
+          profile: subscriber.profile,
+          states: [],
+        };
+        persisted.states.push(...changedPersistStates);
+        persistByProfile.set(subscriber.profile.id, persisted);
+      }
+      continue;
+    }
+
+    const displayStates = latchedStates.map((state) =>
+      withSignalMonitorMatrixStreamActionability(state, subscriber.profile),
     );
     const changedStates = changedSignalMonitorMatrixStreamStates(
       subscriber,
-      latchedStates,
+      displayStates,
     );
     if (!changedStates.length) {
       continue;
     }
 
     if (isSignalMonitorUuidLike(subscriber.profile.id)) {
+      const changedKeys = new Set(
+        changedStates.map((state) => signalMonitorMatrixStreamStateKey(state)),
+      );
       const persisted = persistByProfile.get(subscriber.profile.id) ?? {
         profile: subscriber.profile,
         states: [],
@@ -10038,6 +10091,7 @@ function createSignalMonitorMatrixStreamSubscriptionForTests(input: {
     serverOwnedProducer: input.serverOwnedProducer === true,
     onEvent: input.onEvent,
     lastStateSignatures: new Map(),
+    lastPersistDirtyKeys: new Map(),
     lastStates: new Map(),
   };
   signalMonitorMatrixStreamSubscribers.set(subscriberId, subscriber);

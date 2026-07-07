@@ -3,6 +3,8 @@ import { readFileSync } from "node:fs";
 import { after, test } from "node:test";
 
 import { pool } from "@workspace/db";
+import { withTestDb } from "@workspace/db/testing";
+import { sql } from "drizzle-orm";
 import { __signalMonitorInternalsForTests } from "./signal-monitor";
 
 const evaluatedAt = new Date("2026-06-09T15:00:00.000Z");
@@ -187,6 +189,156 @@ test("runtime-fallback stream profiles do not enqueue DB persistence", () => {
     emitBlock,
     /if \(isSignalMonitorUuidLike\(subscriber\.profile\.id\)\) \{/,
   );
+});
+
+test("server-owned producer persists direction flips through the canonical path", async () => {
+  await withTestDb(async ({ db }) => {
+    const profileId = "00000000-0000-4000-8000-0000000000c1";
+    await db.execute(sql`
+      INSERT INTO signal_monitor_profiles
+        (id, environment, enabled, fresh_window_bars)
+      VALUES (${profileId}, 'shadow', true, 3)
+    `);
+    const scope =
+      __signalMonitorInternalsForTests.normalizeSignalMonitorMatrixStreamScope({
+        environment: "shadow",
+        cells: [{ symbol: "AAPL", timeframe: "5m" }] as never,
+      });
+    const subscription =
+      __signalMonitorInternalsForTests.createSignalMonitorMatrixStreamSubscriptionForTests({
+        scope,
+        profile: {
+          ...profile(profileId),
+          id: profileId,
+          freshWindowBars: 3,
+        } as never,
+        prime: false,
+        serverOwnedProducer: true,
+        onEvent: () => {
+          throw new Error("server-owned producer should not emit SSE events");
+        },
+      });
+    let direction: "buy" | "sell" = "buy";
+    const makeState = () => {
+      const signalAt =
+        direction === "buy"
+          ? new Date("2026-06-09T14:55:00.000Z")
+          : new Date("2026-06-09T15:00:00.000Z");
+      const latestBarAt =
+        direction === "buy"
+          ? new Date("2026-06-09T15:00:00.000Z")
+          : new Date("2026-06-09T15:05:00.000Z");
+      return {
+        ...streamState("AAPL", "5m", ""),
+        profileId,
+        currentSignalDirection: direction,
+        currentSignalAt: signalAt,
+        currentSignalPrice: 100,
+        currentSignalClose: 101,
+        latestBarAt,
+        latestBarClose: 102,
+        barsSinceSignal: 0,
+        fresh: true,
+        status: "ok",
+        lastError: null,
+        latestBarSourceIntegrity: { trusted: true, reason: null },
+        canonicalSignalEvent: {
+          signal: {
+            id: `event-${direction}`,
+            eventType: direction === "buy" ? "buy_signal" : "sell_signal",
+            direction,
+            barIndex: 1,
+            time: Math.floor(signalAt.getTime() / 1000),
+            ts: signalAt.toISOString(),
+            price: 100,
+            close: 101,
+            actionable: true,
+            filtered: false,
+            filterState: {},
+          },
+          signalAt,
+          signalBarAt: signalAt,
+          latestBarAt,
+          latestBarAnchorAt: latestBarAt,
+          sourceBarPartial: false,
+          sourceIntegrity: { trusted: true, reason: null },
+        },
+      } as any;
+    };
+
+    __signalMonitorInternalsForTests.emitSignalMonitorMatrixStreamAggregateDelta({
+      message: { symbol: "AAPL" },
+      environment: "shadow",
+      evaluatedAt: new Date("2026-06-09T15:00:00.000Z"),
+      evaluateState: () => makeState(),
+    });
+    direction = "sell";
+    __signalMonitorInternalsForTests.emitSignalMonitorMatrixStreamAggregateDelta({
+      message: { symbol: "AAPL" },
+      environment: "shadow",
+      evaluatedAt: new Date("2026-06-09T15:05:00.000Z"),
+      evaluateState: () => makeState(),
+    });
+
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      const events = await db.execute(sql`
+        SELECT direction
+        FROM signal_monitor_events
+        WHERE profile_id = ${profileId}
+        ORDER BY signal_at
+      `);
+      if (events.rows.length >= 2) {
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+
+    const states = await db.execute(sql`
+      SELECT current_signal_direction
+      FROM signal_monitor_symbol_states
+      WHERE profile_id = ${profileId}
+        AND symbol = 'AAPL'
+        AND timeframe = '5m'
+    `);
+    const events = await db.execute(sql`
+      SELECT direction
+      FROM signal_monitor_events
+      WHERE profile_id = ${profileId}
+      ORDER BY signal_at
+    `);
+
+    subscription.unsubscribe();
+    assert.equal(states.rows[0]?.current_signal_direction, "sell");
+    assert.deepEqual(
+      events.rows.map((row) => row.direction),
+      ["buy", "sell"],
+    );
+  });
+});
+
+test("server-owned producer bypasses stream signature and delta event work", () => {
+  const emitStart = serviceSource.indexOf(
+    "export function emitSignalMonitorMatrixStreamAggregateDelta",
+  );
+  const emitEnd = serviceSource.indexOf(
+    "persistByProfile.forEach",
+    emitStart,
+  );
+  assert.notEqual(emitStart, -1);
+  assert.notEqual(emitEnd, -1);
+  const emitBlock = serviceSource.slice(emitStart, emitEnd);
+  const serverOwnedStart = emitBlock.indexOf("if (subscriber.serverOwnedProducer)");
+  const realSseStart = emitBlock.indexOf("const displayStates", serverOwnedStart);
+  assert.notEqual(serverOwnedStart, -1);
+  assert.notEqual(realSseStart, -1);
+  const serverOwnedBlock = emitBlock.slice(serverOwnedStart, realSseStart);
+
+  assert.match(serverOwnedBlock, /changedSignalMonitorMatrixStreamPersistStates/);
+  assert.match(serverOwnedBlock, /continue;/);
+  assert.doesNotMatch(serverOwnedBlock, /changedSignalMonitorMatrixStreamStates/);
+  assert.doesNotMatch(serverOwnedBlock, /buildSignalMonitorMatrixStreamDeltaEvent/);
+  assert.doesNotMatch(serverOwnedBlock, /subscriber\.onEvent/);
+  assert.doesNotMatch(serverOwnedBlock, /signalMonitorMatrixStreamStateSignature/);
 });
 
 test("response display freshness is derived from bar-window age", () => {
