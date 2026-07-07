@@ -831,12 +831,15 @@ export const AlgoLivePage = ({
     [indicatorSignalRows, indicatorTimelineBars],
   );
 
-  const showEmptyOperationsState = Boolean(setupDataSettled && !deployments.length);
+  const emptyOperationsSetupSettled = Boolean(
+    setupDataSettled && !refreshPending,
+  );
+  const showEmptyOperationsState = Boolean(!deployments.length);
   if (showEmptyOperationsState) {
     return (
       <EmptyOperationsState
         candidateDrafts={candidateDrafts}
-        setupDataSettled={setupDataSettled}
+        setupDataSettled={emptyOperationsSetupSettled}
         deploymentListUnavailable={deploymentListUnavailable}
         selectedDraft={selectedDraft}
         setSelectedDraftId={setSelectedDraftId}

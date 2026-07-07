@@ -149,6 +149,22 @@ test("AlgoLivePage keeps hooks before the empty-state return", () => {
   assert.doesNotMatch(afterEmptyReturn, /const liveIndicatorMetrics = useMemo/);
 });
 
+test("AlgoLivePage treats deployment refetch gaps as loading, not no-deployment", () => {
+  assert.match(
+    source,
+    /const emptyOperationsSetupSettled = Boolean\(\s*setupDataSettled && !refreshPending,\s*\);/,
+  );
+  assert.match(source, /const showEmptyOperationsState = Boolean\(!deployments\.length\);/);
+  assert.match(
+    source,
+    /setupDataSettled=\{emptyOperationsSetupSettled\}/,
+  );
+  assert.doesNotMatch(
+    source,
+    /const showEmptyOperationsState = Boolean\(setupDataSettled && !deployments\.length\);/,
+  );
+});
+
 test("STA MTF config uses the configured draft timeframe set for table and KPI consumers", () => {
   const config = resolveEffectiveStaMtfAlignmentConfig({
     mtfAlignmentDraft: {

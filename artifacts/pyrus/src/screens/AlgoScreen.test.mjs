@@ -98,6 +98,14 @@ test("Algo settings save avoids the full performance refresh lane", () => {
   assert.match(strategySaveSuccess, /includeSignalOptionsPerformance: false,/);
 });
 
+test("Algo deployments query retains previous data through refetches", () => {
+  const deploymentsQueryBlock = source.match(
+    /const deploymentsQuery = useListAlgoDeployments\([\s\S]*?\n  \);/u,
+  )?.[0];
+  assert.ok(deploymentsQueryBlock, "deployments query block should exist");
+  assert.match(deploymentsQueryBlock, /placeholderData: retainPreviousData,/);
+});
+
 test("Algo settings all-save reconciles drafts from mutation payloads", () => {
   const allSaveBlock = source.match(
     /const handleSaveAllAdjustments = async \(\) => \{[\s\S]*?const handleOpenCandidateInTrade/u,
