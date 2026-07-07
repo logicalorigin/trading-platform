@@ -532,7 +532,12 @@ export const AlgoScreen = ({
   );
   const algoPostPrimaryQueriesEnabled = Boolean(
     algoLiveDataQueriesEnabled &&
-      !shadowAccountStreamFreshness.accountFresh,
+      // Shadow positions arrive over SSE, so the REST query only backfills a
+      // stale stream. Broker/combined tabs have no stream — their query must
+      // stay enabled or retainPreviousData pins the previous tab's rows.
+      (algoPositionsUseShadowOverlay
+        ? !shadowAccountStreamFreshness.accountFresh
+        : true),
   );
   const algoRoutineRefetchInterval =
     isVisible && !algoCockpitStreamFreshness.algoPrimaryFresh
@@ -543,9 +548,7 @@ export const AlgoScreen = ({
       ? QUERY_DEFAULTS.refetchInterval
       : false;
   const signalOptionsLedgerPositionsRefetchInterval =
-    algoPostPrimaryQueriesEnabled && !shadowAccountStreamFreshness.accountFresh
-      ? 60_000
-      : false;
+    algoPostPrimaryQueriesEnabled ? 60_000 : false;
   useRuntimeWorkloadFlag("algo:cockpit", isVisible, {
     kind: algoCockpitStreamFreshness.algoPrimaryFresh ? "stream" : "poll",
     label: "Algo cockpit",
@@ -567,6 +570,7 @@ export const AlgoScreen = ({
         ...QUERY_DEFAULTS,
         enabled: algoSetupQueriesEnabled,
         refetchInterval: algoRoutineRefetchInterval,
+        placeholderData: retainPreviousData,
         retry: false,
       },
     },
