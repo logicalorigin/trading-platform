@@ -8,7 +8,6 @@ import {
   getLatestDiagnostics,
   pruneDiagnosticStorage,
 } from "./diagnostics";
-import { getIbkrLaneArchitectureSummary } from "./ibkr-lanes";
 import { listAlgoDeployments } from "./automation";
 import { listPineScripts } from "./pine-scripts";
 import { listWatchlists } from "./platform";
@@ -186,7 +185,6 @@ export async function getBackendSettingsSnapshot() {
   const diagnostics = getLatestDiagnostics();
   const [
     thresholdsResult,
-    laneSummaryResult,
     watchlistsResult,
     signalMonitorResult,
     researchResult,
@@ -194,7 +192,6 @@ export async function getBackendSettingsSnapshot() {
     algoDeploymentsResult,
   ] = await Promise.allSettled([
     getDiagnosticThresholds(),
-    Promise.resolve(getIbkrLaneArchitectureSummary()),
     listWatchlists(),
     getSignalMonitorProfile({ environment: getRuntimeMode() }),
     getResearchStatus(),
@@ -203,8 +200,6 @@ export async function getBackendSettingsSnapshot() {
   ]);
   const thresholds =
     thresholdsResult.status === "fulfilled" ? thresholdsResult.value : [];
-  const laneSummary =
-    laneSummaryResult.status === "fulfilled" ? laneSummaryResult.value : null;
   const watchlists =
     watchlistsResult.status === "fulfilled" ? watchlistsResult.value.watchlists : [];
   const signalMonitor =
@@ -242,7 +237,6 @@ export async function getBackendSettingsSnapshot() {
       diagnosticsSeverity: diagnostics?.severity ?? "info",
       pendingRestartCount,
       thresholdCount: thresholds.length,
-      ibkrLaneCount: laneSummary?.membershipCount ?? 0,
       watchlistCount: watchlists.length,
       watchlistSymbolCount: watchlists.reduce(
         (count, watchlist) => count + (watchlist.items?.length ?? 0),

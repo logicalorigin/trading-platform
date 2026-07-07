@@ -45,7 +45,6 @@ import {
   stopPythonComputeRuntime,
 } from "./services/python-compute";
 import { attachOptionQuoteWebSocket } from "./ws/options-quotes";
-import { ensureIbkrLaneRuntimeOverridesLoaded } from "./services/ibkr-lanes";
 import {
   diagnosticsPositionProbeForTarget,
   selectDiagnosticsAccountProbeTarget,
@@ -273,7 +272,6 @@ function ensureDefaultSignalOptionsPaperDeploymentWithRetry(attempt = 1): void {
 
 server.listen(port, () => {
   logger.info({ port }, "Server listening");
-  ensureIbkrLaneRuntimeOverridesLoaded();
   // Prime the algo deployment-list cache while the pool is still idle, BEFORE
   // the staggered background workers below start their connect herd. The algo
   // page's controls gate on a present deployment list; without a warm cache, a

@@ -1,34 +1,40 @@
-import { IbkrBridgeClient } from "../providers/ibkr/bridge-client";
 import { isMassiveStocksRealtimeConfigured } from "../lib/runtime";
 import { normalizeSymbol } from "../lib/values";
 import { logger } from "../lib/logger";
 import { HttpError, isHttpError } from "../lib/errors";
 import {
-  isBridgeWorkBackedOff,
-  isTransientBridgeWorkError,
-  runBridgeWork,
-} from "./bridge-governor";
+  isTransientWorkError,
+  isWorkBackedOff,
+} from "./work-governor";
 import {
-  listIbkrAccounts,
   listIbkrExecutions,
+  listIbkrAccounts,
+  listIbkrOrders,
   listIbkrPositions,
 } from "./ibkr-account-bridge";
 import {
-  clearBridgeOrderReadSuppression,
-  getBridgeOrderReadSuppression,
-  markBridgeOrderReadsSuppressed,
-  shouldProbeBridgeOrderReadSuppression,
-} from "./bridge-order-read-state";
-import type { QuoteSnapshot } from "../providers/ibkr/client";
+  clearOrderReadSuppression,
+  getOrderReadSuppression,
+  markOrderReadsSuppressed,
+  shouldProbeOrderReadSuppression,
+} from "./order-read-suppression";
+import type {
+  BrokerAccountSnapshot,
+  BrokerExecutionSnapshot,
+  BrokerOrderSnapshot,
+  BrokerPositionSnapshot,
+  OptionChainContract,
+  QuoteSnapshot,
+} from "../providers/ibkr/client";
 import { subscribeMassiveStockQuoteSnapshots } from "./massive-stock-quote-stream";
 import {
   fetchBridgeOptionQuoteSnapshots,
   type OptionQuoteSnapshotPayload,
 } from "./bridge-option-quote-stream";
 import {
-  readIbkrLiveDemandState,
-  subscribeIbkrLiveDemand,
-} from "./ibkr-live-demand-coordinator";
+  readOptionQuoteDemandState,
+  subscribeOptionQuoteDemand,
+} from "./option-quote-demand-coordinator";
 import type {
   MarketDataFallbackProvider,
   MarketDataIntent,
@@ -45,14 +51,13 @@ import {
   OPTION_CHAIN_PUBLIC_METADATA_TIMEOUT_MS,
 } from "./platform";
 
-const bridgeClient = new IbkrBridgeClient();
 const ORDER_SNAPSHOT_STALE_MS = 120_000;
 const ACCOUNT_MONITOR_LEASE_TTL_MS = 15_000;
 let nextOptionQuoteDemandStreamId = 1;
 
 type Unsubscribe = () => void;
 type OrderSnapshotPayload = {
-  orders: Awaited<ReturnType<IbkrBridgeClient["listOrders"]>>;
+  orders: BrokerOrderSnapshot[];
 };
 const orderSnapshotCache = new Map<
   string,
@@ -63,8 +68,8 @@ const accountMonitorSnapshots = new Map<
   {
     mode: "shadow" | "live";
     accountId?: string;
-    positions: Awaited<ReturnType<IbkrBridgeClient["listPositions"]>>;
-    orders: Awaited<ReturnType<IbkrBridgeClient["listOrders"]>>;
+    positions: BrokerPositionSnapshot[];
+    orders: BrokerOrderSnapshot[];
   }
 >();
 
@@ -314,7 +319,7 @@ function refreshAccountMonitorLeases(input: {
 function updateAccountMonitorPositions(input: {
   mode: "shadow" | "live";
   accountId?: string;
-  positions: Awaited<ReturnType<IbkrBridgeClient["listPositions"]>>;
+  positions: BrokerPositionSnapshot[];
 }): void {
   const key = accountMonitorOwner(input);
   const current = accountMonitorSnapshots.get(key);
@@ -330,7 +335,7 @@ function updateAccountMonitorPositions(input: {
 function updateAccountMonitorOrders(input: {
   mode: "shadow" | "live";
   accountId?: string;
-  orders: Awaited<ReturnType<IbkrBridgeClient["listOrders"]>>;
+  orders: BrokerOrderSnapshot[];
 }): void {
   const key = accountMonitorOwner(input);
   const current = accountMonitorSnapshots.get(key);
@@ -401,7 +406,7 @@ function createPollingStream<T>({
 type OptionChainSnapshotPayload = {
   underlyings: Array<{
     underlying: string;
-    contracts: Awaited<ReturnType<IbkrBridgeClient["getOptionChain"]>>;
+    contracts: OptionChainContract[];
     updatedAt: string;
   }>;
 };
@@ -474,7 +479,7 @@ export function readOptionQuoteDemandSnapshotPayload(input: {
   requiresGreeks?: boolean;
 }): OptionQuoteSnapshotPayload {
   const requestedAt = Date.now();
-  const state = readIbkrLiveDemandState(input);
+  const state = readOptionQuoteDemandState(input);
   const quotes = state.states.flatMap((item) =>
     item.quote
       ? [{ ...item.quote, source: "massive" as const }]
@@ -529,15 +534,15 @@ export async function fetchOrderSnapshotPayload(input: {
     status: input.status ?? null,
   });
   const cached = orderSnapshotCache.get(cacheKey);
-  const suppression = getBridgeOrderReadSuppression();
+  const suppression = getOrderReadSuppression();
 
-  if (suppression && !shouldProbeBridgeOrderReadSuppression(suppression)) {
+  if (suppression && !shouldProbeOrderReadSuppression(suppression)) {
     return cached && Date.now() - cached.cachedAt <= ORDER_SNAPSHOT_STALE_MS
       ? cached.payload
       : { orders: [] };
   }
 
-  if (isBridgeWorkBackedOff("orders")) {
+  if (isWorkBackedOff("orders")) {
     if (cached && Date.now() - cached.cachedAt <= ORDER_SNAPSHOT_STALE_MS) {
       return cached.payload;
     }
@@ -557,16 +562,11 @@ export async function fetchOrderSnapshotPayload(input: {
   timeout.unref?.();
 
   try {
-    const payload = await runBridgeWork("orders", async () => ({
-      orders: (
-        await bridgeClient.listOrdersWithMeta({
-          ...input,
-          signal: controller.signal,
-        })
-      ).orders,
-    }));
+    const payload = {
+      orders: await listIbkrOrders(input),
+    };
     orderSnapshotCache.set(cacheKey, { payload, cachedAt: Date.now() });
-    clearBridgeOrderReadSuppression("orders_timeout");
+    clearOrderReadSuppression("orders_timeout");
     updateAccountMonitorOrders({
       mode: input.mode,
       accountId: input.accountId,
@@ -575,7 +575,7 @@ export async function fetchOrderSnapshotPayload(input: {
     return payload;
   } catch (error) {
     if (isOrderSnapshotTimeoutError(error)) {
-      markBridgeOrderReadsSuppressed({
+      markOrderReadsSuppressed({
         reason: "orders_timeout",
         message:
           "Open-orders snapshots are paused after the bridge order endpoint did not respond.",
@@ -590,13 +590,13 @@ export async function fetchOrderSnapshotPayload(input: {
         : { orders: [] };
     }
     if (
-      isTransientBridgeWorkError(error) &&
+      isTransientWorkError(error) &&
       cached &&
       Date.now() - cached.cachedAt <= ORDER_SNAPSHOT_STALE_MS
     ) {
       return cached.payload;
     }
-    if (isTransientBridgeWorkError(error)) {
+    if (isTransientWorkError(error)) {
       logger.warn({ err: error }, "Returning empty order snapshot after transient bridge failure");
       return { orders: [] };
     }
@@ -610,8 +610,8 @@ export async function fetchAccountSnapshotPayload(input: {
   accountId?: string;
   mode: "shadow" | "live";
 }): Promise<{
-  accounts: Awaited<ReturnType<IbkrBridgeClient["listAccounts"]>>;
-  positions: Awaited<ReturnType<IbkrBridgeClient["listPositions"]>>;
+  accounts: BrokerAccountSnapshot[];
+  positions: BrokerPositionSnapshot[];
 }> {
   const accounts = await listIbkrAccounts(input.mode);
   void recordAccountSnapshots(accounts).catch((error) => {
@@ -638,7 +638,7 @@ export async function fetchExecutionSnapshotPayload(input: {
   symbol?: string;
   providerContractId?: string | null;
 }): Promise<{
-  executions: Awaited<ReturnType<IbkrBridgeClient["listExecutions"]>>;
+  executions: BrokerExecutionSnapshot[];
 }> {
   return {
     executions: await listIbkrExecutions(input),
@@ -669,7 +669,7 @@ export function subscribeOptionChains(
   onSnapshot: (payload: {
     underlyings: Array<{
       underlying: string;
-      contracts: Awaited<ReturnType<IbkrBridgeClient["getOptionChain"]>>;
+      contracts: OptionChainContract[];
       updatedAt: string;
     }>;
   }) => void,
@@ -705,7 +705,7 @@ export function subscribeOptionQuoteSnapshots(
   const owner =
     input.owner?.trim() ||
     `bridge-option-live-demand:${nextOptionQuoteDemandStreamId++}`;
-  return subscribeIbkrLiveDemand(
+  return subscribeOptionQuoteDemand(
     { ...input, owner, intent: input.intent ?? "visible-live" },
     onSnapshot,
   );
@@ -717,10 +717,10 @@ export function subscribeOrderSnapshots(
     mode: "shadow" | "live";
     status?: "pending_submit" | "submitted" | "accepted" | "partially_filled" | "filled" | "canceled" | "rejected" | "expired";
   },
-  onSnapshot: (payload: { orders: Awaited<ReturnType<IbkrBridgeClient["listOrders"]>> }) => void,
+  onSnapshot: (payload: { orders: BrokerOrderSnapshot[] }) => void,
   options: {
     onPollSuccess?: (input: {
-      payload: { orders: Awaited<ReturnType<IbkrBridgeClient["listOrders"]>> };
+      payload: { orders: BrokerOrderSnapshot[] };
       changed: boolean;
     }) => void | Promise<void>;
   } = {},
@@ -740,14 +740,14 @@ export function subscribeAccountSnapshots(
     mode: "shadow" | "live";
   },
   onSnapshot: (payload: {
-    accounts: Awaited<ReturnType<IbkrBridgeClient["listAccounts"]>>;
-    positions: Awaited<ReturnType<IbkrBridgeClient["listPositions"]>>;
+    accounts: BrokerAccountSnapshot[];
+    positions: BrokerPositionSnapshot[];
   }) => void,
   options: {
     onPollSuccess?: (input: {
       payload: {
-        accounts: Awaited<ReturnType<IbkrBridgeClient["listAccounts"]>>;
-        positions: Awaited<ReturnType<IbkrBridgeClient["listPositions"]>>;
+        accounts: BrokerAccountSnapshot[];
+        positions: BrokerPositionSnapshot[];
       };
       changed: boolean;
     }) => void | Promise<void>;
@@ -772,7 +772,7 @@ export function subscribeExecutionSnapshots(
     providerContractId?: string | null;
   },
   onSnapshot: (payload: {
-    executions: Awaited<ReturnType<IbkrBridgeClient["listExecutions"]>>;
+    executions: BrokerExecutionSnapshot[];
   }) => void,
 ): Unsubscribe {
   return createPollingStream({

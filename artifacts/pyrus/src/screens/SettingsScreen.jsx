@@ -21,9 +21,6 @@ import {
   normalizeLaneSymbolList,
 } from "./settings/ibkrLaneUiModel";
 import {
-  IbkrLaneArchitecturePanel,
-} from "./settings/IbkrLaneArchitecturePanel";
-import {
   DiagnosticThresholdSettingsPanel,
 } from "./settings/DiagnosticThresholdSettingsPanel";
 import { SnapTradeConnectPanel } from "./settings/SnapTradeConnectPanel.jsx";
@@ -58,7 +55,6 @@ import {
   useFlowScannerControlState,
 } from "../features/platform/marketFlowStore";
 import { useToast } from "../features/platform/platformContexts.jsx";
-import { useRuntimeControlSnapshot } from "../features/platform/useRuntimeControlSnapshot";
 import {
   IBKR_BRIDGE_SESSION_KEYS,
   readIbkrBridgeSessionValue,
@@ -3153,13 +3149,6 @@ export default function SettingsScreen({
   }, [activeTab, settingsVisible]);
   const backend = useBackendSettings({ enabled: backendSettingsEnabled });
   const userPreferences = useUserPreferences();
-  const runtimeControl = useRuntimeControlSnapshot({
-    enabled: dataBrokerTabActive,
-    runtimeDiagnosticsEnabled: false,
-    lineUsageEnabled: dataBrokerTabActive,
-    lineUsageStreamEnabled: true,
-    lineUsageDetail: "full",
-  });
   const { watchlists } = useWatchlists({ enabled: automationTabActive });
   const settings = backend.snapshot?.settings || [];
   const settingsByGroup = useMemo(() => {
@@ -3396,9 +3385,6 @@ export default function SettingsScreen({
                 enabled={dataBrokerTabActive}
               />
               <Panel title="Runtime Settings">{renderSettingGrid("runtime")}</Panel>
-              <IbkrLineUsagePanel
-                runtimeControl={runtimeControl}
-              />
             </>
           )}
 

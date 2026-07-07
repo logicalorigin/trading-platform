@@ -37,7 +37,7 @@ const router: IRouter = Router();
 
 const REQUIRE_ADMIN_PATHS = [
   // Platform-ops settings (currently unguarded — tightened here).
-  /^\/settings\/(backend|ibkr-lanes|ibkr-line-usage)(\/|$)/,
+  /^\/settings\/backend(\/|$)/,
 ];
 
 const REQUIRE_USER_PATHS = [

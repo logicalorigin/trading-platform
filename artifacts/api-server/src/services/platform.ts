@@ -48,10 +48,6 @@ import {
   isPoolContentionError,
   isTransientPostgresError,
 } from "../lib/transient-db-error";
-import {
-  getIbkrBridgeActivationDiagnostics,
-  getIbkrBridgeRuntimeSessionState,
-} from "./ibkr-bridge-runtime";
 import { getCachedStorageHealthSnapshot } from "./storage-health";
 import { requireCurrentAppUserId } from "./app-user-context";
 import { normalizeSymbol } from "../lib/values";
@@ -70,7 +66,6 @@ import {
   choosePositionQuote,
   positionReferenceSymbol,
 } from "./account-position-model";
-import { IbkrBridgeClient } from "../providers/ibkr/bridge-client";
 import { getIbkrClientPortalClient } from "./ibkr-client-runtime";
 import {
   MassiveMarketDataClient,
@@ -144,13 +139,8 @@ import {
 } from "./bridge-option-quote-stream";
 import { recordServerDiagnosticEvent } from "./diagnostics";
 import { getSignalMonitorDbFallbackDiagnostics } from "./signal-monitor-diagnostics";
-import {
-  getBridgeGovernorSnapshot,
-  isBridgeWorkBackedOff,
-  runBridgeWork,
-} from "./bridge-governor";
+import { getWorkGovernorSnapshot } from "./work-governor";
 import { listIbkrExecutions } from "./ibkr-account-bridge";
-import { resolveIbkrLaneSymbols } from "./ibkr-lane-policy";
 import {
   filterClosedBarsForStore,
   loadStoredMarketBars,
@@ -187,10 +177,6 @@ import {
   type MarketDataIntent,
 } from "./market-data-admission";
 import {
-  isIbkrHistoricalAdmissionError,
-  runIbkrHistoricalRequest,
-} from "./ibkr-historical-admission";
-import {
   normalizeUniverseMarket,
   resolveMarketIdentityFields,
   resolveMarketIdentityMetadata,
@@ -203,25 +189,140 @@ import {
 } from "./option-metadata-store";
 import { validateSellCallOrderIntent } from "./option-order-intent";
 import {
-  getAnnotatedBridgeHealthForTradingGuard,
-  getBridgeHealthForSession,
-  getIbkrClient,
-  getRuntimeBridgeHealthState,
-  getSessionBridgeHealthFailureState,
-} from "./platform-bridge-health";
-import {
   getRuntimeMarketDataDiagnostics,
   getRuntimeMassiveProviderDiagnostics,
 } from "./platform-market-data-diagnostics";
 import { getPythonComputeDiagnostics } from "./python-compute";
 import { getSseStreamDiagnostics } from "./sse-stream-diagnostics";
-export { __setIbkrBridgeClientFactoryForTests } from "./platform-bridge-health";
 export type { IbkrRuntimeStreamState } from "./platform-runtime-status";
 export {
   isLikelyUsEquitySession,
   resolveIbkrRuntimeStreamState as __resolveIbkrRuntimeStreamStateForTests,
   resolveIbkrRuntimeStrictReason as __resolveIbkrRuntimeStrictReasonForTests,
 } from "./platform-runtime-status";
+
+type RetiredBridgeHealth = Record<string, any> & {
+  streamStateReason: string;
+  strictReady: boolean;
+  strictReason: string;
+};
+
+const retiredBridgeHealth: RetiredBridgeHealth = {
+  connected: false,
+  lastError: "IBKR desktop bridge retired.",
+  marketDataMode: null,
+  transport: null,
+  authenticated: false,
+  competing: false,
+  selectedAccountId: null,
+  accounts: [],
+  connectionTarget: null,
+  sessionMode: null,
+  clientId: null,
+  liveMarketDataAvailable: false,
+  lastTickleAt: null,
+  lastRecoveryAttemptAt: null,
+  lastRecoveryError: null,
+  diagnostics: null,
+  strictReady: false,
+  strictReason: "bridge_retired",
+  streamStateReason: "bridge_retired",
+  healthFresh: false,
+  healthAgeMs: null,
+  stale: true,
+  bridgeReachable: false,
+  socketConnected: false,
+  brokerServerConnected: false,
+  connectivityUp: false,
+  connectivityReason: "bridge_retired",
+  lastTickleAgeMs: null,
+  serverConnectivity: null,
+  lastServerConnectivityAt: null,
+  lastServerConnectivityError: null,
+  accountsLoaded: false,
+  configuredLiveMarketDataMode: false,
+  streamFresh: false,
+  lastStreamEventAgeMs: null,
+  streamState: "unavailable",
+};
+
+function getIbkrClient() {
+  return getIbkrClientPortalClient();
+}
+
+function getIbkrBridgeActivationDiagnostics() {
+  return {
+    status: "retired",
+    activeCount: 0,
+    desktopAgentRequests: [],
+    latestActivation: null,
+    latestActivationId: null,
+    insight: {
+      currentOwner: "none" as const,
+      currentPhase: "idle" as const,
+      currentPhaseElapsedMs: null,
+      currentPhaseStartedAt: null,
+      detail: "IBKR desktop bridge is retired.",
+      normalAfterMs: null,
+      phaseDurations: {},
+      recommendedAction: null,
+      severity: "idle" as const,
+      stale: false,
+      staleAfterMs: null,
+      timeline: [],
+      title: "IBKR bridge retired",
+    },
+    latestProgress: null,
+    recentProgress: [],
+  };
+}
+
+function getIbkrBridgeRuntimeSessionState() {
+  return {
+    bridgeRuntimeAttached: false,
+    bridgeRuntimeStatus: "retired",
+    bridgeRuntimeReason: "bridge_retired",
+    desktopAgentOnline: false,
+    desktopAgentRegistered: false,
+    desktopAgentRegisteredCount: 0,
+    desktopAgentCompatibility: null,
+    desktopAgentCompatible: false,
+    desktopAgentHelperVersion: null,
+    desktopAgentKnownBad: false,
+    desktopAgentExpectedHelperVersion: "",
+    desktopAgentUpgradeRequired: false,
+    reconnectAvailable: false,
+  };
+}
+
+async function getBridgeHealthForSession(
+  ..._args: unknown[]
+): Promise<RetiredBridgeHealth | null> {
+  return null;
+}
+
+function getSessionBridgeHealthFailureState() {
+  return {
+    healthError: "IBKR desktop bridge retired.",
+    healthErrorCode: "bridge_retired",
+    healthErrorStatusCode: null,
+    healthErrorDetail: null,
+  };
+}
+
+async function getRuntimeBridgeHealthState() {
+  return {
+    annotatedHealth: retiredBridgeHealth,
+    fallbackStreamState: {
+      streamState: retiredBridgeHealth.streamState,
+      streamStateReason: retiredBridgeHealth.streamStateReason,
+    },
+    healthError: "IBKR desktop bridge retired.",
+    healthErrorCode: "bridge_retired",
+    healthErrorStatusCode: null,
+    healthErrorDetail: null,
+  };
+}
 export {
   __setHistoricalFlowDirectFallbackTimeoutMsForTests,
   __setHistoricalFlowStoreDisabledForTests,
@@ -829,9 +930,43 @@ export function getIbkrWatchlistPrewarmDiagnostics() {
   };
 }
 
+type MarketDataSymbolResolution = {
+  desiredSymbols: Array<{ symbol: string; sources: string[] }>;
+  admittedSymbols: string[];
+  droppedSymbols: string[];
+  maxSymbols: number;
+};
+
+function resolveMarketDataSymbols(
+  sources: Record<string, readonly string[]>,
+): MarketDataSymbolResolution {
+  const sourceBySymbol = new Map<string, Set<string>>();
+  Object.entries(sources).forEach(([source, symbols]) => {
+    symbols.forEach((symbolInput) => {
+      const symbol = normalizeSymbol(symbolInput);
+      if (!symbol) return;
+      const sourceSet = sourceBySymbol.get(symbol) ?? new Set<string>();
+      sourceSet.add(source);
+      sourceBySymbol.set(symbol, sourceSet);
+    });
+  });
+  const desiredSymbols = Array.from(sourceBySymbol.entries()).map(
+    ([symbol, symbolSources]) => ({
+      symbol,
+      sources: Array.from(symbolSources),
+    }),
+  );
+  return {
+    desiredSymbols,
+    admittedSymbols: desiredSymbols.map((entry) => entry.symbol),
+    droppedSymbols: [],
+    maxSymbols: desiredSymbols.length,
+  };
+}
+
 function resolveEquityLiveQuoteLaneSymbols(watchlistSymbols: string[]) {
   const flowLaneSources = getOptionsFlowLaneSourceSymbols();
-  return resolveIbkrLaneSymbols("equity-live-quotes", {
+  return resolveMarketDataSymbols({
     "built-in": flowLaneSources.builtInSymbols,
     watchlists: watchlistSymbols,
     "flow-universe": flowLaneSources.flowUniverseSymbols,
@@ -1136,29 +1271,7 @@ export function reconcileIbkrWatchlistPrewarmFromBridgeDiagnostics(
 }
 
 function reconcileIbkrWatchlistPrewarmFromBridgeSoon(reason: string): void {
-  if (!getProviderConfiguration().ibkr) {
-    return;
-  }
-  void withTimeout(
-    runBridgeWork("health", () => getIbkrClient().getLaneDiagnostics(), {
-      bypassBackoff: true,
-      recordFailure: false,
-    }),
-    IBKR_WATCHLIST_PREWARM_BRIDGE_RECONCILE_TIMEOUT_MS,
-    () =>
-      new Error(
-        `IBKR bridge prewarm reconciliation timed out after ${IBKR_WATCHLIST_PREWARM_BRIDGE_RECONCILE_TIMEOUT_MS}ms.`,
-      ),
-  )
-    .then((diagnostics) => {
-      reconcileIbkrWatchlistPrewarmFromBridgeDiagnostics(diagnostics);
-    })
-    .catch((error) => {
-      logger.debug(
-        { err: error, reason },
-        "IBKR bridge watchlist prewarm reconciliation skipped",
-      );
-    });
+  logger.debug({ reason }, "IBKR bridge prewarm reconciliation retired");
 }
 
 function isLiveWarmupHoldingBackgroundWork(): boolean {
@@ -1382,7 +1495,10 @@ function shouldSyncBridgePrewarmGroup(
 }
 
 function isBridgeWorkBackoffError(error: unknown): boolean {
-  return isHttpError(error) && error.code === "ibkr_bridge_work_backoff";
+  return (
+    isHttpError(error) &&
+    (error.code === "ibkr_bridge_work_backoff" || error.code === "work_backoff")
+  );
 }
 
 function getWatchlistPrewarmBridgeSyncBlockReason(
@@ -1457,8 +1573,7 @@ function scheduleIbkrWatchlistPrewarm(
   reason: string,
 ) {
   if (
-    !getProviderConfiguration().ibkr ||
-    isBridgeWorkBackedOff("health")
+    !getProviderConfiguration().ibkr
   ) {
     return;
   }
@@ -2617,6 +2732,7 @@ export async function getSession() {
     waitForStaleRefresh: false,
   });
   const ibkrRuntime = getIbkrBridgeRuntimeSessionState();
+  const bridgeOverride = getIbkrBridgeRuntimeOverride();
   const bridgeHealthFailureState =
     bridgeHealth === null ? getSessionBridgeHealthFailureState() : null;
   const massiveConfig = getMassiveRuntimeConfig();
@@ -2638,6 +2754,8 @@ export async function getSession() {
     runtime: {
       ibkr: {
         ...ibkrRuntime,
+        runtimeOverrideActive: Boolean(bridgeOverride),
+        runtimeOverrideUpdatedAt: bridgeOverride?.updatedAt ?? null,
         ...(bridgeHealthFailureState ?? {}),
         activation: sessionActivationDiagnostics(),
       },
@@ -2760,8 +2878,8 @@ function serializeOrderReadDebug(error: unknown, timeoutMs: number) {
   };
 }
 
-function getBridgeBackoffRemainingMs(category: "orders" | "health"): number {
-  return getBridgeGovernorSnapshot()[category].backoffRemainingMs;
+function getBridgeBackoffRemainingMs(category: "orders"): number {
+  return getWorkGovernorSnapshot()[category].backoffRemainingMs;
 }
 
 async function recordOrderReadDegraded(input: {
@@ -4633,6 +4751,7 @@ async function validateOrderIntentForRouting(
   });
 }
 
+
 export async function placeOrder(input: PlaceOrderInput) {
   assertLiveOrderConfirmed(input.mode, input.confirm);
   await assertIbkrGatewayTradingAvailable();
@@ -5167,7 +5286,7 @@ async function getNewsUncached(input: { ticker?: string; limit?: number }) {
   // We only fall back to Massive when IBKR returns no headlines — typically
   // for tickerless requests, since IBKR's /iserver/news requires a conid.
   const ibkrClient = getIbkrClient();
-  let articles: Awaited<ReturnType<IbkrBridgeClient["getNews"]>> = [];
+  let articles: Awaited<ReturnType<ReturnType<typeof getIbkrClient>["getNews"]>> = [];
   try {
     articles = await ibkrClient.getNews(input);
   } catch {
@@ -10403,7 +10522,7 @@ async function fetchOptionStudyFallbackBar(input: {
 function decorateBarsResult(input: {
   request: GetBarsInput;
   bars: BrokerBarSnapshot[];
-  bridgeHealth: Awaited<ReturnType<IbkrBridgeClient["getHealth"]>> | null;
+  bridgeHealth: RetiredBridgeHealth | null;
   gapFilled: boolean;
   emptyReason: string | null;
   studyFallback: boolean;
@@ -10871,7 +10990,7 @@ type IbkrOptionChainInput = {
   emptyRetryDelaysMs?: readonly number[];
 };
 type IbkrOptionChainContracts = Awaited<
-  ReturnType<IbkrBridgeClient["getOptionChain"]>
+  ReturnType<ReturnType<typeof getIbkrClient>["getOptionChain"]>
 >;
 type FlowScannerContract = IbkrOptionChainContracts[number] & {
   flowOccurredAt?: Date | null;
@@ -10887,7 +11006,7 @@ type IbkrOptionExpirationsInput = {
   timeoutMs?: number;
 };
 type IbkrOptionExpirationDates = Awaited<
-  ReturnType<IbkrBridgeClient["getOptionExpirations"]>
+  ReturnType<ReturnType<typeof getIbkrClient>["getOptionExpirations"]>
 >;
 type OptionChainStrikeCoverage = "fast" | "standard" | "full";
 type OptionChainQuoteHydration = "metadata" | "snapshot";
@@ -11921,7 +12040,7 @@ function getFlowScannerPinnedSymbols(): string[] {
 
 export function getOptionsFlowScannerLaneResolution() {
   const sources = getOptionsFlowLaneSourceSymbols();
-  const resolution = resolveIbkrLaneSymbols("flow-scanner", {
+  const resolution = resolveMarketDataSymbols({
     "built-in": sources.builtInSymbols,
     watchlists: sources.watchlistSymbols,
     "flow-universe": sources.flowUniverseSymbols,
@@ -11935,7 +12054,7 @@ function orderOptionsFlowScannerLaneResolution(
     watchlistSymbols: string[];
     flowUniverseSymbols: string[];
   },
-  resolution: ReturnType<typeof resolveIbkrLaneSymbols>,
+  resolution: MarketDataSymbolResolution,
 ) {
   const admitted = new Set(resolution.admittedSymbols);
   const orderedSymbols = Array.from(
@@ -11964,7 +12083,7 @@ function orderOptionsFlowUniverseLaneResolution(
     watchlistSymbols: string[];
     flowUniverseSymbols: string[];
   },
-  resolution: ReturnType<typeof resolveIbkrLaneSymbols>,
+  resolution: MarketDataSymbolResolution,
 ) {
   const admitted = new Set(resolution.admittedSymbols);
   const orderedSymbols = Array.from(
@@ -11993,7 +12112,7 @@ export function __orderOptionsFlowScannerLaneResolutionForTests(
     watchlistSymbols: string[];
     flowUniverseSymbols: string[];
   },
-  resolution: ReturnType<typeof resolveIbkrLaneSymbols>,
+  resolution: MarketDataSymbolResolution,
 ) {
   return orderOptionsFlowScannerLaneResolution(sources, resolution);
 }
@@ -12490,7 +12609,7 @@ export function getOptionsFlowUniverseCoverage(): FlowUniverseCoverage {
 
 export function getOptionsFlowUniverse() {
   const sources = getOptionsFlowLaneSourceSymbols();
-  const laneResolution = resolveIbkrLaneSymbols("flow-scanner", {
+  const laneResolution = resolveMarketDataSymbols({
     "built-in": sources.builtInSymbols,
     watchlists: sources.watchlistSymbols,
     "flow-universe": sources.flowUniverseSymbols,

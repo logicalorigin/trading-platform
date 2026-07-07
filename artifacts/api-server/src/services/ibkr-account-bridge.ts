@@ -4,13 +4,15 @@ import { IbkrClient } from "../providers/ibkr/client";
 import type {
   BrokerAccountSnapshot,
   BrokerExecutionSnapshot,
+  BrokerOrderSnapshot,
   BrokerPositionSnapshot,
 } from "../providers/ibkr/client";
 import {
-  isBridgeWorkBackedOff,
-  isTransientBridgeWorkError,
-  runBridgeWork,
-} from "./bridge-governor";
+  isTransientWorkError,
+  isWorkBackedOff,
+  runGovernedWork,
+  type WorkGovernorCategory,
+} from "./work-governor";
 import { getIbkrClientPortalClient } from "./ibkr-client-runtime";
 
 type CacheEntry<T> = {
@@ -21,7 +23,8 @@ type CacheEntry<T> = {
 type AccountBridgeClient = Pick<
   IbkrClient,
   "listAccounts" | "listPositions" | "listExecutions"
->;
+> &
+  Partial<Pick<IbkrClient, "listOrders">>;
 
 let accountClientFactory: () => AccountBridgeClient = getIbkrClientPortalClient;
 const accountListCache = new Map<string, CacheEntry<BrokerAccountSnapshot[]>>();
@@ -30,6 +33,8 @@ const positionCache = new Map<string, CacheEntry<BrokerPositionSnapshot[]>>();
 const positionInflight = new Map<string, Promise<BrokerPositionSnapshot[]>>();
 const executionCache = new Map<string, CacheEntry<BrokerExecutionSnapshot[]>>();
 const executionInflight = new Map<string, Promise<BrokerExecutionSnapshot[]>>();
+const orderCache = new Map<string, CacheEntry<BrokerOrderSnapshot[]>>();
+const orderInflight = new Map<string, Promise<BrokerOrderSnapshot[]>>();
 
 export function __setIbkrAccountBridgeDependenciesForTests(
   input: {
@@ -45,6 +50,8 @@ export function __setIbkrAccountBridgeDependenciesForTests(
   positionInflight.clear();
   executionCache.clear();
   executionInflight.clear();
+  orderCache.clear();
+  orderInflight.clear();
 }
 
 function readPositiveIntegerEnv(name: string, fallback: number): number {
@@ -117,6 +124,7 @@ async function runCachedAccountRead<T extends unknown[]>({
   allowStaleFallback = true,
   serveStaleWhileRefreshing = true,
   preserveNonEmptyStaleOnEmpty = false,
+  workCategory = "account",
   work,
 }: {
   cache: Map<string, CacheEntry<T>>;
@@ -130,6 +138,7 @@ async function runCachedAccountRead<T extends unknown[]>({
   allowStaleFallback?: boolean;
   serveStaleWhileRefreshing?: boolean;
   preserveNonEmptyStaleOnEmpty?: boolean;
+  workCategory?: WorkGovernorCategory;
   work: () => Promise<T>;
 }): Promise<T> {
   const cached = cache.get(key);
@@ -159,11 +168,11 @@ async function runCachedAccountRead<T extends unknown[]>({
     return pending;
   }
 
-  if (allowStaleFallback && isBridgeWorkBackedOff("account") && staleCached) {
+  if (allowStaleFallback && isWorkBackedOff(workCategory) && staleCached) {
     return staleCached.payload;
   }
 
-  const promise = runBridgeWork("account", work)
+  const promise = runGovernedWork(workCategory, work)
     .then((payload) => {
       if (
         preserveNonEmptyStaleOnEmpty &&
@@ -185,7 +194,7 @@ async function runCachedAccountRead<T extends unknown[]>({
     })
     .catch((error) => {
       if (
-        isTransientBridgeWorkError(error) &&
+        isTransientWorkError(error) &&
         allowStaleFallback &&
         cached &&
         isUsableStale(cached, staleTtlMs)
@@ -196,7 +205,7 @@ async function runCachedAccountRead<T extends unknown[]>({
         );
         return cached.payload;
       }
-      if (isTransientBridgeWorkError(error)) {
+      if (isTransientWorkError(error)) {
         logger.warn(
           { err: error, label, key },
           "Returning empty IBKR account read after transient failure",
@@ -297,6 +306,32 @@ export function listIbkrExecutions(input: {
   });
 }
 
+export function listIbkrOrders(input: {
+  accountId?: string;
+  mode: RuntimeMode;
+  status?: BrokerOrderSnapshot["status"];
+}): Promise<BrokerOrderSnapshot[]> {
+  const key = stableStringify({
+    accountId: input.accountId ?? null,
+    mode: input.mode,
+    status: input.status ?? null,
+  });
+  return runCachedAccountRead({
+    cache: orderCache,
+    inflight: orderInflight,
+    key,
+    freshTtlMs: accountFreshTtlMs(),
+    staleTtlMs: accountStaleTtlMs(),
+    label: "orders",
+    workCategory: "orders",
+    initialWaitMs: readPositiveIntegerEnv("IBKR_ORDER_STREAM_INITIAL_WAIT_MS", 1_500),
+    allowStaleFallback: true,
+    serveStaleWhileRefreshing: false,
+    preserveNonEmptyStaleOnEmpty: true,
+    work: () => accountClientFactory().listOrders?.(input) ?? Promise.resolve([]),
+  });
+}
+
 export function __resetIbkrAccountBridgeCacheForTests(): void {
   accountListCache.clear();
   accountListInflight.clear();
@@ -304,4 +339,6 @@ export function __resetIbkrAccountBridgeCacheForTests(): void {
   positionInflight.clear();
   executionCache.clear();
   executionInflight.clear();
+  orderCache.clear();
+  orderInflight.clear();
 }

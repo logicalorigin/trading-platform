@@ -24,7 +24,6 @@ import {
   resolveSignalSourceEnvironment,
   traceSignalMonitorPriceFreshness,
 } from "../services/signal-monitor";
-import { recordLatestClientPerfMetrics } from "../services/ibkr-perf-capture";
 import { HttpError } from "../lib/errors";
 
 const router: IRouter = Router();
@@ -268,9 +267,6 @@ router.post("/diagnostics/client-events", async (req, res) => {
 
 router.post("/diagnostics/client-metrics", async (req, res) => {
   const body = asRecord(req.body);
-  // Forward the full payload (incl. the `liveData` attribution section) to the IBKR perf
-  // capture sampler so client-side data-flow metrics land in the before/after document.
-  recordLatestClientPerfMetrics(body);
   const result = await recordClientDiagnosticsMetrics({
     memory: asRecord(body.memory),
     isolation: asRecord(body.isolation),
