@@ -219,6 +219,8 @@ export type PlaceOrderInput = {
   strategyIntent?: OptionOrderStrategyIntent;
   tradingSession?: TradingSession;
   includeOvernight?: boolean | null;
+  taxPreflightToken?: string | null;
+  taxAcknowledgements?: string[] | null;
 };
 
 export type QuoteSnapshot = {
