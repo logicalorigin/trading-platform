@@ -4,6 +4,8 @@ import test from "node:test";
 
 import { __shadowWatchlistBacktestInternalsForTests as internals } from "./shadow-account";
 
+const waitTurn = () => new Promise((resolve) => setImmediate(resolve));
+
 type TestShadowPositionsResponse = {
   positions: Array<{ id: string; symbol: string; assetClass: string }>;
   totals: Record<string, unknown>;
@@ -470,6 +472,102 @@ test("shared dashboard fills+orders read serves stale immediately at the derived
   assert.match(block, /staleStrategy:\s*"immediate"/);
   assert.match(block, /ttlMs:\s*SHADOW_DERIVED_READ_CACHE_TTL_MS/);
   assert.doesNotMatch(block, /staleStrategy:\s*"never"/);
+});
+
+test("shared dashboard fills+orders read is bounded and uses a 30s derived TTL", () => {
+  const source = readFileSync(new URL("./shadow-account.ts", import.meta.url), "utf8");
+  const start = source.indexOf("async function readBoundedShadowFillsWithOrders");
+  const end = source.indexOf("function readShadowDashboardFillsWithOrders", start);
+  assert.notEqual(start, -1, "Missing bounded dashboard fills reader");
+  assert.notEqual(end, -1, "Missing function boundary after bounded fills reader");
+  const block = source.slice(start, end);
+
+  assert.match(source, /const SHADOW_DERIVED_READ_CACHE_TTL_MS = 30_000;/);
+  assert.match(source, /const SHADOW_LEDGER_DASHBOARD_READ_LIMIT =/);
+  assert.match(block, /orderBy\(desc\(shadowFillsTable\.occurredAt\)\)/);
+  assert.match(block, /\.limit\(shadowLedgerDashboardReadLimit\(\)\)/);
+  assert.match(block, /readShadowOrdersByFillOrderId\(fills\)/);
+});
+
+test("automation ledger realized P&L keeps the all-time source path", () => {
+  const source = readFileSync(new URL("./shadow-account.ts", import.meta.url), "utf8");
+  const realizedStart = source.indexOf(
+    "export async function computeSignalOptionsLedgerRealizedForDeployment",
+  );
+  const realizedEnd = source.indexOf(
+    "function buildShadowCashActivityTotalsFromAccount",
+    realizedStart,
+  );
+  assert.notEqual(realizedStart, -1);
+  assert.notEqual(realizedEnd, -1);
+  const realizedBlock = source.slice(realizedStart, realizedEnd);
+  assert.match(realizedBlock, /readShadowLedgerBundleForSource\("automation"\)/);
+
+  const ordersStart = source.indexOf("async function readShadowOrdersForSource");
+  const ordersEnd = source.indexOf("async function readShadowFillsWithOrdersForSource", ordersStart);
+  assert.notEqual(ordersStart, -1);
+  assert.notEqual(ordersEnd, -1);
+  const ordersBlock = source.slice(ordersStart, ordersEnd);
+  const automationBranch = ordersBlock.slice(ordersBlock.indexOf("const orders = await db"));
+  assert.doesNotMatch(automationBranch, /shadowLedgerDashboardReadLimit/);
+});
+
+test("shared dashboard fills+orders read joins one in-flight operation", async () => {
+  internals.invalidateShadowFreshStateCache();
+  internals.setShadowReadCacheWindowsForTests({
+    ttlMs: 60_000,
+    staleTtlMs: 60_000,
+    staleWaitMs: 250,
+  });
+
+  let reads = 0;
+  let releaseRead: () => void = () => {};
+  const gate = new Promise<void>((resolve) => {
+    releaseRead = resolve;
+  });
+  const value = { fills: [], ordersById: new Map() };
+
+  try {
+    const first = internals.readShadowDashboardFillsWithOrdersForTests(async () => {
+      reads += 1;
+      await gate;
+      return value;
+    });
+    const second = internals.readShadowDashboardFillsWithOrdersForTests(async () => {
+      reads += 1;
+      return { fills: [], ordersById: new Map() };
+    });
+
+    await waitTurn();
+    assert.equal(reads, 1);
+    releaseRead();
+    assert.equal(await first, value);
+    assert.equal(await second, value);
+    assert.equal(reads, 1);
+  } finally {
+    releaseRead();
+    await waitTurn();
+    internals.invalidateShadowFreshStateCache();
+    internals.setShadowReadCacheWindowsForTests({
+      ttlMs: null,
+      staleTtlMs: null,
+      staleWaitMs: null,
+    });
+  }
+});
+
+test("shadow order tabs share the cached full account order scan", () => {
+  const source = readFileSync(new URL("./shadow-account.ts", import.meta.url), "utf8");
+  const ordersStart = source.indexOf("export async function getShadowAccountOrders");
+  const ordersEnd = source.indexOf("\nfunction shadowResponseReason", ordersStart);
+  assert.notEqual(ordersStart, -1, "Missing getShadowAccountOrders");
+  assert.notEqual(ordersEnd, -1, "Missing function boundary after orders");
+  const ordersBody = source.slice(ordersStart, ordersEnd);
+
+  assert.match(ordersBody, /readShadowOrdersForDisplay\(source\)/);
+  assert.match(ordersBody, /`orders:all:\$\{shadowSourceCacheKey\(source\)\}`/);
+  assert.match(ordersBody, /staleStrategy:\s*"immediate"/);
+  assert.match(ordersBody, /SHADOW_DERIVED_READ_CACHE_TTL_MS/);
 });
 
 test("shadow trade diagnostics uses shared stale-immediate read cache", () => {

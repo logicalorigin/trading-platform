@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { signalOptionsFinalQuoteDeltaGate } from "./signal-options-automation";
+import type { OptionGreekSnapshot } from "@workspace/backtest-core";
+import {
+  signalOptionsFinalQuoteBreakevenGate,
+  signalOptionsFinalQuoteDeltaGate,
+  signalOptionsFinalQuoteScoreGate,
+} from "./signal-options-automation";
 
 // The greek selector's hard tradeability floor (|delta| >= 0.15) must hold against
 // the FINAL fill quote, not just the selection-time snapshot — and must also cover
@@ -10,6 +15,15 @@ import { signalOptionsFinalQuoteDeltaGate } from "./signal-options-automation";
 
 const AT = new Date("2026-07-07T15:00:00Z");
 const EXPIRY = new Date("2026-07-09T20:00:00Z");
+const HEALTHY_GREEKS: OptionGreekSnapshot = {
+  price: 2,
+  delta: 0.45,
+  gamma: 0.08,
+  theta: -0.02,
+  vega: 0.1,
+  impliedVolatility: 1,
+  timeToExpirationYears: 0.04,
+};
 
 test("not greek-governed: gate never blocks (pure legacy path untouched)", () => {
   const gate = signalOptionsFinalQuoteDeltaGate({
@@ -92,4 +106,83 @@ test("no delta derivable: gate passes open and reports unavailable (never newly 
   });
   assert.equal(gate.ok, true);
   assert.equal(gate.ok && gate.deltaSource, "unavailable");
+});
+
+test("final premium beyond expected-move breakeven is rejected", () => {
+  const gate = signalOptionsFinalQuoteBreakevenGate({
+    greekSelectorGoverned: true,
+    right: "call",
+    spot: 100,
+    strike: 100,
+    fillPrice: 5.01,
+    expectedMovePct: 0.05,
+  });
+  assert.equal(gate.ok, false);
+  if (!gate.ok) {
+    assert.equal(
+      gate.reason,
+      "entry_breakeven_beyond_expected_move_final_quote",
+    );
+    assert.equal(gate.expectedMovePct, 0.05);
+    assert.ok(gate.breakevenMovePct > gate.expectedMovePct);
+  }
+});
+
+test("final premium at the expected-move breakeven bound passes", () => {
+  const gate = signalOptionsFinalQuoteBreakevenGate({
+    greekSelectorGoverned: true,
+    right: "call",
+    spot: 100,
+    strike: 100,
+    fillPrice: 5,
+    expectedMovePct: 0.05,
+  });
+  assert.equal(gate.ok, true);
+  assert.equal(gate.ok && gate.breakevenMovePct, 0.05);
+});
+
+test("missing final expected-move context passes open", () => {
+  const gate = signalOptionsFinalQuoteBreakevenGate({
+    greekSelectorGoverned: true,
+    right: "call",
+    spot: 100,
+    strike: 100,
+    fillPrice: 10,
+    expectedMovePct: null,
+  });
+  assert.equal(gate.ok, true);
+  assert.equal(gate.ok && gate.expectedMovePct, null);
+});
+
+test("final quote score below minScore is rejected", () => {
+  const gate = signalOptionsFinalQuoteScoreGate({
+    greekSelectorGoverned: true,
+    right: "call",
+    spot: 100,
+    strike: 100,
+    fillPrice: 2,
+    volume: 100,
+    greeks: HEALTHY_GREEKS,
+    minScore: 101,
+  });
+  assert.equal(gate.ok, false);
+  if (!gate.ok) {
+    assert.equal(gate.reason, "entry_score_below_min_final_quote");
+    assert.ok(gate.score.total < gate.minScore);
+  }
+});
+
+test("final quote score at or above minScore passes", () => {
+  const gate = signalOptionsFinalQuoteScoreGate({
+    greekSelectorGoverned: true,
+    right: "call",
+    spot: 100,
+    strike: 100,
+    fillPrice: 2,
+    volume: 100,
+    greeks: HEALTHY_GREEKS,
+    minScore: 0,
+  });
+  assert.equal(gate.ok, true);
+  assert.ok(gate.ok && gate.score && gate.score.total >= gate.minScore);
 });

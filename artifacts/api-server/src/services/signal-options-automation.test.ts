@@ -409,6 +409,52 @@ test("Signal Options cockpit keeps real gateway failures as warnings", () => {
   assert.equal(items[0].severity, "warning");
 });
 
+test("Signal Options position_marking rule composes detail from only nonzero clauses", () => {
+  const { buildRuleAdherence } = __signalOptionsAutomationInternalsForTests;
+  const profile = {
+    riskHaltControls: { dailyLossHaltEnabled: false },
+    riskCaps: { maxPremiumPerEntry: 1000, maxContracts: 10, maxDailyLoss: 5000, maxOpenSymbols: 10 },
+    optionSelection: { allowZeroDte: false, minDte: 0, maxDte: 60 },
+  } as never;
+
+  // All zero counts: should pass with no detail about marking.
+  const allZero = buildRuleAdherence({
+    profile,
+    activePositions: [],
+    risk: {},
+    events: [],
+  });
+  const allZeroRule = allZero.find((r) => r.id === "position_marking");
+  assert.equal(allZeroRule?.status, "pass");
+  assert.equal(allZeroRule?.detail, "Open positions have marks for current exposure.");
+
+  // One nonzero count (unmarkedPositions): should contain only that clause.
+  const oneNonzero = buildRuleAdherence({
+    profile,
+    activePositions: [{ lastMarkPrice: undefined }, { lastMarkPrice: undefined }] as never[],
+    risk: {},
+    events: [],
+  });
+  const oneNonzeroRule = oneNonzero.find((r) => r.id === "position_marking");
+  assert.equal(oneNonzeroRule?.status, "warning");
+  assert.equal(oneNonzeroRule?.detail, "2 open positions lack marks.");
+
+  // Two nonzero counts: should contain only those two clauses, semicolon-separated.
+  const twoNonzero = buildRuleAdherence({
+    profile,
+    activePositions: [{ lastMarkPrice: undefined }] as never[],
+    risk: {},
+    events: [
+      { eventType: "signal_options_candidate_skipped", payload: { reason: "position_mark_unavailable" } },
+      { eventType: "signal_options_candidate_skipped", payload: { reason: "position_mark_unavailable" } },
+      { eventType: "signal_options_candidate_skipped", payload: { reason: "position_mark_unavailable" } },
+    ] as never[],
+  });
+  const twoNonzeroRule = twoNonzero.find((r) => r.id === "position_marking");
+  assert.equal(twoNonzeroRule?.status, "warning");
+  assert.equal(twoNonzeroRule?.detail, "1 open positions lack marks; 3 mark events reported quote issues.");
+});
+
 test("Signal Options gateway blocker: shadow deployments bypass broker readiness but keep the RTH gate", () => {
   const { signalOptionsGatewayExecutionBlocker } =
     __signalOptionsAutomationInternalsForTests;
@@ -1241,4 +1287,205 @@ test("MTF entry gate honors configured requiredCount instead of forcing unanimit
     mtfTimeframeDirections,
   });
   assert.ok(strict.reasons.includes("mtf_not_aligned"));
+});
+
+const greekSlotQuote = (
+  right: "call" | "put",
+  strike: number,
+  delta: number,
+) =>
+  ({
+    contract: {
+      ticker: `TST-${right}-${strike}`,
+      underlying: "TST",
+      expirationDate: "2026-07-10",
+      strike,
+      right,
+      multiplier: 100,
+      sharesPerContract: 100,
+      providerContractId: `conid-${right}-${strike}`,
+    },
+    bid: 1,
+    ask: 1.1,
+    last: 1.05,
+    mark: 1.05,
+    impliedVolatility: 0.35,
+    delta,
+    gamma: 0.03,
+    theta: -0.02,
+    vega: 0.08,
+    openInterest: 500,
+    volume: 100,
+    quoteFreshness: "fresh",
+    marketDataMode: "live",
+    quoteUpdatedAt: "2026-07-07T14:30:00.000Z",
+    updatedAt: "2026-07-07T14:30:00.000Z",
+  }) as never;
+
+const greekSlotStrikes = (selection: { attempts: Array<{ quote: unknown }> }) =>
+  selection.attempts.map(
+    (attempt) =>
+      (attempt.quote as { contract?: { strike?: number } }).contract?.strike,
+  );
+
+async function greekSlotProfile(input: {
+  callStrikeSlots?: number[];
+  putStrikeSlots?: number[];
+  minScore?: number;
+  fallbackToLegacy?: boolean;
+}) {
+  const { resolveSignalOptionsExecutionProfile } = await import(
+    "@workspace/backtest-core"
+  );
+  return resolveSignalOptionsExecutionProfile({
+    optionSelection: {
+      callStrikeSlots: input.callStrikeSlots,
+      putStrikeSlots: input.putStrikeSlots,
+      greekSelector: {
+        enabled: true,
+        mode: "all",
+        fallbackToLegacy: input.fallbackToLegacy ?? true,
+        maxCandidates: 24,
+        minScore: input.minScore ?? 0,
+        requireLiveGreeks: true,
+      },
+    },
+    riskCaps: { maxPremiumPerEntry: 5_000, maxContracts: 10 },
+  });
+}
+
+test("greek selector scores only configured call strike slots", async () => {
+  const { selectSignalOptionsGreekContractPlanFromChain } =
+    __signalOptionsAutomationInternalsForTests;
+  const profile = await greekSlotProfile({ callStrikeSlots: [2, 1, 3] });
+  const contracts = [94, 96, 98, 100, 102, 104, 106].map((strike) =>
+    greekSlotQuote("call", strike, 0.45),
+  );
+
+  const selection = selectSignalOptionsGreekContractPlanFromChain({
+    contracts,
+    direction: "buy",
+    signalPrice: 101,
+    profile,
+    at: new Date("2026-07-07T14:30:00.000Z"),
+  });
+
+  assert.equal(selection.candidateCount, 3);
+  assert.deepEqual(greekSlotStrikes(selection).sort((a, b) => a! - b!), [
+    98,
+    100,
+    102,
+  ]);
+  assert.equal(greekSlotStrikes(selection).includes(94), false);
+  assert.equal(greekSlotStrikes(selection).includes(106), false);
+});
+
+test("greek selector scores only configured put strike slots", async () => {
+  const { selectSignalOptionsGreekContractPlanFromChain } =
+    __signalOptionsAutomationInternalsForTests;
+  const profile = await greekSlotProfile({ putStrikeSlots: [4, 3, 2] });
+  const contracts = [94, 96, 98, 100, 102, 104, 106].map((strike) =>
+    greekSlotQuote("put", strike, -0.45),
+  );
+
+  const selection = selectSignalOptionsGreekContractPlanFromChain({
+    contracts,
+    direction: "sell",
+    signalPrice: 101,
+    profile,
+    at: new Date("2026-07-07T14:30:00.000Z"),
+  });
+
+  assert.equal(selection.candidateCount, 3);
+  assert.deepEqual(greekSlotStrikes(selection).sort((a, b) => a! - b!), [
+    100,
+    102,
+    104,
+  ]);
+  assert.equal(greekSlotStrikes(selection).includes(94), false);
+  assert.equal(greekSlotStrikes(selection).includes(106), false);
+});
+
+test("greek selector proceeds with remaining slot matches when configured slots collapse on a thin chain", async () => {
+  const { selectSignalOptionsGreekContractPlanFromChain } =
+    __signalOptionsAutomationInternalsForTests;
+  const profile = await greekSlotProfile({ callStrikeSlots: [2, 3, 4] });
+  const contracts = [100, 102].map((strike) =>
+    greekSlotQuote("call", strike, 0.45),
+  );
+
+  const selection = selectSignalOptionsGreekContractPlanFromChain({
+    contracts,
+    direction: "buy",
+    signalPrice: 101,
+    profile,
+    at: new Date("2026-07-07T14:30:00.000Z"),
+  });
+
+  assert.equal(selection.candidateCount, 2);
+  assert.deepEqual(greekSlotStrikes(selection), [100, 102]);
+  assert.equal(selection.fallbackReason, null);
+});
+
+test("zero slot-matching greek candidates follows the existing fallback_legacy no-candidate path", async () => {
+  const { selectSignalOptionsContractPlanFromChain } =
+    __signalOptionsAutomationInternalsForTests;
+  const profile = await greekSlotProfile({ callStrikeSlots: [2, 1, 3] });
+  const selection = selectSignalOptionsContractPlanFromChain({
+    contracts: [94, 96, 98].map((strike) =>
+      greekSlotQuote("put", strike, -0.45),
+    ),
+    direction: "buy",
+    signalPrice: 100,
+    profile,
+    runtimeMode: "live",
+  });
+
+  assert.equal(selection.selectedBy, "fallback_legacy");
+  assert.equal(selection.ok, false);
+  assert.equal(selection.candidateCount, 0);
+  assert.equal(selection.fallbackReason, "greek_selector_no_candidates");
+  assert.equal(selection.greekSelection?.candidateCount, 0);
+  assert.equal(selection.greekSelection?.fallbackReason, "greek_selector_no_candidates");
+});
+
+test("slot-excluded greek contracts are absent from scored attempts and the selection payload", async () => {
+  const {
+    selectSignalOptionsGreekContractPlanFromChain,
+    signalOptionsContractSelectionPayload,
+  } = __signalOptionsAutomationInternalsForTests;
+  const profile = await greekSlotProfile({ callStrikeSlots: [2, 1, 3] });
+  const selection = selectSignalOptionsGreekContractPlanFromChain({
+    contracts: [94, 96, 98, 100, 102, 104, 106].map((strike) =>
+      greekSlotQuote("call", strike, 0.45),
+    ),
+    direction: "buy",
+    signalPrice: 101,
+    profile,
+    at: new Date("2026-07-07T14:30:00.000Z"),
+  });
+  const payload = signalOptionsContractSelectionPayload(selection);
+  const payloadAttempts = (payload.greekSelection as {
+    attempts: Array<{ selectedContract: { strike: number } }>;
+    topCandidates: Array<{ selectedContract: { strike: number } }>;
+  }).attempts;
+  const payloadTopCandidates = (payload.greekSelection as {
+    attempts: Array<{ selectedContract: { strike: number } }>;
+    topCandidates: Array<{ selectedContract: { strike: number } }>;
+  }).topCandidates;
+
+  assert.equal(greekSlotStrikes(selection).includes(94), false);
+  assert.equal(greekSlotStrikes(selection).includes(106), false);
+  assert.deepEqual(
+    payloadAttempts
+      .map((attempt) => attempt.selectedContract.strike)
+      .sort((left, right) => left - right),
+    [98, 100, 102],
+  );
+  assert.equal(
+    payloadTopCandidates.some((attempt) =>
+      [94, 96, 104, 106].includes(attempt.selectedContract.strike),
+    ),
+    false,
+  );
 });

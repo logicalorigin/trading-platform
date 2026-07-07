@@ -498,7 +498,11 @@ let shadowPositionMarkRefreshInFlight:
 const SHADOW_READ_CACHE_TTL_MS = 2_500;
 const SHADOW_READ_CACHE_STALE_TTL_MS = 60_000;
 const SHADOW_READ_CACHE_STALE_WAIT_MS = 1_500;
-const SHADOW_DERIVED_READ_CACHE_TTL_MS = 10_000;
+const SHADOW_DERIVED_READ_CACHE_TTL_MS = 30_000;
+const SHADOW_LEDGER_DASHBOARD_READ_LIMIT = Math.max(
+  1_000,
+  Number(process.env["SHADOW_LEDGER_DASHBOARD_READ_LIMIT"]) || 20_000,
+);
 const SHADOW_TRADE_DIAGNOSTICS_CACHE_TTL_MS = 30_000;
 const SHADOW_TRADE_DIAGNOSTICS_CACHE_STALE_TTL_MS = 300_000;
 const SHADOW_OPTION_QUOTE_CACHE_TTL_MS = 15_000;
@@ -527,8 +531,9 @@ let shadowReadCacheStaleWaitMsForTests: number | null = null;
 let shadowOptionQuoteCacheTtlMsForTests: number | null = null;
 let shadowOptionQuoteCacheStaleTtlMsForTests: number | null = null;
 // Mark refresh mutates open-position valuation and account totals. It does not
-// mutate orders/fills, and equity-history has its own 10s TTL; expiring those on
-// every mark tick made the marketing stream rebuild expensive DB reads every 5s.
+  // mutate orders/fills, and equity-history has its own derived-read TTL; expiring
+  // those on every mark tick made the marketing stream rebuild expensive DB reads
+  // every 5s.
 const SHADOW_MARK_REFRESH_CACHE_KEY_PREFIXES = [
   "allocation:",
   "ledger-bundle:",
@@ -624,6 +629,10 @@ const shadowBenchmarkBarsInFlight = new Map<
   string,
   Promise<ShadowBenchmarkBars | null>
 >();
+
+function shadowLedgerDashboardReadLimit(): number {
+  return SHADOW_LEDGER_DASHBOARD_READ_LIMIT;
+}
 
 function invalidateShadowFreshStateCache() {
   // Global clear across accounts is correct (never serves wrong data); per-account
@@ -2126,8 +2135,13 @@ function buildShadowAutomationContext(input: {
     markPrice,
   ].filter((value): value is number => value != null);
   const peakPrice = peakPriceCandidates.length ? Math.max(...peakPriceCandidates) : null;
+  const persistedStopPrice = toNumber(eventStop.stopPrice);
   const displayStop =
-    profilePayload && entryPrice != null && markPrice != null && peakPrice != null
+    persistedStopPrice == null &&
+    profilePayload &&
+    entryPrice != null &&
+    markPrice != null &&
+    peakPrice != null
       ? computeSignalOptionsPositionStop({
           entryPrice,
           peakPrice,
@@ -2135,18 +2149,28 @@ function buildShadowAutomationContext(input: {
           profile: resolveSignalOptionsExecutionProfile(profilePayload),
         })
       : null;
+  const eventTrailActive =
+    typeof eventStop.trailActive === "boolean" ? eventStop.trailActive : null;
+  const eventTrailHasTakenOver =
+    typeof eventStop.trailHasTakenOver === "boolean"
+      ? eventStop.trailHasTakenOver
+      : null;
+  const eventActiveStopKind = readString(eventStop.activeStopKind);
   const hardStopPrice =
-    displayStop?.hardStopPrice ?? toNumber(eventStop.hardStopPrice) ?? eventStopPrice;
-  const rawStopPrice = displayStop?.stopPrice ?? eventStopPrice;
-  const trailStopPrice = displayStop?.trailStopPrice ?? toNumber(eventStop.trailStopPrice);
-  const trailActive = displayStop?.trailActive ?? eventStop.trailActive === true;
+    toNumber(eventStop.hardStopPrice) ?? displayStop?.hardStopPrice ?? eventStopPrice;
+  const rawStopPrice = persistedStopPrice ?? displayStop?.stopPrice ?? eventStopPrice;
+  const trailStopPrice = toNumber(eventStop.trailStopPrice) ?? displayStop?.trailStopPrice;
+  const trailActive = eventTrailActive ?? displayStop?.trailActive ?? false;
   const trailHasTakenOver =
+    eventTrailHasTakenOver ??
     displayStop?.trailHasTakenOver ??
     (trailActive && hardStopPrice != null && trailStopPrice != null
       ? trailStopPrice > hardStopPrice
       : trailActive && trailStopPrice != null && hardStopPrice == null);
   const activeStopKind =
-    displayStop?.activeStopKind ??
+    (eventActiveStopKind === "trailing_stop" || eventActiveStopKind === "hard_stop"
+      ? eventActiveStopKind
+      : displayStop?.activeStopKind) ??
     (trailHasTakenOver
       ? "trailing_stop"
       : hardStopPrice != null
@@ -2155,10 +2179,11 @@ function buildShadowAutomationContext(input: {
           ? "trailing_stop"
           : null);
   const activeStopPrice =
+    toNumber(eventStop.activeStopPrice) ??
     displayStop?.activeStopPrice ??
     (activeStopKind === "trailing_stop" ? trailStopPrice : hardStopPrice) ??
     rawStopPrice;
-  const stopPrice = activeStopPrice ?? rawStopPrice;
+  const stopPrice = persistedStopPrice ?? activeStopPrice ?? rawStopPrice;
 
   return {
     entryPrice,
@@ -3099,7 +3124,12 @@ async function readShadowOrdersByFillOrderId(
   return new Map(orders.map((order) => [order.id, order]));
 }
 
-async function readShadowFillsWithOrders() {
+type ShadowFillsWithOrders = {
+  fills: ShadowFillRow[];
+  ordersById: Map<string, ShadowOrderRow>;
+};
+
+async function readShadowFillsWithOrders(): Promise<ShadowFillsWithOrders> {
   const fills = await db
     .select()
     .from(shadowFillsTable)
@@ -3110,7 +3140,22 @@ async function readShadowFillsWithOrders() {
   };
 }
 
-// Single-flighted shared read of the account's full shadow fills+orders for the
+async function readBoundedShadowFillsWithOrders(): Promise<ShadowFillsWithOrders> {
+  const fills = (
+    await db
+      .select()
+      .from(shadowFillsTable)
+      .where(eq(shadowFillsTable.accountId, currentShadowAccountId()))
+      .orderBy(desc(shadowFillsTable.occurredAt))
+      .limit(shadowLedgerDashboardReadLimit())
+  ).sort((left, right) => left.occurredAt.getTime() - right.occurredAt.getTime());
+  return {
+    fills,
+    ordersById: await readShadowOrdersByFillOrderId(fills),
+  };
+}
+
+// Single-flighted shared read of the account's bounded shadow fills+orders for the
 // dashboard widgets. The account screen mounts ~10 widget endpoints at once,
 // several of which independently re-read the same fills+orders concurrently
 // against the 12-connection pool (the startup pool-saturation root cause).
@@ -3118,19 +3163,21 @@ async function readShadowFillsWithOrders() {
 // them into a single read. The raw readShadowFillsWithOrders above stays for
 // write-adjacent recompute paths that need an uncached fresh read.
 //
-// Under a large signal universe the DB pool is saturated and this full
+// Under a large signal universe the DB pool is saturated and this bounded
 // fills+orders scan (the dominant shadow-read cost in the flight recorder,
-// ~1.7s) was on the critical path for equity-history / positions / closed-trades
-// / cash-activity: the DEFAULT "wait" stale strategy blocked each stale miss for
+// ~1.7s) was on the critical path for equity-history / positions / cash-activity:
+// the DEFAULT "wait" stale strategy blocked each stale miss for
 // up to staleWaitMs (1.5s) before serving the same cached value it would have
 // served anyway (the fresh read almost always exceeds 1.5s under load). Serve the
-// last cached fills+orders immediately and refresh in the background instead, and
-// widen the TTL to the derived-read cadence so the heavy scan recomputes ~4x less
-// often (10s vs 2.5s), cutting pool contention for every shadow route. Staleness
+// last cached fills+orders immediately and refresh in the background instead. The
+// 30s derived-read TTL is aligned with the slow account-page derived cadence while
+// shadow write invalidation still clears this cache on ledger mutations. Staleness
 // bound is unchanged (staleExpiresAt still SHADOW_READ_CACHE_STALE_TTL_MS = 60s);
 // trading logic never reads this cached path (it uses readShadowFillsWithOrders).
-function readShadowDashboardFillsWithOrders() {
-  return withShadowReadCache("dashboard:fills-with-orders", readShadowFillsWithOrders, {
+function readShadowDashboardFillsWithOrders(
+  reader: () => Promise<ShadowFillsWithOrders> = readBoundedShadowFillsWithOrders,
+) {
+  return withShadowReadCache("dashboard:fills-with-orders", reader, {
     ttlMs: SHADOW_DERIVED_READ_CACHE_TTL_MS,
     staleStrategy: "immediate",
   });
@@ -3167,7 +3214,9 @@ async function readShadowOrdersForAccount(): Promise<ShadowOrderRow[]> {
   return await db
     .select()
     .from(shadowOrdersTable)
-    .where(eq(shadowOrdersTable.accountId, currentShadowAccountId()));
+    .where(eq(shadowOrdersTable.accountId, currentShadowAccountId()))
+    .orderBy(desc(shadowOrdersTable.placedAt))
+    .limit(shadowLedgerDashboardReadLimit());
 }
 
 async function readShadowOrdersForSource(
@@ -9954,12 +10003,11 @@ export async function getShadowAccountClosedTrades(input: {
       }
       try {
         await ensureShadowAccount();
-        // Share the dashboard fills+orders read (readShadowDashboardFillsWithOrders)
-        // instead of a separate query; replicate `where occurred_at <= to order by
-        // occurred_at asc` in memory on a copy (never mutate the shared cached array).
+        // Closed-trades is the all-time P&L consumer; keep it on the raw ledger
+        // reader instead of the dashboard-capped stream reader.
         const toBound = input.to;
         const { fills: allFills, ordersById } =
-          await readShadowDashboardFillsWithOrders();
+          await readShadowFillsWithOrders();
         const rawFills = (
           toBound
             ? allFills.filter((fill) => fill.occurredAt <= toBound)
@@ -11026,17 +11074,8 @@ export async function getShadowAccountOrders(input: {
         };
       }
       try {
-        await ensureShadowAccount();
         const terminalStatuses = ["filled", "canceled", "rejected", "expired"];
-        const orders = await db
-          .select()
-          .from(shadowOrdersTable)
-          .where(eq(shadowOrdersTable.accountId, currentShadowAccountId()))
-          .orderBy(desc(shadowOrdersTable.placedAt))
-          .limit(SHADOW_ORDER_HISTORY_LIMIT);
-        const sourceOrders = source
-          ? orders.filter((order) => shadowOrderMatchesSource(order, source))
-          : orders.filter(isLiveShadowOrder);
+        const sourceOrders = await readShadowOrdersForDisplay(source);
         const filtered = sourceOrders.filter((order) =>
           tab === "working"
             ? !terminalStatuses.includes(order.status)
@@ -11070,6 +11109,28 @@ export async function getShadowAccountOrders(input: {
         }
         throw error;
       }
+    },
+    {
+      staleStrategy: "immediate",
+      ttlMs: SHADOW_DERIVED_READ_CACHE_TTL_MS,
+    },
+  );
+}
+
+function readShadowOrdersForDisplay(source: ShadowSourceScope | null) {
+  return withShadowReadCache(
+    `orders:all:${shadowSourceCacheKey(source)}`,
+    async () => {
+      await ensureShadowAccount();
+      const orders = await db
+        .select()
+        .from(shadowOrdersTable)
+        .where(eq(shadowOrdersTable.accountId, currentShadowAccountId()))
+        .orderBy(desc(shadowOrdersTable.placedAt))
+        .limit(SHADOW_ORDER_HISTORY_LIMIT);
+      return source
+        ? orders.filter((order) => shadowOrderMatchesSource(order, source))
+        : orders.filter(isLiveShadowOrder);
     },
     {
       staleStrategy: "immediate",
@@ -14504,6 +14565,7 @@ export const __shadowWatchlistBacktestInternalsForTests = {
   },
   rememberShadowOptionQuoteForTests: rememberShadowOptionQuote,
   readCachedShadowOptionQuotesForTests: readCachedShadowOptionQuotes,
+  readShadowDashboardFillsWithOrdersForTests: readShadowDashboardFillsWithOrders,
   withShadowReadCache,
   getShadowAccountReadDiagnostics,
   resetShadowAccountReadDiagnosticsForTests,

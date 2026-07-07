@@ -52,6 +52,7 @@ export type SignalOptionsWireContext = {
   symbol?: string | null;
   timeframe?: string | null;
   latestBarAt: Date | string | null;
+  previousBarAt?: Date | string | null;
   latestClose: number | null;
   regimeDirection: number | null;
   previousRegimeDirection?: number | null;
@@ -160,6 +161,53 @@ function latestDate(value: unknown): Date | null {
     return Number.isFinite(date.getTime()) ? date : null;
   }
   return null;
+}
+
+function signalOptionsWireTimeframeMs(timeframe?: string | null): number | null {
+  const match = String(timeframe ?? "").trim().match(/^(\d+)(m|h|d)$/i);
+  if (!match) {
+    return null;
+  }
+  const amount = Number(match[1]);
+  if (!Number.isFinite(amount) || amount <= 0) {
+    return null;
+  }
+  const unit = match[2]?.toLowerCase();
+  return unit === "m"
+    ? amount * 60_000
+    : unit === "h"
+      ? amount * 60 * 60_000
+      : unit === "d"
+        ? amount * 24 * 60 * 60_000
+        : null;
+}
+
+function resolveWireBarFreshness(input: {
+  context: SignalOptionsWireContext | null;
+  now?: Date | null;
+}) {
+  const context = input.context;
+  const latestBarAt = latestDate(context?.latestBarAt);
+  if (!context || !latestBarAt) {
+    return { stale: false, ageMs: null, intervalMs: null };
+  }
+  const timeframeMs = signalOptionsWireTimeframeMs(context.timeframe);
+  const previousBarAt = latestDate(context.previousBarAt);
+  const spacingMs =
+    previousBarAt && latestBarAt.getTime() > previousBarAt.getTime()
+      ? latestBarAt.getTime() - previousBarAt.getTime()
+      : null;
+  const intervalMs = timeframeMs ?? spacingMs;
+  if (intervalMs == null) {
+    return { stale: false, ageMs: null, intervalMs: null };
+  }
+  const now = input.now ?? new Date();
+  const ageMs = Math.max(0, now.getTime() - latestBarAt.getTime());
+  return {
+    stale: ageMs > intervalMs * 2,
+    ageMs,
+    intervalMs,
+  };
 }
 
 function positionUnderlyingDirection(direction?: SignalOptionsPositionDirection | null) {
@@ -422,11 +470,15 @@ export function computeSignalOptionsPositionStop(input: {
         })
       : null;
   const latestUnderlyingClose = finiteNumber(wireContext?.latestClose);
-  const structureBreak =
+  const rawStructureBreak =
     Boolean(selectedWire && latestUnderlyingClose != null && !regimeFlipAgainstPosition) &&
     (underlyingDirection === 1
       ? latestUnderlyingClose! <= selectedWire!.price
       : latestUnderlyingClose! >= selectedWire!.price);
+  const wireBarFreshness = rawStructureBreak
+    ? resolveWireBarFreshness({ context: wireContext, now: input.now })
+    : { stale: false, ageMs: null, intervalMs: null };
+  const structureBreak = rawStructureBreak && !wireBarFreshness.stale;
   const usesProgressiveTrail =
     profile.exitPolicy.progressiveTrailEnabled &&
     profile.exitPolicy.progressiveTrailSteps.length > 0;
@@ -543,7 +595,10 @@ export function computeSignalOptionsPositionStop(input: {
       selectedWirePrice: selectedWire?.price ?? null,
       latestUnderlyingClose,
       latestUnderlyingBarAt: wireContext?.latestBarAt ?? null,
+      latestUnderlyingBarAgeMs: wireBarFreshness.ageMs,
+      latestUnderlyingBarIntervalMs: wireBarFreshness.intervalMs,
       structureBreak,
+      structureBreakSuppressed: wireBarFreshness.stale ? "stale_bar" : null,
       regimeDirection,
       previousRegimeDirection,
       regimeFlipAgainstPosition,

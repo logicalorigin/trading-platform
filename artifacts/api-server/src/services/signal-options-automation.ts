@@ -284,6 +284,7 @@ const SIGNAL_OPTIONS_MONITOR_BAR_SOURCE_POLICY = "mixed" as const;
 const SIGNAL_OPTIONS_MONITOR_STALE_GRACE_MS = 5_000;
 const SIGNAL_OPTIONS_POSITION_MARK_SKIP_RATE_LIMIT_MS = 5 * 60 * 1_000;
 const SIGNAL_OPTIONS_SHADOW_MARK_FALLBACK_MAX_AGE_MS = 3 * 60 * 1_000;
+const SIGNAL_OPTIONS_PEAK_FLOOR_CACHE_TTL_MS = 15_000;
 // Stop-exit decisions demand fresher data than P&L marking: a fallback mark
 // may be up to 3 minutes old to RECORD marks, but an EXIT may only fire from
 // a fallback mark at most 60s old (user-confirmed policy: wait for fresh
@@ -1873,6 +1874,18 @@ type SignalOptionsShadowPositionMarkFallback = {
   source: string | null;
 };
 
+const signalOptionsPeakFloorFallbackCache = new Map<
+  string,
+  {
+    cachedAtMs: number;
+    value: SignalOptionsShadowPositionMarkFallback | null;
+  }
+>();
+
+function signalOptionsPeakFloorCacheKey(position: SignalOptionsPosition) {
+  return position.id;
+}
+
 async function readShadowPositionMarkFallback(
   position: SignalOptionsPosition,
 ): Promise<SignalOptionsShadowPositionMarkFallback | null> {
@@ -1944,6 +1957,48 @@ async function readShadowPositionMarkFallback(
   };
 }
 
+async function readCachedShadowPositionMarkFallback(input: {
+  position: SignalOptionsPosition;
+  now: Date;
+}): Promise<SignalOptionsShadowPositionMarkFallback | null> {
+  const cacheKey = signalOptionsPeakFloorCacheKey(input.position);
+  const nowMs = input.now.getTime();
+  const cached = signalOptionsPeakFloorFallbackCache.get(cacheKey);
+  if (
+    cached &&
+    nowMs - cached.cachedAtMs <= SIGNAL_OPTIONS_PEAK_FLOOR_CACHE_TTL_MS
+  ) {
+    return cached.value;
+  }
+
+  const value = await readShadowPositionMarkFallback(input.position).catch(
+    (error: unknown) => {
+      logger.warn?.(
+        {
+          err: error,
+          positionId: input.position.id,
+          symbol: input.position.symbol,
+        },
+        "Failed to read signal-options Shadow position mark fallback",
+      );
+      return null;
+    },
+  );
+  signalOptionsPeakFloorFallbackCache.set(cacheKey, {
+    cachedAtMs: nowMs,
+    value,
+  });
+  return value;
+}
+
+function clearSignalOptionsPeakFloorCacheForPosition(
+  position: SignalOptionsPosition,
+) {
+  signalOptionsPeakFloorFallbackCache.delete(
+    signalOptionsPeakFloorCacheKey(position),
+  );
+}
+
 function isFreshShadowPositionMarkFallback(input: {
   fallback: SignalOptionsShadowPositionMarkFallback | null;
   now: Date;
@@ -2005,6 +2060,11 @@ const SIGNAL_OPTIONS_POSITION_MARK_SKIP_REASONS = new Set([
   "position_mark_unavailable",
   "position_mark_failed",
   "position_mark_timeout",
+]);
+
+const SIGNAL_OPTIONS_PERSISTED_POSITION_AUDIT_SKIP_REASONS = new Set([
+  "position_exit_quote_unavailable",
+  "after_hours_option_exit_blocked",
 ]);
 
 function isSignalOptionsPositionMarkSkipReason(reason: string | null) {
@@ -3382,6 +3442,41 @@ function strikesAroundMoneyForSlot(slot: number) {
 
 const SIGNAL_OPTIONS_FALLBACK_STRIKE_STEPS = 2;
 
+function signalOptionsSlotResolvedQuotes(input: {
+  candidates: SignalOptionsOptionQuote[];
+  strikes: number[];
+  spotPrice: number;
+  slots: number[];
+}) {
+  const attemptedStrikes = new Set<number>();
+  const resolved: Array<{
+    slot: number;
+    quote: SignalOptionsOptionQuote;
+  }> = [];
+  for (const slot of input.slots) {
+    const strike =
+      input.strikes[
+        resolveStrikeIndex({
+          strikes: input.strikes,
+          spotPrice: input.spotPrice,
+          slot,
+        })
+      ];
+    if (strike == null || attemptedStrikes.has(strike)) {
+      continue;
+    }
+    attemptedStrikes.add(strike);
+    const quote =
+      input.candidates.find(
+        (item) => finiteNumber(asRecord(item.contract).strike) === strike,
+      ) ?? null;
+    if (quote) {
+      resolved.push({ slot, quote });
+    }
+  }
+  return resolved;
+}
+
 function signalOptionsStrikeSlotsForFallback(input: {
   profile: SignalOptionsExecutionProfile;
   optionRight: OptionRight;
@@ -3439,23 +3534,13 @@ export function selectSignalOptionsContractFromChain(input: {
 
   const spotPrice =
     input.signalPrice ?? strikes[Math.floor(strikes.length / 2)]!;
-  const attemptedStrikes = new Set<number>();
-  for (const slot of signalOptionsStrikeSlotsForRight(
-    input.profile,
-    optionRight,
-  )) {
-    const strike = strikes[resolveStrikeIndex({ strikes, spotPrice, slot })];
-    if (strike == null || attemptedStrikes.has(strike)) {
-      continue;
-    }
-    attemptedStrikes.add(strike);
-    const quote =
-      candidates.find(
-        (item) => finiteNumber(asRecord(item.contract).strike) === strike,
-      ) ?? null;
-    if (quote) {
-      return quote;
-    }
+  for (const { quote } of signalOptionsSlotResolvedQuotes({
+    candidates,
+    strikes,
+    spotPrice,
+    slots: signalOptionsStrikeSlotsForRight(input.profile, optionRight),
+  })) {
+    return quote;
   }
   return null;
 }
@@ -3603,22 +3688,13 @@ function selectSignalOptionsLegacyContractPlanFromChain(input: {
     profile: input.profile,
     optionRight,
   });
-  const attemptedStrikes = new Set<number>();
 
-  for (const slot of slots) {
-    const strike = strikes[resolveStrikeIndex({ strikes, spotPrice, slot })];
-    if (strike == null || attemptedStrikes.has(strike)) {
-      continue;
-    }
-    attemptedStrikes.add(strike);
-    const quote =
-      candidates.find(
-        (item) => finiteNumber(asRecord(item.contract).strike) === strike,
-      ) ?? null;
-    if (!quote) {
-      continue;
-    }
-
+  for (const { slot, quote } of signalOptionsSlotResolvedQuotes({
+    candidates,
+    strikes,
+    spotPrice,
+    slots,
+  })) {
     const orderPlan = buildSignalOptionsShadowOrderPlan(quote, input.profile);
     const attempt = {
       slot,
@@ -3829,14 +3905,32 @@ function selectSignalOptionsGreekContractPlanFromChain(input: {
       fallbackReason: "greek_selector_no_candidates",
     };
   }
+  const attempts: SignalOptionsGreekContractAttempt[] = [];
+  const right = optionRightForSignal(input.direction);
+  const rightCandidates = input.contracts.filter(
+    (quote) => asRecord(quote.contract).right === right,
+  );
+  const strikes = Array.from(
+    new Set(
+      rightCandidates
+        .map((quote) => finiteNumber(asRecord(quote.contract).strike))
+        .filter((strike): strike is number => strike != null),
+    ),
+  ).sort((left, rightStrike) => left - rightStrike);
+  const slotResolvedQuotes = strikes.length
+    ? signalOptionsSlotResolvedQuotes({
+        candidates: rightCandidates,
+        strikes,
+        spotPrice: spot,
+        slots: signalOptionsStrikeSlotsForRight(input.profile, right),
+      }).map((resolved) => resolved.quote)
+    : [];
   const candidates = signalOptionsGreekCandidateQuotes({
-    contracts: input.contracts,
+    contracts: slotResolvedQuotes,
     direction: input.direction,
     signalPrice: spot,
     maxCandidates: policy.maxCandidates,
   });
-  const attempts: SignalOptionsGreekContractAttempt[] = [];
-  const right = optionRightForSignal(input.direction);
 
   for (const quote of candidates) {
     const orderPlan = buildSignalOptionsShadowOrderPlan(quote, input.profile);
@@ -4002,6 +4096,145 @@ export function signalOptionsFinalQuoteDeltaGate(input: {
     };
   }
   return { ok: true, delta, deltaSource };
+}
+
+function signalOptionsBreakevenMovePct(input: {
+  right: OptionRight;
+  spot: number;
+  strike: number;
+  fillPrice: number;
+}): number | null {
+  if (input.spot <= 0) {
+    return null;
+  }
+  const breakeven =
+    input.right === "put"
+      ? input.spot - (input.strike - input.fillPrice)
+      : input.strike + input.fillPrice - input.spot;
+  return breakeven / input.spot;
+}
+
+export function signalOptionsFinalQuoteBreakevenGate(input: {
+  greekSelectorGoverned: boolean;
+  right: OptionRight;
+  spot: number | null;
+  strike: number | null;
+  fillPrice: number | null;
+  expectedMovePct: number | null;
+}):
+  | {
+      ok: true;
+      breakevenMovePct: number | null;
+      expectedMovePct: number | null;
+    }
+  | {
+      ok: false;
+      reason: "entry_breakeven_beyond_expected_move_final_quote";
+      breakevenMovePct: number;
+      expectedMovePct: number;
+      fillPrice: number;
+    } {
+  const expectedMovePct = finiteNumber(input.expectedMovePct);
+  if (!input.greekSelectorGoverned || expectedMovePct == null || expectedMovePct <= 0) {
+    return { ok: true, breakevenMovePct: null, expectedMovePct: null };
+  }
+  const spot = finiteNumber(input.spot);
+  const strike = finiteNumber(input.strike);
+  const fillPrice = finiteNumber(input.fillPrice);
+  if (spot == null || strike == null || fillPrice == null || fillPrice <= 0) {
+    return { ok: true, breakevenMovePct: null, expectedMovePct };
+  }
+  const breakevenMovePct = signalOptionsBreakevenMovePct({
+    right: input.right,
+    spot,
+    strike,
+    fillPrice,
+  });
+  if (breakevenMovePct == null) {
+    return { ok: true, breakevenMovePct: null, expectedMovePct };
+  }
+  if (breakevenMovePct > expectedMovePct) {
+    return {
+      ok: false,
+      reason: "entry_breakeven_beyond_expected_move_final_quote",
+      breakevenMovePct,
+      expectedMovePct,
+      fillPrice,
+    };
+  }
+  return { ok: true, breakevenMovePct, expectedMovePct };
+}
+
+export function signalOptionsFinalQuoteScoreGate(input: {
+  greekSelectorGoverned: boolean;
+  right: OptionRight;
+  spot: number | null;
+  strike: number | null;
+  fillPrice: number | null;
+  volume?: number | null;
+  greeks: OptionGreekSnapshot | null;
+  minScore: number;
+}):
+  | { ok: true; score: OptionGreekScore | null; minScore: number }
+  | {
+      ok: false;
+      reason: "entry_score_below_min_final_quote";
+      score: OptionGreekScore;
+      minScore: number;
+    } {
+  const minScore = finiteNumber(input.minScore);
+  if (!input.greekSelectorGoverned || minScore == null) {
+    return { ok: true, score: null, minScore: input.minScore };
+  }
+  const spot = finiteNumber(input.spot);
+  const strike = finiteNumber(input.strike);
+  const fillPrice = finiteNumber(input.fillPrice);
+  if (
+    spot == null ||
+    strike == null ||
+    fillPrice == null ||
+    fillPrice <= 0 ||
+    !input.greeks
+  ) {
+    return { ok: true, score: null, minScore };
+  }
+  const score = scoreOptionGreekCandidate({
+    right: input.right,
+    spot,
+    strike,
+    entryPrice: fillPrice,
+    volume: finiteNumber(input.volume),
+    greeks: input.greeks,
+  });
+  if (score.total < minScore) {
+    return {
+      ok: false,
+      reason: "entry_score_below_min_final_quote",
+      score,
+      minScore,
+    };
+  }
+  return { ok: true, score, minScore };
+}
+
+function signalOptionsGreekSelectionExpectedMovePct(
+  selection: SignalOptionsGreekContractSelection | null | undefined,
+) {
+  const greeks = selection?.selectedAttempt?.greeks;
+  const impliedVolatility = finiteNumber(greeks?.impliedVolatility);
+  const timeToExpirationYears = finiteNumber(greeks?.timeToExpirationYears);
+  if (
+    impliedVolatility != null &&
+    impliedVolatility > 0 &&
+    timeToExpirationYears != null &&
+    timeToExpirationYears > 0
+  ) {
+    return impliedVolatility * Math.sqrt(timeToExpirationYears);
+  }
+  const expectedMovePct = finiteNumber(
+    selection?.selectedAttempt?.score?.expectedMovePct,
+  );
+  return expectedMovePct != null && expectedMovePct > 0 ? expectedMovePct : null;
 }
 
 function selectSignalOptionsContractPlanFromChain(input: {
@@ -7103,9 +7336,15 @@ function shouldPersistSignalOptionsEventToLedger(input: {
   event: ExecutionEvent;
   mode?: SignalOptionsTallyMode;
 }) {
+  const reason = compactString(
+    asRecord(input.event.payload).reason ?? asRecord(input.event.payload).skipReason,
+  );
   return !(
     signalOptionsTallyAuthoritative(input.mode) &&
-    isSignalOptionsEntryCandidateSkip(input.event)
+    isSignalOptionsEntryCandidateSkip(input.event) &&
+    !(
+      reason && SIGNAL_OPTIONS_PERSISTED_POSITION_AUDIT_SKIP_REASONS.has(reason)
+    )
   );
 }
 
@@ -7468,6 +7707,11 @@ function computeSignalOptionsDailyRealizedPnl(
         event.eventType === SIGNAL_OPTIONS_EXIT_EVENT &&
         isSameUtcDate(event.occurredAt, now) &&
         signalOptionsExitEventHasActionableOptionSession(event),
+    )
+    .sort(
+      (left, right) =>
+        right.occurredAt.getTime() - left.occurredAt.getTime() ||
+        right.id.localeCompare(left.id),
     )
     .filter((event) => {
       const payload = asRecord(event.payload);
@@ -7916,8 +8160,10 @@ const SIGNAL_OPTIONS_SEEN_SIGNAL_SKIP_REASON_VALUES = [
   "candidate_resolution_failed",
   "candidate_resolution_timeout",
   "daily_loss_halt_active",
+  "entry_breakeven_beyond_expected_move_final_quote",
   "entry_delta_below_floor",
   "entry_gate_failed",
+  "entry_score_below_min_final_quote",
   "gateway_login_required",
   "gateway_not_ready",
   "gateway_socket_disconnected",
@@ -11074,7 +11320,13 @@ function buildRuleAdherence(input: {
       violations: markProblemEvents + positionMarkFeedBlocks,
       detail:
         unmarkedPositions || markProblemEvents || positionMarkFeedBlocks
-          ? `${unmarkedPositions} open positions lack marks; ${markProblemEvents} mark events reported quote issues; ${positionMarkFeedBlocks} scans blocked new entries while marking was degraded.`
+          ? [
+              unmarkedPositions ? `${unmarkedPositions} open positions lack marks` : null,
+              markProblemEvents ? `${markProblemEvents} mark events reported quote issues` : null,
+              positionMarkFeedBlocks ? `${positionMarkFeedBlocks} scans blocked new entries while marking was degraded` : null,
+            ]
+              .filter(Boolean)
+              .join("; ") + "."
           : "Open positions have marks for current exposure.",
     }),
   ];
@@ -12922,18 +13174,9 @@ async function refreshActivePosition(input: {
     return { managed: false, reason };
   };
 
-  const shadowMarkFallback = await readShadowPositionMarkFallback(
-    input.position,
-  ).catch((error: unknown) => {
-    logger.warn?.(
-      {
-        err: error,
-        positionId: input.position.id,
-        symbol: input.position.symbol,
-      },
-      "Failed to read signal-options Shadow position mark fallback",
-    );
-    return null;
+  const shadowMarkFallback = await readCachedShadowPositionMarkFallback({
+    position: input.position,
+    now,
   });
   const fallbackFresh = isFreshShadowPositionMarkFallback({
     fallback: shadowMarkFallback,
@@ -13239,6 +13482,7 @@ async function refreshActivePosition(input: {
       signalOptionsClaimedExits.delete(exitClaimKey);
       throw error;
     }
+    clearSignalOptionsPeakFloorCacheForPosition(input.position);
     return {
       managed: true,
       usedShadowMarkFallback,
@@ -14059,14 +14303,22 @@ async function resolveSignalOptionsCandidateContract(input: {
   // Money-path guardrail: re-enforce the selector's hard tradeability floor against
   // the FINAL quote (post live re-quote / shadow fallback). Selection-time scoring
   // ran on an earlier snapshot, and the fallback_legacy path never scored at all.
+  const finalGateStrike = finiteNumber(asRecord(selectedContract).strike);
+  const finalGateExpirationDate = dateOrNull(
+    asRecord(selectedContract).expirationDate,
+  );
+  const finalGateFillPrice = finiteNumber(orderPlan?.simulatedFillPrice);
+  const finalGateSpot = finiteNumber(input.candidate.signalPrice);
+  const finalQuoteGateAt = new Date();
   const finalDeltaGate = signalOptionsFinalQuoteDeltaGate({
     greekSelectorGoverned: Boolean(greekSelection),
     entryGreeks,
-    strike: finiteNumber(asRecord(selectedContract).strike),
-    expirationDate: dateOrNull(asRecord(selectedContract).expirationDate),
-    fillPrice: finiteNumber(orderPlan?.simulatedFillPrice),
-    spot: finiteNumber(input.candidate.signalPrice),
+    strike: finalGateStrike,
+    expirationDate: finalGateExpirationDate,
+    fillPrice: finalGateFillPrice,
+    spot: finalGateSpot,
     right: input.candidate.optionRight,
+    at: finalQuoteGateAt,
   });
   if (!finalDeltaGate.ok) {
     return {
@@ -14091,6 +14343,105 @@ async function resolveSignalOptionsCandidateContract(input: {
           delta: finalDeltaGate.delta,
           deltaSource: finalDeltaGate.deltaSource,
           floor: finalDeltaGate.floor,
+          fillQuoteSource,
+        },
+        contractSelection: contractSelectionPayload,
+        ...(liveQuoteDemandPayload
+          ? { liveQuoteDemand: liveQuoteDemandPayload }
+          : {}),
+      },
+      retryable: true,
+    };
+  }
+  const finalBreakevenGate = signalOptionsFinalQuoteBreakevenGate({
+    greekSelectorGoverned: Boolean(greekSelection),
+    right: input.candidate.optionRight,
+    spot: finalGateSpot,
+    strike: finalGateStrike,
+    fillPrice: finalGateFillPrice,
+    expectedMovePct: signalOptionsGreekSelectionExpectedMovePct(greekSelection),
+  });
+  if (!finalBreakevenGate.ok) {
+    return {
+      selectedExpiration,
+      selectedQuote: null,
+      selectedContract: null,
+      quote: null,
+      orderPlan: null,
+      liquidity: null,
+      entryGreeks: null,
+      contractSelection,
+      contractSelectionPayload,
+      chainDebug: chain.debug,
+      chainAttempts,
+      reason: finalBreakevenGate.reason,
+      detail: {
+        selectedExpiration: selectedExpirationPayload,
+        chainDebug: chain.debug,
+        chainAttempts,
+        retryable: true,
+        finalBreakevenGate: {
+          breakevenMovePct: finalBreakevenGate.breakevenMovePct,
+          expectedMovePct: finalBreakevenGate.expectedMovePct,
+          fillPrice: finalBreakevenGate.fillPrice,
+          fillQuoteSource,
+        },
+        contractSelection: contractSelectionPayload,
+        ...(liveQuoteDemandPayload
+          ? { liveQuoteDemand: liveQuoteDemandPayload }
+          : {}),
+      },
+      retryable: true,
+    };
+  }
+  const finalScoreGreeks =
+    selectedQuote &&
+    finalGateStrike != null &&
+    finalGateSpot != null &&
+    finalGateFillPrice != null
+      ? optionGreekSnapshotForSelector({
+          quote: selectedQuote,
+          right: input.candidate.optionRight,
+          spot: finalGateSpot,
+          strike: finalGateStrike,
+          entryPrice: finalGateFillPrice,
+          at: finalQuoteGateAt,
+          requireLiveGreeks:
+            input.profile.optionSelection.greekSelector.requireLiveGreeks,
+        })
+      : null;
+  const finalScoreGate = signalOptionsFinalQuoteScoreGate({
+    greekSelectorGoverned: Boolean(greekSelection?.selectedAttempt),
+    right: input.candidate.optionRight,
+    spot: finalGateSpot,
+    strike: finalGateStrike,
+    fillPrice: finalGateFillPrice,
+    volume: finiteNumber(selectedQuote?.volume),
+    greeks: finalScoreGreeks,
+    minScore: input.profile.optionSelection.greekSelector.minScore,
+  });
+  if (!finalScoreGate.ok) {
+    return {
+      selectedExpiration,
+      selectedQuote: null,
+      selectedContract: null,
+      quote: null,
+      orderPlan: null,
+      liquidity: null,
+      entryGreeks: null,
+      contractSelection,
+      contractSelectionPayload,
+      chainDebug: chain.debug,
+      chainAttempts,
+      reason: finalScoreGate.reason,
+      detail: {
+        selectedExpiration: selectedExpirationPayload,
+        chainDebug: chain.debug,
+        chainAttempts,
+        retryable: true,
+        finalScoreGate: {
+          score: finalScoreGate.score,
+          minScore: finalScoreGate.minScore,
           fillQuoteSource,
         },
         contractSelection: contractSelectionPayload,
@@ -15042,6 +15393,7 @@ async function closePositionForOppositeSignal(input: {
       profile: input.profile,
     },
   });
+  clearSignalOptionsPeakFloorCacheForPosition(input.position);
   return true;
 }
 
@@ -15852,6 +16204,10 @@ function buildSignalOptionsWireContext(input: {
     symbol: input.symbol,
     timeframe: input.timeframe,
     latestBarAt: new Date(latestBar.time * 1000).toISOString(),
+    previousBarAt:
+      index > 0
+        ? new Date(input.chartBars[index - 1]!.time * 1000).toISOString()
+        : null,
     latestClose: latestBar.c,
     regimeDirection,
     previousRegimeDirection:
@@ -19999,10 +20355,23 @@ export const __signalOptionsAutomationInternalsForTests = {
   tryClaimSignalOptionsPositionExit,
   __resetSignalOptionsClaimedExitsForTests: () =>
     signalOptionsClaimedExits.clear(),
+  SIGNAL_OPTIONS_PEAK_FLOOR_CACHE_TTL_MS,
+  refreshActivePosition,
+  __resetSignalOptionsPeakFloorFallbackCacheForTests: () =>
+    signalOptionsPeakFloorFallbackCache.clear(),
+  __hasSignalOptionsPeakFloorFallbackCacheForTests: (
+    position: SignalOptionsPosition,
+  ) =>
+    signalOptionsPeakFloorFallbackCache.has(
+      signalOptionsPeakFloorCacheKey(position),
+    ),
+  __clearSignalOptionsPeakFloorFallbackCacheForTests:
+    clearSignalOptionsPeakFloorCacheForPosition,
   buildCandidateFromSignal,
   candidateFromSignalSnapshot,
   buildSignalOptionsCandidateShellsFromSignals,
   previewCandidateFromSignalSnapshot,
+  buildRuleAdherence,
   buildCockpitAttention,
   buildCockpitDiagnostics,
   buildCockpitPipeline,
@@ -20081,6 +20450,7 @@ export const __signalOptionsAutomationInternalsForTests = {
   selectSignalOptionsLegacyContractPlanFromChain,
   selectSignalOptionsContractPlanFromChain,
   selectSignalOptionsGreekContractPlanFromChain,
+  signalOptionsContractSelectionPayload,
   signalOptionsDecisionSnapshotContracts,
   buildSignalOptionsDataQualityReport,
   isSignalOptionsGreekSelectorEnabled,

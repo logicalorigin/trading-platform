@@ -52,6 +52,30 @@ test("duplicate exits for the same position id count once", () => {
   assert.equal(total, -250);
 });
 
+test("duplicate exit dedup is independent of caller event order", () => {
+  const older = exitEvent({
+    id: "e1",
+    positionId: "p-1",
+    pnl: -250,
+    occurredAt: new Date("2026-07-07T14:30:00Z"),
+  });
+  const newer = exitEvent({
+    id: "e2",
+    positionId: "p-1",
+    pnl: -175,
+    occurredAt: new Date("2026-07-07T15:30:00Z"),
+  });
+
+  assert.equal(
+    internals.computeSignalOptionsDailyRealizedPnl([older, newer], NOW),
+    -175,
+  );
+  assert.equal(
+    internals.computeSignalOptionsDailyRealizedPnl([newer, older], NOW),
+    -175,
+  );
+});
+
 test("exits for different positions still sum", () => {
   const total = internals.computeSignalOptionsDailyRealizedPnl(
     [

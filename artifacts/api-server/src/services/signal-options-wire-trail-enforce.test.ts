@@ -131,3 +131,64 @@ test("enforce off: delta sizing candidate is telemetry-only and never shifts the
   assert.equal(stop.trailStopPrice, legacy.trailStopPrice);
   assert.equal(stop.stopPrice, legacy.stopPrice);
 });
+
+test("wire structure break is suppressed when the completed bar is older than two wire intervals", () => {
+  const stop = computeSignalOptionsPositionStop({
+    entryPrice: 1.0,
+    peakPrice: 1.38,
+    markPrice: 1.2,
+    profile: wireProfile,
+    now: new Date("2026-07-07T15:03:01Z"),
+    wireContext: {
+      ...bullWireContext,
+      timeframe: "1m",
+      latestBarAt: new Date("2026-07-07T15:00:00Z"),
+      latestClose: 96,
+    },
+  });
+
+  assert.equal(stop.exitReason, null);
+  assert.equal(stop.wireTrail.structureBreak, false);
+  assert.equal(stop.wireTrail.structureBreakSuppressed, "stale_bar");
+});
+
+test("wire structure break still fires when the completed bar is fresh", () => {
+  const stop = computeSignalOptionsPositionStop({
+    entryPrice: 1.0,
+    peakPrice: 1.38,
+    markPrice: 1.2,
+    profile: wireProfile,
+    now: new Date("2026-07-07T15:01:30Z"),
+    wireContext: {
+      ...bullWireContext,
+      timeframe: "1m",
+      latestBarAt: new Date("2026-07-07T15:00:00Z"),
+      latestClose: 96,
+    },
+  });
+
+  assert.equal(stop.exitReason, "wire_structure_break");
+  assert.equal(stop.wireTrail.structureBreak, true);
+  assert.equal(stop.wireTrail.structureBreakSuppressed, null);
+});
+
+test("wire structure break fails open when timeframe and bar spacing are unavailable", () => {
+  const stop = computeSignalOptionsPositionStop({
+    entryPrice: 1.0,
+    peakPrice: 1.38,
+    markPrice: 1.2,
+    profile: wireProfile,
+    now: new Date("2026-07-10T15:00:00Z"),
+    wireContext: {
+      ...bullWireContext,
+      timeframe: null,
+      latestBarAt: new Date("2026-07-07T15:00:00Z"),
+      previousBarAt: null,
+      latestClose: 96,
+    },
+  });
+
+  assert.equal(stop.exitReason, "wire_structure_break");
+  assert.equal(stop.wireTrail.structureBreak, true);
+  assert.equal(stop.wireTrail.structureBreakSuppressed, null);
+});

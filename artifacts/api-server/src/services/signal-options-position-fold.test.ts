@@ -565,6 +565,52 @@ test("projection retained window matches full daily P&L and control update time"
   );
 });
 
+test("projection daily P&L matches ledger order for duplicate exits", () => {
+  const duplicateExitCorpus: ExecutionEvent[] = [
+    entryEvent("NVDA", 60, {
+      id: "p-dup-N1",
+      candidateId: "c-dup-N1",
+      entryPrice: 1.2,
+      quantity: 1,
+    }),
+    {
+      ...exitEvent("NVDA", 61, "c-dup-N1"),
+      id: "evt-exit-NVDA-older",
+      payload: {
+        pnl: -300,
+        position: { id: "p-dup-N1", candidateId: "c-dup-N1" },
+        candidate: { id: "c-dup-N1" },
+      },
+    } as unknown as ExecutionEvent,
+    {
+      ...exitEvent("NVDA", 62, "c-dup-N1"),
+      id: "evt-exit-NVDA-newer",
+      payload: {
+        pnl: -125,
+        position: { id: "p-dup-N1", candidateId: "c-dup-N1" },
+        candidate: { id: "c-dup-N1" },
+      },
+    } as unknown as ExecutionEvent,
+  ];
+  const projection = internals.createSignalOptionsPositionProjection("sig");
+  const positions = internals.deriveActivePositions(duplicateExitCorpus);
+  const ledgerOrder = [...duplicateExitCorpus].sort(
+    (left, right) => right.occurredAt.getTime() - left.occurredAt.getTime(),
+  );
+  const now = t(63);
+
+  internals.foldTailIntoSignalOptionsProjection(
+    projection,
+    duplicateExitCorpus,
+  );
+
+  assert.equal(
+    internals.projectionDailyPnl(projection, positions, now),
+    internals.computeSignalOptionsDailyPnl(ledgerOrder, positions, now),
+  );
+  assert.equal(internals.projectionDailyPnl(projection, positions, now), -125);
+});
+
 // GOLDEN SNAPSHOT — implementation-independent oracle. deriveActivePositions is
 // now itself implemented via the fold, so fold-vs-derive comparisons above pin
 // only the incremental machinery (watermarks, batching, dedup) — not the
