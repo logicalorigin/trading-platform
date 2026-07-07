@@ -19,6 +19,7 @@ import readinessRouter from "./readiness";
 import researchRouter from "./research";
 import settingsRouter from "./settings";
 import signalMonitorRouter from "./signal-monitor";
+import taxRouter from "./tax";
 
 const router: IRouter = Router();
 
@@ -62,6 +63,8 @@ const REQUIRE_USER_PATHS = [
   /^\/signal-monitor(\/|$)/,
   // Member settings.
   /^\/settings\/preferences(\/|$)/,
+  // Tax profile, tax estimates, and reserve planning are user-scoped.
+  /^\/tax(\/|$)/,
 ];
 
 function gate(
@@ -101,5 +104,6 @@ router.use(readinessRouter);
 router.use(researchRouter);
 router.use(settingsRouter);
 router.use(signalMonitorRouter);
+router.use(taxRouter);
 
 export default router;

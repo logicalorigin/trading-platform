@@ -24,6 +24,7 @@ import {
   DiagnosticThresholdSettingsPanel,
 } from "./settings/DiagnosticThresholdSettingsPanel";
 import { SnapTradeConnectPanel } from "./settings/SnapTradeConnectPanel.jsx";
+import TaxSettingsPanel from "./settings/TaxSettingsPanel.jsx";
 import {
   LOCAL_ALERT_PREFERENCES_EVENT,
   readLocalAlertPreferences,
@@ -125,6 +126,12 @@ const SETTINGS_TABS = [
     label: "Workspace",
     description: "Defaults, market, flow",
     keywords: "workspace market flow scanner defaults grid watchlist account",
+  },
+  {
+    id: "Tax",
+    label: "Tax",
+    description: "Profile, reserve, estimates",
+    keywords: "tax wash sale reserve state federal safe harbor lots basis",
   },
   {
     id: "Automation & Alerts",
@@ -3123,6 +3130,7 @@ export default function SettingsScreen({
   const [settingsSearch, setSettingsSearch] = useState("");
   const settingsVisible = Boolean(isVisible);
   const dataBrokerTabActive = settingsVisible && activeTab === "Data & Broker";
+  const taxTabActive = settingsVisible && activeTab === "Tax";
   const automationTabActive = settingsVisible && activeTab === "Automation & Alerts";
   const systemTabActive = settingsVisible && activeTab === "System";
   const backendSettingsEnabled = dataBrokerTabActive || systemTabActive;
@@ -3363,6 +3371,13 @@ export default function SettingsScreen({
               <WorkspaceProfilePreferencesPanel userPreferences={userPreferences} />
               <WorkspaceDefaultsPanel />
             </>
+          )}
+
+          {activeTab === "Tax" && (
+            <TaxSettingsPanel
+              enabled={taxTabActive}
+              isPhone={settingsIsPhone}
+            />
           )}
 
           {activeTab === "Automation & Alerts" && (

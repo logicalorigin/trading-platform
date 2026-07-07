@@ -113,6 +113,7 @@ import {
 import { useAccountTab } from "../features/platform/useAccountTab.js";
 import { AccountTabs } from "./account/AccountTabs.jsx";
 import TodaySnapshotPanel from "./account/TodaySnapshotPanel.jsx";
+import TaxCenterPanel from "./account/TaxCenterPanel.jsx";
 import { OrdersPanel } from "./account/TradesOrdersPanel.jsx";
 import {
   buildIdleAccountQuery,
@@ -2599,6 +2600,25 @@ const AccountScreenInner = ({
             </DeferredPanelSuspense>
           </div>
         </div>
+
+        <DeferredRender
+          minHeight={accountIsPhone ? 360 : 280}
+          onActivate={() => markAccountPanelActivated("tax")}
+          testId="account-deferred-tax"
+        >
+          <DeferredPanelSuspense
+            minHeight={accountIsPhone ? 360 : 280}
+            title="Loading tax center"
+            detail="Preparing tax estimates and reserve status."
+          >
+            <TaxCenterPanel
+              accountId={accountTab || "all"}
+              currency={currency}
+              maskValues={maskAccountValues}
+              isPhone={accountIsPhone}
+            />
+          </DeferredPanelSuspense>
+        </DeferredRender>
 
         <DeferredPanelSuspense
           minHeight={accountIsPhone ? 430 : 300}

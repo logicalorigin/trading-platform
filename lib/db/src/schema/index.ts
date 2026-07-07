@@ -15,6 +15,7 @@ export * from "./robinhood";
 export * from "./schwab";
 export * from "./signal-monitor";
 export * from "./snaptrade";
+export * from "./tax";
 export * from "./trading";
 export * from "./universe";
 export * from "./user-scoped-tables";
