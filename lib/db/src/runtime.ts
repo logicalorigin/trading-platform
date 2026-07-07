@@ -94,9 +94,18 @@ function buildPostgresEnvDatabaseUrl(env: NodeJS.ProcessEnv): string | null {
   }
   url.pathname = `/${database}`;
   if (env["PGSSLMODE"]) {
-    url.searchParams.set("sslmode", env["PGSSLMODE"]);
+    url.searchParams.set("sslmode", normalizeNodePgSslMode(env["PGSSLMODE"]));
   }
   return url.toString();
+}
+
+function normalizeNodePgSslMode(value: string): string {
+  const normalized = value.trim().toLowerCase();
+  return normalized === "prefer" ||
+    normalized === "require" ||
+    normalized === "verify-ca"
+    ? "verify-full"
+    : value;
 }
 
 export function resolveDatabaseRuntimeConfig(
