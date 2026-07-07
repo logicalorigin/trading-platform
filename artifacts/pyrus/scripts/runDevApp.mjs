@@ -287,12 +287,35 @@ function stopLifecycleHeartbeat() {
   lifecycleHeartbeatTimer = null;
 }
 
+function readDevEnvLocal() {
+  // Optional per-container env overrides (KEY=VALUE lines, # comments).
+  // Re-read on every spawn so a SIGUSR2 in-place reload picks up flag flips
+  // (e.g. SIGNAL_OPTIONS_TALLY) without the full workflow restart that
+  // Replit secrets changes require.
+  try {
+    const out = {};
+    const text = readFileSync(
+      path.join(repoRoot, ".pyrus-runtime", "dev-env.local"),
+      "utf8",
+    );
+    for (const line of text.split("\n")) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith("#")) continue;
+      const m = /^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/.exec(trimmed);
+      if (m) out[m[1]] = m[2];
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
 function spawnService(name, args, env) {
   console.log(`[pyrus-dev] starting ${name}: pnpm ${args.join(" ")}`);
   const child = spawn("pnpm", args, {
     cwd: repoRoot,
     detached: true,
-    env: { ...process.env, ...env },
+    env: { ...process.env, ...readDevEnvLocal(), ...env },
     stdio: "inherit",
   });
   children.add(child);

@@ -1,3 +1,6 @@
+// MUST stay the first import: applies .pyrus-runtime/dev-env.local overrides
+// before any module reads process.env.
+import "./dev-env-local";
 import { createServer } from "node:http";
 import app from "./app";
 import { logger } from "./lib/logger";
