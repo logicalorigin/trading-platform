@@ -144,6 +144,91 @@ const PRIORITY_PRELOAD_SOURCE_MODULES = [
   "/src/app/AppContent.tsx",
   "/src/features/platform/PlatformApp.jsx",
 ];
+const BOOT_NEURAL_SOURCE_MODULE = "/src/boot-neural.tsx";
+const BOOT_NEURAL_SCENE_SOURCE_MODULE = "/src/boot-neural-scene.tsx";
+
+function basePrefixFor(resolvedBase: string) {
+  return resolvedBase.endsWith("/") ? resolvedBase : `${resolvedBase}/`;
+}
+
+function bootNeuralHtmlEntryPlugin(): import("vite").Plugin {
+  let resolvedBase = "/";
+  return {
+    name: "pyrus-boot-neural-html-entry",
+    configResolved(config) {
+      resolvedBase = config.base || "/";
+    },
+    transformIndexHtml: {
+      order: "post",
+      handler(html, ctx) {
+        const basePrefix = basePrefixFor(resolvedBase);
+        const devInjectTo = "head" as const;
+        const productionInjectTo = "head-prepend" as const;
+        const sceneUrlAssignment = (sceneUrl: string) =>
+          `window.__PYRUS_BOOT_NEURAL_SCENE_URL__=${JSON.stringify(sceneUrl)};`;
+
+        if (!ctx.bundle) {
+          return {
+            html,
+            tags: [
+              {
+                tag: "script",
+                children: sceneUrlAssignment(
+                  `${basePrefix}${BOOT_NEURAL_SCENE_SOURCE_MODULE.slice(1)}`,
+                ),
+                injectTo: devInjectTo,
+              },
+              {
+                tag: "script",
+                attrs: {
+                  type: "module",
+                  src: `${basePrefix}${BOOT_NEURAL_SOURCE_MODULE.slice(1)}`,
+                },
+                injectTo: devInjectTo,
+              },
+            ],
+          };
+        }
+
+        const findChunkBySourceModule = (sourceModule: string) =>
+          Object.values(ctx.bundle ?? {}).find(
+            (file) =>
+              file.type === "chunk" &&
+              file.facadeModuleId
+                ?.replaceAll("\\", "/")
+                .endsWith(sourceModule),
+          );
+
+        const bootChunk = findChunkBySourceModule(BOOT_NEURAL_SOURCE_MODULE);
+        const sceneChunk = findChunkBySourceModule(
+          BOOT_NEURAL_SCENE_SOURCE_MODULE,
+        );
+        if (!bootChunk || bootChunk.type !== "chunk") return html;
+        if (!sceneChunk || sceneChunk.type !== "chunk") return html;
+
+        return {
+          html,
+          tags: [
+            {
+              tag: "script",
+              children: sceneUrlAssignment(`${basePrefix}${sceneChunk.fileName}`),
+              injectTo: productionInjectTo,
+            },
+            {
+              tag: "script",
+              attrs: {
+                type: "module",
+                crossorigin: true,
+                src: `${basePrefix}${bootChunk.fileName}`,
+              },
+              injectTo: productionInjectTo,
+            },
+          ],
+        };
+      },
+    },
+  };
+}
 
 function criticalChunkModulePreloadPlugin(): import("vite").Plugin {
   let resolvedBase = "/";
@@ -158,9 +243,7 @@ function criticalChunkModulePreloadPlugin(): import("vite").Plugin {
       handler(html, ctx) {
         const bundle = ctx.bundle;
         if (!bundle) return html;
-        const basePrefix = resolvedBase.endsWith("/")
-          ? resolvedBase
-          : `${resolvedBase}/`;
+        const basePrefix = basePrefixFor(resolvedBase);
         const hrefs: string[] = [];
         for (const file of Object.values(bundle)) {
           if (file.type !== "chunk") continue;
@@ -239,6 +322,7 @@ export default defineConfig({
     },
     react(),
     tailwindcss(),
+    bootNeuralHtmlEntryPlugin(),
     criticalChunkModulePreloadPlugin(),
     ...(enableReplitRuntimeErrorModal
       ? [
@@ -315,6 +399,14 @@ export default defineConfig({
       },
     },
     rollupOptions: {
+      input: {
+        app: path.resolve(import.meta.dirname, "index.html"),
+        "boot-neural": path.resolve(import.meta.dirname, "src/boot-neural.tsx"),
+        "boot-neural-scene": path.resolve(
+          import.meta.dirname,
+          "src/boot-neural-scene.tsx",
+        ),
+      },
       output: {
         manualChunks(id) {
           const normalizedId = id.replaceAll("\\", "/");
@@ -447,16 +539,10 @@ export default defineConfig({
               return "vendor-dexie";
             }
 
-            // three.js + react-three-fiber (+ fiber's exclusive transitives):
-            // only reachable from the lazy NeuralCanvas. Pin them here so they
-            // never fall into the eager catch-all "vendor" chunk.
+            // three.js neural / 3D mark scenes are lazy-only. Pin the package
+            // here so it does not fall into the eager catch-all "vendor" chunk.
             if (
               packageName === "three" ||
-              packageName.startsWith("@react-three/") ||
-              packageName === "its-fine" ||
-              packageName === "suspend-react" ||
-              packageName === "react-use-measure" ||
-              packageName === "zustand" ||
               packageName === "buffer" ||
               packageName === "base64-js"
             ) {
@@ -600,7 +686,6 @@ export default defineConfig({
       "d3",
       "hls.js/light",
       "three",
-      "@react-three/fiber",
     ],
   },
   server: {

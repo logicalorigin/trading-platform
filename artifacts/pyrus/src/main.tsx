@@ -23,6 +23,15 @@ const dismissBootCrashDiagnostics = () => {
   bootDiagnostics?.dismiss?.();
 };
 
+const disposeBootNeural = () => {
+  const bootNeural = (
+    window as unknown as {
+      __PYRUS_DISPOSE_BOOT_NEURAL__?: () => void;
+    }
+  ).__PYRUS_DISPOSE_BOOT_NEURAL__;
+  bootNeural?.();
+};
+
 const now = () =>
   typeof performance !== "undefined" && typeof performance.now === "function"
     ? performance.now()
@@ -51,6 +60,7 @@ if (bootLoaderElapsedMs === null) {
 }
 startBootProgressTask("react-root");
 
+disposeBootNeural();
 createRoot(rootElement).render(<App bootLoaderElapsedMs={bootLoaderElapsedMs} />);
 completeBootProgressTask("react-root");
 dismissBootCrashDiagnostics();

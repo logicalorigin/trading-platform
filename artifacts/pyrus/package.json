@@ -58,7 +58,6 @@
     "@fontsource/ibm-plex-mono": "^5.2.7",
     "@fontsource/ibm-plex-sans": "^5.2.8",
     "@radix-ui/react-tooltip": "^1.2.8",
-    "@react-three/fiber": "^9.6.1",
     "@workspace/account-math": "workspace:*",
     "hls.js": "^1.6.16",
     "lightweight-charts": "^5.1.0",

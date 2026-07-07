@@ -11,11 +11,11 @@ export type MorphTick = {
   justDispersing: boolean;
 };
 
-// Drives the timeline. NeuralPoints calls `update(dtMs)` every frame and reads
+// Drives the timeline. NeuralCanvas calls `update(dtMs)` every frame and reads
 // `morph` / `scatter` / `opacity` into the shader uniforms.
 //   - "opener": loop → form lockup → disperse → reveal (fires `revealed` once).
 //   - "tight":  loop briefly → form the mark → hold forever (never reveals);
-//     NeuralPoints spins the formed mark as the idle loader motion.
+//     NeuralCanvas spins the formed mark as the idle loader motion.
 export class MorphMachine {
   state: NeuralState = "loading-loop";
   morph = 0;
@@ -74,7 +74,7 @@ export class MorphMachine {
       }
       case "formed": {
         this.morph = 1;
-        // Tight loaders hold the formed mark indefinitely (spun by NeuralPoints).
+        // Tight loaders hold the formed mark indefinitely (spun by NeuralCanvas).
         if (this.mode === "tight") break;
         if (this.elapsedInState >= TIMING.formedHoldMs) {
           this.transition("dispersing");

@@ -31,7 +31,8 @@ import {
 } from "../../lib/uiTokens.jsx";
 import { joinMotionClasses, motionVars } from "../../lib/motion.jsx";
 import { AppTooltip } from "@/components/ui/tooltip";
-import { PyrusBrandLockup } from "../../components/brand/PyrusLogo";
+import { BrandResolve } from "@/components/marketing/brand-resolve";
+import { PyrusWordmark } from "../../components/brand/pyrus-wordmark";
 import { PortfolioPulseZone } from "./PortfolioPulseZone.jsx";
 import { CommandPalette } from "./CommandPalette.jsx";
 import { SCREENS, preloadScreenModule } from "./screenRegistry.jsx";
@@ -43,6 +44,55 @@ const ICONIZED_SCREEN_IDS = new Set(["settings"]);
 const isLiveMode = (environment) => String(environment || "").toLowerCase() === "live";
 
 const SCROLLERS_COLLAPSED_STORAGE_KEY = "pyrus.header.scrollersCollapsed.v1";
+
+const HEADER_MARK_SPHERE_PROPS = {
+  particles: 5200,
+  orbitCount: 1800,
+  particleSize: 0.2,
+  coreOpacity: 0.44,
+  orbitOpacity: 0.28,
+  distortion: 0.54,
+  morphCycleMs: 8200,
+  ringScale: 0.88,
+  lockup: true,
+  lockupMarkOnly: true,
+  stray: 0.28,
+  maxFps: 30,
+};
+
+function HeaderBrandLockup({
+  className,
+  compact,
+  markClassName,
+  wordmarkWidth,
+}) {
+  return (
+    <div
+      className={className}
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        color: "var(--ra-text-primary, #F4F8FF)",
+        gap: compact ? 8 : 10,
+        minWidth: 0,
+        flexShrink: 0,
+      }}
+    >
+      <BrandResolve
+        loop
+        morph
+        logoVariant="svg"
+        className={markClassName}
+        haloBlur={0.45}
+        bloomBlur={1.8}
+        sphereInsetClassName="-inset-[72%]"
+        sphereProps={HEADER_MARK_SPHERE_PROPS}
+        webglPolicy="available"
+      />
+      <PyrusWordmark width={wordmarkWidth ?? (compact ? 116 : 150)} title="PYRUS" />
+    </div>
+  );
+}
 
 const readScrollersCollapsed = () => {
   if (typeof window === "undefined") return false;
@@ -381,24 +431,26 @@ const AppHeaderInner = ({
                 scrollSnapType: "x proximity",
               }}
             >
-              <div
-                style={{
-                  flex: "0 1 auto",
-                  maxWidth: `min(70vw, ${dim(260)}px)`,
-                  minWidth: 0,
-                }}
-              >
-                <HeaderStatusClusterComponent
-                  session={session}
-                  environment={environment}
-                  bridgeTone={bridgeTone}
-                  theme={theme}
-                  onToggleTheme={onToggleTheme}
-                  safeQaMode={safeQaMode}
-                  compact
-                  mobileSheet
-                />
-              </div>
+              {HeaderStatusClusterComponent ? (
+                <div
+                  style={{
+                    flex: "0 1 auto",
+                    maxWidth: `min(70vw, ${dim(260)}px)`,
+                    minWidth: 0,
+                  }}
+                >
+                  <HeaderStatusClusterComponent
+                    session={session}
+                    environment={environment}
+                    bridgeTone={bridgeTone}
+                    theme={theme}
+                    onToggleTheme={onToggleTheme}
+                    safeQaMode={safeQaMode}
+                    compact
+                    mobileSheet
+                  />
+                </div>
+              ) : null}
               <MobileHeaderChip label="ACCT" value={compactAccountId} />
               <MobileHeaderChip label="NLV" value={compactNetLiq} tone={CSS_COLOR.text} />
             </div>
@@ -425,12 +477,10 @@ const AppHeaderInner = ({
                   minWidth: 0,
                 }}
               >
-                <PyrusBrandLockup
-                  animatedMark
+                <HeaderBrandLockup
                   compact
                   className="pyrus-header-brand-lockup"
                   markClassName="h-[24px] w-[24px]"
-                  markImageClassName="pyrus-header-mark-image"
                   wordmarkWidth={86}
                 />
               </div>
@@ -483,12 +533,10 @@ const AppHeaderInner = ({
                 paddingInline: sp(3),
               }}
             >
-              <PyrusBrandLockup
-                animatedMark
+              <HeaderBrandLockup
                 compact={headerTight}
                 className="pyrus-header-brand-lockup"
                 markClassName={headerTight ? "h-[25px] w-[25px]" : "h-[31px] w-[31px]"}
-                markImageClassName="pyrus-header-mark-image"
                 wordmarkWidth={headerTight ? 106 : 136}
               />
             </div>
@@ -681,18 +729,20 @@ const AppHeaderInner = ({
                 minimal={headerAccountMinimal}
                 dense
               />
-              <HeaderStatusClusterComponent
-                session={session}
-                environment={environment}
-                bridgeTone={bridgeTone}
-                theme={theme}
-                onToggleTheme={onToggleTheme}
-                safeQaMode={safeQaMode}
-                showThemeToggle={false}
-                compact={headerCompactStatus}
-                minimal={headerStatusMinimal}
-                dense
-              />
+              {HeaderStatusClusterComponent ? (
+                <HeaderStatusClusterComponent
+                  session={session}
+                  environment={environment}
+                  bridgeTone={bridgeTone}
+                  theme={theme}
+                  onToggleTheme={onToggleTheme}
+                  safeQaMode={safeQaMode}
+                  showThemeToggle={false}
+                  compact={headerCompactStatus}
+                  minimal={headerStatusMinimal}
+                  dense
+                />
+              ) : null}
             </div>
           </>
         )}

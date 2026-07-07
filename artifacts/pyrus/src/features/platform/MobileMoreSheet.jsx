@@ -23,7 +23,6 @@ import {
   sp,
   textSize,
 } from "../../lib/uiTokens.jsx";
-import { FooterMemoryPressureIndicator } from "./FooterMemoryPressureIndicator.jsx";
 import { SCREENS } from "./screenRegistry.jsx";
 import { SEMANTIC_TONE } from "./semanticToneModel.js";
 
@@ -299,10 +298,6 @@ export const MobileMoreSheet = ({
               overflow: "hidden",
             }}
           >
-            <FooterMemoryPressureIndicator
-              signal={memoryPressureSignal}
-              runtimeControl={apiSourcePressureSnapshot}
-            />
           </span>
           <FlaskConical
             aria-hidden="true"

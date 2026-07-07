@@ -1,7 +1,7 @@
 import { Suspense, useEffect, type ComponentType } from "react";
 import "./runtime-config";
 import { AppProviders } from "./AppProviders";
-import LogoLoader from "../components/LogoLoader";
+import { NeuralLoader } from "../components/neural/NeuralLoader";
 import { lazyWithRetry, preloadDynamicImport } from "../lib/dynamicImport";
 import { PlatformErrorBoundary } from "../components/platform/PlatformErrorBoundary";
 import { LoginGate } from "../features/auth/LoginGate.jsx";
@@ -494,7 +494,7 @@ function AppContentRouteFallback({ bootLoaderElapsedMs = null }: AppContentProps
   const bootHandoffElapsedMs = useBootHandoffElapsedMs(bootLoaderElapsedMs);
 
   return (
-    <LogoLoader
+    <NeuralLoader
       bootHandoffElapsedMs={bootHandoffElapsedMs}
       label="Loading workspace"
       progress={progress}

@@ -243,7 +243,12 @@
           }
         };
 
-        const isOptionalDevScript = (target) => {
+        const isOptionalBootNeuralScriptPath = (pathname) =>
+          pathname.endsWith("/src/boot-neural.tsx") ||
+          pathname.endsWith("/src/boot-neural-scene.tsx") ||
+          /\/assets\/boot-neural(?:-scene)?-[^/]+\.js$/.test(pathname);
+
+        const isOptionalScriptResource = (target) => {
           if (target.tagName !== "script") return false;
           const pathname = resourcePathname(target.url || target.inlineModuleImport);
           const id = String(target.id || "").toLowerCase();
@@ -251,13 +256,14 @@
             pathname === "/@vite/client" ||
             pathname === "/@react-refresh" ||
             pathname.startsWith("/@replit/") ||
+            isOptionalBootNeuralScriptPath(pathname) ||
             id === "replit-dev-banner"
           );
         };
 
         const isFatalResourceError = (target) => {
           if (!target) return false;
-          if (target.tagName === "script") return !isOptionalDevScript(target);
+          if (target.tagName === "script") return !isOptionalScriptResource(target);
           if (target.tagName !== "link") return false;
           const rel = String(target.rel || "").toLowerCase();
           const as = String(target.as || "").toLowerCase();
@@ -417,6 +423,15 @@
           if (
             kind === "error" &&
             !resourceTarget &&
+            isOptionalBootNeuralScriptPath(resourcePathname(event.filename || ""))
+          ) {
+            event.preventDefault?.();
+            event.stopImmediatePropagation?.();
+            return;
+          }
+          if (
+            kind === "error" &&
+            !resourceTarget &&
             !message &&
             !event.error &&
             !event.filename
@@ -479,11 +494,49 @@
         justify-content: center;
         min-height: 100vh;
         min-height: 100dvh;
+        overflow: hidden;
+        position: relative;
       }
 
       html[data-pyrus-theme="dark"] .pyrus-boot-loader {
         background: #050914;
         color: #f4f8ff;
+      }
+
+      .pyrus-boot-neural-fallback,
+      .pyrus-boot-neural-root {
+        inset: 0;
+        pointer-events: none;
+        position: absolute;
+      }
+
+      .pyrus-boot-neural-fallback {
+        background-image:
+          radial-gradient(circle at 38% 48%, rgba(61, 184, 255, 0.72) 0 1px, transparent 1.7px),
+          radial-gradient(circle at 62% 43%, rgba(255, 61, 42, 0.66) 0 1px, transparent 1.7px),
+          radial-gradient(circle at 50% 58%, rgba(25, 35, 52, 0.34) 0 1px, transparent 1.5px);
+        background-position: 0 0, 8px 11px, 17px 5px;
+        background-size: 17px 17px, 23px 23px, 31px 31px;
+        mask-image: radial-gradient(125% 125% at 50% 45%, #000 55%, transparent 100%);
+        opacity: 0.44;
+        transform: scale(1.04);
+      }
+
+      html[data-pyrus-theme="dark"] .pyrus-boot-neural-fallback {
+        opacity: 0.72;
+      }
+
+      .pyrus-boot-loader--webgl .pyrus-boot-neural-fallback {
+        opacity: 0;
+      }
+
+      .pyrus-boot-neural-root {
+        mask-image: radial-gradient(125% 125% at 50% 45%, #000 55%, transparent 100%);
+        opacity: 0.72;
+      }
+
+      .pyrus-boot-neural-root canvas {
+        display: block;
       }
 
       .pyrus-boot-lockup {
@@ -493,6 +546,8 @@
         gap: 24px;
         justify-content: center;
         line-height: 1;
+        position: relative;
+        z-index: 1;
       }
 
       .pyrus-boot-word {
@@ -520,7 +575,9 @@
         gap: 8px;
         margin-top: 32px;
         max-width: min(360px, calc(100vw - 48px));
+        position: relative;
         width: 360px;
+        z-index: 1;
       }
 
       .pyrus-boot-progress-row {
@@ -579,6 +636,10 @@
       }
 
       @media (prefers-reduced-motion: reduce) {
+        .pyrus-boot-neural-fallback {
+          background-position: 0 0, 8px 11px, 17px 5px;
+        }
+
         .pyrus-boot-word {
           animation: none;
         }
@@ -594,6 +655,8 @@
     </script>
     <div id="root">
       <div class="pyrus-boot-loader" data-testid="pyrus-boot-loader" role="status" aria-label="Loading PYRUS">
+        <div class="pyrus-boot-neural-fallback" aria-hidden="true"></div>
+        <div id="pyrus-boot-neural-root" class="pyrus-boot-neural-root" aria-hidden="true"></div>
         <div class="pyrus-boot-lockup" aria-hidden="true">
           <div class="pyrus-boot-word">PYRUS</div>
         </div>

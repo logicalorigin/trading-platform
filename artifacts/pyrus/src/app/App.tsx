@@ -1,6 +1,6 @@
 import { Suspense } from "react";
-import LogoLoader from "../components/LogoLoader";
 import NeuralBootOverlay from "../components/neural/NeuralBootOverlay";
+import { NeuralLoader } from "../components/neural/NeuralLoader";
 import { lazyWithRetry, preloadDynamicImport } from "../lib/dynamicImport";
 import { PlatformErrorBoundary } from "../components/platform/PlatformErrorBoundary";
 import { readInitialPlatformScreen } from "../features/platform/initialPlatformScreen";
@@ -81,7 +81,7 @@ function AppShellFallback({ bootLoaderElapsedMs = null }: AppProps) {
   const bootHandoffElapsedMs = useBootHandoffElapsedMs(bootLoaderElapsedMs);
 
   return (
-    <LogoLoader
+    <NeuralLoader
       bootHandoffElapsedMs={bootHandoffElapsedMs}
       label="Starting PYRUS"
       progress={progress}

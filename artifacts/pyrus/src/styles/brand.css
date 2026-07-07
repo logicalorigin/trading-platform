@@ -1,0 +1,162 @@
+@source not "../components/marketing/neural-core/pyrus-logo-points.ts";
+@source not "../components/marketing/neural-core/pyrus-wordmark-points.ts";
+
+/* =============================================================================
+   Pyrus brand-kit CSS — animations + theme tokens for the neural / logo system.
+
+   These rules are EXTRACTED from the marketing site's src/index.css. Append the
+   whole file to the target app's global stylesheet (or @import it). Everything
+   here is plain CSS; nothing is Tailwind-version specific EXCEPT the token block
+   at the bottom (see notes there).
+   ========================================================================== */
+
+/* -----------------------------------------------------------------------------
+   1. PyrusMark ring spin — the 2D SVG mark's independently rotating rings.
+   Driven by the per-ring CSS vars set in pyrus-mark.tsx via spin().
+   -------------------------------------------------------------------------- */
+.pyrus-ring {
+  transform-box: view-box;
+  transform-origin: 50% 50%;
+  animation: pyrus-ring-spin var(--pyrus-ring-duration, 30s) linear infinite;
+  animation-direction: var(--pyrus-ring-direction, normal);
+}
+@keyframes pyrus-ring-spin {
+  to { transform: rotate(360deg); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .pyrus-ring { animation: none; }
+}
+
+/* -----------------------------------------------------------------------------
+   2. BrandLoader wordmark fade-up (the PYRUS PNG under the resolving mark).
+   -------------------------------------------------------------------------- */
+@keyframes brand-loader-word {
+  from { opacity: 0; transform: translateY(9px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.brand-loader-word {
+  animation: brand-loader-word 0.55s cubic-bezier(0.16, 1, 0.3, 1) 0.82s both;
+}
+/* When the BrandResolve moment plays, hold the wordmark until the logo has
+   resolved out of the sphere (~1.65s) before fading it up. */
+.brand-loader-word--resolve {
+  animation-delay: 1.55s;
+}
+
+/* -----------------------------------------------------------------------------
+   3. BrandResolve — the NeuralCore particle sphere condensing into PyrusMark.
+   The sphere fades in, breathes, then contracts + fades out; the logo resolves
+   in on top during the overlap so the cloud reads as collapsing into the mark.
+   Both layers share the same centered box (see brand-resolve.tsx).
+   -------------------------------------------------------------------------- */
+@keyframes brand-resolve-sphere {
+  0%   { opacity: 0; transform: scale(1.18); }
+  20%  { opacity: 1; transform: scale(1.04); }
+  58%  { opacity: 0.92; transform: scale(0.98); }
+  100% { opacity: 0; transform: scale(0.5); }
+}
+.brand-resolve-sphere {
+  transform-origin: 50% 50%;
+  animation: brand-resolve-sphere 1.55s cubic-bezier(0.16, 1, 0.3, 1) both;
+  will-change: opacity, transform;
+}
+@keyframes brand-resolve-logo {
+  0%   { opacity: 0; transform: scale(0.82); filter: blur(2px) brightness(1.4); }
+  100% { opacity: 1; transform: scale(1); filter: blur(0) brightness(1); }
+}
+.brand-resolve-logo {
+  transform-origin: 50% 50%;
+  animation: brand-resolve-logo 0.72s cubic-bezier(0.16, 1, 0.3, 1) 0.95s both;
+}
+
+/* Looping header variant: the logo stays legible (it's a persistent nav mark)
+   while the sphere blooms and condenses into it once per cycle. Cycle length is
+   --brand-resolve-cycle (default 9s); active resolve is the first ~20% (~1.8s). */
+@keyframes brand-resolve-sphere-loop {
+  0%   { opacity: 0; transform: scale(1.2); }
+  6%   { opacity: 1; transform: scale(1.06); }
+  14%  { opacity: 0.92; transform: scale(0.96); }
+  20%  { opacity: 0; transform: scale(0.5); }
+  100% { opacity: 0; transform: scale(0.5); }
+}
+.brand-resolve-sphere--loop {
+  transform-origin: 50% 50%;
+  animation: brand-resolve-sphere-loop var(--brand-resolve-cycle, 9s) ease-in-out infinite;
+  will-change: opacity, transform;
+  /* At header size the particle box reads as a square haze; this radial mask
+     fades its corners so the cloud reads as round, centered on the mark. */
+  -webkit-mask-image: radial-gradient(circle at center, #000 42%, transparent 68%);
+  mask-image: radial-gradient(circle at center, #000 42%, transparent 68%);
+}
+@keyframes brand-resolve-logo-loop {
+  0%   { transform: scale(1); filter: brightness(1); }
+  12%  { transform: scale(0.93); filter: brightness(1.3); }
+  20%  { transform: scale(1); filter: brightness(1); }
+  100% { transform: scale(1); filter: brightness(1); }
+}
+.brand-resolve-logo--loop {
+  transform-origin: 50% 50%;
+  animation: brand-resolve-logo-loop var(--brand-resolve-cycle, 9s) ease-in-out infinite;
+}
+/* Morph mode: the crisp mark sits as a faint guide behind the dotted rings the
+   particles form, so the brand shape stays hinted even at the neural phase. */
+.brand-resolve-guide { opacity: 0.22; }
+
+@media (prefers-reduced-motion: reduce) {
+  .brand-loader-word,
+  .brand-resolve-logo,
+  .brand-resolve-logo--loop { animation: none; }
+  .brand-loader-word { opacity: 1; transform: none; filter: none; }
+  /* Sphere never mounts under reduced motion (gated in brand-resolve.tsx); this
+     is belt-and-suspenders so the logo is fully visible if it ever does. */
+  .brand-resolve-sphere,
+  .brand-resolve-sphere--loop { display: none; }
+  .brand-resolve-logo,
+  .brand-resolve-logo--loop { opacity: 1; transform: none; filter: none; }
+}
+
+/* -----------------------------------------------------------------------------
+   4. (Optional) splash breathing pulse — shared by BrandLoader / index.html
+   splash. Only needed if you wire a pre-React splash element.
+   -------------------------------------------------------------------------- */
+@keyframes pyrus-splash-pulse {
+  0%, 100% { opacity: 0.8; filter: brightness(1); }
+  50%      { opacity: 1;   filter: brightness(1.15); }
+}
+.pyrus-splash-pulse { animation: pyrus-splash-pulse 1.8s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) {
+  .pyrus-splash-pulse { animation: none; }
+}
+
+/* =============================================================================
+   5. THEME TOKENS — REQUIRED.
+
+   The components use the Tailwind utility classes `bg-background`,
+   `text-foreground`, and `text-muted-foreground` (NeuralStage/NeuralLoader/
+   BrandLoader). Those map to the CSS custom properties below. The marketing
+   site is on Tailwind v4 and registers them via `@theme`. Provide the matching
+   values in whatever way your app's Tailwind setup expects:
+
+   • Tailwind v4 (@theme):   keep the @theme block below.
+   • Tailwind v3 (config):   delete the @theme block, put the :root vars below
+                             into your global CSS, and add to tailwind.config:
+                               colors: {
+                                 background: 'hsl(var(--background))',
+                                 foreground: 'hsl(var(--foreground))',
+                                 'muted-foreground': 'hsl(var(--muted-foreground))',
+                               }
+   • If your app ALREADY defines background/foreground/muted-foreground, you can
+     drop this whole section — the components will just inherit your theme.
+   ========================================================================== */
+:root {
+  --background: 225 60% 5%;       /* near-black navy — the dark canvas the cloud sits on */
+  --foreground: 217 47% 97%;
+  --muted-foreground: 217 15% 70%;
+}
+
+/* Tailwind v4 only — exposes the vars as color utilities. Remove for v3. */
+@theme {
+  --color-background: hsl(var(--background));
+  --color-foreground: hsl(var(--foreground));
+  --color-muted-foreground: hsl(var(--muted-foreground));
+}

@@ -62,7 +62,6 @@ import {
   useStableWidth,
   useViewport,
 } from "../../lib/responsive";
-import { FooterMemoryPressureIndicator } from "./FooterMemoryPressureIndicator.jsx";
 import { AppTooltip } from "@/components/ui/tooltip";
 import { PlatformErrorBoundary } from "../../components/platform/PlatformErrorBoundary";
 import { LoadingSpinner, StatusPill } from "../../components/platform/primitives";
@@ -164,7 +163,9 @@ const ScreenSuspenseFallback = () => (
       minHeight: 0,
       display: "grid",
       placeItems: "center",
-      background: CSS_COLOR.bg0,
+      // Literal fallback: this fallback can render before the token CSS is
+      // mounted, when var(--ra-surface-0) alone would resolve to nothing.
+      background: "var(--ra-surface-0, #F7FAFF)",
     }}
   >
     <LoadingSpinner size={22} />
@@ -1480,10 +1481,6 @@ export const PlatformShell = ({
             >
               v0.1.0
             </span>
-            <FooterMemoryPressureIndicator
-              signal={memoryPressureSignal}
-              runtimeControl={apiSourcePressureSnapshot}
-            />
           </span>
         </div>
       )}

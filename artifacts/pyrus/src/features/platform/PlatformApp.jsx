@@ -8,7 +8,7 @@ import {
 } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { isPyrusSafeQaMode } from "../../app/qa-mode";
-import LogoLoader from "../../components/LogoLoader";
+import { NeuralLoader } from "../../components/neural/NeuralLoader";
 import {
   getGetNewsQueryOptions,
   getGetQuoteSnapshotsQueryOptions,
@@ -5340,7 +5340,7 @@ export default function PlatformApp() {
           LatencyDebugStripComponent={LatencyDebugStrip}
           HeaderKpiStripComponent={HeaderKpiStrip}
           HeaderAccountStripComponent={HeaderAccountStrip}
-          HeaderStatusClusterComponent={MemoHeaderStatusCluster}
+          HeaderStatusClusterComponent={null}
           HeaderBroadcastScrollerStackComponent={HeaderBroadcastScrollerStack}
           WatchlistComponent={MemoWatchlistContainer}
           memoryPressureSignal={memoryPressureSignal}
@@ -5422,7 +5422,7 @@ export default function PlatformApp() {
           className="pyrus-boot-progress-overlay"
           data-testid="pyrus-boot-progress-overlay"
         >
-          <LogoLoader
+          <NeuralLoader
             bootHandoffElapsedMs={null}
             label="Loading workspace"
             progress={bootProgress}

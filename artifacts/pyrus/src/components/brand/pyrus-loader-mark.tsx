@@ -1,3 +1,11 @@
-export function PyrusLoaderMark({ className: _className }: { className?: string }) {
-  return null;
+import { PyrusMark } from "./pyrus-mark";
+
+export function PyrusLoaderMark({ className }: { className?: string }) {
+  return (
+    <PyrusMark
+      animated
+      className={["pyrus-loader-instrument", className].filter(Boolean).join(" ")}
+      title=""
+    />
+  );
 }

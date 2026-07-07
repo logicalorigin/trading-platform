@@ -7,8 +7,14 @@ const read = (relativePath) =>
 
 const indexHtml = read("index.html");
 const indexCss = read("src/index.css");
+const viteConfig = read("vite.config.ts");
+const bootNeural = read("src/boot-neural.tsx");
+const bootNeuralScene = read("src/boot-neural-scene.tsx");
+const appContent = read("src/app/AppContent.tsx");
 const brandLoader = read("src/components/BrandLoader.tsx");
 const crashDiagnostics = read("src/app/crashDiagnostics.tsx");
+const appHeader = read("src/features/platform/AppHeader.jsx");
+const platformApp = read("src/features/platform/PlatformApp.jsx");
 const pyrusLoaderMark = read("src/components/brand/pyrus-loader-mark.tsx");
 const pyrusLogo = read("src/components/brand/PyrusLogo.tsx");
 const pyrusMark = read("src/components/brand/pyrus-mark.tsx");
@@ -31,22 +37,58 @@ test("static boot loader has a light default and an explicit dark override", () 
     indexHtml,
     /html\[data-pyrus-theme="dark"\] \.pyrus-boot-loader\s*\{[^}]*background: #050914/s,
   );
+  assert.match(indexHtml, /id="pyrus-boot-neural-root"/);
+  assert.doesNotMatch(indexHtml, /src="\/src\/boot-neural\.tsx"/);
+  assert.match(viteConfig, /BOOT_NEURAL_SOURCE_MODULE = "\/src\/boot-neural\.tsx"/);
+  assert.match(
+    viteConfig,
+    /BOOT_NEURAL_SCENE_SOURCE_MODULE = "\/src\/boot-neural-scene\.tsx"/,
+  );
+  assert.match(viteConfig, /bootNeuralHtmlEntryPlugin/);
+  assert.match(viteConfig, /__PYRUS_BOOT_NEURAL_SCENE_URL__/);
+  assert.match(viteConfig, /facadeModuleId/);
+  assert.match(viteConfig, /devInjectTo = "head"/);
+  assert.match(viteConfig, /productionInjectTo = "head-prepend"/);
+  assert.match(viteConfig, /"boot-neural": path\.resolve\(import\.meta\.dirname, "src\/boot-neural\.tsx"\)/);
+  assert.match(viteConfig, /"boot-neural-scene": path\.resolve\(/);
   assert.match(indexHtml, /<div class="pyrus-boot-word">PYRUS<\/div>/);
+  assert.match(bootNeural, /NeuralCoreScene/);
+  assert.match(bootNeural, /__PYRUS_BOOT_NEURAL_SCENE_URL__/);
+  assert.match(bootNeural, /@vite-ignore/);
+  assert.match(bootNeural, /EMPTY_BOOT_NEURAL_SCENE/);
+  assert.match(bootNeural, /sceneModule\.default \?\? sceneModule\.n/);
+  assert.match(bootNeural, /sceneExport\?\.default/);
+  assert.match(bootNeural, /isWebglAvailable/);
+  assert.doesNotMatch(bootNeural, /from "@\/lib\/webglCapability"/);
+  assert.doesNotMatch(bootNeural, /@\/components\/marketing\/neural-core-scene/);
+  assert.match(
+    bootNeuralScene,
+    /import NeuralCoreScene from "@\/components\/marketing\/neural-core-scene"/,
+  );
+  assert.match(bootNeuralScene, /export default NeuralCoreScene/);
 });
 
-test("boot and React loaders do not reference retired Pyrus brand image assets", () => {
-  for (const source of [
-    indexHtml,
-    crashDiagnostics,
-    pyrusLoaderMark,
-    pyrusMark,
-    pyrusWordmark,
-  ]) {
-    assert.doesNotMatch(source, /\/brand\//);
+test("launch and header brand surfaces use neural resolve animation", () => {
+  assert.match(appContent, /NeuralLoader/);
+  assert.doesNotMatch(appContent, /LogoLoader/);
+  assert.match(platformApp, /NeuralLoader/);
+  assert.doesNotMatch(platformApp, /LogoLoader/);
+  assert.match(appHeader, /BrandResolve/);
+  assert.match(appHeader, /HEADER_MARK_SPHERE_PROPS/);
+  assert.match(appHeader, /webglPolicy="available"/);
+});
+
+test("React loaders use the current Pyrus brand kit assets", () => {
+  assert.doesNotMatch(indexHtml, /\/brand\//);
+  assert.doesNotMatch(crashDiagnostics, /\/brand\//);
+  assert.match(pyrusLoaderMark, /PyrusMark/);
+  assert.match(pyrusMark, /\/brand\/pyrus-mark\.svg/);
+  assert.match(pyrusWordmark, /\/brand\/pyrus-wordmark-tight\.png/);
+  assert.match(pyrusWordmark, /\/brand\/pyrus-wordmark-tight-light\.png/);
+
+  for (const source of [pyrusLoaderMark, pyrusMark, pyrusWordmark]) {
     assert.doesNotMatch(source, /pyrus-loader-mark-dark\.svg/);
-    assert.doesNotMatch(source, /pyrus-mark-dark\.svg/);
     assert.doesNotMatch(source, /pyrus-mark\.png/);
-    assert.doesNotMatch(source, /pyrus-wordmark-tight(?:-light)?\.png/);
   }
 });
 
