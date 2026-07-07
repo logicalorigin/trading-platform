@@ -3,7 +3,12 @@ import test from "node:test";
 
 import type { BrokerAccountSnapshot } from "../providers/ibkr/client";
 
-import { applySnapTradeAccountBalances, listAccounts } from "./account";
+import {
+  __accountUniverseInternalsForTests,
+  applyRobinhoodAccountBalances,
+  applySnapTradeAccountBalances,
+  listAccounts,
+} from "./account";
 import type { SnapTradeAccountPortfolioResponse } from "./snaptrade-account-portfolio";
 
 function snapshot(
@@ -59,6 +64,16 @@ function portfolio(input: {
 
 function balanceRecord(id: string) {
   return { snapshot: snapshot(id, "snaptrade"), appUserId: "user-1" };
+}
+
+function robinhoodBalanceRecord(id: string, providerAccountId = id) {
+  return {
+    snapshot: {
+      ...snapshot(id, "robinhood"),
+      providerAccountId,
+    },
+    appUserId: "user-1",
+  };
 }
 
 const noopRecordSnapshots = async () => {};
@@ -198,6 +213,135 @@ test("listAccounts merges Robinhood accounts with provider preserved", async () 
     ["ibkr:U1", "robinhood:robinhood:727958282"],
   );
   assert.equal(result.accounts[1].provider, "robinhood");
+});
+
+test("listAccounts returns Robinhood-only when no IBKR source has accounts", async () => {
+  const result = await listAccounts(
+    { mode: "live" },
+    {
+      listLiveAccounts: async () => [],
+      getPersistedAccounts: emptyPersisted,
+      getFlexAccounts: emptyFlex,
+      recordSnapshots: noopRecordSnapshots,
+      getSnapTradeAccounts: async () => [],
+      getRobinhoodAccounts: async () => [
+        {
+          ...snapshot("rh-local-id", "robinhood"),
+          providerAccountId: "727958282",
+          cash: 40,
+          buyingPower: 40,
+          netLiquidation: 40,
+        },
+      ],
+    },
+  );
+
+  assert.deepEqual(
+    result.accounts.map((a) => `${a.provider}:${a.id}:${a.netLiquidation}`),
+    ["robinhood:rh-local-id:40"],
+  );
+});
+
+test("applyRobinhoodAccountBalances populates portfolio balances onto snapshots", async () => {
+  const accounts = await applyRobinhoodAccountBalances(
+    [robinhoodBalanceRecord("rh-local-id", "robinhood:727958282")],
+    {
+      fetchPortfolio: async ({ accountNumber }) => {
+        assert.equal(accountNumber, "727958282");
+        return {
+          data: {
+            total_value: "40",
+            cash: "39.50",
+            currency: "USD",
+            buying_power: {
+              buying_power: "38.25",
+              display_currency: "USD",
+            },
+          },
+        };
+      },
+      now: () => 1_000,
+    },
+  );
+
+  assert.equal(accounts.length, 1);
+  assert.equal(accounts[0].providerAccountId, "robinhood:727958282");
+  assert.equal(accounts[0].cash, 39.5);
+  assert.equal(accounts[0].buyingPower, 38.25);
+  assert.equal(accounts[0].netLiquidation, 40);
+  assert.equal(accounts[0].currency, "USD");
+});
+
+test("applyRobinhoodAccountBalances serves cached balances without a second MCP call", async () => {
+  let calls = 0;
+  const fetchPortfolio = async () => {
+    calls += 1;
+    return {
+      data: {
+        total_value: String(calls * 100),
+        cash: "10",
+        buying_power: { buying_power: "20" },
+        currency: "USD",
+      },
+    };
+  };
+
+  const first = await applyRobinhoodAccountBalances(
+    [robinhoodBalanceRecord("rh-cache-hit", "727958282")],
+    { fetchPortfolio, now: () => 1_000 },
+  );
+  const second = await applyRobinhoodAccountBalances(
+    [robinhoodBalanceRecord("rh-cache-hit", "727958282")],
+    { fetchPortfolio, now: () => 10_000 },
+  );
+
+  assert.equal(calls, 1);
+  assert.equal(first[0].netLiquidation, 100);
+  assert.equal(second[0].netLiquidation, 100);
+});
+
+test("applyRobinhoodAccountBalances degrades to zero balances when portfolio fetch fails", async () => {
+  const accounts = await applyRobinhoodAccountBalances(
+    [robinhoodBalanceRecord("rh-fail", "727958282")],
+    {
+      fetchPortfolio: async () => {
+        throw new Error("robinhood portfolio outage");
+      },
+      now: () => 1_000,
+    },
+  );
+
+  assert.equal(accounts.length, 1);
+  assert.equal(accounts[0].id, "rh-fail");
+  assert.equal(accounts[0].cash, 0);
+  assert.equal(accounts[0].buyingPower, 0);
+  assert.equal(accounts[0].netLiquidation, 0);
+});
+
+test("account detail resolver resolves Robinhood accounts by local broker account id", async () => {
+  const robinhood = {
+    ...snapshot("broker-account-uuid", "robinhood"),
+    providerAccountId: "727958282",
+    cash: 40,
+    buyingPower: 40,
+    netLiquidation: 40,
+  };
+
+  const universe =
+    await __accountUniverseInternalsForTests.readLiveAccountUniverseUncached(
+      "broker-account-uuid",
+      "live",
+      {
+        listLiveAccounts: async () => [],
+        getSnapTradeAccounts: async () => [],
+        getRobinhoodAccounts: async () => [robinhood],
+      },
+    );
+
+  assert.equal(universe.requestedAccountId, "broker-account-uuid");
+  assert.deepEqual(universe.accountIds, ["broker-account-uuid"]);
+  assert.equal(universe.source, "robinhood");
+  assert.equal(universe.accounts[0].netLiquidation, 40);
 });
 
 test("applySnapTradeAccountBalances populates live balances onto snapshots", async () => {

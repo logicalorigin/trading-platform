@@ -166,7 +166,9 @@ import {
   getSnapTradeAccountPortfolio,
   type SnapTradeAccountPortfolioResponse,
 } from "./snaptrade-account-portfolio";
+import { getRobinhoodAccessToken } from "./robinhood-oauth";
 import { ownedBy } from "./scoped-db";
+import { RobinhoodMcpSession } from "../providers/robinhood/mcp-client";
 import type {
   BrokerAccountSnapshot,
   BrokerExecutionSnapshot,
@@ -213,6 +215,9 @@ const ACCOUNT_SCHEMA_READINESS_CACHE_TTL_MS = 30_000;
 // on every request.
 const SNAPTRADE_BALANCE_CACHE_TTL_MS = 45_000;
 const SNAPTRADE_BALANCE_FETCH_CONCURRENCY = 4;
+const ROBINHOOD_LOCAL_ID_PREFIX = "robinhood:";
+const ROBINHOOD_BALANCE_CACHE_TTL_MS = 45_000;
+const ROBINHOOD_BALANCE_FETCH_CONCURRENCY = 4;
 
 type AccountMetric = {
   value: number | null;
@@ -236,7 +241,7 @@ type AccountUniverse = {
   isCombined: boolean;
   accounts: BrokerAccountSnapshot[];
   primaryCurrency: string;
-  source: "live" | "persisted" | "flex";
+  source: "live" | "snaptrade" | "robinhood" | "broker" | "flex";
   latestSnapshotAt: Date | null;
   staleReason: string | null;
 };
@@ -332,6 +337,15 @@ const snapTradeAccountBalanceInflight = new Map<
   Promise<SnapTradeAccountBalanceValues | null>
 >();
 const snapTradeAccountBalanceErrorLogSuppressedUntil = new Map<string, number>();
+const robinhoodAccountBalanceCache = new Map<
+  string,
+  { value: RobinhoodAccountBalanceValues; expiresAt: number }
+>();
+const robinhoodAccountBalanceInflight = new Map<
+  string,
+  Promise<RobinhoodAccountBalanceValues | null>
+>();
+const robinhoodAccountBalanceErrorLogSuppressedUntil = new Map<string, number>();
 
 function readShortLivedAccountCache<T>(
   cache: Map<string, ShortLivedAccountCacheEntry<T>>,
@@ -1162,41 +1176,11 @@ function buildAccountPositionTotals(input: AccountPositionTotalsInput) {
   };
 }
 
-async function getPersistedBackedAccounts(
-  requestedAccountId: string,
-  mode: RuntimeMode,
-): Promise<{
+async function emptyPersistedBackedAccounts(): Promise<{
   accounts: BrokerAccountSnapshot[];
   latestSnapshotAt: Date | null;
 }> {
-  const isCombined = requestedAccountId === COMBINED_ACCOUNT_ID;
-  const conditions = [eq(brokerAccountsTable.mode, mode)];
-  if (!isCombined) {
-    conditions.push(eq(brokerAccountsTable.providerAccountId, requestedAccountId));
-  }
-
-  const rows = await db
-    .select({
-      providerAccountId: brokerAccountsTable.providerAccountId,
-      displayName: brokerAccountsTable.displayName,
-      mode: brokerAccountsTable.mode,
-      asOf: balanceSnapshotsTable.asOf,
-      currency: balanceSnapshotsTable.currency,
-      cash: balanceSnapshotsTable.cash,
-      buyingPower: balanceSnapshotsTable.buyingPower,
-      netLiquidation: balanceSnapshotsTable.netLiquidation,
-      maintenanceMargin: balanceSnapshotsTable.maintenanceMargin,
-    })
-    .from(brokerAccountsTable)
-    .innerJoin(
-      balanceSnapshotsTable,
-      eq(balanceSnapshotsTable.accountId, brokerAccountsTable.id),
-    )
-    .where(and(...conditions))
-    .orderBy(desc(balanceSnapshotsTable.asOf))
-    .limit(1_000);
-
-  return persistedAccountRowsToSnapshots(rows);
+  return { accounts: [], latestSnapshotAt: null };
 }
 
 function liveAccountUniverseCacheKey(accountId: string, mode: RuntimeMode): string {
@@ -1220,9 +1204,15 @@ async function getLiveAccountUniverse(
 async function readLiveAccountUniverseUncached(
   accountId: string,
   mode: RuntimeMode,
+  options: Pick<
+    ListAccountsOptions,
+    "listLiveAccounts" | "getSnapTradeAccounts" | "getRobinhoodAccounts"
+  > = {},
 ): Promise<AccountUniverse> {
   let liveReadFailed = false;
-  const accounts = await listIbkrAccounts(mode).catch(() => {
+  const accounts = await (options.listLiveAccounts ?? listIbkrAccounts)(
+    mode,
+  ).catch(() => {
     liveReadFailed = true;
     return [] as BrokerAccountSnapshot[];
   });
@@ -1233,22 +1223,52 @@ async function readLiveAccountUniverseUncached(
     : accounts.filter((account) => account.id === requestedAccountId);
 
   if (!selectedAccounts.length) {
-    const persistedAccounts = await getPersistedBackedAccounts(
-      requestedAccountId,
-      mode,
-    );
-    if (persistedAccounts.accounts.length) {
+    const providerBackedAccounts = [
+      ...(await (options.getSnapTradeAccounts ?? getSnapTradeBackedAccounts)(
+        mode,
+      ).catch((error) => {
+        logger.warn(
+          { err: error },
+          "SnapTrade account detail resolution failed; continuing account fallback waterfall",
+        );
+        return [] as BrokerAccountSnapshot[];
+      })),
+      ...(await (options.getRobinhoodAccounts ?? getRobinhoodBackedAccounts)(
+        mode,
+      ).catch((error) => {
+        logger.warn(
+          { err: error },
+          "Robinhood account detail resolution failed; continuing account fallback waterfall",
+        );
+        return [] as BrokerAccountSnapshot[];
+      })),
+    ];
+    const selectedProviderBackedAccounts = isCombined
+      ? providerBackedAccounts
+      : providerBackedAccounts.filter(
+          (account) => account.id === requestedAccountId,
+        );
+    if (selectedProviderBackedAccounts.length) {
+      const providers = new Set(
+        selectedProviderBackedAccounts.map((account) => account.provider),
+      );
+      const source =
+        providers.size === 1 && providers.has("robinhood")
+          ? "robinhood"
+          : providers.size === 1 && providers.has("snaptrade")
+            ? "snaptrade"
+            : "broker";
       return {
         requestedAccountId,
-        accountIds: persistedAccounts.accounts.map((account) => account.id),
+        accountIds: selectedProviderBackedAccounts.map((account) => account.id),
         isCombined,
-        accounts: persistedAccounts.accounts,
-        primaryCurrency: currencyOf(persistedAccounts.accounts),
-        source: "persisted",
-        latestSnapshotAt: persistedAccounts.latestSnapshotAt,
+        accounts: selectedProviderBackedAccounts,
+        primaryCurrency: currencyOf(selectedProviderBackedAccounts),
+        source,
+        latestSnapshotAt: latestTimestampOf(selectedProviderBackedAccounts),
         staleReason: liveReadFailed
-          ? "ibkr_unavailable_using_persisted_snapshots"
-          : "ibkr_accounts_empty_using_persisted_snapshots",
+          ? "ibkr_unavailable_using_provider_accounts"
+          : "ibkr_accounts_empty_using_provider_accounts",
       };
     }
 
@@ -1392,6 +1412,14 @@ async function readPositionsForUniverseUncached(
   universe: AccountUniverse,
   mode: RuntimeMode,
 ): Promise<BrokerPositionSnapshot[]> {
+  if (
+    universe.source === "robinhood" ||
+    universe.source === "snaptrade" ||
+    universe.source === "broker"
+  ) {
+    return [];
+  }
+
   const readOpenPositions = async (): Promise<BrokerPositionSnapshot[]> => {
     if (!universe.isCombined && universe.accountIds[0]) {
       return filterOpenBrokerPositions(
@@ -1469,6 +1497,14 @@ async function readOrdersForUniverseUncached(
   universe: AccountUniverse,
   mode: RuntimeMode,
 ): Promise<AccountUniverseOrderResult> {
+  if (
+    universe.source === "robinhood" ||
+    universe.source === "snaptrade" ||
+    universe.source === "broker"
+  ) {
+    return { orders: [] };
+  }
+
   const results = await Promise.all(
     universe.accountIds.map((accountId) =>
       listOrders({ accountId, mode }),
@@ -4164,9 +4200,21 @@ type SnapTradeAccountBalanceValues = {
   currency: string;
 };
 
+type RobinhoodAccountBalanceValues = {
+  netLiquidation: number;
+  cash: number;
+  buyingPower: number;
+  currency: string;
+};
+
 // A zero-filled SnapTrade snapshot paired with the app user that owns it, so the
 // live portfolio balance fetch can be user-scoped.
 type SnapTradeAccountRecord = {
+  snapshot: BrokerAccountSnapshot;
+  appUserId: string | null;
+};
+
+type RobinhoodAccountRecord = {
   snapshot: BrokerAccountSnapshot;
   appUserId: string | null;
 };
@@ -4184,6 +4232,11 @@ export type SnapTradeAccountPortfolioFetcher = (input: {
   appUserId: string;
   accountId: string;
 }) => Promise<SnapTradeAccountPortfolioResponse>;
+
+export type RobinhoodAccountPortfolioFetcher = (input: {
+  appUserId: string;
+  accountNumber: string;
+}) => Promise<unknown>;
 
 function withTradingInclusionDefault(
   accounts: BrokerAccountSnapshot[],
@@ -4286,12 +4339,14 @@ async function getSnapTradeBackedAccounts(
   return applySnapTradeAccountBalances(records);
 }
 
-async function getRobinhoodBackedAccounts(
+export async function getRobinhoodBackedAccounts(
   mode: RuntimeMode,
+  deps: Parameters<typeof applyRobinhoodAccountBalances>[1] = {},
 ): Promise<BrokerAccountSnapshot[]> {
   const rows = await db
     .select({
       id: brokerAccountsTable.id,
+      appUserId: brokerAccountsTable.appUserId,
       providerAccountId: brokerAccountsTable.providerAccountId,
       displayName: brokerAccountsTable.displayName,
       accountType: brokerAccountsTable.accountType,
@@ -4324,7 +4379,7 @@ async function getRobinhoodBackedAccounts(
     )
     .limit(1_000);
 
-  return rows.map((row) => {
+  const records: RobinhoodAccountRecord[] = rows.map((row) => {
     const syncedAt = row.lastSyncedAt ? new Date(row.lastSyncedAt) : null;
     const executionBlockers = [...row.executionBlockers];
     const accountStatus = row.accountStatus ?? null;
@@ -4335,44 +4390,49 @@ async function getRobinhoodBackedAccounts(
         ? null
         : true;
     return {
-      id: row.id,
-      providerAccountId: row.providerAccountId,
-      provider: "robinhood",
-      mode: row.mode,
-      displayName: row.displayName || "Robinhood account",
-      currency: row.baseCurrency || "USD",
-      buyingPower: 0,
-      cash: 0,
-      netLiquidation: 0,
-      accountType: row.accountType,
-      includedInTrading: row.includedInTrading,
-      capabilities,
-      accountStatus,
-      executionReady:
-        executionBlockers.length === 0 &&
-        (accountStatus == null || accountStatus === "open"),
-      executionBlockers,
-      agentic,
-      totalCashValue: null,
-      settledCash: null,
-      accruedCash: null,
-      initialMargin: null,
-      maintenanceMargin: null,
-      excessLiquidity: null,
-      cushion: null,
-      sma: null,
-      dayTradingBuyingPower: null,
-      regTInitialMargin: null,
-      grossPositionValue: null,
-      leverage: null,
-      dayTradesRemaining: null,
-      isPatternDayTrader: null,
-      updatedAt:
-        syncedAt && !Number.isNaN(syncedAt.getTime())
-          ? syncedAt
-          : row.updatedAt ?? new Date(),
-    } satisfies BrokerAccountSnapshot & BackedAccountReadiness;
+      appUserId: row.appUserId,
+      snapshot: {
+        id: row.id,
+        providerAccountId: row.providerAccountId,
+        provider: "robinhood",
+        mode: row.mode,
+        displayName: row.displayName || "Robinhood account",
+        currency: row.baseCurrency || "USD",
+        buyingPower: 0,
+        cash: 0,
+        netLiquidation: 0,
+        accountType: row.accountType,
+        includedInTrading: row.includedInTrading,
+        capabilities,
+        accountStatus,
+        executionReady:
+          executionBlockers.length === 0 &&
+          (accountStatus == null || accountStatus === "open"),
+        executionBlockers,
+        agentic,
+        totalCashValue: null,
+        settledCash: null,
+        accruedCash: null,
+        initialMargin: null,
+        maintenanceMargin: null,
+        excessLiquidity: null,
+        cushion: null,
+        sma: null,
+        dayTradingBuyingPower: null,
+        regTInitialMargin: null,
+        grossPositionValue: null,
+        leverage: null,
+        dayTradesRemaining: null,
+        isPatternDayTrader: null,
+        updatedAt:
+          syncedAt && !Number.isNaN(syncedAt.getTime())
+            ? syncedAt
+            : row.updatedAt ?? new Date(),
+      } satisfies BrokerAccountSnapshot & BackedAccountReadiness,
+    };
   });
+
+  return applyRobinhoodAccountBalances(records, deps);
 }
 
 const SNAPTRADE_PRESENCE_CACHE_TTL_MS = 30_000;
@@ -4569,6 +4629,206 @@ export async function applySnapTradeAccountBalances(
   return results;
 }
 
+function recordOf(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+function robinhoodAccountNumber(providerAccountId: string): string {
+  return providerAccountId.startsWith(ROBINHOOD_LOCAL_ID_PREFIX)
+    ? providerAccountId.slice(ROBINHOOD_LOCAL_ID_PREFIX.length).trim()
+    : providerAccountId;
+}
+
+function robinhoodBalanceValuesFromPortfolio(
+  payload: unknown,
+  fallbackCurrency: string,
+): RobinhoodAccountBalanceValues {
+  const root = recordOf(payload);
+  const data = recordOf(root["data"]);
+  const buyingPower = recordOf(data["buying_power"]);
+  const currency =
+    (typeof data["currency"] === "string" && data["currency"].trim()) ||
+    (typeof buyingPower["display_currency"] === "string" &&
+      buyingPower["display_currency"].trim()) ||
+    fallbackCurrency;
+  const cash = toNumber(data["cash"]) ?? 0;
+  return {
+    netLiquidation: toNumber(data["total_value"]) ?? cash,
+    cash,
+    buyingPower: toNumber(buyingPower["buying_power"]) ?? 0,
+    currency: currency.toUpperCase(),
+  };
+}
+
+function logRobinhoodBalanceFailureOncePerWindow(
+  accountId: string,
+  accountNumber: string,
+  error: unknown,
+  now: () => number,
+): void {
+  const nowMs = now();
+  const suppressedUntil =
+    robinhoodAccountBalanceErrorLogSuppressedUntil.get(accountId) ?? 0;
+  if (suppressedUntil > nowMs) {
+    return;
+  }
+  robinhoodAccountBalanceErrorLogSuppressedUntil.set(
+    accountId,
+    nowMs + ROBINHOOD_BALANCE_CACHE_TTL_MS,
+  );
+  logger.warn(
+    {
+      err: error,
+      robinhoodAccountId: accountId,
+      robinhoodAccountNumber: accountNumber,
+    },
+    "Robinhood portfolio balance fetch failed; reporting zero balances for account",
+  );
+}
+
+function createRobinhoodAccountPortfolioFetcher(options: {
+  env?: NodeJS.ProcessEnv | Record<string, string | undefined>;
+  fetchImpl?: typeof fetch;
+  encryptionKey?: string;
+  mcpUrl?: string;
+  now?: () => number;
+} = {}): RobinhoodAccountPortfolioFetcher {
+  const sessionsByUser = new Map<string, Promise<RobinhoodMcpSession>>();
+  return async ({ appUserId, accountNumber }) => {
+    let sessionPromise = sessionsByUser.get(appUserId);
+    if (!sessionPromise) {
+      sessionPromise = (async () => {
+        const accessToken = await getRobinhoodAccessToken({
+          appUserId,
+          env: options.env,
+          fetchImpl: options.fetchImpl,
+          encryptionKey: options.encryptionKey,
+          now: options.now ? new Date(options.now()) : undefined,
+        });
+        const session = new RobinhoodMcpSession({
+          accessToken,
+          fetchImpl: options.fetchImpl,
+          mcpUrl: options.mcpUrl,
+        });
+        await session.initialize();
+        return session;
+      })();
+      sessionsByUser.set(appUserId, sessionPromise);
+    }
+
+    const session = await sessionPromise;
+    return session.callTool({
+      name: "get_portfolio",
+      arguments: { account_number: accountNumber },
+    });
+  };
+}
+
+async function resolveRobinhoodAccountBalance(
+  record: RobinhoodAccountRecord,
+  fetchPortfolio: RobinhoodAccountPortfolioFetcher,
+  now: () => number,
+): Promise<RobinhoodAccountBalanceValues | null> {
+  const appUserId = record.appUserId;
+  const accountId = record.snapshot.id;
+  const accountNumber = robinhoodAccountNumber(record.snapshot.providerAccountId);
+  if (!appUserId || !accountNumber) {
+    return null;
+  }
+
+  const cached = robinhoodAccountBalanceCache.get(accountId);
+  if (cached && cached.expiresAt > now()) {
+    return cached.value;
+  }
+  const inflight = robinhoodAccountBalanceInflight.get(accountId);
+  if (inflight) {
+    return inflight;
+  }
+
+  const request = (async () => {
+    try {
+      const portfolio = await fetchPortfolio({ appUserId, accountNumber });
+      const value = robinhoodBalanceValuesFromPortfolio(
+        portfolio,
+        record.snapshot.currency,
+      );
+      robinhoodAccountBalanceCache.set(accountId, {
+        value,
+        expiresAt: now() + ROBINHOOD_BALANCE_CACHE_TTL_MS,
+      });
+      return value;
+    } catch (error) {
+      logRobinhoodBalanceFailureOncePerWindow(
+        accountId,
+        accountNumber,
+        error,
+        now,
+      );
+      return null;
+    } finally {
+      robinhoodAccountBalanceInflight.delete(accountId);
+    }
+  })();
+  robinhoodAccountBalanceInflight.set(accountId, request);
+  return request;
+}
+
+export async function applyRobinhoodAccountBalances(
+  records: RobinhoodAccountRecord[],
+  deps: {
+    fetchPortfolio?: RobinhoodAccountPortfolioFetcher;
+    now?: () => number;
+    env?: NodeJS.ProcessEnv | Record<string, string | undefined>;
+    fetchImpl?: typeof fetch;
+    encryptionKey?: string;
+    mcpUrl?: string;
+  } = {},
+): Promise<BrokerAccountSnapshot[]> {
+  if (records.length === 0) {
+    return [];
+  }
+  const now = deps.now ?? Date.now;
+  const fetchPortfolio =
+    deps.fetchPortfolio ??
+    createRobinhoodAccountPortfolioFetcher({
+      env: deps.env,
+      fetchImpl: deps.fetchImpl,
+      encryptionKey: deps.encryptionKey,
+      mcpUrl: deps.mcpUrl,
+      now,
+    });
+
+  const results = new Array<BrokerAccountSnapshot>(records.length);
+  let nextIndex = 0;
+  const workerCount = Math.min(
+    records.length,
+    ROBINHOOD_BALANCE_FETCH_CONCURRENCY,
+  );
+  await Promise.all(
+    Array.from({ length: workerCount }, async () => {
+      while (true) {
+        const index = nextIndex;
+        nextIndex += 1;
+        if (index >= records.length) {
+          return;
+        }
+        const record = records[index];
+        const balances = await resolveRobinhoodAccountBalance(
+          record,
+          fetchPortfolio,
+          now,
+        );
+        results[index] = balances
+          ? { ...record.snapshot, ...balances }
+          : record.snapshot;
+      }
+    }),
+  );
+  return results;
+}
+
 export async function listAccounts(
   input: { mode?: RuntimeMode },
   options: ListAccountsOptions = {},
@@ -4593,7 +4853,7 @@ async function listAccountsUncached(
   const mode = input.mode;
   const listLiveAccounts = options.listLiveAccounts ?? listIbkrAccounts;
   const getPersistedAccounts =
-    options.getPersistedAccounts ?? getPersistedBackedAccounts;
+    options.getPersistedAccounts ?? emptyPersistedBackedAccounts;
   const getFlexAccounts = options.getFlexAccounts ?? getFlexBackedAccounts;
   const recordSnapshots = options.recordSnapshots ?? recordAccountSnapshots;
   const getSnapTradeAccounts =
@@ -8505,6 +8765,10 @@ export const __accountEquityHistoryInternalsForTests = {
   isPlaceholderZeroAccountSnapshot,
   persistedAccountRowsToSnapshots,
   readAccountRouteResponseCache,
+};
+
+export const __accountUniverseInternalsForTests = {
+  readLiveAccountUniverseUncached,
 };
 
 export const __accountPositionInternalsForTests = {
