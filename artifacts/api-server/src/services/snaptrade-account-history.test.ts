@@ -10,7 +10,10 @@ import {
 } from "@workspace/db";
 import { withTestDb } from "@workspace/db/testing";
 import { bootstrapInitialUser } from "./auth";
-import { getSnapTradeAccountHistory } from "./snaptrade-account-history";
+import {
+  getSnapTradeAccountHistory,
+  ingestSnapTradeAccountHistory,
+} from "./snaptrade-account-history";
 import {
   deriveSnapTradeUserId,
   recordSnapTradeUserCredential,
@@ -178,7 +181,8 @@ test("SnapTrade account history backfills activities and beta balance history", 
         });
       };
 
-      const result = await getSnapTradeAccountHistory({
+      // Background/scheduler path: the ingest does the live SnapTrade pull + store.
+      const ingest = await ingestSnapTradeAccountHistory({
         appUserId: auth.user.id,
         accountId: account.id,
         env: {
@@ -198,6 +202,19 @@ test("SnapTrade account history backfills activities and beta balance history", 
         ],
       );
       assert.doesNotMatch(requestedUrls.join("\n"), /consumer-secret/);
+      assert.equal(ingest.activitiesStored, 3);
+      assert.equal(ingest.balanceSnapshotsStored, 2);
+
+      // Read path is STORED-FIRST: it serves persisted data and makes NO blocking
+      // live SnapTrade call (the ~17s ingest that used to time out is gone).
+      requestedUrls.length = 0;
+      const result = await getSnapTradeAccountHistory({
+        appUserId: auth.user.id,
+        accountId: account.id,
+        now: new Date("2026-07-01T20:00:00.000Z"),
+      });
+      assert.equal(requestedUrls.length, 0);
+
       assert.equal(result.provider, "snaptrade");
       assert.equal(result.closedTrades.trades.length, 1);
       assert.equal(result.closedTrades.trades[0]?.symbol, "BLDP");
@@ -253,7 +270,8 @@ test("SnapTrade account history degrades gracefully when beta balance history is
         });
       };
 
-      const result = await getSnapTradeAccountHistory({
+      // Seed via the background ingest: activities empty, balanceHistory 403.
+      const ingest = await ingestSnapTradeAccountHistory({
         appUserId: auth.user.id,
         accountId: account.id,
         env: {
@@ -264,11 +282,22 @@ test("SnapTrade account history degrades gracefully when beta balance history is
         now: new Date("2026-07-01T20:00:00.000Z"),
         fetchImpl,
       });
+      assert.equal(ingest.activitiesStored, 0);
+      assert.equal(ingest.balanceSnapshotsStored, 0);
+
+      const result = await getSnapTradeAccountHistory({
+        appUserId: auth.user.id,
+        accountId: account.id,
+        now: new Date("2026-07-01T20:00:00.000Z"),
+      });
 
       assert.equal(result.closedTrades.trades.length, 0);
       assert.equal(result.equityHistory.points.length, 0);
       assert.equal(result.balanceHistory.available, false);
-      assert.equal(result.balanceHistory.reason, "snaptrade_balance_history_unavailable");
+      assert.equal(
+        result.balanceHistory.reason,
+        "snaptrade_balance_history_unavailable",
+      );
     }),
   );
 });

@@ -36,6 +36,7 @@ import { startOvernightSpotWorker } from "./services/overnight-spot-worker";
 import { startSignalMonitorEvaluationWorker } from "./services/signal-monitor-evaluation-worker";
 import { startSignalUniverseRankingScheduler } from "./services/signal-universe-ranking";
 import { startSnapshotRetentionScheduler } from "./services/snapshot-retention-scheduler";
+import { startSnapTradeHistoryRefreshScheduler } from "./services/snaptrade-history-scheduler";
 import { ensureDefaultSignalOptionsPaperDeployment } from "./services/signal-options-automation";
 import { listAlgoDeployments } from "./services/automation";
 import {
@@ -317,6 +318,7 @@ server.listen(port, () => {
     () => startDiagnosticsCollector(collectDiagnosticsInput),
     startSnapshotRetentionScheduler,
     startSignalUniverseRankingScheduler,
+    startSnapTradeHistoryRefreshScheduler,
     startRuntimeFlightRecorder,
     () => {
       void importRuntimeFlightRecorderIncidents(

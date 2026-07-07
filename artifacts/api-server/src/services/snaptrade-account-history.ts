@@ -1082,6 +1082,27 @@ async function storeBalanceSnapshots(input: {
   return missing.length;
 }
 
+// Inverse of storeBalanceSnapshots: the stored-first read serves the equity curve
+// from persisted balance snapshots instead of a blocking live SnapTrade pull.
+async function readStoredBalanceSnapshots(input: {
+  accountId: string;
+}): Promise<BalanceHistoryPoint[]> {
+  const rows = await db
+    .select({
+      asOf: balanceSnapshotsTable.asOf,
+      netLiquidation: balanceSnapshotsTable.netLiquidation,
+      currency: balanceSnapshotsTable.currency,
+    })
+    .from(balanceSnapshotsTable)
+    .where(eq(balanceSnapshotsTable.accountId, input.accountId))
+    .orderBy(balanceSnapshotsTable.asOf);
+  return rows.map((row) => ({
+    timestamp: row.asOf,
+    netLiquidation: Number(row.netLiquidation),
+    currency: row.currency,
+  }));
+}
+
 function equityHistoryFromBalancePoints(input: {
   accountId: string;
   range: string;
@@ -1168,9 +1189,32 @@ function publicAccount(account: LocalSnapTradeAccount): SnapTradeHistoryAccount 
   };
 }
 
-export async function getSnapTradeAccountHistory(
-  options: GetSnapTradeAccountHistoryOptions,
-): Promise<SnapTradeAccountHistoryResponse> {
+export type IngestSnapTradeAccountHistoryOptions = {
+  appUserId: string;
+  accountId: string;
+  to?: Date | string | null;
+  env?: NodeJS.ProcessEnv | Record<string, string | undefined>;
+  fetchImpl?: typeof fetch;
+  now?: Date;
+  encryptionKey?: string;
+};
+
+export type IngestSnapTradeAccountHistoryResult = {
+  account: LocalSnapTradeAccount;
+  balanceHistory: Awaited<ReturnType<typeof fetchBalanceHistory>>;
+  activitiesFetched: number;
+  activitiesStored: number;
+  balanceSnapshotsStored: number;
+};
+
+// Fetch the account's full activity + balance history from SnapTrade and persist
+// it (activities upsert on (account_id, snaptrade_activity_id); balance points into
+// balance_snapshots). Store-only — no derived response — so the connect hook and
+// the background scheduler can reuse the exact fetch+store path, not just the HTTP
+// request handler.
+export async function ingestSnapTradeAccountHistory(
+  options: IngestSnapTradeAccountHistoryOptions,
+): Promise<IngestSnapTradeAccountHistoryResult> {
   const env = options.env ?? process.env;
   const fetchImpl = options.fetchImpl ?? fetch;
   const now = options.now ?? new Date();
@@ -1219,11 +1263,33 @@ export async function getSnapTradeAccountHistory(
       points: balanceHistory.points,
     }),
   ]);
-  const activities = await readStoredActivities({
-    accountId: account.id,
-    from: null,
-    to: options.to,
-  });
+
+  return {
+    account,
+    balanceHistory,
+    activitiesFetched: fetchedActivities.length,
+    activitiesStored,
+    balanceSnapshotsStored,
+  };
+}
+
+export async function getSnapTradeAccountHistory(
+  options: GetSnapTradeAccountHistoryOptions,
+): Promise<SnapTradeAccountHistoryResponse> {
+  const now = options.now ?? new Date();
+  // Stored-first read: serve persisted activities + balance snapshots (sub-second).
+  // The full live SnapTrade ingest used to run here and could take ~17s — past the
+  // client's 20s GET timeout. It now runs only in the background (6h scheduler,
+  // on-connect hook, and a throttled on-read refresh fired by the route), so
+  // opening an account never blocks on a live broker pull.
+  const account = await loadLocalSnapTradeAccount(
+    options.appUserId,
+    options.accountId,
+  );
+  const [activities, storedBalancePoints] = await Promise.all([
+    readStoredActivities({ accountId: account.id, from: null, to: options.to }),
+    readStoredBalanceSnapshots({ accountId: account.id }),
+  ]);
   const allClosedTrades = buildClosedTradesFromActivities(activities);
   const trades = filterClosedTrades({
     trades: allClosedTrades,
@@ -1235,7 +1301,7 @@ export async function getSnapTradeAccountHistory(
     accountId: account.id,
     range: options.range || "ALL",
     currency: account.baseCurrency,
-    points: balanceHistory.points,
+    points: storedBalancePoints,
     events,
     updatedAt: now.toISOString(),
   });
@@ -1247,6 +1313,7 @@ export async function getSnapTradeAccountHistory(
     (sum, trade) => sum + (trade.realizedPnl ?? 0),
     0,
   );
+  const balanceAvailable = storedBalancePoints.length > 0;
 
   return {
     provider: "snaptrade",
@@ -1270,15 +1337,15 @@ export async function getSnapTradeAccountHistory(
     },
     equityHistory,
     balanceHistory: {
-      available: balanceHistory.available,
-      reason: balanceHistory.available ? null : balanceHistory.reason,
-      pointCount: balanceHistory.points.length,
+      available: balanceAvailable,
+      reason: balanceAvailable ? null : "snaptrade_balance_history_unavailable",
+      pointCount: storedBalancePoints.length,
     },
     backfill: {
-      activitiesFetched: fetchedActivities.length,
-      activitiesStored,
-      balanceSnapshotsFetched: balanceHistory.points.length,
-      balanceSnapshotsStored,
+      activitiesFetched: activities.length,
+      activitiesStored: activities.length,
+      balanceSnapshotsFetched: storedBalancePoints.length,
+      balanceSnapshotsStored: storedBalancePoints.length,
     },
   };
 }
