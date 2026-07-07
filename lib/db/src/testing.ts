@@ -2,7 +2,11 @@ import { PGlite } from "@electric-sql/pglite";
 import { drizzle as drizzlePglite } from "drizzle-orm/pglite";
 import { generateDrizzleJson, generateMigration } from "drizzle-kit/api";
 
-import { __setDbForTests, type WorkspaceDatabase } from "./index";
+import {
+  __setDbForTests,
+  __setPoolQueryForTests,
+  type WorkspaceDatabase,
+} from "./index";
 import * as schema from "./schema";
 
 /**
@@ -62,11 +66,37 @@ export async function createTestDb(): Promise<TestDatabase> {
   }
 
   const restore = __setDbForTests(db);
+  // Route raw `pool.query(text, values)` callers to the same PGlite instance so
+  // services that bypass drizzle (hand-written SQL reads like the shadow
+  // maintenance peak lookup) hit the test DB too. Translates the pg call
+  // signatures PGlite doesn't share; promise-style calls only (all current
+  // pool.query callers are promise-style).
+  const restorePool = __setPoolQueryForTests(async (...args: unknown[]) => {
+    const first = args[0];
+    const second = args[1];
+    const text =
+      typeof first === "string"
+        ? first
+        : String((first as { text?: unknown })?.text ?? "");
+    const values = Array.isArray(second)
+      ? second
+      : typeof first === "object" && first !== null
+        ? ((first as { values?: unknown[] }).values ?? undefined)
+        : undefined;
+    const result = await client.query(text, values as never[] | undefined);
+    return {
+      rows: result.rows,
+      rowCount:
+        (result as { affectedRows?: number }).affectedRows ??
+        result.rows.length,
+    };
+  });
 
   let closed = false;
   const cleanup = async (): Promise<void> => {
     if (closed) return;
     closed = true;
+    restorePool();
     restore();
     await client.close();
   };

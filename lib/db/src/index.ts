@@ -348,6 +348,26 @@ function instrumentClient(client: pg.PoolClient): pg.PoolClient {
   return client;
 }
 
+// Test seam for raw `pool.query(...)` callers, mirroring `__setDbForTests`:
+// while installed, promise-style pool.query calls are routed to the override
+// (a PGlite-backed executor in tests) instead of the real Postgres pool. Null in
+// production, so the branch below is a permanent no-op there. Checked-out
+// clients (`pool.connect()`) are NOT seamed — transaction flows go through the
+// drizzle `db` proxy, which has its own seam.
+let poolQueryOverrideForTests:
+  | ((...args: unknown[]) => Promise<unknown>)
+  | null = null;
+
+export function __setPoolQueryForTests(
+  next: (...args: unknown[]) => Promise<unknown>,
+): () => void {
+  const previous = poolQueryOverrideForTests;
+  poolQueryOverrideForTests = next;
+  return () => {
+    poolQueryOverrideForTests = previous;
+  };
+}
+
 function instrumentPostgresPoolDiagnostics(targetPool: pg.Pool): void {
   const queryablePool = targetPool as unknown as {
     query: (...args: unknown[]) => unknown;
@@ -355,8 +375,12 @@ function instrumentPostgresPoolDiagnostics(targetPool: pg.Pool): void {
   };
   const originalQuery = queryablePool.query.bind(targetPool);
   const originalConnect = queryablePool.connect.bind(targetPool);
+  const routedQuery = (...args: unknown[]) =>
+    poolQueryOverrideForTests
+      ? poolQueryOverrideForTests(...args)
+      : originalQuery(...args);
 
-  queryablePool.query = instrumentQuery(originalQuery, "pool");
+  queryablePool.query = instrumentQuery(routedQuery, "pool");
   queryablePool.connect = (...args: unknown[]) => {
     const startedAtMs = Date.now();
     const callback = args[0];
