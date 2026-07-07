@@ -3,9 +3,21 @@ import { once } from "node:events";
 import test, { beforeEach } from "node:test";
 import type { AddressInfo } from "node:net";
 
-import { db, usersTable } from "@workspace/db";
+import {
+  algoDeploymentsTable,
+  algoStrategiesTable,
+  auditEventsTable,
+  brokerAccountsTable,
+  brokerConnectionsTable,
+  db,
+  executionEventsTable,
+  usersTable,
+} from "@workspace/db";
 import { withTestDb } from "@workspace/db/testing";
 import app from "../app";
+import {
+  __algoAutomationInternalsForTests,
+} from "../services/automation";
 import { createAuthSession } from "../services/auth";
 import { AUTH_CSRF_HEADER, __resetAuthRateLimitsForTests } from "./auth";
 
@@ -38,9 +50,70 @@ async function seedUser(role: "admin" | "member") {
     .returning();
   const session = await createAuthSession({ userId: user!.id });
   return {
+    id: user!.id,
     cookie: `pyrus_session=${session.sessionToken}`,
     csrfToken: session.csrfToken,
   };
+}
+
+async function seedOwnedDeployment(input: {
+  appUserId: string;
+  providerAccountId: string;
+}) {
+  const [connection] = await db
+    .insert(brokerConnectionsTable)
+    .values({
+      appUserId: input.appUserId,
+      name: `snaptrade-${input.providerAccountId}`,
+      connectionType: "broker",
+      brokerProvider: "snaptrade",
+      mode: "shadow",
+      status: "connected",
+      capabilities: ["accounts"],
+    })
+    .returning();
+  await db.insert(brokerAccountsTable).values({
+    appUserId: input.appUserId,
+    connectionId: connection!.id,
+    providerAccountId: input.providerAccountId,
+    displayName: `Account ${input.providerAccountId}`,
+    mode: "shadow",
+  });
+  const [strategy] = await db
+    .insert(algoStrategiesTable)
+    .values({
+      name: `strategy-${input.providerAccountId}`,
+      mode: "shadow",
+      enabled: true,
+      symbolUniverse: ["AAPL"],
+      config: {},
+    })
+    .returning();
+  const [deployment] = await db
+    .insert(algoDeploymentsTable)
+    .values({
+      strategyId: strategy!.id,
+      name: `deployment-${input.providerAccountId}`,
+      mode: "shadow",
+      enabled: true,
+      providerAccountId: input.providerAccountId,
+      symbolUniverse: ["AAPL"],
+      config: {},
+    })
+    .returning();
+  const [event] = await db
+    .insert(executionEventsTable)
+    .values({
+      deploymentId: deployment!.id,
+      providerAccountId: input.providerAccountId,
+      symbol: "AAPL",
+      eventType: "signal_options_shadow_entry",
+      summary: `entry-${input.providerAccountId}`,
+      payload: { side: "long" },
+    })
+    .returning();
+  __algoAutomationInternalsForTests.clearExecutionEventsListCacheForTests();
+  return { deployment: deployment!, event: event! };
 }
 
 // A well-formed but nonexistent deployment id: once auth is admitted the
@@ -143,13 +216,109 @@ test("algo mutation routes admit admin sessions with a valid CSRF header", async
   );
 });
 
-test("algo deployment reads stay open so the cockpit keeps polling", async () => {
+test("algo deployment reads require authentication", async () => {
   await withTestDb(async () =>
     withServer(async (baseUrl) => {
       const response = await fetch(`${baseUrl}/algo/deployments`);
-      assert.equal(response.status, 200);
-      const body = (await response.json()) as { deployments?: unknown };
-      assert.ok(Array.isArray(body.deployments));
+      assert.equal(response.status, 401);
+      const body = (await response.json()) as { code?: string };
+      assert.equal(body.code, "auth_required");
+    }),
+  );
+});
+
+test("algo deployment list and events are scoped to the owning user", async () => {
+  await withTestDb(async () =>
+    withServer(async (baseUrl) => {
+      const owner = await seedUser("member");
+      const other = await seedUser("member");
+      const { deployment, event } = await seedOwnedDeployment({
+        appUserId: owner.id,
+        providerAccountId: `acct-${Date.now()}`,
+      });
+
+      const ownerListResponse = await fetch(`${baseUrl}/algo/deployments`, {
+        headers: { cookie: owner.cookie },
+      });
+      assert.equal(ownerListResponse.status, 200);
+      const ownerList = (await ownerListResponse.json()) as {
+        deployments: Array<{ id: string }>;
+      };
+      assert.deepEqual(
+        ownerList.deployments.map((item) => item.id),
+        [deployment.id],
+      );
+
+      const otherListResponse = await fetch(`${baseUrl}/algo/deployments`, {
+        headers: { cookie: other.cookie },
+      });
+      assert.equal(otherListResponse.status, 200);
+      const otherList = (await otherListResponse.json()) as {
+        deployments: Array<{ id: string }>;
+      };
+      assert.deepEqual(otherList.deployments, []);
+
+      const ownerEventsResponse = await fetch(
+        `${baseUrl}/algo/events?deploymentId=${deployment.id}`,
+        { headers: { cookie: owner.cookie } },
+      );
+      assert.equal(ownerEventsResponse.status, 200);
+      const ownerEvents = (await ownerEventsResponse.json()) as {
+        events: Array<{ id: string }>;
+      };
+      assert.deepEqual(
+        ownerEvents.events.map((item) => item.id),
+        [event.id],
+      );
+
+      const otherGlobalEventsResponse = await fetch(`${baseUrl}/algo/events`, {
+        headers: { cookie: other.cookie },
+      });
+      assert.equal(otherGlobalEventsResponse.status, 200);
+      const otherGlobalEvents = (await otherGlobalEventsResponse.json()) as {
+        events: Array<{ id: string }>;
+      };
+      assert.deepEqual(otherGlobalEvents.events, []);
+    }),
+  );
+});
+
+test("algo per-deployment reads reject cross-user deployment access", async () => {
+  await withTestDb(async () =>
+    withServer(async (baseUrl) => {
+      const owner = await seedUser("member");
+      const other = await seedUser("member");
+      const { deployment } = await seedOwnedDeployment({
+        appUserId: owner.id,
+        providerAccountId: `acct-${Date.now()}-cross`,
+      });
+
+      for (const path of [
+        `/algo/events?deploymentId=${deployment.id}`,
+        `/algo/deployments/${deployment.id}/signal-options/state`,
+        `/algo/deployments/${deployment.id}/cockpit`,
+      ]) {
+        const response = await fetch(`${baseUrl}${path}`, {
+          headers: { cookie: other.cookie },
+        });
+        assert.equal(response.status, 403, path);
+        const body = (await response.json()) as { code?: string };
+        assert.equal(body.code, "algo_deployment_forbidden");
+      }
+
+      const auditRows = await db
+        .select()
+        .from(auditEventsTable);
+      assert.equal(
+        auditRows.filter(
+          (row) =>
+            row.appUserId === other.id &&
+            row.eventType === "entitlement.denied" &&
+            row.resourceType === "algo_deployment" &&
+            row.resourceId === deployment.id,
+        ).length,
+        3,
+      );
     }),
   );
 });

@@ -1,6 +1,6 @@
 import { Router, type IRouter, type Response } from "express";
 import { HttpError } from "../lib/errors";
-import { requireAdminCsrf } from "./auth";
+import { requireAdminCsrf, requireUser } from "./auth";
 import {
   fetchAlgoCockpitPrimaryPayload,
   subscribeAlgoCockpitSnapshots,
@@ -33,6 +33,12 @@ import {
   getApiRouteAdmission,
   withRouteAdmissionMetadata,
 } from "../services/route-admission";
+import {
+  assertCanReadAlgoDeployment,
+  filterAlgoDeploymentListForSession,
+  filterExecutionEventsForSession,
+  firstReadableAlgoDeploymentId,
+} from "../services/automation-authorization";
 
 const router: IRouter = Router();
 const SIGNAL_OPTIONS_SHADOW_SCAN_ROUTE_TIMEOUT_MS = 45_000;
@@ -111,6 +117,23 @@ function writeSseEvent(
   res.write(`data: ${JSON.stringify(payload)}\n\n`);
 }
 
+async function scopeAlgoCockpitPayloadForSession<T extends {
+  deployments: Awaited<ReturnType<typeof listAlgoDeployments>>;
+  events: Awaited<ReturnType<typeof listExecutionEvents>>;
+}>(
+  session: Awaited<ReturnType<typeof requireUser>>,
+  payload: T,
+): Promise<T> {
+  return {
+    ...payload,
+    deployments: await filterAlgoDeploymentListForSession(
+      session,
+      payload.deployments,
+    ),
+    events: await filterExecutionEventsForSession(session, payload.events),
+  };
+}
+
 function readRequiredString(value: unknown, field: string): string {
   if (typeof value !== "string" || !value.trim()) {
     throw new HttpError(400, `Missing ${field}.`, {
@@ -148,9 +171,15 @@ function readOptionalBoolean(value: unknown): boolean | undefined {
 }
 
 router.get("/algo/deployments", async (req, res): Promise<void> => {
+  const session = await requireUser(req);
   const mode = req.query.mode === "live" ? "live" : req.query.mode === "shadow" ? "shadow" : undefined;
 
-  res.json(await listAlgoDeployments({ mode }));
+  res.json(
+    await filterAlgoDeploymentListForSession(
+      session,
+      await listAlgoDeployments({ mode }),
+    ),
+  );
 });
 
 router.post("/algo/deployments", async (req, res): Promise<void> => {
@@ -270,6 +299,7 @@ function readSignalQualityDraftOverride(
 }
 
 router.get("/algo/deployments/:deploymentId/signal-quality-kpis", async (req, res): Promise<void> => {
+  await assertCanReadAlgoDeployment(await requireUser(req), req.params.deploymentId);
   res.json(
     await getDeploymentSignalQualityKpis({
       deploymentId: req.params.deploymentId,
@@ -289,6 +319,7 @@ router.post("/algo/deployments/:deploymentId/signal-quality-kpis/refresh", async
 });
 
 router.get("/algo/deployments/:deploymentId/signal-options/state", async (req, res): Promise<void> => {
+  await assertCanReadAlgoDeployment(await requireUser(req), req.params.deploymentId);
   const admission = getApiRouteAdmission(res);
   const view = req.query.view === "full" ? "full" : "summary";
   res.json(
@@ -305,6 +336,7 @@ router.get("/algo/deployments/:deploymentId/signal-options/state", async (req, r
 });
 
 router.get("/algo/deployments/:deploymentId/cockpit", async (req, res): Promise<void> => {
+  await assertCanReadAlgoDeployment(await requireUser(req), req.params.deploymentId);
   const admission = getApiRouteAdmission(res);
   const view = req.query.view === "full" ? "full" : "summary";
   res.json(
@@ -320,6 +352,7 @@ router.get("/algo/deployments/:deploymentId/cockpit", async (req, res): Promise<
 });
 
 router.get("/algo/deployments/:deploymentId/signal-options/performance", async (req, res): Promise<void> => {
+  await assertCanReadAlgoDeployment(await requireUser(req), req.params.deploymentId);
   const admission = getApiRouteAdmission(res);
   res.json(
     withRouteAdmissionMetadata(
@@ -473,10 +506,14 @@ router.patch("/algo/deployments/:deploymentId/signal-options/profile", async (re
 });
 
 router.get("/algo/events", async (req, res): Promise<void> => {
+  const session = await requireUser(req);
   const deploymentId =
     typeof req.query.deploymentId === "string" && req.query.deploymentId.trim()
       ? req.query.deploymentId.trim()
       : undefined;
+  if (deploymentId) {
+    await assertCanReadAlgoDeployment(session, deploymentId);
+  }
   const limit =
     typeof req.query.limit === "string" && req.query.limit.trim()
       ? Number(req.query.limit)
@@ -485,15 +522,19 @@ router.get("/algo/events", async (req, res): Promise<void> => {
     req.query.includePayload === "true" || req.query.view === "full";
 
   res.json(
-    await listExecutionEvents({
-      deploymentId,
-      limit: Number.isFinite(limit) ? limit : undefined,
-      includePayload,
-    }),
+    await filterExecutionEventsForSession(
+      session,
+      await listExecutionEvents({
+        deploymentId,
+        limit: Number.isFinite(limit) ? limit : undefined,
+        includePayload,
+      }),
+    ),
   );
 });
 
 router.get("/streams/algo/cockpit", async (req, res): Promise<void> => {
+  const session = await requireUser(req);
   const mode: "shadow" | "live" = req.query.mode === "live" ? "live" : "shadow";
   const deploymentId =
     typeof req.query.deploymentId === "string" && req.query.deploymentId.trim()
@@ -503,6 +544,16 @@ router.get("/streams/algo/cockpit", async (req, res): Promise<void> => {
     typeof req.query.eventLimit === "string" && req.query.eventLimit.trim()
       ? Number(req.query.eventLimit)
       : undefined;
+  const deployments = await filterAlgoDeploymentListForSession(
+    session,
+    await listAlgoDeployments({ mode }),
+  );
+  const readableDeploymentId = deploymentId
+    ? (await assertCanReadAlgoDeployment(session, deploymentId), deploymentId)
+    : await firstReadableAlgoDeploymentId(
+        session,
+        deployments.deployments.map((deployment) => deployment.id),
+      );
 
   res.setHeader("Content-Type", "text/event-stream");
   res.setHeader("Cache-Control", "no-cache, no-transform");
@@ -528,11 +579,14 @@ router.get("/streams/algo/cockpit", async (req, res): Promise<void> => {
 
   try {
     const input = {
-      deploymentId,
+      deploymentId: readableDeploymentId,
       mode,
       eventLimit: Number.isFinite(eventLimit) ? eventLimit : undefined,
     };
-    const initialPayload = await fetchAlgoCockpitPrimaryPayload(input);
+    const initialPayload = await scopeAlgoCockpitPayloadForSession(
+      session,
+      await fetchAlgoCockpitPrimaryPayload(input),
+    );
     if (closed) {
       return;
     }
@@ -547,7 +601,24 @@ router.get("/streams/algo/cockpit", async (req, res): Promise<void> => {
       input,
       (payload) => {
         if (!closed) {
-          writeSseEvent(res, "live", payload);
+          void scopeAlgoCockpitPayloadForSession(session, payload)
+            .then((scopedPayload) => {
+              if (!closed) {
+                writeSseEvent(res, "live", scopedPayload);
+              }
+            })
+            .catch((error) => {
+              if (!closed) {
+                writeSseEvent(res, "error", {
+                  title: "Algo cockpit stream scope failed",
+                  status: 500,
+                  detail:
+                    error instanceof Error
+                      ? error.message
+                      : "Unknown stream error.",
+                });
+              }
+            });
         }
       },
       {
