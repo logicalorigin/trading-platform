@@ -249,6 +249,49 @@ function withSignalMonitorBarEvaluationEnabled<T>(run: () => T): T {
   }
 }
 
+type TimerHandle = {
+  callback: () => void;
+  delayMs: number;
+  unref: () => void;
+};
+
+function withFakeMatrixStreamTimers<T>(run: (timers: {
+  delays: number[];
+  activeDelays: () => number[];
+}) => T): T {
+  const previousSetTimeout = globalThis.setTimeout;
+  const previousClearTimeout = globalThis.clearTimeout;
+  const handles = new Set<TimerHandle>();
+  const delays: number[] = [];
+
+  globalThis.setTimeout = ((callback: () => void, delayMs?: number) => {
+    const handle = {
+      callback,
+      delayMs: Number(delayMs ?? 0),
+      unref: () => {},
+    };
+    delays.push(handle.delayMs);
+    handles.add(handle);
+    return handle as never;
+  }) as unknown as typeof setTimeout;
+  globalThis.clearTimeout = ((handle?: TimerHandle) => {
+    if (handle) {
+      handles.delete(handle);
+    }
+  }) as typeof clearTimeout;
+
+  try {
+    return run({
+      delays,
+      activeDelays: () => Array.from(handles, (handle) => handle.delayMs),
+    });
+  } finally {
+    __signalMonitorInternalsForTests.resetSignalMonitorMatrixStreamForTests();
+    globalThis.setTimeout = previousSetTimeout;
+    globalThis.clearTimeout = previousClearTimeout;
+  }
+}
+
 test("signal matrix stream scope treats exact cells as authoritative", () => {
   const scope =
     __signalMonitorInternalsForTests.normalizeSignalMonitorMatrixStreamScope({
@@ -817,6 +860,155 @@ test("server-owned producer evaluates bar-close ticks with no UI subscriber", ()
     // and only for the tick's symbol (keystone gap fixed).
     assert.deepEqual(evalCalls, ["AAPL:1m"]);
     __signalMonitorInternalsForTests.resetSignalMonitorMatrixStreamForTests();
+  });
+});
+
+test("matrix stream uses idle flush cadence with only synthetic subscribers", () => {
+  withFakeMatrixStreamTimers(() => {
+    __signalMonitorInternalsForTests.resetSignalMonitorMatrixStreamForTests();
+    const scope =
+      __signalMonitorInternalsForTests.normalizeSignalMonitorMatrixStreamScope({
+        environment: "shadow",
+        symbols: ["AAPL"],
+        timeframes: ["1m"],
+      });
+    const subscription =
+      __signalMonitorInternalsForTests.createSignalMonitorMatrixStreamSubscriptionForTests(
+        {
+          scope,
+          profile: profile(),
+          prime: false,
+          serverOwnedProducer: true,
+          onEvent() {},
+        },
+      );
+
+    __signalMonitorInternalsForTests.queueSignalMonitorMatrixStreamAggregate({
+      symbol: "AAPL",
+      startMs: evaluatedAt.getTime(),
+    } as never);
+
+    assert.equal(
+      __signalMonitorInternalsForTests.getSignalMonitorMatrixStreamRealSubscriberCountForTests(),
+      0,
+    );
+    assert.equal(
+      __signalMonitorInternalsForTests.getSignalMonitorMatrixStreamFlushDelayForTests(),
+      3000,
+    );
+
+    subscription.unsubscribe();
+  });
+});
+
+test("matrix stream uses fast flush cadence with a real subscriber", () => {
+  withFakeMatrixStreamTimers(() => {
+    __signalMonitorInternalsForTests.resetSignalMonitorMatrixStreamForTests();
+    const scope =
+      __signalMonitorInternalsForTests.normalizeSignalMonitorMatrixStreamScope({
+        environment: "shadow",
+        symbols: ["AAPL"],
+        timeframes: ["1m"],
+      });
+    const subscription =
+      __signalMonitorInternalsForTests.createSignalMonitorMatrixStreamSubscriptionForTests(
+        {
+          scope,
+          profile: profile(),
+          prime: false,
+          onEvent() {},
+        },
+      );
+
+    __signalMonitorInternalsForTests.queueSignalMonitorMatrixStreamAggregate({
+      symbol: "AAPL",
+      startMs: evaluatedAt.getTime(),
+    } as never);
+
+    assert.equal(
+      __signalMonitorInternalsForTests.getSignalMonitorMatrixStreamRealSubscriberCountForTests(),
+      1,
+    );
+    assert.equal(
+      __signalMonitorInternalsForTests.getSignalMonitorMatrixStreamFlushDelayForTests(),
+      300,
+    );
+
+    subscription.unsubscribe();
+  });
+});
+
+test("server-owned producer subscriber does not count as real", () => {
+  __signalMonitorInternalsForTests.resetSignalMonitorMatrixStreamForTests();
+  const scope =
+    __signalMonitorInternalsForTests.buildSignalMonitorServerOwnedProducerScope({
+      environment: "shadow",
+      symbols: ["AAPL"],
+      timeframes: ["1m"],
+    });
+
+  __signalMonitorInternalsForTests.registerSignalMonitorServerOwnedProducer({
+    environment: "shadow",
+    profile: profile(),
+    scope,
+  });
+
+  assert.equal(
+    __signalMonitorInternalsForTests.getSignalMonitorMatrixStreamRealSubscriberCountForTests(),
+    0,
+  );
+  __signalMonitorInternalsForTests.resetSignalMonitorMatrixStreamForTests();
+});
+
+test("matrix stream wakes promptly when a real subscriber attaches during idle cadence", () => {
+  withFakeMatrixStreamTimers(({ delays, activeDelays }) => {
+    __signalMonitorInternalsForTests.resetSignalMonitorMatrixStreamForTests();
+    const scope =
+      __signalMonitorInternalsForTests.normalizeSignalMonitorMatrixStreamScope({
+        environment: "shadow",
+        symbols: ["AAPL"],
+        timeframes: ["1m"],
+      });
+    const synthetic =
+      __signalMonitorInternalsForTests.createSignalMonitorMatrixStreamSubscriptionForTests(
+        {
+          scope,
+          profile: profile(),
+          prime: false,
+          serverOwnedProducer: true,
+          onEvent() {},
+        },
+      );
+
+    __signalMonitorInternalsForTests.queueSignalMonitorMatrixStreamAggregate({
+      symbol: "AAPL",
+      startMs: evaluatedAt.getTime(),
+    } as never);
+
+    assert.equal(
+      __signalMonitorInternalsForTests.getSignalMonitorMatrixStreamFlushDelayForTests(),
+      3000,
+    );
+
+    const real =
+      __signalMonitorInternalsForTests.createSignalMonitorMatrixStreamSubscriptionForTests(
+        {
+          scope,
+          profile: profile(),
+          prime: false,
+          onEvent() {},
+        },
+      );
+
+    assert.deepEqual(delays.slice(-2), [3000, 300]);
+    assert.deepEqual(activeDelays(), [300]);
+    assert.equal(
+      __signalMonitorInternalsForTests.getSignalMonitorMatrixStreamFlushDelayForTests(),
+      300,
+    );
+
+    real.unsubscribe();
+    synthetic.unsubscribe();
   });
 });
 

@@ -346,6 +346,7 @@ type SignalMonitorMatrixStreamSubscriber = {
   id: number;
   scope: SignalMonitorMatrixStreamScope;
   profile: DbSignalMonitorProfile;
+  serverOwnedProducer: boolean;
   onEvent: (event: SignalMonitorMatrixStreamEvent) => void | Promise<void>;
   lastStateSignatures: Map<string, string>;
   // Last state emitted per cell: the wire-side signal latch. A directionless
@@ -472,7 +473,14 @@ const SIGNAL_MONITOR_MATRIX_STREAM_KEEPALIVE_MS = 5 * 60_000;
 // loop. 300ms (~3.3x/s) is still smooth for a live grid and roughly halves the
 // continuous matrix-eval cost. This is a permanent baseline reduction of excess
 // work — NOT a pressure-reactive backoff.
-const SIGNAL_MONITOR_MATRIX_STREAM_FLUSH_MS = 300;
+const SIGNAL_MONITOR_MATRIX_STREAM_FLUSH_MS = (() => {
+  const parsed = Number(process.env.SIGNAL_MONITOR_MATRIX_STREAM_FLUSH_MS);
+  return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : 300;
+})();
+const SIGNAL_MONITOR_MATRIX_STREAM_IDLE_FLUSH_MS = (() => {
+  const parsed = Number(process.env.SIGNAL_MONITOR_MATRIX_STREAM_IDLE_FLUSH_MS);
+  return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : 3_000;
+})();
 const SIGNAL_MONITOR_LOCAL_BAR_CACHE_REFRESH_MS = 60_000;
 const SIGNAL_MONITOR_PYTHON_SIGNAL_MATRIX_CONCURRENCY = 2;
 const DEFAULT_SIGNAL_MONITOR_BAR_SOURCE_POLICY: SignalMonitorBarSourcePolicy =
@@ -2900,6 +2908,7 @@ const pendingSignalMonitorMatrixStreamSymbolsByEnvironment = new Map<
 >();
 let signalMonitorMatrixStreamFlushTimer: ReturnType<typeof setTimeout> | null =
   null;
+let signalMonitorMatrixStreamFlushTimerDelayMs: number | null = null;
 let signalMonitorMatrixStreamFlushInFlight = false;
 let signalMonitorMatrixStreamAggregateEventCount = 0;
 let signalMonitorMatrixStreamLastAggregateAt: Date | null = null;
@@ -9823,6 +9832,22 @@ function yieldSignalMonitorEventLoop(): Promise<void> {
   });
 }
 
+function countSignalMonitorMatrixStreamRealSubscribers(): number {
+  let count = 0;
+  signalMonitorMatrixStreamSubscribers.forEach((subscriber) => {
+    if (!subscriber.serverOwnedProducer) {
+      count += 1;
+    }
+  });
+  return count;
+}
+
+function signalMonitorMatrixStreamFlushDelayMs(): number {
+  return countSignalMonitorMatrixStreamRealSubscribers() > 0
+    ? SIGNAL_MONITOR_MATRIX_STREAM_FLUSH_MS
+    : SIGNAL_MONITOR_MATRIX_STREAM_IDLE_FLUSH_MS;
+}
+
 async function flushSignalMonitorMatrixStreamAggregates(): Promise<void> {
   if (signalMonitorMatrixStreamFlushInFlight) {
     return;
@@ -9875,11 +9900,30 @@ function scheduleSignalMonitorMatrixStreamFlush() {
   if (signalMonitorMatrixStreamFlushTimer) {
     return;
   }
+  const delayMs = signalMonitorMatrixStreamFlushDelayMs();
+  signalMonitorMatrixStreamFlushTimerDelayMs = delayMs;
   signalMonitorMatrixStreamFlushTimer = setTimeout(() => {
     signalMonitorMatrixStreamFlushTimer = null;
+    signalMonitorMatrixStreamFlushTimerDelayMs = null;
     void flushSignalMonitorMatrixStreamAggregates();
-  }, SIGNAL_MONITOR_MATRIX_STREAM_FLUSH_MS);
+  }, delayMs);
   signalMonitorMatrixStreamFlushTimer.unref?.();
+}
+
+function rescheduleSignalMonitorMatrixStreamFlushForRealSubscriber() {
+  if (
+    !signalMonitorMatrixStreamFlushTimer ||
+    !pendingSignalMonitorMatrixStreamSymbolsByEnvironment.size ||
+    signalMonitorMatrixStreamFlushTimerDelayMs === null ||
+    signalMonitorMatrixStreamFlushTimerDelayMs <=
+      SIGNAL_MONITOR_MATRIX_STREAM_FLUSH_MS
+  ) {
+    return;
+  }
+  clearTimeout(signalMonitorMatrixStreamFlushTimer);
+  signalMonitorMatrixStreamFlushTimer = null;
+  signalMonitorMatrixStreamFlushTimerDelayMs = null;
+  scheduleSignalMonitorMatrixStreamFlush();
 }
 
 function queueSignalMonitorMatrixStreamAggregate(
@@ -9949,6 +9993,7 @@ function createSignalMonitorMatrixStreamSubscriptionForTests(input: {
   profile: DbSignalMonitorProfile;
   onEvent: (event: SignalMonitorMatrixStreamEvent) => void | Promise<void>;
   prime?: boolean;
+  serverOwnedProducer?: boolean;
 }): SignalMonitorMatrixStreamSubscription {
   const subscriberId = nextSignalMonitorMatrixStreamSubscriberId;
   nextSignalMonitorMatrixStreamSubscriberId += 1;
@@ -9956,11 +10001,15 @@ function createSignalMonitorMatrixStreamSubscriptionForTests(input: {
     id: subscriberId,
     scope: input.scope,
     profile: input.profile,
+    serverOwnedProducer: input.serverOwnedProducer === true,
     onEvent: input.onEvent,
     lastStateSignatures: new Map(),
     lastStates: new Map(),
   };
   signalMonitorMatrixStreamSubscribers.set(subscriberId, subscriber);
+  if (!subscriber.serverOwnedProducer) {
+    rescheduleSignalMonitorMatrixStreamFlushForRealSubscriber();
+  }
   if (input.prime !== false) {
     primeSignalMonitorMatrixStockAggregateStream(input.scope.symbols);
   }
@@ -10039,6 +10088,7 @@ function registerSignalMonitorServerOwnedProducer(input: {
   const subscription = createSignalMonitorMatrixStreamSubscriptionForTests({
     scope: input.scope,
     profile: input.profile,
+    serverOwnedProducer: true,
     onEvent: () => {},
   });
   signalMonitorServerOwnedProducers.set(input.environment, {
@@ -11304,6 +11354,7 @@ function resetSignalMonitorMatrixStreamForTests() {
     clearTimeout(signalMonitorMatrixStreamFlushTimer);
     signalMonitorMatrixStreamFlushTimer = null;
   }
+  signalMonitorMatrixStreamFlushTimerDelayMs = null;
   signalMonitorMatrixStreamFlushInFlight = false;
   signalMonitorMatrixStreamAggregateEventCount = 0;
   signalMonitorMatrixStreamLastAggregateAt = null;
@@ -13121,6 +13172,7 @@ export const __signalMonitorInternalsForTests = {
   resolveSignalMonitorMatrixStreamScope,
   evaluateSignalMonitorMatrixStreamScopeDelta,
   emitSignalMonitorMatrixStreamAggregateDelta,
+  queueSignalMonitorMatrixStreamAggregate,
   evaluateSignalMonitorMatrixStateFromCompletedBars,
   getSignalMonitorMatrixHeavyEvaluationCacheStats,
   getSignalMonitorIndicatorSnapshotBaseCacheStats,
@@ -13141,6 +13193,11 @@ export const __signalMonitorInternalsForTests = {
   buildSignalMonitorMatrixStreamBootstrapEvent,
   buildSignalMonitorMatrixStreamBootstrapEventFromStoredState,
   getSignalMonitorMatrixStreamStatus,
+  getSignalMonitorMatrixStreamRealSubscriberCountForTests:
+    countSignalMonitorMatrixStreamRealSubscribers,
+  getSignalMonitorMatrixStreamFlushDelayForTests() {
+    return signalMonitorMatrixStreamFlushTimerDelayMs;
+  },
   resetSignalMonitorMatrixStreamForTests,
   resolveSignalMonitorBrokerRecentWindowMinutes,
   isSignalMonitorStateCurrentForLane,
