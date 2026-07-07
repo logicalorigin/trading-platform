@@ -53,3 +53,14 @@ Key routing rules:
 - Resume context -> invoke `/context-restore`
 - Author a backlog-ready spec/issue -> invoke `/spec`
 - Question tuning, developer profile, or "stop asking me that" -> invoke `/plan-tune`
+
+## Ponytail discipline (all coding work, all agents)
+
+Before writing or changing code, read `.claude/skills/ponytail/SKILL.md` and apply it at
+level **full**: climb the ladder (does it need to exist -> reuse what's in the codebase ->
+stdlib -> native platform -> installed dep -> one line -> minimum code), fix root causes not
+symptoms, shortest working diff, mark deliberate shortcuts with a `ponytail:` comment naming
+the ceiling and upgrade path. Never simplify away trust-boundary validation, data-loss error
+handling, security, accessibility, or anything explicitly requested — and never skip
+understanding the code before shortening the solution. Codex workers: treat this as a
+standing rule from ignition, and leaders must repeat it in work-order prompts.

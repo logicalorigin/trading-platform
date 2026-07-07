@@ -152,6 +152,9 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 When the user's request matches an available skill, invoke it via the Skill tool. When in doubt, invoke the skill.
 
 Key routing rules:
+- ANY coding task (writing, refactoring, fixing, reviewing, dependency choice) -> apply /ponytail
+  discipline by default (level: full): read `.claude/skills/ponytail/SKILL.md` and climb its ladder
+  before writing code. This binds subagents and codex workers too — work-orders should say so.
 - Product ideas/brainstorming -> invoke /office-hours
 - Strategy/scope -> invoke /plan-ceo-review
 - Architecture -> invoke /plan-eng-review
