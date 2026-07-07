@@ -11,6 +11,11 @@ import {
   SNAPTRADE_API_BASE_URL,
 } from "./snaptrade-readiness";
 import { loadSnapTradeUserCredential } from "./snaptrade-user-custody";
+import {
+  assertTaxPreflightForOrderSubmission,
+  recordTaxPreflightOrderSubmitted,
+} from "./tax-planning";
+import type { TaxOrderLike } from "./tax-planning-model";
 
 export const SNAPTRADE_EQUITY_ORDER_ACTIONS = ["BUY", "SELL"] as const;
 export const SNAPTRADE_EQUITY_ORDER_TYPES = [
@@ -64,6 +69,8 @@ export type SnapTradeEquityOrderSubmitInput = {
   price?: number | null;
   stop?: number | null;
   clientOrderId?: string | null;
+  taxPreflightToken?: string | null;
+  taxAcknowledgements?: string[] | null;
 };
 
 export type SnapTradeEquityOrderAccount = {
@@ -268,6 +275,20 @@ const SNAPTRADE_SYMBOL_SEARCH_MAX_LENGTH = 80;
 const SYMBOL_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$/;
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+const TAX_ORDER_TYPE_BY_SNAPTRADE: Record<SnapTradeEquityOrderType, TaxOrderLike["type"]> = {
+  Market: "market",
+  Limit: "limit",
+  Stop: "stop",
+  StopLimit: "stop_limit",
+};
+
+const TAX_TIF_BY_SNAPTRADE: Record<SnapTradeEquityTimeInForce, TaxOrderLike["timeInForce"]> = {
+  Day: "day",
+  GTC: "gtc",
+  FOK: "fok",
+  IOC: "ioc",
+};
 const ACTIONS = new Set<string>(SNAPTRADE_EQUITY_ORDER_ACTIONS);
 const ORDER_TYPES = new Set<string>(SNAPTRADE_EQUITY_ORDER_TYPES);
 const TIME_IN_FORCE_VALUES = new Set<string>(
@@ -833,6 +854,27 @@ function normalizeSubmitInput(
   };
 }
 
+function snapTradeSubmitToTaxOrder(input: {
+  accountId: string;
+  order: NormalizedSubmitInput;
+}): TaxOrderLike {
+  return {
+    accountId: input.accountId,
+    mode: "live",
+    symbol: input.order.symbol,
+    assetClass: "equity",
+    side: input.order.action === "SELL" ? "sell" : "buy",
+    type: TAX_ORDER_TYPE_BY_SNAPTRADE[input.order.orderType],
+    quantity: Number(input.order.units) || 0,
+    limitPrice: input.order.price ?? null,
+    stopPrice: input.order.stop ?? null,
+    timeInForce: TAX_TIF_BY_SNAPTRADE[input.order.timeInForce],
+    optionContract: null,
+    route: "snaptrade",
+    intent: null,
+  };
+}
+
 function impactContent(
   account: LocalSnapTradeAccount,
   input: NormalizedImpactInput,
@@ -1235,6 +1277,16 @@ export async function submitSnapTradeEquityOrder(
     encryptionKey: options.encryptionKey,
   });
   assertExecutionReady(account);
+  const taxPreflight = await assertTaxPreflightForOrderSubmission({
+    appUserId: options.appUserId,
+    order: snapTradeSubmitToTaxOrder({
+      accountId: options.accountId,
+      order: normalizedInput,
+    }),
+    taxPreflightToken: options.input.taxPreflightToken,
+    taxAcknowledgements: options.input.taxAcknowledgements,
+    now,
+  });
   assertSubmitRateLimit(`${options.appUserId}:${account.id}`, now);
 
   const query = buildUserScopedQuery({
@@ -1254,6 +1306,11 @@ export async function submitSnapTradeEquityOrder(
     failedCode: "snaptrade_order_submit_failed",
   });
   const parsed = parseSubmitResponse(payload, normalizedInput);
+  await recordTaxPreflightOrderSubmitted({
+    appUserId: options.appUserId,
+    preflightToken: taxPreflight?.preflightToken,
+    submittedOrderId: parsed.order.brokerageOrderId,
+  });
 
   return {
     provider: "snaptrade",

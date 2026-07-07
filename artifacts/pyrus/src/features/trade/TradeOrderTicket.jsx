@@ -8,6 +8,7 @@ import {
   getGetSnapTradeAccountPortfolioQueryKey,
   getGetSnapTradeRecentOrdersQueryKey,
   useCheckSnapTradeEquityOrderImpact,
+  useCreateTaxOrderPreflight,
   usePlaceOrder,
   usePreviewOrder,
   useGetSnapTradeRecentOrders,
@@ -29,6 +30,7 @@ import {
 } from "../platform/semanticToneModel.js";
 import { useToast } from "../platform/platformContexts.jsx";
 import { platformJsonRequest } from "../platform/platformJsonRequest";
+import { useAuthSession } from "../auth/authSession.jsx";
 import { useUserPreferences } from "../preferences/useUserPreferences";
 import {
   TICKET_ASSET_MODES,
@@ -93,18 +95,6 @@ const TRADE_BUY_TONE = toneForDirectionalIntent("buy");
 const TRADE_SELL_TONE = toneForDirectionalIntent("sell");
 const toneForOrderSide = (side) =>
   toneForDirectionalIntent(side, TRADE_BUY_TONE);
-const AUTH_SESSION_QUERY_KEY = ["auth-session"];
-
-async function readAuthSession({ signal }) {
-  const response = await fetch("/api/auth/session", {
-    headers: { Accept: "application/json" },
-    signal,
-  });
-  if (!response.ok) {
-    throw new Error("Auth session unavailable");
-  }
-  return response.json();
-}
 
 const TicketReadinessStrip = ({ model }) => {
   const tone = readinessToneColor(model?.tone);
@@ -150,6 +140,83 @@ const TicketReadinessStrip = ({ model }) => {
   );
 };
 
+const taxPreflightToneColor = (state, pending) => {
+  if (pending) return CSS_COLOR.cyan;
+  if (state?.action === "block") return CSS_COLOR.red;
+  if (state?.action === "warn_ack_required") return CSS_COLOR.amber;
+  if (state?.action === "allow") return CSS_COLOR.green;
+  return CSS_COLOR.textDim;
+};
+
+const formatTaxPreflightAction = (state, pending) => {
+  if (pending) return "Checking";
+  if (state?.action === "block") return "Blocked";
+  if (state?.action === "warn_ack_required") return "Ack required";
+  if (state?.action === "allow") return "Clear";
+  return "Not run";
+};
+
+const TaxComplianceStrip = ({ state, pending }) => {
+  const tone = taxPreflightToneColor(state, pending);
+  const warnings = Array.isArray(state?.warnings) ? state.warnings : [];
+  const reasons = Array.isArray(state?.reasons) ? state.reasons : [];
+  const acknowledgements = Array.isArray(state?.requiredAcknowledgements)
+    ? state.requiredAcknowledgements
+    : [];
+  const detail = pending
+    ? "Checking tax and same-account order conflicts."
+    : warnings[0] ||
+      reasons[0] ||
+      (acknowledgements.length
+        ? `${acknowledgements.length} acknowledgement${acknowledgements.length === 1 ? "" : "s"} required`
+        : "Runs before live submission.");
+  return (
+    <div
+      data-testid="trade-ticket-tax-compliance-strip"
+      style={{
+        display: "flex",
+        alignItems: "stretch",
+        gap: sp(6),
+        minWidth: 0,
+        border: `1px solid ${cssColorAlpha(tone, "34")}`,
+        background: cssColorAlpha(tone, "08"),
+        padding: sp("6px 7px"),
+      }}
+    >
+      <SeverityRail tone={tone} />
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: sp(5),
+          minWidth: 0,
+          flexWrap: "wrap",
+        }}
+      >
+        <MetricChip label="Tax" value={formatTaxPreflightAction(state, pending)} tone={tone} />
+        <MetricChip
+          label="Wash"
+          value={state?.washSaleRisk ? String(state.washSaleRisk).toUpperCase() : MISSING_VALUE}
+          tone={state?.washSaleRisk === "unknown" ? CSS_COLOR.amber : tone}
+        />
+        <span
+          style={{
+            minWidth: 0,
+            color: CSS_COLOR.textSec,
+            fontFamily: T.sans,
+            fontSize: textSize("body"),
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {detail}
+        </span>
+      </div>
+    </div>
+  );
+};
+
 export const TradeOrderTicket = ({
   slot,
   chainRows = [],
@@ -171,6 +238,7 @@ export const TradeOrderTicket = ({
 }) => {
   const toast = useToast();
   const queryClient = useQueryClient();
+  const authSession = useAuthSession();
   const { preferences: ticketPreferences } = useUserPreferences();
   const confirmBrokerOrders = ticketPreferences.trading.confirmOrders !== false;
   const objectValue = (value) =>
@@ -304,17 +372,21 @@ export const TradeOrderTicket = ({
   const snapTradeAccount = snapTradeExecutionState.selectedAccount || null;
   const snapTradeAccountReady = Boolean(snapTradeAccount?.executionReady);
   const liveBrokerRoute = ticketIsShares ? "snaptrade" : "ibkr";
-  const snapTradeAuthSessionQuery = useQuery({
-    queryKey: AUTH_SESSION_QUERY_KEY,
-    queryFn: readAuthSession,
-    enabled: Boolean(liveBrokerRoute === "snaptrade" && snapTradeAccountReady),
-    staleTime: 60_000,
-    retry: false,
-  });
-  const snapTradeCsrfToken = snapTradeAuthSessionQuery.data?.csrfToken || "";
+  const snapTradeAuthEnabled = Boolean(
+    liveBrokerRoute === "snaptrade" && snapTradeAccountReady,
+  );
+  const snapTradeCsrfToken = snapTradeAuthEnabled
+    ? authSession.csrfToken || ""
+    : "";
   const snapTradeCsrfHeaders = useMemo(
     () => (snapTradeCsrfToken ? { "x-csrf-token": snapTradeCsrfToken } : {}),
     [snapTradeCsrfToken],
+  );
+  const taxPreflightCsrfToken = authSession.csrfToken || snapTradeCsrfToken;
+  const taxPreflightCsrfHeaders = useMemo(
+    () =>
+      taxPreflightCsrfToken ? { "x-csrf-token": taxPreflightCsrfToken } : {},
+    [taxPreflightCsrfToken],
   );
   const liveOrderPayloadReady = ticketIsShares
     ? Boolean(snapTradeAccountReady && slot.ticker)
@@ -521,6 +593,10 @@ export const TradeOrderTicket = ({
   const snapTradeImpactMutation = useCheckSnapTradeEquityOrderImpact({
     request: { headers: snapTradeCsrfHeaders },
   });
+  const taxPreflightMutation = useCreateTaxOrderPreflight({
+    request: { headers: taxPreflightCsrfHeaders },
+  });
+  const [taxPreflightState, setTaxPreflightState] = useState(null);
   const [liveConfirmState, setLiveConfirmState] = useState(null);
   const [liveConfirmPending, setLiveConfirmPending] = useState(false);
   const [liveConfirmError, setLiveConfirmError] = useState(null);
@@ -1346,6 +1422,147 @@ export const TradeOrderTicket = ({
           : undefined,
       }
     : null;
+  const buildTaxPreflightOrder = (route, targetAccountId) => ({
+    accountId: targetAccountId,
+    mode: "live",
+    symbol: slot.ticker,
+    assetClass: ticketAssetClass,
+    side: side.toLowerCase(),
+    type: normalizeTicketOrderType(orderType),
+    quantity: qtyNum,
+    limitPrice: orderPrices.limitPrice,
+    stopPrice: orderPrices.stopPrice,
+    timeInForce: tif.toLowerCase(),
+    optionContract: optionOrderContract,
+    route,
+    intent:
+      sellCallIntent.strategyIntent ||
+      sellCallIntent.positionEffect ||
+      null,
+  });
+  const runTaxPreflight = async (route, targetAccountId) => {
+    if (!targetAccountId) {
+      toast.push({
+        kind: "warn",
+        title: "Tax preflight blocked",
+        body: "No account is available for the live-order tax preflight.",
+      });
+      return null;
+    }
+    if (!taxPreflightCsrfToken) {
+      const blocked = {
+        action: "block",
+        washSaleRisk: "unknown",
+        selfTradeRisk: "possible",
+        reasons: ["auth_session_required"],
+        warnings: ["Refresh the app session before running tax preflight."],
+        requiredAcknowledgements: [],
+      };
+      setTaxPreflightState(blocked);
+      toast.push({
+        kind: "warn",
+        title: "Tax preflight blocked",
+        body: "Refresh the app session before submitting a live order.",
+      });
+      return null;
+    }
+
+    try {
+      const result = await taxPreflightMutation.mutateAsync({
+        accountId: targetAccountId,
+        data: { order: buildTaxPreflightOrder(route, targetAccountId) },
+      });
+      setTaxPreflightState(result);
+      if (result?.action === "block") {
+        toast.push({
+          kind: "warn",
+          title: "Order blocked by preflight",
+          body:
+            (Array.isArray(result.reasons) && result.reasons[0]) ||
+            "Resolve the tax/compliance preflight issue before submitting.",
+        });
+      } else if (result?.action === "warn_ack_required") {
+        toast.push({
+          kind: "warn",
+          title: "Tax acknowledgement required",
+          body:
+            (Array.isArray(result.warnings) && result.warnings[0]) ||
+            "Review the confirmation before submitting this live order.",
+        });
+      }
+      return result;
+    } catch (error) {
+      const blocked = {
+        action: "block",
+        washSaleRisk: "unknown",
+        selfTradeRisk: "possible",
+        reasons: ["preflight_unavailable"],
+        warnings: [
+          error?.message ||
+            "Tax/compliance preflight is unavailable, so live submission is blocked.",
+        ],
+        requiredAcknowledgements: [],
+      };
+      setTaxPreflightState(blocked);
+      toast.push({
+        kind: "error",
+        title: "Tax preflight unavailable",
+        body:
+          error?.message ||
+          "The tax/compliance preflight service did not return a decision.",
+      });
+      return null;
+    }
+  };
+  const buildTaxPreflightConfirmLines = (preflight) => {
+    if (!preflight) return [];
+    const action =
+      preflight.action === "allow"
+        ? "CLEAR"
+        : preflight.action === "warn_ack_required"
+          ? "ACK REQUIRED"
+          : "BLOCKED";
+    const actionColor =
+      preflight.action === "allow"
+        ? CSS_COLOR.green
+        : preflight.action === "warn_ack_required"
+          ? CSS_COLOR.amber
+          : CSS_COLOR.red;
+    const acknowledgements = Array.isArray(preflight.requiredAcknowledgements)
+      ? preflight.requiredAcknowledgements
+      : [];
+    return [
+      { label: "TAX", value: action, valueColor: actionColor },
+      {
+        label: "WASH",
+        value: preflight.washSaleRisk
+          ? String(preflight.washSaleRisk).toUpperCase()
+          : MISSING_VALUE,
+        valueColor:
+          preflight.washSaleRisk === "unknown"
+            ? CSS_COLOR.amber
+            : CSS_COLOR.text,
+      },
+      ...(acknowledgements.length
+        ? [
+            {
+              label: "ACKS",
+              value: String(acknowledgements.length),
+              valueColor: CSS_COLOR.amber,
+            },
+          ]
+        : []),
+    ];
+  };
+  const buildTaxSubmissionFields = (preflight) => ({
+    taxPreflightToken:
+      typeof preflight?.preflightToken === "string"
+        ? preflight.preflightToken
+        : null,
+    taxAcknowledgements: Array.isArray(preflight?.requiredAcknowledgements)
+      ? preflight.requiredAcknowledgements
+      : [],
+  });
   const comparisonRequest =
     executionMode === "shadow"
       ? shadowOrderRequest
@@ -1680,7 +1897,8 @@ export const TradeOrderTicket = ({
     previewOrderMutation.mutate({ data: orderRequest });
   };
 
-  const submitLiveBrokerOrder = async () => {
+  const submitLiveBrokerOrder = async (taxPreflight = taxPreflightState) => {
+    const taxSubmissionFields = buildTaxSubmissionFields(taxPreflight);
     if (liveUsesSnapTrade) {
       if (!snapTradeCsrfToken) {
         toast.push({
@@ -1701,7 +1919,10 @@ export const TradeOrderTicket = ({
 
       await submitSnapTradeOrderMutation.mutateAsync({
         accountId: snapTradeAccount.id,
-        data: snapTradeOrderDraft.body,
+        data: {
+          ...snapTradeOrderDraft.body,
+          ...taxSubmissionFields,
+        },
       });
       return;
     }
@@ -1733,6 +1954,7 @@ export const TradeOrderTicket = ({
           mode: environment,
           confirm: true,
           parentOrderRequest: orderRequest,
+          ...taxSubmissionFields,
           ibkrOrders: buildTwsBracketOrders({
             previewPayload: preview.orderPayload,
             side,
@@ -1751,11 +1973,12 @@ export const TradeOrderTicket = ({
       data: {
         ...orderRequest,
         confirm: true,
+        ...taxSubmissionFields,
       },
     });
   };
 
-  const submitOrder = () => {
+  const submitOrder = async () => {
     if (!validateTicket({ requireAttachedExits: hasAttachedExits })) {
       return;
     }
@@ -1769,7 +1992,7 @@ export const TradeOrderTicket = ({
         });
         return;
       }
-      if (snapTradeAuthSessionQuery.isPending) {
+      if (snapTradeAuthEnabled && authSession.isLoading) {
         toast.push({
           kind: "info",
           title: "Auth session loading",
@@ -1791,6 +2014,11 @@ export const TradeOrderTicket = ({
           title: "SnapTrade order blocked",
           body: snapTradeDraftBlockMessage,
         });
+        return;
+      }
+
+      const taxPreflight = await runTaxPreflight("snaptrade", snapTradeAccount.id);
+      if (!taxPreflight || taxPreflight.action === "block") {
         return;
       }
 
@@ -1828,8 +2056,9 @@ export const TradeOrderTicket = ({
             value: costDisplay,
             valueColor: isLong ? CSS_COLOR.red : CSS_COLOR.green,
           },
+          ...buildTaxPreflightConfirmLines(taxPreflight),
         ],
-        onConfirm: submitLiveBrokerOrder,
+        onConfirm: () => submitLiveBrokerOrder(taxPreflight),
       });
       return;
     }
@@ -1872,9 +2101,16 @@ export const TradeOrderTicket = ({
       return;
     }
 
+    const taxPreflight = await runTaxPreflight("ibkr", accountId);
+    if (!taxPreflight || taxPreflight.action === "block") {
+      return;
+    }
+    const taxRequiresAcknowledgement =
+      taxPreflight.action === "warn_ack_required";
+
     setLiveConfirmError(null);
-    if (!confirmBrokerOrders && environment !== "live") {
-      void submitLiveBrokerOrder();
+    if (!confirmBrokerOrders && environment !== "live" && !taxRequiresAcknowledgement) {
+      void submitLiveBrokerOrder(taxPreflight);
       return;
     }
 
@@ -1951,13 +2187,14 @@ export const TradeOrderTicket = ({
               },
             ]
           : []),
+        ...buildTaxPreflightConfirmLines(taxPreflight),
         {
           label: isLong ? "EST COST" : "EST CREDIT",
           value: costDisplay,
           valueColor: isLong ? CSS_COLOR.red : CSS_COLOR.green,
         },
       ],
-      onConfirm: submitLiveBrokerOrder,
+      onConfirm: () => submitLiveBrokerOrder(taxPreflight),
     });
   };
 
@@ -2063,6 +2300,7 @@ export const TradeOrderTicket = ({
   const qtyPresets = ticketIsShares ? [1, 10, 25, 50, 100] : [1, 3, 5, 10];
   const ibkrSubmitPending =
     placeOrderMutation.isPending || submitOrdersMutation.isPending;
+  const taxPreflightPending = !executionIsShadow && taxPreflightMutation.isPending;
   const previewIsPending =
     previewOrderMutation.isPending ||
     previewShadowOrderMutation.isPending ||
@@ -2070,13 +2308,13 @@ export const TradeOrderTicket = ({
   const primarySubmitPending = executionIsShadow
     ? placeShadowOrderMutation.isPending
     : liveUsesSnapTrade
-      ? submitSnapTradeOrderMutation.isPending
-      : ibkrSubmitPending;
+      ? submitSnapTradeOrderMutation.isPending || taxPreflightPending
+      : ibkrSubmitPending || taxPreflightPending;
   const sellCallSubmitBlocked = sellCallIntent.applies && !sellCallIntent.allowed;
   const snapTradeAuthLoading =
     liveUsesSnapTrade &&
     snapTradeAccountReady &&
-    snapTradeAuthSessionQuery.isPending;
+    (snapTradeAuthEnabled && authSession.isLoading);
   const ticketReadinessModel = buildTicketReadinessModel({
     executionMode,
     brokerRoute: liveBrokerRoute,
@@ -2101,11 +2339,15 @@ export const TradeOrderTicket = ({
       sellCallSubmitBlocked
     : liveUsesSnapTrade
       ? submitSnapTradeOrderMutation.isPending ||
+        taxPreflightPending ||
         snapTradeAuthLoading ||
         !snapTradeCsrfToken ||
         !snapTradeOrderDraft.ready ||
         sellCallSubmitBlocked
-      : ibkrSubmitPending || gatewayTradingBlocked || sellCallSubmitBlocked;
+      : ibkrSubmitPending ||
+        taxPreflightPending ||
+        gatewayTradingBlocked ||
+        sellCallSubmitBlocked;
   const previewDisabled =
     previewIsPending ||
     sellCallSubmitBlocked;
@@ -2123,7 +2365,9 @@ export const TradeOrderTicket = ({
 	            ? "CONFIRM ADD EXPOSURE"
 	            : `${ticketActionLabel} SHADOW ${qtyNum || 0} ${ticketIsShares ? "sh" : "ct"} × ${fillPriceDisplay}`
     : liveUsesSnapTrade
-      ? submitSnapTradeOrderMutation.isPending
+      ? taxPreflightPending
+        ? "CHECKING TAX..."
+        : submitSnapTradeOrderMutation.isPending
         ? "SUBMITTING..."
         : !snapTradeAccountReady
           ? "SNAPTRADE ACCOUNT REQUIRED"
@@ -2136,6 +2380,8 @@ export const TradeOrderTicket = ({
                 : `${ticketActionLabel} SNAPTRADE ${qtyNum || 0} sh × ${fillPriceDisplay} · ${signedCostDisplay}`
     : gatewayTradingBlocked
       ? gatewayTradingBlockedLabel
+      : taxPreflightPending
+        ? "CHECKING TAX..."
       : ibkrSubmitPending
       ? "SUBMITTING..."
       : sellCallSubmitBlocked
@@ -2370,6 +2616,12 @@ export const TradeOrderTicket = ({
       ) : null}
       {renderExecutionModeControls()}
       <TicketReadinessStrip model={ticketReadinessModel} />
+      {!executionIsShadow ? (
+        <TaxComplianceStrip
+          state={taxPreflightState}
+          pending={taxPreflightMutation.isPending}
+        />
+      ) : null}
       {liveUsesSnapTrade ? (
         <div
           data-testid="snaptrade-recent-orders-status"

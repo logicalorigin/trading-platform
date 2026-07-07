@@ -7,6 +7,7 @@ import {
   db,
 } from "@workspace/db";
 import { withTestDb } from "@workspace/db/testing";
+import { runAsAppUser } from "./app-user-context";
 import { bootstrapInitialUser } from "./auth";
 import {
   checkSnapTradeEquityOrderImpact,
@@ -18,6 +19,7 @@ import {
   deriveSnapTradeUserId,
   recordSnapTradeUserCredential,
 } from "./snaptrade-user-custody";
+import { createTaxOrderPreflight } from "./tax-planning";
 
 const TEST_ENCRYPTION_KEY = Buffer.alloc(32, 23).toString("base64url");
 
@@ -341,9 +343,29 @@ test("SnapTrade equity submit places a documented direct equity order and return
               number: "U7654321",
             },
           }),
-          { status: 200, headers: { "content-type": "application/json" } },
+        { status: 200, headers: { "content-type": "application/json" } },
         );
       };
+
+      const preflight = await runAsAppUser(auth.user.id, () =>
+        createTaxOrderPreflight({
+          order: {
+            accountId: account.id,
+            mode: "live",
+            symbol: "MSFT",
+            assetClass: "equity",
+            side: "buy",
+            type: "limit",
+            quantity: 3,
+            limitPrice: 402.1,
+            stopPrice: null,
+            timeInForce: "day",
+            optionContract: null,
+            route: "snaptrade",
+            intent: null,
+          },
+        }),
+      );
 
       const result = await submitSnapTradeEquityOrder({
         appUserId: auth.user.id,
@@ -358,6 +380,8 @@ test("SnapTrade equity submit places a documented direct equity order and return
           units: 3,
           price: 402.1,
           clientOrderId: "44444444-4444-4444-8444-444444444444",
+          taxPreflightToken: preflight.preflightToken,
+          taxAcknowledgements: preflight.requiredAcknowledgements,
         },
         env: {
           SNAPTRADE_CLIENTID: "client-123",

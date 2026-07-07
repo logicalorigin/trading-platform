@@ -11,6 +11,7 @@ import {
 } from "@workspace/db";
 import { withTestDb } from "@workspace/db/testing";
 import app from "../app";
+import { runAsAppUser } from "../services/app-user-context";
 import { createAuthSession } from "../services/auth";
 import { ingestSnapTradeAccountHistory } from "../services/snaptrade-account-history";
 import {
@@ -22,6 +23,7 @@ import {
   loadSnapTradeUserCredential,
   recordSnapTradeUserCredential,
 } from "../services/snaptrade-user-custody";
+import { createTaxOrderPreflight } from "../services/tax-planning";
 import { AUTH_CSRF_HEADER, __resetAuthRateLimitsForTests } from "./auth";
 
 beforeEach(() => {
@@ -2507,6 +2509,25 @@ test("SnapTrade equity submit route places a sanitized confirmed order", async (
               );
             }) as typeof fetch;
             try {
+              const preflight = await runAsAppUser(bootstrapBody.user.id, () =>
+                createTaxOrderPreflight({
+                  order: {
+                    accountId: account.id,
+                    mode: "live",
+                    symbol: "AAPL",
+                    assetClass: "equity",
+                    side: "buy",
+                    type: "market",
+                    quantity: 1,
+                    limitPrice: null,
+                    stopPrice: null,
+                    timeInForce: "day",
+                    optionContract: null,
+                    route: "snaptrade",
+                    intent: null,
+                  },
+                }),
+              );
               const response = await previousFetch(
                 `${baseUrl}/broker-execution/snaptrade/accounts/${account.id}/orders`,
                 {
@@ -2523,6 +2544,8 @@ test("SnapTrade equity submit route places a sanitized confirmed order", async (
                     orderType: "Market",
                     timeInForce: "Day",
                     units: 1,
+                    taxPreflightToken: preflight.preflightToken,
+                    taxAcknowledgements: preflight.requiredAcknowledgements,
                   }),
                 },
               );

@@ -2,7 +2,15 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  brokerAccountsTable,
+  brokerConnectionsTable,
+  db,
+  usersTable,
+} from "@workspace/db";
+import { withTestDb } from "@workspace/db/testing";
+import {
   __schwabEquityOrderInternalsForTests,
+  submitSchwabEquityOrder,
   type SchwabEquityOrderAccount,
 } from "./schwab-equity-orders";
 
@@ -22,6 +30,20 @@ function expectHttpError(fn: () => unknown, statusCode: number, code: string) {
     assert.equal(e.code, code);
     return true;
   });
+}
+
+async function createUser(email: string): Promise<string> {
+  const [user] = await db
+    .insert(usersTable)
+    .values({
+      email,
+      displayName: null,
+      passwordHash: "scrypt:v1:test-only",
+      role: "member",
+    })
+    .returning({ id: usersTable.id });
+  assert.ok(user);
+  return user.id;
 }
 
 test("normalizeSchwabSymbol upper-cases, trims, and rejects invalid symbols", () => {
@@ -234,4 +256,69 @@ test("assertExecutionReady throws 409 with the blockers while Schwab is blocked"
 
 test("assertExecutionReady passes through when the account is execution-ready", () => {
   assert.doesNotThrow(() => assertExecutionReady(account({ executionReady: true })));
+});
+
+test("submitSchwabEquityOrder requires tax preflight before provider calls", async () => {
+  await withTestDb(async () => {
+    const appUserId = await createUser("schwab-tax-preflight@example.com");
+    const [connection] = await db
+      .insert(brokerConnectionsTable)
+      .values({
+        appUserId,
+        name: "schwab:tax-preflight",
+        connectionType: "broker",
+        brokerProvider: "schwab",
+        mode: "live",
+        status: "connected",
+        capabilities: ["accounts", "positions", "schwab", "orders"],
+      })
+      .returning({ id: brokerConnectionsTable.id });
+    assert.ok(connection);
+    const [brokerAccount] = await db
+      .insert(brokerAccountsTable)
+      .values({
+        appUserId,
+        connectionId: connection.id,
+        providerAccountId: "schwab:ABC123HASH",
+        displayName: "Schwab ...5678",
+        mode: "live",
+        accountStatus: "open",
+        baseCurrency: "USD",
+        capabilities: [
+          "accounts",
+          "positions",
+          "schwab",
+          "orders",
+          "execution-ready",
+        ],
+        executionBlockers: [],
+      })
+      .returning({ id: brokerAccountsTable.id });
+    assert.ok(brokerAccount);
+
+    let called = false;
+    await assert.rejects(
+      submitSchwabEquityOrder({
+        appUserId,
+        accountId: brokerAccount.id,
+        input: {
+          confirm: true,
+          symbol: "AAPL",
+          action: "BUY",
+          quantity: 1,
+          orderType: "Market",
+          timeInForce: "Day",
+        },
+        fetchImpl: (async () => {
+          called = true;
+          throw new Error("provider fetch should not run without tax preflight");
+        }) as typeof fetch,
+      }),
+      (error: unknown) => {
+        assert.equal((error as { code?: string }).code, "tax_preflight_required");
+        return true;
+      },
+    );
+    assert.equal(called, false);
+  });
 });

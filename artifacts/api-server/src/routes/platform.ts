@@ -2134,6 +2134,15 @@ router.post("/orders/submit", async (req, res) => {
         req.body.parentOrderRequest && typeof req.body.parentOrderRequest === "object"
           ? PlaceOrderBody.parse(req.body.parentOrderRequest)
           : null,
+      taxPreflightToken:
+        typeof req.body.taxPreflightToken === "string"
+          ? req.body.taxPreflightToken
+          : null,
+      taxAcknowledgements: Array.isArray(req.body.taxAcknowledgements)
+        ? req.body.taxAcknowledgements
+            .map((entry: unknown) => String(entry || "").trim())
+            .filter(Boolean)
+        : null,
       ibkrOrders: req.body.ibkrOrders,
     }));
     return;

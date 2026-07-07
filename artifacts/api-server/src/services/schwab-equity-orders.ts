@@ -11,6 +11,11 @@ import {
   type SchwabOrderRequest,
 } from "../providers/schwab/trader-api-client";
 import { getSchwabAccessToken } from "./schwab-oauth";
+import {
+  assertTaxPreflightForOrderSubmission,
+  recordTaxPreflightOrderSubmitted,
+} from "./tax-planning";
+import type { TaxOrderLike } from "./tax-planning-model";
 
 // Schwab equity order service — attended-broker order path (Phase 0). Mirrors
 // snaptrade-equity-orders. Every operation goes through assertExecutionReady,
@@ -40,6 +45,8 @@ export type SchwabEquityOrderPreviewInput = {
 export type SchwabEquityOrderSubmitInput = SchwabEquityOrderPreviewInput & {
   // Per-order confirmation gate (ADR-002: terminal orders require confirmation).
   confirm?: boolean;
+  taxPreflightToken?: string | null;
+  taxAcknowledgements?: string[] | null;
 };
 
 export type SchwabEquityOrderAccount = {
@@ -105,6 +112,17 @@ const SESSION_WIRE: Record<SchwabEquityTradingSession, SchwabOrderRequest["sessi
   Am: "AM",
   Pm: "PM",
   Seamless: "SEAMLESS",
+};
+const TAX_ORDER_TYPE_BY_SCHWAB: Record<SchwabEquityOrderType, string> = {
+  Market: "market",
+  Limit: "limit",
+  Stop: "stop",
+  StopLimit: "stop_limit",
+};
+const TAX_TIF_BY_SCHWAB: Record<SchwabEquityTimeInForce, string> = {
+  Day: "day",
+  GoodTillCancel: "gtc",
+  FillOrKill: "fok",
 };
 
 function assertEnum<T extends string>(
@@ -231,6 +249,30 @@ export function buildSchwabOrderRequest(order: NormalizedSchwabOrder): SchwabOrd
     request.stopPrice = formatPrice(order.stopPrice);
   }
   return request;
+}
+
+function schwabSubmitToTaxOrder(input: {
+  accountId: string;
+  order: NormalizedSchwabOrder;
+}): TaxOrderLike {
+  return {
+    accountId: input.accountId,
+    mode: "live",
+    symbol: input.order.symbol,
+    assetClass: "equity",
+    side:
+      input.order.action === "SELL" || input.order.action === "SELL_SHORT"
+        ? "sell"
+        : "buy",
+    type: TAX_ORDER_TYPE_BY_SCHWAB[input.order.orderType],
+    quantity: input.order.quantity,
+    limitPrice: input.order.limitPrice,
+    stopPrice: input.order.stopPrice,
+    timeInForce: TAX_TIF_BY_SCHWAB[input.order.timeInForce],
+    optionContract: null,
+    route: "schwab",
+    intent: null,
+  };
 }
 
 function executionReady(input: {
@@ -380,11 +422,27 @@ export async function submitSchwabEquityOrder(
     });
   }
   const now = options.now ?? new Date();
-  const order = buildSchwabOrderRequest(validateSchwabEquityOrderInput(options.input));
+  const normalizedInput = validateSchwabEquityOrderInput(options.input);
+  const order = buildSchwabOrderRequest(normalizedInput);
   const account = await loadLocalSchwabAccount(options.appUserId, options.accountId);
   assertExecutionReady(account); // stays blocked until Phase 2 (order_tooling_unverified)
+  const taxPreflight = await assertTaxPreflightForOrderSubmission({
+    appUserId: options.appUserId,
+    order: schwabSubmitToTaxOrder({
+      accountId: options.accountId,
+      order: normalizedInput,
+    }),
+    taxPreflightToken: options.input.taxPreflightToken,
+    taxAcknowledgements: options.input.taxAcknowledgements,
+    now,
+  });
   const client = await loadOrderClient(account, options);
   const result = await client.placeOrder(account.accountHash, order);
+  await recordTaxPreflightOrderSubmitted({
+    appUserId: options.appUserId,
+    preflightToken: taxPreflight?.preflightToken,
+    submittedOrderId: result.orderId,
+  });
   return {
     provider: "schwab",
     submittedAt: now.toISOString(),
@@ -437,6 +495,7 @@ export async function cancelSchwabEquityOrder(
 export const __schwabEquityOrderInternalsForTests = {
   validateSchwabEquityOrderInput,
   buildSchwabOrderRequest,
+  schwabSubmitToTaxOrder,
   assertExecutionReady,
   executionReady,
   normalizeSchwabSymbol,

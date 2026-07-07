@@ -48,6 +48,11 @@ import {
   isPoolContentionError,
   isTransientPostgresError,
 } from "../lib/transient-db-error";
+import {
+  assertTaxPreflightForOrderSubmission,
+  recordTaxPreflightOrderSubmitted,
+} from "./tax-planning";
+import type { TaxOrderLike } from "./tax-planning-model";
 import { getCachedStorageHealthSnapshot } from "./storage-health";
 import { requireCurrentAppUserId } from "./app-user-context";
 import { normalizeSymbol } from "../lib/values";
@@ -4751,13 +4756,66 @@ async function validateOrderIntentForRouting(
   });
 }
 
+function ibkrOrderToTaxOrder(
+  input: PlaceOrderInput,
+  options: { taxMode?: TaxOrderLike["mode"] } = {},
+): TaxOrderLike {
+  return {
+    accountId: input.accountId,
+    mode: options.taxMode ?? input.mode,
+    symbol: input.symbol,
+    assetClass: input.assetClass,
+    side: input.side,
+    type: input.type,
+    quantity: input.quantity,
+    limitPrice: input.limitPrice ?? null,
+    stopPrice: input.stopPrice ?? null,
+    timeInForce: input.timeInForce,
+    optionContract: input.optionContract as Record<string, unknown> | null,
+    route: "ibkr",
+    intent: input.strategyIntent ?? input.positionEffect ?? null,
+  };
+}
+
+function submittedOrderIdText(value: unknown): string | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+  const record = value as Record<string, unknown>;
+  const submittedOrderIds = Array.isArray(record["submittedOrderIds"])
+    ? record["submittedOrderIds"]
+        .map((entry) => String(entry || "").trim())
+        .filter(Boolean)
+    : [];
+  if (submittedOrderIds.length > 0) {
+    return submittedOrderIds.join(",");
+  }
+  const id = String(record["id"] || record["orderId"] || "").trim();
+  return id || null;
+}
+
+type PlaceOrderTaxPreflightFields = {
+  taxPreflightToken?: string | null;
+  taxAcknowledgements?: string[] | null;
+};
 
 export async function placeOrder(input: PlaceOrderInput) {
   assertLiveOrderConfirmed(input.mode, input.confirm);
+  const taxInput = input as PlaceOrderInput & PlaceOrderTaxPreflightFields;
+  const taxPreflight = await assertTaxPreflightForOrderSubmission({
+    order: ibkrOrderToTaxOrder(input, { taxMode: "live" }),
+    taxPreflightToken: taxInput.taxPreflightToken,
+    taxAcknowledgements: taxInput.taxAcknowledgements,
+  });
   await assertIbkrGatewayTradingAvailable();
   const client = getIbkrClientPortalClient();
   await validateOrderIntentForRouting(input, client);
-  return client.placeOrder(input);
+  const order = await client.placeOrder(input);
+  await recordTaxPreflightOrderSubmitted({
+    preflightToken: taxPreflight?.preflightToken,
+    submittedOrderId: order.id,
+  });
+  return order;
 }
 
 export async function previewOrder(input: PlaceOrderInput) {
@@ -4771,25 +4829,51 @@ export async function submitRawOrders(input: {
   mode?: "shadow" | "live" | null;
   confirm?: boolean | null;
   parentOrderRequest?: PlaceOrderInput | null;
+  taxPreflightToken?: string | null;
+  taxAcknowledgements?: string[] | null;
   ibkrOrders: Record<string, unknown>[];
 }) {
   assertLiveOrderConfirmed(input.mode ?? getRuntimeMode(), input.confirm);
-  await assertIbkrGatewayTradingAvailable();
-  const client = getIbkrClientPortalClient();
-  if (input.parentOrderRequest) {
-    await validateOrderIntentForRouting(
-      {
+  const mode = input.mode ?? getRuntimeMode();
+  const parentOrderRequest = input.parentOrderRequest
+    ? {
         ...input.parentOrderRequest,
         accountId: input.accountId || input.parentOrderRequest.accountId,
-        mode: input.mode ?? input.parentOrderRequest.mode ?? getRuntimeMode(),
-      },
-      client,
-    );
+        mode,
+      } as PlaceOrderInput & PlaceOrderTaxPreflightFields
+    : null;
+  const taxPreflight = await assertTaxPreflightForOrderSubmission({
+    order: parentOrderRequest
+      ? ibkrOrderToTaxOrder(parentOrderRequest, { taxMode: "live" })
+      : (() => {
+          throw new HttpError(
+            409,
+            "Tax/compliance preflight requires the parent order request for raw IBKR submissions.",
+            {
+              code: "tax_preflight_parent_order_required",
+              expose: true,
+            },
+          );
+        })(),
+    taxPreflightToken:
+      input.taxPreflightToken ?? parentOrderRequest?.taxPreflightToken,
+    taxAcknowledgements:
+      input.taxAcknowledgements ?? parentOrderRequest?.taxAcknowledgements,
+  });
+  await assertIbkrGatewayTradingAvailable();
+  const client = getIbkrClientPortalClient();
+  if (parentOrderRequest) {
+    await validateOrderIntentForRouting(parentOrderRequest, client);
   }
-  return client.submitRawOrders({
+  const result = await client.submitRawOrders({
     accountId: input.accountId,
     orders: input.ibkrOrders,
   });
+  await recordTaxPreflightOrderSubmitted({
+    preflightToken: taxPreflight?.preflightToken,
+    submittedOrderId: submittedOrderIdText(result),
+  });
+  return result;
 }
 
 export async function replaceOrder(input: {
