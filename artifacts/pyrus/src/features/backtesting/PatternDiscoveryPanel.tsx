@@ -236,31 +236,27 @@ function FamilyChip({
   const family = setupFamilyById(familyId);
   const tone = familyTone(familyId);
   return (
-    <span
+    <Badge
+      color={tone}
+      variant="outline"
       title={family.description}
       style={{
-        display: "inline-flex",
-        alignItems: "center",
         maxWidth: "100%",
         height: dim(16),
         padding: sp("0 5px"),
-        borderRadius: dim(RADII.pill),
         border: `1px solid ${cssColorAlpha(tone, "55")}`,
         background: cssColorAlpha(tone, "18"),
-        color: tone,
         fontFamily: SANS,
         fontSize: fs(8),
-        fontWeight: FONT_WEIGHTS.medium,
         lineHeight: 1,
         whiteSpace: "nowrap",
         overflow: "hidden",
         textOverflow: "ellipsis",
-        textTransform: "uppercase",
         letterSpacing: "0.03em",
       }}
     >
       {compact ? family.shortLabel : family.label}
-    </span>
+    </Badge>
   );
 }
 

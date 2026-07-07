@@ -7,6 +7,7 @@ import {
 } from "react";
 import { useDenseVirtualRows } from "../../components/platform/DenseVirtualTable.jsx";
 import {
+  ChartSkeleton,
   DataUnavailableState,
   LoadingSpinner,
   Select,
@@ -1041,6 +1042,36 @@ export const TradeChainPanel = ({
                 topPadding={topPadding}
                 bottomPadding={bottomPadding}
               />
+            </div>
+          </div>
+        ) : showLoading ? (
+          <div
+            aria-label="Loading option chain"
+            aria-busy="true"
+            style={{
+              height: "100%",
+              minHeight: dim(120),
+              position: "relative",
+            }}
+          >
+            <ChartSkeleton fill bars={18} />
+            <div
+              style={{
+                position: "absolute",
+                inset: 0,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                padding: sp("16px 18px"),
+                textAlign: "center",
+                pointerEvents: "none",
+                color: CSS_COLOR.textSec,
+                fontFamily: T.sans,
+                fontSize: textSize("body"),
+                fontWeight: FONT_WEIGHTS.medium,
+              }}
+            >
+              Loading option chain{emptyChainState.detail ? ` - ${emptyChainState.detail}` : ""}
             </div>
           </div>
         ) : (

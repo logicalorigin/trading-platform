@@ -779,8 +779,15 @@ export const Pill = ({
   );
 };
 
-export const Badge = ({ children, color = CSS_COLOR.textDim, variant = "solid" }) => (
+export const Badge = ({
+  children,
+  color = CSS_COLOR.textDim,
+  variant = "solid",
+  title,
+  style = {},
+}) => (
   <span
+    title={title}
     style={{
       display: "inline-block",
       padding: sp("3px 9px"),
@@ -791,6 +798,7 @@ export const Badge = ({ children, color = CSS_COLOR.textDim, variant = "solid" }
       letterSpacing: "0.04em",
       textTransform: "uppercase",
       ...resolveBadgeVariantSurface({ variant, color, solidPercent: 8 }),
+      ...style,
     }}
   >
     {children}

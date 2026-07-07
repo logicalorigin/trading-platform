@@ -26,7 +26,7 @@ import { CalendarView } from "./components/ResearchCalendarView";
 import { Logo } from "./components/ResearchLogo";
 import { SettingsPanel } from "./components/ResearchSettingsPanel";
 import { ThemeSwitcher } from "./components/ResearchThemeSwitcher";
-import { MicroSparkline, Pill, SegmentedControl, Skeleton, StatTile, StatusPill } from "../../components/platform/primitives.jsx";
+import { Badge, MicroSparkline, Pill, SegmentedControl, Skeleton, StatTile, StatusPill } from "../../components/platform/primitives.jsx";
 import {
   backgroundPrefetchFundamentals,
   fetchFinancials,
@@ -1335,11 +1335,11 @@ function PriceChart({ co, vc, price, wkLow, wkHigh }) {
           {fmtPrice(endPrice)}
         </span>
         {isFiniteNumber(periodReturn) ? (
-          <span style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: sp("3px 10px"), borderRadius: RADII.lg, background: periodReturn >= 0 ? toneAlpha(CSS_COLOR.green, 0.10) : toneAlpha(CSS_COLOR.red, 0.10), fontSize: fs(12), fontWeight: FONT_WEIGHTS.regular, color: retColor, fontVariantNumeric: "tabular-nums" }}>
+          <Badge color={retColor} title={`Return over ${pricePeriod}`} style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: sp("3px 10px"), borderRadius: RADII.lg, background: periodReturn >= 0 ? toneAlpha(CSS_COLOR.green, 0.10) : toneAlpha(CSS_COLOR.red, 0.10), fontSize: fs(12), fontWeight: FONT_WEIGHTS.regular, color: retColor, letterSpacing: 0, textTransform: "none", fontVariantNumeric: "tabular-nums" }}>
             <span>{periodReturn >= 0 ? "▲" : "▼"}</span>
             <span>{periodReturn >= 0 ? "+" : ""}{periodReturn.toFixed(2)}%</span>
             <span style={{ fontSize: fs(10), fontWeight: FONT_WEIGHTS.regular, opacity: 0.7, marginLeft: sp(2) }}>over {pricePeriod}</span>
-          </span>
+          </Badge>
         ) : (
           <span style={{ fontSize: fs(10), color: CSS_COLOR.textMuted }}>Return unavailable</span>
         )}

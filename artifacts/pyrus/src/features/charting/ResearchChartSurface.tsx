@@ -13943,26 +13943,11 @@ const ResearchChartSurfaceComponent = ({
             style={{
               position: "relative",
               zIndex: 1,
-              minWidth: 220,
-              maxWidth: 360,
-              padding: "16px 18px",
-              border: `1px solid ${withAlpha(theme.border, "b8")}`,
-              background: theme.bg2,
-              boxShadow: ELEVATION.lg,
+              maxWidth: 420,
+              padding: "0 18px",
+              textAlign: "center",
             }}
           >
-            <div
-              style={{
-                marginBottom: 8,
-                color: withAlpha(theme.textMuted, "8c"),
-                fontFamily: theme.mono,
-                fontSize: TYPE_CSS_VAR.label,
-                letterSpacing: "0.16em",
-                textTransform: "uppercase",
-              }}
-            >
-              {emptyStateEyebrow}
-            </div>
             <div
               style={{
                 color: theme.text,
@@ -13971,7 +13956,7 @@ const ResearchChartSurfaceComponent = ({
                 lineHeight: 1.5,
               }}
             >
-              {emptyStateTitle}
+              {emptyStateEyebrow}: {emptyStateTitle}
             </div>
             <div
               style={{
