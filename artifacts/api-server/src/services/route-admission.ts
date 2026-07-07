@@ -254,6 +254,10 @@ export function classifyApiRoute(input: {
   if (
     path === "/orders/submit" ||
     path === "/orders/preview" ||
+    (path === "/tax/profile" && method === "PUT") ||
+    (path === "/tax/reserve/plan" && method === "POST") ||
+    /^\/accounts\/[^/]+\/tax\/preflight$/.test(path) ||
+    /^\/tax\/reserve\/actions\/(preview|submit)$/.test(path) ||
     /^\/orders\/[^/]+\/(replace|cancel)$/.test(path) ||
     (path === "/orders" && method === "POST") ||
     path === "/shadow/orders/preview" ||
@@ -288,6 +292,16 @@ export function classifyApiRoute(input: {
       ))
   ) {
     return "live-data";
+  }
+
+  if (
+    path === "/tax/profile" ||
+    path === "/tax/state-rules/status" ||
+    path === "/tax/overview" ||
+    path === "/tax/reserve" ||
+    /^\/accounts\/[^/]+\/tax\//.test(path)
+  ) {
+    return "protected-position";
   }
 
   if (path === "/quotes/snapshot") {

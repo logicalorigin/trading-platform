@@ -129,6 +129,14 @@ let storedBarsCacheFullReadCount = 0;
 let storedBarsCacheDeltaReadCount = 0;
 let storedBarsCacheInvalidationCount = 0;
 let storedBarsCacheEvictionCount = 0;
+// Prefetch-vs-fallback accounting for readStoredBars. The fallback branch takes one
+// pooled connection per source, so its rate gauges whether the per-symbol path is a
+// real cost or a structural rarity (audit-flagged "rare but uncounted"). Split by
+// reason: no prefetch present vs prefetch present but key-mismatched.
+let storedBarsPrefetchHitCount = 0;
+let storedBarsPrefetchFallbackCount = 0;
+let storedBarsPrefetchFallbackNoPrefetchCount = 0;
+let storedBarsPrefetchFallbackMismatchCount = 0;
 
 const minuteBarsBySymbol = new Map<string, Map<number, CachedBar>>();
 const trackedSymbols = new Set<string>();
@@ -903,7 +911,14 @@ async function readStoredBars(input: {
     const prefetched = sourceNames.map(
       (sourceName) => bySource.get(sourceName)?.get(symbol) ?? [],
     );
+    storedBarsPrefetchHitCount += 1;
     return mergeBarsByTimestamp(prefetched.flat(), input.limit);
+  }
+  storedBarsPrefetchFallbackCount += 1;
+  if (prefetch === undefined) {
+    storedBarsPrefetchFallbackNoPrefetchCount += 1;
+  } else {
+    storedBarsPrefetchFallbackMismatchCount += 1;
   }
   // Fallback: per-symbol read (one pooled connection per source). Unchanged from
   // the pre-prefetch behavior, and behavior-equal to the prefetch path above.
@@ -1401,6 +1416,12 @@ export function getSignalMonitorLocalBarCacheDiagnostics() {
       deltaReadCount: storedBarsCacheDeltaReadCount,
       invalidationCount: storedBarsCacheInvalidationCount,
       evictionCount: storedBarsCacheEvictionCount,
+    },
+    storedBarsRead: {
+      prefetchHitCount: storedBarsPrefetchHitCount,
+      fallbackCount: storedBarsPrefetchFallbackCount,
+      fallbackNoPrefetchCount: storedBarsPrefetchFallbackNoPrefetchCount,
+      fallbackMismatchCount: storedBarsPrefetchFallbackMismatchCount,
     },
     lastEnqueueScannedBarCount,
   };

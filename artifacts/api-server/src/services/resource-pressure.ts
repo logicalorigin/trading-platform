@@ -285,14 +285,17 @@ function eventLoopUtilizationLevel(
   return value >= API_EVENT_LOOP_UTILIZATION_WATCH ? "watch" : "normal";
 }
 
-// A full pool (active>=max) with a SINGLE transient waiter is a momentary blip at
-// normal fan-out, not sustained saturation - escalating it to "high" fires every
-// back-pressure gate (admission shed, diagnostics-persist skip, backfill skip,
-// shadow fast-fallback) and made the signal flap. Require a real queue (>=2
-// waiters) on top of the existing 2-sample hysteresis before "high". This only
-// de-flaps the signal; genuine relief is reducing concurrent demand on the hard
-// 12-connection pool, not tuning the threshold.
-const DB_POOL_HIGH_MIN_WAITERS = 2;
+// A full pool (active>=max) with only a few transient waiters is normal fan-out
+// (~10 concurrent sub-reads per dashboard load, per lib/db pool comment), not
+// sustained saturation - escalating it to "high" fires every back-pressure gate
+// (admission shed, diagnostics-persist skip, backfill skip, shadow fast-fallback,
+// signal-options worker degrade) and made the signal flap. Require a real, DEEP
+// queue (>= half the 12-connection pool) on top of the existing 2-sample
+// hysteresis before "high", so a busy-but-serviceable pool stays "watch". This
+// only de-flaps the signal; genuine relief is reducing concurrent demand on the
+// hard pool, not tuning the threshold. Override live with DB_POOL_HIGH_MIN_WAITERS.
+const DB_POOL_HIGH_MIN_WAITERS =
+  readPositiveNumberEnv("DB_POOL_HIGH_MIN_WAITERS") ?? 6;
 
 function dbPoolLevel(input: {
   active: number | null;

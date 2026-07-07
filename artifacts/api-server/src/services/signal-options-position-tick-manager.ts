@@ -5,9 +5,9 @@ import type { QuoteSnapshot } from "../providers/ibkr/client";
 import { logger as defaultLogger } from "../lib/logger";
 import type { OptionQuoteSnapshotPayload } from "./bridge-option-quote-stream";
 import {
-  subscribeIbkrLiveDemand,
-  type IbkrLiveDemandDeclaration,
-} from "./ibkr-live-demand-coordinator";
+  subscribeOptionQuoteDemand,
+  type OptionQuoteDemandDeclaration,
+} from "./option-quote-demand-coordinator";
 import { getSignalMonitorProfileRow } from "./signal-monitor";
 import {
   listEnabledSignalOptionsDeployments,
@@ -38,7 +38,7 @@ type ActivePositionSnapshotCacheEntry = {
 };
 
 type SubscribeDemand = (
-  input: IbkrLiveDemandDeclaration,
+  input: OptionQuoteDemandDeclaration,
   onSnapshot: (payload: OptionQuoteSnapshotPayload) => void,
 ) => () => void;
 
@@ -196,7 +196,7 @@ export class SignalOptionsPositionTickManager {
         listSignalOptionsActivePositionsForDeployment({
           deploymentId: input.deployment.id,
         }));
-    this.subscribeDemand = dependencies.subscribeDemand ?? subscribeIbkrLiveDemand;
+    this.subscribeDemand = dependencies.subscribeDemand ?? subscribeOptionQuoteDemand;
     this.manageQuote =
       dependencies.manageQuote ?? manageSignalOptionsActivePositionQuote;
     this.resolveProfile =

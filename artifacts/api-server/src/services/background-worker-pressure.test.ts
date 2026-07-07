@@ -17,16 +17,20 @@ const noopLogger = {
   warn() {},
 };
 
-function highResourcePressureSnapshot() {
+function highFiniteResourcePressureSnapshot() {
   __resetApiResourcePressureForTests();
-  // Two sustained samples above the event-loop high threshold (400ms) enter "high"
-  // server saturation via the 2-sample hysteresis.
-  updateApiResourcePressure({
-    eventLoopDelayP95Ms: 500,
-  });
-  return updateApiResourcePressure({
-    eventLoopDelayP95Ms: 500,
-  });
+  // Two sustained samples of a SATURATED pool with a deep wait-queue enter "high"
+  // finite-resource pressure (pool exhaustion) via the 2-sample hysteresis. This
+  // is what drives isApiResourcePressureHardBlock now — a busy event loop no
+  // longer does (finite-resource decouple), so the old event-loop-only snapshot
+  // stopped tripping the hard block.
+  const saturatedPool = {
+    dbPoolActive: 12,
+    dbPoolMax: 12,
+    dbPoolWaiting: 8,
+  };
+  updateApiResourcePressure(saturatedPool);
+  return updateApiResourcePressure(saturatedPool);
 }
 
 function normalPressureSnapshot() {
@@ -54,17 +58,17 @@ function signalOptionsDeployment(
   } as unknown as AlgoDeployment;
 }
 
-test("signal-options worker pauses deployment scans under high resource pressure while running maintenance", async () => {
-  const pressure = highResourcePressureSnapshot();
+test("signal-options worker degrades to a positions-only scan under high resource pressure (does not fully pause)", async () => {
+  const pressure = highFiniteResourcePressureSnapshot();
   let maintenanceCount = 0;
-  let scanCount = 0;
+  const scanCalls: Record<string, unknown>[] = [];
   const releaseLock = async () => {};
   const deployment = signalOptionsDeployment();
 
   const worker = createSignalOptionsWorker({
     listDeployments: async () => [deployment],
-    scanDeployment: async () => {
-      scanCount += 1;
+    scanDeployment: async (input) => {
+      scanCalls.push(input as Record<string, unknown>);
       return {};
     },
     runMaintenance: async () => {
@@ -83,11 +87,18 @@ test("signal-options worker pauses deployment scans under high resource pressure
 
   const snapshot = worker.getRuntimeSnapshot();
   assert.equal(maintenanceCount, 1);
-  assert.equal(scanCount, 0);
+  // Degrade, don't pause: the scan still runs (so open positions keep being
+  // marked/exited and the ops table stays fed), but with skipEntryWork so no
+  // heavy entry work is done. Fully pausing left positions unmanaged under load.
+  assert.equal(scanCalls.length, 1);
+  assert.equal(scanCalls[0]?.["skipEntryWork"], true);
+  assert.equal(scanCalls[0]?.["source"], "worker");
   assert.equal(snapshot.scanEnabled, true);
   assert.equal(snapshot.deploymentCount, 1);
-  assert.equal(snapshot.deployments[0]?.lastSkipReason, "resource_pressure");
-  assert.equal(snapshot.deployments[0]?.nextScanDueInMs, 30_000);
+  assert.notEqual(
+    snapshot.deployments[0]?.lastSkipReason,
+    "resource_pressure",
+  );
   assert.equal(snapshot.maintenance.runCount, 1);
 
   __resetApiResourcePressureForTests();
@@ -232,9 +243,9 @@ test("signal monitor worker stays idle in passive mode", async () => {
   assert.equal(subscribeCount, 0);
 });
 
-test("overnight spot worker pauses deployment scans under high resource pressure", async () => {
-  const pressure = highResourcePressureSnapshot();
-  let scanCount = 0;
+test("overnight spot worker degrades to an exit-only scan under high resource pressure (outside RTH)", async () => {
+  const pressure = highFiniteResourcePressureSnapshot();
+  const scanCalls: Record<string, unknown>[] = [];
   const releaseLock = async () => {};
   const deployment = {
     id: "overnight-spot-test",
@@ -251,8 +262,8 @@ test("overnight spot worker pauses deployment scans under high resource pressure
 
   const worker = createOvernightSpotWorker({
     listDeployments: async () => [deployment],
-    scanDeployment: async () => {
-      scanCount += 1;
+    scanDeployment: async (input) => {
+      scanCalls.push(input as Record<string, unknown>);
       return {
         deploymentId: deployment.id,
         executionMode: "shadow",
@@ -267,18 +278,26 @@ test("overnight spot worker pauses deployment scans under high resource pressure
       };
     },
     getResourcePressure: () => pressure,
+    // Overnight session so the RTH full-pause does not pre-empt the pressure path.
+    getMarketSessionKey: () => "overnight",
     acquireTickLock: async () => releaseLock,
-    now: () => new Date("2026-06-09T18:41:00.000Z"),
+    now: () => new Date("2026-06-09T06:41:00.000Z"),
     logger: noopLogger,
+    scanTimeoutMs: null,
     subscribeCockpitChanges: () => () => {},
   });
 
   await worker.runOnce();
 
   const snapshot = worker.getRuntimeSnapshot();
-  assert.equal(scanCount, 0);
-  assert.equal(snapshot.deployments[0]?.lastSkipReason, "resource_pressure");
-  assert.equal(snapshot.deployments[0]?.nextScanDueInMs, 30_000);
+  // Degrade, not pause: the scan runs (so open longs can still be exited) with
+  // skipEntryWork so entry (buy) work is shed. RTH still fully pauses elsewhere.
+  assert.equal(scanCalls.length, 1);
+  assert.equal(scanCalls[0]?.["skipEntryWork"], true);
+  assert.notEqual(
+    snapshot.deployments[0]?.lastSkipReason,
+    "resource_pressure",
+  );
 
   __resetApiResourcePressureForTests();
 });

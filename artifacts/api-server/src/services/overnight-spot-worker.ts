@@ -30,7 +30,6 @@ const FAILED_DEPLOYMENT_RETRY_MS = 60_000;
 const DEFAULT_WORKER_SCAN_TIMEOUT_MS = 45_000;
 const WORKER_SCAN_TIMEOUT_MIN_MS = 5_000;
 const WORKER_SCAN_TIMEOUT_MAX_MS = 300_000;
-const OVERNIGHT_SPOT_RESOURCE_PRESSURE_RETRY_MS = 30_000;
 // Overnight-spot deployments are dormant during regular trading hours (RTH).
 // Re-check at a calm cadence so they resume promptly once RTH ends.
 const OVERNIGHT_SPOT_REGULAR_SESSION_RETRY_MS = 60_000;
@@ -45,6 +44,7 @@ type WorkerDependencies = {
     deploymentId: string;
     runActions: true;
     recordSignals: true;
+    skipEntryWork?: boolean;
   }) => Promise<OvernightSpotSignalScanResult>;
   getResourcePressure: () => ApiResourcePressureSnapshot;
   getMarketSessionKey: (now: Date) => UsEquityMarketSessionKey;
@@ -240,12 +240,14 @@ function defaultDependencies(
 async function runDeploymentScanWithTimeout(input: {
   deployment: OvernightSpotWorkerDeployment;
   dependencies: WorkerDependencies;
+  skipEntryWork?: boolean;
 }) {
   const { deployment, dependencies } = input;
   const scanPromise = dependencies.scanDeployment({
     deploymentId: deployment.id,
     runActions: true,
     recordSignals: true,
+    skipEntryWork: input.skipEntryWork === true,
   });
   if (dependencies.scanTimeoutMs === null) {
     return scanPromise;
@@ -279,6 +281,7 @@ async function runDeployment(input: {
   deployment: OvernightSpotWorkerDeployment;
   runtime: DeploymentRuntime;
   dependencies: WorkerDependencies;
+  skipEntryWork?: boolean;
 }) {
   const { deployment, runtime, dependencies } = input;
   if (activeDeploymentIds.has(deployment.id)) {
@@ -296,6 +299,7 @@ async function runDeployment(input: {
     const result = await runDeploymentScanWithTimeout({
       deployment,
       dependencies,
+      skipEntryWork: input.skipEntryWork === true,
     });
     runtime.scanCount += 1;
     runtime.failureCount = 0;
@@ -350,23 +354,6 @@ function markSkipped(input: {
   input.runtime.lastSkippedAtMs = input.nowMs;
   input.runtime.lastSkipReason = input.reason;
   input.runtime.skippedScanCount += 1;
-}
-
-function pauseDeploymentForResourcePressure(input: {
-  runtime: DeploymentRuntime;
-  nowMs: number;
-}) {
-  markSkipped({
-    runtime: input.runtime,
-    reason: "resource_pressure",
-    nowMs: input.nowMs,
-  });
-  input.runtime.lastCheckedAtMs = input.nowMs;
-  input.runtime.currentScanStartedAtMs = null;
-  input.runtime.timedOut = false;
-  input.runtime.unsettledAfterTimeout = false;
-  input.runtime.nextScanDueAtMs =
-    input.nowMs + OVERNIGHT_SPOT_RESOURCE_PRESSURE_RETRY_MS;
 }
 
 function pauseDeploymentForRegularSession(input: {
@@ -458,10 +445,13 @@ export function createOvernightSpotWorker(
           continue;
         }
 
-        if (isApiResourcePressureHardBlock(pressure)) {
-          pauseDeploymentForResourcePressure({ runtime, nowMs });
-          continue;
-        }
+        // Under hard resource pressure, DEGRADE to an exit-only (sell) scan so open
+        // longs stay closeable, instead of fully pausing — a full pause left them
+        // unmanaged and, since the loop blocker is DB row parsing not scan bodies,
+        // pausing never returned loop time anyway. RTH still fully pauses below:
+        // overnight quotes are unavailable during the regular session, so any plan
+        // there would only emit blocked-quote toasts.
+        const skipEntryWork = isApiResourcePressureHardBlock(pressure);
 
         if (inRegularSession) {
           pauseDeploymentForRegularSession({ runtime, nowMs });
@@ -469,7 +459,12 @@ export function createOvernightSpotWorker(
         }
 
         runtime.nextScanDueAtMs = null;
-        await runDeployment({ deployment, runtime, dependencies });
+        await runDeployment({
+          deployment,
+          runtime,
+          dependencies,
+          skipEntryWork,
+        });
       }
     } catch (error) {
       dependencies.logger.warn(

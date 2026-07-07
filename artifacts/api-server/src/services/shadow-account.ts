@@ -52,7 +52,7 @@ import type {
 import {
   declareIbkrLiveDemand,
   readIbkrLiveDemandState,
-} from "./ibkr-live-demand-coordinator";
+} from "./option-quote-demand-coordinator";
 import {
   notifyShadowAccountChanged,
   type ShadowAccountChangeReason,

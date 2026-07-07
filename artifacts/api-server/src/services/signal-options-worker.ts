@@ -21,14 +21,27 @@ const WORKER_WAKEUP_MS = 5_000;
 export const SIGNAL_OPTIONS_WORKER_ADVISORY_LOCK_KEY = 1_930_514_022;
 const ADVISORY_LOCK_KEY = SIGNAL_OPTIONS_WORKER_ADVISORY_LOCK_KEY;
 const FAILED_DEPLOYMENT_RETRY_MS = 60_000;
-const SIGNAL_OPTIONS_WORKER_ACTION_BUDGET_MS = 60_000;
-const SIGNAL_OPTIONS_WORKER_ACTION_ITEM_LIMIT = 4;
+// Per-scan action-work budget/limit. Deliberately small so one worker tick never
+// hogs the pool, but env-overridable so the throughput can be raised (e.g. once
+// demand-reduction frees pool headroom) without a rebuild — 4 items/scan is a
+// heavy throttle against the ~2000-symbol universe, tracked as a tuning lever.
+const SIGNAL_OPTIONS_WORKER_ACTION_BUDGET_MS = positiveInteger(
+  process.env["SIGNAL_OPTIONS_WORKER_ACTION_BUDGET_MS"],
+  60_000,
+  1_000,
+  600_000,
+);
+const SIGNAL_OPTIONS_WORKER_ACTION_ITEM_LIMIT = positiveInteger(
+  process.env["SIGNAL_OPTIONS_WORKER_ACTION_ITEM_LIMIT"],
+  4,
+  1,
+  1_000,
+);
 const DEFAULT_SIGNAL_OPTIONS_WORKER_SCAN_TIMEOUT_MS = 120_000;
 const SIGNAL_OPTIONS_WORKER_SCAN_TIMEOUT_MIN_MS = 1_000;
 const SIGNAL_OPTIONS_WORKER_SCAN_TIMEOUT_MAX_MS = 3_600_000;
 const SIGNAL_OPTIONS_WORKER_SCAN_TIMEOUT_REASON = "worker_scan_timeout";
 const SIGNAL_OPTIONS_ACTIVE_POSITION_POLL_MS = 5_000;
-const SIGNAL_OPTIONS_RESOURCE_PRESSURE_RETRY_MS = 30_000;
 
 type ReleaseLock = () => Promise<void>;
 type WorkerLogger = Pick<typeof logger, "debug" | "info" | "warn">;
@@ -50,6 +63,7 @@ type WorkerDependencies = {
     source: "worker";
     actionWorkBudgetMs: number;
     actionWorkItemLimit: number;
+    skipEntryWork?: boolean;
     signal?: AbortSignal;
   }) => Promise<unknown>;
   runMaintenance: (input: { source: "worker" }) => Promise<unknown>;
@@ -394,23 +408,6 @@ function createDeploymentRuntime(signature: string): DeploymentRuntime {
   };
 }
 
-function pauseDeploymentForResourcePressure(input: {
-  runtime: DeploymentRuntime;
-  nowMs: number;
-}) {
-  const { runtime, nowMs } = input;
-  runtime.lastCheckedAtMs = nowMs;
-  runtime.lastSkippedAtMs = nowMs;
-  runtime.lastSkipReason = "resource_pressure";
-  runtime.skippedScanCount += 1;
-  runtime.currentScanStartedAtMs = null;
-  runtime.timedOut = false;
-  runtime.timeoutReason = null;
-  runtime.unsettledAfterTimeout = false;
-  runtime.lastScanOutcome = "resource_pressure";
-  runtime.nextScanDueAtMs = nowMs + SIGNAL_OPTIONS_RESOURCE_PRESSURE_RETRY_MS;
-}
-
 async function acquirePostgresAdvisoryLock(): Promise<ReleaseLock | null> {
   return sharedAdvisoryLockHolder.acquire(ADVISORY_LOCK_KEY);
 }
@@ -439,6 +436,7 @@ function defaultDependencies(
 async function runDeploymentScanWithTimeout(input: {
   deployment: AlgoDeployment;
   dependencies: WorkerDependencies;
+  skipEntryWork?: boolean;
 }): Promise<unknown> {
   const { deployment, dependencies } = input;
   const controller = new AbortController();
@@ -449,6 +447,7 @@ async function runDeploymentScanWithTimeout(input: {
     source: "worker",
     actionWorkBudgetMs: SIGNAL_OPTIONS_WORKER_ACTION_BUDGET_MS,
     actionWorkItemLimit: SIGNAL_OPTIONS_WORKER_ACTION_ITEM_LIMIT,
+    skipEntryWork: input.skipEntryWork === true,
     signal: controller.signal,
   });
   scanPromise.catch(() => {});
@@ -485,6 +484,7 @@ async function runDeployment(input: {
   deployment: AlgoDeployment;
   runtime: DeploymentRuntime;
   dependencies: WorkerDependencies;
+  skipEntryWork?: boolean;
 }) {
   const { deployment, runtime, dependencies } = input;
   if (activeDeploymentIds.has(deployment.id)) {
@@ -510,6 +510,7 @@ async function runDeployment(input: {
     const scanResult = await runDeploymentScanWithTimeout({
       deployment,
       dependencies,
+      skipEntryWork: input.skipEntryWork === true,
     });
     if (isScanAlreadyRunningResult(scanResult)) {
       const skippedAt = dependencies.now();
@@ -729,14 +730,23 @@ export function createSignalOptionsWorker(
           continue;
         }
 
-        if (isApiResourcePressureHardBlock(pressure)) {
-          pauseDeploymentForResourcePressure({ runtime, nowMs });
-          continue;
-        }
+        // Under hard finite-resource pressure (pool/memory exhausted), DEGRADE
+        // instead of fully pausing: run a positions-only scan so open positions
+        // keep getting managed (marks/exits) and the ops table keeps fresh data,
+        // while shedding the heavy entry work that would add pool load. Fully
+        // pausing left positions unmanaged and the STA table blank for the whole
+        // pressure window, and — since the loop blocker is DB row parsing, not the
+        // scan bodies — pausing never returned loop time anyway.
+        const skipEntryWork = isApiResourcePressureHardBlock(pressure);
 
         runtime.lastCheckedAtMs = nowMs;
         runtime.nextScanDueAtMs = null;
-        await runDeployment({ deployment, runtime, dependencies });
+        await runDeployment({
+          deployment,
+          runtime,
+          dependencies,
+          skipEntryWork,
+        });
       }
     } catch (error) {
       dependencies.logger.warn(

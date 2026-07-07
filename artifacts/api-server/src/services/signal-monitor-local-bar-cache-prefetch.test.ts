@@ -199,6 +199,58 @@ test("a mismatched evaluatedAt/limit falls through to the per-symbol path identi
   assert.ok(baseline.length > 0);
 });
 
+test("readStoredBars accounts prefetch hits vs per-symbol fallback by reason", async () => {
+  await seed("AAPL", 4);
+  const evaluatedAt = new Date();
+  const limit = 50;
+  const read = () => getSignalMonitorLocalBarCacheDiagnostics().storedBarsRead;
+
+  // (1) No prefetch context -> per-symbol fallback, attributed to "no prefetch".
+  const before1 = read();
+  await loadSignalMonitorLocalBarCache({
+    symbol: "AAPL",
+    timeframe: TIMEFRAME,
+    evaluatedAt,
+    limit,
+  });
+  const after1 = read();
+  assert.equal(after1.fallbackCount - before1.fallbackCount, 1, "no-prefetch read is a fallback");
+  assert.equal(
+    after1.fallbackNoPrefetchCount - before1.fallbackNoPrefetchCount,
+    1,
+    "attributed to missing prefetch",
+  );
+  assert.equal(after1.prefetchHitCount - before1.prefetchHitCount, 0);
+  assert.equal(after1.fallbackMismatchCount - before1.fallbackMismatchCount, 0);
+
+  // (2) Matching prefetch -> served from the batch, counted as a hit (no pooled read).
+  const before2 = read();
+  await runWithSignalMonitorStoredBarsPrefetch(
+    { symbols: ["AAPL"], timeframes: [TIMEFRAME], evaluatedAt, limit },
+    async () =>
+      loadSignalMonitorLocalBarCache({ symbol: "AAPL", timeframe: TIMEFRAME, evaluatedAt, limit }),
+  );
+  const after2 = read();
+  assert.equal(after2.prefetchHitCount - before2.prefetchHitCount, 1, "matching prefetch is a hit");
+  assert.equal(after2.fallbackCount - before2.fallbackCount, 0, "no fallback on a prefetch hit");
+
+  // (3) Prefetch present but key-mismatched (different limit) -> fallback, attributed to "mismatch".
+  const before3 = read();
+  await runWithSignalMonitorStoredBarsPrefetch(
+    { symbols: ["AAPL"], timeframes: [TIMEFRAME], evaluatedAt, limit: limit + 1 },
+    async () =>
+      loadSignalMonitorLocalBarCache({ symbol: "AAPL", timeframe: TIMEFRAME, evaluatedAt, limit }),
+  );
+  const after3 = read();
+  assert.equal(
+    after3.fallbackMismatchCount - before3.fallbackMismatchCount,
+    1,
+    "mismatched prefetch attributed to mismatch",
+  );
+  assert.equal(after3.fallbackNoPrefetchCount - before3.fallbackNoPrefetchCount, 0);
+  assert.equal(after3.prefetchHitCount - before3.prefetchHitCount, 0);
+});
+
 test("the cross-cycle prefetch cache avoids repeated full bar_cache reads", async () => {
   await seed("AAPL", 4);
   await seed("MSFT", 3);

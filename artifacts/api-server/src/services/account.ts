@@ -153,12 +153,12 @@ import {
   getFlexConfigs,
 } from "./account-flex-model";
 import {
-  declareIbkrLiveDemand,
-  type IbkrLiveDemandStatus,
-  type IbkrLiveDemandQuoteState,
-  readIbkrLiveDemandState,
-  releaseIbkrLiveDemand,
-} from "./ibkr-live-demand-coordinator";
+  declareOptionQuoteDemand,
+  type OptionQuoteDemandStatus,
+  type OptionQuoteDemandQuoteState,
+  readOptionQuoteDemandState,
+  releaseOptionQuoteDemand,
+} from "./option-quote-demand-coordinator";
 import { fetchBridgeOptionQuoteSnapshots } from "./bridge-option-quote-stream";
 import { releaseMarketDataLeases } from "./market-data-admission";
 import {
@@ -1562,7 +1562,7 @@ function declareAccountPositionEquityQuoteDemands(
   }
 }
 
-type AccountPositionOptionQuoteDemandState = IbkrLiveDemandQuoteState;
+type AccountPositionOptionQuoteDemandState = OptionQuoteDemandQuoteState;
 
 type AccountPositionOptionQuoteSnapshot = PositionQuoteSnapshot & {
   providerContractId: string | null;
@@ -1739,7 +1739,7 @@ type OptionQuoteSource = "ibkr" | "massive";
 
 function optionQuoteFreshnessState(
   quote: QuoteSnapshot & { source?: OptionQuoteSource },
-): { status: IbkrLiveDemandStatus; reason: string | null } {
+): { status: OptionQuoteDemandStatus; reason: string | null } {
   const freshness = String(quote.freshness ?? "").trim();
   if (freshness === "unavailable") {
     return { status: "unavailable", reason: "quote_unavailable" };
@@ -1756,7 +1756,7 @@ function optionQuoteFreshnessState(
 function optionQuoteGreeksState(input: {
   quote: QuoteSnapshot & { source?: OptionQuoteSource };
   requiresGreeks: boolean;
-}): { status: IbkrLiveDemandStatus; reason: string | null } {
+}): { status: OptionQuoteDemandStatus; reason: string | null } {
   const quoteState = optionQuoteFreshnessState(input.quote);
   if (optionQuoteHasAnyGreek(input.quote)) {
     return quoteState;
@@ -2010,7 +2010,7 @@ async function fetchOptionQuoteSnapshotsForPositions(
           const readProviderContractIdsForUnderlying = Array.from(
             new Set(underlyingProviderContractIds.readProviderContractIds),
           );
-          return readIbkrLiveDemandState({
+          return readOptionQuoteDemandState({
             owner: ownerForUnderlying,
             underlying,
             providerContractIds: readProviderContractIdsForUnderlying,
@@ -2262,7 +2262,7 @@ function declareAccountPositionOptionQuoteDemands(
     ([underlying, underlyingProviderContractIds]) => {
       const ownerForUnderlying = `${owner}:${underlying}`;
       nextOwners.add(ownerForUnderlying);
-      declareIbkrLiveDemand({
+      declareOptionQuoteDemand({
         owner: ownerForUnderlying,
         underlying,
         providerContractIds: Array.from(new Set(underlyingProviderContractIds)),
@@ -2277,7 +2277,7 @@ function declareAccountPositionOptionQuoteDemands(
     accountPositionOptionDemandOwnersByAccountKey.get(accountKey) ?? new Set<string>();
   previousOwners.forEach((previousOwner) => {
     if (!nextOwners.has(previousOwner)) {
-      releaseIbkrLiveDemand(previousOwner, "account_position_set_changed");
+      releaseOptionQuoteDemand(previousOwner, "account_position_set_changed");
     }
   });
   if (nextOwners.size) {
@@ -8391,9 +8391,9 @@ export const __accountPositionInternalsForTests = {
   buildAccountPositionTotals,
   buildExecutionOpenDatesForPositions,
   buildPositionMarketHydration,
-  accountOptionQuoteFromDemandState,
   buildPositionQuoteFromSnapshot,
   choosePositionQuote,
+  accountOptionQuoteFromDemandState,
   clearAccountPositionOpenDateCaches: () => {
     accountPositionOpenDatesReadCache.clear();
     accountPositionOpenDatesLastKnownCache.clear();

@@ -159,6 +159,10 @@ type RunOvernightSpotSignalScanInput = {
   forceEvaluate?: boolean;
   runActions?: boolean;
   recordSignals?: boolean;
+  // Positions/exit-only degrade under resource pressure: evaluate only SELL (exit)
+  // signals so open longs can still be closed, and shed all entry (buy) work.
+  // Sells with no open long self-block via overnight_spot_exit_position_required.
+  skipEntryWork?: boolean;
   now?: Date;
   env?: Record<string, string | undefined>;
   signal?: AbortSignal;
@@ -625,12 +629,18 @@ export async function runOvernightSpotSignalScan(
       state.currentSignalDirection === "sell",
   );
   throwIfOvernightSpotScanAborted(input.signal);
-  const actionStates =
+  const actionStates = (
     runActions && profile.requireActionableSignal
       ? states.filter((state) =>
           isSignalStateActionableForOvernightSpot({ state, profile, now }),
         )
-      : states;
+      : states
+  ).filter(
+    (state) =>
+      // Under a resource-pressure degrade, act on exit (sell) signals only so open
+      // longs stay closeable while entry (buy) work is shed.
+      input.skipEntryWork !== true || state.currentSignalDirection === "sell",
+  );
   const symbols = Array.from(
     new Set(actionStates.map((state) => normalizeSymbol(state.symbol).toUpperCase())),
   );

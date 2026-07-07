@@ -29,6 +29,8 @@ import {
   type StockMinuteAggregateMessage,
   type StockMinuteAggregateSubscription,
 } from "./stock-aggregate-stream";
+import { runWithSignalMonitorStoredBarsPrefetch } from "./signal-monitor-local-bar-cache";
+import { PYRUS_SIGNALS_SIGNAL_WARMUP_BARS } from "@workspace/pyrus-signals-core";
 
 const WORKER_WAKEUP_MS = 5_000;
 const ADVISORY_LOCK_KEY = 1_930_514_021;
@@ -353,94 +355,111 @@ async function runProfile(input: {
       1,
       10,
     );
-    for (
-      let index = 0;
-      index < resolvedBatch.symbols.length;
-      index += concurrency
-    ) {
-      const batchSymbols = resolvedBatch.symbols.slice(index, index + concurrency);
-      const latestBars = await Promise.all(
-        batchSymbols.map((symbol) =>
-          loadWorkerCompletedBars({
-            symbol,
-            timeframe,
-            evaluatedAt,
-            dependencies,
-          }),
-        ),
-      );
-      const failedBarLoads = latestBars.filter(
-        (result) => result.kind === "failed",
-      );
-      if (failedBarLoads.length) {
-        dependencies.logger.warn?.(
-          {
-            profileId: profile.id,
-            timeframe,
-            failedCount: failedBarLoads.length,
-            symbols: failedBarLoads.slice(0, 12).map((result) => result.symbol),
-          },
-          "Signal monitor worker skipped failed history bar loads",
-        );
-      }
-      const keysToRecord = new Map<string, string>();
-      const symbolsToEvaluate: Array<{
-        symbol: string;
-        completedBars: Awaited<ReturnType<typeof loadSignalMonitorCompletedBars>>;
-      }> = [];
-
-      latestBars.forEach((result) => {
-        if (result.kind !== "loaded") {
-          return;
-        }
-        const { symbol, completedBars } = result;
-        if (!completedBars.latestBarAt) {
-          return;
-        }
-
-        const key = evaluatedKey({
-          profileId: profile.id,
-          symbol,
-          timeframe,
-          latestBarAt: completedBars.latestBarAt,
-        });
-        keysToRecord.set(symbol, key);
-        if (runtime.evaluatedKeys.has(key)) {
-          return;
-        }
-        symbolsToEvaluate.push({ symbol, completedBars });
-      });
-
-      if (!symbolsToEvaluate.length) {
-        continue;
-      }
-
-      const evaluatedStates = await Promise.all(
-        symbolsToEvaluate.map((entry) =>
-          dependencies.evaluateSymbolFromCompletedBars({
-            profile: universe.profile,
-            symbol: entry.symbol,
-            timeframe,
-            mode: "incremental",
-            evaluatedAt,
-            completedBars: entry.completedBars.bars,
-          }),
-        ),
-      );
-      await dependencies.updateProfileEvaluationMetadata({
-        profile: universe.profile,
+    await runWithSignalMonitorStoredBarsPrefetch(
+      {
+        symbols: resolvedBatch.symbols,
+        timeframes: [timeframe],
         evaluatedAt,
-        states: evaluatedStates,
-      });
-      evaluatedStates.forEach((state) => {
-        const key = keysToRecord.get(state.symbol);
-        if (key) {
-          if (shouldRememberEvaluatedKey(state)) {
-            runtime.evaluatedKeys.add(key);
+        limit: PYRUS_SIGNALS_SIGNAL_WARMUP_BARS,
+      },
+      async () => {
+        for (
+          let index = 0;
+          index < resolvedBatch.symbols.length;
+          index += concurrency
+        ) {
+          const batchSymbols = resolvedBatch.symbols.slice(
+            index,
+            index + concurrency,
+          );
+          const latestBars = await Promise.all(
+            batchSymbols.map((symbol) =>
+              loadWorkerCompletedBars({
+                symbol,
+                timeframe,
+                evaluatedAt,
+                dependencies,
+              }),
+            ),
+          );
+          const failedBarLoads = latestBars.filter(
+            (result) => result.kind === "failed",
+          );
+          if (failedBarLoads.length) {
+            dependencies.logger.warn?.(
+              {
+                profileId: profile.id,
+                timeframe,
+                failedCount: failedBarLoads.length,
+                symbols: failedBarLoads
+                  .slice(0, 12)
+                  .map((result) => result.symbol),
+              },
+              "Signal monitor worker skipped failed history bar loads",
+            );
           }
+          const keysToRecord = new Map<string, string>();
+          const symbolsToEvaluate: Array<{
+            symbol: string;
+            completedBars: Awaited<
+              ReturnType<typeof loadSignalMonitorCompletedBars>
+            >;
+          }> = [];
+
+          latestBars.forEach((result) => {
+            if (result.kind !== "loaded") {
+              return;
+            }
+            const { symbol, completedBars } = result;
+            if (!completedBars.latestBarAt) {
+              return;
+            }
+
+            const key = evaluatedKey({
+              profileId: profile.id,
+              symbol,
+              timeframe,
+              latestBarAt: completedBars.latestBarAt,
+            });
+            keysToRecord.set(symbol, key);
+            if (runtime.evaluatedKeys.has(key)) {
+              return;
+            }
+            symbolsToEvaluate.push({ symbol, completedBars });
+          });
+
+          if (!symbolsToEvaluate.length) {
+            continue;
+          }
+
+          const evaluatedStates = await Promise.all(
+            symbolsToEvaluate.map((entry) =>
+              dependencies.evaluateSymbolFromCompletedBars({
+                profile: universe.profile,
+                symbol: entry.symbol,
+                timeframe,
+                mode: "incremental",
+                evaluatedAt,
+                completedBars: entry.completedBars.bars,
+              }),
+            ),
+          );
+          await dependencies.updateProfileEvaluationMetadata({
+            profile: universe.profile,
+            evaluatedAt,
+            states: evaluatedStates,
+          });
+          evaluatedStates.forEach((state) => {
+            const key = keysToRecord.get(state.symbol);
+            if (key) {
+              if (shouldRememberEvaluatedKey(state)) {
+                runtime.evaluatedKeys.add(key);
+              }
+            }
+          });
         }
-      });
-    }
+      },
+    );
   } catch (error) {
     const message =
       error instanceof Error && error.message

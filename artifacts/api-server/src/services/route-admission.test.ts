@@ -47,6 +47,44 @@ test("Signal Quality KPIs are shed under high pressure", () => {
   );
 });
 
+test("tax planning routes keep protected admission classes", () => {
+  assert.equal(
+    classifyApiRoute({
+      method: "POST",
+      path: "/api/accounts/live-account-id/tax/preflight",
+    }),
+    "protected-execution",
+  );
+  assert.equal(
+    classifyApiRoute({
+      method: "PUT",
+      path: "/api/tax/profile",
+    }),
+    "protected-execution",
+  );
+  assert.equal(
+    classifyApiRoute({
+      method: "POST",
+      path: "/api/tax/reserve/plan",
+    }),
+    "protected-execution",
+  );
+  assert.equal(
+    classifyApiRoute({
+      method: "GET",
+      path: "/api/tax/reserve",
+    }),
+    "protected-position",
+  );
+  assert.equal(
+    classifyApiRoute({
+      method: "GET",
+      path: "/api/accounts/live-account-id/tax/lots",
+    }),
+    "protected-position",
+  );
+});
+
 test("Signal Options full state remains active-screen", () => {
   assert.equal(
     classifyApiRoute({
