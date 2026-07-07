@@ -1,5 +1,4 @@
 import { useMemo } from "react";
-import { useQuery } from "@tanstack/react-query";
 import {
   CSS_COLOR,
   FONT_WEIGHTS,
@@ -13,19 +12,7 @@ import { ActionButton } from "../../components/ui/ActionButton.jsx";
 import { AppTooltip } from "@/components/ui/tooltip";
 import { normalizeLegacyAlgoBrandText } from "./algoBranding.js";
 import { useRunOvernightSpotSignalScan } from "@workspace/api-client-react";
-
-const AUTH_SESSION_QUERY_KEY = ["auth-session"];
-
-async function readAuthSession({ signal }) {
-  const response = await fetch("/api/auth/session", {
-    headers: { Accept: "application/json" },
-    signal,
-  });
-  if (!response.ok) {
-    throw new Error("Auth session unavailable");
-  }
-  return response.json();
-}
+import { useAuthSession } from "../../features/auth/authSession.jsx";
 
 const asRecord = (value) =>
   value && typeof value === "object" && !Array.isArray(value) ? value : {};
@@ -69,13 +56,8 @@ export const OvernightControlPanel = ({ deployment }) => {
       parameters.overnightSpotTrading ??
       parameters.overnightSpot,
   );
-  const authSessionQuery = useQuery({
-    queryKey: AUTH_SESSION_QUERY_KEY,
-    queryFn: readAuthSession,
-    staleTime: 60_000,
-    retry: false,
-  });
-  const csrfToken = authSessionQuery.data?.csrfToken || "";
+  const authSession = useAuthSession();
+  const csrfToken = authSession.csrfToken || "";
   const csrfHeaders = useMemo(
     () => (csrfToken ? { "x-csrf-token": csrfToken } : {}),
     [csrfToken],
