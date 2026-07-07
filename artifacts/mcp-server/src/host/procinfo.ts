@@ -38,17 +38,39 @@ async function ppidOf(pid: number): Promise<number | null> {
   }
 }
 
+// Pure: is this cmdline the Replit pid2 server? On pooled microVMs (pid0
+// -pid2-pooling) the pid2 SERVER runs at an arbitrary OS pid (observed: 23)
+// with argv0 "pid2" but comm "node" — so match cmdline argv0, never comm,
+// and never the numeric pid. /proc/<pid>/cmdline is NUL-separated.
+function cmdlineIsPid2(cmdline: string): boolean {
+  const argv0 = cmdline.split("\0")[0] ?? "";
+  return argv0.split("/").pop() === "pid2";
+}
+
+async function isPid2(pid: number): Promise<boolean> {
+  if (pid === 2) return true; // legacy non-pooled containers: pid2 is literally pid 2
+  try {
+    return cmdlineIsPid2(await readFile(`/proc/${pid}/cmdline`, "utf8"));
+  } catch {
+    return false;
+  }
+}
+
 async function walkToPid2(pid: number): Promise<{ chain: number[]; reachesPid2: boolean }> {
   const chain: number[] = [];
   const seen = new Set<number>();
   let current: number | null = pid;
+  let reachesPid2 = false;
   while (current !== null && current > 0 && !seen.has(current) && chain.length < 64) {
     seen.add(current);
     chain.push(current);
-    if (current === 2) break;
+    if (await isPid2(current)) {
+      reachesPid2 = true;
+      break;
+    }
     current = await ppidOf(current);
   }
-  return { chain, reachesPid2: chain.includes(2) };
+  return { chain, reachesPid2 };
 }
 
 async function readLockFile(apiPort: number): Promise<{
@@ -145,4 +167,4 @@ export async function readPortBindings(): Promise<PortBindings> {
 
 // Test-only surface (consumed by procinfo.test.mjs). Mirrors the repo's
 // __customFetchInternalsForTests convention.
-export const __procinfoInternalsForTests = { parsePpidFromStat, parseListeningPorts };
+export const __procinfoInternalsForTests = { parsePpidFromStat, parseListeningPorts, cmdlineIsPid2 };

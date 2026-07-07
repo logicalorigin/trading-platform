@@ -29,10 +29,18 @@ can't see. There is no public in-container hook to make pid2 spawn the tracked w
   API child IN PLACE (handler in `runDevApp.mjs`: `reloadApiInPlace`). The supervisor never exits, so
   the preview stays attached and the web port never drops — the user sees the new backend with no
   crash flash and nothing to click. Confirm the reload: poll `http://127.0.0.1:8080/api/healthz` → 200.
-- Verify the supervisor is the pid2-owned one (its parent chain reaches `pid2`):
-  `pgrep -f 'node ./scripts/runDevApp.mjs'` then walk `/proc/<pid>/stat` field 4 up to pid2. If the
-  app is fully stopped (no supervisor), the user must hit Run once to let pid2 spawn it (the one
-  bootstrap only pid2 can do); then drive everything via SIGUSR2.
+- Verify the supervisor is the pid2-owned one (its parent chain reaches the **pid2 server
+  process**): `pgrep -f 'node ./scripts/runDevApp.mjs'` then walk `/proc/<pid>/stat` field 4 up to
+  an ancestor whose `/proc/<pid>/cmdline` argv0 is `pid2`. CAUTION (verified 2026-07-05): on pooled
+  microVMs (`pid0 -pid2-pooling`, cluster riker) the pid2 server is NOT numeric PID 2 — observed at
+  OS pid 23 with comm `node` — so never test `pid === 2`; match argv0. The
+  `get_supervisor_state` MCP tool does this correctly now (`procinfo.ts` `cmdlineIsPid2`); before
+  2026-07-05 it false-negatived every pooled-microVM chain — do not trust old "preview detached"
+  verdicts, and confirm with the public-URL probe below before any corrective restart. If the app is
+  fully stopped (no supervisor), the user must hit Run once to let pid2 spawn it (the one bootstrap
+  only pid2 can do); then drive everything via SIGUSR2. After a whole-VM replacement (Replit rotates
+  the microVM ~every 6h since 2026-07-02, at ~:17 past 00/06/12/18 UTC) pid2 respawns the workflow
+  by itself ~10s after attach — no Run click is needed and the ~25s gap is not a crash.
 - Do NOT shell-launch `REPLIT_MODE=workflow pnpm ... dev:replit` to reload code — that spawns a
   supervisor pid2 doesn't track, detaching the user's preview (the `Exit status 143` churn). Avoid it.
 - Confirm what the user actually sees by hitting the PUBLIC preview URL from the container:

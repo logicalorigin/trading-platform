@@ -3,7 +3,23 @@ import test from "node:test";
 
 import { __procinfoInternalsForTests } from "./procinfo.ts";
 
-const { parsePpidFromStat, parseListeningPorts } = __procinfoInternalsForTests;
+const { parsePpidFromStat, parseListeningPorts, cmdlineIsPid2 } = __procinfoInternalsForTests;
+
+test("cmdlineIsPid2 matches the pooled-microVM pid2 server by argv0, not comm", () => {
+  // Observed live on cluster riker (pid 23, comm "node"):
+  assert.equal(
+    cmdlineIsPid2(
+      "pid2\0--no-deprecation\0--disable-warning=ExperimentalWarning\0--use-openssl-ca\0/mnt/pid2/server.cjs\0--pooled-fd=4\0",
+    ),
+    true,
+  );
+  // argv0 may also be an absolute path.
+  assert.equal(cmdlineIsPid2("/usr/bin/pid2\0--flag\0"), true);
+  // Mentioning pid2 elsewhere in argv must NOT match.
+  assert.equal(cmdlineIsPid2("node\0/mnt/pid2/server.cjs\0"), false);
+  assert.equal(cmdlineIsPid2("node\0./scripts/runDevApp.mjs\0"), false);
+  assert.equal(cmdlineIsPid2(""), false);
+});
 
 test("parsePpidFromStat reads ppid past a comm containing spaces and parens", () => {
   // ppid is the 4th field overall, i.e. the 2nd after the final ')'.
