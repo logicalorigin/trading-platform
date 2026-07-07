@@ -4,8 +4,6 @@ import {
   GetRuntimeDiagnosticsResponse,
   GetLatestDiagnosticsResponse,
   ListDiagnosticEventsResponse,
-  GetIbkrLineUsageResponse,
-  GetIbkrLaneArchitectureResponse,
   ListBrokerConnectionsResponse,
 } from "@workspace/api-zod";
 import type { QueryValue } from "../http/api-client";
@@ -84,26 +82,6 @@ export const httpTools: HttpTool[] = [
     }),
   },
   // --- Subsystem 2: provider / data-source routing -------------------------
-  {
-    name: "get_ibkr_line_usage",
-    description:
-      "IBKR line-usage snapshot: admission, bridge status, and quote/option-quote stream health (active consumers, reconnect counts, last-event age, data-freshness age, last error) plus provider diagnostics. The 'is the data flowing and from where' view.",
-    method: "GET",
-    endpoint: "/settings/ibkr-line-usage",
-    operationId: "getIbkrLineUsage",
-    responseSchema: GetIbkrLineUsageResponse,
-    inputShape: {},
-  },
-  {
-    name: "get_ibkr_lanes",
-    description:
-      "IBKR lane architecture: lane policy, nodes/edges/memberships, governor config, and bridge pressure (normal/degraded/backoff/stalled). Use to diagnose how broker requests are routed across lanes.",
-    method: "GET",
-    endpoint: "/settings/ibkr-lanes",
-    operationId: "getIbkrLaneArchitecture",
-    responseSchema: GetIbkrLaneArchitectureResponse,
-    inputShape: {},
-  },
   {
     name: "list_broker_connections",
     description:

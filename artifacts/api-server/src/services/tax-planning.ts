@@ -40,7 +40,24 @@ const PROVIDER_ACCOUNT_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/u;
 
 type TaxProfileRow = typeof taxProfilesTable.$inferSelect;
 type TaxProfileAccountRow = typeof taxProfileAccountsTable.$inferSelect;
-type ShadowTaxFillRow = Awaited<ReturnType<typeof loadShadowTaxFills>>["fills"][number];
+type ShadowFillSelectRow = typeof shadowFillsTable.$inferSelect;
+type ShadowOrderSelectRow = typeof shadowOrdersTable.$inferSelect;
+type ShadowTaxFillRow = {
+  fillId: ShadowFillSelectRow["id"];
+  orderId: ShadowFillSelectRow["orderId"];
+  source: ShadowOrderSelectRow["source"];
+  symbol: ShadowFillSelectRow["symbol"];
+  assetClass: ShadowFillSelectRow["assetClass"];
+  side: ShadowFillSelectRow["side"];
+  quantity: ShadowFillSelectRow["quantity"];
+  price: ShadowFillSelectRow["price"];
+  grossAmount: ShadowFillSelectRow["grossAmount"];
+  fees: ShadowFillSelectRow["fees"];
+  realizedPnl: ShadowFillSelectRow["realizedPnl"];
+  cashDelta: ShadowFillSelectRow["cashDelta"];
+  optionContract: ShadowFillSelectRow["optionContract"];
+  occurredAt: ShadowFillSelectRow["occurredAt"];
+};
 type TaxAccountScope =
   | { accountId: "all"; accountScope: "connected_accounts" }
   | { accountId: "shadow"; accountScope: "shadow_simulation" }
@@ -247,7 +264,10 @@ async function resolveShadowTaxAccountId(appUserId: string): Promise<string | nu
   return legacyAccount?.id ?? null;
 }
 
-async function loadShadowTaxFills(appUserId: string, taxYear: number) {
+async function loadShadowTaxFills(
+  appUserId: string,
+  taxYear: number,
+): Promise<{ shadowAccountId: string | null; fills: ShadowTaxFillRow[] }> {
   const accountId = await resolveShadowTaxAccountId(appUserId);
   if (!accountId) {
     return { shadowAccountId: null, fills: [] };
