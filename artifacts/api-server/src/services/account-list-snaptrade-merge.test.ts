@@ -8,7 +8,7 @@ import type { SnapTradeAccountPortfolioResponse } from "./snaptrade-account-port
 
 function snapshot(
   id: string,
-  provider: "ibkr" | "snaptrade",
+  provider: "ibkr" | "snaptrade" | "robinhood",
 ): BrokerAccountSnapshot {
   return {
     id,
@@ -77,6 +77,7 @@ test("listAccounts merges SnapTrade accounts onto the live IBKR branch", async (
         snapshot("etrade-a", "snaptrade"),
         snapshot("etrade-b", "snaptrade"),
       ],
+      getRobinhoodAccounts: async () => [],
     },
   );
 
@@ -99,6 +100,7 @@ test("listAccounts leaves IBKR list unchanged when SnapTrade is empty", async ()
       getFlexAccounts: emptyFlex,
       recordSnapshots: noopRecordSnapshots,
       getSnapTradeAccounts: async () => [],
+      getRobinhoodAccounts: async () => [],
     },
   );
 
@@ -120,6 +122,7 @@ test("listAccounts degrades to IBKR-only when SnapTrade read throws", async () =
       getSnapTradeAccounts: async () => {
         throw new Error("snaptrade outage");
       },
+      getRobinhoodAccounts: async () => [],
     },
   );
 
@@ -141,6 +144,7 @@ test("listAccounts merges SnapTrade onto the persisted branch when IBKR is empty
       getFlexAccounts: emptyFlex,
       recordSnapshots: noopRecordSnapshots,
       getSnapTradeAccounts: async () => [snapshot("etrade-a", "snaptrade")],
+      getRobinhoodAccounts: async () => [],
     },
   );
 
@@ -163,6 +167,7 @@ test("listAccounts returns SnapTrade-only when no IBKR source has accounts", asy
         snapshot("etrade-b", "snaptrade"),
         snapshot("etrade-c", "snaptrade"),
       ],
+      getRobinhoodAccounts: async () => [],
     },
   );
 
@@ -171,6 +176,28 @@ test("listAccounts returns SnapTrade-only when no IBKR source has accounts", asy
     ["snaptrade", "snaptrade", "snaptrade"],
   );
   assert.equal(result.accounts.length, 3);
+});
+
+test("listAccounts merges Robinhood accounts with provider preserved", async () => {
+  const result = await listAccounts(
+    { mode: "live" },
+    {
+      listLiveAccounts: async () => [snapshot("U1", "ibkr")],
+      getPersistedAccounts: emptyPersisted,
+      getFlexAccounts: emptyFlex,
+      recordSnapshots: noopRecordSnapshots,
+      getSnapTradeAccounts: async () => [],
+      getRobinhoodAccounts: async () => [
+        snapshot("robinhood:727958282", "robinhood"),
+      ],
+    },
+  );
+
+  assert.deepEqual(
+    result.accounts.map((a) => `${a.provider}:${a.id}`),
+    ["ibkr:U1", "robinhood:robinhood:727958282"],
+  );
+  assert.equal(result.accounts[1].provider, "robinhood");
 });
 
 test("applySnapTradeAccountBalances populates live balances onto snapshots", async () => {

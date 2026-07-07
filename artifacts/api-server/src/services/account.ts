@@ -166,6 +166,7 @@ import {
   getSnapTradeAccountPortfolio,
   type SnapTradeAccountPortfolioResponse,
 } from "./snaptrade-account-portfolio";
+import { ownedBy } from "./scoped-db";
 import type {
   BrokerAccountSnapshot,
   BrokerExecutionSnapshot,
@@ -4148,6 +4149,9 @@ type ListAccountsOptions = {
   getSnapTradeAccounts?: (
     mode: RuntimeMode,
   ) => Promise<BrokerAccountSnapshot[]>;
+  getRobinhoodAccounts?: (
+    mode: RuntimeMode,
+  ) => Promise<BrokerAccountSnapshot[]>;
 };
 
 const SNAPTRADE_LOCAL_ID_PREFIX = "snaptrade:";
@@ -4165,6 +4169,15 @@ type SnapTradeAccountBalanceValues = {
 type SnapTradeAccountRecord = {
   snapshot: BrokerAccountSnapshot;
   appUserId: string | null;
+};
+
+type BackedAccountReadiness = {
+  includedInTrading: boolean;
+  capabilities: string[];
+  accountStatus: string | null;
+  executionReady: boolean;
+  executionBlockers: string[];
+  agentic?: boolean | null;
 };
 
 export type SnapTradeAccountPortfolioFetcher = (input: {
@@ -4271,6 +4284,92 @@ async function getSnapTradeBackedAccounts(
   });
 
   return applySnapTradeAccountBalances(records);
+}
+
+async function getRobinhoodBackedAccounts(
+  mode: RuntimeMode,
+): Promise<BrokerAccountSnapshot[]> {
+  const rows = await db
+    .select({
+      id: brokerAccountsTable.id,
+      providerAccountId: brokerAccountsTable.providerAccountId,
+      displayName: brokerAccountsTable.displayName,
+      accountType: brokerAccountsTable.accountType,
+      includedInTrading: brokerAccountsTable.includedInTrading,
+      baseCurrency: brokerAccountsTable.baseCurrency,
+      mode: brokerAccountsTable.mode,
+      accountStatus: brokerAccountsTable.accountStatus,
+      capabilities: brokerAccountsTable.capabilities,
+      executionBlockers: brokerAccountsTable.executionBlockers,
+      lastSyncedAt: brokerAccountsTable.lastSyncedAt,
+      updatedAt: brokerAccountsTable.updatedAt,
+    })
+    .from(brokerAccountsTable)
+    .innerJoin(
+      brokerConnectionsTable,
+      eq(brokerConnectionsTable.id, brokerAccountsTable.connectionId),
+    )
+    .where(
+      and(
+        ownedBy(brokerAccountsTable),
+        ownedBy(brokerConnectionsTable),
+        eq(brokerAccountsTable.mode, mode),
+        eq(brokerAccountsTable.includedInTrading, true),
+        eq(brokerConnectionsTable.brokerProvider, "robinhood"),
+        eq(brokerConnectionsTable.status, "connected"),
+      ),
+    )
+    .limit(1_000);
+
+  return rows.map((row) => {
+    const syncedAt = row.lastSyncedAt ? new Date(row.lastSyncedAt) : null;
+    const executionBlockers = [...row.executionBlockers];
+    const accountStatus = row.accountStatus ?? null;
+    const capabilities = [...row.capabilities];
+    const agentic = executionBlockers.includes("robinhood.account.non_agentic")
+      ? false
+      : executionBlockers.includes("robinhood.account.agentic_unverified")
+        ? null
+        : true;
+    return {
+      id: row.id,
+      providerAccountId: row.providerAccountId,
+      provider: "robinhood",
+      mode: row.mode,
+      displayName: row.displayName || "Robinhood account",
+      currency: row.baseCurrency || "USD",
+      buyingPower: 0,
+      cash: 0,
+      netLiquidation: 0,
+      accountType: row.accountType,
+      includedInTrading: row.includedInTrading,
+      capabilities,
+      accountStatus,
+      executionReady:
+        executionBlockers.length === 0 &&
+        (accountStatus == null || accountStatus === "open"),
+      executionBlockers,
+      agentic,
+      totalCashValue: null,
+      settledCash: null,
+      accruedCash: null,
+      initialMargin: null,
+      maintenanceMargin: null,
+      excessLiquidity: null,
+      cushion: null,
+      sma: null,
+      dayTradingBuyingPower: null,
+      regTInitialMargin: null,
+      grossPositionValue: null,
+      leverage: null,
+      dayTradesRemaining: null,
+      isPatternDayTrader: null,
+      updatedAt:
+        syncedAt && !Number.isNaN(syncedAt.getTime())
+          ? syncedAt
+          : row.updatedAt ?? new Date(),
+    } satisfies BrokerAccountSnapshot & BackedAccountReadiness;
+  });
 }
 
 const SNAPTRADE_PRESENCE_CACHE_TTL_MS = 30_000;
@@ -4496,10 +4595,12 @@ async function listAccountsUncached(
   const recordSnapshots = options.recordSnapshots ?? recordAccountSnapshots;
   const getSnapTradeAccounts =
     options.getSnapTradeAccounts ?? getSnapTradeBackedAccounts;
+  const getRobinhoodAccounts =
+    options.getRobinhoodAccounts ?? getRobinhoodBackedAccounts;
 
-  // SnapTrade accounts are additive to whatever IBKR source wins the waterfall
+  // Persisted broker accounts are additive to whatever IBKR source wins the waterfall
   // below. Resolve them in parallel and degrade to IBKR-only on any failure so a
-  // SnapTrade outage never breaks the account list.
+  // provider outage never breaks the account list.
   const snapTradeAccountsPromise = getSnapTradeAccounts(mode).catch((error) => {
     logger.warn(
       { err: error },
@@ -4507,6 +4608,20 @@ async function listAccountsUncached(
     );
     return [] as BrokerAccountSnapshot[];
   });
+  const robinhoodAccountsPromise = getRobinhoodAccounts(mode).catch((error) => {
+    logger.warn(
+      { err: error },
+      "Robinhood account merge failed; returning brokers without Robinhood accounts",
+    );
+    return [] as BrokerAccountSnapshot[];
+  });
+  const additionalBrokerAccountsPromise = Promise.all([
+    snapTradeAccountsPromise,
+    robinhoodAccountsPromise,
+  ]).then(([snapTradeAccounts, robinhoodAccounts]) => [
+    ...snapTradeAccounts,
+    ...robinhoodAccounts,
+  ]);
 
   try {
     const liveAccounts = await listLiveAccounts(mode);
@@ -4520,7 +4635,7 @@ async function listAccountsUncached(
       return {
         accounts: withTradingInclusionDefault([
           ...liveAccounts,
-          ...(await snapTradeAccountsPromise),
+          ...(await additionalBrokerAccountsPromise),
         ]),
       };
     }
@@ -4538,7 +4653,7 @@ async function listAccountsUncached(
     return {
       accounts: withTradingInclusionDefault([
         ...persistedAccounts.accounts,
-        ...(await snapTradeAccountsPromise),
+        ...(await additionalBrokerAccountsPromise),
       ]),
     };
   }
@@ -4548,12 +4663,16 @@ async function listAccountsUncached(
     return {
       accounts: withTradingInclusionDefault([
         ...flexAccounts,
-        ...(await snapTradeAccountsPromise),
+        ...(await additionalBrokerAccountsPromise),
       ]),
     };
   }
 
-  return { accounts: withTradingInclusionDefault(await snapTradeAccountsPromise) };
+  return {
+    accounts: withTradingInclusionDefault(
+      await additionalBrokerAccountsPromise,
+    ),
+  };
 }
 
 export async function getAccountSummary(input: {
