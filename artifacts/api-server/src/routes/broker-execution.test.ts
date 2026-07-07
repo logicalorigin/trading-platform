@@ -25,6 +25,7 @@ import {
 } from "../services/snaptrade-user-custody";
 import { createTaxOrderPreflight } from "../services/tax-planning";
 import { AUTH_CSRF_HEADER, __resetAuthRateLimitsForTests } from "./auth";
+import { __brokerExecutionRouteInternalsForTests } from "./broker-execution";
 
 beforeEach(() => {
   __resetAuthRateLimitsForTests();
@@ -36,6 +37,9 @@ type AuthRouteBody = {
   };
   csrfToken: string;
 };
+
+type SchwabRouteInternals =
+  typeof __brokerExecutionRouteInternalsForTests.schwabOrders;
 
 const TEST_ENCRYPTION_KEY = Buffer.alloc(32, 7).toString("base64url");
 
@@ -135,6 +139,56 @@ async function withBootstrapToken<T>(fn: () => Promise<T>): Promise<T> {
       process.env["PYRUS_AUTH_BOOTSTRAP_TOKEN"] = previous;
     }
   }
+}
+
+function restoreSchwabRouteInternals(original: SchwabRouteInternals): void {
+  __brokerExecutionRouteInternalsForTests.schwabOrders.readSchwabReadiness =
+    original.readSchwabReadiness;
+  __brokerExecutionRouteInternalsForTests.schwabOrders.previewSchwabEquityOrder =
+    original.previewSchwabEquityOrder;
+  __brokerExecutionRouteInternalsForTests.schwabOrders.submitSchwabEquityOrder =
+    original.submitSchwabEquityOrder;
+  __brokerExecutionRouteInternalsForTests.schwabOrders.cancelSchwabEquityOrder =
+    original.cancelSchwabEquityOrder;
+}
+
+function schwabReadinessFixture(configured = true) {
+  return {
+    provider: "schwab" as const,
+    configured,
+    status: configured ? ("research_required" as const) : ("unconfigured" as const),
+    checkedAt: "2026-07-07T20:00:00.000Z",
+    executionDecision: {
+      decisionCode: "PROVIDER_RESEARCH_REQUIRED" as const,
+      allowed: false,
+      reason:
+        "Provider integration requires additional research before live execution.",
+    },
+    prerequisites: {
+      credentialEncryptionKeyPresent: configured,
+      redirectBaseUrlPresent: configured,
+      appCredentialsPresent: configured,
+    },
+    limitations: configured
+      ? ["schwab.provider_research_required"]
+      : ["schwab.app_credentials_missing"],
+    upstream: null,
+  };
+}
+
+function schwabOrderAccountFixture() {
+  return {
+    id: "acct-1",
+    connectionId: "conn-1",
+    accountHash: "HASH123",
+    displayName: "Schwab ...1234",
+    baseCurrency: "USD",
+    mode: "live" as const,
+    accountStatus: "open",
+    executionReady: true,
+    executionBlockers: [],
+    lastSyncedAt: "2026-07-07T19:00:00.000Z",
+  };
 }
 
 test("SnapTrade readiness route requires authentication before probing", async () => {
@@ -3226,6 +3280,270 @@ test("Schwab equity order routes require CSRF before order handling", async () =
       ),
     ),
   );
+});
+
+test("Schwab equity order routes delegate to existing services when ready", async () => {
+  const original = { ...__brokerExecutionRouteInternalsForTests.schwabOrders };
+  try {
+    await withTestDb(async () =>
+      withServer(async (baseUrl) => {
+        const [member] = await db
+          .insert(usersTable)
+          .values({
+            email: "schwab-orders-member@example.com",
+            passwordHash: "unused",
+            role: "member",
+            entitlements: ["broker_connect"],
+          })
+          .returning();
+        const session = await createAuthSession({ userId: member!.id });
+        const headers = {
+          cookie: `pyrus_session=${session.sessionToken}`,
+          "content-type": "application/json",
+          [AUTH_CSRF_HEADER]: session.csrfToken,
+        };
+
+        const calls: string[] = [];
+        __brokerExecutionRouteInternalsForTests.schwabOrders.readSchwabReadiness =
+          async () => schwabReadinessFixture(true) as never;
+        __brokerExecutionRouteInternalsForTests.schwabOrders.previewSchwabEquityOrder =
+          async (input) => {
+            calls.push(`preview:${input.appUserId}:${input.accountId}`);
+            return {
+              provider: "schwab",
+              checkedAt: "2026-07-07T20:01:00.000Z",
+              account: schwabOrderAccountFixture(),
+              preview: { accepted: true },
+            };
+          };
+        __brokerExecutionRouteInternalsForTests.schwabOrders.submitSchwabEquityOrder =
+          async (input) => {
+            calls.push(`submit:${input.appUserId}:${input.accountId}`);
+            return {
+              provider: "schwab",
+              submittedAt: "2026-07-07T20:02:00.000Z",
+              account: schwabOrderAccountFixture(),
+              orderId: "order-123",
+              status: "submitted",
+            };
+          };
+        __brokerExecutionRouteInternalsForTests.schwabOrders.cancelSchwabEquityOrder =
+          async (input) => {
+            calls.push(`cancel:${input.appUserId}:${input.accountId}:${input.orderId}`);
+            return {
+              provider: "schwab",
+              canceledAt: "2026-07-07T20:03:00.000Z",
+              account: schwabOrderAccountFixture(),
+              orderId: input.orderId,
+              status: "canceled",
+            };
+          };
+
+        const preview = await fetch(
+          `${baseUrl}/broker-execution/schwab/accounts/acct-1/orders/preview`,
+          {
+            method: "POST",
+            headers,
+            body: JSON.stringify({
+              symbol: "AAPL",
+              action: "BUY",
+              quantity: 1,
+              orderType: "Market",
+              timeInForce: "Day",
+            }),
+          },
+        );
+        assert.equal(preview.status, 200);
+        assert.equal(((await preview.json()) as { preview?: unknown }).preview != null, true);
+
+        const submit = await fetch(
+          `${baseUrl}/broker-execution/schwab/accounts/acct-1/orders`,
+          {
+            method: "POST",
+            headers,
+            body: JSON.stringify({
+              confirm: true,
+              symbol: "AAPL",
+              action: "BUY",
+              quantity: 1,
+              orderType: "Market",
+              timeInForce: "Day",
+            }),
+          },
+        );
+        assert.equal(submit.status, 200);
+        assert.equal(((await submit.json()) as { orderId?: string }).orderId, "order-123");
+
+        const cancel = await fetch(
+          `${baseUrl}/broker-execution/schwab/accounts/acct-1/orders/cancel`,
+          {
+            method: "POST",
+            headers,
+            body: JSON.stringify({ orderId: "order-123" }),
+          },
+        );
+        assert.equal(cancel.status, 200);
+        assert.equal(
+          ((await cancel.json()) as { status?: string; orderId?: string }).status,
+          "canceled",
+        );
+        assert.deepEqual(calls, [
+          `preview:${member!.id}:acct-1`,
+          `submit:${member!.id}:acct-1`,
+          `cancel:${member!.id}:acct-1:order-123`,
+        ]);
+      }),
+    );
+  } finally {
+    restoreSchwabRouteInternals(original);
+  }
+});
+
+test("Schwab equity order routes reject unconfigured Schwab readiness before service calls", async () => {
+  const original = { ...__brokerExecutionRouteInternalsForTests.schwabOrders };
+  try {
+    await withTestDb(async () =>
+      withServer(async (baseUrl) => {
+        const [member] = await db
+          .insert(usersTable)
+          .values({
+            email: "schwab-orders-not-ready@example.com",
+            passwordHash: "unused",
+            role: "member",
+            entitlements: ["broker_connect"],
+          })
+          .returning();
+        const session = await createAuthSession({ userId: member!.id });
+        let called = false;
+        __brokerExecutionRouteInternalsForTests.schwabOrders.readSchwabReadiness =
+          async () => schwabReadinessFixture(false) as never;
+        __brokerExecutionRouteInternalsForTests.schwabOrders.previewSchwabEquityOrder =
+          async () => {
+            called = true;
+            throw new Error("service should not run");
+          };
+
+        const response = await fetch(
+          `${baseUrl}/broker-execution/schwab/accounts/acct-1/orders/preview`,
+          {
+            method: "POST",
+            headers: {
+              cookie: `pyrus_session=${session.sessionToken}`,
+              "content-type": "application/json",
+              [AUTH_CSRF_HEADER]: session.csrfToken,
+            },
+            body: JSON.stringify({
+              symbol: "AAPL",
+              action: "BUY",
+              quantity: 1,
+              orderType: "Market",
+              timeInForce: "Day",
+            }),
+          },
+        );
+
+        assert.equal(response.status, 503);
+        assert.equal(((await response.json()) as { code?: string }).code, "schwab_order_routes_not_ready");
+        assert.equal(called, false);
+      }),
+    );
+  } finally {
+    restoreSchwabRouteInternals(original);
+  }
+});
+
+test("Schwab equity order routes reject members without broker_connect", async () => {
+  const original = { ...__brokerExecutionRouteInternalsForTests.schwabOrders };
+  try {
+    await withTestDb(async () =>
+      withServer(async (baseUrl) => {
+        const [member] = await db
+          .insert(usersTable)
+          .values({
+            email: "schwab-orders-unentitled@example.com",
+            passwordHash: "unused",
+            role: "member",
+          })
+          .returning();
+        const session = await createAuthSession({ userId: member!.id });
+        let called = false;
+        __brokerExecutionRouteInternalsForTests.schwabOrders.readSchwabReadiness =
+          async () => {
+            called = true;
+            return schwabReadinessFixture(true) as never;
+          };
+
+        const response = await fetch(
+          `${baseUrl}/broker-execution/schwab/accounts/acct-1/orders/preview`,
+          {
+            method: "POST",
+            headers: {
+              cookie: `pyrus_session=${session.sessionToken}`,
+              "content-type": "application/json",
+              [AUTH_CSRF_HEADER]: session.csrfToken,
+            },
+            body: JSON.stringify({
+              symbol: "AAPL",
+              action: "BUY",
+              quantity: 1,
+              orderType: "Market",
+              timeInForce: "Day",
+            }),
+          },
+        );
+
+        assert.equal(response.status, 403);
+        assert.equal(((await response.json()) as { code?: string }).code, "entitlement_required");
+        assert.equal(called, false);
+      }),
+    );
+  } finally {
+    restoreSchwabRouteInternals(original);
+  }
+});
+
+test("Schwab equity order routes return 400 for malformed bodies before readiness", async () => {
+  const original = { ...__brokerExecutionRouteInternalsForTests.schwabOrders };
+  try {
+    await withTestDb(async () =>
+      withServer(async (baseUrl) => {
+        const [member] = await db
+          .insert(usersTable)
+          .values({
+            email: "schwab-orders-bad-body@example.com",
+            passwordHash: "unused",
+            role: "member",
+            entitlements: ["broker_connect"],
+          })
+          .returning();
+        const session = await createAuthSession({ userId: member!.id });
+        let called = false;
+        __brokerExecutionRouteInternalsForTests.schwabOrders.readSchwabReadiness =
+          async () => {
+            called = true;
+            return schwabReadinessFixture(true) as never;
+          };
+
+        const response = await fetch(
+          `${baseUrl}/broker-execution/schwab/accounts/acct-1/orders/preview`,
+          {
+            method: "POST",
+            headers: {
+              cookie: `pyrus_session=${session.sessionToken}`,
+              "content-type": "application/json",
+              [AUTH_CSRF_HEADER]: session.csrfToken,
+            },
+            body: JSON.stringify({ symbol: "AAPL" }),
+          },
+        );
+
+        assert.equal(response.status, 400);
+        assert.equal(called, false);
+      }),
+    );
+  } finally {
+    restoreSchwabRouteInternals(original);
+  }
 });
 
 test("Schwab equity order routes stay blocked behind execution readiness", async () => {

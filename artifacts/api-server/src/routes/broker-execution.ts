@@ -95,6 +95,30 @@ const SNAPTRADE_HISTORY_RANGES = new Set([
   "ALL",
 ]);
 
+export const __brokerExecutionRouteInternalsForTests = {
+  schwabOrders: {
+    readSchwabReadiness,
+    previewSchwabEquityOrder,
+    submitSchwabEquityOrder,
+    cancelSchwabEquityOrder,
+  },
+};
+
+async function requireSchwabOrderReadiness(): Promise<void> {
+  const readiness =
+    await __brokerExecutionRouteInternalsForTests.schwabOrders.readSchwabReadiness();
+  if (readiness.configured) {
+    return;
+  }
+  throw new HttpError(503, "Schwab order routes are not ready", {
+    code: "schwab_order_routes_not_ready",
+    data: {
+      status: readiness.status,
+      limitations: readiness.limitations,
+    },
+  });
+}
+
 function readOptionalQueryString(value: unknown): string | null {
   if (typeof value !== "string") {
     return null;
@@ -270,10 +294,11 @@ router.post("/broker-execution/schwab/sync", async (req, res) => {
 router.post(
   "/broker-execution/schwab/accounts/:accountId/orders/preview",
   async (req, res) => {
-    const session = await requireAdminCsrf(req);
+    const session = await requireEntitlementCsrf("broker_connect")(req);
     const body = PreviewSchwabEquityOrderBody.parse(req.body ?? {});
+    await requireSchwabOrderReadiness();
     const data = PreviewSchwabEquityOrderResponse.parse(
-      await previewSchwabEquityOrder({
+      await __brokerExecutionRouteInternalsForTests.schwabOrders.previewSchwabEquityOrder({
         appUserId: session.user.id,
         accountId: req.params.accountId,
         input: body,
@@ -286,10 +311,11 @@ router.post(
 router.post(
   "/broker-execution/schwab/accounts/:accountId/orders",
   async (req, res) => {
-    const session = await requireAdminCsrf(req);
+    const session = await requireEntitlementCsrf("broker_connect")(req);
     const body = SubmitSchwabEquityOrderBody.parse(req.body ?? {});
+    await requireSchwabOrderReadiness();
     const data = SubmitSchwabEquityOrderResponse.parse(
-      await submitSchwabEquityOrder({
+      await __brokerExecutionRouteInternalsForTests.schwabOrders.submitSchwabEquityOrder({
         appUserId: session.user.id,
         accountId: req.params.accountId,
         input: body,
@@ -302,10 +328,11 @@ router.post(
 router.post(
   "/broker-execution/schwab/accounts/:accountId/orders/cancel",
   async (req, res) => {
-    const session = await requireAdminCsrf(req);
+    const session = await requireEntitlementCsrf("broker_connect")(req);
     const body = CancelSchwabEquityOrderBody.parse(req.body ?? {});
+    await requireSchwabOrderReadiness();
     const data = CancelSchwabEquityOrderResponse.parse(
-      await cancelSchwabEquityOrder({
+      await __brokerExecutionRouteInternalsForTests.schwabOrders.cancelSchwabEquityOrder({
         appUserId: session.user.id,
         accountId: req.params.accountId,
         orderId: body.orderId,
