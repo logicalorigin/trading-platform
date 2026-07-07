@@ -3314,9 +3314,11 @@ export async function getRuntimeDiagnostics() {
   const [
     { getAccountPageStreamDiagnostics },
     { getShadowAccountReadDiagnostics },
+    { getSignalOptionsTallyDiagnostics },
   ] = await Promise.all([
     import("./account-page-streams"),
     import("./shadow-account"),
+    import("./signal-options-automation"),
   ]);
   const optionsFlowScannerDiagnostics = getOptionsFlowScannerDiagnostics();
   const marketDataAdmissionWithScanner = {
@@ -3364,6 +3366,7 @@ export async function getRuntimeDiagnostics() {
     signalMonitor: {
       lastDbFallback: getSignalMonitorDbFallbackDiagnostics(),
     },
+    signalOptionsTally: getSignalOptionsTallyDiagnostics(),
     storage: getCachedStorageHealthSnapshot(),
     ibkr: {
       transport: "tws" as const,

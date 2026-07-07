@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import {
   computeOptionGreeksFromPrice,
+  MIN_TRADEABLE_ABS_DELTA,
   resolveSignalOptionsExecutionProfile,
   scoreOptionGreekCandidate,
   signalOptionsAvailableMtfTimeframes,
@@ -168,24 +169,32 @@ const signalOptionsActionCursors = new Map<
   }
 >();
 const SIGNAL_OPTIONS_PROJECTION_OVERLAP_MS = 5 * 60_000;
+const SIGNAL_OPTIONS_TALLY_FULL_VERIFY_INTERVAL_MS = 15 * 60_000;
 type SignalOptionsPositionProjection = {
   foldState: SignalOptionsPositionFoldState;
   watermark: Date | null;
   recentlyFoldedIds: Set<string>;
   recentEvents: ExecutionEvent[];
   configSignature: string;
+  // Drift self-repair bookkeeping (plan step 4): when this projection last passed a
+  // full-derive verification, and the position signature it passed with. A cold
+  // rebuild counts as verified-by-construction (fold of the full read == derive).
+  lastFullVerifyAt: Date | null;
+  lastVerifiedPositionsSignature: string | null;
 };
 const signalOptionsPositionProjections = new Map<
   string,
   SignalOptionsPositionProjection
 >();
 const signalOptionsRecentSkips = new Map<string, ExecutionEvent[]>();
+const signalOptionsSeenSignalStoreWarmDeployments = new Set<string>();
 type SignalOptionsTallyMode = "off" | "shadow" | "on";
 let signalOptionsTallyDriftCount = 0;
 let signalOptionsTallyCompareCount = 0;
 let signalOptionsTallyDedupDriftCount = 0;
 let signalOptionsTallyPnlDriftCount = 0;
 let signalOptionsTallyControlDriftCount = 0;
+let signalOptionsTallyRebuildCount = 0;
 
 function signalOptionsTallyMode(): SignalOptionsTallyMode {
   const raw = process.env.SIGNAL_OPTIONS_TALLY?.toLowerCase();
@@ -207,6 +216,18 @@ function getSignalOptionsTallyDriftStats() {
     pnlDrift: signalOptionsTallyPnlDriftCount,
     controlDrift: signalOptionsTallyControlDriftCount,
     compares: signalOptionsTallyCompareCount,
+    rebuilds: signalOptionsTallyRebuildCount,
+  };
+}
+
+// Bake-gate observability: the zero-drift criterion for the tally rollout must be
+// checkable from runtime diagnostics, not warn logs. Counters reset on restart
+// (VM rotates ~6h), so bake evaluation reads them per-rotation window.
+export function getSignalOptionsTallyDiagnostics() {
+  return {
+    mode: signalOptionsTallyMode(),
+    projections: signalOptionsPositionProjections.size,
+    ...getSignalOptionsTallyDriftStats(),
   };
 }
 
@@ -504,6 +525,25 @@ export type SignalOptionsPosition = {
   signalQuality?: SignalOptionsEntryQuality | null;
   entryGreeks?: SignalOptionsGreekSnapshot | null;
   greekBaselineSource?: "entry" | "first_mark" | null;
+};
+
+type SignalOptionsSeenSignalWriteRow = {
+  deploymentId: string;
+  providerAccountId?: string | null;
+  eventId?: string | null;
+  symbol?: string | null;
+  signalKey: string;
+  reason: string;
+  candidateMatchKey?: string | null;
+  occurredAt: Date;
+  payloadRetryable?: boolean | null;
+  preflight?: boolean | null;
+  hasSelectedContract?: boolean | null;
+  hasSignalMatrixMtf?: boolean | null;
+  premiumCap?: number | null;
+  available?: number | null;
+  chainDebugReason?: string | null;
+  expirationsDebugReason?: string | null;
 };
 
 type SignalMonitorState = {
@@ -2119,6 +2159,41 @@ async function listDeploymentEventsSince(
     .limit(Math.min(Math.max(limit, 1), 10_000));
 }
 
+async function listDeploymentEventsExcludingFirehose(
+  deploymentId: string,
+  limit = 500,
+) {
+  return db
+    .select()
+    .from(executionEventsTable)
+    .where(
+      and(
+        eq(executionEventsTable.deploymentId, deploymentId),
+        sql`${executionEventsTable.eventType} LIKE 'signal_options_%'`,
+        sql`not (${signalOptionsSeenSignalStoreCandidateSql()})`,
+      ),
+    )
+    .orderBy(desc(executionEventsTable.occurredAt))
+    .limit(Math.min(Math.max(limit, 1), 10_000));
+}
+
+async function listDeploymentEntryCandidateSkipEvents(
+  deploymentId: string,
+  limit = SIGNAL_OPTIONS_STATE_EVENT_LIMIT,
+) {
+  return db
+    .select()
+    .from(executionEventsTable)
+    .where(
+      and(
+        eq(executionEventsTable.deploymentId, deploymentId),
+        sql`${signalOptionsSeenSignalStoreCandidateSql()}`,
+      ),
+    )
+    .orderBy(desc(executionEventsTable.occurredAt))
+    .limit(Math.min(Math.max(limit, 1), 10_000));
+}
+
 async function listDeploymentBackfillEvents(deploymentId: string) {
   return db
     .select()
@@ -2274,8 +2349,87 @@ async function insertSignalOptionsEvent(input: {
   if (isSignalOptionsEntryCandidateSkip(event)) {
     recordSignalOptionsRecentSkip(input.deployment.id, event);
   }
+  if (input.ledgerSource !== SIGNAL_OPTIONS_REPLAY_SOURCE) {
+    void upsertSignalOptionsSeenSignal(event).catch((error) => {
+      logger.warn?.(
+        {
+          err: error,
+          deploymentId: input.deployment.id,
+          eventId: event.id,
+          eventType: event.eventType,
+        },
+        "Failed to upsert signal-options seen-signal sidecar row",
+      );
+    });
+  }
 
   return event;
+}
+
+async function upsertSignalOptionsSeenSignal(event: ExecutionEvent) {
+  const row = extractSignalOptionsSeenSignalRow(event);
+  if (!row) {
+    return;
+  }
+  const now = new Date();
+  await db.execute(sql`
+    insert into signal_options_seen_signals (
+      deployment_id,
+      provider_account_id,
+      event_id,
+      symbol,
+      signal_key,
+      reason,
+      candidate_match_key,
+      occurred_at,
+      payload_retryable,
+      preflight,
+      has_selected_contract,
+      has_signal_matrix_mtf,
+      premium_cap,
+      available,
+      chain_debug_reason,
+      expirations_debug_reason,
+      created_at,
+      updated_at
+    )
+    values (
+      ${row.deploymentId},
+      ${row.providerAccountId ?? null},
+      ${row.eventId ?? null},
+      ${row.symbol ?? null},
+      ${row.signalKey},
+      ${row.reason},
+      ${row.candidateMatchKey ?? null},
+      ${row.occurredAt},
+      ${row.payloadRetryable ?? false},
+      ${row.preflight ?? false},
+      ${row.hasSelectedContract ?? false},
+      ${row.hasSignalMatrixMtf ?? false},
+      ${row.premiumCap ?? null},
+      ${row.available ?? null},
+      ${row.chainDebugReason ?? null},
+      ${row.expirationsDebugReason ?? null},
+      ${now},
+      ${now}
+    )
+    on conflict (deployment_id, signal_key) do update set
+      provider_account_id = excluded.provider_account_id,
+      event_id = excluded.event_id,
+      symbol = excluded.symbol,
+      reason = excluded.reason,
+      candidate_match_key = excluded.candidate_match_key,
+      occurred_at = excluded.occurred_at,
+      payload_retryable = excluded.payload_retryable,
+      preflight = excluded.preflight,
+      has_selected_contract = excluded.has_selected_contract,
+      has_signal_matrix_mtf = excluded.has_signal_matrix_mtf,
+      premium_cap = excluded.premium_cap,
+      available = excluded.available,
+      chain_debug_reason = excluded.chain_debug_reason,
+      expirations_debug_reason = excluded.expirations_debug_reason,
+      updated_at = excluded.updated_at
+  `);
 }
 
 function resolveDeploymentProfile(deployment: AlgoDeployment) {
@@ -3778,6 +3932,76 @@ function selectSignalOptionsGreekContractPlanFromChain(input: {
       ? null
       : greekSelectorFallbackReason(attempts, candidates.length),
   };
+}
+
+// Final-quote tradeability gate: the greek selector's one HARD disqualifier
+// (|delta| >= MIN_TRADEABLE_ABS_DELTA) re-checked against the quote the entry will
+// actually fill at. Selection scores the snapshot/chain quote, but the settle loop
+// re-quotes live and the shadow fallback re-prices from delayed/mark — and the
+// legacy fallback path applies no greek checks at all. This gate closes both holes
+// at the single point where the final fill quote is known. When the final quote
+// carries no real delta, one is synthesized from the fill price (a lottery-ticket
+// premium implies a near-zero synthetic delta, so the DIA-471P shape still fails);
+// if no delta can be derived at all, the gate passes open (it must not newly block
+// fills on missing data) and reports deltaSource "unavailable" for diagnostics.
+export function signalOptionsFinalQuoteDeltaGate(input: {
+  greekSelectorGoverned: boolean;
+  entryGreeks: { delta?: number | null } | null;
+  strike: number | null;
+  expirationDate: Date | null;
+  fillPrice: number | null;
+  spot: number | null;
+  right: "call" | "put";
+  at?: Date | null;
+}):
+  | { ok: true; delta: number | null; deltaSource: "quote" | "synthetic" | "unavailable" }
+  | {
+      ok: false;
+      reason: "entry_delta_below_floor";
+      delta: number;
+      deltaSource: "quote" | "synthetic";
+      floor: number;
+    } {
+  if (!input.greekSelectorGoverned) {
+    return { ok: true, delta: null, deltaSource: "unavailable" };
+  }
+  let delta = finiteNumber(input.entryGreeks?.delta);
+  let deltaSource: "quote" | "synthetic" | "unavailable" =
+    delta == null ? "unavailable" : "quote";
+  if (
+    delta == null &&
+    input.strike != null &&
+    input.spot != null &&
+    input.expirationDate != null &&
+    input.fillPrice != null &&
+    input.fillPrice > 0
+  ) {
+    const synthetic = computeOptionGreeksFromPrice({
+      spot: input.spot,
+      strike: input.strike,
+      optionPrice: input.fillPrice,
+      right: input.right,
+      at: input.at ?? new Date(),
+      expirationDate: input.expirationDate,
+      riskFreeRate: 0.05,
+      dividendYield: 0,
+    });
+    delta = finiteNumber(synthetic?.delta);
+    deltaSource = delta == null ? "unavailable" : "synthetic";
+  }
+  if (delta == null) {
+    return { ok: true, delta: null, deltaSource: "unavailable" };
+  }
+  if (Math.abs(delta) < MIN_TRADEABLE_ABS_DELTA) {
+    return {
+      ok: false,
+      reason: "entry_delta_below_floor",
+      delta,
+      deltaSource: deltaSource as "quote" | "synthetic",
+      floor: MIN_TRADEABLE_ABS_DELTA,
+    };
+  }
+  return { ok: true, delta, deltaSource };
 }
 
 function selectSignalOptionsContractPlanFromChain(input: {
@@ -6462,6 +6686,8 @@ function createSignalOptionsPositionProjection(
     recentlyFoldedIds: new Set(),
     recentEvents: [],
     configSignature,
+    lastFullVerifyAt: null,
+    lastVerifiedPositionsSignature: null,
   };
 }
 
@@ -6996,8 +7222,14 @@ async function updateSignalOptionsPositionProjection(
     const projection =
       createSignalOptionsPositionProjection(configSignature);
     foldTailIntoSignalOptionsProjection(projection, all);
+    // Verified-by-construction: a cold rebuild folds the exact full read, so the
+    // projection equals the derive by the fold-equivalence guarantee.
+    const positions = [...projection.foldState.positions.values()];
+    projection.lastFullVerifyAt = new Date();
+    projection.lastVerifiedPositionsSignature =
+      signalOptionsPositionActionSignature(positions);
     signalOptionsPositionProjections.set(deploymentId, projection);
-    return [...projection.foldState.positions.values()];
+    return positions;
   }
 
   const since = new Date(
@@ -7030,6 +7262,91 @@ async function readSignalOptionsProjectedDecisionState(input: {
     }),
     projection: projection ?? null,
   };
+}
+
+// Plan step 4 (drift self-repair, authoritative mode): re-verify the projection
+// against a full ledger derive when its position set changed (a folded ENTRY/EXIT —
+// the exact moment drift would cost money) or when the last verification is older
+// than the backstop interval (catches backdated events the watermark overlap
+// misses, e.g. reconcile heals writing occurredAt = closedAt).
+function shouldVerifySignalOptionsProjection(input: {
+  projection: SignalOptionsPositionProjection;
+  positionsSignature: string;
+  now: Date;
+}): boolean {
+  if (
+    input.projection.lastVerifiedPositionsSignature !== input.positionsSignature
+  ) {
+    return true;
+  }
+  const verifiedAt = input.projection.lastFullVerifyAt?.getTime() ?? 0;
+  return (
+    input.now.getTime() - verifiedAt >=
+    SIGNAL_OPTIONS_TALLY_FULL_VERIFY_INTERVAL_MS
+  );
+}
+
+// Authoritative ("on") read with drift self-repair. Reads the projection; when a
+// verification is due, does a full ledger read + derive and diffs it against the
+// projection. On drift: count it, drop the projection, and rebuild from the ledger
+// THIS tick (the cold-rebuild path in updateSignalOptionsPositionProjection), so a
+// drifted tally can never manage real positions. On any read failure the caller
+// falls back to the plain ledger path via the thrown error.
+async function readSignalOptionsAuthoritativeDecisionState(input: {
+  deploymentId: string;
+  configSignature: string;
+  now?: Date;
+}): Promise<{
+  events: ExecutionEvent[];
+  positions: SignalOptionsPosition[];
+  projection: SignalOptionsPositionProjection | null;
+}> {
+  const projected = await readSignalOptionsProjectedDecisionState({
+    deploymentId: input.deploymentId,
+    configSignature: input.configSignature,
+  });
+  const projection = projected.projection;
+  if (!projection) {
+    return projected;
+  }
+  const now = input.now ?? new Date();
+  const positionsSignature = signalOptionsPositionActionSignature(
+    projected.positions,
+  );
+  if (
+    !shouldVerifySignalOptionsProjection({
+      projection,
+      positionsSignature,
+      now,
+    })
+  ) {
+    return projected;
+  }
+  const fullEvents = await listDeploymentEvents(
+    input.deploymentId,
+    SIGNAL_OPTIONS_STATE_EVENT_LIMIT,
+  );
+  const fullDerived = deriveActivePositions(
+    runtimeSignalOptionsEvents(fullEvents),
+  );
+  const diffs = signalOptionsPositionsDrift(fullDerived, projected.positions);
+  signalOptionsTallyCompareCount += 1;
+  if (!diffs.length) {
+    projection.lastFullVerifyAt = now;
+    projection.lastVerifiedPositionsSignature = positionsSignature;
+    return projected;
+  }
+  signalOptionsTallyDriftCount += 1;
+  signalOptionsTallyRebuildCount += 1;
+  logger.warn?.(
+    { deploymentId: input.deploymentId, diffs: diffs.slice(0, 10) },
+    "signal-options tally authority drift; rebuilding projection from ledger",
+  );
+  signalOptionsPositionProjections.delete(input.deploymentId);
+  return readSignalOptionsProjectedDecisionState({
+    deploymentId: input.deploymentId,
+    configSignature: input.configSignature,
+  });
 }
 
 function positionCandidateIdFromPayload(payload: Record<string, unknown>) {
@@ -7571,6 +7888,55 @@ const GATEWAY_READINESS_SKIP_REASONS = new Set([
   "live_market_data_not_configured",
 ]);
 
+const SIGNAL_OPTIONS_SEEN_SIGNAL_SKIP_REASON_VALUES = [
+  "after_hours_option_entry_blocked",
+  "adx_below_minimum",
+  "bear_regime_gate_failed",
+  "bridge_health_unavailable",
+  "bridge_unavailable",
+  "candidate_resolution_failed",
+  "candidate_resolution_timeout",
+  "daily_loss_halt_active",
+  "entry_delta_below_floor",
+  "entry_gate_failed",
+  "gateway_login_required",
+  "gateway_not_ready",
+  "gateway_socket_disconnected",
+  "greek_selector_below_min_score",
+  "greek_selector_liquidity_failed",
+  "greek_selector_missing_greeks",
+  "greek_selector_no_candidates",
+  "ibkr_not_configured",
+  "invalid_shadow_order_plan",
+  "inverse_put_blocked",
+  "liquidity_gate_failed",
+  "live_market_data_not_configured",
+  "max_open_symbols_reached",
+  "missing_bid_ask",
+  "missing_mark",
+  "mtf_fully_bullish",
+  "mtf_not_aligned",
+  "mtf_unavailable",
+  "no_contract_for_strike_slot",
+  "no_expiration_in_dte_window",
+  "opposite_signal_flip_disabled",
+  "option_chain_backoff",
+  "option_expiration_backoff",
+  "premium_budget_too_small",
+  "quote_not_fresh",
+  "same_direction_position_open",
+  "spread_too_wide",
+  "trading_allowance_exhausted",
+  SIGNAL_OPTIONS_GATEWAY_NOT_READY_REASON,
+  SIGNAL_OPTIONS_MARKET_SESSION_QUIET_REASON,
+] as const;
+
+const SIGNAL_OPTIONS_SEEN_SIGNAL_SKIP_REASONS = new Set<string>(
+  SIGNAL_OPTIONS_SEEN_SIGNAL_SKIP_REASON_VALUES,
+);
+
+const SIGNAL_OPTIONS_CANDIDATE_MATCH_KEY_DELIMITER = "|";
+
 function isSignalOptionsGatewayExecutionBlocker(
   blocker: SignalOptionsExecutionBlocker | null | undefined,
 ) {
@@ -7765,6 +8131,25 @@ function optionBackoffPayload(backoff: SignalOptionsOptionBackoff) {
   };
 }
 
+function signalOptionsCandidateMatchKey(input: {
+  symbol: unknown;
+  direction: unknown;
+}) {
+  const symbol = normalizeSymbol(String(input.symbol ?? "")).toUpperCase();
+  if (!symbol) {
+    return null;
+  }
+  const direction = input.direction === "sell" ? "sell" : "buy";
+  return [symbol, direction].join(SIGNAL_OPTIONS_CANDIDATE_MATCH_KEY_DELIMITER);
+}
+
+function signalOptionsPositionMatchKey(position: SignalOptionsPosition) {
+  return signalOptionsCandidateMatchKey({
+    symbol: position.symbol,
+    direction: position.direction,
+  });
+}
+
 function signalOptionsPositionMatchesCandidate(input: {
   position: SignalOptionsPosition;
   candidate: Record<string, unknown>;
@@ -7779,6 +8164,76 @@ function signalOptionsPositionMatchesCandidate(input: {
     positionSymbol === candidateSymbol &&
     input.position.direction === candidateDirection
   );
+}
+
+function isSignalOptionsSeenSignalStoreCandidate(
+  event: ExecutionEvent,
+): boolean {
+  if (event.eventType !== SIGNAL_OPTIONS_SKIPPED_EVENT) return false;
+  if (isSignalOptionsReplayEvent(event)) return false;
+  const payload = asRecord(event.payload);
+  const reason = compactString(payload.reason ?? payload.skipReason);
+  return Boolean(
+    reason && SIGNAL_OPTIONS_SEEN_SIGNAL_SKIP_REASONS.has(reason),
+  );
+}
+
+function signalOptionsSeenSignalReasonAllowlistSql() {
+  const reasonExpr = sql`coalesce(${executionEventsTable.payload}->>'reason', ${executionEventsTable.payload}->>'skipReason')`;
+  return sql.join(
+    SIGNAL_OPTIONS_SEEN_SIGNAL_SKIP_REASON_VALUES.map(
+      (reason) => sql`${reasonExpr} = ${reason}`,
+    ),
+    sql` or `,
+  );
+}
+
+function signalOptionsSeenSignalStoreCandidateSql() {
+  return sql`(${executionEventsTable.eventType} = ${SIGNAL_OPTIONS_SKIPPED_EVENT} and (${signalOptionsSeenSignalReasonAllowlistSql()}))`;
+}
+
+function extractSignalOptionsSeenSignalRow(
+  event: ExecutionEvent,
+): SignalOptionsSeenSignalWriteRow | null {
+  if (!isSignalOptionsSeenSignalStoreCandidate(event)) {
+    return null;
+  }
+  if (!event.deploymentId) {
+    return null;
+  }
+  const payload = asRecord(event.payload);
+  const reason = compactString(payload.reason ?? payload.skipReason);
+  const signalKey = compactString(payload.signalKey);
+  if (!reason || !signalKey) {
+    return null;
+  }
+  const candidate = asRecord(payload.candidate);
+  const symbol = normalizeSymbol(
+    String(candidate.symbol ?? event.symbol ?? ""),
+  ).toUpperCase();
+  const chainDebug = asRecord(payload.chainDebug);
+  const expirationsDebug = asRecord(payload.expirationsDebug);
+  return {
+    deploymentId: event.deploymentId,
+    providerAccountId: event.providerAccountId ?? null,
+    eventId: event.id,
+    symbol: symbol || event.symbol || null,
+    signalKey,
+    reason,
+    candidateMatchKey: signalOptionsCandidateMatchKey({
+      symbol: candidate.symbol ?? event.symbol,
+      direction: candidate.direction,
+    }),
+    occurredAt: dateOrNull(event.occurredAt) ?? new Date(),
+    payloadRetryable: payload.retryable === true,
+    preflight: payload.preflight === true,
+    hasSelectedContract: skipPayloadHasSelectedContract(payload),
+    hasSignalMatrixMtf: skipPayloadHasSignalMatrixMtf(payload),
+    premiumCap: optionalFiniteNumber(payload.premiumCap),
+    available: optionalFiniteNumber(payload.available),
+    chainDebugReason: compactString(chainDebug.reason),
+    expirationsDebugReason: compactString(expirationsDebug.reason),
+  };
 }
 
 function skipPayloadHasSelectedContract(payload: Record<string, unknown>) {
@@ -7827,23 +8282,40 @@ function skipEventDisabledByProfile(
   return Boolean(reason && skipReasonDisabledByProfile(reason, profile));
 }
 
+type SignalOptionsSeenSignalRetryOptions = {
+  activePositions?: SignalOptionsPosition[];
+  currentPremiumCap?: number | null;
+  dailyLossHaltEnabled?: boolean;
+  premiumBudgetEnabled?: boolean;
+  tradingAllowanceEnabled?: boolean;
+  currentTradingAllowanceAvailable?: number | null;
+  forceRetryMarketData?: boolean;
+  gatewayReady?: boolean;
+  gatewayReadinessBlockEnabled?: boolean;
+  isShadow?: boolean;
+  contractResolutionBackoffEnabled?: boolean;
+  profileUpdatedAt?: Date | null;
+  now?: Date;
+};
+
+type SignalOptionsSeenSignalRetryRow = {
+  signalKey?: string | null;
+  reason: string;
+  occurredAt: Date | string;
+  payloadRetryable?: boolean | null;
+  preflight?: boolean | null;
+  hasSelectedContract?: boolean | null;
+  hasSignalMatrixMtf?: boolean | null;
+  premiumCap?: number | null;
+  available?: number | null;
+  candidateMatchKey?: string | null;
+  chainDebugReason?: string | null;
+  expirationsDebugReason?: string | null;
+};
+
 function isRetryableSignalOptionsSkip(
   event: ExecutionEvent,
-  options?: {
-    activePositions?: SignalOptionsPosition[];
-    currentPremiumCap?: number | null;
-    dailyLossHaltEnabled?: boolean;
-    premiumBudgetEnabled?: boolean;
-    tradingAllowanceEnabled?: boolean;
-    currentTradingAllowanceAvailable?: number | null;
-    forceRetryMarketData?: boolean;
-    gatewayReady?: boolean;
-    gatewayReadinessBlockEnabled?: boolean;
-    isShadow?: boolean;
-    contractResolutionBackoffEnabled?: boolean;
-    profileUpdatedAt?: Date | null;
-    now?: Date;
-  },
+  options?: SignalOptionsSeenSignalRetryOptions,
 ) {
   if (event.eventType !== SIGNAL_OPTIONS_SKIPPED_EVENT) {
     return false;
@@ -8001,23 +8473,256 @@ function isRetryableSignalOptionsSkip(
   });
 }
 
+function isRetryableSignalOptionsSkipFromRow(
+  row: SignalOptionsSeenSignalRetryRow,
+  options?: SignalOptionsSeenSignalRetryOptions,
+) {
+  const reason = compactString(row.reason);
+  if (!reason) {
+    return false;
+  }
+  const occurredAt = dateOrNull(row.occurredAt);
+  if (
+    occurredAt &&
+    options?.profileUpdatedAt &&
+    occurredAt.getTime() <= options.profileUpdatedAt.getTime()
+  ) {
+    return true;
+  }
+
+  if (
+    reason === "daily_loss_halt_active" &&
+    options?.dailyLossHaltEnabled === false
+  ) {
+    return true;
+  }
+
+  if (
+    row.payloadRetryable === true &&
+    FORCE_RETRYABLE_SIGNAL_OPTION_SKIP_REASONS.has(reason)
+  ) {
+    return true;
+  }
+
+  if (row.preflight === true && GATEWAY_READINESS_SKIP_REASONS.has(reason)) {
+    const shadowBypass =
+      options?.isShadow === true &&
+      reason !== SIGNAL_OPTIONS_MARKET_SESSION_QUIET_REASON;
+    return (
+      shadowBypass ||
+      options?.gatewayReadinessBlockEnabled === false ||
+      options?.gatewayReady === true
+    );
+  }
+
+  if (EXECUTION_BLOCKER_SKIP_REASONS.has(reason)) {
+    return row.hasSelectedContract !== true;
+  }
+
+  if (GATEWAY_READINESS_SKIP_REASONS.has(reason)) {
+    const shadowBypass =
+      options?.isShadow === true &&
+      reason !== SIGNAL_OPTIONS_MARKET_SESSION_QUIET_REASON;
+    return (
+      shadowBypass ||
+      options?.gatewayReadinessBlockEnabled === false ||
+      options?.gatewayReady === true ||
+      row.hasSelectedContract !== true
+    );
+  }
+
+  if (ENTRY_GATE_SKIP_REASONS.has(reason)) {
+    return row.hasSelectedContract !== true;
+  }
+
+  if (reason === "premium_budget_too_small") {
+    if (options?.premiumBudgetEnabled === false) {
+      return true;
+    }
+    const previousPremiumCap = optionalFiniteNumber(row.premiumCap);
+    const currentPremiumCap = optionalFiniteNumber(options?.currentPremiumCap);
+    return (
+      currentPremiumCap != null &&
+      (previousPremiumCap == null || previousPremiumCap < currentPremiumCap)
+    );
+  }
+
+  if (reason === "trading_allowance_exhausted") {
+    if (options?.tradingAllowanceEnabled === false) {
+      return true;
+    }
+    const previousAvailable = optionalFiniteNumber(row.available);
+    const currentAvailable = optionalFiniteNumber(
+      options?.currentTradingAllowanceAvailable,
+    );
+    return (
+      currentAvailable != null &&
+      (previousAvailable == null || currentAvailable > previousAvailable)
+    );
+  }
+
+  if (reason === "same_direction_position_open") {
+    if (!options?.activePositions) {
+      return false;
+    }
+    return !options.activePositions.some((position) => {
+      const positionKey = signalOptionsPositionMatchKey(position);
+      return Boolean(
+        positionKey &&
+          row.candidateMatchKey &&
+          positionKey === row.candidateMatchKey,
+      );
+    });
+  }
+
+  if (
+    options?.forceRetryMarketData &&
+    FORCE_RETRYABLE_SIGNAL_OPTION_SKIP_REASONS.has(reason)
+  ) {
+    return true;
+  }
+
+  if (
+    options?.forceRetryMarketData &&
+    (reason === "mtf_not_aligned" ||
+      reason === "greek_selector_no_candidates") &&
+    row.hasSignalMatrixMtf !== true
+  ) {
+    return true;
+  }
+
+  if (reason === "candidate_resolution_timeout") {
+    return true;
+  }
+
+  if (
+    options?.contractResolutionBackoffEnabled === false &&
+    (reason === "option_chain_backoff" ||
+      reason === "option_expiration_backoff")
+  ) {
+    return true;
+  }
+
+  if (!RETRYABLE_SIGNAL_OPTION_SKIP_REASONS.has(reason)) {
+    return false;
+  }
+
+  return [row.chainDebugReason, row.expirationsDebugReason].some(
+    (debugReason) => {
+      const value = compactString(debugReason);
+      return value ? RETRYABLE_OPTION_DEBUG_REASONS.has(value) : false;
+    },
+  );
+}
+
+function seenSignalKeysFromStoreRows(
+  rows: SignalOptionsSeenSignalRetryRow[],
+  options?: SignalOptionsSeenSignalRetryOptions,
+) {
+  return new Set(
+    rows
+      .filter((row) => !isRetryableSignalOptionsSkipFromRow(row, options))
+      .map((row) => row.signalKey)
+      .filter(
+        (signalKey): signalKey is string => typeof signalKey === "string",
+      ),
+  );
+}
+
+async function listSignalOptionsSeenSignalRows(
+  deploymentId: string,
+  limit = 10_000,
+) {
+  const boundedLimit = Math.min(Math.max(limit, 1), 10_000);
+  const result = await db.execute(sql<SignalOptionsSeenSignalRetryRow>`
+    select
+      signal_key as "signalKey",
+      reason,
+      occurred_at as "occurredAt",
+      payload_retryable as "payloadRetryable",
+      preflight,
+      has_selected_contract as "hasSelectedContract",
+      has_signal_matrix_mtf as "hasSignalMatrixMtf",
+      premium_cap as "premiumCap",
+      available,
+      candidate_match_key as "candidateMatchKey",
+      chain_debug_reason as "chainDebugReason",
+      expirations_debug_reason as "expirationsDebugReason"
+    from signal_options_seen_signals
+    where deployment_id = ${deploymentId}
+    order by occurred_at desc
+    limit ${boundedLimit}
+  `);
+  return (result.rows ?? []) as SignalOptionsSeenSignalRetryRow[];
+}
+
+async function ensureSignalOptionsSeenSignalStoreWarm(deploymentId: string) {
+  if (signalOptionsSeenSignalStoreWarmDeployments.has(deploymentId)) {
+    return;
+  }
+  signalOptionsSeenSignalStoreWarmDeployments.add(deploymentId);
+  try {
+    const tail = await listDeploymentEntryCandidateSkipEvents(
+      deploymentId,
+      10_000,
+    );
+    for (const event of tail) {
+      await upsertSignalOptionsSeenSignal(event);
+    }
+  } catch (error) {
+    signalOptionsSeenSignalStoreWarmDeployments.delete(deploymentId);
+    throw error;
+  }
+}
+
+async function computeSignalOptionsSeenSignals(input: {
+  deploymentId: string;
+  events: ExecutionEvent[];
+  options?: SignalOptionsSeenSignalRetryOptions;
+}) {
+  const seen = seenSignalKeys(
+    input.events.filter((event) => !isSignalOptionsSeenSignalStoreCandidate(event)),
+    input.options,
+  );
+  try {
+    await ensureSignalOptionsSeenSignalStoreWarm(input.deploymentId);
+  } catch (error) {
+    logger.warn?.(
+      { err: error, deploymentId: input.deploymentId },
+      "Failed to warm signal-options seen-signal sidecar",
+    );
+  }
+  try {
+    const rows = await listSignalOptionsSeenSignalRows(input.deploymentId);
+    for (const signalKey of seenSignalKeysFromStoreRows(rows, input.options)) {
+      seen.add(signalKey);
+    }
+  } catch (error) {
+    logger.warn?.(
+      { err: error, deploymentId: input.deploymentId },
+      "Failed to read signal-options seen-signal sidecar",
+    );
+  }
+  try {
+    const tail = await listDeploymentEntryCandidateSkipEvents(
+      input.deploymentId,
+      SIGNAL_OPTIONS_STATE_EVENT_LIMIT,
+    );
+    for (const signalKey of seenSignalKeys(tail, input.options)) {
+      seen.add(signalKey);
+    }
+  } catch (error) {
+    logger.warn?.(
+      { err: error, deploymentId: input.deploymentId },
+      "Failed to read signal-options entry-skip cold-window tail",
+    );
+  }
+  return seen;
+}
+
 function seenSignalKeys(
   events: ExecutionEvent[],
-  options?: {
-    activePositions?: SignalOptionsPosition[];
-    currentPremiumCap?: number | null;
-    dailyLossHaltEnabled?: boolean;
-    premiumBudgetEnabled?: boolean;
-    tradingAllowanceEnabled?: boolean;
-    currentTradingAllowanceAvailable?: number | null;
-    forceRetryMarketData?: boolean;
-    gatewayReady?: boolean;
-    gatewayReadinessBlockEnabled?: boolean;
-    isShadow?: boolean;
-    contractResolutionBackoffEnabled?: boolean;
-    profileUpdatedAt?: Date | null;
-    now?: Date;
-  },
+  options?: SignalOptionsSeenSignalRetryOptions,
 ) {
   return new Set(
     runtimeSignalOptionsEvents(events)
@@ -13332,6 +14037,51 @@ async function resolveSignalOptionsCandidateContract(input: {
       }
     }
   }
+  // Money-path guardrail: re-enforce the selector's hard tradeability floor against
+  // the FINAL quote (post live re-quote / shadow fallback). Selection-time scoring
+  // ran on an earlier snapshot, and the fallback_legacy path never scored at all.
+  const finalDeltaGate = signalOptionsFinalQuoteDeltaGate({
+    greekSelectorGoverned: Boolean(greekSelection),
+    entryGreeks,
+    strike: finiteNumber(asRecord(selectedContract).strike),
+    expirationDate: dateOrNull(asRecord(selectedContract).expirationDate),
+    fillPrice: finiteNumber(orderPlan?.simulatedFillPrice),
+    spot: finiteNumber(input.candidate.signalPrice),
+    right: input.candidate.optionRight,
+  });
+  if (!finalDeltaGate.ok) {
+    return {
+      selectedExpiration,
+      selectedQuote: null,
+      selectedContract: null,
+      quote: null,
+      orderPlan: null,
+      liquidity: null,
+      entryGreeks: null,
+      contractSelection,
+      contractSelectionPayload,
+      chainDebug: chain.debug,
+      chainAttempts,
+      reason: finalDeltaGate.reason,
+      detail: {
+        selectedExpiration: selectedExpirationPayload,
+        chainDebug: chain.debug,
+        chainAttempts,
+        retryable: true,
+        finalDeltaGate: {
+          delta: finalDeltaGate.delta,
+          deltaSource: finalDeltaGate.deltaSource,
+          floor: finalDeltaGate.floor,
+          fillQuoteSource,
+        },
+        contractSelection: contractSelectionPayload,
+        ...(liveQuoteDemandPayload
+          ? { liveQuoteDemand: liveQuoteDemandPayload }
+          : {}),
+      },
+      retryable: true,
+    };
+  }
   const quote = quoteToPayload(selectedQuote);
   return {
     selectedExpiration,
@@ -18361,7 +19111,7 @@ async function runSignalOptionsShadowScanUnlocked(input: {
   let initialDerivedPositions: SignalOptionsPosition[];
   if (useTallyAuthority) {
     try {
-      const projected = await readSignalOptionsProjectedDecisionState({
+      const projected = await readSignalOptionsAuthoritativeDecisionState({
         deploymentId: deployment.id,
         configSignature: projectionSignature,
       });
@@ -18372,7 +19122,7 @@ async function runSignalOptionsShadowScanUnlocked(input: {
         { err: error, deploymentId: deployment.id },
         "signal-options tally authority initial read failed; falling back to ledger",
       );
-      const initialEvents = await listDeploymentEvents(
+      const initialEvents = await listDeploymentEventsExcludingFirehose(
         deployment.id,
         SIGNAL_OPTIONS_STATE_EVENT_LIMIT,
       );
@@ -18380,7 +19130,7 @@ async function runSignalOptionsShadowScanUnlocked(input: {
       initialDerivedPositions = deriveActivePositions(initialSignalEvents);
     }
   } else {
-    const initialEvents = await listDeploymentEvents(
+    const initialEvents = await listDeploymentEventsExcludingFirehose(
       deployment.id,
       SIGNAL_OPTIONS_STATE_EVENT_LIMIT,
     );
@@ -18421,20 +19171,24 @@ async function runSignalOptionsShadowScanUnlocked(input: {
   });
   const initialProfileUpdatedAt =
     latestSignalOptionsControlUpdatedAt(initialSignalEvents);
-  const initialSeenSignals = seenSignalKeys(initialSignalEvents, {
-    activePositions: initialPositions,
-    currentPremiumCap: profile.riskCaps.maxPremiumPerEntry,
-    dailyLossHaltEnabled: profile.riskHaltControls.dailyLossHaltEnabled,
-    premiumBudgetEnabled: profile.riskHaltControls.premiumBudgetEnabled,
-    forceRetryMarketData: input.forceEvaluate === true,
-    gatewayReady: readiness.ready,
-    isShadow: isShadowDeployment,
-    gatewayReadinessBlockEnabled:
-      profile.infrastructureHaltControls.gatewayReadinessBlockEnabled,
-    contractResolutionBackoffEnabled:
-      profile.infrastructureHaltControls.contractResolutionBackoffEnabled,
-    now: signalScanCompletedAt,
-    profileUpdatedAt: initialProfileUpdatedAt,
+  const initialSeenSignals = await computeSignalOptionsSeenSignals({
+    deploymentId: deployment.id,
+    events: initialSignalEvents,
+    options: {
+      activePositions: initialPositions,
+      currentPremiumCap: profile.riskCaps.maxPremiumPerEntry,
+      dailyLossHaltEnabled: profile.riskHaltControls.dailyLossHaltEnabled,
+      premiumBudgetEnabled: profile.riskHaltControls.premiumBudgetEnabled,
+      forceRetryMarketData: input.forceEvaluate === true,
+      gatewayReady: readiness.ready,
+      isShadow: isShadowDeployment,
+      gatewayReadinessBlockEnabled:
+        profile.infrastructureHaltControls.gatewayReadinessBlockEnabled,
+      contractResolutionBackoffEnabled:
+        profile.infrastructureHaltControls.contractResolutionBackoffEnabled,
+      now: signalScanCompletedAt,
+      profileUpdatedAt: initialProfileUpdatedAt,
+    },
   });
   const resumingSignalWork =
     source === "worker" &&
@@ -18624,7 +19378,7 @@ async function runSignalOptionsShadowScanUnlocked(input: {
   let authoritativeProjection: SignalOptionsPositionProjection | null = null;
   if (useTallyAuthority) {
     try {
-      const projected = await readSignalOptionsProjectedDecisionState({
+      const projected = await readSignalOptionsAuthoritativeDecisionState({
         deploymentId: deployment.id,
         configSignature: projectionSignature,
       });
@@ -18641,7 +19395,7 @@ async function runSignalOptionsShadowScanUnlocked(input: {
         { err: error, deploymentId: deployment.id },
         "signal-options tally authority post-mark read failed; falling back to ledger",
       );
-      const eventsAfterMarks = await listDeploymentEvents(
+      const eventsAfterMarks = await listDeploymentEventsExcludingFirehose(
         deployment.id,
         SIGNAL_OPTIONS_STATE_EVENT_LIMIT,
       );
@@ -18654,7 +19408,7 @@ async function runSignalOptionsShadowScanUnlocked(input: {
         });
     }
   } else {
-    const eventsAfterMarks = await listDeploymentEvents(
+    const eventsAfterMarks = await listDeploymentEventsExcludingFirehose(
       deployment.id,
       SIGNAL_OPTIONS_STATE_EVENT_LIMIT,
     );
@@ -18776,10 +19530,11 @@ async function runSignalOptionsShadowScanUnlocked(input: {
     now: signalScanCompletedAt,
     profileUpdatedAt,
   };
-  const seenSignals = seenSignalKeys(
-    eventsAfterMarksRuntime,
-    seenSignalsOptions,
-  );
+  const seenSignals = await computeSignalOptionsSeenSignals({
+    deploymentId: deployment.id,
+    events: eventsAfterMarksRuntime,
+    options: seenSignalsOptions,
+  });
   if (tallyMode === "shadow") {
     try {
       const bufferSkips = listSignalOptionsRecentSkips(deployment.id);
@@ -19220,6 +19975,9 @@ export const __signalOptionsAutomationInternalsForTests = {
   signalOptionsPositionsDrift,
   getSignalOptionsTallyDriftStats,
   signalOptionsPositionProjections,
+  shouldVerifySignalOptionsProjection,
+  readSignalOptionsAuthoritativeDecisionState,
+  signalOptionsPositionActionSignature,
   signalOptionsRecentSkips,
   signalOptionsTallyAuthoritative,
   recoverActivePositionsFromShadowLedgerRows,
@@ -19268,6 +20026,14 @@ export const __signalOptionsAutomationInternalsForTests = {
   optionChainBackoffFromAttempts,
   signalOptionsNoContractResolutionReason,
   seenSignalKeys,
+  signalOptionsCandidateMatchKey,
+  signalOptionsPositionMatchKey,
+  extractSignalOptionsSeenSignalRow,
+  isRetryableSignalOptionsSkip,
+  isRetryableSignalOptionsSkipFromRow,
+  seenSignalKeysFromStoreRows,
+  isSignalOptionsSeenSignalStoreCandidate,
+  SIGNAL_OPTIONS_SEEN_SIGNAL_SKIP_REASON_VALUES,
   shouldRecordPositionMarkSkip,
   createSignalOptionsActionWorkBudget,
   resolveSignalOptionsMonitorBatch,

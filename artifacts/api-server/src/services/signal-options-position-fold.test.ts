@@ -564,3 +564,68 @@ test("projection retained window matches full daily P&L and control update time"
       ?.getTime(),
   );
 });
+
+// GOLDEN SNAPSHOT — implementation-independent oracle. deriveActivePositions is
+// now itself implemented via the fold, so fold-vs-derive comparisons above pin
+// only the incremental machinery (watermarks, batching, dedup) — not the
+// per-event semantics. This literal snapshot pins the semantics: it was captured
+// while the fold was verified byte-identical to the original deriveActivePositions
+// (plan step 1), and any change to entry/mark/exit folding, initial-stop
+// derivation, premiumAtRisk, or defaulting breaks it loudly. Update it only for
+// an INTENTIONAL semantic change, in its own reviewed commit.
+const GOLDEN_ACTIVE_POSITIONS = [
+  {
+    id: "p-A2",
+    candidateId: "c-A2",
+    symbol: "AAPL",
+    direction: "buy",
+    optionRight: "call",
+    timeframe: "15m",
+    signalAt: "2033-05-18T03:40:20.000Z",
+    openedAt: "2033-05-18T03:40:20.000Z",
+    entryPrice: 2.1,
+    quantity: 3,
+    peakPrice: 2.4,
+    stopPrice: 1.9,
+    premiumAtRisk: 630,
+    selectedContract: {},
+    lastMarkPrice: 2.3,
+    lastMarkedAt: "2033-05-18T03:41:20.000Z",
+    lastStop: null,
+    lastWireTrail: null,
+    signalQuality: null,
+    entryGreeks: null,
+    greekBaselineSource: null,
+  },
+  {
+    id: "p-M2",
+    candidateId: "c-M2",
+    symbol: "MSFT",
+    direction: "buy",
+    optionRight: "call",
+    timeframe: "15m",
+    signalAt: "2033-05-18T03:42:20.000Z",
+    openedAt: "2033-05-18T03:42:20.000Z",
+    entryPrice: 3.5,
+    quantity: 1,
+    peakPrice: 3.5,
+    stopPrice: 1.75,
+    premiumAtRisk: 350,
+    selectedContract: {},
+    lastMarkPrice: null,
+    lastMarkedAt: null,
+    lastStop: null,
+    lastWireTrail: null,
+    signalQuality: null,
+    entryGreeks: null,
+    greekBaselineSource: null,
+  },
+];
+
+test("golden: fold semantics match the frozen snapshot (independent of derive)", () => {
+  const positions = bySymbol(internals.deriveActivePositions(corpus));
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(positions)),
+    GOLDEN_ACTIVE_POSITIONS,
+  );
+});

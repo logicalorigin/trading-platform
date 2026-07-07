@@ -2,6 +2,7 @@ import { createInsertSchema } from "drizzle-zod";
 import {
   boolean,
   date,
+  doublePrecision,
   index,
   integer,
   jsonb,
@@ -178,6 +179,51 @@ export const automationDiagnosticsTable = pgTable(
   ],
 );
 
+export const signalOptionsSeenSignalsTable = pgTable(
+  "signal_options_seen_signals",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    deploymentId: uuid("deployment_id")
+      .notNull()
+      .references(() => algoDeploymentsTable.id),
+    providerAccountId: varchar("provider_account_id", { length: 128 }),
+    eventId: uuid("event_id"),
+    symbol: varchar("symbol", { length: 64 }),
+    signalKey: text("signal_key").notNull(),
+    reason: varchar("reason", { length: 128 }).notNull(),
+    candidateMatchKey: varchar("candidate_match_key", { length: 160 }),
+    occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull(),
+    payloadRetryable: boolean("payload_retryable").notNull().default(false),
+    preflight: boolean("preflight").notNull().default(false),
+    hasSelectedContract: boolean("has_selected_contract")
+      .notNull()
+      .default(false),
+    hasSignalMatrixMtf: boolean("has_signal_matrix_mtf")
+      .notNull()
+      .default(false),
+    premiumCap: doublePrecision("premium_cap"),
+    available: doublePrecision("available"),
+    chainDebugReason: varchar("chain_debug_reason", { length: 128 }),
+    expirationsDebugReason: varchar("expirations_debug_reason", { length: 128 }),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex("signal_options_seen_signals_deployment_signal_key_idx").on(
+      table.deploymentId,
+      table.signalKey,
+    ),
+    index("signal_options_seen_signals_deployment_occurred_idx").on(
+      table.deploymentId,
+      table.occurredAt.desc(),
+    ),
+    index("signal_options_seen_signals_event_idx").on(table.eventId),
+    index("signal_options_seen_signals_deployment_reason_idx").on(
+      table.deploymentId,
+      table.reason,
+    ),
+  ],
+);
+
 // Materialized signal-quality KPI calibration response. The GET route reads
 // this cheap snapshot; explicit refresh/background work owns the expensive
 // full-universe bar-cache sweep.
@@ -227,5 +273,7 @@ export type AlgoDeployment = typeof algoDeploymentsTable.$inferSelect;
 export type InsertAlgoDeployment = typeof algoDeploymentsTable.$inferInsert;
 export type ExecutionEvent = typeof executionEventsTable.$inferSelect;
 export type AutomationDiagnostic = typeof automationDiagnosticsTable.$inferSelect;
+export type SignalOptionsSeenSignal =
+  typeof signalOptionsSeenSignalsTable.$inferSelect;
 export type SignalQualityKpiSnapshot =
   typeof signalQualityKpiSnapshotsTable.$inferSelect;
