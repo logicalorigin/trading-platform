@@ -406,6 +406,161 @@ test("SnapTrade account sync keeps identical upstream ids isolated per app user"
   );
 });
 
+test("SnapTrade account sync classifies new accounts and preserves manual inclusion on re-sync", async () => {
+  await withBootstrapToken(async () =>
+    withTestDb(async ({ db }) => {
+      const auth = await createUser("snaptrade-categories@example.com");
+      const snapTradeUserId = deriveSnapTradeUserId(auth.user.id);
+      await recordSnapTradeUserCredential({
+        appUserId: auth.user.id,
+        snapTradeUserId,
+        userSecret: "snaptrade-user-secret",
+        encryptionKey: TEST_ENCRYPTION_KEY,
+      });
+
+      let accountName = "Webull Individual Cash";
+      const fetchImpl: typeof fetch = async (url) => {
+        const requestUrl = new URL(String(url));
+        if (requestUrl.pathname === "/api/v1/authorizations") {
+          return new Response(
+            JSON.stringify([
+              {
+                id: "auth-webull-1",
+                type: "trade",
+                disabled: false,
+                brokerage: {
+                  slug: "WEBULL",
+                  name: "Webull",
+                  allows_trading: true,
+                },
+              },
+            ]),
+            { status: 200, headers: { "content-type": "application/json" } },
+          );
+        }
+
+        if (requestUrl.pathname === "/api/v1/accounts") {
+          return new Response(
+            JSON.stringify([
+              {
+                id: "acct-webull-equity",
+                brokerage_authorization: "auth-webull-1",
+                name: accountName,
+                number: "11112222",
+                institution_name: "Webull",
+                balance: { currency: { code: "USD" } },
+                status: "open",
+              },
+              {
+                id: "acct-webull-futures",
+                brokerage_authorization: "auth-webull-1",
+                name: "Webull Futures",
+                number: "33334444",
+                institution_name: "Webull",
+                balance: { currency: { code: "USD" } },
+                status: "open",
+              },
+              {
+                id: "acct-webull-events",
+                brokerage_authorization: "auth-webull-1",
+                name: "Webull Events Cash",
+                number: "55556666",
+                institution_name: "Webull",
+                balance: { currency: { code: "USD" } },
+                status: "open",
+              },
+            ]),
+            { status: 200, headers: { "content-type": "application/json" } },
+          );
+        }
+
+        return new Response(JSON.stringify({ message: "unexpected path" }), {
+          status: 404,
+          headers: { "content-type": "application/json" },
+        });
+      };
+
+      const inserted = await syncSnapTradeBrokerageConnections({
+        appUserId: auth.user.id,
+        env: {
+          SNAPTRADE_CLIENTID: "client-123",
+          SNAPTRADE_API_KEY: "consumer-secret",
+        },
+        encryptionKey: TEST_ENCRYPTION_KEY,
+        now: new Date("2026-07-01T21:00:00.000Z"),
+        fetchImpl,
+      });
+
+      assert.deepEqual(
+        inserted.accounts.map((account) => ({
+          snapTradeAccountId: account.snapTradeAccountId,
+          accountType: account.accountType,
+          includedInTrading: account.includedInTrading,
+        })),
+        [
+          {
+            snapTradeAccountId: "acct-webull-equity",
+            accountType: "equity",
+            includedInTrading: true,
+          },
+          {
+            snapTradeAccountId: "acct-webull-futures",
+            accountType: "futures",
+            includedInTrading: false,
+          },
+          {
+            snapTradeAccountId: "acct-webull-events",
+            accountType: "prediction",
+            includedInTrading: false,
+          },
+        ],
+      );
+
+      const equityAccount = inserted.accounts.find(
+        (account) => account.snapTradeAccountId === "acct-webull-equity",
+      );
+      assert.ok(equityAccount);
+      await db
+        .update(brokerAccountsTable)
+        .set({ includedInTrading: false })
+        .where(eq(brokerAccountsTable.id, equityAccount.id));
+
+      accountName = "Webull Crypto Cash";
+      const resynced = await syncSnapTradeBrokerageConnections({
+        appUserId: auth.user.id,
+        env: {
+          SNAPTRADE_CLIENTID: "client-123",
+          SNAPTRADE_API_KEY: "consumer-secret",
+        },
+        encryptionKey: TEST_ENCRYPTION_KEY,
+        now: new Date("2026-07-01T21:05:00.000Z"),
+        fetchImpl,
+      });
+      const renamed = resynced.accounts.find(
+        (account) => account.snapTradeAccountId === "acct-webull-equity",
+      );
+      assert.equal(renamed?.displayName, "Webull Crypto Cash");
+      assert.equal(renamed?.accountType, "crypto");
+      assert.equal(renamed?.includedInTrading, false);
+
+      const [storedRenamed] = await db
+        .select({
+          displayName: brokerAccountsTable.displayName,
+          accountType: brokerAccountsTable.accountType,
+          includedInTrading: brokerAccountsTable.includedInTrading,
+        })
+        .from(brokerAccountsTable)
+        .where(eq(brokerAccountsTable.id, equityAccount.id))
+        .limit(1);
+      assert.deepEqual(storedRenamed, {
+        displayName: "Webull Crypto Cash",
+        accountType: "crypto",
+        includedInTrading: false,
+      });
+    }),
+  );
+});
+
 test("SnapTrade account sync blocks execution for disabled and non-trading connections", async () => {
   await withBootstrapToken(async () =>
     withTestDb(async () => {

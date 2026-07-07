@@ -49,6 +49,7 @@ import type {
   BacktestSweepDetail,
   BarsResponse,
   BenchmarkFlowScannerBody,
+  BrokerAccountInclusionResponse,
   BrokerConnectionsResponse,
   CancelAccountOrderRequest,
   CancelOrderRequest,
@@ -115,6 +116,7 @@ import type {
   GetSnapTradeAccountHistoryResponse,
   GetSnapTradeAccountPortfolioResponse,
   GetSnapTradeRecentOrdersResponse,
+  GetTaxStateRulesStatusParams,
   GetUniverseLogosParams,
   GexDashboardResponse,
   GexSnapshotsResponse,
@@ -197,6 +199,7 @@ import type {
   SearchUniverseTickersParams,
   SessionInfo,
   SetAlgoDeploymentModeRequest,
+  SetBrokerAccountInclusionBody,
   SignalMonitorBreadthHistoryResponse,
   SignalMonitorEventsResponse,
   SignalMonitorProfile,
@@ -850,19 +853,19 @@ export const useUpdateUserPreferences = <TError = ErrorType<unknown>,
     }
 
 /**
- * @summary Get IBKR lane architecture settings
+ * @summary Get the current user's tax profile
  */
-export const getGetIbkrLaneArchitectureUrl = () => {
+export const getGetTaxProfileUrl = () => {
 
 
 
 
-  return `/api/settings/ibkr-lanes`
+  return `/api/tax/profile`
 }
 
-export const getIbkrLaneArchitecture = async ( options?: RequestInit): Promise<JsonObject> => {
+export const getTaxProfile = async ( options?: RequestInit): Promise<JsonObject> => {
 
-  return customFetch<JsonObject>(getGetIbkrLaneArchitectureUrl(),
+  return customFetch<JsonObject>(getGetTaxProfileUrl(),
   {
     ...options,
     method: 'GET'
@@ -875,45 +878,45 @@ export const getIbkrLaneArchitecture = async ( options?: RequestInit): Promise<J
 
 
 
-export const getGetIbkrLaneArchitectureQueryKey = () => {
+export const getGetTaxProfileQueryKey = () => {
     return [
-    `/api/settings/ibkr-lanes`
+    `/api/tax/profile`
     ] as const;
     }
 
 
-export const getGetIbkrLaneArchitectureQueryOptions = <TData = Awaited<ReturnType<typeof getIbkrLaneArchitecture>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getIbkrLaneArchitecture>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+export const getGetTaxProfileQueryOptions = <TData = Awaited<ReturnType<typeof getTaxProfile>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getTaxProfile>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
 ) => {
 
 const {query: queryOptions, request: requestOptions} = options ?? {};
 
-  const queryKey =  queryOptions?.queryKey ?? getGetIbkrLaneArchitectureQueryKey();
+  const queryKey =  queryOptions?.queryKey ?? getGetTaxProfileQueryKey();
 
 
 
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof getIbkrLaneArchitecture>>> = ({ signal }) => getIbkrLaneArchitecture({ signal, ...requestOptions });
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getTaxProfile>>> = ({ signal }) => getTaxProfile({ signal, ...requestOptions });
 
 
 
 
 
-   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getIbkrLaneArchitecture>>, TError, TData> & { queryKey: QueryKey }
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getTaxProfile>>, TError, TData> & { queryKey: QueryKey }
 }
 
-export type GetIbkrLaneArchitectureQueryResult = NonNullable<Awaited<ReturnType<typeof getIbkrLaneArchitecture>>>
-export type GetIbkrLaneArchitectureQueryError = ErrorType<unknown>
+export type GetTaxProfileQueryResult = NonNullable<Awaited<ReturnType<typeof getTaxProfile>>>
+export type GetTaxProfileQueryError = ErrorType<unknown>
 
 
 /**
- * @summary Get IBKR lane architecture settings
+ * @summary Get the current user's tax profile
  */
 
-export function useGetIbkrLaneArchitecture<TData = Awaited<ReturnType<typeof getIbkrLaneArchitecture>>, TError = ErrorType<unknown>>(
-  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getIbkrLaneArchitecture>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+export function useGetTaxProfile<TData = Awaited<ReturnType<typeof getTaxProfile>>, TError = ErrorType<unknown>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getTaxProfile>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
 
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
 
-  const queryOptions = getGetIbkrLaneArchitectureQueryOptions(options)
+  const queryOptions = getGetTaxProfileQueryOptions(options)
 
   const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
 
@@ -925,19 +928,19 @@ export function useGetIbkrLaneArchitecture<TData = Awaited<ReturnType<typeof get
 
 
 /**
- * @summary Update IBKR lane architecture settings
+ * @summary Update the current user's tax profile
  */
-export const getUpdateIbkrLaneArchitectureUrl = () => {
+export const getUpdateTaxProfileUrl = () => {
 
 
 
 
-  return `/api/settings/ibkr-lanes`
+  return `/api/tax/profile`
 }
 
-export const updateIbkrLaneArchitecture = async (jsonObject?: JsonObject, options?: RequestInit): Promise<JsonObject> => {
+export const updateTaxProfile = async (jsonObject?: JsonObject, options?: RequestInit): Promise<JsonObject> => {
 
-  return customFetch<JsonObject>(getUpdateIbkrLaneArchitectureUrl(),
+  return customFetch<JsonObject>(getUpdateTaxProfileUrl(),
   {
     ...options,
     method: 'PUT',
@@ -950,11 +953,11 @@ export const updateIbkrLaneArchitecture = async (jsonObject?: JsonObject, option
 
 
 
-export const getUpdateIbkrLaneArchitectureMutationOptions = <TError = ErrorType<unknown>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateIbkrLaneArchitecture>>, TError,{data: BodyType<JsonObject>}, TContext>, request?: SecondParameter<typeof customFetch>}
-): UseMutationOptions<Awaited<ReturnType<typeof updateIbkrLaneArchitecture>>, TError,{data: BodyType<JsonObject>}, TContext> => {
+export const getUpdateTaxProfileMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateTaxProfile>>, TError,{data: BodyType<JsonObject>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof updateTaxProfile>>, TError,{data: BodyType<JsonObject>}, TContext> => {
 
-const mutationKey = ['updateIbkrLaneArchitecture'];
+const mutationKey = ['updateTaxProfile'];
 const {mutation: mutationOptions, request: requestOptions} = options ?
       options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
       options
@@ -964,10 +967,10 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 
 
 
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof updateIbkrLaneArchitecture>>, {data: BodyType<JsonObject>}> = (props) => {
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof updateTaxProfile>>, {data: BodyType<JsonObject>}> = (props) => {
           const {data} = props ?? {};
 
-          return  updateIbkrLaneArchitecture(data,requestOptions)
+          return  updateTaxProfile(data,requestOptions)
         }
 
 
@@ -977,38 +980,45 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 
   return  { mutationFn, ...mutationOptions }}
 
-    export type UpdateIbkrLaneArchitectureMutationResult = NonNullable<Awaited<ReturnType<typeof updateIbkrLaneArchitecture>>>
-    export type UpdateIbkrLaneArchitectureMutationBody = BodyType<JsonObject>
-    export type UpdateIbkrLaneArchitectureMutationError = ErrorType<unknown>
+    export type UpdateTaxProfileMutationResult = NonNullable<Awaited<ReturnType<typeof updateTaxProfile>>>
+    export type UpdateTaxProfileMutationBody = BodyType<JsonObject>
+    export type UpdateTaxProfileMutationError = ErrorType<unknown>
 
     /**
- * @summary Update IBKR lane architecture settings
+ * @summary Update the current user's tax profile
  */
-export const useUpdateIbkrLaneArchitecture = <TError = ErrorType<unknown>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateIbkrLaneArchitecture>>, TError,{data: BodyType<JsonObject>}, TContext>, request?: SecondParameter<typeof customFetch>}
+export const useUpdateTaxProfile = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateTaxProfile>>, TError,{data: BodyType<JsonObject>}, TContext>, request?: SecondParameter<typeof customFetch>}
  ): UseMutationResult<
-        Awaited<ReturnType<typeof updateIbkrLaneArchitecture>>,
+        Awaited<ReturnType<typeof updateTaxProfile>>,
         TError,
         {data: BodyType<JsonObject>},
         TContext
       > => {
-      return useMutation(getUpdateIbkrLaneArchitectureMutationOptions(options));
+      return useMutation(getUpdateTaxProfileMutationOptions(options));
     }
 
 /**
- * @summary Get current IBKR line usage
+ * @summary Get state income-tax rule-pack readiness
  */
-export const getGetIbkrLineUsageUrl = () => {
+export const getGetTaxStateRulesStatusUrl = (params?: GetTaxStateRulesStatusParams,) => {
+  const normalizedParams = new URLSearchParams();
 
+  Object.entries(params || {}).forEach(([key, value]) => {
 
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : value.toString())
+    }
+  });
 
+  const stringifiedParams = normalizedParams.toString();
 
-  return `/api/settings/ibkr-line-usage`
+  return stringifiedParams.length > 0 ? `/api/tax/state-rules/status?${stringifiedParams}` : `/api/tax/state-rules/status`
 }
 
-export const getIbkrLineUsage = async ( options?: RequestInit): Promise<JsonObject> => {
+export const getTaxStateRulesStatus = async (params?: GetTaxStateRulesStatusParams, options?: RequestInit): Promise<JsonObject> => {
 
-  return customFetch<JsonObject>(getGetIbkrLineUsageUrl(),
+  return customFetch<JsonObject>(getGetTaxStateRulesStatusUrl(params),
   {
     ...options,
     method: 'GET'
@@ -1021,45 +1031,45 @@ export const getIbkrLineUsage = async ( options?: RequestInit): Promise<JsonObje
 
 
 
-export const getGetIbkrLineUsageQueryKey = () => {
+export const getGetTaxStateRulesStatusQueryKey = (params?: GetTaxStateRulesStatusParams,) => {
     return [
-    `/api/settings/ibkr-line-usage`
+    `/api/tax/state-rules/status`, ...(params ? [params] : [])
     ] as const;
     }
 
 
-export const getGetIbkrLineUsageQueryOptions = <TData = Awaited<ReturnType<typeof getIbkrLineUsage>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getIbkrLineUsage>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+export const getGetTaxStateRulesStatusQueryOptions = <TData = Awaited<ReturnType<typeof getTaxStateRulesStatus>>, TError = ErrorType<unknown>>(params?: GetTaxStateRulesStatusParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getTaxStateRulesStatus>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
 ) => {
 
 const {query: queryOptions, request: requestOptions} = options ?? {};
 
-  const queryKey =  queryOptions?.queryKey ?? getGetIbkrLineUsageQueryKey();
+  const queryKey =  queryOptions?.queryKey ?? getGetTaxStateRulesStatusQueryKey(params);
 
 
 
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof getIbkrLineUsage>>> = ({ signal }) => getIbkrLineUsage({ signal, ...requestOptions });
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getTaxStateRulesStatus>>> = ({ signal }) => getTaxStateRulesStatus(params, { signal, ...requestOptions });
 
 
 
 
 
-   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getIbkrLineUsage>>, TError, TData> & { queryKey: QueryKey }
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getTaxStateRulesStatus>>, TError, TData> & { queryKey: QueryKey }
 }
 
-export type GetIbkrLineUsageQueryResult = NonNullable<Awaited<ReturnType<typeof getIbkrLineUsage>>>
-export type GetIbkrLineUsageQueryError = ErrorType<unknown>
+export type GetTaxStateRulesStatusQueryResult = NonNullable<Awaited<ReturnType<typeof getTaxStateRulesStatus>>>
+export type GetTaxStateRulesStatusQueryError = ErrorType<unknown>
 
 
 /**
- * @summary Get current IBKR line usage
+ * @summary Get state income-tax rule-pack readiness
  */
 
-export function useGetIbkrLineUsage<TData = Awaited<ReturnType<typeof getIbkrLineUsage>>, TError = ErrorType<unknown>>(
-  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getIbkrLineUsage>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+export function useGetTaxStateRulesStatus<TData = Awaited<ReturnType<typeof getTaxStateRulesStatus>>, TError = ErrorType<unknown>>(
+ params?: GetTaxStateRulesStatusParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getTaxStateRulesStatus>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
 
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
 
-  const queryOptions = getGetIbkrLineUsageQueryOptions(options)
+  const queryOptions = getGetTaxStateRulesStatusQueryOptions(params,options)
 
   const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
 
@@ -1071,19 +1081,19 @@ export function useGetIbkrLineUsage<TData = Awaited<ReturnType<typeof getIbkrLin
 
 
 /**
- * @summary Stream IBKR line usage snapshots
+ * @summary Get user-level tax overview
  */
-export const getStreamIbkrLineUsageUrl = () => {
+export const getGetTaxOverviewUrl = () => {
 
 
 
 
-  return `/api/settings/ibkr-line-usage/stream`
+  return `/api/tax/overview`
 }
 
-export const streamIbkrLineUsage = async ( options?: RequestInit): Promise<SseStream> => {
+export const getTaxOverview = async ( options?: RequestInit): Promise<JsonObject> => {
 
-  return customFetch<SseStream>(getStreamIbkrLineUsageUrl(),
+  return customFetch<JsonObject>(getGetTaxOverviewUrl(),
   {
     ...options,
     method: 'GET'
@@ -1096,45 +1106,45 @@ export const streamIbkrLineUsage = async ( options?: RequestInit): Promise<SseSt
 
 
 
-export const getStreamIbkrLineUsageQueryKey = () => {
+export const getGetTaxOverviewQueryKey = () => {
     return [
-    `/api/settings/ibkr-line-usage/stream`
+    `/api/tax/overview`
     ] as const;
     }
 
 
-export const getStreamIbkrLineUsageQueryOptions = <TData = Awaited<ReturnType<typeof streamIbkrLineUsage>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof streamIbkrLineUsage>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+export const getGetTaxOverviewQueryOptions = <TData = Awaited<ReturnType<typeof getTaxOverview>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getTaxOverview>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
 ) => {
 
 const {query: queryOptions, request: requestOptions} = options ?? {};
 
-  const queryKey =  queryOptions?.queryKey ?? getStreamIbkrLineUsageQueryKey();
+  const queryKey =  queryOptions?.queryKey ?? getGetTaxOverviewQueryKey();
 
 
 
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof streamIbkrLineUsage>>> = ({ signal }) => streamIbkrLineUsage({ signal, ...requestOptions });
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getTaxOverview>>> = ({ signal }) => getTaxOverview({ signal, ...requestOptions });
 
 
 
 
 
-   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof streamIbkrLineUsage>>, TError, TData> & { queryKey: QueryKey }
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getTaxOverview>>, TError, TData> & { queryKey: QueryKey }
 }
 
-export type StreamIbkrLineUsageQueryResult = NonNullable<Awaited<ReturnType<typeof streamIbkrLineUsage>>>
-export type StreamIbkrLineUsageQueryError = ErrorType<unknown>
+export type GetTaxOverviewQueryResult = NonNullable<Awaited<ReturnType<typeof getTaxOverview>>>
+export type GetTaxOverviewQueryError = ErrorType<unknown>
 
 
 /**
- * @summary Stream IBKR line usage snapshots
+ * @summary Get user-level tax overview
  */
 
-export function useStreamIbkrLineUsage<TData = Awaited<ReturnType<typeof streamIbkrLineUsage>>, TError = ErrorType<unknown>>(
-  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof streamIbkrLineUsage>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+export function useGetTaxOverview<TData = Awaited<ReturnType<typeof getTaxOverview>>, TError = ErrorType<unknown>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getTaxOverview>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
 
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
 
-  const queryOptions = getStreamIbkrLineUsageQueryOptions(options)
+  const queryOptions = getGetTaxOverviewQueryOptions(options)
 
   const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
 
@@ -1144,6 +1154,294 @@ export function useStreamIbkrLineUsage<TData = Awaited<ReturnType<typeof streamI
 
 
 
+
+/**
+ * @summary Get tax reserve status
+ */
+export const getGetTaxReserveUrl = () => {
+
+
+
+
+  return `/api/tax/reserve`
+}
+
+export const getTaxReserve = async ( options?: RequestInit): Promise<JsonObject> => {
+
+  return customFetch<JsonObject>(getGetTaxReserveUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetTaxReserveQueryKey = () => {
+    return [
+    `/api/tax/reserve`
+    ] as const;
+    }
+
+
+export const getGetTaxReserveQueryOptions = <TData = Awaited<ReturnType<typeof getTaxReserve>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getTaxReserve>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetTaxReserveQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getTaxReserve>>> = ({ signal }) => getTaxReserve({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getTaxReserve>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetTaxReserveQueryResult = NonNullable<Awaited<ReturnType<typeof getTaxReserve>>>
+export type GetTaxReserveQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary Get tax reserve status
+ */
+
+export function useGetTaxReserve<TData = Awaited<ReturnType<typeof getTaxReserve>>, TError = ErrorType<unknown>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getTaxReserve>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetTaxReserveQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+
+
+
+
+/**
+ * @summary Plan a tax reserve target
+ */
+export const getPlanTaxReserveUrl = () => {
+
+
+
+
+  return `/api/tax/reserve/plan`
+}
+
+export const planTaxReserve = async (jsonObject?: JsonObject, options?: RequestInit): Promise<JsonObject> => {
+
+  return customFetch<JsonObject>(getPlanTaxReserveUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      jsonObject,)
+  }
+);}
+
+
+
+
+export const getPlanTaxReserveMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof planTaxReserve>>, TError,{data: BodyType<JsonObject>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof planTaxReserve>>, TError,{data: BodyType<JsonObject>}, TContext> => {
+
+const mutationKey = ['planTaxReserve'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof planTaxReserve>>, {data: BodyType<JsonObject>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  planTaxReserve(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type PlanTaxReserveMutationResult = NonNullable<Awaited<ReturnType<typeof planTaxReserve>>>
+    export type PlanTaxReserveMutationBody = BodyType<JsonObject>
+    export type PlanTaxReserveMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Plan a tax reserve target
+ */
+export const usePlanTaxReserve = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof planTaxReserve>>, TError,{data: BodyType<JsonObject>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof planTaxReserve>>,
+        TError,
+        {data: BodyType<JsonObject>},
+        TContext
+      > => {
+      return useMutation(getPlanTaxReserveMutationOptions(options));
+    }
+
+/**
+ * @summary Preview a tax reserve action
+ */
+export const getPreviewTaxReserveActionUrl = () => {
+
+
+
+
+  return `/api/tax/reserve/actions/preview`
+}
+
+export const previewTaxReserveAction = async (jsonObject?: JsonObject, options?: RequestInit): Promise<JsonObject> => {
+
+  return customFetch<JsonObject>(getPreviewTaxReserveActionUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      jsonObject,)
+  }
+);}
+
+
+
+
+export const getPreviewTaxReserveActionMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof previewTaxReserveAction>>, TError,{data: BodyType<JsonObject>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof previewTaxReserveAction>>, TError,{data: BodyType<JsonObject>}, TContext> => {
+
+const mutationKey = ['previewTaxReserveAction'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof previewTaxReserveAction>>, {data: BodyType<JsonObject>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  previewTaxReserveAction(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type PreviewTaxReserveActionMutationResult = NonNullable<Awaited<ReturnType<typeof previewTaxReserveAction>>>
+    export type PreviewTaxReserveActionMutationBody = BodyType<JsonObject>
+    export type PreviewTaxReserveActionMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Preview a tax reserve action
+ */
+export const usePreviewTaxReserveAction = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof previewTaxReserveAction>>, TError,{data: BodyType<JsonObject>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof previewTaxReserveAction>>,
+        TError,
+        {data: BodyType<JsonObject>},
+        TContext
+      > => {
+      return useMutation(getPreviewTaxReserveActionMutationOptions(options));
+    }
+
+/**
+ * @summary Submit or record a tax reserve action
+ */
+export const getSubmitTaxReserveActionUrl = () => {
+
+
+
+
+  return `/api/tax/reserve/actions/submit`
+}
+
+export const submitTaxReserveAction = async (jsonObject?: JsonObject, options?: RequestInit): Promise<JsonObject> => {
+
+  return customFetch<JsonObject>(getSubmitTaxReserveActionUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      jsonObject,)
+  }
+);}
+
+
+
+
+export const getSubmitTaxReserveActionMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof submitTaxReserveAction>>, TError,{data: BodyType<JsonObject>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof submitTaxReserveAction>>, TError,{data: BodyType<JsonObject>}, TContext> => {
+
+const mutationKey = ['submitTaxReserveAction'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof submitTaxReserveAction>>, {data: BodyType<JsonObject>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  submitTaxReserveAction(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type SubmitTaxReserveActionMutationResult = NonNullable<Awaited<ReturnType<typeof submitTaxReserveAction>>>
+    export type SubmitTaxReserveActionMutationBody = BodyType<JsonObject>
+    export type SubmitTaxReserveActionMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Submit or record a tax reserve action
+ */
+export const useSubmitTaxReserveAction = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof submitTaxReserveAction>>, TError,{data: BodyType<JsonObject>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof submitTaxReserveAction>>,
+        TError,
+        {data: BodyType<JsonObject>},
+        TContext
+      > => {
+      return useMutation(getSubmitTaxReserveActionMutationOptions(options));
+    }
 
 /**
  * Returns read-only bridge, API memory, chart-support, and order-capability diagnostics.
@@ -2556,6 +2854,152 @@ export const useSyncSnapTradeBrokerageConnections = <TError = ErrorType<unknown>
         TContext
       > => {
       return useMutation(getSyncSnapTradeBrokerageConnectionsMutationOptions(options));
+    }
+
+/**
+ * @summary List broker accounts available for trading inclusion management
+ */
+export const getGetBrokerExecutionIncludedAccountsUrl = () => {
+
+
+
+
+  return `/api/broker-execution/included-accounts`
+}
+
+export const getBrokerExecutionIncludedAccounts = async ( options?: RequestInit): Promise<BrokerAccountInclusionResponse> => {
+
+  return customFetch<BrokerAccountInclusionResponse>(getGetBrokerExecutionIncludedAccountsUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetBrokerExecutionIncludedAccountsQueryKey = () => {
+    return [
+    `/api/broker-execution/included-accounts`
+    ] as const;
+    }
+
+
+export const getGetBrokerExecutionIncludedAccountsQueryOptions = <TData = Awaited<ReturnType<typeof getBrokerExecutionIncludedAccounts>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getBrokerExecutionIncludedAccounts>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetBrokerExecutionIncludedAccountsQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getBrokerExecutionIncludedAccounts>>> = ({ signal }) => getBrokerExecutionIncludedAccounts({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getBrokerExecutionIncludedAccounts>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetBrokerExecutionIncludedAccountsQueryResult = NonNullable<Awaited<ReturnType<typeof getBrokerExecutionIncludedAccounts>>>
+export type GetBrokerExecutionIncludedAccountsQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary List broker accounts available for trading inclusion management
+ */
+
+export function useGetBrokerExecutionIncludedAccounts<TData = Awaited<ReturnType<typeof getBrokerExecutionIncludedAccounts>>, TError = ErrorType<unknown>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getBrokerExecutionIncludedAccounts>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetBrokerExecutionIncludedAccountsQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+
+
+
+
+/**
+ * @summary Replace the broker accounts included in trading surfaces
+ */
+export const getSetBrokerExecutionIncludedAccountsUrl = () => {
+
+
+
+
+  return `/api/broker-execution/included-accounts`
+}
+
+export const setBrokerExecutionIncludedAccounts = async (setBrokerAccountInclusionBody: SetBrokerAccountInclusionBody, options?: RequestInit): Promise<BrokerAccountInclusionResponse> => {
+
+  return customFetch<BrokerAccountInclusionResponse>(getSetBrokerExecutionIncludedAccountsUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      setBrokerAccountInclusionBody,)
+  }
+);}
+
+
+
+
+export const getSetBrokerExecutionIncludedAccountsMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof setBrokerExecutionIncludedAccounts>>, TError,{data: BodyType<SetBrokerAccountInclusionBody>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof setBrokerExecutionIncludedAccounts>>, TError,{data: BodyType<SetBrokerAccountInclusionBody>}, TContext> => {
+
+const mutationKey = ['setBrokerExecutionIncludedAccounts'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof setBrokerExecutionIncludedAccounts>>, {data: BodyType<SetBrokerAccountInclusionBody>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  setBrokerExecutionIncludedAccounts(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type SetBrokerExecutionIncludedAccountsMutationResult = NonNullable<Awaited<ReturnType<typeof setBrokerExecutionIncludedAccounts>>>
+    export type SetBrokerExecutionIncludedAccountsMutationBody = BodyType<SetBrokerAccountInclusionBody>
+    export type SetBrokerExecutionIncludedAccountsMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Replace the broker accounts included in trading surfaces
+ */
+export const useSetBrokerExecutionIncludedAccounts = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof setBrokerExecutionIncludedAccounts>>, TError,{data: BodyType<SetBrokerAccountInclusionBody>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof setBrokerExecutionIncludedAccounts>>,
+        TError,
+        {data: BodyType<SetBrokerAccountInclusionBody>},
+        TContext
+      > => {
+      return useMutation(getSetBrokerExecutionIncludedAccountsMutationOptions(options));
     }
 
 /**
@@ -5120,6 +5564,453 @@ export function useGetAccountCashActivity<TData = Awaited<ReturnType<typeof getA
 
 
 
+
+/**
+ * @summary Get account-scoped tax overview
+ */
+export const getGetAccountTaxOverviewUrl = (accountId: string,) => {
+
+
+
+
+  return `/api/accounts/${accountId}/tax/overview`
+}
+
+export const getAccountTaxOverview = async (accountId: string, options?: RequestInit): Promise<JsonObject> => {
+
+  return customFetch<JsonObject>(getGetAccountTaxOverviewUrl(accountId),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetAccountTaxOverviewQueryKey = (accountId: string,) => {
+    return [
+    `/api/accounts/${accountId}/tax/overview`
+    ] as const;
+    }
+
+
+export const getGetAccountTaxOverviewQueryOptions = <TData = Awaited<ReturnType<typeof getAccountTaxOverview>>, TError = ErrorType<unknown>>(accountId: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getAccountTaxOverview>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetAccountTaxOverviewQueryKey(accountId);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getAccountTaxOverview>>> = ({ signal }) => getAccountTaxOverview(accountId, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: !!(accountId), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getAccountTaxOverview>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetAccountTaxOverviewQueryResult = NonNullable<Awaited<ReturnType<typeof getAccountTaxOverview>>>
+export type GetAccountTaxOverviewQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary Get account-scoped tax overview
+ */
+
+export function useGetAccountTaxOverview<TData = Awaited<ReturnType<typeof getAccountTaxOverview>>, TError = ErrorType<unknown>>(
+ accountId: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getAccountTaxOverview>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetAccountTaxOverviewQueryOptions(accountId,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+
+
+
+
+/**
+ * @summary Get normalized tax events for an account
+ */
+export const getGetAccountTaxEventsUrl = (accountId: string,) => {
+
+
+
+
+  return `/api/accounts/${accountId}/tax/events`
+}
+
+export const getAccountTaxEvents = async (accountId: string, options?: RequestInit): Promise<JsonObject> => {
+
+  return customFetch<JsonObject>(getGetAccountTaxEventsUrl(accountId),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetAccountTaxEventsQueryKey = (accountId: string,) => {
+    return [
+    `/api/accounts/${accountId}/tax/events`
+    ] as const;
+    }
+
+
+export const getGetAccountTaxEventsQueryOptions = <TData = Awaited<ReturnType<typeof getAccountTaxEvents>>, TError = ErrorType<unknown>>(accountId: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getAccountTaxEvents>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetAccountTaxEventsQueryKey(accountId);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getAccountTaxEvents>>> = ({ signal }) => getAccountTaxEvents(accountId, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: !!(accountId), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getAccountTaxEvents>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetAccountTaxEventsQueryResult = NonNullable<Awaited<ReturnType<typeof getAccountTaxEvents>>>
+export type GetAccountTaxEventsQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary Get normalized tax events for an account
+ */
+
+export function useGetAccountTaxEvents<TData = Awaited<ReturnType<typeof getAccountTaxEvents>>, TError = ErrorType<unknown>>(
+ accountId: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getAccountTaxEvents>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetAccountTaxEventsQueryOptions(accountId,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+
+
+
+
+/**
+ * @summary Get tax lots for an account
+ */
+export const getGetAccountTaxLotsUrl = (accountId: string,) => {
+
+
+
+
+  return `/api/accounts/${accountId}/tax/lots`
+}
+
+export const getAccountTaxLots = async (accountId: string, options?: RequestInit): Promise<JsonObject> => {
+
+  return customFetch<JsonObject>(getGetAccountTaxLotsUrl(accountId),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetAccountTaxLotsQueryKey = (accountId: string,) => {
+    return [
+    `/api/accounts/${accountId}/tax/lots`
+    ] as const;
+    }
+
+
+export const getGetAccountTaxLotsQueryOptions = <TData = Awaited<ReturnType<typeof getAccountTaxLots>>, TError = ErrorType<unknown>>(accountId: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getAccountTaxLots>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetAccountTaxLotsQueryKey(accountId);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getAccountTaxLots>>> = ({ signal }) => getAccountTaxLots(accountId, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: !!(accountId), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getAccountTaxLots>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetAccountTaxLotsQueryResult = NonNullable<Awaited<ReturnType<typeof getAccountTaxLots>>>
+export type GetAccountTaxLotsQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary Get tax lots for an account
+ */
+
+export function useGetAccountTaxLots<TData = Awaited<ReturnType<typeof getAccountTaxLots>>, TError = ErrorType<unknown>>(
+ accountId: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getAccountTaxLots>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetAccountTaxLotsQueryOptions(accountId,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+
+
+
+
+/**
+ * @summary Get wash-sale risk windows for an account
+ */
+export const getGetAccountWashWindowsUrl = (accountId: string,) => {
+
+
+
+
+  return `/api/accounts/${accountId}/tax/wash-windows`
+}
+
+export const getAccountWashWindows = async (accountId: string, options?: RequestInit): Promise<JsonObject> => {
+
+  return customFetch<JsonObject>(getGetAccountWashWindowsUrl(accountId),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetAccountWashWindowsQueryKey = (accountId: string,) => {
+    return [
+    `/api/accounts/${accountId}/tax/wash-windows`
+    ] as const;
+    }
+
+
+export const getGetAccountWashWindowsQueryOptions = <TData = Awaited<ReturnType<typeof getAccountWashWindows>>, TError = ErrorType<unknown>>(accountId: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getAccountWashWindows>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetAccountWashWindowsQueryKey(accountId);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getAccountWashWindows>>> = ({ signal }) => getAccountWashWindows(accountId, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: !!(accountId), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getAccountWashWindows>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetAccountWashWindowsQueryResult = NonNullable<Awaited<ReturnType<typeof getAccountWashWindows>>>
+export type GetAccountWashWindowsQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary Get wash-sale risk windows for an account
+ */
+
+export function useGetAccountWashWindows<TData = Awaited<ReturnType<typeof getAccountWashWindows>>, TError = ErrorType<unknown>>(
+ accountId: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getAccountWashWindows>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetAccountWashWindowsQueryOptions(accountId,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+
+
+
+
+/**
+ * @summary Get tax reconciliation issues for an account
+ */
+export const getGetAccountTaxReconciliationUrl = (accountId: string,) => {
+
+
+
+
+  return `/api/accounts/${accountId}/tax/reconciliation`
+}
+
+export const getAccountTaxReconciliation = async (accountId: string, options?: RequestInit): Promise<JsonObject> => {
+
+  return customFetch<JsonObject>(getGetAccountTaxReconciliationUrl(accountId),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetAccountTaxReconciliationQueryKey = (accountId: string,) => {
+    return [
+    `/api/accounts/${accountId}/tax/reconciliation`
+    ] as const;
+    }
+
+
+export const getGetAccountTaxReconciliationQueryOptions = <TData = Awaited<ReturnType<typeof getAccountTaxReconciliation>>, TError = ErrorType<unknown>>(accountId: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getAccountTaxReconciliation>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetAccountTaxReconciliationQueryKey(accountId);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getAccountTaxReconciliation>>> = ({ signal }) => getAccountTaxReconciliation(accountId, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: !!(accountId), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getAccountTaxReconciliation>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetAccountTaxReconciliationQueryResult = NonNullable<Awaited<ReturnType<typeof getAccountTaxReconciliation>>>
+export type GetAccountTaxReconciliationQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary Get tax reconciliation issues for an account
+ */
+
+export function useGetAccountTaxReconciliation<TData = Awaited<ReturnType<typeof getAccountTaxReconciliation>>, TError = ErrorType<unknown>>(
+ accountId: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getAccountTaxReconciliation>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetAccountTaxReconciliationQueryOptions(accountId,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+
+
+
+
+/**
+ * @summary Run tax and compliance preflight for an order
+ */
+export const getCreateTaxOrderPreflightUrl = (accountId: string,) => {
+
+
+
+
+  return `/api/accounts/${accountId}/tax/preflight`
+}
+
+export const createTaxOrderPreflight = async (accountId: string,
+    jsonObject?: JsonObject, options?: RequestInit): Promise<JsonObject> => {
+
+  return customFetch<JsonObject>(getCreateTaxOrderPreflightUrl(accountId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      jsonObject,)
+  }
+);}
+
+
+
+
+export const getCreateTaxOrderPreflightMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createTaxOrderPreflight>>, TError,{accountId: string;data: BodyType<JsonObject>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof createTaxOrderPreflight>>, TError,{accountId: string;data: BodyType<JsonObject>}, TContext> => {
+
+const mutationKey = ['createTaxOrderPreflight'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof createTaxOrderPreflight>>, {accountId: string;data: BodyType<JsonObject>}> = (props) => {
+          const {accountId,data} = props ?? {};
+
+          return  createTaxOrderPreflight(accountId,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CreateTaxOrderPreflightMutationResult = NonNullable<Awaited<ReturnType<typeof createTaxOrderPreflight>>>
+    export type CreateTaxOrderPreflightMutationBody = BodyType<JsonObject>
+    export type CreateTaxOrderPreflightMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Run tax and compliance preflight for an order
+ */
+export const useCreateTaxOrderPreflight = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createTaxOrderPreflight>>, TError,{accountId: string;data: BodyType<JsonObject>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof createTaxOrderPreflight>>,
+        TError,
+        {accountId: string;data: BodyType<JsonObject>},
+        TContext
+      > => {
+      return useMutation(getCreateTaxOrderPreflightMutationOptions(options));
+    }
 
 /**
  * @summary Run a Shadow watchlist backtest

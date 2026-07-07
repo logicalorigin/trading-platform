@@ -4162,6 +4162,23 @@ export type SnapTradeAccountPortfolioFetcher = (input: {
   accountId: string;
 }) => Promise<SnapTradeAccountPortfolioResponse>;
 
+function withTradingInclusionDefault(
+  accounts: BrokerAccountSnapshot[],
+): BrokerAccountSnapshot[] {
+  return accounts.map((account) => {
+    const accountWithInclusion = account as BrokerAccountSnapshot & {
+      includedInTrading?: unknown;
+    };
+    return {
+      ...account,
+      includedInTrading:
+        typeof accountWithInclusion.includedInTrading === "boolean"
+          ? accountWithInclusion.includedInTrading
+          : true,
+    };
+  });
+}
+
 // Reads SnapTrade-linked brokerage accounts (e.g. E*TRADE) from the persisted
 // broker_accounts/broker_connections tables, then hydrates each with its live
 // portfolio balances (netLiquidation/cash/buyingPower/currency) via a short-lived
@@ -4178,6 +4195,8 @@ async function getSnapTradeBackedAccounts(
       appUserId: brokerAccountsTable.appUserId,
       providerAccountId: brokerAccountsTable.providerAccountId,
       displayName: brokerAccountsTable.displayName,
+      accountType: brokerAccountsTable.accountType,
+      includedInTrading: brokerAccountsTable.includedInTrading,
       baseCurrency: brokerAccountsTable.baseCurrency,
       mode: brokerAccountsTable.mode,
       lastSyncedAt: brokerAccountsTable.lastSyncedAt,
@@ -4191,6 +4210,7 @@ async function getSnapTradeBackedAccounts(
     .where(
       and(
         eq(brokerAccountsTable.mode, mode),
+        eq(brokerAccountsTable.includedInTrading, true),
         eq(brokerConnectionsTable.brokerProvider, "snaptrade"),
         eq(brokerConnectionsTable.status, "connected"),
       ),
@@ -4216,7 +4236,8 @@ async function getSnapTradeBackedAccounts(
         buyingPower: 0,
         cash: 0,
         netLiquidation: 0,
-        accountType: null,
+        accountType: row.accountType,
+        includedInTrading: row.includedInTrading,
         totalCashValue: null,
         settledCash: null,
         accruedCash: null,
@@ -4487,7 +4508,10 @@ async function listAccountsUncached(
         );
       });
       return {
-        accounts: [...liveAccounts, ...(await snapTradeAccountsPromise)],
+        accounts: withTradingInclusionDefault([
+          ...liveAccounts,
+          ...(await snapTradeAccountsPromise),
+        ]),
       };
     }
   } catch {
@@ -4502,19 +4526,24 @@ async function listAccountsUncached(
   });
   if (persistedAccounts.accounts.length) {
     return {
-      accounts: [
+      accounts: withTradingInclusionDefault([
         ...persistedAccounts.accounts,
         ...(await snapTradeAccountsPromise),
-      ],
+      ]),
     };
   }
 
   const flexAccounts = await getFlexAccounts(COMBINED_ACCOUNT_ID, mode);
   if (flexAccounts.length) {
-    return { accounts: [...flexAccounts, ...(await snapTradeAccountsPromise)] };
+    return {
+      accounts: withTradingInclusionDefault([
+        ...flexAccounts,
+        ...(await snapTradeAccountsPromise),
+      ]),
+    };
   }
 
-  return { accounts: await snapTradeAccountsPromise };
+  return { accounts: withTradingInclusionDefault(await snapTradeAccountsPromise) };
 }
 
 export async function getAccountSummary(input: {

@@ -96,6 +96,7 @@ import {
   bridgeRuntimeTone,
   hasGatewayLiveDataProof,
 } from "../features/platform/bridgeRuntimeModel";
+import { useAccountTab } from "../features/platform/useAccountTab.js";
 import {
   clearAlgoStaExecutionTimeframe,
   publishAlgoStaExecutionTimeframe,
@@ -424,6 +425,22 @@ export const AlgoScreen = ({
   const [saveAllPending, setSaveAllPending] = useState(false);
   const criticalApiMutationPaused = useCriticalApiMutationPause();
   const [algoRuntimeHelpers, setAlgoRuntimeHelpers] = useState(
+  const [algoAccountTabRaw, setAlgoAccountTab] = useAccountTab("shadow");
+  const algoAccountTab = useMemo(() => {
+    if (algoAccountTabRaw === "all" || algoAccountTabRaw === "shadow") {
+      return algoAccountTabRaw;
+    }
+    return accounts.some((account) => account.id === algoAccountTabRaw)
+      ? algoAccountTabRaw
+      : "shadow";
+  }, [algoAccountTabRaw, accounts]);
+  const algoPositionsAccountId =
+    algoAccountTab === "shadow"
+      ? "shadow"
+      : algoAccountTab === "all"
+        ? "combined"
+        : algoAccountTab;
+  const algoPositionsUseShadowOverlay = algoAccountTab === "shadow";
     DEFAULT_ALGO_RUNTIME_HELPERS,
   );
   const brokerConfigured = Boolean(session?.configured?.ibkr);
@@ -636,13 +653,19 @@ export const AlgoScreen = ({
     },
   );
   const signalOptionsLedgerPositionsQuery = useGetAccountPositions(
-    "shadow",
-    {
-      mode: "shadow",
-      assetClass: "all",
-      source: "automation",
-      liveQuotes: false,
-    },
+    algoPositionsAccountId,
+    algoPositionsUseShadowOverlay
+      ? {
+          mode: "shadow",
+          assetClass: "all",
+          source: "automation",
+          liveQuotes: false,
+        }
+      : {
+          mode: environment || "live",
+          assetClass: "all",
+          liveQuotes: false,
+        },
     {
       query: {
         ...QUERY_DEFAULTS,
@@ -2030,6 +2053,10 @@ export const AlgoScreen = ({
             signalOptionsRuleAdherence={signalOptionsRuleAdherence}
             gatewayReady={gatewayReady}
             signalScanReady={signalScanReady}
+            positionAccountTabId={algoAccountTab}
+            positionAccounts={accounts}
+            onSelectPositionAccountTab={setAlgoAccountTab}
+            positionAccountUsesShadowOverlay={algoPositionsUseShadowOverlay}
             signalScanBlockedReason={null}
             transitions={visibleTransitions}
             visibleSignalRows={visibleSignalRows}

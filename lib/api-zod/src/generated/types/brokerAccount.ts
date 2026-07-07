@@ -19,6 +19,7 @@ export interface BrokerAccount {
   cash: number;
   netLiquidation: number;
   accountType?: string | null;
+  includedInTrading: boolean;
   totalCashValue?: number | null;
   settledCash?: number | null;
   accruedCash?: number | null;

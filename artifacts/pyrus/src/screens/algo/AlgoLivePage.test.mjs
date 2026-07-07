@@ -185,3 +185,34 @@ test("STA MTF config requires every configured frame", () => {
   assert.deepEqual(config.timeframes, ["5m", "15m", "1h"]);
   assert.equal(config.requiredCount, 3);
 });
+
+test("algo account tabs route shadow to automation overlay and live tabs to broker rows", () => {
+  const accountTabsUsage = source.match(
+    /<AccountTabs[\s\S]*?dataTestId="algo-account-tabs"[\s\S]*?\/>/,
+  )?.[0];
+  assert.ok(accountTabsUsage, "Missing algo account tabs");
+  assert.match(accountTabsUsage, /accounts=\{positionAccounts\}/);
+  assert.match(accountTabsUsage, /activeTabId=\{positionAccountTabId\}/);
+  assert.match(accountTabsUsage, /onSelectTab=\{onSelectPositionAccountTab\}/);
+
+  const positionsUsage = source.match(
+    /<OperationsPositionsTable[\s\S]*?algoIsPhone=\{algoIsPhone\}[\s\S]*?\/>/,
+  )?.[0];
+  assert.ok(positionsUsage, "Missing operations positions table usage");
+  assert.match(
+    positionsUsage,
+    /positions=\{\s*positionAccountUsesShadowOverlay \? signalOptionsPositions : \[\]\s*\}/,
+  );
+  assert.match(
+    positionsUsage,
+    /deploymentId=\{\s*positionAccountUsesShadowOverlay \? focusedDeploymentId : null\s*\}/,
+  );
+  assert.match(
+    positionsUsage,
+    /filterByDeployment=\{positionAccountUsesShadowOverlay\}/,
+  );
+  assert.match(
+    positionsUsage,
+    /positionAccountUsesShadowOverlay\s*\?\s*"Shadow algo positions"\s*:\s*"Broker positions"/,
+  );
+});

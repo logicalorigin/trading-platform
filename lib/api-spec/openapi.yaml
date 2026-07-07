@@ -166,22 +166,22 @@ paths:
               schema:
                 $ref: "#/components/schemas/JsonObject"
 
-  /settings/ibkr-lanes:
+  /tax/profile:
     get:
-      operationId: getIbkrLaneArchitecture
-      tags: [settings]
-      summary: Get IBKR lane architecture settings
+      operationId: getTaxProfile
+      tags: [tax]
+      summary: Get the current user's tax profile
       responses:
         "200":
-          description: IBKR lane architecture
+          description: Tax profile snapshot
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/JsonObject"
     put:
-      operationId: updateIbkrLaneArchitecture
-      tags: [settings]
-      summary: Update IBKR lane architecture settings
+      operationId: updateTaxProfile
+      tags: [tax]
+      summary: Update the current user's tax profile
       requestBody:
         required: false
         content:
@@ -190,37 +190,113 @@ paths:
               $ref: "#/components/schemas/JsonObject"
       responses:
         "200":
-          description: Updated IBKR lane architecture
+          description: Updated tax profile snapshot
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/JsonObject"
 
-  /settings/ibkr-line-usage:
+  /tax/state-rules/status:
     get:
-      operationId: getIbkrLineUsage
-      tags: [settings]
-      summary: Get current IBKR line usage
+      operationId: getTaxStateRulesStatus
+      tags: [tax]
+      summary: Get state income-tax rule-pack readiness
+      parameters:
+        - name: taxYear
+          in: query
+          required: false
+          schema:
+            type: integer
       responses:
         "200":
-          description: IBKR line usage snapshot
+          description: State rule-pack status
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/JsonObject"
 
-  /settings/ibkr-line-usage/stream:
+  /tax/overview:
     get:
-      operationId: streamIbkrLineUsage
-      tags: [settings]
-      summary: Stream IBKR line usage snapshots
+      operationId: getTaxOverview
+      tags: [tax]
+      summary: Get user-level tax overview
       responses:
         "200":
-          description: IBKR line usage SSE stream
+          description: Tax overview
           content:
-            text/event-stream:
+            application/json:
               schema:
-                $ref: "#/components/schemas/SseStream"
+                $ref: "#/components/schemas/JsonObject"
+
+  /tax/reserve:
+    get:
+      operationId: getTaxReserve
+      tags: [tax]
+      summary: Get tax reserve status
+      responses:
+        "200":
+          description: Tax reserve status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JsonObject"
+
+  /tax/reserve/plan:
+    post:
+      operationId: planTaxReserve
+      tags: [tax]
+      summary: Plan a tax reserve target
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/JsonObject"
+      responses:
+        "200":
+          description: Tax reserve plan
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JsonObject"
+
+  /tax/reserve/actions/preview:
+    post:
+      operationId: previewTaxReserveAction
+      tags: [tax]
+      summary: Preview a tax reserve action
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/JsonObject"
+      responses:
+        "200":
+          description: Tax reserve action preview
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JsonObject"
+
+  /tax/reserve/actions/submit:
+    post:
+      operationId: submitTaxReserveAction
+      tags: [tax]
+      summary: Submit or record a tax reserve action
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/JsonObject"
+      responses:
+        "200":
+          description: Tax reserve action result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JsonObject"
 
   /diagnostics/runtime:
     get:
@@ -564,6 +640,36 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/SyncSnapTradeBrokerageConnectionsResponse"
+
+  /broker-execution/included-accounts:
+    get:
+      operationId: getBrokerExecutionIncludedAccounts
+      tags: [broker]
+      summary: List broker accounts available for trading inclusion management
+      responses:
+        "200":
+          description: Broker account inclusion state
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BrokerAccountInclusionResponse"
+    post:
+      operationId: setBrokerExecutionIncludedAccounts
+      tags: [broker]
+      summary: Replace the broker accounts included in trading surfaces
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SetBrokerAccountInclusionBody"
+      responses:
+        "200":
+          description: Updated broker account inclusion state
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BrokerAccountInclusionResponse"
 
   /broker-execution/snaptrade/brokerages:
     get:
@@ -1294,6 +1400,102 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/AccountCashActivityResponse"
+
+  /accounts/{accountId}/tax/overview:
+    get:
+      operationId: getAccountTaxOverview
+      tags: [tax]
+      summary: Get account-scoped tax overview
+      parameters:
+        - $ref: "#/components/parameters/AccountIdPath"
+      responses:
+        "200":
+          description: Account tax overview
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JsonObject"
+
+  /accounts/{accountId}/tax/events:
+    get:
+      operationId: getAccountTaxEvents
+      tags: [tax]
+      summary: Get normalized tax events for an account
+      parameters:
+        - $ref: "#/components/parameters/AccountIdPath"
+      responses:
+        "200":
+          description: Account tax events
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JsonObject"
+
+  /accounts/{accountId}/tax/lots:
+    get:
+      operationId: getAccountTaxLots
+      tags: [tax]
+      summary: Get tax lots for an account
+      parameters:
+        - $ref: "#/components/parameters/AccountIdPath"
+      responses:
+        "200":
+          description: Account tax lots
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JsonObject"
+
+  /accounts/{accountId}/tax/wash-windows:
+    get:
+      operationId: getAccountWashWindows
+      tags: [tax]
+      summary: Get wash-sale risk windows for an account
+      parameters:
+        - $ref: "#/components/parameters/AccountIdPath"
+      responses:
+        "200":
+          description: Account wash-sale windows
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JsonObject"
+
+  /accounts/{accountId}/tax/reconciliation:
+    get:
+      operationId: getAccountTaxReconciliation
+      tags: [tax]
+      summary: Get tax reconciliation issues for an account
+      parameters:
+        - $ref: "#/components/parameters/AccountIdPath"
+      responses:
+        "200":
+          description: Account tax reconciliation issues
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JsonObject"
+
+  /accounts/{accountId}/tax/preflight:
+    post:
+      operationId: createTaxOrderPreflight
+      tags: [tax]
+      summary: Run tax and compliance preflight for an order
+      parameters:
+        - $ref: "#/components/parameters/AccountIdPath"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/JsonObject"
+      responses:
+        "200":
+          description: Tax and compliance preflight result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JsonObject"
 
   /accounts/shadow/watchlist-backtest/runs:
     post:
@@ -4491,7 +4693,7 @@ components:
 
     BrokerProvider:
       type: string
-      enum: [ibkr, snaptrade, robinhood]
+      enum: [ibkr, snaptrade, robinhood, schwab]
 
     ExecutionDecisionCode:
       type: string
@@ -5048,6 +5250,11 @@ components:
           description: SnapTrade account id. This is not an account number.
         displayName:
           type: string
+        accountType:
+          type: string
+          enum: [crypto, futures, prediction, equity]
+        includedInTrading:
+          type: boolean
         brokerageName:
           type: string
           nullable: true
@@ -5077,6 +5284,8 @@ components:
         - connectionId
         - snapTradeAccountId
         - displayName
+        - accountType
+        - includedInTrading
         - brokerageName
         - status
         - baseCurrency
@@ -5556,6 +5765,16 @@ components:
           format: uuid
           nullable: true
           description: Optional idempotency/correlation UUID passed through to SnapTrade.
+        taxPreflightToken:
+          type: string
+          nullable: true
+          description: Token returned by the PYRUS tax/compliance preflight for this exact order. Required by the server before broker order submission.
+        taxAcknowledgements:
+          type: array
+          nullable: true
+          description: Required acknowledgement ids returned by tax/compliance preflight; submit every returned id when the preflight action requires acknowledgement.
+          items:
+            type: string
       required:
         - confirm
         - action
@@ -6608,6 +6827,16 @@ components:
             confirm:
               type: boolean
               description: Must be true to submit the order to Schwab and the brokerage account.
+            taxPreflightToken:
+              type: string
+              nullable: true
+              description: Token returned by the PYRUS tax/compliance preflight for this exact order. Required by the server before broker order submission.
+            taxAcknowledgements:
+              type: array
+              nullable: true
+              description: Required acknowledgement ids returned by tax/compliance preflight; submit every returned id when the preflight action requires acknowledgement.
+              items:
+                type: string
           required:
             - confirm
 
@@ -9523,6 +9752,8 @@ components:
         accountType:
           type: string
           nullable: true
+        includedInTrading:
+          type: boolean
         totalCashValue:
           type: number
           nullable: true
@@ -9578,7 +9809,60 @@ components:
         - buyingPower
         - cash
         - netLiquidation
+        - includedInTrading
         - updatedAt
+
+    BrokerAccountInclusionAccount:
+      type: object
+      properties:
+        id:
+          type: string
+        providerAccountId:
+          type: string
+        provider:
+          $ref: "#/components/schemas/BrokerProvider"
+          nullable: true
+        mode:
+          $ref: "#/components/schemas/EnvironmentMode"
+        displayName:
+          type: string
+        accountType:
+          type: string
+          nullable: true
+        includedInTrading:
+          type: boolean
+        updatedAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - providerAccountId
+        - provider
+        - mode
+        - displayName
+        - accountType
+        - includedInTrading
+        - updatedAt
+
+    BrokerAccountInclusionResponse:
+      type: object
+      properties:
+        accounts:
+          type: array
+          items:
+            $ref: "#/components/schemas/BrokerAccountInclusionAccount"
+      required:
+        - accounts
+
+    SetBrokerAccountInclusionBody:
+      type: object
+      properties:
+        includedAccountIds:
+          type: array
+          items:
+            type: string
+      required:
+        - includedAccountIds
 
     WatchlistItem:
       type: object
@@ -10332,6 +10616,16 @@ components:
           nullable: true
         payload:
           $ref: "#/components/schemas/JsonObject"
+        taxPreflightToken:
+          type: string
+          nullable: true
+          description: Token returned by the PYRUS tax/compliance preflight for this exact order. Required by the server before broker order submission.
+        taxAcknowledgements:
+          type: array
+          nullable: true
+          description: Required acknowledgement ids returned by tax/compliance preflight; submit every returned id when the preflight action requires acknowledgement.
+          items:
+            type: string
       required:
         - accountId
         - mode
@@ -10402,6 +10696,17 @@ components:
           oneOf:
             - $ref: "#/components/schemas/PlaceOrderRequest"
             - type: "null"
+          description: Normalized parent order request used to fingerprint tax/compliance preflight for raw IBKR bracket submissions. Required by the server before broker order submission.
+        taxPreflightToken:
+          type: string
+          nullable: true
+          description: Token returned by the PYRUS tax/compliance preflight for the parent order. Required by the server before broker order submission.
+        taxAcknowledgements:
+          type: array
+          nullable: true
+          description: Required acknowledgement ids returned by tax/compliance preflight; submit every returned id when the preflight action requires acknowledgement.
+          items:
+            type: string
         ibkrOrders:
           type: array
           items:

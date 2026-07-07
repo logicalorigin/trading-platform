@@ -5,6 +5,7 @@
  * Internal trading platform API for Massive market data and IBKR execution.
  * OpenAPI spec version: 0.2.0
  */
+import type { SnapTradeBrokerageConnectionSyncAccountAccountType } from './snapTradeBrokerageConnectionSyncAccountAccountType';
 import type { SnapTradeBrokerageConnectionSyncAccountMode } from './snapTradeBrokerageConnectionSyncAccountMode';
 import type { SnapTradeBrokerageConnectionSyncAccountStatus } from './snapTradeBrokerageConnectionSyncAccountStatus';
 
@@ -19,6 +20,8 @@ export interface SnapTradeBrokerageConnectionSyncAccount {
   /** SnapTrade account id. This is not an account number. */
   snapTradeAccountId: string;
   displayName: string;
+  accountType: SnapTradeBrokerageConnectionSyncAccountAccountType;
+  includedInTrading: boolean;
   brokerageName: string | null;
   /** Sanitized SnapTrade account status. Null means unknown or not provided by the brokerage. */
   status: SnapTradeBrokerageConnectionSyncAccountStatus;

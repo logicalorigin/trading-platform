@@ -2,6 +2,7 @@ import { Router, type IRouter } from "express";
 import {
   GenerateSnapTradeConnectionPortalBody,
   GenerateSnapTradeConnectionPortalResponse,
+  GetBrokerExecutionIncludedAccountsResponse,
   GetIbkrOAuthReadinessResponse,
   GetRobinhoodReadinessResponse,
   GetSnapTradeReadinessResponse,
@@ -24,6 +25,8 @@ import {
   SubmitSchwabEquityOrderResponse,
   SubmitSnapTradeEquityOrderBody,
   SubmitSnapTradeEquityOrderResponse,
+  SetBrokerExecutionIncludedAccountsBody,
+  SetBrokerExecutionIncludedAccountsResponse,
   SyncRobinhoodConnectionsResponse,
   SyncSchwabConnectionsResponse,
   SyncSnapTradeBrokerageConnectionsResponse,
@@ -55,6 +58,10 @@ import {
   previewSchwabEquityOrder,
   submitSchwabEquityOrder,
 } from "../services/schwab-equity-orders";
+import {
+  listBrokerAccountInclusions,
+  setBrokerAccountInclusions,
+} from "../services/broker-account-inclusion";
 import { getSnapTradeAccountPortfolio } from "../services/snaptrade-account-portfolio";
 import { generateSnapTradeConnectionPortal } from "../services/snaptrade-connection-portal";
 import {
@@ -355,6 +362,26 @@ router.post("/broker-execution/snaptrade/sync", async (req, res) => {
       "SnapTrade connect-time history backfill failed",
     );
   });
+  res.json(data);
+});
+
+router.get("/broker-execution/included-accounts", async (req, res) => {
+  const session = await requireEntitlement("broker_connect")(req);
+  const data = GetBrokerExecutionIncludedAccountsResponse.parse(
+    await listBrokerAccountInclusions({ appUserId: session.user.id }),
+  );
+  res.json(data);
+});
+
+router.post("/broker-execution/included-accounts", async (req, res) => {
+  const session = await requireEntitlementCsrf("broker_connect")(req);
+  const body = SetBrokerExecutionIncludedAccountsBody.parse(req.body ?? {});
+  const data = SetBrokerExecutionIncludedAccountsResponse.parse(
+    await setBrokerAccountInclusions({
+      appUserId: session.user.id,
+      includedAccountIds: body.includedAccountIds,
+    }),
+  );
   res.json(data);
 });
 

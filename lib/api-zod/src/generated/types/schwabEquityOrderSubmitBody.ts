@@ -7,7 +7,11 @@
  */
 import type { SchwabEquityOrderPreviewBody } from './schwabEquityOrderPreviewBody';
 
-export type SchwabEquityOrderSubmitBody = SchwabEquityOrderPreviewBody & {
+export type SchwabEquityOrderSubmitBody = SchwabEquityOrderPreviewBody & ({
   /** Must be true to submit the order to Schwab and the brokerage account. */
   confirm: boolean;
-};
+  /** Token returned by the PYRUS tax/compliance preflight for this exact order. Required by the server before broker order submission. */
+  taxPreflightToken?: string | null;
+  /** Required acknowledgement ids returned by tax/compliance preflight; submit every returned id when the preflight action requires acknowledgement. */
+  taxAcknowledgements?: string[] | null;
+});

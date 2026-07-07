@@ -6,6 +6,7 @@ import {
   db,
 } from "@workspace/db";
 import { HttpError } from "../lib/errors";
+import { classifyBrokerAccountCategory } from "./broker-account-category";
 import {
   buildSnapTradeSignature,
   SNAPTRADE_API_BASE_URL,
@@ -32,6 +33,8 @@ export type SnapTradeBrokerageConnectionSyncAccount = {
   connectionId: string;
   snapTradeAccountId: string;
   displayName: string;
+  accountType: "crypto" | "futures" | "prediction" | "equity";
+  includedInTrading: boolean;
   brokerageName: string | null;
   status: "open" | "closed" | "archived" | null;
   baseCurrency: string;
@@ -89,6 +92,7 @@ type NormalizedAccount = {
   snapTradeAccountId: string;
   snapTradeConnectionId: string;
   displayName: string;
+  accountType: "crypto" | "futures" | "prediction" | "equity";
   brokerageName: string | null;
   status: "open" | "closed" | "archived" | null;
   baseCurrency: string;
@@ -499,6 +503,7 @@ function normalizeAccount(
     snapTradeAccountId,
     snapTradeConnectionId,
     displayName,
+    accountType: classifyBrokerAccountCategory(displayName),
     brokerageName,
     status: normalizeAccountStatus(record),
     baseCurrency: normalizeCurrency(record),
@@ -603,7 +608,7 @@ async function upsertAccount(input: {
   account: AccountForStorage;
   localConnectionId: string;
   syncedAt: Date;
-}): Promise<string> {
+}): Promise<{ id: string; includedInTrading: boolean }> {
   const lastSyncedAt = input.syncedAt.toISOString();
   const providerAccountId = localSnapTradeProviderId(
     input.account.snapTradeAccountId,
@@ -626,6 +631,7 @@ async function upsertAccount(input: {
       .set({
         connectionId: input.localConnectionId,
         displayName: input.account.displayName,
+        accountType: input.account.accountType,
         mode: "live",
         accountStatus: input.account.status,
         baseCurrency: input.account.baseCurrency,
@@ -635,9 +641,12 @@ async function upsertAccount(input: {
         updatedAt: input.syncedAt,
       })
       .where(eq(brokerAccountsTable.id, existing.id))
-      .returning({ id: brokerAccountsTable.id });
+      .returning({
+        id: brokerAccountsTable.id,
+        includedInTrading: brokerAccountsTable.includedInTrading,
+      });
     if (updated) {
-      return updated.id;
+      return updated;
     }
   }
 
@@ -648,6 +657,8 @@ async function upsertAccount(input: {
       connectionId: input.localConnectionId,
       providerAccountId,
       displayName: input.account.displayName,
+      accountType: input.account.accountType,
+      includedInTrading: input.account.accountType === "equity",
       mode: "live",
       accountStatus: input.account.status,
       baseCurrency: input.account.baseCurrency,
@@ -656,7 +667,10 @@ async function upsertAccount(input: {
       isDefault: false,
       lastSyncedAt,
     })
-    .returning({ id: brokerAccountsTable.id });
+    .returning({
+      id: brokerAccountsTable.id,
+      includedInTrading: brokerAccountsTable.includedInTrading,
+    });
 
   if (!stored) {
     throw new HttpError(500, "Failed to store SnapTrade broker account", {
@@ -664,7 +678,7 @@ async function upsertAccount(input: {
       expose: false,
     });
   }
-  return stored.id;
+  return stored;
 }
 
 export async function syncSnapTradeBrokerageConnections(
@@ -755,16 +769,19 @@ export async function syncSnapTradeBrokerageConnections(
       executionReady: executionBlockers.length === 0,
       executionBlockers,
     };
+    const storedAccount = await upsertAccount({
+      appUserId: options.appUserId,
+      account: accountForStorage,
+      localConnectionId: storedConnection.localConnectionId,
+      syncedAt,
+    });
     accounts.push({
-      id: await upsertAccount({
-        appUserId: options.appUserId,
-        account: accountForStorage,
-        localConnectionId: storedConnection.localConnectionId,
-        syncedAt,
-      }),
+      id: storedAccount.id,
       connectionId: storedConnection.localConnectionId,
       snapTradeAccountId: account.snapTradeAccountId,
       displayName: account.displayName,
+      accountType: account.accountType,
+      includedInTrading: storedAccount.includedInTrading,
       brokerageName: account.brokerageName,
       status: account.status,
       baseCurrency: account.baseCurrency,

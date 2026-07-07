@@ -17,16 +17,20 @@ export const OperationsPositionsTable = ({
   accountPositionsQuery = null,
   symbolIndex = {},
   deploymentId = null,
+  filterByDeployment = true,
+  sourceLabel = "Shadow algo positions",
   algoIsPhone,
 }) => {
   const accountRows = accountPositionsQuery?.data?.positions || [];
   const scopedAccountRows = useMemo(
     () =>
-      filterAccountPositionRowsForDeployment({
-        rows: accountRows,
-        deploymentId,
-      }),
-    [accountRows, deploymentId],
+      filterByDeployment
+        ? filterAccountPositionRowsForDeployment({
+            rows: accountRows,
+            deploymentId,
+          })
+        : accountRows,
+    [accountRows, deploymentId, filterByDeployment],
   );
   const providerContractIds = useMemo(
     () =>
@@ -90,7 +94,7 @@ export const OperationsPositionsTable = ({
     [accountPositionsQuery, response, rows, useAccountPositionRows],
   );
   const positionsSourceLabel = useAccountPositionRows
-    ? "Shadow algo positions"
+    ? sourceLabel
     : "Runtime algo positions";
 
   return (

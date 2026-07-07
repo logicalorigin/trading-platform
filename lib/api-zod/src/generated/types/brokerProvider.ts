@@ -13,4 +13,5 @@ export const BrokerProvider = {
   ibkr: 'ibkr',
   snaptrade: 'snaptrade',
   robinhood: 'robinhood',
+  schwab: 'schwab',
 } as const;

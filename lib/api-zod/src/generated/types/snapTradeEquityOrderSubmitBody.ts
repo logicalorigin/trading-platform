@@ -34,4 +34,8 @@ export interface SnapTradeEquityOrderSubmitBody {
   stop?: number | null;
   /** Optional idempotency/correlation UUID passed through to SnapTrade. */
   clientOrderId?: string | null;
+  /** Token returned by the PYRUS tax/compliance preflight for this exact order. Required by the server before broker order submission. */
+  taxPreflightToken?: string | null;
+  /** Required acknowledgement ids returned by tax/compliance preflight; submit every returned id when the preflight action requires acknowledgement. */
+  taxAcknowledgements?: string[] | null;
 }

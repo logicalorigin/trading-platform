@@ -65,6 +65,7 @@ import {
 } from "../../features/platform/streamSemantics";
 import { buildAlgoStatusFailurePoint } from "../../features/platform/failurePointModel.js";
 import { OperationsPositionsTable } from "./OperationsPositionsTable";
+import { AccountTabs } from "../account/AccountTabs.jsx";
 import { OperationsSignalTable } from "./OperationsSignalTable";
 
 export const preloadAlgoLivePageModules = () => Promise.resolve();
@@ -661,6 +662,10 @@ export const AlgoLivePage = ({
   // Positions
   signalOptionsPositions,
   signalOptionsLedgerPositionsQuery,
+  positionAccountTabId = "shadow",
+  positionAccounts = [],
+  onSelectPositionAccountTab,
+  positionAccountUsesShadowOverlay = true,
   // Drill
   symbolIndex,
   events,
@@ -1428,11 +1433,29 @@ export const AlgoLivePage = ({
             onStaRowsChange={handleStaRowsChange}
           />
 
+          <AccountTabs
+            accounts={positionAccounts}
+            activeTabId={positionAccountTabId}
+            onSelectTab={onSelectPositionAccountTab}
+            accountIsPhone={algoIsPhone}
+            dataTestId="algo-account-tabs"
+          />
+
           <OperationsPositionsTable
-            positions={signalOptionsPositions}
+            positions={
+              positionAccountUsesShadowOverlay ? signalOptionsPositions : []
+            }
             accountPositionsQuery={signalOptionsLedgerPositionsQuery}
             symbolIndex={symbolIndex}
-            deploymentId={focusedDeploymentId}
+            deploymentId={
+              positionAccountUsesShadowOverlay ? focusedDeploymentId : null
+            }
+            filterByDeployment={positionAccountUsesShadowOverlay}
+            sourceLabel={
+              positionAccountUsesShadowOverlay
+                ? "Shadow algo positions"
+                : "Broker positions"
+            }
             signalOptionsProfile={signalOptionsProfile}
             algoIsPhone={algoIsPhone}
           />

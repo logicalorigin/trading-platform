@@ -123,6 +123,7 @@ export const BrokerProvider = {
   ibkr: 'ibkr',
   snaptrade: 'snaptrade',
   robinhood: 'robinhood',
+  schwab: 'schwab',
 } as const;
 
 export type ExecutionDecisionCode = typeof ExecutionDecisionCode[keyof typeof ExecutionDecisionCode];
@@ -531,6 +532,16 @@ export interface SnapTradeBrokerageConnectionSyncConnection {
   mode: SnapTradeBrokerageConnectionSyncConnectionMode;
 }
 
+export type SnapTradeBrokerageConnectionSyncAccountAccountType = typeof SnapTradeBrokerageConnectionSyncAccountAccountType[keyof typeof SnapTradeBrokerageConnectionSyncAccountAccountType];
+
+
+export const SnapTradeBrokerageConnectionSyncAccountAccountType = {
+  crypto: 'crypto',
+  futures: 'futures',
+  prediction: 'prediction',
+  equity: 'equity',
+} as const;
+
 /**
  * Sanitized SnapTrade account status. Null means unknown or not provided by the brokerage.
  */
@@ -561,6 +572,8 @@ export interface SnapTradeBrokerageConnectionSyncAccount {
   /** SnapTrade account id. This is not an account number. */
   snapTradeAccountId: string;
   displayName: string;
+  accountType: SnapTradeBrokerageConnectionSyncAccountAccountType;
+  includedInTrading: boolean;
   brokerageName: string | null;
   /** Sanitized SnapTrade account status. Null means unknown or not provided by the brokerage. */
   status: SnapTradeBrokerageConnectionSyncAccountStatus;
@@ -1062,6 +1075,10 @@ export interface SnapTradeEquityOrderSubmitBody {
   stop?: number | null;
   /** Optional idempotency/correlation UUID passed through to SnapTrade. */
   clientOrderId?: string | null;
+  /** Token returned by the PYRUS tax/compliance preflight for this exact order. Required by the server before broker order submission. */
+  taxPreflightToken?: string | null;
+  /** Required acknowledgement ids returned by tax/compliance preflight; submit every returned id when the preflight action requires acknowledgement. */
+  taxAcknowledgements?: string[] | null;
 }
 
 export type SnapTradeEquityOrderAccountMode = typeof SnapTradeEquityOrderAccountMode[keyof typeof SnapTradeEquityOrderAccountMode];
@@ -1730,10 +1747,14 @@ export interface SchwabEquityOrderPreviewBody {
   stopPrice?: number | null;
 }
 
-export type SchwabEquityOrderSubmitBody = SchwabEquityOrderPreviewBody & {
+export type SchwabEquityOrderSubmitBody = SchwabEquityOrderPreviewBody & ({
   /** Must be true to submit the order to Schwab and the brokerage account. */
   confirm: boolean;
-};
+  /** Token returned by the PYRUS tax/compliance preflight for this exact order. Required by the server before broker order submission. */
+  taxPreflightToken?: string | null;
+  /** Required acknowledgement ids returned by tax/compliance preflight; submit every returned id when the preflight action requires acknowledgement. */
+  taxAcknowledgements?: string[] | null;
+});
 
 /**
  * Local PYRUS request for Schwab order cancellation.
@@ -3737,6 +3758,7 @@ export interface BrokerAccount {
   cash: number;
   netLiquidation: number;
   accountType?: string | null;
+  includedInTrading: boolean;
   totalCashValue?: number | null;
   settledCash?: number | null;
   accruedCash?: number | null;
@@ -3752,6 +3774,25 @@ export interface BrokerAccount {
   dayTradesRemaining?: number | null;
   isPatternDayTrader?: boolean | null;
   updatedAt: string;
+}
+
+export interface BrokerAccountInclusionAccount {
+  id: string;
+  providerAccountId: string;
+  provider: BrokerProvider | null;
+  mode: EnvironmentMode;
+  displayName: string;
+  accountType: string | null;
+  includedInTrading: boolean;
+  updatedAt: string;
+}
+
+export interface BrokerAccountInclusionResponse {
+  accounts: BrokerAccountInclusionAccount[];
+}
+
+export interface SetBrokerAccountInclusionBody {
+  includedAccountIds: string[];
 }
 
 export interface WatchlistItem {
@@ -4156,6 +4197,10 @@ export interface PlaceOrderRequest {
   sourceEventId?: string | null;
   clientOrderId?: string | null;
   payload?: JsonObject;
+  /** Token returned by the PYRUS tax/compliance preflight for this exact order. Required by the server before broker order submission. */
+  taxPreflightToken?: string | null;
+  /** Required acknowledgement ids returned by tax/compliance preflight; submit every returned id when the preflight action requires acknowledgement. */
+  taxAcknowledgements?: string[] | null;
 }
 
 export interface OrderPreview {
@@ -4178,7 +4223,12 @@ export interface SubmitIbkrOrdersRequest {
   accountId?: string | null;
   mode?: EnvironmentMode | null;
   confirm?: boolean;
+  /** Normalized parent order request used to fingerprint tax/compliance preflight for raw IBKR bracket submissions. Required by the server before broker order submission. */
   parentOrderRequest?: PlaceOrderRequest | null;
+  /** Token returned by the PYRUS tax/compliance preflight for the parent order. Required by the server before broker order submission. */
+  taxPreflightToken?: string | null;
+  /** Required acknowledgement ids returned by tax/compliance preflight; submit every returned id when the preflight action requires acknowledgement. */
+  taxAcknowledgements?: string[] | null;
   ibkrOrders: JsonObject[];
 }
 
@@ -8273,6 +8323,10 @@ export interface PatternOccurrences {
   occurrences: PatternOccurrence[];
   perSymbol: PatternOccurrenceSymbolAgg[];
 }
+
+export type GetTaxStateRulesStatusParams = {
+taxYear?: number;
+};
 
 export type ListDiagnosticHistoryParams = {
 from?: string;

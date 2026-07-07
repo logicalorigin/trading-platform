@@ -60,6 +60,8 @@ export const brokerAccountsTable = pgTable(
     displayName: text("display_name").notNull(),
     mode: environmentModeEnum("mode").notNull(),
     accountStatus: varchar("account_status", { length: 32 }),
+    accountType: varchar("account_type", { length: 32 }),
+    includedInTrading: boolean("included_in_trading").notNull().default(true),
     baseCurrency: varchar("base_currency", { length: 16 }).notNull().default("USD"),
     capabilities: text("capabilities").array().notNull().default([]),
     executionBlockers: text("execution_blockers").array().notNull().default([]),

@@ -14,6 +14,11 @@ export interface SubmitIbkrOrdersRequest {
   accountId?: string | null;
   mode?: EnvironmentMode | null;
   confirm?: boolean;
+  /** Normalized parent order request used to fingerprint tax/compliance preflight for raw IBKR bracket submissions. Required by the server before broker order submission. */
   parentOrderRequest?: PlaceOrderRequest | null;
+  /** Token returned by the PYRUS tax/compliance preflight for the parent order. Required by the server before broker order submission. */
+  taxPreflightToken?: string | null;
+  /** Required acknowledgement ids returned by tax/compliance preflight; submit every returned id when the preflight action requires acknowledgement. */
+  taxAcknowledgements?: string[] | null;
   ibkrOrders: JsonObject[];
 }

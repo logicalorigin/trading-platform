@@ -26,10 +26,10 @@ const readCurrentWorkspaceState = () => {
   return raw ? JSON.parse(raw) : {};
 };
 
-const readAccountTabFromStorage = () => {
+const readAccountTabFromStorage = (defaultTab = DEFAULT_TAB) => {
   try {
     const parsed = readCurrentWorkspaceState();
-    if (parsed === undefined) return DEFAULT_TAB;
+    if (parsed === undefined) return defaultTab;
     const value = parsed[STORAGE_KEY_FIELD];
     if (typeof value === "string" && value.trim()) {
       return value;
@@ -37,9 +37,9 @@ const readAccountTabFromStorage = () => {
     if (parsed[LEGACY_SECTION_FIELD] === "shadow") {
       return "shadow";
     }
-    return DEFAULT_TAB;
+    return defaultTab;
   } catch {
-    return DEFAULT_TAB;
+    return defaultTab;
   }
 };
 
@@ -65,11 +65,11 @@ export const writeAccountTab = (value) => {
   }
 };
 
-export const useAccountTab = () => {
-  const [tab, setTab] = useState(readAccountTabFromStorage);
+export const useAccountTab = (defaultTab = DEFAULT_TAB) => {
+  const [tab, setTab] = useState(() => readAccountTabFromStorage(defaultTab));
   useEffect(() => {
     if (typeof window === "undefined") return undefined;
-    const sync = () => setTab(readAccountTabFromStorage());
+    const sync = () => setTab(readAccountTabFromStorage(defaultTab));
     window.addEventListener(PYRUS_WORKSPACE_SETTINGS_EVENT, sync);
     return () => {
       window.removeEventListener(PYRUS_WORKSPACE_SETTINGS_EVENT, sync);

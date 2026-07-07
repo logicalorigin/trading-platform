@@ -59,7 +59,7 @@ export const GetReadinessResponse = zod.object({
  */
 export const GetSessionResponse = zod.object({
   "environment": zod.enum(['shadow', 'live']),
-  "brokerProvider": zod.enum(['ibkr', 'snaptrade', 'robinhood']),
+  "brokerProvider": zod.enum(['ibkr', 'snaptrade', 'robinhood', 'schwab']),
   "marketDataProvider": zod.enum(['massive', 'ibkr']),
   "marketDataProviders": zod.object({
   "live": zod.enum(['massive', 'ibkr']),
@@ -313,23 +313,63 @@ export const UpdateUserPreferencesResponse = zod.record(zod.string(), zod.unknow
 
 
 /**
- * @summary Get IBKR lane architecture settings
+ * @summary Get the current user's tax profile
  */
-export const GetIbkrLaneArchitectureResponse = zod.record(zod.string(), zod.unknown())
+export const GetTaxProfileResponse = zod.record(zod.string(), zod.unknown())
 
 
 /**
- * @summary Update IBKR lane architecture settings
+ * @summary Update the current user's tax profile
  */
-export const UpdateIbkrLaneArchitectureBody = zod.record(zod.string(), zod.unknown())
+export const UpdateTaxProfileBody = zod.record(zod.string(), zod.unknown())
 
-export const UpdateIbkrLaneArchitectureResponse = zod.record(zod.string(), zod.unknown())
+export const UpdateTaxProfileResponse = zod.record(zod.string(), zod.unknown())
 
 
 /**
- * @summary Get current IBKR line usage
+ * @summary Get state income-tax rule-pack readiness
  */
-export const GetIbkrLineUsageResponse = zod.record(zod.string(), zod.unknown())
+export const GetTaxStateRulesStatusQueryParams = zod.object({
+  "taxYear": zod.coerce.number().optional()
+})
+
+export const GetTaxStateRulesStatusResponse = zod.record(zod.string(), zod.unknown())
+
+
+/**
+ * @summary Get user-level tax overview
+ */
+export const GetTaxOverviewResponse = zod.record(zod.string(), zod.unknown())
+
+
+/**
+ * @summary Get tax reserve status
+ */
+export const GetTaxReserveResponse = zod.record(zod.string(), zod.unknown())
+
+
+/**
+ * @summary Plan a tax reserve target
+ */
+export const PlanTaxReserveBody = zod.record(zod.string(), zod.unknown())
+
+export const PlanTaxReserveResponse = zod.record(zod.string(), zod.unknown())
+
+
+/**
+ * @summary Preview a tax reserve action
+ */
+export const PreviewTaxReserveActionBody = zod.record(zod.string(), zod.unknown())
+
+export const PreviewTaxReserveActionResponse = zod.record(zod.string(), zod.unknown())
+
+
+/**
+ * @summary Submit or record a tax reserve action
+ */
+export const SubmitTaxReserveActionBody = zod.record(zod.string(), zod.unknown())
+
+export const SubmitTaxReserveActionResponse = zod.record(zod.string(), zod.unknown())
 
 
 /**
@@ -653,7 +693,7 @@ export const ExportDiagnosticsResponse = zod.record(zod.string(), zod.unknown())
 export const ListBrokerConnectionsResponse = zod.object({
   "connections": zod.array(zod.object({
   "id": zod.string(),
-  "provider": zod.union([zod.enum(['ibkr', 'snaptrade', 'robinhood']),zod.enum(['massive', 'ibkr'])]),
+  "provider": zod.union([zod.enum(['ibkr', 'snaptrade', 'robinhood', 'schwab']),zod.enum(['massive', 'ibkr'])]),
   "name": zod.string(),
   "brokerageSlug": zod.string().optional().describe('Optional SnapTrade brokerage slug for provider connections (e.g. ETRADE).'),
   "mode": zod.enum(['shadow', 'live']),
@@ -839,6 +879,8 @@ export const SyncSnapTradeBrokerageConnectionsResponse = zod.object({
   "connectionId": zod.string().describe('Local PYRUS broker connection id.'),
   "snapTradeAccountId": zod.string().describe('SnapTrade account id. This is not an account number.'),
   "displayName": zod.string(),
+  "accountType": zod.enum(['crypto', 'futures', 'prediction', 'equity']),
+  "includedInTrading": zod.boolean(),
   "brokerageName": zod.string().nullable(),
   "status": zod.enum(['open', 'closed', 'archived']).nullable().describe('Sanitized SnapTrade account status. Null means unknown or not provided by the brokerage.'),
   "baseCurrency": zod.string(),
@@ -854,6 +896,44 @@ export const SyncSnapTradeBrokerageConnectionsResponse = zod.object({
   "storedAccounts": zod.number()
 })
 }).describe('Sanitized result of syncing the authenticated user\'s SnapTrade brokerage connections and accounts. Never includes SnapTrade userSecret, PYRUS user ids, full account numbers, or raw upstream payloads.')
+
+
+/**
+ * @summary List broker accounts available for trading inclusion management
+ */
+export const GetBrokerExecutionIncludedAccountsResponse = zod.object({
+  "accounts": zod.array(zod.object({
+  "id": zod.string(),
+  "providerAccountId": zod.string(),
+  "provider": zod.enum(['ibkr', 'snaptrade', 'robinhood', 'schwab']).nullable(),
+  "mode": zod.enum(['shadow', 'live']),
+  "displayName": zod.string(),
+  "accountType": zod.string().nullable(),
+  "includedInTrading": zod.boolean(),
+  "updatedAt": zod.coerce.date()
+}))
+})
+
+
+/**
+ * @summary Replace the broker accounts included in trading surfaces
+ */
+export const SetBrokerExecutionIncludedAccountsBody = zod.object({
+  "includedAccountIds": zod.array(zod.string())
+})
+
+export const SetBrokerExecutionIncludedAccountsResponse = zod.object({
+  "accounts": zod.array(zod.object({
+  "id": zod.string(),
+  "providerAccountId": zod.string(),
+  "provider": zod.enum(['ibkr', 'snaptrade', 'robinhood', 'schwab']).nullable(),
+  "mode": zod.enum(['shadow', 'live']),
+  "displayName": zod.string(),
+  "accountType": zod.string().nullable(),
+  "includedInTrading": zod.boolean(),
+  "updatedAt": zod.coerce.date()
+}))
+})
 
 
 /**
@@ -1289,7 +1369,9 @@ export const SubmitSnapTradeEquityOrderBody = zod.object({
   "notionalValue": zod.number().nullish().describe('Notional order value. Only valid for Market + Day orders when supported by the brokerage.'),
   "price": zod.number().nullish().describe('Required for Limit and StopLimit orders.'),
   "stop": zod.number().nullish().describe('Required for Stop and StopLimit orders.'),
-  "clientOrderId": zod.string().uuid().nullish().describe('Optional idempotency\/correlation UUID passed through to SnapTrade.')
+  "clientOrderId": zod.string().uuid().nullish().describe('Optional idempotency\/correlation UUID passed through to SnapTrade.'),
+  "taxPreflightToken": zod.string().nullish().describe('Token returned by the PYRUS tax\/compliance preflight for this exact order. Required by the server before broker order submission.'),
+  "taxAcknowledgements": zod.array(zod.string()).nullish().describe('Required acknowledgement ids returned by tax\/compliance preflight; submit every returned id when the preflight action requires acknowledgement.')
 }).describe('Local PYRUS request for SnapTrade\'s direct equity order endpoint. confirm=true is required because this can submit a live brokerage order.')
 
 export const SubmitSnapTradeEquityOrderResponse = zod.object({
@@ -1564,7 +1646,9 @@ export const SubmitSchwabEquityOrderBody = zod.object({
   "limitPrice": zod.number().nullish().describe('Required for Limit and StopLimit orders.'),
   "stopPrice": zod.number().nullish().describe('Required for Stop and StopLimit orders.')
 }).describe('Local PYRUS request for a Schwab equity order preview. Uses camelCase locally and is translated to Schwab Trader API wire fields server-side.').and(zod.object({
-  "confirm": zod.boolean().describe('Must be true to submit the order to Schwab and the brokerage account.')
+  "confirm": zod.boolean().describe('Must be true to submit the order to Schwab and the brokerage account.'),
+  "taxPreflightToken": zod.string().nullish().describe('Token returned by the PYRUS tax\/compliance preflight for this exact order. Required by the server before broker order submission.'),
+  "taxAcknowledgements": zod.array(zod.string()).nullish().describe('Required acknowledgement ids returned by tax\/compliance preflight; submit every returned id when the preflight action requires acknowledgement.')
 }).describe('Local PYRUS request for Schwab order submission. confirm=true is required because this can submit a live brokerage order once execution gates are lifted.'))
 
 export const SubmitSchwabEquityOrderResponse = zod.object({
@@ -1674,7 +1758,7 @@ export const ListAccountsResponse = zod.object({
   "accounts": zod.array(zod.object({
   "id": zod.string(),
   "providerAccountId": zod.string(),
-  "provider": zod.enum(['ibkr', 'snaptrade', 'robinhood']),
+  "provider": zod.enum(['ibkr', 'snaptrade', 'robinhood', 'schwab']),
   "mode": zod.enum(['shadow', 'live']),
   "displayName": zod.string(),
   "currency": zod.string(),
@@ -1682,6 +1766,7 @@ export const ListAccountsResponse = zod.object({
   "cash": zod.number(),
   "netLiquidation": zod.number(),
   "accountType": zod.string().nullish(),
+  "includedInTrading": zod.boolean(),
   "totalCashValue": zod.number().nullish(),
   "settledCash": zod.number().nullish(),
   "accruedCash": zod.number().nullish(),
@@ -2657,6 +2742,68 @@ export const GetAccountCashActivityResponse = zod.object({
 
 
 /**
+ * @summary Get account-scoped tax overview
+ */
+export const GetAccountTaxOverviewParams = zod.object({
+  "accountId": zod.coerce.string().describe('IBKR account id or the virtual \"combined\" account id.')
+})
+
+export const GetAccountTaxOverviewResponse = zod.record(zod.string(), zod.unknown())
+
+
+/**
+ * @summary Get normalized tax events for an account
+ */
+export const GetAccountTaxEventsParams = zod.object({
+  "accountId": zod.coerce.string().describe('IBKR account id or the virtual \"combined\" account id.')
+})
+
+export const GetAccountTaxEventsResponse = zod.record(zod.string(), zod.unknown())
+
+
+/**
+ * @summary Get tax lots for an account
+ */
+export const GetAccountTaxLotsParams = zod.object({
+  "accountId": zod.coerce.string().describe('IBKR account id or the virtual \"combined\" account id.')
+})
+
+export const GetAccountTaxLotsResponse = zod.record(zod.string(), zod.unknown())
+
+
+/**
+ * @summary Get wash-sale risk windows for an account
+ */
+export const GetAccountWashWindowsParams = zod.object({
+  "accountId": zod.coerce.string().describe('IBKR account id or the virtual \"combined\" account id.')
+})
+
+export const GetAccountWashWindowsResponse = zod.record(zod.string(), zod.unknown())
+
+
+/**
+ * @summary Get tax reconciliation issues for an account
+ */
+export const GetAccountTaxReconciliationParams = zod.object({
+  "accountId": zod.coerce.string().describe('IBKR account id or the virtual \"combined\" account id.')
+})
+
+export const GetAccountTaxReconciliationResponse = zod.record(zod.string(), zod.unknown())
+
+
+/**
+ * @summary Run tax and compliance preflight for an order
+ */
+export const CreateTaxOrderPreflightParams = zod.object({
+  "accountId": zod.coerce.string().describe('IBKR account id or the virtual \"combined\" account id.')
+})
+
+export const CreateTaxOrderPreflightBody = zod.record(zod.string(), zod.unknown())
+
+export const CreateTaxOrderPreflightResponse = zod.record(zod.string(), zod.unknown())
+
+
+/**
  * @summary Run a Shadow watchlist backtest
  */
 export const RunShadowWatchlistBacktestBody = zod.record(zod.string(), zod.unknown())
@@ -3022,7 +3169,9 @@ export const PlaceOrderBody = zod.object({
   "source": zod.enum(['manual', 'automation']).optional(),
   "sourceEventId": zod.string().nullish(),
   "clientOrderId": zod.string().nullish(),
-  "payload": zod.record(zod.string(), zod.unknown()).optional()
+  "payload": zod.record(zod.string(), zod.unknown()).optional(),
+  "taxPreflightToken": zod.string().nullish().describe('Token returned by the PYRUS tax\/compliance preflight for this exact order. Required by the server before broker order submission.'),
+  "taxAcknowledgements": zod.array(zod.string()).nullish().describe('Required acknowledgement ids returned by tax\/compliance preflight; submit every returned id when the preflight action requires acknowledgement.')
 })
 
 
@@ -3059,7 +3208,9 @@ export const PreviewOrderBody = zod.object({
   "source": zod.enum(['manual', 'automation']).optional(),
   "sourceEventId": zod.string().nullish(),
   "clientOrderId": zod.string().nullish(),
-  "payload": zod.record(zod.string(), zod.unknown()).optional()
+  "payload": zod.record(zod.string(), zod.unknown()).optional(),
+  "taxPreflightToken": zod.string().nullish().describe('Token returned by the PYRUS tax\/compliance preflight for this exact order. Required by the server before broker order submission.'),
+  "taxAcknowledgements": zod.array(zod.string()).nullish().describe('Required acknowledgement ids returned by tax\/compliance preflight; submit every returned id when the preflight action requires acknowledgement.')
 })
 
 export const PreviewOrderResponse = zod.object({
@@ -3121,7 +3272,9 @@ export const PreviewShadowOrderBody = zod.object({
   "source": zod.enum(['manual', 'automation']).optional(),
   "sourceEventId": zod.string().nullish(),
   "clientOrderId": zod.string().nullish(),
-  "payload": zod.record(zod.string(), zod.unknown()).optional()
+  "payload": zod.record(zod.string(), zod.unknown()).optional(),
+  "taxPreflightToken": zod.string().nullish().describe('Token returned by the PYRUS tax\/compliance preflight for this exact order. Required by the server before broker order submission.'),
+  "taxAcknowledgements": zod.array(zod.string()).nullish().describe('Required acknowledgement ids returned by tax\/compliance preflight; submit every returned id when the preflight action requires acknowledgement.')
 })
 
 export const PreviewShadowOrderResponse = zod.object({
@@ -3183,7 +3336,9 @@ export const PlaceShadowOrderBody = zod.object({
   "source": zod.enum(['manual', 'automation']).optional(),
   "sourceEventId": zod.string().nullish(),
   "clientOrderId": zod.string().nullish(),
-  "payload": zod.record(zod.string(), zod.unknown()).optional()
+  "payload": zod.record(zod.string(), zod.unknown()).optional(),
+  "taxPreflightToken": zod.string().nullish().describe('Token returned by the PYRUS tax\/compliance preflight for this exact order. Required by the server before broker order submission.'),
+  "taxAcknowledgements": zod.array(zod.string()).nullish().describe('Required acknowledgement ids returned by tax\/compliance preflight; submit every returned id when the preflight action requires acknowledgement.')
 })
 
 
@@ -3220,7 +3375,9 @@ export const SubmitOrdersBody = zod.union([zod.object({
   "source": zod.enum(['manual', 'automation']).optional(),
   "sourceEventId": zod.string().nullish(),
   "clientOrderId": zod.string().nullish(),
-  "payload": zod.record(zod.string(), zod.unknown()).optional()
+  "payload": zod.record(zod.string(), zod.unknown()).optional(),
+  "taxPreflightToken": zod.string().nullish().describe('Token returned by the PYRUS tax\/compliance preflight for this exact order. Required by the server before broker order submission.'),
+  "taxAcknowledgements": zod.array(zod.string()).nullish().describe('Required acknowledgement ids returned by tax\/compliance preflight; submit every returned id when the preflight action requires acknowledgement.')
 }),zod.object({
   "accountId": zod.string().nullish(),
   "mode": zod.union([zod.enum(['shadow', 'live']),zod.null()]).optional(),
@@ -3255,8 +3412,12 @@ export const SubmitOrdersBody = zod.union([zod.object({
   "source": zod.enum(['manual', 'automation']).optional(),
   "sourceEventId": zod.string().nullish(),
   "clientOrderId": zod.string().nullish(),
-  "payload": zod.record(zod.string(), zod.unknown()).optional()
-}),zod.null()]).optional(),
+  "payload": zod.record(zod.string(), zod.unknown()).optional(),
+  "taxPreflightToken": zod.string().nullish().describe('Token returned by the PYRUS tax\/compliance preflight for this exact order. Required by the server before broker order submission.'),
+  "taxAcknowledgements": zod.array(zod.string()).nullish().describe('Required acknowledgement ids returned by tax\/compliance preflight; submit every returned id when the preflight action requires acknowledgement.')
+}),zod.null()]).optional().describe('Normalized parent order request used to fingerprint tax\/compliance preflight for raw IBKR bracket submissions. Required by the server before broker order submission.'),
+  "taxPreflightToken": zod.string().nullish().describe('Token returned by the PYRUS tax\/compliance preflight for the parent order. Required by the server before broker order submission.'),
+  "taxAcknowledgements": zod.array(zod.string()).nullish().describe('Required acknowledgement ids returned by tax\/compliance preflight; submit every returned id when the preflight action requires acknowledgement.'),
   "ibkrOrders": zod.array(zod.record(zod.string(), zod.unknown()))
 })])
 

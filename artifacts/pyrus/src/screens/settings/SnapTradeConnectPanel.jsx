@@ -3,9 +3,11 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   getGetRobinhoodReadinessQueryKey,
   getGetSchwabReadinessQueryKey,
+  getGetBrokerExecutionIncludedAccountsQueryKey,
   getGetSnapTradeReadinessQueryKey,
   getListAccountsQueryKey,
   getListBrokerConnectionsQueryKey,
+  useGetBrokerExecutionIncludedAccounts,
   useGenerateSnapTradeConnectionPortal,
   useGetSnapTradeAccountPortfolio,
   useGetSnapTradeReadiness,
@@ -22,6 +24,7 @@ import {
   useGetIbkrPortalReadiness,
   useConnectIbkrPortal,
   useDisconnectIbkrPortal,
+  useSetBrokerExecutionIncludedAccounts,
   getIbkrPortalStatus,
 } from "@workspace/api-client-react";
 import {
@@ -296,6 +299,23 @@ function formatExecutionBlockers(blockers) {
       (Array.isArray(blockers) ? blockers : [])
         .map((blocker) => SNAPTRADE_EXECUTION_BLOCKER_LABELS[blocker] || blocker)
         .filter(Boolean),
+function formatBrokerProvider(provider) {
+  const normalized = String(provider || "").trim().toLowerCase();
+  if (normalized === "ibkr") return "IBKR";
+  if (normalized === "snaptrade") return "SnapTrade";
+  if (normalized === "robinhood") return "Robinhood";
+  if (normalized === "schwab") return "Schwab";
+  return provider || "Broker";
+}
+
+function formatAccountCategory(category) {
+  const normalized = String(category || "equity").trim().toLowerCase();
+  if (normalized === "crypto") return "Crypto";
+  if (normalized === "futures") return "Futures";
+  if (normalized === "prediction") return "Prediction";
+  return "Equity";
+}
+
     ),
   );
   return labels.length ? labels.join(", ") : "blocked";
@@ -623,6 +643,13 @@ export function SnapTradeConnectPanel({ enabled = true }) {
 
   const readinessQuery = useGetSnapTradeReadiness({
     query: {
+  const inclusionQuery = useGetBrokerExecutionIncludedAccounts({
+    query: {
+      enabled: Boolean(enabled && canManage),
+      retry: false,
+      staleTime: 30_000,
+    },
+  });
       enabled: Boolean(enabled && canManage),
       retry: false,
       staleTime: 15_000,
@@ -664,6 +691,19 @@ export function SnapTradeConnectPanel({ enabled = true }) {
           const nextAccountId = data.accounts.some((account) => account.id === current)
             ? current
             : data.accounts.find((account) => account.executionReady === true)
+  const inclusionMutation = useSetBrokerExecutionIncludedAccounts({
+    request: { headers: csrfHeaders },
+    mutation: {
+      onSuccess: () => {
+        void queryClient.invalidateQueries({
+          queryKey: getGetBrokerExecutionIncludedAccountsQueryKey(),
+        });
+        void queryClient.invalidateQueries({
+          queryKey: getListAccountsQueryKey(),
+        });
+      },
+    },
+  });
                 ?.id ||
               data.accounts[0]?.id ||
               "";
@@ -778,6 +818,7 @@ export function SnapTradeConnectPanel({ enabled = true }) {
   const executionReadyAccounts = syncedAccounts.filter(
     (account) => account.executionReady === true,
   );
+    inclusionMutation.isPending ||
   const executionReadyConnections = syncedConnections.filter(
     (connection) => connection.executionReady === true,
   );
@@ -813,6 +854,15 @@ export function SnapTradeConnectPanel({ enabled = true }) {
       !credentialsReady ||
       registerMutation.isPending ||
       portalMutation.isPending ||
+  const inclusionAccounts = inclusionQuery.data?.accounts || [];
+  const toggleIncludedAccount = (accountId, nextIncluded) => {
+    const includedAccountIds = inclusionAccounts
+      .filter((account) =>
+        account.id === accountId ? nextIncluded : account.includedInTrading,
+      )
+      .map((account) => account.id);
+    inclusionMutation.mutate({ data: { includedAccountIds } });
+  };
       syncMutation.isPending,
   );
   const syncDisabled = Boolean(
@@ -1194,6 +1244,7 @@ export function SnapTradeConnectPanel({ enabled = true }) {
   // Stop polling any open broker auth popup if the panel unmounts.
   useEffect(
     () => () => {
+    void inclusionQuery.refetch();
       if (oauthPollRef.current) {
         window.clearInterval(oauthPollRef.current);
       }
@@ -1573,6 +1624,7 @@ export function SnapTradeConnectPanel({ enabled = true }) {
     ? readErrorMessage(authSessionQuery.error, "Auth session unavailable.")
     : "";
   const readinessError = readinessQuery.error
+    readErrorMessage(inclusionMutation.error, "") ||
     ? readErrorMessage(readinessQuery.error, "SnapTrade readiness unavailable.")
     : robinhoodReadinessQuery.error
       ? readErrorMessage(
@@ -2014,6 +2066,100 @@ export function SnapTradeConnectPanel({ enabled = true }) {
           {brokeragesQuery.isError ? (
             <div
               style={{
+        {inclusionAccounts.length || inclusionQuery.isFetching ? (
+          <div
+            style={{
+              border: `1px solid ${cssColorMix(CSS_COLOR.border, 55)}`,
+              borderRadius: dim(RADII.sm),
+              background: CSS_COLOR.bg1,
+              padding: sp(10),
+              display: "grid",
+              gap: sp(8),
+              minWidth: 0,
+            }}
+          >
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: sp(8),
+                flexWrap: "wrap",
+              }}
+            >
+              <div
+                style={{
+                  color: CSS_COLOR.textSec,
+                  fontFamily: T.sans,
+                  fontSize: textSize("caption"),
+                  fontWeight: FONT_WEIGHTS.medium,
+                }}
+              >
+                Trading accounts
+              </div>
+              <span
+                style={{
+                  color: CSS_COLOR.textDim,
+                  fontFamily: T.sans,
+                  fontSize: fs(10),
+                }}
+              >
+                {inclusionAccounts.filter((account) => account.includedInTrading)
+                  .length}{" "}
+                included
+              </span>
+            </div>
+            {inclusionAccounts.map((account) => (
+              <label
+                key={account.id}
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "minmax(0, 1fr) auto",
+                  gap: sp(10),
+                  alignItems: "center",
+                  borderTop: `1px solid ${cssColorMix(CSS_COLOR.border, 35)}`,
+                  paddingTop: sp(8),
+                  fontFamily: T.sans,
+                }}
+              >
+                <span style={{ display: "grid", gap: sp(3), minWidth: 0 }}>
+                  <span
+                    style={{
+                      color: CSS_COLOR.text,
+                      fontSize: textSize("body"),
+                      overflowWrap: "anywhere",
+                    }}
+                  >
+                    {account.displayName}
+                  </span>
+                  <span
+                    style={{
+                      color: CSS_COLOR.textDim,
+                      fontSize: fs(10),
+                      overflowWrap: "anywhere",
+                    }}
+                  >
+                    {formatBrokerProvider(account.provider)} / {account.mode} /{" "}
+                    {formatAccountCategory(account.accountType)}
+                  </span>
+                </span>
+                <input
+                  type="checkbox"
+                  checked={account.includedInTrading}
+                  disabled={inclusionMutation.isPending || !canManage}
+                  onChange={(event) =>
+                    toggleIncludedAccount(account.id, event.target.checked)
+                  }
+                  style={{
+                    width: dim(18),
+                    height: dim(18),
+                    accentColor: CSS_COLOR.accent,
+                  }}
+                />
+              </label>
+            ))}
+          </div>
+        ) : null}
                 color: CSS_COLOR.textDim,
                 fontFamily: T.sans,
                 fontSize: textSize("body"),

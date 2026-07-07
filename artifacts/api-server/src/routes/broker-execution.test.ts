@@ -351,6 +351,187 @@ test("SnapTrade connect lifecycle is gated by the broker_connect entitlement", a
   );
 });
 
+test("included broker accounts routes enforce authentication, entitlement, and CSRF gates", async () => {
+  await withTestDb(async () =>
+    withServer(async (baseUrl) => {
+      const routeUrl = `${baseUrl}/broker-execution/included-accounts`;
+
+      const unauthenticated = await fetch(routeUrl);
+      assert.equal(unauthenticated.status, 401);
+
+      const [plainMember] = await db
+        .insert(usersTable)
+        .values({
+          email: "included-accounts-plain@example.com",
+          passwordHash: "unused",
+          role: "member",
+        })
+        .returning();
+      const plainSession = await createAuthSession({
+        userId: plainMember!.id,
+      });
+      const plainCookie = `pyrus_session=${plainSession.sessionToken}`;
+
+      const blockedGet = await fetch(routeUrl, {
+        headers: { cookie: plainCookie },
+      });
+      assert.equal(blockedGet.status, 403);
+      assert.equal(
+        ((await blockedGet.json()) as { code?: string }).code,
+        "entitlement_required",
+      );
+
+      const [entitledMember] = await db
+        .insert(usersTable)
+        .values({
+          email: "included-accounts-entitled-gate@example.com",
+          passwordHash: "unused",
+          role: "member",
+          entitlements: ["broker_connect"],
+        })
+        .returning();
+      const entitledSession = await createAuthSession({
+        userId: entitledMember!.id,
+      });
+      const entitledCookie = `pyrus_session=${entitledSession.sessionToken}`;
+
+      const missingCsrf = await fetch(routeUrl, {
+        method: "POST",
+        headers: {
+          cookie: entitledCookie,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ includedAccountIds: [] }),
+      });
+      assert.equal(missingCsrf.status, 403);
+      assert.equal(
+        ((await missingCsrf.json()) as { code?: string }).code,
+        "invalid_csrf_token",
+      );
+    }),
+  );
+});
+
+test("included broker accounts routes list and persist authenticated selections", async () => {
+  await withTestDb(async () =>
+    withServer(async (baseUrl) => {
+      const [member] = await db
+        .insert(usersTable)
+        .values({
+          email: "included-accounts-happy@example.com",
+          passwordHash: "unused",
+          role: "member",
+          entitlements: ["broker_connect"],
+        })
+        .returning();
+      const session = await createAuthSession({ userId: member!.id });
+      const cookie = `pyrus_session=${session.sessionToken}`;
+      const [connection] = await db
+        .insert(brokerConnectionsTable)
+        .values({
+          appUserId: member!.id,
+          name: "snaptrade:included-accounts-happy",
+          connectionType: "broker",
+          brokerProvider: "snaptrade",
+          mode: "live",
+          status: "connected",
+          capabilities: ["accounts", "positions"],
+        })
+        .returning({ id: brokerConnectionsTable.id });
+      assert.ok(connection);
+      const [equity] = await db
+        .insert(brokerAccountsTable)
+        .values({
+          appUserId: member!.id,
+          connectionId: connection.id,
+          providerAccountId: "snaptrade:included-equity",
+          displayName: "Included Equity",
+          accountType: "equity",
+          includedInTrading: true,
+          mode: "live",
+          accountStatus: "open",
+          baseCurrency: "USD",
+          capabilities: ["accounts", "positions"],
+        })
+        .returning({ id: brokerAccountsTable.id });
+      const [crypto] = await db
+        .insert(brokerAccountsTable)
+        .values({
+          appUserId: member!.id,
+          connectionId: connection.id,
+          providerAccountId: "snaptrade:included-crypto",
+          displayName: "Included Crypto",
+          accountType: "crypto",
+          includedInTrading: false,
+          mode: "live",
+          accountStatus: "open",
+          baseCurrency: "USD",
+          capabilities: ["accounts", "positions"],
+        })
+        .returning({ id: brokerAccountsTable.id });
+      assert.ok(equity);
+      assert.ok(crypto);
+
+      const routeUrl = `${baseUrl}/broker-execution/included-accounts`;
+      const listed = await fetch(routeUrl, {
+        headers: { cookie },
+      });
+      assert.equal(listed.status, 200);
+      const listedBody = (await listed.json()) as {
+        accounts: Array<{
+          id: string;
+          providerAccountId: string;
+          accountType: string | null;
+          includedInTrading: boolean;
+        }>;
+      };
+      assert.deepEqual(
+        listedBody.accounts.map((account) => ({
+          providerAccountId: account.providerAccountId,
+          accountType: account.accountType,
+          includedInTrading: account.includedInTrading,
+        })),
+        [
+          {
+            providerAccountId: "snaptrade:included-crypto",
+            accountType: "crypto",
+            includedInTrading: false,
+          },
+          {
+            providerAccountId: "snaptrade:included-equity",
+            accountType: "equity",
+            includedInTrading: true,
+          },
+        ],
+      );
+
+      const updated = await fetch(routeUrl, {
+        method: "POST",
+        headers: {
+          cookie,
+          "content-type": "application/json",
+          [AUTH_CSRF_HEADER]: session.csrfToken,
+        },
+        body: JSON.stringify({ includedAccountIds: [crypto.id] }),
+      });
+      assert.equal(updated.status, 200);
+      const updatedBody = (await updated.json()) as {
+        accounts: Array<{ id: string; includedInTrading: boolean }>;
+      };
+      assert.deepEqual(
+        updatedBody.accounts.map((account) => ({
+          id: account.id,
+          includedInTrading: account.includedInTrading,
+        })),
+        [
+          { id: crypto.id, includedInTrading: true },
+          { id: equity.id, includedInTrading: false },
+        ],
+      );
+    }),
+  );
+});
+
 test("IBKR portal stays off for members without the compliance flag (SPEC §6)", async () => {
   await withTestDb(async () =>
     withServer(async (baseUrl) => {
