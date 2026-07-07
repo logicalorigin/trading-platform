@@ -96,6 +96,9 @@ import {
   bridgeRuntimeTone,
   hasGatewayLiveDataProof,
 } from "../features/platform/bridgeRuntimeModel";
+import {
+  useAuthSession,
+} from "../features/auth/authSession.jsx";
 import { useAccountTab } from "../features/platform/useAccountTab.js";
 import {
   clearAlgoStaExecutionTimeframe,
@@ -156,18 +159,6 @@ const ALGO_SETTINGS_SAVE_PAUSE_TTL_MS =
 const ALGO_SETTINGS_SAVE_REQUEST_OPTIONS = Object.freeze({
   timeoutMs: ALGO_SETTINGS_SAVE_TIMEOUT_MS,
 });
-const AUTH_SESSION_QUERY_KEY = ["auth-session"];
-
-async function readAuthSession({ signal }) {
-  const response = await fetch("/api/auth/session", {
-    headers: { Accept: "application/json" },
-    signal,
-  });
-  if (!response.ok) {
-    throw new Error("Auth session unavailable");
-  }
-  return response.json();
-}
 
 const EMPTY_ALGO_DEPLOYMENTS = Object.freeze([]);
 const EMPTY_ALGO_DRAFTS = Object.freeze([]);
@@ -401,13 +392,8 @@ export const AlgoScreen = ({
   const toast = useToast();
   const { preferences: userPreferences } = useUserPreferences();
   const queryClient = useQueryClient();
-  const authSessionQuery = useQuery({
-    queryKey: AUTH_SESSION_QUERY_KEY,
-    queryFn: readAuthSession,
-    staleTime: 60_000,
-    retry: false,
-  });
-  const csrfToken = authSessionQuery.data?.csrfToken || "";
+  const authSession = useAuthSession();
+  const csrfToken = authSession.csrfToken || "";
   const csrfHeaders = useMemo(
     () => (csrfToken ? { "x-csrf-token": csrfToken } : {}),
     [csrfToken],
@@ -425,6 +411,20 @@ export const AlgoScreen = ({
   const [saveAllPending, setSaveAllPending] = useState(false);
   const criticalApiMutationPaused = useCriticalApiMutationPause();
   const [algoRuntimeHelpers, setAlgoRuntimeHelpers] = useState(
+    DEFAULT_ALGO_RUNTIME_HELPERS,
+  );
+  const brokerConfigured = Boolean(session?.configured?.ibkr);
+  const gatewayReady = isGatewayReadyForAlgo(session);
+  const bridgeTone = bridgeRuntimeTone(session);
+  const activeAccount =
+    accounts.find((account) => account.id === selectedAccountId) ||
+    accounts[0] ||
+    null;
+  const activeAccountId =
+    activeAccount?.id ||
+    selectedAccountId ||
+    session?.ibkrBridge?.selectedAccountId ||
+    null;
   const [algoAccountTabRaw, setAlgoAccountTab] = useAccountTab("shadow");
   const algoAccountTab = useMemo(() => {
     if (algoAccountTabRaw === "all" || algoAccountTabRaw === "shadow") {
@@ -441,20 +441,6 @@ export const AlgoScreen = ({
         ? "combined"
         : algoAccountTab;
   const algoPositionsUseShadowOverlay = algoAccountTab === "shadow";
-    DEFAULT_ALGO_RUNTIME_HELPERS,
-  );
-  const brokerConfigured = Boolean(session?.configured?.ibkr);
-  const gatewayReady = isGatewayReadyForAlgo(session);
-  const bridgeTone = bridgeRuntimeTone(session);
-  const activeAccount =
-    accounts.find((account) => account.id === selectedAccountId) ||
-    accounts[0] ||
-    null;
-  const activeAccountId =
-    activeAccount?.id ||
-    selectedAccountId ||
-    session?.ibkrBridge?.selectedAccountId ||
-    null;
   useEffect(() => {
     if (!isVisible || algoRuntimeHelpers !== DEFAULT_ALGO_RUNTIME_HELPERS) {
       return undefined;
@@ -2053,10 +2039,6 @@ export const AlgoScreen = ({
             signalOptionsRuleAdherence={signalOptionsRuleAdherence}
             gatewayReady={gatewayReady}
             signalScanReady={signalScanReady}
-            positionAccountTabId={algoAccountTab}
-            positionAccounts={accounts}
-            onSelectPositionAccountTab={setAlgoAccountTab}
-            positionAccountUsesShadowOverlay={algoPositionsUseShadowOverlay}
             signalScanBlockedReason={null}
             transitions={visibleTransitions}
             visibleSignalRows={visibleSignalRows}
@@ -2071,6 +2053,10 @@ export const AlgoScreen = ({
             safeQaMode={safeQaMode}
             signalOptionsPositions={signalOptionsPositions}
             signalOptionsLedgerPositionsQuery={signalOptionsLedgerPositionsQuery}
+            positionAccountTabId={algoAccountTab}
+            positionAccounts={accounts}
+            onSelectPositionAccountTab={setAlgoAccountTab}
+            positionAccountUsesShadowOverlay={algoPositionsUseShadowOverlay}
             symbolIndex={symbolIndex}
             events={events}
             userPreferences={userPreferences}

@@ -40,6 +40,7 @@ import {
 } from "lucide-react";
 import { Button } from "../../components/ui/Button.jsx";
 import { SurfacePanel } from "../../components/platform/primitives.jsx";
+import { useAuthSession } from "../../features/auth/authSession.jsx";
 import { writeSnapTradeExecutionAccountState } from "../../features/broker/snapTradeExecutionAccountStore.js";
 import {
   CSS_COLOR,
@@ -78,8 +79,6 @@ import {
   errorFlashKeys,
   successFlashKeys,
 } from "./brokerConnectionLifecycle.js";
-
-const AUTH_SESSION_QUERY_KEY = ["auth-session"];
 
 // Robinhood feather mark, inlined as a self-contained SVG data URI so the tile
 // carries no external/CDN image dependency. Rendered on the same white logo
@@ -222,17 +221,6 @@ function watchBrokerPopup({
   }, 400);
 }
 
-async function readAuthSession({ signal }) {
-  const response = await fetch("/api/auth/session", {
-    headers: { Accept: "application/json" },
-    signal,
-  });
-  if (!response.ok) {
-    throw new Error("Auth session unavailable");
-  }
-  return response.json();
-}
-
 function readErrorMessage(error, fallback) {
   const payload = error?.data || error?.body || error?.payload;
   return (
@@ -299,6 +287,18 @@ function formatExecutionBlockers(blockers) {
       (Array.isArray(blockers) ? blockers : [])
         .map((blocker) => SNAPTRADE_EXECUTION_BLOCKER_LABELS[blocker] || blocker)
         .filter(Boolean),
+    ),
+  );
+  return labels.length ? labels.join(", ") : "blocked";
+}
+
+function formatExecutionState(entity) {
+  if (!entity) return MISSING_VALUE;
+  return entity.executionReady === true
+    ? "ready"
+    : formatExecutionBlockers(entity.executionBlockers);
+}
+
 function formatBrokerProvider(provider) {
   const normalized = String(provider || "").trim().toLowerCase();
   if (normalized === "ibkr") return "IBKR";
@@ -314,18 +314,6 @@ function formatAccountCategory(category) {
   if (normalized === "futures") return "Futures";
   if (normalized === "prediction") return "Prediction";
   return "Equity";
-}
-
-    ),
-  );
-  return labels.length ? labels.join(", ") : "blocked";
-}
-
-function formatExecutionState(entity) {
-  if (!entity) return MISSING_VALUE;
-  return entity.executionReady === true
-    ? "ready"
-    : formatExecutionBlockers(entity.executionBlockers);
 }
 
 function StatusRow({ label, value, tone = CSS_COLOR.textSec }) {
@@ -626,14 +614,7 @@ export function SnapTradeConnectPanel({ enabled = true }) {
   const [activeConnectKey, setActiveConnectKey] = useState("");
   const [popupBrokerKey, setPopupBrokerKey] = useState("");
 
-  const authSessionQuery = useQuery({
-    queryKey: AUTH_SESSION_QUERY_KEY,
-    queryFn: readAuthSession,
-    enabled,
-    staleTime: 60_000,
-    retry: false,
-  });
-  const authSession = authSessionQuery.data || {};
+  const authSession = useAuthSession();
   const canManage = canManageSnapTradeConnections(authSession.user);
   const csrfToken = authSession.csrfToken || "";
   const csrfHeaders = useMemo(
@@ -643,13 +624,6 @@ export function SnapTradeConnectPanel({ enabled = true }) {
 
   const readinessQuery = useGetSnapTradeReadiness({
     query: {
-  const inclusionQuery = useGetBrokerExecutionIncludedAccounts({
-    query: {
-      enabled: Boolean(enabled && canManage),
-      retry: false,
-      staleTime: 30_000,
-    },
-  });
       enabled: Boolean(enabled && canManage),
       retry: false,
       staleTime: 15_000,
@@ -665,6 +639,13 @@ export function SnapTradeConnectPanel({ enabled = true }) {
   const brokerConnectionsQuery = useListBrokerConnections({
     query: {
       enabled: Boolean(enabled),
+      retry: false,
+      staleTime: 30_000,
+    },
+  });
+  const inclusionQuery = useGetBrokerExecutionIncludedAccounts({
+    query: {
+      enabled: Boolean(enabled && canManage),
       retry: false,
       staleTime: 30_000,
     },
@@ -691,19 +672,6 @@ export function SnapTradeConnectPanel({ enabled = true }) {
           const nextAccountId = data.accounts.some((account) => account.id === current)
             ? current
             : data.accounts.find((account) => account.executionReady === true)
-  const inclusionMutation = useSetBrokerExecutionIncludedAccounts({
-    request: { headers: csrfHeaders },
-    mutation: {
-      onSuccess: () => {
-        void queryClient.invalidateQueries({
-          queryKey: getGetBrokerExecutionIncludedAccountsQueryKey(),
-        });
-        void queryClient.invalidateQueries({
-          queryKey: getListAccountsQueryKey(),
-        });
-      },
-    },
-  });
                 ?.id ||
               data.accounts[0]?.id ||
               "";
@@ -716,6 +684,19 @@ export function SnapTradeConnectPanel({ enabled = true }) {
         });
         void queryClient.invalidateQueries({
           queryKey: getListBrokerConnectionsQueryKey(),
+        });
+        void queryClient.invalidateQueries({
+          queryKey: getListAccountsQueryKey(),
+        });
+      },
+    },
+  });
+  const inclusionMutation = useSetBrokerExecutionIncludedAccounts({
+    request: { headers: csrfHeaders },
+    mutation: {
+      onSuccess: () => {
+        void queryClient.invalidateQueries({
+          queryKey: getGetBrokerExecutionIncludedAccountsQueryKey(),
         });
         void queryClient.invalidateQueries({
           queryKey: getListAccountsQueryKey(),
@@ -818,7 +799,6 @@ export function SnapTradeConnectPanel({ enabled = true }) {
   const executionReadyAccounts = syncedAccounts.filter(
     (account) => account.executionReady === true,
   );
-    inclusionMutation.isPending ||
   const executionReadyConnections = syncedConnections.filter(
     (connection) => connection.executionReady === true,
   );
@@ -833,11 +813,12 @@ export function SnapTradeConnectPanel({ enabled = true }) {
   const portfolioCurrency =
     portfolio?.account?.baseCurrency || selectedPortfolioAccount?.baseCurrency || "USD";
   const busy =
-    authSessionQuery.isLoading ||
+    authSession.isLoading ||
     readinessQuery.isLoading ||
     registerMutation.isPending ||
     portalMutation.isPending ||
     syncMutation.isPending ||
+    inclusionMutation.isPending ||
     portfolioQuery.isFetching ||
     robinhoodReadinessQuery.isLoading ||
     robinhoodStartMutation.isPending ||
@@ -854,15 +835,6 @@ export function SnapTradeConnectPanel({ enabled = true }) {
       !credentialsReady ||
       registerMutation.isPending ||
       portalMutation.isPending ||
-  const inclusionAccounts = inclusionQuery.data?.accounts || [];
-  const toggleIncludedAccount = (accountId, nextIncluded) => {
-    const includedAccountIds = inclusionAccounts
-      .filter((account) =>
-        account.id === accountId ? nextIncluded : account.includedInTrading,
-      )
-      .map((account) => account.id);
-    inclusionMutation.mutate({ data: { includedAccountIds } });
-  };
       syncMutation.isPending,
   );
   const syncDisabled = Boolean(
@@ -882,6 +854,15 @@ export function SnapTradeConnectPanel({ enabled = true }) {
       syncMutation.isPending ||
       portfolioQuery.isFetching,
   );
+  const inclusionAccounts = inclusionQuery.data?.accounts || [];
+  const toggleIncludedAccount = (accountId, nextIncluded) => {
+    const includedAccountIds = inclusionAccounts
+      .filter((account) =>
+        account.id === accountId ? nextIncluded : account.includedInTrading,
+      )
+      .map((account) => account.id);
+    inclusionMutation.mutate({ data: { includedAccountIds } });
+  };
   // Avoid the "defaults, then live" flash: render the live tradable list once it
   // arrives, the bundled defaults only if the fetch errored, and nothing while
   // the first fetch is still in flight.
@@ -1244,7 +1225,6 @@ export function SnapTradeConnectPanel({ enabled = true }) {
   // Stop polling any open broker auth popup if the panel unmounts.
   useEffect(
     () => () => {
-    void inclusionQuery.refetch();
       if (oauthPollRef.current) {
         window.clearInterval(oauthPollRef.current);
       }
@@ -1258,12 +1238,13 @@ export function SnapTradeConnectPanel({ enabled = true }) {
   const refresh = () => {
     setLocalError("");
     setPortalLaunchBlocked(false);
-    void authSessionQuery.refetch();
+    void authSession.refresh();
     void readinessQuery.refetch();
     void robinhoodReadinessQuery.refetch();
     void schwabReadinessQuery.refetch();
     void ibkrPortalReadinessQuery.refetch();
     void brokeragesQuery.refetch();
+    void inclusionQuery.refetch();
     if (selectedPortfolioAccountId) {
       void portfolioQuery.refetch();
     }
@@ -1620,11 +1601,8 @@ export function SnapTradeConnectPanel({ enabled = true }) {
     }
   };
 
-  const authError = authSessionQuery.error
-    ? readErrorMessage(authSessionQuery.error, "Auth session unavailable.")
-    : "";
+  const authError = authSession.isError ? "Auth session unavailable." : "";
   const readinessError = readinessQuery.error
-    readErrorMessage(inclusionMutation.error, "") ||
     ? readErrorMessage(readinessQuery.error, "SnapTrade readiness unavailable.")
     : robinhoodReadinessQuery.error
       ? readErrorMessage(
@@ -1646,6 +1624,7 @@ export function SnapTradeConnectPanel({ enabled = true }) {
     readErrorMessage(registerMutation.error, "") ||
     readErrorMessage(portalMutation.error, "") ||
     readErrorMessage(syncMutation.error, "") ||
+    readErrorMessage(inclusionMutation.error, "") ||
     readErrorMessage(portfolioQuery.error, "") ||
     readErrorMessage(robinhoodStartMutation.error, "") ||
     readErrorMessage(robinhoodSyncMutation.error, "") ||
@@ -1813,7 +1792,7 @@ export function SnapTradeConnectPanel({ enabled = true }) {
     return brokerCardStatusLine(phase);
   };
 
-  if (enabled && authSessionQuery.isFetched && !canManage) {
+  if (enabled && !authSession.isLoading && !canManage) {
     return null;
   }
 
@@ -2066,6 +2045,27 @@ export function SnapTradeConnectPanel({ enabled = true }) {
           {brokeragesQuery.isError ? (
             <div
               style={{
+                color: CSS_COLOR.textDim,
+                fontFamily: T.sans,
+                fontSize: textSize("body"),
+              }}
+            >
+              Live broker list unavailable — showing defaults.
+            </div>
+          ) : null}
+          {brokeragesQuery.isLoading && !brokeragesQuery.data ? (
+            <div
+              style={{
+                color: CSS_COLOR.textDim,
+                fontFamily: T.sans,
+                fontSize: textSize("body"),
+              }}
+            >
+              Loading brokers…
+            </div>
+          ) : null}
+        </div>
+
         {inclusionAccounts.length || inclusionQuery.isFetching ? (
           <div
             style={{
@@ -2160,26 +2160,6 @@ export function SnapTradeConnectPanel({ enabled = true }) {
             ))}
           </div>
         ) : null}
-                color: CSS_COLOR.textDim,
-                fontFamily: T.sans,
-                fontSize: textSize("body"),
-              }}
-            >
-              Live broker list unavailable — showing defaults.
-            </div>
-          ) : null}
-          {brokeragesQuery.isLoading && !brokeragesQuery.data ? (
-            <div
-              style={{
-                color: CSS_COLOR.textDim,
-                fontFamily: T.sans,
-                fontSize: textSize("body"),
-              }}
-            >
-              Loading brokers…
-            </div>
-          ) : null}
-        </div>
 
         {isRobinhood ? (
           <div

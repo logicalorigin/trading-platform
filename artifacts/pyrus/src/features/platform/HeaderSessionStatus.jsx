@@ -1,4 +1,4 @@
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   ChevronDown,
   KeyRound,
@@ -28,6 +28,7 @@ import {
   T,
   textSize,
 } from "../../lib/uiTokens.jsx";
+import { useAuthSession } from "../auth/authSession.jsx";
 import {
   buildFirstRunBody,
   buildSignInBody,
@@ -35,19 +36,6 @@ import {
   validateFirstRunInput,
   validateSignInInput,
 } from "./headerSessionModel.js";
-
-const AUTH_SESSION_QUERY_KEY = ["auth-session"];
-
-async function readAuthSession({ signal }) {
-  const response = await fetch("/api/auth/session", {
-    headers: { Accept: "application/json" },
-    signal,
-  });
-  if (!response.ok) {
-    throw new Error("Auth session unavailable");
-  }
-  return response.json();
-}
 
 async function postAuthJson(path, body, headers = {}) {
   const response = await fetch(path, {
@@ -241,23 +229,17 @@ export function HeaderSessionStatus({
   const [pending, setPending] = useState(false);
   const [localError, setLocalError] = useState("");
 
-  const authSessionQuery = useQuery({
-    queryKey: AUTH_SESSION_QUERY_KEY,
-    queryFn: readAuthSession,
-    staleTime: 60_000,
-    retry: false,
-  });
-  const authSession = authSessionQuery.data || {};
+  const authSession = useAuthSession();
   const sessionUser = authSession.user || null;
   const csrfToken = authSession.csrfToken || "";
   const signedIn = Boolean(sessionUser);
 
-  const statusLabel = authSessionQuery.isLoading
+  const statusLabel = authSession.isLoading
     ? "Checking"
     : signedIn
       ? describeSessionUser(sessionUser)
       : "Sign in";
-  const statusTone = authSessionQuery.isLoading
+  const statusTone = authSession.isLoading
     ? CSS_COLOR.textDim
     : signedIn
       ? CSS_COLOR.green
@@ -347,9 +329,9 @@ export function HeaderSessionStatus({
     // Mark everything else stale WITHOUT forcing an immediate app-wide refetch
     // (that thundering herd can hang the spinner under load); those queries
     // refetch lazily on next access.
-    void queryClient.invalidateQueries({ queryKey: AUTH_SESSION_QUERY_KEY });
+    void authSession.refresh();
     void queryClient.invalidateQueries({ refetchType: "none" });
-  }, [queryClient]);
+  }, [authSession, queryClient]);
 
   const submitSignIn = useCallback(async () => {
     const input = { email, password };

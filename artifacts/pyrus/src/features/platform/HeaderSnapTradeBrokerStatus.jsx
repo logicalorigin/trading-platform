@@ -1,4 +1,4 @@
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   AlertTriangle,
   CheckCircle2,
@@ -50,20 +50,9 @@ import {
   SNAPTRADE_BROKER_CHOICES,
   buildSnapTradeConnectionPortalBody,
 } from "../../screens/settings/snapTradeConnectModel.js";
+import { useAuthSession } from "../auth/authSession.jsx";
 
-const AUTH_SESSION_QUERY_KEY = ["auth-session"];
 const DEFAULT_BROKER = "INTERACTIVE-BROKERS-FLEX";
-
-async function readAuthSession({ signal }) {
-  const response = await fetch("/api/auth/session", {
-    headers: { Accept: "application/json" },
-    signal,
-  });
-  if (!response.ok) {
-    throw new Error("Auth session unavailable");
-  }
-  return response.json();
-}
 
 function readErrorMessage(error, fallback) {
   const payload = error?.data || error?.body || error?.payload;
@@ -236,13 +225,7 @@ export function HeaderSnapTradeBrokerStatus({
   const executionState = useSnapTradeExecutionAccountState();
   const executionAccount = executionState.selectedAccount || null;
 
-  const authSessionQuery = useQuery({
-    queryKey: AUTH_SESSION_QUERY_KEY,
-    queryFn: readAuthSession,
-    staleTime: 60_000,
-    retry: false,
-  });
-  const authSession = authSessionQuery.data || {};
+  const authSession = useAuthSession();
   const csrfToken = authSession.csrfToken || "";
   const csrfHeaders = useMemo(
     () => (csrfToken ? { "x-csrf-token": csrfToken } : {}),
@@ -251,7 +234,7 @@ export function HeaderSnapTradeBrokerStatus({
 
   const readinessQuery = useGetSnapTradeReadiness({
     query: {
-      enabled: authSessionQuery.isSuccess,
+      enabled: !authSession.isLoading && !authSession.isError,
       retry: false,
       staleTime: 15_000,
     },
@@ -314,8 +297,8 @@ export function HeaderSnapTradeBrokerStatus({
     executionState.executionReadyCount ||
     0;
   const statusModel = buildStatusModel({
-    authLoading: authSessionQuery.isLoading,
-    authError: authSessionQuery.isError,
+    authLoading: authSession.isLoading,
+    authError: authSession.isError,
     credentialsReady,
     executionAccount,
     readinessError: readinessQuery.isError,
@@ -332,7 +315,7 @@ export function HeaderSnapTradeBrokerStatus({
     registerMutation.isPending ||
     portalMutation.isPending ||
     syncMutation.isPending ||
-    authSessionQuery.isLoading ||
+    authSession.isLoading ||
     readinessQuery.isLoading;
   const mutationError =
     readErrorMessage(registerMutation.error, "") ||
@@ -341,9 +324,7 @@ export function HeaderSnapTradeBrokerStatus({
   const visibleError =
     localError ||
     mutationError ||
-    (authSessionQuery.error
-      ? readErrorMessage(authSessionQuery.error, "Auth session unavailable.")
-      : "") ||
+    (authSession.isError ? "Auth session unavailable." : "") ||
     (readinessQuery.error
       ? readErrorMessage(readinessQuery.error, "SnapTrade readiness unavailable.")
       : "");
@@ -464,9 +445,9 @@ export function HeaderSnapTradeBrokerStatus({
   const refresh = useCallback(() => {
     setLocalError("");
     setPortalLaunchBlocked(false);
-    void authSessionQuery.refetch();
+    void authSession.refresh();
     void readinessQuery.refetch();
-  }, [authSessionQuery, readinessQuery]);
+  }, [authSession, readinessQuery]);
 
   const launchPortal = useCallback(async () => {
     if (!csrfToken) {
