@@ -4,7 +4,8 @@ import test from "node:test";
 
 import { __positionsPanelInternalsForTests } from "./PositionsPanel.jsx";
 
-const { applyLiveEquityQuoteToRow } = __positionsPanelInternalsForTests;
+const { applyLiveEquityQuoteToRow, buildDisplayTotals } =
+  __positionsPanelInternalsForTests;
 
 const source = readFileSync(new URL("./PositionsPanel.jsx", import.meta.url), "utf8");
 
@@ -153,4 +154,77 @@ test("position fallback sparkline does not use average cost as current price", (
 
   assert.ok(fallbackSparkline, "Missing buildPositionFallbackSparklineData");
   assert.doesNotMatch(fallbackSparkline, /row\?\.averageCost/);
+});
+
+test("display totals sum broker money, not live Massive money", () => {
+  const rows = [
+    {
+      marketValue: 1200,
+      brokerMarketValue: 1000,
+      unrealizedPnl: 200,
+      brokerUnrealizedPnl: 100,
+    },
+    {
+      marketValue: -600,
+      brokerMarketValue: -500,
+      unrealizedPnl: -80,
+      brokerUnrealizedPnl: -50,
+    },
+  ];
+
+  const totals = buildDisplayTotals(rows);
+
+  // Broker sum (1000 + -500) = 500, NOT the live Massive sum (1200 + -600) = 600.
+  assert.equal(totals.netExposure, 500);
+  assert.equal(totals.grossLong, 1000);
+  assert.equal(totals.grossShort, -500);
+  // Broker unrealized (100 + -50) = 50, NOT the live sum (200 + -80) = 120.
+  assert.equal(totals.unrealizedPnl, 50);
+});
+
+test("real rows follow broker marks; shadow rows stay on live Massive valuation", () => {
+  const openedAt = "2026-04-30T00:00:00.000Z";
+  const baseRow = {
+    symbol: "FCEL",
+    assetClass: "Stocks",
+    quantity: 100,
+    averageCost: 15,
+    mark: 20,
+    marketPrice: 20,
+    marketValue: 2000, // broker market value
+    unrealizedPnl: 500, // broker unrealized PnL
+    unrealizedPnlPercent: 33.33,
+    openedAt,
+    quote: null,
+    underlyingMarket: null,
+  };
+  const liveQuote = {
+    symbol: "FCEL",
+    price: 22,
+    mark: 22,
+    last: 22,
+    freshness: "live",
+    marketDataMode: "live",
+    source: "massive",
+  };
+
+  const realPatched = applyLiveEquityQuoteToRow(
+    { ...baseRow, id: "U123:FCEL", accountId: "U123" },
+    liveQuote,
+  );
+  // Live mark (22) drives the displayed Price/marketValue overlay...
+  assert.equal(realPatched.marketValue, 2200);
+  // ...while the broker money is preserved as the source of truth.
+  assert.equal(realPatched.brokerMarketValue, 2000);
+  assert.equal(realPatched.brokerUnrealizedPnl, 500);
+  assert.equal(buildDisplayTotals([realPatched]).netExposure, 2000);
+
+  const shadowPatched = applyLiveEquityQuoteToRow(
+    { ...baseRow, id: "shadow:FCEL", accountId: "shadow" },
+    liveQuote,
+  );
+  // Shadow rows have no broker, so broker fields stay null and money follows live.
+  assert.equal(shadowPatched.marketValue, 2200);
+  assert.equal(shadowPatched.brokerMarketValue, null);
+  assert.equal(buildDisplayTotals([shadowPatched]).netExposure, 2200);
 });

@@ -222,6 +222,25 @@ const firstFiniteNumber = (...values) => {
   return null;
 };
 
+// Broker (SnapTrade) marks are the source of truth for the account Positions MONEY
+// columns (market value, unrealized P&L) and the account TOTALS. The live Massive quote
+// is surfaced ONLY as the displayed Price overlay, never as money. These readers prefer
+// the preserved broker value and fall back to the live value when it is absent (e.g.
+// shadow-ledger rows have no broker and intentionally stay on Massive valuation) so money
+// cells never render blank. NOTE: `finiteNumber(null)` is 0 here (Number(null) === 0), so
+// the broker field is chosen with `??` BEFORE the finite check — otherwise a null broker
+// value would coerce to 0 instead of falling back to the live value.
+const brokerMoneyValue = (brokerValue, liveValue) => {
+  const value = brokerValue ?? liveValue;
+  return value == null ? null : finiteNumber(value);
+};
+const brokerMarketValueForRow = (row) =>
+  brokerMoneyValue(row?.brokerMarketValue, row?.marketValue);
+const brokerUnrealizedPnlForRow = (row) =>
+  brokerMoneyValue(row?.brokerUnrealizedPnl, row?.unrealizedPnl);
+const brokerUnrealizedPnlPercentForRow = (row) =>
+  brokerMoneyValue(row?.brokerUnrealizedPnlPercent, row?.unrealizedPnlPercent);
+
 const firstPositiveFiniteNumber = (...values) => {
   for (const value of values) {
     const numeric = finiteNumber(value);
@@ -777,6 +796,11 @@ const applyLiveOptionQuoteToRow = (row, liveQuote) => {
         }
       : row.underlyingMarket;
 
+  // Preserve the incoming broker (SnapTrade) money as the source of truth for the money
+  // columns/totals; the live values above stay for the Price overlay only. Shadow-ledger
+  // rows have no broker, so leave the broker fields null and let readers fall back to live
+  // (Massive) valuation.
+  const preserveBrokerMoney = !isShadowLedgerPositionRow(row);
   return {
     ...row,
     ...(underlyingMarket ? { underlyingMarket } : {}),
@@ -790,6 +814,15 @@ const applyLiveOptionQuoteToRow = (row, liveQuote) => {
     unrealizedPnl,
     unrealizedPnlPercent,
     marketValue,
+    brokerMarketValue: preserveBrokerMoney
+      ? firstFiniteNumber(row.brokerMarketValue ?? row.marketValue)
+      : null,
+    brokerUnrealizedPnl: preserveBrokerMoney
+      ? firstFiniteNumber(row.brokerUnrealizedPnl ?? row.unrealizedPnl)
+      : null,
+    brokerUnrealizedPnlPercent: preserveBrokerMoney
+      ? firstFiniteNumber(row.brokerUnrealizedPnlPercent ?? row.unrealizedPnlPercent)
+      : null,
     betaWeightedDelta:
       delta != null && quantity != null && multiplier != null
         ? delta * quantity * multiplier
@@ -971,6 +1004,11 @@ const applyLiveEquityQuoteToRow = (row, liveQuote) => {
     };
   }
 
+  // Preserve the incoming broker (SnapTrade) money as the source of truth for the money
+  // columns/totals; the live values above stay for the Price overlay only. Shadow-ledger
+  // rows have no broker, so leave the broker fields null and let readers fall back to live
+  // (Massive) valuation.
+  const preserveBrokerMoney = !isShadowLedgerPositionRow(row);
   return {
     ...row,
     quote,
@@ -981,6 +1019,15 @@ const applyLiveEquityQuoteToRow = (row, liveQuote) => {
     unrealizedPnl,
     unrealizedPnlPercent,
     marketValue,
+    brokerMarketValue: preserveBrokerMoney
+      ? firstFiniteNumber(row.brokerMarketValue ?? row.marketValue)
+      : null,
+    brokerUnrealizedPnl: preserveBrokerMoney
+      ? firstFiniteNumber(row.brokerUnrealizedPnl ?? row.unrealizedPnl)
+      : null,
+    brokerUnrealizedPnlPercent: preserveBrokerMoney
+      ? firstFiniteNumber(row.brokerUnrealizedPnlPercent ?? row.unrealizedPnlPercent)
+      : null,
     underlyingMarket,
   };
 };
@@ -1015,8 +1062,8 @@ const buildDisplayTotals = (rows, fallbackTotals = {}) => {
   }
   const totals = safeRows.reduce(
     (acc, row) => {
-      const marketValue = firstFiniteNumber(row.marketValue);
-      const unrealizedPnl = firstFiniteNumber(row.unrealizedPnl);
+      const marketValue = brokerMarketValueForRow(row);
+      const unrealizedPnl = brokerUnrealizedPnlForRow(row);
       const dayChange = firstFiniteNumber(row.dayChange);
       const weightPercent = firstFiniteNumber(row.weightPercent);
       if (marketValue != null) {
@@ -1062,7 +1109,7 @@ const applyDisplayWeights = (rows, fallbackTotals = null) => {
   }
   const base = Math.abs(netLiquidation);
   return safeRows.map((row) => {
-    const marketValue = firstFiniteNumber(row?.marketValue);
+    const marketValue = brokerMarketValueForRow(row);
     if (marketValue == null) return row;
     const weightPercent = (marketValue / base) * 100;
     return {
@@ -2230,8 +2277,8 @@ const denseColumnSortValue = (row, id, snapshotsBySymbol = {}) => {
   if (id === "stop") return tradeManagementForRow(row).sortValues.stop;
   if (id === "trail") return tradeManagementForRow(row).sortValues.trail;
   if (id === "day") return row.dayChange;
-  if (id === "unrealized") return row.unrealizedPnl;
-  if (id === "exposure") return row.marketValue;
+  if (id === "unrealized") return brokerUnrealizedPnlForRow(row);
+  if (id === "exposure") return brokerMarketValueForRow(row);
   if (id === "greeks") return row?.optionQuote?.delta ?? row.betaWeightedDelta;
   if (id === "last") return quote?.mark ?? quote?.last ?? row.mark;
   if (id === "bid") return quote?.bid;
@@ -2489,8 +2536,13 @@ const DensePositionActions = ({
         },
         {
           label: "P&L",
-          value: formatAccountSignedMoney(row.unrealizedPnl, currency, false, maskValues),
-          tone: toneForValue(row.unrealizedPnl),
+          value: formatAccountSignedMoney(
+            brokerUnrealizedPnlForRow(row),
+            currency,
+            false,
+            maskValues,
+          ),
+          tone: toneForValue(brokerUnrealizedPnlForRow(row)),
         },
         {
           label: "Stop",
@@ -2845,10 +2897,10 @@ const DensePositionCell = ({
     return (
       <td style={denseTableCellStyle(column, expanded)}>
         <DenseStackedValue
-          primary={formatAccountSignedMoney(row.unrealizedPnl, currency, false, maskValues)}
-          secondary={signedPercent(row.unrealizedPnlPercent, 2, maskValues)}
-          primaryTone={toneForValue(row.unrealizedPnl)}
-          secondaryTone={toneForValue(row.unrealizedPnlPercent)}
+          primary={formatAccountSignedMoney(brokerUnrealizedPnlForRow(row), currency, false, maskValues)}
+          secondary={signedPercent(brokerUnrealizedPnlPercentForRow(row), 2, maskValues)}
+          primaryTone={toneForValue(brokerUnrealizedPnlForRow(row))}
+          secondaryTone={toneForValue(brokerUnrealizedPnlPercentForRow(row))}
           align={column.align}
         />
       </td>
@@ -2857,7 +2909,7 @@ const DensePositionCell = ({
     return (
       <td style={denseTableCellStyle(column, expanded)}>
         <DenseStackedValue
-          primary={formatAccountMoney(row.marketValue, currency, false, maskValues)}
+          primary={formatAccountMoney(brokerMarketValueForRow(row), currency, false, maskValues)}
           secondary={`Wt ${formatAccountPercent(row.weightPercent, 2, maskValues)}`}
           primaryTone={CSS_COLOR.text}
           align={column.align}
@@ -2893,13 +2945,13 @@ const DensePositionCell = ({
     content = signedPercent(row.dayChangePercent, 2, maskValues);
     color = toneForValue(row.dayChangePercent);
   } else if (column.id === "unrealizedPnl") {
-    content = formatAccountSignedMoney(row.unrealizedPnl, currency, false, maskValues);
-    color = toneForValue(row.unrealizedPnl);
+    content = formatAccountSignedMoney(brokerUnrealizedPnlForRow(row), currency, false, maskValues);
+    color = toneForValue(brokerUnrealizedPnlForRow(row));
   } else if (column.id === "unrealizedPnlPercent") {
-    content = signedPercent(row.unrealizedPnlPercent, 2, maskValues);
-    color = toneForValue(row.unrealizedPnlPercent);
+    content = signedPercent(brokerUnrealizedPnlPercentForRow(row), 2, maskValues);
+    color = toneForValue(brokerUnrealizedPnlPercentForRow(row));
   } else if (column.id === "marketValue") {
-    content = formatAccountMoney(row.marketValue, currency, false, maskValues);
+    content = formatAccountMoney(brokerMarketValueForRow(row), currency, false, maskValues);
     color = CSS_COLOR.text;
   } else if (column.id === "weightPercent") {
     content = formatAccountPercent(row.weightPercent, 2, maskValues);
@@ -3495,15 +3547,15 @@ export const PositionsAtDateInspector = ({
                         </td>
                         <td style={compactPositionCellStyle({ align: "right" })}>
                           <DenseStackedValue
-                            primary={formatAccountSignedMoney(row.unrealizedPnl, currency, false, maskValues)}
-                            secondary={signedPercent(row.unrealizedPnlPercent, 2, maskValues)}
-                            primaryTone={toneForValue(row.unrealizedPnl)}
-                            secondaryTone={toneForValue(row.unrealizedPnlPercent)}
+                            primary={formatAccountSignedMoney(brokerUnrealizedPnlForRow(row), currency, false, maskValues)}
+                            secondary={signedPercent(brokerUnrealizedPnlPercentForRow(row), 2, maskValues)}
+                            primaryTone={toneForValue(brokerUnrealizedPnlForRow(row))}
+                            secondaryTone={toneForValue(brokerUnrealizedPnlPercentForRow(row))}
                           />
                         </td>
                         <td style={compactPositionCellStyle({ align: "right" })}>
                           <DenseStackedValue
-                            primary={formatAccountMoney(row.marketValue, currency, false, maskValues)}
+                            primary={formatAccountMoney(brokerMarketValueForRow(row), currency, false, maskValues)}
                             secondary={`Wt ${formatAccountPercent(row.weightPercent, 2, maskValues)}`}
                             primaryTone={CSS_COLOR.text}
                           />
