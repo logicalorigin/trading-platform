@@ -650,8 +650,12 @@ function invalidateShadowReadCachesAfterBackgroundMarkRefresh() {
 }
 
 function isShadowReadCacheKeyExpiredByMarkRefresh(key: string): boolean {
-  return SHADOW_MARK_REFRESH_CACHE_KEY_PREFIXES.some((prefix) =>
-    key.startsWith(prefix),
+  // Cache keys are account-partitioned as "<accountId> <route:...>" (Slice 5.5).
+  // Match the route prefix after the partition too — plain startsWith stopped
+  // matching when the account prefix landed, which silently turned mark-refresh
+  // invalidation into a no-op (stale summaries/positions until natural TTL).
+  return SHADOW_MARK_REFRESH_CACHE_KEY_PREFIXES.some(
+    (prefix) => key.startsWith(prefix) || key.includes(` ${prefix}`),
   );
 }
 
