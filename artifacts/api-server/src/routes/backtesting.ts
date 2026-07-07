@@ -31,14 +31,17 @@ import {
   createBacktestRun,
   createBacktestStudy,
   createBacktestSweep,
+  createOvernightSignalExpectancyStudy,
   createPatternDiscoveryStudy,
   getBacktestRunChart,
   getBacktestRun,
   getBacktestStudy,
   getBacktestStudyPreviewChart,
   getBacktestSweep,
+  getOvernightSignalExpectancyResults,
   getPatternDiscoveryResults,
   getPatternOccurrences,
+  listOvernightSignalExpectancySamples,
   listBacktestDraftStrategies,
   listBacktestJobs,
   listBacktestRuns,
@@ -211,6 +214,68 @@ router.get("/backtests/drafts", async (_req, res): Promise<void> => {
   );
   res.json(data);
 });
+
+const OvernightTimeframe = z.enum(["15m", "30m", "1h", "4h"]);
+
+const CreateOvernightExpectancyBody = z.object({
+  name: z.string().min(1).optional(),
+  symbols: z.array(z.string().min(1)).optional(),
+  signalTimeframes: z.array(OvernightTimeframe).min(1).optional(),
+  startsAt: z.coerce.date().optional(),
+  endsAt: z.coerce.date().optional(),
+  signalSettingsByTimeframe: z.record(z.record(z.unknown())).optional(),
+  persistSamples: z.boolean().optional(),
+});
+
+const OvernightSamplesQuery = z.object({
+  cursor: z.string().min(1).optional(),
+  limit: z.coerce.number().int().positive().max(500).optional(),
+  timeframe: OvernightTimeframe.optional(),
+  symbol: z.string().min(1).optional(),
+  status: z
+    .enum([
+      "valid",
+      "sell_state",
+      "no_signal",
+      "missing_return",
+      "insufficient_warmup",
+    ])
+    .optional(),
+  from: z.coerce.date().optional(),
+  to: z.coerce.date().optional(),
+});
+
+router.post(
+  "/backtests/overnight-expectancy",
+  async (req, res): Promise<void> => {
+    const body = CreateOvernightExpectancyBody.parse(req.body);
+    const data = await createOvernightSignalExpectancyStudy(body);
+    res.status(201).json(data);
+  },
+);
+
+router.get(
+  "/backtests/overnight-expectancy/:studyId",
+  async (req, res): Promise<void> => {
+    const studyId = z.string().uuid().parse(req.params.studyId);
+    const data = await getOvernightSignalExpectancyResults(studyId);
+    if (!data) {
+      res.status(404).json({ error: "study_not_found" });
+      return;
+    }
+    res.json(data);
+  },
+);
+
+router.get(
+  "/backtests/overnight-expectancy/:studyId/samples",
+  async (req, res): Promise<void> => {
+    const studyId = z.string().uuid().parse(req.params.studyId);
+    const query = OvernightSamplesQuery.parse(req.query);
+    const data = await listOvernightSignalExpectancySamples(studyId, query);
+    res.json(data);
+  },
+);
 
 const PatternDiscoveryBody = z.object({
   name: z.string().min(1),

@@ -15,6 +15,7 @@ import {
   type StrategyCatalogItem,
 } from "@workspace/backtest-core";
 import {
+  algoDeploymentsTable,
   algoStrategiesTable,
   backtestPromotionsTable,
   backtestRunDatasetsTable,
@@ -30,6 +31,9 @@ import {
   instrumentsTable,
   mtfPatternOccurrencesTable,
   mtfPatternResultsTable,
+  overnightSignalExpectancyResultsTable,
+  overnightSignalExpectancySamplesTable,
+  signalUniverseRankingsTable,
   watchlistItemsTable,
 } from "@workspace/db";
 import type {
@@ -41,7 +45,7 @@ import type {
   BacktestSweep,
   HistoricalBarDataset,
 } from "@workspace/db";
-import { and, asc, desc, eq } from "drizzle-orm";
+import { and, asc, desc, eq, gte, lte, sql, type SQL } from "drizzle-orm";
 import { HttpError } from "../lib/errors";
 import { getMassiveRuntimeConfig } from "../lib/runtime";
 import { normalizeSymbol } from "../lib/values";
@@ -96,6 +100,11 @@ type CreateSweepInput = {
   walkForwardTrainingMonths: number | null;
   walkForwardTestMonths: number | null;
   walkForwardStepMonths: number | null;
+};
+
+type BacktestDeploymentSignalOptionsSnapshot = {
+  deploymentId: string;
+  signalOptionsProfile: SignalOptionsExecutionProfile;
 };
 
 export type ResolveBacktestOptionContractInput = {
@@ -2010,6 +2019,47 @@ function resolveSignalOptionsProfileFromParameters(
   });
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+async function resolveBacktestDeploymentSignalOptionsSnapshot(input: {
+  studyId: string;
+  preferredRunId?: string | null;
+}): Promise<BacktestDeploymentSignalOptionsSnapshot | null> {
+  const deployments = await db
+    .select({
+      id: algoDeploymentsTable.id,
+      config: algoDeploymentsTable.config,
+    })
+    .from(algoDeploymentsTable)
+    .where(
+      sql`${algoDeploymentsTable.config} ->> 'sourceStudyId' = ${input.studyId}`,
+    )
+    .orderBy(
+      input.preferredRunId
+        ? sql`case when ${algoDeploymentsTable.config} ->> 'sourceRunId' = ${input.preferredRunId} then 0 else 1 end`
+        : sql`0`,
+      desc(algoDeploymentsTable.updatedAt),
+    )
+    .limit(5);
+
+  for (const deployment of deployments) {
+    if (!isRecord(deployment.config) || !isRecord(deployment.config.signalOptions)) {
+      continue;
+    }
+
+    return {
+      deploymentId: deployment.id,
+      signalOptionsProfile: resolveSignalOptionsExecutionProfile(
+        deployment.config,
+      ),
+    };
+  }
+
+  return null;
+}
+
 export async function listBacktestStudies() {
   const studies = await db
     .select()
@@ -2179,13 +2229,29 @@ export async function createBacktestRun(input: CreateRunInput) {
       })
       .returning();
 
+    const deploymentSignalOptionsSnapshot =
+      await resolveBacktestDeploymentSignalOptionsSnapshot({
+        studyId: study.id,
+        preferredRunId: run.id,
+      });
+
     await tx.insert(backtestStudyJobsTable).values({
       studyId: study.id,
       kind: "single_run",
       runId: run.id,
       status: "queued",
       progressPercent: 0,
-      payload: { parameters },
+      payload: {
+        parameters,
+        ...(deploymentSignalOptionsSnapshot
+          ? {
+              deploymentSignalOptionsProfile:
+                deploymentSignalOptionsSnapshot.signalOptionsProfile,
+              deploymentSignalOptionsDeploymentId:
+                deploymentSignalOptionsSnapshot.deploymentId,
+            }
+          : {}),
+      },
     });
 
     return run;
@@ -2262,6 +2328,355 @@ export async function createPatternDiscoveryStudy(
 
     return { studyId: study.id, jobId: job.id, status: "queued" as const };
   });
+}
+
+const OVERNIGHT_SIGNAL_EXPECTANCY_KIND = "overnight_signal_expectancy";
+const OVERNIGHT_SIGNAL_TIMEFRAMES = ["15m", "30m", "1h", "4h"] as const;
+type OvernightSignalTimeframe = (typeof OVERNIGHT_SIGNAL_TIMEFRAMES)[number];
+const OVERNIGHT_DEFAULT_LOOKBACK_DAYS = 730;
+const OVERNIGHT_SAMPLE_LIMIT_MAX = 500;
+
+export type CreateOvernightSignalExpectancyInput = {
+  name?: string;
+  symbols?: string[];
+  signalTimeframes?: string[];
+  startsAt?: Date;
+  endsAt?: Date;
+  signalSettingsByTimeframe?: Record<string, Record<string, unknown>>;
+  persistSamples?: boolean;
+};
+
+export type ListOvernightSignalExpectancySamplesInput = {
+  limit?: number;
+  cursor?: string | null;
+  timeframe?: string | null;
+  symbol?: string | null;
+  status?: string | null;
+  from?: Date | null;
+  to?: Date | null;
+};
+
+const normalizeStudySymbol = (symbol: string): string =>
+  normalizeSymbol(symbol).toUpperCase();
+
+function normalizeOvernightTimeframes(
+  values: readonly string[] | null | undefined,
+): OvernightSignalTimeframe[] {
+  const requested = values?.length ? values : OVERNIGHT_SIGNAL_TIMEFRAMES;
+  const normalized = requested.filter(
+    (value): value is OvernightSignalTimeframe =>
+      (OVERNIGHT_SIGNAL_TIMEFRAMES as readonly string[]).includes(value),
+  );
+  return normalized.length > 0 ? [...new Set(normalized)] : [...OVERNIGHT_SIGNAL_TIMEFRAMES];
+}
+
+const utcDateKey = (value: Date): string => value.toISOString().slice(0, 10);
+
+async function resolveOvernightUniverse(inputSymbols?: string[]): Promise<{
+  symbols: string[];
+  rankedAt: Date | null;
+  source: string;
+  memberCount: number;
+}> {
+  if (inputSymbols && inputSymbols.length > 0) {
+    const symbols = [...new Set(inputSymbols.map(normalizeStudySymbol).filter(Boolean))];
+    return {
+      symbols,
+      rankedAt: null,
+      source: "request.symbols",
+      memberCount: symbols.length,
+    };
+  }
+
+  const rows = await db
+    .select({
+      symbol: signalUniverseRankingsTable.symbol,
+      rankedAt: signalUniverseRankingsTable.rankedAt,
+    })
+    .from(signalUniverseRankingsTable)
+    .where(eq(signalUniverseRankingsTable.member, true))
+    .orderBy(
+      sql`${signalUniverseRankingsTable.rank} asc nulls last`,
+      asc(signalUniverseRankingsTable.symbol),
+    );
+  const symbols = rows.map((row) => normalizeStudySymbol(row.symbol));
+  const rankedAt = rows.find((row) => row.rankedAt)?.rankedAt ?? null;
+  return {
+    symbols,
+    rankedAt,
+    source: "signal_universe_rankings.member",
+    memberCount: symbols.length,
+  };
+}
+
+export async function createOvernightSignalExpectancyStudy(
+  input: CreateOvernightSignalExpectancyInput,
+) {
+  const now = new Date();
+  const endsAt = input.endsAt ?? now;
+  const startsAt =
+    input.startsAt ??
+    new Date(endsAt.getTime() - OVERNIGHT_DEFAULT_LOOKBACK_DAYS * 86_400_000);
+  if (startsAt.getTime() >= endsAt.getTime()) {
+    throw new HttpError(400, "startsAt must be before endsAt.", {
+      code: "invalid_backtest_window",
+    });
+  }
+
+  const universe = await resolveOvernightUniverse(input.symbols);
+  if (universe.symbols.length === 0) {
+    throw new HttpError(400, "No symbols found for overnight expectancy study.", {
+      code: "empty_symbol_universe",
+    });
+  }
+
+  const signalTimeframes = normalizeOvernightTimeframes(input.signalTimeframes);
+  const parameters = {
+    kind: OVERNIGHT_SIGNAL_EXPECTANCY_KIND,
+    signalTimeframes,
+    signalSettingsByTimeframe: input.signalSettingsByTimeframe ?? {},
+    persistSamples: input.persistSamples ?? true,
+    canonicalStudyTimeframe: "15m",
+    canonicalReturnTimeframe: "15m",
+    returnWindow: "regular_close_to_next_regular_open",
+    signalDefinition:
+      "completed Pyrus buy state carried forward until the next completed sell",
+    signalAvailabilityPolicy: "bar_start_plus_timeframe_step_lte_regular_close",
+    universeSnapshot: {
+      source: universe.source,
+      rankedAt: universe.rankedAt?.toISOString() ?? null,
+      memberCount: universe.memberCount,
+      symbols: universe.symbols,
+      survivorshipBias:
+        "Current signal_universe_rankings.member snapshot; historical membership and delistings are not reconstructed.",
+    },
+  };
+
+  return db.transaction(async (tx) => {
+    const [study] = await tx
+      .insert(backtestStudiesTable)
+      .values({
+        name:
+          input.name ??
+          `Overnight signal expectancy ${utcDateKey(startsAt)} to ${utcDateKey(endsAt)}`,
+        strategyId: OVERNIGHT_SIGNAL_EXPECTANCY_KIND,
+        strategyVersion: "v1",
+        directionMode: "long_only",
+        symbols: universe.symbols,
+        timeframe: "15m",
+        startsAt,
+        endsAt,
+        parameters,
+        portfolioRules: {},
+        executionProfile: {},
+        optimizerConfig: {},
+      })
+      .returning();
+
+    const [job] = await tx
+      .insert(backtestStudyJobsTable)
+      .values({
+        studyId: study.id,
+        kind: OVERNIGHT_SIGNAL_EXPECTANCY_KIND,
+        status: "queued",
+        progressPercent: 0,
+        payload: { parameters },
+      })
+      .returning();
+
+    return { studyId: study.id, jobId: job.id, status: "queued" as const };
+  });
+}
+
+const dbNumber = (value: NumberLike): number | null =>
+  value == null || value === "" ? null : Number(value);
+
+export async function getOvernightSignalExpectancyResults(studyId: string) {
+  const study = await db
+    .select()
+    .from(backtestStudiesTable)
+    .where(eq(backtestStudiesTable.id, studyId))
+    .limit(1)
+    .then((rows) => rows[0] ?? null);
+  if (!study) return null;
+
+  const job = await db
+    .select()
+    .from(backtestStudyJobsTable)
+    .where(eq(backtestStudyJobsTable.studyId, studyId))
+    .orderBy(desc(backtestStudyJobsTable.createdAt))
+    .limit(1)
+    .then((rows) => rows[0] ?? null);
+  const results = await db
+    .select()
+    .from(overnightSignalExpectancyResultsTable)
+    .where(eq(overnightSignalExpectancyResultsTable.studyId, studyId))
+    .orderBy(asc(overnightSignalExpectancyResultsTable.rank));
+
+  return {
+    studyId,
+    status: job?.status ?? "unknown",
+    progressPercent: job?.progressPercent ?? 0,
+    startedAt: job?.startedAt ?? null,
+    finishedAt: job?.finishedAt ?? null,
+    errorMessage: job?.errorMessage ?? null,
+    startsAt: study.startsAt,
+    endsAt: study.endsAt,
+    symbols: study.symbols,
+    parameters: study.parameters,
+    results: results.map((row) => ({
+      id: row.id,
+      timeframe: row.timeframe,
+      sampleCount: row.sampleCount,
+      eligibleSampleCount: row.eligibleSampleCount,
+      buyStateCount: row.buyStateCount,
+      validReturnCoveragePct: dbNumber(row.validReturnCoveragePct),
+      buyStateFrequencyPct: dbNumber(row.buyStateFrequencyPct),
+      expectancyPct: dbNumber(row.expectancyPct),
+      medianReturnPct: dbNumber(row.medianReturnPct),
+      winRatePct: dbNumber(row.winRatePct),
+      avgWinPct: dbNumber(row.avgWinPct),
+      avgLossPct: dbNumber(row.avgLossPct),
+      payoffRatio: dbNumber(row.payoffRatio),
+      stdReturnPct: dbNumber(row.stdReturnPct),
+      tStat: dbNumber(row.tStat),
+      ci95LowPct: dbNumber(row.ci95LowPct),
+      ci95HighPct: dbNumber(row.ci95HighPct),
+      rank: row.rank,
+      winnerStatus: row.winnerStatus,
+      pairwiseSummary: row.pairwiseSummary,
+      dataQuality: row.dataQuality,
+    })),
+  };
+}
+
+type OvernightSampleCursor = {
+  sessionDate: string;
+  symbol: string;
+  timeframe: string;
+  id: string;
+};
+
+function encodeOvernightSampleCursor(
+  cursor: OvernightSampleCursor,
+): string {
+  return Buffer.from(JSON.stringify(cursor), "utf8").toString("base64url");
+}
+
+function decodeOvernightSampleCursor(
+  cursor: string | null | undefined,
+): OvernightSampleCursor | null {
+  if (!cursor) return null;
+  try {
+    const parsed = JSON.parse(
+      Buffer.from(cursor, "base64url").toString("utf8"),
+    ) as Partial<OvernightSampleCursor>;
+    return typeof parsed.sessionDate === "string" &&
+      typeof parsed.symbol === "string" &&
+      typeof parsed.timeframe === "string" &&
+      typeof parsed.id === "string"
+      ? {
+          sessionDate: parsed.sessionDate,
+          symbol: parsed.symbol,
+          timeframe: parsed.timeframe,
+          id: parsed.id,
+        }
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function listOvernightSignalExpectancySamples(
+  studyId: string,
+  input: ListOvernightSignalExpectancySamplesInput = {},
+) {
+  const limit = Math.max(
+    1,
+    Math.min(OVERNIGHT_SAMPLE_LIMIT_MAX, Math.floor(input.limit ?? 100)),
+  );
+  const conditions: SQL[] = [
+    eq(overnightSignalExpectancySamplesTable.studyId, studyId),
+  ];
+  if (input.timeframe) {
+    conditions.push(eq(overnightSignalExpectancySamplesTable.timeframe, input.timeframe));
+  }
+  if (input.symbol) {
+    conditions.push(
+      eq(overnightSignalExpectancySamplesTable.symbol, normalizeStudySymbol(input.symbol)),
+    );
+  }
+  if (input.status) {
+    conditions.push(eq(overnightSignalExpectancySamplesTable.status, input.status));
+  }
+  if (input.from) {
+    conditions.push(
+      gte(overnightSignalExpectancySamplesTable.sessionDate, utcDateKey(input.from)),
+    );
+  }
+  if (input.to) {
+    conditions.push(
+      lte(overnightSignalExpectancySamplesTable.sessionDate, utcDateKey(input.to)),
+    );
+  }
+  const cursor = decodeOvernightSampleCursor(input.cursor);
+  if (cursor) {
+    conditions.push(sql`(
+      ${overnightSignalExpectancySamplesTable.sessionDate},
+      ${overnightSignalExpectancySamplesTable.symbol},
+      ${overnightSignalExpectancySamplesTable.timeframe},
+      ${overnightSignalExpectancySamplesTable.id}
+    ) > (
+      ${cursor.sessionDate}::date,
+      ${cursor.symbol},
+      ${cursor.timeframe},
+      ${cursor.id}::uuid
+    )`);
+  }
+
+  const rows = await db
+    .select()
+    .from(overnightSignalExpectancySamplesTable)
+    .where(and(...conditions))
+    .orderBy(
+      asc(overnightSignalExpectancySamplesTable.sessionDate),
+      asc(overnightSignalExpectancySamplesTable.symbol),
+      asc(overnightSignalExpectancySamplesTable.timeframe),
+      asc(overnightSignalExpectancySamplesTable.id),
+    )
+    .limit(limit + 1);
+  const items = rows.slice(0, limit);
+  const last = items[items.length - 1] ?? null;
+
+  return {
+    studyId,
+    limit,
+    nextCursor:
+      rows.length > limit && last
+        ? encodeOvernightSampleCursor({
+            sessionDate: String(last.sessionDate),
+            symbol: last.symbol,
+            timeframe: last.timeframe,
+            id: last.id,
+          })
+        : null,
+    samples: items.map((row) => ({
+      id: row.id,
+      symbol: row.symbol,
+      sessionDate: String(row.sessionDate),
+      timeframe: row.timeframe,
+      status: row.status,
+      exclusionReason: row.exclusionReason,
+      signalAt: row.signalAt,
+      signalAvailableAt: row.signalAvailableAt,
+      entryAt: row.entryAt,
+      entryPrice: dbNumber(row.entryPrice),
+      exitAt: row.exitAt,
+      exitPrice: dbNumber(row.exitPrice),
+      returnPct: dbNumber(row.returnPct),
+      metadata: row.metadata,
+    })),
+  };
 }
 
 // Fetch a study's ranked pattern results (+ job progress), optionally one horizon.
@@ -2751,6 +3166,11 @@ export async function createBacktestSweep(input: CreateSweepInput) {
       })
       .returning();
 
+    const deploymentSignalOptionsSnapshot =
+      await resolveBacktestDeploymentSignalOptionsSnapshot({
+        studyId: study.id,
+      });
+
     await tx.insert(backtestStudyJobsTable).values({
       studyId: study.id,
       kind: "sweep",
@@ -2767,6 +3187,14 @@ export async function createBacktestSweep(input: CreateSweepInput) {
         walkForwardStepMonths: input.walkForwardStepMonths,
         candidateTargetCount: candidateParameters.length,
         walkForwardWindows,
+        ...(deploymentSignalOptionsSnapshot
+          ? {
+              deploymentSignalOptionsProfile:
+                deploymentSignalOptionsSnapshot.signalOptionsProfile,
+              deploymentSignalOptionsDeploymentId:
+                deploymentSignalOptionsSnapshot.deploymentId,
+            }
+          : {}),
       },
     });
 
