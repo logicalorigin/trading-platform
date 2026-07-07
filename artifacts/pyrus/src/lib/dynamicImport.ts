@@ -34,10 +34,27 @@ const DYNAMIC_IMPORT_RELOAD_KEY_PREFIX = "pyrus:dynamic-import-reload:";
 
 type DynamicImportOptions = {
   label?: string;
+  onAttemptFailure?: (context: DynamicImportAttemptFailure) => void;
+  onRetry?: (context: DynamicImportRetry) => void;
   retries?: number;
   retryDelayMs?: number;
   reloadOnFailure?: boolean;
   timeoutMs?: number;
+};
+
+export type DynamicImportAttemptFailure = {
+  label: string;
+  attempt: number;
+  maxAttempts: number;
+  error: unknown;
+  willRetry: boolean;
+};
+
+export type DynamicImportRetry = {
+  label: string;
+  attempt: number;
+  maxAttempts: number;
+  error: unknown;
 };
 
 const getDynamicImportErrorMessage = (error: unknown): string => {
@@ -125,6 +142,7 @@ export async function retryDynamicImport<T>(
     options.retryDelayMs ?? DEFAULT_DYNAMIC_IMPORT_RETRY_DELAY_MS;
   const reloadOnFailure = options.reloadOnFailure ?? true;
   const timeoutMs = options.timeoutMs ?? DEFAULT_DYNAMIC_IMPORT_TIMEOUT_MS;
+  const maxAttempts = retries + 1;
   let lastError: unknown = null;
 
   for (let attempt = 0; attempt <= retries; attempt += 1) {
@@ -134,9 +152,26 @@ export async function retryDynamicImport<T>(
       return mod;
     } catch (error) {
       lastError = error;
-      if (!isRetryableDynamicImportError(error) || attempt >= retries) {
+      const willRetry = isRetryableDynamicImportError(error) && attempt < retries;
+      options.onAttemptFailure?.({
+        label,
+        attempt: attempt + 1,
+        maxAttempts,
+        error,
+        willRetry,
+      });
+      if (!willRetry) {
         break;
       }
+      // Singleton loaders must drop their cached promise here: a timeout rejects
+      // only this race, not the underlying import promise, so the next attempt
+      // needs a fresh promise and timeout window.
+      options.onRetry?.({
+        label,
+        attempt: attempt + 2,
+        maxAttempts,
+        error,
+      });
       await wait(retryDelayMs * (attempt + 1));
     }
   }

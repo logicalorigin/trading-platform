@@ -1,7 +1,12 @@
 import { Suspense } from "react";
 import NeuralBootOverlay from "../components/neural/NeuralBootOverlay";
 import { NeuralLoader } from "../components/neural/NeuralLoader";
-import { lazyWithRetry, preloadDynamicImport } from "../lib/dynamicImport";
+import {
+  lazyWithRetry,
+  preloadDynamicImport,
+  type DynamicImportAttemptFailure,
+  type DynamicImportRetry,
+} from "../lib/dynamicImport";
 import { PlatformErrorBoundary } from "../components/platform/PlatformErrorBoundary";
 import { readInitialPlatformScreen } from "../features/platform/initialPlatformScreen";
 // @ts-ignore JS module keeps screen chunk preload state outside the React registry.
@@ -21,6 +26,19 @@ import {
 
 let appContentImport: Promise<{ default: typeof import("./AppContent").default }> | null =
   null;
+
+const clearAppContentImportAfterWrapperFailure = (
+  _context: DynamicImportAttemptFailure,
+) => {
+  appContentImport = null;
+};
+
+const markAppContentImportRetry = ({ attempt, maxAttempts }: DynamicImportRetry) => {
+  appContentImport = null;
+  startBootProgressTask("app-content-chunk", {
+    detail: `Retrying app shell (attempt ${attempt}/${maxAttempts})`,
+  });
+};
 
 const loadAppContent = () => {
   if (!appContentImport) {
@@ -42,6 +60,8 @@ const loadAppContent = () => {
 if (typeof window !== "undefined") {
   preloadDynamicImport(loadAppContent, {
     label: "AppContent",
+    onAttemptFailure: clearAppContentImportAfterWrapperFailure,
+    onRetry: markAppContentImportRetry,
     retries: 4,
     retryDelayMs: 500,
   });
@@ -68,6 +88,8 @@ const AppContent = lazyWithRetry(async () => {
   return loadAppContent();
 }, {
   label: "AppContent",
+  onAttemptFailure: clearAppContentImportAfterWrapperFailure,
+  onRetry: markAppContentImportRetry,
   retries: 4,
   retryDelayMs: 500,
 });

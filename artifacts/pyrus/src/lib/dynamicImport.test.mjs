@@ -77,6 +77,107 @@ test("a never-settling import rejects after the timeout as a retryable error", a
   assert.ok(Date.now() - started < 5_000, "must reject promptly, not hang");
 });
 
+test("a stuck singleton import can be replaced before retrying", async () => {
+  const { retryDynamicImport } = await import("./dynamicImport.ts");
+  let cachedImport = null;
+  let importCallCount = 0;
+
+  const startImport = () => {
+    importCallCount += 1;
+    if (importCallCount === 1) {
+      return new Promise(() => {});
+    }
+    return Promise.resolve({ default: "loaded" });
+  };
+
+  const singletonLoader = () => {
+    cachedImport ??= startImport();
+    return cachedImport;
+  };
+
+  const mod = await retryDynamicImport(singletonLoader, {
+    label: "singleton-chunk",
+    retries: 1,
+    retryDelayMs: 0,
+    reloadOnFailure: false,
+    timeoutMs: 30,
+    onAttemptFailure: ({ willRetry }) => {
+      if (willRetry) {
+        cachedImport = null;
+      }
+    },
+  });
+
+  assert.deepEqual(mod, { default: "loaded" });
+  assert.equal(importCallCount, 2);
+});
+
+test("retry attempts surface progress detail context", async () => {
+  const { retryDynamicImport } = await import("./dynamicImport.ts");
+  const retryDetails = [];
+  let callCount = 0;
+
+  const mod = await retryDynamicImport(
+    () => {
+      callCount += 1;
+      if (callCount === 1) {
+        return Promise.reject(
+          new Error("Failed to fetch dynamically imported module"),
+        );
+      }
+      return Promise.resolve({ default: "loaded" });
+    },
+    {
+      label: "detail-chunk",
+      retries: 4,
+      retryDelayMs: 0,
+      reloadOnFailure: false,
+      timeoutMs: 100,
+      onRetry: ({ attempt, maxAttempts }) => {
+        retryDetails.push(`retrying (attempt ${attempt}/${maxAttempts})`);
+      },
+    },
+  );
+
+  assert.deepEqual(mod, { default: "loaded" });
+  assert.deepEqual(retryDetails, ["retrying (attempt 2/5)"]);
+});
+
+test("preload timeout failures remain observable while preserving the non-throwing contract", async () => {
+  const { preloadDynamicImport } = await import("./dynamicImport.ts");
+  let cachedImport = new Promise(() => {});
+  const failures = [];
+
+  const result = await preloadDynamicImport(() => cachedImport, {
+    label: "preload-chunk",
+    retries: 0,
+    reloadOnFailure: false,
+    timeoutMs: 30,
+    onAttemptFailure: ({ label, attempt, maxAttempts, willRetry, error }) => {
+      failures.push({
+        label,
+        attempt,
+        maxAttempts,
+        willRetry,
+        retryableTimeout: /timed out/.test(String(error?.message)),
+      });
+      cachedImport = null;
+    },
+  });
+
+  assert.equal(result, undefined);
+  assert.equal(cachedImport, null);
+  assert.deepEqual(failures, [
+    {
+      label: "preload-chunk",
+      attempt: 1,
+      maxAttempts: 1,
+      willRetry: false,
+      retryableTimeout: true,
+    },
+  ]);
+});
+
 test("the timeout race is applied to every loader attempt", () => {
   assert.match(
     source,
