@@ -245,6 +245,26 @@ const mergeSparklineBars = (...seriesList) => {
   return [...untimed, ...timed];
 };
 
+const parseRetryAfterMs = (value) => {
+  if (!value) return null;
+  const seconds = Number(value);
+  if (Number.isFinite(seconds) && seconds >= 0) {
+    return Math.round(seconds * 1_000);
+  }
+  const timestamp = Date.parse(value);
+  if (!Number.isFinite(timestamp)) return null;
+  return Math.max(0, timestamp - Date.now());
+};
+
+const barsRetryDelay = BARS_QUERY_DEFAULTS.retryDelay;
+
+const signalSparklineSeedRetryDelay = (attempt, error) => {
+  if (error?.status === 429 && Number.isFinite(error.retryAfterMs)) {
+    return Math.max(0, error.retryAfterMs);
+  }
+  return barsRetryDelay(attempt, error);
+};
+
 const fetchSparklineSeed = async (
   symbols,
   {
@@ -271,7 +291,10 @@ const fetchSparklineSeed = async (
     }),
   });
   if (!response.ok) {
-    throw new Error(`${label} failed with ${response.status}`);
+    const error = new Error(`${label} failed with ${response.status}`);
+    error.status = response.status;
+    error.retryAfterMs = parseRetryAfterMs(response.headers.get("retry-after"));
+    throw error;
   }
   const payload = await response.json();
   const items = Array.isArray(payload?.items) ? payload.items : [];
@@ -840,6 +863,7 @@ export const MarketDataSubscriptionProvider = ({
       }),
     ...BARS_QUERY_DEFAULTS,
     retry: retryUnlessTimeout(2),
+    retryDelay: signalSparklineSeedRetryDelay,
     gcTime: HEAVY_PAYLOAD_GC_MS,
   });
   const signalSparklineSeedData = useMemo(
