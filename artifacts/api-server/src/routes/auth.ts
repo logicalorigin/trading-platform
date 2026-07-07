@@ -10,6 +10,7 @@ import {
   type AuthenticatedSession,
 } from "../services/auth";
 import { isLaunchAuthConfigured, launchSession } from "../services/auth-launch";
+import { recordAuditEvent } from "../services/audit-events";
 import {
   sessionHasEntitlement,
   type Entitlement,
@@ -194,6 +195,13 @@ export function requireEntitlement(
   return async (req: Request) => {
     const session = await requireUser(req);
     if (!sessionHasEntitlement(session, key)) {
+      void recordAuditEvent({
+        appUserId: session.user.id,
+        eventType: "entitlement.denied",
+        subject: { type: "entitlement", id: key },
+        resource: { type: "route", id: req.path },
+        payload: { method: req.method },
+      });
       throw new HttpError(403, "This feature requires an upgraded plan.", {
         code: "entitlement_required",
       });
@@ -208,6 +216,13 @@ export function requireEntitlementCsrf(
   return async (req: Request) => {
     const session = await requireUserCsrf(req);
     if (!sessionHasEntitlement(session, key)) {
+      void recordAuditEvent({
+        appUserId: session.user.id,
+        eventType: "entitlement.denied",
+        subject: { type: "entitlement", id: key },
+        resource: { type: "route", id: req.path },
+        payload: { method: req.method },
+      });
       throw new HttpError(403, "This feature requires an upgraded plan.", {
         code: "entitlement_required",
       });
@@ -239,6 +254,12 @@ router.post("/auth/bootstrap", async (req, res) => {
     password: readString(body, "password"),
     bootstrapToken: readString(body, "bootstrapToken"),
   });
+  void recordAuditEvent({
+    appUserId: result.user.id,
+    eventType: "auth.bootstrap",
+    subject: { type: "user", id: result.user.id },
+    payload: { role: result.user.role },
+  });
   setSessionCookie(req, res, result.sessionToken);
   res.json({
     user: result.user,
@@ -255,6 +276,12 @@ router.post("/auth/login", async (req, res) => {
   const result = await loginUser({
     email,
     password: readString(body, "password"),
+  });
+  void recordAuditEvent({
+    appUserId: result.user.id,
+    eventType: "auth.login",
+    subject: { type: "user", id: result.user.id },
+    payload: { method: "password" },
   });
   setSessionCookie(req, res, result.sessionToken);
   res.json({
@@ -284,6 +311,16 @@ router.post("/auth/launch", async (req, res) => {
     });
   }
   const result = await launchSession(token);
+  void recordAuditEvent({
+    appUserId: result.user.id,
+    eventType: "auth.launch",
+    subject: { type: "user", id: result.user.id },
+    payload: {
+      role: result.user.role,
+      entitlements: result.user.entitlements,
+      transport: "post",
+    },
+  });
   setSessionCookie(req, res, result.sessionToken);
   res.json({
     user: result.user,
@@ -309,6 +346,16 @@ router.get("/auth/launch", async (req, res) => {
     });
   }
   const result = await launchSession(token);
+  void recordAuditEvent({
+    appUserId: result.user.id,
+    eventType: "auth.launch",
+    subject: { type: "user", id: result.user.id },
+    payload: {
+      role: result.user.role,
+      entitlements: result.user.entitlements,
+      transport: "get",
+    },
+  });
   setSessionCookie(req, res, result.sessionToken);
   res.redirect(302, "/");
 });

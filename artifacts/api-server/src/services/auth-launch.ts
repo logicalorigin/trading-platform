@@ -5,6 +5,7 @@ import { and, eq, lt } from "drizzle-orm";
 import { db, launchTokenJtiTable, usersTable, type User } from "@workspace/db";
 import { HttpError } from "../lib/errors";
 import { logger } from "../lib/logger";
+import { recordAuditEvent } from "./audit-events";
 import { createAuthSession, type AuthResult } from "./auth";
 import { resolveLaunchEntitlements } from "./entitlements";
 
@@ -155,21 +156,36 @@ async function provisionLaunchUser(input: {
 
   const existing = await findExisting();
   if (existing) {
+    const nextEntitlements = resolveLaunchEntitlements({
+      claim: input.entitlementsClaim,
+      tokenPlan: input.plan,
+      existingPlan: existing.plan,
+    });
     const [updated] = await db
       .update(usersTable)
       .set({
         email: input.email,
         displayName: input.name ?? existing.displayName,
         plan: input.plan ?? existing.plan,
-        entitlements: resolveLaunchEntitlements({
-          claim: input.entitlementsClaim,
-          tokenPlan: input.plan,
-          existingPlan: existing.plan,
-        }),
+        entitlements: nextEntitlements,
         updatedAt: new Date(),
       })
       .where(eq(usersTable.id, existing.id))
       .returning();
+    if (
+      JSON.stringify(existing.entitlements) !== JSON.stringify(nextEntitlements)
+    ) {
+      void recordAuditEvent({
+        appUserId: existing.id,
+        eventType: "entitlement.changed",
+        subject: { type: "user", id: existing.id },
+        payload: {
+          previous: existing.entitlements,
+          next: nextEntitlements,
+          source: "launch_token",
+        },
+      });
+    }
     return updated ?? existing;
   }
 

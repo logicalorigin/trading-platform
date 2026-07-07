@@ -72,6 +72,7 @@ import {
 } from "../services/snaptrade-equity-orders";
 import { HttpError } from "../lib/errors";
 import { logger } from "../lib/logger";
+import { recordAuditEvent } from "../services/audit-events";
 import { getSnapTradeAccountHistory } from "../services/snaptrade-account-history";
 import {
   refreshSnapTradeAccountHistoryForUser,
@@ -187,6 +188,12 @@ router.post("/broker-execution/robinhood/connect", async (req, res) => {
       appUserId: session.user.id,
     }),
   );
+  void recordAuditEvent({
+    appUserId: session.user.id,
+    eventType: "broker.connect_start",
+    subject: { type: "broker_provider", id: "robinhood" },
+    payload: { route: req.path },
+  });
   res.json(data);
 });
 
@@ -202,6 +209,12 @@ router.get("/broker-execution/robinhood/oauth/callback", async (req, res) => {
     typeof req.query["error"] === "string" && req.query["error"].length > 0;
 
   if (denied || !code || !state) {
+    void recordAuditEvent({
+      appUserId: session.user.id,
+      eventType: "broker.connect_denied",
+      subject: { type: "broker_provider", id: "robinhood" },
+      payload: { denied, missingCode: !code, missingState: !state },
+    });
     res.redirect(302, "/?screen=settings&robinhood=denied");
     return;
   }
@@ -215,6 +228,11 @@ router.get("/broker-execution/robinhood/oauth/callback", async (req, res) => {
     await syncRobinhoodConnections({ appUserId: session.user.id }).catch(
       () => undefined,
     );
+    void recordAuditEvent({
+      appUserId: session.user.id,
+      eventType: "broker.connect_complete",
+      subject: { type: "broker_provider", id: "robinhood" },
+    });
     res.redirect(302, "/?screen=settings&robinhood=connected");
   } catch {
     res.redirect(302, "/?screen=settings&robinhood=error");
@@ -228,14 +246,20 @@ router.post("/broker-execution/robinhood/sync", async (req, res) => {
       appUserId: session.user.id,
     }),
   );
+  void recordAuditEvent({
+    appUserId: session.user.id,
+    eventType: "broker.sync",
+    subject: { type: "broker_provider", id: "robinhood" },
+  });
   res.json(data);
 });
 
 router.get("/broker-execution/schwab/readiness", async (req, res) => {
   const session = await requireEntitlement("broker_connect")(req);
+  const userReadiness = await readSchwabUserReadiness(session.user.id);
   const data = GetSchwabReadinessResponse.parse({
-    ...(await readSchwabReadiness()),
-    user: await readSchwabUserReadiness(session.user.id),
+    ...(await readSchwabReadiness({ userReadiness })),
+    user: userReadiness,
   });
   res.json(data);
 });
@@ -247,6 +271,12 @@ router.post("/broker-execution/schwab/connect", async (req, res) => {
       appUserId: session.user.id,
     }),
   );
+  void recordAuditEvent({
+    appUserId: session.user.id,
+    eventType: "broker.connect_start",
+    subject: { type: "broker_provider", id: "schwab" },
+    payload: { route: req.path },
+  });
   res.json(data);
 });
 
@@ -262,6 +292,12 @@ router.get("/broker-execution/schwab/oauth/callback", async (req, res) => {
     typeof req.query["error"] === "string" && req.query["error"].length > 0;
 
   if (denied || !code || !state) {
+    void recordAuditEvent({
+      appUserId: session.user.id,
+      eventType: "broker.connect_denied",
+      subject: { type: "broker_provider", id: "schwab" },
+      payload: { denied, missingCode: !code, missingState: !state },
+    });
     res.redirect(302, "/?screen=settings&schwab=denied");
     return;
   }
@@ -275,6 +311,11 @@ router.get("/broker-execution/schwab/oauth/callback", async (req, res) => {
     await syncSchwabConnections({ appUserId: session.user.id }).catch(
       () => undefined,
     );
+    void recordAuditEvent({
+      appUserId: session.user.id,
+      eventType: "broker.connect_complete",
+      subject: { type: "broker_provider", id: "schwab" },
+    });
     res.redirect(302, "/?screen=settings&schwab=connected");
   } catch {
     res.redirect(302, "/?screen=settings&schwab=error");
@@ -288,6 +329,11 @@ router.post("/broker-execution/schwab/sync", async (req, res) => {
       appUserId: session.user.id,
     }),
   );
+  void recordAuditEvent({
+    appUserId: session.user.id,
+    eventType: "broker.sync",
+    subject: { type: "broker_provider", id: "schwab" },
+  });
   res.json(data);
 });
 
@@ -296,6 +342,17 @@ router.post(
   async (req, res) => {
     const session = await requireEntitlementCsrf("broker_connect")(req);
     const body = PreviewSchwabEquityOrderBody.parse(req.body ?? {});
+    void recordAuditEvent({
+      appUserId: session.user.id,
+      eventType: "broker.order_mutation_attempt",
+      subject: { type: "broker_provider", id: "schwab" },
+      resource: { type: "broker_account", id: req.params.accountId },
+      payload: {
+        action: "preview",
+        symbol: body.symbol,
+        orderAction: body.action,
+      },
+    });
     await requireSchwabOrderReadiness();
     const data = PreviewSchwabEquityOrderResponse.parse(
       await __brokerExecutionRouteInternalsForTests.schwabOrders.previewSchwabEquityOrder({
@@ -313,6 +370,17 @@ router.post(
   async (req, res) => {
     const session = await requireEntitlementCsrf("broker_connect")(req);
     const body = SubmitSchwabEquityOrderBody.parse(req.body ?? {});
+    void recordAuditEvent({
+      appUserId: session.user.id,
+      eventType: "broker.order_mutation_attempt",
+      subject: { type: "broker_provider", id: "schwab" },
+      resource: { type: "broker_account", id: req.params.accountId },
+      payload: {
+        action: "submit",
+        symbol: body.symbol,
+        orderAction: body.action,
+      },
+    });
     await requireSchwabOrderReadiness();
     const data = SubmitSchwabEquityOrderResponse.parse(
       await __brokerExecutionRouteInternalsForTests.schwabOrders.submitSchwabEquityOrder({
@@ -330,6 +398,13 @@ router.post(
   async (req, res) => {
     const session = await requireEntitlementCsrf("broker_connect")(req);
     const body = CancelSchwabEquityOrderBody.parse(req.body ?? {});
+    void recordAuditEvent({
+      appUserId: session.user.id,
+      eventType: "broker.order_mutation_attempt",
+      subject: { type: "broker_provider", id: "schwab" },
+      resource: { type: "broker_account", id: req.params.accountId },
+      payload: { action: "cancel", orderId: body.orderId },
+    });
     await requireSchwabOrderReadiness();
     const data = CancelSchwabEquityOrderResponse.parse(
       await __brokerExecutionRouteInternalsForTests.schwabOrders.cancelSchwabEquityOrder({
@@ -357,6 +432,12 @@ router.post("/broker-execution/snaptrade/users/current", async (req, res) => {
       appUserId: session.user.id,
     }),
   );
+  void recordAuditEvent({
+    appUserId: session.user.id,
+    eventType: "broker.connect_start",
+    subject: { type: "broker_provider", id: "snaptrade" },
+    payload: { created: data.created, stage: "user_registration" },
+  });
   res.status(data.created ? 201 : 200).json(data);
 });
 
@@ -369,6 +450,16 @@ router.post("/broker-execution/snaptrade/connection-portal", async (req, res) =>
       input: body,
     }),
   );
+  void recordAuditEvent({
+    appUserId: session.user.id,
+    eventType: "broker.connect_start",
+    subject: { type: "broker_provider", id: "snaptrade" },
+    payload: {
+      stage: "connection_portal",
+      connectionType: body.connectionType,
+      reconnect: Boolean(body.reconnect),
+    },
+  });
   res.json(data);
 });
 
@@ -379,6 +470,12 @@ router.post("/broker-execution/snaptrade/sync", async (req, res) => {
       appUserId: session.user.id,
     }),
   );
+  void recordAuditEvent({
+    appUserId: session.user.id,
+    eventType: "broker.connect_complete",
+    subject: { type: "broker_provider", id: "snaptrade" },
+    payload: { accountCount: data.accounts.length },
+  });
   // Kick off a background history backfill for the just-synced accounts so past
   // P&L populates without the user opening each account page. Fire-and-forget:
   // the sync response must not wait on the (potentially slow) SnapTrade activity
@@ -484,6 +581,17 @@ router.post(
   async (req, res) => {
     const session = await requireAdminCsrf(req);
     const body = CheckSnapTradeEquityOrderImpactBody.parse(req.body ?? {});
+    void recordAuditEvent({
+      appUserId: session.user.id,
+      eventType: "broker.order_mutation_attempt",
+      subject: { type: "broker_provider", id: "snaptrade" },
+      resource: { type: "broker_account", id: req.params.accountId },
+      payload: {
+        action: "impact",
+        symbol: body.symbol,
+        orderAction: body.action,
+      },
+    });
     const data = CheckSnapTradeEquityOrderImpactResponse.parse(
       await checkSnapTradeEquityOrderImpact({
         appUserId: session.user.id,
@@ -500,6 +608,17 @@ router.post(
   async (req, res) => {
     const session = await requireAdminCsrf(req);
     const body = SubmitSnapTradeEquityOrderBody.parse(req.body ?? {});
+    void recordAuditEvent({
+      appUserId: session.user.id,
+      eventType: "broker.order_mutation_attempt",
+      subject: { type: "broker_provider", id: "snaptrade" },
+      resource: { type: "broker_account", id: req.params.accountId },
+      payload: {
+        action: "submit",
+        symbol: body.symbol,
+        orderAction: body.action,
+      },
+    });
     const data = SubmitSnapTradeEquityOrderResponse.parse(
       await submitSnapTradeEquityOrder({
         appUserId: session.user.id,

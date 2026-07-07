@@ -18,6 +18,7 @@ import {
   isIbkrMemberConnectEnabled,
   sessionHasEntitlement,
 } from "../services/entitlements";
+import { recordAuditEvent } from "../services/audit-events";
 import {
   connectPortal,
   disconnectPortal,
@@ -103,6 +104,12 @@ router.post("/broker-execution/ibkr-portal/connect", async (req, res) => {
   const data = ConnectIbkrPortalResponse.parse(
     await connectPortal(session.user.id),
   );
+  void recordAuditEvent({
+    appUserId: session.user.id,
+    eventType: "broker.connect_start",
+    subject: { type: "broker_provider", id: "ibkr" },
+    payload: { connector: "client_portal" },
+  });
   res.json(data);
 });
 
@@ -111,6 +118,12 @@ router.post("/broker-execution/ibkr-portal/disconnect", async (req, res) => {
   const data = DisconnectIbkrPortalResponse.parse(
     await disconnectPortal(session.user.id),
   );
+  void recordAuditEvent({
+    appUserId: session.user.id,
+    eventType: "broker.disconnect",
+    subject: { type: "broker_provider", id: "ibkr" },
+    payload: { connector: "client_portal" },
+  });
   res.json(data);
 });
 
