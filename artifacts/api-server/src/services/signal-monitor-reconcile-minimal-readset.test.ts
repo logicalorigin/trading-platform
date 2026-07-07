@@ -35,6 +35,7 @@ const COUNT_KEYS = [
   "untrustedIdentityCleared",
   "barsRecomputed",
   "freshCleared",
+  "eventAnchorsInserted",
 ] as const;
 const STATE_COLS = [
   "current_signal_direction",
@@ -1084,6 +1085,89 @@ test("event-anchor backfill apply inserts synthetic anchors", async () => {
     );
     assert.equal(afterPlan.counts.activeCellsNeedingAnchor, 0);
     assert.equal(afterPlan.counts.candidateEvents, 0);
+  });
+});
+
+test("state reconciliation inserts event anchors for active latched cells", async () => {
+  await withTestDb(async ({ db }) => {
+    const exec = (q: ReturnType<typeof sql>) => db.execute(q);
+    await exec(sql`
+      INSERT INTO signal_monitor_profiles (id, environment, enabled)
+      VALUES (${PROFILE_ID}, 'shadow', true)
+    `);
+    await exec(sql`
+      INSERT INTO signal_monitor_symbol_states
+        (id, profile_id, symbol, timeframe, active, status, current_signal_direction,
+         current_signal_at, current_signal_price, current_signal_close, filter_state)
+      VALUES
+        (gen_random_uuid(), ${PROFILE_ID}, 'AAA', '5m', true, 'ok', 'buy',
+          '2026-06-25T15:00:00.000Z'::timestamptz, 100, 101, '{"score":1}'::jsonb),
+        (gen_random_uuid(), ${PROFILE_ID}, 'BBB', '5m', true, 'ok', 'buy',
+          '2026-06-25T15:05:00.000Z'::timestamptz, 200, 201, '{"score":2}'::jsonb),
+        (gen_random_uuid(), ${PROFILE_ID}, 'CCC', '5m', false, 'ok', 'sell',
+          '2026-06-25T15:10:00.000Z'::timestamptz, 300, 301, '{}'::jsonb)
+    `);
+    await exec(sql`
+      INSERT INTO signal_monitor_events
+        (id, profile_id, event_key, environment, symbol, timeframe, direction, signal_at, payload)
+      VALUES
+        (gen_random_uuid(), ${PROFILE_ID}, 'reconcile-anchor-bbb-old', 'shadow', 'BBB', '5m', 'sell', '2026-06-25T15:01:00.000Z'::timestamptz, '{}'::jsonb),
+        (gen_random_uuid(), ${PROFILE_ID}, 'reconcile-anchor-ccc-inactive', 'shadow', 'CCC', '5m', 'sell', '2026-06-25T15:10:00.000Z'::timestamptz, '{}'::jsonb)
+    `);
+
+    const firstRun = await reconcileSignalMonitorSymbolStatesFromCanonicalEvents({
+      dryRun: false,
+    });
+    const inserted = await exec(sql`
+      SELECT event_key, symbol, direction, signal_at, source, payload
+      FROM signal_monitor_events
+      WHERE source = 'state-anchor-backfill'
+      ORDER BY symbol
+    `);
+    const secondRun = await reconcileSignalMonitorSymbolStatesFromCanonicalEvents({
+      dryRun: false,
+    });
+    const insertedAfterSecondRun = await exec(sql`
+      SELECT count(*)::int AS n
+      FROM signal_monitor_events
+      WHERE source = 'state-anchor-backfill'
+    `);
+
+    assert.equal(firstRun[0]?.eventAnchorsInserted, 2);
+    assert.equal(secondRun[0]?.eventAnchorsInserted, 0);
+    assert.equal(inserted.rows.length, 2);
+    assert.deepEqual(
+      inserted.rows.map((row) => [
+        row.symbol,
+        row.direction,
+        dateIso(row.signal_at),
+        row.source,
+        ((row.payload as Record<string, unknown>).stateAnchorBackfill as Record<
+          string,
+          unknown
+        >).reason,
+      ]),
+      [
+        [
+          "AAA",
+          "buy",
+          "2026-06-25T15:00:00.000Z",
+          "state-anchor-backfill",
+          "missing_event_anchor",
+        ],
+        [
+          "BBB",
+          "buy",
+          "2026-06-25T15:05:00.000Z",
+          "state-anchor-backfill",
+          "latest_direction_mismatch",
+        ],
+      ],
+    );
+    assert.equal(
+      Number((insertedAfterSecondRun.rows[0] as Record<string, unknown>).n),
+      2,
+    );
   });
 });
 

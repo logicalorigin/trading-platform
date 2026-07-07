@@ -1937,8 +1937,9 @@ type SignalMonitorBreadthSnapshotRow = {
   sell: number;
 };
 
-// Build the breadth response from recorded snapshots: carry the latest snapshot
-// forward across buckets so the line is continuous between captures.
+// Build the breadth response from recorded snapshots: start at the first bucket
+// with real snapshot data, then carry the latest snapshot forward across later
+// buckets so the line is continuous between captures.
 function buildSignalMonitorBreadthFromSnapshots(
   rows: SignalMonitorBreadthSnapshotRow[],
   input: {
@@ -1973,12 +1974,15 @@ function buildSignalMonitorBreadthFromSnapshots(
   const buildPoints = (series: Array<{ at: number; buy: number; sell: number }>) => {
     const points = [];
     let index = 0;
-    let last = series.length ? { buy: series[0].buy, sell: series[0].sell } : { buy: 0, sell: 0 };
+    let last: { buy: number; sell: number } | null = null;
     for (let bucket = fromBucketMs; bucket <= toBucketMs; bucket += bucketMs) {
       const bucketEnd = bucket + bucketMs;
       while (index < series.length && series[index].at < bucketEnd) {
         last = { buy: series[index].buy, sell: series[index].sell };
         index += 1;
+      }
+      if (!last) {
+        continue;
       }
       points.push({
         at: new Date(bucket),
@@ -10244,6 +10248,7 @@ export type SignalMonitorStateReconciliationCounts = {
   untrustedIdentityCleared: number;
   barsRecomputed: number;
   freshCleared: number;
+  eventAnchorsInserted: number;
 };
 
 const SIGNAL_MONITOR_INTRADAY_BAR_SECONDS_SQL = sql`
@@ -11267,6 +11272,7 @@ async function reconcileSignalMonitorSymbolStatesForProfile(
     untrustedIdentityCleared,
     barsRecomputed,
     freshCleared,
+    eventAnchorsInserted: 0,
   };
 }
 
@@ -11285,16 +11291,43 @@ export async function reconcileSignalMonitorSymbolStatesFromCanonicalEvents(
     return [];
   }
   const results: SignalMonitorStateReconciliationCounts[] = [];
+  const firstResultByEnvironment = new Map<
+    RuntimeMode,
+    SignalMonitorStateReconciliationCounts
+  >();
   for (const profile of profiles) {
     try {
-      results.push(
-        await reconcileSignalMonitorSymbolStatesForProfile(profile, dryRun),
+      const counts = await reconcileSignalMonitorSymbolStatesForProfile(
+        profile,
+        dryRun,
       );
+      results.push(counts);
+      if (!firstResultByEnvironment.has(profile.environment)) {
+        firstResultByEnvironment.set(profile.environment, counts);
+      }
     } catch (error) {
       logger.warn(
         { err: error, profileId: profile.id },
         "Signal monitor state reconciliation failed",
       );
+    }
+  }
+  if (!dryRun) {
+    for (const [environment, counts] of firstResultByEnvironment) {
+      try {
+        const eventAnchorBackfill = await buildSignalMonitorEventAnchorBackfillPlan({
+          environment,
+          candidateLimit: 10_000,
+          apply: true,
+        });
+        counts.eventAnchorsInserted =
+          eventAnchorBackfill.applied.insertedEvents;
+      } catch (error) {
+        logger.warn(
+          { err: error, environment },
+          "Signal monitor state reconciliation event-anchor backfill failed",
+        );
+      }
     }
   }
   return results;
@@ -14210,16 +14243,12 @@ export async function listSignalMonitorBreadthHistory(input: {
       }
       snapshotRows = [];
     }
-    // Only trust snapshots when they actually span the window start; otherwise
-    // (e.g. a long range still mostly older than recording) reconstruct so the
-    // deep history isn't flat-filled.
-    const earliestSnapshotMs = snapshotRows.length
-      ? dateOrNull(snapshotRows[0].capturedAt)?.getTime() ?? null
-      : null;
-    const snapshotsCoverWindow =
-      earliestSnapshotMs != null &&
-      earliestSnapshotMs <= window.from.getTime() + window.bucketMinutes * 60_000 * 2;
-    if (snapshotsCoverWindow) {
+    // Prefer exact standing-breadth snapshots whenever present. The event log is
+    // sparse by design and can miss anchors for latched state cells; using it for
+    // long ranges undercounts breadth. If snapshots start after the requested
+    // window, buildSignalMonitorBreadthFromSnapshots carries the earliest exact
+    // point backward instead of switching to incomplete replay.
+    if (snapshotRows.length > 0) {
       return buildSignalMonitorBreadthFromSnapshots(snapshotRows, window);
     }
 

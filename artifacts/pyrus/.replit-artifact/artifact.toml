@@ -32,6 +32,7 @@ args = ["node", "--enable-source-maps", "artifacts/api-server/dist/index.mjs"]
 PORT = "18747"
 NODE_ENV = "production"
 PYRUS_SERVE_WEB = "1"
+PYRUS_SIGNAL_MONITOR_STATE_RECONCILE_ON_STARTUP = "1"
 
 [services.production.health.startup]
 path = "/api/healthz"
@@ -39,3 +40,4 @@ path = "/api/healthz"
 [services.env]
 PORT = "18747"
 BASE_PATH = "/"
+PYRUS_SIGNAL_MONITOR_STATE_RECONCILE_ON_STARTUP = "1"
