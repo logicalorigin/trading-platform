@@ -321,10 +321,36 @@ function breakevenMovePct(input: ScoreOptionGreekCandidateInput): number | null 
 // relying on a downstream moneyness guard to catch the pick after the fact.
 export const MIN_TRADEABLE_ABS_DELTA = 0.15;
 
+const GREEK_SCORE_WEIGHTS = {
+  deltaFit: 20,
+  breakevenFit: 25,
+  gammaTheta: 20,
+  ivValue: 10,
+  liquidity: 15,
+  dataQuality: 10,
+} as const;
+
+function smoothstep(value: number): number {
+  const t = clamp(value, 0, 1);
+  return t * t * (3 - 2 * t);
+}
+
+function deltaFitRatio(absDelta: number): number {
+  if (absDelta >= 0.35 && absDelta <= 0.55) return 1;
+  if (absDelta < 0.25) {
+    const lowDeltaRamp = clamp((absDelta - MIN_TRADEABLE_ABS_DELTA) / 0.1, 0, 1);
+    return lowDeltaRamp * lowDeltaRamp * 0.45;
+  }
+  if (absDelta < 0.35) {
+    return 0.45 + smoothstep((absDelta - 0.25) / 0.1) * 0.55;
+  }
+  return 1 - smoothstep((absDelta - 0.55) / 0.35);
+}
+
 export function scoreOptionGreekCandidate(input: ScoreOptionGreekCandidateInput): OptionGreekScore {
   const notes: string[] = [];
   const absDelta = Math.abs(input.greeks.delta);
-  const deltaFit = clamp(1 - Math.abs(absDelta - 0.45) / 0.35, 0, 1) * 30;
+  const deltaFit = deltaFitRatio(absDelta) * GREEK_SCORE_WEIGHTS.deltaFit;
   if (absDelta < 0.2) notes.push("low_delta");
   if (absDelta > 0.8) notes.push("deep_itm_delta");
 
@@ -334,7 +360,8 @@ export function scoreOptionGreekCandidate(input: ScoreOptionGreekCandidateInput)
   const breakevenFit =
     breakevenPct == null || expectedMovePct <= 0
       ? 0
-      : clamp((expectedMovePct - Math.max(0, breakevenPct)) / expectedMovePct, -1, 1) * 20;
+      : clamp((expectedMovePct - Math.max(0, breakevenPct)) / expectedMovePct, -1, 1) *
+        GREEK_SCORE_WEIGHTS.breakevenFit;
   if (breakevenPct != null && expectedMovePct > 0 && breakevenPct > expectedMovePct) {
     notes.push("breakeven_beyond_expected_move");
   }
@@ -352,21 +379,22 @@ export function scoreOptionGreekCandidate(input: ScoreOptionGreekCandidateInput)
   const gammaTheta =
     thetaDailyPct == null || gammaMovePremiumFraction == null
       ? 0
-      : clamp(gammaMovePremiumFraction / Math.max(thetaDailyPct, 0.002), 0, 1) * 15;
+      : clamp(gammaMovePremiumFraction / Math.max(thetaDailyPct, 0.002), 0, 1) *
+        GREEK_SCORE_WEIGHTS.gammaTheta;
   if (thetaDailyPct != null && thetaDailyPct > 0.08) notes.push("high_theta_burden");
 
   const premiumMovePct = input.entryPrice / input.spot;
   const premiumToExpectedMove =
     expectedMovePct > 0 ? premiumMovePct / expectedMovePct : Number.POSITIVE_INFINITY;
-  const ivPenalty = clamp((input.greeks.impliedVolatility - 1.2) / 1.8, 0, 1) * 10;
-  const valuePenalty = clamp((premiumToExpectedMove - 0.45) / 0.75, 0, 1) * 10;
-  const ivValue = 15 - ivPenalty - valuePenalty;
+  const ivPenalty = clamp((input.greeks.impliedVolatility - 1.2) / 1.8, 0, 1) * 5;
+  const valuePenalty = clamp((premiumToExpectedMove - 0.45) / 0.75, 0, 1) * 5;
+  const ivValue = GREEK_SCORE_WEIGHTS.ivValue - ivPenalty - valuePenalty;
   if (ivPenalty > 0 || valuePenalty > 0) notes.push("overprice_penalty");
 
-  const liquidity = clamp((input.volume ?? 0) / 100, 0, 1) * 10;
+  const liquidity = clamp((input.volume ?? 0) / 100, 0, 1) * GREEK_SCORE_WEIGHTS.liquidity;
   if ((input.volume ?? 0) < 10) notes.push("thin_option_volume");
 
-  const dataQuality = input.hasExitPrice === false ? 0 : 10;
+  const dataQuality = input.hasExitPrice === false ? 0 : GREEK_SCORE_WEIGHTS.dataQuality;
   if (input.hasExitPrice === false) notes.push("missing_exit_price");
 
   const components = {

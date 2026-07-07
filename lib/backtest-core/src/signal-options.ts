@@ -232,7 +232,10 @@ export const defaultSignalOptionsExecutionProfile: SignalOptionsExecutionProfile
     entryGate: {
       mtfAlignment: {
         enabled: true,
-        requiredCount: signalOptionsDefaultMtfTimeframes.length,
+        // Matches needed among the watched timeframes, not unanimity: the
+        // events source is sparse on higher TFs, so requiring all frames is a
+        // de-facto entry freeze. The control panel dial overrides this.
+        requiredCount: 2,
         timeframes: [...signalOptionsDefaultMtfTimeframes],
         preset: "custom",
       },
@@ -274,7 +277,9 @@ export const defaultSignalOptionsExecutionProfile: SignalOptionsExecutionProfile
       wireGreekTrail: {
         enabled: false,
         requireFreshGreeks: true,
-        greekMaxAgeMs: 15_000,
+        // Default must exceed the worst-case greek poll interval (20s) with margin,
+        // else freshness gating silently disables all greek adjustments.
+        greekMaxAgeMs: 45_000,
         deltaSizingEnabled: false,
         runnerPollIntervalSeconds: 20,
         rungByProfit: [...signalOptionsDefaultWireTrailRungs],
@@ -363,7 +368,9 @@ export const tunedSignalOptionsExecutionProfilePatch = {
     wireGreekTrail: {
       enabled: true,
       requireFreshGreeks: true,
-      greekMaxAgeMs: 15_000,
+      // Default must exceed the worst-case greek poll interval (20s) with margin,
+      // else freshness gating silently disables all greek adjustments.
+      greekMaxAgeMs: 45_000,
       deltaSizingEnabled: false,
       runnerPollIntervalSeconds: 20,
       rungByProfit: signalOptionsDefaultWireTrailRungs,
@@ -798,13 +805,22 @@ export function resolveSignalOptionsExecutionProfile(
     },
     entryGate: {
       mtfAlignment: {
+        // The control panel exposes this toggle (entryGate.mtfAlignment.enabled)
+        // and is authoritative; only an unset value falls back to enabled.
         enabled: booleanValue(
-          mtfAlignment.enabled ?? root.mtfAlignmentEnabled,
+          mtfAlignment.enabled,
           defaults.entryGate.mtfAlignment.enabled,
         ),
+        // Unset falls back to the profile default (confirmation count, not
+        // unanimity). Falling back to timeframes.length made every unset
+        // deployment require ALL frames to agree — a de-facto entry freeze
+        // once the gate clamps to the frames actually present.
         requiredCount: finiteInteger(
           mtfAlignment.requiredCount,
-          Math.max(1, mtfTimeframes.length),
+          Math.min(
+            defaults.entryGate.mtfAlignment.requiredCount,
+            Math.max(1, mtfTimeframes.length),
+          ),
           1,
           Math.max(1, mtfTimeframes.length),
         ),
@@ -845,14 +861,9 @@ export function resolveSignalOptionsExecutionProfile(
         0,
         1_000,
       ),
-      requireBidAsk: booleanValue(
-        liquidityGate.requireBidAsk ?? root.requireBidAsk,
-        defaults.liquidityGate.requireBidAsk,
-      ),
-      requireFreshQuote: booleanValue(
-        liquidityGate.requireFreshQuote ?? root.requireFreshQuote,
-        defaults.liquidityGate.requireFreshQuote,
-      ),
+      // No UI control exists; a stored false is stale data, never intent.
+      requireBidAsk: true,
+      requireFreshQuote: true,
     },
     fillPolicy: {
       chaseMode: "aggressive",
