@@ -663,6 +663,7 @@ function addApiLatency(
 function toPayloadQuote(quote: QuoteSnapshot): OptionQuoteWithSource {
   const emittedAt = nowProvider();
   const lastReceivedAt = readTimestampMs(quote.latency?.apiServerReceivedAt);
+  const hasPrevClose = quote.prevClose != null;
   const ageMs =
     lastReceivedAt === null
       ? null
@@ -679,6 +680,12 @@ function toPayloadQuote(quote: QuoteSnapshot): OptionQuoteWithSource {
     ...addApiLatency(
       {
         ...quote,
+        change: hasPrevClose
+          ? finiteNumber(quote.change)
+          : null,
+        changePercent: hasPrevClose
+          ? finiteNumber(quote.changePercent)
+          : null,
         cacheAgeMs: ageMs,
         freshness,
       },
@@ -1246,6 +1253,7 @@ function massiveOptionSnapshotToQuoteSnapshot(
     positiveNumber(last) ??
     midpoint(bid, ask) ??
     0;
+  const prevClose = finiteNumber(snapshot.prevClose);
 
   return {
     symbol: providerContractId,
@@ -1256,12 +1264,18 @@ function massiveOptionSnapshotToQuoteSnapshot(
     ask,
     bidSize: 0,
     askSize: 0,
-    change: finiteNumber(snapshot.change) ?? 0,
-    changePercent: finiteNumber(snapshot.changePercent) ?? 0,
+    change:
+      prevClose != null
+        ? finiteNumber(snapshot.change) ?? 0
+        : null,
+    changePercent:
+      prevClose != null
+        ? finiteNumber(snapshot.changePercent) ?? 0
+        : null,
     open: null,
     high: null,
     low: null,
-    prevClose: finiteNumber(snapshot.prevClose),
+    prevClose,
     volume: finiteNumber(snapshot.volume),
     openInterest: finiteNumber(snapshot.openInterest),
     impliedVolatility: finiteNumber(snapshot.impliedVolatility),
@@ -1806,6 +1820,9 @@ export function __cacheBridgeOptionQuoteForTests(
 ): QuoteSnapshot | null {
   return cacheQuote(quote);
 }
+
+export const __massiveOptionSnapshotToQuoteSnapshotForTests =
+  massiveOptionSnapshotToQuoteSnapshot;
 
 export function __getBridgeOptionQuoteLastErrorForTests(): string | null {
   return lastError;

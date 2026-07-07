@@ -1586,6 +1586,22 @@ function finiteQuoteNumber(value: unknown): number | null {
   return Number.isFinite(numeric) ? numeric : null;
 }
 
+function optionQuoteDayChangeNumber(
+  quote: (QuoteSnapshot & { dayChange?: unknown }) | null | undefined,
+): number | null {
+  return quote?.prevClose != null
+    ? finiteQuoteNumber(quote.dayChange ?? quote.change)
+    : null;
+}
+
+function optionQuoteDayChangePercentNumber(
+  quote: (QuoteSnapshot & { dayChangePercent?: unknown }) | null | undefined,
+): number | null {
+  return quote?.prevClose != null
+    ? finiteQuoteNumber(quote.dayChangePercent ?? quote.changePercent)
+    : null;
+}
+
 function quoteDate(value: unknown): Date | null {
   if (value instanceof Date && !Number.isNaN(value.getTime())) {
     return value;
@@ -1841,14 +1857,8 @@ function accountOptionQuoteFromDemandState(
     greeksFreshness,
     unavailableDetail: reason ?? greeksReason,
     price: finiteQuoteNumber(quote?.price),
-    dayChange: finiteQuoteNumber(
-      (quote as (QuoteSnapshot & { dayChange?: unknown }) | null)?.dayChange ??
-        quote?.change,
-    ),
-    dayChangePercent: finiteQuoteNumber(
-      (quote as (QuoteSnapshot & { dayChangePercent?: unknown }) | null)
-        ?.dayChangePercent ?? quote?.changePercent,
-    ),
+    dayChange: optionQuoteDayChangeNumber(quote),
+    dayChangePercent: optionQuoteDayChangePercentNumber(quote),
     volume: finiteQuoteNumber(quote?.volume),
     openInterest: finiteQuoteNumber(quote?.openInterest),
     impliedVolatility: finiteQuoteNumber(quote?.impliedVolatility),
@@ -8381,6 +8391,7 @@ export const __accountPositionInternalsForTests = {
   buildAccountPositionTotals,
   buildExecutionOpenDatesForPositions,
   buildPositionMarketHydration,
+  accountOptionQuoteFromDemandState,
   buildPositionQuoteFromSnapshot,
   choosePositionQuote,
   clearAccountPositionOpenDateCaches: () => {

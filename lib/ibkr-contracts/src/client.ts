@@ -230,8 +230,8 @@ export type QuoteSnapshot = {
   ask: number;
   bidSize: number;
   askSize: number;
-  change: number;
-  changePercent: number;
+  change: number | null;
+  changePercent: number | null;
   open: number | null;
   high: number | null;
   low: number | null;
