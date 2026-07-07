@@ -2,6 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { PersistQueryClientProvider } from "@tanstack/react-query-persist-client";
 import { useEffect, useMemo, type PropsWithChildren } from "react";
 import { TooltipProvider } from "../components/ui/TooltipProvider";
+import { AuthProvider } from "../features/auth/authSession.jsx";
 import { usePyrusPerformanceMetricsReporter } from "../features/platform/performanceMetrics";
 import { createPyrusPersistOptions } from "./queryPersistence";
 
@@ -77,7 +78,7 @@ export function AppProviders({ children }: PropsWithChildren) {
 
   const tooltipWrapped = (
     <TooltipProvider delayDuration={500} skipDelayDuration={150}>
-      {children}
+      <AuthProvider>{children}</AuthProvider>
     </TooltipProvider>
   );
 

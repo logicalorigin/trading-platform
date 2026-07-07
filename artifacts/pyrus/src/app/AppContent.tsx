@@ -4,6 +4,7 @@ import { AppProviders } from "./AppProviders";
 import LogoLoader from "../components/LogoLoader";
 import { lazyWithRetry, preloadDynamicImport } from "../lib/dynamicImport";
 import { PlatformErrorBoundary } from "../components/platform/PlatformErrorBoundary";
+import { LoginGate } from "../features/auth/LoginGate.jsx";
 import { useBootHandoffElapsedMs } from "./bootLoaderHandoff";
 // @ts-ignore JS module keeps screen chunk preload state outside the React registry.
 import { preloadScreenModule } from "../features/platform/screenModulePreloader";
@@ -458,7 +459,15 @@ function AppContent({ bootLoaderElapsedMs = null }: AppContentProps) {
           reportSeverity="warning"
         >
           {InitialRouteComponent ? (
-            <InitialRouteComponent />
+            labMode === "chart-parity" || labMode === "ticker-search" ? (
+              <InitialRouteComponent />
+            ) : (
+              // Same login gate as the Suspense path below — the preloaded
+              // fast-path must not render the workspace for a signed-out visitor.
+              <LoginGate>
+                <InitialRouteComponent />
+              </LoginGate>
+            )
           ) : (
             <Suspense fallback={<AppContentRouteFallback bootLoaderElapsedMs={bootLoaderElapsedMs} />}>
               {labMode === "chart-parity" ? (
@@ -466,7 +475,9 @@ function AppContent({ bootLoaderElapsedMs = null }: AppContentProps) {
               ) : labMode === "ticker-search" ? (
                 <TickerSearchLab />
               ) : (
-                <PlatformApp />
+                <LoginGate>
+                  <PlatformApp />
+                </LoginGate>
               )}
             </Suspense>
           )}
