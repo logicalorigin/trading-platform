@@ -14317,22 +14317,33 @@ export async function listSignalMonitorBreadthHistory(input: {
       sell: number;
     }> = [];
     try {
-      snapshotRows = await db
-        .select({
-          timeframe: signalMonitorBreadthSnapshotsTable.timeframe,
-          capturedAt: signalMonitorBreadthSnapshotsTable.capturedAt,
-          buy: signalMonitorBreadthSnapshotsTable.buy,
-          sell: signalMonitorBreadthSnapshotsTable.sell,
-        })
-        .from(signalMonitorBreadthSnapshotsTable)
-        .where(
-          and(
-            eq(signalMonitorBreadthSnapshotsTable.environment, environment),
-            gte(signalMonitorBreadthSnapshotsTable.capturedAt, window.from),
-            lte(signalMonitorBreadthSnapshotsTable.capturedAt, window.to),
-          ),
-        )
-        .orderBy(signalMonitorBreadthSnapshotsTable.capturedAt);
+      const bucketSeconds = Math.max(1, window.bucketMinutes) * 60;
+      const result = await db.execute(sql`
+        SELECT DISTINCT ON (timeframe, bucket)
+          timeframe,
+          captured_at AS "capturedAt",
+          buy,
+          sell
+        FROM (
+          SELECT
+            timeframe,
+            captured_at,
+            buy,
+            sell,
+            floor(extract(epoch from captured_at) / ${bucketSeconds}) AS bucket
+          FROM signal_monitor_breadth_snapshots
+          WHERE environment = ${environment}
+            AND captured_at >= ${window.from}
+            AND captured_at <= ${window.to}
+        ) AS bucketed
+        ORDER BY timeframe, bucket, captured_at DESC
+      `);
+      snapshotRows = (result.rows ?? []) as typeof snapshotRows;
+      snapshotRows.sort(
+        (left, right) =>
+          dateOrNull(left.capturedAt)!.getTime() -
+          dateOrNull(right.capturedAt)!.getTime(),
+      );
     } catch (snapshotError) {
       if (!isTransientPostgresError(snapshotError)) {
         logger.warn(

@@ -154,6 +154,54 @@ test("breadth history accepts all range contracts and keeps day exact when snaps
   });
 });
 
+test("breadth history snapshot reduction keeps the latest snapshot per bucket", async () => {
+  await withTestDb(async ({ db }) => {
+    const exec = (q: ReturnType<typeof sql>) => db.execute(q);
+    await exec(sql`
+      INSERT INTO signal_monitor_profiles (id, environment, enabled)
+      VALUES (${PROFILE_ID}, 'shadow', true)
+    `);
+    await exec(sql`
+      INSERT INTO signal_monitor_breadth_snapshots
+        (id, environment, timeframe, captured_at, buy, sell, total)
+      VALUES
+        (gen_random_uuid(), 'shadow', 'all', '2026-06-25T14:00:00.000Z'::timestamptz, 1, 8, 9),
+        (gen_random_uuid(), 'shadow', 'all', '2026-06-25T14:05:00.000Z'::timestamptz, 7, 2, 9),
+        (gen_random_uuid(), 'shadow', '5m', '2026-06-25T14:00:00.000Z'::timestamptz, 1, 8, 9),
+        (gen_random_uuid(), 'shadow', '5m', '2026-06-25T14:05:00.000Z'::timestamptz, 7, 2, 9)
+    `);
+    const raw = await exec(sql`
+      SELECT count(*) AS count
+      FROM signal_monitor_breadth_snapshots
+      WHERE environment = 'shadow'
+    `);
+
+    const history = await listSignalMonitorBreadthHistory({
+      environment: "shadow",
+      range: "day",
+      now: new Date("2026-06-25T16:00:00.000Z"),
+    });
+
+    assert.equal(Number(raw.rows[0]?.count), 4);
+    assert.deepEqual(
+      history.points[0]
+        ? [history.points[0].buy, history.points[0].sell, history.points[0].total]
+        : null,
+      [7, 2, 9],
+    );
+    assert.deepEqual(
+      history.timeframes[0]?.points[0]
+        ? [
+            history.timeframes[0].points[0].buy,
+            history.timeframes[0].points[0].sell,
+            history.timeframes[0].points[0].total,
+          ]
+        : null,
+      [7, 2, 9],
+    );
+  });
+});
+
 test("recorded breadth snapshots include aged directional state rows", async () => {
   await withTestDb(async ({ db }) => {
     const exec = (q: ReturnType<typeof sql>) => db.execute(q);

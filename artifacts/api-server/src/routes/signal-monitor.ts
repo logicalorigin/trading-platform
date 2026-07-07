@@ -259,6 +259,59 @@ const SIGNAL_MONITOR_STATE_CACHE_MS = 15_000;
 // identical while skipping the repeat stringify.
 const signalMonitorStateCache = new Map<string, { json: string; at: number }>();
 const signalMonitorStateInFlight = new Map<string, Promise<string>>();
+const SIGNAL_MONITOR_BREADTH_HISTORY_CACHE_MS = 5_000;
+const signalMonitorBreadthHistoryCache = new Map<
+  string,
+  { json: string; at: number }
+>();
+const signalMonitorBreadthHistoryInFlight = new Map<string, Promise<string>>();
+
+export async function getCachedSerializedSignalMonitorBreadthHistory(
+  input: {
+    cacheKey: string;
+    compute: () => Promise<string>;
+    nowMs?: number;
+  },
+) {
+  const nowMs = input.nowMs ?? Date.now();
+  const cached = signalMonitorBreadthHistoryCache.get(input.cacheKey);
+  if (
+    cached &&
+    nowMs - cached.at < SIGNAL_MONITOR_BREADTH_HISTORY_CACHE_MS
+  ) {
+    return cached.json;
+  }
+
+  let pending = signalMonitorBreadthHistoryInFlight.get(input.cacheKey);
+  if (!pending) {
+    const compute = (async () => {
+      const json = await input.compute();
+      signalMonitorBreadthHistoryCache.set(input.cacheKey, {
+        json,
+        at: input.nowMs ?? Date.now(),
+      });
+      return json;
+    })();
+    pending = compute;
+    signalMonitorBreadthHistoryInFlight.set(input.cacheKey, compute);
+    void compute
+      .finally(() => {
+        if (
+          signalMonitorBreadthHistoryInFlight.get(input.cacheKey) === compute
+        ) {
+          signalMonitorBreadthHistoryInFlight.delete(input.cacheKey);
+        }
+      })
+      .catch(() => {});
+  }
+
+  return pending;
+}
+
+export function resetSignalMonitorBreadthHistoryRouteCacheForTests() {
+  signalMonitorBreadthHistoryCache.clear();
+  signalMonitorBreadthHistoryInFlight.clear();
+}
 
 router.get("/signal-monitor/state", async (req, res) => {
   // Validate the request shape, but the request's own environment is overridden
@@ -304,14 +357,22 @@ router.get("/signal-monitor/state", async (req, res) => {
 
 router.get("/signal-monitor/breadth-history", async (req, res) => {
   const query = ListSignalMonitorBreadthHistoryQueryParams.parse(req.query);
-  const data = ListSignalMonitorBreadthHistoryResponse.parse(
-    await listSignalMonitorBreadthHistory({
-      ...query,
-      environment: resolveSignalSourceEnvironment(),
-    }),
-  );
+  const environment = resolveSignalSourceEnvironment();
+  const cacheKey = `${environment}:${query.range ?? "day"}`;
+  const json = await getCachedSerializedSignalMonitorBreadthHistory({
+    cacheKey,
+    compute: async () =>
+      JSON.stringify(
+        ListSignalMonitorBreadthHistoryResponse.parse(
+          await listSignalMonitorBreadthHistory({
+            ...query,
+            environment,
+          }),
+        ),
+      ),
+  });
 
-  res.json(data);
+  res.json(new RawJson(json));
 });
 
 router.get("/signal-monitor/events", async (req, res) => {
