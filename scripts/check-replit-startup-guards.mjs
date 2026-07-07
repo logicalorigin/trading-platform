@@ -205,15 +205,19 @@ check(
 check(
   rootScripts["typecheck:libs"] ===
     "node scripts/run-validation-command.mjs --label typecheck:libs -- tsc --build",
-  "package.json typecheck:libs must run through scripts/run-validation-command.mjs so broad lib builds are refused while the live PYRUS runtime is hot.",
+  "package.json typecheck:libs must run through scripts/run-validation-command.mjs so broad lib builds are serialized and logged without live-supervisor admission guards.",
 );
 const validationRunner = read("scripts/run-validation-command.mjs");
 check(
-  validationRunner.includes("/tmp/pyrus/pyrus-dev-supervisor-8080.lock") &&
-    validationRunner.includes("readProcessCommand(pid).includes(\"runDevApp.mjs\")") &&
-    validationRunner.includes("supervisorLock") &&
-    validationRunner.includes("live-pyrus-runtime-hot"),
-  "run-validation-command.mjs must keep both flight-recorder and live supervisor-lock admission evidence.",
+  validationRunner.includes(".pyrus-runtime") &&
+    validationRunner.includes("validation.lock") &&
+    validationRunner.includes("commands.jsonl") &&
+    validationRunner.includes("validation-lock-held") &&
+    !validationRunner.includes("live-pyrus-runtime-hot") &&
+    !validationRunner.includes("PYRUS_ENFORCE_HOT_VALIDATION") &&
+    !validationRunner.includes("PYRUS_ALLOW_HOT_VALIDATION") &&
+    !validationRunner.includes("/tmp/pyrus/pyrus-dev-supervisor-8080.lock"),
+  "run-validation-command.mjs must keep the validation ledger and single-validation lock without the retired live-supervisor hot-runtime guard.",
 );
 check(
   rootScripts["typecheck"]?.includes("pnpm run typecheck:libs") &&
@@ -263,11 +267,11 @@ check(
 );
 check(
   replitDocs.includes("scripts/run-validation-command.mjs") &&
-    replitDocs.includes("/tmp/pyrus/pyrus-dev-supervisor-8080.lock") &&
     replitDocs.includes(".pyrus-runtime/validation/commands.jsonl") &&
-    replitDocs.includes("PYRUS_ALLOW_HOT_VALIDATION=1") &&
+    replitDocs.includes("single-validation lock") &&
+    replitDocs.includes("does not inspect the live PYRUS supervisor") &&
     replitDocs.includes("targeted package checks"),
-  "replit.md must document the guarded root validation path, validation ledger, explicit hot-validation override, and targeted-check preference.",
+  "replit.md must document the root validation ledger, single-validation lock, retired supervisor hot guard, and targeted-check preference.",
 );
 const scriptsReadme = read("scripts/README.md");
 check(
@@ -280,10 +284,10 @@ check(
     scriptsReadme.includes("uses a controlled handoff") &&
     scriptsReadme.includes("PYRUS_DEV_DUPLICATE_CHECK_ONLY=1") &&
     scriptsReadme.includes("run-validation-command.mjs") &&
-    scriptsReadme.includes("/tmp/pyrus/pyrus-dev-supervisor-8080.lock") &&
-    scriptsReadme.includes("PYRUS_ALLOW_HOT_VALIDATION=1") &&
+    scriptsReadme.includes("single-validation lock") &&
+    scriptsReadme.includes("does not inspect the live PYRUS supervisor") &&
     scriptsReadme.includes(".pyrus-runtime/validation/commands.jsonl"),
-  "scripts/README.md must document the Replit-owned restart marker, immediate controlled handoff restart path, explicit force-restart marker, duplicate-check-only smoke-test marker, and guarded validation ledger.",
+  "scripts/README.md must document the Replit-owned restart marker, immediate controlled handoff restart path, explicit force-restart marker, duplicate-check-only smoke-test marker, and unguarded validation ledger.",
 );
 check(
   scriptsReadme.includes("PYRUS_ALLOW_REPLIT_CONTROL_PLANE_CLEANUP=1") &&

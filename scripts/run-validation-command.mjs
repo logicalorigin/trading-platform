@@ -12,11 +12,6 @@ import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const DEFAULT_RECORDER_DIR = path.join(
-  repoRoot,
-  ".pyrus-runtime",
-  "flight-recorder",
-);
 const DEFAULT_LEDGER = path.join(
   repoRoot,
   ".pyrus-runtime",
@@ -29,8 +24,6 @@ const DEFAULT_LOCK_FILE = path.join(
   "validation",
   "validation.lock",
 );
-const DEFAULT_SUPERVISOR_LOCK = "/tmp/pyrus/pyrus-dev-supervisor-8080.lock";
-const HOT_RUNTIME_WINDOW_MS = 120_000;
 const DEFAULT_NODE_OPTIONS = "--max-old-space-size=3072";
 
 function usage() {
@@ -38,29 +31,19 @@ function usage() {
 
 Options:
   --label NAME              Ledger label for the validation command.
-  --recorder-dir PATH       PYRUS flight-recorder directory.
   --ledger PATH             Validation command JSONL ledger.
   --lock-file PATH          Single-validation lock file.
-  --supervisor-lock PATH    PYRUS dev supervisor lock file.
-  --allow-hot-app           Allow execution even when the live app is hot.
-  --no-live-runtime-guard   Disable live-runtime admission checks.
 
 Environment overrides:
-  PYRUS_ENFORCE_HOT_VALIDATION=1  Re-enable the hot app refusal (default: OFF).
-  PYRUS_ALLOW_HOT_VALIDATION=1   Bypass hot app refusal intentionally.
-  CI=1                           Bypass hot app refusal for CI.
+  NODE_OPTIONS              Defaults to ${DEFAULT_NODE_OPTIONS} when unset.
 `);
 }
 
 function parseArgs(argv) {
   const parsed = {
     label: null,
-    recorderDir: DEFAULT_RECORDER_DIR,
     ledgerPath: DEFAULT_LEDGER,
     lockFile: DEFAULT_LOCK_FILE,
-    supervisorLock: DEFAULT_SUPERVISOR_LOCK,
-    allowHotApp: false,
-    liveRuntimeGuard: true,
     command: [],
   };
 
@@ -79,11 +62,6 @@ function parseArgs(argv) {
       index += 1;
       continue;
     }
-    if (arg === "--recorder-dir") {
-      parsed.recorderDir = path.resolve(argv[index + 1] ?? "");
-      index += 1;
-      continue;
-    }
     if (arg === "--ledger") {
       parsed.ledgerPath = path.resolve(argv[index + 1] ?? "");
       index += 1;
@@ -92,19 +70,6 @@ function parseArgs(argv) {
     if (arg === "--lock-file") {
       parsed.lockFile = path.resolve(argv[index + 1] ?? "");
       index += 1;
-      continue;
-    }
-    if (arg === "--supervisor-lock") {
-      parsed.supervisorLock = path.resolve(argv[index + 1] ?? "");
-      index += 1;
-      continue;
-    }
-    if (arg === "--allow-hot-app") {
-      parsed.allowHotApp = true;
-      continue;
-    }
-    if (arg === "--no-live-runtime-guard") {
-      parsed.liveRuntimeGuard = false;
       continue;
     }
     throw new Error(`Unknown argument: ${arg}`);
@@ -116,113 +81,6 @@ function parseArgs(argv) {
 
   parsed.label = parsed.label ?? parsed.command[0];
   return parsed;
-}
-
-function readJson(filePath) {
-  try {
-    return JSON.parse(readFileSync(filePath, "utf8"));
-  } catch {
-    return null;
-  }
-}
-
-function msSince(value, nowMs) {
-  const parsed = Date.parse(value ?? "");
-  if (!Number.isFinite(parsed)) return Number.POSITIVE_INFINITY;
-  return nowMs - parsed;
-}
-
-function runtimePhase(current) {
-  return (
-    current?.lifecycle?.phase ??
-    current?.lastEvent?.phase ??
-    current?.lastEvent?.event ??
-    null
-  );
-}
-
-function isRunningSupervisor(current, nowMs) {
-  if (!current || typeof current !== "object") {
-    return false;
-  }
-  const updatedAgoMs = msSince(current.updatedAt, nowMs);
-  if (updatedAgoMs > HOT_RUNTIME_WINDOW_MS) {
-    return false;
-  }
-  const phase = runtimePhase(current);
-  return (
-    phase === "running" ||
-    current?.supervisor?.lockAcquired === true ||
-    current?.lastEvent?.lockAcquired === true
-  );
-}
-
-function readProcessCommand(pid) {
-  try {
-    return readFileSync(`/proc/${pid}/cmdline`, "utf8")
-      .replaceAll("\0", " ")
-      .trim();
-  } catch {
-    return "";
-  }
-}
-
-function collectSupervisorLockEvidence(supervisorLock) {
-  const lock = readJson(supervisorLock);
-  const pid = Number(lock?.pid);
-  const live =
-    Number.isInteger(pid) &&
-    pid > 0 &&
-    pidIsLive(pid) &&
-    readProcessCommand(pid).includes("runDevApp.mjs");
-  return lock
-    ? {
-        path: supervisorLock,
-        pid: Number.isInteger(pid) ? pid : null,
-        startedAt: lock.startedAt ?? null,
-        apiPort: lock.apiPort ?? null,
-        webPort: lock.webPort ?? null,
-        live,
-      }
-    : null;
-}
-
-function collectRuntimeEvidence(recorderDir, supervisorLock, nowMs) {
-  const supervisor = readJson(path.join(recorderDir, "current.json"));
-  const api = readJson(path.join(recorderDir, "api-current.json"));
-  const supervisorRunning = isRunningSupervisor(supervisor, nowMs);
-  const supervisorLockEvidence = collectSupervisorLockEvidence(supervisorLock);
-  const apiUpdatedAgoMs = msSince(api?.updatedAt, nowMs);
-  return {
-    recorderDir,
-    supervisor: supervisor
-      ? {
-          updatedAt: supervisor.updatedAt ?? null,
-          phase: runtimePhase(supervisor),
-          pid: supervisor?.supervisor?.pid ?? supervisor?.lastEvent?.pid ?? null,
-          apiPid: supervisor?.lastEvent?.apiPid ?? null,
-          webPid: supervisor?.lastEvent?.webPid ?? null,
-          bootId: supervisor?.boot?.bootId ?? null,
-          lockAcquired:
-            supervisor?.supervisor?.lockAcquired ??
-            supervisor?.lastEvent?.lockAcquired ??
-            null,
-          running: supervisorRunning,
-        }
-      : null,
-    api: api
-      ? {
-          updatedAt: api.updatedAt ?? null,
-          pid: api.pid ?? null,
-          pressure: api?.apiPressure?.level ?? null,
-          rssMb: api?.memoryMb?.rss ?? null,
-          p95Ms: api?.requests?.p95Ms ?? null,
-          fresh: apiUpdatedAgoMs <= HOT_RUNTIME_WINDOW_MS,
-        }
-      : null,
-    supervisorLock: supervisorLockEvidence,
-    hotRuntime: supervisorRunning || supervisorLockEvidence?.live === true,
-  };
 }
 
 function mkdirFor(filePath) {
@@ -292,24 +150,6 @@ function removeLock(lockFile) {
   }
 }
 
-function shouldAllowHotApp(options) {
-  return (
-    options.allowHotApp ||
-    process.env.PYRUS_ALLOW_HOT_VALIDATION === "1" ||
-    process.env.CI === "1"
-  );
-}
-
-// The hot-runtime signal (supervisor lock + flight-recorder) has been firing
-// false positives: the live app is reported "hot" while effectively idle, which
-// wrongly refuses harmless validation. Per owner decision 2026-06-17 the
-// hot-runtime refusal is DISABLED BY DEFAULT — we assume the hot signal is not
-// trustworthy. Set PYRUS_ENFORCE_HOT_VALIDATION=1 to re-enable the refusal once
-// the hotRuntime detection is reliable again.
-function hotRuntimeGuardEnforced() {
-  return process.env.PYRUS_ENFORCE_HOT_VALIDATION === "1";
-}
-
 function commandSummary(command) {
   return command.join(" ");
 }
@@ -317,11 +157,6 @@ function commandSummary(command) {
 async function main() {
   const options = parseArgs(process.argv.slice(2));
   const startedAt = new Date();
-  const runtime = collectRuntimeEvidence(
-    options.recorderDir,
-    options.supervisorLock,
-    startedAt.getTime(),
-  );
   const baseEvent = {
     schemaVersion: 1,
     time: startedAt.toISOString(),
@@ -331,29 +166,7 @@ async function main() {
     command: options.command,
     commandSummary: commandSummary(options.command),
     pid: process.pid,
-    runtime,
   };
-
-  if (
-    options.liveRuntimeGuard &&
-    hotRuntimeGuardEnforced() &&
-    runtime.hotRuntime &&
-    !shouldAllowHotApp(options)
-  ) {
-    writeLedger(options.ledgerPath, {
-      ...baseEvent,
-      status: "refused",
-      reason: "live-pyrus-runtime-hot",
-    });
-    console.error(
-      [
-        `Refusing ${options.label}: live PYRUS/Replit runtime is hot.`,
-        "Run a targeted no-emit test, quiesce the app, or set PYRUS_ALLOW_HOT_VALIDATION=1 for an intentional maintenance window.",
-        `Ledger: ${options.ledgerPath}`,
-      ].join("\n"),
-    );
-    process.exit(75);
-  }
 
   const lock = createLock(options.lockFile, options.label);
   if (!lock.acquired) {
