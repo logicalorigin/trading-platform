@@ -235,8 +235,8 @@ export const buildAttentionStream = ({
       kind: "gateway",
       kindLabel: "GATEWAY",
       severity: "warning",
-      title: "Data bridge not ready",
-      summary: "Start the broker bridge to resume signal evaluation.",
+      title: "Signal evaluation paused",
+      summary: "Signal evaluation is paused until the reported readiness blocker clears.",
     });
   }
   if (finiteNumber(gatewayBlocks) > 0) {

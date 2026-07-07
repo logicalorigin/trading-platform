@@ -33,11 +33,11 @@ test("options strategy execution stays blocked outside regular options hours", (
   );
 });
 
-test("options strategy execution is ready during regular options hours when the bridge is healthy", () => {
+test("options live broker execution is ready during regular options hours when the broker session is healthy", () => {
   const readiness = resolveAlgoGatewayReadiness(READY_IBKR, DURING_RTH);
   assert.equal(readiness.ready, true);
   assert.equal(readiness.reason, null);
-  assert.equal(readiness.message, "IBKR Client Portal is ready for options strategy execution.");
+  assert.equal(readiness.message, "IBKR Client Portal is ready for live broker order execution.");
 });
 
 test("options strategy execution readiness does not require broker market-data mode", () => {

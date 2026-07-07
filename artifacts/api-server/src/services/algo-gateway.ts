@@ -51,7 +51,7 @@ export function resolveAlgoGatewayReadiness(
     return {
       ready: false,
       reason: "ibkr_not_configured",
-      message: "IBKR Client Portal is not configured for options strategy execution.",
+      message: "IBKR Client Portal is not configured for live broker order execution.",
       diagnostics: ibkr,
     };
   }
@@ -110,7 +110,7 @@ export function resolveAlgoGatewayReadiness(
   return {
     ready: true,
     reason: null,
-    message: "IBKR Client Portal is ready for options strategy execution.",
+    message: "IBKR Client Portal is ready for live broker order execution.",
     diagnostics: ibkr,
   };
 }
@@ -127,7 +127,7 @@ export async function getAlgoGatewayReadiness(): Promise<AlgoGatewayReadiness> {
 export function throwAlgoGatewayNotReady(
   readiness: AlgoGatewayReadiness,
 ): never {
-  throw new HttpError(503, "IBKR Client Portal is required for options strategy execution.", {
+  throw new HttpError(503, "IBKR Client Portal is required for live broker order execution.", {
     code: "algo_gateway_not_ready",
     detail: readiness.message,
     data: {
