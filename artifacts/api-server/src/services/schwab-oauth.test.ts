@@ -4,6 +4,7 @@ import test from "node:test";
 import { withTestDb } from "@workspace/db/testing";
 import { bootstrapInitialUser } from "./auth";
 import {
+  classifySchwabTokenRefreshFailure,
   completeSchwabConnect,
   getSchwabAccessToken,
   startSchwabConnect,
@@ -64,6 +65,26 @@ function unusedFetch(): typeof fetch {
     throw new Error("fetch should not be called");
   }) as typeof fetch;
 }
+
+test("classifySchwabTokenRefreshFailure treats invalid_grant as refresh_expired_or_revoked", () => {
+  assert.equal(
+    classifySchwabTokenRefreshFailure({
+      status: 400,
+      payload: {
+        error: "invalid_grant",
+        error_description: "Refresh token is expired or revoked",
+      },
+    }),
+    "refresh_expired_or_revoked",
+  );
+  assert.equal(
+    classifySchwabTokenRefreshFailure({
+      status: 502,
+      payload: { error: "temporarily_unavailable" },
+    }),
+    "transient_or_unknown",
+  );
+});
 
 test("startSchwabConnect builds an authorization URL without any network call", async () => {
   await withBootstrapToken(async () =>
@@ -420,6 +441,67 @@ test("getSchwabAccessToken throws 409 schwab_reconnect_required when the refresh
           );
         },
       );
+    }),
+  );
+});
+
+test("getSchwabAccessToken persists reauth state when Schwab rejects refresh with invalid_grant", async () => {
+  await withBootstrapToken(async () =>
+    withTestDb(async () => {
+      const auth = await createUser("owner@example.com");
+      const now = new Date("2026-07-02T18:00:00.000Z");
+      await beginSchwabConnectCustody({
+        appUserId: auth.user.id,
+        oauthState: "state-1",
+        encryptionKey: TEST_ENCRYPTION_KEY,
+        now,
+      });
+      await storeSchwabTokens({
+        appUserId: auth.user.id,
+        accessToken: "stale-access",
+        refreshToken: "refresh-1",
+        accessTokenExpiresAt: new Date(now.getTime() - 1_000),
+        refreshTokenExpiresAt: new Date(now.getTime() + SEVEN_DAYS_MS),
+        scope: "api",
+        encryptionKey: TEST_ENCRYPTION_KEY,
+        now,
+      });
+
+      const fetchImpl: typeof fetch = async () =>
+        jsonResponse(
+          {
+            error: "invalid_grant",
+            error_description: "Refresh token expired or revoked",
+          },
+          400,
+        );
+
+      await assert.rejects(
+        getSchwabAccessToken({
+          appUserId: auth.user.id,
+          env: TEST_ENV,
+          fetchImpl,
+          encryptionKey: TEST_ENCRYPTION_KEY,
+          now,
+        }),
+        (error: unknown) => {
+          const httpError = error as {
+            statusCode?: number;
+            code?: string;
+            data?: { reason?: string };
+          };
+          return (
+            httpError.statusCode === 409 &&
+            httpError.code === "schwab_reconnect_required" &&
+            httpError.data?.reason === "refresh_expired_or_revoked"
+          );
+        },
+      );
+
+      const readiness = await readSchwabUserReadiness(auth.user.id, now);
+      assert.equal(readiness.status, "expired");
+      assert.equal(readiness.nextAction, "reconnect");
+      assert.deepEqual(readiness.executionBlockers, ["broker_reauth"]);
     }),
   );
 });

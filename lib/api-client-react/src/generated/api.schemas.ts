@@ -1502,6 +1502,7 @@ export type SchwabReadinessStatus = typeof SchwabReadinessStatus[keyof typeof Sc
 export const SchwabReadinessStatus = {
   unconfigured: 'unconfigured',
   research_required: 'research_required',
+  reauth_required: 'reauth_required',
 } as const;
 
 export type SchwabUserReadinessStatus = typeof SchwabUserReadinessStatus[keyof typeof SchwabUserReadinessStatus];
@@ -1555,6 +1556,19 @@ export type SchwabReadinessResponsePrerequisites = {
   appCredentialsPresent: boolean;
 };
 
+export type SchwabReadinessResponseReauthRequiredReason = typeof SchwabReadinessResponseReauthRequiredReason[keyof typeof SchwabReadinessResponseReauthRequiredReason] | null;
+
+
+export const SchwabReadinessResponseReauthRequiredReason = {
+  refresh_expired_or_revoked: 'refresh_expired_or_revoked',
+  refresh_expires_soon: 'refresh_expires_soon',
+} as const;
+
+export type SchwabReadinessResponseReauthRequired = {
+  required: boolean;
+  reason: SchwabReadinessResponseReauthRequiredReason;
+};
+
 export type SchwabReadinessResponseUpstream = {
   status: number;
   code: string;
@@ -1571,6 +1585,7 @@ export interface SchwabReadinessResponse {
   checkedAt: string;
   executionDecision: ExecutionDecisionResponse;
   prerequisites: SchwabReadinessResponsePrerequisites;
+  reauthRequired: SchwabReadinessResponseReauthRequired;
   user: SchwabUserReadiness;
   limitations: string[];
   upstream: SchwabReadinessResponseUpstream;

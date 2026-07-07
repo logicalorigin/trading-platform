@@ -620,6 +620,8 @@ export * from './schwabEquityTradingSession';
 export * from './schwabReadinessResponse';
 export * from './schwabReadinessResponsePrerequisites';
 export * from './schwabReadinessResponseProvider';
+export * from './schwabReadinessResponseReauthRequired';
+export * from './schwabReadinessResponseReauthRequiredReason';
 export * from './schwabReadinessResponseUpstream';
 export * from './schwabReadinessStatus';
 export * from './schwabUserReadiness';

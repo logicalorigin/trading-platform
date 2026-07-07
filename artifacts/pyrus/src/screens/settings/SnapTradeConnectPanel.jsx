@@ -68,6 +68,8 @@ import {
   SCHWAB_USER_STATUS_LABELS,
   formatSchwabConnectOutcome,
   formatSchwabLimitation,
+  isSchwabReauthRequired,
+  schwabConnectActionLabel,
 } from "./schwabConnectModel.js";
 import { formatIbkrPortalStatus } from "./ibkrPortalConnectModel.js";
 import {
@@ -955,7 +957,7 @@ export function SnapTradeConnectPanel({ enabled = true }) {
   const schwabConfigured = schwabReadiness?.configured === true;
   const schwabUserStatus = schwabUser?.status || "not_connected";
   const schwabConnected = schwabUser?.connected === true;
-  const schwabReconnectRequired = schwabUserStatus === "expired";
+  const schwabReconnectRequired = isSchwabReauthRequired(schwabReadiness);
   const schwabLimitations = Array.isArray(schwabReadiness?.limitations)
     ? schwabReadiness.limitations
     : [];
@@ -1016,7 +1018,7 @@ export function SnapTradeConnectPanel({ enabled = true }) {
         phases.set(
           key,
           deriveBrokerCardPhase({
-            connected: schwabConnected,
+            connected: schwabConnected && !schwabReconnectRequired,
             working:
               schwabStartMutation.isPending || schwabSyncMutation.isPending,
             awaitingUser: popupBrokerKey === key,
@@ -1675,7 +1677,10 @@ export function SnapTradeConnectPanel({ enabled = true }) {
       const schwabReconnect = schwabConnected || schwabReconnectRequired;
       const actions = [
         {
-          label: schwabReconnect ? "Reconnect" : "Connect",
+          label: schwabConnectActionLabel({
+            connected: schwabConnected,
+            reauthRequired: schwabReconnectRequired,
+          }),
           variant: schwabReconnectRequired || !schwabConnected ? "primary" : "secondary",
           icon: schwabReconnect ? (
             <ExternalLink size={actionIconSize} strokeWidth={2} aria-hidden="true" />

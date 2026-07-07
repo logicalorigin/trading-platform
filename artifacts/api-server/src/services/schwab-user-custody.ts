@@ -239,8 +239,8 @@ function readinessFromCredential(
   const disabled = Boolean(credential.disabledAt);
   const expired =
     !disabled &&
-    credential.status === "connected" &&
-    refreshTokenExpired(credential, now);
+    (credential.status === "expired" ||
+      (credential.status === "connected" && refreshTokenExpired(credential, now)));
   const connected = !disabled && !expired && credential.status === "connected";
   const status: SchwabUserReadinessStatus = disabled
     ? "disabled"
@@ -270,7 +270,7 @@ function readinessFromCredential(
           : credential.status === "pending"
             ? "complete_authorization"
             : "start_connect",
-    executionBlockers: reauthRequired ? ["broker_reauth"] : [],
+    executionBlockers: expired || reauthRequired ? ["broker_reauth"] : [],
   };
 }
 

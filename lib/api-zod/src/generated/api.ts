@@ -1509,7 +1509,7 @@ export const SyncRobinhoodConnectionsResponse = zod.object({
 export const GetSchwabReadinessResponse = zod.object({
   "provider": zod.enum(['schwab']),
   "configured": zod.boolean(),
-  "status": zod.enum(['unconfigured', 'research_required']),
+  "status": zod.enum(['unconfigured', 'research_required', 'reauth_required']),
   "checkedAt": zod.coerce.date(),
   "executionDecision": zod.object({
   "decisionCode": zod.enum(['BROKER_SCOPE_READY', 'BROKER_SCOPE_MISSING', 'BROKER_CAPABILITY_READY', 'BROKER_CAPABILITY_SYNC_REQUIRED', 'BROKER_CAPABILITY_STALE', 'BROKER_CAPABILITY_UNSUPPORTED', 'BROKER_ORDER_SHAPE_UNSUPPORTED', 'PROVIDER_ELIGIBLE', 'PROVIDER_RESEARCH_REQUIRED', 'PROVIDER_INSUFFICIENT_CAPABILITY', 'PROVIDER_UNSUPPORTED', 'PROVIDER_SPECIAL_CONNECTOR_REQUIRED', 'PROVIDER_COMPLIANCE_REVIEW_REQUIRED']),
@@ -1524,6 +1524,10 @@ export const GetSchwabReadinessResponse = zod.object({
   "credentialEncryptionKeyPresent": zod.boolean(),
   "redirectBaseUrlPresent": zod.boolean(),
   "appCredentialsPresent": zod.boolean()
+}),
+  "reauthRequired": zod.object({
+  "required": zod.boolean(),
+  "reason": zod.enum(['refresh_expired_or_revoked', 'refresh_expires_soon']).nullable()
 }),
   "user": zod.object({
   "connected": zod.boolean(),

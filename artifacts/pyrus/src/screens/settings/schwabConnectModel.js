@@ -15,6 +15,7 @@ export const SCHWAB_LIMITATION_LABELS = Object.freeze({
   "schwab.provider_research_required": "Provider research required before live trading",
   "schwab.order_tooling_unverified": "Order tooling unverified — execution gated",
   "schwab.weekly_reauth_required": "Schwab requires re-authorization every 7 days",
+  "schwab.broker_reauth_required": "Reconnect Schwab to refresh authorization",
   "schwab.credential_encryption_key_missing": "Credential encryption key missing",
   "schwab.redirect_base_url_missing": "OAuth redirect base URL missing",
   "schwab.app_credentials_missing": "Schwab app key/secret missing",
@@ -52,4 +53,20 @@ export function formatSchwabConnectOutcome(outcome) {
     default:
       return null;
   }
+}
+
+export function isSchwabReauthRequired(readiness) {
+  const user = readiness?.user || null;
+  return Boolean(
+    readiness?.status === "reauth_required" ||
+      readiness?.reauthRequired?.required === true ||
+      user?.status === "expired" ||
+      user?.nextAction === "reconnect" ||
+      user?.executionBlockers?.includes("broker_reauth"),
+  );
+}
+
+export function schwabConnectActionLabel({ connected, reauthRequired } = {}) {
+  if (reauthRequired) return "Reconnect Schwab";
+  return connected ? "Reconnect" : "Connect";
 }

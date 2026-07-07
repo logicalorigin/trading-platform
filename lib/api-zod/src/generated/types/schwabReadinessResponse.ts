@@ -8,6 +8,7 @@
 import type { ExecutionDecisionResponse } from './executionDecisionResponse';
 import type { SchwabReadinessResponsePrerequisites } from './schwabReadinessResponsePrerequisites';
 import type { SchwabReadinessResponseProvider } from './schwabReadinessResponseProvider';
+import type { SchwabReadinessResponseReauthRequired } from './schwabReadinessResponseReauthRequired';
 import type { SchwabReadinessResponseUpstream } from './schwabReadinessResponseUpstream';
 import type { SchwabReadinessStatus } from './schwabReadinessStatus';
 import type { SchwabUserReadiness } from './schwabUserReadiness';
@@ -22,6 +23,7 @@ export interface SchwabReadinessResponse {
   checkedAt: Date;
   executionDecision: ExecutionDecisionResponse;
   prerequisites: SchwabReadinessResponsePrerequisites;
+  reauthRequired: SchwabReadinessResponseReauthRequired;
   user: SchwabUserReadiness;
   limitations: string[];
   upstream: SchwabReadinessResponseUpstream;

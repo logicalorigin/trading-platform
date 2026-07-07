@@ -12,4 +12,5 @@ export type SchwabReadinessStatus = typeof SchwabReadinessStatus[keyof typeof Sc
 export const SchwabReadinessStatus = {
   unconfigured: 'unconfigured',
   research_required: 'research_required',
+  reauth_required: 'reauth_required',
 } as const;

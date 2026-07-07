@@ -1,5 +1,7 @@
 import { randomBytes } from "node:crypto";
+import { eq } from "drizzle-orm";
 
+import { db, schwabUserCredentialsTable } from "@workspace/db";
 import { HttpError } from "../lib/errors";
 import {
   beginSchwabConnectCustody,
@@ -179,6 +181,34 @@ type SchwabTokenGrantResponse = {
   scope: string | null;
 };
 
+export type SchwabTokenRefreshFailureClassification =
+  | "refresh_expired_or_revoked"
+  | "transient_or_unknown";
+
+export function classifySchwabTokenRefreshFailure(input: {
+  status: number;
+  payload: unknown;
+}): SchwabTokenRefreshFailureClassification {
+  const record = asRecord(input.payload);
+  const error = record["error"];
+  const errorDescription = record["error_description"];
+  const errorText = [
+    typeof error === "string" ? error : "",
+    typeof errorDescription === "string" ? errorDescription : "",
+  ]
+    .join(" ")
+    .toLowerCase();
+
+  if (
+    (input.status === 400 || input.status === 401) &&
+    /\binvalid_grant\b/u.test(errorText)
+  ) {
+    return "refresh_expired_or_revoked";
+  }
+
+  return "transient_or_unknown";
+}
+
 async function requestSchwabTokenGrant(input: {
   body: URLSearchParams;
   appKey: string;
@@ -213,7 +243,7 @@ async function requestSchwabTokenGrant(input: {
     throw new HttpError(502, "Schwab token request failed", {
       code: input.failureCode,
       expose: false,
-      data: { status: response.status },
+      data: { status: response.status, payload },
     });
   }
 
@@ -344,14 +374,40 @@ export async function getSchwabAccessToken(
   body.set("grant_type", "refresh_token");
   body.set("refresh_token", tokens.refreshToken);
 
-  const grant = await requestSchwabTokenGrant({
-    body,
-    appKey,
-    appSecret,
-    fetchImpl,
-    now,
-    failureCode: "schwab_token_refresh_failed",
-  });
+  let grant: SchwabTokenGrantResponse;
+  try {
+    grant = await requestSchwabTokenGrant({
+      body,
+      appKey,
+      appSecret,
+      fetchImpl,
+      now,
+      failureCode: "schwab_token_refresh_failed",
+    });
+  } catch (error) {
+    if (error instanceof HttpError && error.code === "schwab_token_refresh_failed") {
+      const data = asRecord(error.data);
+      const classification = classifySchwabTokenRefreshFailure({
+        status: typeof data["status"] === "number" ? data["status"] : 0,
+        payload: data["payload"],
+      });
+      if (classification === "refresh_expired_or_revoked") {
+        await markSchwabRefreshExpiredOrRevoked({
+          appUserId: options.appUserId,
+          now,
+        });
+        throw new HttpError(
+          409,
+          "Schwab refresh token has expired or was revoked; reconnect required",
+          {
+            code: "schwab_reconnect_required",
+            data: { reason: classification },
+          },
+        );
+      }
+    }
+    throw error;
+  }
 
   await storeSchwabTokens({
     appUserId: options.appUserId,
@@ -368,4 +424,19 @@ export async function getSchwabAccessToken(
   });
 
   return grant.accessToken;
+}
+
+async function markSchwabRefreshExpiredOrRevoked(input: {
+  appUserId: string;
+  now: Date;
+}): Promise<void> {
+  await db
+    .update(schwabUserCredentialsTable)
+    .set({
+      status: "expired",
+      accessTokenExpiresAt: null,
+      refreshTokenExpiresAt: input.now,
+      updatedAt: input.now,
+    })
+    .where(eq(schwabUserCredentialsTable.appUserId, input.appUserId));
 }

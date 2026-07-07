@@ -6507,7 +6507,7 @@ components:
 
     SchwabReadinessStatus:
       type: string
-      enum: [unconfigured, research_required]
+      enum: [unconfigured, research_required, reauth_required]
 
     SchwabUserReadinessStatus:
       type: string
@@ -6591,6 +6591,20 @@ components:
             - credentialEncryptionKeyPresent
             - redirectBaseUrlPresent
             - appCredentialsPresent
+        reauthRequired:
+          type: object
+          properties:
+            required:
+              type: boolean
+            reason:
+              type: string
+              nullable: true
+              enum:
+                - refresh_expired_or_revoked
+                - refresh_expires_soon
+          required:
+            - required
+            - reason
         user:
           $ref: "#/components/schemas/SchwabUserReadiness"
         limitations:
@@ -6618,6 +6632,7 @@ components:
         - checkedAt
         - executionDecision
         - prerequisites
+        - reauthRequired
         - user
         - limitations
         - upstream

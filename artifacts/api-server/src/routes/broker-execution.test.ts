@@ -169,6 +169,7 @@ function schwabReadinessFixture(configured = true) {
       redirectBaseUrlPresent: configured,
       appCredentialsPresent: configured,
     },
+    reauthRequired: { required: false, reason: null },
     limitations: configured
       ? ["schwab.provider_research_required"]
       : ["schwab.app_credentials_missing"],
