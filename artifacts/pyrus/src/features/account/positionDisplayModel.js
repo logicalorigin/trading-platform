@@ -94,7 +94,7 @@ const buildQuote = (quote, fallbackMark, source) => {
   const last = automationEventQuote ? null : positiveNumber(quote.last ?? quote.price);
   const quotedMid = automationEventQuote ? null : positiveNumber(quote.mid);
   const mid =
-    bid != null && ask != null && (bid > 0 || ask > 0)
+    bid != null && ask != null && bid > 0 && ask > 0
       ? (bid + ask) / 2
       : quotedMid;
   const mark = mid ?? positiveNumber(quote.mark) ?? last ?? positiveNumber(fallbackMark);
