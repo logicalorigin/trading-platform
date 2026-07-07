@@ -1114,6 +1114,53 @@ test("SnapTrade account history route requires authentication before provider ca
   );
 });
 
+test("SnapTrade account history route rejects invalid query filters before provider call", async () => {
+  await withBootstrapToken(async () =>
+    withSnapTradeEnv(async () =>
+      withCredentialEncryptionEnv(async () =>
+        withTestDb(async () =>
+          withServer(async (baseUrl) => {
+            const previousFetch = globalThis.fetch;
+            const bootstrapResponse = await previousFetch(`${baseUrl}/auth/bootstrap`, {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({
+                email: "history-invalid-query@example.com",
+                password: "correct horse battery staple",
+                bootstrapToken: "setup-token",
+              }),
+            });
+            assert.equal(bootstrapResponse.status, 200);
+            const cookie = bootstrapResponse.headers.get("set-cookie") ?? "";
+            let called = false;
+            globalThis.fetch = (async () => {
+              called = true;
+              throw new Error("provider fetch should not run");
+            }) as typeof fetch;
+            try {
+              for (const [query, code] of [
+                ["from=not-a-date", "invalid_snaptrade_history_from"],
+                ["to=not-a-date", "invalid_snaptrade_history_to"],
+                ["range=NOPE", "invalid_snaptrade_history_range"],
+              ] as const) {
+                const response = await previousFetch(
+                  `${baseUrl}/broker-execution/snaptrade/accounts/local-account-id/history?${query}`,
+                  { headers: { cookie } },
+                );
+                assert.equal(response.status, 400);
+                assert.equal(((await response.json()) as { code?: string }).code, code);
+              }
+              assert.equal(called, false);
+            } finally {
+              globalThis.fetch = previousFetch;
+            }
+          }),
+        ),
+      ),
+    ),
+  );
+});
+
 test("SnapTrade sync route requires CSRF before provider call", async () => {
   await withBootstrapToken(async () =>
     withSnapTradeEnv(async () =>
