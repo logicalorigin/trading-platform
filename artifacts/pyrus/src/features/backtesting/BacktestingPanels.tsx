@@ -1287,6 +1287,11 @@ export function AlgoDraftStrategiesPanel({
       refetchInterval: isVisible ? 10_000 : false,
     },
   });
+  const visibleDrafts = (draftsQuery.data?.drafts ?? []).slice(0, 3);
+
+  if (visibleDrafts.length === 0) {
+    return null;
+  }
 
   return (
     <div
@@ -1325,7 +1330,7 @@ export function AlgoDraftStrategiesPanel({
         </div>
       </div>
       <DraftStrategiesList
-        drafts={(draftsQuery.data?.drafts ?? []).slice(0, 3)}
+        drafts={visibleDrafts}
         theme={theme}
         scale={scale}
         formatDateTimeLabel={formatBacktestDateTime}
@@ -1355,6 +1360,7 @@ export function BacktestWorkspace({
     (value: string | null | undefined) => formatHour(value, userPreferences),
     [userPreferences],
   );
+  const backtestInputsRef = useRef<HTMLDetailsElement | null>(null);
   useRuntimeWorkloadFlag("backtest:workspace", isVisible, {
     kind: "poll",
     label: "Backtest workspace",
@@ -2574,6 +2580,14 @@ export function BacktestWorkspace({
     }
   }
 
+  function handleFocusStudyInputs(): void {
+    backtestInputsRef.current?.scrollIntoView({
+      behavior: "smooth",
+      block: "start",
+    });
+    backtestInputsRef.current?.focus({ preventScroll: true });
+  }
+
   async function handleQueueRun(): Promise<void> {
     if (!selectedStudy) {
       return;
@@ -2833,10 +2847,10 @@ export function BacktestWorkspace({
               action={
                 <button
                   type="button"
-                  onClick={() => void handleCreateStudy()}
+                  onClick={handleFocusStudyInputs}
                   style={buttonStyle(theme, scale, "primary")}
                 >
-                  Create study
+                  Configure study
                 </button>
               }
             />
@@ -2971,7 +2985,7 @@ export function BacktestWorkspace({
           </div>
         }
       >
-        <details open>
+        <details open ref={backtestInputsRef} tabIndex={-1}>
           <summary
             style={{
               cursor: "pointer",
@@ -2980,8 +2994,7 @@ export function BacktestWorkspace({
               color: theme.textSec,
             }}
           >
-            Configure study, universe, timeframe, and execution inputs without
-            losing the chart workspace below
+            Configure study, universe, timeframe, and execution inputs
           </summary>
           <div
             style={{
@@ -3102,9 +3115,7 @@ export function BacktestWorkspace({
               }}
             >
               Uses strategy defaults for the deep parameter set, portfolio
-              rules, execution profile, and optimizer tuning. This keeps the
-              main page analysis-first while still putting the warning inputs
-              above the chart workspace.
+              rules, execution profile, and optimizer tuning.
             </div>
             <button
               type="button"
@@ -3135,18 +3146,6 @@ export function BacktestWorkspace({
         }
       >
         <div style={{ display: "grid", gap: scale.sp(10) }}>
-          <div
-            style={{
-              fontSize: scale.fs(10),
-              color: theme.textSec,
-              lineHeight: 1.5,
-            }}
-          >
-            The spot chart is the primary visual truth surface. The options
-            panel stays linked to the same selected trade and is reserved for
-            option replay once contract-history payloads are available.
-          </div>
-
           <div
             style={{
               ...cardStyle(theme, scale),
@@ -3698,19 +3697,6 @@ export function BacktestWorkspace({
           </div>
         ) : (
           <div style={{ display: "grid", gap: scale.sp(10) }}>
-            <div
-              style={{
-                fontSize: scale.fs(10),
-                color: theme.textSec,
-                lineHeight: 1.5,
-              }}
-            >
-              Backtest Summary combines the top-line readout, representative
-              trades, and selected-trade forensics into one surface. Use the
-              chart workspace above together with the quick-pick cards and
-              trade lens here to drive focus.
-            </div>
-
             <div
               style={{
                 display: "grid",
@@ -6374,25 +6360,27 @@ export function BacktestWorkspace({
               </div>
             </div>
 
-            <div style={{ ...cardStyle(theme, scale), background: theme.bg0 }}>
-              <div
-                style={{
-                  fontSize: scale.fs(10),
-                  fontWeight: FONT_WEIGHTS.regular,
-                  color: theme.textSec,
-                  marginBottom: scale.sp(8),
-                }}
-              >
-                Promoted Drafts
+            {(draftsQuery.data?.drafts ?? []).length > 0 ? (
+              <div style={{ ...cardStyle(theme, scale), background: theme.bg0 }}>
+                <div
+                  style={{
+                    fontSize: scale.fs(10),
+                    fontWeight: FONT_WEIGHTS.regular,
+                    color: theme.textSec,
+                    marginBottom: scale.sp(8),
+                  }}
+                >
+                  Promoted Drafts
+                </div>
+                <DraftStrategiesList
+                  drafts={(draftsQuery.data?.drafts ?? []).slice(0, 3)}
+                  theme={theme}
+                  scale={scale}
+                  formatDateTimeLabel={formatBacktestDateTime}
+                  compact
+                />
               </div>
-              <DraftStrategiesList
-                drafts={(draftsQuery.data?.drafts ?? []).slice(0, 3)}
-                theme={theme}
-                scale={scale}
-                formatDateTimeLabel={formatBacktestDateTime}
-                compact
-              />
-            </div>
+            ) : null}
           </div>
         </div>
       </SectionCard>

@@ -26,11 +26,8 @@ import {
   Radar,
   RefreshCw,
   ScanLine,
-  Scale,
   Search,
   SlidersHorizontal,
-  TrendingDown,
-  TrendingUp,
 } from "lucide-react";
 import { DenseVirtualTable } from "../components/platform/DenseVirtualTable.jsx";
 import {
@@ -171,10 +168,6 @@ const isRenderableSignalMatrixState = (state) => {
       !state?.lastError &&
       (state?.latestBarAt || state?.currentSignalAt),
   );
-};
-const toHydrationCount = (value) => {
-  const numeric = Number(value);
-  return Number.isFinite(numeric) ? Math.max(0, Math.floor(numeric)) : 0;
 };
 const SIGNAL_TIMEFRAME_OPTIONS = ["1m", "2m", "5m", "15m", "1h", "1d"];
 // Mirror of the backend + PlatformApp SIGNAL_MONITOR_MAX_SYMBOLS_LIMIT; caps the "Limit"
@@ -1415,11 +1408,8 @@ function SignalsOverviewPanel({
   const aged = Math.max(0, active - fresh);
   const buy = Math.max(0, summary?.buy || 0);
   const sell = Math.max(0, summary?.sell || 0);
-  const net = Number.isFinite(netBias?.net) ? netBias.net : buy - sell;
   const problem = Math.max(0, summary?.problem || 0);
   const pending = Math.max(0, summary?.pending || 0);
-  const netTone =
-    net > 0 ? CSS_COLOR.blue : net < 0 ? CSS_COLOR.red : CSS_COLOR.textDim;
   const attentionTone = problem
     ? CSS_COLOR.red
     : pending
@@ -1436,10 +1426,6 @@ function SignalsOverviewPanel({
       empty: monitorEnabled && !stale && fresh === 0,
     }),
   );
-
-  // Breadth is a point-in-time aggregate (not a tracked time series), so the
-  // Buy/Sell/Net cards visualize current proportions rather than a trend line.
-  const activeBuySell = buy + sell;
 
   const metrics = [
     {
@@ -1472,48 +1458,6 @@ function SignalsOverviewPanel({
       ),
     },
     {
-      key: "buy",
-      icon: TrendingUp,
-      label: "Buy",
-      value: formatCount(buy),
-      tone: CSS_COLOR.blue,
-      tooltip: `${formatCount(buy)} of ${formatCount(total)} symbols on a buy signal`,
-      viz: (
-        <SignalsSplitBar
-          segments={[{ pct: total ? (buy / total) * 100 : 0, color: CSS_COLOR.blue }]}
-        />
-      ),
-    },
-    {
-      key: "sell",
-      icon: TrendingDown,
-      label: "Sell",
-      value: formatCount(sell),
-      tone: CSS_COLOR.red,
-      tooltip: `${formatCount(sell)} of ${formatCount(total)} symbols on a sell signal`,
-      viz: (
-        <SignalsSplitBar
-          segments={[{ pct: total ? (sell / total) * 100 : 0, color: CSS_COLOR.red }]}
-        />
-      ),
-    },
-    {
-      key: "net",
-      icon: Scale,
-      label: "Net",
-      value: `${net > 0 ? "+" : ""}${formatCount(net)}`,
-      tone: netTone,
-      tooltip: netBias?.label || "Net buy/sell bias",
-      viz: (
-        <SignalsSplitBar
-          segments={[
-            { pct: activeBuySell ? (buy / activeBuySell) * 100 : 0, color: CSS_COLOR.blue },
-            { pct: activeBuySell ? (sell / activeBuySell) * 100 : 0, color: CSS_COLOR.red },
-          ]}
-        />
-      ),
-    },
-    {
       key: "attention",
       icon: Bell,
       label: "Attention",
@@ -1538,9 +1482,7 @@ function SignalsOverviewPanel({
       <div
         style={{
           display: "grid",
-          gridTemplateColumns: phone
-            ? "repeat(3, minmax(0, 1fr))"
-            : "repeat(6, minmax(0, 1fr))",
+          gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
           gap: sp(6),
           minWidth: 0,
         }}
@@ -2996,7 +2938,6 @@ function SignalsHydrationStrip({
   hydrated,
   missing,
   phone,
-  timeframeHydration = [],
   total,
 }) {
   const hasUniverse = total > 0;
@@ -3014,10 +2955,6 @@ function SignalsHydrationStrip({
     : complete
       ? "Signal matrix current"
       : `${missing} cells awaiting data`;
-  const timeframeRows = Array.isArray(timeframeHydration)
-    ? timeframeHydration.filter((item) => item?.timeframe)
-    : [];
-
   return (
     <div
       data-testid="signals-hydration-strip"
@@ -3076,100 +3013,6 @@ function SignalsHydrationStrip({
         >
           {hasUniverse ? `${hydratedPercent}%` : "idle"}
         </span>
-      </div>
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: sp(6),
-          flexWrap: "wrap",
-          minWidth: 0,
-        }}
-      >
-        {(timeframeRows.length
-          ? timeframeRows
-          : SIGNALS_TABLE_TIMEFRAMES.map((timeframe) => ({
-              timeframe,
-              hydrated: 0,
-              missing: 0,
-              requested: 0,
-              aged: 0,
-              total: 0,
-            }))
-        ).map((item) => {
-          const frameTotal = toHydrationCount(item.total);
-          const frameHydrated = Math.min(frameTotal, toHydrationCount(item.hydrated));
-          const frameAged = Math.min(frameHydrated, toHydrationCount(item.aged));
-          const frameMissing = Math.max(0, frameTotal - frameHydrated);
-          const frameComplete = frameTotal > 0 && frameHydrated >= frameTotal;
-          const framePercent = frameTotal
-            ? frameComplete
-              ? 100
-              : Math.min(99, Math.floor((frameHydrated / frameTotal) * 100))
-            : 0;
-          const frameTone = !frameTotal
-            ? CSS_COLOR.textDim
-            : frameComplete
-              ? CSS_COLOR.green
-              : CSS_COLOR.amber;
-          const frameSubLabel = [
-            frameMissing ? `${frameMissing} missing` : "",
-            frameAged ? `${frameAged} aged` : "",
-          ]
-            .filter(Boolean)
-            .join(" · ");
-          return (
-            <span
-              key={item.timeframe}
-              data-testid={`signals-hydration-${item.timeframe}`}
-              role="meter"
-              aria-label={`${item.timeframe} ${framePercent} percent hydrated; ${frameHydrated} of ${frameTotal || 0} cells; ${frameMissing} missing; ${frameAged} aged`}
-              aria-valuemin={0}
-              aria-valuemax={100}
-              aria-valuenow={framePercent}
-              title={`${item.timeframe}: ${frameHydrated}/${frameTotal || 0} hydrated, ${frameMissing} missing, ${frameAged} aged`}
-              style={{
-                display: "inline-flex",
-                alignItems: "center",
-                gap: sp(4),
-                minWidth: 0,
-                color: CSS_COLOR.textDim,
-                fontSize: fs(9),
-                fontVariantNumeric: "tabular-nums",
-                whiteSpace: "nowrap",
-              }}
-            >
-              <span
-                style={{
-                  color: CSS_COLOR.textMuted,
-                  fontWeight: FONT_WEIGHTS.label,
-                  textTransform: "uppercase",
-                }}
-              >
-                {String(item.timeframe).toUpperCase()}
-              </span>
-              <span
-                style={{
-                  color: frameTone,
-                  fontWeight: FONT_WEIGHTS.label,
-                }}
-              >
-                {frameTotal ? `${frameHydrated}/${frameTotal}` : "idle"}
-              </span>
-              {frameSubLabel ? (
-                <span
-                  style={{
-                    ...cellTextStyle,
-                    color: frameMissing ? CSS_COLOR.amber : CSS_COLOR.textDim,
-                    fontSize: fs(9),
-                  }}
-                >
-                  {frameSubLabel}
-                </span>
-              ) : null}
-            </span>
-          );
-        })}
       </div>
     </div>
   );
@@ -4562,13 +4405,6 @@ export default function SignalsScreen({
   const matrixHydrationTotal = matrixHydrationPlan.totalCellCount;
   const matrixHydrationHydrated = matrixHydrationPlan.hydratedCellCount;
   const matrixHydrationMissing = matrixHydrationPlan.missingCellCount;
-  const matrixHydrationTone =
-    matrixHydrationTotal > 0 && matrixHydrationMissing === 0
-      ? CSS_COLOR.green
-      : CSS_COLOR.amber;
-  const matrixHydrationLabel = matrixHydrationTotal
-    ? `Intervals ${matrixHydrationHydrated}/${matrixHydrationTotal}`
-    : "Intervals idle";
   const scopeResolvedSymbols = Number(signalMatrixUniverse?.resolvedSymbols);
   const scopeActiveSymbols = Number(signalMatrixCoverage?.activeScopeSymbols);
   const scopeSymbolCounts = [scopeResolvedSymbols, scopeActiveSymbols].filter(
@@ -4690,9 +4526,6 @@ export default function SignalsScreen({
                 <DataIssueInlineIcon issues={cacheIssues} side="bottom" align="center" />
               </span>
             ) : null}
-            <StatusPill color={matrixHydrationTone} variant="outline">
-              {matrixHydrationLabel}
-            </StatusPill>
             {scopeCoverageLabel ? (
               <StatusPill color={CSS_COLOR.amber} variant="outline">
                 {scopeCoverageLabel}
@@ -4722,6 +4555,8 @@ export default function SignalsScreen({
             alignItems: "end",
             flexWrap: "wrap",
             padding: sp(10),
+            background: filteredRows.length ? CSS_COLOR.bg2 : CSS_COLOR.bg1,
+            borderColor: filteredRows.length ? CSS_COLOR.border : CSS_COLOR.borderLight,
           }}
         >
           <SignalsTickerSearchInput
@@ -4784,10 +4619,13 @@ export default function SignalsScreen({
                 type="button"
                 aria-label="Toggle indicator controls"
                 aria-expanded={settingsOpen ? "true" : "false"}
+                title="Toggle indicator controls"
                 onClick={() => setSettingsOpen((current) => !current)}
                 style={{
                   ...iconButtonStyle,
                   color: settingsOpen ? CSS_COLOR.accent : CSS_COLOR.textSec,
+                  borderColor: settingsOpen ? CSS_COLOR.accent : CSS_COLOR.border,
+                  background: settingsOpen ? cssColorMix(CSS_COLOR.accent, 12) : CSS_COLOR.bg1,
                 }}
               >
                 <SlidersHorizontal size={15} strokeWidth={2} aria-hidden="true" />
@@ -4797,10 +4635,14 @@ export default function SignalsScreen({
               <button
                 type="button"
                 aria-label={profile?.enabled ? "Turn monitor off" : "Turn monitor on"}
+                aria-pressed={profile?.enabled ? "true" : "false"}
+                title={profile?.enabled ? "Monitor on; turn off" : "Monitor off; turn on"}
                 onClick={onToggleMonitor}
                 style={{
                   ...iconButtonStyle,
                   color: profile?.enabled ? CSS_COLOR.green : CSS_COLOR.textDim,
+                  borderColor: profile?.enabled ? CSS_COLOR.green : CSS_COLOR.border,
+                  background: profile?.enabled ? cssColorMix(CSS_COLOR.green, 12) : CSS_COLOR.bg1,
                 }}
               >
                 <Power size={15} strokeWidth={2} aria-hidden="true" />
@@ -4810,6 +4652,7 @@ export default function SignalsScreen({
               <button
                 type="button"
                 aria-label="Run signal scan"
+                title="Run signal scan"
                 onClick={onScanNow}
                 style={iconButtonStyle}
               >
@@ -4820,10 +4663,13 @@ export default function SignalsScreen({
               <button
                 type="button"
                 aria-label="Refresh signals"
+                title="Refresh signals"
                 onClick={handleRefresh}
                 style={{
                   ...iconButtonStyle,
                   color: refreshing ? CSS_COLOR.accent : CSS_COLOR.textSec,
+                  borderColor: refreshing ? CSS_COLOR.accent : CSS_COLOR.border,
+                  background: refreshing ? cssColorMix(CSS_COLOR.accent, 12) : CSS_COLOR.bg1,
                 }}
               >
                 <RefreshCw size={15} strokeWidth={2} aria-hidden="true" />
@@ -4868,7 +4714,6 @@ export default function SignalsScreen({
             hydrated={matrixHydrationHydrated}
             missing={matrixHydrationMissing}
             phone={phone}
-            timeframeHydration={matrixHydrationPlan.timeframeHydration}
             total={matrixHydrationTotal}
           />
           {errored ? (
