@@ -14,10 +14,12 @@ import {
   SNAPTRADE_API_BASE_URL,
 } from "./snaptrade-readiness";
 import { loadSnapTradeUserCredential } from "./snaptrade-user-custody";
+import { getSnapTradeAccountPortfolio } from "./snaptrade-account-portfolio";
 import {
   calculateTransferAdjustedReturnPoints,
   type AccountEquityHistorySeedPoint,
 } from "./account-equity-history-model";
+import { readEnvString } from "../lib/env";
 
 type SnapTradeCredentials = {
   clientId: string;
@@ -196,13 +198,6 @@ type ActivityLot = {
 const LOCAL_ID_PREFIX = "snaptrade:";
 const SNAPTRADE_ACTIVITY_PAGE_LIMIT = 1000;
 const SNAPTRADE_ACTIVITY_MAX_PAGES = 25;
-
-function readEnvString(
-  env: NodeJS.ProcessEnv | Record<string, string | undefined>,
-  key: string,
-): string {
-  return env[key]?.trim() ?? "";
-}
 
 function configuredSnapTradeCredentials(
   env: NodeJS.ProcessEnv | Record<string, string | undefined>,
@@ -1050,6 +1045,38 @@ async function fetchBalanceHistory(input: {
   };
 }
 
+// Current net-liquidation as a single balance point, from SnapTrade's available
+// /balances endpoint (via getSnapTradeAccountPortfolio). Used as the equity-curve
+// fallback when the historical /balanceHistory endpoint is unavailable. Best
+// effort: returns [] on any failure so the backfill never breaks on balances.
+async function fetchCurrentBalancePoint(input: {
+  appUserId: string;
+  accountId: string;
+  baseCurrency: string;
+  env: NodeJS.ProcessEnv | Record<string, string | undefined>;
+  fetchImpl: typeof fetch;
+  now: Date;
+}): Promise<BalanceHistoryPoint[]> {
+  try {
+    const portfolio = await getSnapTradeAccountPortfolio({
+      appUserId: input.appUserId,
+      accountId: input.accountId,
+      env: input.env,
+      fetchImpl: input.fetchImpl,
+      now: input.now,
+    });
+    const nlv = portfolio.totals.netLiquidation;
+    if (nlv == null) {
+      return [];
+    }
+    return [
+      { timestamp: input.now, netLiquidation: nlv, currency: input.baseCurrency },
+    ];
+  } catch {
+    return [];
+  }
+}
+
 async function storeBalanceSnapshots(input: {
   accountId: string;
   points: BalanceHistoryPoint[];
@@ -1256,11 +1283,27 @@ export async function ingestSnapTradeAccountHistory(
     }),
   ]);
 
+  // SnapTrade's historical /balanceHistory endpoint is unavailable on this plan
+  // (403/404 → 0 points), so these accounts have no equity curve. Fall back to
+  // snapshotting the CURRENT net-liquidation (from the available /balances
+  // endpoint) on each backfill run, so a forward equity curve accumulates —
+  // matching how IBKR builds balance snapshots over time.
+  const balancePoints = balanceHistory.points.length
+    ? balanceHistory.points
+    : await fetchCurrentBalancePoint({
+        appUserId: options.appUserId,
+        accountId: options.accountId,
+        baseCurrency: account.baseCurrency,
+        env,
+        fetchImpl,
+        now,
+      });
+
   const [activitiesStored, balanceSnapshotsStored] = await Promise.all([
     storeActivities(fetchedActivities),
     storeBalanceSnapshots({
       accountId: account.id,
-      points: balanceHistory.points,
+      points: balancePoints,
     }),
   ]);
 

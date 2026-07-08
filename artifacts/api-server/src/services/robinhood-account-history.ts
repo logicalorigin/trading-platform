@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { and, desc, eq, sql } from "drizzle-orm";
 
 import {
+  balanceSnapshotsTable,
   brokerAccountsTable,
   brokerConnectionsTable,
   db,
@@ -10,6 +11,7 @@ import {
   type RobinhoodAccountActivity,
 } from "@workspace/db";
 import { HttpError } from "../lib/errors";
+import { logger } from "../lib/logger";
 import { RobinhoodMcpSession } from "../providers/robinhood/mcp-client";
 import { getRobinhoodAccessToken } from "./robinhood-oauth";
 
@@ -61,7 +63,30 @@ export type IngestRobinhoodAccountHistoryResult = {
   accountId: string;
   tradesFetched: number;
   activitiesStored: number;
+  balanceSnapshotStored: boolean;
 };
+
+function toNumber(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && value.trim()) {
+    const n = Number(value);
+    return Number.isFinite(n) ? n : null;
+  }
+  return null;
+}
+
+// Extract current net-liquidation from the get_portfolio payload
+// ({ data: { total_value, cash, buying_power: { buying_power } } }). Mirrors the
+// account-list balance reader; Robinhood exposes no historical balance endpoint,
+// so snapshotting the current value each backfill run builds a forward equity
+// curve (same fallback strategy as the SnapTrade backfill).
+function portfolioNetLiquidation(payload: unknown): number | null {
+  const root = asRecord(payload);
+  const data = asRecord(root["data"]);
+  const totalValue = toNumber(data["total_value"]);
+  if (totalValue != null) return totalValue;
+  return toNumber(data["cash"]);
+}
 
 type LocalRobinhoodAccount = {
   id: string;
@@ -276,12 +301,54 @@ export async function ingestRobinhoodAccountHistory(
     trades,
     now,
   );
+  const balanceSnapshotStored = await snapshotCurrentBalance(
+    session,
+    account,
+    now,
+  );
 
   return {
     accountId: account.id,
     tradesFetched: trades.length,
     activitiesStored,
+    balanceSnapshotStored,
   };
+}
+
+// Best-effort: snapshot the account's current net-liquidation so a forward
+// equity curve accumulates (Robinhood has no historical balance endpoint).
+// Never breaks the backfill — a balance failure just skips the snapshot.
+async function snapshotCurrentBalance(
+  session: RobinhoodHistorySession,
+  account: LocalRobinhoodAccount,
+  now: Date,
+): Promise<boolean> {
+  try {
+    const payload = await session.callTool({
+      name: "get_portfolio",
+      arguments: { account_number: account.accountNumber },
+    });
+    const nlv = portfolioNetLiquidation(payload);
+    if (nlv == null) {
+      return false;
+    }
+    await db.insert(balanceSnapshotsTable).values({
+      accountId: account.id,
+      currency: account.baseCurrency,
+      cash: "0.000000",
+      buyingPower: "0.000000",
+      netLiquidation: nlv.toFixed(6),
+      maintenanceMargin: null,
+      asOf: now,
+    });
+    return true;
+  } catch (error) {
+    logger.warn(
+      { err: error, accountId: account.id },
+      "Robinhood balance snapshot failed",
+    );
+    return false;
+  }
 }
 
 // Stored-first read for the account-detail P&L surface. Never triggers a live

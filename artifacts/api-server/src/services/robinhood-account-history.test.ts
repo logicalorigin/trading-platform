@@ -68,13 +68,28 @@ async function createRobinhoodAccount(
 // cursor, so the ingest's pagination + dedup are exercised without a live server.
 function fakePnlSession(
   pages: Array<{ trades: unknown[]; next_cursor?: string | null }>,
-  opts: { expectAccountNumber?: string; calls?: string[] } = {},
+  opts: {
+    expectAccountNumber?: string;
+    calls?: string[];
+    portfolioTotalValue?: string | null;
+  } = {},
 ): RobinhoodHistorySession {
   return {
     async callTool(call) {
       opts.calls?.push(call.name);
-      assert.equal(call.name, "get_pnl_trade_history");
       const args = call.arguments ?? {};
+      // The ingest also snapshots the current balance via get_portfolio.
+      if (call.name === "get_portfolio") {
+        return {
+          data: {
+            total_value:
+              opts.portfolioTotalValue === undefined
+                ? "1000.00"
+                : opts.portfolioTotalValue,
+          },
+        };
+      }
+      assert.equal(call.name, "get_pnl_trade_history");
       assert.equal(args["span"], "all");
       if (opts.expectAccountNumber) {
         assert.equal(args["account_number"], opts.expectAccountNumber);
@@ -133,7 +148,11 @@ test("Robinhood history backfills realized-P&L trades across pages", async () =>
 
       assert.equal(result.tradesFetched, 2);
       assert.equal(result.activitiesStored, 2);
-      assert.equal(calls.length, 2); // paged twice (cursor followed)
+      assert.equal(
+        calls.filter((c) => c === "get_pnl_trade_history").length,
+        2,
+      ); // paged twice (cursor followed)
+      assert.equal(result.balanceSnapshotStored, true); // equity-curve point written
 
       const stored = await readRobinhoodAccountActivities(account.id);
       assert.equal(stored.length, 2);
