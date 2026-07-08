@@ -53,8 +53,8 @@ const WireTrailStatusBand = ({ profile, positions }) => {
       : "--";
   const cells = [
     { label: "RUNGS", value: summary.rungSummary },
-    { label: "GREEKS", value: summary.greekSummary },
-    { label: "STRUCT", value: structureValue },
+    { label: "GREEK GATE", value: summary.greekSummary },
+    { label: "STRUCTURE", value: structureValue },
     { label: "FLOOR", value: floorValue },
     { label: "POLL", value: pollValue },
   ];
@@ -111,7 +111,7 @@ const WireTrailStatusBand = ({ profile, positions }) => {
       <div
         style={{
           display: "grid",
-          gridTemplateColumns: "repeat(auto-fit, minmax(56px, max-content))",
+          gridTemplateColumns: "repeat(auto-fit, minmax(64px, max-content))",
           justifyContent: "start",
           gap: sp(3),
           minWidth: 0,
@@ -132,7 +132,7 @@ const WireTrailStatusBand = ({ profile, positions }) => {
                 style={{
                   color: CSS_COLOR.textMuted,
                   fontFamily: T.data,
-                  fontSize: textSize("micro"),
+                  fontSize: textSize("label"),
                   fontWeight: FONT_WEIGHTS.label,
                   lineHeight: 1.1,
                 }}

@@ -193,7 +193,7 @@ const CompactSettingInput = ({
           style={{
             color: invalid ? CSS_COLOR.red : CSS_COLOR.textMuted,
             fontFamily: T.sans,
-            fontSize: textSize("micro"),
+            fontSize: textSize("label"),
             lineHeight: 1,
             flex: "0 0 auto",
             width: dim(20),
@@ -635,7 +635,7 @@ export const HaltStrip = ({
                 style={{
                   color: (STATUS_TONES[rollup.state] || STATUS_TONES.armed).color,
                   fontFamily: T.sans,
-                  fontSize: textSize("micro"),
+                  fontSize: textSize("label"),
                   fontWeight: 600,
                   letterSpacing: 0,
                   textTransform: "uppercase",

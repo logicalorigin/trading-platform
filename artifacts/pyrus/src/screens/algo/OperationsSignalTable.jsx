@@ -1669,6 +1669,7 @@ export const OperationsSignalTable = ({
       latestBarAt: latestMatrixMs ? new Date(latestMatrixMs).toISOString() : null,
       latestScanAt: latestScanMs ? new Date(latestScanMs).toISOString() : null,
       scanRunning: scanStageRecord.status === "running",
+      marketSessionQuiet,
       scanPhase: activePhase,
       sourcePolicy,
       heavyWorkDeferred,
@@ -1695,6 +1696,8 @@ export const OperationsSignalTable = ({
       : "Bar --",
     freshness.scanRunning
       ? "Scan running"
+      : freshness.marketSessionQuiet
+        ? "Market closed"
       : freshness.scanDetail
         ? freshness.scanDetail
         : freshness.latestScanAt
