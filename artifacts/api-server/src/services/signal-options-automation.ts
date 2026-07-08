@@ -6101,7 +6101,7 @@ function resolveSignalOptionsMonitorBatch(input: {
   const nextIndex = (startIndex + batchSize) % uniqueSymbols.length;
   signalOptionsMonitorBatchCursors.set(cursorKey, {
     signature,
-    nextIndex,
+    nextIndex: startIndex,
   });
 
   return {
@@ -6112,6 +6112,33 @@ function resolveSignalOptionsMonitorBatch(input: {
     nextIndex,
     capacity,
   };
+}
+
+function rememberSignalOptionsMonitorBatchSymbolProcessed(input: {
+  deploymentId: string;
+  universe: Set<string>;
+  symbol: string;
+}) {
+  const uniqueSymbols = normalizeSignalOptionsMonitorUniverseSymbols(
+    input.universe,
+  );
+  if (!uniqueSymbols.length) {
+    return;
+  }
+  const signature = uniqueSymbols.join("|");
+  const current = signalOptionsMonitorBatchCursors.get(input.deploymentId);
+  if (current?.signature !== signature) {
+    return;
+  }
+  const currentIndex = current.nextIndex % uniqueSymbols.length;
+  const symbol = normalizeSymbol(input.symbol).toUpperCase();
+  if (!symbol || uniqueSymbols[currentIndex] !== symbol) {
+    return;
+  }
+  signalOptionsMonitorBatchCursors.set(input.deploymentId, {
+    signature,
+    nextIndex: (currentIndex + 1) % uniqueSymbols.length,
+  });
 }
 
 function resolveSignalOptionsWorkerMonitorBatchCapacity(
@@ -21403,6 +21430,7 @@ export const __signalOptionsAutomationInternalsForTests = {
   shouldRecordPositionMarkSkip,
   createSignalOptionsActionWorkBudget,
   resolveSignalOptionsMonitorBatch,
+  rememberSignalOptionsMonitorBatchSymbolProcessed,
   resolveSignalOptionsWorkerMonitorBatchCapacity,
   resolveSignalOptionsMonitorFullRefresh,
   shouldBatchSignalOptionsWorkerMonitorRefresh,

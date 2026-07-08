@@ -603,6 +603,42 @@ test("Signal Options monitor refresh stops mid-universe scan when aborted", () =
   );
 });
 
+test("Signal Options monitor batch cursor resumes at the first unprocessed symbol after abort", () => {
+  const {
+    resolveSignalOptionsMonitorBatch,
+    rememberSignalOptionsMonitorBatchSymbolProcessed,
+  } = __signalOptionsAutomationInternalsForTests;
+  const deploymentId = `cursor-resume-${Date.now()}`;
+  const universe = new Set(["AAA", "BBB", "CCC", "DDD"]);
+  const profile = {} as never;
+
+  const planned = resolveSignalOptionsMonitorBatch({
+    deploymentId,
+    universe,
+    profile,
+    capacity: 2,
+  });
+  assert.deepEqual(planned.symbols, ["AAA", "BBB"]);
+  assert.equal(planned.startIndex, 0);
+  assert.equal(planned.nextIndex, 2);
+
+  rememberSignalOptionsMonitorBatchSymbolProcessed({
+    deploymentId,
+    universe,
+    symbol: "AAA",
+  });
+
+  const resumed = resolveSignalOptionsMonitorBatch({
+    deploymentId,
+    universe,
+    profile,
+    capacity: 2,
+  });
+  assert.deepEqual(resumed.symbols, ["BBB", "CCC"]);
+  assert.equal(resumed.startIndex, 1);
+  assert.equal(resumed.nextIndex, 3);
+});
+
 test("Signal Options action states require canonical signal monitor events", () => {
   const states = [
     signalState("AERO", "2026-06-09T16:35:00.000Z", "sell"),
