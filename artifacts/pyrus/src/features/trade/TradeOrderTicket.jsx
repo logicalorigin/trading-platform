@@ -96,6 +96,94 @@ const TRADE_SELL_TONE = toneForDirectionalIntent("sell");
 const toneForOrderSide = (side) =>
   toneForDirectionalIntent(side, TRADE_BUY_TONE);
 
+export const resolveIbkrLiveSubmitBlock = ({
+  brokerConfigured,
+  gatewayTradingBlocked,
+  gatewayTradingMessage,
+  accountId,
+  liveOrderPayloadReady,
+  orderRequest,
+  ticketIsShares,
+}) => {
+  if (!brokerConfigured) {
+    return {
+      reason: "broker_required",
+      toast: {
+        kind: "warn",
+        title: "IBKR required",
+        body: "Local order fills are disabled. Connect IBKR Client Portal to submit this order.",
+      },
+    };
+  }
+
+  if (gatewayTradingBlocked) {
+    return {
+      reason: "gateway_blocked",
+      toast: {
+        kind: "warn",
+        title: "IBKR session unavailable",
+        body: gatewayTradingMessage,
+      },
+    };
+  }
+
+  if (!accountId) {
+    return {
+      reason: "missing_account",
+      toast: {
+        kind: "warn",
+        title: "No broker account selected",
+        body: "The Client Portal session is authenticated, but no IBKR account is active yet.",
+      },
+    };
+  }
+
+  if (!liveOrderPayloadReady || !orderRequest) {
+    return {
+      reason: "order_payload_unavailable",
+      toast: {
+        kind: "info",
+        title: ticketIsShares ? "Ticker loading" : "Contract loading",
+        body: ticketIsShares
+          ? "Wait for the ticker to finish loading before submitting a broker order."
+          : "Wait for the live option chain to finish loading before submitting a broker order.",
+      },
+    };
+  }
+
+  return null;
+};
+
+export const submitIbkrLiveOrderAfterGate = async ({
+  brokerConfigured,
+  gatewayTradingBlocked,
+  gatewayTradingMessage,
+  accountId,
+  liveOrderPayloadReady,
+  orderRequest,
+  ticketIsShares,
+  toast,
+  submit,
+}) => {
+  const block = resolveIbkrLiveSubmitBlock({
+    brokerConfigured,
+    gatewayTradingBlocked,
+    gatewayTradingMessage,
+    accountId,
+    liveOrderPayloadReady,
+    orderRequest,
+    ticketIsShares,
+  });
+
+  if (block) {
+    toast.push(block.toast);
+    return { submitted: false, reason: block.reason };
+  }
+
+  await submit();
+  return { submitted: true, reason: null };
+};
+
 const TicketReadinessStrip = ({ model }) => {
   const tone = readinessToneColor(model?.tone);
   return (
@@ -2063,138 +2151,112 @@ export const TradeOrderTicket = ({
       return;
     }
 
-    if (!brokerConfigured) {
-      toast.push({
-        kind: "warn",
-        title: "IBKR required",
-        body: "Local order fills are disabled. Connect IBKR Client Portal to submit this order.",
-      });
-      return;
-    }
+    await submitIbkrLiveOrderAfterGate({
+      brokerConfigured,
+      gatewayTradingBlocked,
+      gatewayTradingMessage,
+      accountId,
+      liveOrderPayloadReady,
+      orderRequest,
+      ticketIsShares,
+      toast,
+      submit: async () => {
+        const taxPreflight = await runTaxPreflight("ibkr", accountId);
+        if (!taxPreflight || taxPreflight.action === "block") {
+          return;
+        }
+        const taxRequiresAcknowledgement =
+          taxPreflight.action === "warn_ack_required";
 
-    if (gatewayTradingBlocked) {
-      toast.push({
-        kind: "warn",
-        title: "IBKR session unavailable",
-        body: gatewayTradingMessage,
-      });
-      return;
-    }
+        setLiveConfirmError(null);
+        if (!confirmBrokerOrders && environment !== "live" && !taxRequiresAcknowledgement) {
+          void submitLiveBrokerOrder(taxPreflight);
+          return;
+        }
 
-    if (!accountId) {
-      toast.push({
-        kind: "warn",
-        title: "No broker account selected",
-        body: "The Client Portal session is authenticated, but no IBKR account is active yet.",
-      });
-      return;
-    }
-
-    if (!liveOrderPayloadReady || !orderRequest) {
-      toast.push({
-        kind: "info",
-        title: ticketIsShares ? "Ticker loading" : "Contract loading",
-        body: ticketIsShares
-          ? "Wait for the ticker to finish loading before submitting a broker order."
-          : "Wait for the live option chain to finish loading before submitting a broker order.",
-      });
-      return;
-    }
-
-    const taxPreflight = await runTaxPreflight("ibkr", accountId);
-    if (!taxPreflight || taxPreflight.action === "block") {
-      return;
-    }
-    const taxRequiresAcknowledgement =
-      taxPreflight.action === "warn_ack_required";
-
-    setLiveConfirmError(null);
-    if (!confirmBrokerOrders && environment !== "live" && !taxRequiresAcknowledgement) {
-      void submitLiveBrokerOrder(taxPreflight);
-      return;
-    }
-
-    setLiveConfirmState({
-      title: `${ticketActionLabel} ${ticketInstrumentLabel}`,
-      detail: hasAttachedExits
-        ? `Submit this ${environment.toUpperCase()} IBKR parent order with ${attachedExitCount} attached exit order${attachedExitCount === 1 ? "" : "s"}.`
-        : `Submit this ${environment.toUpperCase()} broker order to Interactive Brokers for immediate routing.`,
-      confirmLabel: hasAttachedExits
-        ? `${ticketActionLabel} IBKR + ${attachedExitLabel}`
-        : `${ticketActionLabel} IBKR ORDER`,
-      confirmTone: selectedSideColor,
-      lines: [
-        { label: "ACCOUNT", value: accountId || MISSING_VALUE },
-        { label: "SYMBOL", value: slot.ticker },
-        ...(ticketIsOptions
-          ? [
-              {
-                label: "CONTRACT",
-                value: ticketOptionContractShortLabel,
-              },
-            ]
-          : [{ label: "ASSET", value: "SHARES" }]),
-        {
-          label: "TYPE",
-          value: hasAttachedExits
-            ? `${orderTypeLabel} + ${attachedExitLabel}`
-            : orderTypeLabel,
-        },
-        { label: "TIF", value: tif },
-        {
-          label: "QTY",
-          value: `${qtyNum || 0} ${ticketQuantityUnit.toUpperCase()}`,
-        },
-        {
-          label:
-            orderType === "STP" || orderType === "STP_LMT"
-              ? "STOP"
-              : orderType === "MKT"
-                ? "MARK"
-                : "LIMIT",
-          value:
-            orderType === "STP_LMT"
-              ? stopLimitPriceDisplay
-              : fillPriceDisplay,
-        },
-        ...(attachStopLoss
-          ? [
-              {
-                label: "STOP LOSS",
-                value: formatTicketPrice(stopLoss),
-                valueColor: CSS_COLOR.red,
-              },
-            ]
-          : []),
-        ...(attachTakeProfit
-          ? [
-              {
-                label: "TAKE PROFIT",
-                value: formatTicketPrice(takeProfit),
-                valueColor: CSS_COLOR.green,
-              },
-            ]
-          : []),
-        ...(sellCallIntent.applies
-          ? [
-              { label: "INTENT", value: sellCallIntent.intentLabel },
-              {
-                label: "COVERAGE",
-                value:
-                  sellCallIntent.strategyIntent === "covered_call"
-                    ? `${sellCallIntent.coverage.coveredCallCapacity} covered / ${sellCallIntent.coverage.reservedShares} reserved sh`
-                    : `${sellCallIntent.coverage.availableMatchingLongCallContracts} available long call(s)`,
-              },
-            ]
-          : []),
-        ...buildTaxPreflightConfirmLines(taxPreflight),
-        {
-          label: isLong ? "EST COST" : "EST CREDIT",
-          value: costDisplay,
-          valueColor: isLong ? CSS_COLOR.red : CSS_COLOR.green,
-        },
-      ],
-      onConfirm: () => submitLiveBrokerOrder(taxPreflight),
+        setLiveConfirmState({
+          title: `${ticketActionLabel} ${ticketInstrumentLabel}`,
+          detail: hasAttachedExits
+            ? `Submit this ${environment.toUpperCase()} IBKR parent order with ${attachedExitCount} attached exit order${attachedExitCount === 1 ? "" : "s"}.`
+            : `Submit this ${environment.toUpperCase()} broker order to Interactive Brokers for immediate routing.`,
+          confirmLabel: hasAttachedExits
+            ? `${ticketActionLabel} IBKR + ${attachedExitLabel}`
+            : `${ticketActionLabel} IBKR ORDER`,
+          confirmTone: selectedSideColor,
+          lines: [
+            { label: "ACCOUNT", value: accountId || MISSING_VALUE },
+            { label: "SYMBOL", value: slot.ticker },
+            ...(ticketIsOptions
+              ? [
+                  {
+                    label: "CONTRACT",
+                    value: ticketOptionContractShortLabel,
+                  },
+                ]
+              : [{ label: "ASSET", value: "SHARES" }]),
+            {
+              label: "TYPE",
+              value: hasAttachedExits
+                ? `${orderTypeLabel} + ${attachedExitLabel}`
+                : orderTypeLabel,
+            },
+            { label: "TIF", value: tif },
+            {
+              label: "QTY",
+              value: `${qtyNum || 0} ${ticketQuantityUnit.toUpperCase()}`,
+            },
+            {
+              label:
+                orderType === "STP" || orderType === "STP_LMT"
+                  ? "STOP"
+                  : orderType === "MKT"
+                    ? "MARK"
+                    : "LIMIT",
+              value:
+                orderType === "STP_LMT"
+                  ? stopLimitPriceDisplay
+                  : fillPriceDisplay,
+            },
+            ...(attachStopLoss
+              ? [
+                  {
+                    label: "STOP LOSS",
+                    value: formatTicketPrice(stopLoss),
+                    valueColor: CSS_COLOR.red,
+                  },
+                ]
+              : []),
+            ...(attachTakeProfit
+              ? [
+                  {
+                    label: "TAKE PROFIT",
+                    value: formatTicketPrice(takeProfit),
+                    valueColor: CSS_COLOR.green,
+                  },
+                ]
+              : []),
+            ...(sellCallIntent.applies
+              ? [
+                  { label: "INTENT", value: sellCallIntent.intentLabel },
+                  {
+                    label: "COVERAGE",
+                    value:
+                      sellCallIntent.strategyIntent === "covered_call"
+                        ? `${sellCallIntent.coverage.coveredCallCapacity} covered / ${sellCallIntent.coverage.reservedShares} reserved sh`
+                        : `${sellCallIntent.coverage.availableMatchingLongCallContracts} available long call(s)`,
+                  },
+                ]
+              : []),
+            ...buildTaxPreflightConfirmLines(taxPreflight),
+            {
+              label: isLong ? "EST COST" : "EST CREDIT",
+              value: costDisplay,
+              valueColor: isLong ? CSS_COLOR.red : CSS_COLOR.green,
+            },
+          ],
+          onConfirm: () => submitLiveBrokerOrder(taxPreflight),
+        });
+      },
     });
   };
 

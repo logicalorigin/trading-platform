@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
+import { submitIbkrLiveOrderAfterGate } from "./TradeOrderTicket.jsx";
 import { buildTicketReadinessModel } from "./tradeTicketReadinessModel.js";
 
 const ticketSource = readFileSync(
@@ -78,20 +79,16 @@ test("SnapTrade equity readiness blocks when no execution-ready account is selec
 });
 
 test("shadow preview and fill branches are not gated by broker connection", () => {
-  const previewShadowStart = ticketSource.indexOf('if (executionMode === "shadow") {');
-  const previewShadowEnd = ticketSource.indexOf("if (!brokerConfigured) {");
-  const liveSubmitStart = ticketSource.indexOf("const submitOrder = () => {");
+  const previewOrderStart = ticketSource.indexOf("const previewOrder = async () => {");
+  const previewShadowStart = ticketSource.indexOf('if (executionMode === "shadow") {', previewOrderStart);
+  const previewShadowEnd = ticketSource.indexOf("if (!brokerConfigured) {", previewShadowStart);
   const shadowSubmitStart = ticketSource.indexOf("const submitShadowOrder = () => {");
   const shadowSubmitEnd = ticketSource.indexOf("const automationContract =");
+  assert.ok(previewOrderStart >= 0, "preview branch must exist");
   assert.ok(previewShadowStart >= 0, "shadow preview branch must exist");
   assert.ok(
     previewShadowEnd > previewShadowStart,
     "shadow preview branch boundary must exist",
-  );
-  assert.ok(liveSubmitStart >= 0, "live submit branch must exist");
-  assert.ok(
-    shadowSubmitStart > liveSubmitStart,
-    "shadow submit branch must follow live submit branch",
   );
   assert.ok(
     shadowSubmitEnd > shadowSubmitStart,
@@ -102,17 +99,12 @@ test("shadow preview and fill branches are not gated by broker connection", () =
     previewShadowStart,
     previewShadowEnd,
   );
-  const liveSubmitBranch = ticketSource.slice(
-    liveSubmitStart,
-    shadowSubmitStart,
-  );
   const shadowSubmitBranch = ticketSource.slice(
     shadowSubmitStart,
     shadowSubmitEnd,
   );
 
   assert.doesNotMatch(previewShadowBranch, /gatewayTradingBlocked/);
-  assert.match(liveSubmitBranch, /if \(gatewayTradingBlocked\) \{/);
   assert.doesNotMatch(shadowSubmitBranch, /gatewayTradingBlocked/);
   assert.match(
     ticketSource,
@@ -121,10 +113,63 @@ test("shadow preview and fill branches are not gated by broker connection", () =
   assert.doesNotMatch(ticketSource, /executionIsShadow && gatewayTradingBlocked/);
 });
 
+test("blocked IBKR live submit never invokes live submit continuation", async () => {
+  const toasts = [];
+  let liveSubmitCalls = 0;
+
+  const result = await submitIbkrLiveOrderAfterGate({
+    brokerConfigured: true,
+    gatewayTradingBlocked: true,
+    gatewayTradingMessage: "Gateway is not ready for trading.",
+    accountId: "DU123",
+    liveOrderPayloadReady: true,
+    orderRequest: { conid: 123 },
+    ticketIsShares: false,
+    toast: { push: (toast) => toasts.push(toast) },
+    submit: async () => {
+      liveSubmitCalls += 1;
+    },
+  });
+
+  assert.equal(liveSubmitCalls, 0);
+  assert.deepEqual(result, { submitted: false, reason: "gateway_blocked" });
+  assert.deepEqual(toasts, [
+    {
+      kind: "warn",
+      title: "IBKR session unavailable",
+      body: "Gateway is not ready for trading.",
+    },
+  ]);
+  assert.match(ticketSource, /await submitIbkrLiveOrderAfterGate\(\{/);
+});
+
+test("ready IBKR live submit invokes live submit continuation once", async () => {
+  const toasts = [];
+  let liveSubmitCalls = 0;
+
+  const result = await submitIbkrLiveOrderAfterGate({
+    brokerConfigured: true,
+    gatewayTradingBlocked: false,
+    gatewayTradingMessage: "",
+    accountId: "DU123",
+    liveOrderPayloadReady: true,
+    orderRequest: { conid: 123 },
+    ticketIsShares: false,
+    toast: { push: (toast) => toasts.push(toast) },
+    submit: async () => {
+      liveSubmitCalls += 1;
+    },
+  });
+
+  assert.equal(liveSubmitCalls, 1);
+  assert.deepEqual(result, { submitted: true, reason: null });
+  assert.deepEqual(toasts, []);
+});
+
 test("SnapTrade equity submit branch is before IBKR broker guards", () => {
-  const submitOrderStart = ticketSource.indexOf("const submitOrder = () => {");
+  const submitOrderStart = ticketSource.indexOf("const submitOrder = async () => {");
   const snapTradeSubmitStart = ticketSource.indexOf("if (liveUsesSnapTrade) {", submitOrderStart);
-  const ibkrBrokerGuardStart = ticketSource.indexOf("if (!brokerConfigured) {", submitOrderStart);
+  const ibkrBrokerGateStart = ticketSource.indexOf("await submitIbkrLiveOrderAfterGate({", submitOrderStart);
   const previewOrderStart = ticketSource.indexOf("const previewOrder = async () => {");
   const snapTradePreviewStart = ticketSource.indexOf("if (liveUsesSnapTrade) {", previewOrderStart);
   const previewIbkrBrokerGuardStart = ticketSource.indexOf("if (!brokerConfigured) {", previewOrderStart);
@@ -132,8 +177,8 @@ test("SnapTrade equity submit branch is before IBKR broker guards", () => {
   assert.ok(submitOrderStart >= 0, "live submit branch must exist");
   assert.ok(snapTradeSubmitStart > submitOrderStart, "SnapTrade submit branch must exist");
   assert.ok(
-    ibkrBrokerGuardStart > snapTradeSubmitStart,
-    "SnapTrade submit must run before IBKR brokerConfigured guard",
+    ibkrBrokerGateStart > snapTradeSubmitStart,
+    "SnapTrade submit must run before IBKR broker gate",
   );
   assert.ok(previewOrderStart >= 0, "preview branch must exist");
   assert.ok(snapTradePreviewStart > previewOrderStart, "SnapTrade preview branch must exist");
