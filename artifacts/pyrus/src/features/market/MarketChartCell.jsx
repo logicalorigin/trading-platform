@@ -35,6 +35,29 @@ const MARKET_CHART_TIMEFRAMES = getChartTimeframeValues("primary");
 
 export const preloadMarketChartRuntime = () => undefined;
 
+const MARKET_CHART_CELL_CHROME_CSS = `
+.market-chart-cell [data-chart-frame-placement^="market-compact"] [data-chart-toolbar-density],
+.market-chart-cell [data-chart-frame-placement^="market-compact"] [data-chart-toolbar-density] > div,
+.market-chart-cell [data-chart-frame-placement^="market-compact"] button {
+  opacity: 0.68;
+  filter: saturate(0.72);
+}
+
+.market-chart-cell [data-chart-frame-placement^="market-compact"] [data-chart-toolbar-density] svg,
+.market-chart-cell [data-chart-frame-placement^="market-compact"] button svg {
+  transform: scale(0.86);
+  transform-origin: center;
+}
+
+.market-chart-cell [data-chart-frame-placement^="market-compact"]:hover [data-chart-toolbar-density],
+.market-chart-cell [data-chart-frame-placement^="market-compact"]:focus-within [data-chart-toolbar-density],
+.market-chart-cell [data-chart-frame-placement^="market-compact"] button:hover,
+.market-chart-cell [data-chart-frame-placement^="market-compact"] button:focus-visible {
+  opacity: 1;
+  filter: none;
+}
+`;
+
 const isMarketChartShellControlTarget = (target) =>
   isMarketChartInteractiveTarget(target) && !isMarketChartPlotTarget(target);
 const MARKET_CHART_CLICK_MOVE_TOLERANCE = 6;
@@ -526,6 +549,7 @@ export const MarketChartCell = ({
   );
   return (
     <div
+      className="market-chart-cell"
       onPointerDownCapture={handleFramePointerDown}
       onPointerMoveCapture={handleFramePointerMove}
       onPointerUpCapture={handleFramePointerUp}
@@ -548,6 +572,7 @@ export const MarketChartCell = ({
         boxShadow: isActive ? `0 0 0 1px ${cssColorMix(CSS_COLOR.accent, 20)}` : "none",
       }}
     >
+      <style>{MARKET_CHART_CELL_CHROME_CSS}</style>
       <div style={{ position: "relative", flex: 1, minHeight: 0 }}>
         {historicalDataEnabled ? (
           <>
@@ -566,9 +591,9 @@ export const MarketChartCell = ({
                 isActive
                   ? fullFrame
                     ? "workspace"
-                    : "compact-active"
+                    : "market-compact-active"
                   : dense
-                    ? "compact-passive"
+                    ? "market-compact-passive"
                     : "workspace-passive"
               }
               surfaceUiStateKey={`market-spot-chart:${slotId}:${timeframe}`}

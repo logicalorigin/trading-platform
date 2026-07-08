@@ -7,6 +7,8 @@ export type ResearchChartFramePlacement =
   | "workspace-passive"
   | "compact-active"
   | "compact-passive"
+  | "market-compact-active"
+  | "market-compact-passive"
   | "inspection"
   | "backtest";
 
@@ -37,6 +39,13 @@ const DENSE_CHROME_PLACEMENT: ResearchChartFramePlacementPolicy = {
   surfaceBottomOverlayHeight: 16,
 };
 
+const MARKET_GRID_CHROME_PLACEMENT: ResearchChartFramePlacementPolicy = {
+  ...DENSE_CHROME_PLACEMENT,
+  surfaceTopOverlayHeight: 24,
+  surfaceLeftOverlayWidth: 24,
+  surfaceBottomOverlayHeight: 14,
+};
+
 const CHART_FRAME_PLACEMENTS: Record<
   ResearchChartFramePlacement,
   ResearchChartFramePlacementPolicy
@@ -49,6 +58,11 @@ const CHART_FRAME_PLACEMENTS: Record<
   "compact-active": DENSE_CHROME_PLACEMENT,
   "compact-passive": {
     ...DENSE_CHROME_PLACEMENT,
+    mobileInteractionMode: "page-first",
+  },
+  "market-compact-active": MARKET_GRID_CHROME_PLACEMENT,
+  "market-compact-passive": {
+    ...MARKET_GRID_CHROME_PLACEMENT,
     mobileInteractionMode: "page-first",
   },
   inspection: {

@@ -150,6 +150,7 @@ const RESEARCH_LIVE_ENRICHMENT_DELAY_MS = 8_000;
 const RESEARCH_LIVE_REFRESH_DELAY_MS = 500;
 const RESEARCH_FUNDAMENTALS_PREFETCH_DELAY_MS = 4_000;
 const RESEARCH_THEME_PREFETCH_DELAY_MS = 4_000;
+const GRAPH_PROMINENT_LABEL_RADIUS = 15;
 
 // Standard "card" container used by MarketSummary rows, Detail subsections, etc.
 const STYLE_CARD = {
@@ -3622,6 +3623,10 @@ function computeAutoPos(cos, theme, W, H) {
   return autoPos;
 }
 
+function shouldShowGraphNodeLabel(d) {
+  return d?.r >= GRAPH_PROMINENT_LABEL_RADIUS;
+}
+
 // Top-right toolbar: color mode toggles + reset button.
 // Separated from Graph so the color mode / reset UI is easier to locate and edit.
 function GraphToolbar({ colorMode, setColorMode, nodesRef, simRef }) {
@@ -3706,10 +3711,21 @@ function Graph({ cos, sel, onSel, vFilter, searchQuery, theme, liveData = {}, li
 
     // Auto-layout fallback for meta-themes (empty POS) — see computeAutoPos helper above
     const autoPos = computeAutoPos(cos, theme, W, H);
+    const positionEntries = cos
+      .map(c => POS[c.t] || autoPos[c.t])
+      .filter(p => Array.isArray(p) && isFiniteNumber(p[0]) && isFiniteNumber(p[1]));
+    const minPositionX = positionEntries.length ? Math.min(...positionEntries.map(p => p[0])) : 0;
+    const maxPositionX = positionEntries.length ? Math.max(...positionEntries.map(p => p[0])) : W;
+    const spreadTargetX = (x) => {
+      if (!isFiniteNumber(x) || maxPositionX - minPositionX < 80) return W / 2;
+      return 42 + ((x - minPositionX) / (maxPositionX - minPositionX)) * (W - 84);
+    };
 
     const nodes = cos.map(c => {
       // Prefer curated positions, fall back to auto-layout grid (meta-themes), then center
       const p = POS[c.t] || autoPos[c.t];
+      const targetX = p ? spreadTargetX(p[0]) : W / 2;
+      const targetY = p ? Math.max(34, Math.min(H - 34, p[1])) : H / 2;
       // Prefer live market cap from FMP quote; fall back to authored
       const effMC = liveData[c.t]?.mc ?? c.mc;
       // Preserve live revenue (TTM) + authored revenue separately — d.r conflicts with d3 radius
@@ -3723,9 +3739,9 @@ function Graph({ cos, sel, onSel, vFilter, searchQuery, theme, liveData = {}, li
         _mc: effMC, _mcIsLive: liveData[c.t]?.mc != null,
         _gm: effGM, _gmIsLive: liveFund[c.t]?.grossMarginTTM != null,
         _pe: effPE,
-        targetX: p ? p[0] : W/2, targetY: p ? p[1] : H/2,
-        x: p ? p[0] + (Math.random()-.5)*8 : W/2 + (Math.random()-.5)*40,
-        y: p ? p[1] + (Math.random()-.5)*8 : H/2 + (Math.random()-.5)*40 };
+        targetX, targetY,
+        x: targetX + (Math.random()-.5)*16,
+        y: targetY + (Math.random()-.5)*16 };
     });
     const links = EDGES.filter(([s, t]) => tSet.has(s) && tSet.has(t)).map(([s, t, l]) => ({ source: s, target: t, label: l }));
 
@@ -3733,16 +3749,16 @@ function Graph({ cos, sel, onSel, vFilter, searchQuery, theme, liveData = {}, li
     // Key changes from default:
     //  - velocityDecay 0.65 (default 0.4) → more damping, less oscillation
     //  - alphaDecay 0.05 (default 0.0228) → converges in ~90 ticks vs 300
-    //  - charge -10 (was -15) → less repulsion cascade
-    //  - position strength 0.4/0.5 (was 0.25/0.35) → stronger anchor to target
+    //  - stronger charge/collision → dense nodes spread instead of text piling
+    //  - x targets normalized across the canvas → uses the empty right side
     const sim = forceSimulation(nodes)
       .velocityDecay(0.65)
       .alphaDecay(0.05)
-      .force("link", forceLink(links).id(d => d.t).distance(30).strength(0.03))
-      .force("charge", forceManyBody().strength(-10).distanceMax(80))
-      .force("collision", forceCollide().radius(d => d.r + 3).strength(0.9))
-      .force("x", forceX(d => d.targetX).strength(0.4))
-      .force("y", forceY(d => d.targetY).strength(0.5));
+      .force("link", forceLink(links).id(d => d.t).distance(58).strength(0.025))
+      .force("charge", forceManyBody().strength(-34).distanceMax(170))
+      .force("collision", forceCollide().radius(d => d.r + 12).strength(1))
+      .force("x", forceX(d => d.targetX).strength(0.28))
+      .force("y", forceY(d => d.targetY).strength(0.42));
     simRef.current = sim;
     nodesRef.current = nodes;
 
@@ -3808,8 +3824,11 @@ function Graph({ cos, sel, onSel, vFilter, searchQuery, theme, liveData = {}, li
       .attr("text-anchor", "middle")
       .attr("dy", d => d.r + 9)
       .attr("fill", CSS_COLOR.textDim)
+      .attr("fill-opacity", d => shouldShowGraphNodeLabel(d) ? 1 : 0)
       .attr("font-size", d => Math.max(8, Math.min(10, d.r * 0.6)))
-      .attr("font-family", T.display).attr("font-weight", FONT_WEIGHTS.regular);
+      .attr("font-family", T.display).attr("font-weight", FONT_WEIGHTS.regular)
+      .attr("pointer-events", "none")
+      .attr("class", "node-label");
 
     // Data sub-label (market cap for large, P/E for medium)
     node.filter(d => d.r >= 13).append("text")
@@ -3817,8 +3836,11 @@ function Graph({ cos, sel, onSel, vFilter, searchQuery, theme, liveData = {}, li
       .attr("text-anchor", "middle")
       .attr("dy", d => d.r + 17)
       .attr("fill", CSS_COLOR.textMuted)
+      .attr("fill-opacity", d => shouldShowGraphNodeLabel(d) ? 1 : 0)
       .attr("font-size", fs(7))
-      .attr("font-family", T.display);
+      .attr("font-family", T.display)
+      .attr("pointer-events", "none")
+      .attr("class", "node-sub-label");
 
     // Hover tooltip + connection highlighting
     node.on("mouseenter", (e, d) => {
@@ -4011,6 +4033,23 @@ function Graph({ cos, sel, onSel, vFilter, searchQuery, theme, liveData = {}, li
         const inZone = zoneHl === null || (POS[d.t] && Math.abs(POS[d.t][1] - zoneYs[zoneHl]) < 35);
         return inZone ? 1 : 0.15;
       });
+
+    const resolveNodeLabelOpacity = (d) => {
+      const matchesSearch = sq && (d.t.toLowerCase().includes(sq) || d.nm.toLowerCase().includes(sq));
+      const inZone = zoneHl === null || (POS[d.t] && Math.abs(POS[d.t][1] - zoneYs[zoneHl]) < 35);
+      if (matchesSearch || d.t === active) return 1;
+      if (active) return isConn(d.t) ? 0.85 : 0;
+      if (zoneHl !== null) return inZone && shouldShowGraphNodeLabel(d) ? 1 : 0;
+      return shouldShowGraphNodeLabel(d) ? 1 : 0;
+    };
+
+    svg.selectAll(".node-label").transition().duration(160)
+      .attr("fill-opacity", resolveNodeLabelOpacity)
+      .attr("fill", d => d.t === active ? CSS_COLOR.text : CSS_COLOR.textDim);
+
+    svg.selectAll(".node-sub-label").transition().duration(160)
+      .attr("fill-opacity", d => Math.min(0.85, resolveNodeLabelOpacity(d)))
+      .attr("fill", d => d.t === active ? CSS_COLOR.textSec : CSS_COLOR.textMuted);
 
     // Profit rings
     svg.selectAll(".profit-ring").transition().duration(200)
