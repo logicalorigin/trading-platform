@@ -3627,6 +3627,28 @@ function shouldShowGraphNodeLabel(d) {
   return d?.r >= GRAPH_PROMINENT_LABEL_RADIUS;
 }
 
+function updateGraphNodeLiveFields(node, liveData = {}, liveFund = {}) {
+  const liveQuote = liveData[node.t] || {};
+  const liveFundamentals = liveFund[node.t] || {};
+  const authoredRev = node._authoredRev ?? node.r;
+  const effMC = liveQuote.mc ?? node.mc;
+  const liveRev = liveFundamentals.revenueTTM ?? null;
+  const effRev = liveRev ?? authoredRev;
+  const effGM = liveFundamentals.grossMarginTTM ?? node.g;
+  const effPE = liveQuote.pe ?? node.pe;
+
+  node._authoredRev = authoredRev;
+  node.r = Math.max(9, Math.min(22, Math.sqrt(effMC / 800)));
+  node._rev = effRev;
+  node._revIsLive = liveRev != null;
+  node._mc = effMC;
+  node._mcIsLive = liveQuote.mc != null;
+  node._gm = effGM;
+  node._gmIsLive = liveFundamentals.grossMarginTTM != null;
+  node._pe = effPE;
+  return node;
+}
+
 // Top-right toolbar: color mode toggles + reset button.
 // Separated from Graph so the color mode / reset UI is easier to locate and edit.
 function GraphToolbar({ colorMode, setColorMode, nodesRef, simRef }) {
@@ -3668,6 +3690,10 @@ function Graph({ cos, sel, onSel, vFilter, searchQuery, theme, liveData = {}, li
   const tipRef = useRef();
   const nodesRef = useRef([]);
   const simRef = useRef(null);
+  const liveDataRef = useRef(liveData);
+  const liveFundRef = useRef(liveFund);
+  const selRef = useRef(sel);
+  const onSelRef = useRef(onSel);
   const [colorMode, setColorMode] = useState("vertical");
   const [zoneHl, setZoneHl] = useState(null);
   const [hovered, setHovered] = useState(null);
@@ -3685,6 +3711,11 @@ function Graph({ cos, sel, onSel, vFilter, searchQuery, theme, liveData = {}, li
     if (colorMode === "ai") return aiScale(d.ms?.ai || 0.5);
     return GRAPH_VERTICAL_COLORS[d.v] || VX[d.v].c;
   }, [colorMode]);
+
+  useEffect(() => {
+    selRef.current = sel;
+    onSelRef.current = onSel;
+  }, [sel, onSel]);
 
   useEffect(() => {
     if (!ref.current) return;
@@ -3726,22 +3757,10 @@ function Graph({ cos, sel, onSel, vFilter, searchQuery, theme, liveData = {}, li
       const p = POS[c.t] || autoPos[c.t];
       const targetX = p ? spreadTargetX(p[0]) : W / 2;
       const targetY = p ? Math.max(34, Math.min(H - 34, p[1])) : H / 2;
-      // Prefer live market cap from FMP quote; fall back to authored
-      const effMC = liveData[c.t]?.mc ?? c.mc;
-      // Preserve live revenue (TTM) + authored revenue separately — d.r conflicts with d3 radius
-      const liveRev = liveFund[c.t]?.revenueTTM ?? null;
-      const effRev = liveRev ?? c.r;
-      const effGM = liveFund[c.t]?.grossMarginTTM ?? c.g;
-      const effPE = liveData[c.t]?.pe ?? c.pe;
-      return { ...c,
-        r: Math.max(9, Math.min(22, Math.sqrt(effMC / 800))),
-        _rev: effRev, _revIsLive: liveRev != null,
-        _mc: effMC, _mcIsLive: liveData[c.t]?.mc != null,
-        _gm: effGM, _gmIsLive: liveFund[c.t]?.grossMarginTTM != null,
-        _pe: effPE,
+      return updateGraphNodeLiveFields({ ...c,
         targetX, targetY,
         x: targetX + (Math.random()-.5)*16,
-        y: targetY + (Math.random()-.5)*16 };
+        y: targetY + (Math.random()-.5)*16 }, liveDataRef.current, liveFundRef.current);
     });
     const links = EDGES.filter(([s, t]) => tSet.has(s) && tSet.has(t)).map(([s, t, l]) => ({ source: s, target: t, label: l }));
 
@@ -3780,7 +3799,9 @@ function Graph({ cos, sel, onSel, vFilter, searchQuery, theme, liveData = {}, li
       .attr("text-anchor", "middle")
       .attr("pointer-events", "none");
 
-    const node = g.append("g").selectAll("g").data(nodes).join("g").attr("cursor", "pointer");
+    const node = g.append("g").selectAll("g").data(nodes).join("g")
+      .attr("class", "force-node")
+      .attr("cursor", "pointer");
 
     // Profitability ring (outer)
     node.append("circle")
@@ -3796,14 +3817,14 @@ function Graph({ cos, sel, onSel, vFilter, searchQuery, theme, liveData = {}, li
       .attr("r", d => d.r)
       .attr("fill", CSS_COLOR.bg1)
       .attr("fill-opacity", 1)
-      .attr("stroke", d => getColor(d))
+      .attr("stroke", d => GRAPH_VERTICAL_COLORS[d.v] || VX[d.v].c)
       .attr("stroke-width", 1.5)
       .attr("class", "main-circle");
 
     // Branded initial circle (inside node - moves with simulation, zero lag)
     node.append("circle")
       .attr("r", d => Math.max(5, d.r * 0.7))
-      .attr("fill", d => colorMode === "vertical" ? (GRAPH_VERTICAL_COLORS[d.v] || VX[d.v].c) : (BRAND[d.t] || [CSS_COLOR.textDim])[0])
+      .attr("fill", d => GRAPH_VERTICAL_COLORS[d.v] || VX[d.v].c)
       .attr("class", "brand-circle");
 
     // Brand initial text
@@ -3850,7 +3871,7 @@ function Graph({ cos, sel, onSel, vFilter, searchQuery, theme, liveData = {}, li
       if (!tip) return;
       const vc = VX[d.v];
       const br = BRAND[d.t] || [CSS_COLOR.textDim, d.t.slice(0,2)];
-      const tipPrice = resolveResearchPrice(d, liveData[d.t]);
+      const tipPrice = resolveResearchPrice(d, liveDataRef.current[d.t]);
       // Green dot for live-sourced fields, gray for authored fallback
       const dot = (isLive) => `<span style="display:inline-block;width:4px;height:4px;border-radius:2px;background:${isLive ? CSS_COLOR.green : toneAlpha(CSS_COLOR.text, 0.12)};margin-left:4px;vertical-align:middle"></span>`;
       tip.innerHTML = `<div style="display:flex;align-items:center;gap:5px;margin-bottom:2px;"><span style="display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;border-radius:3px;background:${br[0]};color:${CSS_COLOR.onAccent};font-size:10px;font-weight: ${FONT_WEIGHTS.regular};font-family:${T.display};">${br[1]}</span><span style="font-weight: ${FONT_WEIGHTS.regular};color:${vc.c};font-size:14px;">${d.cc || ""} $${d.t}</span><span style="font-weight: ${FONT_WEIGHTS.regular};color:${CSS_COLOR.text};font-size:14px;margin-left:auto;font-family:${T.display};">${fmtPrice(tipPrice)}</span></div>` +
@@ -3899,7 +3920,11 @@ function Graph({ cos, sel, onSel, vFilter, searchQuery, theme, liveData = {}, li
       if (tipRef.current) tipRef.current.style.display = "none";
     });
 
-    node.on("click", (e, d) => { e.stopPropagation(); if (tipRef.current) tipRef.current.style.display = "none"; onSel(sel === d.t ? null : d.t); });
+    node.on("click", (e, d) => {
+      e.stopPropagation();
+      if (tipRef.current) tipRef.current.style.display = "none";
+      onSelRef.current(selRef.current === d.t ? null : d.t);
+    });
 
     node.call(drag()
       .on("start", (e, d) => {
@@ -3938,9 +3963,59 @@ function Graph({ cos, sel, onSel, vFilter, searchQuery, theme, liveData = {}, li
 
     });
 
-    svg.on("click", () => { onSel(null); setZoneHl(null); });
+    svg.on("click", () => { onSelRef.current(null); setZoneHl(null); });
     return () => sim.stop();
-  }, [cos, tSet, getColor, liveData, liveFund]);
+  }, [cos, tSet, theme]);
+
+  useEffect(() => {
+    liveDataRef.current = liveData;
+    liveFundRef.current = liveFund;
+    if (!ref.current || !simRef.current) return;
+
+    nodesRef.current.forEach(node => updateGraphNodeLiveFields(node, liveData, liveFund));
+
+    const svg = select(ref.current);
+    const nodeGroups = svg.selectAll(".force-node");
+    nodeGroups.selectAll(".profit-ring")
+      .attr("r", d => d.r + 2)
+      .attr("stroke", d => d.pe != null && d.pe > 0 ? CSS_COLOR.green : d.fin?.eps > 0 ? CSS_COLOR.green : CSS_COLOR.red);
+    nodeGroups.selectAll(".main-circle")
+      .attr("r", d => d.r);
+    nodeGroups.selectAll(".brand-circle")
+      .attr("r", d => Math.max(5, d.r * 0.7));
+    nodeGroups.selectAll(".brand-text")
+      .attr("font-size", d => Math.max(5, Math.min(9, d.r * 0.55)));
+    nodeGroups.selectAll(".node-label")
+      .attr("dy", d => d.r + 9)
+      .attr("font-size", d => Math.max(8, Math.min(10, d.r * 0.6)));
+    nodeGroups.selectAll("text.node-sub-label")
+      .data(d => d.r >= 13 ? [d] : [], d => d.t)
+      .join(
+        enter => enter.append("text")
+          .attr("text-anchor", "middle")
+          .attr("fill", CSS_COLOR.textMuted)
+          .attr("font-size", fs(7))
+          .attr("font-family", T.display)
+          .attr("pointer-events", "none")
+          .attr("class", "node-sub-label"),
+        update => update,
+        exit => exit.remove()
+      )
+      .text(d => d.r >= 16 ? fmtMC(d._mc) : (d._pe ? d._pe + "x" : ""))
+      .attr("dy", d => d.r + 17);
+
+    const collision = simRef.current.force("collision");
+    if (collision?.radius) collision.radius(d => d.r + 12);
+    simRef.current.alpha(Math.max(simRef.current.alpha(), 0.12)).restart();
+  }, [liveData, liveFund]);
+
+  useEffect(() => {
+    if (!ref.current) return;
+    const svg = select(ref.current);
+    svg.selectAll(".main-circle").attr("stroke", d => getColor(d));
+    svg.selectAll(".brand-circle")
+      .attr("fill", d => colorMode === "vertical" ? (GRAPH_VERTICAL_COLORS[d.v] || VX[d.v].c) : (BRAND[d.t] || [CSS_COLOR.textDim])[0]);
+  }, [colorMode, getColor]);
 
   // Selection + hover + zone highlight + search highlight
   useEffect(() => {
