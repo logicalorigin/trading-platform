@@ -16,7 +16,10 @@ import {
 } from "@workspace/backtest-core";
 import {
   addTradingDays,
+  listNyseEarlyCloses,
   previousTradingDayOrSame,
+  resolveUsEquityMarketSession,
+  resolveUsEquityMarketStatus,
   rthBarsBack,
 } from "@workspace/market-calendar";
 import {
@@ -662,6 +665,23 @@ const shadowBenchmarkBarsInFlight = new Map<
   string,
   Promise<ShadowBenchmarkBars | null>
 >();
+type SignalOptionsTrailingStopEnforcementFailureDiagnostic = {
+  positionId: string;
+  symbol: string;
+  message: string;
+  name: string | null;
+  markPrice: number;
+  markAt: Date;
+  observedAt: Date;
+};
+const signalOptionsTrailingStopEnforcementFailures: {
+  count: number;
+  recent: SignalOptionsTrailingStopEnforcementFailureDiagnostic[];
+} = {
+  count: 0,
+  recent: [],
+};
+const SIGNAL_OPTIONS_TRAILING_STOP_ENFORCEMENT_FAILURE_LIMIT = 20;
 
 function shadowLedgerDashboardReadLimit(): number {
   return SHADOW_LEDGER_DASHBOARD_READ_LIMIT;
@@ -1228,6 +1248,13 @@ function optionDateKey(value: Date | string): string {
   return Number.isNaN(date.getTime()) ? String(value) : date.toISOString().slice(0, 10);
 }
 
+function shadowOptionMarketDateKey(value: Date): string {
+  return (
+    resolveUsEquityMarketStatus(value).calendarDay?.date ??
+    marketDateParts(value).key
+  );
+}
+
 function marketDateParts(value: Date) {
   const parts = new Intl.DateTimeFormat("en-US", {
     timeZone: "America/New_York",
@@ -1248,28 +1275,70 @@ function marketDateParts(value: Date) {
   };
 }
 
-function isMarketCloseOrLater(value: Date) {
-  const parts = marketDateParts(value);
-  return parts.hour > 16 || (parts.hour === 16 && parts.minute >= 0);
+function shadowOptionRegularCloseAt(value: Date): Date | null {
+  const status = resolveUsEquityMarketStatus(value);
+  const day = status.calendarDay;
+  if (!day?.tradingDay || !day.regularCloseAt) {
+    return null;
+  }
+  const earlyClose = listNyseEarlyCloses(Number(day.date.slice(0, 4))).find(
+    (close) => close.date === day.date,
+  );
+  const closeAt = new Date(earlyClose?.regularCloseAt ?? day.regularCloseAt);
+  return Number.isNaN(closeAt.getTime()) ? null : closeAt;
 }
 
-function shadowOptionSessionCloseMinute(contract?: ShadowOptionContract | null): number {
+function isMarketCloseOrLater(value: Date) {
+  const closeAt = shadowOptionRegularCloseAt(value);
+  if (closeAt) {
+    return value.getTime() >= closeAt.getTime();
+  }
+  return resolveUsEquityMarketStatus(value).calendarDay?.tradingDay === false;
+}
+
+function shadowOptionSessionCloseAt(
+  value: Date,
+  contract?: ShadowOptionContract | null,
+): Date | null {
+  const regularCloseAt = shadowOptionRegularCloseAt(value);
+  if (!regularCloseAt) {
+    return null;
+  }
+  const status = resolveUsEquityMarketStatus(value);
   const underlying = normalizeSymbol(String(contract?.underlying ?? "")).toUpperCase();
-  return SHADOW_OPTION_EXTENDED_CLOSE_UNDERLYINGS.has(underlying)
-    ? 16 * 60 + 15
-    : 16 * 60;
+  if (
+    status.calendarDay?.earlyClose !== true &&
+    SHADOW_OPTION_EXTENDED_CLOSE_UNDERLYINGS.has(underlying)
+  ) {
+    return new Date(regularCloseAt.getTime() + 15 * 60_000);
+  }
+  return regularCloseAt;
 }
 
 function isShadowOptionTradingSession(
   value: Date,
   contract?: ShadowOptionContract | null,
 ) {
-  const parts = marketDateParts(value);
-  if (parts.weekday === "Sat" || parts.weekday === "Sun") {
+  const session = resolveUsEquityMarketSession(value);
+  if (session.key !== "rth" && session.key !== "after") {
     return false;
   }
-  const minutes = parts.hour * 60 + parts.minute;
-  return minutes >= 9 * 60 + 30 && minutes < shadowOptionSessionCloseMinute(contract);
+  const status = resolveUsEquityMarketStatus(value);
+  const openAt = status.calendarDay?.regularOpenAt
+    ? new Date(status.calendarDay.regularOpenAt)
+    : null;
+  const closeAt = shadowOptionSessionCloseAt(value, contract);
+  if (
+    !status.calendarDay?.tradingDay ||
+    !openAt ||
+    !closeAt ||
+    Number.isNaN(openAt.getTime()) ||
+    Number.isNaN(closeAt.getTime())
+  ) {
+    return false;
+  }
+  const time = value.getTime();
+  return time >= openAt.getTime() && time < closeAt.getTime();
 }
 
 function shouldCloseOptionForShadowMaintenance(
@@ -1277,7 +1346,7 @@ function shouldCloseOptionForShadowMaintenance(
   now = new Date(),
 ) {
   const expiration = optionDateKey(contract.expirationDate);
-  const marketDate = marketDateParts(now).key;
+  const marketDate = shadowOptionMarketDateKey(now);
   return expiration < marketDate || (expiration === marketDate && isMarketCloseOrLater(now));
 }
 
@@ -5115,14 +5184,62 @@ function isSignalOptionsShadowMarkStopExitReason(
   return reason === "hard_stop" || reason === "runner_trail_stop";
 }
 
-async function enforceSignalOptionsTrailingStopFromShadowMark(input: {
+type SignalOptionsTrailingStopEnforcementInput = {
   position: ShadowPositionRow;
   contract: ShadowOptionContract;
   quote: Partial<QuoteSnapshot> | Record<string, unknown> | null | undefined;
   pricing: ShadowOptionPricingPolicy;
   markPrice: number;
   markAt: Date;
+};
+
+function recordSignalOptionsTrailingStopEnforcementFailure(input: {
+  error: unknown;
+  position: ShadowPositionRow;
+  markPrice: number;
+  markAt: Date;
 }) {
+  const error =
+    input.error instanceof Error
+      ? input.error
+      : new Error(String(input.error ?? "Unknown enforcement failure"));
+  const diagnostic: SignalOptionsTrailingStopEnforcementFailureDiagnostic = {
+    positionId: input.position.id,
+    symbol: input.position.symbol,
+    message: error.message,
+    name: error.name || null,
+    markPrice: input.markPrice,
+    markAt: input.markAt,
+    observedAt: new Date(),
+  };
+  signalOptionsTrailingStopEnforcementFailures.count += 1;
+  signalOptionsTrailingStopEnforcementFailures.recent.push(diagnostic);
+  while (
+    signalOptionsTrailingStopEnforcementFailures.recent.length >
+    SIGNAL_OPTIONS_TRAILING_STOP_ENFORCEMENT_FAILURE_LIMIT
+  ) {
+    signalOptionsTrailingStopEnforcementFailures.recent.shift();
+  }
+  return diagnostic;
+}
+
+function getSignalOptionsTrailingStopEnforcementFailureDiagnostics() {
+  return {
+    count: signalOptionsTrailingStopEnforcementFailures.count,
+    recent: signalOptionsTrailingStopEnforcementFailures.recent.map((event) => ({
+      ...event,
+    })),
+  };
+}
+
+function resetSignalOptionsTrailingStopEnforcementFailureDiagnosticsForTests() {
+  signalOptionsTrailingStopEnforcementFailures.count = 0;
+  signalOptionsTrailingStopEnforcementFailures.recent.length = 0;
+}
+
+async function enforceSignalOptionsTrailingStopFromShadowMark(
+  input: SignalOptionsTrailingStopEnforcementInput,
+) {
   const context = await resolveSignalOptionsShadowMarkExitContext(input.position);
   if (!context) {
     return { exited: false, reason: "not_signal_options_position" };
@@ -5163,6 +5280,43 @@ async function enforceSignalOptionsTrailingStopFromShadowMark(input: {
     markAt: input.markAt,
   });
   return { exited: true, reason: decision.exitReason };
+}
+
+async function enforceSignalOptionsTrailingStopFromShadowMarkSafely(
+  input: SignalOptionsTrailingStopEnforcementInput,
+  options: {
+    enforce?: (
+      enforcementInput: SignalOptionsTrailingStopEnforcementInput,
+    ) => Promise<{ exited: boolean; reason: string }>;
+  } = {},
+) {
+  try {
+    const enforce =
+      options.enforce ?? enforceSignalOptionsTrailingStopFromShadowMark;
+    return await enforce(input);
+  } catch (error) {
+    const diagnostic = recordSignalOptionsTrailingStopEnforcementFailure({
+      error,
+      position: input.position,
+      markPrice: input.markPrice,
+      markAt: input.markAt,
+    });
+    logger.warn?.(
+      {
+        err: error,
+        positionId: input.position.id,
+        symbol: input.position.symbol,
+        enforcementFailureCount:
+          signalOptionsTrailingStopEnforcementFailures.count,
+      },
+      "Signal-options mark-time trailing stop enforcement failed",
+    );
+    return {
+      exited: false,
+      reason: "enforcement_failed",
+      diagnostic,
+    };
+  }
 }
 
 async function resolveMaintenanceOptionExitPrice(input: {
@@ -6219,22 +6373,13 @@ export async function refreshShadowPositionMarks() {
       write.contract &&
       write.optionPricing
     ) {
-      await enforceSignalOptionsTrailingStopFromShadowMark({
+      await enforceSignalOptionsTrailingStopFromShadowMarkSafely({
         position: write.position,
         contract: write.contract,
         quote: write.optionQuote,
         pricing: write.optionPricing,
         markPrice: write.markPrice,
         markAt: write.asOf,
-      }).catch((error) => {
-        logger.warn?.(
-          {
-            err: error,
-            positionId: write.position.id,
-            symbol: write.position.symbol,
-          },
-          "Signal-options mark-time trailing stop enforcement failed",
-        );
       });
     }
   }
@@ -14725,6 +14870,9 @@ export const __shadowWatchlistBacktestInternalsForTests = {
   readOpenShadowPositionsForSource,
   shouldCloseOptionForShadowMaintenance,
   isShadowOptionTradingSession,
+  enforceSignalOptionsTrailingStopFromShadowMarkSafely,
+  getSignalOptionsTrailingStopEnforcementFailureDiagnostics,
+  resetSignalOptionsTrailingStopEnforcementFailureDiagnosticsForTests,
   isLiveShadowAutomationPayload,
   isHistoricalSignalOptionsShadowOrder,
   isSignalOptionsBackfillShadowOrder,
