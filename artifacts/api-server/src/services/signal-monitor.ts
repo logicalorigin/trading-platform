@@ -1328,18 +1328,20 @@ function stateToResponseForSnapshot(
   // The live aggregate ring keeps streaming (incl. extended hours) even when the
   // producer has stopped refreshing this cell, so a current ring bar must rescue
   // a lane whose persisted bar age would otherwise trip the stale relabel below.
-  const streamLatestBarAt = signalMonitorStreamLaneLatestCompletedBarAt({
-    symbol: state.symbol,
-    timeframe: input.timeframe,
-    evaluatedAt: input.evaluatedAt,
-  });
+  // The ring read is computed lazily inside the short-circuit: it costs a full
+  // minute-bar load + aggregate per (symbol, timeframe), and callers that do
+  // not relabel (markNonCurrentStale unset) never consume it.
   if (
     !input.markNonCurrentStale ||
     isSignalMonitorStateCurrentForLane({
       state,
       timeframe: input.timeframe,
       evaluatedAt: input.evaluatedAt,
-      streamLatestBarAt,
+      streamLatestBarAt: signalMonitorStreamLaneLatestCompletedBarAt({
+        symbol: state.symbol,
+        timeframe: input.timeframe,
+        evaluatedAt: input.evaluatedAt,
+      }),
     })
   ) {
     return response;
@@ -14517,37 +14519,46 @@ async function readSignalMonitorPassiveStoredStateFresh(input: {
   // this hot route. When includeNonCurrent is set (the served /signal-monitor/state
   // poll), every universe state is returned regardless, so computing — then discarding
   // — that ~3000-cell ring pass is pure waste. Compute it lazily, only when it filters.
-  const visibleStates = input.includeNonCurrent
-    ? universeStates
-    : universeStates.filter((state) => {
-        const symbol = normalizeSymbol(state.symbol).toUpperCase();
-        const timeframe = String(
-          state.timeframe || "",
-        ) as SignalMonitorMatrixTimeframe;
-        return (
-          universeSymbolSet.has(symbol) &&
-          isSignalMonitorStateCurrentForLane({
-            state,
-            timeframe,
-            evaluatedAt,
-            streamLatestBarAt: signalMonitorStreamLaneLatestCompletedBarAt({
-              symbol: state.symbol,
+  // Memoize the per-symbol ring loads for the duration of this synchronous
+  // shaping pass: the currentness filter and stateToResponseForSnapshot each
+  // call signalMonitorStreamLaneLatestCompletedBarAt per (symbol, timeframe)
+  // row, which otherwise re-loads and re-copies the live aggregate ring for
+  // every row. evaluatedAt is constant across the pass so memo keys stay
+  // coherent, and the block contains no awaits, so the memo scope mirrors the
+  // existing synchronous matrix-flush usage.
+  const responseStates = withSignalMonitorStreamSourceMinuteBarsMemo(() => {
+    const visibleStates = input.includeNonCurrent
+      ? universeStates
+      : universeStates.filter((state) => {
+          const symbol = normalizeSymbol(state.symbol).toUpperCase();
+          const timeframe = String(
+            state.timeframe || "",
+          ) as SignalMonitorMatrixTimeframe;
+          return (
+            universeSymbolSet.has(symbol) &&
+            isSignalMonitorStateCurrentForLane({
+              state,
               timeframe,
               evaluatedAt,
-            }),
-          })
-        );
-      });
-  const responseStates = visibleStates.map((state) =>
-    stateToResponseForSnapshot(state, {
-      timeframe: String(
-        state.timeframe || "",
-      ) as SignalMonitorMatrixTimeframe,
-      evaluatedAt,
-      freshWindowBars: input.profile.freshWindowBars,
-      markNonCurrentStale: input.markNonCurrentStale,
-    }),
-  );
+              streamLatestBarAt: signalMonitorStreamLaneLatestCompletedBarAt({
+                symbol: state.symbol,
+                timeframe,
+                evaluatedAt,
+              }),
+            })
+          );
+        });
+    return visibleStates.map((state) =>
+      stateToResponseForSnapshot(state, {
+        timeframe: String(
+          state.timeframe || "",
+        ) as SignalMonitorMatrixTimeframe,
+        evaluatedAt,
+        freshWindowBars: input.profile.freshWindowBars,
+        markNonCurrentStale: input.markNonCurrentStale,
+      }),
+    );
+  });
   const value = completeSignalMonitorStateSnapshotCoverage({
     profile: profileToResponse(input.profile),
     states: responseStates,
@@ -14624,39 +14635,48 @@ async function readSignalMonitorStateFresh(input: {
       const symbol = normalizeSymbol(state.symbol).toUpperCase();
       return currentUniverseSymbols.has(symbol);
     });
-    const currentStates = universeStates.filter((state) => {
-      const symbol = normalizeSymbol(state.symbol).toUpperCase();
-      const timeframe = String(
-        state.timeframe || "",
-      ) as SignalMonitorMatrixTimeframe;
-      return (
-        currentUniverseSymbols.has(symbol) &&
-        isSignalMonitorStateCurrentForLane({
-          state,
-          timeframe,
-          evaluatedAt,
-          streamLatestBarAt: signalMonitorStreamLaneLatestCompletedBarAt({
-            symbol: state.symbol,
+    // Memoize the per-symbol ring loads for the duration of this synchronous
+    // shaping pass: the currentness filter and stateToResponseForSnapshot each
+    // call signalMonitorStreamLaneLatestCompletedBarAt per (symbol, timeframe)
+    // row, which otherwise re-loads and re-copies the live aggregate ring for
+    // every row. evaluatedAt is constant across the pass so memo keys stay
+    // coherent, and the block contains no awaits, so the memo scope mirrors
+    // the existing synchronous matrix-flush usage.
+    const responseStates = withSignalMonitorStreamSourceMinuteBarsMemo(() => {
+      const currentStates = universeStates.filter((state) => {
+        const symbol = normalizeSymbol(state.symbol).toUpperCase();
+        const timeframe = String(
+          state.timeframe || "",
+        ) as SignalMonitorMatrixTimeframe;
+        return (
+          currentUniverseSymbols.has(symbol) &&
+          isSignalMonitorStateCurrentForLane({
+            state,
             timeframe,
             evaluatedAt,
-          }),
-        })
+            streamLatestBarAt: signalMonitorStreamLaneLatestCompletedBarAt({
+              symbol: state.symbol,
+              timeframe,
+              evaluatedAt,
+            }),
+          })
+        );
+      });
+      const visibleStates = input.includeNonCurrent
+        ? universeStates
+        : currentStates;
+
+      return visibleStates.map((state) =>
+        stateToResponseForSnapshot(state, {
+          timeframe: String(
+            state.timeframe || "",
+          ) as SignalMonitorMatrixTimeframe,
+          evaluatedAt,
+          freshWindowBars: hydratedProfile.freshWindowBars,
+          markNonCurrentStale: input.markNonCurrentStale,
+        }),
       );
     });
-    const visibleStates = input.includeNonCurrent
-      ? universeStates
-      : currentStates;
-
-    const responseStates = visibleStates.map((state) =>
-      stateToResponseForSnapshot(state, {
-        timeframe: String(
-          state.timeframe || "",
-        ) as SignalMonitorMatrixTimeframe,
-        evaluatedAt,
-        freshWindowBars: hydratedProfile.freshWindowBars,
-        markNonCurrentStale: input.markNonCurrentStale,
-      }),
-    );
     const value = completeSignalMonitorStateSnapshotCoverage({
       profile: profileToResponse(hydratedProfile),
       states: responseStates,

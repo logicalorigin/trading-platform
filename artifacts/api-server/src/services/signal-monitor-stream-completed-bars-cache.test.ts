@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { after, beforeEach, test } from "node:test";
 
 import { pool } from "@workspace/db";
@@ -27,6 +28,8 @@ const {
   resetSignalMonitorMatrixStreamForTests: resetStream,
   seedSignalMonitorBackfilledBaseForTests: seedBackfilledBase,
   getSignalMonitorBackfilledBaseForTests: getBackfilledBase,
+  stateToResponseForSnapshot,
+  signalMonitorStreamLaneLatestCompletedBarAt: laneLatestCompletedBarAt,
 } = __signalMonitorInternalsForTests;
 
 after(async () => {
@@ -303,6 +306,106 @@ test("source minute bars memo reuses same-depth loads across stream timeframes",
       misses: 1,
     });
   });
+});
+
+// --- P3v2 slice 1a: stored-state read shaping memoizes per-row ring loads ---
+
+test("stored-state shaping memoizes ring loads per row and skips them without relabel", () => {
+  primeRing("2026-06-09T15:00:00.000Z", 300);
+  const evaluatedAt = new Date("2026-06-09T15:00:00.000Z");
+  const state = {
+    id: "22222222-2222-4222-8222-222222222222",
+    profileId: "11111111-1111-4111-8111-111111111111",
+    symbol: SYMBOL,
+    timeframe: "5m",
+    currentSignalDirection: "buy",
+    trendDirection: "bullish",
+    currentSignalAt: new Date("2026-06-09T14:30:00.000Z"),
+    currentSignalPrice: "100.5",
+    currentSignalClose: "100.6",
+    currentSignalMfePercent: null,
+    currentSignalMaePercent: null,
+    filterState: null,
+    latestBarAt: new Date("2026-06-09T14:55:00.000Z"),
+    latestBarClose: "101.2",
+    barsSinceSignal: 5,
+    fresh: true,
+    status: "ok",
+    active: true,
+    lastEvaluatedAt: new Date("2026-06-09T14:55:00.000Z"),
+    lastError: null,
+    createdAt: new Date("2026-06-09T14:00:00.000Z"),
+    updatedAt: new Date("2026-06-09T14:55:00.000Z"),
+  } as never;
+
+  const before = sourceBarsMemoStats();
+
+  // Lazy half: without markNonCurrentStale the per-row shaping must never touch
+  // the ring — the lane read exists only as an input to the stale relabel.
+  withSourceBarsMemo(() => {
+    stateToResponseForSnapshot(state, {
+      timeframe: "5m" as never,
+      evaluatedAt,
+      freshWindowBars: 5,
+    });
+    const stats = sourceBarsMemoStats();
+    assert.equal(stats.size, 0, "no ring load without markNonCurrentStale");
+    assert.equal(stats.misses, before.misses, "no memo miss without relabel");
+    assert.equal(stats.hits, before.hits, "no memo hit without relabel");
+  });
+
+  // Memo half: the stored-state read's per-row pattern — the currentness
+  // filter's lane read followed by the relabeling shaping's lane read for the
+  // same cell — loads the ring source once and reuses it.
+  withSourceBarsMemo(() => {
+    laneLatestCompletedBarAt({
+      symbol: SYMBOL,
+      timeframe: "5m" as never,
+      evaluatedAt,
+    });
+    stateToResponseForSnapshot(state, {
+      timeframe: "5m" as never,
+      evaluatedAt,
+      freshWindowBars: 5,
+      markNonCurrentStale: true,
+    });
+    const stats = sourceBarsMemoStats();
+    assert.equal(stats.size, 1, "one memoized source-load for the cell");
+    assert.equal(stats.misses - before.misses, 1, "ring loaded exactly once");
+    assert.equal(stats.hits - before.hits, 1, "second lane read reused the memo");
+  });
+
+  // Wiring: both stored-state read functions scope the memo around their
+  // synchronous shaping pass (source-structural check, matching the repo's
+  // convention for asserting wiring on DB-coupled read paths).
+  const source = readFileSync(
+    new URL("./signal-monitor.ts", import.meta.url),
+    "utf8",
+  );
+  const passiveStart = source.indexOf(
+    "async function readSignalMonitorPassiveStoredStateFresh",
+  );
+  const freshStart = source.indexOf(
+    "async function readSignalMonitorStateFresh",
+  );
+  const freshEnd = source.indexOf(
+    "export async function getSignalMonitorStoredState",
+  );
+  assert.ok(passiveStart >= 0, "passive stored-state read exists");
+  assert.ok(
+    freshStart > passiveStart && freshEnd > freshStart,
+    "stored-state read functions appear in the expected order",
+  );
+  assert.match(
+    source.slice(passiveStart, freshStart),
+    /withSignalMonitorStreamSourceMinuteBarsMemo\(/,
+    "passive stored-state read scopes the source-bars memo",
+  );
+  assert.match(
+    source.slice(freshStart, freshEnd),
+    /withSignalMonitorStreamSourceMinuteBarsMemo\(/,
+    "fresh stored-state read scopes the source-bars memo",
+  );
 });
 
 test("an out-of-order correction busts the cell even within the same boundary", () => {
