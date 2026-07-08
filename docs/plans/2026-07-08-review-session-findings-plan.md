@@ -40,6 +40,16 @@ GREEN** (gate caught 2 type errors tsx tests missed). Dispatch: PID-tracked orch
   no timeout `robinhood/mcp-client.ts:89`) + P3s (caches, overlapping polls, silent failures, large
   test-integrity/source-text-guard cluster). Triage into Phase 5 before fixing.
 
+### Phase 2 result (same session): 4/7 committed + api-server typecheck GREEN
+c712d759 T7 cockpit serialize-once-per-payload, 96ef68c7 T8 drop redundant /algo prefix auth lookup,
+40cedac5 T10 shadow reconcile single read, 2bcc2535 T11 gex batch enqueue. **HELD:** T5
+(`signal-monitor.ts` is owned by concurrent Claude session 8939ce3f doing DB-read streamlining; my T5
+fingerprint-dedup hunks are additive and ride along in that file — that session commits it), T6
+(`platform.ts` WIP), T9 (`runtime-flight-recorder.ts` WIP).
+**COORDINATION:** concurrent session 8939ce3f owns DB read/write streamlining + dead-code removal +
+5m-signal DB audit. Phase 4 (zombie-config) overlaps its dead-code work — cede or coordinate before
+dispatching. Any codex worker must re-check `git status` per file (a clean file can go dirty in ~90s).
+
 ## Phase 1: P1 correctness (fix first)
 - [ ] T1 (S): PhotonicsObservatory d3 force-graph effect re-runs per live tick
       (`artifacts/pyrus/src/features/research/PhotonicsObservatory.jsx:3943` — liveData/liveFund in
