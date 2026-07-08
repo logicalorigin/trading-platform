@@ -4,20 +4,16 @@ import {
   useGetResearchEarningsCalendar,
   useListAggregateFlowEvents,
 } from "@workspace/api-client-react";
+import { AppTooltip } from "@/components/ui/tooltip";
 import { MultiChartGrid } from "../features/market/MultiChartGrid.jsx";
-import { MarketActivityPanel } from "../features/market/MarketActivityPanel.jsx";
 import MarketInternalsRail from "../features/market/MarketInternalsRail.jsx";
-import MarketUniverseTable from "../features/market/MarketUniverseTable.jsx";
-import { useSignalMonitorSnapshot } from "../features/platform/signalMonitorStore.js";
-import { useNotificationSnapshot } from "../features/platform/notificationStore.js";
+import { MarketUniverseScanner } from "../features/market/MarketUniverseTable.jsx";
+import { UNUSUAL_THRESHOLD_OPTIONS } from "../features/market/MarketActivityPanel.jsx";
 import {
   Card,
   DataUnavailableState,
-  MetricChip,
-  RadialStrokeGauge,
-  SegmentedControl,
+  Select,
   SurfacePanel,
-  TextField,
 } from "../components/platform/primitives.jsx";
 import {
   fmtM,
@@ -36,20 +32,14 @@ import {
   toneForDirectionalIntent,
   toneForFinancialDelta,
 } from "../features/platform/semanticToneModel.js";
-import { CSS_COLOR, FONT_WEIGHTS, RADII, T, sp, textSize } from "../lib/uiTokens.jsx";
-
-const SORT_OPTIONS = [
-  { value: "flow", label: "Flow" },
-  { value: "pct", label: "%" },
-  { value: "vol", label: "Vol" },
-  { value: "alpha", label: "A–Z" },
-];
+import { CSS_COLOR, FONT_WEIGHTS, RADII, T, cssColorMix, dim, sp, textSize } from "../lib/uiTokens.jsx";
+import { useViewport } from "../lib/responsive";
 
 const isCallRight = (right) => String(right || "").toLowerCase().startsWith("c");
 
-// Roll the aggregate flow tape up to the few headline numbers the hero band shows.
-// Uses the same query key as MarketUniverseTable, so react-query serves both from
-// a single request.
+// Roll the aggregate flow tape up to the few headline numbers the top bar shows.
+// Uses the same query key as the scanner, so react-query serves both from a
+// single request.
 const summarizeFlow = (events) => {
   let callPrem = 0;
   let putPrem = 0;
@@ -72,171 +62,251 @@ const summarizeFlow = (events) => {
 const sentimentTone = (sentiment) =>
   toneForFinancialDelta(mapNewsSentimentToScore(sentiment));
 
-const HeroBand = ({ flow, sortMode, onSortModeChange, filterText, onFilterChange }) => {
-  const bullPct = Math.round(flow.bullShare * 100);
-  const breadth = buildTrackedBreadthSummary();
-  const advPct = isFiniteNumber(breadth.advancePct)
-    ? Math.round(breadth.advancePct)
-    : null;
-  const volProxy = MACRO_TICKERS.find((item) => item.sym === "VIXY") || null;
-  const volPct = isFiniteNumber(volProxy?.pct) ? volProxy.pct : null;
-  return (
-    <SurfacePanel
-      compact
+// Derive a single regime verdict from the live inputs. Each available input
+// contributes a bounded -1..+1 directional vote; the mean classifies the tape.
+// When no live input has landed (the flow tape is the primary signal), degrade
+// honestly to an amber THIN TAPE rather than a false RISK-ON.
+const deriveRegime = ({ flow, advancePct, putCall, volPct }) => {
+  const signals = [];
+  if (flow.total > 0) {
+    signals.push(Math.max(-1, Math.min(1, (flow.bullShare - 0.5) * 4)));
+  }
+  if (isFiniteNumber(putCall)) {
+    signals.push(Math.max(-1, Math.min(1, (1 - putCall) * 1.5)));
+  }
+  if (isFiniteNumber(advancePct)) {
+    signals.push(Math.max(-1, Math.min(1, (advancePct - 50) / 25)));
+  }
+  if (isFiniteNumber(volPct)) {
+    signals.push(Math.max(-1, Math.min(1, -volPct / 3)));
+  }
+  if (!signals.length || !(flow.total > 0)) {
+    return { label: "THIN TAPE", tone: CSS_COLOR.amber, thin: true };
+  }
+  const score = signals.reduce((sum, value) => sum + value, 0) / signals.length;
+  if (score >= 0.18) {
+    return { label: "RISK-ON", tone: toneForDirectionalIntent("bullish"), thin: false };
+  }
+  if (score <= -0.18) {
+    return { label: "RISK-OFF", tone: toneForDirectionalIntent("bearish"), thin: false };
+  }
+  return { label: "MIXED", tone: CSS_COLOR.amber, thin: false };
+};
+
+const buildWhyClause = ({ regime, flow, advancePct }) => {
+  if (regime.thin) return "flow tape still hydrating — waiting on live prints";
+  const parts = [`${flow.bullShare >= 0.5 ? "call" : "put"} flow leading`];
+  if (isFiniteNumber(advancePct)) {
+    parts.push(advancePct >= 50 ? "breadth broadening" : "breadth narrowing");
+  }
+  parts.push(`net ${fmtM(flow.net)}`);
+  return parts.join(" · ");
+};
+
+const RegimePill = ({ regime, why }) => (
+  <div
+    role="status"
+    aria-label={`Regime ${regime.label}. ${why}`}
+    style={{
+      display: "inline-flex",
+      alignItems: "center",
+      gap: sp(8),
+      padding: sp("5px 12px"),
+      borderRadius: RADII.pill,
+      background: cssColorMix(regime.tone, 13),
+      border: `1px solid ${cssColorMix(regime.tone, 38)}`,
+      minWidth: 0,
+    }}
+  >
+    <span
+      aria-hidden="true"
+      style={{ width: 6, height: 6, borderRadius: RADII.pill, background: regime.tone, flex: "0 0 auto" }}
+    />
+    <span
       style={{
-        position: "sticky",
-        top: 0,
-        zIndex: 5,
-      }}
-      bodyStyle={{
-        display: "flex",
-        alignItems: "center",
-        gap: sp("16px"),
-        flexWrap: "wrap",
+        color: regime.tone,
+        fontFamily: T.sans,
+        fontWeight: FONT_WEIGHTS.emphasis,
+        fontSize: textSize("bodyStrong"),
+        letterSpacing: "0.02em",
+        whiteSpace: "nowrap",
       }}
     >
-      <div style={{ display: "flex", alignItems: "center", gap: sp("12px") }}>
-        <div
-          style={{
-            fontFamily: T.sans,
-            fontSize: textSize("displaySmall"),
-            fontWeight: FONT_WEIGHTS.emphasis,
-            letterSpacing: 0.5,
-            color: CSS_COLOR.text,
-          }}
-        >
-          MARKET
-        </div>
-        <RadialStrokeGauge
-          value={bullPct}
-          max={100}
-          size={56}
-          label="Bull flow"
-          valueLabel={`${bullPct}%`}
-          ariaLabel={`Bull flow ${bullPct}%`}
-        />
-      </div>
-      <div style={{ display: "flex", alignItems: "center", gap: sp("6px"), flexWrap: "wrap" }}>
-        <MetricChip
+      {regime.label}
+    </span>
+    <span
+      style={{
+        color: CSS_COLOR.textSec,
+        fontFamily: T.sans,
+        fontSize: textSize("body"),
+        minWidth: 0,
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+        whiteSpace: "nowrap",
+      }}
+    >
+      {why}
+    </span>
+  </div>
+);
+
+const TopStat = ({ label, value, tone = CSS_COLOR.textSec, title }) => (
+  <div title={title} style={{ display: "flex", flexDirection: "column", minWidth: 0 }}>
+    <span
+      style={{
+        color: CSS_COLOR.textDim,
+        fontFamily: T.sans,
+        fontSize: textSize("caption"),
+        letterSpacing: "0.06em",
+        textTransform: "uppercase",
+      }}
+    >
+      {label}
+    </span>
+    <span
+      style={{
+        color: tone,
+        fontFamily: T.data,
+        fontSize: textSize("paragraphMuted"),
+        fontWeight: FONT_WEIGHTS.label,
+        fontVariantNumeric: "tabular-nums",
+        lineHeight: 1.2,
+        whiteSpace: "nowrap",
+      }}
+    >
+      {value}
+    </span>
+  </div>
+);
+
+// Local New York clock — a low-key liveness cue. Frozen under safe-QA so
+// screenshots stay deterministic.
+const Clock = ({ live = true }) => {
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => {
+    if (!live) return undefined;
+    const id = setInterval(() => setNow(new Date()), 1000);
+    return () => clearInterval(id);
+  }, [live]);
+  const label = now.toLocaleTimeString("en-US", {
+    hour12: false,
+    timeZone: "America/New_York",
+  });
+  return (
+    <span style={{ fontFamily: T.data, fontSize: textSize("body"), color: CSS_COLOR.textDim, whiteSpace: "nowrap" }}>
+      {label} ET
+    </span>
+  );
+};
+
+// Top bar — the screen's one primary read: a derived regime verdict + why
+// clause, then a right-aligned stat row. Breadth / P/C / VIX / Net flow / Adv-Dec
+// live only here; the internals card reads the same inputs so the two never
+// diverge.
+const RegimeTopBar = ({ flow, breadth, volPct, live }) => {
+  const advancePct = isFiniteNumber(breadth.advancePct) ? breadth.advancePct : null;
+  const hasBreadth = advancePct != null && breadth.total > 0;
+  const regime = deriveRegime({ flow, advancePct, putCall: flow.putCall, volPct });
+  const why = buildWhyClause({ regime, flow, advancePct });
+
+  const breadthTone =
+    advancePct == null
+      ? CSS_COLOR.textDim
+      : toneForDirectionalIntent(advancePct >= 50 ? "bullish" : "bearish");
+  const putCallTone =
+    flow.putCall == null
+      ? CSS_COLOR.textDim
+      : toneForDirectionalIntent(flow.putCall <= 1 ? "bullish" : "bearish");
+  const volTone =
+    volPct == null
+      ? CSS_COLOR.textDim
+      : toneForDirectionalIntent(volPct <= 0 ? "bullish" : "bearish");
+
+  return (
+    <Card
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: sp(14),
+        flexWrap: "wrap",
+        padding: sp("8px 12px"),
+        flexShrink: 0,
+      }}
+    >
+      <span
+        style={{
+          fontFamily: T.sans,
+          fontSize: textSize("bodyStrong"),
+          fontWeight: FONT_WEIGHTS.emphasis,
+          letterSpacing: "0.08em",
+          color: CSS_COLOR.text,
+        }}
+      >
+        MARKET
+      </span>
+      <RegimePill regime={regime} why={why} />
+      <div style={{ display: "flex", alignItems: "center", gap: sp(20), marginLeft: "auto", flexWrap: "wrap" }}>
+        <TopStat
           label="Breadth"
-          value={advPct != null ? `${advPct}%` : "—"}
-          tone={advPct == null ? CSS_COLOR.textDim : toneForFinancialDelta(advPct - 50)}
+          value={advancePct != null ? `${Math.round(advancePct)}%` : "—"}
+          tone={breadthTone}
           title="Share of tracked symbols advancing on the day"
         />
-        <MetricChip
+        <TopStat
           label="P/C"
           value={flow.putCall != null ? flow.putCall.toFixed(2) : "—"}
-          tone={
-            flow.putCall == null
-              ? CSS_COLOR.textDim
-              : toneForDirectionalIntent(flow.putCall <= 1 ? "bullish" : "bearish")
-          }
+          tone={putCallTone}
           title="Put premium / call premium across the flow tape (>1 = puts lead)"
         />
-        <MetricChip
-          label="VIXY"
+        <TopStat
+          label="VIX"
           value={volPct != null ? formatSignedPercent(volPct) : "—"}
-          tone={volPct == null ? CSS_COLOR.textDim : toneForFinancialDelta(-volPct)}
-          title="Volatility proxy (VIXY) daily change — up = risk-off"
+          tone={volTone}
+          title="Volatility proxy (VIXY) daily change — down = risk-on"
         />
-        <MetricChip
+        <TopStat
           label="Net flow"
           value={fmtM(flow.net)}
           tone={toneForDirectionalIntent(flow.net >= 0 ? "bullish" : "bearish")}
           title="Net call−put premium across the flow tape"
         />
-      </div>
-      <div style={{ display: "flex", alignItems: "center", gap: sp("10px"), marginLeft: "auto" }}>
-        <SegmentedControl
-          options={SORT_OPTIONS}
-          value={sortMode}
-          onChange={onSortModeChange}
-          ariaLabel="Universe sort"
-          radioGroup
+        <TopStat
+          label="Adv/Dec"
+          value={hasBreadth ? `${breadth.advancers} / ${breadth.decliners}` : "—"}
+          title="Advancing vs declining tracked symbols"
         />
-        <TextField
-          value={filterText}
-          onChange={(event) => onFilterChange(event.target.value)}
-          placeholder="Filter symbol…"
-          size="sm"
-          style={{ width: 150, minWidth: 0, maxWidth: "100%" }}
-          inputProps={{ "aria-label": "Filter universe by symbol" }}
-        />
+        <Clock live={live} />
       </div>
-    </SurfacePanel>
+    </Card>
   );
 };
 
-const NewsRail = ({ isVisible, safeQaMode }) => {
+const CONTEXT_NEWS_LIMIT = 6;
+
+const ContextSectionLabel = ({ children }) => (
+  <div
+    style={{
+      color: CSS_COLOR.textDim,
+      fontFamily: T.sans,
+      fontSize: textSize("caption"),
+      letterSpacing: "0.12em",
+      textTransform: "uppercase",
+    }}
+  >
+    {children}
+  </div>
+);
+
+// Context — News + Calendar folded into one symbol-aware card. With a symbol
+// selected it shows that symbol's sentiment-dot headlines and its next earnings;
+// otherwise market-wide headlines and the next catalysts. One shared empty
+// state, never two stacked blank cards. A catalyst row click loads its symbol.
+const MarketContextCard = ({ isVisible, safeQaMode, researchConfigured, selectedSym, onSelectSymbol }) => {
+  const scoped = Boolean(selectedSym);
   const newsQuery = useGetNews(
-    { limit: 6 },
+    scoped ? { ticker: selectedSym, limit: CONTEXT_NEWS_LIMIT } : { limit: CONTEXT_NEWS_LIMIT },
     { query: { enabled: isVisible && !safeQaMode, refetchInterval: 60_000 } },
   );
-  const articles = newsQuery.data?.articles || [];
-  return (
-    <SurfacePanel title="News" compact>
-      {articles.length ? (
-        <div style={{ display: "flex", flexDirection: "column", gap: sp("6px") }}>
-          {articles.map((article) => (
-            <a
-              key={article.id}
-              href={article.articleUrl}
-              target="_blank"
-              rel="noreferrer"
-              style={{
-                display: "flex",
-                alignItems: "baseline",
-                gap: sp("8px"),
-                textDecoration: "none",
-                color: CSS_COLOR.text,
-                fontFamily: T.sans,
-                fontSize: textSize("metric"),
-              }}
-            >
-              <span
-                aria-hidden="true"
-                style={{
-                  width: 6,
-                  height: 6,
-                  borderRadius: RADII.pill,
-                  background: sentimentTone(article.sentiment),
-                  flex: "0 0 auto",
-                  alignSelf: "center",
-                }}
-              />
-              <span
-                style={{
-                  flex: 1,
-                  minWidth: 0,
-                  overflow: "hidden",
-                  textOverflow: "ellipsis",
-                  whiteSpace: "nowrap",
-                }}
-              >
-                {article.title}
-              </span>
-              <span style={{ color: CSS_COLOR.textDim, flex: "0 0 auto" }}>
-                {formatRelativeTimeShort(article.publishedAt)}
-              </span>
-            </a>
-          ))}
-        </div>
-      ) : (
-        <DataUnavailableState
-          variant="neutral"
-          loading={newsQuery.isPending && newsQuery.fetchStatus !== "idle"}
-          title="No headlines"
-          detail="Provider-backed headlines appear here during market hours."
-        />
-      )}
-    </SurfacePanel>
-  );
-};
-
-// Upcoming earnings for the next two weeks. Reuses the same
-// useGetResearchEarningsCalendar hook + dedup the classic Market screen used;
-// gated on researchConfigured. A row click loads that symbol into the chart grid.
-const CalendarRail = ({ isVisible, safeQaMode, researchConfigured, onSymClick }) => {
   const calendarWindow = useMemo(() => {
     const from = new Date();
     const to = new Date(from);
@@ -251,12 +321,14 @@ const CalendarRail = ({ isVisible, safeQaMode, researchConfigured, onSymClick })
       retry: false,
     },
   });
-  const items = useMemo(() => {
+  const catalysts = useMemo(() => {
     const entries = earningsQuery.data?.entries || [];
     if (!researchConfigured || !entries.length) return [];
+    const needle = scoped ? selectedSym.toUpperCase() : null;
     const seen = new Set();
     return entries
       .filter((entry) => entry?.symbol && entry?.date)
+      .filter((entry) => !needle || entry.symbol.toUpperCase() === needle)
       .sort(
         (left, right) =>
           (left.date ? Date.parse(left.date) : Infinity) -
@@ -275,81 +347,148 @@ const CalendarRail = ({ isVisible, safeQaMode, researchConfigured, onSymClick })
         }
         return acc;
       }, [])
-      .slice(0, 7);
-  }, [earningsQuery.data, researchConfigured]);
+      .slice(0, scoped ? 3 : 6);
+  }, [earningsQuery.data, researchConfigured, scoped, selectedSym]);
+
+  const articles = newsQuery.data?.articles || [];
+  const hasNews = articles.length > 0;
+  const hasCatalysts = catalysts.length > 0;
+  const loading =
+    (newsQuery.isPending && newsQuery.fetchStatus !== "idle") ||
+    (researchConfigured && earningsQuery.isPending && earningsQuery.fetchStatus !== "idle");
+
+  const action = (
+    <span
+      style={{
+        color: scoped ? CSS_COLOR.accent : CSS_COLOR.textDim,
+        fontFamily: T.data,
+        fontSize: textSize("caption"),
+        letterSpacing: "0.04em",
+      }}
+    >
+      {scoped ? selectedSym : "Market-wide"}
+    </span>
+  );
+
   return (
-    <SurfacePanel title="Calendar" compact>
-      {items.length ? (
-        <div style={{ display: "flex", flexDirection: "column", gap: sp("6px") }}>
-          {items.map((event) => (
-            <button
-              key={event.id}
-              type="button"
-              className="ra-interactive"
-              onClick={() => onSymClick?.(event.symbol)}
-              style={{
-                display: "flex",
-                alignItems: "baseline",
-                justifyContent: "space-between",
-                gap: sp("8px"),
-                width: "100%",
-                background: "transparent",
-                border: "none",
-                padding: 0,
-                cursor: "pointer",
-                textAlign: "left",
-                color: CSS_COLOR.text,
-                fontFamily: T.sans,
-                fontSize: textSize("metric"),
-              }}
-            >
-              <span
-                style={{
-                  minWidth: 0,
-                  overflow: "hidden",
-                  textOverflow: "ellipsis",
-                  whiteSpace: "nowrap",
-                }}
-              >
-                {event.label}
-              </span>
-              <span style={{ color: CSS_COLOR.textDim, flex: "0 0 auto" }}>
-                {event.date}
-              </span>
-            </button>
-          ))}
-        </div>
-      ) : (
+    <SurfacePanel title="Context" compact style={{ alignSelf: "stretch" }} action={action}>
+      {!hasNews && !hasCatalysts ? (
         <DataUnavailableState
           variant="neutral"
-          loading={
-            researchConfigured &&
-            earningsQuery.isPending &&
-            earningsQuery.fetchStatus !== "idle"
-          }
-          title="No earnings scheduled"
+          loading={loading}
+          title={scoped ? `No ${selectedSym} context yet` : "No market context yet"}
           detail={
-            researchConfigured
-              ? "Upcoming earnings for the next two weeks appear here."
-              : "Research calendar access is not configured for this environment."
+            scoped
+              ? "Headlines and the next earnings date for this symbol appear here during market hours."
+              : "Market headlines and upcoming catalysts appear here during market hours."
           }
         />
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: sp("10px") }}>
+          {hasNews ? (
+            <div style={{ display: "flex", flexDirection: "column", gap: sp("6px") }}>
+              {articles.map((article) => (
+                <a
+                  key={article.id}
+                  href={article.articleUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  style={{
+                    display: "flex",
+                    alignItems: "baseline",
+                    gap: sp("8px"),
+                    textDecoration: "none",
+                    color: CSS_COLOR.text,
+                    fontFamily: T.sans,
+                    fontSize: textSize("metric"),
+                  }}
+                >
+                  <span
+                    aria-hidden="true"
+                    style={{
+                      width: 6,
+                      height: 6,
+                      borderRadius: RADII.pill,
+                      background: sentimentTone(article.sentiment),
+                      flex: "0 0 auto",
+                      alignSelf: "center",
+                    }}
+                  />
+                  <span
+                    style={{
+                      flex: 1,
+                      minWidth: 0,
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {article.title}
+                  </span>
+                  <span style={{ color: CSS_COLOR.textDim, flex: "0 0 auto" }}>
+                    {formatRelativeTimeShort(article.publishedAt)}
+                  </span>
+                </a>
+              ))}
+            </div>
+          ) : null}
+          {hasCatalysts ? (
+            <div style={{ display: "flex", flexDirection: "column", gap: sp("6px") }}>
+              <ContextSectionLabel>Next catalysts</ContextSectionLabel>
+              {catalysts.map((event) => (
+                <button
+                  key={event.id}
+                  type="button"
+                  className="ra-interactive"
+                  onClick={() => onSelectSymbol?.(event.symbol)}
+                  style={{
+                    display: "flex",
+                    alignItems: "baseline",
+                    justifyContent: "space-between",
+                    gap: sp("8px"),
+                    width: "100%",
+                    background: "transparent",
+                    border: "none",
+                    padding: 0,
+                    cursor: "pointer",
+                    textAlign: "left",
+                    color: CSS_COLOR.text,
+                    fontFamily: T.sans,
+                    fontSize: textSize("metric"),
+                  }}
+                >
+                  <span
+                    style={{
+                      minWidth: 0,
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {event.label}
+                  </span>
+                  <span style={{ color: CSS_COLOR.textDim, flex: "0 0 auto", fontFamily: T.data }}>
+                    {event.date}
+                  </span>
+                </button>
+              ))}
+            </div>
+          ) : null}
+        </div>
       )}
     </SurfacePanel>
   );
 };
 
 /**
- * MarketDemoScreen — the Market overview page (redesign, now promoted to the
- * `"market"` route via screenRegistry; the legacy MarketScreen.jsx is retained
- * but no longer rendered). Layout: a sticky universe-overview hero (flow gauge +
- * P/C + net flow + sort/filter), the flow-ranked universe table, the multi-chart
- * grid kept first-class directly under the hero (a row click loads that symbol
- * into the grid), the activity panel, then supporting rails — market internals
- * (sector flow, leaders/laggards, breadth, rates, market read), news, and the
- * earnings calendar.
+ * MarketDemoScreen — the Market overview page (redesign, promoted to the
+ * `"market"` route via screenRegistry). A dashboard-first command center: a
+ * top-bar regime read, a compact flow-ranked Scanner (left), the MultiChartGrid
+ * dropped into the dominant center slot, and Market internals + Context on the
+ * right. A scanner / calendar row click → handleSelectSymbol loads that symbol
+ * into the chart grid (+ onSymClick) — the core interaction contract.
  *
- * See docs/plans/market-screen-redesign-2026-06-26.md.
+ * See docs/design/market-dashboard-v3-mockup.html for the approved layout.
  */
 export default function MarketDemoScreen({
   sym = "SPY",
@@ -361,22 +500,14 @@ export default function MarketDemoScreen({
   researchConfigured = false,
   stockAggregateStreamingEnabled = false,
   unusualThreshold,
-  watchlists = [],
-  onSignalAction,
-  onScanNow,
-  onToggleMonitor,
-  onChangeMonitorTimeframe,
-  onChangeMonitorWatchlist,
 }) {
   const [selectedSym, setSelectedSym] = useState(sym || "SPY");
-  const [sortMode, setSortMode] = useState("flow");
-  const [filterText, setFilterText] = useState("");
-  // The unusual-flow threshold select lives in MarketActivityPanel; it needs a
-  // setter to be more than a no-op. Seed from the app-level prop, then drive it
-  // locally so the control actually changes the chart's unusual-flow overlay.
-  const [unusualThresholdValue, setUnusualThreshold] = useState(
-    unusualThreshold ?? 1,
-  );
+  // The unusual-flow threshold select now lives in the chart slot header; it
+  // seeds from the app-level prop then drives the grid's unusual-flow overlay.
+  const [unusualThresholdValue, setUnusualThreshold] = useState(unusualThreshold ?? 1);
+
+  const { flags } = useViewport();
+  const isDesktop = flags.isDesktop;
 
   // Keep the local chart selection in step with the app-wide symbol when the
   // parent changes it (e.g. a deep-link ping), without overriding in-screen picks.
@@ -393,17 +524,85 @@ export default function MarketDemoScreen({
     [flowQuery.data],
   );
 
-  // Live signal-monitor + notification state for the activity panel. Both are
-  // app-wide stores (populated by the platform runtime), so the demo reads the
-  // same data the rest of the platform sees.
-  const signalMonitor = useSignalMonitorSnapshot();
-  const notifications = useNotificationSnapshot();
+  // Shared market-read inputs — computed once so the top bar and the internals
+  // card read identical Breadth / P/C / VIX values (single source of truth).
+  const breadth = useMemo(() => buildTrackedBreadthSummary(), []);
+  const volPct = useMemo(() => {
+    const proxy = MACRO_TICKERS.find((item) => item.sym === "VIXY") || null;
+    return isFiniteNumber(proxy?.pct) ? proxy.pct : null;
+  }, []);
 
   const handleSelectSymbol = (nextSymbol) => {
     if (!nextSymbol) return;
     setSelectedSym(nextSymbol);
     onSymClick?.(nextSymbol);
   };
+
+  const chartSlot = (
+    <div
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        gap: sp("8px"),
+        minHeight: 0,
+        minWidth: 0,
+        overflowY: isDesktop ? "auto" : "visible",
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "center", gap: sp("10px"), flexShrink: 0, padding: sp("0 2px") }}>
+        <span style={{ color: CSS_COLOR.text, fontFamily: T.sans, fontSize: textSize("bodyStrong"), fontWeight: FONT_WEIGHTS.label }}>
+          Charts
+        </span>
+        <span style={{ color: CSS_COLOR.textDim, fontFamily: T.data, fontSize: textSize("body") }}>
+          · {selectedSym} selected
+        </span>
+        <div style={{ marginLeft: "auto" }}>
+          <AppTooltip content="Volume / open interest ratio at which a print is flagged as unusual.">
+            <Select
+              value={String(unusualThresholdValue)}
+              onChange={(next) => setUnusualThreshold(Number(next))}
+              ariaLabel="Unusual flow threshold"
+              options={UNUSUAL_THRESHOLD_OPTIONS}
+              style={{ width: dim(92) }}
+              selectProps={{ "data-testid": "market-flow-threshold-select" }}
+            />
+          </AppTooltip>
+        </div>
+      </div>
+      <MultiChartGrid
+        activeSym={selectedSym}
+        externalSelection={marketSymPing}
+        onSymClick={handleSelectSymbol}
+        watchlistSymbols={symbols}
+        stockAggregateStreamingEnabled={stockAggregateStreamingEnabled && !safeQaMode}
+        isVisible={isVisible}
+        unusualThreshold={unusualThresholdValue}
+        trackStateKey="pyrus:market-grid-track-sizes:demo"
+      />
+    </div>
+  );
+
+  const rightColumn = (
+    <div
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        gap: sp("12px"),
+        minHeight: 0,
+        minWidth: 0,
+        overflowY: isDesktop ? "auto" : "visible",
+      }}
+    >
+      <MarketInternalsRail breadth={breadth} putCall={flowSummary.putCall} volPct={volPct} />
+      <MarketContextCard
+        isVisible={isVisible}
+        safeQaMode={safeQaMode}
+        researchConfigured={researchConfigured}
+        selectedSym={selectedSym}
+        onSelectSymbol={handleSelectSymbol}
+      />
+    </div>
+  );
 
   return (
     <div
@@ -421,80 +620,56 @@ export default function MarketDemoScreen({
         style={{
           flex: 1,
           minHeight: 0,
-          overflowY: "auto",
           display: "flex",
           flexDirection: "column",
           gap: sp("10px"),
           padding: sp("12px"),
         }}
       >
-      <HeroBand
-        flow={flowSummary}
-        sortMode={sortMode}
-        onSortModeChange={setSortMode}
-        filterText={filterText}
-        onFilterChange={setFilterText}
-      />
+        <RegimeTopBar flow={flowSummary} breadth={breadth} volPct={volPct} live={!safeQaMode} />
 
-      <Card style={{ maxHeight: "44vh", display: "flex", flexDirection: "column", minHeight: 0 }}>
-        <MarketUniverseTable
-          isVisible={isVisible}
-          activeSym={selectedSym}
-          sortMode={sortMode}
-          filterText={filterText}
-          onSortModeChange={setSortMode}
-          onSelectSymbol={handleSelectSymbol}
-        />
-      </Card>
+        <div
+          style={
+            isDesktop
+              ? {
+                  display: "grid",
+                  gridTemplateColumns: "272px minmax(0, 1fr) 328px",
+                  gridTemplateRows: "minmax(0, 1fr)",
+                  gap: sp("12px"),
+                  flex: 1,
+                  minHeight: 0,
+                }
+              : {
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: sp("12px"),
+                  flex: 1,
+                  minHeight: 0,
+                  overflowY: "auto",
+                }
+          }
+        >
+          <Card
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              minHeight: 0,
+              minWidth: 0,
+              overflow: "hidden",
+              height: isDesktop ? "100%" : "min(60vh, 520px)",
+            }}
+          >
+            <MarketUniverseScanner
+              isVisible={isVisible}
+              activeSym={selectedSym}
+              onSelectSymbol={handleSelectSymbol}
+            />
+          </Card>
 
-      <div style={{ flex: "1 1 auto", minHeight: 360, display: "flex", flexDirection: "column" }}>
-        <MultiChartGrid
-          activeSym={selectedSym}
-          externalSelection={marketSymPing}
-          onSymClick={handleSelectSymbol}
-          watchlistSymbols={symbols}
-          stockAggregateStreamingEnabled={stockAggregateStreamingEnabled && !safeQaMode}
-          isVisible={isVisible}
-          unusualThreshold={unusualThresholdValue}
-          trackStateKey="pyrus:market-grid-track-sizes:demo"
-        />
-      </div>
+          {chartSlot}
 
-      <MarketActivityPanel
-        signalStates={signalMonitor.states}
-        signalEvents={signalMonitor.events}
-        signalMonitorProfile={signalMonitor.profile}
-        signalMonitorPending={signalMonitor.pending}
-        signalMonitorDegraded={signalMonitor.degraded}
-        notifications={notifications.toasts}
-        watchlists={watchlists}
-        unusualThreshold={unusualThresholdValue}
-        onChangeUnusualThreshold={setUnusualThreshold}
-        onSymClick={handleSelectSymbol}
-        onSignalAction={onSignalAction}
-        onScanNow={onScanNow}
-        onToggleMonitor={onToggleMonitor}
-        onChangeMonitorTimeframe={onChangeMonitorTimeframe}
-        onChangeMonitorWatchlist={onChangeMonitorWatchlist}
-      />
-
-      <MarketInternalsRail isVisible={isVisible} onSelectSymbol={handleSelectSymbol} />
-
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))",
-          gap: sp("10px"),
-        }}
-      >
-        <NewsRail isVisible={isVisible} safeQaMode={safeQaMode} />
-        <CalendarRail
-          isVisible={isVisible}
-          safeQaMode={safeQaMode}
-          researchConfigured={researchConfigured}
-          onSymClick={handleSelectSymbol}
-        />
-      </div>
+          {rightColumn}
+        </div>
       </div>
     </div>
   );
