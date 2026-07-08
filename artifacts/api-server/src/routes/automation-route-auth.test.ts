@@ -132,6 +132,47 @@ const MUTATION_ROUTES = [
   },
 ] as const;
 
+const DIAGNOSTICS_USER_ROUTES = [
+  { method: "GET", path: "/diagnostics/history" },
+  { method: "GET", path: "/diagnostics/events" },
+  { method: "GET", path: "/diagnostics/events/example-event" },
+  { method: "GET", path: "/diagnostics/export" },
+  { method: "GET", path: "/diagnostics/thresholds" },
+  { method: "GET", path: "/diagnostics/stream" },
+  { method: "GET", path: "/diagnostics/market-data/price-trace" },
+  { method: "POST", path: "/diagnostics/client-events" },
+  { method: "POST", path: "/diagnostics/client-metrics" },
+  { method: "POST", path: "/diagnostics/browser-reports" },
+] as const;
+
+const DIAGNOSTICS_ADMIN_ROUTES = [
+  { method: "PUT", path: "/diagnostics/thresholds" },
+  { method: "POST", path: "/diagnostics/storage/prune" },
+  { method: "POST", path: "/diagnostics/market-data/gex-universe-refresh" },
+] as const;
+
+const DIAGNOSTICS_GATED_ROUTES = [
+  ...DIAGNOSTICS_USER_ROUTES,
+  ...DIAGNOSTICS_ADMIN_ROUTES,
+] as const;
+
+type AuthRouteRequestInit = RequestInit & {
+  headers?: Record<string, string>;
+};
+
+function requestInitFor(route: {
+  method: string;
+}): AuthRouteRequestInit {
+  if (route.method === "GET") {
+    return { method: route.method };
+  }
+  return {
+    method: route.method,
+    headers: { "content-type": "application/json" },
+    body: "{}",
+  };
+}
+
 test("algo mutation routes reject unauthenticated requests", async () => {
   await withServer(async (baseUrl) => {
     for (const route of MUTATION_ROUTES) {
@@ -145,6 +186,42 @@ test("algo mutation routes reject unauthenticated requests", async () => {
       assert.equal(body.code, "auth_required");
     }
   });
+});
+
+test("gated diagnostics routes reject unauthenticated requests", async () => {
+  await withServer(async (baseUrl) => {
+    for (const route of DIAGNOSTICS_GATED_ROUTES) {
+      const response = await fetch(
+        `${baseUrl}${route.path}`,
+        requestInitFor(route),
+      );
+      assert.equal(response.status, 401, `${route.path} should require auth`);
+      const body = (await response.json()) as { code?: string };
+      assert.equal(body.code, "auth_required");
+    }
+  });
+});
+
+test("admin diagnostics routes reject authenticated non-admin sessions", async () => {
+  await withTestDb(async () =>
+    withServer(async (baseUrl) => {
+      const member = await seedUser("member");
+      for (const route of DIAGNOSTICS_ADMIN_ROUTES) {
+        const init = requestInitFor(route);
+        const response = await fetch(`${baseUrl}${route.path}`, {
+          ...init,
+          headers: {
+            ...init.headers,
+            cookie: member.cookie,
+            [AUTH_CSRF_HEADER]: member.csrfToken,
+          },
+        });
+        assert.equal(response.status, 403, `${route.path} should reject non-admin`);
+        const body = (await response.json()) as { code?: string };
+        assert.equal(body.code, "admin_required");
+      }
+    }),
+  );
 });
 
 test("algo mutation routes reject authenticated non-admin sessions", async () => {

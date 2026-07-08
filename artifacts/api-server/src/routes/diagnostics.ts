@@ -25,6 +25,7 @@ import {
   traceSignalMonitorPriceFreshness,
 } from "../services/signal-monitor";
 import { HttpError } from "../lib/errors";
+import { requireAdminCsrf, requireUser } from "./auth";
 
 const router: IRouter = Router();
 
@@ -182,6 +183,7 @@ router.get("/diagnostics/latest", async (_req, res) => {
 });
 
 router.get("/diagnostics/history", async (req, res) => {
+  await requireUser(req);
   const { from, to } = readWindow(req);
   res.json(
     await listDiagnosticHistory({
@@ -194,6 +196,7 @@ router.get("/diagnostics/history", async (req, res) => {
 });
 
 router.get("/diagnostics/events", async (req, res) => {
+  await requireUser(req);
   const { from, to } = readWindow(req);
   res.json(
     await listDiagnosticEvents({
@@ -208,6 +211,7 @@ router.get("/diagnostics/events", async (req, res) => {
 });
 
 router.get("/diagnostics/export", async (req, res) => {
+  await requireUser(req);
   const { from, to } = readWindow(req);
   res.json(
     await exportDiagnostics({
@@ -226,11 +230,13 @@ router.get("/diagnostics/export", async (req, res) => {
   );
 });
 
-router.get("/diagnostics/thresholds", async (_req, res) => {
+router.get("/diagnostics/thresholds", async (req, res) => {
+  await requireUser(req);
   res.json({ thresholds: await getDiagnosticThresholds() });
 });
 
 router.put("/diagnostics/thresholds", async (req, res) => {
+  await requireAdminCsrf(req);
   const body = asRecord(req.body);
   const thresholds = Array.isArray(body.thresholds) ? body.thresholds : [];
   res.json({
@@ -253,6 +259,7 @@ router.put("/diagnostics/thresholds", async (req, res) => {
 });
 
 router.post("/diagnostics/client-events", async (req, res) => {
+  await requireUser(req);
   const body = asRecord(req.body);
   const event = await recordBrowserDiagnosticEvent({
     category: readString(body.category) ?? "client-event",
@@ -266,6 +273,7 @@ router.post("/diagnostics/client-events", async (req, res) => {
 });
 
 router.post("/diagnostics/client-metrics", async (req, res) => {
+  await requireUser(req);
   const body = asRecord(req.body);
   const result = await recordClientDiagnosticsMetrics({
     memory: asRecord(body.memory),
@@ -284,11 +292,13 @@ router.post("/diagnostics/client-metrics", async (req, res) => {
 });
 
 router.post("/diagnostics/browser-reports", async (req, res) => {
+  await requireUser(req);
   const result = await recordBrowserReports(req.body);
   res.status(202).json(result);
 });
 
 router.post("/diagnostics/storage/prune", async (req, res) => {
+  await requireAdminCsrf(req);
   const body = asRecord(req.body);
   const tables = Array.isArray(body.tables)
     ? body.tables.map((value) => String(value))
@@ -300,6 +310,7 @@ router.post("/diagnostics/storage/prune", async (req, res) => {
 });
 
 router.post("/diagnostics/market-data/gex-universe-refresh", async (req, res) => {
+  await requireAdminCsrf(req);
   const body = asRecord(req.body);
   const symbols = readStringList(body.symbols);
   const dryRun = readOptionalBoolean(body.dryRun) ?? true;
@@ -323,6 +334,7 @@ router.post("/diagnostics/market-data/gex-universe-refresh", async (req, res) =>
 });
 
 router.get("/diagnostics/market-data/price-trace", async (req, res) => {
+  await requireUser(req);
   res.json(
     await traceSignalMonitorPriceFreshness({
       environment:
@@ -335,7 +347,8 @@ router.get("/diagnostics/market-data/price-trace", async (req, res) => {
   );
 });
 
-router.get("/diagnostics/stream", (req, res) => {
+router.get("/diagnostics/stream", async (req, res) => {
+  await requireUser(req);
   res.setHeader("Content-Type", "text/event-stream");
   res.setHeader("Cache-Control", "no-cache, no-transform");
   res.setHeader("Connection", "keep-alive");
@@ -391,6 +404,7 @@ router.get("/diagnostics/stream", (req, res) => {
 });
 
 router.get("/diagnostics/events/:eventId", async (req, res) => {
+  await requireUser(req);
   const detail = await getDiagnosticEventDetail(req.params.eventId);
   if (!detail) {
     res.status(404).json({
