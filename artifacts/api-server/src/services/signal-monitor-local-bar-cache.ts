@@ -1260,6 +1260,12 @@ async function flushPendingPersistBars(): Promise<void> {
 }
 
 function enqueueRollups(symbol: string, evaluatedAt: Date): void {
+  if (!liveAggregatePersistEnabled()) {
+    liveAggregatePersistSkipCount += 1;
+    lastLiveAggregatePersistSkippedAt = new Date();
+    lastEnqueueScannedBarCount = 0;
+    return;
+  }
   const symbolBars = minuteBarsBySymbol.get(symbol);
   if (!symbolBars?.size) {
     lastEnqueueScannedBarCount = 0;

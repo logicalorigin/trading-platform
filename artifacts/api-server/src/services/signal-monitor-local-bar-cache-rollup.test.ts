@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { __signalMonitorLocalBarCacheInternalsForTests } from "./signal-monitor-local-bar-cache";
+import {
+  __signalMonitorLocalBarCacheInternalsForTests,
+  getSignalMonitorLocalBarCacheDiagnostics,
+} from "./signal-monitor-local-bar-cache";
 import type { MassiveDelayedStockAggregate } from "./massive-stock-aggregate-stream";
 
 const internals = __signalMonitorLocalBarCacheInternalsForTests;
@@ -188,14 +191,51 @@ test("behavior preserved: deterministic multi-hour ingest rolls up exactly acros
   }
 });
 
+test("disabled live aggregate persistence skips per-aggregate rollup scan work", () => {
+  const previousPersist =
+    process.env.PYRUS_SIGNAL_MONITOR_LOCAL_BAR_CACHE_PERSIST_LIVE_AGGREGATES;
+  delete process.env.PYRUS_SIGNAL_MONITOR_LOCAL_BAR_CACHE_PERSIST_LIVE_AGGREGATES;
+  internals.reset();
+  try {
+    internals.ingest(
+      aggregateAtMinute("SKIPSCAN", Date.now() - MINUTE_MS, 0, {
+        open: 100,
+        high: 101,
+        low: 99,
+        close: 100.5,
+        volume: 10,
+      }),
+    );
+
+    const diagnostics = getSignalMonitorLocalBarCacheDiagnostics();
+    assert.equal(diagnostics.liveAggregatePersistEnabled, false);
+    assert.equal(internals.lastEnqueueScannedBarCount, 0);
+    assert.equal(diagnostics.pendingPersistBarCount, 0);
+    assert.equal(diagnostics.liveAggregatePersistSkipCount, 1);
+    assert.notEqual(diagnostics.lastLiveAggregatePersistSkippedAt, null);
+  } finally {
+    internals.reset();
+    if (previousPersist === undefined) {
+      delete process.env
+        .PYRUS_SIGNAL_MONITOR_LOCAL_BAR_CACHE_PERSIST_LIVE_AGGREGATES;
+    } else {
+      process.env.PYRUS_SIGNAL_MONITOR_LOCAL_BAR_CACHE_PERSIST_LIVE_AGGREGATES =
+        previousPersist;
+    }
+  }
+});
+
 test("bound: per-aggregate scan stays within the recent window regardless of history depth", () => {
   // Retain far more than the deep history so nothing is pruned and we can prove
   // the scan does NOT grow with the retained depth.
   const previousRetention =
     process.env.PYRUS_SIGNAL_MONITOR_LOCAL_BAR_CACHE_RETENTION_MS;
+  const previousPersist =
+    process.env.PYRUS_SIGNAL_MONITOR_LOCAL_BAR_CACHE_PERSIST_LIVE_AGGREGATES;
   process.env.PYRUS_SIGNAL_MONITOR_LOCAL_BAR_CACHE_RETENTION_MS = String(
     100 * 60 * 60_000,
   );
+  process.env.PYRUS_SIGNAL_MONITOR_LOCAL_BAR_CACHE_PERSIST_LIVE_AGGREGATES = "1";
   internals.reset();
   try {
     const symbol = "DEEP";
@@ -264,6 +304,13 @@ test("bound: per-aggregate scan stays within the recent window regardless of his
     } else {
       process.env.PYRUS_SIGNAL_MONITOR_LOCAL_BAR_CACHE_RETENTION_MS =
         previousRetention;
+    }
+    if (previousPersist === undefined) {
+      delete process.env
+        .PYRUS_SIGNAL_MONITOR_LOCAL_BAR_CACHE_PERSIST_LIVE_AGGREGATES;
+    } else {
+      process.env.PYRUS_SIGNAL_MONITOR_LOCAL_BAR_CACHE_PERSIST_LIVE_AGGREGATES =
+        previousPersist;
     }
   }
 });
