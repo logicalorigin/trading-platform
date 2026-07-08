@@ -1346,9 +1346,8 @@ test("MTF entry gate honors configured requiredCount instead of forcing unanimit
   assert.equal(partial.mtfMatches, 2);
   assert.equal(partial.reasons.includes("mtf_not_aligned"), false);
 
-  // Unconfigured count falls back to the confirmation default (2), never
-  // unanimity — a stricter requirement must come from the panel's saved
-  // settings (product ruling 2026-07-07).
+  // Unconfigured count falls back to full selected-frame alignment; a looser
+  // threshold must come from the panel's saved requiredCount.
   const strictProfile = resolveSignalOptionsExecutionProfile({
     signalOptions: {
       entryGate: {
@@ -1356,14 +1355,14 @@ test("MTF entry gate honors configured requiredCount instead of forcing unanimit
       },
     },
   });
-  assert.equal(strictProfile.entryGate.mtfAlignment.requiredCount, 2);
+  assert.equal(strictProfile.entryGate.mtfAlignment.requiredCount, 3);
   const strict = evaluateSignalOptionsEntryGate({
     candidate,
     profile: strictProfile,
     mtfTimeframeDirections,
   });
-  assert.equal(strict.requiredMtfCount, 2);
-  assert.equal(strict.reasons.includes("mtf_not_aligned"), false);
+  assert.equal(strict.requiredMtfCount, 3);
+  assert.equal(strict.reasons.includes("mtf_not_aligned"), true);
 });
 
 const greekSlotQuote = (
