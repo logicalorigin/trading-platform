@@ -56,6 +56,13 @@ const forbiddenPatterns = [
   new RegExp(`\\b${retiredAlertSynonym}\\w*\\b`, "i"),
 ];
 const MAX_TEXT_FILE_BYTES = 50_000_000;
+// Comment-only lines (prose like "critical path" / "most severe first" / "severed the link")
+// use the retired words in ordinary English, not as an alert-tier identifier or value — skip them.
+const commentLinePrefixes = ["//", "/*", "*"];
+function isCommentOnlyLine(line) {
+  const trimmed = line.trim();
+  return commentLinePrefixes.some((prefix) => trimmed.startsWith(prefix));
+}
 
 function toRelPath(fullPath) {
   return path.relative(repoRoot, fullPath).replaceAll(path.sep, "/");
@@ -98,6 +105,7 @@ for (const root of scanRoots) {
     }
     const source = readFileSync(fullPath, "utf8");
     source.split(/\r?\n/).forEach((line, index) => {
+      if (isCommentOnlyLine(line)) return;
       if (!forbiddenPatterns.some((pattern) => pattern.test(line))) return;
       failures.push(`${relPath}:${index + 1}: ${line.trim()}`);
     });
