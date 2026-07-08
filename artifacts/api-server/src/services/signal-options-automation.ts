@@ -8384,7 +8384,8 @@ function computeSignalOptionsDailyRealizedPnl(
         // Wave-2 C3 (daily-loss halt day, 2026-07-07): key the halt "day" off the
         // NY trading day (rolls at NY midnight), not the UTC calendar day — an
         // exit after 20:00 ET no longer lands on the next day's ledger.
-        marketDateKeyFromDate(event.occurredAt) === marketDateKeyFromDate(now) &&
+        signalOptionsNyseSessionDayKey(event.occurredAt) ===
+          signalOptionsNyseSessionDayKey(now) &&
         signalOptionsExitEventHasActionableOptionSession(event),
     )
     .sort(
@@ -8409,10 +8410,7 @@ function computeSignalOptionsDailyRealizedPnl(
       seenPositionKeys.add(key);
       return true;
     })
-    .reduce(
-      (sum, event) => sum + (finiteNumber(asRecord(event.payload).pnl) ?? 0),
-      0,
-    );
+    .reduce((sum, event) => sum + signalOptionsExitEventNetPnl(event), 0);
 }
 
 function computeSignalOptionsOpenUnrealizedPnl(
@@ -17057,16 +17055,34 @@ function latestCompletedBackfillMarketDate(now = new Date()) {
   // completed market date only when it is a trading day whose regular session
   // has closed; a weekend OR holiday resolves to the most recent prior trading
   // day (previousTradingDayOrSame skips holidays too, not just weekends).
-  if (resolveNyseCalendarDay(now)?.tradingDay !== true) {
+  const calendarDay = resolveNyseCalendarDay(now);
+  if (calendarDay?.tradingDay !== true) {
     return previousTradingDayOrSame(today);
   }
-  const minutes =
-    Number.parseInt(parts.hour ?? "0", 10) * 60 +
-    Number.parseInt(parts.minute ?? "0", 10);
-  if (minutes >= 16 * 60) {
+  const regularCloseMs = calendarDay.regularCloseAt
+    ? Date.parse(calendarDay.regularCloseAt)
+    : Number.NaN;
+  if (Number.isFinite(regularCloseMs) && now.getTime() >= regularCloseMs) {
     return today;
   }
   return previousTradingDayOrSame(addDaysToBackfillDate(today, -1));
+}
+
+function signalOptionsBackfillSessionEndAt(
+  endDate: string,
+  session: SignalOptionsBackfillSession,
+): Date {
+  const end = new Date(`${endDate}T00:00:00.000Z`);
+  const fallback = new Date(end.getTime() + 24 * 60 * 60_000 - 1);
+  const calendarDay = resolveNyseCalendarDay(`${endDate}T12:00:00.000Z`);
+  if (!calendarDay?.tradingDay) {
+    return fallback;
+  }
+  const sessionEndAt =
+    session === "all"
+      ? calendarDay.extendedCloseAt
+      : calendarDay.regularCloseAt;
+  return dateOrNull(sessionEndAt) ?? fallback;
 }
 
 function resolveSignalOptionsBackfillWindow(input: {
@@ -17099,7 +17115,7 @@ function resolveSignalOptionsBackfillWindow(input: {
     endDate,
     session,
     from: start,
-    to: new Date(end.getTime() + 24 * 60 * 60_000 - 1),
+    to: signalOptionsBackfillSessionEndAt(endDate, session),
     warmupFrom: new Date(start.getTime() - BACKFILL_WARMUP_DAYS * 86_400_000),
   };
 }
@@ -17116,6 +17132,22 @@ function marketParts(value: Date): Record<string, string> {
 function marketDateKeyFromDate(value: Date): string {
   const parts = marketParts(value);
   return `${parts.year}-${parts.month}-${parts.day}`;
+}
+
+function signalOptionsNyseSessionDayKey(value: Date): string {
+  return resolveNyseCalendarDay(value)?.date ?? marketDateKeyFromDate(value);
+}
+
+function signalOptionsExitEventNetPnl(event: ExecutionEvent): number {
+  const payload = asRecord(event.payload);
+  const pnl = finiteNumber(payload.pnl) ?? 0;
+  const commissionsAndFees = [
+    payload.commission,
+    payload.commissions,
+    payload.fee,
+    payload.fees,
+  ].reduce((sum, value) => sum + (finiteNumber(value) ?? 0), 0);
+  return pnl - commissionsAndFees;
 }
 
 // Wave-2 C2 (session gates holiday/early-close aware, product ruling
@@ -18906,7 +18938,7 @@ async function closeBackfillPosition(input: {
     input.position.quantity,
     input.position.selectedContract,
   );
-  const dayKey = input.occurredAt.toISOString().slice(0, 10);
+  const dayKey = signalOptionsNyseSessionDayKey(input.occurredAt);
   input.realizedByDay.set(dayKey, (input.realizedByDay.get(dayKey) ?? 0) + pnl);
   const positionPatch = {
     ...backfillPositionPayload(input.position),
@@ -20128,7 +20160,7 @@ export async function runSignalOptionsShadowBackfill(input: {
         continue;
       }
 
-      const dayKey = historicalSignal.signalAt.toISOString().slice(0, 10);
+      const dayKey = signalOptionsNyseSessionDayKey(historicalSignal.signalAt);
       const dailyPnl = dailyPnlForBackfill({
         dayKey,
         realizedByDay,
