@@ -117,6 +117,7 @@ test("stream promotion advances intraday backfilled base with the evaluated seri
     timeframe: "5m",
     bars: baseBars,
     refreshedAtMs,
+    source: "backfill",
   });
   promoteSignalMonitorBackfilledBaseFromStream({
     symbol: "AAPL",
@@ -147,6 +148,7 @@ test("stream promotion does not turn daily stream output into a backfilled base"
     timeframe: "1d",
     bars: baseBars,
     refreshedAtMs,
+    source: "backfill",
   });
   promoteSignalMonitorBackfilledBaseFromStream({
     symbol: "AAPL",

@@ -26,6 +26,7 @@ const {
   resetSignalMonitorMatrixHeavyEvaluationCache: resetCaches,
   resetSignalMonitorMatrixStreamForTests: resetStream,
   seedSignalMonitorBackfilledBaseForTests: seedBackfilledBase,
+  getSignalMonitorBackfilledBaseForTests: getBackfilledBase,
 } = __signalMonitorInternalsForTests;
 
 after(async () => {
@@ -189,6 +190,80 @@ test("a hit holds across sub-minute evaluatedAt drift (same completed boundary)"
   assert.deepEqual(barsCacheStats(), { size: 1, hits: 1, misses: 1 });
 });
 
+test("stream-base promotion preserves cache hits while backfill refreshes bust the cell", () => {
+  const evaluatedAt = new Date("2026-06-09T15:00:00.000Z");
+  primeRing(evaluatedAt.toISOString());
+
+  const completedBars = loadSignalMonitorStreamCompletedBars({
+    symbol: SYMBOL,
+    timeframe: "1m",
+    evaluatedAt,
+    limit: 240,
+  });
+  assert.ok(completedBars.length > 0, "test setup should have completed bars");
+
+  const initialBackfillStamp = Date.parse("2026-06-09T14:00:00.000Z");
+  seedBackfilledBase({
+    symbol: SYMBOL,
+    timeframe: "1m",
+    bars: toBackfilledBaseBars(completedBars as never),
+    refreshedAtMs: initialBackfillStamp,
+    source: "backfill",
+  });
+
+  const first = evalAt(evaluatedAt.toISOString());
+  assert.ok(first, "first evaluation should produce a state");
+  assert.deepEqual(barsCacheStats(), { size: 1, hits: 0, misses: 1 });
+
+  const promoted = getBackfilledBase({
+    symbol: SYMBOL,
+    timeframe: "1m",
+  }) as
+    | {
+        bars?: Array<{ timestamp: Date }>;
+        contentStamp?: number;
+        refreshedAt?: number;
+      }
+    | undefined;
+  assert.equal(
+    promoted?.refreshedAt,
+    evaluatedAt.getTime(),
+    "promotion should still bump scheduler freshness",
+  );
+  assert.equal(
+    promoted?.contentStamp,
+    initialBackfillStamp,
+    "promotion should not dirty the completed-bars cache input",
+  );
+  assert.equal(
+    promoted?.bars?.at(-1)?.timestamp.toISOString(),
+    completedBars.at(-1)?.timestamp.toISOString(),
+    "promotion should keep the same latest completed bar",
+  );
+
+  const second = evalAt(evaluatedAt.toISOString());
+  assert.ok(second, "second evaluation should produce a state");
+  assert.deepEqual(barsCacheStats(), { size: 1, hits: 1, misses: 1 });
+
+  const nextBackfillStamp = Date.parse("2026-06-09T14:30:00.000Z");
+  seedBackfilledBase({
+    symbol: SYMBOL,
+    timeframe: "1m",
+    bars: toBackfilledBaseBars(completedBars as never),
+    refreshedAtMs: nextBackfillStamp,
+    source: "backfill",
+  });
+  const backfilled = getBackfilledBase({
+    symbol: SYMBOL,
+    timeframe: "1m",
+  }) as { contentStamp?: number } | undefined;
+  assert.equal(backfilled?.contentStamp, nextBackfillStamp);
+
+  const third = evalAt(evaluatedAt.toISOString());
+  assert.ok(third, "third evaluation should produce a state");
+  assert.deepEqual(barsCacheStats(), { size: 1, hits: 1, misses: 2 });
+});
+
 test("crossing the completed-bar boundary busts the cell (re-aggregates)", () => {
   primeRing("2026-06-09T15:00:00.000Z");
 
@@ -263,6 +338,7 @@ test("stale backfilled base gap is filled from local 1m memory without changing 
     timeframe: "1m",
     bars: staleBase,
     refreshedAtMs: evaluatedAt.getTime() - 60 * 60_000,
+    source: "backfill",
   });
 
   const gapFilled = evalStreamBars({
@@ -296,6 +372,7 @@ test("contiguous base plus live edge is unchanged when local memory is available
     timeframe: "1m",
     bars: baseBars,
     refreshedAtMs: evaluatedAt.getTime() - 60_000,
+    source: "backfill",
   });
 
   const streamBars = loadSignalMonitorStreamCompletedBars({

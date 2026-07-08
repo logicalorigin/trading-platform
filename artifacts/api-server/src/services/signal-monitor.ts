@@ -5215,6 +5215,7 @@ export function startSignalMonitorLocalBarCacheWarmup(): void {
 // base (cold start / disabled) falls back to the prior live-ring behavior.
 type SignalMonitorBackfilledBaseEntry = {
   bars: SignalMonitorBarSnapshot[];
+  contentStamp: number;
   refreshedAt: number;
 };
 const signalMonitorBackfilledBaseByCell = new Map<
@@ -5363,18 +5364,23 @@ function rememberSignalMonitorBackfilledBaseBars(input: {
   timeframe: SignalMonitorMatrixTimeframe;
   bars: SignalMonitorBarSnapshot[];
   refreshedAtMs: number;
+  source: "backfill" | "stream-promotion";
 }): void {
   if (!input.bars.length) {
     return;
   }
   ensureSignalMonitorBackfilledBaseInvalidationSubscription();
-  signalMonitorBackfilledBaseByCell.set(
-    signalMonitorBackfillCellKey(input.symbol, input.timeframe),
-    {
-      bars: input.bars.slice(-SIGNAL_MONITOR_MATRIX_BARS_LIMIT),
-      refreshedAt: input.refreshedAtMs,
-    },
-  );
+  const key = signalMonitorBackfillCellKey(input.symbol, input.timeframe);
+  const existing = signalMonitorBackfilledBaseByCell.get(key);
+  const contentStamp =
+    input.source === "stream-promotion"
+      ? existing?.contentStamp ?? input.refreshedAtMs
+      : input.refreshedAtMs;
+  signalMonitorBackfilledBaseByCell.set(key, {
+    bars: input.bars.slice(-SIGNAL_MONITOR_MATRIX_BARS_LIMIT),
+    contentStamp,
+    refreshedAt: input.refreshedAtMs,
+  });
 }
 
 function promoteSignalMonitorBackfilledBaseFromStream(input: {
@@ -5404,6 +5410,7 @@ function promoteSignalMonitorBackfilledBaseFromStream(input: {
     timeframe: input.timeframe,
     bars: input.completedBars,
     refreshedAtMs: input.evaluatedAt.getTime(),
+    source: "stream-promotion",
   });
 }
 
@@ -5618,6 +5625,7 @@ async function refreshSignalMonitorBackfilledBaseBars(input: {
                       timeframe,
                       bars: snapshot.bars,
                       refreshedAtMs: input.evaluatedAt.getTime(),
+                      source: "backfill",
                     });
                   }
                 } catch {
@@ -8420,7 +8428,7 @@ let signalMonitorIndicatorSnapshotBaseCacheMisses = 0;
 // its output (the merged completedBars) is a pure function of just three inputs:
 //   1. the completed-bucket boundary for the timeframe (clock-driven; advances
 //      once per minute for 1m, every 5m for 5m, etc. — see signalMonitorCompletedBarsQueryTo),
-//   2. the async backfilled base for the cell (signalMonitorBackfilledBaseByCell.refreshedAt),
+//   2. the async backfilled base content for the cell (signalMonitorBackfilledBaseByCell.contentStamp),
 //   3. any out-of-order aggregate that corrects an already-completed minute (revision below).
 // When none changed since the last evaluation, the merged bars cannot have
 // changed, so we reuse them and skip load/filter/merge. We still run the
@@ -9773,7 +9781,7 @@ function evaluateSignalMonitorMatrixStateFromStreamBars(input: {
 }): SignalMonitorMatrixStateResult | null {
   // #2 upstream dirty-track (see signalMonitorStreamCompletedBarsCache above):
   // the merged completedBars are a pure function of the completed-bucket boundary,
-  // the backfilled base refresh, and any out-of-order completed-minute correction.
+  // the backfilled base content, and any out-of-order completed-minute correction.
   // Skip the load/filter/merge when none changed; ALWAYS run the downstream eval
   // so staleness/age recompute from the live evaluatedAt.
   const cellKey = signalMonitorBackfillCellKey(input.symbol, input.timeframe);
@@ -9781,7 +9789,7 @@ function evaluateSignalMonitorMatrixStateFromStreamBars(input: {
   const dirtyKey = `${signalMonitorCompletedBarsQueryTo({
     timeframe: input.timeframe,
     evaluatedAt: input.evaluatedAt,
-  }).getTime()}:${baseEntry?.refreshedAt ?? 0}:${getSignalMonitorAggregateRevision(
+  }).getTime()}:${baseEntry?.contentStamp ?? 0}:${getSignalMonitorAggregateRevision(
     input.symbol,
   )}`;
   let completedBars: SignalMonitorBarSnapshot[];
@@ -14087,14 +14095,7 @@ export const __signalMonitorInternalsForTests = {
   selectSignalMonitorBackfillDueCells,
   groupSignalMonitorBackfillDueCellsByTimeframe,
   promoteSignalMonitorBackfilledBaseFromStream,
-  seedSignalMonitorBackfilledBaseForTests(input: {
-    symbol: string;
-    timeframe: SignalMonitorMatrixTimeframe;
-    bars: SignalMonitorBarSnapshot[];
-    refreshedAtMs: number;
-  }) {
-    rememberSignalMonitorBackfilledBaseBars(input);
-  },
+  seedSignalMonitorBackfilledBaseForTests: rememberSignalMonitorBackfilledBaseBars,
   getSignalMonitorBackfilledBaseForTests(input: {
     symbol: string;
     timeframe: SignalMonitorMatrixTimeframe;
