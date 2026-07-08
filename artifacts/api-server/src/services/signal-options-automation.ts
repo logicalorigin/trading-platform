@@ -8767,12 +8767,16 @@ async function reconcileActivePositionsWithShadowLedger(input: {
   // omit it and fall back to building it below.
   shadowIndex?: SignalOptionsShadowIndex;
 }) {
+  let shadowIndex = input.shadowIndex;
+  if (input.deploymentId && !shadowIndex) {
+    shadowIndex = await buildSignalOptionsShadowIndex(input.events);
+  }
   const ledgerPositions = input.deploymentId
     ? await recoverActivePositionsFromShadowLedger({
         deploymentId: input.deploymentId,
         // When the caller already built the index (buildStatePayload), reuse the
         // shadow_positions it loaded instead of re-querying the same table.
-        shadowPositions: input.shadowIndex?.shadowPositions,
+        shadowPositions: shadowIndex?.shadowPositions,
       })
     : [];
   const positions = mergeActivePositionsWithShadowLedger(
@@ -8782,7 +8786,7 @@ async function reconcileActivePositionsWithShadowLedger(input: {
   if (!positions.length) {
     return positions;
   }
-  const shadowIndex =
+  shadowIndex ??=
     input.shadowIndex ?? (await buildSignalOptionsShadowIndex(input.events));
   return reconcileActivePositionsWithShadowLinks(positions, shadowIndex);
 }
