@@ -458,6 +458,37 @@ const subscribeToAggregateStore = (listener: () => void): (() => void) => {
 
 const getAggregateStoreSnapshot = (): number => storeVersion;
 
+const hasStreamConsumerForSymbol = (symbol: string): boolean =>
+  Array.from(consumers.values()).some((consumer) =>
+    consumer.symbols.has(symbol),
+  );
+
+const hasSymbolStoreListenerForSymbol = (symbol: string): boolean =>
+  Boolean(symbolStoreListeners.get(symbol)?.size);
+
+const hasLiveMinuteCacheConsumerForSymbol = (symbol: string): boolean =>
+  hasStreamConsumerForSymbol(symbol) || hasSymbolStoreListenerForSymbol(symbol);
+
+const evictMinuteCacheIfUnused = (symbol: string): boolean => {
+  const normalizedSymbol = symbol.trim().toUpperCase();
+  if (!normalizedSymbol) {
+    return false;
+  }
+  if (hasLiveMinuteCacheConsumerForSymbol(normalizedSymbol)) {
+    return false;
+  }
+
+  const deleted = minuteCacheBySymbol.delete(normalizedSymbol);
+  if (!deleted) {
+    return false;
+  }
+
+  symbolStoreVersions.delete(normalizedSymbol);
+  pendingSymbolNotifications.delete(normalizedSymbol);
+  notifyStoreListeners();
+  return true;
+};
+
 const subscribeToAggregateStoreForSymbol = (
   symbol: string,
   listener: () => void,
@@ -481,6 +512,7 @@ const subscribeToAggregateStoreForSymbol = (
     currentListeners.delete(listener);
     if (currentListeners.size === 0) {
       symbolStoreListeners.delete(normalizedSymbol);
+      evictMinuteCacheIfUnused(normalizedSymbol);
     }
   };
 };
@@ -631,7 +663,12 @@ const scheduleRefreshEventSource = (
 
 const trimMinuteCache = (cache: Map<number, BrokerStockAggregateMessage>) => {
   while (cache.size > MAX_MINUTE_AGGREGATES_PER_SYMBOL) {
-    const oldestKey = cache.keys().next().value;
+    let oldestKey: number | undefined;
+    cache.forEach((_, key) => {
+      if (oldestKey === undefined || key < oldestKey) {
+        oldestKey = key;
+      }
+    });
     if (oldestKey == null) {
       break;
     }
@@ -664,6 +701,11 @@ const hasAggregateChanged = (
 
 const recordAggregate = (message: BrokerStockAggregateMessage) => {
   const symbol = message.symbol.toUpperCase();
+  if (!hasLiveMinuteCacheConsumerForSymbol(symbol)) {
+    evictMinuteCacheIfUnused(symbol);
+    return;
+  }
+
   const symbolCache =
     minuteCacheBySymbol.get(symbol) ??
     new Map<number, BrokerStockAggregateMessage>();
@@ -887,8 +929,10 @@ const registerConsumer = (
   scheduleRefreshEventSource();
 
   return () => {
+    const previousSymbols = Array.from(consumers.get(id)?.symbols ?? []);
     consumers.delete(id);
     syncAggregateConsumerStats();
+    previousSymbols.forEach((symbol) => evictMinuteCacheIfUnused(symbol));
     scheduleRefreshEventSource();
   };
 };
@@ -1030,3 +1074,10 @@ export const useBrokerStockAggregateStream = ({
 
 export const getStoredStockMinuteAggregates = getStoredBrokerMinuteAggregates;
 export const useMassiveStockAggregateStream = useBrokerStockAggregateStream;
+
+export const __brokerStockAggregateStreamTestHooks = {
+  maxMinuteAggregatesPerSymbol: MAX_MINUTE_AGGREGATES_PER_SYMBOL,
+  recordAggregate,
+  registerConsumer,
+  subscribeToAggregateStoreForSymbol,
+};
