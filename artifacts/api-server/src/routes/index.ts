@@ -54,9 +54,7 @@ const REQUIRE_USER_PATHS = [
   // (/streams/accounts — the IBKR bridge snapshot — stays public; it has no shadow reader.)
   /^\/streams\/accounts\/page(\/|$)/,
   /^\/streams\/accounts\/shadow(\/|$)/,
-  // Member data routers (distinct prefixes; mutations still call requireAdminCsrf).
-  /^\/algo(\/|$)/,
-  /^\/streams\/algo(\/|$)/,
+  // Member data routers (distinct prefixes; algo routes gate per handler).
   /^\/backtests(\/|$)/,
   /^\/charting(\/|$)/,
   /^\/research(\/|$)/,
