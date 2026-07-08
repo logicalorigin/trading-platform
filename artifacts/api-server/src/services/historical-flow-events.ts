@@ -1,5 +1,10 @@
 import { and, asc, desc, eq, gte, lt } from "drizzle-orm";
 import {
+  isNyseFullHoliday,
+  listNyseEarlyCloses,
+  resolveUsEquityMarketSession,
+} from "@workspace/market-calendar";
+import {
   db,
   flowEventHydrationSessionsTable,
   flowEventsTable,
@@ -294,6 +299,38 @@ const newYorkWallTimeToUtcDate = (
   return new Date(guess.getTime() - (actualWallTime - expectedWallTime));
 };
 
+const resolveHistoricalFlowSessionWindow = (
+  parts: NewYorkSessionParts,
+): Pick<HistoricalFlowSession, "windowFrom" | "windowTo"> | null => {
+  if (isWeekendSession(parts)) {
+    return null;
+  }
+  const marketDate = marketDateKey(parts);
+  const sessionAnchor = newYorkWallTimeToUtcDate(parts, 12 * 60);
+  if (isNyseFullHoliday(sessionAnchor)) {
+    return null;
+  }
+
+  const windowFrom = newYorkWallTimeToUtcDate(
+    parts,
+    FLOW_REGULAR_SESSION_OPEN_MINUTES,
+  );
+  if (resolveUsEquityMarketSession(windowFrom).key !== "rth") {
+    return null;
+  }
+
+  const earlyClose = listNyseEarlyCloses(parts.year).find(
+    (close) => close.date === marketDate,
+  );
+  const earlyCloseAt = earlyClose ? new Date(earlyClose.regularCloseAt) : null;
+  const windowTo =
+    earlyCloseAt && !Number.isNaN(earlyCloseAt.getTime())
+      ? earlyCloseAt
+      : newYorkWallTimeToUtcDate(parts, FLOW_REGULAR_SESSION_CLOSE_MINUTES);
+
+  return { windowFrom, windowTo };
+};
+
 export function resolveHistoricalFlowSessions(input: {
   from: Date;
   to: Date;
@@ -308,21 +345,14 @@ export function resolveHistoricalFlowSessions(input: {
 
   while (cursor.getTime() <= last.getTime()) {
     const parts = readNewYorkSessionParts(cursor);
-    if (parts && !isWeekendSession(parts)) {
+    const window = parts ? resolveHistoricalFlowSessionWindow(parts) : null;
+    if (parts && window) {
       const marketDate = marketDateKey(parts);
-      const windowFrom = newYorkWallTimeToUtcDate(
-        parts,
-        FLOW_REGULAR_SESSION_OPEN_MINUTES,
-      );
-      const windowTo = newYorkWallTimeToUtcDate(
-        parts,
-        FLOW_REGULAR_SESSION_CLOSE_MINUTES,
-      );
       if (
-        windowTo.getTime() >= input.from.getTime() &&
-        windowFrom.getTime() <= input.to.getTime()
+        window.windowTo.getTime() >= input.from.getTime() &&
+        window.windowFrom.getTime() <= input.to.getTime()
       ) {
-        sessions.set(marketDate, { marketDate, windowFrom, windowTo });
+        sessions.set(marketDate, { marketDate, ...window });
       }
     }
     cursor.setUTCDate(cursor.getUTCDate() + 1);
