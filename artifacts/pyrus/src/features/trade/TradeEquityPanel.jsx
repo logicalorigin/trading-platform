@@ -911,6 +911,12 @@ export const TradeEquityPanel = ({
   const equityChartSource =
     equityChartSourceState.sourceLabel ||
     describeBrokerChartSource(latestBar?.source);
+  const equityChartEmptyTitle =
+    barsStatus === "loading" ? "Loading spot chart" : equityChartStatus;
+  const equityChartEmptyDetail =
+    barsStatus === "loading"
+      ? `${ticker || "Selected symbol"} ${tf} spot bars`
+      : `${ticker || "Selected symbol"} ${tf} spot bars are not hydrated yet.`;
   const callFlows = chartEvents.filter((event) => {
     const right = String(
       event.metadata?.cp || event.metadata?.right || "",
@@ -1090,9 +1096,8 @@ export const TradeEquityPanel = ({
         onAddDrawing={addDrawing}
         onVisibleLogicalRangeChange={handleVisibleLogicalRangeChange}
         emptyState={{
-          eyebrow: "Spot feed",
-          title: equityChartStatus,
-          detail: `${ticker || "Selected symbol"} ${tf} spot bars are not hydrated yet.`,
+          title: equityChartEmptyTitle,
+          detail: equityChartEmptyDetail,
         }}
         surfaceTopOverlay={(controls) => (
           <ResearchChartWidgetHeader

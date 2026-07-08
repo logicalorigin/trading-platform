@@ -1289,16 +1289,24 @@ export const Watchlist = ({
         }}
       >
         <div
-          style={{ display: "flex", alignItems: "center", gap: sp(8), position: "relative" }}
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: sp(8),
+            position: "relative",
+            flexWrap: "wrap",
+          }}
         >
           <button
             type="button"
             data-testid="watchlist-menu-trigger"
             aria-expanded={watchlistMenuOpen ? "true" : "false"}
+            title={activeWatchlist?.name || "Watchlists"}
             onClick={toggleWatchlistMenu}
             style={{
-              flex: 1,
-              minWidth: 0,
+              flex: "1 1 160px",
+              minWidth: dim(140),
+              minHeight: dim(36),
               display: "flex",
               alignItems: "center",
               justifyContent: "space-between",
@@ -1420,7 +1428,7 @@ export const Watchlist = ({
             disabled={!removableItems.length || busy}
             style={{
               minWidth: dim(selectionMode || mobileDense ? 54 : 32),
-              height: dim(32),
+              height: dim(36),
               display: "grid",
               placeItems: "center",
               borderRadius: dim(RADII.sm),
@@ -1453,8 +1461,8 @@ export const Watchlist = ({
             }
             onClick={mobileDense ? openManageSheet : handleCreateWatchlist}
             style={{
-              width: dim(32),
-              height: dim(32),
+              width: dim(36),
+              height: dim(36),
               display: "grid",
               placeItems: "center",
               borderRadius: dim(RADII.sm),
@@ -1488,6 +1496,7 @@ export const Watchlist = ({
             onClick={handleRenameWatchlist}
             disabled={!activeWatchlist || busy}
             style={{
+              minHeight: dim(30),
               padding: sp("6px 8px"),
               borderRadius: dim(RADII.sm),
               background: "transparent",
@@ -1508,6 +1517,7 @@ export const Watchlist = ({
             onClick={() => activeWatchlist && onSetDefaultWatchlist?.(activeWatchlist.id)}
             disabled={!activeWatchlist || activeWatchlist.isDefault || busy}
             style={{
+              minHeight: dim(30),
               padding: sp("6px 8px"),
               borderRadius: dim(RADII.sm),
               background: activeWatchlist?.isDefault ? `${cssColorMix(CSS_COLOR.accent, 7)}` : "transparent",
@@ -1531,6 +1541,7 @@ export const Watchlist = ({
             onClick={handleDeleteWatchlist}
             disabled={!activeWatchlist || watchlists.length <= 1 || busy}
             style={{
+              minHeight: dim(30),
               padding: sp("6px 8px"),
               borderRadius: dim(RADII.sm),
               background: "transparent",
@@ -1625,6 +1636,8 @@ export const Watchlist = ({
                 data-testid={`watchlist-sort-${option.id}`}
                 onClick={() => handleSelectSortMode(option.id)}
                 style={{
+                  flex: "1 1 0",
+                  minHeight: dim(30),
                   padding: sp("6px 4px"),
                   borderRadius: dim(RADII.sm),
                   background: active ? CSS_COLOR.accent : "transparent",
@@ -1652,6 +1665,7 @@ export const Watchlist = ({
               alignItems: "center",
               gap: sp(8),
               padding: sp("8px 12px"),
+              minHeight: dim(36),
               borderRadius: dim(RADII.sm),
               background: "transparent",
               border: `1px solid ${CSS_COLOR.border}`,
@@ -1673,6 +1687,7 @@ export const Watchlist = ({
             disabled={!directionEnabled}
             style={{
               width: dim(48),
+              minHeight: dim(36),
               borderRadius: dim(RADII.sm),
               background: "transparent",
               border: `1px solid ${CSS_COLOR.border}`,

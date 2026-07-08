@@ -12,6 +12,7 @@ import { getGexDashboard as getGexDashboardRequest } from "@workspace/api-client
 import { AppTooltip } from "@/components/ui/tooltip";
 import {
   AlertTriangle,
+  ChevronDown,
   Search,
   ShieldCheck,
   SlidersHorizontal,
@@ -151,7 +152,8 @@ const GexTickerInput = ({ value, onCommit, isPhone }) => {
       {...inputProps}
       aria-label="GEX ticker"
       style={{
-        width: dim(isPhone ? 68 : 82),
+        width: dim(isPhone ? 86 : 118),
+        minWidth: 0,
         border: 0,
         outline: 0,
         background: "transparent",
@@ -238,16 +240,6 @@ const buildSourceCoverageWarnings = ({ data, sourceCoverageRatio }) => {
 };
 
 const rgba = (color, alpha) => cssColorMix(color, alpha * 100);
-
-const fieldStyle = {
-  background: CSS_COLOR.bg0,
-  border: "none",
-  color: CSS_COLOR.text,
-  fontFamily: T.sans,
-  fontSize: textSize("bodyStrong"),
-  height: dim(30),
-  outline: "none",
-};
 
 export const SectionTitle = ({ children, right }) => (
   <div
@@ -1605,20 +1597,29 @@ export default function GexScreen({
     !visibleMobileExpirationOptions.some((option) => option.value === expirationFilter);
   const tickerSearchControl = (
     <div
+      className="ra-textfield"
       style={{
         display: "flex",
         alignItems: "center",
         gap: sp(6),
-        padding: sp("0 8px"),
-        ...fieldStyle,
+        width: dim(isPhone ? 150 : 184),
+        height: dim(isPhone ? 34 : 36),
+        padding: sp("0 10px"),
+        border: `1px solid ${CSS_COLOR.border}`,
+        borderRadius: dim(RADII.sm),
+        background: CSS_COLOR.bg2,
+        color: CSS_COLOR.text,
+        fontFamily: T.sans,
+        fontSize: textSize("bodyStrong"),
       }}
     >
-      <Search size={14} color={CSS_COLOR.textDim} />
+      <Search size={15} color={CSS_COLOR.textDim} />
       <GexTickerInput
         value={ticker}
         onCommit={commitTicker}
         isPhone={isPhone}
       />
+      <ChevronDown size={14} color={CSS_COLOR.textDim} aria-hidden="true" />
     </div>
   );
   const filtersControl = (
@@ -1678,26 +1679,68 @@ export default function GexScreen({
           style={{
             display: "flex",
             alignItems: "center",
-            justifyContent: "flex-end",
-            gap: sp(8),
+            justifyContent: "space-between",
+            gap: sp(12),
             flexWrap: "wrap",
             minWidth: 0,
           }}
         >
-          {tickerSearchControl}
-          {isPhone ? (
-            <Button
-              dataTestId="gex-mobile-filter-trigger"
-              variant="secondary"
-              size="md"
-              leftIcon={SlidersHorizontal}
-              onClick={() => setMobileFiltersOpen(true)}
+          <div
+            style={{
+              minWidth: 0,
+              flex: "1 1 220px",
+              display: "grid",
+              gap: sp(2),
+            }}
+          >
+            <div
+              style={{
+                color: CSS_COLOR.text,
+                fontFamily: T.sans,
+                fontSize: textSize("sectionTitle"),
+                fontWeight: FONT_WEIGHTS.label,
+                letterSpacing: 0,
+              }}
             >
-              Filters
-            </Button>
-          ) : (
-            filtersControl
-          )}
+              GEX
+            </div>
+            <div
+              style={{
+                color: CSS_COLOR.textMuted,
+                fontFamily: T.sans,
+                fontSize: textSize("caption"),
+                letterSpacing: "0.04em",
+                textTransform: "uppercase",
+              }}
+            >
+              {ticker} · Gamma exposure
+            </div>
+          </div>
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "flex-end",
+              gap: sp(8),
+              flexWrap: "wrap",
+              minWidth: 0,
+            }}
+          >
+            {tickerSearchControl}
+            {isPhone ? (
+              <Button
+                dataTestId="gex-mobile-filter-trigger"
+                variant="secondary"
+                size="md"
+                leftIcon={SlidersHorizontal}
+                onClick={() => setMobileFiltersOpen(true)}
+              >
+                Filters
+              </Button>
+            ) : (
+              filtersControl
+            )}
+          </div>
         </div>
 
         {isPhone ? (
