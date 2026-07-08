@@ -3329,7 +3329,7 @@ function MarketSummary({ onFilterVertical, onSelect, theme, liveData = {}, liveF
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: sp(6) }}>
           <div style={lbl}>Ecosystem heatmap</div>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <span style={{ fontSize: fs(10), color: CSS_COLOR.red }}>\u25C0 Declining</span>
+            <span style={{ fontSize: fs(10), color: CSS_COLOR.red }}>{"\u25C0 Declining"}</span>
             <div style={{ display: "flex", gap: 1 }}>
               {[-30,-15,0,15,30,60,100].map(g => (
                 <div key={g} style={{ width: 10, height: 6, borderRadius: RADII.xs,
@@ -3337,7 +3337,7 @@ function MarketSummary({ onFilterVertical, onSelect, theme, liveData = {}, liveF
                 }} />
               ))}
             </div>
-            <span style={{ fontSize: fs(10), color: CSS_COLOR.green }}>Growing \u25B6</span>
+            <span style={{ fontSize: fs(10), color: CSS_COLOR.green }}>{"Growing \u25B6"}</span>
           </div>
         </div>
         <div style={{ background: CSS_COLOR.text, borderRadius: RADII.md, padding: sp(6), overflow: "hidden" }}>
