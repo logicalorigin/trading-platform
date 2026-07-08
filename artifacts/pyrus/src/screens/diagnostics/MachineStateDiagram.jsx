@@ -782,6 +782,17 @@ const truncate = (value, maxLength) => {
   return text.length > maxLength ? `${text.slice(0, Math.max(0, maxLength - 1))}…` : text;
 };
 
+// Like truncate, but trims back to the last word boundary so the ellipsis never
+// lands mid-word (e.g. "API subsystem…" rather than "API subsystem n…"). Falls
+// back to a char cut when the first word alone overruns the budget.
+const truncateWord = (value, maxLength) => {
+  const text = String(value || "");
+  if (text.length <= maxLength) return text;
+  const cut = text.slice(0, Math.max(0, maxLength - 1));
+  const sp = cut.lastIndexOf(" ");
+  return `${(sp > maxLength * 0.5 ? cut.slice(0, sp) : cut).trimEnd()}…`;
+};
+
 const countBy = (items, key) =>
   items.reduce((counts, item) => {
     const value = item[key] || "unknown";
@@ -1169,7 +1180,7 @@ const ClientRailSignals = ({ master, rect }) => {
               fontFamily={T.sans}
               fontSize={CARD_DETAIL_SIZE}
             >
-              {truncate(abbreviateDetail(row.child.detail), charsForWidth(rect.width * 0.44, CARD_DETAIL_SIZE, DETAIL_CHAR_EM))}
+              {truncateWord(abbreviateDetail(row.child.detail), charsForWidth(rect.width * 0.44, CARD_DETAIL_SIZE, DETAIL_CHAR_EM))}
             </text>
           </g>
         );
