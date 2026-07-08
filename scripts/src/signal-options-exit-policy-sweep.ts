@@ -80,6 +80,7 @@ const MIN_CLOSED_TRADES = 20;
 const ACCOUNT_SIZE = 30_000;
 const DEFAULT_VARIANT_HEARTBEAT_MS = 60_000;
 const DEFAULT_VARIANT_TIMEOUT_MS = 20 * 60_000;
+const DEFAULT_WIRE_GREEK_TRAIL_MAX_AGE_MS = 45_000;
 const RISK_CAP_PATCH = {
   riskCaps: {
     maxOpenSymbols: 10,
@@ -103,7 +104,10 @@ const EARLY_INVALIDATION_LOSS_GRID = [12.5, 15, 17.5, 20, 22.5, 25, 30] as const
 const WIRE_GREEK_TRAIL_POLICY_PATCH = {
   enabled: true,
   requireFreshGreeks: true,
-  greekMaxAgeMs: 15_000,
+  greekMaxAgeMs: readIntegerEnv(
+    "SIGNAL_OPTIONS_EXIT_SWEEP_GREEK_MAX_AGE_MS",
+    DEFAULT_WIRE_GREEK_TRAIL_MAX_AGE_MS,
+  ),
   deltaSizingEnabled: false,
   runnerPollIntervalSeconds: 20,
   rungByProfit: [...signalOptionsDefaultWireTrailRungs],

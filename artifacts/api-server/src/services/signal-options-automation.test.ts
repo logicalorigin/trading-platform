@@ -2,10 +2,14 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
+import type { ExecutionEvent } from "@workspace/db";
 import {
   __signalOptionsAutomationInternalsForTests,
   evaluateMtfPatternGate,
   runSignalOptionsShadowBackfill,
+  selectSignalOptionsExpiration,
+  SIGNAL_OPTIONS_EXIT_EVENT,
+  SIGNAL_OPTIONS_SKIPPED_EVENT,
   type SignalOptionsPosition,
 } from "./signal-options-automation";
 import {
@@ -1272,7 +1276,9 @@ test("MTF entry gate honors configured requiredCount instead of forcing unanimit
   assert.equal(partial.mtfMatches, 2);
   assert.equal(partial.reasons.includes("mtf_not_aligned"), false);
 
-  // Unconfigured count still defaults to unanimity and blocks the same setup.
+  // Unconfigured count falls back to the confirmation default (2), never
+  // unanimity — a stricter requirement must come from the panel's saved
+  // settings (product ruling 2026-07-07).
   const strictProfile = resolveSignalOptionsExecutionProfile({
     signalOptions: {
       entryGate: {
@@ -1280,13 +1286,14 @@ test("MTF entry gate honors configured requiredCount instead of forcing unanimit
       },
     },
   });
-  assert.equal(strictProfile.entryGate.mtfAlignment.requiredCount, 3);
+  assert.equal(strictProfile.entryGate.mtfAlignment.requiredCount, 2);
   const strict = evaluateSignalOptionsEntryGate({
     candidate,
     profile: strictProfile,
     mtfTimeframeDirections,
   });
-  assert.ok(strict.reasons.includes("mtf_not_aligned"));
+  assert.equal(strict.requiredMtfCount, 2);
+  assert.equal(strict.reasons.includes("mtf_not_aligned"), false);
 });
 
 const greekSlotQuote = (
@@ -1487,5 +1494,194 @@ test("slot-excluded greek contracts are absent from scored attempts and the sele
       [94, 96, 104, 106].includes(attempt.selectedContract.strike),
     ),
     false,
+  );
+});
+
+// ---------------------------------------------------------------------------
+// Wave-2 CD: trading-lane market-time correctness + MTF payload mapping.
+// Product rulings 2026-07-07; disclosed in
+// .codex-watch/handoff-signal-options-lane-2026-07-07.md.
+// ---------------------------------------------------------------------------
+
+test("C1 selectSignalOptionsExpiration: DTE counts NY trading days, not UTC calendar days", () => {
+  const profile = {
+    optionSelection: { allowZeroDte: false, minDte: 1, targetDte: 1, maxDte: 3 },
+  } as unknown as Parameters<typeof selectSignalOptionsExpiration>[1];
+
+  // Friday signal -> Monday expiry across the weekend = 1 trading day (was 3
+  // calendar days; a maxDte<=2 profile previously dropped every Friday entry).
+  assert.equal(
+    selectSignalOptionsExpiration(
+      [{ expirationDate: new Date("2026-06-15T00:00:00.000Z") }],
+      profile,
+      new Date("2026-06-12T18:00:00.000Z"),
+    )?.dte,
+    1,
+  );
+
+  // Holiday-adjacent: Thu 2026-07-02 -> Mon 2026-07-06 across the 2026-07-03
+  // Independence Day holiday = 1 trading day (was 4 calendar days).
+  assert.equal(
+    selectSignalOptionsExpiration(
+      [{ expirationDate: new Date("2026-07-06T00:00:00.000Z") }],
+      profile,
+      new Date("2026-07-02T14:00:00.000Z"),
+    )?.dte,
+    1,
+  );
+
+  // Monday -> same-week Friday weekly = 4 trading days. This is the HONEST count
+  // (the work-order's "2 trading days within maxDte 3" was arithmetically wrong;
+  // verified against the landed market-calendar util). 4 > maxDte 3 => still
+  // skipped. The trading-day conversion fixes weekend/holiday window shrinkage,
+  // NOT the same-week Monday->Friday blackout, which is a maxDte product lever.
+  assert.equal(
+    selectSignalOptionsExpiration(
+      [{ expirationDate: new Date("2026-06-12T00:00:00.000Z") }],
+      profile,
+      new Date("2026-06-08T13:30:00.000Z"),
+    ),
+    null,
+  );
+});
+
+test("C2 session gates are holiday/early-close aware", () => {
+  const {
+    isRegularMarketSession,
+    isLiveOptionTradingSession,
+    isLiveOvernightExitWindow,
+  } = __signalOptionsAutomationInternalsForTests;
+
+  // Early close 2026-11-27 (day after Thanksgiving, 13:00 ET close). EST = UTC-5.
+  assert.equal(isRegularMarketSession(new Date("2026-11-27T17:30:00.000Z")), true); // 12:30 ET
+  assert.equal(isRegularMarketSession(new Date("2026-11-27T19:00:00.000Z")), false); // 14:00 ET (closed)
+  assert.equal(isLiveOptionTradingSession(new Date("2026-11-27T17:30:00.000Z")), true);
+  assert.equal(isLiveOptionTradingSession(new Date("2026-11-27T19:00:00.000Z")), false);
+  // Overnight exit window shifts to 12:45-13:00 on early closes (was: never fired).
+  assert.equal(isLiveOvernightExitWindow(new Date("2026-11-27T17:50:00.000Z")), true); // 12:50 ET
+  assert.equal(isLiveOvernightExitWindow(new Date("2026-11-27T20:50:00.000Z")), false); // 15:50 ET
+  // Early close overrides the extended-close (16:15) underlyings too.
+  assert.equal(
+    isLiveOptionTradingSession(new Date("2026-11-27T18:10:00.000Z"), { underlying: "SPY" }), // 13:10 ET
+    false,
+  );
+
+  // Full holiday 2026-07-03 (observed Independence Day): all three false. EDT = UTC-4.
+  assert.equal(isRegularMarketSession(new Date("2026-07-03T15:00:00.000Z")), false); // 11:00 ET
+  assert.equal(isLiveOptionTradingSession(new Date("2026-07-03T15:00:00.000Z")), false);
+  assert.equal(isLiveOvernightExitWindow(new Date("2026-07-03T19:50:00.000Z")), false); // 15:50 ET
+
+  // Normal day 2026-07-06 (Monday) unchanged: RTH 09:30-16:00, exit 15:45-16:00.
+  assert.equal(isRegularMarketSession(new Date("2026-07-06T14:00:00.000Z")), true); // 10:00 ET
+  assert.equal(isRegularMarketSession(new Date("2026-07-06T20:30:00.000Z")), false); // 16:30 ET
+  assert.equal(isLiveOvernightExitWindow(new Date("2026-07-06T19:50:00.000Z")), true); // 15:50 ET
+  assert.equal(isLiveOvernightExitWindow(new Date("2026-07-06T19:30:00.000Z")), false); // 15:30 ET
+  // Extended-close underlying keeps 16:15 on a normal day.
+  assert.equal(
+    isLiveOptionTradingSession(new Date("2026-07-06T20:10:00.000Z"), { underlying: "SPY" }), // 16:10 ET
+    true,
+  );
+  assert.equal(isLiveOptionTradingSession(new Date("2026-07-06T20:10:00.000Z")), false); // 16:10 ET, regular
+});
+
+test("C3 daily-loss halt keys off the NY trading day, not the UTC calendar day", () => {
+  const { computeSignalOptionsDailyRealizedPnl } =
+    __signalOptionsAutomationInternalsForTests;
+  // maintenance:true admits the exit past the option session so this isolates
+  // the day-key logic (the C3 change) rather than the session gate.
+  const exit = (id: string, occurredAt: string, pnl: number) =>
+    ({
+      id,
+      eventType: SIGNAL_OPTIONS_EXIT_EVENT,
+      occurredAt: new Date(occurredAt),
+      payload: { pnl, maintenance: true },
+    }) as unknown as ExecutionEvent;
+
+  const now = new Date("2026-07-07T23:00:00.000Z"); // 19:00 ET -> NY day 2026-07-07
+  const sameNyDay = exit("a", "2026-07-08T01:00:00.000Z", -100); // 21:00 ET 07-07 (UTC rolled)
+  const nextNyDay = exit("b", "2026-07-08T13:30:00.000Z", -50); // 09:30 ET 07-08
+
+  // Only the same-NY-day exit counts; the old UTC-calendar-day logic would have
+  // dropped the 07-08Z timestamp even though it is the same NY evening.
+  assert.equal(
+    computeSignalOptionsDailyRealizedPnl([sameNyDay, nextNyDay], now),
+    -100,
+  );
+});
+
+test("C4 latestCompletedBackfillMarketDate skips holidays, not just weekends", () => {
+  const { latestCompletedBackfillMarketDate } =
+    __signalOptionsAutomationInternalsForTests;
+  // On the 2026-07-03 holiday (observed Independence Day, a Friday) the latest
+  // completed market date is Thursday 2026-07-02, not the holiday itself.
+  assert.equal(
+    latestCompletedBackfillMarketDate(new Date("2026-07-03T15:00:00.000Z")), // 11:00 ET holiday
+    "2026-07-02",
+  );
+  // Weekend -> most recent trading day, skipping the adjacent holiday.
+  assert.equal(
+    latestCompletedBackfillMarketDate(new Date("2026-07-04T18:00:00.000Z")), // Sat
+    "2026-07-02",
+  );
+  // Normal trading day after the close returns today.
+  assert.equal(
+    latestCompletedBackfillMarketDate(new Date("2026-07-06T20:30:00.000Z")), // 16:30 ET Mon
+    "2026-07-06",
+  );
+});
+
+test("D1 candidateFromEvent maps payload.entryGate onto the candidate", () => {
+  const { candidateFromEvent } = __signalOptionsAutomationInternalsForTests;
+  const entryGate = {
+    ok: false,
+    reason: "mtf_not_aligned",
+    reasons: ["mtf_not_aligned"],
+    adx: 21.5,
+    mtfMatches: 1,
+    mtfDirections: [1, -1],
+    mtfTimeframes: ["1m", "5m"],
+    requiredMtfCount: 2,
+    missingMtfTimeframes: [],
+  };
+  const candidate = candidateFromEvent({
+    id: "evt-1",
+    symbol: "AAPL",
+    eventType: SIGNAL_OPTIONS_SKIPPED_EVENT,
+    occurredAt: new Date("2026-07-07T14:00:00.000Z"),
+    payload: { candidate: { id: "cand-1", symbol: "AAPL" }, entryGate },
+  } as unknown as ExecutionEvent);
+  assert.deepEqual(candidate?.entryGate, entryGate);
+});
+
+test("D1 mergeSignalOptionsCandidate keeps the freshest non-null entryGate", () => {
+  const { mergeSignalOptionsCandidate } =
+    __signalOptionsAutomationInternalsForTests;
+  type Cand = Parameters<typeof mergeSignalOptionsCandidate>[1];
+  const base = (entryGate: Record<string, unknown> | null) =>
+    ({
+      id: "c",
+      symbol: "AAPL",
+      direction: "buy",
+      optionRight: "call",
+      timeframe: "15m",
+      signalAt: new Date(0).toISOString(),
+      signalPrice: null,
+      status: "skipped",
+      entryGate,
+    }) as unknown as Cand;
+
+  const oldGate = { ok: false, reason: "mtf_not_aligned", mtfMatches: 1 };
+  const freshGate = { ok: false, reason: "mtf_unavailable", mtfMatches: 0 };
+
+  // The candidate arg (the newer event, or durable state) wins when it has a gate.
+  assert.deepEqual(
+    mergeSignalOptionsCandidate(base(oldGate), base(freshGate)).entryGate,
+    freshGate,
+  );
+  // A newer/merged candidate with no gate must NOT drop the preserved gate
+  // (the object spread would otherwise overwrite it with null).
+  assert.deepEqual(
+    mergeSignalOptionsCandidate(base(oldGate), base(null)).entryGate,
+    oldGate,
   );
 });

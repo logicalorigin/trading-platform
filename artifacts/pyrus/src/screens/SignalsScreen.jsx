@@ -447,7 +447,12 @@ const formatTrend = (value) =>
 
 const formatAge = (dashboardSummary) => {
   if (!dashboardSummary) return MISSING_VALUE;
-  const bars = Number(dashboardSummary.displayAgeBars ?? dashboardSummary.trendAgeBars);
+  const rawBars =
+    dashboardSummary.displayAgeBars ?? dashboardSummary.trendAgeBars;
+  // Number(null) === 0 — without this guard, rows with NO age data render
+  // "0b" (freshest-looking) while sorting as unknown (last).
+  if (rawBars == null) return MISSING_VALUE;
+  const bars = Number(rawBars);
   if (!Number.isFinite(bars)) return MISSING_VALUE;
   const fromSignalBars = dashboardSummary.displayAgeSource === "signal-bars";
   const bucket = !fromSignalBars && dashboardSummary.trendAgeBucket

@@ -15,6 +15,11 @@ import {
   type SignalOptionsExecutionProfile,
 } from "@workspace/backtest-core";
 import {
+  addTradingDays,
+  previousTradingDayOrSame,
+  rthBarsBack,
+} from "@workspace/market-calendar";
+import {
   calculateTransferAdjustedReturnSeries,
   externalTransferAmount,
 } from "@workspace/account-math";
@@ -3801,7 +3806,7 @@ async function resolveEquityMark(symbol: string): Promise<{
   ask: number | null;
   source: string;
   asOf: Date;
-}> {
+> {
   const normalized = normalizeSymbol(symbol).toUpperCase();
   const quotes = await getQuoteSnapshots({
     symbols: normalized,
@@ -4904,13 +4909,14 @@ type SignalOptionsShadowExitEventRow = {
   deploymentId: string | null;
   symbol: string | null;
   occurredAt: Date;
+  payload?: unknown | null;
 };
 
 // Dedup rule shared by the force-close pass, the mark-time stop emitter, and the
-// expiration ledger-sync emitter: a candidate exit is a duplicate if a
-// SIGNAL_OPTIONS_SHADOW_EXIT_EVENT already exists for the same deployment+symbol
-// at/after the position's openedAt — one pnl-bearing exit per position lifecycle,
-// so the events-ledger daily-loss halt never double-counts the same close.
+// expiration ledger-sync emitter: a candidate final exit is a duplicate if a
+// non-partial SIGNAL_OPTIONS_SHADOW_EXIT_EVENT already exists for the same
+// deployment+symbol at/after the position's openedAt. Partial scale-outs have
+// their own identity and must not block the later final exit.
 function signalOptionsShadowExitEventIsDuplicate(
   candidate: SignalOptionsShadowExitEventCandidate,
   existingEvents: SignalOptionsShadowExitEventRow[],
@@ -4918,6 +4924,7 @@ function signalOptionsShadowExitEventIsDuplicate(
   const normalizedSymbol = normalizeSymbol(candidate.symbol).toUpperCase();
   return existingEvents.some(
     (event) =>
+      readRecord(event.payload)?.partial !== true &&
       event.deploymentId === candidate.deploymentId &&
       event.symbol != null &&
       normalizeSymbol(event.symbol).toUpperCase() === normalizedSymbol &&
@@ -4934,6 +4941,7 @@ async function hasExistingSignalOptionsShadowExitEvent(
       deploymentId: executionEventsTable.deploymentId,
       symbol: executionEventsTable.symbol,
       occurredAt: executionEventsTable.occurredAt,
+      payload: executionEventsTable.payload,
     })
     .from(executionEventsTable)
     .where(
@@ -4942,6 +4950,7 @@ async function hasExistingSignalOptionsShadowExitEvent(
         eq(executionEventsTable.eventType, SIGNAL_OPTIONS_SHADOW_EXIT_EVENT),
         eq(executionEventsTable.symbol, normalizedSymbol),
         gte(executionEventsTable.occurredAt, candidate.since),
+        sql`${executionEventsTable.payload}->>'partial' is distinct from 'true'`,
       ),
     )
     .limit(1);
@@ -12028,17 +12037,13 @@ function addDaysToMarketDate(value: string, days: number) {
   return date.toISOString().slice(0, 10);
 }
 
-function marketDateWeekday(value: string) {
-  const parsed = parseMarketDateKey(value);
-  return new Date(Date.UTC(parsed.year, parsed.month - 1, parsed.day)).getUTCDay();
-}
-
 function previousWeekdayOrSame(value: string) {
-  let cursor = value;
-  while (marketDateWeekday(cursor) === 0 || marketDateWeekday(cursor) === 6) {
-    cursor = addDaysToMarketDate(cursor, -1);
-  }
-  return cursor;
+  // Holiday-aware now (not just Sat/Sun): a weekday holiday like 2026-07-03
+  // resolves back to the prior trading day 2026-07-02. parseMarketDateKey first
+  // preserves the HttpError(400) on malformed input that user-facing callers
+  // (resolveWatchlistBacktestWindow) rely on.
+  parseMarketDateKey(value);
+  return previousTradingDayOrSame(value);
 }
 
 function previousCalendarMonthRange(now: Date) {
@@ -12064,17 +12069,11 @@ function yearToDateRange(now: Date) {
 }
 
 function addWeekdaysToMarketDate(value: string, days: number) {
-  let cursor = value;
-  const step = days < 0 ? -1 : 1;
-  let remaining = Math.abs(days);
-  while (remaining > 0) {
-    cursor = addDaysToMarketDate(cursor, step);
-    const weekday = marketDateWeekday(cursor);
-    if (weekday !== 0 && weekday !== 6) {
-      remaining -= 1;
-    }
-  }
-  return cursor;
+  // Holiday-aware trading-day step (skips full holidays, not just weekends), so a
+  // "past_week" (-4) window spans four real trading days. parseMarketDateKey
+  // preserves the HttpError(400) on malformed input.
+  parseMarketDateKey(value);
+  return addTradingDays(value, days);
 }
 
 function marketDatesBetween(from: string, to: string) {
@@ -12551,13 +12550,26 @@ function watchlistBacktestHydrationStart(input: {
   timeframe: ShadowWatchlistBacktestTimeframe;
   window: ReturnType<typeof resolveWatchlistBacktestWindow>;
 }) {
-  return new Date(
-    Math.max(
-      0,
-      input.window.start.getTime() -
-        WATCHLIST_BACKTEST_TIMEFRAME_MS[input.timeframe] *
-          PYRUS_SIGNALS_SIGNAL_WARMUP_BARS,
-    ),
+  // "Warm up N bars" means N *session* bars, not N × interval of continuous
+  // wall-clock. The old wall-clock reach fell short of a full prior session for
+  // 1m — 1000 min ≈ 16.7h < the 17.5h overnight gap — so 1m warmed up with ZERO
+  // prior-session bars and diverged from the live monitor (which fetches warmup
+  // by count). Step WARMUP_BARS whole regular-session bars back, crossing
+  // overnight/weekend/holiday gaps.
+  const timeframeMs = WATCHLIST_BACKTEST_TIMEFRAME_MS[input.timeframe];
+  if (input.timeframe === "1d") {
+    // Daily bars are one-per-trading-day, so RTH-bar counting (a fraction of each
+    // session) does not apply — rthBarsBack would exhaust its scan cap. Step back
+    // WARMUP_BARS trading days instead; the resulting NY date key at UTC midnight
+    // is a safe lower bound for the stored-bar `from` query.
+    return new Date(
+      `${addTradingDays(input.window.start, -PYRUS_SIGNALS_SIGNAL_WARMUP_BARS)}T00:00:00.000Z`,
+    );
+  }
+  return rthBarsBack(
+    timeframeMs,
+    input.window.start,
+    PYRUS_SIGNALS_SIGNAL_WARMUP_BARS,
   );
 }
 
@@ -14585,6 +14597,9 @@ export const __shadowWatchlistBacktestInternalsForTests = {
     shadowFreshStateCache.get(currentShadowAccountId()) ?? null,
   resolveWatchlistBacktestWindow,
   isWatchlistBacktestRegularSessionTime,
+  watchlistBacktestHydrationStart,
+  previousWeekdayOrSame,
+  addWeekdaysToMarketDate,
   watchlistBacktestOrderMatchesRange,
   signalOptionsReplayOrderMatchesDate,
   signalOptionsReplayOrderMatchesRange,

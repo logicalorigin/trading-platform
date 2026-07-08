@@ -4,7 +4,6 @@ import { logger } from "../lib/logger";
 import { subscribeAlgoCockpitChanges } from "./algo-cockpit-events";
 import {
   getApiResourcePressureSnapshot,
-  isApiResourcePressureHardBlock,
   type ApiResourcePressureSnapshot,
 } from "./resource-pressure";
 import {
@@ -691,7 +690,6 @@ export function createSignalOptionsWorker(
 
       const nowMs = dependencies.now().getTime();
       const deployments = await dependencies.listDeployments();
-      const pressure = dependencies.getResourcePressure();
       const enabledIds = new Set(deployments.map((deployment) => deployment.id));
 
       await runMaintenanceOnce();
@@ -730,22 +728,15 @@ export function createSignalOptionsWorker(
           continue;
         }
 
-        // Under hard finite-resource pressure (pool/memory exhausted), DEGRADE
-        // instead of fully pausing: run a positions-only scan so open positions
-        // keep getting managed (marks/exits) and the ops table keeps fresh data,
-        // while shedding the heavy entry work that would add pool load. Fully
-        // pausing left positions unmanaged and the STA table blank for the whole
-        // pressure window, and — since the loop blocker is DB row parsing, not the
-        // scan bodies — pausing never returned loop time anyway.
-        const skipEntryWork = isApiResourcePressureHardBlock(pressure);
-
         runtime.lastCheckedAtMs = nowMs;
         runtime.nextScanDueAtMs = null;
         await runDeployment({
           deployment,
           runtime,
           dependencies,
-          skipEntryWork,
+          // Entries never pause under pressure per owner directive 2026-07-07;
+          // pressure recovery = demand fixes, not trading stops.
+          skipEntryWork: false,
         });
       }
     } catch (error) {

@@ -5,19 +5,27 @@ import { pool } from "@workspace/db";
 
 import { __signalMonitorInternalsForTests } from "./signal-monitor";
 import {
+  __signalMonitorLocalBarCacheInternalsForTests,
+  readSignalMonitorLocalMemoryBars,
+} from "./signal-monitor-local-bar-cache";
+import {
   __stockAggregateStreamTestInternals,
   type StockMinuteAggregateMessage,
 } from "./stock-aggregate-stream";
 
 const {
   evaluateSignalMonitorMatrixStateFromStreamBars: evalStreamBars,
+  evaluateSignalMonitorMatrixStateFromCompletedBars: evalCompletedBars,
   loadSignalMonitorStreamCompletedBars,
+  mergeCompletedBars,
   getSignalMonitorStreamCompletedBarsCacheStats: barsCacheStats,
   getSignalMonitorStreamSourceMinuteBarsMemoStats: sourceBarsMemoStats,
   withSignalMonitorStreamSourceMinuteBarsMemo: withSourceBarsMemo,
   recordSignalMonitorAggregateRevision: recordRevision,
   getSignalMonitorAggregateRevision: getRevision,
   resetSignalMonitorMatrixHeavyEvaluationCache: resetCaches,
+  resetSignalMonitorMatrixStreamForTests: resetStream,
+  seedSignalMonitorBackfilledBaseForTests: seedBackfilledBase,
 } = __signalMonitorInternalsForTests;
 
 after(async () => {
@@ -25,8 +33,10 @@ after(async () => {
 });
 
 beforeEach(() => {
+  resetStream();
   resetCaches();
   __stockAggregateStreamTestInternals.reset();
+  __signalMonitorLocalBarCacheInternalsForTests.reset();
 });
 
 const SYMBOL = "SPY";
@@ -56,6 +66,58 @@ const aggregate = (startMs: number, close: number): StockMinuteAggregateMessage 
   delayed: false,
   source: "massive-websocket",
 });
+
+function recentEvaluatedAt(): Date {
+  return new Date(Math.floor(Date.now() / 60_000) * 60_000);
+}
+
+function buildMinuteAggregates(input: {
+  evaluatedAt: Date;
+  count: number;
+}): StockMinuteAggregateMessage[] {
+  const latestCompletedStartMs = input.evaluatedAt.getTime() - 60_000;
+  return Array.from({ length: input.count }, (_, index) => {
+    const startMs = latestCompletedStartMs - (input.count - 1 - index) * 60_000;
+    const close = Number(
+      (100 + index * 0.025 + Math.sin(index / 9) * 0.75).toFixed(4),
+    );
+    return aggregate(startMs, close);
+  });
+}
+
+function seedLocalMemoryBars(aggregates: StockMinuteAggregateMessage[]): void {
+  for (const entry of aggregates) {
+    __signalMonitorLocalBarCacheInternalsForTests.ingest(entry as never);
+  }
+}
+
+function seedStreamBars(aggregates: StockMinuteAggregateMessage[]): void {
+  for (const entry of aggregates) {
+    __stockAggregateStreamTestInternals.ingestAggregateForTests(entry);
+  }
+}
+
+function toBackfilledBaseBars(
+  bars: ReturnType<typeof readSignalMonitorLocalMemoryBars>,
+) {
+  return bars.map((bar) => ({
+    ...bar,
+    source: "massive-history",
+    freshness: "live",
+    marketDataMode: "live",
+  })) as never[];
+}
+
+function readFullLocalMemorySeries(evaluatedAt: Date) {
+  const bars = readSignalMonitorLocalMemoryBars({
+    symbol: SYMBOL,
+    timeframe: "1m",
+    evaluatedAt,
+    limit: 240,
+  }) as never[];
+  assert.equal(bars.length, 240, "test setup must have a full 240-bar series");
+  return bars;
+}
 
 // Push `count` one-minute aggregates into the in-memory ring, the freshest closing
 // at `endIso`. Price waves so the pyrus indicator has real variation.
@@ -186,4 +248,79 @@ test("an out-of-order correction busts the cell even within the same boundary", 
   assert.equal(getRevision(SYMBOL), 1, "out-of-order minute bumped the revision");
   evalAt("2026-06-09T15:00:00.000Z");
   assert.equal(barsCacheStats().misses, 2, "revision bump must bust the cell");
+});
+
+test("stale backfilled base gap is filled from local 1m memory without changing signal output", () => {
+  const evaluatedAt = recentEvaluatedAt();
+  const aggregates = buildMinuteAggregates({ evaluatedAt, count: 260 });
+  seedLocalMemoryBars(aggregates);
+  seedStreamBars(aggregates.slice(-5));
+
+  const fullSeries = readFullLocalMemorySeries(evaluatedAt);
+  const staleBase = toBackfilledBaseBars(fullSeries.slice(0, 210));
+  seedBackfilledBase({
+    symbol: SYMBOL,
+    timeframe: "1m",
+    bars: staleBase,
+    refreshedAtMs: evaluatedAt.getTime() - 60 * 60_000,
+  });
+
+  const gapFilled = evalStreamBars({
+    profile: makeProfile(),
+    symbol: SYMBOL,
+    timeframe: "1m",
+    evaluatedAt,
+  });
+  const contiguous = evalCompletedBars({
+    profile: makeProfile(),
+    symbol: SYMBOL,
+    timeframe: "1m",
+    evaluatedAt,
+    completedBars: fullSeries,
+  });
+
+  assert.ok(gapFilled, "stream eval should produce a state");
+  assert.deepEqual(gapFilled, contiguous);
+});
+
+test("contiguous base plus live edge is unchanged when local memory is available", () => {
+  const evaluatedAt = recentEvaluatedAt();
+  const aggregates = buildMinuteAggregates({ evaluatedAt, count: 245 });
+  seedLocalMemoryBars(aggregates);
+  seedStreamBars(aggregates.slice(-5));
+
+  const fullSeries = readFullLocalMemorySeries(evaluatedAt);
+  const baseBars = toBackfilledBaseBars(fullSeries.slice(0, 235));
+  seedBackfilledBase({
+    symbol: SYMBOL,
+    timeframe: "1m",
+    bars: baseBars,
+    refreshedAtMs: evaluatedAt.getTime() - 60_000,
+  });
+
+  const streamBars = loadSignalMonitorStreamCompletedBars({
+    symbol: SYMBOL,
+    timeframe: "1m",
+    evaluatedAt,
+    limit: 240,
+  });
+  assert.equal(streamBars.length, 5, "test setup should have a shallow live edge");
+  const oldMergeSeries = mergeCompletedBars(baseBars, streamBars, 240);
+
+  const streamState = evalStreamBars({
+    profile: makeProfile(),
+    symbol: SYMBOL,
+    timeframe: "1m",
+    evaluatedAt,
+  });
+  const oldMergeState = evalCompletedBars({
+    profile: makeProfile(),
+    symbol: SYMBOL,
+    timeframe: "1m",
+    evaluatedAt,
+    completedBars: oldMergeSeries,
+  });
+
+  assert.ok(streamState, "stream eval should produce a state");
+  assert.deepEqual(streamState, oldMergeState);
 });

@@ -51,6 +51,11 @@ export function signalMonitorFresh(input: {
   );
 }
 
+// Provisional product ruling 2026-07-07 (user unsure): block entries whose
+// crossover fired before the current session's open. This constant is the
+// one-line reversal — flip to false to remove the prior-session block entirely.
+export const SIGNAL_MONITOR_BLOCK_PRIOR_SESSION_ENTRIES: boolean = true;
+
 export function buildSignalMonitorActionability(input: {
   direction: string | null;
   signalAt: Date | string | null;
@@ -61,17 +66,28 @@ export function buildSignalMonitorActionability(input: {
   // Outranks stale/age: during a closed/quiet session, rows should read
   // "market closed" rather than "signal too old" or "data stale".
   marketClosed?: boolean;
+  // Current session's regular open. When set (in-session) and the signal fired
+  // before it, the row is blocked as a prior-session entry (gated by the
+  // constant above). Callers pass null when the market is closed/idle.
+  sessionOpenAt?: Date | null;
 }): SignalMonitorActionability {
   const directional = input.direction === "buy" || input.direction === "sell";
   const staleBlocker = input.staleBlocker || "data_stale";
+  const priorSessionSignal =
+    SIGNAL_MONITOR_BLOCK_PRIOR_SESSION_ENTRIES &&
+    input.sessionOpenAt != null &&
+    input.signalAt != null &&
+    new Date(input.signalAt).getTime() < input.sessionOpenAt.getTime();
   const actionBlocker =
     !directional || !input.signalAt
       ? "no_signal"
       : input.marketClosed
         ? "market_closed"
-        : input.stale
-          ? staleBlocker
-          : signalMonitorSignalAgeBlocker(input.barsSinceSignal);
+        : priorSessionSignal
+          ? "prior_session_signal"
+          : input.stale
+            ? staleBlocker
+            : signalMonitorSignalAgeBlocker(input.barsSinceSignal);
   return {
     fresh: signalMonitorFresh(input),
     actionEligible: actionBlocker == null,

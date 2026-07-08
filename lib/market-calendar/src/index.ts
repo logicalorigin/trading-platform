@@ -707,6 +707,194 @@ export const resolvePreviousUsEquitySessionClose = (
   return bestCloseMs === null ? null : new Date(bestCloseMs);
 };
 
+const MARKET_DATE_KEY_PATTERN = /^(\d{4})-(\d{2})-(\d{2})$/;
+
+// Resolve input to New York calendar-day parts. A bare YYYY-MM-DD string names
+// a NY day directly — `new Date("YYYY-MM-DD")` is UTC midnight, i.e. 19:00/20:00
+// ET the PREVIOUS NY day, which would off-by-one every date-key caller (DTE).
+const resolveNewYorkDayParts = (
+  value: Date | number | string,
+): Pick<NewYorkClockParts, "year" | "month" | "day"> | null => {
+  if (typeof value === "string") {
+    const match = MARKET_DATE_KEY_PATTERN.exec(value);
+    if (match) {
+      return {
+        year: Number(match[1]),
+        month: Number(match[2]),
+        day: Number(match[3]),
+      };
+    }
+  }
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return null;
+  }
+  return resolveNewYorkClockParts(date);
+};
+
+// Regular-session window of the NY day containing UTC noon of `utcDay`
+// (UTC noon sits inside the same New York calendar day year-round).
+const rthWindowForUtcDay = (
+  utcDay: number,
+): { openMs: number; closeMs: number } | null => {
+  const calendar = resolveNyseCalendarDay(utcDay * 86_400_000 + 12 * 3_600_000);
+  if (!calendar?.tradingDay || !calendar.regularOpenAt || !calendar.regularCloseAt) {
+    return null;
+  }
+  const openMs = Date.parse(calendar.regularOpenAt);
+  const closeMs = Date.parse(calendar.regularCloseAt);
+  if (!Number.isFinite(openMs) || !Number.isFinite(closeMs)) {
+    return null;
+  }
+  return { openMs, closeMs };
+};
+
+// NYSE trading-day boundaries strictly after `from`'s New York day through
+// `to`'s New York day — weekends AND full holidays excluded. The holiday-aware
+// generalization of naive weekday counting, in NY days (not UTC days) so
+// evening evaluations (20:00-24:00 ET, when the UTC date is already tomorrow)
+// do not read one day low. Same-day, inverted, or invalid spans are 0.
+export const tradingDaysBetween = (
+  from: Date | number | string,
+  to: Date | number | string,
+): number => {
+  const fromParts = resolveNewYorkDayParts(from);
+  const toParts = resolveNewYorkDayParts(to);
+  if (!fromParts || !toParts) {
+    return 0;
+  }
+  const toKey = dateKey(toParts.year, toParts.month, toParts.day);
+  let cursor: Pick<NewYorkClockParts, "year" | "month" | "day"> = fromParts;
+  let count = 0;
+  while (dateKey(cursor.year, cursor.month, cursor.day) < toKey) {
+    cursor = addDaysToDateKeyParts(cursor, 1);
+    if (isNyseTradingDate(cursor)) {
+      count += 1;
+    }
+  }
+  return count;
+};
+
+// Holiday-aware replacements for weekday-only market-date helpers
+// (the previousWeekdayOrSame / addWeekdaysToMarketDate shapes): YYYY-MM-DD
+// market-date keys out, matching the call sites being replaced.
+export const previousTradingDayOrSame = (
+  value: Date | number | string,
+): string => {
+  let cursor = resolveNewYorkDayParts(value);
+  if (!cursor) {
+    throw new RangeError(`previousTradingDayOrSame: invalid date ${String(value)}`);
+  }
+  while (!isNyseTradingDate(cursor)) {
+    cursor = addDaysToDateKeyParts(cursor, -1);
+  }
+  return dateKey(cursor.year, cursor.month, cursor.day);
+};
+
+export const addTradingDays = (
+  value: Date | number | string,
+  days: number,
+): string => {
+  let cursor = resolveNewYorkDayParts(value);
+  if (!cursor || !Number.isFinite(days)) {
+    throw new RangeError(`addTradingDays: invalid input ${String(value)} / ${days}`);
+  }
+  const step = days < 0 ? -1 : 1;
+  let remaining = Math.abs(Math.trunc(days));
+  while (remaining > 0) {
+    cursor = addDaysToDateKeyParts(cursor, step);
+    if (isNyseTradingDate(cursor)) {
+      remaining -= 1;
+    }
+  }
+  return dateKey(cursor.year, cursor.month, cursor.day);
+};
+
+// Whole regular-session bars of `timeframeMs` between two instants: only time
+// inside 09:30-close NY on NYSE trading days counts (holiday- and early-close-
+// aware via each day's regularOpenAt/regularCloseAt). Nights, weekends, and
+// holidays contribute zero bars.
+export const rthBarsBetween = (
+  timeframeMs: number,
+  from: Date | number,
+  to: Date | number,
+): number => {
+  const startMs = from instanceof Date ? from.getTime() : from;
+  const endMs = to instanceof Date ? to.getTime() : to;
+  if (
+    !Number.isFinite(startMs) ||
+    !Number.isFinite(endMs) ||
+    endMs <= startMs ||
+    !Number.isFinite(timeframeMs) ||
+    timeframeMs <= 0
+  ) {
+    return 0;
+  }
+  const dayMs = 86_400_000;
+  // The NYSE regular session (09:30-16:00 ET) never crosses UTC midnight, so
+  // iterating UTC days and intersecting per-day session windows is exact.
+  const firstDay = Math.floor(startMs / dayMs);
+  const lastDay = Math.floor(endMs / dayMs);
+  let total = 0;
+  for (let day = firstDay; day <= lastDay; day += 1) {
+    const window = rthWindowForUtcDay(day);
+    if (!window) {
+      continue;
+    }
+    const clippedFrom = Math.max(startMs, window.openMs);
+    const clippedTo = Math.min(endMs, window.closeMs);
+    if (clippedTo > clippedFrom) {
+      total += Math.floor((clippedTo - clippedFrom) / timeframeMs);
+    }
+  }
+  return total;
+};
+
+// Inverse of rthBarsBetween: the instant such that
+// rthBarsBetween(timeframeMs, result, end) >= count — i.e. step `count` whole
+// regular-session bars backward from `end`, crossing overnight/weekend/holiday
+// gaps. Exact when satisfiable (the round trip equals `count`); when it is not
+// satisfiable within the scan cap the earliest scanned session open is
+// returned — conservative-early, never late.
+export const rthBarsBack = (
+  timeframeMs: number,
+  end: Date | number,
+  count: number,
+): Date => {
+  const endMs = end instanceof Date ? end.getTime() : end;
+  if (!Number.isFinite(endMs) || !Number.isFinite(timeframeMs) || timeframeMs <= 0) {
+    return new Date(Number.NaN);
+  }
+  let remaining = Math.ceil(count);
+  if (!Number.isFinite(remaining) || remaining <= 0) {
+    return new Date(endMs);
+  }
+  const dayMs = 86_400_000;
+  let earliestOpenMs = endMs;
+  // ponytail: linear day walk with a hard cap — plenty for intraday warmups
+  // (1000 1h bars ≈ 220 calendar days); timeframes longer than a session yield
+  // 0 bars/day and exhaust the cap — daily+ callers should use addTradingDays.
+  const firstDay = Math.floor(endMs / dayMs);
+  const lastDay = firstDay - (remaining * 10 + 30);
+  for (let day = firstDay; day >= lastDay; day -= 1) {
+    const window = rthWindowForUtcDay(day);
+    if (!window) {
+      continue;
+    }
+    const to = Math.min(endMs, window.closeMs);
+    if (to <= window.openMs) {
+      continue;
+    }
+    const available = Math.floor((to - window.openMs) / timeframeMs);
+    if (available >= remaining) {
+      return new Date(to - remaining * timeframeMs);
+    }
+    remaining -= available;
+    earliestOpenMs = window.openMs;
+  }
+  return new Date(earliestOpenMs);
+};
+
 // Test-only hook so the per-year/day/minute memoization can be asserted. Declared
 // at end of module so every referenced builder/cache is already initialized (the
 // references are evaluated eagerly when this object literal is constructed).

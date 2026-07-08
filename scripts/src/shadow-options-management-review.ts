@@ -333,7 +333,7 @@ async function loadTopLeaks(config: Config): Promise<LeakRow[]> {
     `
       with sells as (
         select o.symbol,
-               coalesce(o.payload->>'reason', 'unknown') as reason,
+               coalesce(o.payload->>'reason', o.payload->>'exitReason', 'unknown') as reason,
                o.placed_at as closed_at,
                f.realized_pnl,
                f.quantity,
@@ -763,7 +763,7 @@ async function buildReview(config: Config): Promise<ReviewOutput> {
     await Promise.all([
       loadLedgerSummary(config),
       loadAggregate(config, "to_char(date_trunc('month', f.occurred_at), 'YYYY-MM')"),
-      loadAggregate(config, "coalesce(o.payload->>'reason', 'unknown')"),
+      loadAggregate(config, "coalesce(o.payload->>'reason', o.payload->>'exitReason', 'unknown')"),
       loadAggregate(
         config,
         "coalesce(o.payload #>> '{position,signalQuality,tier}', 'unknown') || ':' || coalesce(width_bucket((o.payload #>> '{position,signalQuality,score}')::numeric, 0, 100, 5)::text, 'unknown')",

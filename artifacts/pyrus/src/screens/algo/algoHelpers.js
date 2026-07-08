@@ -85,39 +85,41 @@ export const SIGNAL_OPTIONS_DEFAULT_MTF_TIMEFRAMES = [
   "1h",
 ];
 
-// Presets pick WHICH timeframes to watch; requiredCount stays a separate
-// user dial (matches needed, not unanimity — absent higher-TF data would
-// otherwise freeze entries).
+// Presets pick WHICH timeframes to watch; requiredCount is a user dial that
+// DEFAULTS to full alignment (all selected frames) so the STA table + entry gate
+// match the backend (requiredSignalOptionsMtfCount in signal-options-automation.ts:
+// an unset count means full count). Owner decision 2026-07-08: the default is
+// unanimity over the selected frames; the user may lower the dial to n-of-N.
 export const SIGNAL_OPTIONS_MTF_PRESETS = [
   {
     value: "custom",
     label: "Custom",
     timeframes: SIGNAL_OPTIONS_DEFAULT_MTF_TIMEFRAMES,
-    requiredCount: 2,
+    requiredCount: SIGNAL_OPTIONS_DEFAULT_MTF_TIMEFRAMES.length,
   },
   {
     value: "scalp",
     label: "Scalp",
     timeframes: ["1m", "2m", "5m"],
-    requiredCount: 2,
+    requiredCount: 3,
   },
   {
     value: "balanced",
     label: "Balanced",
     timeframes: ["5m", "15m", "1h"],
-    requiredCount: 2,
+    requiredCount: 3,
   },
   {
     value: "higher_timeframe",
     label: "Higher TF",
     timeframes: ["15m", "1h", "1d"],
-    requiredCount: 2,
+    requiredCount: 3,
   },
   {
     value: "six_frame",
     label: "Six",
     timeframes: SIGNAL_OPTIONS_MTF_TIMEFRAMES,
-    requiredCount: 2,
+    requiredCount: SIGNAL_OPTIONS_MTF_TIMEFRAMES.length,
   },
 ];
 
@@ -149,7 +151,7 @@ export const SIGNAL_OPTIONS_DEFAULT_PROFILE = {
   entryGate: {
     mtfAlignment: {
       enabled: true,
-      requiredCount: 2,
+      requiredCount: SIGNAL_OPTIONS_DEFAULT_MTF_TIMEFRAMES.length,
       timeframes: SIGNAL_OPTIONS_DEFAULT_MTF_TIMEFRAMES,
       preset: "custom",
     },
@@ -760,7 +762,13 @@ export const staRowPassesMtfAlignment = (
     matrixStatesByTimeframe: signalMatrixBySymbol?.[symbolUpper] || {},
     signalDirection: normalizeStaRowSignalDirection(signalRecord.direction),
     timeframes,
-    requiredCount: timeframes.length || mtfAlignmentConfig?.requiredCount,
+    // Owner requirement 2026-07-08: the STA table shows ONLY fully-aligned rows —
+    // EVERY configured MTF frame must agree, regardless of the panel's requiredCount
+    // dial. A stored dial (e.g. 2-of-3) was still surfacing rows with a divergent
+    // frame (mixed buy/sell arrows), so the display gate FORCES full alignment over
+    // the configured frames here. resolveConfiguredMtfAlignment clamps to
+    // [1, frames.length].
+    requiredCount: timeframes.length,
     enabled: mtfAlignmentConfig?.enabled !== false,
   });
   return !(result.applicable && !result.aligned);
@@ -1730,15 +1738,13 @@ export const resolveSignalMove = (
         : MISSING_VALUE,
     };
   }
-  // Direction-adjust so a favorable move reads positive regardless of side: a
-  // sell/short signal profits when price falls. This matches the score's and the
-  // KPI pipeline's direction-signed convention so the Move column is comparable to
-  // the score (the raw price path stays visible in auditDetail below).
-  const moveDirection = String(
-    record.direction || candidateRecord.direction || "buy",
-  ).toLowerCase();
-  const moveDirectionSign = moveDirection === "sell" ? -1 : 1;
-  const value = (currentPrice - signalPrice) * moveDirectionSign;
+  // Raw price move since the signal fired, so the Move column matches the
+  // sparkline's price direction: price down reads negative (shown red), price up
+  // reads positive (shown green), regardless of signal side. Owner decision
+  // 2026-07-08: show the raw price move, not the direction-signed favorable-move
+  // convention — a winning short whose price fell reads as a down move. The
+  // score/KPI pipeline keeps its own direction-signed convention independently.
+  const value = currentPrice - signalPrice;
   const pct = (value / signalPrice) * 100;
   const signalLevelPrice = signalBasis.signalLevelPrice ?? null;
   const levelDetail = signalLevelPrice
@@ -2201,6 +2207,31 @@ export const resolveCandidateGateDisplay = (candidate) => {
           ? CSS_COLOR.amber
           : CSS_COLOR.textDim,
   };
+};
+
+// The MTF entry gate's working-out for display beside the judged verdict. The
+// numbers come from candidate.entryGate — the SERVER's real gate result (mapped
+// from the skip-event payload), so they are truth, not a client estimate.
+// Returns "" when no gate result is attached, "gate passed" when it cleared,
+// else "gate N/M · missing X,Y" (matched frames / configured frames).
+export const resolveCandidateGateWorkOut = (candidate) => {
+  const entryGate = asRecord(asRecord(candidate).entryGate);
+  const timeframes = Array.isArray(entryGate.mtfTimeframes)
+    ? entryGate.mtfTimeframes.filter(Boolean)
+    : [];
+  if (!timeframes.length && entryGate.mtfMatches == null) return "";
+  if (entryGate.ok === true) return "gate passed";
+  const matched = numberFrom(entryGate.mtfMatches, 0);
+  const total = timeframes.length || numberFrom(entryGate.requiredMtfCount, matched);
+  const missing = Array.isArray(entryGate.missingMtfTimeframes)
+    ? entryGate.missingMtfTimeframes.filter(Boolean)
+    : [];
+  return [
+    `gate ${matched}/${total}`,
+    missing.length ? `missing ${missing.join(",")}` : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
 };
 
 export const resolveCandidateSyncDisplay = (candidate) => {

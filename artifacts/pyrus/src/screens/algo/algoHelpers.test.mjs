@@ -15,10 +15,13 @@ import {
   resolveSignalAge,
   resolveSignalDayMove,
   resolveSignalMove,
+  resolveCandidateGateWorkOut,
   resolveSignalScoreBreakdown,
   signalActionLabel,
   signalFreshnessLabel,
   staRowPassesMtfAlignment,
+  mergeSignalOptionsProfile,
+  SIGNAL_OPTIONS_DEFAULT_MTF_TIMEFRAMES,
   STRATEGY_SIGNAL_TIMEFRAMES,
 } from "./algoHelpers.js";
 
@@ -1567,24 +1570,26 @@ test("resolveSignalMove returns the signed percent from signal fire price to cur
   assert.equal(down.label, "-4.0%");
 });
 
-test("resolveSignalMove direction-adjusts the move so a short's favorable drop reads positive", () => {
-  // Sell/short signal: a drop below the fire price is FAVORABLE, so Move reads
-  // positive — matching the score's / KPI's direction-signed convention.
-  const favorable = resolveSignalMove(
+test("resolveSignalMove shows the raw price move regardless of signal side", () => {
+  // Owner decision 2026-07-08: Move is the raw price change since the fire price,
+  // matching the sparkline's price direction (not the direction-signed
+  // favorable-move). A short whose underlying DROPPED reads NEGATIVE (down/red),
+  // even though the drop is favorable for the short.
+  const shortDrop = resolveSignalMove(
     { signalPrice: 500, direction: "sell" },
     { price: 480 },
     null,
   );
-  assert.equal(favorable.label, "+4.0%");
-  assert.equal(favorable.detail, "+20.00");
-  // A rise above the fire price is adverse for a short -> negative.
-  const adverse = resolveSignalMove(
+  assert.equal(shortDrop.label, "-4.0%");
+  assert.equal(shortDrop.detail, "-20.00");
+  // A short whose underlying ROSE reads positive (up/green).
+  const shortRise = resolveSignalMove(
     { signalPrice: 500, direction: "sell" },
     { price: 525 },
     null,
   );
-  assert.equal(adverse.label, "-5.0%");
-  // Buy signals are unchanged (directionSign +1).
+  assert.equal(shortRise.label, "+5.0%");
+  // Buy signals are unchanged.
   assert.equal(
     resolveSignalMove({ signalPrice: 500, direction: "buy" }, { price: 525 }, null)
       .label,
@@ -2011,4 +2016,96 @@ test("Gateway halt does not fire on a shadow signal-options deployment (retired 
     }).state,
     "forced",
   );
+});
+
+test("STA MTF filter honors the stored requiredCount dial", () => {
+  // Owner decision 2026-07-08: the panel's configured requiredCount is
+  // authoritative, so a stored dial of 2 lets a 2-of-3 row through.
+  const divergent = {
+    MU: {
+      "2m": { currentSignalDirection: "buy", status: "ok", active: true },
+      "5m": { currentSignalDirection: "buy", status: "ok", active: true },
+      "15m": { currentSignalDirection: "sell", status: "ok", active: true },
+    },
+  };
+  assert.equal(
+    staRowPassesMtfAlignment(
+      { symbol: "MU", timeframe: "15m", direction: "buy" },
+      divergent,
+      { enabled: true, timeframes: ["2m", "5m", "15m"], requiredCount: 2 },
+    ),
+    true,
+  );
+  // A fully-aligned 3-of-3 row still passes with the same stored dial of 2.
+  assert.equal(
+    staRowPassesMtfAlignment(
+      { symbol: "MU", timeframe: "15m", direction: "buy" },
+      {
+        MU: {
+          "2m": { currentSignalDirection: "buy", status: "ok", active: true },
+          "5m": { currentSignalDirection: "buy", status: "ok", active: true },
+          "15m": { currentSignalDirection: "buy", status: "ok", active: true },
+        },
+      },
+      { enabled: true, timeframes: ["2m", "5m", "15m"], requiredCount: 2 },
+    ),
+    true,
+  );
+});
+
+test("STA MTF gate defaults to full alignment (matches the bot) for an unconfigured profile", () => {
+  // Owner decision 2026-07-08: a profile with no stored MTF count defaults to
+  // unanimity over the selected frames, so a row with a divergent frame is hidden
+  // by default (same as the backend entry gate on an unset requiredCount).
+  const cfg = mergeSignalOptionsProfile({}).entryGate.mtfAlignment;
+  assert.equal(cfg.requiredCount, SIGNAL_OPTIONS_DEFAULT_MTF_TIMEFRAMES.length);
+  assert.equal(
+    staRowPassesMtfAlignment(
+      { symbol: "MU", timeframe: "1m", direction: "buy" },
+      {
+        MU: {
+          "1m": { currentSignalDirection: "buy", status: "ok", active: true },
+          "2m": { currentSignalDirection: "buy", status: "ok", active: true },
+          "5m": { currentSignalDirection: "buy", status: "ok", active: true },
+          "15m": { currentSignalDirection: "sell", status: "ok", active: true },
+          "1h": { currentSignalDirection: "buy", status: "ok", active: true },
+        },
+      },
+      cfg,
+    ),
+    false,
+  );
+});
+
+test("resolveCandidateGateWorkOut renders the server gate working-out", () => {
+  // Blocked: 1 of 3 frames matched, two missing.
+  assert.equal(
+    resolveCandidateGateWorkOut({
+      entryGate: {
+        ok: false,
+        mtfMatches: 1,
+        mtfTimeframes: ["1m", "5m", "15m"],
+        requiredMtfCount: 2,
+        missingMtfTimeframes: ["5m", "15m"],
+      },
+    }),
+    "gate 1/3 · missing 5m,15m",
+  );
+  // Passed gate.
+  assert.equal(
+    resolveCandidateGateWorkOut({
+      entryGate: { ok: true, mtfMatches: 3, mtfTimeframes: ["1m", "5m", "15m"] },
+    }),
+    "gate passed",
+  );
+  // Blocked with no missing frames listed → just the count.
+  assert.equal(
+    resolveCandidateGateWorkOut({
+      entryGate: { ok: false, mtfMatches: 2, mtfTimeframes: ["1m", "5m"] },
+    }),
+    "gate 2/2",
+  );
+  // No entryGate attached → empty string (nothing to render).
+  assert.equal(resolveCandidateGateWorkOut({}), "");
+  assert.equal(resolveCandidateGateWorkOut({ entryGate: {} }), "");
 });

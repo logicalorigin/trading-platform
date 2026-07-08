@@ -1,8 +1,33 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { __signalMonitorLocalBarCacheInternalsForTests } from "./signal-monitor-local-bar-cache";
+import {
+  __signalMonitorLocalBarCacheInternalsForTests,
+  getSignalMonitorLocalBarCacheDiagnostics,
+} from "./signal-monitor-local-bar-cache";
 import type { MassiveDelayedStockAggregate } from "./massive-stock-aggregate-stream";
+
+test("default memory retention spans a holiday weekend (>= 89.5h)", () => {
+  // Fri 16:00 close -> Tue 09:30 open across a Monday holiday = 89.5h; the old 72h
+  // default did not span it. The default applies only with the env override unset.
+  const previous =
+    process.env.PYRUS_SIGNAL_MONITOR_LOCAL_BAR_CACHE_RETENTION_MS;
+  delete process.env.PYRUS_SIGNAL_MONITOR_LOCAL_BAR_CACHE_RETENTION_MS;
+  try {
+    const { memoryRetentionMs } = getSignalMonitorLocalBarCacheDiagnostics();
+    assert.ok(
+      memoryRetentionMs >= 89.5 * 60 * 60_000,
+      `retention ${memoryRetentionMs} must span the 89.5h holiday weekend`,
+    );
+    assert.equal(memoryRetentionMs, 120 * 60 * 60_000);
+  } finally {
+    if (previous === undefined) {
+      delete process.env.PYRUS_SIGNAL_MONITOR_LOCAL_BAR_CACHE_RETENTION_MS;
+    } else {
+      process.env.PYRUS_SIGNAL_MONITOR_LOCAL_BAR_CACHE_RETENTION_MS = previous;
+    }
+  }
+});
 
 test("signal monitor local bar cache warms from durable massive history", () => {
   const sources =
@@ -20,7 +45,7 @@ test("signal monitor local bar cache rolls up sparse completed hourly buckets", 
   internals.reset();
   try {
     // Anchor to a recent completed hour so the ingested bars stay inside the
-    // 72h memory-retention window (storeMinuteBar prunes older-than-now-72h);
+    // memory-retention window (storeMinuteBar prunes older-than-now-retention);
     // a fixed past date rots into a false failure once it ages out.
     const bucketStartMs =
       Math.floor((Date.now() - 2 * 60 * 60_000) / (60 * 60_000)) * (60 * 60_000);

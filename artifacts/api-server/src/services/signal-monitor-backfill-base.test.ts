@@ -26,9 +26,14 @@ const bar = (
 
 const {
   mergeCompletedBars,
+  groupSignalMonitorBackfillDueCellsByTimeframe,
+  promoteSignalMonitorBackfilledBaseFromStream,
+  seedSignalMonitorBackfilledBaseForTests,
+  getSignalMonitorBackfilledBaseForTests,
   selectSignalMonitorBackfillDueCells,
   shouldSkipSignalMonitorBackfillForPressure,
   shouldSkipSignalMonitorBackfillForQuietProducer,
+  resetSignalMonitorMatrixStreamForTests,
   traceSignalMonitorLaneCurrentness,
   SIGNAL_MONITOR_BACKFILL_REFRESH_MS,
   SIGNAL_MONITOR_BACKFILL_CONCURRENCY_LIMIT,
@@ -93,6 +98,75 @@ test("empty base preserves prior live-only behavior", () => {
   );
 });
 
+test("stream promotion advances intraday backfilled base with the evaluated series", () => {
+  resetSignalMonitorMatrixStreamForTests();
+  const refreshedAtMs = Date.parse("2026-06-12T13:00:00.000Z");
+  const evaluatedAt = new Date("2026-06-12T13:11:00.000Z");
+  const baseBars = [
+    bar("2026-06-12T13:00:00.000Z"),
+    bar("2026-06-12T13:05:00.000Z"),
+  ];
+  const completedBars = mergeCompletedBars(
+    baseBars,
+    [bar("2026-06-12T13:10:00.000Z", { source: "massive-websocket" })],
+    240,
+  ) as Array<{ timestamp: Date }>;
+
+  seedSignalMonitorBackfilledBaseForTests({
+    symbol: "aapl",
+    timeframe: "5m",
+    bars: baseBars,
+    refreshedAtMs,
+  });
+  promoteSignalMonitorBackfilledBaseFromStream({
+    symbol: "AAPL",
+    timeframe: "5m",
+    completedBars: completedBars as never,
+    evaluatedAt,
+  });
+
+  const promoted = getSignalMonitorBackfilledBaseForTests({
+    symbol: "AAPL",
+    timeframe: "5m",
+  });
+  assert.equal(promoted?.refreshedAt, evaluatedAt.getTime());
+  assert.deepEqual(
+    promoted?.bars.map((entry) => entry.timestamp.toISOString()),
+    completedBars.map((entry) => entry.timestamp.toISOString()),
+  );
+  resetSignalMonitorMatrixStreamForTests();
+});
+
+test("stream promotion does not turn daily stream output into a backfilled base", () => {
+  resetSignalMonitorMatrixStreamForTests();
+  const refreshedAtMs = Date.parse("2026-06-12T00:00:00.000Z");
+  const baseBars = [bar("2026-06-11T00:00:00.000Z")];
+
+  seedSignalMonitorBackfilledBaseForTests({
+    symbol: "AAPL",
+    timeframe: "1d",
+    bars: baseBars,
+    refreshedAtMs,
+  });
+  promoteSignalMonitorBackfilledBaseFromStream({
+    symbol: "AAPL",
+    timeframe: "1d",
+    completedBars: [bar("2026-06-12T00:00:00.000Z")] as never,
+    evaluatedAt: new Date("2026-06-13T00:00:00.000Z"),
+  });
+
+  const promoted = getSignalMonitorBackfilledBaseForTests({
+    symbol: "AAPL",
+    timeframe: "1d",
+  });
+  assert.equal(promoted?.refreshedAt, refreshedAtMs);
+  assert.deepEqual(
+    promoted?.bars.map((entry) => entry.timestamp.toISOString()),
+    ["2026-06-11T00:00:00.000Z"],
+  );
+  resetSignalMonitorMatrixStreamForTests();
+});
+
 test("due-cell selection caps per cycle and refreshes the most-overdue first", () => {
   const nowMs = Date.parse("2026-06-12T15:00:00.000Z");
   const interval1m = SIGNAL_MONITOR_BACKFILL_REFRESH_MS["1m"];
@@ -118,6 +192,25 @@ test("due-cell selection caps per cycle and refreshes the most-overdue first", (
   assert.deepEqual(
     selected.map((cell) => cell.symbol),
     ["AAA", "BBB"],
+  );
+});
+
+test("due-cell prefetch grouping keeps symbols scoped to their due timeframe", () => {
+  const grouped = groupSignalMonitorBackfillDueCellsByTimeframe([
+    { symbol: "aapl", timeframe: "1m" },
+    { symbol: "MSFT", timeframe: "1m" },
+    { symbol: "AAPL", timeframe: "1h" },
+  ]);
+
+  assert.deepEqual(
+    Array.from(grouped.entries()).map(([timeframe, symbols]) => [
+      timeframe,
+      symbols,
+    ]),
+    [
+      ["1m", ["AAPL", "MSFT"]],
+      ["1h", ["AAPL"]],
+    ],
   );
 });
 

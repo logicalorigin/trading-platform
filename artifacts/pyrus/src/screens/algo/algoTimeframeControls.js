@@ -32,12 +32,15 @@ const orderedMtfTimeframes = (timeframes) => {
   );
 };
 
-const buildMtfSelectionPatch = (timeframes) => {
+const buildMtfSelectionPatch = (timeframes, requiredCount = null) => {
   const selectedTimeframes = orderedMtfTimeframes(timeframes);
   return {
     timeframes: selectedTimeframes,
     preset: "custom",
-    requiredCount: normalizeAlgoMtfRequiredCount(null, selectedTimeframes),
+    requiredCount: normalizeAlgoMtfRequiredCount(
+      requiredCount,
+      selectedTimeframes,
+    ),
   };
 };
 
@@ -60,17 +63,36 @@ export const normalizeAlgoAlignedMtfTimeframes = (
 };
 
 export const normalizeAlgoMtfRequiredCount = (
-  _value,
+  value,
   selectedTimeframes,
-  _fallback = 2,
+  fallback = 2,
 ) => {
-  return Math.max(1, Array.isArray(selectedTimeframes) ? selectedTimeframes.length : 0);
+  // product ruling 2026-07-07: the panel's n-of-N governs. The stored value is
+  // honored (clamped to the selection size); full-count is only the ceiling,
+  // never forced — discarding the value here made every panel interaction
+  // write unanimity back into the profile.
+  const frameCount = Math.max(
+    1,
+    Array.isArray(selectedTimeframes) ? selectedTimeframes.length : 0,
+  );
+  // Number(null) === 0 — treat null/undefined/"" as unset, not as zero.
+  const numericValue =
+    value == null || value === "" ? Number.NaN : Number(value);
+  const numericFallback =
+    fallback == null || fallback === "" ? Number.NaN : Number(fallback);
+  const base = Number.isFinite(numericValue)
+    ? Math.round(numericValue)
+    : Number.isFinite(numericFallback)
+      ? Math.round(numericFallback)
+      : frameCount;
+  return Math.max(1, Math.min(frameCount, base));
 };
 
 export const buildAlgoExecutionTimeframePatch = (
   timeframe,
   fallback,
   selectedTimeframes,
+  requiredCount = null,
 ) => {
   const signalTimeframe = normalizeAlgoExecutionTimeframe(timeframe, fallback);
   const currentMtfTimeframes = normalizeAlgoMtfTimeframes(selectedTimeframes);
@@ -84,7 +106,7 @@ export const buildAlgoExecutionTimeframePatch = (
   }
   return {
     signalTimeframe,
-    ...buildMtfSelectionPatch(alignedMtfTimeframes),
+    ...buildMtfSelectionPatch(alignedMtfTimeframes, requiredCount),
   };
 };
 
@@ -92,6 +114,7 @@ export const buildAlgoMtfTimeframeTogglePatch = ({
   selectedTimeframes,
   timeframe,
   executionTimeframe,
+  requiredCount = null,
 }) => {
   const current = normalizeAlgoAlignedMtfTimeframes(
     selectedTimeframes,
@@ -99,10 +122,10 @@ export const buildAlgoMtfTimeframeTogglePatch = ({
   );
   const normalizedTimeframe = String(timeframe || "").trim();
   if (!SIGNAL_OPTIONS_MTF_TIMEFRAMES.includes(normalizedTimeframe)) {
-    return buildMtfSelectionPatch(current);
+    return buildMtfSelectionPatch(current, requiredCount);
   }
   if (normalizedTimeframe === normalizeOptionalExecutionTimeframe(executionTimeframe)) {
-    return buildMtfSelectionPatch(current);
+    return buildMtfSelectionPatch(current, requiredCount);
   }
 
   const nextSet = new Set(current);
@@ -114,5 +137,5 @@ export const buildAlgoMtfTimeframeTogglePatch = ({
     nextSet.add(normalizedTimeframe);
   }
 
-  return buildMtfSelectionPatch([...nextSet]);
+  return buildMtfSelectionPatch([...nextSet], requiredCount);
 };

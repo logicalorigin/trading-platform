@@ -1547,7 +1547,12 @@ export const OperationsSignalTable = ({
     [displaySignalTimeframes, signalMatrixBySymbol, staFilteredRows],
   );
   const matrixPendingRows = signalMatrixHydrationSplit.pendingRows;
-  const rows = signalMatrixHydrationSplit.rows;
+  // Render ALL filtered rows, including those whose per-timeframe matrix cells are
+  // still hydrating — their core signal (direction/age/price) is already present.
+  // Using .rows (hydrated-only) hid pending rows behind the banner, so they
+  // vanished from the sorted/paginated list ("missing data when sorting by age").
+  // Owner report 2026-07-08. matrixPendingRows still drives the hydration banner.
+  const rows = signalMatrixHydrationSplit.rowsWithHydration;
   const paginatedRows = useMemo(
     () => paginateRows(rows, page, SIGNALS_PAGE_SIZE),
     [page, rows],

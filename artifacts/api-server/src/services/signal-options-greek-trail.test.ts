@@ -120,7 +120,7 @@ test("stale greeks zero the adjustment but structure break still evaluates on th
     markPrice: 1.4,
     profile: wireProfile,
     wireContext: { ...bullWireContext, latestClose: 95 }, // through wire3 (97)
-    currentGreeks: { delta: 0.35, ageMs: 20_000 }, // stale (> 15000ms)
+    currentGreeks: { delta: 0.35, ageMs: 50_000 }, // stale (> 45000ms)
   });
   assert.equal(stop.wireTrail.greekAdjustment.adjustment, 0);
   assert.deepEqual(stop.wireTrail.greekAdjustment.reasons, ["greeks_unavailable"]);

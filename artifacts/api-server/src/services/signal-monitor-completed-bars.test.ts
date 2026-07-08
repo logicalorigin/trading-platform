@@ -72,13 +72,14 @@ test("quiet market completed bars still retry when far behind the previous close
 const barsSinceSignal = __signalMonitorInternalsForTests.signalMonitorBarsSinceSignal;
 
 test("gappy intraday feed counts bars since signal by elapsed time, not present bars", () => {
-  // ADBG defect: signal at 20:05, latest bar 20:40 (35 min ≈ 7 bars on 5m) but
-  // only 1 bar is present in the sparse stream cache.
+  // ADBG defect: signal at 17:05Z, latest bar 17:40Z (35 in-session minutes ≈ 7
+  // bars on 5m) but only 1 bar is present in the sparse stream cache. Fixture
+  // times sit inside RTH — bar ages now count session bars only.
   assert.equal(
     barsSinceSignal({
       timeframe: "5m",
-      signalAt: new Date("2026-06-11T20:05:00.000Z"),
-      latestBarAt: new Date("2026-06-11T20:40:00.000Z"),
+      signalAt: new Date("2026-06-11T17:05:00.000Z"),
+      latestBarAt: new Date("2026-06-11T17:40:00.000Z"),
       presentBarsSinceSignal: 1,
     }),
     7,
@@ -88,8 +89,8 @@ test("gappy intraday feed counts bars since signal by elapsed time, not present 
 test("thin and liquid symbols with the same signal/latest times report the same bars", () => {
   const args = {
     timeframe: "5m" as const,
-    signalAt: new Date("2026-06-11T20:05:00.000Z"),
-    latestBarAt: new Date("2026-06-11T20:40:00.000Z"),
+    signalAt: new Date("2026-06-11T17:05:00.000Z"),
+    latestBarAt: new Date("2026-06-11T17:40:00.000Z"),
   };
   const thin = barsSinceSignal({ ...args, presentBarsSinceSignal: 1 });
   const liquid = barsSinceSignal({ ...args, presentBarsSinceSignal: 7 });
@@ -180,7 +181,7 @@ test("cross-session intraday signal is counted as very old, not artificially fre
 });
 
 test("python signal matrix state recomputes elapsed bar age before freshness", () => {
-  const evaluatedAt = new Date("2026-06-12T13:44:30.000Z");
+  const evaluatedAt = new Date("2026-06-12T14:44:30.000Z");
   const result =
     __signalMonitorInternalsForTests.signalMonitorMatrixStateFromPython({
       profile: {
@@ -203,8 +204,8 @@ test("python signal matrix state recomputes elapsed bar age before freshness", (
       timeframe: "1m",
       evaluatedAt,
       completedBars: [
-        bar("2026-06-12T13:15:00.000Z"),
-        bar("2026-06-12T13:44:00.000Z"),
+        bar("2026-06-12T14:15:00.000Z"),
+        bar("2026-06-12T14:44:00.000Z"),
       ],
       pythonState: {
         symbol: "AAPL",
@@ -213,7 +214,7 @@ test("python signal matrix state recomputes elapsed bar age before freshness", (
         signal: {
           direction: "long",
           barIndex: 0,
-          time: Math.floor(Date.parse("2026-06-12T13:15:00.000Z") / 1000),
+          time: Math.floor(Date.parse("2026-06-12T14:15:00.000Z") / 1000),
           price: 100,
         },
         barsSinceSignal: 1,
@@ -1342,7 +1343,7 @@ test("signal monitor events read checks fallback latch before retrying the datab
   assert.notEqual(listEnd, -1);
   const listBlock = source.slice(listStart, listEnd);
   const latchCheck = listBlock.indexOf("shouldServeSignalMonitorEventsRuntimeFallback");
-  const dbRead = listBlock.indexOf(".select(");
+  const dbRead = listBlock.indexOf("loadSignalMonitorEventRows");
   const markFailure = listBlock.indexOf("markSignalMonitorEventsReadFallback");
 
   assert.notEqual(latchCheck, -1);
@@ -1606,5 +1607,50 @@ test("signal monitor state snapshots fill missing universe cells as unavailable"
       (state) => state.symbol === "SPY" && String(state.timeframe) === "2m",
     )?.status,
     "unavailable",
+  );
+});
+
+test("intraday bar age counts only regular-session bars (SMR regression: wall-clock counted nights, weekends, and the Jul-3 holiday)", () => {
+  const barsSince = __signalMonitorInternalsForTests.signalMonitorBarsSinceSignal;
+  // SMR 15m: signal 2026-07-02T16:15:00Z (12:15 ET), latest bar 2026-07-07T22:45:00Z
+  // (post-close). Wall-clock division said 506; honest RTH bars:
+  // Jul-2 remainder 15 + Jul-3 holiday 0 + weekend 0 + Jul-6 26 + Jul-7 26 = 67.
+  assert.equal(
+    barsSince({
+      timeframe: "15m",
+      signalAt: new Date("2026-07-02T16:15:00.000Z"),
+      latestBarAt: new Date("2026-07-07T22:45:00.000Z"),
+      presentBarsSinceSignal: 0,
+    }),
+    67,
+  );
+});
+
+test("intraday bar age does not inflate across a single overnight gap (prior-session signals stay actionable at the open)", () => {
+  const barsSince = __signalMonitorInternalsForTests.signalMonitorBarsSinceSignal;
+  // 15m signal at 2026-07-06T19:00:00Z (15:00 ET, 4 bars left in the session);
+  // first bar of the next session closes 2026-07-07T13:45:00Z. Honest age: 5 bars.
+  // Wall-clock division would have said ~75 and blocked it as signal_too_old.
+  assert.equal(
+    barsSince({
+      timeframe: "15m",
+      signalAt: new Date("2026-07-06T19:00:00.000Z"),
+      latestBarAt: new Date("2026-07-07T13:45:00.000Z"),
+      presentBarsSinceSignal: 0,
+    }),
+    5,
+  );
+});
+
+test("intraday bar age keeps the present-bar floor (never fresher than actual)", () => {
+  const barsSince = __signalMonitorInternalsForTests.signalMonitorBarsSinceSignal;
+  assert.equal(
+    barsSince({
+      timeframe: "5m",
+      signalAt: new Date("2026-07-07T15:00:00.000Z"),
+      latestBarAt: new Date("2026-07-07T15:10:00.000Z"),
+      presentBarsSinceSignal: 7,
+    }),
+    7,
   );
 });

@@ -10,8 +10,8 @@ import {
 
 // Defaults (base profile): overnightExitEnabled=false, overnightMinGainPct=20,
 // overnightRunnerGivebackPct=15, trailActivationPct=40, minLockedGainPct=10,
-// highQualityOvernightMinGainPct=-100. All prices below use entryPrice=100 so
-// return-pct math stays on clean integers.
+// highQualityOvernightMinGainPct=-100, highQualityOvernightRunnerGivebackPct=25.
+// All prices below use entryPrice=100 so return-pct math stays on clean integers.
 
 const disabledProfile = resolveSignalOptionsExecutionProfile({});
 const enabledProfile = resolveSignalOptionsExecutionProfile({
@@ -31,6 +31,11 @@ const highQualityBullishSignal: SignalOptionsEntryQuality = {
   mtfDirections: [],
   spreadPctOfMid: null,
   bullishRegime: true,
+};
+
+const standardQualityBullishSignal: SignalOptionsEntryQuality = {
+  ...highQualityBullishSignal,
+  tier: "standard",
 };
 
 test("overnightExitEnabled=false: no exit even at -50% mark return, markReturnPct still computed", () => {
@@ -113,4 +118,52 @@ test("conditional high-quality bullish signal lowers the min-gain bar to highQua
   assert.equal(result.conditionalExitPolicy?.overnightMinGainPct, -100);
   assert.equal(result.overnightTrailStopPrice, null);
   assert.equal(result.exitReason, null);
+});
+
+test("conditional high-quality bullish runner uses the wider overnight giveback knob", () => {
+  const result = computeSignalOptionsOvernightPositionExit({
+    entryPrice: 100,
+    peakPrice: 200,
+    markPrice: 152,
+    profile: conditionalHighQualityProfile,
+    signalQuality: highQualityBullishSignal,
+  });
+  assert.equal(result.conditionalExitPolicy?.overnightRunnerGivebackPct, 25);
+  assert.equal(result.overnightTrailStopPrice, 150);
+  assert.equal(result.exitReason, null);
+});
+
+test("conditional standard-quality runner keeps the standard overnight giveback", () => {
+  const result = computeSignalOptionsOvernightPositionExit({
+    entryPrice: 100,
+    peakPrice: 200,
+    markPrice: 152,
+    profile: conditionalHighQualityProfile,
+    signalQuality: standardQualityBullishSignal,
+  });
+  assert.equal(result.conditionalExitPolicy?.overnightRunnerGivebackPct, 15);
+  assert.equal(result.overnightTrailStopPrice, 170);
+  assert.equal(result.exitReason, "overnight_runner_stop");
+});
+
+test("gate off keeps high-quality bullish overnight behavior on the legacy standard trail", () => {
+  const gateOffProfile = resolveSignalOptionsExecutionProfile({
+    exitPolicy: {
+      overnightExitEnabled: true,
+      conditionalQualityExitsEnabled: false,
+      highQualityOvernightRunnerGivebackPct: 25,
+    },
+  });
+
+  const result = computeSignalOptionsOvernightPositionExit({
+    entryPrice: 100,
+    peakPrice: 200,
+    markPrice: 152,
+    profile: gateOffProfile,
+    signalQuality: highQualityBullishSignal,
+  });
+  assert.equal(result.conditionalExitPolicy?.overnightMinGainPct, 20);
+  assert.equal(result.conditionalExitPolicy?.overnightRunnerGivebackPct, 15);
+  assert.equal(result.overnightTrailStopPrice, 170);
+  assert.equal(result.exitReason, "overnight_runner_stop");
 });

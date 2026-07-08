@@ -79,32 +79,40 @@ function resolveConditionalExitPolicy(input: {
   signalQuality?: SignalOptionsEntryQuality | null;
 }) {
   const { profile, signalQuality } = input;
-  const enabled = profile.exitPolicy.conditionalQualityExitsEnabled;
+  const exitPolicy = profile.exitPolicy as typeof profile.exitPolicy & {
+    highQualityOvernightRunnerGivebackPct: number;
+  };
+  const enabled = exitPolicy.conditionalQualityExitsEnabled;
   const tier = signalQuality?.tier ?? "standard";
   const liquidityTier = signalQuality?.liquidityTier ?? "standard";
+  const highQualityBullish =
+    enabled && tier === "high" && signalQuality?.bullishRegime;
   return {
     earlyExitBars:
       enabled && tier === "low"
-        ? profile.exitPolicy.lowQualityEarlyExitBars
+        ? exitPolicy.lowQualityEarlyExitBars
         : enabled && tier === "high"
-          ? profile.exitPolicy.highQualityEarlyExitBars
-          : profile.exitPolicy.earlyExitBars,
+          ? exitPolicy.highQualityEarlyExitBars
+          : exitPolicy.earlyExitBars,
     earlyExitLossPct:
       enabled && tier === "low"
-        ? profile.exitPolicy.lowQualityEarlyExitLossPct
+        ? exitPolicy.lowQualityEarlyExitLossPct
         : enabled && tier === "high"
-          ? profile.exitPolicy.highQualityEarlyExitLossPct
-          : profile.exitPolicy.earlyExitLossPct,
+          ? exitPolicy.highQualityEarlyExitLossPct
+          : exitPolicy.earlyExitLossPct,
     trailGivebackPct:
       enabled && liquidityTier === "weak"
-        ? profile.exitPolicy.weakLiquidityTrailGivebackPct
+        ? exitPolicy.weakLiquidityTrailGivebackPct
         : enabled && liquidityTier === "strong"
-          ? profile.exitPolicy.strongLiquidityTrailGivebackPct
-          : profile.exitPolicy.trailGivebackPct,
+          ? exitPolicy.strongLiquidityTrailGivebackPct
+          : exitPolicy.trailGivebackPct,
     overnightMinGainPct:
-      enabled && tier === "high" && signalQuality?.bullishRegime
-        ? profile.exitPolicy.highQualityOvernightMinGainPct
-        : profile.exitPolicy.overnightMinGainPct,
+      highQualityBullish
+        ? exitPolicy.highQualityOvernightMinGainPct
+        : exitPolicy.overnightMinGainPct,
+    overnightRunnerGivebackPct: highQualityBullish
+      ? exitPolicy.highQualityOvernightRunnerGivebackPct
+      : exitPolicy.overnightRunnerGivebackPct,
   };
 }
 
@@ -401,6 +409,8 @@ export function computeSignalOptionsPositionStop(input: {
   entryGreeks?: SignalOptionsGreekSnapshot | null;
   spreadPctOfMid?: number | null;
   barsSinceEntry?: number | null;
+  quantity?: number | null;
+  scaleOutAlreadyFired?: boolean | null;
   signalQuality?: SignalOptionsEntryQuality | null;
   now?: Date | null;
   // Shadow-first gate: unless the caller passes the operator enforce flag, the wire
@@ -501,10 +511,26 @@ export function computeSignalOptionsPositionStop(input: {
     ? progressiveTrailStep != null
     : returnPct >= profile.exitPolicy.trailActivationPct;
   const trailActive = usesWireTrail || legacyTrailActive;
+  const scaleOutPolicy = profile.exitPolicy.scaleOut;
+  const quantity = finiteNumber(input.quantity);
+  const scaleOutArmed =
+    scaleOutPolicy.enabled &&
+    trailActive &&
+    input.scaleOutAlreadyFired !== true &&
+    quantity != null &&
+    quantity >= 2;
+  const exitQuantity = scaleOutArmed
+    ? Math.min(
+        quantity - 1,
+        Math.max(1, Math.round(quantity * (scaleOutPolicy.sellFractionPct / 100))),
+      )
+    : undefined;
   const minLockedGainPct =
     progressiveTrailStep?.minLockedGainPct ?? profile.exitPolicy.minLockedGainPct;
   const givebackPct =
-    progressiveTrailStep?.givebackPct ?? conditional.trailGivebackPct;
+    scaleOutPolicy.enabled && input.scaleOutAlreadyFired === true
+      ? scaleOutPolicy.runnerGivebackPct
+      : (progressiveTrailStep?.givebackPct ?? conditional.trailGivebackPct);
   // Per-share premium giveback: |delta| × |spot − wire| is already in premium dollars
   // per share (delta = premium move per $1 underlying move). No contract multiplier —
   // peakPrice/markPrice are per-share premiums throughout this function.
@@ -555,6 +581,8 @@ export function computeSignalOptionsPositionStop(input: {
     activeStopPrice,
     activeStopKind,
     trailActive,
+    scaleOutArmed,
+    exitQuantity,
     trailStopPrice,
     trailHasTakenOver,
     givebackPct,
@@ -638,12 +666,11 @@ export function computeSignalOptionsOvernightPositionExit(input: {
     entryPrice > 0 ? ((peakPrice - entryPrice) / entryPrice) * 100 : 0;
   const trailActive = peakReturnPct >= profile.exitPolicy.trailActivationPct;
   const overnightTrailStopPrice =
-    trailActive && profile.exitPolicy.overnightRunnerGivebackPct > 0
+    trailActive && conditional.overnightRunnerGivebackPct > 0
       ? Number(
           Math.max(
             entryPrice * (1 + profile.exitPolicy.minLockedGainPct / 100),
-            peakPrice *
-              (1 - profile.exitPolicy.overnightRunnerGivebackPct / 100),
+            peakPrice * (1 - conditional.overnightRunnerGivebackPct / 100),
           ).toFixed(2),
         )
       : null;

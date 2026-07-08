@@ -54,7 +54,10 @@ const mtfPresetPatch = (value) => {
   return {
     "entryGate.mtfAlignment.preset": preset.value,
     "entryGate.mtfAlignment.timeframes": timeframes,
-    "entryGate.mtfAlignment.requiredCount": Math.max(1, timeframes.length),
+    "entryGate.mtfAlignment.requiredCount": Math.max(
+      1,
+      Math.min(preset.requiredCount ?? 2, timeframes.length),
+    ),
   };
 };
 

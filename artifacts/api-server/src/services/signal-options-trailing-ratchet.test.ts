@@ -3,7 +3,10 @@ import test from "node:test";
 
 import { resolveSignalOptionsExecutionProfile } from "@workspace/backtest-core";
 
-import { computeSignalOptionsPositionStop } from "./signal-options-exit-policy";
+import {
+  computeSignalOptionsPositionStop,
+  type SignalOptionsEntryQuality,
+} from "./signal-options-exit-policy";
 
 // Trailing-stop ratchet math for real-money options positions. Base profile defaults
 // (resolveSignalOptionsExecutionProfile({})): hardStopPct -40, trailActivationPct 40,
@@ -13,6 +16,24 @@ import { computeSignalOptionsPositionStop } from "./signal-options-exit-policy";
 // boundary (40, 60, 100, ...) exact so the >= activation checks land where intended.
 
 const baseProfile = resolveSignalOptionsExecutionProfile({});
+
+const lowQualitySignal: SignalOptionsEntryQuality = {
+  tier: "low",
+  liquidityTier: "standard",
+  score: 0,
+  reasons: [],
+  adx: null,
+  mtfMatches: 0,
+  mtfDirections: [],
+  spreadPctOfMid: null,
+  bullishRegime: false,
+};
+
+const highQualitySignal: SignalOptionsEntryQuality = {
+  ...lowQualitySignal,
+  tier: "high",
+  bullishRegime: true,
+};
 
 test("below activation: peak +39% keeps the hard stop only", () => {
   const stop = computeSignalOptionsPositionStop({
@@ -223,4 +244,49 @@ test("early_invalidation fires only pre-trail once bars/loss thresholds are met,
     barsSinceEntry: 4,
   });
   assert.equal(barsNotMet.premiumExitReason, null);
+});
+
+test("conditional quality exits activate low/high early-invalidation tiers", () => {
+  const conditionalProfile = resolveSignalOptionsExecutionProfile({
+    exitPolicy: { conditionalQualityExitsEnabled: true },
+  });
+
+  const lowQuality = computeSignalOptionsPositionStop({
+    entryPrice: 100,
+    peakPrice: 102,
+    markPrice: 85,
+    profile: conditionalProfile,
+    barsSinceEntry: 4,
+    signalQuality: lowQualitySignal,
+  });
+  assert.equal(lowQuality.conditionalExitPolicy.earlyExitBars, 4);
+  assert.equal(lowQuality.conditionalExitPolicy.earlyExitLossPct, 15);
+  assert.equal(lowQuality.premiumExitReason, "early_invalidation");
+
+  const highQuality = computeSignalOptionsPositionStop({
+    entryPrice: 100,
+    peakPrice: 102,
+    markPrice: 75,
+    profile: conditionalProfile,
+    barsSinceEntry: 8,
+    signalQuality: highQualitySignal,
+  });
+  assert.equal(highQuality.conditionalExitPolicy.earlyExitBars, 8);
+  assert.equal(highQuality.conditionalExitPolicy.earlyExitLossPct, 25);
+  assert.equal(highQuality.premiumExitReason, "early_invalidation");
+});
+
+test("gate off ignores quality early-invalidation tiers", () => {
+  const withoutQuality = computeSignalOptionsPositionStop({
+    entryPrice: 100,
+    peakPrice: 102,
+    markPrice: 75,
+    profile: baseProfile,
+    barsSinceEntry: 8,
+    signalQuality: highQualitySignal,
+  });
+
+  assert.equal(withoutQuality.conditionalExitPolicy.earlyExitBars, 0);
+  assert.equal(withoutQuality.conditionalExitPolicy.earlyExitLossPct, 0);
+  assert.equal(withoutQuality.premiumExitReason, null);
 });

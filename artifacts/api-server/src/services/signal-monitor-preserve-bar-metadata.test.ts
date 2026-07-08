@@ -22,7 +22,7 @@ const barsSinceSignal =
 test("1d barsSinceSignal ages by trading days even when the persisted count is frozen at 0/1", () => {
   // A weeks-old daily signal whose latch froze barsSinceSignal at 0 must now age
   // out of the actionable window (barsSinceSignal <= 1). 2026-06-03 (Wed) ->
-  // 2026-06-30 (Tue) spans 19 trading weekdays.
+  // 2026-06-30 (Tue) spans 18 trading days because Juneteenth is closed.
   assert.equal(
     barsSinceSignal({
       timeframe: "1d",
@@ -30,7 +30,7 @@ test("1d barsSinceSignal ages by trading days even when the persisted count is f
       latestBarAt: new Date("2026-06-30T00:00:00.000Z"),
       presentBarsSinceSignal: 0,
     }),
-    19,
+    18,
   );
 
   // A genuinely recent daily signal stays inside the actionable window: a signal

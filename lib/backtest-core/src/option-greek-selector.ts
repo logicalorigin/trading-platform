@@ -1,3 +1,5 @@
+import { resolveNyseCalendarDay } from "@workspace/market-calendar";
+
 export type OptionGreekSelectorRight = "call" | "put";
 
 export type BlackScholesResult = {
@@ -254,16 +256,25 @@ export function timeToExpirationYears(input: {
   at: Date;
   expirationDate: Date;
 }): number {
-  const expirationCloseUtc = Date.UTC(
-    input.expirationDate.getUTCFullYear(),
-    input.expirationDate.getUTCMonth(),
-    input.expirationDate.getUTCDate(),
-    20,
-    0,
-    0,
-    0,
-  );
-  return Math.max(0, (expirationCloseUtc - input.at.getTime()) / (365 * 24 * 60 * 60 * 1000));
+  // The option expires at the 16:00 America/New_York regular close on its
+  // expiration day. 16:00 ET is 20:00 UTC only under EDT; under EST it is 21:00
+  // UTC, so the old hardcoded 20:00 UTC ran the horizon 1h short every winter.
+  // Resolve the real DST-correct close via the NYSE calendar (also early-close
+  // aware: 13:00 ET on half-days) instead of hand-rolling a DST rule. `expirationDate`
+  // is UTC-midnight of the expiry day (see providers/lib toDate), so its getUTC*
+  // parts name that day; anchor on UTC noon of that day — always inside the same
+  // NY calendar day — so the calendar lookup can't slip to the prior day.
+  const year = input.expirationDate.getUTCFullYear();
+  const month = input.expirationDate.getUTCMonth();
+  const day = input.expirationDate.getUTCDate();
+  const expiryNoonUtc = Date.UTC(year, month, day, 12, 0, 0, 0);
+  const regularCloseAt = resolveNyseCalendarDay(expiryNoonUtc)?.regularCloseAt;
+  const closeMs = regularCloseAt
+    ? Date.parse(regularCloseAt)
+    : // Defensive fallback for a non-trading expiry day (options are not listed to
+      // expire on one, so this is unreached in practice): the prior 20:00 UTC.
+      Date.UTC(year, month, day, 20, 0, 0, 0);
+  return Math.max(0, (closeMs - input.at.getTime()) / (365 * 24 * 60 * 60 * 1000));
 }
 
 export function computeOptionGreeksFromPrice(input: {

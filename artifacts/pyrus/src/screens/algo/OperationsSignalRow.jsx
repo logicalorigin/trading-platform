@@ -70,6 +70,7 @@ import {
   formatQuoteGreeksSummary,
   formatQuoteSummary,
   resolveCandidateGateDisplay,
+  resolveCandidateGateWorkOut,
   resolveCandidateSyncDisplay,
   resolveDisplayCurrentPrice,
   resolveSignalAge,
@@ -519,6 +520,18 @@ const resolveSelectionStageDisplay = ({
   ).trim();
 
   if (!Object.keys(candidateRecord).length) {
+    // A terminally blocked signal (e.g. "Signal Too Old") will never get a
+    // candidate — showing "Queued / pending" forever is a lie. Let the
+    // blocker verdict win, matching the contract/quote columns.
+    if (hasBlockerDisplay(blocker)) {
+      return {
+        main: "Blocked",
+        detail: blocker,
+        tone: CSS_COLOR.red,
+        Icon: Ban,
+        motionState: "blocked",
+      };
+    }
     return {
       main: "Queued",
       detail: "action candidate pending",
@@ -1725,6 +1738,16 @@ const SignalHeroCell = ({
               minWidth: 0,
               overflow: "hidden",
               textOverflow: "ellipsis",
+              // Raw price move: up is green, down is red (matches the sparkline and
+              // the day-move pill above). resolveSignalMove no longer direction-signs.
+              color:
+                signalMove?.label && signalMove.label !== MISSING_VALUE
+                  ? Number(signalMove.pct) > 0
+                    ? CSS_COLOR.green
+                    : Number(signalMove.pct) < 0
+                      ? CSS_COLOR.red
+                      : undefined
+                  : undefined,
             }}
           >
             {[
@@ -2430,8 +2453,26 @@ export const OperationsSignalRow = ({
             tone: CSS_COLOR.amber,
           }
         : resolveCandidateGateDisplay(candidate);
-  const sync = resolveCandidateSyncDisplay(candidate);
-  const statusMeta = statusPillMeta(signalRecord, candidate, blocker);
+  // A row whose live signal is gone reads "NO SIGNAL" in the signal cell
+  // (signalFreshnessLabel), but candidate matching fail-opens for signal-less
+  // rows and attaches a stale historical candidate. Gate suppression on the
+  // SAME predicate the signal cell shows so trending (direction present) and
+  // market-idle rows keep their normal candidate display.
+  const rowHasNoLiveSignal = signalFreshnessLabel(signalRecord) === "NO SIGNAL";
+  // No candidate will ever exist for a blocked signal — don't render the sync
+  // cell as eternally "Pending / shadow link pending" next to a terminal verdict.
+  const sync =
+    rowHasNoLiveSignal ||
+    (!Object.keys(asRecord(candidate)).length && blocker !== MISSING_VALUE)
+      ? {
+          label: "Not linked",
+          detail: rowHasNoLiveSignal ? "No Signal" : blocker,
+          tone: CSS_COLOR.textDim,
+        }
+      : resolveCandidateSyncDisplay(candidate);
+  const statusMeta = rowHasNoLiveSignal
+    ? { label: "No Signal", tone: CSS_COLOR.textDim, Icon: MinusCircle }
+    : statusPillMeta(signalRecord, candidate, blocker);
   const latest = candidateLatestActivityLabel(candidate);
   const latestTimeline = latestTimelineItem(candidate);
   const latestTime = latestTimeline.occurredAt
@@ -2439,6 +2480,26 @@ export const OperationsSignalRow = ({
     : signalRecord.signalAt
       ? formatRelativeTimeShort(signalRecord.signalAt)
       : MISSING_VALUE;
+  // Working-out of the MTF entry gate beside the judged verdict (D2). The gate
+  // numbers are the server's real result (candidate.entryGate); the age is the
+  // candidate's newest timeline occurredAt (latestTime). A created candidate
+  // (no blocker, status not skipped) means the gate cleared — gate failure always
+  // skips before creation — so it reads "gate passed".
+  const gateWorkOut = resolveCandidateGateWorkOut(candidate);
+  const candidateActionStatus = String(
+    candidate?.actionStatus || candidate?.status || "",
+  ).toLowerCase();
+  const gatePassed =
+    gateWorkOut === "gate passed" ||
+    (gateWorkOut === "" &&
+      candidateBlocker === MISSING_VALUE &&
+      Object.keys(asRecord(candidate)).length > 0 &&
+      (!candidateActionStatus || candidateActionStatus === "candidate"));
+  const gateBlockedWorkOut =
+    gateWorkOut && gateWorkOut !== "gate passed" ? gateWorkOut : "";
+  const gateWorkOutDetail = gateBlockedWorkOut
+    ? compactJoin([gateBlockedWorkOut, latestTime])
+    : "";
   const underlyingPriceValue = resolveUnderlyingPrice(
     signalRecord,
     tickerSnapshot,
@@ -2905,10 +2966,27 @@ export const OperationsSignalRow = ({
     ),
     gate: (
       <DataCell
-        value={gate.category === "clear" ? MISSING_VALUE : gate.label}
-        detail={gate.category === "clear" ? MISSING_VALUE : gate.detail}
+        value={
+          gate.category === "clear"
+            ? gatePassed
+              ? "Gate passed"
+              : MISSING_VALUE
+            : gate.label
+        }
+        detail={
+          gate.category === "clear"
+            ? gatePassed
+              ? latestTime
+              : MISSING_VALUE
+            : compactJoin([gate.detail, gateWorkOutDetail])
+        }
         tone={gate.tone}
-        titleValue={compactJoin([gate.label, gate.detail, blocker])}
+        titleValue={compactJoin([
+          gate.category === "clear" && gatePassed ? "Gate passed" : gate.label,
+          gate.detail,
+          gateWorkOutDetail,
+          blocker,
+        ])}
         motionState={gateMotionState}
       />
     ),
@@ -2987,7 +3065,7 @@ export const OperationsSignalRow = ({
       key: "gate",
       label: "Gate",
       cell: desktopCells.gate,
-      visibleWhen: gate.category !== "clear",
+      visibleWhen: gate.category !== "clear" || gatePassed,
     },
     { key: "matrix", label: "Matrix", cell: desktopCells.matrix },
   ].filter(

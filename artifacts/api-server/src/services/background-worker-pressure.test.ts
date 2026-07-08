@@ -87,11 +87,10 @@ test("signal-options worker degrades to a positions-only scan under high resourc
 
   const snapshot = worker.getRuntimeSnapshot();
   assert.equal(maintenanceCount, 1);
-  // Degrade, don't pause: the scan still runs (so open positions keep being
-  // marked/exited and the ops table stays fed), but with skipEntryWork so no
-  // heavy entry work is done. Fully pausing left positions unmanaged under load.
+  // Owner directive 2026-07-07: entries never pause under pressure. The scan
+  // runs in full — pressure recovery comes from demand fixes, not trading stops.
   assert.equal(scanCalls.length, 1);
-  assert.equal(scanCalls[0]?.["skipEntryWork"], true);
+  assert.equal(scanCalls[0]?.["skipEntryWork"], false);
   assert.equal(scanCalls[0]?.["source"], "worker");
   assert.equal(snapshot.scanEnabled, true);
   assert.equal(snapshot.deploymentCount, 1);
@@ -290,13 +289,49 @@ test("overnight spot worker degrades to an exit-only scan under high resource pr
   await worker.runOnce();
 
   const snapshot = worker.getRuntimeSnapshot();
-  // Degrade, not pause: the scan runs (so open longs can still be exited) with
-  // skipEntryWork so entry (buy) work is shed. RTH still fully pauses elsewhere.
+  // Owner directive 2026-07-07: entries never pause under pressure — the worker
+  // no longer sets skipEntryWork at all. RTH still fully pauses elsewhere.
   assert.equal(scanCalls.length, 1);
-  assert.equal(scanCalls[0]?.["skipEntryWork"], true);
+  assert.equal(scanCalls[0]?.["skipEntryWork"], undefined);
   assert.notEqual(
     snapshot.deployments[0]?.lastSkipReason,
     "resource_pressure",
+  );
+
+  __resetApiResourcePressureForTests();
+});
+
+test("entry work runs on every tick under sustained hard block (no pressure gate)", async () => {
+  const pressure = highFiniteResourcePressureSnapshot();
+  const scanCalls: Record<string, unknown>[] = [];
+  let nowMs = new Date("2026-06-09T18:41:00.000Z").getTime();
+
+  const worker = createSignalOptionsWorker({
+    listDeployments: async () => [signalOptionsDeployment()],
+    scanDeployment: async (input) => {
+      scanCalls.push(input as Record<string, unknown>);
+      return {};
+    },
+    runMaintenance: async () => ({}),
+    getResourcePressure: () => pressure,
+    acquireTickLock: async () => async () => {},
+    now: () => new Date(nowMs),
+    logger: noopLogger,
+    scanTimeoutMs: null,
+    subscribeCockpitChanges: () => () => {},
+  });
+
+  for (let tick = 0; tick < 21; tick += 1) {
+    await worker.runOnce();
+    nowMs += 16_000;
+  }
+
+  assert.equal(scanCalls.length, 21);
+  // Owner directive 2026-07-07: the entry gate and its starvation floor are
+  // removed — every tick runs full entry work even under sustained hard block.
+  assert.equal(
+    scanCalls.filter((call) => call["skipEntryWork"] === false).length,
+    21,
   );
 
   __resetApiResourcePressureForTests();

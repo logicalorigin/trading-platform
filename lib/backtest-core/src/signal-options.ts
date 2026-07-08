@@ -36,6 +36,23 @@ export type SignalOptionsGreekPositionManagementPolicy = {
   enabled: boolean;
 };
 
+export type SignalOptionsScaleOutPolicy = {
+  enabled: boolean;
+  sellFractionPct: number;
+  runnerGivebackPct: number;
+};
+
+export type SignalOptionsOppositeSignalDualConfirmPolicy = {
+  enabled: boolean;
+  firstBarSellFractionPct: number;
+};
+
+export type SignalOptionsReEntryWatchPolicy = {
+  enabled: boolean;
+  watchWindowBars: number;
+  maxReEntriesPerSignal: number;
+};
+
 export type SignalOptionsGreekSelectorMode = "off" | "shadow" | "live" | "all";
 export type SignalOptionsMtfTimeframe = "1m" | "2m" | "5m" | "15m" | "1h" | "1d";
 export type SignalOptionsMtfPreset =
@@ -111,6 +128,9 @@ export type SignalOptionsExecutionProfile = {
     trailGivebackPct: number;
     progressiveTrailEnabled: boolean;
     progressiveTrailSteps: SignalOptionsProgressiveTrailStep[];
+    scaleOut: SignalOptionsScaleOutPolicy;
+    oppositeSignalDualConfirm: SignalOptionsOppositeSignalDualConfirmPolicy;
+    reEntryWatch: SignalOptionsReEntryWatchPolicy;
     wireGreekTrail: SignalOptionsWireGreekTrailPolicy;
     greekPositionManagement: SignalOptionsGreekPositionManagementPolicy;
     flipOnOppositeSignal: boolean;
@@ -119,6 +139,7 @@ export type SignalOptionsExecutionProfile = {
     overnightExitEnabled: boolean;
     overnightMinGainPct: number;
     overnightRunnerGivebackPct: number;
+    highQualityOvernightRunnerGivebackPct: number;
     conditionalQualityExitsEnabled: boolean;
     lowQualityEarlyExitBars: number;
     lowQualityEarlyExitLossPct: number;
@@ -232,10 +253,10 @@ export const defaultSignalOptionsExecutionProfile: SignalOptionsExecutionProfile
     entryGate: {
       mtfAlignment: {
         enabled: true,
-        // Matches needed among the watched timeframes, not unanimity: the
-        // events source is sparse on higher TFs, so requiring all frames is a
-        // de-facto entry freeze. The control panel dial overrides this.
-        requiredCount: 2,
+        // Owner decision 2026-07-08: default to FULL alignment over the selected
+        // frames (all must agree). The control panel's MTF REQUIRED COUNT dial
+        // overrides this to loosen to n-of-N when desired.
+        requiredCount: signalOptionsDefaultMtfTimeframes.length,
         timeframes: [...signalOptionsDefaultMtfTimeframes],
         preset: "custom",
       },
@@ -274,6 +295,20 @@ export const defaultSignalOptionsExecutionProfile: SignalOptionsExecutionProfile
       trailGivebackPct: 25,
       progressiveTrailEnabled: false,
       progressiveTrailSteps: [],
+      scaleOut: {
+        enabled: false,
+        sellFractionPct: 60,
+        runnerGivebackPct: 30,
+      },
+      oppositeSignalDualConfirm: {
+        enabled: false,
+        firstBarSellFractionPct: 50,
+      },
+      reEntryWatch: {
+        enabled: false,
+        watchWindowBars: 6,
+        maxReEntriesPerSignal: 1,
+      },
       wireGreekTrail: {
         enabled: false,
         requireFreshGreeks: true,
@@ -298,6 +333,7 @@ export const defaultSignalOptionsExecutionProfile: SignalOptionsExecutionProfile
       overnightExitEnabled: false,
       overnightMinGainPct: 20,
       overnightRunnerGivebackPct: 15,
+      highQualityOvernightRunnerGivebackPct: 25,
       conditionalQualityExitsEnabled: false,
       lowQualityEarlyExitBars: 4,
       lowQualityEarlyExitLossPct: 15,
@@ -365,6 +401,20 @@ export const tunedSignalOptionsExecutionProfilePatch = {
     trailGivebackPct: 20,
     progressiveTrailEnabled: true,
     progressiveTrailSteps: aggressiveSignalOptionsProgressiveTrailSteps,
+    scaleOut: {
+      enabled: false,
+      sellFractionPct: 60,
+      runnerGivebackPct: 30,
+    },
+    oppositeSignalDualConfirm: {
+      enabled: false,
+      firstBarSellFractionPct: 50,
+    },
+    reEntryWatch: {
+      enabled: false,
+      watchWindowBars: 6,
+      maxReEntriesPerSignal: 1,
+    },
     wireGreekTrail: {
       enabled: true,
       requireFreshGreeks: true,
@@ -383,6 +433,9 @@ export const tunedSignalOptionsExecutionProfilePatch = {
     overnightExitEnabled: true,
     overnightMinGainPct: 10,
     overnightRunnerGivebackPct: 15,
+    highQualityOvernightRunnerGivebackPct: 25,
+    // P3 2026-07-07: high-quality bullish runners carry overnight on wider trails by default.
+    conditionalQualityExitsEnabled: true,
     earlyExitBars: 8,
     earlyExitLossPct: 25,
   },
@@ -554,6 +607,76 @@ function progressiveTrailSteps(
     .sort((left, right) => left.activationPct - right.activationPct);
 
   return steps.length ? steps : fallback;
+}
+
+function scaleOutPolicy(
+  value: unknown,
+  root: Record<string, unknown>,
+  fallback: SignalOptionsScaleOutPolicy,
+): SignalOptionsScaleOutPolicy {
+  const source = asRecord(value);
+  return {
+    enabled: booleanValue(source.enabled ?? root.scaleOutEnabled, fallback.enabled),
+    sellFractionPct: finiteNumber(
+      source.sellFractionPct ?? root.scaleOutSellFractionPct,
+      fallback.sellFractionPct,
+      1,
+      99,
+    ),
+    runnerGivebackPct: finiteNumber(
+      source.runnerGivebackPct ?? root.scaleOutRunnerGivebackPct,
+      fallback.runnerGivebackPct,
+      0,
+      100,
+    ),
+  };
+}
+
+function oppositeSignalDualConfirmPolicy(
+  value: unknown,
+  root: Record<string, unknown>,
+  fallback: SignalOptionsOppositeSignalDualConfirmPolicy,
+): SignalOptionsOppositeSignalDualConfirmPolicy {
+  const source = asRecord(value);
+  return {
+    enabled: booleanValue(
+      source.enabled ?? root.oppositeSignalDualConfirmEnabled,
+      fallback.enabled,
+    ),
+    firstBarSellFractionPct: finiteNumber(
+      source.firstBarSellFractionPct ??
+        root.oppositeSignalDualConfirmFirstBarSellFractionPct,
+      fallback.firstBarSellFractionPct,
+      1,
+      99,
+    ),
+  };
+}
+
+function reEntryWatchPolicy(
+  value: unknown,
+  root: Record<string, unknown>,
+  fallback: SignalOptionsReEntryWatchPolicy,
+): SignalOptionsReEntryWatchPolicy {
+  const source = asRecord(value);
+  return {
+    enabled: booleanValue(
+      source.enabled ?? root.reEntryWatchEnabled,
+      fallback.enabled,
+    ),
+    watchWindowBars: finiteInteger(
+      source.watchWindowBars ?? root.reEntryWatchWindowBars,
+      fallback.watchWindowBars,
+      1,
+      100,
+    ),
+    maxReEntriesPerSignal: finiteInteger(
+      source.maxReEntriesPerSignal ?? root.reEntryWatchMaxReEntriesPerSignal,
+      fallback.maxReEntriesPerSignal,
+      1,
+      20,
+    ),
+  };
 }
 
 const SIGNAL_OPTIONS_WIRE_TRAIL_RUNGS: readonly SignalOptionsWireTrailRung[] = [
@@ -811,16 +934,14 @@ export function resolveSignalOptionsExecutionProfile(
           mtfAlignment.enabled,
           defaults.entryGate.mtfAlignment.enabled,
         ),
-        // Unset falls back to the profile default (confirmation count, not
-        // unanimity). Falling back to timeframes.length made every unset
-        // deployment require ALL frames to agree — a de-facto entry freeze
-        // once the gate clamps to the frames actually present.
+        // Owner decision 2026-07-08: an unset requiredCount defaults to FULL
+        // alignment (all selected frames must agree), so the STA table and the
+        // bot's entry gate only act on fully-aligned signals. An explicitly
+        // stored dial (from the control panel) is still honored and clamped to
+        // the frames present. Loosen by lowering the panel's MTF REQUIRED COUNT.
         requiredCount: finiteInteger(
           mtfAlignment.requiredCount,
-          Math.min(
-            defaults.entryGate.mtfAlignment.requiredCount,
-            Math.max(1, mtfTimeframes.length),
-          ),
+          Math.max(1, mtfTimeframes.length),
           1,
           Math.max(1, mtfTimeframes.length),
         ),
@@ -911,6 +1032,21 @@ export function resolveSignalOptionsExecutionProfile(
         exitPolicy.progressiveTrailSteps ?? root.progressiveTrailSteps,
         defaults.exitPolicy.progressiveTrailSteps,
       ),
+      scaleOut: scaleOutPolicy(
+        exitPolicy.scaleOut ?? root.scaleOut,
+        root,
+        defaults.exitPolicy.scaleOut,
+      ),
+      oppositeSignalDualConfirm: oppositeSignalDualConfirmPolicy(
+        exitPolicy.oppositeSignalDualConfirm ?? root.oppositeSignalDualConfirm,
+        root,
+        defaults.exitPolicy.oppositeSignalDualConfirm,
+      ),
+      reEntryWatch: reEntryWatchPolicy(
+        exitPolicy.reEntryWatch ?? root.reEntryWatch,
+        root,
+        defaults.exitPolicy.reEntryWatch,
+      ),
       wireGreekTrail: wireGreekTrailPolicy(
         exitPolicy.wireGreekTrail ?? root.wireGreekTrail,
         root,
@@ -952,6 +1088,13 @@ export function resolveSignalOptionsExecutionProfile(
         exitPolicy.overnightRunnerGivebackPct ??
           root.overnightRunnerGivebackPct,
         defaults.exitPolicy.overnightRunnerGivebackPct,
+        0,
+        100,
+      ),
+      highQualityOvernightRunnerGivebackPct: finiteNumber(
+        exitPolicy.highQualityOvernightRunnerGivebackPct ??
+          root.highQualityOvernightRunnerGivebackPct,
+        defaults.exitPolicy.highQualityOvernightRunnerGivebackPct,
         0,
         100,
       ),

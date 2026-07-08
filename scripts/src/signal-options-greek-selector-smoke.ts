@@ -2,6 +2,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { pathToFileURL } from "node:url";
+import { scoreOptionGreekCandidate } from "@workspace/backtest-core";
 import { pool } from "@workspace/db";
 import {
   runSignalOptionsGreekSelectorSmoke,
@@ -9,6 +10,17 @@ import {
   type SignalOptionsGreekSelectorSmokeResult,
 } from "../../artifacts/api-server/src/services/signal-options-automation";
 import { SIGNAL_OPTIONS_WORKER_ADVISORY_LOCK_KEY } from "../../artifacts/api-server/src/services/signal-options-worker";
+import {
+  lookupHistoricalGreeks,
+  readGexHistoricalGreeksToleranceMs,
+  type GexHistoricalGreeksMatch,
+  type HistoricalGreeksLookupResult,
+} from "./gex-historical-greeks";
+
+// The shadow backfill replays historical bars and refuses to run unless bar
+// evaluation is opted in. This smoke is a historical replay, so enable it for
+// this process only. `??=` lets a caller override.
+process.env["PYRUS_SIGNAL_MONITOR_BAR_EVALUATION_ENABLED"] ??= "1";
 
 type DeploymentRow = {
   id: string;
@@ -27,8 +39,26 @@ type Config = {
   riskFreeRate: number;
   dividendYield: number;
   symbols: string[];
+  gexToleranceMs: number;
   lockWaitMs: number;
   progress: boolean;
+};
+
+type GreekSourceMetadata =
+  | {
+      source: "gex_snapshot";
+      computedAt: string;
+      ageMs: number;
+      snapshotId: string;
+      sourceStatus: string | null;
+    }
+  | {
+      source: "bs_reconstruction";
+      reason: Exclude<HistoricalGreeksLookupResult, GexHistoricalGreeksMatch>["reason"];
+    };
+
+type SmokeCandidateWithGreekSource = SignalOptionsGreekSelectorSmokeCandidate & {
+  greekSource?: GreekSourceMetadata;
 };
 
 function argValue(name: string): string | null {
@@ -50,6 +80,11 @@ function readNumber(value: string | undefined | null, fallback: number): number 
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
+function finiteNumber(value: unknown): number | null {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
 function readPositiveInteger(
   value: string | undefined | null,
   fallback: number | null,
@@ -57,6 +92,16 @@ function readPositiveInteger(
 ): number | null {
   const parsed = Number(value);
   if (!Number.isFinite(parsed) || parsed < 1) return fallback;
+  return Math.min(max, Math.floor(parsed));
+}
+
+function readNonNegativeInteger(
+  value: string | undefined | null,
+  fallback: number,
+  max: number,
+): number {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < 0) return fallback;
   return Math.min(max, Math.floor(parsed));
 }
 
@@ -108,6 +153,12 @@ function readConfig(): Config {
         ?.split(",")
         .map((symbol) => symbol.trim().toUpperCase())
         .filter(Boolean) ?? [],
+    gexToleranceMs: readNonNegativeInteger(
+      argValue("gex-tolerance-ms") ??
+        process.env["SIGNAL_OPTIONS_GEX_GREEKS_TOLERANCE_MS"],
+      readGexHistoricalGreeksToleranceMs(),
+      24 * 60 * 60_000,
+    ),
     lockWaitMs: readPositiveInteger(
       argValue("lock-wait-ms") ?? process.env["SIGNAL_OPTIONS_GREEK_SMOKE_LOCK_WAIT_MS"],
       0,
@@ -127,6 +178,10 @@ function numberCell(value: number | null | undefined, digits = 2): string {
 
 function percentCell(value: number | null | undefined, digits = 1): string {
   return value == null || !Number.isFinite(value) ? "-" : `${(value * 100).toFixed(digits)}%`;
+}
+
+function minutesCell(value: number | null | undefined): string {
+  return value == null || !Number.isFinite(value) ? "-" : `${(value / 60_000).toFixed(1)}m`;
 }
 
 function cell(value: unknown): string {
@@ -151,6 +206,46 @@ function outcomeLabel(
   if (outcome === "closed_trade") return "Closed";
   if (outcome === "end_of_window_mark") return "EOD mark";
   return "Unmarked";
+}
+
+function candidateGreekSource(
+  candidate: SignalOptionsGreekSelectorSmokeCandidate | null,
+): GreekSourceMetadata | null {
+  return (candidate as SmokeCandidateWithGreekSource | null)?.greekSource ?? null;
+}
+
+function greekSourceLabel(
+  candidate: SignalOptionsGreekSelectorSmokeCandidate | null,
+): string {
+  return candidateGreekSource(candidate)?.source ?? "bs_reconstruction";
+}
+
+function greekSourceAgeMs(
+  candidate: SignalOptionsGreekSelectorSmokeCandidate | null,
+): number | null {
+  const source = candidateGreekSource(candidate);
+  return source?.source === "gex_snapshot" ? source.ageMs : null;
+}
+
+function selectedGexSnapshotCount(result: SignalOptionsGreekSelectorSmokeResult): number {
+  return result.rows.filter(
+    (row) => candidateGreekSource(row.selected)?.source === "gex_snapshot",
+  ).length;
+}
+
+function candidateGexSnapshotCount(result: SignalOptionsGreekSelectorSmokeResult): number {
+  const seen = new Set<string>();
+  let count = 0;
+  for (const row of result.rows) {
+    for (const candidate of [row.selected, ...row.topCandidates]) {
+      if (!candidate) continue;
+      const key = `${row.candidateId}:${candidate.ticker}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      if (candidateGreekSource(candidate)?.source === "gex_snapshot") count += 1;
+    }
+  }
+  return count;
 }
 
 function noteCounts(result: SignalOptionsGreekSelectorSmokeResult): Array<[string, number]> {
@@ -190,6 +285,8 @@ export function renderGreekSelectorSmokeMarkdown(
     money(row.underlyingPrice),
     legacyContractLabel(row.legacy),
     contractLabel(row.selected),
+    greekSourceLabel(row.selected),
+    minutesCell(greekSourceAgeMs(row.selected)),
     numberCell(row.selected?.score.total, 1),
     row.selected ? percentCell(row.selected.greeks.impliedVolatility) : "-",
     row.selected ? numberCell(row.selected.greeks.delta, 3) : "-",
@@ -214,7 +311,8 @@ export function renderGreekSelectorSmokeMarkdown(
     `- Max candidates per signal: ${result.config.maxCandidatesPerSignal}`,
     `- Risk-free rate: ${percentCell(result.config.riskFreeRate)}`,
     `- Dividend yield: ${percentCell(result.config.dividendYield)}`,
-    "- Greek source: Black-Scholes reconstruction from historical option entry prices",
+    `- GEX tolerance: ${minutesCell(finiteNumber((result.config as Record<string, unknown>)["gexToleranceMs"]))}`,
+    "- Greek source: `gex_snapshots` exact-contract lookup when available; Black-Scholes reconstruction fallback",
     "",
     "## Summary",
     "",
@@ -232,6 +330,8 @@ export function renderGreekSelectorSmokeMarkdown(
     `| Rows with Greek selection | ${summary.rowsWithSelection} |`,
     `| Rows with marked PnL | ${summary.rowsWithMarkedPnl} |`,
     `| Candidates scored | ${summary.candidatesScored} |`,
+    `| Visible candidates with gex_snapshot greeks | ${candidateGexSnapshotCount(result)} |`,
+    `| Selected rows with gex_snapshot greeks | ${selectedGexSnapshotCount(result)} |`,
     `| Candidates skipped | ${summary.candidatesSkipped} |`,
     `| Rows without selection | ${summary.rowsWithoutSelection} |`,
     "",
@@ -244,8 +344,8 @@ export function renderGreekSelectorSmokeMarkdown(
     "",
     "## Per-Signal Results",
     "",
-    "| Signal At | Symbol | Side | Outcome | Underlying | Legacy Contract | Greek Contract | Score | IV | Delta | Gamma | Theta | Legacy PnL | Greek PnL | Delta | Scored/Total |",
-    "| --- | --- | --- | --- | ---: | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+    "| Signal At | Symbol | Side | Outcome | Underlying | Legacy Contract | Greek Contract | Source | Source Age | Score | IV | Delta | Gamma | Theta | Legacy PnL | Greek PnL | Delta | Scored/Total |",
+    "| --- | --- | --- | --- | ---: | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
     ...rows.map((row) => `| ${row.map(cell).join(" | ")} |`),
     "",
     "## Notes",
@@ -268,6 +368,154 @@ export function renderGreekSelectorSmokeMarkdown(
     );
   }
   return `${lines.join("\n")}\n`;
+}
+
+function summarizeGreekSelectorSmokeRows(
+  actionCandidates: number,
+  legacyClosedTrades: number,
+  rows: SignalOptionsGreekSelectorSmokeResult["rows"],
+): SignalOptionsGreekSelectorSmokeResult["summary"] {
+  const comparableRows = rows.filter((row) => row.pnlDelta != null);
+  const markedRows = rows.filter((row) => row.selected?.pnl != null);
+  const totalLegacyPnl = comparableRows.reduce(
+    (sum, row) => sum + (row.legacy.pnl ?? 0),
+    0,
+  );
+  const totalSelectedPnl = comparableRows.reduce(
+    (sum, row) => sum + (row.selected?.pnl ?? 0),
+    0,
+  );
+  const totalSelectedMarkedPnl = markedRows.reduce(
+    (sum, row) => sum + (row.selected?.pnl ?? 0),
+    0,
+  );
+  return {
+    actionCandidates,
+    reportedSignals: rows.length,
+    legacyClosedTrades,
+    comparedSignals: comparableRows.length,
+    changedSelections: rows.filter((row) => {
+      const legacyTicker = row.legacy.ticker;
+      const selectedTicker = row.selected?.ticker ?? null;
+      return Boolean(legacyTicker && selectedTicker && legacyTicker !== selectedTicker);
+    }).length,
+    totalLegacyPnl: Number(totalLegacyPnl.toFixed(2)),
+    totalSelectedPnl: Number(totalSelectedPnl.toFixed(2)),
+    totalPnlDelta: Number((totalSelectedPnl - totalLegacyPnl).toFixed(2)),
+    totalSelectedMarkedPnl: Number(totalSelectedMarkedPnl.toFixed(2)),
+    candidatesScored: rows.reduce((sum, row) => sum + row.candidatesScored, 0),
+    candidatesSkipped: rows.reduce((sum, row) => sum + row.candidatesSkipped, 0),
+    skipReasons: rows.reduce<Record<string, number>>((counts, row) => {
+      for (const [reason, count] of Object.entries(row.skipReasons)) {
+        counts[reason] = (counts[reason] ?? 0) + count;
+      }
+      return counts;
+    }, {}),
+    rowsWithSelection: rows.filter((row) => row.selected).length,
+    rowsWithMarkedPnl: markedRows.length,
+    rowsWithoutSelection: rows.filter((row) => !row.selected).length,
+  };
+}
+
+function uniqueVisibleCandidates(
+  row: SignalOptionsGreekSelectorSmokeResult["rows"][number],
+): SignalOptionsGreekSelectorSmokeCandidate[] {
+  const seen = new Set<string>();
+  const candidates: SignalOptionsGreekSelectorSmokeCandidate[] = [];
+  for (const candidate of [row.selected, ...row.topCandidates]) {
+    if (!candidate) continue;
+    const key = `${candidate.ticker}:${candidate.entryAt}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    candidates.push(candidate);
+  }
+  return candidates;
+}
+
+function applyGreekLookupToCandidate(input: {
+  row: SignalOptionsGreekSelectorSmokeResult["rows"][number];
+  candidate: SignalOptionsGreekSelectorSmokeCandidate;
+  lookup: HistoricalGreeksLookupResult;
+}) {
+  const candidateWithSource = input.candidate as SmokeCandidateWithGreekSource;
+  if (input.lookup.source === "gex_snapshot") {
+    const spot = input.row.underlyingPrice ?? input.lookup.spot;
+    input.candidate.greeks = input.lookup.greeks;
+    if (spot != null && Number.isFinite(spot)) {
+      input.candidate.score = scoreOptionGreekCandidate({
+        right: input.candidate.right,
+        spot,
+        strike: input.candidate.strike,
+        entryPrice: input.candidate.entryPrice,
+        volume: input.candidate.volume,
+        hasExitPrice: input.candidate.exitPrice != null,
+        greeks: input.lookup.greeks,
+      });
+    }
+    candidateWithSource.greekSource = {
+      source: "gex_snapshot",
+      computedAt: input.lookup.computedAt,
+      ageMs: input.lookup.ageMs,
+      snapshotId: input.lookup.snapshotId,
+      sourceStatus: input.lookup.sourceStatus,
+    };
+    return;
+  }
+  candidateWithSource.greekSource = {
+    source: "bs_reconstruction",
+    reason: input.lookup.reason,
+  };
+}
+
+async function applyGexHistoricalGreeks(
+  result: SignalOptionsGreekSelectorSmokeResult,
+  config: Pick<Config, "gexToleranceMs" | "progress">,
+) {
+  let lookupCount = 0;
+  let matchCount = 0;
+  for (const row of result.rows) {
+    for (const candidate of uniqueVisibleCandidates(row)) {
+      lookupCount += 1;
+      const lookup = await lookupHistoricalGreeks({
+        symbol: row.symbol,
+        expirationDate: candidate.expirationDate,
+        strike: candidate.strike,
+        right: candidate.right,
+        timestamp: new Date(candidate.entryAt),
+        toleranceMs: config.gexToleranceMs,
+        fallbackGreeks: candidate.greeks,
+      });
+      if (lookup.source === "gex_snapshot") matchCount += 1;
+      applyGreekLookupToCandidate({ row, candidate, lookup });
+    }
+    row.topCandidates = row.topCandidates
+      .slice()
+      .sort(
+        (left, right) =>
+          right.score.total - left.score.total ||
+          (right.pnl ?? Number.NEGATIVE_INFINITY) -
+            (left.pnl ?? Number.NEGATIVE_INFINITY) ||
+          left.ticker.localeCompare(right.ticker),
+      );
+    row.selected = row.topCandidates[0] ?? row.selected;
+    row.pnlDelta =
+      row.selected?.pnl != null && row.legacy.pnl != null
+        ? Number((row.selected.pnl - row.legacy.pnl).toFixed(2))
+        : null;
+  }
+  Object.assign(
+    result.summary,
+    summarizeGreekSelectorSmokeRows(
+      result.summary.actionCandidates,
+      result.summary.legacyClosedTrades,
+      result.rows,
+    ),
+  );
+  if (config.progress) {
+    console.log(
+      `[signal-options-greek-smoke] gex lookup matched ${matchCount}/${lookupCount} visible candidates toleranceMs=${config.gexToleranceMs}`,
+    );
+  }
 }
 
 async function readSignalOptionsDeployment(): Promise<DeploymentRow> {
@@ -367,6 +615,8 @@ async function main() {
       dividendYield: config.dividendYield,
       progress: config.progress,
     });
+    (result.config as Record<string, unknown>)["gexToleranceMs"] = config.gexToleranceMs;
+    await applyGexHistoricalGreeks(result, config);
     await mkdir(config.reportDir, { recursive: true });
     const reportPath = path.join(config.reportDir, "report.md");
     await writeFile(reportPath, renderGreekSelectorSmokeMarkdown(result));

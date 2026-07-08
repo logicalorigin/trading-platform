@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   scoreOptionGreekCandidate,
+  timeToExpirationYears,
   type ScoreOptionGreekCandidateInput,
 } from "./option-greek-selector";
 
@@ -70,6 +71,55 @@ function rankCandidates(
     )
     .slice(0, policy.maxCandidates);
 }
+
+// The expiry horizon must anchor on the real 16:00 America/New_York close, which
+// is DST-dependent: 20:00 UTC in summer (EDT) but 21:00 UTC in winter (EST). The
+// old code hardcoded 20:00 UTC, running every winter horizon 1h short. Both
+// expiries below are ordinary (non-early-close) trading Fridays, so the close is
+// 16:00 ET in both zones — the two instants must differ by exactly 1h.
+test("expiry horizon anchors on DST-correct 16:00 ET, not a fixed 20:00 UTC", () => {
+  const YEAR_MS = 365 * 24 * 60 * 60 * 1000;
+  const HOUR_MS = 60 * 60 * 1000;
+
+  // Summer (EDT): 16:00 ET == 20:00 UTC, so an `at` of 20:00 UTC IS the close.
+  const summerYears = timeToExpirationYears({
+    at: new Date("2026-07-17T20:00:00.000Z"),
+    expirationDate: new Date(Date.UTC(2026, 6, 17)),
+  });
+  assert.equal(summerYears, 0, "summer close should be exactly 20:00 UTC");
+
+  // Winter (EST): 16:00 ET == 21:00 UTC, so 20:00 UTC is still 1h BEFORE the close;
+  // the old fixed-20:00-UTC code would have returned 0 here.
+  const winterYears = timeToExpirationYears({
+    at: new Date("2026-01-16T20:00:00.000Z"),
+    expirationDate: new Date(Date.UTC(2026, 0, 16)),
+  });
+  assert.ok(
+    Math.abs(winterYears - HOUR_MS / YEAR_MS) < 1e-9,
+    `winter close should be 21:00 UTC (1h after 20:00 UTC); got years ${winterYears}`,
+  );
+
+  // Recover each close instant and confirm both read as 16:00 in New York.
+  const recoverCloseUtc = (expirationDate: Date, at: Date) =>
+    at.getTime() + timeToExpirationYears({ at, expirationDate }) * YEAR_MS;
+  const nyTime = (ms: number) =>
+    new Intl.DateTimeFormat("en-US", {
+      timeZone: "America/New_York",
+      hour: "2-digit",
+      minute: "2-digit",
+      hourCycle: "h23",
+    }).format(new Date(Math.round(ms)));
+  const summerClose = recoverCloseUtc(
+    new Date(Date.UTC(2026, 6, 17)),
+    new Date("2026-01-01T00:00:00.000Z"),
+  );
+  const winterClose = recoverCloseUtc(
+    new Date(Date.UTC(2026, 0, 16)),
+    new Date("2026-01-01T00:00:00.000Z"),
+  );
+  assert.equal(nyTime(summerClose), "16:00");
+  assert.equal(nyTime(winterClose), "16:00");
+});
 
 // The greek scorer must never RANK a no-directional-exposure contract as
 // selectable. Regression for the DIA 471P @ spot ~521.8 lottery-ticket entry

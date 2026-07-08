@@ -628,6 +628,7 @@ const GOLDEN_ACTIVE_POSITIONS = [
     optionRight: "call",
     timeframe: "15m",
     signalAt: "2033-05-18T03:40:20.000Z",
+    sourceSignalKey: null,
     openedAt: "2033-05-18T03:40:20.000Z",
     entryPrice: 2.1,
     quantity: 3,
@@ -642,6 +643,8 @@ const GOLDEN_ACTIVE_POSITIONS = [
     signalQuality: null,
     entryGreeks: null,
     greekBaselineSource: null,
+    oppositeSignalPendingConfirm: null,
+    reEntryWatch: null,
   },
   {
     id: "p-M2",
@@ -651,6 +654,7 @@ const GOLDEN_ACTIVE_POSITIONS = [
     optionRight: "call",
     timeframe: "15m",
     signalAt: "2033-05-18T03:42:20.000Z",
+    sourceSignalKey: null,
     openedAt: "2033-05-18T03:42:20.000Z",
     entryPrice: 3.5,
     quantity: 1,
@@ -665,6 +669,8 @@ const GOLDEN_ACTIVE_POSITIONS = [
     signalQuality: null,
     entryGreeks: null,
     greekBaselineSource: null,
+    oppositeSignalPendingConfirm: null,
+    reEntryWatch: null,
   },
 ];
 

@@ -8,6 +8,8 @@ import { sql } from "drizzle-orm";
 import { __signalMonitorInternalsForTests } from "./signal-monitor";
 
 const evaluatedAt = new Date("2026-06-09T15:00:00.000Z");
+const fastFlushMs =
+  __signalMonitorInternalsForTests.SIGNAL_MONITOR_MATRIX_STREAM_FLUSH_MS;
 // Pin trading-day semantics: blocker assertions (signal_too_old/data_stale)
 // must not flip to market_closed when the suite runs on a holiday/weekend.
 __signalMonitorInternalsForTests.setSignalMonitorQuietMarketSessionNowForTests(
@@ -314,6 +316,141 @@ test("server-owned producer persists direction flips through the canonical path"
       ["buy", "sell"],
     );
   });
+});
+
+test("B3: subscriber SSE delta persists identity changes plus coarse freshness heartbeats", async () => {
+  await withTestDb(async ({ db }) => {
+    __signalMonitorInternalsForTests.resetSignalMonitorMatrixStreamForTests();
+    const profileId = "00000000-0000-4000-8000-0000000000b3";
+    // signal_monitor_symbol_states FKs to signal_monitor_profiles; the async
+    // persist drains into this test DB, so the enqueue counter is the observation.
+    await db.execute(sql`
+      INSERT INTO signal_monitor_profiles (id, environment, enabled, fresh_window_bars)
+      VALUES (${profileId}, 'shadow', true, 3)
+    `);
+    const scope =
+      __signalMonitorInternalsForTests.normalizeSignalMonitorMatrixStreamScope({
+        environment: "shadow",
+        symbols: ["AAPL"],
+        timeframes: ["5m"],
+      });
+    const events: unknown[] = [];
+    const subscription =
+      __signalMonitorInternalsForTests.createSignalMonitorMatrixStreamSubscriptionForTests(
+        {
+          scope,
+          profile: { ...profile(profileId), id: profileId } as never,
+          prime: false,
+          onEvent(event) {
+            events.push(event);
+          },
+        },
+      );
+
+    const emit = (evaluatedAt: Date, overrides: Record<string, unknown>) => {
+      __signalMonitorInternalsForTests.emitSignalMonitorMatrixStreamAggregateDelta({
+        message: { symbol: "AAPL" },
+        environment: "shadow",
+        evaluatedAt,
+        evaluateState: (input: { symbol: string; timeframe: string }) =>
+          ({
+            ...directionalStreamState(input.symbol, input.timeframe, overrides),
+            profileId,
+          }) as never,
+      });
+    };
+
+    __signalMonitorInternalsForTests.resetSignalMonitorPersistScheduleStatsForTests();
+
+    // 1) baseline: new cell → SSE delivered + persist enqueued.
+    emit(new Date("2026-06-09T15:00:00.000Z"), {});
+    const afterBaseline =
+      __signalMonitorInternalsForTests.getSignalMonitorPersistScheduleStatsForTests();
+    assert.equal(events.length, 1, "baseline SSE delivered");
+    assert.equal(afterBaseline.states, 1, "baseline enqueues a persist");
+
+    // 2) display-only change (mfe moved) — identity/freshness bucket unchanged,
+    // so the persist dirty-key is unchanged.
+    emit(new Date("2026-06-09T15:00:30.000Z"), { currentSignalMfePercent: 3.21 });
+    const afterDisplay =
+      __signalMonitorInternalsForTests.getSignalMonitorPersistScheduleStatsForTests();
+    assert.equal(events.length, 2, "display-only delta still delivered over SSE");
+    assert.equal(
+      afterDisplay.states - afterBaseline.states,
+      0,
+      "display-only change enqueues NO persist",
+    );
+
+    // 3) pure latestBarAt/status churn inside the 5-minute heartbeat bucket is
+    // durability-neutral: signal identity is unchanged and bounded freshness is
+    // still covered by the next heartbeat.
+    emit(new Date("2026-06-09T15:01:00.000Z"), {
+      latestBarAt: new Date("2026-06-09T15:01:00.000Z"),
+      status: "stale",
+    });
+    const afterChurn =
+      __signalMonitorInternalsForTests.getSignalMonitorPersistScheduleStatsForTests();
+    assert.equal(events.length, 3, "bar-advance delta delivered over SSE");
+    assert.equal(
+      afterChurn.states - afterDisplay.states,
+      0,
+      "pure latestBarAt/status churn inside the heartbeat enqueues NO persist",
+    );
+
+    // 4) heartbeat boundary → bounded freshness write.
+    emit(new Date("2026-06-09T15:05:00.000Z"), {
+      latestBarAt: new Date("2026-06-09T15:05:00.000Z"),
+    });
+    const afterHeartbeat =
+      __signalMonitorInternalsForTests.getSignalMonitorPersistScheduleStatsForTests();
+    assert.equal(events.length, 4, "heartbeat delta delivered over SSE");
+    assert.equal(
+      afterHeartbeat.states - afterChurn.states,
+      1,
+      "5-minute freshness heartbeat enqueues a persist",
+    );
+
+    // 5) signal identity change → immediate persist, independent of heartbeat.
+    emit(new Date("2026-06-09T15:05:30.000Z"), {
+      currentSignalDirection: "sell",
+      currentSignalAt: new Date("2026-06-09T15:05:00.000Z"),
+      latestBarAt: new Date("2026-06-09T15:05:00.000Z"),
+    });
+    const afterIdentity =
+      __signalMonitorInternalsForTests.getSignalMonitorPersistScheduleStatsForTests();
+    assert.equal(events.length, 5, "identity-change delta delivered over SSE");
+    assert.equal(
+      afterIdentity.states - afterHeartbeat.states,
+      1,
+      "signal identity change enqueues a persist immediately",
+    );
+
+    // The enqueued persists drain un-awaited; wait for idle BEFORE withTestDb
+    // closes the PGlite instance and restores the real db, or the drain races
+    // the close (suite hang / drain leaking onto the real pool).
+    await __signalMonitorInternalsForTests.waitForSignalMonitorPersistIdleForTests();
+
+    subscription.unsubscribe();
+    __signalMonitorInternalsForTests.resetSignalMonitorMatrixStreamForTests();
+  });
+});
+
+test("subscriber persist gating filters by the persist dirty-key, not the display signature", () => {
+  const emitStart = serviceSource.indexOf(
+    "export function emitSignalMonitorMatrixStreamAggregateDelta",
+  );
+  const emitEnd = serviceSource.indexOf("persistByProfile.forEach", emitStart);
+  const emitBlock = serviceSource.slice(emitStart, emitEnd);
+  const realSseStart = emitBlock.indexOf("const displayStates");
+  const subscriberBlock = emitBlock.slice(realSseStart);
+  // The real-subscriber persist set is filtered through the tight persist
+  // dirty-key filter (same as the producer path), not the broad display signature.
+  assert.match(
+    subscriberBlock,
+    /changedSignalMonitorMatrixStreamPersistStates\(\s*subscriber,\s*latchedStates,?\s*\)/,
+  );
+  // SSE delivery still uses the display-signature changed set.
+  assert.match(subscriberBlock, /subscriber\.onEvent\(/);
 });
 
 test("server-owned producer bypasses stream signature and delta event work", () => {
@@ -1165,7 +1302,7 @@ test("matrix stream uses fast flush cadence with a real subscriber", () => {
     );
     assert.equal(
       __signalMonitorInternalsForTests.getSignalMonitorMatrixStreamFlushDelayForTests(),
-      300,
+      fastFlushMs,
     );
 
     subscription.unsubscribe();
@@ -1234,11 +1371,11 @@ test("matrix stream wakes promptly when a real subscriber attaches during idle c
         },
       );
 
-    assert.deepEqual(delays.slice(-2), [3000, 300]);
-    assert.deepEqual(activeDelays(), [300]);
+    assert.deepEqual(delays.slice(-2), [3000, fastFlushMs]);
+    assert.deepEqual(activeDelays(), [fastFlushMs]);
     assert.equal(
       __signalMonitorInternalsForTests.getSignalMonitorMatrixStreamFlushDelayForTests(),
-      300,
+      fastFlushMs,
     );
 
     real.unsubscribe();

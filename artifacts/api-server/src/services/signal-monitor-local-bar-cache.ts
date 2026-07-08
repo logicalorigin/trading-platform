@@ -1,5 +1,10 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 
+import {
+  resolvePreviousUsEquitySessionClose,
+  resolveUsEquityMarketSession,
+} from "@workspace/market-calendar";
+
 import { logger } from "../lib/logger";
 import { isMassiveStocksRealtimeConfigured } from "../lib/runtime";
 import { normalizeSymbol } from "../lib/values";
@@ -54,7 +59,13 @@ const TIMEFRAME_MS: Record<SignalMonitorLocalBarCacheTimeframe, number> = {
   "1h": 60 * 60_000,
   "1d": 24 * 60 * 60_000,
 };
-const DEFAULT_MEMORY_RETENTION_MS = 72 * 60 * 60_000;
+// A Friday 16:00 close to a Tuesday 09:30 open across a Monday holiday is 89.5h,
+// so the old 72h retention (chosen "to span a weekend") did NOT span a holiday
+// weekend — the memory-only reader (readSignalMonitorLocalMemoryBars, feeding the
+// signal-quality KPI preview) returned near-zero prior-session bars on a
+// Tuesday-after-holiday open. 120h clears 89.5h with margin. (Cell count is
+// bounded separately; this only widens the per-symbol minute retention.)
+const DEFAULT_MEMORY_RETENTION_MS = 120 * 60 * 60_000;
 const DEFAULT_PERSIST_FLUSH_MS = 5_000;
 // A normal full-universe prefetch is 2,000 symbols * 6 local timeframes * 2
 // sources = 24,000 cells. Keep the default above that footprint so the LRU does
@@ -64,9 +75,12 @@ const DEFAULT_STORED_BARS_CACHE_MAX_CELLS = 30_000;
 // Per-aggregate rollups only emit limit:3 buckets of the largest intraday
 // timeframe (1h). The last 3 completed/provisional 1h buckets span at most 3h;
 // floored-bucket alignment can pull a bar up to ~1h older into the oldest kept
-// bucket, so a 4h window (3h coverage + 1h margin) is the smallest slice that
-// reproduces the full-history rollup output. Capping the per-aggregate scan to
-// this window keeps it O(recent window) instead of O(72h retained history).
+// bucket, so a 4h window (3h coverage + 1h margin) is the intra-session width
+// that reproduces the full-history rollup output. Capping the per-aggregate scan
+// keeps it O(recent window) instead of O(retained history). "3 buckets ≤ 4h" only
+// holds intra-session, though: right after a weekend/holiday reopen the recent
+// buckets straddle the closed gap and live partly in the prior session — see
+// rollupScanCutoffMs, which reaches across a genuine gap via the market calendar.
 const ROLLUP_RECENT_WINDOW_MS = TIMEFRAME_MS["1h"] * 3 + TIMEFRAME_MS["1h"];
 // Background durable reads should yield to foreground/stream DB work during app
 // bring-up. Operators can raise this after measuring their DB/cache headroom.
@@ -1259,6 +1273,27 @@ async function flushPendingPersistBars(): Promise<void> {
   }
 }
 
+// Start of the minute-bar slice that can feed the limit:3 rollups at
+// `evaluatedAt`. Normally the intra-session ROLLUP_RECENT_WINDOW_MS (4h). But when
+// that window's far edge lands in a fully-closed period — i.e. the market just
+// reopened after a weekend/holiday and the recent 1h buckets straddle the gap —
+// reach back to the previous regular-session close so the prior session's bars are
+// included. Only "closed" (no-session) edges widen; open extended-hours edges
+// (pre/rth/after/overnight) keep the tight 4h scan. In production the widened span
+// is nearly empty (no bars arrive while closed), so the scan stays bounded by real
+// bar density, not wall-clock width.
+function rollupScanCutoffMs(evaluatedAt: Date): number {
+  const plainCutoffMs = evaluatedAt.getTime() - ROLLUP_RECENT_WINDOW_MS;
+  if (resolveUsEquityMarketSession(new Date(plainCutoffMs)).open) {
+    return plainCutoffMs;
+  }
+  const previousCloseMs =
+    resolvePreviousUsEquitySessionClose(evaluatedAt)?.getTime() ?? null;
+  return previousCloseMs == null
+    ? plainCutoffMs
+    : Math.min(plainCutoffMs, previousCloseMs);
+}
+
 function enqueueRollups(symbol: string, evaluatedAt: Date): void {
   if (!liveAggregatePersistEnabled()) {
     liveAggregatePersistSkipCount += 1;
@@ -1271,10 +1306,10 @@ function enqueueRollups(symbol: string, evaluatedAt: Date): void {
     lastEnqueueScannedBarCount = 0;
     return;
   }
-  // Only the recent window can contribute to the limit:3 rollups we emit here,
-  // so scan that slice instead of the full 72h retained history. The map is
-  // keyed by minute timestamp (ms); keep entries at or after the window start.
-  const windowStartMs = evaluatedAt.getTime() - ROLLUP_RECENT_WINDOW_MS;
+  // Only the recent (session-aware) window can contribute to the limit:3 rollups
+  // we emit here, so scan that slice instead of the full retained history. The map
+  // is keyed by minute timestamp (ms); keep entries at or after the window start.
+  const windowStartMs = rollupScanCutoffMs(evaluatedAt);
   const minuteBars: CachedBar[] = [];
   for (const [timestampMs, bar] of symbolBars) {
     if (timestampMs >= windowStartMs) {

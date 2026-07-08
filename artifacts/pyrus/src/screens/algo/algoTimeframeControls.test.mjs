@@ -27,13 +27,15 @@ test("algo rail execution timeframe patch accepts 2m when MTF is already aligned
 });
 
 test("algo rail execution timeframe patch adds the execution frame to MTF", () => {
+  // product ruling 2026-07-07: the configured required count is preserved,
+  // never forced to the selection size.
   assert.deepEqual(
     buildAlgoExecutionTimeframePatch("15m", "5m", ["1m", "5m"], 2),
     {
       signalTimeframe: "15m",
       timeframes: ["1m", "5m", "15m"],
       preset: "custom",
-      requiredCount: 3,
+      requiredCount: 2,
     },
   );
 });
@@ -82,7 +84,9 @@ test("algo rail MTF toggle can leave a 1:1 execution selection", () => {
   );
 });
 
-test("algo rail MTF adding a frame requires the full selected set", () => {
+test("algo rail MTF adding a frame preserves the configured required count", () => {
+  // product ruling 2026-07-07: panel n-of-N governs; growing the watch set
+  // must not silently raise the requirement.
   assert.deepEqual(
     buildAlgoMtfTimeframeTogglePatch({
       selectedTimeframes: ["2m", "5m"],
@@ -92,7 +96,7 @@ test("algo rail MTF adding a frame requires the full selected set", () => {
     {
       timeframes: ["2m", "5m", "15m"],
       preset: "custom",
-      requiredCount: 3,
+      requiredCount: 2,
     },
   );
 });
@@ -126,11 +130,20 @@ test("algo rail MTF removal clamps required count to selected frames", () => {
   );
 });
 
-test("algo rail MTF required count ignores stale partial saved values", () => {
-  assert.equal(normalizeAlgoMtfRequiredCount(2, ["2m", "5m", "15m"]), 3);
+test("algo rail MTF required count honors saved values (clamped to the selection)", () => {
+  // product ruling 2026-07-07: overrules the prior "ignore stale partial
+  // saved values" full-count intent.
+  assert.equal(normalizeAlgoMtfRequiredCount(2, ["2m", "5m", "15m"]), 2);
+  assert.equal(normalizeAlgoMtfRequiredCount(9, ["2m", "5m"]), 2);
+  assert.equal(normalizeAlgoMtfRequiredCount(null, ["2m", "5m", "15m"]), 2);
 });
 
-test("algo settings MTF presets require every selected preset frame", () => {
+test("algo settings MTF presets default to full alignment across the preset's frames", () => {
+  // Owner decision 2026-07-08 (supersedes the 2026-07-07 n-of-N ruling): the STA
+  // gate + entry gate default to unanimity over the selected frames, matching the
+  // backend (requiredSignalOptionsMtfCount: unset => full count). Picking a preset
+  // sets requiredCount to that preset's frame count; the user can still lower the
+  // MTF REQUIRED COUNT dial afterward.
   const field = getSettingFieldByPath("entryGate.mtfAlignment.preset");
   assert.deepEqual(field.patchFromValue("balanced"), {
     "entryGate.mtfAlignment.preset": "balanced",
