@@ -12,9 +12,11 @@ export const AUTH_SESSION_QUERY_KEY = ["auth-session"];
 // `{ user: null, csrfToken: null }` when signed out. A non-200 means the backend
 // is unreachable — surfaced as an error so the gate can fail closed.
 export async function readAuthSession({ signal } = {}) {
+  const timeout = AbortSignal.timeout(8000);
+  const merged = signal ? AbortSignal.any([signal, timeout]) : timeout;
   const response = await fetch("/api/auth/session", {
     headers: { Accept: "application/json" },
-    signal,
+    signal: merged,
   });
   if (!response.ok) {
     throw new Error("Auth session unavailable");
