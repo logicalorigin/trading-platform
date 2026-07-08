@@ -14,6 +14,10 @@ test("providerLabel labels strictly by the wire provider enum, never leaking it 
   // the brokerage name isn't in the normalized wire shape, so label by provider.
   assert.equal(providerLabel({ provider: "snaptrade" }), "SnapTrade");
   assert.equal(providerLabel({ provider: "SnapTrade" }), "SnapTrade");
+  // Direct-OAuth brokers carry their own provider enum and get a branded label
+  // (previously fell through to the neutral 'Brokerage' fallback).
+  assert.equal(providerLabel({ provider: "robinhood" }), "Robinhood");
+  assert.equal(providerLabel({ provider: "schwab" }), "Schwab");
   // Unknown/missing provider falls back to a neutral word, never the raw enum.
   assert.equal(providerLabel({ provider: "webull" }), "Brokerage");
   assert.equal(providerLabel(undefined), "Brokerage");
