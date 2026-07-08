@@ -1,0 +1,1967 @@
+{
+  "probes": [
+    {
+      "method": "GET",
+      "path": "/healthz",
+      "class": "safe",
+      "auth": "anon",
+      "maxTimeS": 8,
+      "expect": "200 {status:ok}",
+      "src": "health.ts:6"
+    },
+    {
+      "method": "GET",
+      "path": "/readiness",
+      "class": "safe",
+      "auth": "anon",
+      "maxTimeS": 8,
+      "expect": "200 readiness payload",
+      "src": "readiness.ts:8",
+      "note": "reads getSession broker runtime in try/catch"
+    },
+    {
+      "method": "GET",
+      "path": "/session",
+      "class": "safe",
+      "auth": "anon",
+      "maxTimeS": 8,
+      "expect": "200 session (public per index.ts comment)",
+      "src": "platform.ts:1718"
+    },
+    {
+      "method": "GET",
+      "path": "/diagnostics/runtime",
+      "class": "safe",
+      "auth": "anon",
+      "maxTimeS": 8,
+      "expect": "200 runtime diagnostics",
+      "src": "platform.ts:1739",
+      "params": "detail=compact",
+      "note": "NOT a duplicate: only defined in platform.ts; diagnosticsRouter has no /runtime route"
+    },
+    {
+      "method": "GET",
+      "path": "/auth/session",
+      "class": "safe",
+      "auth": "anon",
+      "maxTimeS": 8,
+      "expect": "200 {user:null,csrfToken:null} without cookie",
+      "src": "auth.ts:234"
+    },
+    {
+      "method": "GET",
+      "path": "/diagnostics/latest",
+      "class": "safe",
+      "auth": "anon",
+      "maxTimeS": 8,
+      "expect": "200 latest snapshot",
+      "src": "diagnostics.ts:180"
+    },
+    {
+      "method": "GET",
+      "path": "/diagnostics/history",
+      "class": "safe",
+      "auth": "anon",
+      "maxTimeS": 8,
+      "expect": "200 history",
+      "src": "diagnostics.ts:184",
+      "params": "limit=10",
+      "note": "from/to default to last 60m"
+    },
+    {
+      "method": "GET",
+      "path": "/diagnostics/events",
+      "class": "safe",
+      "auth": "anon",
+      "maxTimeS": 8,
+      "expect": "200 events",
+      "src": "diagnostics.ts:196",
+      "params": "limit=10"
+    },
+    {
+      "method": "GET",
+      "path": "/diagnostics/export",
+      "class": "offhours",
+      "auth": "anon",
+      "maxTimeS": 20,
+      "expect": "200 export bundle",
+      "src": "diagnostics.ts:210",
+      "note": "exportDiagnostics = heavy single-shot; NO query params per rule (defaults only)"
+    },
+    {
+      "method": "GET",
+      "path": "/diagnostics/thresholds",
+      "class": "safe",
+      "auth": "anon",
+      "maxTimeS": 8,
+      "expect": "200 thresholds",
+      "src": "diagnostics.ts:229"
+    },
+    {
+      "method": "GET",
+      "path": "/diagnostics/market-data/price-trace",
+      "class": "offhours",
+      "auth": "anon",
+      "maxTimeS": 20,
+      "expect": "200 price-freshness trace",
+      "src": "diagnostics.ts:325",
+      "params": "symbols=SPY&limit=10",
+      "note": "market-data trace; scope to SPY to avoid universe scan"
+    },
+    {
+      "method": "GET",
+      "path": "/diagnostics/stream",
+      "class": "sse",
+      "auth": "anon",
+      "maxTimeS": 8,
+      "expect": "text/event-stream (ready+heartbeat)",
+      "src": "diagnostics.ts:338"
+    },
+    {
+      "method": "GET",
+      "path": "/diagnostics/events/{eventId}",
+      "class": "safe",
+      "auth": "anon",
+      "maxTimeS": 8,
+      "expect": "200 detail or 404",
+      "src": "diagnostics.ts:393",
+      "harvest": "eventId <- GET /diagnostics/events"
+    },
+    {
+      "method": "GET",
+      "path": "/executions",
+      "class": "safe",
+      "auth": "anon",
+      "maxTimeS": 8,
+      "expect": "200 executions",
+      "src": "platform.ts:2185",
+      "params": "limit=10"
+    },
+    {
+      "method": "GET",
+      "path": "/quotes/snapshot",
+      "class": "safe",
+      "auth": "anon",
+      "maxTimeS": 8,
+      "expect": "200 quote snapshots",
+      "src": "platform.ts:2211",
+      "params": "symbols=SPY",
+      "note": "symbols REQUIRED; off-hours returns delayed/frozen"
+    },
+    {
+      "method": "GET",
+      "path": "/gex-snapshots",
+      "class": "offhours",
+      "auth": "anon",
+      "maxTimeS": 20,
+      "expect": "200 gex snapshots",
+      "src": "platform.ts:2218",
+      "params": "symbols=SPY",
+      "note": "symbols REQUIRED"
+    },
+    {
+      "method": "GET",
+      "path": "/gex/{underlying}",
+      "class": "offhours",
+      "auth": "anon",
+      "maxTimeS": 20,
+      "expect": "200 gex dashboard (HTTP-cached) or 304",
+      "src": "platform.ts:2228",
+      "params": "underlying=SPY"
+    },
+    {
+      "method": "GET",
+      "path": "/gex/{underlying}/projection",
+      "class": "offhours",
+      "auth": "anon",
+      "maxTimeS": 20,
+      "expect": "200 gex projection",
+      "src": "platform.ts:2270",
+      "params": "underlying=SPY",
+      "note": "NOT in openapi spec"
+    },
+    {
+      "method": "GET",
+      "path": "/gex/{underlying}/zero-gamma",
+      "class": "offhours",
+      "auth": "anon",
+      "maxTimeS": 20,
+      "expect": "200 zero-gamma",
+      "src": "platform.ts:2294",
+      "params": "underlying=SPY",
+      "note": "NOT in openapi spec"
+    },
+    {
+      "method": "GET",
+      "path": "/news",
+      "class": "safe",
+      "auth": "anon",
+      "maxTimeS": 8,
+      "expect": "200 news articles",
+      "src": "platform.ts:2321",
+      "params": "ticker=SPY&limit=10"
+    },
+    {
+      "method": "GET",
+      "path": "/universe/tickers",
+      "class": "safe",
+      "auth": "anon",
+      "maxTimeS": 8,
+      "expect": "200 ticker search",
+      "src": "platform.ts:2328",
+      "params": "search=SPY&limit=10"
+    },
+    {
+      "method": "GET",
+      "path": "/universe/logos",
+      "class": "safe",
+      "auth": "anon",
+      "maxTimeS": 8,
+      "expect": "200 logos (same-origin URLs)",
+      "src": "platform.ts:2339",
+      "params": "symbols=SPY"
+    },
+    {
+      "method": "GET",
+      "path": "/universe/logo-proxy",
+      "class": "exclude",
+      "auth": "anon",
+      "maxTimeS": 0,
+      "expect": "SKIP",
+      "src": "platform.ts:2361",
+      "note": "third-party image proxy (task exclusion)"
+    },
+    {
+      "method": "GET",
+      "path": "/bars",
+      "class": "offhours",
+      "auth": "anon",
+      "maxTimeS": 20,
+      "expect": "200 bars",
+      "src": "platform.ts:2409",
+      "params": "symbol=SPY&timeframe=1d&limit=10",
+      "note": "symbol+timeframe REQUIRED; window validated"
+    },
+    {
+      "method": "GET",
+      "path": "/options/chains",
+      "class": "offhours",
+      "auth": "anon",
+      "maxTimeS": 20,
+      "expect": "200 option chain",
+      "src": "platform.ts:2487",
+      "params": "underlying=SPY",
+      "note": "underlying REQUIRED"
+    },
+    {
+      "method": "GET",
+      "path": "/options/expirations",
+      "class": "offhours",
+      "auth": "anon",
+      "maxTimeS": 20,
+      "expect": "200 expirations",
+      "src": "platform.ts:2525",
+      "params": "underlying=SPY",
+      "note": "underlying REQUIRED; harvest expirationDate for chains"
+    },
+    {
+      "method": "GET",
+      "path": "/options/resolve-contract",
+      "class": "offhours",
+      "auth": "anon",
+      "maxTimeS": 20,
+      "expect": "200 resolved contract",
+      "src": "platform.ts:2543",
+      "params": "underlying=SPY&right=call",
+      "harvest": "strike <- GET /options/chains",
+      "note": "underlying,strike,right REQUIRED"
+    },
+    {
+      "method": "GET",
+      "path": "/options/chart-bars",
+      "class": "offhours",
+      "auth": "anon",
+      "maxTimeS": 20,
+      "expect": "200 option chart bars",
+      "src": "platform.ts:2672",
+      "params": "underlying=SPY&right=call&timeframe=1d&limit=10",
+      "harvest": "strike <- GET /options/chains",
+      "note": "underlying,strike,right,timeframe REQUIRED"
+    },
+    {
+      "method": "GET",
+      "path": "/footprints",
+      "class": "offhours",
+      "auth": "anon",
+      "maxTimeS": 20,
+      "expect": "200 volume footprints",
+      "src": "platform.ts:2751",
+      "params": "symbol=SPY&timeframe=5m",
+      "note": "symbol+timeframe REQUIRED (400 otherwise)"
+    },
+    {
+      "method": "GET",
+      "path": "/flow/events",
+      "class": "offhours",
+      "auth": "anon",
+      "maxTimeS": 20,
+      "expect": "200 flow events",
+      "src": "platform.ts:2784",
+      "params": "underlying=SPY&limit=10",
+      "note": "queueRefresh defaults true; blocking false"
+    },
+    {
+      "method": "GET",
+      "path": "/flow/events/aggregate",
+      "class": "offhours",
+      "auth": "anon",
+      "maxTimeS": 20,
+      "expect": "200 aggregate flow",
+      "src": "platform.ts:2797",
+      "params": "limit=10"
+    },
+    {
+      "method": "GET",
+      "path": "/flow/premium-distribution",
+      "class": "offhours",
+      "auth": "anon",
+      "maxTimeS": 20,
+      "expect": "200 premium distribution",
+      "src": "platform.ts:2808",
+      "params": "limit=10"
+    },
+    {
+      "method": "GET",
+      "path": "/flow/universe",
+      "class": "safe",
+      "auth": "anon",
+      "maxTimeS": 8,
+      "expect": "200 flow universe (in-memory)",
+      "src": "platform.ts:2817"
+    },
+    {
+      "method": "GET",
+      "path": "/broker-connections",
+      "class": "safe",
+      "auth": "session-user",
+      "maxTimeS": 8,
+      "expect": "200 connections",
+      "src": "platform.ts:1750",
+      "note": "REQUIRE_USER /broker-connections"
+    },
+    {
+      "method": "GET",
+      "path": "/accounts",
+      "class": "safe",
+      "auth": "session-user",
+      "maxTimeS": 8,
+      "expect": "200 accounts",
+      "src": "platform.ts:1756",
+      "params": "mode=shadow",
+      "harvest": "accountId -> parameterized /accounts/{accountId}/* + tax",
+      "note": "REQUIRE_USER /accounts"
+    },
+    {
+      "method": "GET",
+      "path": "/accounts/flex/health",
+      "class": "offhours",
+      "auth": "session-user",
+      "maxTimeS": 20,
+      "expect": "200 flex health",
+      "src": "platform.ts:1764",
+      "note": "IBKR Flex readiness passthrough; gated by /accounts prefix"
+    },
+    {
+      "method": "GET",
+      "path": "/accounts/{accountId}/summary",
+      "class": "safe",
+      "auth": "session-user",
+      "maxTimeS": 8,
+      "expect": "200 summary",
+      "src": "platform.ts:1772",
+      "harvest": "accountId <- GET /accounts"
+    },
+    {
+      "method": "GET",
+      "path": "/accounts/{accountId}/equity-history",
+      "class": "safe",
+      "auth": "session-user",
+      "maxTimeS": 8,
+      "expect": "200 equity history",
+      "src": "platform.ts:1786",
+      "params": "range=1M",
+      "harvest": "accountId <- GET /accounts"
+    },
+    {
+      "method": "GET",
+      "path": "/accounts/{accountId}/allocation",
+      "class": "safe",
+      "auth": "session-user",
+      "maxTimeS": 8,
+      "expect": "200 allocation",
+      "src": "platform.ts:1806",
+      "harvest": "accountId <- GET /accounts"
+    },
+    {
+      "method": "GET",
+      "path": "/accounts/{accountId}/positions",
+      "class": "safe",
+      "auth": "session-user",
+      "maxTimeS": 8,
+      "expect": "200 positions",
+      "src": "platform.ts:1820",
+      "harvest": "accountId <- GET /accounts"
+    },
+    {
+      "method": "GET",
+      "path": "/accounts/{accountId}/positions-at-date",
+      "class": "safe",
+      "auth": "session-user",
+      "maxTimeS": 8,
+      "expect": "200 positions-at-date",
+      "src": "platform.ts:1845",
+      "params": "date=<YYYY-MM-DD>",
+      "harvest": "accountId <- GET /accounts"
+    },
+    {
+      "method": "GET",
+      "path": "/accounts/{accountId}/closed-trades",
+      "class": "safe",
+      "auth": "session-user",
+      "maxTimeS": 8,
+      "expect": "200 closed trades",
+      "src": "platform.ts:1865",
+      "harvest": "accountId <- GET /accounts"
+    },
+    {
+      "method": "GET",
+      "path": "/accounts/{accountId}/orders",
+      "class": "safe",
+      "auth": "session-user",
+      "maxTimeS": 8,
+      "expect": "200 orders",
+      "src": "platform.ts:1895",
+      "harvest": "accountId <- GET /accounts"
+    },
+    {
+      "method": "GET",
+      "path": "/accounts/{accountId}/risk",
+      "class": "safe",
+      "auth": "session-user",
+      "maxTimeS": 8,
+      "expect": "200 risk",
+      "src": "platform.ts:1931",
+      "harvest": "accountId <- GET /accounts"
+    },
+    {
+      "method": "GET",
+      "path": "/accounts/{accountId}/cash-activity",
+      "class": "safe",
+      "auth": "session-user",
+      "maxTimeS": 8,
+      "expect": "200 cash activity",
+      "src": "platform.ts:1948",
+      "harvest": "accountId <- GET /accounts"
+    },
+    {
+      "method": "GET",
+      "path": "/watchlists",
+      "class": "safe",
+      "auth": "session-user",
+      "maxTimeS": 8,
+      "expect": "200 watchlists",
+      "src": "platform.ts:2023",
+      "harvest": "watchlistId -> /watchlists/{watchlistId}/*",
+      "note": "REQUIRE_USER /watchlists"
+    },
+    {
+      "method": "GET",
+      "path": "/positions",
+      "class": "safe",
+      "auth": "session-user",
+      "maxTimeS": 8,
+      "expect": "200 legacy positions",
+      "src": "platform.ts:2057",
+      "params": "mode=shadow",
+      "note": "REQUIRE_USER /positions"
+    },
+    {
+      "method": "GET",
+      "path": "/orders",
+      "class": "safe",
+      "auth": "session-user",
+      "maxTimeS": 8,
+      "expect": "200 orders",
+      "src": "platform.ts:2074",
+      "params": "mode=shadow",
+      "note": "REQUIRE_USER /orders"
+    },
+    {
+      "method": "GET",
+      "path": "/streams/quotes",
+      "class": "sse",
+      "auth": "anon",
+      "maxTimeS": 8,
+      "expect": "text/event-stream",
+      "src": "platform.ts:2875",
+      "params": "symbols=SPY",
+      "note": "symbols REQUIRED (400 otherwise)"
+    },
+    {
+      "method": "GET",
+      "path": "/streams/options/chains",
+      "class": "sse",
+      "auth": "anon",
+      "maxTimeS": 8,
+      "expect": "text/event-stream",
+      "src": "platform.ts:2976",
+      "params": "underlying=SPY"
+    },
+    {
+      "method": "GET",
+      "path": "/streams/options/quotes",
+      "class": "sse",
+      "auth": "anon",
+      "maxTimeS": 8,
+      "expect": "text/event-stream",
+      "src": "platform.ts:3011"
+    },
+    {
+      "method": "GET",
+      "path": "/streams/orders",
+      "class": "sse",
+      "auth": "anon",
+      "maxTimeS": 8,
+      "expect": "text/event-stream",
+      "src": "platform.ts:3098",
+      "note": "public: /streams/orders not in REQUIRE prefixes"
+    },
+    {
+      "method": "GET",
+      "path": "/streams/executions",
+      "class": "sse",
+      "auth": "anon",
+      "maxTimeS": 8,
+      "expect": "text/event-stream",
+      "src": "platform.ts:3133"
+    },
+    {
+      "method": "GET",
+      "path": "/streams/footprints",
+      "class": "sse",
+      "auth": "anon",
+      "maxTimeS": 8,
+      "expect": "text/event-stream",
+      "src": "platform.ts:3192"
+    },
+    {
+      "method": "GET",
+      "path": "/streams/accounts",
+      "class": "sse",
+      "auth": "anon",
+      "maxTimeS": 8,
+      "expect": "text/event-stream",
+      "src": "platform.ts:3350",
+      "note": "public IBKR bridge snapshot (index.ts comment)"
+    },
+    {
+      "method": "GET",
+      "path": "/streams/accounts/page",
+      "class": "sse",
+      "auth": "session-user",
+      "maxTimeS": 8,
+      "expect": "text/event-stream",
+      "src": "platform.ts:3256",
+      "note": "REQUIRE_USER /streams/accounts/page"
+    },
+    {
+      "method": "GET",
+      "path": "/streams/accounts/shadow",
+      "class": "sse",
+      "auth": "session-user",
+      "maxTimeS": 8,
+      "expect": "text/event-stream",
+      "src": "platform.ts:3385",
+      "note": "REQUIRE_USER /streams/accounts/shadow"
+    },
+    {
+      "method": "GET",
+      "path": "/streams/stocks/aggregates",
+      "class": "sse",
+      "auth": "anon",
+      "maxTimeS": 8,
+      "expect": "text/event-stream",
+      "src": "platform.ts:3414"
+    },
+    {
+      "method": "GET",
+      "path": "/algo/deployments",
+      "class": "safe",
+      "auth": "session-user",
+      "maxTimeS": 8,
+      "expect": "200 deployments",
+      "src": "automation.ts:173",
+      "params": "mode=shadow",
+      "harvest": "deploymentId -> /algo/deployments/{deploymentId}/*"
+    },
+    {
+      "method": "GET",
+      "path": "/algo/events",
+      "class": "safe",
+      "auth": "session-user",
+      "maxTimeS": 8,
+      "expect": "200 events",
+      "src": "automation.ts:508",
+      "params": "limit=10"
+    },
+    {
+      "method": "GET",
+      "path": "/algo/deployments/{deploymentId}/cockpit",
+      "class": "safe",
+      "auth": "session-user",
+      "maxTimeS": 8,
+      "expect": "200 cockpit (summary+cached)",
+      "src": "automation.ts:338",
+      "harvest": "deploymentId <- GET /algo/deployments"
+    },
+    {
+      "method": "GET",
+      "path": "/algo/deployments/{deploymentId}/signal-options/state",
+      "class": "safe",
+      "auth": "session-user",
+      "maxTimeS": 8,
+      "expect": "200 automation state (summary+cached)",
+      "src": "automation.ts:321",
+      "harvest": "deploymentId <- GET /algo/deployments"
+    },
+    {
+      "method": "GET",
+      "path": "/algo/deployments/{deploymentId}/signal-options/performance",
+      "class": "safe",
+      "auth": "session-user",
+      "maxTimeS": 8,
+      "expect": "200 performance (cached)",
+      "src": "automation.ts:354",
+      "harvest": "deploymentId <- GET /algo/deployments"
+    },
+    {
+      "method": "GET",
+      "path": "/algo/deployments/{deploymentId}/signal-quality-kpis",
+      "class": "offhours",
+      "auth": "session-user",
+      "maxTimeS": 20,
+      "expect": "200 signal-quality KPIs",
+      "src": "automation.ts:301",
+      "harvest": "deploymentId <- GET /algo/deployments",
+      "note": "off-hours single-shot; NO query params per rule"
+    },
+    {
+      "method": "GET",
+      "path": "/streams/algo/cockpit",
+      "class": "sse",
+      "auth": "session-user",
+      "maxTimeS": 8,
+      "expect": "text/event-stream",
+      "src": "automation.ts:536",
+      "params": "mode=shadow",
+      "note": "REQUIRE_USER /streams/algo"
+    },
+    {
+      "method": "GET",
+      "path": "/backtests/strategies",
+      "class": "safe",
+      "auth": "session-user",
+      "maxTimeS": 8,
+      "expect": "200 strategies (static)",
+      "src": "backtesting.ts:57"
+    },
+    {
+      "method": "GET",
+      "path": "/backtests/studies",
+      "class": "safe",
+      "auth": "session-user",
+      "maxTimeS": 8,
+      "expect": "200 studies",
+      "src": "backtesting.ts:62",
+      "harvest": "studyId -> /backtests/studies/{studyId}*"
+    },
+    {
+      "method": "GET",
+      "path": "/backtests/studies/{studyId}",
+      "class": "safe",
+      "auth": "session-user",
+      "maxTimeS": 8,
+      "expect": "200 study",
+      "src": "backtesting.ts:73",
+      "harvest": "studyId <- GET /backtests/studies"
+    },
+    {
+      "method": "GET",
+      "path": "/backtests/studies/{studyId}/preview-chart",
+      "class": "offhours",
+      "auth": "session-user",
+      "maxTimeS": 20,
+      "expect": "200 preview chart",
+      "src": "backtesting.ts:81",
+      "harvest": "studyId <- GET /backtests/studies",
+      "note": "backtest chart compute"
+    },
+    {
+      "method": "GET",
+      "path": "/backtests/runs",
+      "class": "safe",
+      "auth": "session-user",
+      "maxTimeS": 8,
+      "expect": "200 runs",
+      "src": "backtesting.ts:92",
+      "harvest": "runId -> /backtests/runs/{runId}*; sweepId"
+    },
+    {
+      "method": "GET",
+      "path": "/backtests/runs/{runId}",
+      "class": "safe",
+      "auth": "session-user",
+      "maxTimeS": 8,
+      "expect": "200 run",
+      "src": "backtesting.ts:152",
+      "harvest": "runId <- GET /backtests/runs"
+    },
+    {
+      "method": "GET",
+      "path": "/backtests/runs/{runId}/chart",
+      "class": "offhours",
+      "auth": "session-user",
+      "maxTimeS": 20,
+      "expect": "200 run chart",
+      "src": "backtesting.ts:158",
+      "params": "symbol=SPY",
+      "harvest": "runId <- GET /backtests/runs",
+      "note": "backtest chart"
+    },
+    {
+      "method": "GET",
+      "path": "/backtests/sweeps/{sweepId}",
+      "class": "safe",
+      "auth": "session-user",
+      "maxTimeS": 8,
+      "expect": "200 sweep",
+      "src": "backtesting.ts:187",
+      "harvest": "sweepId <- GET /backtests/runs (run.sweepId); no list endpoint"
+    },
+    {
+      "method": "GET",
+      "path": "/backtests/jobs",
+      "class": "safe",
+      "auth": "session-user",
+      "maxTimeS": 8,
+      "expect": "200 jobs",
+      "src": "backtesting.ts:195"
+    },
+    {
+      "method": "GET",
+      "path": "/backtests/drafts",
+      "class": "safe",
+      "auth": "session-user",
+      "maxTimeS": 8,
+      "expect": "200 drafts",
+      "src": "backtesting.ts:211"
+    },
+    {
+      "method": "GET",
+      "path": "/backtests/overnight-expectancy/{studyId}",
+      "class": "offhours",
+      "auth": "session-user",
+      "maxTimeS": 20,
+      "expect": "200 results or 404",
+      "src": "backtesting.ts:257",
+      "harvest": "studyId(uuid) <- POST /backtests/overnight-expectancy or /backtests/studies",
+      "note": "NOT in spec"
+    },
+    {
+      "method": "GET",
+      "path": "/backtests/overnight-expectancy/{studyId}/samples",
+      "class": "offhours",
+      "auth": "session-user",
+      "maxTimeS": 20,
+      "expect": "200 samples",
+      "src": "backtesting.ts:270",
+      "params": "limit=10",
+      "harvest": "studyId(uuid)",
+      "note": "NOT in spec"
+    },
+    {
+      "method": "GET",
+      "path": "/backtests/pattern-discovery/{studyId}",
+      "class": "offhours",
+      "auth": "session-user",
+      "maxTimeS": 20,
+      "expect": "200 results or 404",
+      "src": "backtesting.ts:299",
+      "harvest": "studyId(uuid) <- /backtests/studies",
+      "note": "pattern discovery"
+    },
+    {
+      "method": "GET",
+      "path": "/backtests/pattern-discovery/{studyId}/occurrences",
+      "class": "offhours",
+      "auth": "session-user",
+      "maxTimeS": 20,
+      "expect": "200 occurrences",
+      "src": "backtesting.ts:316",
+      "harvest": "studyId(uuid)+patternKey <- GET /backtests/pattern-discovery/{studyId}",
+      "note": "patternKey+horizonBars REQUIRED"
+    },
+    {
+      "method": "GET",
+      "path": "/charting/pine-scripts",
+      "class": "safe",
+      "auth": "session-user",
+      "maxTimeS": 8,
+      "expect": "200 pine scripts",
+      "src": "charting.ts:17",
+      "note": "REQUIRE_USER /charting"
+    },
+    {
+      "method": "GET",
+      "path": "/research/status",
+      "class": "safe",
+      "auth": "session-user",
+      "maxTimeS": 8,
+      "expect": "200 status",
+      "src": "research.ts:52"
+    },
+    {
+      "method": "GET",
+      "path": "/research/high-beta-universe",
+      "class": "offhours",
+      "auth": "session-user",
+      "maxTimeS": 20,
+      "expect": "200 universe (dryRun default true)",
+      "src": "research.ts:58",
+      "note": "universe-wide external (FMP) read"
+    },
+    {
+      "method": "GET",
+      "path": "/research/fundamentals",
+      "class": "safe",
+      "auth": "session-user",
+      "maxTimeS": 8,
+      "expect": "200 fundamentals",
+      "src": "research.ts:67",
+      "params": "symbol=SPY",
+      "note": "symbol REQUIRED; external FMP read"
+    },
+    {
+      "method": "GET",
+      "path": "/research/financials",
+      "class": "safe",
+      "auth": "session-user",
+      "maxTimeS": 8,
+      "expect": "200 financials",
+      "src": "research.ts:76",
+      "params": "symbol=SPY",
+      "note": "symbol REQUIRED"
+    },
+    {
+      "method": "GET",
+      "path": "/research/snapshots",
+      "class": "safe",
+      "auth": "session-user",
+      "maxTimeS": 8,
+      "expect": "200 snapshots",
+      "src": "research.ts:85",
+      "params": "symbols=SPY",
+      "note": "symbols REQUIRED"
+    },
+    {
+      "method": "GET",
+      "path": "/research/earnings-calendar",
+      "class": "safe",
+      "auth": "session-user",
+      "maxTimeS": 8,
+      "expect": "200 calendar",
+      "src": "research.ts:94",
+      "params": "from=<today>&to=<+7d>",
+      "note": "from+to REQUIRED"
+    },
+    {
+      "method": "GET",
+      "path": "/research/sec-filings",
+      "class": "safe",
+      "auth": "session-user",
+      "maxTimeS": 8,
+      "expect": "200 filings",
+      "src": "research.ts:105",
+      "params": "symbol=SPY",
+      "note": "symbol REQUIRED"
+    },
+    {
+      "method": "GET",
+      "path": "/research/transcripts",
+      "class": "safe",
+      "auth": "session-user",
+      "maxTimeS": 8,
+      "expect": "200 transcript dates",
+      "src": "research.ts:112",
+      "params": "symbol=SPY",
+      "note": "symbol REQUIRED"
+    },
+    {
+      "method": "GET",
+      "path": "/research/transcript",
+      "class": "safe",
+      "auth": "session-user",
+      "maxTimeS": 8,
+      "expect": "200 transcript",
+      "src": "research.ts:121",
+      "params": "symbol=SPY",
+      "note": "symbol REQUIRED"
+    },
+    {
+      "method": "GET",
+      "path": "/settings/backend",
+      "class": "safe",
+      "auth": "session-admin",
+      "maxTimeS": 8,
+      "expect": "200 backend settings snapshot",
+      "src": "settings.ts:135",
+      "note": "REQUIRE_ADMIN /settings/backend"
+    },
+    {
+      "method": "GET",
+      "path": "/settings/preferences",
+      "class": "safe",
+      "auth": "session-user",
+      "maxTimeS": 8,
+      "expect": "200 preferences",
+      "src": "settings.ts:147",
+      "note": "REQUIRE_USER /settings/preferences"
+    },
+    {
+      "method": "GET",
+      "path": "/signal-monitor/profile",
+      "class": "safe",
+      "auth": "session-user",
+      "maxTimeS": 8,
+      "expect": "200 profile",
+      "src": "signal-monitor.ts:139"
+    },
+    {
+      "method": "GET",
+      "path": "/signal-monitor/state",
+      "class": "offhours",
+      "auth": "session-user",
+      "maxTimeS": 20,
+      "expect": "200 full-universe state (~10MB, 15s cache)",
+      "src": "signal-monitor.ts:316",
+      "note": "heavy compute read"
+    },
+    {
+      "method": "GET",
+      "path": "/signal-monitor/breadth-history",
+      "class": "safe",
+      "auth": "session-user",
+      "maxTimeS": 8,
+      "expect": "200 breadth history (cached)",
+      "src": "signal-monitor.ts:358",
+      "params": "range=day"
+    },
+    {
+      "method": "GET",
+      "path": "/signal-monitor/events",
+      "class": "safe",
+      "auth": "session-user",
+      "maxTimeS": 8,
+      "expect": "200 events",
+      "src": "signal-monitor.ts:378",
+      "params": "limit=10"
+    },
+    {
+      "method": "GET",
+      "path": "/signal-monitor/matrix/stream",
+      "class": "sse",
+      "auth": "session-user",
+      "maxTimeS": 8,
+      "expect": "text/event-stream (204 if no symbols)",
+      "src": "signal-monitor.ts:171",
+      "params": "symbols=SPY&timeframes=5m",
+      "note": "REQUIRE_USER /signal-monitor"
+    },
+    {
+      "method": "GET",
+      "path": "/tax/profile",
+      "class": "safe",
+      "auth": "session-user",
+      "maxTimeS": 8,
+      "expect": "200 tax profile",
+      "src": "tax.ts:28"
+    },
+    {
+      "method": "GET",
+      "path": "/tax/state-rules/status",
+      "class": "safe",
+      "auth": "session-user",
+      "maxTimeS": 8,
+      "expect": "200 state-rule status",
+      "src": "tax.ts:37",
+      "params": "taxYear=2025"
+    },
+    {
+      "method": "GET",
+      "path": "/tax/overview",
+      "class": "safe",
+      "auth": "session-user",
+      "maxTimeS": 8,
+      "expect": "200 overview",
+      "src": "tax.ts:42"
+    },
+    {
+      "method": "GET",
+      "path": "/tax/reserve",
+      "class": "safe",
+      "auth": "session-user",
+      "maxTimeS": 8,
+      "expect": "200 reserve",
+      "src": "tax.ts:87"
+    },
+    {
+      "method": "GET",
+      "path": "/accounts/{accountId}/tax/overview",
+      "class": "safe",
+      "auth": "session-user",
+      "maxTimeS": 8,
+      "expect": "200 account tax overview",
+      "src": "tax.ts:46",
+      "harvest": "accountId <- GET /accounts"
+    },
+    {
+      "method": "GET",
+      "path": "/accounts/{accountId}/tax/events",
+      "class": "safe",
+      "auth": "session-user",
+      "maxTimeS": 8,
+      "expect": "200 tax events",
+      "src": "tax.ts:51",
+      "harvest": "accountId <- GET /accounts"
+    },
+    {
+      "method": "GET",
+      "path": "/accounts/{accountId}/tax/lots",
+      "class": "safe",
+      "auth": "session-user",
+      "maxTimeS": 8,
+      "expect": "200 tax lots",
+      "src": "tax.ts:56",
+      "harvest": "accountId <- GET /accounts"
+    },
+    {
+      "method": "GET",
+      "path": "/accounts/{accountId}/tax/wash-windows",
+      "class": "safe",
+      "auth": "session-user",
+      "maxTimeS": 8,
+      "expect": "200 wash windows",
+      "src": "tax.ts:61",
+      "harvest": "accountId <- GET /accounts"
+    },
+    {
+      "method": "GET",
+      "path": "/accounts/{accountId}/tax/reconciliation",
+      "class": "safe",
+      "auth": "session-user",
+      "maxTimeS": 8,
+      "expect": "200 reconciliation",
+      "src": "tax.ts:66",
+      "harvest": "accountId <- GET /accounts"
+    },
+    {
+      "method": "GET",
+      "path": "/broker-execution/snaptrade/readiness",
+      "class": "offhours",
+      "auth": "session+entitlement:broker_connect",
+      "maxTimeS": 20,
+      "expect": "200 readiness",
+      "src": "broker-execution.ts:159",
+      "note": "broker readiness passthrough"
+    },
+    {
+      "method": "GET",
+      "path": "/broker-execution/ibkr/oauth/readiness",
+      "class": "offhours",
+      "auth": "session-admin",
+      "maxTimeS": 20,
+      "expect": "200 readiness",
+      "src": "broker-execution.ts:170",
+      "note": "requireAdmin"
+    },
+    {
+      "method": "GET",
+      "path": "/broker-execution/robinhood/readiness",
+      "class": "offhours",
+      "auth": "session+entitlement:broker_connect",
+      "maxTimeS": 20,
+      "expect": "200 readiness",
+      "src": "broker-execution.ts:176"
+    },
+    {
+      "method": "GET",
+      "path": "/broker-execution/schwab/readiness",
+      "class": "offhours",
+      "auth": "session+entitlement:broker_connect",
+      "maxTimeS": 20,
+      "expect": "200 readiness",
+      "src": "broker-execution.ts:283"
+    },
+    {
+      "method": "GET",
+      "path": "/broker-execution/included-accounts",
+      "class": "safe",
+      "auth": "session+entitlement:broker_connect",
+      "maxTimeS": 8,
+      "expect": "200 inclusion prefs",
+      "src": "broker-execution.ts:518"
+    },
+    {
+      "method": "GET",
+      "path": "/broker-execution/snaptrade/brokerages",
+      "class": "exclude",
+      "auth": "session+entitlement:broker_connect",
+      "maxTimeS": 0,
+      "expect": "SKIP",
+      "src": "broker-execution.ts:446",
+      "note": "third-party SnapTrade brokerage catalog + entitlement-gated"
+    },
+    {
+      "method": "GET",
+      "path": "/broker-execution/robinhood/oauth/callback",
+      "class": "exclude",
+      "auth": "session+entitlement:broker_connect",
+      "maxTimeS": 0,
+      "expect": "SKIP",
+      "src": "broker-execution.ts:204",
+      "note": "OAuth callback: side-effect (token exchange + 302 redirect)"
+    },
+    {
+      "method": "GET",
+      "path": "/broker-execution/schwab/oauth/callback",
+      "class": "exclude",
+      "auth": "session+entitlement:broker_connect",
+      "maxTimeS": 0,
+      "expect": "SKIP",
+      "src": "broker-execution.ts:312",
+      "note": "OAuth callback: side-effect + 302 redirect"
+    },
+    {
+      "method": "GET",
+      "path": "/broker-execution/snaptrade/accounts/{accountId}/portfolio",
+      "class": "exclude",
+      "auth": "session+entitlement:broker_connect",
+      "maxTimeS": 0,
+      "expect": "SKIP",
+      "src": "broker-execution.ts:538",
+      "note": "third-party SnapTrade passthrough"
+    },
+    {
+      "method": "GET",
+      "path": "/broker-execution/snaptrade/accounts/{accountId}/history",
+      "class": "exclude",
+      "auth": "session+entitlement:broker_connect",
+      "maxTimeS": 0,
+      "expect": "SKIP",
+      "src": "broker-execution.ts:552",
+      "note": "third-party SnapTrade passthrough"
+    },
+    {
+      "method": "GET",
+      "path": "/broker-execution/snaptrade/accounts/{accountId}/orders/recent",
+      "class": "exclude",
+      "auth": "session+entitlement:broker_connect",
+      "maxTimeS": 0,
+      "expect": "SKIP",
+      "src": "broker-execution.ts:575",
+      "note": "third-party SnapTrade passthrough"
+    },
+    {
+      "method": "GET",
+      "path": "/broker-execution/snaptrade/accounts/{accountId}/symbols/search",
+      "class": "exclude",
+      "auth": "session+entitlement:broker_connect",
+      "maxTimeS": 0,
+      "expect": "SKIP",
+      "src": "broker-execution.ts:590",
+      "note": "third-party SnapTrade passthrough"
+    },
+    {
+      "method": "GET",
+      "path": "/broker-execution/ibkr-portal/readiness",
+      "class": "offhours",
+      "auth": "session+ibkr-portal-access",
+      "maxTimeS": 20,
+      "expect": "200 readiness",
+      "src": "ibkr-portal.ts:131",
+      "note": "requireUser + IBKR portal access"
+    },
+    {
+      "method": "GET",
+      "path": "/broker-execution/ibkr-portal/status",
+      "class": "offhours",
+      "auth": "session+ibkr-portal-access",
+      "maxTimeS": 20,
+      "expect": "200 status",
+      "src": "ibkr-portal.ts:139",
+      "note": "requireUser + IBKR portal access"
+    },
+    {
+      "method": "USE",
+      "path": "/broker-execution/ibkr-portal/gateway",
+      "class": "exclude",
+      "auth": "session+ibkr-portal-access",
+      "maxTimeS": 0,
+      "expect": "SKIP",
+      "src": "ibkr-portal.ts:180",
+      "note": "reverse proxy to user IBKR Client Portal gateway (all methods)"
+    },
+    {
+      "method": "GET",
+      "path": "/marketing/shadow-dashboard/snapshot",
+      "class": "safe",
+      "auth": "marketing-bearer",
+      "maxTimeS": 8,
+      "expect": "401 (no token) or 404 (disabled)",
+      "src": "marketing.ts:132",
+      "note": "PYRUS_MARKETING_DASHBOARD_TOKEN Bearer; NOT in spec"
+    },
+    {
+      "method": "GET",
+      "path": "/marketing/shadow-dashboard/stream",
+      "class": "sse",
+      "auth": "marketing-bearer",
+      "maxTimeS": 8,
+      "expect": "401/404 before stream (no token)",
+      "src": "marketing.ts:145",
+      "note": "SSE but bearer-gated; NOT in spec"
+    },
+    {
+      "method": "GET",
+      "path": "/auth/launch",
+      "class": "exclude",
+      "auth": "anon",
+      "maxTimeS": 0,
+      "expect": "SKIP",
+      "src": "auth.ts:332",
+      "note": "side-effect: mints pyrus_session + 302 redirect on valid token; 400/503 otherwise; NOT in spec"
+    }
+  ],
+  "noCookieProbes": [
+    {
+      "method": "GET",
+      "path": "/broker-connections",
+      "probe": "no-cookie",
+      "class": "safe",
+      "auth": "none",
+      "maxTimeS": 5,
+      "expect": "401",
+      "src": "platform.ts:1750"
+    },
+    {
+      "method": "GET",
+      "path": "/accounts",
+      "probe": "no-cookie",
+      "class": "safe",
+      "auth": "none",
+      "maxTimeS": 5,
+      "expect": "401",
+      "src": "platform.ts:1756"
+    },
+    {
+      "method": "GET",
+      "path": "/accounts/flex/health",
+      "probe": "no-cookie",
+      "class": "offhours",
+      "auth": "none",
+      "maxTimeS": 5,
+      "expect": "401",
+      "src": "platform.ts:1764"
+    },
+    {
+      "method": "GET",
+      "path": "/accounts/{accountId}/summary",
+      "probe": "no-cookie",
+      "class": "safe",
+      "auth": "none",
+      "maxTimeS": 5,
+      "expect": "401",
+      "src": "platform.ts:1772"
+    },
+    {
+      "method": "GET",
+      "path": "/accounts/{accountId}/equity-history",
+      "probe": "no-cookie",
+      "class": "safe",
+      "auth": "none",
+      "maxTimeS": 5,
+      "expect": "401",
+      "src": "platform.ts:1786"
+    },
+    {
+      "method": "GET",
+      "path": "/accounts/{accountId}/allocation",
+      "probe": "no-cookie",
+      "class": "safe",
+      "auth": "none",
+      "maxTimeS": 5,
+      "expect": "401",
+      "src": "platform.ts:1806"
+    },
+    {
+      "method": "GET",
+      "path": "/accounts/{accountId}/positions",
+      "probe": "no-cookie",
+      "class": "safe",
+      "auth": "none",
+      "maxTimeS": 5,
+      "expect": "401",
+      "src": "platform.ts:1820"
+    },
+    {
+      "method": "GET",
+      "path": "/accounts/{accountId}/positions-at-date",
+      "probe": "no-cookie",
+      "class": "safe",
+      "auth": "none",
+      "maxTimeS": 5,
+      "expect": "401",
+      "src": "platform.ts:1845"
+    },
+    {
+      "method": "GET",
+      "path": "/accounts/{accountId}/closed-trades",
+      "probe": "no-cookie",
+      "class": "safe",
+      "auth": "none",
+      "maxTimeS": 5,
+      "expect": "401",
+      "src": "platform.ts:1865"
+    },
+    {
+      "method": "GET",
+      "path": "/accounts/{accountId}/orders",
+      "probe": "no-cookie",
+      "class": "safe",
+      "auth": "none",
+      "maxTimeS": 5,
+      "expect": "401",
+      "src": "platform.ts:1895"
+    },
+    {
+      "method": "GET",
+      "path": "/accounts/{accountId}/risk",
+      "probe": "no-cookie",
+      "class": "safe",
+      "auth": "none",
+      "maxTimeS": 5,
+      "expect": "401",
+      "src": "platform.ts:1931"
+    },
+    {
+      "method": "GET",
+      "path": "/accounts/{accountId}/cash-activity",
+      "probe": "no-cookie",
+      "class": "safe",
+      "auth": "none",
+      "maxTimeS": 5,
+      "expect": "401",
+      "src": "platform.ts:1948"
+    },
+    {
+      "method": "GET",
+      "path": "/watchlists",
+      "probe": "no-cookie",
+      "class": "safe",
+      "auth": "none",
+      "maxTimeS": 5,
+      "expect": "401",
+      "src": "platform.ts:2023"
+    },
+    {
+      "method": "GET",
+      "path": "/positions",
+      "probe": "no-cookie",
+      "class": "safe",
+      "auth": "none",
+      "maxTimeS": 5,
+      "expect": "401",
+      "src": "platform.ts:2057"
+    },
+    {
+      "method": "GET",
+      "path": "/orders",
+      "probe": "no-cookie",
+      "class": "safe",
+      "auth": "none",
+      "maxTimeS": 5,
+      "expect": "401",
+      "src": "platform.ts:2074"
+    },
+    {
+      "method": "GET",
+      "path": "/streams/accounts/page",
+      "probe": "no-cookie",
+      "class": "sse",
+      "auth": "none",
+      "maxTimeS": 5,
+      "expect": "401",
+      "src": "platform.ts:3256"
+    },
+    {
+      "method": "GET",
+      "path": "/streams/accounts/shadow",
+      "probe": "no-cookie",
+      "class": "sse",
+      "auth": "none",
+      "maxTimeS": 5,
+      "expect": "401",
+      "src": "platform.ts:3385"
+    },
+    {
+      "method": "GET",
+      "path": "/algo/deployments",
+      "probe": "no-cookie",
+      "class": "safe",
+      "auth": "none",
+      "maxTimeS": 5,
+      "expect": "401",
+      "src": "automation.ts:173"
+    },
+    {
+      "method": "GET",
+      "path": "/algo/events",
+      "probe": "no-cookie",
+      "class": "safe",
+      "auth": "none",
+      "maxTimeS": 5,
+      "expect": "401",
+      "src": "automation.ts:508"
+    },
+    {
+      "method": "GET",
+      "path": "/algo/deployments/{deploymentId}/cockpit",
+      "probe": "no-cookie",
+      "class": "safe",
+      "auth": "none",
+      "maxTimeS": 5,
+      "expect": "401",
+      "src": "automation.ts:338"
+    },
+    {
+      "method": "GET",
+      "path": "/algo/deployments/{deploymentId}/signal-options/state",
+      "probe": "no-cookie",
+      "class": "safe",
+      "auth": "none",
+      "maxTimeS": 5,
+      "expect": "401",
+      "src": "automation.ts:321"
+    },
+    {
+      "method": "GET",
+      "path": "/algo/deployments/{deploymentId}/signal-options/performance",
+      "probe": "no-cookie",
+      "class": "safe",
+      "auth": "none",
+      "maxTimeS": 5,
+      "expect": "401",
+      "src": "automation.ts:354"
+    },
+    {
+      "method": "GET",
+      "path": "/algo/deployments/{deploymentId}/signal-quality-kpis",
+      "probe": "no-cookie",
+      "class": "offhours",
+      "auth": "none",
+      "maxTimeS": 5,
+      "expect": "401",
+      "src": "automation.ts:301"
+    },
+    {
+      "method": "GET",
+      "path": "/streams/algo/cockpit",
+      "probe": "no-cookie",
+      "class": "sse",
+      "auth": "none",
+      "maxTimeS": 5,
+      "expect": "401",
+      "src": "automation.ts:536"
+    },
+    {
+      "method": "GET",
+      "path": "/backtests/strategies",
+      "probe": "no-cookie",
+      "class": "safe",
+      "auth": "none",
+      "maxTimeS": 5,
+      "expect": "401",
+      "src": "backtesting.ts:57"
+    },
+    {
+      "method": "GET",
+      "path": "/backtests/studies",
+      "probe": "no-cookie",
+      "class": "safe",
+      "auth": "none",
+      "maxTimeS": 5,
+      "expect": "401",
+      "src": "backtesting.ts:62"
+    },
+    {
+      "method": "GET",
+      "path": "/backtests/studies/{studyId}",
+      "probe": "no-cookie",
+      "class": "safe",
+      "auth": "none",
+      "maxTimeS": 5,
+      "expect": "401",
+      "src": "backtesting.ts:73"
+    },
+    {
+      "method": "GET",
+      "path": "/backtests/studies/{studyId}/preview-chart",
+      "probe": "no-cookie",
+      "class": "offhours",
+      "auth": "none",
+      "maxTimeS": 5,
+      "expect": "401",
+      "src": "backtesting.ts:81"
+    },
+    {
+      "method": "GET",
+      "path": "/backtests/runs",
+      "probe": "no-cookie",
+      "class": "safe",
+      "auth": "none",
+      "maxTimeS": 5,
+      "expect": "401",
+      "src": "backtesting.ts:92"
+    },
+    {
+      "method": "GET",
+      "path": "/backtests/runs/{runId}",
+      "probe": "no-cookie",
+      "class": "safe",
+      "auth": "none",
+      "maxTimeS": 5,
+      "expect": "401",
+      "src": "backtesting.ts:152"
+    },
+    {
+      "method": "GET",
+      "path": "/backtests/runs/{runId}/chart",
+      "probe": "no-cookie",
+      "class": "offhours",
+      "auth": "none",
+      "maxTimeS": 5,
+      "expect": "401",
+      "src": "backtesting.ts:158"
+    },
+    {
+      "method": "GET",
+      "path": "/backtests/sweeps/{sweepId}",
+      "probe": "no-cookie",
+      "class": "safe",
+      "auth": "none",
+      "maxTimeS": 5,
+      "expect": "401",
+      "src": "backtesting.ts:187"
+    },
+    {
+      "method": "GET",
+      "path": "/backtests/jobs",
+      "probe": "no-cookie",
+      "class": "safe",
+      "auth": "none",
+      "maxTimeS": 5,
+      "expect": "401",
+      "src": "backtesting.ts:195"
+    },
+    {
+      "method": "GET",
+      "path": "/backtests/drafts",
+      "probe": "no-cookie",
+      "class": "safe",
+      "auth": "none",
+      "maxTimeS": 5,
+      "expect": "401",
+      "src": "backtesting.ts:211"
+    },
+    {
+      "method": "GET",
+      "path": "/backtests/overnight-expectancy/{studyId}",
+      "probe": "no-cookie",
+      "class": "offhours",
+      "auth": "none",
+      "maxTimeS": 5,
+      "expect": "401",
+      "src": "backtesting.ts:257"
+    },
+    {
+      "method": "GET",
+      "path": "/backtests/overnight-expectancy/{studyId}/samples",
+      "probe": "no-cookie",
+      "class": "offhours",
+      "auth": "none",
+      "maxTimeS": 5,
+      "expect": "401",
+      "src": "backtesting.ts:270"
+    },
+    {
+      "method": "GET",
+      "path": "/backtests/pattern-discovery/{studyId}",
+      "probe": "no-cookie",
+      "class": "offhours",
+      "auth": "none",
+      "maxTimeS": 5,
+      "expect": "401",
+      "src": "backtesting.ts:299"
+    },
+    {
+      "method": "GET",
+      "path": "/backtests/pattern-discovery/{studyId}/occurrences",
+      "probe": "no-cookie",
+      "class": "offhours",
+      "auth": "none",
+      "maxTimeS": 5,
+      "expect": "401",
+      "src": "backtesting.ts:316"
+    },
+    {
+      "method": "GET",
+      "path": "/charting/pine-scripts",
+      "probe": "no-cookie",
+      "class": "safe",
+      "auth": "none",
+      "maxTimeS": 5,
+      "expect": "401",
+      "src": "charting.ts:17"
+    },
+    {
+      "method": "GET",
+      "path": "/research/status",
+      "probe": "no-cookie",
+      "class": "safe",
+      "auth": "none",
+      "maxTimeS": 5,
+      "expect": "401",
+      "src": "research.ts:52"
+    },
+    {
+      "method": "GET",
+      "path": "/research/high-beta-universe",
+      "probe": "no-cookie",
+      "class": "offhours",
+      "auth": "none",
+      "maxTimeS": 5,
+      "expect": "401",
+      "src": "research.ts:58"
+    },
+    {
+      "method": "GET",
+      "path": "/research/fundamentals",
+      "probe": "no-cookie",
+      "class": "safe",
+      "auth": "none",
+      "maxTimeS": 5,
+      "expect": "401",
+      "src": "research.ts:67"
+    },
+    {
+      "method": "GET",
+      "path": "/research/financials",
+      "probe": "no-cookie",
+      "class": "safe",
+      "auth": "none",
+      "maxTimeS": 5,
+      "expect": "401",
+      "src": "research.ts:76"
+    },
+    {
+      "method": "GET",
+      "path": "/research/snapshots",
+      "probe": "no-cookie",
+      "class": "safe",
+      "auth": "none",
+      "maxTimeS": 5,
+      "expect": "401",
+      "src": "research.ts:85"
+    },
+    {
+      "method": "GET",
+      "path": "/research/earnings-calendar",
+      "probe": "no-cookie",
+      "class": "safe",
+      "auth": "none",
+      "maxTimeS": 5,
+      "expect": "401",
+      "src": "research.ts:94"
+    },
+    {
+      "method": "GET",
+      "path": "/research/sec-filings",
+      "probe": "no-cookie",
+      "class": "safe",
+      "auth": "none",
+      "maxTimeS": 5,
+      "expect": "401",
+      "src": "research.ts:105"
+    },
+    {
+      "method": "GET",
+      "path": "/research/transcripts",
+      "probe": "no-cookie",
+      "class": "safe",
+      "auth": "none",
+      "maxTimeS": 5,
+      "expect": "401",
+      "src": "research.ts:112"
+    },
+    {
+      "method": "GET",
+      "path": "/research/transcript",
+      "probe": "no-cookie",
+      "class": "safe",
+      "auth": "none",
+      "maxTimeS": 5,
+      "expect": "401",
+      "src": "research.ts:121"
+    },
+    {
+      "method": "GET",
+      "path": "/settings/backend",
+      "probe": "no-cookie",
+      "class": "safe",
+      "auth": "none",
+      "maxTimeS": 5,
+      "expect": "401 (403 if member cookie w/o admin)",
+      "src": "settings.ts:135"
+    },
+    {
+      "method": "GET",
+      "path": "/settings/preferences",
+      "probe": "no-cookie",
+      "class": "safe",
+      "auth": "none",
+      "maxTimeS": 5,
+      "expect": "401",
+      "src": "settings.ts:147"
+    },
+    {
+      "method": "GET",
+      "path": "/signal-monitor/profile",
+      "probe": "no-cookie",
+      "class": "safe",
+      "auth": "none",
+      "maxTimeS": 5,
+      "expect": "401",
+      "src": "signal-monitor.ts:139"
+    },
+    {
+      "method": "GET",
+      "path": "/signal-monitor/state",
+      "probe": "no-cookie",
+      "class": "offhours",
+      "auth": "none",
+      "maxTimeS": 5,
+      "expect": "401",
+      "src": "signal-monitor.ts:316"
+    },
+    {
+      "method": "GET",
+      "path": "/signal-monitor/breadth-history",
+      "probe": "no-cookie",
+      "class": "safe",
+      "auth": "none",
+      "maxTimeS": 5,
+      "expect": "401",
+      "src": "signal-monitor.ts:358"
+    },
+    {
+      "method": "GET",
+      "path": "/signal-monitor/events",
+      "probe": "no-cookie",
+      "class": "safe",
+      "auth": "none",
+      "maxTimeS": 5,
+      "expect": "401",
+      "src": "signal-monitor.ts:378"
+    },
+    {
+      "method": "GET",
+      "path": "/signal-monitor/matrix/stream",
+      "probe": "no-cookie",
+      "class": "sse",
+      "auth": "none",
+      "maxTimeS": 5,
+      "expect": "401",
+      "src": "signal-monitor.ts:171"
+    },
+    {
+      "method": "GET",
+      "path": "/tax/profile",
+      "probe": "no-cookie",
+      "class": "safe",
+      "auth": "none",
+      "maxTimeS": 5,
+      "expect": "401",
+      "src": "tax.ts:28"
+    },
+    {
+      "method": "GET",
+      "path": "/tax/state-rules/status",
+      "probe": "no-cookie",
+      "class": "safe",
+      "auth": "none",
+      "maxTimeS": 5,
+      "expect": "401",
+      "src": "tax.ts:37"
+    },
+    {
+      "method": "GET",
+      "path": "/tax/overview",
+      "probe": "no-cookie",
+      "class": "safe",
+      "auth": "none",
+      "maxTimeS": 5,
+      "expect": "401",
+      "src": "tax.ts:42"
+    },
+    {
+      "method": "GET",
+      "path": "/tax/reserve",
+      "probe": "no-cookie",
+      "class": "safe",
+      "auth": "none",
+      "maxTimeS": 5,
+      "expect": "401",
+      "src": "tax.ts:87"
+    },
+    {
+      "method": "GET",
+      "path": "/accounts/{accountId}/tax/overview",
+      "probe": "no-cookie",
+      "class": "safe",
+      "auth": "none",
+      "maxTimeS": 5,
+      "expect": "401",
+      "src": "tax.ts:46"
+    },
+    {
+      "method": "GET",
+      "path": "/accounts/{accountId}/tax/events",
+      "probe": "no-cookie",
+      "class": "safe",
+      "auth": "none",
+      "maxTimeS": 5,
+      "expect": "401",
+      "src": "tax.ts:51"
+    },
+    {
+      "method": "GET",
+      "path": "/accounts/{accountId}/tax/lots",
+      "probe": "no-cookie",
+      "class": "safe",
+      "auth": "none",
+      "maxTimeS": 5,
+      "expect": "401",
+      "src": "tax.ts:56"
+    },
+    {
+      "method": "GET",
+      "path": "/accounts/{accountId}/tax/wash-windows",
+      "probe": "no-cookie",
+      "class": "safe",
+      "auth": "none",
+      "maxTimeS": 5,
+      "expect": "401",
+      "src": "tax.ts:61"
+    },
+    {
+      "method": "GET",
+      "path": "/accounts/{accountId}/tax/reconciliation",
+      "probe": "no-cookie",
+      "class": "safe",
+      "auth": "none",
+      "maxTimeS": 5,
+      "expect": "401",
+      "src": "tax.ts:66"
+    },
+    {
+      "method": "GET",
+      "path": "/broker-execution/snaptrade/readiness",
+      "probe": "no-cookie",
+      "class": "offhours",
+      "auth": "none",
+      "maxTimeS": 5,
+      "expect": "401",
+      "src": "broker-execution.ts:159"
+    },
+    {
+      "method": "GET",
+      "path": "/broker-execution/ibkr/oauth/readiness",
+      "probe": "no-cookie",
+      "class": "offhours",
+      "auth": "none",
+      "maxTimeS": 5,
+      "expect": "401 (403 if member cookie w/o admin)",
+      "src": "broker-execution.ts:170"
+    },
+    {
+      "method": "GET",
+      "path": "/broker-execution/robinhood/readiness",
+      "probe": "no-cookie",
+      "class": "offhours",
+      "auth": "none",
+      "maxTimeS": 5,
+      "expect": "401",
+      "src": "broker-execution.ts:176"
+    },
+    {
+      "method": "GET",
+      "path": "/broker-execution/schwab/readiness",
+      "probe": "no-cookie",
+      "class": "offhours",
+      "auth": "none",
+      "maxTimeS": 5,
+      "expect": "401",
+      "src": "broker-execution.ts:283"
+    },
+    {
+      "method": "GET",
+      "path": "/broker-execution/included-accounts",
+      "probe": "no-cookie",
+      "class": "safe",
+      "auth": "none",
+      "maxTimeS": 5,
+      "expect": "401",
+      "src": "broker-execution.ts:518"
+    },
+    {
+      "method": "GET",
+      "path": "/broker-execution/ibkr-portal/readiness",
+      "probe": "no-cookie",
+      "class": "offhours",
+      "auth": "none",
+      "maxTimeS": 5,
+      "expect": "401",
+      "src": "ibkr-portal.ts:131"
+    },
+    {
+      "method": "GET",
+      "path": "/broker-execution/ibkr-portal/status",
+      "probe": "no-cookie",
+      "class": "offhours",
+      "auth": "none",
+      "maxTimeS": 5,
+      "expect": "401",
+      "src": "ibkr-portal.ts:139"
+    }
+  ]
+}

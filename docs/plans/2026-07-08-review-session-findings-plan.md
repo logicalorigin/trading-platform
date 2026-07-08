@@ -103,3 +103,59 @@ final verify output (journal: `subagents/workflows/wf_3eda40c2-8ca/journal.jsonl
 | Tomorrow's open re-saturates | Fixes landed target exactly that; watch flight recorder at 07:30 MDT; T12-T14 are the structural insurance |
 | Dirty tree still holds other lanes | Never broad git add; lane table: scratchpad/lane-classification.md |
 | In-flight worker edits collide | One worker per file; check `git status` before dispatch |
+
+## Resume instructions (stopped / pending / unstarted work)
+
+Session base: Claude session `fccb627d-8452-4d5f-8c32-0c59dd098930`. Scratchpad
+(`/tmp/claude-1000/-home-runner-workspace/fccb627d-*/scratchpad/`) dies on VM rotation (~6h);
+everything needed for pickup is in-repo (this doc, `docs/plans/session-artifacts-2026-07-08/`,
+`.codex-watch/`, `docs/plans/workorders-2026-07-08/`).
+
+### Stopped Claude workflows (same-session resume only — from a NEW session, harvest journals or relaunch)
+Journals: `~/.claude/projects/-home-runner-workspace/fccb627d-*/subagents/workflows/<runId>/journal.jsonl`
+Scripts:  `~/.claude/projects/-home-runner-workspace/fccb627d-*/workflows/scripts/`
+| Workflow | runId | State when stopped | Pickup |
+|---|---|---|---|
+| pyrus-whole-codebase-review | wf_3eda40c2-8ca | Find done (46u/164 findings, 6 P1 — 5 fixed); Lane+Verify partial | Harvest P2s (49) + P3s (109) from journal; they are UNVERIFIED — triage by confidence, spot-check before fixing |
+| duplicative-work-hunt | wf_01a91aa3-9af | 8/8 hunters done; verify partial | 8 high-conf findings already in Phase 2 above; journal has the full list |
+| silent-failure-hunt | wf_bdaf8bd3-6f5 | hunters done; verify partial | P1 in T2; P2/P3s in Phase 5; journal has full findings |
+| unbounded-growth-hunt | wf_b55f9b7c-ca2 | hunters done; verify partial | P1s in T3/T4; P2s in Phase 5; journal has full list |
+| zombie-config-hunt | wf_6e6e4ffb-76b | stopped early (superseded by codex HUNT-Z) | Ignore; use `.codex-watch/hunt-z-report.md` |
+If the old session dir is gone: relaunch from the committed WO specs (`wo-hunt-series.md` covers
+zombie/money/cache/session/retry/test-lies) or re-run a review workflow scoped to the P2/P3 gap.
+
+### Codex workers possibly still writing at session end (reports persist regardless)
+- `WO-FIX-13` (SSE bootstrap cache + overlay gate + P&L day window): when `.codex-watch/wo-fix-13-report.md`
+  exists → check tests green → files are working-tree edits → review diff → commit per-fix
+  (signal-monitor.ts / OperationsSignalRow.jsx / signal-options-automation.ts), then SIGUSR2 reload.
+- `WO-FIX-14` (auth-session 8s timeout — the forever-LOADING boot fix): same protocol,
+  `authSession.jsx` (frontend, Vite hot-reloads; no API restart needed).
+- Codex hunt chain (HUNT-M/C/S/R/T, sequential): reports land as `.codex-watch/hunt-{m,c,s,r,t}-report.md`.
+  If the chain died mid-run (checked via missing reports), re-dispatch per hunt:
+  `{ echo "RUN ONLY THE HUNT-<X> SECTION..."; cat docs/plans/workorders-2026-07-08/wo-hunt-series.md; } | codex exec -s danger-full-access -c 'model_reasoning_effort="high"' - > .codex-watch/hunt-<x>-run.log 2>&1`
+  Triage each report into this plan's phases when it lands.
+
+### Unstarted (dispatch order)
+1. **T14 / 1b** (owner-greenlit): O(1) latest-completed-bucket — design in `docs/plans/elu-p3-proposal.md`
+   §1b; dispatch codex xhigh once wo-fix-13 has released signal-monitor.ts.
+2. **Probe completion**: 69 un-probed routes (harness classes probe-off-hours-expensive + SSE) —
+   plan + auth notes in `docs/plans/session-artifacts-2026-07-08/probe-plan.json` / `-notes.md`.
+   Mint a fresh QA session first (pattern: `artifacts/api-server/__mint-qa-session.mts`; the
+   session-`fccb627d` token was revoked... verify revocation succeeded — the revoke command errored
+   mid-handoff; if `qa-session.json`'s token still works, revoke via `revokeAuthSession` (auth.ts:353)).
+3. **Full-suite re-run vs baseline ledger** (`session-artifacts-2026-07-08/test-ledger-summary.txt`):
+   NOTE the sweep harness bug — lib/backtest-core + lib/market-calendar need tsx invoked via a
+   package that declares it (or add tsx devDep) — 48/48 actually green when run correctly.
+4. **browser:waterfall** e2e + fresh visual sweep (use `artifacts/pyrus/e2e/.watch-app.mjs` pattern,
+   45s waits, storage-state auth).
+5. **Owner decisions A/B** then T12/T13/T15-T17 per the sequenced plan in
+   `docs/plans/db-topology-decision-doc.md` §5 (step 0 baselines first).
+
+### Standing session practices (from owner feedback — binding for pickup sessions)
+Watch the live runtime proactively (recreate the watcher from `.watch-app.mjs`, check
+flight-recorder events each wake); terse updates; lean verification (no refutation panels on clear
+findings); offload heavy work to codex xhigh workers (WO template:
+`docs/plans/workorders-2026-07-08/wo-fix-14-*.md` is the leanest example); one worker per file;
+isolated per-fix commits via index-blob staging (never broad `git add`); SIGUSR2 reload after
+backend batches; tomorrow's market open (~07:30 MDT) is the acceptance test for today's pressure
+fixes — watch ELU/pool/waiting at open before dispatching anything heavy.

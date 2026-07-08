@@ -1,0 +1,19 @@
+=== api-server: 184 test files ===
+api-server: exit=1 pass_lines=1179 fail_lines=17
+=== pyrus: 136 test files ===
+pyrus: exit=1 pass_lines=838 fail_lines=13
+=== lib-db: 10 test files ===
+lib-db: exit=0 pass_lines=30 fail_lines=0
+=== backtest-core: 3 test files ===
+backtest-core: exit=1 pass_lines=0 fail_lines=7
+=== market-calendar: 1 test files ===
+market-calendar: exit=1 pass_lines=0 fail_lines=3
+=== pyrus-signals-core: 1 test files ===
+pyrus-signals-core: exit=0 pass_lines=19 fail_lines=0
+=== api-client-react: 1 test files ===
+api-client-react: exit=0 pass_lines=3 fail_lines=0
+=== backtest-worker: 3 test files ===
+backtest-worker: exit=0 pass_lines=13 fail_lines=0
+=== mcp-server: 3 test files ===
+mcp-server: exit=0 pass_lines=10 fail_lines=0
+SWEEP COMPLETE Wed Jul  8 01:35:57 PM MDT 2026
