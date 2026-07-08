@@ -15,6 +15,12 @@ visual/testers. In-flight at compile time: WO-FIX-13 (codex), boot-stall investi
 M/C/S/R/T (reports land in `.codex-watch/hunt-*.md` — TRIAGE THEM when they arrive), review-workflow
 final verify output (journal: `subagents/workflows/wf_3eda40c2-8ca/journal.jsonl`).
 
+## Phase 0 update (end of session): WO-FIX-13 A/B/C + WO-FIX-14 landed (commits c2032667,
+3299f0f3, d84973b5, e4273ce3 — bootstrap cache, overlay gate, P&L day window, auth timeout).
+26 commits total. Hunts M/C/S triaged below (Phase 1b); hunts R/T still pending collection.
+Two ambiguous dirty test files left for triage: signal-monitor-stream.test.ts,
+signal-monitor-local-bar-cache-rollup.test.ts (unclear worker vs lane ownership).
+
 ## Phase 1: P1 correctness (fix first)
 - [ ] T1 (S): PhotonicsObservatory d3 force-graph effect re-runs per live tick
       (`artifacts/pyrus/src/features/research/PhotonicsObservatory.jsx:3943` — liveData/liveFund in
@@ -29,6 +35,20 @@ final verify output (journal: `subagents/workflows/wf_3eda40c2-8ca/journal.jsonl
 - [ ] T4 (M): frontend minute-cache unbounded growth
       (`artifacts/pyrus/src/features/charting/useMassiveStockAggregateStream.ts:144` module-level
       per-symbol minute map, browser runs all day). AC: bound per symbol + eviction on symbol switch.
+
+## Phase 1b: P1s from codex hunts M/C/S (money-math, cache-coherence, session-boundary)
+- [ ] T1b-1 (S): daily-loss keyed by UTC day, not NY session — TWO sites
+      (`backtest-worker/src/index.ts:1317`, `signal-options-automation.ts:18807`). AC: NY-session day
+      via lib/market-calendar.
+- [ ] T1b-2 (S): signal-options daily P&L ignores commissions (`signal-options-automation.ts:8271`).
+- [ ] T1b-3 (S): SnapTrade balances not busted after live order submit (`account.ts:4564`).
+- [ ] T1b-4 (S): IBKR order mutations don't bust order-visibility cache (`platform.ts:3094`).
+- [ ] T1b-5 (M): session gates ignore holidays/half-days — FIVE sites: flow RTH gate UTC-fixed
+      (`flow-universe.ts:270`), shadow option live-session gate (`shadow-account.ts:1263`), expiring
+      options force-closed 3h late on half-days (`shadow-account.ts:1251`), backfill default end
+      (`signal-options-automation.ts:17053`), flow hydration sessions (`historical-flow-events.ts:297`).
+      AC: all five consume lib/market-calendar early-close/holiday data. Full details:
+      `.codex-watch/hunt-{m,c,s}-report.md` (+ P2/P3s therein, unread — triage on pickup).
 
 ### Checkpoint 1: targeted tests green; SIGUSR2 reload; watcher digest clean.
 
