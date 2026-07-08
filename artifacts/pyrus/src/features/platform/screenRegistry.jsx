@@ -149,7 +149,7 @@ const createPreloadableScreen = (screenId, label) => {
   };
 };
 
-const MarketScreen = createPreloadableScreen("market", "MarketScreen");
+const MarketScreen = createPreloadableScreen("market-demo", "MarketDemoScreen");
 const MarketDemoScreen = createPreloadableScreen("market-demo", "MarketDemoScreen");
 const SignalsScreen = createPreloadableScreen("signals", "SignalsScreen");
 const FlowScreen = createPreloadableScreen("flow", "FlowScreen");
@@ -181,7 +181,9 @@ export const SCREENS = [
 ];
 
 export const SCREEN_MODULE_PRELOAD_ORDER = [
-  "market",
+  // "market" route now renders the redesign (market-demo module) — preload that
+  // chunk so the primary Market tab is pre-warmed (the legacy market chunk is dead).
+  "market-demo",
   "account",
   "signals",
   "algo",

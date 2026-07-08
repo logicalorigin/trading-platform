@@ -1,5 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
-import { useGetNews, useListAggregateFlowEvents } from "@workspace/api-client-react";
+import {
+  useGetNews,
+  useGetResearchEarningsCalendar,
+  useListAggregateFlowEvents,
+} from "@workspace/api-client-react";
 import { MultiChartGrid } from "../features/market/MultiChartGrid.jsx";
 import { MarketActivityPanel } from "../features/market/MarketActivityPanel.jsx";
 import MarketInternalsRail from "../features/market/MarketInternalsRail.jsx";
@@ -17,6 +21,8 @@ import {
 } from "../components/platform/primitives.jsx";
 import {
   fmtM,
+  formatCalendarMeta,
+  formatIsoDate,
   formatRelativeTimeShort,
   formatSignedPercent,
   isFiniteNumber,
@@ -227,14 +233,121 @@ const NewsRail = ({ isVisible, safeQaMode }) => {
   );
 };
 
+// Upcoming earnings for the next two weeks. Reuses the same
+// useGetResearchEarningsCalendar hook + dedup the classic Market screen used;
+// gated on researchConfigured. A row click loads that symbol into the chart grid.
+const CalendarRail = ({ isVisible, safeQaMode, researchConfigured, onSymClick }) => {
+  const calendarWindow = useMemo(() => {
+    const from = new Date();
+    const to = new Date(from);
+    to.setUTCDate(to.getUTCDate() + 14);
+    return { from: formatIsoDate(from), to: formatIsoDate(to) };
+  }, []);
+  const earningsQuery = useGetResearchEarningsCalendar(calendarWindow, {
+    query: {
+      enabled: Boolean(isVisible && !safeQaMode && researchConfigured),
+      staleTime: 300_000,
+      refetchInterval: isVisible && !safeQaMode ? 300_000 : false,
+      retry: false,
+    },
+  });
+  const items = useMemo(() => {
+    const entries = earningsQuery.data?.entries || [];
+    if (!researchConfigured || !entries.length) return [];
+    const seen = new Set();
+    return entries
+      .filter((entry) => entry?.symbol && entry?.date)
+      .sort(
+        (left, right) =>
+          (left.date ? Date.parse(left.date) : Infinity) -
+          (right.date ? Date.parse(right.date) : Infinity),
+      )
+      .reduce((acc, entry) => {
+        const key = `${entry.symbol}_${entry.date}_${entry.time || ""}`;
+        if (!seen.has(key)) {
+          seen.add(key);
+          acc.push({
+            id: key,
+            symbol: entry.symbol,
+            label: `${entry.symbol} earnings`,
+            date: formatCalendarMeta(entry.date, entry.time),
+          });
+        }
+        return acc;
+      }, [])
+      .slice(0, 7);
+  }, [earningsQuery.data, researchConfigured]);
+  return (
+    <SurfacePanel title="Calendar" compact>
+      {items.length ? (
+        <div style={{ display: "flex", flexDirection: "column", gap: sp("6px") }}>
+          {items.map((event) => (
+            <button
+              key={event.id}
+              type="button"
+              className="ra-interactive"
+              onClick={() => onSymClick?.(event.symbol)}
+              style={{
+                display: "flex",
+                alignItems: "baseline",
+                justifyContent: "space-between",
+                gap: sp("8px"),
+                width: "100%",
+                background: "transparent",
+                border: "none",
+                padding: 0,
+                cursor: "pointer",
+                textAlign: "left",
+                color: CSS_COLOR.text,
+                fontFamily: T.sans,
+                fontSize: textSize("metric"),
+              }}
+            >
+              <span
+                style={{
+                  minWidth: 0,
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {event.label}
+              </span>
+              <span style={{ color: CSS_COLOR.textDim, flex: "0 0 auto" }}>
+                {event.date}
+              </span>
+            </button>
+          ))}
+        </div>
+      ) : (
+        <DataUnavailableState
+          variant="neutral"
+          loading={
+            researchConfigured &&
+            earningsQuery.isPending &&
+            earningsQuery.fetchStatus !== "idle"
+          }
+          title="No earnings scheduled"
+          detail={
+            researchConfigured
+              ? "Upcoming earnings for the next two weeks appear here."
+              : "Research calendar access is not configured for this environment."
+          }
+        />
+      )}
+    </SurfacePanel>
+  );
+};
+
 /**
- * MarketDemoScreen — hidden redesign of the Market overview page.
- *
- * Reachable only via `?screen=market-demo` (intentionally absent from the nav).
- * The existing MarketScreen is untouched. Layout: a sticky universe-overview hero
- * (flow gauge + P/C + net flow + sort/filter), the flow-ranked universe table,
- * the multi-chart grid kept first-class directly under the hero (a row click loads
- * that symbol into the grid), and a compact News rail.
+ * MarketDemoScreen — the Market overview page (redesign, now promoted to the
+ * `"market"` route via screenRegistry; the legacy MarketScreen.jsx is retained
+ * but no longer rendered). Layout: a sticky universe-overview hero (flow gauge +
+ * P/C + net flow + sort/filter), the flow-ranked universe table, the multi-chart
+ * grid kept first-class directly under the hero (a row click loads that symbol
+ * into the grid), the activity panel, then supporting rails — market internals
+ * (sector flow, leaders/laggards, breadth, rates, market read), news, and the
+ * earnings calendar.
  *
  * See docs/plans/market-screen-redesign-2026-06-26.md.
  */
@@ -245,6 +358,7 @@ export default function MarketDemoScreen({
   symbols,
   isVisible = false,
   safeQaMode = false,
+  researchConfigured = false,
   stockAggregateStreamingEnabled = false,
   unusualThreshold,
   watchlists = [],
@@ -364,6 +478,8 @@ export default function MarketDemoScreen({
         onChangeMonitorWatchlist={onChangeMonitorWatchlist}
       />
 
+      <MarketInternalsRail isVisible={isVisible} onSelectSymbol={handleSelectSymbol} />
+
       <div
         style={{
           display: "grid",
@@ -371,8 +487,13 @@ export default function MarketDemoScreen({
           gap: sp("10px"),
         }}
       >
-        <MarketInternalsRail isVisible={isVisible} onSelectSymbol={handleSelectSymbol} />
         <NewsRail isVisible={isVisible} safeQaMode={safeQaMode} />
+        <CalendarRail
+          isVisible={isVisible}
+          safeQaMode={safeQaMode}
+          researchConfigured={researchConfigured}
+          onSymClick={handleSelectSymbol}
+        />
       </div>
       </div>
     </div>
