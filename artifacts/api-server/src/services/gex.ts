@@ -20,6 +20,7 @@ import {
 } from "./platform";
 import {
   enqueueMarketDataJob,
+  enqueueMarketDataJobs,
   getMarketDataIngestDiagnostics,
   getLatestChartGexSnapshot,
   getLatestGexSnapshot,
@@ -251,6 +252,7 @@ let gexIngestFacadeForTests: {
   getLatestChartGexSnapshot?: typeof getLatestChartGexSnapshot;
   getLatestGexSnapshot?: typeof getLatestGexSnapshot;
   enqueueMarketDataJob?: typeof enqueueMarketDataJob;
+  enqueueMarketDataJobs?: typeof enqueueMarketDataJobs;
   getDiagnostics?: typeof getMarketDataIngestDiagnostics;
   isConfigured?: typeof isMarketDataIngestConfigured;
 } | null = null;
@@ -424,10 +426,13 @@ function getGexIngestFacade(): {
   getLatestChartGexSnapshot: typeof getLatestChartGexSnapshot;
   getLatestGexSnapshot: typeof getLatestGexSnapshot;
   enqueueMarketDataJob: typeof enqueueMarketDataJob;
+  enqueueMarketDataJobs: typeof enqueueMarketDataJobs;
   getDiagnostics: typeof getMarketDataIngestDiagnostics;
   isConfigured: typeof isMarketDataIngestConfigured;
 } {
   const testFullSnapshot = gexIngestFacadeForTests?.getLatestGexSnapshot;
+  const testEnqueueMarketDataJob =
+    gexIngestFacadeForTests?.enqueueMarketDataJob;
   const isConfigured =
     gexIngestFacadeForTests?.isConfigured ?? isMarketDataIngestConfigured;
   return {
@@ -439,7 +444,13 @@ function getGexIngestFacade(): {
     getLatestGexSnapshot:
       testFullSnapshot ?? getLatestGexSnapshot,
     enqueueMarketDataJob:
-      gexIngestFacadeForTests?.enqueueMarketDataJob ?? enqueueMarketDataJob,
+      testEnqueueMarketDataJob ?? enqueueMarketDataJob,
+    enqueueMarketDataJobs:
+      gexIngestFacadeForTests?.enqueueMarketDataJobs ??
+      (testEnqueueMarketDataJob
+        ? async (inputs) =>
+            Promise.all(inputs.map((input) => testEnqueueMarketDataJob(input)))
+        : enqueueMarketDataJobs),
     getDiagnostics:
       gexIngestFacadeForTests?.getDiagnostics ??
       (gexIngestFacadeForTests
@@ -667,24 +678,29 @@ async function queueGexSnapshotRefresh(
       kind: "gex_snapshot" as const,
     },
   ];
-  const results = await Promise.all(
-    inputs.map(async (input): Promise<GexSnapshotRefreshJobResult> => {
-      try {
-        const result = await facade.enqueueMarketDataJob(input);
-        return { kind: input.kind, ...result };
-      } catch (error) {
-        return {
-          kind: input.kind,
+  const results: GexSnapshotRefreshJobResult[] = await facade
+    .enqueueMarketDataJobs(inputs)
+    .then((enqueueResults) =>
+      inputs.map((input, index) => ({
+        kind: input.kind,
+        ...(enqueueResults[index] ?? {
           queued: false,
           dedupeKey: "",
-          reason:
-            error instanceof Error && error.message
-              ? error.message
-              : "enqueue_error",
-        };
-      }
-    }),
-  );
+          reason: "enqueue_error",
+        }),
+      })),
+    )
+    .catch((error) =>
+      inputs.map((input) => ({
+        kind: input.kind,
+        queued: false,
+        dedupeKey: "",
+        reason:
+          error instanceof Error && error.message
+            ? error.message
+            : "enqueue_error",
+      })),
+    );
   let diagnostics: MarketDataIngestDiagnostics | null = null;
   let diagnosticsError: string | null = null;
   try {
