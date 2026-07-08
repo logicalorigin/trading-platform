@@ -2,7 +2,13 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
-import type { ExecutionEvent } from "@workspace/db";
+import {
+  signalMonitorSymbolStatesTable,
+  type AlgoDeployment,
+  type ExecutionEvent,
+} from "@workspace/db";
+import { withTestDb } from "@workspace/db/testing";
+import { sql } from "drizzle-orm";
 import {
   __signalOptionsAutomationInternalsForTests,
   evaluateMtfPatternGate,
@@ -324,6 +330,161 @@ test("Signal Options performance refresh avoids full dashboard hydration", () =>
   assert.match(body, /buildStatePayload\(\{\s*deployment,\s*profile,\s*events,\s*view:\s*"summary",/);
   assert.doesNotMatch(body, /view:\s*"full"/);
   assert.doesNotMatch(body, /getSignalOptionsDashboardSnapshot/);
+});
+
+test("Signal Options worker signal_refresh uses the deployment-scoped stored-state reader", async () => {
+  const fastReaderStart = source.indexOf(
+    "async function listSignalOptionsStoredSignalStatesFast",
+  );
+  const fastReaderEnd = source.indexOf(
+    "\nfunction resolveSignalOptionsMonitorFullRefresh",
+    fastReaderStart,
+  );
+  assert.notEqual(fastReaderStart, -1, "Missing fast stored-state reader");
+  assert.notEqual(fastReaderEnd, -1, "Missing fast reader boundary");
+  const fastReader = source.slice(fastReaderStart, fastReaderEnd);
+  assert.match(
+    fastReader,
+    /inArray\(signalMonitorSymbolStatesTable\.symbol, universeSymbols\)/,
+    "fast reader must scope signal states to the deployment universe",
+  );
+  assert.match(fastReader, /\.limit\(500\)/, "fast reader must keep the row cap");
+
+  await withTestDb(async ({ db }) => {
+    let symbolStateSelects = 0;
+    let symbolStateLimit: unknown = null;
+    const realSelect = db.select.bind(db);
+    (db as unknown as { select: (...args: unknown[]) => unknown }).select = (
+      ...args: unknown[]
+    ) => {
+      const builder = realSelect(...(args as [])) as {
+        from: (...fromArgs: unknown[]) => unknown;
+      };
+      const realFrom = builder.from.bind(builder);
+      builder.from = (...fromArgs: unknown[]) => {
+        const query = realFrom(...fromArgs) as {
+          limit?: (...limitArgs: unknown[]) => unknown;
+        };
+        if (fromArgs[0] === signalMonitorSymbolStatesTable) {
+          symbolStateSelects += 1;
+          if (typeof query.limit === "function") {
+            const realLimit = query.limit.bind(query);
+            query.limit = (...limitArgs: unknown[]) => {
+              symbolStateLimit = limitArgs[0];
+              return realLimit(...limitArgs);
+            };
+          }
+        }
+        return query;
+      };
+      return builder;
+    };
+
+    const profileId = "00000000-0000-4000-8000-000000000909";
+    const evaluatedAt = new Date();
+    const latestBarAt = new Date(evaluatedAt.getTime() - 5 * 60_000);
+    const deployment = {
+      id: "00000000-0000-4000-8000-000000000919",
+      name: "Scoped Signal Options Worker",
+      enabled: true,
+      mode: "shadow",
+      providerAccountId: "shadow",
+      symbolUniverse: ["AAPL"],
+      config: { signalOptions: {} },
+      updatedAt: evaluatedAt,
+    } as unknown as AlgoDeployment;
+
+    await db.execute(sql`
+      INSERT INTO signal_monitor_profiles
+        (id, environment, enabled, timeframe, pyrus_signals_settings, fresh_window_bars, last_evaluated_at)
+      VALUES
+        (${profileId}, 'shadow', true, '5m', ${JSON.stringify({ alpha: "kept" })}::jsonb, 3, ${evaluatedAt.toISOString()}::timestamptz)
+    `);
+    await db.execute(sql`
+      INSERT INTO signal_monitor_symbol_states
+        (id, profile_id, symbol, timeframe, current_signal_direction, current_signal_at, current_signal_price,
+         latest_bar_at, bars_since_signal, fresh, status, active, last_evaluated_at)
+      VALUES
+        ('00000000-0000-4000-8000-000000000910', ${profileId}, 'AAPL', '5m', 'buy',
+         ${latestBarAt.toISOString()}::timestamptz, 187.12, ${latestBarAt.toISOString()}::timestamptz,
+         0, true, 'ok', true, ${evaluatedAt.toISOString()}::timestamptz),
+        ('00000000-0000-4000-8000-000000000911', ${profileId}, 'MSFT', '5m', 'sell',
+         ${latestBarAt.toISOString()}::timestamptz, 412.34, ${latestBarAt.toISOString()}::timestamptz,
+         0, true, 'ok', true, ${evaluatedAt.toISOString()}::timestamptz)
+    `);
+
+    const universe = new Set(["AAPL"]);
+    const result =
+      await __signalOptionsAutomationInternalsForTests.loadSignalOptionsMonitorState({
+        deployment,
+        universe,
+        preferStoredMonitorState: true,
+        source: "worker",
+      });
+    const states = result.states as Record<string, unknown>[];
+    const state = states[0] ?? {};
+    const profile = result.profile as Record<string, unknown>;
+
+    assert.equal(symbolStateSelects, 1);
+    assert.equal(symbolStateLimit, 500);
+    assert.deepEqual(
+      states.map((entry) => entry["symbol"]),
+      ["AAPL"],
+      "worker refresh must not return out-of-deployment stored states",
+    );
+    assert.equal(state["profileId"], profileId);
+    assert.equal(state["currentSignalDirection"], "buy");
+    assert.equal(state["currentSignalPrice"], 187.12);
+    assert.equal(state["barsSinceSignal"], 0);
+    assert.equal(state["fresh"], true);
+    assert.equal(state["status"], "ok");
+    assert.ok(state["currentSignalAt"], "currentSignalAt is needed for signal keys");
+    assert.ok(state["latestBarAt"], "latestBarAt is needed for worker summaries");
+    assert.ok(
+      state["lastEvaluatedAt"],
+      "lastEvaluatedAt is needed for refresh currentness checks",
+    );
+    assert.equal(profile["timeframe"], "5m");
+    assert.equal(profile["freshWindowBars"], 3);
+    assert.equal(
+      (profile["pyrusSignalsSettings"] as Record<string, unknown>)["alpha"],
+      "kept",
+    );
+
+    const summary =
+      __signalOptionsAutomationInternalsForTests.buildWorkerScanSummary({
+        states: states as never,
+        universe,
+        candidateCount: 0,
+        blockedCandidateCount: 0,
+        activeScanPhase: "signal_refresh",
+      });
+    assert.equal(summary.signalCount, 1);
+    assert.equal(summary.freshSignalCount, 1);
+    assert.equal(summary.latestSignalBarAt, latestBarAt.toISOString());
+
+    const ordered =
+      __signalOptionsAutomationInternalsForTests.orderSignalOptionsActionStates({
+        states: states as never,
+        universe,
+        timeframe: profile["timeframe"] as never,
+      });
+    const signalAt =
+      state["currentSignalAt"] instanceof Date
+        ? state["currentSignalAt"].toISOString()
+        : String(state["currentSignalAt"]);
+    const candidate =
+      __signalOptionsAutomationInternalsForTests.buildCandidateFromSignal({
+        deployment,
+        state: ordered[0] as never,
+        signalAt,
+        freshWindowBars: profile["freshWindowBars"] as number,
+      });
+    assert.equal(candidate.symbol, "AAPL");
+    assert.ok(candidate.signal);
+    assert.equal(candidate.signal.latestBarAt, latestBarAt.toISOString());
+    assert.equal(candidate.signal.freshWindowBars, 3);
+  });
 });
 
 test("Signal Options backfill requires explicit bar-evaluation opt-in", async () => {

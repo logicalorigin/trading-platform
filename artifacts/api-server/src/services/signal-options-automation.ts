@@ -5919,18 +5919,49 @@ function signalOptionsDirectionOrNull(value: unknown): SignalDirection | null {
   return value === "buy" || value === "sell" ? value : null;
 }
 
+function signalOptionsMonitorProfileResponse(profile: SignalMonitorProfileRow) {
+  return {
+    id: profile.id,
+    environment: profile.environment,
+    enabled: profile.enabled,
+    watchlistId: profile.watchlistId ?? null,
+    timeframe: resolveSignalMonitorTimeframe(profile.timeframe),
+    pyrusSignalsSettings: asRecord(profile.pyrusSignalsSettings),
+    freshWindowBars: profile.freshWindowBars,
+    pollIntervalSeconds: profile.pollIntervalSeconds,
+    maxSymbols: profile.maxSymbols,
+    evaluationConcurrency: profile.evaluationConcurrency,
+    lastEvaluatedAt: profile.lastEvaluatedAt ?? null,
+    lastError: profile.lastError ?? null,
+    createdAt: profile.createdAt,
+    updatedAt: profile.updatedAt,
+  };
+}
+
 async function listSignalOptionsStoredSignalStatesFast(input: {
   deployment: AlgoDeployment;
   universe: Set<string>;
+  profile?: SignalMonitorProfileRow | null;
 }) {
-  const [profile] = await db
-    .select()
-    .from(signalMonitorProfilesTable)
-    .where(eq(signalMonitorProfilesTable.environment, resolveSignalSourceEnvironment()))
-    .limit(1);
+  const profile =
+    input.profile ??
+    (
+      await db
+        .select()
+        .from(signalMonitorProfilesTable)
+        .where(
+          eq(
+            signalMonitorProfilesTable.environment,
+            resolveSignalSourceEnvironment(),
+          ),
+        )
+        .limit(1)
+    )[0];
   if (!profile) {
     return {
       states: [] as SignalMonitorState[],
+      profile: null,
+      stateSource: "database" as const,
       timeframe: null as SignalMonitorTimeframe | null,
       freshWindowBars: null as number | null,
     };
@@ -6039,6 +6070,8 @@ async function listSignalOptionsStoredSignalStatesFast(input: {
 
   return {
     states,
+    profile: signalOptionsMonitorProfileResponse(profile),
+    stateSource: "database" as const,
     timeframe,
     freshWindowBars: optionalFiniteNumber(profile.freshWindowBars),
   };
@@ -6269,6 +6302,35 @@ function shouldUseStoredMonitorStateForWorkerReadiness(input: {
   return Boolean(input.source === "worker" && input.readinessReason);
 }
 
+function shouldUseScopedSignalOptionsWorkerStoredState(input: {
+  source?: "manual" | "worker";
+  preferStoredMonitorState?: boolean;
+}) {
+  return (
+    input.source === "worker" && input.preferStoredMonitorState === true
+  );
+}
+
+async function readSignalOptionsStoredMonitorState(input: {
+  deployment: AlgoDeployment;
+  universe: Set<string>;
+  profile: SignalMonitorProfileRow;
+  preferStoredMonitorState?: boolean;
+  source?: "manual" | "worker";
+}) {
+  if (shouldUseScopedSignalOptionsWorkerStoredState(input)) {
+    return listSignalOptionsStoredSignalStatesFast({
+      deployment: input.deployment,
+      universe: input.universe,
+      profile: input.profile,
+    });
+  }
+  return getSignalMonitorStoredState({
+    environment: resolveSignalSourceEnvironment(),
+    markNonCurrentStale: true,
+  });
+}
+
 async function loadSignalOptionsMonitorState(input: {
   deployment: AlgoDeployment;
   universe: Set<string>;
@@ -6296,9 +6358,12 @@ async function loadSignalOptionsMonitorState(input: {
       const symbols = normalizeSignalOptionsMonitorUniverseSymbols(
         input.universe,
       );
-      const evaluated = await getSignalMonitorStoredState({
-        environment: resolveSignalSourceEnvironment(),
-        markNonCurrentStale: true,
+      const evaluated = await readSignalOptionsStoredMonitorState({
+        deployment: input.deployment,
+        universe: input.universe,
+        profile,
+        preferStoredMonitorState: input.preferStoredMonitorState,
+        source: input.source,
       });
       throwIfSignalOptionsScanAborted(input.signal);
       return {
@@ -6314,9 +6379,12 @@ async function loadSignalOptionsMonitorState(input: {
     const symbols = normalizeSignalOptionsMonitorUniverseSymbols(
       input.universe,
     );
-    const stored = await getSignalMonitorStoredState({
-      environment: resolveSignalSourceEnvironment(),
-      markNonCurrentStale: true,
+    const stored = await readSignalOptionsStoredMonitorState({
+      deployment: input.deployment,
+      universe: input.universe,
+      profile,
+      preferStoredMonitorState: input.preferStoredMonitorState,
+      source: input.source,
     });
     throwIfSignalOptionsScanAborted(input.signal);
     const monitorStateNeedsRefresh = shouldRefreshSignalOptionsMonitorState({
@@ -21440,6 +21508,7 @@ export const __signalOptionsAutomationInternalsForTests = {
   resolveSignalOptionsMonitorFullRefresh,
   shouldBatchSignalOptionsWorkerMonitorRefresh,
   shouldRefreshSignalOptionsMonitorState,
+  loadSignalOptionsMonitorState,
   hasPendingSignalOptionsActionableState,
   hasUnseenSignalOptionsActionableState,
   orderSignalOptionsActionStates,
