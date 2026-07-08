@@ -153,7 +153,7 @@ const HeroBand = ({ flow, sortMode, onSortModeChange, filterText, onFilterChange
           onChange={(event) => onFilterChange(event.target.value)}
           placeholder="Filter symbol…"
           size="sm"
-          style={{ width: 150 }}
+          style={{ width: 150, minWidth: 0, maxWidth: "100%" }}
           inputProps={{ "aria-label": "Filter universe by symbol" }}
         />
       </div>
@@ -257,6 +257,12 @@ export default function MarketDemoScreen({
   const [selectedSym, setSelectedSym] = useState(sym || "SPY");
   const [sortMode, setSortMode] = useState("flow");
   const [filterText, setFilterText] = useState("");
+  // The unusual-flow threshold select lives in MarketActivityPanel; it needs a
+  // setter to be more than a no-op. Seed from the app-level prop, then drive it
+  // locally so the control actually changes the chart's unusual-flow overlay.
+  const [unusualThresholdValue, setUnusualThreshold] = useState(
+    unusualThreshold ?? 1,
+  );
 
   // Keep the local chart selection in step with the app-wide symbol when the
   // parent changes it (e.g. a deep-link ping), without overriding in-screen picks.
@@ -335,7 +341,7 @@ export default function MarketDemoScreen({
           watchlistSymbols={symbols}
           stockAggregateStreamingEnabled={stockAggregateStreamingEnabled && !safeQaMode}
           isVisible={isVisible}
-          unusualThreshold={unusualThreshold}
+          unusualThreshold={unusualThresholdValue}
           trackStateKey="pyrus:market-grid-track-sizes:demo"
         />
       </div>
@@ -348,7 +354,8 @@ export default function MarketDemoScreen({
         signalMonitorDegraded={signalMonitor.degraded}
         notifications={notifications.toasts}
         watchlists={watchlists}
-        unusualThreshold={unusualThreshold}
+        unusualThreshold={unusualThresholdValue}
+        onChangeUnusualThreshold={setUnusualThreshold}
         onSymClick={handleSelectSymbol}
         onSignalAction={onSignalAction}
         onScanNow={onScanNow}

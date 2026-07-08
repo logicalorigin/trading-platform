@@ -282,7 +282,7 @@ export default function MarketUniverseTable({
       {
         id: "sym",
         header: "Symbol",
-        width: "64px",
+        width: "minmax(0, 64px)",
         align: "left",
         sortable: true,
         cell: ({ row }) => (
@@ -303,7 +303,7 @@ export default function MarketUniverseTable({
       {
         id: "price",
         header: "Price",
-        width: "76px",
+        width: "minmax(0, 76px)",
         align: "right",
         cell: ({ row }) => (
           <FlashCell value={row.original.price}>
@@ -316,7 +316,7 @@ export default function MarketUniverseTable({
       {
         id: "chg",
         header: "Chg%",
-        width: "72px",
+        width: "minmax(0, 72px)",
         align: "right",
         sortable: true,
         cell: ({ row }) => (
@@ -333,7 +333,7 @@ export default function MarketUniverseTable({
       {
         id: "vol",
         header: "Vol",
-        width: "72px",
+        width: "minmax(0, 72px)",
         align: "right",
         sortable: true,
         cell: ({ row }) => (
@@ -347,7 +347,7 @@ export default function MarketUniverseTable({
       {
         id: "flow",
         header: "Flow heat",
-        width: "minmax(150px, 1.4fr)",
+        width: "minmax(0, 1.4fr)",
         align: "left",
         sortable: true,
         cell: ({ row }) => <FlowHeatCell row={row.original} />,
@@ -355,7 +355,7 @@ export default function MarketUniverseTable({
       {
         id: "spark",
         header: "Trend",
-        width: "64px",
+        width: "minmax(0, 64px)",
         align: "left",
         cell: ({ row }) => <SparkCell symbol={row.original.symbol} />,
       },
@@ -364,7 +364,7 @@ export default function MarketUniverseTable({
       defs.push({
         id: "gex",
         header: "Net γ",
-        width: "76px",
+        width: "minmax(0, 76px)",
         align: "right",
         cell: ({ row }) => (
           <GexCell
@@ -431,9 +431,9 @@ export default function MarketUniverseTable({
 
   if (universeQuery.isPending) {
     return (
-      <div style={{ display: "flex", flexDirection: "column", gap: sp("6px") }}>
+      <div style={{ display: "flex", flexDirection: "column" }}>
         {Array.from({ length: 8 }).map((_, index) => (
-          <Skeleton key={index} width="100%" height={26} />
+          <Skeleton key={index} width="100%" height={34} />
         ))}
       </div>
     );
