@@ -17,9 +17,28 @@ final verify output (journal: `subagents/workflows/wf_3eda40c2-8ca/journal.jsonl
 
 ## Phase 0 update (end of session): WO-FIX-13 A/B/C + WO-FIX-14 landed (commits c2032667,
 3299f0f3, d84973b5, e4273ce3 — bootstrap cache, overlay gate, P&L day window, auth timeout).
-26 commits total. Hunts M/C/S triaged below (Phase 1b); hunts R/T still pending collection.
+26 commits total. Hunts M/C/S triaged below (Phase 1b). Hunts R (retry/feedback, 7 findings) and
+T (test-lies, 6 findings) landed 15:34/15:39 MDT and are now triaged (Phase 1c + Phase 5); all four
+hunt-R/T P1s spot-checked real (session 9359d586). ALL codex hunts (M/C/S/R/T/Z) are now collected.
 Two ambiguous dirty test files left for triage: signal-monitor-stream.test.ts,
 signal-monitor-local-bar-cache-rollup.test.ts (unclear worker vs lane ownership).
+
+## Session update (2026-07-08 evening, orchestrated codex, session 3bd7161e)
+All 9 clean-file P1s landed as isolated commits (42283226 t3, 6f9db9ca t1c1, 1f35b309 t4,
+23800e9d signal-options 1b A/B+1b5, b6b51d7a shadow T2+1b5, 02122990 t1b5-flow, 4057066c t1,
+217331a0 t1c2, b776dabd t1c3, d1cb709b typecheck-gate fix). **api-server + pyrus typecheck both
+GREEN** (gate caught 2 type errors tsx tests missed). Dispatch: PID-tracked orchestrator, cap 2,
+`codex-run.sh`/`codex-orchestrator.sh` in session scratchpad; per-worker reports in
+`.codex-watch/wo-p1-*-report.md`; work orders in `docs/plans/workorders-2026-07-08/wo-p1-*.md`.
+- **STILL HELD (dirty-tree, need owner call to commit those lanes first):** T1b-1 backtest
+  `index.ts:1317` site (+821 WIP), T1b-3 `account.ts:4564` (+214 closed-trades WIP), T1b-4
+  `platform.ts:3094` (WIP), T1b-5 `flow-universe.ts:270` site (+194 census WIP). The signal-options
+  and shadow/flow sites of 1b-1/1b-5 ARE done (clean files); only these four remain.
+- **P2/P3 backlog recovered** (replaces lost wf_3eda40c2-8ca journal) →
+  `.codex-watch/wo-p2p3-recovery-report.md`: ~18 deduped findings, UNVERIFIED single-pass —
+  2 P2 (backtest walk-forward metric equal-weighting `backtest-worker/index.ts:2145`; Robinhood MCP
+  no timeout `robinhood/mcp-client.ts:89`) + P3s (caches, overlapping polls, silent failures, large
+  test-integrity/source-text-guard cluster). Triage into Phase 5 before fixing.
 
 ## Phase 1: P1 correctness (fix first)
 - [ ] T1 (S): PhotonicsObservatory d3 force-graph effect re-runs per live tick
@@ -49,6 +68,24 @@ signal-monitor-local-bar-cache-rollup.test.ts (unclear worker vs lane ownership)
       (`signal-options-automation.ts:17053`), flow hydration sessions (`historical-flow-events.ts:297`).
       AC: all five consume lib/market-calendar early-close/holiday data. Full details:
       `.codex-watch/hunt-{m,c,s}-report.md` (+ P2/P3s therein, unread — triage on pickup).
+
+## Phase 1c: P1s from codex hunts R/T (retry/feedback + test-integrity) — spot-checked real
+- [ ] T1c-1 (S): Schwab Trader API HTTP has no timeout/abort/circuit breaker
+      (`providers/schwab/trader-api-client.ts:108` — `request()` builds init w/ no `signal`; live
+      submit awaits it directly at `schwab-equity-orders.ts:439/466`, `broker-execution.ts:410`).
+      A hung request pins the API request and encourages blind retry stacking broker calls. AC:
+      per-request AbortController timeout + surface timeout as "unknown/reconcile", not silent retry.
+      Verify: new targeted test w/ hanging fetchImpl. (hunt-R #1, 0.86)
+- [ ] T1c-2 (S): live-order submit gate is source-sliced, not exercised
+      (`pyrus/.../trade/TradeOrderTicket.shadowBrokerGate.test.mjs:80` reads TradeOrderTicket.jsx as
+      text + regex-checks branch order; real guard is exec UI at TradeOrderTicket.jsx:2075/2336).
+      A regression calling a live mutation before the guard keeps the test green. AC: mount w/ mocked
+      mutations (or extract pure submit/preview decision) and assert blocked live submits never call
+      the mutation. (hunt-T #1, 0.86)
+- [ ] T1c-3 (S): account-admission guard test is text-match, so a leaking route passes
+      (`routes/account-positions-route.test.ts:26` asserts `/admitAccountRoute\(res/` presence only;
+      real handlers must short-circuit on the return, e.g. platform.ts:1820). AC: request-level test
+      w/ admission forced-deny → assert 503 + no account-service call per protected route. (hunt-T #2, 0.84)
 
 ### Checkpoint 1: targeted tests green; SIGUSR2 reload; watcher digest clean.
 
@@ -107,6 +144,15 @@ signal-monitor-local-bar-cache-rollup.test.ts (unclear worker vs lane ownership)
   swallow (market-data-ingest.ts:1234), diagnostics upsert swallow (diagnostics.ts:3446).
 - Growth P2s: massive quote cache (:46), optionChartBarsRouteCache (platform.ts:385),
   lastPersistedDiagnosticEventByKey (diagnostics.ts:786), gexDashboardCache (gex.ts:260).
+- Retry/feedback P2/P3 (hunt-R): option-quote REST fallback overlap (live-streams.ts:653, 0.91),
+  shared option-quote WS 1s reconnect no cap/jitter (:658, 0.88), hook-local option-quote WS 1s
+  redial (:7491, 0.83), IBKR portal popup poll overlap (SnapTradeConnectPanel.jsx:1704, 0.82),
+  diagnostics collector interval overlap (diagnostics.ts:4949, 0.79), Massive backtest fetch no
+  per-attempt timeout (backtest-worker/src/index.ts:289, 0.76).
+- Test-lie P2s (hunt-T): buy/sell KPI split passes w/ one empty side (signal-quality-kpis.test.ts:671,
+  0.91), MTF gate telemetry assertion vacuous (:623, 0.88), signal-options freshness asserts call-shape
+  not output (signal-options-automation.test.ts:245, 0.78), option-chain policy guarded by string
+  absence not behavior (option-chain-policy.test.ts:53, 0.76).
 
 ## Phase 6: session wrap (do before ending any continuation session)
 - [ ] T22: triage in-flight worker outputs when they land (WO-FIX-13, boot-stall report,
