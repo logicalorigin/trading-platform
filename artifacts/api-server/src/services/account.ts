@@ -36,7 +36,7 @@ import {
   isPoolContentionError,
   isTransientPostgresError,
 } from "../lib/transient-db-error";
-import { normalizeSymbol } from "../lib/values";
+import { normalizeSymbol, toIsoDateString } from "../lib/values";
 import { getRuntimeMode, type RuntimeMode } from "../lib/runtime";
 import {
   assertIbkrGatewayTradingAvailable,
@@ -1102,10 +1102,6 @@ function parseDate(value: unknown): Date | null {
   return Number.isNaN(parsed.getTime()) ? null : parsed;
 }
 
-function formatDateOnly(value: Date): string {
-  return value.toISOString().slice(0, 10);
-}
-
 function dateFromDateOnly(value: string | Date): Date {
   if (value instanceof Date) {
     return value;
@@ -1130,7 +1126,7 @@ function dateWindowUtc(value: string | Date): {
   );
   const end = new Date(start.getTime() + 24 * 60 * 60_000);
   return {
-    date: formatDateOnly(start),
+    date: toIsoDateString(start),
     start,
     end,
   };
@@ -2137,7 +2133,7 @@ function finiteOptionNumber(value: unknown): number | null {
 
 function optionExpirationKey(value: unknown): string | null {
   if (value instanceof Date && !Number.isNaN(value.getTime())) {
-    return formatDateOnly(value).replaceAll("-", "");
+    return toIsoDateString(value).replaceAll("-", "");
   }
   const text = String(value ?? "").trim();
   if (/^\d{8}$/.test(text)) {
@@ -2149,7 +2145,7 @@ function optionExpirationKey(value: unknown): string | null {
   }
   const parsed = text ? new Date(text) : null;
   return parsed && !Number.isNaN(parsed.getTime())
-    ? formatDateOnly(parsed).replaceAll("-", "")
+    ? toIsoDateString(parsed).replaceAll("-", "")
     : null;
 }
 
@@ -2507,7 +2503,7 @@ function flexOpenPositionMatchesOptionContract(
   contract: NonNullable<BrokerPositionSnapshot["optionContract"]>,
 ): boolean {
   const text = flexOpenPositionText(candidate);
-  const expiration = formatDateOnly(contract.expirationDate);
+  const expiration = toIsoDateString(contract.expirationDate);
   const compactExpiration = expiration.replaceAll("-", "");
   const strike = String(contract.strike).replace(/\.0+$/, "");
   const right = contract.right.toUpperCase();
@@ -2707,7 +2703,7 @@ function inferSameDayExpiringOptionOpenDatesForPositions(
       if (!(expirationDate instanceof Date) || Number.isNaN(expirationDate.getTime())) {
         return [];
       }
-      const expirationMarketDate = formatDateOnly(expirationDate);
+      const expirationMarketDate = toIsoDateString(expirationDate);
       if (expirationMarketDate !== marketDate) {
         return [];
       }
@@ -2811,7 +2807,7 @@ function executionPositionGroupKey(execution: BrokerExecutionSnapshot): string {
     return [
       "option",
       contract.underlying,
-      formatDateOnly(contract.expirationDate),
+      toIsoDateString(contract.expirationDate),
       contract.strike,
       contract.right,
     ].join(":");
@@ -3015,7 +3011,7 @@ async function getCachedOptionChainContracts(
   if (!refreshChains) {
     return {
       contracts: [],
-      error: `Option-chain Greek refresh skipped for ${underlying} ${formatDateOnly(expirationDate)}; account positions use live option quote Greeks.`,
+      error: `Option-chain Greek refresh skipped for ${underlying} ${toIsoDateString(expirationDate)}; account positions use live option quote Greeks.`,
     };
   }
 
@@ -3054,7 +3050,7 @@ async function getCachedOptionChainContracts(
     error =
       fetchError instanceof Error
         ? fetchError.message
-        : `Unknown option-chain error for ${underlying} ${formatDateOnly(expirationDate)}.`;
+        : `Unknown option-chain error for ${underlying} ${toIsoDateString(expirationDate)}.`;
     logger.warn(
       {
         err: fetchError,
@@ -3482,7 +3478,7 @@ async function upsertFlexReport(xml: string, runId: string): Promise<{
     return [
       {
         providerAccountId,
-        statementDate: formatDateOnly(statementDate),
+        statementDate: toIsoDateString(statementDate),
         currency: firstString(attrs, ["currency", "currencyPrimary"]) ?? "USD",
         netAssetValue: String(netAssetValue),
         cash: numericString(firstNumber(attrs, ["cash", "cashValue"])),
@@ -3622,7 +3618,7 @@ async function upsertFlexReport(xml: string, runId: string): Promise<{
         ),
         currency: firstString(attrs, ["currency"]) ?? "USD",
         tradeDate,
-        settleDate: settleDate ? formatDateOnly(settleDate) : null,
+        settleDate: settleDate ? toIsoDateString(settleDate) : null,
         openClose: firstString(attrs, ["openCloseIndicator", "openClose"]),
         realizedPnl: numericString(
           firstNumber(attrs, ["fifoPnlRealized", "realizedPnl", "realizedPnL"]),
@@ -3739,7 +3735,7 @@ async function upsertFlexReport(xml: string, runId: string): Promise<{
         currency: firstString(attrs, ["currency"]) ?? "USD",
         paidDate,
         exDate:
-          parseDate(firstString(attrs, ["exDate"])) ? formatDateOnly(parseDate(firstString(attrs, ["exDate"])) as Date) : null,
+          parseDate(firstString(attrs, ["exDate"])) ? toIsoDateString(parseDate(firstString(attrs, ["exDate"])) as Date) : null,
         sourceRunId: runId,
         raw: attrs,
       },
@@ -5272,7 +5268,7 @@ async function getAccountEquityHistoryUncached(input: {
   const flexConditions = [inArray(flexNavHistoryTable.providerAccountId, universe.accountIds)];
   if (start) {
     flexConditions.push(
-      gte(flexNavHistoryTable.statementDate, formatDateOnly(start)),
+      gte(flexNavHistoryTable.statementDate, toIsoDateString(start)),
     );
   }
 
@@ -5386,7 +5382,7 @@ async function getAccountEquityHistoryUncached(input: {
       if (transfer === null) {
         return;
       }
-      const key = dateFromDateOnly(formatDateOnly(row.activityDate)).toISOString();
+      const key = dateFromDateOnly(toIsoDateString(row.activityDate)).toISOString();
       const current = cashTransfersByDate.get(key) ?? {
         deposits: 0,
         withdrawals: 0,
@@ -6003,7 +5999,7 @@ async function getAccountPositionsUncached(input: {
             accounts: [] as string[],
             symbol: position.symbol,
             description: position.optionContract
-              ? `${position.optionContract.underlying} ${formatDateOnly(position.optionContract.expirationDate)} ${position.optionContract.strike} ${position.optionContract.right}`
+              ? `${position.optionContract.underlying} ${toIsoDateString(position.optionContract.expirationDate)} ${position.optionContract.strike} ${position.optionContract.right}`
               : position.symbol,
             assetClass: normalizeAssetClassLabel(position),
             positionType: classifyAccountPositionType(position),
@@ -6193,7 +6189,7 @@ async function getAccountPositionsUncached(input: {
           accounts: [position.accountId],
           symbol: position.symbol,
           description: position.optionContract
-            ? `${position.optionContract.underlying} ${formatDateOnly(position.optionContract.expirationDate)} ${position.optionContract.strike} ${position.optionContract.right}`
+            ? `${position.optionContract.underlying} ${toIsoDateString(position.optionContract.expirationDate)} ${position.optionContract.strike} ${position.optionContract.right}`
             : position.symbol,
           assetClass: normalizeAssetClassLabel(position),
           positionType: classifyAccountPositionType(position),

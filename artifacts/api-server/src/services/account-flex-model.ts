@@ -1,3 +1,5 @@
+import { toIsoDateString } from "../lib/values";
+
 const FLEX_MAX_OVERRIDE_DAYS = 365;
 const FLEX_MAX_HISTORY_YEARS = 4;
 
@@ -7,10 +9,6 @@ export type FlexRecord = {
 };
 
 export type FlexConfig = { token: string; queryId: string };
-
-function formatDateOnly(value: Date): string {
-  return value.toISOString().slice(0, 10);
-}
 
 function xmlDecode(value: string): string {
   return value
@@ -119,8 +117,8 @@ export function buildFlexBackfillWindows(
     const windowEndCandidate = addUtcDays(cursor, FLEX_MAX_OVERRIDE_DAYS - 1);
     const windowEnd = windowEndCandidate <= end ? windowEndCandidate : end;
     windows.push({
-      fromDate: formatDateOnly(cursor),
-      toDate: formatDateOnly(windowEnd),
+      fromDate: toIsoDateString(cursor),
+      toDate: toIsoDateString(windowEnd),
     });
   }
 

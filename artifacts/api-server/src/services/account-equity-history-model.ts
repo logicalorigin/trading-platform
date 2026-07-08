@@ -1,4 +1,5 @@
 import type { RuntimeMode } from "../lib/runtime";
+import { toIsoDateString } from "../lib/values";
 import type { BrokerAccountSnapshot } from "../providers/ibkr/client";
 import { calculateTransferAdjustedReturnSeries } from "@workspace/account-math";
 import {
@@ -67,10 +68,6 @@ function toHistoryNumber(value: unknown): number | null {
   }
 
   return null;
-}
-
-function formatDateOnly(value: Date): string {
-  return value.toISOString().slice(0, 10);
 }
 
 function isZeroHistoryNumber(value: unknown): boolean {
@@ -285,7 +282,7 @@ export function compactEquitySnapshotRows(
     const bucketStart = Math.floor(row.asOf.getTime() / bucketSizeMs);
     byBucket.set(`${row.providerAccountId}:${bucketStart}`, row);
 
-    const dayKey = `${row.providerAccountId}:${formatDateOnly(row.asOf)}`;
+    const dayKey = `${row.providerAccountId}:${toIsoDateString(row.asOf)}`;
     const currentFirst = firstByDay.get(dayKey);
     if (!currentFirst || row.asOf.getTime() < currentFirst.asOf.getTime()) {
       firstByDay.set(dayKey, row);
@@ -312,7 +309,7 @@ export function filterSnapshotsOnFlexTransferDates(
     return rows;
   }
   return rows.filter(
-    (row) => !flexTransferDates.has(formatDateOnly(row.asOf)),
+    (row) => !flexTransferDates.has(toIsoDateString(row.asOf)),
   );
 }
 

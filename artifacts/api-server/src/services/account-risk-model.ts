@@ -1,4 +1,4 @@
-import { normalizeSymbol } from "../lib/values";
+import { normalizeSymbol, toIsoDateString } from "../lib/values";
 import type {
   BrokerPositionSnapshot,
   OptionChainContract,
@@ -132,10 +132,6 @@ export type GreekScenarioMatrixBuildResult = {
   jobInput: GreekScenarioMatrixJobInput;
   coverage: GreekScenarioInputCoverage;
 };
-
-function formatDateOnly(value: Date): string {
-  return value.toISOString().slice(0, 10);
-}
 
 function toRiskNumber(value: unknown): number | null {
   if (value === null || value === undefined) {
@@ -488,7 +484,7 @@ export function hasOptionContract(
 export function optionChainGroupKey(
   optionContract: NonNullable<BrokerPositionSnapshot["optionContract"]>,
 ): string {
-  return `${normalizeSymbol(optionContract.underlying)}:${formatDateOnly(optionContract.expirationDate)}`;
+  return `${normalizeSymbol(optionContract.underlying)}:${toIsoDateString(optionContract.expirationDate)}`;
 }
 
 function optionContractTupleKey(input: {
@@ -499,7 +495,7 @@ function optionContractTupleKey(input: {
 }): string {
   return [
     normalizeSymbol(input.underlying),
-    formatDateOnly(input.expirationDate),
+    toIsoDateString(input.expirationDate),
     String(Number(input.strike)),
     input.right.toLowerCase(),
   ].join(":");

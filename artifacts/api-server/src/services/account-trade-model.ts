@@ -2,6 +2,7 @@ import type {
   BrokerOrderSnapshot,
   BrokerPositionSnapshot,
 } from "../providers/ibkr/client";
+import { toIsoDateString } from "../lib/values";
 import {
   accountPositionTypeDisplayLabel,
   classifyAccountPositionType,
@@ -9,10 +10,6 @@ import {
 } from "./account-position-type";
 
 export type OrderTab = "working" | "history";
-
-function formatDateOnly(value: Date): string {
-  return value.toISOString().slice(0, 10);
-}
 
 export function isEtfSymbol(symbol: string): boolean {
   return isStaticAccountEtfSymbol(symbol);
@@ -76,7 +73,7 @@ export function positionGroupKey(position: BrokerPositionSnapshot): string {
     return [
       "option",
       position.optionContract.underlying,
-      formatDateOnly(position.optionContract.expirationDate),
+      toIsoDateString(position.optionContract.expirationDate),
       position.optionContract.strike,
       position.optionContract.right,
     ].join(":");
@@ -89,7 +86,7 @@ export function orderGroupKey(order: BrokerOrderSnapshot): string {
     return [
       "option",
       order.optionContract.underlying,
-      formatDateOnly(order.optionContract.expirationDate),
+      toIsoDateString(order.optionContract.expirationDate),
       order.optionContract.strike,
       order.optionContract.right,
     ].join(":");
