@@ -2,7 +2,6 @@
   "$schema": "https://unpkg.com/knip@5/schema.json",
   "ignoreFiles": [
     "lib/api-zod/src/generated/**",
-    "scripts/run-options-contract-sweeps.mjs",
     "artifacts/api-server/scripts/sampleFlowPremiumDistribution.mjs"
   ],
   "workspaces": {

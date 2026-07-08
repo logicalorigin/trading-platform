@@ -6,10 +6,6 @@ directory to define separate Replit app runners.
 
 ## Backtesting Utilities
 
-- `run-options-contract-sweeps.mjs` queues signal-options backtest sweeps for the
-  currently enabled shadow signal-options deployment. It requires database access
-  via `DATABASE_URL`, and talks to the API using `BACKTEST_API_BASE_URL` or
-  `API_BASE_URL`.
 - `pyrus-signals:signal-options-sweep` runs the Pyrus Signals signal-options
   `timeHorizon`/structure sensitivity sweep through the existing shadow backfill
   path, holds the signal-options worker advisory lock, writes JSON/CSV/Markdown
