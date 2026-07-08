@@ -39,6 +39,10 @@ GREEN** (gate caught 2 type errors tsx tests missed). Dispatch: PID-tracked orch
   2 P2 (backtest walk-forward metric equal-weighting `backtest-worker/index.ts:2145`; Robinhood MCP
   no timeout `robinhood/mcp-client.ts:89`) + P3s (caches, overlapping polls, silent failures, large
   test-integrity/source-text-guard cluster). Triage into Phase 5 before fixing.
+  **VERIFIED** (read-only adversarial pass, all 18 CONFIRMED_REAL, none stale) →
+  `.codex-watch/wo-p2p3-verify-report.md` (ranked shortlist; top P2s: robinhood `mcp-client.ts:89`
+  no-timeout, backtest `index.ts:2145` walk-forward metric weighting). Single-verifier pass, not a
+  multi-vote panel — spot-check P3s when fixing.
 
 ### Phase 2 result (same session): 4/7 committed + api-server typecheck GREEN
 c712d759 T7 cockpit serialize-once-per-payload, 96ef68c7 T8 drop redundant /algo prefix auth lookup,
