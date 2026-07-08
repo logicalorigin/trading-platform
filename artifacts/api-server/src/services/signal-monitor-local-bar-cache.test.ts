@@ -7,6 +7,32 @@ import {
 } from "./signal-monitor-local-bar-cache";
 import type { MassiveDelayedStockAggregate } from "./massive-stock-aggregate-stream";
 
+const MINUTE_MS = 60_000;
+
+function aggregateAtMs(
+  symbol: string,
+  startMs: number,
+): MassiveDelayedStockAggregate {
+  return {
+    eventType: "AM",
+    symbol,
+    open: 100,
+    high: 101,
+    low: 99,
+    close: 100.5,
+    volume: 10,
+    accumulatedVolume: null,
+    vwap: null,
+    sessionVwap: null,
+    officialOpen: null,
+    averageTradeSize: null,
+    startMs,
+    endMs: startMs + MINUTE_MS,
+    delayed: false,
+    source: "massive-websocket",
+  };
+}
+
 test("default memory retention spans a holiday weekend (>= 89.5h)", () => {
   // Fri 16:00 close -> Tue 09:30 open across a Monday holiday = 89.5h; the old 72h
   // default did not span it. The default applies only with the env override unset.
@@ -25,6 +51,91 @@ test("default memory retention spans a holiday weekend (>= 89.5h)", () => {
       delete process.env.PYRUS_SIGNAL_MONITOR_LOCAL_BAR_CACHE_RETENTION_MS;
     } else {
       process.env.PYRUS_SIGNAL_MONITOR_LOCAL_BAR_CACHE_RETENTION_MS = previous;
+    }
+  }
+});
+
+test("minute retention pruning is cadence-bound without serving stale memory bars", () => {
+  const internals = __signalMonitorLocalBarCacheInternalsForTests;
+  const previousRetention =
+    process.env.PYRUS_SIGNAL_MONITOR_LOCAL_BAR_CACHE_RETENTION_MS;
+  const previousPersist =
+    process.env.PYRUS_SIGNAL_MONITOR_LOCAL_BAR_CACHE_PERSIST_LIVE_AGGREGATES;
+  const realDateNow = Date.now;
+  const baseNowMs = Math.floor(realDateNow() / MINUTE_MS) * MINUTE_MS;
+
+  process.env.PYRUS_SIGNAL_MONITOR_LOCAL_BAR_CACHE_RETENTION_MS = String(
+    2 * MINUTE_MS,
+  );
+  delete process.env.PYRUS_SIGNAL_MONITOR_LOCAL_BAR_CACHE_PERSIST_LIVE_AGGREGATES;
+  internals.reset();
+  try {
+    const symbol = "PRUNECAD";
+
+    Date.now = () => baseNowMs;
+    internals.ingest(aggregateAtMs(symbol, baseNowMs - MINUTE_MS));
+    assert.equal(internals.minuteBarRetentionPruneRunCount, 1);
+    assert.equal(internals.lastMinuteBarRetentionPruneScannedBarCount, 1);
+
+    internals.ingest(aggregateAtMs(symbol, baseNowMs));
+    assert.equal(
+      internals.minuteBarRetentionPruneRunCount,
+      1,
+      "second insert inside the cadence window must not full-scan retained bars",
+    );
+    assert.equal(internals.lastMinuteBarRetentionPruneScannedBarCount, 1);
+
+    Date.now = () => baseNowMs + 3 * MINUTE_MS;
+    internals.ingest(aggregateAtMs(symbol, baseNowMs + 3 * MINUTE_MS));
+    assert.equal(
+      internals.minuteBarRetentionPruneRunCount,
+      1,
+      "expired bars may remain physically cached until the prune cadence fires",
+    );
+    assert.equal(getSignalMonitorLocalBarCacheDiagnostics().minuteBarCount, 3);
+
+    const visibleBeforeCadence = internals.readMemoryBars({
+      symbol,
+      timeframe: "1m",
+      evaluatedAt: new Date(baseNowMs + 4 * MINUTE_MS),
+      limit: 10,
+    });
+    assert.deepEqual(
+      visibleBeforeCadence.map((bar) => bar.timestamp.getTime()),
+      [baseNowMs + 3 * MINUTE_MS],
+    );
+
+    Date.now = () => baseNowMs + 5 * MINUTE_MS;
+    internals.ingest(aggregateAtMs(symbol, baseNowMs + 5 * MINUTE_MS));
+    assert.equal(internals.minuteBarRetentionPruneRunCount, 2);
+    assert.equal(internals.lastMinuteBarRetentionPruneScannedBarCount, 4);
+    assert.equal(getSignalMonitorLocalBarCacheDiagnostics().minuteBarCount, 2);
+
+    const visibleAfterCadence = internals.readMemoryBars({
+      symbol,
+      timeframe: "1m",
+      evaluatedAt: new Date(baseNowMs + 6 * MINUTE_MS),
+      limit: 10,
+    });
+    assert.deepEqual(
+      visibleAfterCadence.map((bar) => bar.timestamp.getTime()),
+      [baseNowMs + 3 * MINUTE_MS, baseNowMs + 5 * MINUTE_MS],
+    );
+  } finally {
+    Date.now = realDateNow;
+    internals.reset();
+    if (previousRetention === undefined) {
+      delete process.env.PYRUS_SIGNAL_MONITOR_LOCAL_BAR_CACHE_RETENTION_MS;
+    } else {
+      process.env.PYRUS_SIGNAL_MONITOR_LOCAL_BAR_CACHE_RETENTION_MS =
+        previousRetention;
+    }
+    if (previousPersist === undefined) {
+      delete process.env
+        .PYRUS_SIGNAL_MONITOR_LOCAL_BAR_CACHE_PERSIST_LIVE_AGGREGATES;
+    } else {
+      process.env.PYRUS_SIGNAL_MONITOR_LOCAL_BAR_CACHE_PERSIST_LIVE_AGGREGATES =
+        previousPersist;
     }
   }
 });

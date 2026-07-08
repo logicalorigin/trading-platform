@@ -67,6 +67,7 @@ const TIMEFRAME_MS: Record<SignalMonitorLocalBarCacheTimeframe, number> = {
 // bounded separately; this only widens the per-symbol minute retention.)
 const DEFAULT_MEMORY_RETENTION_MS = 120 * 60 * 60_000;
 const DEFAULT_PERSIST_FLUSH_MS = 5_000;
+const MINUTE_BAR_RETENTION_PRUNE_INTERVAL_MS = 5 * 60_000;
 // A normal full-universe prefetch is 2,000 symbols * 6 local timeframes * 2
 // sources = 24,000 cells. Keep the default above that footprint so the LRU does
 // not scan-evict the same universe it just loaded and turn every cycle into a
@@ -153,6 +154,7 @@ let storedBarsPrefetchFallbackNoPrefetchCount = 0;
 let storedBarsPrefetchFallbackMismatchCount = 0;
 
 const minuteBarsBySymbol = new Map<string, Map<number, CachedBar>>();
+const minuteBarLastPrunedAtMsBySymbol = new Map<string, number>();
 const trackedSymbols = new Set<string>();
 const pendingPersistBars = new Map<string, PendingPersistBar>();
 const persistedBarSignatures = new Map<string, string>();
@@ -168,6 +170,8 @@ let lastPersistAt: Date | null = null;
 let lastPersistError: string | null = null;
 let lastPersistErrorAt: Date | null = null;
 let lastEnqueueScannedBarCount = 0;
+let minuteBarRetentionPruneRunCount = 0;
+let lastMinuteBarRetentionPruneScannedBarCount = 0;
 let liveAggregatePersistSkipCount = 0;
 let lastLiveAggregatePersistSkippedAt: Date | null = null;
 
@@ -201,6 +205,17 @@ function memoryRetentionMs(): number {
     DEFAULT_MEMORY_RETENTION_MS,
     60_000,
     30 * 24 * 60 * 60_000,
+  );
+}
+
+function minuteBarRetentionBoundaryMs(nowMs: number): number {
+  return nowMs - memoryRetentionMs();
+}
+
+function minuteBarRetentionPruneSizeLimit(): number {
+  return (
+    Math.ceil(memoryRetentionMs() / TIMEFRAME_MS["1m"]) +
+    Math.ceil(MINUTE_BAR_RETENTION_PRUNE_INTERVAL_MS / TIMEFRAME_MS["1m"])
   );
 }
 
@@ -710,6 +725,42 @@ async function loadDeltaStoredBarsForPrefetch(
   return result;
 }
 
+function shouldPruneMinuteBarsForSymbol(
+  symbol: string,
+  symbolBars: Map<number, CachedBar>,
+  nowMs: number,
+): boolean {
+  const lastPrunedAtMs = minuteBarLastPrunedAtMsBySymbol.get(symbol);
+  return (
+    lastPrunedAtMs == null ||
+    nowMs - lastPrunedAtMs >= MINUTE_BAR_RETENTION_PRUNE_INTERVAL_MS ||
+    symbolBars.size > minuteBarRetentionPruneSizeLimit()
+  );
+}
+
+function pruneMinuteBarsForSymbol(
+  symbol: string,
+  symbolBars: Map<number, CachedBar>,
+  nowMs: number,
+): void {
+  const retentionBoundary = minuteBarRetentionBoundaryMs(nowMs);
+  let scanned = 0;
+  for (const key of symbolBars.keys()) {
+    scanned += 1;
+    if (key < retentionBoundary) {
+      symbolBars.delete(key);
+    }
+  }
+  minuteBarRetentionPruneRunCount += 1;
+  lastMinuteBarRetentionPruneScannedBarCount = scanned;
+  if (symbolBars.size) {
+    minuteBarLastPrunedAtMsBySymbol.set(symbol, nowMs);
+  } else {
+    minuteBarsBySymbol.delete(symbol);
+    minuteBarLastPrunedAtMsBySymbol.delete(symbol);
+  }
+}
+
 function storeMinuteBar(bar: CachedBar): void {
   const timestamp = dateOrNull(bar.timestamp);
   if (!timestamp) {
@@ -719,11 +770,9 @@ function storeMinuteBar(bar: CachedBar): void {
   symbolBars.set(timestamp.getTime(), bar);
   minuteBarsBySymbol.set(bar.symbol, symbolBars);
 
-  const retentionBoundary = Date.now() - memoryRetentionMs();
-  for (const key of symbolBars.keys()) {
-    if (key < retentionBoundary) {
-      symbolBars.delete(key);
-    }
+  const nowMs = Date.now();
+  if (shouldPruneMinuteBarsForSymbol(bar.symbol, symbolBars, nowMs)) {
+    pruneMinuteBarsForSymbol(bar.symbol, symbolBars, nowMs);
   }
 }
 
@@ -891,7 +940,10 @@ function readMemoryBars(input: {
   includeProvisional?: boolean;
 }): CachedBar[] {
   const symbol = normalizeSymbol(input.symbol).toUpperCase();
-  const minuteBars = Array.from(minuteBarsBySymbol.get(symbol)?.values() ?? []);
+  const retentionBoundary = minuteBarRetentionBoundaryMs(Date.now());
+  const minuteBars = Array.from(
+    minuteBarsBySymbol.get(symbol)?.values() ?? [],
+  ).filter((bar) => bar.timestamp.getTime() >= retentionBoundary);
   if (!minuteBars.length) {
     return [];
   }
@@ -1477,6 +1529,7 @@ export const __signalMonitorLocalBarCacheInternalsForTests = {
     subscriptionSignature = "";
     trackedSymbols.clear();
     minuteBarsBySymbol.clear();
+    minuteBarLastPrunedAtMsBySymbol.clear();
     storedBarsCrossCycleCache.clear();
     storedBarsCacheKeysByBase.clear();
     pendingPersistBars.clear();
@@ -1493,6 +1546,8 @@ export const __signalMonitorLocalBarCacheInternalsForTests = {
     lastPersistError = null;
     lastPersistErrorAt = null;
     lastEnqueueScannedBarCount = 0;
+    minuteBarRetentionPruneRunCount = 0;
+    lastMinuteBarRetentionPruneScannedBarCount = 0;
     liveAggregatePersistSkipCount = 0;
     lastLiveAggregatePersistSkippedAt = null;
     storedBarsCacheHitCount = 0;
@@ -1532,5 +1587,11 @@ export const __signalMonitorLocalBarCacheInternalsForTests = {
   STORED_BARS_DELTA_SYMBOL_BATCH,
   get lastEnqueueScannedBarCount(): number {
     return lastEnqueueScannedBarCount;
+  },
+  get minuteBarRetentionPruneRunCount(): number {
+    return minuteBarRetentionPruneRunCount;
+  },
+  get lastMinuteBarRetentionPruneScannedBarCount(): number {
+    return lastMinuteBarRetentionPruneScannedBarCount;
   },
 };
