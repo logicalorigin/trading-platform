@@ -12,6 +12,7 @@ export type SchwabTraderApiClientOptions = {
   accessToken: string;
   fetchImpl?: typeof fetch;
   baseUrl?: string;
+  requestTimeoutMs?: number;
 };
 
 export type SchwabAccountNumberMapping = {
@@ -57,6 +58,7 @@ type RequestOptions = {
   method?: "GET" | "POST" | "PUT" | "DELETE";
   body?: unknown;
   query?: Record<string, string | number | undefined>;
+  timeoutMs?: number;
 };
 
 type SchwabResponse = {
@@ -64,6 +66,49 @@ type SchwabResponse = {
   headers: Headers;
   json: unknown;
 };
+
+export type SchwabUnknownOrderOutcome = {
+  status: "unknown";
+  orderId: null;
+  reconcileRequired: true;
+  reason: "request_timeout";
+  timeoutMs: number;
+};
+
+export type SchwabPlaceOrderResult =
+  | { orderId: string | null }
+  | SchwabUnknownOrderOutcome;
+
+const DEFAULT_REQUEST_TIMEOUT_MS = 15_000;
+export const SCHWAB_TRADER_API_TIMEOUT_CODE =
+  "schwab_trader_api_timeout_reconcile_required";
+
+export class SchwabTraderApiTimeoutError extends HttpError {
+  readonly timeoutMs: number;
+
+  constructor(input: { path: string; method: string; timeoutMs: number }) {
+    super(504, "Schwab Trader API request timed out; reconcile before retrying", {
+      code: SCHWAB_TRADER_API_TIMEOUT_CODE,
+      expose: true,
+      data: {
+        path: input.path,
+        method: input.method,
+        timeoutMs: input.timeoutMs,
+        outcome: "unknown",
+        reconcileRequired: true,
+        retryable: false,
+      },
+    });
+    this.name = "SchwabTraderApiTimeoutError";
+    this.timeoutMs = input.timeoutMs;
+  }
+}
+
+export function isSchwabTraderApiTimeoutError(
+  error: unknown,
+): error is SchwabTraderApiTimeoutError {
+  return error instanceof SchwabTraderApiTimeoutError;
+}
 
 function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -98,47 +143,81 @@ export class SchwabTraderApiClient {
   private readonly accessToken: string;
   private readonly fetchImpl: typeof fetch;
   private readonly baseUrl: string;
+  private readonly requestTimeoutMs: number;
 
   constructor(options: SchwabTraderApiClientOptions) {
     this.accessToken = options.accessToken;
     this.fetchImpl = options.fetchImpl ?? fetch;
     this.baseUrl = options.baseUrl ?? SCHWAB_TRADER_API_BASE_URL;
+    this.requestTimeoutMs = options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
   }
 
   private async request(path: string, options: RequestOptions = {}): Promise<SchwabResponse> {
     const method = options.method ?? "GET";
+    const timeoutMs = options.timeoutMs ?? this.requestTimeoutMs;
     const headers: Record<string, string> = {
       Accept: "application/json",
       Authorization: `Bearer ${this.accessToken}`,
     };
-    const init: RequestInit = { method, headers };
+    const controller = new AbortController();
+    const init: RequestInit = { method, headers, signal: controller.signal };
     if (options.body !== undefined) {
       headers["Content-Type"] = "application/json";
       init.body = JSON.stringify(options.body);
     }
 
-    let response: Response;
+    let status = 0;
+    let responseHeaders = new Headers();
+    let text = "";
+    let timedOut = false;
+    let timeout: ReturnType<typeof setTimeout> | null = null;
     try {
-      response = await this.fetchImpl(
-        `${this.baseUrl}${path}${buildQueryString(options.query)}`,
+      const url = `${this.baseUrl}${path}${buildQueryString(options.query)}`;
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        timeout = setTimeout(() => {
+          timedOut = true;
+          controller.abort();
+          reject(new SchwabTraderApiTimeoutError({ path, method, timeoutMs }));
+        }, timeoutMs);
+      });
+      const fetchPromise = this.fetchImpl(
+        url,
         init,
+      ).then(
+        (value) => value,
+        (error: unknown) => {
+          if (timedOut || controller.signal.aborted) {
+            throw new SchwabTraderApiTimeoutError({ path, method, timeoutMs });
+          }
+          throw error;
+        },
       );
-    } catch {
+      const response = await Promise.race([fetchPromise, timeoutPromise]);
+      if (!response.ok) {
+        throw new HttpError(502, "Schwab Trader API request failed", {
+          code: "schwab_trader_api_error",
+          expose: false,
+          data: { status: response.status, path },
+        });
+      }
+      status = response.status;
+      responseHeaders = response.headers;
+      text = await Promise.race([response.text(), timeoutPromise]);
+    } catch (error) {
+      if (isSchwabTraderApiTimeoutError(error)) {
+        throw error;
+      }
+      if (error instanceof HttpError) {
+        throw error;
+      }
       throw new HttpError(502, "Schwab Trader API request failed", {
         code: "schwab_trader_api_network_error",
         expose: false,
       });
+    } finally {
+      if (timeout) clearTimeout(timeout);
     }
 
-    if (!response.ok) {
-      throw new HttpError(502, "Schwab Trader API request failed", {
-        code: "schwab_trader_api_error",
-        expose: false,
-        data: { status: response.status, path },
-      });
-    }
-
-    const text = await response.text();
     let json: unknown = null;
     if (text) {
       try {
@@ -147,7 +226,7 @@ export class SchwabTraderApiClient {
         json = null;
       }
     }
-    return { status: response.status, headers: response.headers, json };
+    return { status, headers: responseHeaders, json };
   }
 
   async getAccountNumbers(): Promise<SchwabAccountNumberMapping[]> {
@@ -197,11 +276,25 @@ export class SchwabTraderApiClient {
   async placeOrder(
     accountHash: string,
     order: SchwabOrderRequest,
-  ): Promise<{ orderId: string | null }> {
-    const { headers } = await this.request(
-      `/accounts/${encodeURIComponent(accountHash)}/orders`,
-      { method: "POST", body: order },
-    );
+  ): Promise<SchwabPlaceOrderResult> {
+    let headers: Headers;
+    try {
+      ({ headers } = await this.request(
+        `/accounts/${encodeURIComponent(accountHash)}/orders`,
+        { method: "POST", body: order },
+      ));
+    } catch (error) {
+      if (isSchwabTraderApiTimeoutError(error)) {
+        return {
+          status: "unknown",
+          orderId: null,
+          reconcileRequired: true,
+          reason: "request_timeout",
+          timeoutMs: error.timeoutMs,
+        };
+      }
+      throw error;
+    }
     return { orderId: extractOrderIdFromLocation(headers.get("location")) };
   }
 

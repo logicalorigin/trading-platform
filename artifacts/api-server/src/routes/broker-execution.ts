@@ -55,6 +55,7 @@ import { readSchwabReadiness } from "../services/schwab-readiness";
 import { readSchwabUserReadiness } from "../services/schwab-user-custody";
 import {
   cancelSchwabEquityOrder,
+  isSchwabOrderSubmitReconcileRequired,
   previewSchwabEquityOrder,
   submitSchwabEquityOrder,
 } from "../services/schwab-equity-orders";
@@ -408,14 +409,27 @@ router.post(
       },
     });
     await requireSchwabOrderReadiness();
-    const data = SubmitSchwabEquityOrderResponse.parse(
-      await __brokerExecutionRouteInternalsForTests.schwabOrders.submitSchwabEquityOrder({
-        appUserId: session.user.id,
-        accountId: req.params.accountId,
-        input: body,
-      }),
-    );
-    res.json(data);
+    try {
+      const data = SubmitSchwabEquityOrderResponse.parse(
+        await __brokerExecutionRouteInternalsForTests.schwabOrders.submitSchwabEquityOrder({
+          appUserId: session.user.id,
+          accountId: req.params.accountId,
+          input: body,
+        }),
+      );
+      res.json(data);
+    } catch (error) {
+      if (!isSchwabOrderSubmitReconcileRequired(error)) {
+        throw error;
+      }
+      res.status(error.statusCode).type("application/problem+json").json({
+        type: "https://pyrus.local/problems/upstream",
+        title: error.message,
+        status: error.statusCode,
+        code: error.code,
+        data: error.data,
+      });
+    }
   },
 );
 

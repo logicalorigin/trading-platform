@@ -7,8 +7,10 @@ import {
 } from "@workspace/db";
 import { HttpError } from "../lib/errors";
 import {
+  SCHWAB_TRADER_API_TIMEOUT_CODE,
   SchwabTraderApiClient,
   type SchwabOrderRequest,
+  type SchwabUnknownOrderOutcome,
 } from "../providers/schwab/trader-api-client";
 import { getSchwabAccessToken } from "./schwab-oauth";
 import {
@@ -69,6 +71,9 @@ export type SchwabEquityOrderSubmitResponse = {
   orderId: string | null;
   status: "submitted";
 };
+
+export const SCHWAB_ORDER_SUBMIT_RECONCILE_CODE =
+  "schwab_order_submit_reconcile_required";
 
 export type SchwabEquityOrderPreviewResponse = {
   provider: "schwab";
@@ -315,6 +320,43 @@ function publicAccount(account: LocalSchwabAccount): SchwabEquityOrderAccount {
   };
 }
 
+function schwabOrderSubmitReconcileRequiredError(input: {
+  now: Date;
+  account: LocalSchwabAccount;
+  outcome: SchwabUnknownOrderOutcome;
+}): HttpError {
+  return new HttpError(
+    409,
+    "Schwab order submission outcome is unknown; reconcile before retrying",
+    {
+      code: SCHWAB_ORDER_SUBMIT_RECONCILE_CODE,
+      expose: true,
+      data: {
+        provider: "schwab",
+        submittedAt: input.now.toISOString(),
+        account: publicAccount(input.account),
+        orderId: null,
+        status: "reconcile_required",
+        outcome: "unknown",
+        reason: input.outcome.reason,
+        timeoutMs: input.outcome.timeoutMs,
+        reconcileRequired: true,
+        retryable: false,
+        sourceCode: SCHWAB_TRADER_API_TIMEOUT_CODE,
+      },
+    },
+  );
+}
+
+export function isSchwabOrderSubmitReconcileRequired(
+  error: unknown,
+): error is HttpError {
+  return (
+    error instanceof HttpError &&
+    error.code === SCHWAB_ORDER_SUBMIT_RECONCILE_CODE
+  );
+}
+
 async function loadLocalSchwabAccount(
   appUserId: string,
   accountId: string,
@@ -388,6 +430,7 @@ type OrderContextOptions = {
   encryptionKey?: string;
   keyVersion?: string;
   baseUrl?: string;
+  requestTimeoutMs?: number;
 };
 
 async function loadOrderClient(
@@ -406,6 +449,7 @@ async function loadOrderClient(
     accessToken,
     fetchImpl: options.fetchImpl,
     baseUrl: options.baseUrl,
+    requestTimeoutMs: options.requestTimeoutMs,
   });
 }
 
@@ -438,6 +482,9 @@ export async function submitSchwabEquityOrder(
   });
   const client = await loadOrderClient(account, options);
   const result = await client.placeOrder(account.accountHash, order);
+  if ("status" in result && result.status === "unknown") {
+    throw schwabOrderSubmitReconcileRequiredError({ now, account, outcome: result });
+  }
   await recordTaxPreflightOrderSubmitted({
     appUserId: options.appUserId,
     preflightToken: taxPreflight?.preflightToken,
