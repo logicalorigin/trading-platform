@@ -195,7 +195,7 @@ mock.module(new URL("../services/volume-footprints.ts", import.meta.url).href, {
   },
 });
 
-const { default: platformRouter } = await import("./platform.ts");
+const { default: platformRouter } = await import("./platform");
 
 after(() => {
   mock.reset();

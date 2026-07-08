@@ -17146,7 +17146,7 @@ function signalOptionsExitEventNetPnl(event: ExecutionEvent): number {
     payload.commissions,
     payload.fee,
     payload.fees,
-  ].reduce((sum, value) => sum + (finiteNumber(value) ?? 0), 0);
+  ].reduce<number>((sum, value) => sum + (finiteNumber(value) ?? 0), 0);
   return pnl - commissionsAndFees;
 }
 
