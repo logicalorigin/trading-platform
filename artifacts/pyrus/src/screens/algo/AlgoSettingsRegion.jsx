@@ -153,12 +153,17 @@ const numericInputWidth = (field, value) => {
   return `calc(${chars}ch + 14px)`;
 };
 
+const COMPACT_CONTROL_HEIGHT = 34;
+const COMPACT_SWITCH_WIDTH = 44;
+const COMPACT_SWITCH_HEIGHT = 28;
+const COMPACT_SWITCH_KNOB = 22;
+
 const compactInputStyle = ({ invalid, disabled, numeric = false, field, value }) => ({
-  height: dim(22),
+  height: dim(COMPACT_CONTROL_HEIGHT),
   width: numeric ? numericInputWidth(field, value) : "100%",
   minWidth: 0,
   maxWidth: "100%",
-  padding: sp("0 6px"),
+  padding: sp("0 8px"),
   border: `1px solid ${invalid ? CSS_COLOR.red : CSS_COLOR.border}`,
   borderRadius: dim(RADII.xs),
   background: CSS_COLOR.bg1,
@@ -221,10 +226,10 @@ export const CompactSwitch = ({
     disabled={disabled}
     onClick={() => onChange(!checked)}
     style={{
-      width: dim(27),
-      height: dim(16),
-      minWidth: dim(27),
-      minHeight: dim(16),
+      width: dim(COMPACT_SWITCH_WIDTH),
+      height: dim(COMPACT_SWITCH_HEIGHT),
+      minWidth: dim(COMPACT_SWITCH_WIDTH),
+      minHeight: dim(COMPACT_SWITCH_HEIGHT),
       border: `1px solid ${checked ? CSS_COLOR.accent : CSS_COLOR.border}`,
       borderRadius: dim(RADII.pill),
       background: checked ? cssColorMix(CSS_COLOR.accent, 18) : "transparent",
@@ -243,8 +248,8 @@ export const CompactSwitch = ({
     <span
       aria-hidden="true"
       style={{
-        width: dim(11),
-        height: dim(11),
+        width: dim(COMPACT_SWITCH_KNOB),
+        height: dim(COMPACT_SWITCH_KNOB),
         borderRadius: dim(RADII.pill),
         background: checked ? CSS_COLOR.accent : CSS_COLOR.textMuted,
         display: "block",
@@ -401,8 +406,8 @@ export const CompactFieldInput = ({
               aria-label={`${selectedFrame ? "Remove" : "Add"} ${timeframe} MTF frame`}
               onClick={() => toggleTimeframe(timeframe)}
               style={{
-                height: dim(22),
-                minWidth: dim(30),
+                height: dim(COMPACT_CONTROL_HEIGHT),
+                minWidth: dim(38),
                 border: `1px solid ${selectedFrame ? CSS_COLOR.accent : CSS_COLOR.border}`,
                 borderRadius: dim(RADII.xs),
                 background: selectedFrame
@@ -562,32 +567,28 @@ export const CompactSettingCell = ({
   const className = field.compactWide || field.fullWidth ? "algo-cell--wide" : undefined;
 
   if (field.type === "boolean") {
-    // Booleans pair label + switch on a single row (no input/validation sub-rows),
-    // halving cell height vs the stacked numeric cells below.
     return (
       <label
         className={className}
         style={{
-          display: "flex",
-          flexDirection: "row",
+          display: "grid",
+          gridTemplateColumns: `minmax(0, 1fr) ${dim(COMPACT_SWITCH_WIDTH)}px`,
           alignItems: "center",
-          gap: sp(2),
-          minHeight: dim(20),
+          gap: sp(8),
+          minHeight: dim(44),
           minWidth: 0,
           opacity: disabled ? 0.55 : 1,
           pointerEvents: disabled ? "none" : undefined,
         }}
         data-testid={`algo-compact-control-${field.path}`}
       >
-        <span style={{ flex: "1 1 auto", minWidth: 0, display: "flex" }}>
-          <CompactLabel
-            label={field.compactLabel || field.label}
-            dirty={dirty}
-            previousValue={previousValue}
-            field={field}
-            impact={impactBadge}
-          />
-        </span>
+        <CompactLabel
+          label={field.compactLabel || field.label}
+          dirty={dirty}
+          previousValue={previousValue}
+          field={field}
+          impact={impactBadge}
+        />
         <CompactSwitch
           checked={Boolean(value)}
           disabled={disabled}
@@ -604,10 +605,11 @@ export const CompactSettingCell = ({
       htmlFor={id}
       className={className}
       style={{
-        display: "flex",
-        flexDirection: "column",
-        gap: sp(1),
-        minHeight: dim(34),
+        display: "grid",
+        gridTemplateColumns: `minmax(0, 1fr) minmax(${dim(56)}px, auto)`,
+        alignItems: "center",
+        gap: sp(8),
+        minHeight: dim(44),
         minWidth: 0,
         opacity: disabled ? 0.55 : 1,
         pointerEvents: disabled ? "none" : undefined,
@@ -621,45 +623,45 @@ export const CompactSettingCell = ({
         field={field}
         impact={impactBadge}
       />
-      {(
-        <span
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: sp(2),
-            minWidth: 0,
-          }}
-        >
-          <CompactFieldInput
-            id={id}
-            field={field}
-            value={value}
-            invalid={invalid}
-            disabled={disabled}
-            ariaLabel={field.label}
-            testId={`algo-compact-input-${field.path}`}
-            onPatch={onPatch}
-            draftRoot={draftRoot}
-          />
-          {unitLabel ? (
-            <span
-              aria-hidden="true"
-              style={{
-                color: invalid ? CSS_COLOR.red : CSS_COLOR.textMuted,
-                fontFamily: T.sans,
-                fontSize: textSize("caption"),
-                lineHeight: 1,
-                flex: "0 0 auto",
-              }}
-            >
-              {unitLabel}
-            </span>
-          ) : null}
-        </span>
-      )}
+      <span
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "flex-end",
+          gap: sp(4),
+          minWidth: 0,
+        }}
+      >
+        <CompactFieldInput
+          id={id}
+          field={field}
+          value={value}
+          invalid={invalid}
+          disabled={disabled}
+          ariaLabel={field.label}
+          testId={`algo-compact-input-${field.path}`}
+          onPatch={onPatch}
+          draftRoot={draftRoot}
+        />
+        {unitLabel ? (
+          <span
+            aria-hidden="true"
+            style={{
+              color: invalid ? CSS_COLOR.red : CSS_COLOR.textMuted,
+              fontFamily: T.sans,
+              fontSize: textSize("caption"),
+              lineHeight: 1,
+              flex: "0 0 auto",
+            }}
+          >
+            {unitLabel}
+          </span>
+        ) : null}
+      </span>
       {invalid ? (
         <span
           style={{
+            gridColumn: "1 / -1",
             color: CSS_COLOR.red,
             fontFamily: T.sans,
             fontSize: textSize("caption"),
@@ -678,6 +680,7 @@ export const CompactSettingCell = ({
               return (
                 <span
                   style={{
+                    gridColumn: "1 / -1",
                     color: CSS_COLOR.amber,
                     fontFamily: T.sans,
                     fontSize: textSize("caption"),

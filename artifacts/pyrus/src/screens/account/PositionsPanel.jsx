@@ -1761,6 +1761,37 @@ const mobileFilterRailStyle = {
   WebkitOverflowScrolling: "touch",
 };
 
+const positionFilterGroupStyle = (isPhone) => ({
+  display: "inline-flex",
+  alignItems: "center",
+  gap: sp(5),
+  minWidth: 0,
+  flex: isPhone ? "0 0 auto" : "0 1 auto",
+  padding: sp("2px 4px"),
+  border: `1px solid ${CSS_COLOR.borderLight}`,
+  borderRadius: dim(RADII.sm),
+  background: cssColorMix(CSS_COLOR.text, 2),
+});
+
+const PositionFilterGroup = ({ label, children, isPhone }) => (
+  <div style={positionFilterGroupStyle(isPhone)}>
+    <span
+      style={{
+        color: CSS_COLOR.textMuted,
+        fontFamily: T.sans,
+        fontSize: textSize("caption"),
+        fontWeight: FONT_WEIGHTS.label,
+        letterSpacing: "0.04em",
+        textTransform: "uppercase",
+        whiteSpace: "nowrap",
+      }}
+    >
+      {label}
+    </span>
+    {children}
+  </div>
+);
+
 const positionSparklineShellStyle = (compact = false, inline = false) => ({
   display: inline ? "inline-flex" : "block",
   alignItems: inline ? "center" : undefined,
@@ -4016,19 +4047,29 @@ export const PositionsPanel = ({
         <div
           style={
             isPhone
-              ? mobileFilterRailStyle
-              : { display: "flex", gap: sp(4), flexWrap: "wrap", alignItems: "center" }
+              ? { ...mobileFilterRailStyle, opacity: rows.length ? 1 : 0.86 }
+              : {
+                  display: "flex",
+                  gap: sp(4),
+                  flexWrap: "wrap",
+                  alignItems: "center",
+                  opacity: rows.length ? 1 : 0.86,
+                }
           }
         >
           {showFilters ? (
-            <ToggleGroup options={ASSET_FILTERS} value={assetFilter} onChange={onAssetFilterChange} />
+            <PositionFilterGroup label="Asset" isPhone={isPhone}>
+              <ToggleGroup options={ASSET_FILTERS} value={assetFilter} onChange={onAssetFilterChange} />
+            </PositionFilterGroup>
           ) : null}
           {showFilters && onSourceFilterChange ? (
-            <ToggleGroup
-              options={SOURCE_FILTERS}
-              value={sourceFilter}
-              onChange={onSourceFilterChange}
-            />
+            <PositionFilterGroup label="Source" isPhone={isPhone}>
+              <ToggleGroup
+                options={SOURCE_FILTERS}
+                value={sourceFilter}
+                onChange={onSourceFilterChange}
+              />
+            </PositionFilterGroup>
           ) : null}
           <PositionSymbolSearchInput
             value={symbolSearch}

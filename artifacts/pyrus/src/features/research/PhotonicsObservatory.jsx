@@ -136,6 +136,16 @@ const FALLBACK_THEME = {
 const toneAlpha = (color, alpha) =>
   color ? cssColorMix(color, alpha * 100) : color;
 
+const GRAPH_VERTICAL_COLORS = {
+  photonics: "#CDA24E",
+  compute: "#5E94E8",
+  memory: "#D86890",
+  power: "#8A9A5B",
+  networking: "#A070E8",
+  dcInfra: "#50B8D8",
+  hyperscaler: "#B8895B",
+};
+
 const RESEARCH_LIVE_ENRICHMENT_DELAY_MS = 8_000;
 const RESEARCH_LIVE_REFRESH_DELAY_MS = 500;
 const RESEARCH_FUNDAMENTALS_PREFETCH_DELAY_MS = 4_000;
@@ -3668,7 +3678,7 @@ function Graph({ cos, sel, onSel, vFilter, searchQuery, theme, liveData = {}, li
     if (colorMode === "pe") return d.pe ? peScale(d.pe) : CSS_COLOR.textMuted;
     if (colorMode === "growth") return grScale(d.fin?.rg?.[4] || 0);
     if (colorMode === "ai") return aiScale(d.ms?.ai || 0.5);
-    return VX[d.v].c;
+    return GRAPH_VERTICAL_COLORS[d.v] || VX[d.v].c;
   }, [colorMode]);
 
   useEffect(() => {
@@ -3777,7 +3787,7 @@ function Graph({ cos, sel, onSel, vFilter, searchQuery, theme, liveData = {}, li
     // Branded initial circle (inside node - moves with simulation, zero lag)
     node.append("circle")
       .attr("r", d => Math.max(5, d.r * 0.7))
-      .attr("fill", d => (BRAND[d.t] || [CSS_COLOR.textDim])[0])
+      .attr("fill", d => colorMode === "vertical" ? (GRAPH_VERTICAL_COLORS[d.v] || VX[d.v].c) : (BRAND[d.t] || [CSS_COLOR.textDim])[0])
       .attr("class", "brand-circle");
 
     // Brand initial text
@@ -4073,17 +4083,18 @@ function Graph({ cos, sel, onSel, vFilter, searchQuery, theme, liveData = {}, li
       }} />
       {/* Legend */}
       <div style={{ position: "absolute", bottom: 4, left: 8, display: "flex", gap: 5, flexWrap: "wrap" }}>
-        {Object.entries(theme?.verticals || AI_VERTICALS).map(([k, v]) => (
-          <span key={k} style={{ fontSize: fs(10), color: !vFilter || vFilter === k ? v.c : CSS_COLOR.textMuted }}>
-            <span style={{ display: "inline-block", width: 4, height: 4, borderRadius: RADII.pill, background: v.c, marginRight: sp(2), opacity: !vFilter || vFilter === k ? 1 : 0.2 }} />
-            {v.n}
-          </span>
-        ))}
-        {colorMode !== "vertical" && (
-          <span style={{ fontSize: fs(10), color: CSS_COLOR.textMuted, marginLeft: sp(4) }}>
-            | ring = {"\u{1F7E2}"} profitable {"\u{1F534}"} unprofitable
-          </span>
-        )}
+        {Object.entries(theme?.verticals || AI_VERTICALS).map(([k, v]) => {
+          const verticalColor = GRAPH_VERTICAL_COLORS[k] || v.c;
+          return (
+            <span key={k} style={{ fontSize: fs(10), color: !vFilter || vFilter === k ? verticalColor : CSS_COLOR.textMuted }}>
+              <span style={{ display: "inline-block", width: 4, height: 4, borderRadius: RADII.pill, background: verticalColor, marginRight: sp(2), opacity: !vFilter || vFilter === k ? 1 : 0.2 }} />
+              {v.n}
+            </span>
+          );
+        })}
+        <span style={{ fontSize: fs(10), color: CSS_COLOR.textMuted, marginLeft: sp(4) }}>
+          | ring = {"\u{1F7E2}"} profitable {"\u{1F534}"} unprofitable
+        </span>
       </div>
     </div>
   );

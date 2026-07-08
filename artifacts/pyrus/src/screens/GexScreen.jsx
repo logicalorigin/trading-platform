@@ -1524,6 +1524,9 @@ export default function GexScreen({
     (row) => isFiniteNumber(row.impliedVol) && row.impliedVol > 0,
   ).length;
   const dataReady = Boolean(metrics && spot != null && filteredRows.length);
+  const chartGridColumns = isPhone
+    ? "minmax(0, 1fr)"
+    : "repeat(2, minmax(0, 1fr))";
   const zeroGammaQuery = useGexZeroGamma(ticker, {
     enabled: Boolean(isVisible && dataReady),
   });
@@ -2040,11 +2043,13 @@ export default function GexScreen({
               <ProfileTable profile={metrics.profile} spot={spot} />
             ) : null}
 
+            <SectionHeading title="Primary Gamma" />
+
             {view === "graph" ? (
               <div
                 style={{
                   display: "grid",
-                  gridTemplateColumns: `repeat(auto-fit, minmax(min(100%, ${dim(360)}px), 1fr))`,
+                  gridTemplateColumns: chartGridColumns,
                   gap: sp(10),
                   alignItems: "start",
                 }}
@@ -2091,23 +2096,14 @@ export default function GexScreen({
             <div
               style={{
                 display: "grid",
-                gridTemplateColumns: `repeat(auto-fit, minmax(min(100%, ${dim(360)}px), 1fr))`,
+                gridTemplateColumns: chartGridColumns,
                 gap: sp(10),
                 alignItems: "start",
               }}
             >
-              <div style={{ display: "grid", gap: sp(10), minWidth: 0 }}>
-                <Suspense fallback={<GexChartFallback minHeight={260} />}>
-                  <LazyExpiryChart rows={filteredRows} spot={spot} />
-                </Suspense>
-                <SectionHeading title="Open Interest Analysis" />
-                <Suspense fallback={<GexChartFallback minHeight={260} />}>
-                  <LazyOiChart rows={filteredRows} spot={spot} />
-                </Suspense>
-                <Suspense fallback={<GexChartFallback minHeight={260} />}>
-                  <LazyVolumeProfileChart rows={filteredRows} spot={spot} />
-                </Suspense>
-              </div>
+              <Suspense fallback={<GexChartFallback minHeight={260} />}>
+                <LazyExpiryChart rows={filteredRows} spot={spot} />
+              </Suspense>
               {view === "table" ? (
                 <div style={{ display: "grid", gap: sp(10), minWidth: 0 }}>
                   <Suspense fallback={<GexChartFallback minHeight={180} />}>
@@ -2119,11 +2115,39 @@ export default function GexScreen({
               ) : null}
             </div>
 
+            <SectionHeading title="Open Interest Analysis" />
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: chartGridColumns,
+                gap: sp(10),
+                alignItems: "start",
+              }}
+            >
+              <Suspense fallback={<GexChartFallback minHeight={260} />}>
+                <LazyOiChart rows={filteredRows} spot={spot} />
+              </Suspense>
+            </div>
+
+            <SectionHeading title="Volume Profile" />
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: chartGridColumns,
+                gap: sp(10),
+                alignItems: "start",
+              }}
+            >
+              <Suspense fallback={<GexChartFallback minHeight={260} />}>
+                <LazyVolumeProfileChart rows={filteredRows} spot={spot} />
+              </Suspense>
+            </div>
+
             <SectionHeading title="Implied Volatility" />
             <div
               style={{
                 display: "grid",
-                gridTemplateColumns: `repeat(auto-fit, minmax(min(100%, ${dim(360)}px), 1fr))`,
+                gridTemplateColumns: chartGridColumns,
                 gap: sp(10),
                 alignItems: "start",
               }}
@@ -2140,7 +2164,7 @@ export default function GexScreen({
             <div
               style={{
                 display: "grid",
-                gridTemplateColumns: `repeat(auto-fit, minmax(min(100%, ${dim(360)}px), 1fr))`,
+                gridTemplateColumns: chartGridColumns,
                 gap: sp(10),
                 alignItems: "start",
               }}
