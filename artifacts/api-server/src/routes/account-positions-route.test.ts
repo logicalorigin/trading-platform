@@ -1,14 +1,226 @@
 import assert from "node:assert/strict";
+import { once } from "node:events";
 import { readFileSync } from "node:fs";
-import test from "node:test";
+import type { AddressInfo } from "node:net";
+import { after, mock, test } from "node:test";
+
+import express from "express";
 
 const source = readFileSync(new URL("./platform.ts", import.meta.url), "utf8");
+const serviceCalls = new Map<string, number>();
+
+function countedService(name: string) {
+  return async () => {
+    serviceCalls.set(name, (serviceCalls.get(name) ?? 0) + 1);
+    throw new Error(`${name} should not run when account admission is denied`);
+  };
+}
+
+function inertService(value: unknown = {}) {
+  return async () => value;
+}
+
+function inertSubscription() {
+  return async () => () => undefined;
+}
+
+mock.module(new URL("../lib/runtime.ts", import.meta.url).href, {
+  namedExports: {
+    getProviderConfiguration: () => ({
+      massive: false,
+      research: false,
+      ibkr: false,
+    }),
+  },
+});
+
+mock.module(new URL("../services/account.ts", import.meta.url).href, {
+  namedExports: {
+    cancelAccountOrder: countedService("cancelAccountOrder"),
+    getAccountAllocation: countedService("getAccountAllocation"),
+    getAccountCashActivity: countedService("getAccountCashActivity"),
+    getAccountClosedTrades: countedService("getAccountClosedTrades"),
+    getAccountEquityHistory: countedService("getAccountEquityHistory"),
+    getAccountOrders: countedService("getAccountOrders"),
+    getAccountPositions: countedService("getAccountPositions"),
+    getAccountPositionsAtDate: countedService("getAccountPositionsAtDate"),
+    getAccountRisk: countedService("getAccountRisk"),
+    getAccountSummary: countedService("getAccountSummary"),
+    getFlexHealth: inertService({ ok: true }),
+    hasSnapTradeBackedAccounts: async () => false,
+    listAccounts: countedService("listAccounts"),
+    testFlexToken: inertService({ ok: true }),
+  },
+});
+
+mock.module(new URL("../services/account-page-streams.ts", import.meta.url).href, {
+  namedExports: {
+    ACCOUNT_PAGE_DERIVED_BOOT_DELAY_MS: 0,
+    ACCOUNT_PAGE_LIVE_BOOT_DELAY_MS: 0,
+    fetchAccountPagePrimaryPayload: countedService("fetchAccountPagePrimaryPayload"),
+    recordAccountPageStreamWrite: () => undefined,
+    subscribeAccountPageSnapshots: countedService("subscribeAccountPageSnapshots"),
+  },
+});
+
+mock.module(new URL("../services/bridge-streams.ts", import.meta.url).href, {
+  namedExports: {
+    fetchAccountSnapshotPayload: countedService("fetchAccountSnapshotPayload"),
+    fetchExecutionSnapshotPayload: inertService({}),
+    fetchOptionQuoteSnapshotPayload: inertService({}),
+    fetchOrderSnapshotPayload: inertService({}),
+    fetchQuoteSnapshotPayload: inertService({}),
+    readOptionQuoteDemandSnapshotPayload: inertService({}),
+    resolveQuoteStreamSource: () => "ibkr-bridge",
+    subscribeAccountSnapshots: countedService("subscribeAccountSnapshots"),
+    subscribeExecutionSnapshots: inertSubscription(),
+    subscribeOptionChains: inertSubscription(),
+    subscribeOptionQuoteSnapshots: inertSubscription(),
+    subscribeOrderSnapshots: inertSubscription(),
+    subscribeQuoteSnapshots: inertSubscription(),
+  },
+});
+
+mock.module(new URL("../services/gex.ts", import.meta.url).href, {
+  namedExports: {
+    buildGexDashboardHttpCacheMetadata: () => ({}),
+    getCachedGexDashboardHttpCacheEntry: () => null,
+    getGexDashboardData: inertService({}),
+    getGexProjectionData: inertService({}),
+    getGexSnapshots: inertService({}),
+    getGexZeroGammaData: inertService({}),
+  },
+});
+
+mock.module(new URL("../services/market-data-store.ts", import.meta.url).href, {
+  namedExports: {
+    loadStoredMarketBarsBySymbol: inertService([]),
+  },
+});
+
+mock.module(new URL("../services/platform.ts", import.meta.url).href, {
+  namedExports: {
+    OPTION_CHAIN_PUBLIC_METADATA_TIMEOUT_MS: 0,
+    OPTION_EXPIRATION_PUBLIC_FOREGROUND_WAIT_MS: 0,
+    addWatchlistSymbol: inertService({}),
+    batchOptionChains: inertService({}),
+    benchmarkOptionsFlowScannerTickerPass: inertService({}),
+    cancelOrder: inertService({}),
+    createWatchlist: inertService({}),
+    deleteWatchlist: inertService({}),
+    getBarsWithDebug: inertService({}),
+    getFlowPremiumDistribution: inertService({}),
+    getNews: inertService({}),
+    getOptionChainWithDebug: inertService({}),
+    getOptionChartBarsWithDebug: inertService({}),
+    getOptionExpirationsWithDebug: inertService({}),
+    getOptionsFlowUniverse: inertService({}),
+    getQuoteSnapshots: inertService({}),
+    getRuntimeDiagnostics: inertService({}),
+    getRuntimeDiagnosticsCompact: inertService({}),
+    getSession: inertService({}),
+    getUniverseLogos: inertService({}),
+    listAggregateFlowEvents: inertService({}),
+    listBrokerConnections: inertService({}),
+    listExecutions: inertService({}),
+    listFlowEvents: inertService({}),
+    listOrders: inertService({}),
+    listWatchlistsForCurrentUser: inertService({}),
+    placeOrder: inertService({}),
+    previewOrder: inertService({}),
+    removeWatchlistSymbol: inertService({}),
+    reorderWatchlistSymbols: inertService({}),
+    replaceOrder: inertService({}),
+    resolveOptionContractWithDebug: inertService({}),
+    searchUniverseTickers: inertService({}),
+    submitRawOrders: inertService({}),
+    updateWatchlist: inertService({}),
+  },
+});
+
+mock.module(new URL("../services/shadow-account.ts", import.meta.url).href, {
+  namedExports: {
+    SHADOW_ACCOUNT_ID: "shadow-account",
+    placeShadowOrder: inertService({}),
+    previewShadowOrder: inertService({}),
+    resolveCurrentUserShadowAccountId: inertService("shadow-account"),
+    runShadowWatchlistBacktest: inertService({}),
+    withCallerShadowScope: async (_accountId: unknown, fn: () => unknown) => fn(),
+  },
+});
+
+mock.module(new URL("../services/shadow-account-context.ts", import.meta.url).href, {
+  namedExports: {
+    runWithShadowAccountId: async (_accountId: unknown, fn: () => unknown) => fn(),
+  },
+});
+
+mock.module(new URL("../services/shadow-account-streams.ts", import.meta.url).href, {
+  namedExports: {
+    fetchShadowAccountSnapshotPayload: inertService({}),
+    subscribeShadowAccountSnapshots: inertSubscription(),
+  },
+});
+
+mock.module(
+  new URL("../services/signal-monitor-local-bar-cache.ts", import.meta.url).href,
+  {
+    namedExports: {
+      readSignalMonitorLocalMemoryBars: () => [],
+    },
+  },
+);
+
+mock.module(new URL("../services/sse-stream-diagnostics.ts", import.meta.url).href, {
+  namedExports: {
+    recordSseStreamClose: () => undefined,
+    recordSseStreamOpen: () => undefined,
+    serializeSseEventData: (data: unknown) => JSON.stringify(data),
+  },
+});
+
+mock.module(new URL("../services/stock-aggregate-stream.ts", import.meta.url).href, {
+  namedExports: {
+    getCurrentStockMinuteAggregates: inertService([]),
+    getRecentStockMinuteAggregateHistory: inertService([]),
+    getStockAggregateStreamDiagnostics: inertService({}),
+    isStockAggregateStreamingAvailable: () => false,
+    subscribeMutableStockMinuteAggregates: inertSubscription(),
+  },
+});
+
+mock.module(new URL("../services/volume-footprints.ts", import.meta.url).href, {
+  namedExports: {
+    getVolumeFootprints: inertService({}),
+  },
+});
+
+const { default: platformRouter } = await import("./platform.ts");
+
+after(() => {
+  mock.reset();
+});
 
 function routeSource(path: string, method = "get"): string {
   const start = source.indexOf(`router.${method}("${path}",`);
   assert.notEqual(start, -1, `Missing ${path}`);
   const next = source.indexOf("\nrouter.", start + 1);
   return source.slice(start, next === -1 ? undefined : next);
+}
+
+async function withServer<T>(fn: (baseUrl: string) => Promise<T>): Promise<T> {
+  const app = express();
+  app.use(express.json());
+  app.use(platformRouter);
+  const server = app.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const address = server.address() as AddressInfo;
+  try {
+    return await fn(`http://127.0.0.1:${address.port}`);
+  } finally {
+    server.close();
+    await once(server, "close");
+  }
 }
 
 test("account positions route supports explicit quote and fast-detail controls", () => {
@@ -23,26 +235,64 @@ test("account positions route supports explicit quote and fast-detail controls",
   );
 });
 
-test("real account routes and streams require account admission", () => {
-  [
-    "/accounts",
-    "/accounts/:accountId/summary",
-    "/accounts/:accountId/equity-history",
-    "/accounts/:accountId/allocation",
-    "/accounts/:accountId/positions",
-    "/accounts/:accountId/positions-at-date",
-    "/accounts/:accountId/closed-trades",
-    "/accounts/:accountId/orders",
-    "/accounts/:accountId/risk",
-    "/accounts/:accountId/cash-activity",
-    "/streams/accounts/page",
-    "/streams/accounts",
-  ].forEach((path) => {
-    assert.match(
-      routeSource(path),
-      /admitAccountRoute\(res/,
-      `${path} should guard real-account access when IBKR is unconfigured`,
-    );
+test("real account routes and streams short-circuit account services when admission is denied", async () => {
+  serviceCalls.clear();
+  await withServer(async (baseUrl) => {
+    const cases = [
+      { path: "/accounts", service: "listAccounts" },
+      { path: "/accounts/real-account/summary", service: "getAccountSummary" },
+      {
+        path: "/accounts/real-account/equity-history",
+        service: "getAccountEquityHistory",
+      },
+      {
+        path: "/accounts/real-account/allocation",
+        service: "getAccountAllocation",
+      },
+      { path: "/accounts/real-account/positions", service: "getAccountPositions" },
+      {
+        path: "/accounts/real-account/positions-at-date",
+        service: "getAccountPositionsAtDate",
+      },
+      {
+        path: "/accounts/real-account/closed-trades",
+        service: "getAccountClosedTrades",
+      },
+      { path: "/accounts/real-account/orders", service: "getAccountOrders" },
+      {
+        method: "POST",
+        path: "/accounts/real-account/orders/order-1/cancel",
+        service: "cancelAccountOrder",
+      },
+      { path: "/accounts/real-account/risk", service: "getAccountRisk" },
+      {
+        path: "/accounts/real-account/cash-activity",
+        service: "getAccountCashActivity",
+      },
+      {
+        path: "/streams/accounts/page?accountId=real-account",
+        service: "fetchAccountPagePrimaryPayload",
+      },
+      {
+        path: "/streams/accounts?accountId=real-account",
+        service: "fetchAccountSnapshotPayload",
+      },
+    ];
+
+    for (const { method = "GET", path, service } of cases) {
+      const response = await fetch(`${baseUrl}${path}`, {
+        method,
+        headers: method === "POST" ? { "content-type": "application/json" } : undefined,
+        body: method === "POST" ? "{}" : undefined,
+      });
+
+      assert.equal(response.status, 503, `${method} ${path} should be blocked`);
+      assert.equal(
+        serviceCalls.get(service) ?? 0,
+        0,
+        `${service} should not run after denied account admission`,
+      );
+    }
   });
 });
 
