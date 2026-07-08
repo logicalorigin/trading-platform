@@ -216,7 +216,7 @@ const formatFreshnessAge = (value) => {
 };
 
 const severityTone = (severity) => {
-  if (severity === "error" || severity === "critical") return "var(--ra-toast-error)";
+  if (severity === "error") return "var(--ra-toast-error)";
   if (severity === "warning" || severity === "unknown" || severity === "degraded") return "var(--ra-toast-warning)";
   if (severity === "success") return "var(--ra-toast-success)";
   return "var(--ra-toast-info)";

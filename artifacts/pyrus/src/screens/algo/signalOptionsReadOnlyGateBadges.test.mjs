@@ -86,6 +86,6 @@ test("read-only gate badges show active mtf pattern gate in timeframe order", ()
     label: "MTF pattern gate active",
     value: "1m Sell / 2m Sell / 5m Sell / 15m Buy",
     active: true,
-    critical: true,
+    urgent: true,
   });
 });

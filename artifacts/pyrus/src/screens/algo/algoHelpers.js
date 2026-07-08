@@ -375,7 +375,7 @@ export const buildSignalOptionsReadOnlyGateBadges = (profile) => {
       label: "MTF pattern gate active",
       value: formatSignalOptionsMtfPattern(mtfPattern.pattern),
       active: true,
-      critical: true,
+      urgent: true,
     });
   }
 

@@ -3087,7 +3087,7 @@ const ReadOnlyGateBadgeStrip = ({ badges }) => {
       }}
     >
       {badges.map((badge) => {
-        const tone = badge.critical
+        const tone = badge.urgent
           ? CSS_COLOR.amber
           : badge.active
             ? CSS_COLOR.cyan
@@ -3102,10 +3102,10 @@ const ReadOnlyGateBadgeStrip = ({ badges }) => {
                 gap: sp(1),
                 padding: sp("4px 5px"),
                 border: `1px solid ${
-                  badge.critical ? cssColorMix(CSS_COLOR.amber, 38) : CSS_COLOR.borderLight
+                  badge.urgent ? cssColorMix(CSS_COLOR.amber, 38) : CSS_COLOR.borderLight
                 }`,
                 borderRadius: dim(RADII.xs),
-                background: badge.critical
+                background: badge.urgent
                   ? cssColorMix(CSS_COLOR.amber, 7)
                   : CSS_COLOR.bg1,
               }}
