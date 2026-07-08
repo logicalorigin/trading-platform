@@ -28,6 +28,8 @@ const SHADOW_TAB_ID = "shadow";
 const PROVIDER_LABELS = {
   ibkr: "IBKR",
   snaptrade: "SnapTrade",
+  robinhood: "Robinhood",
+  schwab: "Schwab",
 };
 export const providerLabel = (account) => {
   const provider =
