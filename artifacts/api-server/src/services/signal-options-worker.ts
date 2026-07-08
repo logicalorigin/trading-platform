@@ -37,6 +37,8 @@ const SIGNAL_OPTIONS_WORKER_ACTION_ITEM_LIMIT = positiveInteger(
   1_000,
 );
 const DEFAULT_SIGNAL_OPTIONS_WORKER_SCAN_TIMEOUT_MS = 120_000;
+const DEFAULT_SIGNAL_OPTIONS_WORKER_SCAN_TIMEOUT_MAX_MS = 300_000;
+const DEFAULT_SIGNAL_OPTIONS_WORKER_SCAN_TIMEOUT_POSITION_MS = 3_000;
 const SIGNAL_OPTIONS_WORKER_SCAN_TIMEOUT_MIN_MS = 1_000;
 const SIGNAL_OPTIONS_WORKER_SCAN_TIMEOUT_MAX_MS = 3_600_000;
 const SIGNAL_OPTIONS_WORKER_SCAN_TIMEOUT_REASON = "worker_scan_timeout";
@@ -72,7 +74,7 @@ type WorkerDependencies = {
   clearTimer: (timer: ReturnType<typeof setTimeout>) => void;
   now: () => Date;
   logger: WorkerLogger;
-  scanTimeoutMs: number | null;
+  scanTimeoutMs?: number | null | false;
   subscribeCockpitChanges: typeof subscribeAlgoCockpitChanges;
 };
 
@@ -294,14 +296,30 @@ function positiveInteger(value: unknown, fallback: number, min: number, max: num
     : fallback;
 }
 
-function resolveWorkerScanTimeoutMs(value: unknown): number | null {
+function resolveDefaultWorkerScanTimeoutMs(activePositionCount: unknown) {
+  const count = Math.max(0, Math.floor(numeric(activePositionCount) ?? 0));
+  return Math.min(
+    DEFAULT_SIGNAL_OPTIONS_WORKER_SCAN_TIMEOUT_MAX_MS,
+    Math.max(
+      DEFAULT_SIGNAL_OPTIONS_WORKER_SCAN_TIMEOUT_MS,
+      DEFAULT_SIGNAL_OPTIONS_WORKER_SCAN_TIMEOUT_MS +
+        count * DEFAULT_SIGNAL_OPTIONS_WORKER_SCAN_TIMEOUT_POSITION_MS,
+    ),
+  );
+}
+
+export function resolveWorkerScanTimeoutMs(
+  value: unknown,
+  activePositionCount = 0,
+  envValue = process.env["SIGNAL_OPTIONS_WORKER_SCAN_TIMEOUT_MS"],
+): number | null {
   if (value === null || value === false) {
     return null;
   }
-  const configured =
-    value === undefined
-      ? process.env["SIGNAL_OPTIONS_WORKER_SCAN_TIMEOUT_MS"]
-      : value;
+  const configured = value === undefined ? envValue : value;
+  if (configured === undefined) {
+    return resolveDefaultWorkerScanTimeoutMs(activePositionCount);
+  }
   if (configured === null || configured === "" || configured === "0") {
     return null;
   }
@@ -426,7 +444,7 @@ function defaultDependencies(
     clearTimer: options.clearTimer ?? clearTimeout,
     now: options.now ?? (() => new Date()),
     logger: options.logger ?? logger,
-    scanTimeoutMs: resolveWorkerScanTimeoutMs(options.scanTimeoutMs),
+    scanTimeoutMs: options.scanTimeoutMs,
     subscribeCockpitChanges:
       options.subscribeCockpitChanges ?? subscribeAlgoCockpitChanges,
   };
@@ -435,6 +453,7 @@ function defaultDependencies(
 async function runDeploymentScanWithTimeout(input: {
   deployment: AlgoDeployment;
   dependencies: WorkerDependencies;
+  activePositionCount: number;
   skipEntryWork?: boolean;
 }): Promise<unknown> {
   const { deployment, dependencies } = input;
@@ -451,7 +470,10 @@ async function runDeploymentScanWithTimeout(input: {
   });
   scanPromise.catch(() => {});
 
-  const timeoutMs = dependencies.scanTimeoutMs;
+  const timeoutMs = resolveWorkerScanTimeoutMs(
+    dependencies.scanTimeoutMs,
+    input.activePositionCount,
+  );
   if (timeoutMs === null) {
     return scanPromise;
   }
@@ -509,6 +531,7 @@ async function runDeployment(input: {
     const scanResult = await runDeploymentScanWithTimeout({
       deployment,
       dependencies,
+      activePositionCount: runtime.lastActivePositionCount,
       skipEntryWork: input.skipEntryWork === true,
     });
     if (isScanAlreadyRunningResult(scanResult)) {

@@ -6,7 +6,10 @@ import {
   __resetApiResourcePressureForTests,
   updateApiResourcePressure,
 } from "./resource-pressure";
-import { createSignalOptionsWorker } from "./signal-options-worker";
+import {
+  createSignalOptionsWorker,
+  resolveWorkerScanTimeoutMs,
+} from "./signal-options-worker";
 import type { OvernightSpotWorkerDeployment } from "./overnight-spot-execution";
 import { createOvernightSpotWorker } from "./overnight-spot-worker";
 import { createSignalMonitorEvaluationWorker } from "./signal-monitor-evaluation-worker";
@@ -181,6 +184,15 @@ test("signal-options worker scans enabled deployments with bounded action work",
   assert.deepEqual(snapshot.deployments[0]?.lastBatchSymbols, ["SPY"]);
 
   __resetApiResourcePressureForTests();
+});
+
+test("signal-options worker default scan timeout scales with active positions unless overridden", () => {
+  assert.equal(resolveWorkerScanTimeoutMs(undefined, 0, undefined), 120_000);
+  assert.equal(resolveWorkerScanTimeoutMs(undefined, 10, undefined), 150_000);
+  assert.equal(resolveWorkerScanTimeoutMs(undefined, 100, undefined), 300_000);
+  assert.equal(resolveWorkerScanTimeoutMs("45000", 100, undefined), 45_000);
+  assert.equal(resolveWorkerScanTimeoutMs(undefined, 100, "45000"), 45_000);
+  assert.equal(resolveWorkerScanTimeoutMs(null, 100, undefined), null);
 });
 
 test("signal-options worker keeps scanning when signal evaluation is passive", async () => {
