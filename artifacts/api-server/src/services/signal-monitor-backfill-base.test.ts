@@ -30,6 +30,9 @@ const {
   promoteSignalMonitorBackfilledBaseFromStream,
   seedSignalMonitorBackfilledBaseForTests,
   getSignalMonitorBackfilledBaseForTests,
+  refreshSignalMonitorBackfilledBaseBarsForTests,
+  getSignalMonitorBackfillRefreshDiagnosticsForTests,
+  resetSignalMonitorBackfillRefreshDiagnosticsForTests,
   selectSignalMonitorBackfillDueCells,
   shouldSkipSignalMonitorBackfillForPressure,
   shouldSkipSignalMonitorBackfillForQuietProducer,
@@ -214,6 +217,43 @@ test("due-cell prefetch grouping keeps symbols scoped to their due timeframe", (
       ["1h", ["AAPL"]],
     ],
   );
+});
+
+test("backfilled base refresh swallows grouped prefetch rejection and records diagnostics", async () => {
+  resetSignalMonitorMatrixStreamForTests();
+  resetSignalMonitorBackfillRefreshDiagnosticsForTests();
+
+  await assert.doesNotReject(
+    refreshSignalMonitorBackfilledBaseBarsForTests(
+      {
+        symbols: ["AAPL"],
+        timeframes: ["5m"],
+        evaluatedAt: new Date("2026-06-25T15:00:00.000Z"),
+        environment: "shadow",
+      },
+      {
+        runWithStoredBarsPrefetch: async () => {
+          throw new Error("prefetch rejected for test");
+        },
+      },
+    ),
+  );
+
+  const diagnostics = getSignalMonitorBackfillRefreshDiagnosticsForTests();
+  assert.equal(diagnostics.failureCount, 1);
+  assert.equal(diagnostics.lastError, "prefetch rejected for test");
+  assert.equal(diagnostics.lastErrorAt, "2026-06-25T15:00:00.000Z");
+  assert.equal(
+    diagnostics.lastDiagnostic?.operation,
+    "refresh_signal_monitor_backfilled_base_bars",
+  );
+  assert.equal(diagnostics.lastDiagnostic?.environment, "shadow");
+  assert.equal(
+    diagnostics.lastDiagnostic?.sourceStatus,
+    "backfill-refresh-failed",
+  );
+
+  resetSignalMonitorMatrixStreamForTests();
 });
 
 test("pressure-high skips the backfill cycle; watch/normal keep running", () => {

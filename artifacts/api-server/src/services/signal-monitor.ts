@@ -5187,6 +5187,7 @@ async function refreshSignalMonitorLocalBarCacheWarmup(): Promise<void> {
         symbols,
         timeframes: [...SIGNAL_MONITOR_MATRIX_TIMEFRAMES],
         evaluatedAt: new Date(),
+        environment,
       });
     }
   } catch (error) {
@@ -5266,6 +5267,12 @@ const SIGNAL_MONITOR_BACKFILL_RECENT_AGGREGATE_GRACE_MS = (() => {
   return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : 5 * 60_000;
 })();
 let signalMonitorBackfillRefreshInFlight = false;
+const signalMonitorBackfillRefreshDiagnostics = {
+  failureCount: 0,
+  lastError: null as string | null,
+  lastErrorAt: null as string | null,
+  lastDiagnostic: null as ReturnType<typeof recordSignalMonitorDbFallback> | null,
+};
 
 // Shared background DB-acquisition budget for the producer's two un-awaited
 // fan-outs (deep-history backfill reads + best-effort state-persistence reads).
@@ -5460,6 +5467,53 @@ type SignalMonitorBackfillCandidate = {
   refreshedAt: number | null;
 };
 
+type SignalMonitorBackfillRefreshDeps = {
+  runWithStoredBarsPrefetch?: typeof runWithSignalMonitorStoredBarsPrefetch;
+};
+
+function signalMonitorBackfillRefreshErrorMessage(error: unknown): string {
+  return error instanceof Error && error.message
+    ? error.message
+    : "Signal monitor backfilled base refresh failed.";
+}
+
+function recordSignalMonitorBackfillRefreshFailure(
+  error: unknown,
+  input: {
+    environment?: RuntimeMode | null;
+    evaluatedAt: Date;
+    symbolCount: number;
+    timeframeCount: number;
+  },
+): void {
+  const diagnostic = recordSignalMonitorDbFallback(error, {
+    operation: "refresh_signal_monitor_backfilled_base_bars",
+    environment: input.environment ?? null,
+    sourceStatus: "backfill-refresh-failed",
+    observedAt: input.evaluatedAt,
+  });
+  signalMonitorBackfillRefreshDiagnostics.failureCount += 1;
+  signalMonitorBackfillRefreshDiagnostics.lastError =
+    signalMonitorBackfillRefreshErrorMessage(error);
+  signalMonitorBackfillRefreshDiagnostics.lastErrorAt =
+    input.evaluatedAt.toISOString();
+  signalMonitorBackfillRefreshDiagnostics.lastDiagnostic = diagnostic;
+  logger.warn(
+    {
+      err: error,
+      dbError: diagnostic.dbError,
+      operation: diagnostic.operation,
+      environment: diagnostic.environment,
+      sourceStatus: diagnostic.sourceStatus,
+      transient: diagnostic.transient,
+      poolContention: diagnostic.poolContention,
+      symbolCount: input.symbolCount,
+      timeframeCount: input.timeframeCount,
+    },
+    "Signal monitor backfilled base refresh failed",
+  );
+}
+
 // Pure selection used by refreshSignalMonitorBackfilledBaseBars: keep only cells
 // whose per-timeframe cadence has elapsed, order the most-overdue first, and cap
 // to maxCells. Never-refreshed cells (refreshedAt == null) are maximally overdue.
@@ -5525,11 +5579,15 @@ function groupSignalMonitorBackfillDueCellsByTimeframe(
   );
 }
 
-async function refreshSignalMonitorBackfilledBaseBars(input: {
-  symbols: string[];
-  timeframes: SignalMonitorMatrixTimeframe[];
-  evaluatedAt: Date;
-}): Promise<void> {
+async function refreshSignalMonitorBackfilledBaseBars(
+  input: {
+    symbols: string[];
+    timeframes: SignalMonitorMatrixTimeframe[];
+    evaluatedAt: Date;
+    environment?: RuntimeMode | null;
+  },
+  deps: SignalMonitorBackfillRefreshDeps = {},
+): Promise<void> {
   if (signalMonitorBackfillRefreshInFlight) {
     return;
   }
@@ -5559,6 +5617,8 @@ async function refreshSignalMonitorBackfilledBaseBars(input: {
   signalMonitorBackfillRefreshInFlight = true;
   ensureSignalMonitorBackfilledBaseInvalidationSubscription();
   const nowMs = input.evaluatedAt.getTime();
+  const runWithStoredBarsPrefetch =
+    deps.runWithStoredBarsPrefetch ?? runWithSignalMonitorStoredBarsPrefetch;
   try {
     const candidates: SignalMonitorBackfillCandidate[] = [];
     for (const symbol of input.symbols) {
@@ -5591,7 +5651,7 @@ async function refreshSignalMonitorBackfilledBaseBars(input: {
     const dueSymbolsByTimeframe =
       groupSignalMonitorBackfillDueCellsByTimeframe(dueCells);
     for (const [timeframe, symbols] of dueSymbolsByTimeframe) {
-      await runWithSignalMonitorStoredBarsPrefetch(
+      await runWithStoredBarsPrefetch(
         {
           symbols,
           timeframes: [timeframe],
@@ -5649,6 +5709,13 @@ async function refreshSignalMonitorBackfilledBaseBars(input: {
         },
       );
     }
+  } catch (error) {
+    recordSignalMonitorBackfillRefreshFailure(error, {
+      environment: input.environment,
+      evaluatedAt: input.evaluatedAt,
+      symbolCount: input.symbols.length,
+      timeframeCount: input.timeframes.length,
+    });
   } finally {
     signalMonitorBackfillRefreshInFlight = false;
   }
@@ -10850,7 +10917,11 @@ function createSignalMonitorMatrixStreamSubscriptionForTests(input: {
 const SIGNAL_MONITOR_SERVER_OWNED_PRODUCER_REFRESH_MS = 60_000;
 const signalMonitorServerOwnedProducers = new Map<
   RuntimeMode,
-  { subscription: SignalMonitorMatrixStreamSubscription; symbolKey: string }
+  {
+    subscription: SignalMonitorMatrixStreamSubscription;
+    symbolKey: string;
+    profileSignature: string;
+  }
 >();
 let signalMonitorServerOwnedProducerTimer: ReturnType<typeof setInterval> | null =
   null;
@@ -10874,14 +10945,38 @@ function buildSignalMonitorServerOwnedProducerScope(input: {
   };
 }
 
+function signalMonitorServerOwnedProducerProfileSignature(
+  profile: DbSignalMonitorProfile,
+): string {
+  return JSON.stringify({
+    id: profile.id,
+    environment: profile.environment,
+    enabled: profile.enabled,
+    watchlistId: profile.watchlistId ?? null,
+    timeframe: profile.timeframe,
+    pyrusSignalsSettings: profile.pyrusSignalsSettings ?? {},
+    freshWindowBars: profile.freshWindowBars,
+    pollIntervalSeconds: profile.pollIntervalSeconds,
+    maxSymbols: profile.maxSymbols,
+    evaluationConcurrency: profile.evaluationConcurrency,
+  });
+}
+
 function registerSignalMonitorServerOwnedProducer(input: {
   environment: RuntimeMode;
   profile: DbSignalMonitorProfile;
   scope: SignalMonitorMatrixStreamScope;
 }): void {
   const symbolKey = input.scope.symbols.join(",");
+  const profileSignature = signalMonitorServerOwnedProducerProfileSignature(
+    input.profile,
+  );
   const existing = signalMonitorServerOwnedProducers.get(input.environment);
-  if (existing && existing.symbolKey === symbolKey) {
+  if (
+    existing &&
+    existing.symbolKey === symbolKey &&
+    existing.profileSignature === profileSignature
+  ) {
     // Universe unchanged: just re-prime to defeat the idle keepalive release.
     primeSignalMonitorMatrixStockAggregateStream(input.scope.symbols);
     return;
@@ -10896,6 +10991,7 @@ function registerSignalMonitorServerOwnedProducer(input: {
   signalMonitorServerOwnedProducers.set(input.environment, {
     subscription,
     symbolKey,
+    profileSignature,
   });
 }
 
@@ -10978,6 +11074,7 @@ async function refreshSignalMonitorServerOwnedProducers(): Promise<void> {
           symbols,
           timeframes,
           evaluatedAt: new Date(),
+          environment: universe.profile.environment,
         });
         activeEnvironments.add(universe.profile.environment);
       } catch (error) {
@@ -12183,6 +12280,10 @@ function resetSignalMonitorMatrixStreamForTests() {
   unsubscribeSignalMonitorBackfilledBaseBarCacheRowsChanged?.();
   unsubscribeSignalMonitorBackfilledBaseBarCacheRowsChanged = null;
   signalMonitorBackfilledBaseByCell.clear();
+  signalMonitorBackfillRefreshDiagnostics.failureCount = 0;
+  signalMonitorBackfillRefreshDiagnostics.lastError = null;
+  signalMonitorBackfillRefreshDiagnostics.lastErrorAt = null;
+  signalMonitorBackfillRefreshDiagnostics.lastDiagnostic = null;
   pendingSignalMonitorMatrixStreamSymbolsByEnvironment.clear();
   if (signalMonitorMatrixStreamFlushTimer) {
     clearTimeout(signalMonitorMatrixStreamFlushTimer);
@@ -14125,6 +14226,26 @@ export const __signalMonitorInternalsForTests = {
   SIGNAL_MONITOR_BACKFILL_REFRESH_MS,
   SIGNAL_MONITOR_BACKFILL_MAX_CELLS_PER_CYCLE,
   SIGNAL_MONITOR_BACKFILL_CONCURRENCY_LIMIT,
+  refreshSignalMonitorBackfilledBaseBarsForTests:
+    refreshSignalMonitorBackfilledBaseBars,
+  getSignalMonitorBackfillRefreshDiagnosticsForTests() {
+    const diagnostic =
+      signalMonitorBackfillRefreshDiagnostics.lastDiagnostic;
+    return {
+      failureCount: signalMonitorBackfillRefreshDiagnostics.failureCount,
+      lastError: signalMonitorBackfillRefreshDiagnostics.lastError,
+      lastErrorAt: signalMonitorBackfillRefreshDiagnostics.lastErrorAt,
+      lastDiagnostic: diagnostic
+        ? { ...diagnostic, dbError: { ...diagnostic.dbError } }
+        : null,
+    };
+  },
+  resetSignalMonitorBackfillRefreshDiagnosticsForTests() {
+    signalMonitorBackfillRefreshDiagnostics.failureCount = 0;
+    signalMonitorBackfillRefreshDiagnostics.lastError = null;
+    signalMonitorBackfillRefreshDiagnostics.lastErrorAt = null;
+    signalMonitorBackfillRefreshDiagnostics.lastDiagnostic = null;
+  },
   SIGNAL_MONITOR_MATRIX_STREAM_FLUSH_MS,
   signalMonitorBarsSinceSignal,
   resolveSignalMonitorCurrentSignalExcursion,
