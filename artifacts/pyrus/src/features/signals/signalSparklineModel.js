@@ -112,12 +112,21 @@ export const buildSignalSparklinePointColors = ({
   // different timeframe than the traded signal.
   const rowMatchesColorTimeframe =
     !tradedTimeframe || !rowTimeframe || rowTimeframe === tradedTimeframe;
-  if (
+  const rowSignalIsAuthoritative =
     rowMatchesColorTimeframe &&
     activeStatuses.has(row?.status) &&
     isSignalSparklineDirection(rowSignalDirection) &&
-    rowSignalMs != null
-  ) {
+    rowSignalMs != null;
+  if (rowSignalIsAuthoritative) {
+    for (let index = transitions.length - 1; index >= 0; index -= 1) {
+      const transition = transitions[index];
+      if (
+        transition.ms < rowSignalMs ||
+        transition.direction !== rowSignalDirection
+      ) {
+        transitions.splice(index, 1);
+      }
+    }
     transitions.push({
       direction: rowSignalDirection,
       ms: rowSignalMs,
