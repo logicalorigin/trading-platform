@@ -3,6 +3,9 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import {
+  algoDeploymentsTable,
+  algoStrategiesTable,
+  executionEventsTable,
   signalMonitorSymbolStatesTable,
   type AlgoDeployment,
   type ExecutionEvent,
@@ -1242,6 +1245,76 @@ test("a position's exit can only be claimed once (duplicate-exit race guard)", (
     internals.tryClaimSignalOptionsPositionExit(key, now + 11 * 60 * 1000),
     true,
   );
+});
+
+test("dashboard event read covers the full trading day for >100-event realized P&L", async () => {
+  const internals = __signalOptionsAutomationInternalsForTests;
+  const uuid = (value: number) =>
+    `00000000-0000-4000-8000-${String(value).padStart(12, "0")}`;
+  const strategyId = uuid(3100);
+  const deploymentId = uuid(3101);
+  const now = new Date("2026-07-07T18:00:00.000Z");
+  const firstExitAt = new Date("2026-07-07T14:30:00.000Z");
+
+  await withTestDb(async ({ db }) => {
+    await db.insert(algoStrategiesTable).values({
+      id: strategyId,
+      name: "Signal Options PnL Window",
+      mode: "shadow",
+      enabled: true,
+      symbolUniverse: ["AAPL"],
+      config: {},
+    });
+    await db.insert(algoDeploymentsTable).values({
+      id: deploymentId,
+      strategyId,
+      name: "Signal Options PnL Window",
+      mode: "shadow",
+      enabled: true,
+      providerAccountId: "shadow",
+      symbolUniverse: ["AAPL"],
+      config: { signalOptions: {} },
+    });
+    await db.insert(executionEventsTable).values(
+      Array.from({ length: 120 }, (_, index) => ({
+        id: uuid(4000 + index),
+        deploymentId,
+        providerAccountId: "shadow",
+        symbol: "AAPL",
+        eventType: SIGNAL_OPTIONS_EXIT_EVENT,
+        summary: `exit ${index}`,
+        occurredAt: new Date(firstExitAt.getTime() + index * 60_000),
+        payload: {
+          pnl: -1,
+          position: { id: `position-${index}` },
+        },
+      })),
+    );
+
+    const read = await internals.readSignalOptionsDashboardEvents({
+      deploymentId,
+      recentLimit: 100,
+      now,
+    });
+    assert.equal(read.recentEvents.length, 100);
+    assert.equal(read.dayEvents.length, 120);
+    assert.equal(read.dayOverflow, false);
+    assert.equal(
+      read.sessionStartAt?.toISOString(),
+      "2026-07-07T13:30:00.000Z",
+    );
+
+    const recentOnlyPnl = internals.computeSignalOptionsDailyRealizedPnl(
+      internals.stateSignalOptionsEvents(read.recentEvents).signalEvents,
+      now,
+    );
+    const fullDayPnl = internals.computeSignalOptionsDailyRealizedPnl(
+      internals.stateSignalOptionsEvents(read.events).signalEvents,
+      now,
+    );
+    assert.equal(recentOnlyPnl, -100);
+    assert.equal(fullDayPnl, -120);
+  });
 });
 
 test("deriveCandidateActionStatus: a resolved shadow link marks an open position shadow_filled even when its entry event aged out of the view window", () => {

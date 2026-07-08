@@ -325,6 +325,7 @@ const SIGNAL_OPTIONS_EXTENDED_CLOSE_UNDERLYINGS = new Set([
 const SIGNAL_OPTIONS_STATE_EVENT_LIMIT = 2_500;
 const SIGNAL_OPTIONS_RECENT_SKIPS_LIMIT = SIGNAL_OPTIONS_STATE_EVENT_LIMIT;
 const SIGNAL_OPTIONS_SUMMARY_EVENT_LIMIT = 100;
+const SIGNAL_OPTIONS_DASHBOARD_DAY_EVENT_LIMIT = 10_000;
 const SIGNAL_OPTIONS_SUMMARY_RESPONSE_EVENT_LIMIT = 20;
 const SIGNAL_OPTIONS_DASHBOARD_CACHE_TTL_MS = 2_000;
 const SIGNAL_OPTIONS_DASHBOARD_CACHE_STALE_TTL_MS = 60_000;
@@ -2268,6 +2269,90 @@ async function listDeploymentEventsSince(
     )
     .orderBy(asc(executionEventsTable.occurredAt))
     .limit(Math.min(Math.max(limit, 1), 10_000));
+}
+
+async function listDeploymentEventsSinceWithOverflow(
+  deploymentId: string,
+  since: Date,
+  limit = SIGNAL_OPTIONS_DASHBOARD_DAY_EVENT_LIMIT,
+) {
+  const cappedLimit = Math.min(Math.max(limit, 1), 10_000);
+  const rows = await db
+    .select()
+    .from(executionEventsTable)
+    .where(
+      and(
+        eq(executionEventsTable.deploymentId, deploymentId),
+        sql`${executionEventsTable.eventType} LIKE 'signal_options_%'`,
+        gte(executionEventsTable.occurredAt, since),
+      ),
+    )
+    .orderBy(asc(executionEventsTable.occurredAt))
+    .limit(cappedLimit + 1);
+  return {
+    events: rows.slice(0, cappedLimit),
+    overflow: rows.length > cappedLimit,
+  };
+}
+
+function signalOptionsTodaySessionStartAt(now = new Date()): Date | null {
+  const calendarDay = resolveNyseCalendarDay(now);
+  if (calendarDay?.tradingDay !== true) {
+    return null;
+  }
+  return dateOrNull(calendarDay.regularOpenAt);
+}
+
+function mergeSignalOptionsDashboardEvents(
+  ...eventSets: ExecutionEvent[][]
+): ExecutionEvent[] {
+  const byId = new Map<string, ExecutionEvent>();
+  for (const events of eventSets) {
+    for (const event of events) {
+      byId.set(event.id, event);
+    }
+  }
+  return [...byId.values()].sort(
+    (left, right) =>
+      right.occurredAt.getTime() - left.occurredAt.getTime() ||
+      right.id.localeCompare(left.id),
+  );
+}
+
+async function readSignalOptionsDashboardEvents(input: {
+  deploymentId: string;
+  recentLimit: number;
+  now?: Date;
+}) {
+  const recentEvents = await listDeploymentEvents(
+    input.deploymentId,
+    input.recentLimit,
+  );
+  const sessionStartAt = signalOptionsTodaySessionStartAt(input.now);
+  if (!sessionStartAt) {
+    return {
+      events: recentEvents,
+      recentEvents,
+      dayEvents: [],
+      dayOverflow: false,
+      dayEventLimit: SIGNAL_OPTIONS_DASHBOARD_DAY_EVENT_LIMIT,
+      sessionStartAt,
+    };
+  }
+
+  const dayRead = await listDeploymentEventsSinceWithOverflow(
+    input.deploymentId,
+    sessionStartAt,
+    SIGNAL_OPTIONS_DASHBOARD_DAY_EVENT_LIMIT,
+  );
+  return {
+    events: mergeSignalOptionsDashboardEvents(recentEvents, dayRead.events),
+    recentEvents,
+    dayEvents: dayRead.events,
+    dayOverflow: dayRead.overflow,
+    dayEventLimit: SIGNAL_OPTIONS_DASHBOARD_DAY_EVENT_LIMIT,
+    sessionStartAt,
+  };
 }
 
 async function listDeploymentEventsExcludingFirehose(
@@ -12558,6 +12643,11 @@ type SignalOptionsDashboardSnapshot = {
   cachedAt: string;
   expiresAt: number;
   staleExpiresAt: number;
+  eventRead?: {
+    dayOverflow: boolean;
+    dayEventLimit: number;
+    sessionStartAt: string | null;
+  };
   // Set only on the value RETURNED by a cold rebuild in THIS request (never on
   // the object stored in cache). Its signals were just read by buildStatePayload
   // via listSignalOptionsSignalSnapshots, so the post-snapshot live-signal
@@ -12860,6 +12950,7 @@ function writeSignalOptionsSummarySnapshotFromFullSnapshot(
     cachedAt: new Date(now).toISOString(),
     expiresAt: now + SIGNAL_OPTIONS_SUMMARY_CACHE_TTL_MS,
     staleExpiresAt: now + SIGNAL_OPTIONS_SUMMARY_CACHE_STALE_TTL_MS,
+    eventRead: fullSnapshot.eventRead,
   };
   writeSignalOptionsDashboardSnapshot(
     signalOptionsSummaryDashboardCache,
@@ -12940,13 +13031,14 @@ async function getSignalOptionsFullDashboardSnapshot(input: {
   const work = (async () => {
     const deployment = await getDeploymentOrThrow(input.deploymentId);
     const profile = resolveDeploymentProfile(deployment);
-    const ledgerEvents = await listDeploymentEvents(
-      deployment.id,
-      SIGNAL_OPTIONS_STATE_EVENT_LIMIT,
-    );
+    const eventRead = await readSignalOptionsDashboardEvents({
+      deploymentId: deployment.id,
+      recentLimit: SIGNAL_OPTIONS_STATE_EVENT_LIMIT,
+    });
     const events = signalOptionsEventsWithRecentSkips({
       deploymentId: deployment.id,
-      events: ledgerEvents,
+      events: eventRead.events,
+      limit: SIGNAL_OPTIONS_DASHBOARD_DAY_EVENT_LIMIT,
     });
     const state = await buildStatePayload({ deployment, profile, events });
     const cachedAt = new Date().toISOString();
@@ -12958,6 +13050,11 @@ async function getSignalOptionsFullDashboardSnapshot(input: {
       cachedAt,
       expiresAt: Date.now() + SIGNAL_OPTIONS_DASHBOARD_CACHE_TTL_MS,
       staleExpiresAt: Date.now() + SIGNAL_OPTIONS_DASHBOARD_CACHE_STALE_TTL_MS,
+      eventRead: {
+        dayOverflow: eventRead.dayOverflow,
+        dayEventLimit: eventRead.dayEventLimit,
+        sessionStartAt: eventRead.sessionStartAt?.toISOString() ?? null,
+      },
     };
     signalOptionsDashboardCache.set(deployment.id, snapshot);
     if (deployment.id !== input.deploymentId) {
@@ -13053,14 +13150,14 @@ async function getSignalOptionsSummaryDashboardSnapshot(input: {
   const work = (async () => {
     const deployment = await getDeploymentOrThrow(input.deploymentId);
     const profile = resolveDeploymentProfile(deployment);
-    const ledgerEvents = await listDeploymentEvents(
-      deployment.id,
-      SIGNAL_OPTIONS_SUMMARY_EVENT_LIMIT,
-    );
+    const eventRead = await readSignalOptionsDashboardEvents({
+      deploymentId: deployment.id,
+      recentLimit: SIGNAL_OPTIONS_SUMMARY_EVENT_LIMIT,
+    });
     const events = signalOptionsEventsWithRecentSkips({
       deploymentId: deployment.id,
-      events: ledgerEvents,
-      limit: SIGNAL_OPTIONS_SUMMARY_EVENT_LIMIT,
+      events: eventRead.events,
+      limit: SIGNAL_OPTIONS_DASHBOARD_DAY_EVENT_LIMIT,
     });
     const state = compactSignalOptionsStatePayload(
       await buildStatePayload({ deployment, profile, events, view: "summary" }),
@@ -13074,6 +13171,11 @@ async function getSignalOptionsSummaryDashboardSnapshot(input: {
       cachedAt,
       expiresAt: Date.now() + SIGNAL_OPTIONS_SUMMARY_CACHE_TTL_MS,
       staleExpiresAt: Date.now() + SIGNAL_OPTIONS_SUMMARY_CACHE_STALE_TTL_MS,
+      eventRead: {
+        dayOverflow: eventRead.dayOverflow,
+        dayEventLimit: eventRead.dayEventLimit,
+        sessionStartAt: eventRead.sessionStartAt?.toISOString() ?? null,
+      },
     };
     signalOptionsSummaryDashboardCache.set(deployment.id, snapshot);
     if (deployment.id !== input.deploymentId) {
@@ -21451,6 +21553,7 @@ export const __signalOptionsAutomationInternalsForTests = {
   listSignalOptionsRecentSkips,
   mergeSignalOptionsRecentSkipsIntoEvents,
   signalOptionsEventsWithRecentSkips,
+  readSignalOptionsDashboardEvents,
   shouldPersistSignalOptionsEventToLedger,
   isSignalOptionsReplayEvent,
   runtimeSignalOptionsEvents,
