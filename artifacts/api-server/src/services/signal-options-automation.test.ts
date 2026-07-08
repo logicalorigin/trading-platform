@@ -569,6 +569,40 @@ test("Signal Options action states stay on configured execution timeframe", () =
   );
 });
 
+test("Signal Options monitor refresh stops mid-universe scan when aborted", () => {
+  const { shouldRefreshSignalOptionsMonitorState } =
+    __signalOptionsAutomationInternalsForTests;
+  const controller = new AbortController();
+  const now = "2026-06-09T16:40:00.000Z";
+  const universe = {
+    size: 3,
+    has: () => true,
+    *[Symbol.iterator]() {
+      yield "AAA";
+      controller.abort(new Error("mid-batch abort"));
+      yield "BBB";
+    },
+  } as unknown as Set<string>;
+
+  assert.throws(
+    () =>
+      shouldRefreshSignalOptionsMonitorState({
+        evaluated: {
+          profile: { id: "runtime-fallback-test", timeframe: "5m" },
+          states: [
+            signalState("AAA", now),
+            signalState("BBB", now),
+            signalState("CCC", now),
+          ],
+        },
+        universe,
+        now: new Date(now),
+        signal: controller.signal,
+      }),
+    /mid-batch abort/,
+  );
+});
+
 test("Signal Options action states require canonical signal monitor events", () => {
   const states = [
     signalState("AERO", "2026-06-09T16:35:00.000Z", "sell"),

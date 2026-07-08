@@ -6137,6 +6137,7 @@ function shouldRefreshSignalOptionsMonitorState(input: {
   evaluated: unknown;
   universe: Set<string>;
   now?: Date;
+  signal?: AbortSignal;
 }) {
   const evaluated = asRecord(input.evaluated);
   const profile = asRecord(evaluated.profile);
@@ -6171,6 +6172,7 @@ function shouldRefreshSignalOptionsMonitorState(input: {
         .filter(Boolean),
     );
     for (const symbol of input.universe) {
+      throwIfSignalOptionsScanAborted(input.signal);
       if (!stateSymbols.has(symbol)) {
         return true;
       }
@@ -6288,6 +6290,7 @@ async function loadSignalOptionsMonitorState(input: {
     const monitorStateNeedsRefresh = shouldRefreshSignalOptionsMonitorState({
       evaluated: stored,
       universe: input.universe,
+      signal: input.signal,
     });
     if (
       input.forceEvaluate !== true &&
