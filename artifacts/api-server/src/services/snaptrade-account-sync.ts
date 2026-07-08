@@ -12,6 +12,7 @@ import {
   SNAPTRADE_API_BASE_URL,
 } from "./snaptrade-readiness";
 import { loadSnapTradeUserCredential } from "./snaptrade-user-custody";
+import { readEnvString } from "../lib/env";
 
 export type SnapTradeBrokerageConnectionSyncConnection = {
   id: string;
@@ -107,13 +108,6 @@ const SNAPTRADE_AUTHORIZATIONS_PATH = "/authorizations";
 const SNAPTRADE_ACCOUNTS_PATH = "/accounts";
 const LOCAL_ID_PREFIX = "snaptrade:";
 const MAX_PROVIDER_ID_LENGTH = 128 - LOCAL_ID_PREFIX.length;
-
-function readEnvString(
-  env: NodeJS.ProcessEnv | Record<string, string | undefined>,
-  key: string,
-): string {
-  return env[key]?.trim() ?? "";
-}
 
 function configuredSnapTradeCredentials(
   env: NodeJS.ProcessEnv | Record<string, string | undefined>,

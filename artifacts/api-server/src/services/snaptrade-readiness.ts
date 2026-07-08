@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 
 import { toExecutionDecisionResponse } from "./execution-decision-response";
 import type { ExecutionDecisionResponse } from "./execution-decision-response";
+import { readEnvString } from "../lib/env";
 
 export type SnapTradeReadinessStatus =
   | "unconfigured"
@@ -77,13 +78,6 @@ function canonicalJson(value: unknown): string {
     .sort()
     .map((key) => `${JSON.stringify(key)}:${canonicalJson(record[key])}`)
     .join(",")}}`;
-}
-
-function readEnvString(
-  env: NodeJS.ProcessEnv | Record<string, string | undefined>,
-  key: string,
-): string {
-  return env[key]?.trim() ?? "";
 }
 
 function asRecord(value: unknown): Record<string, unknown> {

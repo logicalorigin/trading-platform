@@ -18,6 +18,7 @@ import {
   type PythonComputeJobResult,
   type PythonComputeJobType,
 } from "./python-compute";
+import { readPositiveInteger, truthyEnv } from "../lib/env";
 
 type PortfolioRiskJobPosition = {
   symbol: string;
@@ -71,15 +72,6 @@ type ResolveAccountPortfolioRiskInput = {
   env?: NodeJS.ProcessEnv | Record<string, string | undefined>;
   runJob?: typeof runPythonComputeJob;
 };
-
-function truthyEnv(value: string | undefined): boolean {
-  return value === "1" || value?.toLowerCase() === "true";
-}
-
-function readPositiveInteger(value: string | undefined, fallback: number): number {
-  const parsed = Number.parseInt(value ?? "", 10);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
-}
 
 function finiteNumber(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;

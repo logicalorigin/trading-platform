@@ -10,6 +10,7 @@ import {
   recordSnapTradeUserCredential,
   type SnapTradeUserReadiness,
 } from "./snaptrade-user-custody";
+import { readEnvString } from "../lib/env";
 
 export type SnapTradeUserRegistrationResponse = {
   provider: "snaptrade";
@@ -27,13 +28,6 @@ export type RegisterSnapTradeCurrentUserOptions = {
 };
 
 const SNAPTRADE_REGISTER_USER_PATH = "/snapTrade/registerUser";
-
-function readEnvString(
-  env: NodeJS.ProcessEnv | Record<string, string | undefined>,
-  key: string,
-): string {
-  return env[key]?.trim() ?? "";
-}
 
 function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)

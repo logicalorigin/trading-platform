@@ -3,6 +3,7 @@ import {
   buildSnapTradeSignature,
   SNAPTRADE_API_BASE_URL,
 } from "./snaptrade-readiness";
+import { readEnvString } from "../lib/env";
 
 export type SnapTradeBrokerageAuthorizationType = {
   type: string;
@@ -44,13 +45,6 @@ let cachedResponse: { fetchedAtMs: number; data: ListSnapTradeBrokeragesResponse
 
 export function resetSnapTradeBrokeragesCacheForTests(): void {
   cachedResponse = null;
-}
-
-function readEnvString(
-  env: NodeJS.ProcessEnv | Record<string, string | undefined>,
-  key: string,
-): string {
-  return env[key]?.trim() ?? "";
 }
 
 function configuredSnapTradeCredentials(

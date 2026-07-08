@@ -43,6 +43,7 @@ import {
   type GexZeroGammaSimulation,
 } from "./gex-zero-gamma-simulation";
 import { fetchTreasuryYieldCurveRates } from "./treasury-yield-curve";
+import { readFlooredPositiveNumberEnv } from "../lib/env";
 
 export type GexOptionRow = {
   strike: number;
@@ -183,22 +184,15 @@ type GexPlatformDataClient = {
 
 type GexPlatformDataClientFactory = () => GexPlatformDataClient;
 
-function readPositiveIntegerEnv(name: string, fallback: number): number {
-  const raw = process.env[name];
-  if (!raw?.trim()) return fallback;
-  const value = Number(raw);
-  return Number.isFinite(value) && value > 0 ? Math.floor(value) : fallback;
-}
-
-const GEX_DASHBOARD_CACHE_TTL_MS = readPositiveIntegerEnv(
+const GEX_DASHBOARD_CACHE_TTL_MS = readFlooredPositiveNumberEnv(
   "GEX_DASHBOARD_CACHE_TTL_MS",
   15_000,
 );
-const GEX_DASHBOARD_STALE_CACHE_TTL_MS = readPositiveIntegerEnv(
+const GEX_DASHBOARD_STALE_CACHE_TTL_MS = readFlooredPositiveNumberEnv(
   "GEX_DASHBOARD_STALE_CACHE_TTL_MS",
   5_000,
 );
-const GEX_DASHBOARD_LOAD_TIMEOUT_MS = readPositiveIntegerEnv(
+const GEX_DASHBOARD_LOAD_TIMEOUT_MS = readFlooredPositiveNumberEnv(
   "GEX_DASHBOARD_LOAD_TIMEOUT_MS",
   10_000,
 );
@@ -206,39 +200,39 @@ const GEX_DASHBOARD_LOAD_TIMEOUT_MS = readPositiveIntegerEnv(
 // loadLatest*Snapshot): intentionally tighter than the 15-minute live-recompute
 // isStale flag (see loadGexDashboardData) and distinct from the Rust worker's
 // 120s ingest gate (GEX_STALE_AFTER_SECS in crates/market-data-worker/src/compute/gex.rs).
-const GEX_SNAPSHOT_MAX_AGE_MS = readPositiveIntegerEnv(
+const GEX_SNAPSHOT_MAX_AGE_MS = readFlooredPositiveNumberEnv(
   "GEX_SNAPSHOT_MAX_AGE_MS",
   60_000,
 );
-const GEX_CHART_PROJECTION_LIVE_MAX_EXPIRATIONS = readPositiveIntegerEnv(
+const GEX_CHART_PROJECTION_LIVE_MAX_EXPIRATIONS = readFlooredPositiveNumberEnv(
   "GEX_CHART_PROJECTION_MAX_EXPIRATIONS",
   4,
 );
-const GEX_CHART_PROJECTION_SNAPSHOT_MAX_EXPIRATIONS = readPositiveIntegerEnv(
+const GEX_CHART_PROJECTION_SNAPSHOT_MAX_EXPIRATIONS = readFlooredPositiveNumberEnv(
   "GEX_CHART_PROJECTION_SNAPSHOT_MAX_EXPIRATIONS",
   8,
 );
-const GEX_CHART_PROJECTION_STRIKES_AROUND_MONEY = readPositiveIntegerEnv(
+const GEX_CHART_PROJECTION_STRIKES_AROUND_MONEY = readFlooredPositiveNumberEnv(
   "GEX_CHART_PROJECTION_STRIKES_AROUND_MONEY",
   8,
 );
-const GEX_CHART_PROJECTION_RATES_TIMEOUT_MS = readPositiveIntegerEnv(
+const GEX_CHART_PROJECTION_RATES_TIMEOUT_MS = readFlooredPositiveNumberEnv(
   "GEX_CHART_PROJECTION_RATES_TIMEOUT_MS",
   250,
 );
-const GEX_CHART_PROJECTION_SNAPSHOT_WAIT_MS = readPositiveIntegerEnv(
+const GEX_CHART_PROJECTION_SNAPSHOT_WAIT_MS = readFlooredPositiveNumberEnv(
   "GEX_CHART_PROJECTION_SNAPSHOT_WAIT_MS",
   10_000,
 );
-const GEX_CHART_PROJECTION_QUOTE_WAIT_MS = readPositiveIntegerEnv(
+const GEX_CHART_PROJECTION_QUOTE_WAIT_MS = readFlooredPositiveNumberEnv(
   "GEX_CHART_PROJECTION_QUOTE_WAIT_MS",
   500,
 );
-const GEX_CHART_PROJECTION_EXPIRATION_WAIT_MS = readPositiveIntegerEnv(
+const GEX_CHART_PROJECTION_EXPIRATION_WAIT_MS = readFlooredPositiveNumberEnv(
   "GEX_CHART_PROJECTION_EXPIRATION_WAIT_MS",
   750,
 );
-const GEX_CHART_PROJECTION_CHAIN_WAIT_MS = readPositiveIntegerEnv(
+const GEX_CHART_PROJECTION_CHAIN_WAIT_MS = readFlooredPositiveNumberEnv(
   "GEX_CHART_PROJECTION_CHAIN_WAIT_MS",
   750,
 );

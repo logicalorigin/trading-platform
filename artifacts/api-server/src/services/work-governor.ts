@@ -1,4 +1,5 @@
 import { HttpError } from "../lib/errors";
+import { readPositiveIntegerEnv } from "../lib/env";
 
 export type WorkGovernorCategory = "account" | "orders";
 
@@ -61,11 +62,6 @@ function emptyState(): CategoryState {
     lastFailureAt: null,
     lastSuccessAt: null,
   };
-}
-
-function readPositiveIntegerEnv(name: string, fallback: number): number {
-  const value = Number.parseInt(process.env[name] ?? "", 10);
-  return Number.isFinite(value) && value > 0 ? value : fallback;
 }
 
 function configFor(category: WorkGovernorCategory): WorkGovernorConfig {

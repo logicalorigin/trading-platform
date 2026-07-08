@@ -11,6 +11,7 @@ import {
   SNAPTRADE_API_BASE_URL,
 } from "./snaptrade-readiness";
 import { loadSnapTradeUserCredential } from "./snaptrade-user-custody";
+import { readEnvString } from "../lib/env";
 
 export type SnapTradeAccountPortfolioBalance = {
   currency: string;
@@ -100,13 +101,6 @@ type LocalSnapTradeAccount = {
 };
 
 const LOCAL_ID_PREFIX = "snaptrade:";
-
-function readEnvString(
-  env: NodeJS.ProcessEnv | Record<string, string | undefined>,
-  key: string,
-): string {
-  return env[key]?.trim() ?? "";
-}
 
 function configuredSnapTradeCredentials(
   env: NodeJS.ProcessEnv | Record<string, string | undefined>,

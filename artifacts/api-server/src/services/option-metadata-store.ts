@@ -27,6 +27,7 @@ import {
 import { normalizeSymbol } from "../lib/values";
 import type { OptionChainContract } from "../providers/ibkr/client";
 import { getApiResourcePressureSnapshot } from "./resource-pressure";
+import { readPositiveIntegerEnv } from "../lib/env";
 
 type DurableOptionMetadataCounters = {
   freshHit: number;
@@ -83,11 +84,6 @@ const durableOptionMetadataBackoffs = new Map<
   string,
   DurableOptionMetadataBackoffEntry
 >();
-
-function readPositiveIntegerEnv(name: string, fallback: number): number {
-  const value = Number.parseInt(process.env[name] ?? "", 10);
-  return Number.isFinite(value) && value > 0 ? value : fallback;
-}
 
 const OPTION_METADATA_SNAPSHOT_RETENTION_MS = readPositiveIntegerEnv(
   "OPTION_METADATA_SNAPSHOT_RETENTION_MS",

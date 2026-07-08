@@ -4,6 +4,7 @@ import {
   SNAPTRADE_API_BASE_URL,
 } from "./snaptrade-readiness";
 import { loadSnapTradeUserCredential } from "./snaptrade-user-custody";
+import { readEnvString } from "../lib/env";
 
 export const SNAPTRADE_CONNECTION_TYPES = [
   "read",
@@ -50,13 +51,6 @@ const BROKER_SLUG_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const CONNECTION_TYPES = new Set<string>(SNAPTRADE_CONNECTION_TYPES);
-
-function readEnvString(
-  env: NodeJS.ProcessEnv | Record<string, string | undefined>,
-  key: string,
-): string {
-  return env[key]?.trim() ?? "";
-}
 
 function configuredSnapTradeCredentials(
   env: NodeJS.ProcessEnv | Record<string, string | undefined>,

@@ -50,6 +50,7 @@ import {
   getQuoteSnapshots,
   OPTION_CHAIN_PUBLIC_METADATA_TIMEOUT_MS,
 } from "./platform";
+import { readPositiveIntegerEnv } from "../lib/env";
 
 const ORDER_SNAPSHOT_STALE_MS = 120_000;
 const ACCOUNT_MONITOR_LEASE_TTL_MS = 15_000;
@@ -75,11 +76,6 @@ const accountMonitorSnapshots = new Map<
 
 function stableStringify(value: unknown): string {
   return JSON.stringify(value);
-}
-
-function readPositiveIntegerEnv(name: string, fallback: number): number {
-  const value = Number.parseInt(process.env[name] ?? "", 10);
-  return Number.isFinite(value) && value > 0 ? value : fallback;
 }
 
 export function accountStreamIntervalMs(): number {

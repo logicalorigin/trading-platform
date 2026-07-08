@@ -1,3 +1,4 @@
+import { readPositiveIntegerEnv } from "../lib/env";
 export type OrderReadSuppressionReason =
   | "orders_bridge_update_required"
   | "orders_timeout";
@@ -10,11 +11,6 @@ type OrderReadSuppression = {
 };
 
 let suppression: OrderReadSuppression | null = null;
-
-function readPositiveIntegerEnv(name: string, fallback: number): number {
-  const parsed = Number.parseInt(process.env[name] ?? "", 10);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
-}
 
 function orderReadSuppressionProbeAfterMs(): number {
   return readPositiveIntegerEnv(

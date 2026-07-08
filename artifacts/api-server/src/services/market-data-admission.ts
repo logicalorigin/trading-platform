@@ -1,4 +1,5 @@
 import { normalizeSymbol } from "../lib/values";
+import { readPositiveIntegerEnv } from "../lib/env";
 
 export type MarketDataIntent =
   | "execution-live"
@@ -380,11 +381,6 @@ function resolveMarketDataLeasePriority(input: {
 function readNonNegativeIntegerEnv(name: string, fallback: number): number {
   const parsed = Number.parseInt(process.env[name] ?? "", 10);
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
-}
-
-function readPositiveIntegerEnv(name: string, fallback: number): number {
-  const parsed = Number.parseInt(process.env[name] ?? "", 10);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
 function readOptionalNonNegativeIntegerEnv(name: string): number | null {

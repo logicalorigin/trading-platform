@@ -16,6 +16,7 @@ import {
   recordTaxPreflightOrderSubmitted,
 } from "./tax-planning";
 import type { TaxOrderLike } from "./tax-planning-model";
+import { readEnvString } from "../lib/env";
 
 export const SNAPTRADE_EQUITY_ORDER_ACTIONS = ["BUY", "SELL"] as const;
 export const SNAPTRADE_EQUITY_ORDER_TYPES = [
@@ -296,13 +297,6 @@ const TIME_IN_FORCE_VALUES = new Set<string>(
 );
 const TRADING_SESSIONS = new Set<string>(SNAPTRADE_EQUITY_TRADING_SESSIONS);
 const lastSubmitAtByAccountKey = new Map<string, number>();
-
-function readEnvString(
-  env: NodeJS.ProcessEnv | Record<string, string | undefined>,
-  key: string,
-): string {
-  return env[key]?.trim() ?? "";
-}
 
 function configuredSnapTradeCredentials(
   env: NodeJS.ProcessEnv | Record<string, string | undefined>,

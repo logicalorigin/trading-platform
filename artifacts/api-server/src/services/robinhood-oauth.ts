@@ -8,6 +8,7 @@ import {
   storeRobinhoodTokens,
 } from "./robinhood-user-custody";
 import type { RobinhoodUserReadiness } from "./robinhood-user-custody";
+import { readEnvString } from "../lib/env";
 
 // Verified live on 2026-07-02 from the RFC 9728/8414 well-known documents at
 // https://agent.robinhood.com/.well-known/oauth-protected-resource/mcp/trading
@@ -64,13 +65,6 @@ export type GetRobinhoodAccessTokenOptions = {
   encryptionKey?: string;
   keyVersion?: string;
 };
-
-function readEnvString(
-  env: NodeJS.ProcessEnv | Record<string, string | undefined>,
-  key: string,
-): string {
-  return env[key]?.trim() ?? "";
-}
 
 export function resolveRobinhoodRedirectBaseUrl(
   env: NodeJS.ProcessEnv | Record<string, string | undefined> = process.env,

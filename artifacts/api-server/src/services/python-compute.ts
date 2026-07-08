@@ -4,6 +4,7 @@ import { createConnection } from "node:net";
 import { resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { logger } from "../lib/logger";
+import { readPositiveInteger, truthyEnv } from "../lib/env";
 
 export type PythonComputeStatus =
   | "disabled"
@@ -188,15 +189,6 @@ const JOB_TYPE_LANE: Record<PythonComputeJobType, PythonComputeLaneId> = {
   portfolio_risk: "risk",
   signal_matrix: "research",
 };
-
-function truthyEnv(value: string | undefined): boolean {
-  return value === "1" || value?.toLowerCase() === "true";
-}
-
-function readPositiveInteger(value: string | undefined, fallback: number): number {
-  const parsed = Number.parseInt(value ?? "", 10);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
-}
 
 function readEnvValue(
   env: NodeJS.ProcessEnv | Record<string, string | undefined>,

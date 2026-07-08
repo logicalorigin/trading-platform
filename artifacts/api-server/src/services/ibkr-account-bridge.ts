@@ -14,6 +14,7 @@ import {
   type WorkGovernorCategory,
 } from "./work-governor";
 import { getIbkrClientPortalClient } from "./ibkr-client-runtime";
+import { readPositiveIntegerEnv } from "../lib/env";
 
 type CacheEntry<T> = {
   payload: T;
@@ -52,11 +53,6 @@ export function __setIbkrAccountBridgeDependenciesForTests(
   executionInflight.clear();
   orderCache.clear();
   orderInflight.clear();
-}
-
-function readPositiveIntegerEnv(name: string, fallback: number): number {
-  const value = Number.parseInt(process.env[name] ?? "", 10);
-  return Number.isFinite(value) && value > 0 ? value : fallback;
 }
 
 function accountFreshTtlMs(): number {

@@ -10,6 +10,7 @@ import {
   storeSchwabTokens,
 } from "./schwab-user-custody";
 import type { SchwabUserReadiness } from "./schwab-user-custody";
+import { readEnvString } from "../lib/env";
 
 // Schwab Trader API is a confidential OAuth2 client (app key + secret sent as
 // HTTP Basic auth on the token endpoint). Unlike Robinhood's Agentic Trading
@@ -64,13 +65,6 @@ export type GetSchwabAccessTokenOptions = {
   encryptionKey?: string;
   keyVersion?: string;
 };
-
-function readEnvString(
-  env: NodeJS.ProcessEnv | Record<string, string | undefined>,
-  key: string,
-): string {
-  return env[key]?.trim() ?? "";
-}
 
 export function resolveSchwabRedirectBaseUrl(
   env: NodeJS.ProcessEnv | Record<string, string | undefined> = process.env,

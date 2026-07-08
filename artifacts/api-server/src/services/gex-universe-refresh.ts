@@ -12,6 +12,7 @@ import {
   type MarketDataIngestJobKind,
   type MarketDataIngestJobStatus,
 } from "./market-data-ingest";
+import { readFlooredPositiveNumberEnv } from "../lib/env";
 
 const DEFAULT_GEX_UNIVERSE_LIMIT = 500;
 const MAX_GEX_UNIVERSE_LIMIT = 500;
@@ -20,9 +21,9 @@ const MAX_GEX_UNIVERSE_BATCH_SIZE = 100;
 const GEX_UNIVERSE_PROJECTION_MAX_EXPIRATIONS = 8;
 const GEX_UNIVERSE_PROJECTION_STRIKES_AROUND_MONEY = 8;
 const GEX_UNIVERSE_PROJECTION_EXPIRATION_UTC_HOUR = 20;
-const DEFAULT_GEX_UNIVERSE_STALE_AFTER_MS = readPositiveIntegerEnv(
+const DEFAULT_GEX_UNIVERSE_STALE_AFTER_MS = readFlooredPositiveNumberEnv(
   "GEX_UNIVERSE_REFRESH_STALE_AFTER_MS",
-  readPositiveIntegerEnv("GEX_SNAPSHOT_MAX_AGE_MS", 60_000),
+  readFlooredPositiveNumberEnv("GEX_SNAPSHOT_MAX_AGE_MS", 60_000),
 );
 
 const GEX_UNIVERSE_REFRESH_JOB_KINDS = [
@@ -208,15 +209,6 @@ type DbModule = {
     ) => Promise<{ rows: T[] }>;
   };
 };
-
-function readPositiveIntegerEnv(name: string, fallback: number): number {
-  const raw = process.env[name];
-  if (!raw?.trim()) {
-    return fallback;
-  }
-  const parsed = Number(raw);
-  return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : fallback;
-}
 
 function normalizePositiveInteger(
   value: unknown,
