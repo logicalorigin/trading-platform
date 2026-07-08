@@ -433,7 +433,6 @@ export default defineConfig({
             normalizedId.includes("/src/components/ui/Stat") ||
             normalizedId.includes("/src/components/ui/dropdown-menu") ||
             normalizedId.includes("/src/components/ui/popover") ||
-            normalizedId.includes("/src/components/ui/tabs") ||
             normalizedId.includes("/src/components/ui/tooltip")
           ) {
             return "ui-core";

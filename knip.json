@@ -36,7 +36,6 @@
         "src/**/*.test.{ts,tsx,js,jsx,mjs}",
         "src/boot-neural.tsx",
         "src/boot-neural-scene.tsx",
-        "src/components/ui/tabs.jsx",
         "src/features/charting/ChartMobileToolbar.tsx"
       ],
       "project": ["src/**/*.{ts,tsx,js,jsx}", "scripts/**/*.mjs"],

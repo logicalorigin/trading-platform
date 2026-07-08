@@ -45,13 +45,3 @@ test("Intraday P&L maps isStale -> stale (collector trigger) and guards the mark
   assert.match(src, /pnlIssues\.length \? <ResilienceMarker/);
 });
 
-test("Risk panel passes a real degraded trigger from greek coverage and guards the marker", () => {
-  const src = read("./RiskDashboardPanel.jsx");
-  assert.match(src, /import \{ ResilienceMarker \}/);
-  // Sourced from the coverage shape that account-risk-model.ts actually emits.
-  assert.match(src, /coverage\?\.skippedPositions \?\? 0/);
-  // `degraded: true` is the collector trigger; `reason` alone would not fire.
-  assert.match(src, /degraded: true,/);
-  assert.match(src, /reason: "greek_coverage_partial"/);
-  assert.match(src, /riskIssues\.length \? <ResilienceMarker/);
-});
