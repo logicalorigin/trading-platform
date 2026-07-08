@@ -1350,8 +1350,6 @@ function BrowserStorageFootprintPanel() {
 }
 
 function AppPreferencesPanel({
-  theme = "dark",
-  onToggleTheme,
   sidebarCollapsed = false,
   onToggleSidebar,
   activitySidebarCollapsed = false,
@@ -1374,21 +1372,6 @@ function AppPreferencesPanel({
   return (
     <Panel title="App Preferences">
       <div style={{ display: "grid", gap: sp(2) }}>
-        <div style={rowStyle}>
-          <span style={rowLabelStyle}>Theme</span>
-          <SegmentedControl
-            radioGroup
-            ariaLabel="Theme"
-            value={theme}
-            onChange={(value) => {
-              if (value !== theme) onToggleTheme?.();
-            }}
-            options={[
-              { value: "dark", label: "Dark" },
-              { value: "light", label: "Light" },
-            ]}
-          />
-        </div>
         <div style={rowStyle}>
           <span style={rowLabelStyle}>Watchlist sidebar</span>
           <SegmentedControl
@@ -2850,8 +2833,6 @@ export default function SettingsScreen({
           {activeTab === "Preferences" && (
             <>
               <AppPreferencesPanel
-                theme={theme}
-                onToggleTheme={onToggleTheme}
                 sidebarCollapsed={sidebarCollapsed}
                 onToggleSidebar={onToggleSidebar}
                 activitySidebarCollapsed={activitySidebarCollapsed}

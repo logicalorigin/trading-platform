@@ -412,7 +412,7 @@ export const resolveHeaderScanWave = ({
         : state === "capacity-limited"
           ? "attention"
           : state === "offline"
-            ? "warning"
+            ? "offline"
             : "paused";
   return {
     status: state,
@@ -925,6 +925,13 @@ export const AlgoLivePage = ({
     deployment: focusedDeployment,
     accountId,
   });
+  const bridgeToneLabel = String(bridgeTone?.label || "").trim();
+  const bridgeToneDuplicatesHeaderWave =
+    !gatewayReady &&
+    ["offline", "warning"].includes(
+      String(headerScanWave.badgeLabel || "").trim().toLowerCase(),
+    ) &&
+    ["offline", "warning"].includes(bridgeToneLabel.toLowerCase());
   const headerStatusItems = [
     deploymentMode
       ? { label: deploymentMode, color: CSS_COLOR.textSec, active: false }
@@ -941,8 +948,8 @@ export const AlgoLivePage = ({
       color: gatewayReady ? CSS_COLOR.green : CSS_COLOR.amber,
       active: !gatewayReady,
     },
-    bridgeTone?.label && bridgeTone.color !== CSS_COLOR.green
-      ? { label: bridgeTone.label, color: bridgeTone.color, active: true }
+    bridgeToneLabel && bridgeTone.color !== CSS_COLOR.green && !bridgeToneDuplicatesHeaderWave
+      ? { label: bridgeToneLabel, color: bridgeTone.color, active: true }
       : null,
   ].filter(Boolean);
   const hasActivitySummary = Boolean(

@@ -213,7 +213,15 @@ export const FlowScannerStatusPanel = ({
           flexWrap: "wrap",
         }}
       >
-        <div style={{ display: "flex", alignItems: "center", gap: sp(6), minWidth: 0 }}>
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: sp(6),
+            minWidth: 0,
+            flexWrap: "wrap",
+          }}
+        >
           <StatusIcon
             enabled={enabled}
             scanning={scannerRuntimeActive}
@@ -227,7 +235,7 @@ export const FlowScannerStatusPanel = ({
               fontSize: fs(11),
               fontWeight: FONT_WEIGHTS.regular,
               letterSpacing: "0.03em",
-              whiteSpace: "nowrap",
+              whiteSpace: "normal",
             }}
           >
             Flow Scanner
@@ -243,7 +251,7 @@ export const FlowScannerStatusPanel = ({
               minWidth: 0,
               overflow: "hidden",
               textOverflow: "ellipsis",
-              whiteSpace: "nowrap",
+              whiteSpace: "normal",
             }}
           >
             {flowDisplayLabel || "Flow source"}
@@ -287,7 +295,7 @@ export const FlowScannerStatusPanel = ({
           gridTemplateColumns: vertical
             ? "minmax(0, 1fr)"
             : dense
-              ? "repeat(2, minmax(0, 1fr))"
+              ? "repeat(auto-fit, minmax(min(100%, 144px), 1fr))"
               : "repeat(4, minmax(0, 1fr))",
           gap: sp(6),
         }}
@@ -344,10 +352,10 @@ export const FlowScannerStatusPanel = ({
           style={{
             display: "flex",
             alignItems: vertical ? "flex-start" : "center",
-            flexWrap: vertical ? "wrap" : "nowrap",
+            flexWrap: "wrap",
             gap: sp(4),
             minWidth: 0,
-            overflowX: vertical ? "visible" : "auto",
+            overflowX: "visible",
             paddingBottom: sp(1),
           }}
         >

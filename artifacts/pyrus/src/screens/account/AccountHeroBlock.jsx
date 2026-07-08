@@ -65,7 +65,7 @@ const HeroMetricPill = ({ label, value, tone = CSS_COLOR.text, title, first = fa
         alignItems: "baseline",
         gap: sp(2),
         minHeight: dim(18),
-        maxWidth: dim(104),
+        maxWidth: dim(138),
         minWidth: 0,
         flex: "0 0 auto",
         padding: sp("0 5px"),
@@ -78,7 +78,7 @@ const HeroMetricPill = ({ label, value, tone = CSS_COLOR.text, title, first = fa
         style={{
           ...labelCapsStyle,
           flexShrink: 0,
-          fontSize: fs(6),
+          fontSize: fs(7),
           lineHeight: 1,
         }}
       >
@@ -161,13 +161,13 @@ export const AccountHeroBlock = ({
     : "Transfer-adjusted return over the selected equity range. External deposits and withdrawals are excluded.";
   const performanceSummary = [
     {
-      label: "Adj return",
+      label: "Adjusted return",
       value: formatSignedPercent(equity.returnPercent, 2, maskValues),
       tone: metricTone(equity.returnPercent),
       title: `${returnTooltip}\nRange: ${rangeLabel}`,
     },
     {
-      label: "P&L Δ",
+      label: "Transfer P&L",
       value: formatAccountSignedMoney(transferAdjustedPnl, currency, true, maskValues),
       tone: metricTone(transferAdjustedPnl),
       title:
@@ -185,19 +185,19 @@ export const AccountHeroBlock = ({
       )} losers`,
     },
     {
-      label: "Real",
+      label: "Realized",
       value: formatAccountSignedMoney(trades.realizedPnl, currency, true, maskValues),
       tone: metricTone(trades.realizedPnl),
       title: "Realized P&L over the selected closed-trade range.",
     },
     {
-      label: "Open",
+      label: "Unrealized",
       value: formatAccountSignedMoney(positions.unrealizedPnl, currency, true, maskValues),
       tone: metricTone(positions.unrealizedPnl),
       title: `${formatNumber(positions.count, 0)} current positions`,
     },
     {
-      label: "Win",
+      label: "Win rate",
       value: formatAccountPercent(trades.winRate, 0, maskValues),
       tone:
         trades.winRate == null || Number.isNaN(Number(trades.winRate))
@@ -211,7 +211,7 @@ export const AccountHeroBlock = ({
       )} losers`,
     },
     {
-      label: "PF",
+      label: "Profit factor",
       value: formatRatio(trades.profitFactor, 2, maskValues),
       tone:
         trades.profitFactor == null || Number.isNaN(Number(trades.profitFactor))
@@ -222,13 +222,13 @@ export const AccountHeroBlock = ({
       title: "Gross profit divided by gross loss.",
     },
     {
-      label: "Exp",
+      label: "Expectancy",
       value: formatAccountSignedMoney(trades.expectancy, currency, true, maskValues),
       tone: metricTone(trades.expectancy),
       title: "Average realized P&L per closed trade.",
     },
     {
-      label: "MaxDD",
+      label: "Max drawdown",
       value: formatSignedPercent(equity.maxDrawdownPercent, 1, maskValues),
       tone: metricTone(equity.maxDrawdownPercent),
       title: formatAccountSignedMoney(
@@ -239,7 +239,7 @@ export const AccountHeroBlock = ({
       ),
     },
     {
-      label: "CurDD",
+      label: "Current DD",
       value: formatSignedPercent(equity.currentDrawdownPercent, 1, maskValues),
       tone: metricTone(equity.currentDrawdownPercent),
       title: formatAccountSignedMoney(
@@ -252,7 +252,7 @@ export const AccountHeroBlock = ({
     ...(hasRiskStats
       ? [
           {
-            label: "Vol",
+            label: "Volatility",
             value: formatAccountPercent(risk.volatilityPercent, 1, maskValues),
             tone: CSS_COLOR.text,
             title:
@@ -266,7 +266,7 @@ export const AccountHeroBlock = ({
               "Informational ratio using range point returns and zero risk-free rate. It is not a formal TWR/MWR performance report.",
           },
           {
-            label: "Sort",
+            label: "Sortino",
             value: formatRatio(risk.sortinoLike, 2, maskValues),
             tone: metricTone(risk.sortinoLike),
             title: "Informational downside-risk ratio using range point returns.",
@@ -280,13 +280,13 @@ export const AccountHeroBlock = ({
       title: "Year-to-date fees and commissions from account cash activity.",
     },
     {
-      label: "Div",
+      label: "Dividends",
       value: formatAccountMoney(cash.dividendsYtd, currency, true, maskValues),
       tone: CSS_COLOR.green,
       title: "Year-to-date dividends.",
     },
     {
-      label: "Int",
+      label: "Interest",
       value: formatAccountMoney(cash.interestYtd, currency, true, maskValues),
       tone: CSS_COLOR.green,
       title: "Year-to-date interest paid or earned.",
@@ -315,10 +315,9 @@ export const AccountHeroBlock = ({
     <section
       data-testid="account-hero-block"
       style={{
-        display: "flex",
-        alignItems: "center",
-        gap: sp(isPhone ? 4 : 6),
-        padding: sp("1px 3px 1px"),
+        display: "grid",
+        gap: sp(4),
+        padding: sp("2px 3px 3px"),
         minWidth: 0,
         overflow: "hidden",
       }}
@@ -326,21 +325,58 @@ export const AccountHeroBlock = ({
       <div
         data-testid="account-hero-primary-row"
         style={{
-          color: CSS_COLOR.text,
-          fontFamily: T.sans,
-          fontSize: fs(isPhone ? 16 : 20),
-          fontVariantNumeric: "tabular-nums",
-          lineHeight: 1,
-          fontWeight: FONT_WEIGHTS.label,
-          whiteSpace: "nowrap",
-          flex: "0 1 auto",
+          display: "flex",
+          alignItems: "baseline",
+          gap: sp(isPhone ? 5 : 8),
+          flexWrap: "wrap",
           minWidth: 0,
-          maxWidth: isPhone ? "48%" : "36%",
-          overflow: "hidden",
-          textOverflow: "ellipsis",
         }}
       >
-        {formatMoney(displayNet, currency, maskValues)}
+        <span
+          style={{
+            color: CSS_COLOR.text,
+            fontFamily: T.sans,
+            fontSize: fs(isPhone ? 17 : 22),
+            fontVariantNumeric: "tabular-nums",
+            lineHeight: 1,
+            fontWeight: FONT_WEIGHTS.label,
+            whiteSpace: "nowrap",
+            minWidth: 0,
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+          }}
+        >
+          {formatMoney(displayNet, currency, maskValues)}
+        </span>
+        {dayPositive !== null ? (
+          <span
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: sp(4),
+              minHeight: dim(22),
+              padding: sp("2px 7px"),
+              border: `1px solid ${cssColorAlpha(dayTone, "42")}`,
+              borderRadius: dim(RADII.pill),
+              background: cssColorAlpha(dayTone, "12"),
+              color: dayTone,
+              flex: "0 0 auto",
+              fontFamily: T.sans,
+              fontSize: fs(isPhone ? 10 : 12),
+              fontVariantNumeric: "tabular-nums",
+              whiteSpace: "nowrap",
+            }}
+          >
+            <DayIcon size={12} />
+            <span style={{ fontWeight: FONT_WEIGHTS.label, fontVariantNumeric: "tabular-nums" }}>{formatMoney(displayDayPnl, currency, maskValues)}</span>
+            {formatPercent(dayPnlPercent, maskValues) ? (
+              <span style={{ opacity: 0.82, fontVariantNumeric: "tabular-nums" }}>
+                {formatPercent(dayPnlPercent, maskValues)}
+              </span>
+            ) : null}
+            <span style={{ color: CSS_COLOR.textMuted, marginLeft: sp(1) }}>today</span>
+          </span>
+        ) : null}
       </div>
       <div
         className="ra-hide-scrollbar"
@@ -355,39 +391,10 @@ export const AccountHeroBlock = ({
           whiteSpace: "nowrap",
         }}
       >
-        {dayPositive !== null ? (
-          <span
-            style={{
-              display: "inline-flex",
-              alignItems: "center",
-              gap: sp(3),
-              minHeight: dim(18),
-              padding: sp("0 5px"),
-              border: `1px solid ${cssColorAlpha(dayTone, "40")}`,
-              borderRadius: dim(RADII.pill),
-              background: cssColorAlpha(dayTone, "12"),
-              color: dayTone,
-              flex: "0 0 auto",
-              fontFamily: T.sans,
-              fontSize: textSize("caption"),
-              fontVariantNumeric: "tabular-nums",
-              whiteSpace: "nowrap",
-            }}
-          >
-            <DayIcon size={10} />
-            <span style={{ fontWeight: FONT_WEIGHTS.medium, fontVariantNumeric: "tabular-nums" }}>{formatMoney(displayDayPnl, currency, maskValues)}</span>
-            {formatPercent(dayPnlPercent, maskValues) ? (
-              <span style={{ opacity: 0.8, fontVariantNumeric: "tabular-nums" }}>
-                {formatPercent(dayPnlPercent, maskValues)}
-              </span>
-            ) : null}
-            <span style={{ color: CSS_COLOR.textMuted, marginLeft: sp(1) }}>today</span>
-          </span>
-        ) : null}
         {performanceRailMetrics.map((metric, index) => (
           <HeroMetricPill
             key={metric.label}
-            first={dayPositive === null && index === 0}
+            first={index === 0}
             {...metric}
           />
         ))}

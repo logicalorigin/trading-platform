@@ -2366,7 +2366,7 @@ const FlowOverviewPanel = ({
   const flowMainGridTemplate = [
     showInlineFilterPanel ? "minmax(238px, 260px)" : null,
     "minmax(0, 1fr)",
-    showContextRail ? "minmax(318px, 0.44fr)" : null,
+    showContextRail ? "minmax(280px, 0.32fr)" : null,
   ]
     .filter(Boolean)
     .join(" ");
