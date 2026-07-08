@@ -47,6 +47,21 @@ export type AlgoCockpitStreamPayload = {
 };
 
 const stableStringify = (value: unknown): string => JSON.stringify(value);
+const algoCockpitPayloadSignatureCache = new WeakMap<
+  AlgoCockpitStreamPayload,
+  string
+>();
+
+function getAlgoCockpitPayloadChangeSignature(
+  payload: AlgoCockpitStreamPayload,
+): string {
+  let signature = algoCockpitPayloadSignatureCache.get(payload);
+  if (signature === undefined) {
+    signature = stableStringify({ ...payload, updatedAt: null });
+    algoCockpitPayloadSignatureCache.set(payload, signature);
+  }
+  return signature;
+}
 
 const normalizeMode = (mode: RuntimeMode | undefined): RuntimeMode =>
   mode === "live" ? "live" : "shadow";
@@ -269,7 +284,7 @@ function createAlgoCockpitSharedPoller(
       if (!subscriber.active) {
         return;
       }
-      const signature = stableStringify({ ...payload, updatedAt: null });
+      const signature = getAlgoCockpitPayloadChangeSignature(payload);
       const changed = signature !== subscriber.lastSignature;
       let snapshotDelivered = true;
       if (changed) {
@@ -408,7 +423,7 @@ export function subscribeAlgoCockpitSnapshots(
     onSnapshot,
     onPollSuccess: options.onPollSuccess,
     lastSignature: options.initialPayload
-      ? stableStringify({ ...options.initialPayload, updatedAt: null })
+      ? getAlgoCockpitPayloadChangeSignature(options.initialPayload)
       : "",
   };
 
