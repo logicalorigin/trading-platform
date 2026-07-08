@@ -170,6 +170,7 @@ const OPTION_QUOTE_BRIDGE_CHUNK_SIZE = Math.max(
   Number.parseInt(process.env["OPTION_QUOTE_BRIDGE_CHUNK_SIZE"] ?? "100", 10) ||
     100,
 );
+const QUOTE_CACHE_RETAINED_BUFFER_SIZE = 1_000;
 let nextSubscriberId = 1;
 let nextSnapshotOwnerId = 1;
 let streamSignature = "";
@@ -455,6 +456,7 @@ function scheduleRetainedSnapshotDemandExpiryTimer(): void {
   retainedSnapshotDemandExpiryTimer = setTimeout(() => {
     retainedSnapshotDemandExpiryTimer = null;
     pruneRetainedSnapshotDemands();
+    pruneQuoteCacheToLiveDemand();
     scheduleRefreshBridgeOptionQuoteStream(0);
     scheduleRetainedSnapshotDemandExpiryTimer();
   }, Math.max(0, nextExpiresAt - now + 1));
@@ -539,6 +541,7 @@ function removeRetainedSnapshotDemandLeases(input: {
     retainedSnapshotDemands.delete(input.owner);
   }
   pruneRetainedSnapshotDemands();
+  pruneQuoteCacheToLiveDemand();
   scheduleRefreshBridgeOptionQuoteStream(0);
   scheduleRetainedSnapshotDemandExpiryTimer();
 }
@@ -548,6 +551,7 @@ function releaseRetainedSnapshotDemandLeases(reason: string): void {
   retainedSnapshotDemands.clear();
   clearRetainedSnapshotDemandExpiryTimer();
   owners.forEach((owner) => releaseMarketDataLeases(owner, reason));
+  pruneQuoteCacheToLiveDemand();
 }
 
 function getRetainedSnapshotDemandValues(): RetainedSnapshotDemand[] {
@@ -596,6 +600,63 @@ function getRequestedProviderContractIds(): string[] {
         ),
       ),
   );
+}
+
+function getLiveQuoteCacheProviderContractIds(): Set<string> {
+  const providerContractIds = new Set<string>();
+  subscribers.forEach((subscriber) => {
+    subscriber.providerContractIds.forEach((providerContractId) => {
+      providerContractIds.add(providerContractId);
+    });
+  });
+  getRetainedSnapshotDemandValues().forEach((demand) => {
+    demand.providerContractExpirations.forEach((_, providerContractId) => {
+      providerContractIds.add(providerContractId);
+    });
+  });
+  return providerContractIds;
+}
+
+function hasLiveQuoteCacheDemand(providerContractId: string): boolean {
+  if (
+    Array.from(subscribers.values()).some((subscriber) =>
+      subscriber.providerContractIds.has(providerContractId),
+    )
+  ) {
+    return true;
+  }
+  return getRetainedSnapshotDemandValues().some((demand) =>
+    demand.providerContractExpirations.has(providerContractId),
+  );
+}
+
+function pruneQuoteCacheToLiveDemand(): void {
+  if (quoteCacheByProviderContractId.size === 0) {
+    return;
+  }
+  const liveProviderContractIds = getLiveQuoteCacheProviderContractIds();
+  quoteCacheByProviderContractId.forEach((_, providerContractId) => {
+    if (!liveProviderContractIds.has(providerContractId)) {
+      quoteCacheByProviderContractId.delete(providerContractId);
+    }
+  });
+}
+
+function pruneQuoteCacheToRetainedLimit(): void {
+  const liveProviderContractIds = getLiveQuoteCacheProviderContractIds();
+  const maxCacheSize =
+    liveProviderContractIds.size + QUOTE_CACHE_RETAINED_BUFFER_SIZE;
+  if (quoteCacheByProviderContractId.size <= maxCacheSize) {
+    return;
+  }
+  for (const providerContractId of quoteCacheByProviderContractId.keys()) {
+    if (quoteCacheByProviderContractId.size <= maxCacheSize) {
+      return;
+    }
+    if (!liveProviderContractIds.has(providerContractId)) {
+      quoteCacheByProviderContractId.delete(providerContractId);
+    }
+  }
 }
 
 function admitBridgeOptionSubscriberLeases(subscriber: Subscriber): void {
@@ -808,9 +869,16 @@ function mergeQuoteForCache(
   };
 }
 
-function cacheQuote(quote: QuoteSnapshot): QuoteSnapshot | null {
+function cacheQuote(
+  quote: QuoteSnapshot,
+  options: { allowUndemanded?: boolean } = {},
+): QuoteSnapshot | null {
   const providerContractId = quote.providerContractId?.trim?.() || "";
   if (!providerContractId) {
+    return null;
+  }
+  if (!options.allowUndemanded && !hasLiveQuoteCacheDemand(providerContractId)) {
+    quoteCacheByProviderContractId.delete(providerContractId);
     return null;
   }
 
@@ -825,7 +893,9 @@ function cacheQuote(quote: QuoteSnapshot): QuoteSnapshot | null {
     "apiServerReceivedAt",
     receivedAt,
   );
+  quoteCacheByProviderContractId.delete(providerContractId);
   quoteCacheByProviderContractId.set(providerContractId, cached);
+  pruneQuoteCacheToRetainedLimit();
   eventCount += 1;
   lastEventAt = receivedAt;
   lastError = null;
@@ -1605,7 +1675,9 @@ export async function fetchBridgeOptionQuoteSnapshots(input: {
         signal: input.signal,
         timeoutMs: input.timeoutMs,
       });
-      freshQuotes.forEach(cacheQuote);
+      freshQuotes.forEach((quote) => {
+        cacheQuote(quote, { allowUndemanded: true });
+      });
     }
   } catch (error) {
     upstreamErrorMessage = readErrorMessage(error);
@@ -1733,6 +1805,7 @@ export function subscribeBridgeOptionQuoteSnapshots(
   return () => {
     subscribers.delete(subscriberId);
     releaseMarketDataLeases(owner, "unsubscribe");
+    pruneQuoteCacheToLiveDemand();
     scheduleRefreshBridgeOptionQuoteStream(0);
   };
 }
