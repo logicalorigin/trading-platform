@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 
-import { and, desc, eq, sql } from "drizzle-orm";
+import { and, asc, desc, eq, sql } from "drizzle-orm";
 
 import {
   balanceSnapshotsTable,
@@ -13,6 +13,10 @@ import {
 import { HttpError } from "../lib/errors";
 import { logger } from "../lib/logger";
 import { RobinhoodMcpSession } from "../providers/robinhood/mcp-client";
+import {
+  calculateTransferAdjustedReturnPoints,
+  reconstructEquityHistoryFromActivityLedger,
+} from "./account-equity-history-model";
 import { getRobinhoodAccessToken } from "./robinhood-oauth";
 
 // Backfills Robinhood per-trade realized P&L into robinhood_account_activities via
@@ -361,4 +365,65 @@ export async function readRobinhoodAccountActivities(
     .from(robinhoodAccountActivitiesTable)
     .where(eq(robinhoodAccountActivitiesTable.accountId, accountId))
     .orderBy(desc(robinhoodAccountActivitiesTable.closedAt));
+}
+
+export async function readRobinhoodActivityLedgerEquityHistory(
+  accountId: string,
+) {
+  const [activities, snapshots] = await Promise.all([
+    db
+      .select()
+      .from(robinhoodAccountActivitiesTable)
+      .where(eq(robinhoodAccountActivitiesTable.accountId, accountId))
+      .orderBy(asc(robinhoodAccountActivitiesTable.closedAt)),
+    db
+      .select({
+        asOf: balanceSnapshotsTable.asOf,
+        netLiquidation: balanceSnapshotsTable.netLiquidation,
+        currency: balanceSnapshotsTable.currency,
+      })
+      .from(balanceSnapshotsTable)
+      .where(eq(balanceSnapshotsTable.accountId, accountId))
+      .orderBy(asc(balanceSnapshotsTable.asOf)),
+  ]);
+  const terminal = snapshots.reduce<{
+    timestamp: Date;
+    netLiquidation: number;
+    currency: string;
+  } | null>((latest, snapshot) => {
+    const netLiquidation = toNumber(snapshot.netLiquidation);
+    if (netLiquidation == null) {
+      return latest;
+    }
+    if (!latest || snapshot.asOf.getTime() > latest.timestamp.getTime()) {
+      return {
+        timestamp: snapshot.asOf,
+        netLiquidation,
+        currency: snapshot.currency,
+      };
+    }
+    return latest;
+  }, null);
+
+  // Robinhood exposes per-closing-trade realized_gain but no historical balance
+  // API. Like the SnapTrade fallback, this is a realized-P&L anchored curve, not
+  // true historical mark-to-market for open positions.
+  const seedPoints = reconstructEquityHistoryFromActivityLedger({
+    terminal,
+    source: "LOCAL_LEDGER",
+    events: activities
+      .map((activity) => {
+        const realizedPnl = toNumber(activity.realizedGain);
+        if (realizedPnl == null) {
+          return null;
+        }
+        return {
+          timestamp: activity.closedAt,
+          currency: activity.currency,
+          realizedPnl,
+        };
+      })
+      .filter((event): event is NonNullable<typeof event> => Boolean(event)),
+  });
+  return calculateTransferAdjustedReturnPoints(seedPoints);
 }

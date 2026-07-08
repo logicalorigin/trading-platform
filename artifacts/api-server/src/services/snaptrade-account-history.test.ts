@@ -301,3 +301,171 @@ test("SnapTrade account history degrades gracefully when beta balance history is
     }),
   );
 });
+
+test("SnapTrade account history reconstructs sparse equity from the activity ledger", async () => {
+  await withBootstrapToken(async () =>
+    withTestDb(async () => {
+      const { auth, account } =
+        await createSnapTradeAccount("history-reconstructed@example.com");
+      await db.insert(snapTradeAccountActivitiesTable).values([
+        {
+          accountId: account.id,
+          snapTradeActivityId: "cash-contribution",
+          tradeDate: new Date("2024-01-01T15:00:00.000Z"),
+          settlementDate: new Date("2024-01-01T15:00:00.000Z"),
+          type: "CONTRIBUTION",
+          optionType: null,
+          symbol: null,
+          rawSymbol: null,
+          description: "Cash contribution",
+          optionTicker: null,
+          quantity: null,
+          price: null,
+          amount: "1000.000000",
+          fee: "0.000000",
+          currency: "USD",
+          externalReferenceId: null,
+          rawPayload: {},
+          updatedAt: new Date("2024-01-01T15:00:00.000Z"),
+        },
+        {
+          accountId: account.id,
+          snapTradeActivityId: "aapl-open",
+          tradeDate: new Date("2024-01-02T15:00:00.000Z"),
+          settlementDate: new Date("2024-01-03T15:00:00.000Z"),
+          type: "TRADE",
+          optionType: null,
+          symbol: "AAPL",
+          rawSymbol: "AAPL",
+          description: "Bought AAPL",
+          optionTicker: null,
+          quantity: "10.000000",
+          price: "50.000000",
+          amount: "-500.000000",
+          fee: "1.000000",
+          currency: "USD",
+          externalReferenceId: null,
+          rawPayload: {},
+          updatedAt: new Date("2024-01-02T15:00:00.000Z"),
+        },
+        {
+          accountId: account.id,
+          snapTradeActivityId: "aapl-close",
+          tradeDate: new Date("2024-01-10T15:00:00.000Z"),
+          settlementDate: new Date("2024-01-11T15:00:00.000Z"),
+          type: "TRADE",
+          optionType: null,
+          symbol: "AAPL",
+          rawSymbol: "AAPL",
+          description: "Sold AAPL",
+          optionTicker: null,
+          quantity: "-10.000000",
+          price: "70.000000",
+          amount: "700.000000",
+          fee: "1.000000",
+          currency: "USD",
+          externalReferenceId: null,
+          rawPayload: {},
+          updatedAt: new Date("2024-01-10T15:00:00.000Z"),
+        },
+        {
+          accountId: account.id,
+          snapTradeActivityId: "cash-dividend",
+          tradeDate: new Date("2024-01-15T15:00:00.000Z"),
+          settlementDate: new Date("2024-01-15T15:00:00.000Z"),
+          type: "DIVIDEND",
+          optionType: null,
+          symbol: "AAPL",
+          rawSymbol: "AAPL",
+          description: "Cash dividend",
+          optionTicker: null,
+          quantity: null,
+          price: null,
+          amount: "10.000000",
+          fee: "0.000000",
+          currency: "USD",
+          externalReferenceId: null,
+          rawPayload: {},
+          updatedAt: new Date("2024-01-15T15:00:00.000Z"),
+        },
+        {
+          accountId: account.id,
+          snapTradeActivityId: "account-fee",
+          tradeDate: new Date("2024-01-20T15:00:00.000Z"),
+          settlementDate: new Date("2024-01-20T15:00:00.000Z"),
+          type: "FEE",
+          optionType: null,
+          symbol: null,
+          rawSymbol: null,
+          description: "Account fee",
+          optionTicker: null,
+          quantity: null,
+          price: null,
+          amount: "-3.000000",
+          fee: "0.000000",
+          currency: "USD",
+          externalReferenceId: null,
+          rawPayload: {},
+          updatedAt: new Date("2024-01-20T15:00:00.000Z"),
+        },
+        {
+          accountId: account.id,
+          snapTradeActivityId: "cash-withdrawal",
+          tradeDate: new Date("2024-01-25T15:00:00.000Z"),
+          settlementDate: new Date("2024-01-25T15:00:00.000Z"),
+          type: "WITHDRAWAL",
+          optionType: null,
+          symbol: null,
+          rawSymbol: null,
+          description: "Outgoing funds transfer",
+          optionTicker: null,
+          quantity: null,
+          price: null,
+          amount: "-100.000000",
+          fee: "0.000000",
+          currency: "USD",
+          externalReferenceId: null,
+          rawPayload: {},
+          updatedAt: new Date("2024-01-25T15:00:00.000Z"),
+        },
+      ]);
+      await db.insert(balanceSnapshotsTable).values({
+        accountId: account.id,
+        currency: "USD",
+        cash: "0.000000",
+        buyingPower: "0.000000",
+        netLiquidation: "1105.000000",
+        maintenanceMargin: null,
+        asOf: new Date("2024-01-31T21:00:00.000Z"),
+      });
+
+      const result = await getSnapTradeAccountHistory({
+        appUserId: auth.user.id,
+        accountId: account.id,
+        now: new Date("2024-02-01T12:00:00.000Z"),
+      });
+
+      assert.equal(result.closedTrades.summary.count, 1);
+      assert.equal(result.closedTrades.summary.realizedPnl, 198);
+      assert.equal(result.equityHistory.selectedSnapshotSource, "SNAPTRADE_ACTIVITY_LEDGER_RECONSTRUCTION");
+      assert.equal(result.equityHistory.points.length, 31);
+      assert.equal(result.equityHistory.points[0]?.netLiquidation, 1000);
+      assert.equal(result.equityHistory.points.at(-1)?.netLiquidation, 1105);
+      assert.equal(result.equityHistory.points[0]?.deposits, 1000);
+      assert.equal(result.equityHistory.points[24]?.withdrawals, 100);
+      assert.equal(result.equityHistory.points.at(-1)?.returnPercent, 20.5);
+
+      const realizedByDay = new Map<string, number>();
+      for (const trade of result.closedTrades.trades) {
+        const key = trade.closeDate?.toISOString().slice(0, 10);
+        if (!key) continue;
+        realizedByDay.set(key, (realizedByDay.get(key) ?? 0) + (trade.realizedPnl ?? 0));
+      }
+      const dailyRealizedSum = Array.from(realizedByDay.values()).reduce(
+        (sum, value) => sum + value,
+        0,
+      );
+      assert.equal(dailyRealizedSum, result.closedTrades.summary.realizedPnl);
+    }),
+  );
+});

@@ -17,7 +17,10 @@ import { loadSnapTradeUserCredential } from "./snaptrade-user-custody";
 import { getSnapTradeAccountPortfolio } from "./snaptrade-account-portfolio";
 import {
   calculateTransferAdjustedReturnPoints,
+  classifyExternalCashTransfer,
+  reconstructEquityHistoryFromActivityLedger,
   type AccountEquityHistorySeedPoint,
+  type ActivityLedgerEquityEvent,
 } from "./account-equity-history-model";
 import { readEnvString } from "../lib/env";
 
@@ -748,6 +751,29 @@ function activitySortAsc(
   return new Date(left.tradeDate).getTime() - new Date(right.tradeDate).getTime();
 }
 
+function activityTradeSide(
+  activity: SnapTradeHistoryActivity,
+): "BUY" | "SELL" | null {
+  if (activity.type === "BUY" || activity.type === "SELL") {
+    return activity.type;
+  }
+  if (activity.optionType?.startsWith("BUY")) {
+    return "BUY";
+  }
+  if (activity.optionType?.startsWith("SELL")) {
+    return "SELL";
+  }
+  const quantity = activity.quantity ?? 0;
+  const amount = activity.amount ?? 0;
+  if (quantity > 0 && amount < 0) {
+    return "BUY";
+  }
+  if (quantity < 0 && amount > 0) {
+    return "SELL";
+  }
+  return null;
+}
+
 function activityKey(activity: SnapTradeHistoryActivity): string {
   return [
     activity.accountId,
@@ -869,9 +895,13 @@ function buildClosedTradesFromActivities(
   const trades: SnapTradeHistoryTrade[] = [];
 
   activities
-    .filter((activity) => activity.type === "BUY" || activity.type === "SELL")
+    .filter((activity) => activityTradeSide(activity) !== null)
     .sort(activitySortAsc)
     .forEach((activity) => {
+      const side = activityTradeSide(activity);
+      if (!side) {
+        return;
+      }
       const quantity = Math.abs(activity.quantity ?? 0);
       const value = activityNotional(activity);
       if (!quantity || value == null) {
@@ -879,7 +909,7 @@ function buildClosedTradesFromActivities(
       }
       const fee = Math.abs(activity.fee ?? 0);
       const key = activityKey(activity);
-      const isBuy = activity.type === "BUY";
+      const isBuy = side === "BUY";
       const optionType = activity.optionType ?? "";
       const longQueue = longLots.get(key) ?? [];
       const shortQueue = shortLots.get(key) ?? [];
@@ -940,26 +970,52 @@ function buildClosedTradesFromActivities(
   });
 }
 
+function snapTradeActivityCashClassification(activity: SnapTradeHistoryActivity):
+  | { type: "deposit" | "withdrawal" | "dividend" | "interest" | "fee"; amount: number }
+  | null {
+  const amount = activity.amount;
+  if (amount == null || amount === 0) {
+    return null;
+  }
+  const transfer = classifyExternalCashTransfer({
+    activityType: activity.type,
+    description: activity.description,
+    amount,
+  });
+  if (transfer !== null) {
+    return transfer >= 0
+      ? { type: "deposit", amount: Math.abs(transfer) }
+      : { type: "withdrawal", amount: Math.abs(transfer) };
+  }
+  if (activity.type === "CONTRIBUTION") {
+    return { type: "deposit", amount: Math.abs(amount) };
+  }
+  if (activity.type === "WITHDRAWAL") {
+    return { type: "withdrawal", amount: Math.abs(amount) };
+  }
+  if (activity.type === "DIVIDEND") {
+    return { type: "dividend", amount };
+  }
+  if (activity.type === "INTEREST") {
+    return { type: "interest", amount };
+  }
+  if (activity.type === "FEE" || activity.type === "TAX") {
+    return { type: "fee", amount: Math.abs(amount) };
+  }
+  return null;
+}
+
 function activityCashEvents(activities: SnapTradeHistoryActivity[]) {
-  const eventTypes = new Map([
-    ["CONTRIBUTION", "deposit"],
-    ["WITHDRAWAL", "withdrawal"],
-    ["DIVIDEND", "dividend"],
-    ["INTEREST", "interest"],
-    ["FEE", "fee"],
-    ["TAX", "fee"],
-  ]);
   return activities
     .map((activity) => {
-      const type = eventTypes.get(activity.type);
-      const amount = activity.amount;
-      if (!type || amount == null || amount === 0) {
+      const event = snapTradeActivityCashClassification(activity);
+      if (!event) {
         return null;
       }
       return {
         timestamp: activity.tradeDate,
-        type,
-        amount,
+        type: event.type,
+        amount: event.amount,
         currency: activity.currency,
         source: "SNAPTRADE_ACTIVITY",
       };
@@ -972,6 +1028,101 @@ type BalanceHistoryPoint = {
   netLiquidation: number;
   currency: string;
 };
+
+type EquityHistoryInputPoint = BalanceHistoryPoint &
+  Pick<
+    AccountEquityHistorySeedPoint,
+    "deposits" | "withdrawals" | "dividends" | "fees"
+  >;
+
+function balancePointToEquityInputPoint(
+  point: BalanceHistoryPoint,
+): EquityHistoryInputPoint {
+  return {
+    ...point,
+    deposits: 0,
+    withdrawals: 0,
+    dividends: 0,
+    fees: 0,
+  };
+}
+
+function latestBalancePoint(points: BalanceHistoryPoint[]): BalanceHistoryPoint | null {
+  return points.reduce<BalanceHistoryPoint | null>((latest, point) => {
+    if (!latest || point.timestamp.getTime() > latest.timestamp.getTime()) {
+      return point;
+    }
+    return latest;
+  }, null);
+}
+
+function balancePointsCoverActivitySpan(input: {
+  points: BalanceHistoryPoint[];
+  activities: SnapTradeHistoryActivity[];
+}): boolean {
+  if (!input.points.length) {
+    return false;
+  }
+  if (!input.activities.length) {
+    return true;
+  }
+  if (input.points.length <= 1) {
+    return false;
+  }
+  const firstActivity = input.activities
+    .map((activity) => parseDate(activity.tradeDate))
+    .filter((date): date is Date => Boolean(date))
+    .sort((left, right) => left.getTime() - right.getTime())[0];
+  const firstPoint = input.points
+    .slice()
+    .sort((left, right) => left.timestamp.getTime() - right.timestamp.getTime())[0];
+  if (!firstActivity || !firstPoint) {
+    return true;
+  }
+  const coverageSlackMs = 24 * 60 * 60_000;
+  return firstPoint.timestamp.getTime() <= firstActivity.getTime() + coverageSlackMs;
+}
+
+function activityLedgerEquityEvents(input: {
+  activities: SnapTradeHistoryActivity[];
+  closedTrades: SnapTradeHistoryTrade[];
+}): ActivityLedgerEquityEvent[] {
+  const events: ActivityLedgerEquityEvent[] = [];
+  for (const activity of input.activities) {
+    const classification = snapTradeActivityCashClassification(activity);
+    const timestamp = parseDate(activity.tradeDate);
+    if (!classification || !timestamp) {
+      continue;
+    }
+    events.push({
+      timestamp,
+      currency: activity.currency,
+      deposits: classification.type === "deposit" ? classification.amount : 0,
+      withdrawals: classification.type === "withdrawal" ? classification.amount : 0,
+      dividends:
+        classification.type === "dividend" || classification.type === "interest"
+          ? classification.amount
+          : 0,
+      fees: classification.type === "fee" ? classification.amount : 0,
+      realizedPnl: 0,
+    });
+  }
+  for (const trade of input.closedTrades) {
+    if (trade.realizedPnl == null || trade.closeDate == null) {
+      continue;
+    }
+    events.push({
+      timestamp: trade.closeDate,
+      currency: trade.currency,
+      realizedPnl: trade.realizedPnl,
+      deposits: 0,
+      withdrawals: 0,
+      dividends: 0,
+      fees: 0,
+    });
+  }
+  return events;
+}
 
 function parseBalanceHistoryPayload(payload: unknown, fallbackCurrency: string) {
   const record = asRecord(payload);
@@ -1134,19 +1285,20 @@ function equityHistoryFromBalancePoints(input: {
   accountId: string;
   range: string;
   currency: string;
-  points: BalanceHistoryPoint[];
+  points: EquityHistoryInputPoint[];
   events: ReturnType<typeof activityCashEvents>;
   updatedAt: string;
+  selectedSnapshotSource?: string;
 }) {
   const seedPoints: AccountEquityHistorySeedPoint[] = input.points.map((point) => ({
     timestamp: point.timestamp,
     netLiquidation: point.netLiquidation,
     currency: point.currency,
     source: "SNAPTRADE_BALANCE_HISTORY",
-    deposits: 0,
-    withdrawals: 0,
-    dividends: 0,
-    fees: 0,
+    deposits: point.deposits,
+    withdrawals: point.withdrawals,
+    dividends: point.dividends,
+    fees: point.fees,
   }));
   const adjusted = calculateTransferAdjustedReturnPoints(seedPoints);
   const lastPoint = adjusted[adjusted.length - 1] ?? null;
@@ -1164,7 +1316,8 @@ function equityHistoryFromBalancePoints(input: {
     terminalPointSource: lastPoint ? "snaptrade_balance_history" : null,
     liveTerminalIncluded: false,
     sourceScope: "manual",
-    selectedSnapshotSource: "SNAPTRADE_BALANCE_HISTORY",
+    selectedSnapshotSource:
+      input.selectedSnapshotSource ?? "SNAPTRADE_BALANCE_HISTORY",
     points: adjusted.map((point) => ({
       timestamp: point.timestamp.toISOString(),
       netLiquidation: point.netLiquidation,
@@ -1179,6 +1332,56 @@ function equityHistoryFromBalancePoints(input: {
     })),
     events: input.events,
     updatedAt: input.updatedAt,
+  };
+}
+
+function snapTradeEquityHistoryPoints(input: {
+  activities: SnapTradeHistoryActivity[];
+  closedTrades: SnapTradeHistoryTrade[];
+  storedBalancePoints: BalanceHistoryPoint[];
+}): { points: EquityHistoryInputPoint[]; selectedSnapshotSource: string } {
+  if (
+    balancePointsCoverActivitySpan({
+      points: input.storedBalancePoints,
+      activities: input.activities,
+    })
+  ) {
+    return {
+      points: input.storedBalancePoints.map(balancePointToEquityInputPoint),
+      selectedSnapshotSource: "SNAPTRADE_BALANCE_HISTORY",
+    };
+  }
+
+  const terminal = latestBalancePoint(input.storedBalancePoints);
+  if (!terminal) {
+    return {
+      points: input.storedBalancePoints.map(balancePointToEquityInputPoint),
+      selectedSnapshotSource: "SNAPTRADE_BALANCE_HISTORY",
+    };
+  }
+
+  // SnapTrade accounts on plans without historical /balanceHistory only have the
+  // current NLV snapshot. This reconstructs a realized/contribution-based curve
+  // from the activity ledger and anchors the final point to that current NLV. It
+  // is not historical mark-to-market because SnapTrade does not provide past
+  // positions or prices here; open-position MTM is absorbed into the anchor.
+  const reconstructed = reconstructEquityHistoryFromActivityLedger({
+    terminal,
+    source: "SNAPTRADE_BALANCE_HISTORY",
+    events: activityLedgerEquityEvents({
+      activities: input.activities,
+      closedTrades: input.closedTrades,
+    }),
+  });
+  if (!reconstructed.length) {
+    return {
+      points: input.storedBalancePoints.map(balancePointToEquityInputPoint),
+      selectedSnapshotSource: "SNAPTRADE_BALANCE_HISTORY",
+    };
+  }
+  return {
+    points: reconstructed,
+    selectedSnapshotSource: "SNAPTRADE_ACTIVITY_LEDGER_RECONSTRUCTION",
   };
 }
 
@@ -1340,13 +1543,19 @@ export async function getSnapTradeAccountHistory(
     to: options.to,
   });
   const events = activityCashEvents(activities);
+  const equityPoints = snapTradeEquityHistoryPoints({
+    activities,
+    closedTrades: allClosedTrades,
+    storedBalancePoints,
+  });
   const equityHistory = equityHistoryFromBalancePoints({
     accountId: account.id,
     range: options.range || "ALL",
     currency: account.baseCurrency,
-    points: storedBalancePoints,
+    points: equityPoints.points,
     events,
     updatedAt: now.toISOString(),
+    selectedSnapshotSource: equityPoints.selectedSnapshotSource,
   });
   const commissions = trades.reduce(
     (sum, trade) => sum + (trade.commissions ?? 0),

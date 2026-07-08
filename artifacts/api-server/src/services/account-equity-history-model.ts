@@ -41,6 +41,16 @@ export type AccountEquityHistorySeedPoint = {
   fees: number;
 };
 
+export type ActivityLedgerEquityEvent = {
+  timestamp: Date;
+  currency: string;
+  deposits?: number;
+  withdrawals?: number;
+  realizedPnl?: number;
+  dividends?: number;
+  fees?: number;
+};
+
 type ExternalCashTransferCandidate = {
   activityType: string;
   description: string | null;
@@ -228,6 +238,137 @@ export function calculateTransferAdjustedReturnPoints(
     cumulativePnl: adjusted[index]?.cumulativePnl ?? 0,
     returnPercent: adjusted[index]?.returnPercent ?? 0,
   }));
+}
+
+function startOfUtcDay(value: Date): Date {
+  return new Date(
+    Date.UTC(value.getUTCFullYear(), value.getUTCMonth(), value.getUTCDate()),
+  );
+}
+
+function addUtcDays(value: Date, days: number): Date {
+  const next = new Date(value.getTime());
+  next.setUTCDate(next.getUTCDate() + days);
+  return next;
+}
+
+function roundHistoryMoney(value: number): number {
+  return Number(value.toFixed(6));
+}
+
+export function reconstructEquityHistoryFromActivityLedger(input: {
+  events: ActivityLedgerEquityEvent[];
+  terminal: {
+    timestamp: Date;
+    netLiquidation: number;
+    currency: string;
+  } | null;
+  source: AccountEquityHistorySeedPoint["source"];
+}): AccountEquityHistorySeedPoint[] {
+  if (!input.terminal || !Number.isFinite(input.terminal.netLiquidation)) {
+    return [];
+  }
+
+  const sortedEvents = input.events
+    .filter((event) => Number.isFinite(event.timestamp.getTime()))
+    .sort((left, right) => left.timestamp.getTime() - right.timestamp.getTime());
+  if (!sortedEvents.length) {
+    return [
+      {
+        timestamp: input.terminal.timestamp,
+        netLiquidation: input.terminal.netLiquidation,
+        currency: input.terminal.currency,
+        source: input.source,
+        deposits: 0,
+        withdrawals: 0,
+        dividends: 0,
+        fees: 0,
+      },
+    ];
+  }
+
+  const firstDay = startOfUtcDay(sortedEvents[0]!.timestamp);
+  const terminalDay = startOfUtcDay(input.terminal.timestamp);
+  if (firstDay.getTime() > terminalDay.getTime()) {
+    return [];
+  }
+
+  const eventsByDay = new Map<
+    string,
+    Required<Omit<ActivityLedgerEquityEvent, "timestamp" | "currency">> & {
+      currency: string;
+    }
+  >();
+  for (const event of sortedEvents) {
+    const day = startOfUtcDay(event.timestamp);
+    if (day.getTime() > terminalDay.getTime()) {
+      continue;
+    }
+    const key = day.toISOString();
+    const current = eventsByDay.get(key) ?? {
+      currency: event.currency || input.terminal.currency,
+      deposits: 0,
+      withdrawals: 0,
+      realizedPnl: 0,
+      dividends: 0,
+      fees: 0,
+    };
+    current.deposits += event.deposits ?? 0;
+    current.withdrawals += event.withdrawals ?? 0;
+    current.realizedPnl += event.realizedPnl ?? 0;
+    current.dividends += event.dividends ?? 0;
+    current.fees += event.fees ?? 0;
+    eventsByDay.set(key, current);
+  }
+
+  let cumulativeLedgerDelta = 0;
+  const cumulativeByDay = new Map<string, number>();
+  for (
+    let day = firstDay;
+    day.getTime() <= terminalDay.getTime();
+    day = addUtcDays(day, 1)
+  ) {
+    const key = day.toISOString();
+    const event = eventsByDay.get(key);
+    if (event) {
+      cumulativeLedgerDelta +=
+        event.deposits -
+        event.withdrawals +
+        event.realizedPnl +
+        event.dividends -
+        event.fees;
+    }
+    cumulativeByDay.set(key, cumulativeLedgerDelta);
+  }
+
+  const terminalKey = terminalDay.toISOString();
+  const terminalLedgerDelta = cumulativeByDay.get(terminalKey) ?? 0;
+  const openingAnchor = input.terminal.netLiquidation - terminalLedgerDelta;
+  const points: AccountEquityHistorySeedPoint[] = [];
+  const outputStartDay =
+    Math.abs(openingAnchor) > 0.000001 ? addUtcDays(firstDay, -1) : firstDay;
+  for (
+    let day = outputStartDay;
+    day.getTime() <= terminalDay.getTime();
+    day = addUtcDays(day, 1)
+  ) {
+    const key = day.toISOString();
+    const event = eventsByDay.get(key);
+    points.push({
+      timestamp:
+        key === terminalKey ? input.terminal.timestamp : new Date(day.getTime()),
+      netLiquidation: roundHistoryMoney(
+        openingAnchor + (cumulativeByDay.get(key) ?? 0),
+      ),
+      currency: event?.currency || input.terminal.currency,
+      source: input.source,
+      deposits: roundHistoryMoney(event?.deposits ?? 0),
+      withdrawals: roundHistoryMoney(event?.withdrawals ?? 0),
+      dividends: roundHistoryMoney(event?.dividends ?? 0),
+      fees: roundHistoryMoney(event?.fees ?? 0),
+    });
+  }
+  return points;
 }
 
 export function classifyExternalCashTransfer(

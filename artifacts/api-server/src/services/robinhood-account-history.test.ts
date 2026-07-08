@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  balanceSnapshotsTable,
   brokerAccountsTable,
   brokerConnectionsTable,
   db,
@@ -11,6 +12,7 @@ import { withTestDb } from "@workspace/db/testing";
 import { bootstrapInitialUser } from "./auth";
 import {
   ingestRobinhoodAccountHistory,
+  readRobinhoodActivityLedgerEquityHistory,
   readRobinhoodAccountActivities,
   type RobinhoodHistorySession,
 } from "./robinhood-account-history";
@@ -192,6 +194,36 @@ test("Robinhood history ingest is idempotent (re-run upserts, no duplicates)", a
         .select()
         .from(robinhoodAccountActivitiesTable);
       assert.equal(rows.length, 2);
+    }),
+  );
+});
+
+test("Robinhood activity ledger reconstructs sparse equity history from realized gains", async () => {
+  await withBootstrapToken(async () =>
+    withTestDb(async () => {
+      const { auth, account } = await createRobinhoodAccount(
+        "rh-equity-ledger@example.com",
+      );
+      await ingestRobinhoodAccountHistory({
+        appUserId: auth.user.id,
+        accountId: account.id,
+        session: fakePnlSession(
+          [{ trades: [TRADE_A, TRADE_B], next_cursor: null }],
+          { portfolioTotalValue: "1111.30" },
+        ),
+        now: new Date("2026-06-30T20:00:00.000Z"),
+      });
+
+      const points = await readRobinhoodActivityLedgerEquityHistory(account.id);
+      assert.ok(points.length >= 30);
+      assert.equal(points.at(-1)?.netLiquidation, 1111.3);
+      assert.ok(Math.abs((points.at(-1)?.cumulativePnl ?? 0) - 111.3) < 1e-9);
+      assert.ok(Math.abs((points.at(-1)?.returnPercent ?? 0) - 11.13) < 1e-9);
+
+      const snapshots = await db
+        .select()
+        .from(balanceSnapshotsTable);
+      assert.equal(snapshots.length, 1);
     }),
   );
 });
