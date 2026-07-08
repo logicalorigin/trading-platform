@@ -78,6 +78,7 @@ import {
   refreshSnapTradeAccountHistoryForUser,
   refreshSnapTradeAccountHistoryOnRead,
 } from "../services/snaptrade-history-scheduler";
+import { refreshRobinhoodAccountHistoryForUser } from "../services/robinhood-history-scheduler";
 import { listSnapTradeBrokerages } from "../services/snaptrade-brokerages";
 import { syncSnapTradeBrokerageConnections } from "../services/snaptrade-account-sync";
 import { readSnapTradeReadiness } from "../services/snaptrade-readiness";
@@ -228,6 +229,16 @@ router.get("/broker-execution/robinhood/oauth/callback", async (req, res) => {
     await syncRobinhoodConnections({ appUserId: session.user.id }).catch(
       () => undefined,
     );
+    // Fire-and-forget P&L history backfill so past trades populate without a
+    // page open (mirrors the SnapTrade on-connect hook).
+    void refreshRobinhoodAccountHistoryForUser(session.user.id).catch(
+      (error) => {
+        logger.warn(
+          { err: error },
+          "Robinhood connect history backfill failed",
+        );
+      },
+    );
     void recordAuditEvent({
       appUserId: session.user.id,
       eventType: "broker.connect_complete",
@@ -257,6 +268,10 @@ router.post("/broker-execution/robinhood/sync", async (req, res) => {
       appUserId: session.user.id,
     }),
   );
+  // Keep P&L history fresh whenever accounts are re-synced (fire-and-forget).
+  void refreshRobinhoodAccountHistoryForUser(session.user.id).catch((error) => {
+    logger.warn({ err: error }, "Robinhood sync history backfill failed");
+  });
   void recordAuditEvent({
     appUserId: session.user.id,
     eventType: "broker.sync",

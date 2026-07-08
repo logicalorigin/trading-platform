@@ -40,6 +40,7 @@ import { startSignalMonitorEvaluationWorker } from "./services/signal-monitor-ev
 import { startSignalUniverseRankingScheduler } from "./services/signal-universe-ranking";
 import { startSnapshotRetentionScheduler } from "./services/snapshot-retention-scheduler";
 import { startSnapTradeHistoryRefreshScheduler } from "./services/snaptrade-history-scheduler";
+import { startRobinhoodHistoryRefreshScheduler } from "./services/robinhood-history-scheduler";
 import { ensureDefaultSignalOptionsPaperDeployment } from "./services/signal-options-automation";
 import { listAlgoDeployments } from "./services/automation";
 import {
@@ -320,6 +321,7 @@ server.listen(port, () => {
     startSnapshotRetentionScheduler,
     startSignalUniverseRankingScheduler,
     startSnapTradeHistoryRefreshScheduler,
+    startRobinhoodHistoryRefreshScheduler,
     startRuntimeFlightRecorder,
     () => {
       void importRuntimeFlightRecorderIncidents(

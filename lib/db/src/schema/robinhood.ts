@@ -1,6 +1,8 @@
 import { createInsertSchema } from "drizzle-zod";
 import {
   index,
+  jsonb,
+  numeric,
   pgTable,
   text,
   timestamp,
@@ -10,6 +12,7 @@ import {
 } from "drizzle-orm/pg-core";
 import { timestamps } from "./common";
 import { usersTable } from "./auth";
+import { brokerAccountsTable } from "./broker";
 
 export const robinhoodUserCredentialsTable = pgTable(
   "robinhood_user_credentials",
@@ -48,3 +51,50 @@ export type RobinhoodUserCredential =
   typeof robinhoodUserCredentialsTable.$inferSelect;
 export type InsertRobinhoodUserCredential =
   typeof robinhoodUserCredentialsTable.$inferInsert;
+
+// Per-trade realized P&L history backfilled from the Robinhood MCP
+// `get_pnl_trade_history` tool (rows: timestamp/symbol/side/quantity/price/
+// realized_gain). Mirrors snapTradeAccountActivitiesTable so account-detail P&L
+// populates automatically via the scheduler + on-connect hook, without a page
+// open. Robinhood returns realized P&L already computed per closing trade, so no
+// cost-basis lot matching is needed. Dedup key is a deterministic hash of the
+// row's identity fields (Robinhood P&L trades carry no stable server id).
+export const robinhoodAccountActivitiesTable = pgTable(
+  "robinhood_account_activities",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    accountId: uuid("account_id")
+      .notNull()
+      .references(() => brokerAccountsTable.id),
+    activityKey: varchar("activity_key", { length: 128 }).notNull(),
+    closedAt: timestamp("closed_at", { withTimezone: true }).notNull(),
+    symbol: varchar("symbol", { length: 96 }),
+    side: varchar("side", { length: 16 }),
+    quantity: numeric("quantity", { precision: 20, scale: 6 }),
+    price: numeric("price", { precision: 20, scale: 6 }),
+    realizedGain: numeric("realized_gain", { precision: 20, scale: 6 }),
+    currency: varchar("currency", { length: 16 }).notNull().default("USD"),
+    rawPayload: jsonb("raw_payload").$type<Record<string, unknown>>(),
+    ...timestamps,
+  },
+  (table) => [
+    index("robinhood_account_activities_account_idx").on(table.accountId),
+    index("robinhood_account_activities_account_closed_at_idx").on(
+      table.accountId,
+      table.closedAt.desc(),
+    ),
+    uniqueIndex("robinhood_account_activities_unique_idx").on(
+      table.accountId,
+      table.activityKey,
+    ),
+  ],
+);
+
+export const insertRobinhoodAccountActivitySchema = createInsertSchema(
+  robinhoodAccountActivitiesTable,
+);
+
+export type RobinhoodAccountActivity =
+  typeof robinhoodAccountActivitiesTable.$inferSelect;
+export type InsertRobinhoodAccountActivity =
+  typeof robinhoodAccountActivitiesTable.$inferInsert;
