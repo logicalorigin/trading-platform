@@ -429,7 +429,6 @@ export default defineConfig({
             normalizedId.includes("/src/components/platform/primitives") ||
             normalizedId.includes("/src/components/platform/InfoTooltipIcon") ||
             normalizedId.includes("/src/components/ui/Button") ||
-            normalizedId.includes("/src/components/ui/CockpitHeader") ||
             normalizedId.includes("/src/components/ui/PulseDot") ||
             normalizedId.includes("/src/components/ui/SectionHeader") ||
             normalizedId.includes("/src/components/ui/Stat") ||

@@ -14,7 +14,6 @@
       "entry": [
         "src/index.ts",
         "build.mjs",
-        "scripts/runUnitTests.mjs",
         "src/**/*.test.ts"
       ],
       "project": ["src/**/*.ts", "scripts/**/*.mjs"]
@@ -34,10 +33,9 @@
         "index.html",
         "vite.config.ts",
         "scripts/runDevApp.mjs",
-        "scripts/visual-review.mjs",
-        "scripts/runUnitTests.mjs",
         "src/**/*.test.{ts,tsx,js,jsx,mjs}",
-        "src/components/ui/CockpitHeader.jsx",
+        "src/boot-neural.tsx",
+        "src/boot-neural-scene.tsx",
         "src/components/ui/tabs.jsx",
         "src/features/charting/ChartMobileToolbar.tsx"
       ],
