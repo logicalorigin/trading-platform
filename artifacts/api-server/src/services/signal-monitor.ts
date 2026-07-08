@@ -10440,16 +10440,7 @@ export const createSignalMonitorStreamBootstrapSnapshotReader = ({
     string,
     Promise<SignalMonitorStreamBootstrapSnapshot>
   >();
-  return async (environment?: RuntimeMode) => {
-    const key = resolveEnvironment(environment);
-    const cached = cache.get(key);
-    if (cached && cached.expiresAtMs > now()) {
-      return cached.snapshot;
-    }
-    const pending = inFlight.get(key);
-    if (pending) {
-      return pending;
-    }
+  const startRead = (environment: RuntimeMode | undefined, key: string) => {
     const compute = read(environment)
       .then((snapshot) => {
         // Never cache degraded fallback snapshots: a transient DB blip must
@@ -10466,6 +10457,25 @@ export const createSignalMonitorStreamBootstrapSnapshotReader = ({
       });
     inFlight.set(key, compute);
     return compute;
+  };
+
+  return async (environment?: RuntimeMode) => {
+    const key = resolveEnvironment(environment);
+    const cached = cache.get(key);
+    if (cached && cached.expiresAtMs > now()) {
+      return cached.snapshot;
+    }
+    const pending = inFlight.get(key);
+    if (cached) {
+      if (!pending) {
+        void startRead(environment, key).catch(() => {});
+      }
+      return cached.snapshot;
+    }
+    if (pending) {
+      return pending;
+    }
+    return startRead(environment, key);
   };
 };
 

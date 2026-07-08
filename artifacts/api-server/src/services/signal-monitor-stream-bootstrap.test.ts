@@ -38,13 +38,28 @@ test("concurrent bootstrap reads share one underlying stored-state read", async 
   assert.equal(left, right);
 });
 
-test("bootstrap snapshot is served from cache within the TTL and re-read after", async () => {
+test("bootstrap snapshot is served from cache within the TTL and refreshed after stale reuse", async () => {
   let reads = 0;
   let nowMs = 0;
+  let releaseRefresh = () => {};
+  let resolveRefreshDone = (_snapshot: unknown) => {};
+  const refreshGate = new Promise<void>((resolve) => {
+    releaseRefresh = resolve;
+  });
+  const refreshDone = new Promise<unknown>((resolve) => {
+    resolveRefreshDone = resolve;
+  });
   const reader = createSignalMonitorStreamBootstrapSnapshotReader({
     read: async () => {
       reads += 1;
-      return snapshot(`read-${reads}`);
+      if (reads === 2) {
+        await refreshGate;
+      }
+      const result = snapshot(`read-${reads}`);
+      if (reads === 2) {
+        resolveRefreshDone(result);
+      }
+      return result;
     },
     now: () => nowMs,
   });
@@ -56,8 +71,22 @@ test("bootstrap snapshot is served from cache within the TTL and re-read after",
   assert.equal(cached, first);
 
   nowMs += 2;
-  const refreshed = await reader("shadow" as never);
+  const stalePromise = reader("shadow" as never);
+  let staleSettled = false;
+  stalePromise.then(() => {
+    staleSettled = true;
+  });
+  await Promise.resolve();
+  assert.equal(staleSettled, true);
+  assert.equal(await stalePromise, first);
   assert.equal(reads, 2);
+  releaseRefresh();
+  await refreshDone;
+  await new Promise<void>((resolve) => {
+    setImmediate(resolve);
+  });
+
+  const refreshed = await reader("shadow" as never);
   assert.notEqual(refreshed, first);
 });
 
