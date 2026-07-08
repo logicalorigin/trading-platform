@@ -2948,6 +2948,11 @@ const FlowOverviewPanel = ({
     }
   };
 
+  const flowPresetMatchesCurrentFilters = (preset) =>
+    activeFlowPresetId === preset.id ||
+    (preset?.filter ? filter === preset.filter : false) ||
+    (Number.isFinite(preset?.minPrem) ? minPrem === preset.minPrem : false);
+
   const toggleColumn = (columnId) => {
     setVisibleColumns((current) => {
       if (current.includes(columnId)) {
@@ -4396,9 +4401,9 @@ const FlowOverviewPanel = ({
 	        >
 	          PRESET SCANS
 	        </span>
-	      ) : null}
+      ) : null}
       {FLOW_BUILT_IN_PRESETS.map((preset) => {
-        const active = activeFlowPresetId === preset.id;
+        const active = flowPresetMatchesCurrentFilters(preset);
         const presetColor = FLOW_PRESET_COLORS[preset.id] || CSS_COLOR.accent;
         return (
           <button
@@ -4406,12 +4411,16 @@ const FlowOverviewPanel = ({
             type="button"
             data-testid={`flow-built-in-preset-${preset.id}`}
             onClick={() => applyBuiltInPreset(preset)}
+            aria-pressed={active}
 	            style={{
 	              padding: sp(isMobileFlowLayout ? "3px 8px" : "4px 10px"),
 	              border: "none",
 	              borderRadius: dim(RADII.pill),
 	              background: active ? cssColorAlpha(presetColor, "18") : CSS_COLOR.bg2,
 	              color: active ? presetColor : CSS_COLOR.textSec,
+              display: "inline-flex",
+              alignItems: "center",
+              gap: sp(4),
               fontSize: textSize("caption"),
               fontFamily: T.sans,
               fontWeight: active ? FONT_WEIGHTS.label : FONT_WEIGHTS.medium,
@@ -4420,6 +4429,17 @@ const FlowOverviewPanel = ({
             }}
           >
             {preset.label}
+            {active ? (
+              <span
+                style={{
+                  fontSize: fs(8),
+                  fontFamily: T.mono,
+                  color: presetColor,
+                }}
+              >
+                ACTIVE
+              </span>
+            ) : null}
           </button>
         );
       })}
