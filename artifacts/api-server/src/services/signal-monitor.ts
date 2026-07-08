@@ -72,6 +72,7 @@ import { notifyAlgoCockpitChanged } from "./algo-cockpit-events";
 import {
   buildSignalMonitorActionability,
   signalMonitorFresh,
+  type SignalMonitorActionBlocker,
 } from "./signal-monitor-actionability";
 import { recordSignalMonitorDbFallback } from "./signal-monitor-diagnostics";
 import {
@@ -295,7 +296,7 @@ export type SignalMonitorMatrixStreamState = {
   // buildSignalMonitorActionability — optional so internal eval results can
   // omit them, but every emitted stream state carries them.
   actionEligible?: boolean;
-  actionBlocker?: string | null;
+  actionBlocker?: SignalMonitorActionBlocker | null;
 };
 export type SignalMonitorMatrixStreamStatusEvent = {
   stream: "signal-matrix";
@@ -1248,17 +1249,21 @@ function stateToResponse(
   const displayDirection =
     storedDirection ?? trendDirectionToSignalDirection(state.trendDirection);
   const hasStoredSignal = Boolean(storedDirection && state.currentSignalAt);
+  const signalAt = hasStoredSignal ? (state.currentSignalAt ?? null) : null;
   // Backend-authored actionability on REST, mirroring the SSE matrix stream,
   // so every transport carries the same verdict. freshWindowBars only feeds
   // the (discarded) fresh recompute — eligibility does not use it.
   const actionability = buildSignalMonitorActionability({
     direction: storedDirection,
-    signalAt: hasStoredSignal ? (state.currentSignalAt ?? null) : null,
+    signalAt,
     barsSinceSignal: hasStoredSignal ? (state.barsSinceSignal ?? null) : null,
     stale: status !== "ok",
     staleBlocker: signalMonitorActionBlockerForStatus(status),
     freshWindowBars: 0,
     marketClosed: isSignalMonitorQuietMarketSessionNow(),
+    signalFiredWhileMarketClosed: signalAt
+      ? isSignalMonitorActionPausedMarketSessionAt(new Date(signalAt))
+      : undefined,
     sessionOpenAt: signalMonitorCurrentSessionOpenAtNow(),
   });
 
@@ -4234,6 +4239,10 @@ function isSignalMonitorQuietMarketSession(evaluatedAt: Date): boolean {
 function isSignalMonitorActionPausedMarketSession(evaluatedAt: Date): boolean {
   const context = getSignalMonitorMarketSessionContext(evaluatedAt);
   return context.quiet || context.marketIdle;
+}
+
+export function isSignalMonitorActionPausedMarketSessionAt(at: Date): boolean {
+  return isSignalMonitorActionPausedMarketSession(at);
 }
 
 // REST/stream call sites have no evaluatedAt in scope; minute-bucket the
@@ -9982,6 +9991,11 @@ function withSignalMonitorMatrixStreamActionability<
     staleBlocker: signalMonitorActionBlockerForStatus(state.status),
     freshWindowBars: profile.freshWindowBars,
     marketClosed: isSignalMonitorQuietMarketSessionNow(),
+    signalFiredWhileMarketClosed: state.currentSignalAt
+      ? isSignalMonitorActionPausedMarketSessionAt(
+          new Date(state.currentSignalAt),
+        )
+      : undefined,
     sessionOpenAt: signalMonitorCurrentSessionOpenAtNow(),
   });
   return {

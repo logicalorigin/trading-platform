@@ -140,6 +140,39 @@ test("marketClosed outranks stale and age blockers, but not no_signal", () => {
   });
 });
 
+test("marketClosed labels expired live-session entries separately", () => {
+  const base = {
+    direction: "buy",
+    signalAt: new Date("2026-06-12T16:25:00.000Z"),
+    barsSinceSignal: 1,
+    stale: false,
+    freshWindowBars: 3,
+    marketClosed: true,
+  };
+  assert.deepEqual(
+    buildSignalMonitorActionability({
+      ...base,
+      signalFiredWhileMarketClosed: false,
+    }),
+    {
+      fresh: true,
+      actionEligible: false,
+      actionBlocker: "entry_window_expired",
+    },
+  );
+  assert.equal(
+    buildSignalMonitorActionability(base).actionBlocker,
+    "market_closed",
+  );
+  assert.equal(
+    buildSignalMonitorActionability({
+      ...base,
+      signalFiredWhileMarketClosed: true,
+    }).actionBlocker,
+    "market_closed",
+  );
+});
+
 test("prior-session signal is blocked intra-session; same-session signal stays eligible", () => {
   // 2026-06-12 is EDT (UTC-4), so the 9:30 ET regular open is 13:30 UTC.
   const sessionOpenAt = new Date("2026-06-12T13:30:00.000Z");

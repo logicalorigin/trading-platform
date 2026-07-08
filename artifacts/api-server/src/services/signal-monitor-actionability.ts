@@ -16,10 +16,20 @@
 // is a separate follow-up; this window makes actionability robust to it.)
 export const SIGNAL_MONITOR_MAX_ACTIONABLE_BARS_SINCE_SIGNAL = 8;
 
+export type SignalMonitorActionBlocker =
+  | "no_signal"
+  | "market_closed"
+  | "entry_window_expired"
+  | "prior_session_signal"
+  | "data_stale"
+  | "market_idle"
+  | "signal_age_unavailable"
+  | "signal_too_old";
+
 export type SignalMonitorActionability = {
   fresh: boolean;
   actionEligible: boolean;
-  actionBlocker: string | null;
+  actionBlocker: SignalMonitorActionBlocker | null;
 };
 
 export function normalizedBarsSinceSignal(value: unknown): number | null {
@@ -31,7 +41,7 @@ export function normalizedBarsSinceSignal(value: unknown): number | null {
 
 export function signalMonitorSignalAgeBlocker(
   barsSinceSignal: unknown,
-): string | null {
+): SignalMonitorActionBlocker | null {
   const bars = normalizedBarsSinceSignal(barsSinceSignal);
   if (bars == null) return "signal_age_unavailable";
   return bars <= SIGNAL_MONITOR_MAX_ACTIONABLE_BARS_SINCE_SIGNAL
@@ -61,11 +71,14 @@ export function buildSignalMonitorActionability(input: {
   signalAt: Date | string | null;
   barsSinceSignal: number | null;
   stale: boolean;
-  staleBlocker?: string | null;
+  staleBlocker?: SignalMonitorActionBlocker | null;
   freshWindowBars: number;
   // Outranks stale/age: during a closed/quiet session, rows should read
   // "market closed" rather than "signal too old" or "data stale".
   marketClosed?: boolean;
+  // Distinguishes signals that fired while action was open but were evaluated
+  // only after the entry window had closed.
+  signalFiredWhileMarketClosed?: boolean;
   // Current session's regular open. When set (in-session) and the signal fired
   // before it, the row is blocked as a prior-session entry (gated by the
   // constant above). Callers pass null when the market is closed/idle.
@@ -78,11 +91,13 @@ export function buildSignalMonitorActionability(input: {
     input.sessionOpenAt != null &&
     input.signalAt != null &&
     new Date(input.signalAt).getTime() < input.sessionOpenAt.getTime();
-  const actionBlocker =
+  const actionBlocker: SignalMonitorActionBlocker | null =
     !directional || !input.signalAt
       ? "no_signal"
       : input.marketClosed
-        ? "market_closed"
+        ? input.signalFiredWhileMarketClosed === false && input.signalAt != null
+          ? "entry_window_expired"
+          : "market_closed"
         : priorSessionSignal
           ? "prior_session_signal"
           : input.stale

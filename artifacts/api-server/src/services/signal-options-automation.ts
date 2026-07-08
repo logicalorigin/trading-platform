@@ -68,6 +68,7 @@ import {
   getSignalMonitorState,
   getSignalMonitorStoredState,
   getSignalMonitorTimeframeMs,
+  isSignalMonitorActionPausedMarketSessionAt,
   isSignalMonitorBarEvaluationEnabled,
   isSignalMonitorQuietMarketSessionNow,
   loadSignalMonitorCompletedBars,
@@ -86,6 +87,7 @@ import {
 import {
   buildSignalMonitorActionability,
   signalMonitorSignalAgeBlocker,
+  type SignalMonitorActionBlocker,
 } from "./signal-monitor-actionability";
 import {
   getBars,
@@ -430,7 +432,7 @@ type SignalOptionsSignalSnapshot = {
   freshWindowBars: number | null;
   fresh: boolean;
   actionEligible: boolean;
-  actionBlocker: string | null;
+  actionBlocker: SignalMonitorActionBlocker | null;
   status?: string | null;
   filterState?: Record<string, unknown> | null;
   contractPreview?: SignalOptionsContractPreview | null;
@@ -2629,6 +2631,9 @@ function buildSignalOptionsSignalSnapshot(input: {
     stale: (status ?? "ok").toLowerCase() !== "ok",
     freshWindowBars: optionalFiniteNumber(input.freshWindowBars) ?? 0,
     marketClosed: isSignalMonitorQuietMarketSessionNow(),
+    signalFiredWhileMarketClosed: signalAt
+      ? isSignalMonitorActionPausedMarketSessionAt(new Date(signalAt))
+      : undefined,
     // Wave-2 C5 (prior-session entry block, Workstream F, provisional
     // 2026-07-07): current RTH open, or null when action is paused. Uses the
     // monitor's memoized helper — it honors the deterministic test seam (a
