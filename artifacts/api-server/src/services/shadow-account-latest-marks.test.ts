@@ -33,6 +33,35 @@ test("position peak marks use lateral top-one probes instead of grouped scans", 
   assert.doesNotMatch(body, /\.groupBy\(shadowPositionMarksTable\.positionId\)/);
 });
 
+test("shadow position mark refresh batches mark writes", () => {
+  const refreshStart = source.indexOf(
+    "export async function refreshShadowPositionMarks",
+  );
+  const refreshEnd = source.indexOf("async function ensureFreshShadowState", refreshStart);
+  assert.notEqual(refreshStart, -1, "Missing refreshShadowPositionMarks");
+  assert.notEqual(refreshEnd, -1, "Missing refreshShadowPositionMarks end marker");
+  const refreshBody = source.slice(refreshStart, refreshEnd);
+
+  assert.match(refreshBody, /const markWrites: ShadowPositionMarkRefreshWrite\[\] = \[\]/);
+  assert.match(refreshBody, /await writeShadowPositionMarkBatch\(markWrites\)/);
+  assert.doesNotMatch(refreshBody, /\.update\(shadowPositionsTable\)/);
+  assert.doesNotMatch(refreshBody, /db\.insert\(shadowPositionMarksTable\)/);
+
+  const batchStart = source.indexOf("async function writeShadowPositionMarkBatch");
+  const batchEnd = source.indexOf(
+    "export async function refreshShadowPositionMarks",
+    batchStart,
+  );
+  assert.notEqual(batchStart, -1, "Missing writeShadowPositionMarkBatch");
+  assert.notEqual(batchEnd, -1, "Missing writeShadowPositionMarkBatch end marker");
+  const batchBody = source.slice(batchStart, batchEnd);
+
+  assert.match(batchBody, /\.insert\(shadowPositionMarksTable\)\.values\(/);
+  assert.match(batchBody, /update shadow_positions as p/);
+  assert.match(batchBody, /from unnest\(/);
+  assert.match(batchBody, /array\[\$\{positionIds\}\]::uuid\[\]/);
+});
+
 test("shadow automation event reads keep literal predicates for partial indexes", () => {
   assert.match(
     source,

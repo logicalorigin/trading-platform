@@ -277,6 +277,28 @@ type ShadowOptionPricingPolicy = {
   quoteAsOf: Date | null;
 };
 
+type ShadowResolvedMark = {
+  price: number | null;
+  bid: number | null;
+  ask: number | null;
+  source: string;
+  asOf: Date;
+};
+
+type ShadowPositionMarkRefreshWrite = {
+  position: ShadowPositionRow;
+  contract: ShadowOptionContract | null;
+  optionQuote: Partial<QuoteSnapshot> | Record<string, unknown> | null | undefined;
+  optionPricing: ShadowOptionPricingPolicy | null;
+  markPrice: number;
+  mark: string;
+  marketValue: string;
+  unrealizedPnl: string;
+  source: string;
+  asOf: Date;
+  updatedAt: Date;
+};
+
 type SignalOptionsShadowMarkExitContext = {
   deployment: AlgoDeployment;
   profile: SignalOptionsExecutionProfile;
@@ -535,6 +557,12 @@ let shadowReadCacheStaleTtlMsForTests: number | null = null;
 let shadowReadCacheStaleWaitMsForTests: number | null = null;
 let shadowOptionQuoteCacheTtlMsForTests: number | null = null;
 let shadowOptionQuoteCacheStaleTtlMsForTests: number | null = null;
+let resolveEquityMarkForTests:
+  | ((
+      symbol: string,
+      position: ShadowPositionRow,
+    ) => Promise<ShadowResolvedMark> | ShadowResolvedMark)
+  | null = null;
 // Mark refresh mutates open-position valuation and account totals. It does not
   // mutate orders/fills, and equity-history has its own derived-read TTL; expiring
   // those on every mark tick made the marketing stream rebuild expensive DB reads
@@ -3800,13 +3828,7 @@ async function writeShadowBalanceSnapshot(
   return totals;
 }
 
-async function resolveEquityMark(symbol: string): Promise<{
-  price: number | null;
-  bid: number | null;
-  ask: number | null;
-  source: string;
-  asOf: Date;
-> {
+async function resolveEquityMark(symbol: string): Promise<ShadowResolvedMark> {
   const normalized = normalizeSymbol(symbol).toUpperCase();
   const quotes = await getQuoteSnapshots({
     symbols: normalized,
@@ -3848,6 +3870,14 @@ async function resolveEquityMark(symbol: string): Promise<{
     source: "bar_fallback",
     asOf: bar?.timestamp instanceof Date ? bar.timestamp : new Date(),
   };
+}
+
+async function resolveEquityMarkForShadowRefresh(
+  position: ShadowPositionRow,
+): Promise<ShadowResolvedMark> {
+  return resolveEquityMarkForTests
+    ? resolveEquityMarkForTests(position.symbol, position)
+    : resolveEquityMark(position.symbol);
 }
 
 async function resolveOptionMark(contract: ShadowOptionContract): Promise<{
@@ -6034,6 +6064,73 @@ function orderRowToResponse(order: typeof shadowOrdersTable.$inferSelect | undef
   };
 }
 
+async function writeShadowPositionMarkBatch(
+  writes: ShadowPositionMarkRefreshWrite[],
+) {
+  if (!writes.length) {
+    return;
+  }
+
+  const positionIds = sql.join(
+    writes.map((write) => sql`${write.position.id}`),
+    sql`, `,
+  );
+  const marks = sql.join(writes.map((write) => sql`${write.mark}`), sql`, `);
+  const marketValues = sql.join(
+    writes.map((write) => sql`${write.marketValue}`),
+    sql`, `,
+  );
+  const unrealizedPnls = sql.join(
+    writes.map((write) => sql`${write.unrealizedPnl}`),
+    sql`, `,
+  );
+  const asOfs = sql.join(writes.map((write) => sql`${write.asOf}`), sql`, `);
+  const updatedAts = sql.join(
+    writes.map((write) => sql`${write.updatedAt}`),
+    sql`, `,
+  );
+
+  await db.transaction(async (tx) => {
+    await tx.insert(shadowPositionMarksTable).values(
+      writes.map((write) => ({
+        accountId: SHADOW_ACCOUNT_ID,
+        positionId: write.position.id,
+        mark: write.mark,
+        marketValue: write.marketValue,
+        unrealizedPnl: write.unrealizedPnl,
+        source: write.source,
+        asOf: write.asOf,
+      })),
+    );
+
+    await tx.execute(sql`
+      update shadow_positions as p
+      set
+        mark = batched.mark,
+        market_value = batched.market_value,
+        unrealized_pnl = batched.unrealized_pnl,
+        as_of = batched.as_of,
+        updated_at = batched.updated_at
+      from unnest(
+        array[${positionIds}]::uuid[],
+        array[${marks}]::numeric[],
+        array[${marketValues}]::numeric[],
+        array[${unrealizedPnls}]::numeric[],
+        array[${asOfs}]::timestamptz[],
+        array[${updatedAts}]::timestamptz[]
+      ) as batched(
+        position_id,
+        mark,
+        market_value,
+        unrealized_pnl,
+        as_of,
+        updated_at
+      )
+      where p.id = batched.position_id
+    `);
+  });
+}
+
 export async function refreshShadowPositionMarks() {
   await ensureShadowAccount();
   const positions = await readOpenShadowPositions();
@@ -6045,9 +6142,9 @@ export async function refreshShadowPositionMarks() {
   const optionQuoteByProviderContractId = optionPositions.length
     ? await fetchShadowOptionDayChangeQuotes(optionPositions).catch(() => new Map())
     : new Map<string, Partial<QuoteSnapshot> | Record<string, unknown>>();
-  let updatedCount = 0;
   const latestMarkAtBySnapshotSource = new Map<string, Date>();
   const observedAt = new Date();
+  const markWrites: ShadowPositionMarkRefreshWrite[] = [];
 
   for (const position of positions) {
     const contract = asOptionContract(position.optionContract);
@@ -6081,7 +6178,7 @@ export async function refreshShadowPositionMarks() {
               source: optionPricing?.valuationReason ?? "quote_unavailable",
               asOf: optionPricing?.quoteAsOf ?? new Date(),
             }
-        : await resolveEquityMark(position.symbol);
+        : await resolveEquityMarkForShadowRefresh(position);
     const price = mark.price;
     if (price == null || price <= 0) {
       continue;
@@ -6094,41 +6191,19 @@ export async function refreshShadowPositionMarks() {
     });
     const marketValue = quantity * price * multiplier;
     const unrealizedPnl = (price - averageCost) * quantity * multiplier;
-    await db
-      .update(shadowPositionsTable)
-      .set({
-        mark: money(price),
-        marketValue: money(marketValue),
-        unrealizedPnl: money(unrealizedPnl),
-        asOf: mark.asOf,
-        updatedAt: new Date(),
-      })
-      .where(eq(shadowPositionsTable.id, position.id));
-    await db.insert(shadowPositionMarksTable).values({
-      accountId: SHADOW_ACCOUNT_ID,
-      positionId: position.id,
+    markWrites.push({
+      position,
+      contract,
+      optionQuote,
+      optionPricing,
+      markPrice: price,
       mark: money(price),
       marketValue: money(marketValue),
       unrealizedPnl: money(unrealizedPnl),
       source: mark.source,
       asOf: mark.asOf,
+      updatedAt: new Date(),
     });
-    if (position.assetClass === "option" && contract && optionPricing) {
-      await enforceSignalOptionsTrailingStopFromShadowMark({
-        position,
-        contract,
-        quote: optionQuote,
-        pricing: optionPricing,
-        markPrice: price,
-        markAt: mark.asOf,
-      }).catch((error) => {
-        logger.warn?.(
-          { err: error, positionId: position.id, symbol: position.symbol },
-          "Signal-options mark-time trailing stop enforcement failed",
-        );
-      });
-    }
-    updatedCount += 1;
     const snapshotSource = shadowMarkSnapshotSourceForPosition(position);
     const latestMarkAt = latestMarkAtBySnapshotSource.get(snapshotSource);
     if (!latestMarkAt || mark.asOf.getTime() > latestMarkAt.getTime()) {
@@ -6136,6 +6211,35 @@ export async function refreshShadowPositionMarks() {
     }
   }
 
+  await writeShadowPositionMarkBatch(markWrites);
+
+  for (const write of markWrites) {
+    if (
+      write.position.assetClass === "option" &&
+      write.contract &&
+      write.optionPricing
+    ) {
+      await enforceSignalOptionsTrailingStopFromShadowMark({
+        position: write.position,
+        contract: write.contract,
+        quote: write.optionQuote,
+        pricing: write.optionPricing,
+        markPrice: write.markPrice,
+        markAt: write.asOf,
+      }).catch((error) => {
+        logger.warn?.(
+          {
+            err: error,
+            positionId: write.position.id,
+            symbol: write.position.symbol,
+          },
+          "Signal-options mark-time trailing stop enforcement failed",
+        );
+      });
+    }
+  }
+
+  const updatedCount = markWrites.length;
   if (updatedCount) {
     invalidateShadowReadCachesAfterBackgroundMarkRefresh();
     for (const [source, latestMarkAt] of latestMarkAtBySnapshotSource) {
@@ -14574,6 +14678,9 @@ export const __shadowWatchlistBacktestInternalsForTests = {
   clearShadowOptionQuoteCachesForTests() {
     shadowOptionQuoteCache.clear();
     shadowOptionGreekQuoteCache.clear();
+  },
+  setResolveEquityMarkForTests(resolver: typeof resolveEquityMarkForTests) {
+    resolveEquityMarkForTests = resolver;
   },
   rememberShadowOptionQuoteForTests: rememberShadowOptionQuote,
   readCachedShadowOptionQuotesForTests: readCachedShadowOptionQuotes,

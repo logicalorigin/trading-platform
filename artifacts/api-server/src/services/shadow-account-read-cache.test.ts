@@ -2,9 +2,65 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
-import { __shadowWatchlistBacktestInternalsForTests as internals } from "./shadow-account";
+import { asc } from "drizzle-orm";
+
+import {
+  db,
+  shadowAccountsTable,
+  shadowPositionMarksTable,
+  shadowPositionsTable,
+} from "@workspace/db";
+import { createTestDb } from "@workspace/db/testing";
+
+import {
+  __shadowWatchlistBacktestInternalsForTests as internals,
+  refreshShadowPositionMarks,
+  SHADOW_ACCOUNT_ID,
+} from "./shadow-account";
 
 const waitTurn = () => new Promise((resolve) => setImmediate(resolve));
+const testMoney = (value: number) => Number(value.toFixed(6)).toString();
+
+type QueryLogger = {
+  logQuery: (query: string, params: unknown[]) => void;
+};
+
+type DrizzleDbWithLoggerSession = {
+  session: {
+    logger: QueryLogger;
+    options: {
+      logger?: QueryLogger;
+    };
+  };
+};
+
+function captureShadowMarkWriteQueries(
+  testDb: Awaited<ReturnType<typeof createTestDb>>,
+  statements: string[],
+) {
+  const dbWithSession = testDb.db as unknown as DrizzleDbWithLoggerSession;
+  const previousLogger = dbWithSession.session.logger;
+  const previousOptionsLogger = dbWithSession.session.options.logger;
+  const captureLogger: QueryLogger = {
+    logQuery(query, params) {
+      const compact = query.replace(/\s+/g, " ").trim().toLowerCase();
+      if (
+        compact.startsWith('insert into "shadow_position_marks"') ||
+        compact.startsWith("insert into shadow_position_marks") ||
+        compact.startsWith("update shadow_positions as p")
+      ) {
+        statements.push(compact);
+      }
+      previousLogger.logQuery(query, params);
+    },
+  };
+  dbWithSession.session.logger = captureLogger;
+  dbWithSession.session.options.logger = captureLogger;
+  return () => {
+    dbWithSession.session.logger = previousLogger;
+    dbWithSession.session.options.logger = previousOptionsLogger;
+  };
+}
 
 type TestShadowPositionsResponse = {
   positions: Array<{ id: string; symbol: string; assetClass: string }>;
@@ -12,6 +68,188 @@ type TestShadowPositionsResponse = {
   stale?: boolean;
   reason?: string;
 };
+
+test("mark refresh batches mark writes and preserves per-row values", async () => {
+  const testDb = await createTestDb();
+  const markWriteStatements: string[] = [];
+  let restoreQueryLogger = () => {};
+
+  const aaplAsOf = new Date("2026-07-08T14:31:00.000Z");
+  const tslaAsOf = new Date("2026-07-08T14:32:00.000Z");
+  const msftAsOf = new Date("2026-07-08T14:33:00.000Z");
+
+  internals.setResolveEquityMarkForTests((symbol) => {
+    if (symbol === "AAPL") {
+      return {
+        price: 123.4567894,
+        bid: null,
+        ask: null,
+        source: "quote",
+        asOf: aaplAsOf,
+      };
+    }
+    if (symbol === "TSLA") {
+      return {
+        price: 12.3456789,
+        bid: null,
+        ask: null,
+        source: "bar_fallback",
+        asOf: tslaAsOf,
+      };
+    }
+    return {
+      price: 0,
+      bid: null,
+      ask: null,
+      source: "quote",
+      asOf: msftAsOf,
+    };
+  });
+
+  try {
+    await db.insert(shadowAccountsTable).values({
+      id: SHADOW_ACCOUNT_ID,
+      displayName: "Shadow",
+      currency: "USD",
+      startingBalance: "25000",
+      cash: "25000",
+      status: "active",
+    });
+    await db.insert(shadowPositionsTable).values([
+      {
+        id: "00000000-0000-4000-8000-000000000001",
+        accountId: SHADOW_ACCOUNT_ID,
+        positionKey: "equity:AAPL",
+        symbol: "AAPL",
+        assetClass: "equity",
+        positionType: "stock",
+        quantity: "2",
+        averageCost: "100",
+        mark: "100",
+        marketValue: "200",
+        unrealizedPnl: "0",
+        status: "open",
+      },
+      {
+        id: "00000000-0000-4000-8000-000000000002",
+        accountId: SHADOW_ACCOUNT_ID,
+        positionKey: "equity:MSFT",
+        symbol: "MSFT",
+        assetClass: "equity",
+        positionType: "stock",
+        quantity: "5",
+        averageCost: "50",
+        mark: "50",
+        marketValue: "250",
+        unrealizedPnl: "0",
+        status: "open",
+      },
+      {
+        id: "00000000-0000-4000-8000-000000000003",
+        accountId: SHADOW_ACCOUNT_ID,
+        positionKey: "equity:TSLA",
+        symbol: "TSLA",
+        assetClass: "equity",
+        positionType: "stock",
+        quantity: "3",
+        averageCost: "10",
+        mark: "10",
+        marketValue: "30",
+        unrealizedPnl: "0",
+        status: "open",
+      },
+    ]);
+
+    restoreQueryLogger = captureShadowMarkWriteQueries(testDb, markWriteStatements);
+    const result = await refreshShadowPositionMarks();
+
+    assert.equal(result.updatedCount, 2);
+
+    const positions = await db
+      .select()
+      .from(shadowPositionsTable)
+      .orderBy(asc(shadowPositionsTable.symbol));
+    const positionsBySymbol = new Map(
+      positions.map((position) => [position.symbol, position]),
+    );
+    const aaplPosition = positionsBySymbol.get("AAPL");
+    const msftPosition = positionsBySymbol.get("MSFT");
+    const tslaPosition = positionsBySymbol.get("TSLA");
+    assert.ok(aaplPosition);
+    assert.ok(msftPosition);
+    assert.ok(tslaPosition);
+
+    assert.equal(aaplPosition.mark, testMoney(123.4567894));
+    assert.equal(aaplPosition.marketValue, testMoney(2 * 123.4567894));
+    assert.equal(
+      aaplPosition.unrealizedPnl,
+      testMoney((123.4567894 - 100) * 2),
+    );
+    assert.equal(aaplPosition.asOf.toISOString(), aaplAsOf.toISOString());
+
+    assert.equal(msftPosition.mark, "50.000000");
+    assert.equal(msftPosition.marketValue, "250.000000");
+    assert.equal(msftPosition.unrealizedPnl, "0.000000");
+
+    assert.equal(tslaPosition.mark, testMoney(12.3456789));
+    assert.equal(tslaPosition.marketValue, testMoney(3 * 12.3456789));
+    assert.equal(
+      tslaPosition.unrealizedPnl,
+      testMoney((12.3456789 - 10) * 3),
+    );
+    assert.equal(tslaPosition.asOf.toISOString(), tslaAsOf.toISOString());
+
+    const marks = await db
+      .select()
+      .from(shadowPositionMarksTable)
+      .orderBy(asc(shadowPositionMarksTable.positionId));
+    assert.equal(marks.length, 2);
+    assert.deepEqual(
+      marks.map((mark) => ({
+        positionId: mark.positionId,
+        mark: mark.mark,
+        marketValue: mark.marketValue,
+        unrealizedPnl: mark.unrealizedPnl,
+        source: mark.source,
+        asOf: mark.asOf.toISOString(),
+      })),
+      [
+        {
+          positionId: "00000000-0000-4000-8000-000000000001",
+          mark: testMoney(123.4567894),
+          marketValue: testMoney(2 * 123.4567894),
+          unrealizedPnl: testMoney((123.4567894 - 100) * 2),
+          source: "quote",
+          asOf: aaplAsOf.toISOString(),
+        },
+        {
+          positionId: "00000000-0000-4000-8000-000000000003",
+          mark: testMoney(12.3456789),
+          marketValue: testMoney(3 * 12.3456789),
+          unrealizedPnl: testMoney((12.3456789 - 10) * 3),
+          source: "bar_fallback",
+          asOf: tslaAsOf.toISOString(),
+        },
+      ],
+    );
+
+    const markInserts = markWriteStatements.filter((statement) =>
+      statement.startsWith('insert into "shadow_position_marks"') ||
+      statement.startsWith("insert into shadow_position_marks"),
+    );
+    const positionUpdates = markWriteStatements.filter((statement) =>
+      statement.startsWith("update shadow_positions as p"),
+    );
+    assert.equal(markInserts.length, 1);
+    assert.equal(positionUpdates.length, 1);
+    assert.match(markInserts[0] ?? "", /values \(.+\), \(/);
+    assert.match(positionUpdates[0] ?? "", /from unnest\(/);
+  } finally {
+    internals.setResolveEquityMarkForTests(null);
+    restoreQueryLogger();
+    await testDb.cleanup();
+  }
+});
 
 test("shadow read cache serves stale values immediately while refresh continues", async () => {
   const key = `test-shadow-read-immediate-${Date.now()}-${Math.random()}`;
