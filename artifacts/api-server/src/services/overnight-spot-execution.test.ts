@@ -5,7 +5,9 @@ import {
   __overnightSpotExecutionInternalsForTests as internals,
   runOvernightSpotSignalScan,
   type OvernightSpotExecutionDependencies,
+  type OvernightSpotExecutionEventInput,
 } from "./overnight-spot-execution";
+import { OVERNIGHT_SPOT_LIVE_CONFIRM_VALUE } from "./overnight-spot-automation";
 
 const SHADOW_DEPLOYMENT = {
   id: "11111111-1111-1111-1111-111111111111",
@@ -22,6 +24,27 @@ const SHADOW_DEPLOYMENT = {
       // the dedup gate; this test targets the idempotency lookup, not signal
       // freshness/session gating.
       requireActionableSignal: false,
+    },
+  },
+};
+
+const LIVE_DEPLOYMENT = {
+  id: "22222222-2222-2222-2222-222222222222",
+  name: "Overnight Spot Live Test",
+  mode: "live" as const,
+  enabled: true,
+  providerAccountId: "DU1234567",
+  symbolUniverse: ["AAPL"],
+  config: {
+    overnightSpot: {
+      enabled: true,
+      executionMode: "live",
+      requireActionableSignal: false,
+      defaultOrderNotional: 1_000,
+      maxOrderNotional: 2_000,
+      maxShareQuantity: 20,
+      maxSpreadPercent: 5,
+      maxSignalAgeMs: 2 * 60 * 60 * 1000,
     },
   },
 };
@@ -50,6 +73,14 @@ function buildScanDeps(
     placeShadowOrder: number;
     insertExecutionEvent: number;
     insertDiagnosticEvent: number;
+    markLiveOrderIntent: number;
+    sequence: string[];
+    insertedEvents: OvernightSpotExecutionEventInput[];
+    markedIntents: Array<{
+      status: string;
+      reason?: string | null;
+      intentEvent: Record<string, unknown>;
+    }>;
   };
 } {
   const calls = {
@@ -57,6 +88,14 @@ function buildScanDeps(
     placeShadowOrder: 0,
     insertExecutionEvent: 0,
     insertDiagnosticEvent: 0,
+    markLiveOrderIntent: 0,
+    sequence: [] as string[],
+    insertedEvents: [] as OvernightSpotExecutionEventInput[],
+    markedIntents: [] as Array<{
+      status: string;
+      reason?: string | null;
+      intentEvent: Record<string, unknown>;
+    }>,
   };
   const deps: OvernightSpotExecutionDependencies = {
     loadDeployment: async () => SHADOW_DEPLOYMENT,
@@ -70,19 +109,34 @@ function buildScanDeps(
     findExistingEventByClientOrderId: async () => null,
     insertExecutionEvent: async (input) => {
       calls.insertExecutionEvent += 1;
-      return { id: "ledger-event", ...input };
+      calls.sequence.push(`insert:${input.eventType}`);
+      calls.insertedEvents.push(input);
+      return { id: `ledger-event-${calls.insertExecutionEvent}`, ...input };
     },
     insertDiagnosticEvent: async (input) => {
       calls.insertDiagnosticEvent += 1;
-      return { id: "diagnostic-event", ...input };
+      calls.sequence.push(`diagnostic:${input.eventType}`);
+      return { id: `diagnostic-event-${calls.insertDiagnosticEvent}`, ...input };
     },
     placeShadowOrder: async () => {
       calls.placeShadowOrder += 1;
+      calls.sequence.push("placeShadowOrder");
       return { id: "shadow-order" };
     },
     placeLiveOrder: async () => {
       calls.placeLiveOrder += 1;
+      calls.sequence.push("placeLiveOrder");
       return { id: "live-order" };
+    },
+    markLiveOrderIntent: async (input) => {
+      calls.markLiveOrderIntent += 1;
+      calls.sequence.push(`mark:${input.status}`);
+      calls.markedIntents.push({
+        status: input.status,
+        reason: input.reason,
+        intentEvent: input.intentEvent,
+      });
+      return { ...input.intentEvent, payload: { status: input.status } };
     },
     notifyChanged: () => {},
     ...overrides,
@@ -205,6 +259,99 @@ test("scan skips placing an order when a ledger terminal event exists (idempoten
   assert.equal(calls.placeShadowOrder, 0);
   assert.equal(calls.insertExecutionEvent, 0);
   assert.equal(calls.insertDiagnosticEvent, 0);
+  assert.ok(clientOrderIds.length >= 1);
+});
+
+test("live scan writes a durable intent before broker placement and marks it filled", async () => {
+  const now = new Date("2026-06-12T16:01:00.000Z");
+  const { deps, calls } = buildScanDeps({
+    loadDeployment: async () => LIVE_DEPLOYMENT,
+    loadQuotes: async () =>
+      new Map([
+        ["AAPL", { bid: 100, ask: 100.1, mid: 100.05, updatedAt: now }],
+      ]),
+  });
+
+  const result = await runOvernightSpotSignalScan(
+    {
+      deploymentId: LIVE_DEPLOYMENT.id,
+      runActions: true,
+      now,
+      env: {
+        PYRUS_ENABLE_LIVE_OVERNIGHT_SPOT: "1",
+        PYRUS_CONFIRM_LIVE_OVERNIGHT_SPOT: OVERNIGHT_SPOT_LIVE_CONFIRM_VALUE,
+      },
+    },
+    deps,
+  );
+
+  assert.equal(result.results.length, 1);
+  assert.equal(result.results[0]?.status, "executed");
+  assert.deepEqual(calls.sequence, [
+    "insert:overnight_spot_live_order_intent",
+    "placeLiveOrder",
+    "insert:overnight_spot_live_entry",
+    "mark:filled",
+  ]);
+  assert.equal(calls.placeLiveOrder, 1);
+  assert.equal(calls.insertExecutionEvent, 2);
+  assert.equal(calls.markLiveOrderIntent, 1);
+
+  const intent = calls.insertedEvents[0];
+  assert.equal(intent?.eventType, "overnight_spot_live_order_intent");
+  assert.equal(
+    (intent?.payload.intent as Record<string, unknown>)?.status,
+    "pending",
+  );
+  assert.equal(
+    calls.insertedEvents[1]?.payload.sourceIntentEventId,
+    "ledger-event-1",
+  );
+  assert.equal(calls.markedIntents[0]?.status, "filled");
+  assert.equal(calls.markedIntents[0]?.intentEvent.id, "ledger-event-1");
+});
+
+test("scan flags pending live intents for reconciliation and does not double-submit", async () => {
+  const clientOrderIds: string[] = [];
+  const { deps, calls } = buildScanDeps({
+    loadDeployment: async () => LIVE_DEPLOYMENT,
+    findExistingEventByClientOrderId: async ({ clientOrderId }) => {
+      clientOrderIds.push(clientOrderId);
+      return {
+        id: "pending-intent-event",
+        eventType: "overnight_spot_live_order_intent",
+        occurredAt: new Date("2026-06-12T16:00:00.000Z"),
+        payload: {
+          clientOrderId,
+          intent: { status: "pending" },
+        },
+      };
+    },
+  });
+
+  const result = await runOvernightSpotSignalScan(
+    {
+      deploymentId: LIVE_DEPLOYMENT.id,
+      runActions: true,
+      now: new Date("2026-06-12T16:01:00.000Z"),
+    },
+    deps,
+  );
+
+  assert.equal(result.results.length, 1);
+  assert.equal(result.results[0]?.status, "skipped");
+  assert.equal(
+    result.results[0]?.reason,
+    "live_order_intent_reconciliation_required",
+  );
+  assert.equal(calls.placeLiveOrder, 0);
+  assert.equal(calls.insertExecutionEvent, 0);
+  assert.equal(calls.markLiveOrderIntent, 1);
+  assert.equal(calls.markedIntents[0]?.status, "reconciliation_required");
+  assert.equal(
+    calls.markedIntents[0]?.reason,
+    "live_order_intent_without_terminal_state",
+  );
   assert.ok(clientOrderIds.length >= 1);
 });
 

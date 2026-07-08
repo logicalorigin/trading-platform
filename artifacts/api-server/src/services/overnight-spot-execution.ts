@@ -40,6 +40,8 @@ import {
 const OVERNIGHT_SPOT_TRACKED_EVENT = "overnight_spot_signal_tracked";
 const OVERNIGHT_SPOT_BLOCKED_EVENT = "overnight_spot_signal_blocked";
 const OVERNIGHT_SPOT_FAILED_EVENT = "overnight_spot_order_failed";
+const OVERNIGHT_SPOT_LIVE_ORDER_INTENT_EVENT =
+  "overnight_spot_live_order_intent";
 const OVERNIGHT_SPOT_QUOTE_BATCH_SIZE = 3;
 
 type OvernightSpotDeployment = Pick<
@@ -75,6 +77,22 @@ export type OvernightSpotExecutionEventInput = {
   summary: string;
   payload: Record<string, unknown>;
   occurredAt: Date;
+};
+
+type OvernightSpotLiveOrderIntentStatus =
+  | "filled"
+  | "failed"
+  | "reconciliation_required";
+
+type OvernightSpotLiveOrderIntentUpdateInput = {
+  intentEvent: Record<string, unknown>;
+  status: OvernightSpotLiveOrderIntentStatus;
+  occurredAt: Date;
+  terminalEventId?: string | null;
+  terminalEventType?: string | null;
+  brokerOrder?: BrokerOrderSnapshot | Record<string, unknown> | null;
+  error?: string | null;
+  reason?: string | null;
 };
 
 export type OvernightSpotExecutionDependencies = {
@@ -119,6 +137,9 @@ export type OvernightSpotExecutionDependencies = {
   placeLiveOrder: (
     order: OvernightSpotOrderRequest,
   ) => Promise<BrokerOrderSnapshot | Record<string, unknown>>;
+  markLiveOrderIntent: (
+    input: OvernightSpotLiveOrderIntentUpdateInput,
+  ) => Promise<Record<string, unknown> | null>;
   notifyChanged: (input: {
     deploymentId: string;
     mode: "shadow" | "live";
@@ -346,6 +367,26 @@ function shouldSkipExistingClientOrderEvent(input: {
   );
 }
 
+function isLiveOrderIntentEvent(event: Record<string, unknown>) {
+  return asString(event.eventType) === OVERNIGHT_SPOT_LIVE_ORDER_INTENT_EVENT;
+}
+
+function liveOrderIntentStatus(event: Record<string, unknown>) {
+  const payload = asRecord(event.payload) ?? {};
+  const intent = asRecord(payload.intent) ?? {};
+  return asString(intent.status);
+}
+
+function shouldFlagLiveOrderIntentForReconciliation(
+  event: Record<string, unknown>,
+) {
+  if (!isLiveOrderIntentEvent(event)) {
+    return false;
+  }
+  const status = liveOrderIntentStatus(event);
+  return !status || status === "pending";
+}
+
 function overnightSpotBlockerCodes(plan: unknown) {
   const record = asRecord(plan) ?? {};
   const blockers = Array.isArray(record.blockers) ? record.blockers : [];
@@ -423,6 +464,53 @@ async function insertEvent(
     reason: input.eventType,
   });
   return event;
+}
+
+function liveOrderIntentPayload(input: {
+  clientOrderId: string;
+  signal: OvernightSpotSignal;
+  plan: OvernightSpotPlanReady;
+  runActions: boolean;
+  now: Date;
+}) {
+  return {
+    ...eventPayload({
+      clientOrderId: input.clientOrderId,
+      signal: input.signal,
+      plan: input.plan,
+      runActions: input.runActions,
+    }),
+    intent: {
+      status: "pending",
+      executionMode: "live",
+      createdAt: input.now.toISOString(),
+      updatedAt: input.now.toISOString(),
+    },
+  };
+}
+
+async function insertLiveOrderIntent(input: {
+  deps: OvernightSpotExecutionDependencies;
+  deployment: OvernightSpotDeployment;
+  plan: OvernightSpotPlanReady;
+  signal: OvernightSpotSignal;
+  runActions: boolean;
+  now: Date;
+}) {
+  return insertEvent(input.deps, {
+    deployment: input.deployment,
+    eventType: OVERNIGHT_SPOT_LIVE_ORDER_INTENT_EVENT,
+    summary: `${input.plan.order.symbol} overnight spot live order intent pending`,
+    symbol: input.plan.order.symbol,
+    payload: liveOrderIntentPayload({
+      clientOrderId: input.plan.clientOrderId,
+      signal: input.signal,
+      plan: input.plan,
+      runActions: input.runActions,
+      now: input.now,
+    }),
+    occurredAt: input.now,
+  });
 }
 
 async function handleReadyPlan(input: {
@@ -513,13 +601,27 @@ async function handleReadyPlan(input: {
     }
   }
 
+  const intentEvent = await insertLiveOrderIntent({
+    deps: input.deps,
+    deployment: input.deployment,
+    plan: input.plan,
+    signal: input.signal,
+    runActions: input.runActions,
+    now: input.now,
+  });
+  const sourceIntentEventId = eventId(intentEvent);
+  let brokerOrder: BrokerOrderSnapshot | Record<string, unknown> | null = null;
+
+  let liveEvent: Record<string, unknown> | null = null;
+  let liveEventType: string | null = null;
   try {
-    const brokerOrder = await input.deps.placeLiveOrder(input.plan.order);
+    brokerOrder = await input.deps.placeLiveOrder(input.plan.order);
     const draft = buildOvernightSpotExecutionEventDraft(input.plan, {
       deploymentId: input.deployment.id,
       occurredAt: input.now,
     });
-    const event = await insertEvent(input.deps, {
+    liveEventType = draft.eventType;
+    liveEvent = await insertEvent(input.deps, {
       deployment: input.deployment,
       eventType: draft.eventType,
       summary: draft.summary,
@@ -527,15 +629,11 @@ async function handleReadyPlan(input: {
       payload: {
         ...draft.payload,
         clientOrderId: input.plan.clientOrderId,
+        sourceIntentEventId,
         brokerOrder,
       },
       occurredAt: draft.occurredAt,
     });
-    return {
-      status: "executed" as const,
-      eventType: draft.eventType,
-      eventId: eventId(event),
-    };
   } catch (error) {
     const event = await insertEvent(input.deps, {
       deployment: input.deployment,
@@ -544,9 +642,20 @@ async function handleReadyPlan(input: {
       symbol: input.plan.order.symbol,
       payload: {
         ...payload,
+        sourceIntentEventId,
+        brokerOrder,
         error: error instanceof Error ? error.message : String(error),
       },
       occurredAt: input.now,
+    });
+    await input.deps.markLiveOrderIntent({
+      intentEvent,
+      status: "failed",
+      occurredAt: new Date(Math.max(input.now.getTime(), Date.now())),
+      terminalEventId: eventId(event),
+      terminalEventType: OVERNIGHT_SPOT_FAILED_EVENT,
+      brokerOrder,
+      error: error instanceof Error ? error.message : String(error),
     });
     return {
       status: "failed" as const,
@@ -554,6 +663,20 @@ async function handleReadyPlan(input: {
       eventId: eventId(event),
     };
   }
+
+  await input.deps.markLiveOrderIntent({
+    intentEvent,
+    status: "filled",
+    occurredAt: new Date(Math.max(input.now.getTime(), Date.now())),
+    terminalEventId: eventId(liveEvent),
+    terminalEventType: liveEventType,
+    brokerOrder,
+  });
+  return {
+    status: "executed" as const,
+    eventType: liveEventType ?? undefined,
+    eventId: eventId(liveEvent),
+  };
 }
 
 async function handleBlockedPlan(input: {
@@ -678,11 +801,23 @@ export async function runOvernightSpotSignalScan(
         runActions,
       })
     ) {
+      let reason = "duplicate_client_order_id";
+      if (isLiveOrderIntentEvent(existing)) {
+        reason = "live_order_intent_reconciliation_required";
+      }
+      if (shouldFlagLiveOrderIntentForReconciliation(existing)) {
+        await dependencies.markLiveOrderIntent({
+          intentEvent: existing,
+          status: "reconciliation_required",
+          occurredAt: now,
+          reason: "live_order_intent_without_terminal_state",
+        });
+      }
       results.push({
         symbol: signal.symbol,
         clientOrderId,
         status: "skipped",
-        reason: "duplicate_client_order_id",
+        reason,
         eventId: eventId(existing),
         eventType:
           typeof existing.eventType === "string" ? existing.eventType : undefined,
@@ -939,7 +1074,8 @@ function clientOrderRowOccurredAtMs(row: ClientOrderRow): number {
 
 // Pure merge+match for the dedup/idempotency lookup. Merges ledger rows
 // (execution_events: overnight_spot_{shadow,live}_* + overnight_spot_order_failed,
-// the order-idempotency terminal markers) with diagnostics rows
+// including live pending-intent rows that must block double-submission) with
+// diagnostics rows
 // (automation_diagnostics: overnight_spot_signal_blocked, the blocked-dedup
 // marker) and returns the SINGLE newest payload-clientOrderId match across BOTH
 // tables — reproducing the pre-split single-table "first match in occurred_at
@@ -979,8 +1115,9 @@ async function findExistingEventByClientOrderId(input: {
   clientOrderId: string;
 }) {
   // Two reads, one per table, then merge in JS. The dedup/idempotency consumers
-  // need: terminal order rows (shadow/live/failed) -> execution_events; the
-  // blocked-dedup marker (overnight_spot_signal_blocked) -> automation_diagnostics.
+  // need: terminal/intention order rows (shadow/live/failed/intent) ->
+  // execution_events; the blocked-dedup marker (overnight_spot_signal_blocked)
+  // -> automation_diagnostics.
   const [ledgerRows, diagnosticRows] = await Promise.all([
     db
       .select()
@@ -1043,6 +1180,58 @@ async function insertDiagnosticEvent(input: OvernightSpotExecutionEventInput) {
   // diagnostic write. Off the write path (fire-and-forget) and never throws back.
   void pruneAutomationDiagnostics().catch(() => {});
   return event;
+}
+
+function liveOrderIntentUpdatedPayload(
+  input: OvernightSpotLiveOrderIntentUpdateInput,
+) {
+  const payload = asRecord(input.intentEvent.payload) ?? {};
+  const previousIntent = asRecord(payload.intent) ?? {};
+  const intent: Record<string, unknown> = {
+    ...previousIntent,
+    status: input.status,
+    updatedAt: input.occurredAt.toISOString(),
+  };
+  if (input.terminalEventId !== undefined) {
+    intent.terminalEventId = input.terminalEventId;
+  }
+  if (input.terminalEventType !== undefined) {
+    intent.terminalEventType = input.terminalEventType;
+  }
+  if (input.reason !== undefined) {
+    intent.reconciliationReason = input.reason;
+    intent.reconciliationRequiredAt = input.occurredAt.toISOString();
+  }
+
+  const nextPayload: Record<string, unknown> = {
+    ...payload,
+    intent,
+  };
+  if (input.brokerOrder !== undefined) {
+    nextPayload.brokerOrder = input.brokerOrder;
+  }
+  if (input.error !== undefined) {
+    nextPayload.error = input.error;
+  }
+  return nextPayload;
+}
+
+async function markLiveOrderIntent(
+  input: OvernightSpotLiveOrderIntentUpdateInput,
+) {
+  const id = eventId(input.intentEvent);
+  if (!id) {
+    return null;
+  }
+  const [event] = await db
+    .update(executionEventsTable)
+    .set({
+      payload: liveOrderIntentUpdatedPayload(input),
+      updatedAt: input.occurredAt,
+    })
+    .where(eq(executionEventsTable.id, id))
+    .returning();
+  return event ?? null;
 }
 
 // Keep automation_diagnostics bounded to a 7-day lookback (owner-decided
@@ -1115,6 +1304,7 @@ export const defaultOvernightSpotExecutionDependencies: OvernightSpotExecutionDe
   insertDiagnosticEvent,
   placeShadowOrder,
   placeLiveOrder: placeOrder,
+  markLiveOrderIntent,
   notifyChanged: notifyAlgoCockpitChanged,
 };
 
@@ -1123,10 +1313,12 @@ export const __overnightSpotExecutionInternalsForTests = {
   isSignalStateActionableForOvernightSpot,
   shouldSkipDuplicateBlockedPlan,
   shouldSkipExistingClientOrderEvent,
+  shouldFlagLiveOrderIntentForReconciliation,
   selectExistingEventByClientOrderId,
   loadQuotes,
   resolveSignalTimeframe,
   payloadClientOrderId,
+  liveOrderIntentUpdatedPayload,
   computeAutomationDiagnosticsPrune,
   pruneAutomationDiagnostics,
 };
