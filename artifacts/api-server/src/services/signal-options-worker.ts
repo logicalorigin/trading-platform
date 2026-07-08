@@ -3,10 +3,6 @@ import { sharedAdvisoryLockHolder, type AlgoDeployment } from "@workspace/db";
 import { logger } from "../lib/logger";
 import { subscribeAlgoCockpitChanges } from "./algo-cockpit-events";
 import {
-  getApiResourcePressureSnapshot,
-  type ApiResourcePressureSnapshot,
-} from "./resource-pressure";
-import {
   listEnabledSignalOptionsDeployments,
   runSignalOptionsShadowScan,
 } from "./signal-options-automation";
@@ -68,7 +64,6 @@ type WorkerDependencies = {
     signal?: AbortSignal;
   }) => Promise<unknown>;
   runMaintenance: (input: { source: "worker" }) => Promise<unknown>;
-  getResourcePressure: () => ApiResourcePressureSnapshot;
   acquireTickLock: () => Promise<ReleaseLock | null>;
   setTimer: (callback: () => void, delayMs: number) => ReturnType<typeof setTimeout>;
   clearTimer: (timer: ReturnType<typeof setTimeout>) => void;
@@ -437,8 +432,6 @@ function defaultDependencies(
       options.listDeployments ?? listEnabledSignalOptionsDeployments,
     scanDeployment: options.scanDeployment ?? runSignalOptionsShadowScan,
     runMaintenance: options.runMaintenance ?? runShadowOptionMaintenance,
-    getResourcePressure:
-      options.getResourcePressure ?? getApiResourcePressureSnapshot,
     acquireTickLock: options.acquireTickLock ?? acquirePostgresAdvisoryLock,
     setTimer: options.setTimer ?? setTimeout,
     clearTimer: options.clearTimer ?? clearTimeout,
@@ -927,10 +920,6 @@ export function startSignalOptionsWorker(): void {
 
 export function stopSignalOptionsWorker(): void {
   defaultWorker.stop();
-}
-
-export function requestSignalOptionsWorkerScanSoon(): void {
-  defaultWorker.requestRunSoon();
 }
 
 export { getSignalOptionsWorkerSnapshot };

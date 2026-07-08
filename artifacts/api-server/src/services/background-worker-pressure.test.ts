@@ -62,7 +62,7 @@ function signalOptionsDeployment(
 }
 
 test("signal-options worker degrades to a positions-only scan under high resource pressure (does not fully pause)", async () => {
-  const pressure = highFiniteResourcePressureSnapshot();
+  highFiniteResourcePressureSnapshot();
   let maintenanceCount = 0;
   const scanCalls: Record<string, unknown>[] = [];
   const releaseLock = async () => {};
@@ -78,7 +78,6 @@ test("signal-options worker degrades to a positions-only scan under high resourc
       maintenanceCount += 1;
       return {};
     },
-    getResourcePressure: () => pressure,
     acquireTickLock: async () => releaseLock,
     now: () => new Date("2026-06-09T18:41:00.000Z"),
     logger: noopLogger,
@@ -145,7 +144,6 @@ test("signal-options worker scans enabled deployments with bounded action work",
       };
     },
     runMaintenance: async () => ({}),
-    getResourcePressure: normalPressureSnapshot,
     acquireTickLock: async () => async () => {
       releaseCount += 1;
     },
@@ -212,7 +210,6 @@ test("signal-options worker keeps scanning when signal evaluation is passive", a
       maintenanceCount += 1;
       return {};
     },
-    getResourcePressure: normalPressureSnapshot,
     acquireTickLock: async () => releaseLock,
     now: () => new Date("2026-06-09T18:41:00.000Z"),
     logger: noopLogger,
@@ -314,7 +311,7 @@ test("overnight spot worker degrades to an exit-only scan under high resource pr
 });
 
 test("entry work runs on every tick under sustained hard block (no pressure gate)", async () => {
-  const pressure = highFiniteResourcePressureSnapshot();
+  highFiniteResourcePressureSnapshot();
   const scanCalls: Record<string, unknown>[] = [];
   let nowMs = new Date("2026-06-09T18:41:00.000Z").getTime();
 
@@ -325,7 +322,6 @@ test("entry work runs on every tick under sustained hard block (no pressure gate
       return {};
     },
     runMaintenance: async () => ({}),
-    getResourcePressure: () => pressure,
     acquireTickLock: async () => async () => {},
     now: () => new Date(nowMs),
     logger: noopLogger,
