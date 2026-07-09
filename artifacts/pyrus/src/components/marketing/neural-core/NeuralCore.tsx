@@ -122,6 +122,7 @@ export default function NeuralCore(userProps: NeuralCoreProps) {
     const disposables: { dispose(): void }[] = [];
 
     const isGpu = p.mode === "gpu";
+    const morphTargetsEnabled = Boolean(p.morph || p.morphDriveRef);
     const atlas = isGpu ? makeGlyphAtlas(CHARSETS[p.charSet]) : null;
     const atlasTex = atlas ? new THREE.CanvasTexture(atlas.canvas) : null;
     if (atlasTex) {
@@ -148,27 +149,26 @@ export default function NeuralCore(userProps: NeuralCoreProps) {
 
     function buildLayer(count: number, radius: number, opacity: number, sizeMul: number, timeScale: number) {
       const dirs = fibonacciSphere(count);
-      // Ring targets share one scale across layers so both layers' dots land on
-      // the SAME concentric circles (a coherent mark, not two offset sets), and
-      // are matched to each dir by angle for a clean radial settle into the mark.
-      const ringScale = p.radius * p.ringScale;
-      let rings: Float32Array;
-      let spins: Float32Array;
+      let rings: Float32Array = dirs;
+      let spins: Float32Array = new Float32Array(count);
       let lockupCenterY = 0;
       let lockupHalfW = 0; // rim radius (world units) -> fixed gradient span the rings spin through
       let ringColors: Float32Array | null = null; // per-particle TARGET color (the logo pixel)
       let wordFillArr: Float32Array | null = null; // 1 = wordmark particle (extra fill)
-      if (p.lockup) {
-        const lk = lockupTargets(dirs, ringScale, !!p.lockupMarkOnly);
-        rings = lk.positions;
-        spins = lk.spins;
-        lockupCenterY = lk.centerY;
-        lockupHalfW = lk.halfW;
-        ringColors = lk.colors;
-        wordFillArr = lk.wordFill;
-      } else {
-        rings = ringTargets(dirs, ringScale);
-        spins = new Float32Array(count); // no per-ring spin off the lockup
+      if (morphTargetsEnabled) {
+        // Both layers share a scale so their dots settle into one coherent mark.
+        const ringScale = p.radius * p.ringScale;
+        if (p.lockup) {
+          const lk = lockupTargets(dirs, ringScale, !!p.lockupMarkOnly);
+          rings = lk.positions;
+          spins = lk.spins;
+          lockupCenterY = lk.centerY;
+          lockupHalfW = lk.halfW;
+          ringColors = lk.colors;
+          wordFillArr = lk.wordFill;
+        } else {
+          rings = ringTargets(dirs, ringScale);
+        }
       }
       const colorMix = new Float32Array(count);
       const seed = new Float32Array(count);
@@ -176,18 +176,20 @@ export default function NeuralCore(userProps: NeuralCoreProps) {
       // (so the converged dots ARE the real logo, in true color); otherwise fall
       // back to the sphere gradient so the shader blend is a no-op for non-logo
       // surfaces (the background cloud, ring-only mode).
-      const ringColor = new Float32Array(count * 3);
+      const ringColor = morphTargetsEnabled ? new Float32Array(count * 3) : dirs;
       for (let i = 0; i < count; i++) {
         const dz = dirs[i * 3 + 2];
         colorMix[i] = THREE.MathUtils.clamp((dz * 0.5 + 0.5) * 0.9 + ((i * 2654435761) % 1000) / 1000 * 0.15, 0, 1);
         seed[i] = ((i * 40503) % 1000) / 1000;
-        if (ringColors) {
-          ringColor[i * 3] = ringColors[i * 3];
-          ringColor[i * 3 + 1] = ringColors[i * 3 + 1];
-          ringColor[i * 3 + 2] = ringColors[i * 3 + 2];
-        } else {
-          const c = core.clone().lerp(outer, colorMix[i]);
-          ringColor[i * 3] = c.r; ringColor[i * 3 + 1] = c.g; ringColor[i * 3 + 2] = c.b;
+        if (morphTargetsEnabled) {
+          if (ringColors) {
+            ringColor[i * 3] = ringColors[i * 3];
+            ringColor[i * 3 + 1] = ringColors[i * 3 + 1];
+            ringColor[i * 3 + 2] = ringColors[i * 3 + 2];
+          } else {
+            const c = core.clone().lerp(outer, colorMix[i]);
+            ringColor[i * 3] = c.r; ringColor[i * 3 + 1] = c.g; ringColor[i * 3 + 2] = c.b;
+          }
         }
       }
       const geo = new THREE.BufferGeometry();
@@ -201,7 +203,7 @@ export default function NeuralCore(userProps: NeuralCoreProps) {
         geo.setAttribute("aSpin", new THREE.BufferAttribute(spins, 1));
         geo.setAttribute("aColorMix", new THREE.BufferAttribute(colorMix, 1));
         geo.setAttribute("aRingColor", new THREE.BufferAttribute(ringColor, 3));
-        geo.setAttribute("aWordFill", new THREE.BufferAttribute(wordFillArr ?? new Float32Array(count), 1));
+        geo.setAttribute("aWordFill", new THREE.BufferAttribute(wordFillArr ?? spins, 1));
         geo.setAttribute("aSeed", new THREE.BufferAttribute(seed, 1));
         // Fresh uniform objects per material - the nebulaCloud twin must not
         // share refs with the crisp material (their uOpacity/uCrisp/uFade differ).
