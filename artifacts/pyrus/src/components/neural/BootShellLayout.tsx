@@ -1,11 +1,14 @@
-import { Suspense, lazy } from "react";
+import { Suspense, lazy, useSyncExternalStore } from "react";
 import { BrandResolve } from "@/components/marketing/brand-resolve";
 import { PyrusMark } from "@/components/marketing/pyrus-mark";
 import { usePrefersReducedMotion } from "@/components/marketing/pyrus-mark-3d";
 import type { NeuralCoreProps } from "@/components/marketing/neural-core";
 import { isNeuralWebglRendererSupported } from "@/lib/webglCapability";
 import { PyrusWordmark } from "../brand/pyrus-wordmark";
-import { isNeuralOpenerActive } from "./neuralOpenerState";
+import {
+  isNeuralOpenerActive,
+  subscribeNeuralOpenerActive,
+} from "./neuralOpenerState";
 
 const NeuralCoreScene = lazy(
   () => import("@/components/marketing/neural-core-scene"),
@@ -60,7 +63,10 @@ export function BootBrandColumn({
   stacked?: boolean;
   testId?: string;
 }) {
-  const openerActive = isNeuralOpenerActive();
+  const openerActive = useSyncExternalStore(
+    subscribeNeuralOpenerActive,
+    isNeuralOpenerActive,
+  );
   const markClass = stacked ? "h-[72px] w-[72px]" : "h-[140px] w-[140px]";
 
   return (

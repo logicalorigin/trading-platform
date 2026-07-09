@@ -38,3 +38,11 @@ test("login form side uses a calmer ambient cloud policy", () => {
     "login ambient mask should be explicit and separate from the loader mask",
   );
 });
+
+test("shared boot brand reacts when the neural opener releases WebGL", () => {
+  assert.match(
+    bootShellSource,
+    /useSyncExternalStore\(\s*subscribeNeuralOpenerActive,\s*isNeuralOpenerActive,\s*\)/,
+    "BootBrandColumn must rerender after the opener releases its WebGL context",
+  );
+});
