@@ -38,6 +38,8 @@ const {
   shouldSkipSignalMonitorBackfillForQuietProducer,
   resetSignalMonitorMatrixStreamForTests,
   traceSignalMonitorLaneCurrentness,
+  getSignalMonitorBackfilledBaseCacheStatsForTests,
+  SIGNAL_MONITOR_BACKFILLED_BASE_MAX_CELLS,
   SIGNAL_MONITOR_BACKFILL_REFRESH_MS,
   SIGNAL_MONITOR_BACKFILL_CONCURRENCY_LIMIT,
 } = __signalMonitorInternalsForTests;
@@ -168,6 +170,96 @@ test("stream promotion does not turn daily stream output into a backfilled base"
   assert.deepEqual(
     promoted?.bars.map((entry) => entry.timestamp.toISOString()),
     ["2026-06-11T00:00:00.000Z"],
+  );
+  resetSignalMonitorMatrixStreamForTests();
+});
+
+test("backfilled base cache evicts the least-recently-used cell at the cap", () => {
+  resetSignalMonitorMatrixStreamForTests();
+  const maxCells = SIGNAL_MONITOR_BACKFILLED_BASE_MAX_CELLS;
+  const refreshedAtMs = Date.parse("2026-06-12T13:00:00.000Z");
+
+  for (let index = 0; index < maxCells; index += 1) {
+    seedSignalMonitorBackfilledBaseForTests({
+      symbol: `LRUBASE${index}`,
+      timeframe: "1m",
+      bars: [bar("2026-06-12T13:00:00.000Z", { close: index })],
+      refreshedAtMs,
+      source: "backfill",
+    });
+  }
+
+  assert.ok(
+    getSignalMonitorBackfilledBaseForTests({
+      symbol: "LRUBASE0",
+      timeframe: "1m",
+    }),
+  );
+
+  seedSignalMonitorBackfilledBaseForTests({
+    symbol: `LRUBASE${maxCells}`,
+    timeframe: "1m",
+    bars: [bar("2026-06-12T13:01:00.000Z", { close: maxCells })],
+    refreshedAtMs,
+    source: "backfill",
+  });
+
+  const stats = getSignalMonitorBackfilledBaseCacheStatsForTests();
+  assert.equal(stats.size, maxCells);
+  assert.equal(stats.maxCells, maxCells);
+  assert.ok(
+    getSignalMonitorBackfilledBaseForTests({
+      symbol: "LRUBASE0",
+      timeframe: "1m",
+    }),
+  );
+  assert.equal(
+    getSignalMonitorBackfilledBaseForTests({
+      symbol: "LRUBASE1",
+      timeframe: "1m",
+    }),
+    undefined,
+  );
+  assert.ok(
+    getSignalMonitorBackfilledBaseForTests({
+      symbol: `LRUBASE${maxCells}`,
+      timeframe: "1m",
+    }),
+  );
+  resetSignalMonitorMatrixStreamForTests();
+});
+
+test("evicted backfilled base reads like a never-backfilled cell", () => {
+  resetSignalMonitorMatrixStreamForTests();
+  const maxCells = SIGNAL_MONITOR_BACKFILLED_BASE_MAX_CELLS;
+  const refreshedAtMs = Date.parse("2026-06-12T13:00:00.000Z");
+
+  for (let index = 0; index <= maxCells; index += 1) {
+    seedSignalMonitorBackfilledBaseForTests({
+      symbol: `EVICTEDBASE${index}`,
+      timeframe: "1m",
+      bars: [bar("2026-06-12T13:00:00.000Z", { close: index })],
+      refreshedAtMs,
+      source: "backfill",
+    });
+  }
+
+  const evictedBars =
+    getSignalMonitorBackfilledBaseForTests({
+      symbol: "EVICTEDBASE0",
+      timeframe: "1m",
+    })?.bars ?? [];
+  const neverBackfilledBars =
+    getSignalMonitorBackfilledBaseForTests({
+      symbol: "NEVERBACKFILLED",
+      timeframe: "1m",
+    })?.bars ?? [];
+  const streamBars = [bar("2026-06-12T13:01:00.000Z")];
+
+  assert.deepEqual(evictedBars, neverBackfilledBars);
+  assert.deepEqual(
+    mergeCompletedBars(evictedBars, streamBars, 240),
+    mergeCompletedBars(neverBackfilledBars, streamBars, 240),
   );
   resetSignalMonitorMatrixStreamForTests();
 });

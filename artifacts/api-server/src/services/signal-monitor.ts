@@ -5482,6 +5482,13 @@ type SignalMonitorBackfilledBaseEntry = {
   contentStamp: number;
   refreshedAt: number;
 };
+// 2000-symbol universe x 6 timeframes = 12000 legitimate live cells; 16384
+// bounds runaway growth while sitting above the steady-state working set.
+const SIGNAL_MONITOR_BACKFILLED_BASE_DEFAULT_MAX_CELLS = 16_384;
+const SIGNAL_MONITOR_BACKFILLED_BASE_MAX_CELLS = readSignalMonitorPositiveInteger(
+  process.env.SIGNAL_MONITOR_BACKFILLED_BASE_MAX_CELLS,
+  SIGNAL_MONITOR_BACKFILLED_BASE_DEFAULT_MAX_CELLS,
+);
 const signalMonitorBackfilledBaseByCell = new Map<
   string,
   SignalMonitorBackfilledBaseEntry
@@ -5717,7 +5724,7 @@ async function processSignalMonitorCompletedBarsGapFetch(
   );
   try {
     const currentBaseBars =
-      signalMonitorBackfilledBaseByCell.get(key)?.bars ?? [];
+      getSignalMonitorBackfilledBaseEntry(key)?.bars ?? [];
     if (!currentBaseBars.length) {
       return;
     }
@@ -5750,7 +5757,7 @@ async function processSignalMonitorCompletedBarsGapFetch(
       return;
     }
     const refreshedBaseBars =
-      signalMonitorBackfilledBaseByCell.get(key)?.bars ?? currentBaseBars;
+      getSignalMonitorBackfilledBaseEntry(key)?.bars ?? currentBaseBars;
     const refreshedTimestamps = new Set(
       refreshedBaseBars
         .map((bar) => signalMonitorBarTimestampMs(bar))
@@ -5911,10 +5918,16 @@ function getSignalMonitorBackfilledBaseBars(
   timeframe: SignalMonitorMatrixTimeframe,
 ): SignalMonitorBarSnapshot[] {
   return (
-    signalMonitorBackfilledBaseByCell.get(
+    getSignalMonitorBackfilledBaseEntry(
       signalMonitorBackfillCellKey(symbol, timeframe),
     )?.bars ?? []
   );
+}
+
+function getSignalMonitorBackfilledBaseEntry(
+  key: string,
+): SignalMonitorBackfilledBaseEntry | undefined {
+  return lruCacheTouch(signalMonitorBackfilledBaseByCell, key);
 }
 
 function signalMonitorBackfilledBaseLatestBarMs(
@@ -5943,16 +5956,21 @@ function rememberSignalMonitorBackfilledBaseBars(input: {
   }
   ensureSignalMonitorBackfilledBaseInvalidationSubscription();
   const key = signalMonitorBackfillCellKey(input.symbol, input.timeframe);
-  const existing = signalMonitorBackfilledBaseByCell.get(key);
+  const existing = getSignalMonitorBackfilledBaseEntry(key);
   const contentStamp =
     input.source === "stream-promotion"
       ? existing?.contentStamp ?? input.refreshedAtMs
       : input.refreshedAtMs;
-  signalMonitorBackfilledBaseByCell.set(key, {
-    bars: input.bars.slice(-SIGNAL_MONITOR_MATRIX_BARS_LIMIT),
-    contentStamp,
-    refreshedAt: input.refreshedAtMs,
-  });
+  lruCacheSet(
+    signalMonitorBackfilledBaseByCell,
+    key,
+    {
+      bars: input.bars.slice(-SIGNAL_MONITOR_MATRIX_BARS_LIMIT),
+      contentStamp,
+      refreshedAt: input.refreshedAtMs,
+    },
+    SIGNAL_MONITOR_BACKFILLED_BASE_MAX_CELLS,
+  );
 }
 
 function promoteSignalMonitorBackfilledBaseFromStream(input: {
@@ -5965,7 +5983,7 @@ function promoteSignalMonitorBackfilledBaseFromStream(input: {
     return;
   }
   const key = signalMonitorBackfillCellKey(input.symbol, input.timeframe);
-  const existing = signalMonitorBackfilledBaseByCell.get(key);
+  const existing = getSignalMonitorBackfilledBaseEntry(key);
   if (!existing?.bars.length) {
     return;
   }
@@ -6181,7 +6199,7 @@ async function refreshSignalMonitorBackfilledBaseBars(
         continue;
       }
       for (const timeframe of input.timeframes) {
-        const existing = signalMonitorBackfilledBaseByCell.get(
+        const existing = getSignalMonitorBackfilledBaseEntry(
           signalMonitorBackfillCellKey(normalized, timeframe),
         );
         candidates.push({
@@ -10496,7 +10514,7 @@ function evaluateSignalMonitorMatrixStateFromStreamBars(input: {
   // Skip the load/filter/merge when none changed; ALWAYS run the downstream eval
   // so staleness/age recompute from the live evaluatedAt.
   const cellKey = signalMonitorBackfillCellKey(input.symbol, input.timeframe);
-  const baseEntry = signalMonitorBackfilledBaseByCell.get(cellKey);
+  const baseEntry = getSignalMonitorBackfilledBaseEntry(cellKey);
   const baseContentStamp = baseEntry?.contentStamp ?? 0;
   const aggregateRevision = getSignalMonitorAggregateRevision(input.symbol);
   let completedBars: SignalMonitorBarSnapshot[];
@@ -14897,12 +14915,19 @@ export const __signalMonitorInternalsForTests = {
     symbol: string;
     timeframe: SignalMonitorMatrixTimeframe;
   }) {
-    return signalMonitorBackfilledBaseByCell.get(
+    return getSignalMonitorBackfilledBaseEntry(
       signalMonitorBackfillCellKey(input.symbol, input.timeframe),
     );
   },
+  getSignalMonitorBackfilledBaseCacheStatsForTests() {
+    return {
+      size: signalMonitorBackfilledBaseByCell.size,
+      maxCells: SIGNAL_MONITOR_BACKFILLED_BASE_MAX_CELLS,
+    };
+  },
   shouldSkipSignalMonitorBackfillForPressure,
   shouldSkipSignalMonitorBackfillForQuietProducer,
+  SIGNAL_MONITOR_BACKFILLED_BASE_MAX_CELLS,
   SIGNAL_MONITOR_BACKFILL_REFRESH_MS,
   SIGNAL_MONITOR_BACKFILL_MAX_CELLS_PER_CYCLE,
   SIGNAL_MONITOR_BACKFILL_CONCURRENCY_LIMIT,
