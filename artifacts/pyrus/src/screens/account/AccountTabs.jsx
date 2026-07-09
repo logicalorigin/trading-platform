@@ -10,6 +10,7 @@ import {
   textSize,
 } from "../../lib/uiTokens.jsx";
 import { motionVars } from "../../lib/motion.jsx";
+import { BrokerLogo } from "../../components/brand/brokerLogos";
 import {
   formatAccountMoney,
   formatAccountPercent,
@@ -21,53 +22,17 @@ import {
 const ALL_TAB_ID = "all";
 const SHADOW_TAB_ID = "shadow";
 
-const svgLogoDataUri = (text, fill, fontSize = 9) =>
-  "data:image/svg+xml," +
-  encodeURIComponent(
-    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><text x="12" y="15.5" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-weight="700" font-size="${fontSize}" fill="${fill}">${text}</text></svg>`,
-  );
-
+// `provider` keys the inline-SVG BrokerLogo mark; `tone` drives the active
+// border/background accent; `label` is the human broker name.
 const BROKER_BRANDS = {
-  all: {
-    label: "All accounts",
-    logoUrl: svgLogoDataUri("ALL", "#168BFF", 8),
-    tone: CSS_COLOR.accent,
-  },
-  etrade: {
-    label: "E*TRADE",
-    logoUrl: svgLogoDataUri("E*", "#6F3FD8", 12),
-    tone: CSS_COLOR.purple,
-  },
-  ibkr: {
-    label: "IBKR",
-    logoUrl: svgLogoDataUri("IBKR", "#CC0000", 8),
-    tone: CSS_COLOR.red,
-  },
-  robinhood: {
-    label: "Robinhood",
-    logoUrl: svgLogoDataUri("RH", "#00C805", 10),
-    tone: CSS_COLOR.green,
-  },
-  schwab: {
-    label: "Schwab",
-    logoUrl: svgLogoDataUri("CS", "#00A0DF", 10),
-    tone: CSS_COLOR.blue,
-  },
-  snaptrade: {
-    label: "SnapTrade",
-    logoUrl: svgLogoDataUri("ST", "#168BFF", 10),
-    tone: CSS_COLOR.cyan,
-  },
-  shadow: {
-    label: "Shadow",
-    logoUrl: svgLogoDataUri("SH", "#FF5F9E", 9),
-    tone: CSS_COLOR.pink,
-  },
-  brokerage: {
-    label: "Brokerage",
-    logoUrl: svgLogoDataUri("BR", "#788AA0", 9),
-    tone: CSS_COLOR.textMuted,
-  },
+  all: { label: "All accounts", provider: "all", tone: CSS_COLOR.accent },
+  etrade: { label: "E*TRADE", provider: "etrade", tone: CSS_COLOR.purple },
+  ibkr: { label: "IBKR", provider: "ibkr", tone: CSS_COLOR.red },
+  robinhood: { label: "Robinhood", provider: "robinhood", tone: CSS_COLOR.green },
+  schwab: { label: "Schwab", provider: "schwab", tone: CSS_COLOR.blue },
+  snaptrade: { label: "SnapTrade", provider: "snaptrade", tone: CSS_COLOR.cyan },
+  shadow: { label: "Shadow", provider: "shadow", tone: CSS_COLOR.pink },
+  brokerage: { label: "Brokerage", provider: "brokerage", tone: CSS_COLOR.textMuted },
 };
 
 // `provider` is the ONLY provider-identity field in the normalized account wire
@@ -218,16 +183,16 @@ const AccountTab = ({
         boxShadow: "none",
         display: "flex",
         alignItems: "center",
-        gap: sp(accountIsPhone ? 5 : 7),
+        gap: sp(accountIsPhone ? 6 : 8),
         flex: accountIsPhone
           ? "1 1 calc(50% - 4px)"
           : compact
-            ? "0 0 184px"
-            : "0 1 258px",
-        minWidth: dim(accountIsPhone ? 156 : compact ? 164 : 190),
-        maxWidth: accountIsPhone ? "none" : dim(compact ? 184 : 258),
-        minHeight: dim(accountIsPhone ? 52 : 56),
-        padding: sp(accountIsPhone ? "6px 8px" : "7px 10px"),
+            ? "0 0 168px"
+            : "0 1 240px",
+        minWidth: dim(accountIsPhone ? 150 : compact ? 152 : 180),
+        maxWidth: accountIsPhone ? "none" : dim(compact ? 168 : 240),
+        minHeight: dim(accountIsPhone ? 42 : 46),
+        padding: sp(accountIsPhone ? "5px 8px" : "6px 9px"),
         color: active ? CSS_COLOR.text : CSS_COLOR.textSec,
         fontFamily: T.sans,
         fontSize: fs(accountIsPhone ? 10 : 12),
@@ -238,26 +203,10 @@ const AccountTab = ({
           "background-color var(--ra-motion-standard) var(--ra-motion-ease), border-color var(--ra-motion-standard) var(--ra-motion-ease), color var(--ra-motion-standard) var(--ra-motion-ease)",
       }}
     >
-      <span
-        aria-hidden="true"
-        style={{
-          flexShrink: 0,
-          height: dim(accountIsPhone ? 24 : 28),
-          width: dim(accountIsPhone ? 24 : 28),
-        }}
-      >
-        <img
-          alt=""
-          draggable={false}
-          src={brand?.logoUrl || BROKER_BRANDS.brokerage.logoUrl}
-          style={{
-            display: "block",
-            height: "100%",
-            objectFit: "contain",
-            width: "100%",
-          }}
-        />
-      </span>
+      <BrokerLogo
+        provider={brand?.provider || BROKER_BRANDS.brokerage.provider}
+        size={dim(accountIsPhone ? 22 : 24)}
+      />
       <span
         style={{
           display: "flex",
