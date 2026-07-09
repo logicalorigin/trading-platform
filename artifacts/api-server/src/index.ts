@@ -21,6 +21,7 @@ import {
   listAccounts,
   startAccountFlexRefreshScheduler,
 } from "./services/account";
+import { isIbkrClientPortalConfigured } from "./services/ibkr-client-runtime";
 import {
   getRuntimeDiagnostics,
   getOrderVisibilityProbe,
@@ -143,7 +144,13 @@ async function collectDiagnosticsInput() {
     if (
       accountTarget.positionProbeProvider === "snaptrade" ||
       accountTarget.positionProbeProvider === "none" ||
-      !accountId
+      !accountId ||
+      // Legacy (IBKR) accounts route the position probe through the IBKR Client
+      // Portal transport. When that transport is unconfigured/retired the probe
+      // throws "IBKR Client Portal is not configured." and lands read_probe_failed
+      // in readiness degradedReasons — a false alarm. Skip it as not-applicable;
+      // keep probing when IBKR IS configured (real failures still surface).
+      !isIbkrClientPortalConfigured()
     ) {
       return Promise.resolve(diagnosticsPositionProbeForTarget(accountTarget));
     }

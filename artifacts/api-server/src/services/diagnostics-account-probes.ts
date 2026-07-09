@@ -64,6 +64,22 @@ export function diagnosticsPositionProbeForTarget(
     };
   }
 
+  // Legacy (IBKR) account, but the IBKR Client Portal transport is unconfigured/
+  // retired — the collector routes here instead of the throwing live probe so an
+  // absent broker reads as not-applicable rather than a read_probe_failed alarm.
+  if (target.positionProbeProvider === "legacy") {
+    return {
+      ok: true,
+      count: 0,
+      provider: target.provider,
+      accountId: target.accountId,
+      accountCount: target.accountCount,
+      source: "diagnostics-collector",
+      skippedLegacyBridgeProbe: true,
+      reason: "ibkr_client_portal_not_configured",
+    };
+  }
+
   return {
     ok: true,
     count: 0,

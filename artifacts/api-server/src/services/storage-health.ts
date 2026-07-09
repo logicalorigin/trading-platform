@@ -30,14 +30,29 @@ export type StorageHealthSnapshot = {
   database: string | null;
   user: string | null;
   sslMode: string | null;
+  // pingMs is the END-TO-END probe wall time, NOT DB round-trip latency: it wraps
+  // background-lane admission wait, pool-acquire wait, and statement/commit exec.
+  // Kept for compatibility; use the components below to attribute app-side queueing
+  // vs. actual DB work. Fresh-connection DB RTT is ~2-5ms (see wo-db-pressure-report).
   pingMs: number | null;
+  // Background admission lane (cap 2) queue wait before the probe starts.
+  laneWaitMs: number | null;
+  // pool.connect() wait once admitted (pool saturation shows up here).
+  acquireMs: number | null;
+  // Actual statement execution + synchronous-commit WAL flush (the real DB signal).
+  execMs: number | null;
   reason: string | null;
   error: string | null;
   transient: boolean;
   dbError?: TransientPostgresErrorSummary;
 };
 
-type StorageHealthProbe = () => Promise<void>;
+type StorageHealthProbeTimings = {
+  laneWaitMs: number;
+  acquireMs: number;
+  execMs: number;
+};
+type StorageHealthProbe = () => Promise<StorageHealthProbeTimings | void>;
 type DbLaneRunner = <T>(lane: "background", fn: () => T) => T;
 
 let storageHealthProbeForTests: StorageHealthProbe | null = null;
@@ -56,6 +71,9 @@ function describeDatabaseUrl(): Omit<
   | "reachable"
   | "checkedAt"
   | "pingMs"
+  | "laneWaitMs"
+  | "acquireMs"
+  | "execMs"
   | "readWriteVerified"
   | "reason"
   | "error"
@@ -72,6 +90,9 @@ function buildSnapshot(
     reason: string | null;
     error: string | null;
     pingMs: number | null;
+    laneWaitMs?: number | null;
+    acquireMs?: number | null;
+    execMs?: number | null;
     transient?: boolean;
     dbError?: TransientPostgresErrorSummary;
   },
@@ -93,6 +114,9 @@ function buildSnapshot(
     reachable: input.reachable,
     readWriteVerified: input.status === "ok" && input.reachable,
     pingMs: input.pingMs,
+    laneWaitMs: input.laneWaitMs ?? null,
+    acquireMs: input.acquireMs ?? null,
+    execMs: input.execMs ?? null,
     reason: input.reason,
     error: input.error,
     transient: input.transient ?? false,
@@ -108,9 +132,12 @@ let cachedStorageHealth = buildSnapshot({
   pingMs: null,
 });
 
-async function defaultStorageHealthProbe(): Promise<void> {
+async function defaultStorageHealthProbe(): Promise<StorageHealthProbeTimings> {
+  const laneRequestedAt = Date.now();
   return runInDbLane("background", async () => {
+    const admittedAt = Date.now();
     const client = await pool.connect();
+    const acquiredAt = Date.now();
     const probeId = `probe-${Date.now()}-${Math.random().toString(36).slice(2)}`;
     try {
       await client.query("begin");
@@ -137,6 +164,11 @@ async function defaultStorageHealthProbe(): Promise<void> {
     } finally {
       client.release();
     }
+    return {
+      laneWaitMs: admittedAt - laneRequestedAt,
+      acquireMs: acquiredAt - admittedAt,
+      execMs: Date.now() - acquiredAt,
+    };
   });
 }
 
@@ -193,13 +225,16 @@ export async function refreshStorageHealthSnapshot(): Promise<StorageHealthSnaps
 
   const startedAt = Date.now();
   try {
-    await (storageHealthProbeForTests ?? defaultStorageHealthProbe)();
+    const timings = await (storageHealthProbeForTests ?? defaultStorageHealthProbe)();
     cachedStorageHealth = buildSnapshot({
       status: "ok",
       reachable: true,
       reason: null,
       error: null,
       pingMs: Date.now() - startedAt,
+      laneWaitMs: timings?.laneWaitMs ?? null,
+      acquireMs: timings?.acquireMs ?? null,
+      execMs: timings?.execMs ?? null,
     });
     return cachedStorageHealth;
   } catch (error) {

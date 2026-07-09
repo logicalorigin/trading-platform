@@ -66,3 +66,28 @@ test("selectDiagnosticsAccountProbeTarget preserves legacy probing when no SnapT
   assert.equal(target.snapTradeAccountCount, 0);
   assert.equal(target.positionProbeProvider, "legacy");
 });
+
+test("diagnosticsPositionProbeForTarget yields an ok skip for a legacy account when IBKR is unconfigured", () => {
+  // index.ts routes a legacy account here (instead of the throwing live probe)
+  // when isIbkrClientPortalConfigured() is false. ok:true is what stops
+  // buildProbeMetrics from counting it as a read_probe_failed failure.
+  const probe = diagnosticsPositionProbeForTarget({
+    accountId: "U123",
+    provider: "ibkr",
+    displayName: "IBKR U123",
+    accountCount: 1,
+    snapTradeAccountCount: 0,
+    positionProbeProvider: "legacy",
+  });
+
+  assert.deepEqual(probe, {
+    ok: true,
+    count: 0,
+    provider: "ibkr",
+    accountId: "U123",
+    accountCount: 1,
+    source: "diagnostics-collector",
+    skippedLegacyBridgeProbe: true,
+    reason: "ibkr_client_portal_not_configured",
+  });
+});
