@@ -193,8 +193,16 @@ function defaultLockClient(context: string): ClientLike {
   }
   // A standalone Client (NOT the shared pool) so the lock never consumes one of
   // the 12 pooled connections. `ssl: false` for helium mirrors the shared pool.
+  // Duplicates index.ts's DB_IDLE_TX_TIMEOUT_MS read because importing from
+  // index.ts here would be circular (index.ts re-exports this module).
+  const idleTxTimeoutMs = Number(process.env.DB_IDLE_TX_TIMEOUT_MS);
   return new Client({
     connectionString: config.url,
+    application_name: "pyrus-advisory-lock",
+    idle_in_transaction_session_timeout:
+      Number.isFinite(idleTxTimeoutMs) && idleTxTimeoutMs > 0
+        ? Math.floor(idleTxTimeoutMs)
+        : 10_000,
     ...(heliumDatabase ? { ssl: false } : {}),
   }) as unknown as ClientLike;
 }

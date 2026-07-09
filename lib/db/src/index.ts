@@ -192,6 +192,14 @@ if (!resolvedDatabaseUrl) {
 }
 
 const defaultPoolMax = (): number => {
+  // Reserve the big pool for the API process. Default-open: an unset
+  // PYRUS_DB_PROFILE is treated as the API (deploy-safe until the supervisor
+  // exports it); scripts/tools opt IN to the small cap by setting any other
+  // value (e.g. PYRUS_DB_PROFILE=script). DB_POOL_MAX still overrides.
+  const profile = process.env.PYRUS_DB_PROFILE;
+  if (profile && profile !== "api") {
+    return 2;
+  }
   try {
     // A single dashboard request fans out into ~10 concurrent shadow sub-reads
     // alongside background mark-refresh writers; a pool of 6 saturates and the
@@ -228,10 +236,19 @@ const defaultConnectionTimeoutMillis = heliumDatabase ? 30_000 : undefined;
 // only fires on pathological stalls. Override with DB_STATEMENT_TIMEOUT_MS.
 const defaultStatementTimeoutMillis = heliumDatabase ? 15_000 : undefined;
 const resolvedPoolMax = readPositiveInteger("DB_POOL_MAX", defaultPoolMax());
+// Server-side kill switch for connections parked inside an open transaction
+// (the pathology that pins scarce pooled connections). Sent as a Postgres
+// startup parameter by pg's getStartupConf().
+const idleInTransactionSessionTimeoutMillis = readPositiveInteger(
+  "DB_IDLE_TX_TIMEOUT_MS",
+  10_000,
+);
 
 export const pool = new Pool({
   connectionString: resolvedDatabaseUrl,
   max: resolvedPoolMax,
+  application_name: `pyrus-${process.env.PYRUS_DB_APP || "app"}`,
+  idle_in_transaction_session_timeout: idleInTransactionSessionTimeoutMillis,
   ...(heliumDatabase ? { ssl: false } : {}),
   ...(readOptionalPositiveInteger("DB_CONNECTION_TIMEOUT_MS") !== undefined ||
   defaultConnectionTimeoutMillis !== undefined
@@ -253,6 +270,32 @@ export const pool = new Pool({
   ...optionalIntegerOption("DB_IDLE_TIMEOUT_MS", "idleTimeoutMillis"),
 });
 attachPostgresPoolErrorHandler(pool);
+
+/**
+ * Reserved trading lane: a small dedicated pool so order/exit writes can never
+ * be starved by dashboard read storms saturating the shared pool. Lazy like
+ * every pg.Pool — zero connections are opened until a consumer runs its first
+ * query, so exporting it changes nothing until consumers wire onto it.
+ * Tight 5s statement_timeout: trading writes are ms-scale; anything slower is
+ * pathological and must release its scarce connection fast.
+ */
+export const tradingPool = new Pool({
+  connectionString: resolvedDatabaseUrl,
+  max: readPositiveInteger("DB_TRADING_POOL_MAX", 3),
+  ...(heliumDatabase ? { ssl: false } : {}),
+  ...(readOptionalPositiveInteger("DB_CONNECTION_TIMEOUT_MS") !== undefined ||
+  defaultConnectionTimeoutMillis !== undefined
+    ? {
+        connectionTimeoutMillis:
+          readOptionalPositiveInteger("DB_CONNECTION_TIMEOUT_MS") ??
+          defaultConnectionTimeoutMillis,
+      }
+    : {}),
+  statement_timeout: 5_000,
+  application_name: "pyrus-api-trading",
+  idle_in_transaction_session_timeout: idleInTransactionSessionTimeoutMillis,
+});
+attachPostgresPoolErrorHandler(tradingPool);
 
 const instrumentedClients = new WeakSet<object>();
 
@@ -443,6 +486,12 @@ instrumentPostgresPoolDiagnostics(pool);
 export type WorkspaceDatabase = NodePgDatabase<typeof schema>;
 
 const productionDb: WorkspaceDatabase = drizzle(pool, { schema });
+
+/**
+ * Drizzle client over the reserved trading pool. No test seam / Proxy: nothing
+ * consumes it yet, and trading writers should hit the real pool directly.
+ */
+export const dbTrading: WorkspaceDatabase = drizzle(tradingPool, { schema });
 
 // Mutable indirection so a test harness can point `db` at an in-process
 // PGlite-backed drizzle instance for the duration of a test, then restore the
