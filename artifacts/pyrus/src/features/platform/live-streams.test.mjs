@@ -19,6 +19,52 @@ test("broker stream freshness tolerates normal SSE jitter under load", () => {
   assert.doesNotMatch(source, /const ACCOUNT_STREAM_FRESH_MS = 7_000;/);
 });
 
+test("option quote patch preserves a shadow prior-day position's backend day change", () => {
+  const { patchAccountPositionRowFromOptionQuote } = __liveStreamsInternalsForTests;
+  const priorDay = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString();
+  const baseRow = {
+    id: "shadow:RH",
+    accountId: "shadow",
+    source: "SHADOW_LEDGER",
+    symbol: "RH",
+    assetClass: "option",
+    optionContract: {
+      underlying: "RH",
+      multiplier: 100,
+      sharesPerContract: 100,
+      strike: 152.5,
+      right: "call",
+      expirationDate: "2026-07-10",
+      providerContractId: "O:RH260710C00152500",
+    },
+    quantity: 2,
+    averageCost: 7.03,
+    mark: 14.6,
+    marketValue: 2920,
+    unrealizedPnl: 1514,
+    dayChange: 1010, // backend position P&L day change
+    dayChangePercent: 52.6,
+    openedAt: priorDay,
+  };
+  // The option quote's own day change is 0 — it must NOT clobber the position day change.
+  const quote = {
+    providerContractId: "O:RH260710C00152500",
+    bid: 14.5,
+    ask: 14.7,
+    mark: 14.6,
+    dayChange: 0,
+    dayChangePercent: 0,
+  };
+  const patched = patchAccountPositionRowFromOptionQuote(baseRow, quote);
+  assert.equal(patched.dayChange, 1010);
+  assert.equal(patched.dayChangePercent, 52.6);
+
+  // Control: a non-shadow prior-day option is NOT preserved (takes the quote's day change).
+  const realRow = { ...baseRow, accountId: "U123", source: "IBKR" };
+  const patchedReal = patchAccountPositionRowFromOptionQuote(realRow, quote);
+  assert.equal(patchedReal.dayChange, 0);
+});
+
 test("option quote cache rejects future-dated ticks and self-heals a poisoned timestamp", () => {
   const { cacheOptionQuoteSnapshot } = __liveStreamsInternalsForTests;
   const now = Date.now();

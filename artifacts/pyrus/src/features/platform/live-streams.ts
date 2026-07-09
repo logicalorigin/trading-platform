@@ -1813,14 +1813,30 @@ const patchAccountPositionRowFromOptionQuote = (
   const sameDayPosition = accountPositionOpenedOnCurrentMarketDay(row.openedAt);
   const sameDayUnrealizedPnl = finiteOptionNumber(unrealizedPnl);
   const sameDayUnrealizedPnlPercent = finiteOptionNumber(unrealizedPnlPercent);
-  const dayChange =
-    sameDayPosition && sameDayUnrealizedPnl !== null
+  // A shadow-ledger prior-day position's Day $ is its P&L change since yesterday's close
+  // (the backend's row.dayChange), NOT the option contract's own day move. The option
+  // quote's dayChange is frequently 0/absent for these, so patching it over the backend
+  // value blanked the Day column to $0. Mirror applyLiveOptionQuoteToRow: preserve the
+  // backend day change for shadow-ledger prior-day rows.
+  const isShadowLedgerRow =
+    String(row.accountId ?? "").toLowerCase() === "shadow" ||
+    String((row as { source?: unknown }).source ?? "").toUpperCase() ===
+      "SHADOW_LEDGER";
+  const preserveBackendDayChange =
+    !sameDayPosition &&
+    isShadowLedgerRow &&
+    (finiteOptionNumber(row.dayChange) !== null ||
+      finiteOptionNumber(row.dayChangePercent) !== null);
+  const dayChange = preserveBackendDayChange
+    ? row.dayChange
+    : sameDayPosition && sameDayUnrealizedPnl !== null
       ? sameDayUnrealizedPnl
       : perContractDayChange !== null && quantity !== null
         ? perContractDayChange * quantity * multiplier
         : row.dayChange;
-  const dayChangePercent =
-    sameDayPosition && sameDayUnrealizedPnlPercent !== null
+  const dayChangePercent = preserveBackendDayChange
+    ? row.dayChangePercent
+    : sameDayPosition && sameDayUnrealizedPnlPercent !== null
       ? sameDayUnrealizedPnlPercent
       : finiteOptionNumber(
           (quote as LiveOptionQuoteSnapshot & { dayChangePercent?: unknown }).dayChangePercent,
