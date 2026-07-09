@@ -32,6 +32,62 @@ type SubscribeMessage = {
   requiresGreeks?: unknown;
 };
 
+type OptionQuotePayload = {
+  quotes?: unknown[];
+  underlying?: string | null;
+};
+
+type OptionQuoteQueueState = {
+  quotePriorityByProviderContractId: Map<string, number>;
+  pendingQuotesByProviderContractId: Map<string, unknown>;
+};
+
+function createOptionQuoteQueueState(): OptionQuoteQueueState {
+  return {
+    quotePriorityByProviderContractId: new Map<string, number>(),
+    pendingQuotesByProviderContractId: new Map<string, unknown>(),
+  };
+}
+
+function clearOptionQuoteQueueState(state: OptionQuoteQueueState): void {
+  state.quotePriorityByProviderContractId.clear();
+  state.pendingQuotesByProviderContractId.clear();
+}
+
+function resetOptionQuoteQueueSubscription(
+  state: OptionQuoteQueueState,
+  providerContractIds: string[],
+): void {
+  clearOptionQuoteQueueState(state);
+  providerContractIds.forEach((providerContractId, index) => {
+    state.quotePriorityByProviderContractId.set(providerContractId, index);
+  });
+}
+
+function readQuoteProviderContractId(quote: unknown): string {
+  return quote && typeof quote === "object" && "providerContractId" in quote
+    ? String(
+        (quote as { providerContractId?: unknown }).providerContractId || "",
+      ).trim()
+    : "";
+}
+
+function enqueueCurrentOptionQuotes(
+  state: OptionQuoteQueueState,
+  payload: OptionQuotePayload,
+): void {
+  (payload.quotes || []).forEach((quote) => {
+    const providerContractId = readQuoteProviderContractId(quote);
+    if (
+      !providerContractId ||
+      !state.quotePriorityByProviderContractId.has(providerContractId)
+    ) {
+      return;
+    }
+    state.pendingQuotesByProviderContractId.set(providerContractId, quote);
+  });
+}
+
 function normalizeProviderContractIds(value: unknown): string[] {
   if (!Array.isArray(value)) {
     return [];
@@ -114,6 +170,15 @@ function isOptionsQuoteUpgrade(request: IncomingMessage): boolean {
   return url.pathname === OPTION_QUOTES_WS_PATH;
 }
 
+export const __optionQuoteWsInternalsForTests = {
+  createOptionQuoteQueueState,
+  enqueueCurrentOptionQuotes,
+  resetOptionQuoteQueueSubscription,
+  getPendingProviderContractIds(state: OptionQuoteQueueState): string[] {
+    return Array.from(state.pendingQuotesByProviderContractId.keys());
+  },
+};
+
 export function attachOptionQuoteWebSocket(server: Server): void {
   const wss = new WebSocketServer({ noServer: true });
 
@@ -134,8 +199,7 @@ export function attachOptionQuoteWebSocket(server: Server): void {
     let degraded = false;
     let highBufferedAmountCount = 0;
     let flushTimer: NodeJS.Timeout | null = null;
-    const quotePriorityByProviderContractId = new Map<string, number>();
-    const pendingQuotesByProviderContractId = new Map<string, unknown>();
+    const quoteQueueState = createOptionQuoteQueueState();
 
     const sendStatus = (payload: Record<string, unknown> = {}) => {
       sendJson(socket, {
@@ -157,7 +221,10 @@ export function attachOptionQuoteWebSocket(server: Server): void {
     };
     const flushQuotes = () => {
       flushTimer = null;
-      if (socket.readyState !== WebSocket.OPEN || pendingQuotesByProviderContractId.size === 0) {
+      if (
+        socket.readyState !== WebSocket.OPEN ||
+        quoteQueueState.pendingQuotesByProviderContractId.size === 0
+      ) {
         return;
       }
 
@@ -179,10 +246,16 @@ export function attachOptionQuoteWebSocket(server: Server): void {
         sendStatus({ reason: degraded ? "buffered_amount_degraded" : "buffered_amount_recovered" });
       }
 
-      const entries = Array.from(pendingQuotesByProviderContractId.entries())
+      const entries = Array.from(
+        quoteQueueState.pendingQuotesByProviderContractId.entries(),
+      )
         .sort((left, right) => {
-          const leftPriority = quotePriorityByProviderContractId.get(left[0]) ?? Number.MAX_SAFE_INTEGER;
-          const rightPriority = quotePriorityByProviderContractId.get(right[0]) ?? Number.MAX_SAFE_INTEGER;
+          const leftPriority =
+            quoteQueueState.quotePriorityByProviderContractId.get(left[0]) ??
+            Number.MAX_SAFE_INTEGER;
+          const rightPriority =
+            quoteQueueState.quotePriorityByProviderContractId.get(right[0]) ??
+            Number.MAX_SAFE_INTEGER;
           return leftPriority - rightPriority;
         });
       const sendCount = degraded
@@ -190,7 +263,7 @@ export function attachOptionQuoteWebSocket(server: Server): void {
         : entries.length;
       const quotes = entries.slice(0, sendCount).map((entry) => entry[1]);
       entries.slice(0, sendCount).forEach(([providerContractId]) => {
-        pendingQuotesByProviderContractId.delete(providerContractId);
+        quoteQueueState.pendingQuotesByProviderContractId.delete(providerContractId);
       });
 
       sendJson(socket, {
@@ -198,21 +271,12 @@ export function attachOptionQuoteWebSocket(server: Server): void {
         quotes,
       });
 
-      if (pendingQuotesByProviderContractId.size > 0) {
+      if (quoteQueueState.pendingQuotesByProviderContractId.size > 0) {
         scheduleFlush();
       }
     };
-    const enqueueQuotes = (payload: { quotes?: unknown[]; underlying?: string | null }) => {
-      (payload.quotes || []).forEach((quote) => {
-        const providerContractId =
-          quote && typeof quote === "object" && "providerContractId" in quote
-            ? String((quote as { providerContractId?: unknown }).providerContractId || "").trim()
-            : "";
-        if (!providerContractId) {
-          return;
-        }
-        pendingQuotesByProviderContractId.set(providerContractId, quote);
-      });
+    const enqueueQuotes = (payload: OptionQuotePayload) => {
+      enqueueCurrentOptionQuotes(quoteQueueState, payload);
       scheduleFlush();
     };
     const heartbeatTimer = setInterval(() => {
@@ -233,7 +297,7 @@ export function attachOptionQuoteWebSocket(server: Server): void {
       }
       unsubscribe();
       unsubscribe = () => {};
-      pendingQuotesByProviderContractId.clear();
+      clearOptionQuoteQueueState(quoteQueueState);
     };
 
     socket.on("message", (raw) => {
@@ -296,10 +360,7 @@ export function attachOptionQuoteWebSocket(server: Server): void {
       unsubscribe = () => {};
       currentSubscriptionKey = subscriptionKey;
       currentProviderContractIds = providerContractIds;
-      quotePriorityByProviderContractId.clear();
-      providerContractIds.forEach((providerContractId, index) => {
-        quotePriorityByProviderContractId.set(providerContractId, index);
-      });
+      resetOptionQuoteQueueSubscription(quoteQueueState, providerContractIds);
 
       try {
         unsubscribe = subscribeOptionQuoteSnapshots(
