@@ -19,6 +19,11 @@ export type IncrementalPyrusSignalsEvaluator = {
   result(): PyrusSignalsEvaluation;
 };
 
+export type IncrementalPyrusSignalsEvaluationOptions = {
+  includeProvisionalSignals?: boolean;
+  lastBarClosed?: boolean;
+};
+
 const toIso = (bar: PyrusSignalsBar): string =>
   bar.ts || new Date(bar.time * 1000).toISOString();
 
@@ -496,7 +501,7 @@ class IncrementalPyrusSignalsEvaluatorImpl
   private readonly signalEvents: PyrusSignalsSignalEvent[] = [];
   private readonly intervals = new MedianPositiveIntervalTracker();
   private readonly includeProvisionalSignals: boolean;
-  private readonly lastBarClosed = true;
+  private readonly lastBarClosed: boolean;
 
   private atrInitialRolling = 0;
   private atrValue = Number.NaN;
@@ -511,14 +516,18 @@ class IncrementalPyrusSignalsEvaluatorImpl
   private breakableLow = Number.NaN;
   private previousRegimeDirection: number | null = null;
 
-  constructor(private readonly settings: PyrusSignalsSignalSettings) {
+  constructor(
+    private readonly settings: PyrusSignalsSignalSettings,
+    options: IncrementalPyrusSignalsEvaluationOptions = {},
+  ) {
     this.atrSmoothedSma = new IncrementalFiniteSma(settings.atrSmoothing);
     this.atrSmoothed = this.atrSmoothedSma.result;
     this.adxState = new IncrementalAdx(settings.adxLength);
     this.volumeSmaState = new IncrementalFiniteSma(settings.volumeMaLength);
     this.volumeSma = this.volumeSmaState.result;
     this.bbMidState = new IncrementalFiniteSma(settings.shadowLength);
-    this.includeProvisionalSignals = !settings.waitForBarClose;
+    this.includeProvisionalSignals = options.includeProvisionalSignals !== false;
+    this.lastBarClosed = options.lastBarClosed === true;
   }
 
   append(bar: PyrusSignalsBar): PyrusSignalsEvaluation {
@@ -537,6 +546,7 @@ class IncrementalPyrusSignalsEvaluatorImpl
     this.appendVolatilityScore(index);
     this.appendPaintSlots();
     this.refreshRetroactiveFilterStates(changedAdxIndexes, index);
+    this.promoteNoLongerFinalBar(index - 1);
     this.appendStructureAndSignals(index);
 
     if (medianChanged) {
@@ -753,11 +763,7 @@ class IncrementalPyrusSignalsEvaluatorImpl
     );
     this.previousRegimeDirection = activeRegimeDirection;
 
-    const actionable =
-      this.includeProvisionalSignals ||
-      !this.settings.waitForBarClose ||
-      this.lastBarClosed ||
-      index < this.chartBars.length - 1;
+    const actionable = this.isActionableIndex(index);
     const pushStructure = (
       eventType: PyrusSignalsStructureEventType,
       direction: PyrusSignalsDirection,
@@ -897,39 +903,70 @@ class IncrementalPyrusSignalsEvaluatorImpl
       );
       structureEvent.filterState = filterState;
 
-      const existingSignalIndex = this.signalEvents.findIndex(
-        (event) =>
-          event.barIndex === changedIndex &&
-          event.direction === structureEvent.direction,
-      );
-      const shouldEmitSignal = filterState.passes && structureEvent.actionable;
-      if (!shouldEmitSignal) {
-        if (existingSignalIndex >= 0) {
-          this.signalEvents.splice(existingSignalIndex, 1);
-        }
-        continue;
-      }
-
-      const signalEvent = this.buildSignalEvent(
-        changedIndex,
-        structureEvent.direction,
-        filterState,
-        structureEvent.actionable,
-      );
-      if (existingSignalIndex >= 0) {
-        this.signalEvents[existingSignalIndex] = signalEvent;
-        continue;
-      }
-
-      const insertAt = this.signalEvents.findIndex(
-        (event) => event.barIndex > changedIndex,
-      );
-      if (insertAt === -1) {
-        this.signalEvents.push(signalEvent);
-      } else {
-        this.signalEvents.splice(insertAt, 0, signalEvent);
-      }
+      this.syncSignalEventForStructure(structureEvent);
     }
+  }
+
+  private promoteNoLongerFinalBar(index: number): void {
+    if (index < 0 || !this.isActionableIndex(index)) {
+      return;
+    }
+
+    for (const structureEvent of this.structureEvents) {
+      if (structureEvent.barIndex !== index || structureEvent.actionable) {
+        continue;
+      }
+      structureEvent.actionable = true;
+      this.syncSignalEventForStructure(structureEvent);
+    }
+  }
+
+  private syncSignalEventForStructure(
+    structureEvent: PyrusSignalsStructureEvent,
+  ): void {
+    if (
+      structureEvent.eventType !== "bullish_choch" &&
+      structureEvent.eventType !== "bearish_choch"
+    ) {
+      return;
+    }
+    if (!structureEvent.filterState) {
+      return;
+    }
+
+    const existingSignalIndex = this.signalEvents.findIndex(
+      (event) =>
+        event.barIndex === structureEvent.barIndex &&
+        event.direction === structureEvent.direction,
+    );
+    const shouldEmitSignal =
+      structureEvent.filterState.passes && structureEvent.actionable;
+    if (!shouldEmitSignal) {
+      if (existingSignalIndex >= 0) {
+        this.signalEvents.splice(existingSignalIndex, 1);
+      }
+      return;
+    }
+
+    const signalEvent = this.buildSignalEvent(
+      structureEvent.barIndex,
+      structureEvent.direction,
+      structureEvent.filterState,
+      structureEvent.actionable,
+    );
+    if (existingSignalIndex >= 0) {
+      this.signalEvents[existingSignalIndex] = signalEvent;
+      return;
+    }
+
+    const insertAt = this.signalEvents.findIndex(
+      (event) => event.barIndex > structureEvent.barIndex,
+    );
+    if (insertAt === -1) {
+      this.signalEvents.push(signalEvent);
+      return;
+    }
+    this.signalEvents.splice(insertAt, 0, signalEvent);
   }
 
   private buildSignalEvent(
@@ -964,6 +1001,15 @@ class IncrementalPyrusSignalsEvaluatorImpl
       filtered: false,
       filterState,
     };
+  }
+
+  private isActionableIndex(index: number): boolean {
+    return (
+      this.includeProvisionalSignals ||
+      !this.settings.waitForBarClose ||
+      this.lastBarClosed ||
+      index < this.chartBars.length - 1
+    );
   }
 
   private refreshPaintSeries(): void {
@@ -1019,5 +1065,6 @@ class IncrementalPyrusSignalsEvaluatorImpl
 
 export const createIncrementalPyrusSignalsEvaluator = (
   settings: PyrusSignalsSignalSettings,
+  options: IncrementalPyrusSignalsEvaluationOptions = {},
 ): IncrementalPyrusSignalsEvaluator =>
-  new IncrementalPyrusSignalsEvaluatorImpl(settings);
+  new IncrementalPyrusSignalsEvaluatorImpl(settings, options);

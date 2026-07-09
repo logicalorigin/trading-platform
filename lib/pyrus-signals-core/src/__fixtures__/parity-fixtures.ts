@@ -38,6 +38,11 @@ export type IncrementalPyrusSignalsEvaluator = (
   series: PyrusSignalsBar[],
 ) => PyrusSignalsEvaluation;
 
+export type PyrusSignalsFixtureEvaluationOptions = {
+  includeProvisionalSignals?: boolean;
+  lastBarClosed?: boolean;
+};
+
 const BAR_INTERVAL_SECONDS = 15 * 60;
 const BASE_TIME_SECONDS = 1_700_000_000;
 const DEFAULT_LENGTH = 1000;
@@ -394,12 +399,14 @@ export const PYRUS_SIGNALS_PARITY_FIXTURES =
 export const evaluatePyrusSignalsFixture = (
   chartBars: PyrusSignalsBar[],
   settings: PyrusSignalsSignalSettings = PYRUS_SIGNALS_DEFAULT_FIXTURE_SETTINGS,
+  options: PyrusSignalsFixtureEvaluationOptions = {},
 ): PyrusSignalsEvaluation =>
   evaluatePyrusSignalsSignals({
     chartBars,
     settings,
-    includeProvisionalSignals: !settings.waitForBarClose,
-    lastBarClosed: true,
+    includeProvisionalSignals:
+      options.includeProvisionalSignals ?? !settings.waitForBarClose,
+    lastBarClosed: options.lastBarClosed ?? true,
   });
 
 const normalizeStableValue = (value: unknown): StableJsonValue | undefined => {
@@ -590,6 +597,7 @@ export const minimumAppendParityLength = (
 export const assertAppendParity = (
   series: PyrusSignalsBar[],
   evaluateIncremental: IncrementalPyrusSignalsEvaluator,
+  options: PyrusSignalsFixtureEvaluationOptions = {},
 ): void => {
   if (!series.length) {
     return;
@@ -597,7 +605,11 @@ export const assertAppendParity = (
   const start = Math.min(series.length, minimumAppendParityLength());
   for (let length = start; length <= series.length; length += 1) {
     const prefix = series.slice(0, length);
-    const fresh = evaluatePyrusSignalsFixture(prefix);
+    const fresh = evaluatePyrusSignalsFixture(
+      prefix,
+      PYRUS_SIGNALS_DEFAULT_FIXTURE_SETTINGS,
+      options,
+    );
     const incremental = evaluateIncremental(prefix);
     const freshBytes = stableSerialize(fresh);
     const incrementalBytes = stableSerialize(incremental);

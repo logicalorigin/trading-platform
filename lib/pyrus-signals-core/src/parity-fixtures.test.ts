@@ -17,6 +17,7 @@ import {
   PYRUS_SIGNALS_PARITY_FIXTURES,
   stableSerialize,
 } from "./__fixtures__/parity-fixtures";
+import type { IncrementalPyrusSignalsEvaluationOptions } from "./incremental";
 import type {
   PyrusSignalsBar,
   PyrusSignalsEvaluation,
@@ -27,6 +28,11 @@ const goldenDirectory = join(
   dirname(fileURLToPath(import.meta.url)),
   "__fixtures__/goldens",
 );
+
+const GOLDEN_INCREMENTAL_OPTIONS = {
+  includeProvisionalSignals: !PYRUS_SIGNALS_DEFAULT_FIXTURE_SETTINGS.waitForBarClose,
+  lastBarClosed: true,
+} satisfies IncrementalPyrusSignalsEvaluationOptions;
 
 test("parity fixtures match committed golden evaluations", async () => {
   assert.ok(PYRUS_SIGNALS_PARITY_FIXTURES.length >= 11);
@@ -59,8 +65,9 @@ test("append parity harness passes with from-scratch evaluation over representat
 
 const createAppendParityAdapter = (
   settings: PyrusSignalsSignalSettings = PYRUS_SIGNALS_DEFAULT_FIXTURE_SETTINGS,
+  options: IncrementalPyrusSignalsEvaluationOptions = GOLDEN_INCREMENTAL_OPTIONS,
 ): ((series: PyrusSignalsBar[]) => PyrusSignalsEvaluation) => {
-  const evaluator = createIncrementalPyrusSignalsEvaluator(settings);
+  const evaluator = createIncrementalPyrusSignalsEvaluator(settings, options);
   let appended = 0;
   return (series) => {
     assert.ok(
@@ -79,7 +86,11 @@ const assertAppendParityWithSettings = (
   series: PyrusSignalsBar[],
   settings: PyrusSignalsSignalSettings,
 ): void => {
-  const evaluator = createIncrementalPyrusSignalsEvaluator(settings);
+  const options = {
+    includeProvisionalSignals: !settings.waitForBarClose,
+    lastBarClosed: true,
+  } satisfies IncrementalPyrusSignalsEvaluationOptions;
+  const evaluator = createIncrementalPyrusSignalsEvaluator(settings, options);
   const start = Math.min(series.length, minimumAppendParityLength(settings));
   for (let index = 0; index < series.length; index += 1) {
     const incremental = evaluator.append(series[index]);
@@ -87,7 +98,11 @@ const assertAppendParityWithSettings = (
     if (length < start) {
       continue;
     }
-    const fresh = evaluatePyrusSignalsFixture(series.slice(0, length), settings);
+    const fresh = evaluatePyrusSignalsFixture(
+      series.slice(0, length),
+      settings,
+      options,
+    );
     const freshBytes = stableSerialize(fresh);
     const incrementalBytes = stableSerialize(incremental);
     if (freshBytes !== incrementalBytes) {
@@ -157,9 +172,11 @@ test("incremental evaluators keep interleaved state isolated", () => {
 
   const left = createIncrementalPyrusSignalsEvaluator(
     PYRUS_SIGNALS_DEFAULT_FIXTURE_SETTINGS,
+    GOLDEN_INCREMENTAL_OPTIONS,
   );
   const right = createIncrementalPyrusSignalsEvaluator(
     PYRUS_SIGNALS_DEFAULT_FIXTURE_SETTINGS,
+    GOLDEN_INCREMENTAL_OPTIONS,
   );
   const sampleLength = 320;
   for (let index = 0; index < sampleLength; index += 1) {
@@ -189,6 +206,7 @@ test("incremental last-100 appends are materially faster than rebuilding prefixe
   assert.ok(fixture);
   const evaluator = createIncrementalPyrusSignalsEvaluator(
     PYRUS_SIGNALS_DEFAULT_FIXTURE_SETTINGS,
+    GOLDEN_INCREMENTAL_OPTIONS,
   );
   for (const bar of fixture.bars.slice(0, 900)) {
     evaluator.append(bar);
