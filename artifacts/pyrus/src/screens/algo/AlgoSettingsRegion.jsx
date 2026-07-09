@@ -3266,7 +3266,7 @@ export const AlgoSettingsRegion = ({
       })}
 
       <ExpandedLimitsSection
-        disabled={!focusedDeployment}
+        disabled={disabled}
         handleApplyExpandedCapacity={handleApplyExpandedCapacity}
         updateProfileMutation={updateProfileMutation}
       />

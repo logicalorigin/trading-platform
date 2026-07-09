@@ -3,6 +3,10 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 const source = readFileSync(new URL("./AlgoScreen.jsx", import.meta.url), "utf8");
+const settingsRegionSource = readFileSync(
+  new URL("./algo/AlgoSettingsRegion.jsx", import.meta.url),
+  "utf8",
+);
 
 test("Algo readiness uses Massive market data instead of the retired IBKR bridge", () => {
   assert.match(
@@ -118,6 +122,54 @@ test("Algo settings save frees live stream connection slots before mutating", ()
     /await waitForCriticalApiMutationPauseSettle\(\s*ALGO_SETTINGS_SAVE_STREAM_DRAIN_MS,\s*\);/,
   );
   assert.match(source, /releaseConnectionPause\(\);/);
+});
+
+test("Expanded Limits APPLY shares the algo save-drain disabled gate", () => {
+  const regionDisabledExpression = settingsRegionSource.match(
+    /const disabled =\s*!focusedDeployment \|\|\s*!controlBaselineReady \|\|\s*saveInProgress \|\|\s*updateProfileMutation\?\.isPending \|\|\s*updateStrategySettingsMutation\?\.isPending;/u,
+  )?.[0];
+  assert.ok(regionDisabledExpression, "region disabled expression should include saveInProgress");
+
+  const expandedLimitsRender = settingsRegionSource.match(
+    /<ExpandedLimitsSection[\s\S]*?\/>/u,
+  )?.[0];
+  assert.ok(expandedLimitsRender, "ExpandedLimitsSection render should exist");
+  assert.match(expandedLimitsRender, /disabled=\{disabled\}/);
+  assert.doesNotMatch(expandedLimitsRender, /disabled=\{!focusedDeployment\}/);
+
+  const expandedLimitsApply = settingsRegionSource.match(
+    /data-testid="signal-options-expanded-capacity"[\s\S]*?>\s*APPLY/u,
+  )?.[0];
+  assert.ok(expandedLimitsApply, "Expanded Limits APPLY button should exist");
+  assert.match(expandedLimitsApply, /disabled=\{disabled \|\| updateProfileMutation\?\.isPending\}/);
+
+  const settingsDisabled = ({
+    focusedDeployment,
+    controlBaselineReady = true,
+    saveInProgress = false,
+    profilePending = false,
+    strategyPending = false,
+  }) =>
+    !focusedDeployment ||
+    !controlBaselineReady ||
+    saveInProgress ||
+    profilePending ||
+    strategyPending;
+
+  assert.equal(
+    settingsDisabled({
+      focusedDeployment: { id: "deployment-1" },
+      saveInProgress: true,
+    }),
+    true,
+  );
+  assert.equal(
+    settingsDisabled({
+      focusedDeployment: { id: "deployment-1" },
+      saveInProgress: false,
+    }),
+    false,
+  );
 });
 
 test("Algo settings save avoids the full performance refresh lane", () => {
