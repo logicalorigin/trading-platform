@@ -1709,6 +1709,28 @@ async function loadRunPoints(runId: string): Promise<BacktestEquityPoint[]> {
   }));
 }
 
+async function loadPreviewSeries(
+  latestRunId: string | null,
+  bestRunId: string | null,
+  loadPoints: (runId: string) => Promise<BacktestEquityPoint[]> = loadRunPoints,
+) {
+  const latestSeriesPromise = latestRunId
+    ? loadPoints(latestRunId)
+    : Promise.resolve([]);
+  const bestSeriesPromise =
+    bestRunId === latestRunId
+      ? latestSeriesPromise
+      : bestRunId
+        ? loadPoints(bestRunId)
+        : Promise.resolve([]);
+  const [latestSeries, bestSeries] = await Promise.all([
+    latestSeriesPromise,
+    bestSeriesPromise,
+  ]);
+
+  return { latestSeries, bestSeries };
+}
+
 function buildTradeMarkerGroups(
   chartBars: Array<{ time: number }>,
   tradeOverlays: Array<{
@@ -3109,12 +3131,10 @@ export async function getBacktestStudyPreviewChart(studyId: string) {
   const latestCompletedRun =
     [...completedRuns].sort(compareCompletedRuns)[0] ?? null;
   const bestCompletedRun = resolveBestCompletedRun(completedRuns);
-  const [latestSeries, bestSeries] = await Promise.all([
-    latestCompletedRun
-      ? loadRunPoints(latestCompletedRun.id)
-      : Promise.resolve([]),
-    bestCompletedRun ? loadRunPoints(bestCompletedRun.id) : Promise.resolve([]),
-  ]);
+  const { latestSeries, bestSeries } = await loadPreviewSeries(
+    latestCompletedRun?.id ?? null,
+    bestCompletedRun?.id ?? null,
+  );
 
   return {
     studyId,
@@ -3386,4 +3406,5 @@ export async function listBacktestDraftStrategies() {
 // (backtesting.ts previously had no test seam).
 export const __backtestingInternalsForTests = {
   calculateDte,
+  loadPreviewSeries,
 };
