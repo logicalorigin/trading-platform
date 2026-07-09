@@ -130,7 +130,8 @@ test("Robinhood sync reads accounts over MCP and upserts sanitized broker record
 
       assert.equal(result.provider, "robinhood");
       assert.equal(result.connections.length, 1);
-      assert.equal(result.connections[0]!.executionReady, false);
+      // An agentic account is now execution-ready, so the connection is too.
+      assert.equal(result.connections[0]!.executionReady, true);
       assert.equal(result.accounts.length, 2);
 
       const agentic = result.accounts.find(
@@ -142,20 +143,26 @@ test("Robinhood sync reads accounts over MCP and upserts sanitized broker record
       assert.equal(agentic.baseCurrency, "USD");
       // Full account numbers are redacted before persistence.
       assert.ok(!agentic.displayName.includes("12345678"));
-      assert.ok(
-        agentic.executionBlockers.includes(
-          "robinhood.order_tooling_unverified",
-        ),
-      );
-      assert.ok(
-        !agentic.executionBlockers.includes("robinhood.account.non_agentic"),
-      );
+      // Order tooling is schema-verified: an open agentic account is
+      // execution-ready with no residual blockers.
+      assert.equal(agentic.executionReady, true);
+      assert.equal(agentic.executionBlockers.length, 0);
+
+      const agenticRow = await db
+        .select()
+        .from(brokerAccountsTable)
+        .where(eq(brokerAccountsTable.providerAccountId, "robinhood:agentic-acct-1"));
+      assert.equal(agenticRow.length, 1);
+      assert.ok(agenticRow[0]!.capabilities.includes("robinhood-agentic"));
+      assert.ok(agenticRow[0]!.capabilities.includes("execution-ready"));
+      assert.ok(agenticRow[0]!.capabilities.includes("orders"));
 
       const individual = result.accounts.find(
         (account) => account.robinhoodAccountId === "individual-acct-2",
       );
       assert.ok(individual);
       assert.equal(individual.agentic, false);
+      assert.equal(individual.executionReady, false);
       assert.ok(
         individual.executionBlockers.includes("robinhood.account.non_agentic"),
       );

@@ -60,6 +60,7 @@ type NormalizedAccount = {
   displayName: string;
   agentic: boolean | null;
   status: "open" | "closed" | "archived" | null;
+  deactivated: boolean;
   baseCurrency: string;
 };
 
@@ -67,10 +68,20 @@ const LOCAL_ID_PREFIX = "robinhood:";
 const MAX_PROVIDER_ID_LENGTH = 128 - LOCAL_ID_PREFIX.length;
 const CONNECTION_NAME = "robinhood:agentic";
 
-// The MCP tool payload shapes are unverified until a live authorized fixture
-// is captured (docs enumerate the tools but not their schemas), so every
-// account carries this blocker and normalization below is defensive.
-const ORDER_TOOLING_UNVERIFIED_BLOCKER = "robinhood.order_tooling_unverified";
+// Base capabilities every synced Robinhood account carries; agentic accounts
+// additionally get order/execution capabilities once the account passes the
+// execution-ready gate below.
+const ACCOUNT_BASE_CAPABILITIES = ["accounts", "positions", "robinhood"];
+const CONNECTION_BASE_CAPABILITIES = [
+  "accounts",
+  "positions",
+  "robinhood",
+  "robinhood-agentic",
+];
+// Marker persisted on the account row so the order service can assert
+// agentic_allowed without an extra get_accounts MCP round-trip.
+const AGENTIC_CAPABILITY = "robinhood-agentic";
+const EXECUTION_CAPABILITIES = ["orders", "executions", "execution-ready"];
 
 function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -237,30 +248,60 @@ function normalizeAccount(value: unknown): NormalizedAccount {
     displayName,
     agentic,
     status: normalizeAccountStatus(record),
+    deactivated:
+      readBoolean(record, ["deactivated", "is_deactivated", "isDeactivated"]) ===
+      true,
     baseCurrency: normalizeCurrency(record),
   };
 }
 
 function accountExecutionBlockers(account: NormalizedAccount): string[] {
-  const blockers = [ORDER_TOOLING_UNVERIFIED_BLOCKER];
+  const blockers: string[] = [];
   if (account.agentic === false) {
     blockers.push("robinhood.account.non_agentic");
   } else if (account.agentic === null) {
     blockers.push("robinhood.account.agentic_unverified");
   }
+  if (account.deactivated) {
+    blockers.push("robinhood.account.deactivated");
+  }
   if (account.status === "closed") {
     blockers.push("robinhood.account.closed");
   } else if (account.status === "archived") {
     blockers.push("robinhood.account.archived");
+  } else if (account.status === null) {
+    blockers.push("robinhood.account.status_unverified");
   }
   return blockers;
 }
 
+// Order tooling is schema-verified for agentic accounts (review/place/cancel
+// equity). An account is execution-ready iff it is agentic, open, not
+// deactivated, and carries no other blocker.
+function accountExecutionReady(
+  account: NormalizedAccount,
+  executionBlockers: string[],
+): boolean {
+  return (
+    account.agentic === true &&
+    account.status === "open" &&
+    !account.deactivated &&
+    executionBlockers.length === 0
+  );
+}
+
+function accountCapabilities(executionReady: boolean): string[] {
+  return executionReady
+    ? [...ACCOUNT_BASE_CAPABILITIES, AGENTIC_CAPABILITY, ...EXECUTION_CAPABILITIES]
+    : [...ACCOUNT_BASE_CAPABILITIES];
+}
+
 async function upsertConnection(input: {
   appUserId: string;
+  capabilities: string[];
   syncedAt: Date;
 }): Promise<string> {
-  const capabilities = ["accounts", "positions", "robinhood", "robinhood-agentic"];
+  const capabilities = input.capabilities;
   const [existing] = await db
     .select({ id: brokerConnectionsTable.id })
     .from(brokerConnectionsTable)
@@ -316,13 +357,14 @@ async function upsertConnection(input: {
 async function upsertAccount(input: {
   appUserId: string;
   account: NormalizedAccount;
+  capabilities: string[];
   executionBlockers: string[];
   localConnectionId: string;
   syncedAt: Date;
 }): Promise<string> {
   const lastSyncedAt = input.syncedAt.toISOString();
   const providerAccountId = `${LOCAL_ID_PREFIX}${input.account.robinhoodAccountId}`;
-  const capabilities = ["accounts", "positions", "robinhood"];
+  const capabilities = input.capabilities;
   const [existing] = await db
     .select({ id: brokerAccountsTable.id })
     .from(brokerAccountsTable)
@@ -404,30 +446,45 @@ export async function syncRobinhoodConnections(
     normalizeAccount,
   );
 
+  const evaluated = normalizedAccounts.map((account) => {
+    const executionBlockers = accountExecutionBlockers(account);
+    const executionReady = accountExecutionReady(account, executionBlockers);
+    return {
+      account,
+      executionBlockers,
+      executionReady,
+      capabilities: accountCapabilities(executionReady),
+    };
+  });
+  const anyExecutionReady = evaluated.some((entry) => entry.executionReady);
+
   const localConnectionId = await upsertConnection({
     appUserId: options.appUserId,
+    capabilities: anyExecutionReady
+      ? [...CONNECTION_BASE_CAPABILITIES, ...EXECUTION_CAPABILITIES]
+      : [...CONNECTION_BASE_CAPABILITIES],
     syncedAt,
   });
 
   const accounts: RobinhoodConnectionSyncAccount[] = [];
-  for (const account of normalizedAccounts) {
-    const executionBlockers = accountExecutionBlockers(account);
+  for (const entry of evaluated) {
     accounts.push({
       id: await upsertAccount({
         appUserId: options.appUserId,
-        account,
-        executionBlockers,
+        account: entry.account,
+        capabilities: entry.capabilities,
+        executionBlockers: entry.executionBlockers,
         localConnectionId,
         syncedAt,
       }),
       connectionId: localConnectionId,
-      robinhoodAccountId: account.robinhoodAccountId,
-      displayName: account.displayName,
-      agentic: account.agentic,
-      status: account.status,
-      baseCurrency: account.baseCurrency,
-      executionReady: false,
-      executionBlockers,
+      robinhoodAccountId: entry.account.robinhoodAccountId,
+      displayName: entry.account.displayName,
+      agentic: entry.account.agentic,
+      status: entry.account.status,
+      baseCurrency: entry.account.baseCurrency,
+      executionReady: entry.executionReady,
+      executionBlockers: entry.executionBlockers,
       mode: "live",
       lastSyncedAt: syncedAt.toISOString(),
     });
@@ -439,8 +496,10 @@ export async function syncRobinhoodConnections(
       provider: "robinhood",
       connectionKind: "agentic_oauth",
       status: "connected",
-      executionReady: false,
-      executionBlockers: [ORDER_TOOLING_UNVERIFIED_BLOCKER],
+      executionReady: anyExecutionReady,
+      executionBlockers: anyExecutionReady
+        ? []
+        : ["robinhood.no_execution_ready_account"],
       accountCount: accounts.length,
       mode: "live",
     },

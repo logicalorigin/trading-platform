@@ -41,6 +41,18 @@ import {
 import { readIbkrOAuthReadiness } from "../services/ibkr-oauth-readiness";
 import { syncRobinhoodConnections } from "../services/robinhood-account-sync";
 import {
+  listRobinhoodEquityOrders,
+  placeRobinhoodEquityOrder,
+  reviewRobinhoodEquityOrder,
+} from "../services/robinhood-equity-orders";
+import {
+  ListRobinhoodEquityOrdersResponse,
+  PlaceRobinhoodEquityOrderBody,
+  PlaceRobinhoodEquityOrderResponse,
+  ReviewRobinhoodEquityOrderBody,
+  ReviewRobinhoodEquityOrderResponse,
+} from "./robinhood-equity-order-schemas";
+import {
   completeRobinhoodConnect,
   startRobinhoodConnect,
 } from "../services/robinhood-oauth";
@@ -664,6 +676,74 @@ router.post(
         appUserId: session.user.id,
         accountId: req.params.accountId,
         input: body,
+      }),
+    );
+    res.json(data);
+  },
+);
+
+router.post(
+  "/broker-execution/robinhood/accounts/:accountId/orders/impact",
+  async (req, res) => {
+    const session = await requireAdminCsrf(req);
+    const body = ReviewRobinhoodEquityOrderBody.parse(req.body ?? {});
+    void recordAuditEvent({
+      appUserId: session.user.id,
+      eventType: "broker.order_mutation_attempt",
+      subject: { type: "broker_provider", id: "robinhood" },
+      resource: { type: "broker_account", id: req.params.accountId },
+      payload: {
+        action: "impact",
+        symbol: body.symbol,
+        orderAction: body.side,
+      },
+    });
+    const data = ReviewRobinhoodEquityOrderResponse.parse(
+      await reviewRobinhoodEquityOrder({
+        appUserId: session.user.id,
+        accountId: req.params.accountId,
+        input: body,
+      }),
+    );
+    res.json(data);
+  },
+);
+
+router.post(
+  "/broker-execution/robinhood/accounts/:accountId/orders",
+  async (req, res) => {
+    const session = await requireAdminCsrf(req);
+    const body = PlaceRobinhoodEquityOrderBody.parse(req.body ?? {});
+    void recordAuditEvent({
+      appUserId: session.user.id,
+      eventType: "broker.order_mutation_attempt",
+      subject: { type: "broker_provider", id: "robinhood" },
+      resource: { type: "broker_account", id: req.params.accountId },
+      payload: {
+        action: "submit",
+        symbol: body.symbol,
+        orderAction: body.side,
+      },
+    });
+    const data = PlaceRobinhoodEquityOrderResponse.parse(
+      await placeRobinhoodEquityOrder({
+        appUserId: session.user.id,
+        accountId: req.params.accountId,
+        input: body,
+      }),
+    );
+    res.json(data);
+  },
+);
+
+router.get(
+  "/broker-execution/robinhood/accounts/:accountId/orders/recent",
+  async (req, res) => {
+    const session = await requireEntitlement("broker_connect")(req);
+    const data = ListRobinhoodEquityOrdersResponse.parse(
+      await listRobinhoodEquityOrders({
+        appUserId: session.user.id,
+        accountId: req.params.accountId,
       }),
     );
     res.json(data);
