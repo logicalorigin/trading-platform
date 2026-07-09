@@ -330,6 +330,8 @@ test("above-high-water persisted bars use the delta reader instead of full reloa
   assert.equal(fullReads, SOURCES.length);
 
   const appendedAt = new Date(startsAt.at(-1)!.getTime() + 60_000);
+  const beforeInvalidation =
+    getSignalMonitorLocalBarCacheDiagnostics().storedBarsCache;
   await persistMarketDataBarsForSymbols({
     timeframe: TIMEFRAME,
     sourceName: SOURCES[0]!,
@@ -353,6 +355,30 @@ test("above-high-water persisted bars use the delta reader instead of full reloa
       },
     ],
   });
+  const afterInvalidation =
+    getSignalMonitorLocalBarCacheDiagnostics().storedBarsCache;
+  assert.equal(
+    afterInvalidation.invalidationEventsCount -
+      beforeInvalidation.invalidationEventsCount,
+    1,
+    "one appended row dispatches one invalidation event",
+  );
+  assert.equal(
+    afterInvalidation.invalidationCount - beforeInvalidation.invalidationCount,
+    1,
+    "one cached source cell is marked by that event",
+  );
+  assert.equal(
+    afterInvalidation.invalidationDeltaDueCount -
+      beforeInvalidation.invalidationDeltaDueCount,
+    1,
+    "append above high-water is counted as delta-due",
+  );
+  assert.equal(
+    afterInvalidation.invalidationFullCount -
+      beforeInvalidation.invalidationFullCount,
+    0,
+  );
 
   const afterAppend = await loadAapl();
   assert.equal(
@@ -397,6 +423,8 @@ test("below-high-water persisted changes invalidate the affected source cell", a
   await loadAapl();
   assert.equal(fullReads, SOURCES.length);
 
+  const beforeInvalidation =
+    getSignalMonitorLocalBarCacheDiagnostics().storedBarsCache;
   await persistMarketDataBarsForSymbols({
     timeframe: TIMEFRAME,
     sourceName: SOURCES[0]!,
@@ -420,6 +448,30 @@ test("below-high-water persisted changes invalidate the affected source cell", a
       },
     ],
   });
+  const afterInvalidation =
+    getSignalMonitorLocalBarCacheDiagnostics().storedBarsCache;
+  assert.equal(
+    afterInvalidation.invalidationEventsCount -
+      beforeInvalidation.invalidationEventsCount,
+    1,
+    "one changed historical row dispatches one invalidation event",
+  );
+  assert.equal(
+    afterInvalidation.invalidationCount - beforeInvalidation.invalidationCount,
+    1,
+    "one cached source cell is marked by that event",
+  );
+  assert.equal(
+    afterInvalidation.invalidationFullCount -
+      beforeInvalidation.invalidationFullCount,
+    1,
+    "below-high-water change is counted as a full invalidation",
+  );
+  assert.equal(
+    afterInvalidation.invalidationDeltaDueCount -
+      beforeInvalidation.invalidationDeltaDueCount,
+    0,
+  );
 
   await loadAapl();
   assert.equal(
@@ -428,6 +480,70 @@ test("below-high-water persisted changes invalidate the affected source cell", a
     "only the changed below-high-water source should do a full refresh",
   );
   assert.equal(deltaReads, 0);
+});
+
+test("stored-bar invalidation diagnostics separate change events from per-cell branch counts", async () => {
+  const startsAt = await seed("AAPL", 2);
+  const evaluatedAt = new Date();
+  await runWithSignalMonitorStoredBarsPrefetch(
+    { symbols: ["AAPL"], timeframes: [TIMEFRAME], evaluatedAt, limit: 50 },
+    async () => null,
+  );
+  await runWithSignalMonitorStoredBarsPrefetch(
+    { symbols: ["AAPL"], timeframes: [TIMEFRAME], evaluatedAt, limit: 3 },
+    async () => null,
+  );
+
+  const appendedAt = new Date(startsAt.at(-1)!.getTime() + 60_000);
+  const beforeInvalidation =
+    getSignalMonitorLocalBarCacheDiagnostics().storedBarsCache;
+  await persistMarketDataBarsForSymbols({
+    timeframe: TIMEFRAME,
+    sourceName: SOURCES[0]!,
+    assetClass: "equity",
+    outsideRth: true,
+    source: "trades",
+    recentWindowMinutes: 0,
+    bySymbol: [
+      {
+        symbol: "AAPL",
+        bars: [
+          {
+            timestamp: appendedAt,
+            open: 150,
+            high: 151,
+            low: 149,
+            close: 150.5,
+            volume: 5_000,
+          },
+        ],
+      },
+    ],
+  });
+
+  const afterInvalidation =
+    getSignalMonitorLocalBarCacheDiagnostics().storedBarsCache;
+  assert.equal(
+    afterInvalidation.invalidationEventsCount -
+      beforeInvalidation.invalidationEventsCount,
+    1,
+    "one changed row is one received event",
+  );
+  assert.equal(
+    afterInvalidation.invalidationCount - beforeInvalidation.invalidationCount,
+    2,
+    "the event fans out to both cached limit variants for the same base key",
+  );
+  assert.equal(
+    afterInvalidation.invalidationDeltaDueCount -
+      beforeInvalidation.invalidationDeltaDueCount,
+    2,
+  );
+  assert.equal(
+    afterInvalidation.invalidationFullCount -
+      beforeInvalidation.invalidationFullCount,
+    0,
+  );
 });
 
 test("high API pressure does not suppress stored-bar DB augmentation", async () => {

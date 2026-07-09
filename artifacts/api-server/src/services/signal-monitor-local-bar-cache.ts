@@ -143,6 +143,9 @@ let storedBarsCacheMissCount = 0;
 let storedBarsCacheFullReadCount = 0;
 let storedBarsCacheDeltaReadCount = 0;
 let storedBarsCacheInvalidationCount = 0;
+let storedBarsCacheInvalidationEventsCount = 0;
+let storedBarsCacheInvalidationFullCount = 0;
+let storedBarsCacheInvalidationDeltaDueCount = 0;
 let storedBarsCacheEvictionCount = 0;
 // Prefetch-vs-fallback accounting for readStoredBars. The fallback branch takes one
 // pooled connection per source, so its rate gauges whether the per-symbol path is a
@@ -612,6 +615,7 @@ function ensureStoredBarsCacheSubscription(): void {
   }
   unsubscribeBarCacheRowsChanged = onBarCacheRowsChanged((changes) => {
     for (const change of changes) {
+      storedBarsCacheInvalidationEventsCount += 1;
       const baseKey = storedBarsCellBaseKey({
         symbol: change.symbol,
         timeframe: change.timeframe,
@@ -628,9 +632,11 @@ function ensureStoredBarsCacheSubscription(): void {
         }
         storedBarsCacheInvalidationCount += 1;
         if (cell.highWaterMs == null || change.startsAtMs <= cell.highWaterMs) {
+          storedBarsCacheInvalidationFullCount += 1;
           cell.invalidated = true;
           cell.deltaDue = false;
         } else {
+          storedBarsCacheInvalidationDeltaDueCount += 1;
           cell.deltaDue = true;
         }
       }
@@ -1508,6 +1514,9 @@ export function getSignalMonitorLocalBarCacheDiagnostics() {
       fullReadCount: storedBarsCacheFullReadCount,
       deltaReadCount: storedBarsCacheDeltaReadCount,
       invalidationCount: storedBarsCacheInvalidationCount,
+      invalidationEventsCount: storedBarsCacheInvalidationEventsCount,
+      invalidationFullCount: storedBarsCacheInvalidationFullCount,
+      invalidationDeltaDueCount: storedBarsCacheInvalidationDeltaDueCount,
       evictionCount: storedBarsCacheEvictionCount,
     },
     storedBarsRead: {
@@ -1555,6 +1564,9 @@ export const __signalMonitorLocalBarCacheInternalsForTests = {
     storedBarsCacheFullReadCount = 0;
     storedBarsCacheDeltaReadCount = 0;
     storedBarsCacheInvalidationCount = 0;
+    storedBarsCacheInvalidationEventsCount = 0;
+    storedBarsCacheInvalidationFullCount = 0;
+    storedBarsCacheInvalidationDeltaDueCount = 0;
     storedBarsCacheEvictionCount = 0;
     persistMarketDataBarsMixedOverride = null;
     loadStoredMarketBarsForSymbolsOverride = null;
