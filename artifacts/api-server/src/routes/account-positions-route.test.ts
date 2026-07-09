@@ -4,7 +4,12 @@ import { readFileSync } from "node:fs";
 import type { AddressInfo } from "node:net";
 import { after, mock, test } from "node:test";
 
+import { db, usersTable } from "@workspace/db";
+import { withTestDb } from "@workspace/db/testing";
 import express from "express";
+import { isHttpError } from "../lib/errors";
+import { createAuthSession } from "../services/auth";
+import { AUTH_CSRF_HEADER } from "./auth";
 
 const source = readFileSync(new URL("./platform.ts", import.meta.url), "utf8");
 const serviceCalls = new Map<string, number>();
@@ -13,6 +18,13 @@ function countedService(name: string) {
   return async () => {
     serviceCalls.set(name, (serviceCalls.get(name) ?? 0) + 1);
     throw new Error(`${name} should not run when account admission is denied`);
+  };
+}
+
+function countedInertService(name: string, value: unknown = {}) {
+  return async () => {
+    serviceCalls.set(name, (serviceCalls.get(name) ?? 0) + 1);
+    return value;
   };
 }
 
@@ -36,7 +48,7 @@ mock.module(new URL("../lib/runtime.ts", import.meta.url).href, {
 
 mock.module(new URL("../services/account.ts", import.meta.url).href, {
   namedExports: {
-    cancelAccountOrder: countedService("cancelAccountOrder"),
+    cancelAccountOrder: countedInertService("cancelAccountOrder"),
     getAccountAllocation: countedService("getAccountAllocation"),
     getAccountCashActivity: countedService("getAccountCashActivity"),
     getAccountClosedTrades: countedService("getAccountClosedTrades"),
@@ -105,7 +117,7 @@ mock.module(new URL("../services/platform.ts", import.meta.url).href, {
     addWatchlistSymbol: inertService({}),
     batchOptionChains: inertService({}),
     benchmarkOptionsFlowScannerTickerPass: inertService({}),
-    cancelOrder: inertService({}),
+    cancelOrder: countedInertService("cancelOrder"),
     createWatchlist: inertService({}),
     deleteWatchlist: inertService({}),
     getBarsWithDebug: inertService({}),
@@ -130,7 +142,7 @@ mock.module(new URL("../services/platform.ts", import.meta.url).href, {
     previewOrder: inertService({}),
     removeWatchlistSymbol: inertService({}),
     reorderWatchlistSymbols: inertService({}),
-    replaceOrder: inertService({}),
+    replaceOrder: countedInertService("replaceOrder"),
     resolveOptionContractWithDebug: inertService({}),
     searchUniverseTickers: inertService({}),
     submitRawOrders: inertService({}),
@@ -212,6 +224,21 @@ async function withServer<T>(fn: (baseUrl: string) => Promise<T>): Promise<T> {
   const app = express();
   app.use(express.json());
   app.use(platformRouter);
+  app.use((error: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+    if (isHttpError(error)) {
+      res.status(error.statusCode).type("application/problem+json").json({
+        title: error.message,
+        status: error.statusCode,
+        code: error.code,
+      });
+      return;
+    }
+
+    res.status(500).type("application/problem+json").json({
+      title: "Internal server error",
+      status: 500,
+    });
+  });
   const server = app.listen(0, "127.0.0.1");
   await once(server, "listening");
   const address = server.address() as AddressInfo;
@@ -222,6 +249,57 @@ async function withServer<T>(fn: (baseUrl: string) => Promise<T>): Promise<T> {
     await once(server, "close");
   }
 }
+
+async function seedMemberAuth(input: {
+  email: string;
+  entitlements?: string[];
+}) {
+  const [user] = await db
+    .insert(usersTable)
+    .values({
+      email: input.email,
+      passwordHash: "unused-hash",
+      role: "member",
+      ...(input.entitlements ? { entitlements: input.entitlements } : {}),
+    })
+    .returning();
+  assert.ok(user);
+  const session = await createAuthSession({ userId: user.id });
+  return {
+    cookie: `pyrus_session=${session.sessionToken}`,
+    csrfToken: session.csrfToken,
+  };
+}
+
+const liveOrderMutationCases = [
+  {
+    path: "/orders/order-1/replace",
+    service: "replaceOrder",
+    body: {
+      accountId: "DU123456",
+      mode: "live",
+      confirm: true,
+      order: { conid: 265598 },
+    },
+  },
+  {
+    path: "/orders/order-1/cancel",
+    service: "cancelOrder",
+    body: {
+      accountId: "DU123456",
+      mode: "live",
+      confirm: true,
+    },
+  },
+  {
+    path: "/accounts/shadow-account/orders/order-1/cancel",
+    service: "cancelAccountOrder",
+    body: {
+      mode: "shadow",
+      confirm: true,
+    },
+  },
+] as const;
 
 test("account positions route supports explicit quote and fast-detail controls", () => {
   const handler = routeSource("/accounts/:accountId/positions");
@@ -235,65 +313,162 @@ test("account positions route supports explicit quote and fast-detail controls",
   );
 });
 
-test("real account routes and streams short-circuit account services when admission is denied", async () => {
-  serviceCalls.clear();
-  await withServer(async (baseUrl) => {
-    const cases = [
-      { path: "/accounts", service: "listAccounts" },
-      { path: "/accounts/real-account/summary", service: "getAccountSummary" },
-      {
-        path: "/accounts/real-account/equity-history",
-        service: "getAccountEquityHistory",
-      },
-      {
-        path: "/accounts/real-account/allocation",
-        service: "getAccountAllocation",
-      },
-      { path: "/accounts/real-account/positions", service: "getAccountPositions" },
-      {
-        path: "/accounts/real-account/positions-at-date",
-        service: "getAccountPositionsAtDate",
-      },
-      {
-        path: "/accounts/real-account/closed-trades",
-        service: "getAccountClosedTrades",
-      },
-      { path: "/accounts/real-account/orders", service: "getAccountOrders" },
-      {
-        method: "POST",
-        path: "/accounts/real-account/orders/order-1/cancel",
-        service: "cancelAccountOrder",
-      },
-      { path: "/accounts/real-account/risk", service: "getAccountRisk" },
-      {
-        path: "/accounts/real-account/cash-activity",
-        service: "getAccountCashActivity",
-      },
-      {
-        path: "/streams/accounts/page?accountId=real-account",
-        service: "fetchAccountPagePrimaryPayload",
-      },
-      {
-        path: "/streams/accounts?accountId=real-account",
-        service: "fetchAccountSnapshotPayload",
-      },
-    ];
-
-    for (const { method = "GET", path, service } of cases) {
-      const response = await fetch(`${baseUrl}${path}`, {
-        method,
-        headers: method === "POST" ? { "content-type": "application/json" } : undefined,
-        body: method === "POST" ? "{}" : undefined,
+test("live order mutation routes reject members without broker_connect before broker services", async () => {
+  await withTestDb(async () =>
+    withServer(async (baseUrl) => {
+      serviceCalls.clear();
+      const auth = await seedMemberAuth({
+        email: "wo-sec-plain@example.com",
       });
 
-      assert.equal(response.status, 503, `${method} ${path} should be blocked`);
-      assert.equal(
-        serviceCalls.get(service) ?? 0,
-        0,
-        `${service} should not run after denied account admission`,
-      );
-    }
-  });
+      for (const route of liveOrderMutationCases) {
+        const response = await fetch(`${baseUrl}${route.path}`, {
+          method: "POST",
+          headers: {
+            cookie: auth.cookie,
+            "content-type": "application/json",
+            [AUTH_CSRF_HEADER]: auth.csrfToken,
+          },
+          body: JSON.stringify(route.body),
+        });
+
+        assert.equal(response.status, 403, `${route.path} should be blocked`);
+        assert.equal(
+          ((await response.json()) as { code?: string }).code,
+          "entitlement_required",
+        );
+        assert.equal(
+          serviceCalls.get(route.service) ?? 0,
+          0,
+          `${route.service} should not run before entitlement admission`,
+        );
+      }
+    }),
+  );
+});
+
+test("live order mutation routes reject missing CSRF before broker services", async () => {
+  await withTestDb(async () =>
+    withServer(async (baseUrl) => {
+      serviceCalls.clear();
+      const auth = await seedMemberAuth({
+        email: "wo-sec-missing-csrf@example.com",
+        entitlements: ["broker_connect"],
+      });
+
+      for (const route of liveOrderMutationCases) {
+        const response = await fetch(`${baseUrl}${route.path}`, {
+          method: "POST",
+          headers: {
+            cookie: auth.cookie,
+            "content-type": "application/json",
+          },
+          body: JSON.stringify(route.body),
+        });
+
+        assert.equal(response.status, 403, `${route.path} should be blocked`);
+        assert.equal(
+          ((await response.json()) as { code?: string }).code,
+          "invalid_csrf_token",
+        );
+        assert.equal(
+          serviceCalls.get(route.service) ?? 0,
+          0,
+          `${route.service} should not run before CSRF admission`,
+        );
+      }
+    }),
+  );
+});
+
+test("live order mutation routes with broker_connect and CSRF reach handlers", async () => {
+  await withTestDb(async () =>
+    withServer(async (baseUrl) => {
+      serviceCalls.clear();
+      const auth = await seedMemberAuth({
+        email: "wo-sec-entitled@example.com",
+        entitlements: ["broker_connect"],
+      });
+
+      for (const route of liveOrderMutationCases) {
+        const response = await fetch(`${baseUrl}${route.path}`, {
+          method: "POST",
+          headers: {
+            cookie: auth.cookie,
+            "content-type": "application/json",
+            [AUTH_CSRF_HEADER]: auth.csrfToken,
+          },
+          body: JSON.stringify(route.body),
+        });
+
+        assert.equal(response.status, 200, `${route.path} should pass guard`);
+        assert.equal(
+          serviceCalls.get(route.service) ?? 0,
+          1,
+          `${route.service} should run after entitlement and CSRF admission`,
+        );
+      }
+    }),
+  );
+});
+
+test("real account routes and streams short-circuit account services when admission is denied", async () => {
+  await withTestDb(async () =>
+    withServer(async (baseUrl) => {
+      serviceCalls.clear();
+      const auth = await seedMemberAuth({
+        email: "account-admission-member@example.com",
+      });
+      const cases = [
+        { path: "/accounts", service: "listAccounts" },
+        { path: "/accounts/real-account/summary", service: "getAccountSummary" },
+        {
+          path: "/accounts/real-account/equity-history",
+          service: "getAccountEquityHistory",
+        },
+        {
+          path: "/accounts/real-account/allocation",
+          service: "getAccountAllocation",
+        },
+        { path: "/accounts/real-account/positions", service: "getAccountPositions" },
+        {
+          path: "/accounts/real-account/positions-at-date",
+          service: "getAccountPositionsAtDate",
+        },
+        {
+          path: "/accounts/real-account/closed-trades",
+          service: "getAccountClosedTrades",
+        },
+        { path: "/accounts/real-account/orders", service: "getAccountOrders" },
+        { path: "/accounts/real-account/risk", service: "getAccountRisk" },
+        {
+          path: "/accounts/real-account/cash-activity",
+          service: "getAccountCashActivity",
+        },
+        {
+          path: "/streams/accounts/page?accountId=real-account",
+          service: "fetchAccountPagePrimaryPayload",
+        },
+        {
+          path: "/streams/accounts?accountId=real-account",
+          service: "fetchAccountSnapshotPayload",
+        },
+      ];
+
+      for (const { path, service } of cases) {
+        const response = await fetch(`${baseUrl}${path}`, {
+          headers: { cookie: auth.cookie },
+        });
+
+        assert.equal(response.status, 503, `GET ${path} should be blocked`);
+        assert.equal(
+          serviceCalls.get(service) ?? 0,
+          0,
+          `${service} should not run after denied account admission`,
+        );
+      }
+    }),
+  );
 });
 
 test("public Trade option-chain routes avoid artificial metadata waits", () => {

@@ -1917,6 +1917,7 @@ router.get("/accounts/:accountId/orders", async (req, res) => {
 });
 
 router.post("/accounts/:accountId/orders/:orderId/cancel", async (req, res) => {
+  await requireEntitlementCsrf("broker_connect")(req);
   if (!(await admitAccountRoute(res, req.params.accountId))) return;
   const body = CancelAccountOrderBody.parse(req.body);
   res.json(
@@ -2162,6 +2163,7 @@ router.post("/orders/submit", async (req, res) => {
 });
 
 router.post("/orders/:orderId/replace", async (req, res) => {
+  await requireEntitlementCsrf("broker_connect")(req);
   const body = ReplaceOrderBody.parse(req.body);
   res.json(await replaceOrder({
     accountId: body.accountId,
@@ -2173,6 +2175,7 @@ router.post("/orders/:orderId/replace", async (req, res) => {
 });
 
 router.post("/orders/:orderId/cancel", async (req, res) => {
+  await requireEntitlementCsrf("broker_connect")(req);
   const body = CancelOrderBody.parse(req.body);
   res.json(await cancelOrder({
     accountId: body.accountId,
