@@ -20,6 +20,7 @@ const QUOTE_FLUSH_INTERVAL_MS = 100;
 const DEGRADED_BUFFERED_AMOUNT_BYTES = 1_000_000;
 const CLOSE_BUFFERED_AMOUNT_BYTES = 5_000_000;
 const DEGRADED_QUOTE_BATCH_SIZE = 100;
+let nextOptionQuoteConnectionId = 1;
 
 type Unsubscribe = () => void;
 
@@ -59,16 +60,16 @@ function resetOptionQuoteQueueSubscription(
   providerContractIds: string[],
 ): void {
   clearOptionQuoteQueueState(state);
-  providerContractIds.forEach((providerContractId, index) => {
+  normalizeProviderContractIds(providerContractIds).forEach((providerContractId, index) => {
     state.quotePriorityByProviderContractId.set(providerContractId, index);
   });
 }
 
 function readQuoteProviderContractId(quote: unknown): string {
   return quote && typeof quote === "object" && "providerContractId" in quote
-    ? String(
-        (quote as { providerContractId?: unknown }).providerContractId || "",
-      ).trim()
+    ? normalizeProviderContractId(
+        (quote as { providerContractId?: unknown }).providerContractId,
+      )
     : "";
 }
 
@@ -88,6 +89,20 @@ function enqueueCurrentOptionQuotes(
   });
 }
 
+function normalizeOpraOptionTicker(value: unknown): string {
+  const normalized = String(value ?? "").trim().toUpperCase().replace(/\s+/g, "");
+  if (!normalized) {
+    return "";
+  }
+  const ticker = normalized.startsWith("O:") ? normalized : `O:${normalized}`;
+  return /^O:[A-Z0-9.-]+\d{6}[CP]\d{8}$/.test(ticker) ? ticker : "";
+}
+
+function normalizeProviderContractId(value: unknown): string {
+  const text = typeof value === "string" ? value.trim() : "";
+  return normalizeOpraOptionTicker(text) || text;
+}
+
 function normalizeProviderContractIds(value: unknown): string[] {
   if (!Array.isArray(value)) {
     return [];
@@ -101,7 +116,7 @@ function normalizeProviderContractIds(value: unknown): string[] {
       return;
     }
 
-    const providerContractId = entry.trim();
+    const providerContractId = normalizeProviderContractId(entry);
     if (!providerContractId || seen.has(providerContractId)) {
       return;
     }
@@ -123,6 +138,15 @@ function normalizeOwner(value: unknown): string | undefined {
   return typeof value === "string" && value.trim()
     ? value.trim().slice(0, 120)
     : undefined;
+}
+
+function optionQuoteDemandOwnerForConnection(
+  owner: string | undefined,
+  connectionId: number,
+): string {
+  const suffix = `:ws-${connectionId}`;
+  const base = owner || "option-quotes";
+  return `${base.slice(0, Math.max(1, 120 - suffix.length))}${suffix}`;
 }
 
 function normalizeIntent(value: unknown): MarketDataIntent {
@@ -173,6 +197,7 @@ function isOptionsQuoteUpgrade(request: IncomingMessage): boolean {
 export const __optionQuoteWsInternalsForTests = {
   createOptionQuoteQueueState,
   enqueueCurrentOptionQuotes,
+  optionQuoteDemandOwnerForConnection,
   resetOptionQuoteQueueSubscription,
   getPendingProviderContractIds(state: OptionQuoteQueueState): string[] {
     return Array.from(state.pendingQuotesByProviderContractId.keys());
@@ -193,6 +218,7 @@ export function attachOptionQuoteWebSocket(server: Server): void {
   });
 
   wss.on("connection", (socket) => {
+    const connectionId = nextOptionQuoteConnectionId++;
     let unsubscribe: Unsubscribe = () => {};
     let currentSubscriptionKey = "";
     let currentProviderContractIds: string[] = [];
@@ -334,7 +360,10 @@ export function attachOptionQuoteWebSocket(server: Server): void {
       const providerContractIds = requestedProviderContractIds;
       const rejectedCount = 0;
       const underlying = normalizeUnderlying(message.underlying);
-      const owner = normalizeOwner(message.owner);
+      const owner = optionQuoteDemandOwnerForConnection(
+        normalizeOwner(message.owner),
+        connectionId,
+      );
       const intent = normalizeIntent(message.intent);
       const requiresGreeks = normalizeRequiresGreeks(message.requiresGreeks);
       const subscriptionKey = JSON.stringify({

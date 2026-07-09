@@ -79,6 +79,55 @@ test("algo operations automation live quote snapshots use Massive OPRA quotes", 
   assert.equal(payload.quotes[0]?.source, "massive");
 });
 
+test("option quote payload freshness uses market-data age, not server cache age", async () => {
+  __resetBridgeOptionQuoteStreamForTests();
+  __resetBridgeGovernorForTests();
+  __resetMarketDataAdmissionForTests();
+  __setBridgeOptionQuoteStreamNowForTests(new Date("2026-06-08T18:00:10.000Z"));
+  __setBridgeOptionQuoteClientForTests({
+    async getHealth() {
+      return {
+        transport: "tws" as const,
+        marketDataMode: "live" as const,
+        liveMarketDataAvailable: true,
+      };
+    },
+    async getOptionQuoteSnapshots() {
+      return [
+        {
+          symbol: "SPY",
+          providerContractId: SPY_OPRA,
+          bid: 1,
+          ask: 1.1,
+          price: 1.05,
+          delayed: false,
+          freshness: "live",
+          transport: "massive_rest",
+          updatedAt: new Date("2026-06-08T18:00:00.000Z"),
+          dataUpdatedAt: new Date("2026-06-08T18:00:00.000Z"),
+        },
+      ] as never;
+    },
+    streamOptionQuoteSnapshots() {
+      return () => {};
+    },
+  });
+
+  const payload = await fetchBridgeOptionQuoteSnapshots({
+    underlying: "SPY",
+    providerContractIds: [SPY_OPRA],
+    owner: "account-position-option-quotes:test:stale-upstream",
+    intent: "account-monitor-live",
+    requiresGreeks: false,
+    hydrateCached: true,
+  });
+
+  assert.equal(payload.quotes.length, 1);
+  assert.equal(payload.quotes[0]?.freshness, "stale");
+  assert.equal(payload.quotes[0]?.ageMs, 10_000);
+  assert.equal(payload.quotes[0]?.cacheAgeMs, 0);
+});
+
 test("unconfigured Massive option snapshots report Massive runtime unavailable", async () => {
   __resetBridgeOptionQuoteStreamForTests();
   __resetBridgeGovernorForTests();

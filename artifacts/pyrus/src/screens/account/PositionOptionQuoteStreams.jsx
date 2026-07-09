@@ -12,6 +12,14 @@ const normalizedProviderContractId = (value) => {
   return text && !normalizeOpraOptionTicker(text) ? text : "";
 };
 
+const optionQuoteProviderContractIds = (quote) =>
+  uniqueProviderContractIds([
+    normalizeOpraOptionTicker(quote?.providerContractId),
+    normalizedProviderContractId(quote?.providerContractId),
+    normalizeOpraOptionTicker(quote?.ticker),
+    normalizeOpraOptionTicker(quote?.symbol),
+  ]);
+
 const optionRightCode = (value) => {
   const normalized = String(value || "").trim().toLowerCase();
   if (normalized === "call" || normalized === "c") return "C";
@@ -72,17 +80,27 @@ export const rowOptionProviderContractIds = (row) => {
   return uniqueProviderContractIds([
     ...optionProviderContractIds(row?.optionContract),
     primaryOptionProviderContractId(row?.optionContract),
-    normalizedProviderContractId(row?.optionQuote?.providerContractId),
+    ...optionQuoteProviderContractIds(row?.optionQuote),
   ]);
 };
 
 const rowOptionQuoteSubscriptionProviderContractIds = (row) => {
   const contractProviderContractIds = optionProviderContractIds(row?.optionContract);
-  return contractProviderContractIds.length
-    ? contractProviderContractIds
-    : [
-        normalizedProviderContractId(row?.optionQuote?.providerContractId),
-      ].filter(Boolean);
+  const quoteProviderContractIds = optionQuoteProviderContractIds(row?.optionQuote);
+  const opraProviderContractIds = uniqueProviderContractIds([
+    ...contractProviderContractIds.filter((providerContractId) =>
+      normalizeOpraOptionTicker(providerContractId),
+    ),
+    ...quoteProviderContractIds.filter((providerContractId) =>
+      normalizeOpraOptionTicker(providerContractId),
+    ),
+  ]);
+  return opraProviderContractIds.length
+    ? opraProviderContractIds
+    : uniqueProviderContractIds([
+        ...contractProviderContractIds,
+        ...quoteProviderContractIds,
+      ]);
 };
 
 const rowOptionUnderlying = (row) => {

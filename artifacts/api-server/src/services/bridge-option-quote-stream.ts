@@ -724,13 +724,21 @@ function addApiLatency(
 function toPayloadQuote(quote: QuoteSnapshot): OptionQuoteWithSource {
   const emittedAt = nowProvider();
   const lastReceivedAt = readTimestampMs(quote.latency?.apiServerReceivedAt);
+  const marketDataUpdatedAt = readTimestampMs(
+    quote.dataUpdatedAt ?? quote.updatedAt,
+  );
   const hasPrevClose = quote.prevClose != null;
   const ageMs =
     lastReceivedAt === null
       ? null
       : Math.max(0, emittedAt.getTime() - lastReceivedAt);
+  const marketDataAgeMs =
+    marketDataUpdatedAt === null
+      ? finiteNumber(quote.ageMs)
+      : Math.max(0, emittedAt.getTime() - marketDataUpdatedAt);
   const freshness =
-    ageMs !== null && ageMs > LIVE_OPTION_QUOTE_STALE_MS
+    (ageMs !== null && ageMs > LIVE_OPTION_QUOTE_STALE_MS) ||
+    (marketDataAgeMs !== null && marketDataAgeMs > LIVE_OPTION_QUOTE_STALE_MS)
       ? "stale"
       : quote.freshness === "delayed" ||
           quote.freshness === "frozen" ||
@@ -747,6 +755,7 @@ function toPayloadQuote(quote: QuoteSnapshot): OptionQuoteWithSource {
         changePercent: hasPrevClose
           ? finiteNumber(quote.changePercent)
           : null,
+        ageMs: marketDataAgeMs,
         cacheAgeMs: ageMs,
         freshness,
       },

@@ -49,6 +49,37 @@ test("account option quote streams subscribe to OPRA ids and keep numeric aliase
   ]);
 });
 
+test("account option quote streams keep quote OPRA aliases when contract OPRA differs", () => {
+  const adjustedOptionRow = {
+    ...numericOptionRow,
+    optionContract: {
+      ...numericOptionRow.optionContract,
+      ticker: "NVDA260612C00145000",
+      providerContractId: "12345",
+    },
+    optionQuote: {
+      providerContractId: "O:NVDA260612C00146000",
+    },
+  };
+
+  assert.deepEqual(rowOptionProviderContractIds(adjustedOptionRow), [
+    "O:NVDA260612C00145000",
+    "12345",
+    "O:NVDA260612C00146000",
+  ]);
+
+  const groups = buildPositionOptionQuoteGroups([adjustedOptionRow]);
+  assert.deepEqual(groups, [
+    {
+      underlying: "NVDA",
+      providerContractIds: [
+        "O:NVDA260612C00145000",
+        "O:NVDA260612C00146000",
+      ],
+    },
+  ]);
+});
+
 test("account option quote stream groups aggregate into one subscription", () => {
   const subscription = buildPositionOptionQuoteStreamSubscription(
     [
