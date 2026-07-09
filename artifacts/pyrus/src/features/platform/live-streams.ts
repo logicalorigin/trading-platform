@@ -57,6 +57,7 @@ import type {
 } from "@workspace/api-client-react";
 
 import { accountPositionTypeParam } from "../account/accountPositionTypes";
+import { recordAlgoCockpitStreamFreshness } from "./algoCockpitStreamFreshnessRegistry";
 import { freshnessUnchanged, isStreamFresh } from "./streamFreshness";
 
 type StreamMode = "shadow" | "live";
@@ -347,7 +348,7 @@ const ACCOUNT_STREAM_FRESH_MS = 20_000;
 const SHADOW_ACCOUNT_STREAM_FRESH_MS = 7_000;
 const ACCOUNT_PAGE_STREAM_FRESH_MS = 3_000;
 const ACCOUNT_PAGE_DERIVED_STREAM_FRESH_MS = 35_000;
-const ALGO_COCKPIT_STREAM_FRESH_MS = 7_000;
+export const ALGO_COCKPIT_STREAM_FRESH_MS = 7_000;
 const ORDER_INVALIDATION_THROTTLE_MS = 2_000;
 const ACCOUNT_DERIVED_INVALIDATION_THROTTLE_MS = 10_000;
 
@@ -6824,6 +6825,10 @@ export const useAlgoCockpitStream = ({
       if (kind === "full") {
         lastFullEventAtRef.current = timestamp;
       }
+      // Publish deployment-scoped freshness so consumers that do NOT own this
+      // EventSource (the algo sidebar while AlgoScreen holds the stream) can
+      // suppress their REST catch-up polling instead of polling forever.
+      recordAlgoCockpitStreamFreshness(deploymentId, kind, timestamp);
       recomputeFreshness();
     };
     const source = new EventSource(streamUrl);

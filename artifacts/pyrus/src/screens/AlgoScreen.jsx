@@ -567,11 +567,17 @@ export const AlgoScreen = ({
   );
   const deployments = deploymentsQuery.data?.deployments || EMPTY_ALGO_DEPLOYMENTS;
   const deploymentPnlById = deploymentsQuery.data?.pnlByDeployment || null;
-  const deploymentListEmptyUnavailable = Boolean(
-    deploymentsQuery.data?.cacheStatus === "unavailable" && !deployments.length,
-  );
+  // "Unavailable" must cover BOTH the backend's explicit marker AND a failed
+  // request with no data at all (pool-saturation 500s/timeouts leave
+  // deploymentsQuery.isError set with data undefined). Without the isError arm
+  // a failed fetch rendered as a successful empty list, and the page showed the
+  // misleading "should be seeded at startup" state instead of "temporarily
+  // unavailable, refresh".
   const deploymentListUnavailable = Boolean(
-    deploymentListEmptyUnavailable && !deploymentsQuery.isFetching,
+    !deploymentsQuery.isFetching &&
+      !deployments.length &&
+      (deploymentsQuery.data?.cacheStatus === "unavailable" ||
+        (deploymentsQuery.isError && !deploymentsQuery.data)),
   );
   const candidateDrafts = useMemo(() => {
     const drafts = draftsQuery.data?.drafts || EMPTY_ALGO_DRAFTS;

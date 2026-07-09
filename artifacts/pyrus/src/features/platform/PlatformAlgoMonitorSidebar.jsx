@@ -89,7 +89,8 @@ import {
   useAlgoStaMtfTimeframes,
 } from "./algoStaExecutionTimeframeStore.js";
 import { useAlgoDeploymentFocus } from "./algoDeploymentFocusStore.js";
-import { useAlgoCockpitStream } from "./live-streams";
+import { useAlgoCockpitRegistryFreshness } from "./algoCockpitStreamFreshnessRegistry";
+import { ALGO_COCKPIT_STREAM_FRESH_MS, useAlgoCockpitStream } from "./live-streams";
 import { buildSignalMatrixBySymbol } from "./watchlistModel";
 
 const QUERY_DEFAULTS = {
@@ -1134,9 +1135,18 @@ export const PlatformAlgoMonitorSidebar = memo(function PlatformAlgoMonitorSideb
         !realtimeStreamGateReason,
     ),
   });
+  // When another component owns the deployment-scoped EventSource (AlgoScreen
+  // on the algo page — realtimeStreamGateReason gates this sidebar's own stream
+  // off), read that owner's freshness from the shared registry. Without it the
+  // scope check never passes here and the sidebar REST-polls forever with a
+  // permanent "polling" badge even while SSE is live.
+  const registryStreamFreshness = useAlgoCockpitRegistryFreshness(
+    deploymentId,
+    ALGO_COCKPIT_STREAM_FRESH_MS,
+  );
   const streamFreshness = externalStreamHydratesDeployment
     ? externalStreamFreshness
-    : ownStreamFreshness;
+    : registryStreamFreshness ?? ownStreamFreshness;
   const restQueriesActive = Boolean(queryEnabled && deploymentId);
   // Shell-level stream freshness is not enough to prove this deployment's cache was
   // updated. Only deployment-scoped freshness can suppress the REST catch-up polls.
