@@ -51,14 +51,6 @@ const getWindowOrigin = (): string | null => {
   }
 };
 
-const safeReadSessionStorage = (key: string): string | null => {
-  try {
-    return window.sessionStorage?.getItem(key) ?? null;
-  } catch {
-    return null;
-  }
-};
-
 const safeWriteSessionStorage = (key: string, value: string | null): void => {
   try {
     if (value === null) {
