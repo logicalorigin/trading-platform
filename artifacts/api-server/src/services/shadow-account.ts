@@ -9763,9 +9763,13 @@ export async function getShadowAccountPositions(input: {
             underlyingMarket: contract
               ? shadowUnderlyingMarketPayload({
                   symbol: underlyingSymbol,
-                  quote:
-                    optionUnderlyingQuote ??
-                    underlyingMarkets.get(underlyingSymbol),
+                  // Merge (don't replace): the option quote's embedded underlying price is
+                  // fresher, but it is price-only — keep the full Massive underlying quote's
+                  // previousClose/changePercent so the Spot day-change % isn't dropped.
+                  quote: {
+                    ...underlyingMarkets.get(underlyingSymbol),
+                    ...optionUnderlyingQuote,
+                  },
                 })
               : null,
             sector: "Shadow Holdings",
