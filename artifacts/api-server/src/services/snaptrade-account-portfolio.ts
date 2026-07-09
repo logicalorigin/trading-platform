@@ -445,13 +445,31 @@ function normalizeAveragePurchasePrice(input: {
   value: number | null;
   optionContract: SnapTradePositionOptionContract | null;
   contractScaled: boolean;
+  quantity?: number | null;
+  costBasis?: number | null;
 }): number | null {
   if (input.value == null) {
     return null;
   }
   const multiplier = optionContractMultiplier(input.optionContract);
-  if (input.optionContract && input.contractScaled && multiplier > 1) {
-    return roundFinancialNumber(input.value / multiplier);
+  if (input.optionContract && multiplier > 1) {
+    if (input.contractScaled) {
+      return roundFinancialNumber(input.value / multiplier);
+    }
+
+    const quantity = input.quantity == null ? null : Math.abs(input.quantity);
+    const perContractCost =
+      input.costBasis != null && quantity != null && quantity > 1e-9
+        ? Math.abs(input.costBasis) / quantity
+        : null;
+    // SnapTrade E*TRADE option averages can be per-contract while prices are per-share.
+    if (
+      perContractCost != null &&
+      Math.abs(perContractCost - input.value) <=
+        Math.max(0.01, Math.abs(input.value) * 0.0001)
+    ) {
+      return roundFinancialNumber(input.value / multiplier);
+    }
   }
   return input.value;
 }
@@ -557,6 +575,8 @@ function normalizePosition(
           value: rawAveragePurchasePrice,
           optionContract,
           contractScaled: false,
+          quantity,
+          costBasis: rawCostBasis,
         })
       : averagePurchasePriceFromCostBasis({
           value: rawCostBasis,

@@ -134,7 +134,7 @@ test("SnapTrade account portfolio signs user-scoped balance and position reads",
                   },
                   units: "10.5",
                   price: "123.45",
-                  cost_basis: "118.20",
+                  cost_basis: "1241.10",
                   openPnl: "61.25",
                   currency: "USD",
                   cash_equivalent: false,
@@ -150,6 +150,65 @@ test("SnapTrade account portfolio signs user-scoped balance and position reads",
                   units: "-1",
                   price: "0.11",
                   cost_basis: "50",
+                  currency: "USD",
+                  cash_equivalent: false,
+                },
+                {
+                  instrument: {
+                    kind: "option",
+                    symbol: "SPY   260821C00400000",
+                    raw_symbol: "SPY   260821C00400000",
+                    description: "SPY Aug 21 2026 400 Call",
+                    currency: "USD",
+                  },
+                  units: "20",
+                  price: "0.17",
+                  average_purchase_price: "83.51",
+                  cost_basis: "1670.2",
+                  currency: "USD",
+                  cash_equivalent: false,
+                },
+                {
+                  instrument: {
+                    kind: "option",
+                    symbol: "XYZ   260821P00005000",
+                    raw_symbol: "XYZ   260821P00005000",
+                    description: "XYZ Aug 21 2026 5 Put",
+                    currency: "USD",
+                  },
+                  units: "3",
+                  price: "0.5",
+                  cost_basis: "150",
+                  currency: "USD",
+                  cash_equivalent: false,
+                },
+                {
+                  instrument: {
+                    kind: "option",
+                    symbol: "QQQ   260821C00300000",
+                    raw_symbol: "QQQ   260821C00300000",
+                    description: "QQQ Aug 21 2026 300 Call",
+                    currency: "USD",
+                  },
+                  units: "2",
+                  price: "0.8",
+                  average_purchase_price: "0.8",
+                  cost_basis: "160",
+                  currency: "USD",
+                  cash_equivalent: false,
+                },
+                {
+                  instrument: {
+                    kind: "option",
+                    symbol: "TSLA  260821P00200000",
+                    raw_symbol: "TSLA  260821P00200000",
+                    description: "TSLA Aug 21 2026 200 Put",
+                    currency: "USD",
+                  },
+                  units: "-3",
+                  price: "5",
+                  average_purchase_price: "500",
+                  cost_basis: "-1500",
                   currency: "USD",
                   cash_equivalent: false,
                 },
@@ -201,7 +260,7 @@ test("SnapTrade account portfolio signs user-scoped balance and position reads",
           buyingPower: 410.71,
         },
       ]);
-      assert.deepEqual(result.positions, [
+      assert.deepEqual(result.positions.slice(0, 2), [
         {
           snapTradePositionId: "stock:AAPL",
           symbol: "AAPL",
@@ -249,13 +308,36 @@ test("SnapTrade account portfolio signs user-scoped balance and position reads",
           },
         },
       ]);
+
+      assert.equal(result.positions.length, 6);
+      const positionsByRawSymbol = new Map(
+        result.positions.map((position) => [position.rawSymbol, position]),
+      );
+      const etradeOption = positionsByRawSymbol.get("SPY   260821C00400000");
+      assert.ok(etradeOption);
+      assert.equal(etradeOption.averagePurchasePrice, 0.8351);
+      assert.equal(etradeOption.costBasis, 1670.2);
+      assert.equal(etradeOption.marketValue, 340);
+      assert.equal(etradeOption.unrealizedPnl, -1330.2);
+      assert.equal(
+        positionsByRawSymbol.get("XYZ   260821P00005000")?.averagePurchasePrice,
+        0.5,
+      );
+      assert.equal(
+        positionsByRawSymbol.get("QQQ   260821C00300000")?.averagePurchasePrice,
+        0.8,
+      );
+      assert.equal(
+        positionsByRawSymbol.get("TSLA  260821P00200000")?.averagePurchasePrice,
+        5,
+      );
       assert.deepEqual(result.totals, {
         cash: 300.71,
         buyingPower: 410.71,
-        positionMarketValue: 1285.225,
-        unrealizedPnl: 100.25,
-        netLiquidation: 1585.935,
-        positionCount: 2,
+        positionMarketValue: 435.225,
+        unrealizedPnl: -1229.95,
+        netLiquidation: 735.935,
+        positionCount: 6,
       });
       assert.equal(result.dataFreshness.asOf, "2026-07-01T19:29:00.000Z");
       assert.doesNotMatch(
