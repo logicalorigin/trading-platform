@@ -4,8 +4,83 @@ import test from "node:test";
 
 import { __positionsPanelInternalsForTests } from "./PositionsPanel.jsx";
 
-const { applyLiveEquityQuoteToRow, buildDisplayTotals } =
+const { applyLiveEquityQuoteToRow, applyLiveOptionQuoteToRow, buildDisplayTotals } =
   __positionsPanelInternalsForTests;
+
+const optionRow = (overrides = {}) => ({
+  id: "U1:AAPL-C",
+  accountId: "U1",
+  symbol: "AAPL",
+  assetClass: "option",
+  optionContract: {
+    underlying: "AAPL",
+    multiplier: 100,
+    sharesPerContract: 100,
+    strike: 150,
+    right: "call",
+    expirationDate: "2026-08-21",
+    providerContractId: null,
+  },
+  quantity: 1,
+  averageCost: 60,
+  mark: 60,
+  marketValue: 6000,
+  unrealizedPnl: 0,
+  unrealizedPnlPercent: 0,
+  brokerUnrealizedPnl: 0,
+  brokerUnrealizedPnlPercent: 0,
+  brokerMarketValue: 6000,
+  openedAt: new Date().toISOString(),
+  optionQuote: { mark: 60, bid: 59.9, ask: 60.1, dayChange: 0, dayChangePercent: 0, source: "ibkr" },
+  underlyingMarket: null,
+  ...overrides,
+});
+
+test("real option row keeps its already-per-share average cost (no double contract de-scale)", () => {
+  const patched = applyLiveOptionQuoteToRow(optionRow(), {
+    mark: 60,
+    bid: 59.9,
+    ask: 60.1,
+    dayChange: 0,
+    dayChangePercent: 0,
+    freshness: "live",
+    marketDataMode: "live",
+    source: "ibkr",
+  });
+  // Backend already normalized averageCost to a per-share premium; it must NOT be
+  // divided by the multiplier again (would render $0.60 and blow up same-day Day $/%).
+  assert.equal(patched.averageCost, 60);
+  assert.ok(Math.abs(patched.unrealizedPnl) < 1e-6);
+});
+
+test("prior-day SHORT option day $ and day % carry the same sign", () => {
+  const patched = applyLiveOptionQuoteToRow(
+    optionRow({
+      quantity: -2,
+      averageCost: 5,
+      mark: 4,
+      marketValue: -800,
+      unrealizedPnl: 200,
+      unrealizedPnlPercent: 20,
+      openedAt: "2026-06-05T14:30:00.000Z",
+      optionQuote: { mark: 4, bid: 3.95, ask: 4.05, dayChange: 0.1, dayChangePercent: 2.5, source: "ibkr" },
+    }),
+    {
+      mark: 4,
+      bid: 3.95,
+      ask: 4.05,
+      dayChange: 0.1,
+      dayChangePercent: 2.5,
+      freshness: "live",
+      marketDataMode: "live",
+      source: "ibkr",
+    },
+  );
+  // Contract rose +2.5% intraday, so a SHORT loses: both $ and % must be negative.
+  assert.ok(patched.dayChange < 0);
+  assert.ok(patched.dayChangePercent < 0);
+  assert.equal(Math.sign(patched.dayChange), Math.sign(patched.dayChangePercent));
+});
 
 const source = readFileSync(new URL("./PositionsPanel.jsx", import.meta.url), "utf8");
 
@@ -94,6 +169,44 @@ test("prior-day equity position day PnL follows live mark versus previous close"
     Math.abs(patched.dayChangePercent - ((15.97 - 17.33) / 17.33) * 100) <
       1e-9,
   );
+});
+
+test("prior-day SHORT equity day $ and day % carry the same sign", () => {
+  const row = {
+    id: "U123:TSLA",
+    accountId: "U123",
+    symbol: "TSLA",
+    assetClass: "Stocks",
+    quantity: -100,
+    averageCost: 20,
+    mark: 100,
+    marketPrice: 100,
+    marketValue: -10000,
+    dayChange: 0,
+    dayChangePercent: 0,
+    unrealizedPnl: 0,
+    unrealizedPnlPercent: 0,
+    openedAt: "2026-06-05T14:30:00.000Z",
+    quote: null,
+    underlyingMarket: null,
+  };
+
+  const patched = applyLiveEquityQuoteToRow(row, {
+    symbol: "TSLA",
+    price: 102,
+    mark: 102,
+    bid: 101.99,
+    ask: 102.01,
+    prevClose: 100,
+    updatedAt: new Date().toISOString(),
+    freshness: "live",
+    marketDataMode: "live",
+  });
+
+  // Underlying rose +2% intraday, so a SHORT loses: both the $ and % must be negative.
+  assert.ok(Math.abs(patched.dayChange - -200) < 1e-9);
+  assert.ok(Math.abs(patched.dayChangePercent - -2) < 1e-9);
+  assert.equal(Math.sign(patched.dayChange), Math.sign(patched.dayChangePercent));
 });
 
 test("equity position row prefers IBKR position quote over Massive base quote", () => {

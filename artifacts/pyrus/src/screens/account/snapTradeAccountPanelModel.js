@@ -184,8 +184,11 @@ const averageCostForSnapTradePosition = (position, optionContract = null) => {
   if (explicit != null) {
     if (optionContract && multiplier > 1) {
       const costBasis = finiteNumber(position?.costBasis);
+      // Compare magnitudes: a short option reports a credit (negative) cost basis, so
+      // a signed perContractCost would never match the positive premium and the
+      // contract-scaled average would be left un-de-scaled (~100x too large).
       const perContractCost = costBasis != null && quantity > 0
-        ? costBasis / quantity
+        ? Math.abs(costBasis) / quantity
         : null;
       if (
         perContractCost != null &&

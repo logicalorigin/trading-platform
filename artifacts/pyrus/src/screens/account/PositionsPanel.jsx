@@ -657,18 +657,12 @@ const optionPriceLooksContractScaled = (row, price, multiplier) => {
   const quantity = Math.abs(firstFiniteNumber(row?.quantity) ?? 0);
   const marketValue = Math.abs(firstFiniteNumber(row?.marketValue) ?? 0);
   const unrealizedPnl = firstFiniteNumber(row?.unrealizedPnl);
-  const rawAveragePrice = firstFiniteNumber(row?.averagePrice, row?.averageCost);
-  const rawMarketPrice = firstFiniteNumber(row?.marketPrice, row?.mark);
-  const rawPriceIsFlatFallback =
-    rawAveragePrice != null &&
-    rawMarketPrice != null &&
-    Math.abs(rawAveragePrice - rawMarketPrice) <= 1e-9 &&
-    unrealizedPnl != null &&
-    Math.abs(unrealizedPnl) <= 0.01;
-  if (price >= multiplier * 0.5 && rawPriceIsFlatFallback) {
-    return true;
-  }
 
+  // Accurate check first: if the row's own marketValue and unrealizedPnl imply a
+  // per-share (premium) basis, the price is NOT contract-scaled — even when avg==mark
+  // makes it look like a flat fallback below. Running this BEFORE the flat-fallback
+  // heuristic stops an already-normalized $50+/share premium from being divided by the
+  // multiplier a second time (which rendered Avg 100x too small and blew up same-day Day $/%).
   const inferredCostBasis =
     marketValue > 0 && unrealizedPnl != null
       ? Math.abs(marketValue - unrealizedPnl)
@@ -686,6 +680,18 @@ const optionPriceLooksContractScaled = (row, price, multiplier) => {
     if (premiumDistance <= 0.02 && contractScaledDistance > 0.02) {
       return false;
     }
+  }
+
+  const rawAveragePrice = firstFiniteNumber(row?.averagePrice, row?.averageCost);
+  const rawMarketPrice = firstFiniteNumber(row?.marketPrice, row?.mark);
+  const rawPriceIsFlatFallback =
+    rawAveragePrice != null &&
+    rawMarketPrice != null &&
+    Math.abs(rawAveragePrice - rawMarketPrice) <= 1e-9 &&
+    unrealizedPnl != null &&
+    Math.abs(unrealizedPnl) <= 0.01;
+  if (price >= multiplier * 0.5 && rawPriceIsFlatFallback) {
+    return true;
   }
 
   return price >= multiplier * 0.5;
@@ -747,10 +753,19 @@ const applyLiveOptionQuoteToRow = (row, liveQuote) => {
       : perContractDayChange != null && quantity != null && multiplier != null
       ? perContractDayChange * quantity * multiplier
       : row.dayChange;
+  // The option quote's own dayChangePercent is the contract's price move; for a SHORT
+  // the position's Day % is inverted, so it must carry the position sign to match Day $
+  // (perContractDayChange * quantity) in the same cell.
+  const perContractDayChangePercent = firstFiniteNumber(
+    optionQuote?.dayChangePercent,
+    row.dayChangePercent,
+  );
   const dayChangePercent =
     sameDayPosition && unrealizedPnlPercent != null
       ? unrealizedPnlPercent
-      : firstFiniteNumber(optionQuote?.dayChangePercent, row.dayChangePercent);
+      : perContractDayChangePercent != null && quantity != null && quantity !== 0
+      ? perContractDayChangePercent * Math.sign(quantity)
+      : perContractDayChangePercent;
   const preserveBackendDayChange = Boolean(
     !sameDayPosition &&
       isShadowLedgerPositionRow(row) &&
@@ -965,9 +980,16 @@ const applyLiveEquityQuoteToRow = (row, liveQuote) => {
   );
   const markDayChange =
     mark != null && previousClose != null ? mark - previousClose : null;
+  // Day % must carry the same sign as Day $ (markDayChange * quantity) so a short
+  // position whose underlying rises shows a loss in BOTH the $ and % of the same cell,
+  // matching the signed same-day path (unrealizedPnlPercent) and the account-total Day %.
   const markDayChangePercent =
-    markDayChange != null && previousClose != null && previousClose > 0
-      ? (markDayChange / previousClose) * 100
+    markDayChange != null &&
+    previousClose != null &&
+    previousClose > 0 &&
+    quantity != null &&
+    quantity !== 0
+      ? ((markDayChange * Math.sign(quantity)) / previousClose) * 100
       : null;
   const dayChange =
     sameDayPosition && unrealizedPnl != null

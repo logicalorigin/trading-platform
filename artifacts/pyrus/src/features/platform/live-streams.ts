@@ -1338,14 +1338,26 @@ const cacheOptionQuoteSnapshot = (
     optionQuoteSnapshotsByProviderContractId.get(normalizedProviderContractId) || null;
   const currentUpdatedAt = getUpdatedAtTime(currentQuote?.updatedAt);
   const nextUpdatedAt = getUpdatedAtTime(quote.updatedAt);
+  const nowMs = Date.now();
 
-  if (
-    currentQuote &&
-    currentUpdatedAt != null &&
-    nextUpdatedAt != null &&
-    nextUpdatedAt < currentUpdatedAt
-  ) {
-    return currentQuote;
+  // Freshness guard with future-tick protection (mirrors isQuoteSnapshotAtLeastAsFresh
+  // on the stock path). A corrupt tick carrying a far-future updatedAt must never
+  // become the cached "current": once it did, every later real (earlier-dated) tick
+  // was rejected below as "older" and the option bid/ask froze on the last value until
+  // reload. Reject a far-future incoming tick, and — crucially — self-heal a "current"
+  // that was already poisoned into the future by NOT rejecting the next real tick.
+  if (currentQuote) {
+    if (isQuoteTimestampTooFarAhead(nextUpdatedAt, nowMs)) {
+      return currentQuote;
+    }
+    if (
+      currentUpdatedAt != null &&
+      nextUpdatedAt != null &&
+      nextUpdatedAt < currentUpdatedAt &&
+      !isQuoteTimestampTooFarAhead(currentUpdatedAt, nowMs)
+    ) {
+      return currentQuote;
+    }
   }
 
   const cachedQuote = mergeOptionQuoteSnapshotForCache(
@@ -7526,6 +7538,7 @@ export const useIbkrOptionQuoteStream = ({
 export const __liveStreamsInternalsForTests = {
   accountPositionsParams,
   applyAlgoCockpitPayloadToCache,
+  cacheOptionQuoteSnapshot,
   mergeAccountPositionRowsById,
   optionPositionProviderContractIds,
   patchAccountPositionsFromStream,

@@ -6,6 +6,7 @@ import {
   __liveStreamsInternalsForTests,
   applyAccountPageLivePayloadToCache,
   getSignalMonitorMatrixStreamUrl,
+  getStoredOptionQuoteSnapshot,
   isQuoteSnapshotAtLeastAsFresh,
 } from "./live-streams.ts";
 
@@ -16,6 +17,65 @@ test("broker stream freshness tolerates normal SSE jitter under load", () => {
 
   assert.match(source, /const ACCOUNT_STREAM_FRESH_MS = 20_000;/);
   assert.doesNotMatch(source, /const ACCOUNT_STREAM_FRESH_MS = 7_000;/);
+});
+
+test("option quote cache rejects future-dated ticks and self-heals a poisoned timestamp", () => {
+  const { cacheOptionQuoteSnapshot } = __liveStreamsInternalsForTests;
+  const now = Date.now();
+  const iso = (ms) => new Date(ms).toISOString();
+  const FAR_FUTURE = 10 * 60 * 1000; // beyond the 2-minute future tolerance
+
+  // Clamp: a corrupt far-future tick must NOT overwrite/freeze a real quote, and a
+  // later real tick must still flow through.
+  const clampId = "O:CLAMPTEST260821C00000500";
+  cacheOptionQuoteSnapshot({
+    providerContractId: clampId,
+    symbol: clampId,
+    bid: 1.0,
+    ask: 1.02,
+    price: 1.01,
+    updatedAt: iso(now),
+  });
+  cacheOptionQuoteSnapshot({
+    providerContractId: clampId,
+    symbol: clampId,
+    bid: 9.98,
+    ask: 9.99,
+    price: 9.985,
+    updatedAt: iso(now + FAR_FUTURE),
+  });
+  assert.equal(getStoredOptionQuoteSnapshot(clampId)?.bid, 1.0);
+  cacheOptionQuoteSnapshot({
+    providerContractId: clampId,
+    symbol: clampId,
+    bid: 1.05,
+    ask: 1.07,
+    price: 1.06,
+    updatedAt: iso(now + 5000),
+  });
+  assert.equal(getStoredOptionQuoteSnapshot(clampId)?.bid, 1.05);
+
+  // Self-heal: a store already poisoned into the future must un-stick on the next
+  // real (earlier-dated) tick instead of freezing until reload.
+  const healId = "O:HEALTEST260821C00000500";
+  cacheOptionQuoteSnapshot({
+    providerContractId: healId,
+    symbol: healId,
+    bid: 2.0,
+    ask: 2.02,
+    price: 2.01,
+    updatedAt: iso(now + FAR_FUTURE),
+  });
+  assert.equal(getStoredOptionQuoteSnapshot(healId)?.bid, 2.0);
+  cacheOptionQuoteSnapshot({
+    providerContractId: healId,
+    symbol: healId,
+    bid: 2.25,
+    ask: 2.27,
+    price: 2.26,
+    updatedAt: iso(now),
+  });
+  assert.equal(getStoredOptionQuoteSnapshot(healId)?.bid, 2.25);
 });
 
 test("quote stream accepts equal-timestamp live price changes", () => {

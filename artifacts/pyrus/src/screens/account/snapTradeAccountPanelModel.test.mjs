@@ -300,6 +300,64 @@ test("buildSnapTradeAccountPanelData normalizes E*TRADE SnapTrade option positio
   assert.equal(data.positionsAtDate.totals.balance.netLiquidation, 347.98);
 });
 
+test("buildSnapTradeAccountPanelData de-scales a SHORT contract-scaled option premium (negative/credit cost basis)", () => {
+  const data = buildSnapTradeAccountPanelData({
+    account: {
+      id: "snaptrade:acct-1",
+      displayName: "E*TRADE Roth IRA",
+      currency: "USD",
+      provider: "snaptrade",
+    },
+    portfolio: {
+      syncedAt: "2026-07-02T20:00:00.000Z",
+      account: {
+        id: "snaptrade:acct-1",
+        displayName: "E*TRADE Roth IRA",
+        baseCurrency: "USD",
+      },
+      balances: [{ currency: "USD", cash: 2000, buyingPower: 2000 }],
+      positions: [
+        {
+          snapTradePositionId: "option:OPTT  260821C00000500",
+          symbol: "OPTT  260821C00000500",
+          rawSymbol: "OPTT  260821C00000500",
+          description: "OPTT Aug 21 2026 0.5 Call",
+          instrumentKind: "option",
+          assetClass: "option",
+          quantity: 3,
+          side: "short",
+          price: 4,
+          averagePurchasePrice: 500,
+          marketValue: -12,
+          costBasis: -1500,
+          unrealizedPnl: 1488,
+          currency: "USD",
+          cashEquivalent: false,
+        },
+      ],
+      totals: {
+        cash: 2000,
+        buyingPower: 2000,
+        positionMarketValue: -12,
+        netLiquidation: 1988,
+        positionCount: 1,
+      },
+      dataFreshness: { asOf: "2026-07-02T20:00:00.000Z" },
+    },
+    now: new Date("2026-07-02T20:00:00.000Z"),
+  });
+
+  const position = data.positions.positions[0];
+  // Contract-scaled premium (500 = $5/share * 100) de-scales to per-share $5 even
+  // though the short reports a negative/credit cost basis.
+  assert.equal(position.averageCost, 5);
+  assert.equal(position.quantity, -3);
+  assert.equal(position.marketValue, -1200);
+  assert.equal(position.unrealizedPnl, 300);
+  assert.equal(position.unrealizedPnlPercent, 20);
+  assert.equal(position.brokerUnrealizedPnl, 300);
+});
+
 test("buildSnapTradeAccountPanelData maps recent orders by working/history tab", () => {
   const common = {
     account: { id: "snaptrade:acct-1", currency: "USD", provider: "snaptrade" },
