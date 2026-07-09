@@ -30,10 +30,12 @@ import {
 } from "@workspace/db";
 import {
   aggregatePyrusSignalsBarsForTimeframe,
+  createIncrementalPyrusSignalsEvaluator,
   evaluatePyrusSignalsSignals,
   PYRUS_SIGNALS_SIGNAL_WARMUP_BARS,
   resolvePyrusSignalsSignalSettings,
   resolvePyrusSignalsTrendDirection,
+  type IncrementalPyrusSignalsEvaluator,
   type PyrusSignalsBar,
   type PyrusSignalsFilterState,
   type PyrusSignalsSignalEvent,
@@ -9296,14 +9298,9 @@ function fingerprintSignalMonitorMatrixCompletedBars(
     signalMonitorCompletedBarsFingerprintMemo.set(chartBars, "0");
     return "0";
   }
-  let hash = 2166136261;
+  let hash = SIGNAL_MONITOR_COMPLETED_BARS_FINGERPRINT_SEED;
   for (const bar of chartBars) {
-    hash = mixSignalMonitorCompletedBarFingerprintField(hash, bar.time);
-    hash = mixSignalMonitorCompletedBarFingerprintField(hash, bar.o);
-    hash = mixSignalMonitorCompletedBarFingerprintField(hash, bar.h);
-    hash = mixSignalMonitorCompletedBarFingerprintField(hash, bar.l);
-    hash = mixSignalMonitorCompletedBarFingerprintField(hash, bar.c);
-    hash = mixSignalMonitorCompletedBarFingerprintField(hash, bar.v);
+    hash = mixSignalMonitorCompletedBarFingerprint(hash, bar);
   }
   const fingerprint = `${n}:${hash}`;
   signalMonitorCompletedBarsFingerprintMemo.set(chartBars, fingerprint);
@@ -9325,12 +9322,374 @@ function mixSignalMonitorCompletedBarFingerprintField(
   return nextHash;
 }
 
+const SIGNAL_MONITOR_COMPLETED_BARS_FINGERPRINT_SEED = 2166136261;
+
+// One bar's contribution to the completed-bars content hash. Shared by the
+// full-series fingerprint above and the incremental append-extension check
+// below so the two folds can never drift apart.
+function mixSignalMonitorCompletedBarFingerprint(
+  hash: number,
+  bar: PyrusSignalsBar,
+): number {
+  let nextHash = mixSignalMonitorCompletedBarFingerprintField(hash, bar.time);
+  nextHash = mixSignalMonitorCompletedBarFingerprintField(nextHash, bar.o);
+  nextHash = mixSignalMonitorCompletedBarFingerprintField(nextHash, bar.h);
+  nextHash = mixSignalMonitorCompletedBarFingerprintField(nextHash, bar.l);
+  nextHash = mixSignalMonitorCompletedBarFingerprintField(nextHash, bar.c);
+  return mixSignalMonitorCompletedBarFingerprintField(nextHash, bar.v);
+}
+
 function getSignalMonitorCompletedBarsFingerprintMemoStatsForTests() {
   return {
     hits: signalMonitorCompletedBarsFingerprintMemoHits,
     misses: signalMonitorCompletedBarsFingerprintMemoMisses,
   };
 }
+
+// --- WO-S3B-2: incremental signal evaluation (PYRUS_SIGNALS_INCREMENTAL_EVAL) --
+// The append-incremental evaluator (lib/pyrus-signals-core, parity-proven
+// byte-identical to evaluatePyrusSignalsSignals at every append) can replace
+// the from-scratch rebuild on heavy-eval cache MISSES: each cell keeps a live
+// evaluator instance and append()s only the new completed bar(s) when the new
+// series is a pure forward extension of what that instance already evaluated.
+// Modes (default 'off'):
+//   off    — from-scratch only; the sole hot-path addition is the mode check
+//            in the miss branch below (zero behavior difference).
+//   shadow — both engines run on every miss; the from-scratch result is ALWAYS
+//            served and cached; a deterministic 1-in-N sample (default 50)
+//            compares the two canonically and counts mismatches (never throws,
+//            never alters the emitted result).
+//   on     — the incremental result is served; a cheap deterministic 1-in-N
+//            self-check (default 500) keeps comparing and logs on divergence
+//            (never throws).
+type SignalMonitorIncrementalEvalMode = "off" | "shadow" | "on";
+let signalMonitorIncrementalEvalModeMemo: SignalMonitorIncrementalEvalMode | null =
+  null;
+function signalMonitorIncrementalEvalMode(): SignalMonitorIncrementalEvalMode {
+  if (signalMonitorIncrementalEvalModeMemo == null) {
+    const raw = (process.env.PYRUS_SIGNALS_INCREMENTAL_EVAL ?? "")
+      .trim()
+      .toLowerCase();
+    signalMonitorIncrementalEvalModeMemo =
+      raw === "on" ? "on" : raw === "shadow" ? "shadow" : "off";
+  }
+  return signalMonitorIncrementalEvalModeMemo;
+}
+
+const SIGNAL_MONITOR_INCREMENTAL_SHADOW_SAMPLE_DEFAULT = 50;
+const SIGNAL_MONITOR_INCREMENTAL_SELF_CHECK_SAMPLE_DEFAULT = 500;
+let signalMonitorIncrementalEvalSampleNMemo: {
+  shadow: number;
+  on: number;
+} | null = null;
+function signalMonitorIncrementalEvalSampleN(mode: "shadow" | "on"): number {
+  if (!signalMonitorIncrementalEvalSampleNMemo) {
+    const parsePositiveInt = (
+      raw: string | undefined,
+      fallback: number,
+    ): number => {
+      const value = Number.parseInt(raw ?? "", 10);
+      return Number.isFinite(value) && value > 0 ? value : fallback;
+    };
+    signalMonitorIncrementalEvalSampleNMemo = {
+      shadow: parsePositiveInt(
+        process.env.PYRUS_SIGNALS_INCREMENTAL_EVAL_SHADOW_SAMPLE_N,
+        SIGNAL_MONITOR_INCREMENTAL_SHADOW_SAMPLE_DEFAULT,
+      ),
+      on: parsePositiveInt(
+        process.env.PYRUS_SIGNALS_INCREMENTAL_EVAL_SELF_CHECK_N,
+        SIGNAL_MONITOR_INCREMENTAL_SELF_CHECK_SAMPLE_DEFAULT,
+      ),
+    };
+  }
+  return signalMonitorIncrementalEvalSampleNMemo[mode];
+}
+
+let signalMonitorIncrementalEvalEvaluationCount = 0;
+let signalMonitorIncrementalEvalAppends = 0;
+let signalMonitorIncrementalEvalSeeds = 0;
+let signalMonitorIncrementalEvalShadowChecks = 0;
+let signalMonitorIncrementalEvalShadowMismatches = 0;
+// Test seam: lets a test corrupt the incremental side of a parity comparison
+// to prove mismatch accounting without being able to alter the emitted result.
+let signalMonitorIncrementalEvalCorruptForTests:
+  | ((
+      evaluation: SignalMonitorMatrixHeavyEvaluation,
+    ) => SignalMonitorMatrixHeavyEvaluation)
+  | null = null;
+
+// Per-cell evaluator instances, keyed like the heavy-eval memo
+// (settingsSignature + symbol + timeframe) PLUS the lastBarClosed flag: the
+// engine bakes lastBarClosed at construction (it decides the tail bar's
+// actionability), so one instance can only serve one closure state and a flip
+// re-seeds instead of serving the other state. Bounded by the SAME LRU max as
+// the heavy-eval cache; eviction = seed-on-next-miss (safe-degraded).
+type SignalMonitorIncrementalEvaluatorCell = {
+  evaluator: IncrementalPyrusSignalsEvaluator;
+  appendedCount: number;
+  appendedHash: number;
+  lastBarTime: number;
+};
+const signalMonitorIncrementalEvaluatorCells = new Map<
+  string,
+  SignalMonitorIncrementalEvaluatorCell
+>();
+
+function signalMonitorIncrementalSeriesFingerprint(
+  count: number,
+  hash: number,
+): string {
+  // Mirrors fingerprintSignalMonitorMatrixCompletedBars exactly ("0" for an
+  // empty series, "{n}:{hash}" otherwise) so a running fold can be compared
+  // against the caller's already-computed full-series fingerprint.
+  return count === 0 ? "0" : `${count}:${hash}`;
+}
+
+// result() exposes the evaluator's LIVE internal arrays (the next append()
+// mutates them in place) and the engine retroactively mutates event objects
+// (actionable/filterState). Snapshot both before caching/serving so a consumer
+// holding an evaluation across a bar boundary can never observe mutation —
+// mirroring from-scratch semantics (a fresh object per miss).
+function snapshotSignalMonitorIncrementalEvaluation(
+  evaluation: SignalMonitorMatrixHeavyEvaluation,
+): SignalMonitorMatrixHeavyEvaluation {
+  return {
+    basis: evaluation.basis.slice(),
+    atrRaw: evaluation.atrRaw.slice(),
+    atrSmoothed: evaluation.atrSmoothed.slice(),
+    upperBand: evaluation.upperBand.slice(),
+    lowerBand: evaluation.lowerBand.slice(),
+    trendLine: evaluation.trendLine.slice(),
+    bullWires: [
+      evaluation.bullWires[0].slice(),
+      evaluation.bullWires[1].slice(),
+      evaluation.bullWires[2].slice(),
+    ],
+    bearWires: [
+      evaluation.bearWires[0].slice(),
+      evaluation.bearWires[1].slice(),
+      evaluation.bearWires[2].slice(),
+    ],
+    adx: evaluation.adx.slice(),
+    volatilityScore: evaluation.volatilityScore.slice(),
+    trendDirection: evaluation.trendDirection.slice(),
+    regimeDirection: evaluation.regimeDirection.slice(),
+    trendBasisComputable: evaluation.trendBasisComputable,
+    marketStructureDirection: evaluation.marketStructureDirection,
+    structureEvents: evaluation.structureEvents.map((event) => ({ ...event })),
+    signalEvents: evaluation.signalEvents.map((event) => ({ ...event })),
+  };
+}
+
+// Canonical (key-sorted, non-finite-safe) serialization for parity comparison
+// only — the fixture-side stableSerialize lives under __fixtures__ and is not
+// importable from production code.
+function canonicalSignalMonitorEvaluationJson(value: unknown): string {
+  return JSON.stringify(value, (_jsonKey, jsonValue) => {
+    if (typeof jsonValue === "number" && !Number.isFinite(jsonValue)) {
+      return `\u0000nonfinite:${String(jsonValue)}`;
+    }
+    if (
+      jsonValue &&
+      typeof jsonValue === "object" &&
+      !Array.isArray(jsonValue)
+    ) {
+      const sorted: Record<string, unknown> = {};
+      for (const objectKey of Object.keys(
+        jsonValue as Record<string, unknown>,
+      ).sort()) {
+        sorted[objectKey] = (jsonValue as Record<string, unknown>)[objectKey];
+      }
+      return sorted;
+    }
+    return jsonValue as unknown;
+  });
+}
+
+function compareSignalMonitorIncrementalEvaluation(
+  incremental: SignalMonitorMatrixHeavyEvaluation,
+  legacy: SignalMonitorMatrixHeavyEvaluation,
+  context: {
+    mode: SignalMonitorIncrementalEvalMode;
+    symbol: string;
+    timeframe: SignalMonitorMatrixTimeframe;
+    barsFingerprint: string;
+  },
+): void {
+  const corrupt = signalMonitorIncrementalEvalCorruptForTests;
+  const incrementalForCompare = corrupt ? corrupt(incremental) : incremental;
+  signalMonitorIncrementalEvalShadowChecks += 1;
+  const incrementalJson = canonicalSignalMonitorEvaluationJson(
+    incrementalForCompare,
+  );
+  const legacyJson = canonicalSignalMonitorEvaluationJson(legacy);
+  if (incrementalJson === legacyJson) {
+    return;
+  }
+  signalMonitorIncrementalEvalShadowMismatches += 1;
+  let divergeAt = 0;
+  const maxLength = Math.min(incrementalJson.length, legacyJson.length);
+  while (
+    divergeAt < maxLength &&
+    incrementalJson[divergeAt] === legacyJson[divergeAt]
+  ) {
+    divergeAt += 1;
+  }
+  logger.warn(
+    {
+      mode: context.mode,
+      symbol: context.symbol,
+      timeframe: context.timeframe,
+      barsFingerprint: context.barsFingerprint,
+      divergeAt,
+      incremental: incrementalJson.slice(
+        Math.max(0, divergeAt - 80),
+        divergeAt + 120,
+      ),
+      legacy: legacyJson.slice(Math.max(0, divergeAt - 80), divergeAt + 120),
+    },
+    "signal-monitor incremental eval diverged from from-scratch (parity sample)",
+  );
+}
+
+function evaluateSignalMonitorMatrixIncrementalEvaluation(input: {
+  key: string;
+  barsFingerprint: string;
+  settings: ReturnType<typeof resolvePyrusSignalsSignalSettings>;
+  symbol: string;
+  timeframe: SignalMonitorMatrixTimeframe;
+  chartBars: PyrusSignalsBar[];
+  lastBarClosed: boolean;
+}): SignalMonitorMatrixHeavyEvaluation | null {
+  const cellKey = `${input.key}\u0000${input.lastBarClosed ? "lc1" : "lc0"}`;
+  try {
+    const bars = input.chartBars;
+    const cell = lruCacheTouch(signalMonitorIncrementalEvaluatorCells, cellKey);
+    if (
+      cell &&
+      bars.length >= cell.appendedCount &&
+      (cell.appendedCount === 0 ||
+        bars[cell.appendedCount - 1]?.time === cell.lastBarTime)
+    ) {
+      // Fold the cell's running content hash over ONLY the candidate new bars:
+      // if the result reproduces the full-series fingerprint the caller already
+      // computed, the previously appended prefix is content-identical (same
+      // confidence as the heavy-eval fingerprint itself) and the tail is a
+      // pure extension — verified in O(new bars), no full-array compare.
+      let hash = cell.appendedHash;
+      for (let index = cell.appendedCount; index < bars.length; index += 1) {
+        hash = mixSignalMonitorCompletedBarFingerprint(hash, bars[index]);
+      }
+      if (
+        signalMonitorIncrementalSeriesFingerprint(bars.length, hash) ===
+        input.barsFingerprint
+      ) {
+        for (let index = cell.appendedCount; index < bars.length; index += 1) {
+          cell.evaluator.append(bars[index]);
+        }
+        if (bars.length > cell.appendedCount) {
+          cell.lastBarTime = bars[bars.length - 1].time;
+          cell.appendedCount = bars.length;
+          cell.appendedHash = hash;
+        }
+        signalMonitorIncrementalEvalAppends += 1;
+        return snapshotSignalMonitorIncrementalEvaluation(
+          cell.evaluator.result(),
+        );
+      }
+    }
+    // Non-extension (gap, correction, shrink, settings/closure change,
+    // eviction): seed a FRESH evaluator by appending the full series (the
+    // parity harness proved this equals from-scratch) and replace the cell.
+    const evaluator = createIncrementalPyrusSignalsEvaluator(input.settings, {
+      includeProvisionalSignals: !input.settings.waitForBarClose,
+      lastBarClosed: input.lastBarClosed,
+    });
+    let hash = SIGNAL_MONITOR_COMPLETED_BARS_FINGERPRINT_SEED;
+    for (const chartBar of bars) {
+      evaluator.append(chartBar);
+      hash = mixSignalMonitorCompletedBarFingerprint(hash, chartBar);
+    }
+    lruCacheSet(
+      signalMonitorIncrementalEvaluatorCells,
+      cellKey,
+      {
+        evaluator,
+        appendedCount: bars.length,
+        appendedHash: hash,
+        lastBarTime: bars.length ? bars[bars.length - 1].time : Number.NaN,
+      },
+      SIGNAL_MONITOR_MATRIX_EVAL_CACHE_MAX,
+    );
+    signalMonitorIncrementalEvalSeeds += 1;
+    return snapshotSignalMonitorIncrementalEvaluation(evaluator.result());
+  } catch (error) {
+    // Engine failure must never break signal serving: drop the cell and let
+    // the caller fall back to the from-scratch evaluator.
+    signalMonitorIncrementalEvaluatorCells.delete(cellKey);
+    logger.warn(
+      { err: error, symbol: input.symbol, timeframe: input.timeframe },
+      "signal-monitor incremental eval failed; serving from-scratch",
+    );
+    return null;
+  }
+}
+
+function evaluateSignalMonitorMatrixHeavyEvaluationWithIncremental(input: {
+  mode: Exclude<SignalMonitorIncrementalEvalMode, "off">;
+  key: string;
+  barsFingerprint: string;
+  settings: ReturnType<typeof resolvePyrusSignalsSignalSettings>;
+  symbol: string;
+  timeframe: SignalMonitorMatrixTimeframe;
+  chartBars: PyrusSignalsBar[];
+  lastBarClosed: boolean;
+}): SignalMonitorMatrixHeavyEvaluation {
+  const evaluateFromScratch = () =>
+    evaluatePyrusSignalsSignals({
+      chartBars: input.chartBars,
+      settings: input.settings,
+      includeProvisionalSignals: !input.settings.waitForBarClose,
+      lastBarClosed: input.lastBarClosed,
+    });
+  signalMonitorIncrementalEvalEvaluationCount += 1;
+  const sampled =
+    signalMonitorIncrementalEvalEvaluationCount %
+      signalMonitorIncrementalEvalSampleN(input.mode) ===
+    0;
+  const incremental = evaluateSignalMonitorMatrixIncrementalEvaluation(input);
+  if (input.mode === "shadow") {
+    // From-scratch ALWAYS wins in shadow mode; the incremental engine only
+    // shadows it (and the comparison is sampled, never result-affecting).
+    const legacy = evaluateFromScratch();
+    if (incremental && sampled) {
+      compareSignalMonitorIncrementalEvaluation(incremental, legacy, input);
+    }
+    return legacy;
+  }
+  if (!incremental) {
+    return evaluateFromScratch();
+  }
+  if (sampled) {
+    compareSignalMonitorIncrementalEvaluation(
+      incremental,
+      evaluateFromScratch(),
+      input,
+    );
+  }
+  return incremental;
+}
+
+function getSignalMonitorIncrementalEvalStats() {
+  return {
+    mode: signalMonitorIncrementalEvalMode(),
+    appends: signalMonitorIncrementalEvalAppends,
+    seeds: signalMonitorIncrementalEvalSeeds,
+    shadowChecks: signalMonitorIncrementalEvalShadowChecks,
+    shadowMismatches: signalMonitorIncrementalEvalShadowMismatches,
+  };
+}
+// --- end WO-S3B-2 incremental signal evaluation ------------------------------
 
 function evaluateSignalMonitorMatrixHeavyEvaluation(input: {
   settings: ReturnType<typeof resolvePyrusSignalsSignalSettings>;
@@ -9362,12 +9721,28 @@ function evaluateSignalMonitorMatrixHeavyEvaluation(input: {
     return cached.value;
   }
   signalMonitorMatrixHeavyEvaluationCacheMisses += 1;
-  const evaluation = evaluatePyrusSignalsSignals({
-    chartBars: input.chartBars,
-    settings: input.settings,
-    includeProvisionalSignals: !input.settings.waitForBarClose,
-    lastBarClosed: input.lastBarClosed,
-  });
+  // WO-S3B-2: on a miss the incremental engine can replace the from-scratch
+  // rebuild (flag-gated; with the flag unset/off this branch is byte-identical
+  // to before — the mode check is the only added instruction).
+  const incrementalMode = signalMonitorIncrementalEvalMode();
+  const evaluation =
+    incrementalMode === "off"
+      ? evaluatePyrusSignalsSignals({
+          chartBars: input.chartBars,
+          settings: input.settings,
+          includeProvisionalSignals: !input.settings.waitForBarClose,
+          lastBarClosed: input.lastBarClosed,
+        })
+      : evaluateSignalMonitorMatrixHeavyEvaluationWithIncremental({
+          mode: incrementalMode,
+          key,
+          barsFingerprint,
+          settings: input.settings,
+          symbol: input.symbol,
+          timeframe: input.timeframe,
+          chartBars: input.chartBars,
+          lastBarClosed: input.lastBarClosed,
+        });
   // The live key set is (distinct settings × universe symbols × timeframes); when it
   // exceeds the max, LRU evicts the least-recently-used cell one at a time instead of
   // wiping the whole cache (which forced the entire universe to recompute at once).
@@ -9413,6 +9788,14 @@ function resetSignalMonitorMatrixHeavyEvaluationCache() {
   signalMonitorStreamSourceMinuteBarsMemoHits = 0;
   signalMonitorStreamSourceMinuteBarsMemoMisses = 0;
   signalMonitorAggregateRevisionBySymbol.clear();
+  signalMonitorIncrementalEvaluatorCells.clear();
+  signalMonitorIncrementalEvalEvaluationCount = 0;
+  signalMonitorIncrementalEvalAppends = 0;
+  signalMonitorIncrementalEvalSeeds = 0;
+  signalMonitorIncrementalEvalShadowChecks = 0;
+  signalMonitorIncrementalEvalShadowMismatches = 0;
+  signalMonitorIncrementalEvalModeMemo = null;
+  signalMonitorIncrementalEvalSampleNMemo = null;
 }
 
 export function evaluateSignalMonitorMatrixStateFromCompletedBars(input: {
@@ -15164,7 +15547,18 @@ export const __signalMonitorInternalsForTests = {
   emitSignalMonitorMatrixStreamAggregateDelta,
   queueSignalMonitorMatrixStreamAggregate,
   evaluateSignalMonitorMatrixStateFromCompletedBars,
+  evaluateSignalMonitorMatrixHeavyEvaluation,
   getSignalMonitorMatrixHeavyEvaluationCacheStats,
+  getSignalMonitorIncrementalEvalStats,
+  setSignalMonitorIncrementalEvalCorruptForTests(
+    corrupt:
+      | ((
+          evaluation: SignalMonitorMatrixHeavyEvaluation,
+        ) => SignalMonitorMatrixHeavyEvaluation)
+      | null,
+  ) {
+    signalMonitorIncrementalEvalCorruptForTests = corrupt;
+  },
   getSignalMonitorIndicatorSnapshotBaseCacheStats,
   getSignalMonitorCompletedBarsFingerprintMemoStatsForTests,
   fingerprintSignalMonitorMatrixCompletedBars,

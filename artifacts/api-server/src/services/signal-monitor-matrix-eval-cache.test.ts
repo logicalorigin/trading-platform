@@ -27,6 +27,9 @@ const {
   lruCacheSet,
   lruCacheTouch,
   resetSignalMonitorMatrixHeavyEvaluationCache: resetCache,
+  evaluateSignalMonitorMatrixHeavyEvaluation: heavyEval,
+  getSignalMonitorIncrementalEvalStats: incrementalStats,
+  setSignalMonitorIncrementalEvalCorruptForTests: setIncrementalCorrupt,
 } = __signalMonitorInternalsForTests;
 
 // A single completed bar whose close time is `closeIso` (dataUpdatedAt drives closedAt).
@@ -550,4 +553,212 @@ test("lruCacheTouch keeps a frequently-hit entry alive under eviction pressure",
   assert.equal(cache.has("hot"), true);
   assert.equal(cache.has("a"), false);
   assert.deepEqual([...cache.keys()], ["b", "hot", "c"]);
+});
+
+// --- WO-S3B-2: incremental evaluation behind PYRUS_SIGNALS_INCREMENTAL_EVAL ---
+// The mode env is memoized inside signal-monitor and the memo is cleared by
+// resetCache(), so each scenario sets the env THEN resets. Always restore the
+// default (unset = off), clear the corruption seam, and reset in finally.
+function withIncrementalMode<T>(env: Record<string, string>, run: () => T): T {
+  for (const [key, value] of Object.entries(env)) {
+    process.env[key] = value;
+  }
+  resetCache();
+  try {
+    return run();
+  } finally {
+    setIncrementalCorrupt(null);
+    for (const key of Object.keys(env)) {
+      delete process.env[key];
+    }
+    resetCache();
+  }
+}
+
+// Growing per-step series: the base bars plus k extra closed bars — each step
+// is a heavy-eval MISS (new tail bar => new fingerprint), which is the only
+// path the incremental engine hooks.
+function buildAppendSteps(stepCount = 6) {
+  const startMs = new Date("2026-06-09T15:00:00.000Z").getTime();
+  const steps: Array<{ iso: string; bars: unknown[] }> = [];
+  let bars = buildBars() as unknown[];
+  steps.push({ iso: "2026-06-09T15:00:00.000Z", bars });
+  for (let k = 1; k < stepCount; k += 1) {
+    const iso = new Date(startMs + k * 60_000).toISOString();
+    const close = Number((101 + Math.sin(k / 2) * 2).toFixed(2));
+    bars = [...bars, bar(iso, close)];
+    steps.push({ iso, bars });
+  }
+  return steps;
+}
+
+test("incremental eval: flag unset/off leaves the instrumentation dormant (from-scratch path untouched)", () => {
+  const profile = makeProfile({});
+  evalAt("2026-06-09T15:00:00.000Z", profile, buildBars());
+  assert.deepEqual(incrementalStats(), {
+    mode: "off",
+    appends: 0,
+    seeds: 0,
+    shadowChecks: 0,
+    shadowMismatches: 0,
+  });
+});
+
+test("incremental eval ON: multi-append sequence is state-identical to from-scratch and appends instead of re-seeding", () => {
+  const profile = makeProfile({});
+  const steps = buildAppendSteps();
+
+  // Reference run on the untouched from-scratch path (flag off).
+  const reference = steps.map((step) => evalAt(step.iso, profile, step.bars));
+
+  withIncrementalMode({ PYRUS_SIGNALS_INCREMENTAL_EVAL: "on" }, () => {
+    const incremental = steps.map((step) =>
+      evalAt(step.iso, profile, step.bars),
+    );
+    for (let k = 0; k < steps.length; k += 1) {
+      assert.deepEqual(
+        incremental[k],
+        reference[k],
+        `state diverged from from-scratch at step ${k}`,
+      );
+    }
+    // First evaluation seeds the cell; every later step appends the one new bar.
+    assert.deepEqual(incrementalStats(), {
+      mode: "on",
+      appends: steps.length - 1,
+      seeds: 1,
+      shadowChecks: 0,
+      shadowMismatches: 0,
+    });
+  });
+});
+
+test("incremental eval ON: non-append transitions (shrink, mid-series correction, settings change) re-seed with correct results", () => {
+  const profile = makeProfile({});
+  const altProfile = makeProfile({ basisLength: 40 });
+  const bars = buildBars() as Array<Record<string, number>>;
+  const shorter = bars.slice(0, bars.length - 1);
+  const corrected = bars.slice();
+  corrected[40] = { ...corrected[40], high: corrected[40].high + 0.25 };
+  const iso = "2026-06-09T15:00:00.000Z";
+
+  // From-scratch references (flag off).
+  const referenceFull = evalAt(iso, profile, bars);
+  const referenceShorter = evalAt(iso, profile, shorter);
+  const referenceCorrected = evalAt(iso, profile, corrected);
+  const referenceAlt = evalAt(iso, altProfile, bars);
+
+  withIncrementalMode({ PYRUS_SIGNALS_INCREMENTAL_EVAL: "on" }, () => {
+    assert.deepEqual(evalAt(iso, profile, bars), referenceFull);
+    assert.equal(incrementalStats().seeds, 1);
+
+    // Shorter series can never be an extension -> fresh seed, correct result.
+    assert.deepEqual(evalAt(iso, profile, shorter), referenceShorter);
+    assert.equal(incrementalStats().seeds, 2);
+
+    // Same tail, corrected middle bar: the appended-prefix fold no longer
+    // reproduces the series content stamp -> re-seed, correct result.
+    assert.deepEqual(evalAt(iso, profile, corrected), referenceCorrected);
+    assert.equal(incrementalStats().seeds, 3);
+
+    // A settings change forks the cell key -> its own seeded instance.
+    assert.deepEqual(evalAt(iso, altProfile, bars), referenceAlt);
+    assert.equal(incrementalStats().seeds, 4);
+    assert.equal(incrementalStats().appends, 0);
+  });
+});
+
+test("incremental eval SHADOW: legacy always served, parity sampled clean; a corrupted incremental result only bumps the mismatch counter", () => {
+  const profile = makeProfile({});
+  const steps = buildAppendSteps(5);
+  const reference = steps.map((step) => evalAt(step.iso, profile, step.bars));
+
+  withIncrementalMode(
+    {
+      PYRUS_SIGNALS_INCREMENTAL_EVAL: "shadow",
+      PYRUS_SIGNALS_INCREMENTAL_EVAL_SHADOW_SAMPLE_N: "1",
+    },
+    () => {
+      for (let k = 0; k < steps.length - 1; k += 1) {
+        assert.deepEqual(
+          evalAt(steps[k].iso, profile, steps[k].bars),
+          reference[k],
+          `shadow mode must serve the from-scratch result at step ${k}`,
+        );
+      }
+      assert.deepEqual(incrementalStats(), {
+        mode: "shadow",
+        appends: steps.length - 2,
+        seeds: 1,
+        shadowChecks: steps.length - 1,
+        shadowMismatches: 0,
+      });
+
+      // Corrupt the incremental side of the comparison (test seam): the
+      // mismatch is counted, and the emitted result is still the legacy one.
+      setIncrementalCorrupt((evaluation) => ({
+        ...evaluation,
+        marketStructureDirection: 99,
+      }));
+      const last = steps[steps.length - 1];
+      assert.deepEqual(
+        evalAt(last.iso, profile, last.bars),
+        reference[steps.length - 1],
+        "a shadow mismatch must never alter the emitted result",
+      );
+      assert.equal(incrementalStats().shadowChecks, steps.length);
+      assert.equal(incrementalStats().shadowMismatches, 1);
+    },
+  );
+});
+
+test("incremental eval ON: a served evaluation is immutable across later appends (no live-array aliasing)", () => {
+  const settings = resolvePyrusSignalsSignalSettings({});
+  const chartBars = buildChartBars();
+  const lastTime = Number(chartBars[chartBars.length - 1].time);
+  const extended = [
+    ...chartBars,
+    {
+      time: lastTime + 60,
+      ts: new Date((lastTime + 60) * 1000).toISOString(),
+      o: 101,
+      h: 101.5,
+      l: 100.5,
+      c: 101.2,
+      v: 1_000,
+    },
+  ];
+
+  withIncrementalMode({ PYRUS_SIGNALS_INCREMENTAL_EVAL: "on" }, () => {
+    const first = heavyEval({
+      settings,
+      symbol: "SPY",
+      timeframe: "1m" as never,
+      chartBars: chartBars as never,
+      lastBarClosed: true,
+    });
+    const firstJson = JSON.stringify(first);
+    // Seeded evaluation matches from-scratch exactly.
+    assert.deepEqual(
+      first,
+      evaluatePyrusSignalsSignals({
+        chartBars: chartBars as never,
+        settings,
+        includeProvisionalSignals: !settings.waitForBarClose,
+        lastBarClosed: true,
+      }),
+    );
+    // Appending a new bar must not mutate the previously served evaluation
+    // (the engine's result() exposes live internals; the wiring must snapshot).
+    heavyEval({
+      settings,
+      symbol: "SPY",
+      timeframe: "1m" as never,
+      chartBars: extended as never,
+      lastBarClosed: true,
+    });
+    assert.equal(JSON.stringify(first), firstJson);
+    assert.equal(incrementalStats().seeds, 1);
+    assert.equal(incrementalStats().appends, 1);
+  });
 });
