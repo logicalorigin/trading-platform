@@ -51,6 +51,7 @@ import {
   type ExecutionEvent,
 } from "@workspace/db";
 import { and, asc, desc, eq, gte, inArray, isNotNull, sql } from "drizzle-orm";
+import type { SQL } from "drizzle-orm";
 import { HttpError } from "../lib/errors";
 import { logger } from "../lib/logger";
 import { normalizeSymbol } from "../lib/values";
@@ -2275,18 +2276,21 @@ async function listDeploymentEventsSinceWithOverflow(
   deploymentId: string,
   since: Date,
   limit = SIGNAL_OPTIONS_DASHBOARD_DAY_EVENT_LIMIT,
+  options: { excludeFirehose?: boolean } = {},
 ) {
   const cappedLimit = Math.min(Math.max(limit, 1), 10_000);
+  const conditions: SQL[] = [
+    eq(executionEventsTable.deploymentId, deploymentId),
+    sql`${executionEventsTable.eventType} LIKE 'signal_options_%'`,
+    gte(executionEventsTable.occurredAt, since),
+  ];
+  if (options.excludeFirehose) {
+    conditions.push(sql`not (${signalOptionsSeenSignalStoreCandidateSql()})`);
+  }
   const rows = await db
     .select()
     .from(executionEventsTable)
-    .where(
-      and(
-        eq(executionEventsTable.deploymentId, deploymentId),
-        sql`${executionEventsTable.eventType} LIKE 'signal_options_%'`,
-        gte(executionEventsTable.occurredAt, since),
-      ),
-    )
+    .where(and(...conditions))
     .orderBy(asc(executionEventsTable.occurredAt))
     .limit(cappedLimit + 1);
   return {
@@ -2324,7 +2328,7 @@ async function readSignalOptionsDashboardEvents(input: {
   recentLimit: number;
   now?: Date;
 }) {
-  const recentEvents = await listDeploymentEvents(
+  const recentEvents = await listDeploymentEventsExcludingFirehose(
     input.deploymentId,
     input.recentLimit,
   );
@@ -2344,6 +2348,7 @@ async function readSignalOptionsDashboardEvents(input: {
     input.deploymentId,
     sessionStartAt,
     SIGNAL_OPTIONS_DASHBOARD_DAY_EVENT_LIMIT,
+    { excludeFirehose: true },
   );
   return {
     events: mergeSignalOptionsDashboardEvents(recentEvents, dayRead.events),

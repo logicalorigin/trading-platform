@@ -1317,6 +1317,82 @@ test("dashboard event read covers the full trading day for >100-event realized P
   });
 });
 
+test("dashboard event read excludes persisted candidate-skip firehose rows", async () => {
+  const internals = __signalOptionsAutomationInternalsForTests;
+  const uuid = (value: number) =>
+    `00000000-0000-4000-8000-${String(value).padStart(12, "0")}`;
+  const strategyId = uuid(5100);
+  const deploymentId = uuid(5101);
+  const now = new Date("2026-07-07T18:00:00.000Z");
+  const firstEventAt = new Date("2026-07-07T14:30:00.000Z");
+
+  await withTestDb(async ({ db }) => {
+    await db.insert(algoStrategiesTable).values({
+      id: strategyId,
+      name: "Signal Options Dashboard Firehose",
+      mode: "shadow",
+      enabled: true,
+      symbolUniverse: ["AAPL"],
+      config: {},
+    });
+    await db.insert(algoDeploymentsTable).values({
+      id: deploymentId,
+      strategyId,
+      name: "Signal Options Dashboard Firehose",
+      mode: "shadow",
+      enabled: true,
+      providerAccountId: "shadow",
+      symbolUniverse: ["AAPL"],
+      config: { signalOptions: {} },
+    });
+    await db.insert(executionEventsTable).values([
+      ...Array.from({ length: 3 }, (_, index) => ({
+        id: uuid(5200 + index),
+        deploymentId,
+        providerAccountId: "shadow",
+        symbol: "AAPL",
+        eventType: SIGNAL_OPTIONS_EXIT_EVENT,
+        summary: `exit ${index}`,
+        occurredAt: new Date(firstEventAt.getTime() + index * 60_000),
+        payload: {
+          pnl: -1,
+          position: { id: `position-${index}` },
+        },
+      })),
+      ...Array.from({ length: 25 }, (_, index) => ({
+        id: uuid(5300 + index),
+        deploymentId,
+        providerAccountId: "shadow",
+        symbol: "AAPL",
+        eventType: SIGNAL_OPTIONS_SKIPPED_EVENT,
+        summary: `skip ${index}`,
+        occurredAt: new Date(firstEventAt.getTime() + (10 + index) * 60_000),
+        payload: {
+          reason: "mtf_not_aligned",
+          signalKey: `AAPL|buy|${index}`,
+        },
+      })),
+    ]);
+
+    const read = await internals.readSignalOptionsDashboardEvents({
+      deploymentId,
+      recentLimit: 10,
+      now,
+    });
+
+    assert.deepEqual(
+      read.recentEvents.map((event) => event.eventType),
+      [
+        SIGNAL_OPTIONS_EXIT_EVENT,
+        SIGNAL_OPTIONS_EXIT_EVENT,
+        SIGNAL_OPTIONS_EXIT_EVENT,
+      ],
+    );
+    assert.equal(read.dayEvents.length, 3);
+    assert.equal(read.dayOverflow, false);
+  });
+});
+
 test("deriveCandidateActionStatus: a resolved shadow link marks an open position shadow_filled even when its entry event aged out of the view window", () => {
   const { deriveCandidateActionStatus } =
     __signalOptionsAutomationInternalsForTests;
