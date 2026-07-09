@@ -263,14 +263,21 @@ function getMassiveDirectConfig(): { apiKey: string; baseUrl: string } {
   };
 }
 
-function buildMassiveDirectUrl(
+export function buildMassiveDirectUrl(
   pathOrUrl: string,
   params: Record<string, string | number | boolean>,
 ): URL {
   const config = getMassiveDirectConfig();
+  const baseUrl = new URL(`${config.baseUrl}/`);
   const url = new URL(
-    pathOrUrl.startsWith("http") ? pathOrUrl : `${config.baseUrl}${pathOrUrl}`,
+    pathOrUrl.startsWith("/") && !pathOrUrl.startsWith("//")
+      ? `.${pathOrUrl}`
+      : pathOrUrl,
+    baseUrl,
   );
+  if (url.origin !== baseUrl.origin) {
+    throw new Error("Massive pagination URL changed origin.");
+  }
   for (const [key, value] of Object.entries(params)) {
     url.searchParams.set(key, String(value));
   }
@@ -286,14 +293,13 @@ function readRetryAfterMs(response: Response, attempt: number): number {
   return MASSIVE_DIRECT_RETRY_DELAY_MS * (attempt + 1);
 }
 
-async function fetchMassiveDirectJson(url: URL): Promise<unknown> {
+export async function fetchMassiveDirectJson(url: URL): Promise<unknown> {
   for (let attempt = 0; attempt <= MASSIVE_DIRECT_MAX_RETRIES; attempt += 1) {
-    const response = await fetch(url);
+    const response = await fetch(url, { redirect: "error" });
     if (response.ok) {
       return response.json();
     }
 
-    const body = await response.text().catch(() => "");
     if (
       attempt < MASSIVE_DIRECT_MAX_RETRIES &&
       (response.status === 429 || response.status >= 500)
@@ -302,9 +308,7 @@ async function fetchMassiveDirectJson(url: URL): Promise<unknown> {
       continue;
     }
 
-    throw new Error(
-      `Massive aggregate fetch failed with ${response.status}: ${body.slice(0, 300)}`,
-    );
+    throw new Error(`Massive aggregate fetch failed with ${response.status}.`);
   }
 
   throw new Error("Massive aggregate fetch exhausted retries.");
