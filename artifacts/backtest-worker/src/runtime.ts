@@ -9,14 +9,25 @@ export function resolveApiBaseUrl(
 
 export const API_BASE_URL = resolveApiBaseUrl();
 
-export const WORKER_POLL_INTERVAL_MS = Number(
-  process.env.BACKTEST_WORKER_POLL_INTERVAL_MS ?? "3000",
+export function readPositiveEnvNumber(
+  name: string,
+  fallback: number,
+  env: NodeJS.ProcessEnv = process.env,
+): number {
+  const value = Number(env[name]);
+  return Number.isFinite(value) && value > 0 ? value : fallback;
+}
+
+export const WORKER_POLL_INTERVAL_MS = readPositiveEnvNumber(
+  "BACKTEST_WORKER_POLL_INTERVAL_MS",
+  3_000,
 );
 
 export const JOB_HEARTBEAT_INTERVAL_MS = 10_000;
 export const JOB_STALE_AFTER_MS = 60_000;
 export const MAX_JOB_ATTEMPTS = 2;
 export const MAX_PARALLEL_SWEEP_RUNS = 4;
-export const BAR_STORAGE_TARGET_BYTES = Number(
-  process.env.BAR_STORAGE_TARGET_BYTES ?? 1024 * 1024 * 1024,
+export const BAR_STORAGE_TARGET_BYTES = readPositiveEnvNumber(
+  "BAR_STORAGE_TARGET_BYTES",
+  1024 * 1024 * 1024,
 );
