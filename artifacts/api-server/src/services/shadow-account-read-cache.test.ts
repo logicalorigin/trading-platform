@@ -730,6 +730,20 @@ test("shadow account positions pressure path does not start a full refresh", () 
   assert.doesNotMatch(pressureBlock, /readFullPositions/);
 });
 
+test("shadow positions fast wrapper warms day change off the read path", () => {
+  const source = readFileSync(new URL("./shadow-account.ts", import.meta.url), "utf8");
+  const start = source.indexOf("async function buildFastShadowPositionsResponse");
+  const end = source.indexOf("export async function getShadowAccountPositions", start);
+  assert.notEqual(start, -1, "Missing buildFastShadowPositionsResponse");
+  assert.notEqual(end, -1, "Missing function boundary after fast positions wrapper");
+
+  const block = source.slice(start, end);
+  assert.match(block, /void kickShadowPositionMarkRefresh\(\)/);
+  assert.match(block, /void readShadowPositionDayChanges\(/);
+  assert.match(block, /recordLastKnownShadowPositionDayChange/);
+  assert.doesNotMatch(block, /await\s+readShadowPositionDayChanges/);
+});
+
 test("shadow reusable position caches gate stale reuse on resource pressure", () => {
   const source = readFileSync(new URL("./shadow-account.ts", import.meta.url), "utf8");
 
@@ -760,6 +774,26 @@ test("shared dashboard fills+orders read serves stale immediately at the derived
   assert.match(block, /staleStrategy:\s*"immediate"/);
   assert.match(block, /ttlMs:\s*SHADOW_DERIVED_READ_CACHE_TTL_MS/);
   assert.doesNotMatch(block, /staleStrategy:\s*"never"/);
+});
+
+test("equity-history base snapshot scan yields under hard DB pool pressure", () => {
+  const source = readFileSync(new URL("./shadow-account.ts", import.meta.url), "utf8");
+  const start = source.indexOf("export async function getShadowAccountEquityHistory");
+  const end = source.indexOf("function readFreshCachedShadowEquityHistoryReturnMetrics", start);
+  assert.notEqual(start, -1, "Missing getShadowAccountEquityHistory");
+  assert.notEqual(end, -1, "Missing function boundary after equity-history reader");
+  const block = source.slice(start, end);
+  const pressureCheck = block.indexOf(
+    'getApiResourcePressureSnapshot().hardResourceLevel === "high"',
+  );
+  const snapshotScan = block.indexOf(".from(shadowBalanceSnapshotsTable)");
+
+  assert.notEqual(pressureCheck, -1, "Missing hard-pressure fallback");
+  assert.notEqual(snapshotScan, -1, "Missing shadow balance snapshot scan");
+  assert.ok(
+    pressureCheck < snapshotScan,
+    "equity-history must fall back before opening the snapshot scan",
+  );
 });
 
 test("shared dashboard fills+orders read is bounded and uses a 30s derived TTL", () => {
@@ -856,6 +890,21 @@ test("shadow order tabs share the cached full account order scan", () => {
   assert.match(ordersBody, /`orders:all:\$\{shadowSourceCacheKey\(source\)\}`/);
   assert.match(ordersBody, /staleStrategy:\s*"immediate"/);
   assert.match(ordersBody, /SHADOW_DERIVED_READ_CACHE_TTL_MS/);
+});
+
+test("account-level shadow order scan is shared with immediate stale reuse", () => {
+  const source = readFileSync(new URL("./shadow-account.ts", import.meta.url), "utf8");
+  const start = source.indexOf("async function readShadowOrdersForAccount()");
+  const end = source.indexOf("\nasync function readShadowOrdersForSource", start);
+  assert.notEqual(start, -1, "Missing readShadowOrdersForAccount");
+  assert.notEqual(end, -1, "Missing function boundary after account orders");
+  const body = source.slice(start, end);
+
+  assert.match(body, /withShadowReadCache\(/);
+  assert.match(body, /`orders:account-bounded:\$\{limit\}`/);
+  assert.match(body, /ttlMs:\s*SHADOW_DERIVED_READ_CACHE_TTL_MS/);
+  assert.match(body, /staleStrategy:\s*"immediate"/);
+  assert.doesNotMatch(body, /staleStrategy:\s*"never"/);
 });
 
 test("shadow trade diagnostics uses shared stale-immediate read cache", () => {

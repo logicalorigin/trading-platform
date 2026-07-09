@@ -6420,6 +6420,22 @@ export async function refreshShadowPositionMarks() {
     }
   }
 
+  try {
+    if (positions.length) {
+      const dayChanges = await readShadowPositionDayChanges(
+        positions,
+        new Date(),
+        null,
+        { fetchMissingOptionQuotes: false },
+      );
+      for (const [positionId, dayChange] of dayChanges) {
+        recordLastKnownShadowPositionDayChange(positionId, dayChange);
+      }
+    }
+  } catch (error) {
+    logger.debug?.({ err: error }, "Shadow day-change cache warm failed");
+  }
+
   return { updatedCount };
 }
 
@@ -9393,6 +9409,7 @@ async function buildFastShadowPositionsResponse(input: {
         readShadowAccount(),
         readOpenShadowPositions(),
       ]);
+      void kickShadowPositionMarkRefresh();
       // Decouple day change from resource pressure without deepening it: serve the
       // last-known cache for free, and only run the (baseline-marks-only, no option-quote
       // fetch) day-change query to bootstrap positions not yet in the cache. Once warm,
@@ -9400,17 +9417,24 @@ async function buildFastShadowPositionsResponse(input: {
       const needsDayChangeBootstrap = positions.some(
         (position) => !lastKnownShadowPositionDayChange.has(position.id),
       );
-      const dayChangesByPositionId = needsDayChangeBootstrap
-        ? await readShadowPositionDayChanges(positions, new Date(), null, {
-            fetchMissingOptionQuotes: false,
-          }).catch(() => null)
-        : null;
+      if (needsDayChangeBootstrap) {
+        void readShadowPositionDayChanges(positions, new Date(), null, {
+          fetchMissingOptionQuotes: false,
+        })
+          .then((dayChangesByPositionId) => {
+            for (const [positionId, dayChange] of dayChangesByPositionId) {
+              recordLastKnownShadowPositionDayChange(positionId, dayChange);
+            }
+          })
+          .catch((error) => {
+            logger.debug?.({ err: error }, "Shadow day-change bootstrap failed");
+          });
+      }
       return buildFastShadowPositionsResponseFromRows({
         account,
         positions,
         assetClassFilter: input.assetClassFilter,
         source: input.source,
-        dayChangesByPositionId,
       });
     },
     {
