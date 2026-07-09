@@ -185,6 +185,7 @@ const Clock = ({ live = true }) => {
   const [now, setNow] = useState(() => new Date());
   useEffect(() => {
     if (!live) return undefined;
+    setNow(new Date());
     const id = setInterval(() => setNow(new Date()), 1000);
     return () => clearInterval(id);
   }, [live]);
@@ -626,7 +627,7 @@ export default function MarketDemoScreen({
           padding: sp("12px"),
         }}
       >
-        <RegimeTopBar flow={flowSummary} breadth={breadth} volPct={volPct} live={!safeQaMode} />
+        <RegimeTopBar flow={flowSummary} breadth={breadth} volPct={volPct} live={isVisible && !safeQaMode} />
 
         <div
           style={
