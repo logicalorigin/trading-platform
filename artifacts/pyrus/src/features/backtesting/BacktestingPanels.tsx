@@ -91,6 +91,7 @@ import {
   type BacktestValidationWarningSeverity,
 } from "./backtestValidationWarnings";
 import { deriveSweepDimensions } from "./sweepDimensions";
+import { shouldPollBacktestRun } from "./backtestPolling";
 import { PatternDiscoveryPanel } from "./PatternDiscoveryPanel";
 import { OvernightExpectancyPanel } from "./OvernightExpectancyPanel";
 import { useRuntimeWorkloadFlag } from "../platform/workloadStats";
@@ -1577,7 +1578,10 @@ export function BacktestWorkspace({
       queryKey: getGetBacktestRunQueryKey(selectedRunId || ""),
       enabled: Boolean(isVisible && selectedRunId),
       staleTime: 2_000,
-      refetchInterval: isVisible ? 5_000 : false,
+      refetchInterval: (query) =>
+        isVisible && shouldPollBacktestRun(query.state.data?.run.status)
+          ? 5_000
+          : false,
     },
   });
   const runChartQuery = useGetBacktestRunChart(
@@ -1594,7 +1598,10 @@ export function BacktestWorkspace({
         }),
         enabled: Boolean(isVisible && selectedRunId),
         staleTime: 2_000,
-        refetchInterval: isVisible ? 5_000 : false,
+        refetchInterval:
+          isVisible && shouldPollBacktestRun(runDetailQuery.data?.run.status)
+            ? 5_000
+            : false,
       },
     },
   );
