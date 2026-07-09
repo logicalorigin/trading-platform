@@ -13,6 +13,7 @@ import {
   cancelSnapTradeEquityOrder,
   checkSnapTradeEquityOrderImpact,
   listSnapTradeRecentOrders,
+  replaceSnapTradeEquityOrder,
   searchSnapTradeAccountSymbols,
   submitSnapTradeEquityOrder,
 } from "./snaptrade-equity-orders";
@@ -742,6 +743,136 @@ test("SnapTrade cancel rejects an empty order id", async () => {
         }),
         (error: unknown) =>
           (error as { code?: string }).code === "snaptrade_order_id_required",
+      );
+    }),
+  );
+});
+
+test("SnapTrade replace requires explicit confirmation", async () => {
+  await assert.rejects(
+    replaceSnapTradeEquityOrder({
+      appUserId: "missing-user",
+      accountId: "missing-account",
+      orderId: "old-order-id",
+      input: {
+        confirm: false,
+        action: "BUY",
+        symbol: "AAPL",
+        orderType: "Market",
+        timeInForce: "Day",
+        units: 1,
+      },
+    }),
+    (error: unknown) => {
+      const candidate = error as { statusCode?: number; code?: string };
+      assert.equal(candidate.statusCode, 409);
+      assert.equal(
+        candidate.code,
+        "snaptrade_order_replace_confirmation_required",
+      );
+      return true;
+    },
+  );
+});
+
+test("SnapTrade replace posts the documented body and returns sanitized replacement metadata", async () => {
+  await withBootstrapToken(async () =>
+    withTestDb(async () => {
+      const auth = await createUser("orders-replace@example.com");
+      const snapTradeUserId = await createSnapTradeCredential(auth.user.id);
+      const account = await createSnapTradeAccount({
+        appUserId: auth.user.id,
+        providerAccountId: "snaptrade:acct-replace-1",
+      });
+      const preflight = await runAsAppUser(auth.user.id, () =>
+        createTaxOrderPreflight({
+          order: {
+            accountId: account.id,
+            mode: "live",
+            symbol: "AAPL",
+            assetClass: "equity",
+            side: "sell",
+            type: "limit",
+            quantity: 4,
+            limitPrice: 210.25,
+            stopPrice: null,
+            timeInForce: "gtc",
+            optionContract: null,
+            route: "snaptrade",
+            intent: null,
+          },
+        }),
+      );
+
+      let requestedBody: Record<string, unknown> | null = null;
+      const fetchImpl: typeof fetch = async (url, init) => {
+        const requestUrl = new URL(String(url));
+        assert.equal(requestUrl.origin, "https://api.snaptrade.com");
+        assert.equal(
+          requestUrl.pathname,
+          "/api/v1/accounts/acct-replace-1/trading/replace",
+        );
+        assert.equal(init?.method, "POST");
+        assert.equal(requestUrl.searchParams.get("clientId"), "client-123");
+        assert.equal(requestUrl.searchParams.get("timestamp"), "1783620000");
+        assert.equal(requestUrl.searchParams.get("userId"), snapTradeUserId);
+        assert.equal(
+          requestUrl.searchParams.get("userSecret"),
+          "snaptrade-user-secret",
+        );
+        assert.ok((new Headers(init?.headers).get("Signature") ?? "").length > 20);
+        requestedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        return Response.json({
+          brokerage_order_id: "new-brokerage-order-id",
+          status: "REPLACE_PENDING",
+          account: { id: "acct-replace-1", number: "U12345678" },
+          userSecret: "upstream-user-secret",
+        });
+      };
+
+      const result = await replaceSnapTradeEquityOrder({
+        appUserId: auth.user.id,
+        accountId: account.id,
+        orderId: " old-brokerage-order-id ",
+        input: {
+          confirm: true,
+          action: "SELL",
+          symbol: "aapl",
+          orderType: "Limit",
+          timeInForce: "GTC",
+          units: 4,
+          price: 210.25,
+          taxPreflightToken: preflight.preflightToken,
+          taxAcknowledgements: preflight.requiredAcknowledgements,
+        },
+        env: {
+          SNAPTRADE_CLIENTID: "client-123",
+          SNAPTRADE_API_KEY: "consumer-secret",
+        },
+        encryptionKey: TEST_ENCRYPTION_KEY,
+        now: new Date("2026-07-09T18:00:00.000Z"),
+        fetchImpl,
+      });
+
+      assert.deepEqual(requestedBody, {
+        brokerage_order_id: "old-brokerage-order-id",
+        action: "SELL",
+        order_type: "Limit",
+        time_in_force: "GTC",
+        price: 210.25,
+        symbol: "AAPL",
+        stop: null,
+        units: 4,
+      });
+      assert.equal(result.provider, "snaptrade");
+      assert.equal(result.replacedAt, "2026-07-09T18:00:00.000Z");
+      assert.equal(result.orderId, "new-brokerage-order-id");
+      assert.equal(result.previousOrderId, "old-brokerage-order-id");
+      assert.equal(result.status, "REPLACE_PENDING");
+      assert.equal(result.account.id, account.id);
+      assert.doesNotMatch(
+        JSON.stringify(result),
+        /snaptrade-user-secret|consumer-secret|client-123|U12345678|upstream-user-secret/,
       );
     }),
   );

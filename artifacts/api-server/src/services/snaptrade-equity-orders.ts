@@ -127,6 +127,20 @@ export type SnapTradeEquityOrderSubmitResponse = {
   };
 };
 
+export type SnapTradeEquityOrderReplaceInput = Omit<
+  SnapTradeEquityOrderSubmitInput,
+  "tradingSession" | "expiryDate" | "notionalValue" | "clientOrderId"
+>;
+
+export type SnapTradeEquityOrderReplaceResponse = {
+  provider: "snaptrade";
+  replacedAt: string;
+  account: SnapTradeEquityOrderAccount;
+  orderId: string;
+  previousOrderId: string;
+  status: string;
+};
+
 export type SnapTradeRecentOrder = {
   brokerageOrderId: string | null;
   brokerageGroupOrderId: string | null;
@@ -204,6 +218,17 @@ export type SubmitSnapTradeEquityOrderOptions = {
   encryptionKey?: string;
 };
 
+export type ReplaceSnapTradeEquityOrderOptions = {
+  appUserId: string;
+  accountId: string;
+  orderId: string;
+  input: SnapTradeEquityOrderReplaceInput;
+  env?: NodeJS.ProcessEnv | Record<string, string | undefined>;
+  fetchImpl?: typeof fetch;
+  now?: Date;
+  encryptionKey?: string;
+};
+
 export type ListSnapTradeRecentOrdersOptions = {
   appUserId: string;
   accountId: string;
@@ -270,6 +295,7 @@ type NormalizedSubmitInput = Required<
 const LOCAL_ID_PREFIX = "snaptrade:";
 const SNAPTRADE_ORDER_IMPACT_PATH = "/trade/impact";
 const SNAPTRADE_PLACE_EQUITY_ORDER_PATH = "/trade/place";
+const SNAPTRADE_REPLACE_ORDER_PATH = "/trading/replace";
 const SNAPTRADE_TRADE_EXPIRY_MS = 5 * 60 * 1000;
 const SNAPTRADE_MIN_ORDER_INTERVAL_MS = 1000;
 const SNAPTRADE_SYMBOL_SEARCH_MAX_LENGTH = 80;
@@ -1311,6 +1337,94 @@ export async function submitSnapTradeEquityOrder(
     submittedAt: now.toISOString(),
     account: publicAccount(account),
     ...parsed,
+  };
+}
+
+export async function replaceSnapTradeEquityOrder(
+  options: ReplaceSnapTradeEquityOrderOptions,
+): Promise<SnapTradeEquityOrderReplaceResponse> {
+  if (options.input.confirm !== true) {
+    throw new HttpError(409, "SnapTrade order replacement requires confirmation", {
+      code: "snaptrade_order_replace_confirmation_required",
+    });
+  }
+  const previousOrderId = options.orderId?.trim();
+  if (!previousOrderId) {
+    throw new HttpError(422, "SnapTrade order id is required", {
+      code: "snaptrade_order_id_required",
+    });
+  }
+
+  const env = options.env ?? process.env;
+  const fetchImpl = options.fetchImpl ?? fetch;
+  const now = options.now ?? new Date();
+  const normalizedInput = normalizeSubmitInput(options.input);
+  const { credential, account, credentials } = await loadOrderContext({
+    appUserId: options.appUserId,
+    accountId: options.accountId,
+    env,
+    encryptionKey: options.encryptionKey,
+  });
+  assertExecutionReady(account);
+  const taxPreflight = await assertTaxPreflightForOrderSubmission({
+    appUserId: options.appUserId,
+    order: snapTradeSubmitToTaxOrder({
+      accountId: options.accountId,
+      order: normalizedInput,
+    }),
+    taxPreflightToken: options.input.taxPreflightToken,
+    taxAcknowledgements: options.input.taxAcknowledgements,
+    now,
+  });
+
+  const query = buildUserScopedQuery({
+    clientId: credentials.clientId,
+    timestamp: Math.floor(now.getTime() / 1000).toString(),
+    snapTradeUserId: credential.snapTradeUserId,
+    userSecret: credential.userSecret,
+  });
+  const encodedAccountId = encodeURIComponent(account.snapTradeAccountId);
+  const payload = await postSnapTradeJson({
+    path: `/accounts/${encodedAccountId}${SNAPTRADE_REPLACE_ORDER_PATH}`,
+    query,
+    content: {
+      brokerage_order_id: previousOrderId,
+      action: normalizedInput.action,
+      order_type: normalizedInput.orderType,
+      time_in_force: normalizedInput.timeInForce,
+      price: normalizedInput.price,
+      symbol: normalizedInput.symbol,
+      stop: normalizedInput.stop,
+      units: normalizedInput.units,
+    },
+    consumerKey: credentials.consumerKey,
+    fetchImpl,
+    message: "SnapTrade order replacement failed",
+    networkCode: "snaptrade_order_replace_network_error",
+    failedCode: "snaptrade_order_replace_failed",
+  });
+  const response = Array.isArray(payload) ? asRecord(payload[0]) : asRecord(payload);
+  const orderId = readString(response, ["brokerage_order_id", "brokerageOrderId"]);
+  const status = readString(response, ["status"]);
+  if (!orderId || !status) {
+    throw new HttpError(502, "SnapTrade order replacement returned invalid data", {
+      code: "snaptrade_order_replace_invalid_response",
+      expose: false,
+    });
+  }
+  await recordTaxPreflightOrderSubmitted({
+    appUserId: options.appUserId,
+    preflightToken: taxPreflight?.preflightToken,
+    submittedOrderId: orderId,
+  });
+
+  return {
+    provider: "snaptrade",
+    replacedAt: now.toISOString(),
+    account: publicAccount(account),
+    orderId,
+    previousOrderId,
+    status,
   };
 }
 

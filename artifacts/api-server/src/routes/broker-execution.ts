@@ -72,8 +72,13 @@ import {
   cancelSchwabEquityOrder,
   isSchwabOrderSubmitReconcileRequired,
   previewSchwabEquityOrder,
+  replaceSchwabEquityOrder,
   submitSchwabEquityOrder,
 } from "../services/schwab-equity-orders";
+import {
+  ReplaceSchwabEquityOrderBody,
+  ReplaceSchwabEquityOrderResponse,
+} from "./schwab-equity-order-schemas";
 import {
   listBrokerAccountInclusions,
   setBrokerAccountInclusions,
@@ -84,12 +89,15 @@ import {
   cancelSnapTradeEquityOrder,
   checkSnapTradeEquityOrderImpact,
   listSnapTradeRecentOrders,
+  replaceSnapTradeEquityOrder,
   searchSnapTradeAccountSymbols,
   submitSnapTradeEquityOrder,
 } from "../services/snaptrade-equity-orders";
 import {
   CancelSnapTradeEquityOrderBody,
   CancelSnapTradeEquityOrderResponse,
+  ReplaceSnapTradeEquityOrderBody,
+  ReplaceSnapTradeEquityOrderResponse,
 } from "./snaptrade-equity-order-schemas";
 import {
   cancelRobinhoodOptionOrder,
@@ -1100,6 +1108,56 @@ router.post(
       await cancelSnapTradeOptionOrder({
         appUserId: session.user.id,
         accountId: req.params.accountId,
+        input: body,
+      }),
+    );
+    res.json(data);
+  },
+);
+
+// --- Order replace/modify ---
+router.post(
+  "/broker-execution/schwab/accounts/:accountId/orders/:orderId/replace",
+  async (req, res) => {
+    const session = await requireEntitlementCsrf("broker_connect")(req);
+    const body = ReplaceSchwabEquityOrderBody.parse(req.body ?? {});
+    void recordAuditEvent({
+      appUserId: session.user.id,
+      eventType: "broker.order_mutation_attempt",
+      subject: { type: "broker_provider", id: "schwab" },
+      resource: { type: "broker_account", id: req.params.accountId },
+      payload: { action: "replace", orderId: req.params.orderId },
+    });
+    await requireSchwabOrderReadiness();
+    const data = ReplaceSchwabEquityOrderResponse.parse(
+      await replaceSchwabEquityOrder({
+        appUserId: session.user.id,
+        accountId: req.params.accountId,
+        orderId: req.params.orderId,
+        input: body,
+      }),
+    );
+    res.json(data);
+  },
+);
+
+router.post(
+  "/broker-execution/snaptrade/accounts/:accountId/orders/:orderId/replace",
+  async (req, res) => {
+    const session = await requireEntitlementCsrf("broker_connect")(req);
+    const body = ReplaceSnapTradeEquityOrderBody.parse(req.body ?? {});
+    void recordAuditEvent({
+      appUserId: session.user.id,
+      eventType: "broker.order_mutation_attempt",
+      subject: { type: "broker_provider", id: "snaptrade" },
+      resource: { type: "broker_account", id: req.params.accountId },
+      payload: { action: "replace", orderId: req.params.orderId },
+    });
+    const data = ReplaceSnapTradeEquityOrderResponse.parse(
+      await replaceSnapTradeEquityOrder({
+        appUserId: session.user.id,
+        accountId: req.params.accountId,
+        orderId: req.params.orderId,
         input: body,
       }),
     );

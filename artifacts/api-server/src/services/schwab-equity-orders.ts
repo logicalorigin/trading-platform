@@ -75,6 +75,15 @@ export type SchwabEquityOrderSubmitResponse = {
   reconciliationReason?: "tax_preflight_order_submit_record_failed";
 };
 
+export type SchwabEquityOrderReplaceResponse = {
+  provider: "schwab";
+  replacedAt: string;
+  account: SchwabEquityOrderAccount;
+  orderId: string;
+  previousOrderId: string;
+  status: "replaced";
+};
+
 export const SCHWAB_ORDER_SUBMIT_RECONCILE_CODE =
   "schwab_order_submit_reconcile_required";
 
@@ -542,6 +551,58 @@ export async function previewSchwabEquityOrder(
     checkedAt: now.toISOString(),
     account: publicAccount(account),
     preview,
+  };
+}
+
+export type ReplaceSchwabEquityOrderOptions = OrderContextOptions & {
+  orderId: string;
+  input: SchwabEquityOrderSubmitInput;
+};
+
+export async function replaceSchwabEquityOrder(
+  options: ReplaceSchwabEquityOrderOptions,
+): Promise<SchwabEquityOrderReplaceResponse> {
+  if (options.input.confirm !== true) {
+    throw new HttpError(409, "Schwab order replacement requires confirmation", {
+      code: "schwab_order_replace_confirmation_required",
+    });
+  }
+  const previousOrderId = options.orderId?.trim();
+  if (!previousOrderId) {
+    throw new HttpError(422, "Schwab order id is required", {
+      code: "schwab_order_id_required",
+    });
+  }
+  const now = options.now ?? new Date();
+  const normalizedInput = validateSchwabEquityOrderInput(options.input);
+  const order = buildSchwabOrderRequest(normalizedInput);
+  const account = await loadLocalSchwabAccount(options.appUserId, options.accountId);
+  assertExecutionReady(account);
+  const taxPreflight = await assertTaxPreflightForOrderSubmission({
+    appUserId: options.appUserId,
+    order: schwabSubmitToTaxOrder({
+      accountId: options.accountId,
+      order: normalizedInput,
+    }),
+    taxPreflightToken: options.input.taxPreflightToken,
+    taxAcknowledgements: options.input.taxAcknowledgements,
+    now,
+  });
+  const client = await loadOrderClient(account, options);
+  const result = await client.replaceOrder(account.accountHash, previousOrderId, order);
+  const orderId = result.orderId ?? previousOrderId;
+  await recordTaxPreflightOrderSubmitted({
+    appUserId: options.appUserId,
+    preflightToken: taxPreflight?.preflightToken,
+    submittedOrderId: orderId,
+  });
+  return {
+    provider: "schwab",
+    replacedAt: now.toISOString(),
+    account: publicAccount(account),
+    orderId,
+    previousOrderId,
+    status: "replaced",
   };
 }
 
