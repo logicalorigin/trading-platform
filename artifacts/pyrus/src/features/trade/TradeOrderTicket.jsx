@@ -9,6 +9,7 @@ import {
   getGetSnapTradeRecentOrdersQueryKey,
   useCheckSnapTradeEquityOrderImpact,
   useCreateTaxOrderPreflight,
+  useGetSchwabReadiness,
   usePlaceOrder,
   usePreviewOrder,
   useGetSnapTradeRecentOrders,
@@ -16,6 +17,7 @@ import {
   useSubmitSnapTradeEquityOrder,
   useSubmitOrders,
   useSyncRobinhoodConnections,
+  useSyncSchwabConnections,
 } from "@workspace/api-client-react";
 import {
   ensureTradeTickerInfo,
@@ -72,6 +74,16 @@ import {
   placeRobinhoodEquityOrderRequest,
   reviewRobinhoodEquityOrderRequest,
 } from "./robinhoodEquityOrderRequests.js";
+import {
+  buildSchwabEquityOrderDraft,
+  previewSchwabEquityOrderRequest,
+  submitSchwabEquityOrderRequest,
+} from "./schwabEquityOrderRequests.js";
+import {
+  buildBrokerOptionOrderDraft,
+  placeBrokerOptionOrderRequest,
+  reviewBrokerOptionOrderRequest,
+} from "./brokerOptionOrderRequests.js";
 import {
   CSS_COLOR,
   cssColorAlpha,
@@ -371,8 +383,10 @@ export const TradeOrderTicket = ({
     slot.cp === "C" ? row?.cContract : row?.pContract;
   const [ticketAssetMode, setTicketAssetMode] = useState("option");
   const [equityBroker, setEquityBroker] = useState("snaptrade");
+  const [optionBroker, setOptionBroker] = useState("ibkr");
   const [selectedRobinhoodAccountId, setSelectedRobinhoodAccountId] =
     useState("");
+  const [selectedSchwabAccountId, setSelectedSchwabAccountId] = useState("");
   const normalizedTicketAssetMode = normalizeTicketAssetMode(ticketAssetMode);
   const ticketIsShares = normalizedTicketAssetMode === "equity";
   const ticketIsOptions = !ticketIsShares;
@@ -468,9 +482,10 @@ export const TradeOrderTicket = ({
   const snapTradeExecutionState = useSnapTradeExecutionAccountState();
   const snapTradeAccount = snapTradeExecutionState.selectedAccount || null;
   const snapTradeAccountReady = Boolean(snapTradeAccount?.executionReady);
-  const liveBrokerRoute = ticketIsShares ? equityBroker : "ibkr";
-  const robinhoodRouteSelected =
-    ticketIsShares && liveBrokerRoute === "robinhood";
+  const liveBrokerRoute = ticketIsShares ? equityBroker : optionBroker;
+  const snapTradeRouteSelected = liveBrokerRoute === "snaptrade";
+  const robinhoodRouteSelected = liveBrokerRoute === "robinhood";
+  const schwabRouteSelected = liveBrokerRoute === "schwab";
   const robinhoodCsrfToken = robinhoodRouteSelected
     ? authSession.csrfToken || ""
     : "";
@@ -519,8 +534,71 @@ export const TradeOrderTicket = ({
     robinhoodSyncMutation.isPending,
     robinhoodSyncMutation.mutate,
   ]);
+  const schwabCsrfToken = schwabRouteSelected
+    ? authSession.csrfToken || ""
+    : "";
+  const schwabCsrfHeaders = useMemo(
+    () => (schwabCsrfToken ? { "x-csrf-token": schwabCsrfToken } : {}),
+    [schwabCsrfToken],
+  );
+  const schwabReadinessQuery = useGetSchwabReadiness({
+    query: {
+      enabled: schwabRouteSelected,
+      retry: false,
+      staleTime: 15_000,
+    },
+  });
+  const schwabSyncMutation = useSyncSchwabConnections({
+    request: { headers: schwabCsrfHeaders },
+  });
+  const schwabAccounts = useMemo(
+    () =>
+      (schwabSyncMutation.data?.accounts || []).filter(
+        (account) => account.executionReady === true,
+      ),
+    [schwabSyncMutation.data],
+  );
+  const schwabAccount =
+    schwabAccounts.find((account) => account.id === selectedSchwabAccountId) ||
+    schwabAccounts[0] ||
+    null;
+  const schwabAccountReady = Boolean(schwabAccount?.executionReady);
+  useEffect(() => {
+    if (schwabAccount?.id !== selectedSchwabAccountId) {
+      setSelectedSchwabAccountId(schwabAccount?.id || "");
+    }
+  }, [schwabAccount?.id, selectedSchwabAccountId]);
+  useEffect(() => {
+    if (
+      schwabRouteSelected &&
+      schwabCsrfToken &&
+      schwabReadinessQuery.data?.user?.connected === true &&
+      !schwabSyncMutation.data &&
+      !schwabSyncMutation.isPending &&
+      !schwabSyncMutation.isError
+    ) {
+      schwabSyncMutation.mutate();
+    }
+  }, [
+    schwabCsrfToken,
+    schwabReadinessQuery.data?.user?.connected,
+    schwabRouteSelected,
+    schwabSyncMutation.data,
+    schwabSyncMutation.isError,
+    schwabSyncMutation.isPending,
+    schwabSyncMutation.mutate,
+  ]);
+  const directOptionAccount =
+    optionBroker === "snaptrade"
+      ? snapTradeAccount
+      : optionBroker === "robinhood"
+        ? robinhoodAccount
+        : optionBroker === "schwab"
+          ? schwabAccount
+          : null;
+  const directOptionAccountReady = Boolean(directOptionAccount?.executionReady);
   const snapTradeAuthEnabled = Boolean(
-    liveBrokerRoute === "snaptrade" && snapTradeAccountReady,
+    snapTradeRouteSelected && snapTradeAccountReady,
   );
   const snapTradeCsrfToken = snapTradeAuthEnabled
     ? authSession.csrfToken || ""
@@ -539,9 +617,15 @@ export const TradeOrderTicket = ({
     ? Boolean(
         (liveBrokerRoute === "robinhood"
           ? robinhoodAccountReady
+          : liveBrokerRoute === "schwab"
+            ? schwabAccountReady
           : snapTradeAccountReady) && slot.ticker,
       )
-    : Boolean(accountId && selectedContractMeta && expInfo.actualDate);
+    : optionBroker === "ibkr"
+      ? Boolean(accountId && selectedContractMeta && expInfo.actualDate)
+      : Boolean(
+          directOptionAccountReady && selectedContractMeta && expInfo.actualDate,
+        );
   const gatewayTradingBlocked = !gatewayTradingReady;
   const gatewayTradingBlockedLabel =
     gatewayTradingBlockReason === "streams_stale"
@@ -750,6 +834,18 @@ export const TradeOrderTicket = ({
   const submitRobinhoodOrderMutation = useMutation({
     mutationFn: placeRobinhoodEquityOrderRequest,
   });
+  const schwabEquityPreviewMutation = useMutation({
+    mutationFn: previewSchwabEquityOrderRequest,
+  });
+  const submitSchwabEquityOrderMutation = useMutation({
+    mutationFn: submitSchwabEquityOrderRequest,
+  });
+  const brokerOptionReviewMutation = useMutation({
+    mutationFn: reviewBrokerOptionOrderRequest,
+  });
+  const submitBrokerOptionMutation = useMutation({
+    mutationFn: placeBrokerOptionOrderRequest,
+  });
   const taxPreflightMutation = useCreateTaxOrderPreflight({
     request: { headers: taxPreflightCsrfHeaders },
   });
@@ -779,9 +875,16 @@ export const TradeOrderTicket = ({
   );
   const executionIsShadow = executionMode === "shadow";
   const liveUsesSnapTrade =
-    !executionIsShadow && liveBrokerRoute === "snaptrade";
+    !executionIsShadow && ticketIsShares && liveBrokerRoute === "snaptrade";
   const liveUsesRobinhood =
-    !executionIsShadow && liveBrokerRoute === "robinhood";
+    !executionIsShadow && ticketIsShares && liveBrokerRoute === "robinhood";
+  const liveUsesSchwab =
+    !executionIsShadow && ticketIsShares && liveBrokerRoute === "schwab";
+  const liveUsesBrokerOption =
+    !executionIsShadow && ticketIsOptions && optionBroker !== "ibkr";
+  const directOptionCsrfToken = liveUsesBrokerOption
+    ? authSession.csrfToken || ""
+    : "";
   const snapTradeSymbolSearchText = String(slot.ticker || "")
     .trim()
     .toUpperCase();
@@ -846,6 +949,10 @@ export const TradeOrderTicket = ({
     snapTradeAccount?.displayName || "Sync SnapTrade";
   const robinhoodExecutionAccountLabel =
     robinhoodAccount?.displayName || "Sync Robinhood";
+  const schwabExecutionAccountLabel =
+    schwabAccount?.displayName || "Sync Schwab";
+  const directOptionExecutionAccountLabel =
+    directOptionAccount?.displayName || `Sync ${formatEnumLabel(optionBroker)}`;
   const selectedExecutionLabel = executionIsShadow
     ? "SHADOW"
     : liveUsesSnapTrade
@@ -856,6 +963,14 @@ export const TradeOrderTicket = ({
       ? robinhoodAccountReady
         ? "ROBINHOOD LIVE"
         : "ROBINHOOD SETUP"
+    : liveUsesSchwab
+      ? schwabAccountReady
+        ? "SCHWAB LIVE"
+        : "SCHWAB SETUP"
+    : liveUsesBrokerOption
+      ? directOptionAccountReady
+        ? `${optionBroker.toUpperCase()} LIVE`
+        : `${optionBroker.toUpperCase()} SETUP`
     : brokerConfigured
       ? gatewayTradingReady
         ? `IBKR ${environment.toUpperCase()}`
@@ -869,6 +984,10 @@ export const TradeOrderTicket = ({
       ? snapTradeExecutionAccountLabel
     : liveUsesRobinhood
       ? robinhoodExecutionAccountLabel
+    : liveUsesSchwab
+      ? schwabExecutionAccountLabel
+    : liveUsesBrokerOption
+      ? directOptionExecutionAccountLabel
     : brokerConfigured
       ? accountId || MISSING_VALUE
       : MISSING_VALUE;
@@ -880,6 +999,14 @@ export const TradeOrderTicket = ({
         : CSS_COLOR.amber
     : liveUsesRobinhood
       ? robinhoodAccountReady
+        ? CSS_COLOR.green
+        : CSS_COLOR.amber
+    : liveUsesSchwab
+      ? schwabAccountReady
+        ? CSS_COLOR.green
+        : CSS_COLOR.amber
+    : liveUsesBrokerOption
+      ? directOptionAccountReady
         ? CSS_COLOR.green
         : CSS_COLOR.amber
     : brokerConfigured
@@ -911,14 +1038,48 @@ export const TradeOrderTicket = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [requestedNonce, requestedSide]);
   const selectEquityBroker = (broker) => {
-    const nextBroker = broker === "robinhood" ? "robinhood" : "snaptrade";
+    const nextBroker = ["robinhood", "schwab"].includes(broker)
+      ? broker
+      : "snaptrade";
     setEquityBroker(nextBroker);
     setPreviewSnapshot(null);
-    if (nextBroker === "robinhood" && tif !== "DAY" && tif !== "GTC") {
+    if (
+      (nextBroker === "robinhood" && tif !== "DAY" && tif !== "GTC") ||
+      (nextBroker === "schwab" && tif === "IOC")
+    ) {
       setTif("DAY");
     }
     if (nextBroker === "robinhood" && robinhoodSyncMutation.isError) {
       robinhoodSyncMutation.reset();
+    }
+    if (nextBroker === "schwab" && schwabSyncMutation.isError) {
+      schwabSyncMutation.reset();
+    }
+  };
+  const selectOptionBroker = (broker) => {
+    const nextBroker = ["snaptrade", "robinhood", "schwab"].includes(broker)
+      ? broker
+      : "ibkr";
+    setOptionBroker(nextBroker);
+    setPreviewSnapshot(null);
+    if (
+      ["snaptrade", "schwab"].includes(nextBroker) &&
+      orderType !== "MKT" &&
+      orderType !== "LMT"
+    ) {
+      setOrderType("LMT");
+    }
+    if (
+      (nextBroker === "robinhood" && tif !== "DAY" && tif !== "GTC") ||
+      (nextBroker === "schwab" && tif === "IOC")
+    ) {
+      setTif("DAY");
+    }
+    if (nextBroker === "robinhood" && robinhoodSyncMutation.isError) {
+      robinhoodSyncMutation.reset();
+    }
+    if (nextBroker === "schwab" && schwabSyncMutation.isError) {
+      schwabSyncMutation.reset();
     }
   };
   const renderTicketAssetModeControls = () => (
@@ -975,12 +1136,32 @@ export const TradeOrderTicket = ({
           options={[
             { value: "snaptrade", label: "SNAPTRADE" },
             { value: "robinhood", label: "ROBINHOOD" },
+            {
+              value: "schwab",
+              label: schwabAccountReady ? "SCHWAB" : "SCHWAB (NOT READY)",
+            },
           ]}
           value={equityBroker}
           onChange={selectEquityBroker}
         />
       ) : null}
-      {ticketIsShares && robinhoodRouteSelected && robinhoodAccounts.length ? (
+      {ticketIsOptions ? (
+        <SegmentedControl
+          ariaLabel="Options broker"
+          options={[
+            { value: "ibkr", label: "IBKR" },
+            { value: "snaptrade", label: "SNAPTRADE" },
+            { value: "robinhood", label: "ROBINHOOD" },
+            {
+              value: "schwab",
+              label: schwabAccountReady ? "SCHWAB" : "SCHWAB (NOT READY)",
+            },
+          ]}
+          value={optionBroker}
+          onChange={selectOptionBroker}
+        />
+      ) : null}
+      {robinhoodRouteSelected && robinhoodAccounts.length ? (
         <select
           aria-label="Robinhood execution account"
           value={robinhoodAccount?.id || ""}
@@ -997,6 +1178,29 @@ export const TradeOrderTicket = ({
           }}
         >
           {robinhoodAccounts.map((account) => (
+            <option key={account.id} value={account.id}>
+              {account.displayName}
+            </option>
+          ))}
+        </select>
+      ) : null}
+      {schwabRouteSelected && schwabAccounts.length ? (
+        <select
+          aria-label="Schwab execution account"
+          value={schwabAccount?.id || ""}
+          onChange={(event) => setSelectedSchwabAccountId(event.target.value)}
+          style={{
+            width: "100%",
+            background: CSS_COLOR.bg1,
+            border: `1px solid ${CSS_COLOR.border}`,
+            borderRadius: dim(RADII.xs),
+            color: CSS_COLOR.textSec,
+            fontFamily: T.sans,
+            fontSize: textSize("body"),
+            padding: sp("5px 7px"),
+          }}
+        >
+          {schwabAccounts.map((account) => (
             <option key={account.id} value={account.id}>
               {account.displayName}
             </option>
@@ -1038,8 +1242,60 @@ export const TradeOrderTicket = ({
             : "Connect and sync an execution-ready Robinhood Agentic account in Settings before submitting shares."}
         </div>
       ) : null}
+      {!executionIsShadow && liveUsesSchwab && !schwabAccountReady ? (
+        <div
+          style={{
+            background: `${cssColorMix(CSS_COLOR.amber, 7)}`,
+            border: `1px solid ${cssColorMix(CSS_COLOR.amber, 21)}`,
+            borderRadius: dim(RADII.xs),
+            padding: sp("6px 8px"),
+            fontSize: textSize("body"),
+            color: CSS_COLOR.amber,
+            fontFamily: T.sans,
+            lineHeight: 1.35,
+          }}
+        >
+          {schwabSyncMutation.isPending
+            ? "Loading execution-ready Schwab accounts."
+            : "Connect and sync an execution-ready Schwab account in Settings before submitting shares."}
+        </div>
+      ) : null}
+      {!executionIsShadow && liveUsesBrokerOption && !directOptionAccountReady ? (
+        <div
+          style={{
+            background: `${cssColorMix(CSS_COLOR.amber, 7)}`,
+            border: `1px solid ${cssColorMix(CSS_COLOR.amber, 21)}`,
+            borderRadius: dim(RADII.xs),
+            padding: sp("6px 8px"),
+            fontSize: textSize("body"),
+            color: CSS_COLOR.amber,
+            fontFamily: T.sans,
+            lineHeight: 1.35,
+          }}
+        >
+          Sync an execution-ready {formatEnumLabel(optionBroker)} account in
+          Settings before submitting options.
+        </div>
+      ) : null}
+      {!executionIsShadow && liveUsesBrokerOption && side === "SELL" ? (
+        <div
+          style={{
+            background: `${cssColorMix(CSS_COLOR.amber, 7)}`,
+            border: `1px solid ${cssColorMix(CSS_COLOR.amber, 21)}`,
+            borderRadius: dim(RADII.xs),
+            padding: sp("6px 8px"),
+            fontSize: textSize("body"),
+            color: CSS_COLOR.amber,
+            fontFamily: T.sans,
+            lineHeight: 1.35,
+          }}
+        >
+          Non-IBKR option sells stay blocked until this ticket has
+          broker-specific position and open-order context.
+        </div>
+      ) : null}
       {!executionIsShadow && !liveUsesSnapTrade && !gatewayTradingReady &&
-        !liveUsesRobinhood && (
+        !liveUsesRobinhood && !liveUsesSchwab && !liveUsesBrokerOption && (
         <div
           style={{
             background: `${cssColorMix(CSS_COLOR.amber, 7)}`,
@@ -1057,7 +1313,16 @@ export const TradeOrderTicket = ({
       )}
     </>
   );
-  const ticketTypeOptions = TICKET_ORDER_TYPES.map((value) => [
+  const ticketOrderTypes =
+    ticketIsOptions && ["snaptrade", "schwab"].includes(optionBroker)
+      ? ["MKT", "LMT"]
+      : TICKET_ORDER_TYPES;
+  const ticketTimeInForceOptions = robinhoodRouteSelected
+    ? ["DAY", "GTC"]
+    : schwabRouteSelected
+      ? ["DAY", "GTC", "FOK"]
+      : ["DAY", "GTC", "IOC", "FOK"];
+  const ticketTypeOptions = ticketOrderTypes.map((value) => [
     value,
     formatTicketOrderType(value),
   ]);
@@ -1243,7 +1508,7 @@ export const TradeOrderTicket = ({
       </div>
       <SegmentedControl
         ariaLabel="Time in force"
-        options={["DAY", "GTC", "IOC", "FOK"]}
+        options={ticketTimeInForceOptions}
         value={tif}
         onChange={setTif}
       />
@@ -1316,11 +1581,23 @@ export const TradeOrderTicket = ({
   }, [executionMode]);
 
   useEffect(() => {
-    if (executionMode === "shadow" || liveUsesSnapTrade || liveUsesRobinhood) {
+    if (
+      executionMode === "shadow" ||
+      liveUsesSnapTrade ||
+      liveUsesRobinhood ||
+      liveUsesSchwab ||
+      liveUsesBrokerOption
+    ) {
       setAttachStopLoss(false);
       setAttachTakeProfit(false);
     }
-  }, [executionMode, liveUsesRobinhood, liveUsesSnapTrade]);
+  }, [
+    executionMode,
+    liveUsesBrokerOption,
+    liveUsesRobinhood,
+    liveUsesSchwab,
+    liveUsesSnapTrade,
+  ]);
 
   useEffect(() => {
     setPreviewSnapshot(null);
@@ -1357,6 +1634,8 @@ export const TradeOrderTicket = ({
     liveBrokerRoute,
     robinhoodAccount?.id,
     robinhoodAccountReady,
+    schwabAccount?.id,
+    schwabAccountReady,
     snapTradeAccount?.id,
     snapTradeAccountReady,
   ]);
@@ -1373,13 +1652,25 @@ export const TradeOrderTicket = ({
   };
   const lockedReadinessModel = buildTicketReadinessModel({
     executionMode,
-    brokerRoute: liveBrokerRoute,
+    brokerRoute:
+      liveUsesRobinhood || liveUsesSchwab || liveUsesBrokerOption
+        ? "snaptrade"
+        : liveBrokerRoute,
     gatewayTradingReady,
     brokerConfigured,
     brokerAuthenticated,
     accountId,
-    snapTradeExecutionReady: snapTradeAccountReady,
-    snapTradeExecutionBlockers: snapTradeAccount?.executionBlockers || [],
+    snapTradeExecutionReady: liveUsesRobinhood
+      ? robinhoodAccountReady
+      : liveUsesSchwab
+        ? schwabAccountReady
+        : liveUsesBrokerOption
+          ? directOptionAccountReady
+          : snapTradeAccountReady,
+    snapTradeExecutionBlockers:
+      liveUsesRobinhood || liveUsesSchwab || liveUsesBrokerOption
+        ? [`${liveBrokerRoute} account`]
+        : snapTradeAccount?.executionBlockers || [],
     ticketInstrumentReady,
     quoteReady: ticketIsShares ? equityQuoteReady : optionQuoteReady,
     spreadPct,
@@ -1478,6 +1769,36 @@ export const TradeOrderTicket = ({
         orderPrices,
       })
     : { ready: false, reason: "route", body: null };
+  const schwabEquityOrderDraft = liveUsesSchwab
+    ? buildSchwabEquityOrderDraft({
+        account: schwabAccount,
+        symbol: slot.ticker,
+        side,
+        orderType,
+        tif,
+        quantity: qtyNum,
+        orderPrices,
+      })
+    : { ready: false, reason: "route", body: null };
+  const brokerOptionOrderDraft = liveUsesBrokerOption
+    ? buildBrokerOptionOrderDraft({
+        broker: optionBroker,
+        account: directOptionAccount,
+        underlyingSymbol:
+          selectedContractMeta?.underlying ||
+          selectedContractMeta?.ticker ||
+          slot.ticker,
+        expiration: expInfo.actualDate,
+        strike: selectedContractMeta?.strike ?? slot.strike,
+        right: selectedContractMeta?.right || slot.cp,
+        side,
+        positionEffect: side === "BUY" ? "open" : null,
+        orderType,
+        tif,
+        quantity: qtyNum,
+        orderPrices,
+      })
+    : { ready: false, reason: "route", body: null };
   const snapTradeDraftBlockMessage =
     {
       snaptrade_account:
@@ -1514,6 +1835,53 @@ export const TradeOrderTicket = ({
       stop: "STOP REQUIRED",
       time_in_force: "DAY / GTC REQUIRED",
     }[robinhoodOrderDraft.reason] || "ROBINHOOD BLOCKED";
+  const schwabEquityDraftBlockMessage =
+    {
+      schwab_account: "Select an execution-ready Schwab account.",
+      symbol: "Select a ticker before submitting a Schwab order.",
+      quantity: "Enter a positive whole-share quantity.",
+      price: "Enter a positive limit price.",
+      stop: "Enter a positive stop trigger.",
+      order_type: "Select a supported Schwab order type.",
+      time_in_force: "Schwab equity orders do not support IOC.",
+    }[schwabEquityOrderDraft.reason] ||
+    "The Schwab equity order payload is not ready yet.";
+  const schwabEquityDraftButtonLabel =
+    {
+      quantity: "WHOLE QTY REQUIRED",
+      price: "PRICE REQUIRED",
+      stop: "STOP REQUIRED",
+      time_in_force: "TIF REQUIRED",
+    }[schwabEquityOrderDraft.reason] || "SCHWAB BLOCKED";
+  const brokerOptionDraftBlockMessage =
+    {
+      robinhood_account:
+        "Select an execution-ready Robinhood Agentic account.",
+      snaptrade_account: "Select an execution-ready SnapTrade account.",
+      schwab_account: "Select an execution-ready Schwab account.",
+      symbol: "The selected option underlying is not supported by this broker.",
+      expiration: "The selected option expiration is unavailable.",
+      strike: "The selected option strike is invalid.",
+      option_type: "The selected contract right is invalid.",
+      position_effect:
+        "Non-IBKR option sells require broker-specific position context and are not enabled.",
+      order_type: `${formatEnumLabel(optionBroker)} options do not support this order type.`,
+      time_in_force: `${formatEnumLabel(optionBroker)} options do not support this time in force.`,
+      quantity: "Enter a positive whole-contract quantity.",
+      price: "Enter a positive option limit price.",
+      stop: "Enter a positive option stop trigger.",
+    }[brokerOptionOrderDraft.reason] ||
+    `The ${formatEnumLabel(optionBroker)} option order payload is not ready yet.`;
+  const brokerOptionDraftButtonLabel =
+    {
+      position_effect: "OPTION SELL BLOCKED",
+      quantity: "WHOLE QTY REQUIRED",
+      price: "PRICE REQUIRED",
+      stop: "STOP REQUIRED",
+      order_type: "ORDER TYPE BLOCKED",
+      time_in_force: "TIF BLOCKED",
+    }[brokerOptionOrderDraft.reason] ||
+    `${optionBroker.toUpperCase()} BLOCKED`;
   const fillPrice = orderPrices.fillPrice;
   const orderTypeLabel = formatTicketOrderType(orderType);
   const cost = fillPrice * qtyNum * ticketMultiplier;
@@ -1643,7 +2011,11 @@ export const TradeOrderTicket = ({
   const shadowAddExposureWarningActive =
     sameShadowContractExposure && !shadowSellToCloseIntent;
   const orderRequest =
-    !liveUsesSnapTrade && !liveUsesRobinhood && liveOrderPayloadReady
+    !liveUsesSnapTrade &&
+    !liveUsesRobinhood &&
+    !liveUsesSchwab &&
+    !liveUsesBrokerOption &&
+    liveOrderPayloadReady
     ? {
         accountId,
         mode: environment,
@@ -1851,6 +2223,8 @@ export const TradeOrderTicket = ({
     !executionIsShadow &&
     !liveUsesSnapTrade &&
     !liveUsesRobinhood &&
+    !liveUsesSchwab &&
+    !liveUsesBrokerOption &&
     (attachStopLoss || attachTakeProfit);
   const attachedExitCount = (attachStopLoss ? 1 : 0) + (attachTakeProfit ? 1 : 0);
   const attachedExitLabel =
@@ -1868,7 +2242,11 @@ export const TradeOrderTicket = ({
     .filter(Boolean)
     .join(" / ");
   const attachedExitTogglesDisabled =
-    executionIsShadow || liveUsesSnapTrade || liveUsesRobinhood;
+    executionIsShadow ||
+    liveUsesSnapTrade ||
+    liveUsesRobinhood ||
+    liveUsesSchwab ||
+    liveUsesBrokerOption;
   const stopLossExitDisabled =
     attachedExitTogglesDisabled || !attachStopLoss;
   const takeProfitExitDisabled =
@@ -2013,6 +2391,111 @@ export const TradeOrderTicket = ({
       return;
     }
 
+    if (liveUsesBrokerOption) {
+      if (!directOptionCsrfToken) {
+        toast.push({
+          kind: "warn",
+          title: "Auth session required",
+          body: `Refresh the app session before previewing a ${formatEnumLabel(optionBroker)} option order.`,
+        });
+        return;
+      }
+      if (
+        !directOptionAccount?.id ||
+        !brokerOptionOrderDraft.ready ||
+        !brokerOptionOrderDraft.body
+      ) {
+        toast.push({
+          kind: "warn",
+          title: `${formatEnumLabel(optionBroker)} option preview blocked`,
+          body: brokerOptionDraftBlockMessage,
+        });
+        return;
+      }
+
+      try {
+        const preview = await brokerOptionReviewMutation.mutateAsync({
+          broker: optionBroker,
+          accountId: directOptionAccount.id,
+          csrfToken: directOptionCsrfToken,
+          body: brokerOptionOrderDraft.body,
+        });
+        const previewOrder = preview?.order || brokerOptionOrderDraft.body;
+        const previewPrice =
+          previewOrder?.limitPrice ??
+          previewOrder?.price ??
+          preview?.review?.quote?.markPrice ??
+          (Number.isFinite(ticketEntryReferencePrice)
+            ? ticketEntryReferencePrice
+            : null);
+        const estimatedValue = Number.isFinite(
+          preview?.review?.estimate?.premium,
+        )
+          ? preview.review.estimate.premium
+          : Number.isFinite(preview?.impact?.estimatedCashChange)
+            ? Math.abs(preview.impact.estimatedCashChange)
+            : Number.isFinite(previewPrice)
+              ? previewPrice * qtyNum * 100
+              : null;
+        setPreviewSnapshot({
+          ...preview,
+          provider: optionBroker,
+          assetClass: "option",
+          directBroker: true,
+          accountId: preview?.account?.id || directOptionAccount.id,
+          resolvedContractId:
+            previewOrder?.optionId ||
+            previewOrder?.occSymbol ||
+            `${optionBroker.toUpperCase()} OPTION`,
+          symbol:
+            previewOrder?.chainSymbol ||
+            previewOrder?.underlyingSymbol ||
+            slot.ticker,
+          fillPrice: previewPrice,
+          orderPayload: {
+            route: optionBroker.toUpperCase(),
+            ...previewOrder,
+          },
+          brokerReview: {
+            estimatedValue,
+            estimatedFee:
+              preview?.review?.estimate?.totalFee ??
+              preview?.impact?.estimatedFeeTotal ??
+              null,
+            collateralAmount:
+              preview?.review?.estimate?.collateralAmount ?? null,
+            alerts: preview?.review?.alerts || [],
+            marketDataDisclosure:
+              preview?.review?.marketDataDisclosure || null,
+            previewAccepted: optionBroker === "schwab",
+          },
+        });
+        toast.push({
+          kind: "success",
+          title: `${formatEnumLabel(optionBroker)} option preview ready`,
+          body: [
+            previewOrder?.action ||
+              previewOrder?.instruction ||
+              `${previewOrder?.side || side} ${previewOrder?.positionEffect || ""}`,
+            previewOrder?.quantity ?? previewOrder?.units ?? qtyNum,
+            previewOrder?.chainSymbol || previewOrder?.underlyingSymbol || slot.ticker,
+            directOptionExecutionAccountLabel,
+          ]
+            .filter(Boolean)
+            .join(" · "),
+        });
+      } catch (error) {
+        toast.push({
+          kind: "error",
+          title: `${formatEnumLabel(optionBroker)} option preview failed`,
+          body:
+            error?.message ||
+            `${formatEnumLabel(optionBroker)} could not review this option order.`,
+        });
+      }
+      return;
+    }
+
     if (liveUsesRobinhood) {
       if (!robinhoodCsrfToken) {
         toast.push({
@@ -2086,6 +2569,73 @@ export const TradeOrderTicket = ({
           body:
             error?.message ||
             "Robinhood could not review this equity order.",
+        });
+      }
+      return;
+    }
+
+    if (liveUsesSchwab) {
+      if (!schwabCsrfToken) {
+        toast.push({
+          kind: "warn",
+          title: "Auth session required",
+          body: "Refresh the app session before previewing a Schwab order.",
+        });
+        return;
+      }
+      if (
+        !schwabAccount?.id ||
+        !schwabEquityOrderDraft.ready ||
+        !schwabEquityOrderDraft.body
+      ) {
+        toast.push({
+          kind: "warn",
+          title: "Schwab preview blocked",
+          body: schwabEquityDraftBlockMessage,
+        });
+        return;
+      }
+
+      try {
+        const preview = await schwabEquityPreviewMutation.mutateAsync({
+          accountId: schwabAccount.id,
+          csrfToken: schwabCsrfToken,
+          body: schwabEquityOrderDraft.body,
+        });
+        setPreviewSnapshot({
+          ...preview,
+          provider: "schwab",
+          assetClass: "equity",
+          directBroker: true,
+          accountId: preview?.account?.id || schwabAccount.id,
+          resolvedContractId: "SCHWAB PREVIEW",
+          symbol: slot.ticker,
+          fillPrice,
+          orderPayload: {
+            route: "SCHWAB",
+            ...schwabEquityOrderDraft.body,
+          },
+          brokerReview: {
+            estimatedValue: cost,
+            estimatedFee: null,
+            collateralAmount: null,
+            alerts: [],
+            marketDataDisclosure: null,
+            previewAccepted: true,
+          },
+        });
+        toast.push({
+          kind: "success",
+          title: "Schwab preview ready",
+          body: [side, qtyNum, slot.ticker, schwabExecutionAccountLabel]
+            .filter(Boolean)
+            .join(" · "),
+        });
+      } catch (error) {
+        toast.push({
+          kind: "error",
+          title: "Schwab preview failed",
+          body: error?.message || "Schwab could not preview this equity order.",
         });
       }
       return;
@@ -2327,6 +2877,119 @@ export const TradeOrderTicket = ({
       return;
     }
 
+    if (liveUsesSchwab) {
+      if (
+        !schwabCsrfToken ||
+        !schwabAccount?.id ||
+        !schwabEquityOrderDraft.ready ||
+        !schwabEquityOrderDraft.body
+      ) {
+        throw new Error(schwabEquityDraftBlockMessage);
+      }
+      const result = await submitSchwabEquityOrderMutation.mutateAsync({
+        accountId: schwabAccount.id,
+        csrfToken: schwabCsrfToken,
+        body: {
+          ...schwabEquityOrderDraft.body,
+          ...taxSubmissionFields,
+        },
+      });
+      setPreviewSnapshot((current) => ({
+        ...(current?.provider === "schwab" && current?.assetClass === "equity"
+          ? current
+          : {}),
+        ...result,
+        provider: "schwab",
+        assetClass: "equity",
+        directBroker: true,
+        accountId: result?.account?.id || schwabAccount.id,
+        resolvedContractId: result?.orderId || "SCHWAB SUBMITTED",
+        symbol: slot.ticker,
+        fillPrice: current?.fillPrice ?? fillPrice,
+        orderPayload: {
+          route: "SCHWAB",
+          ...schwabEquityOrderDraft.body,
+          orderId: result?.orderId || null,
+          status: result?.status || "submitted",
+        },
+      }));
+      toast.push({
+        kind: "success",
+        title: `Submitted ${ticketInstrumentLabel}`,
+        body: [side, qtyNum, slot.ticker, result?.status, result?.orderId]
+          .filter(Boolean)
+          .join(" · "),
+      });
+      return;
+    }
+
+    if (liveUsesBrokerOption) {
+      if (
+        !directOptionCsrfToken ||
+        !directOptionAccount?.id ||
+        !brokerOptionOrderDraft.ready ||
+        !brokerOptionOrderDraft.body
+      ) {
+        throw new Error(brokerOptionDraftBlockMessage);
+      }
+      const result = await submitBrokerOptionMutation.mutateAsync({
+        broker: optionBroker,
+        accountId: directOptionAccount.id,
+        csrfToken: directOptionCsrfToken,
+        body: {
+          ...brokerOptionOrderDraft.body,
+          ...taxSubmissionFields,
+        },
+      });
+      const resultOrder = result?.order || brokerOptionOrderDraft.body;
+      setPreviewSnapshot((current) => ({
+        ...(current?.provider === optionBroker && current?.assetClass === "option"
+          ? current
+          : {}),
+        ...result,
+        provider: optionBroker,
+        assetClass: "option",
+        directBroker: true,
+        accountId: result?.account?.id || directOptionAccount.id,
+        resolvedContractId:
+          resultOrder?.brokerageOrderId ||
+          result?.orderId ||
+          `${optionBroker.toUpperCase()} SUBMITTED`,
+        symbol:
+          resultOrder?.chainSymbol ||
+          resultOrder?.underlyingSymbol ||
+          slot.ticker,
+        fillPrice:
+          current?.provider === optionBroker && current?.assetClass === "option"
+            ? current.fillPrice
+            : resultOrder?.limitPrice ?? resultOrder?.price ?? fillPrice,
+        orderPayload: {
+          route: optionBroker.toUpperCase(),
+          ...resultOrder,
+          orderId: result?.orderId || null,
+          status:
+            resultOrder?.state ||
+            resultOrder?.status ||
+            result?.status ||
+            "submitted",
+        },
+      }));
+      toast.push({
+        kind: "success",
+        title: `Submitted ${ticketInstrumentLabel}`,
+        body: [
+          resultOrder?.action || resultOrder?.instruction || resultOrder?.side,
+          resultOrder?.quantity ?? resultOrder?.units,
+          resultOrder?.chainSymbol || resultOrder?.underlyingSymbol || slot.ticker,
+          resultOrder?.state || resultOrder?.status || result?.status,
+          resultOrder?.brokerageOrderId || result?.orderId,
+        ]
+          .filter(Boolean)
+          .join(" · "),
+      });
+      return;
+    }
+
     if (!orderRequest) {
       toast.push({
         kind: "error",
@@ -2533,6 +3196,161 @@ export const TradeOrderTicket = ({
               orderType === "STP_LMT"
                 ? stopLimitPriceDisplay
                 : fillPriceDisplay,
+          },
+          {
+            label: isLong ? "EST COST" : "EST CREDIT",
+            value: costDisplay,
+            valueColor: isLong ? CSS_COLOR.red : CSS_COLOR.green,
+          },
+          ...buildTaxPreflightConfirmLines(taxPreflight),
+        ],
+        onConfirm: () => submitLiveBrokerOrder(taxPreflight),
+      });
+      return;
+    }
+
+    if (liveUsesSchwab) {
+      if (!schwabAccountReady || !schwabAccount?.id) {
+        toast.push({
+          kind: "warn",
+          title: "Schwab account required",
+          body: "Connect and sync an execution-ready Schwab account in Settings before submitting shares.",
+        });
+        return;
+      }
+      if (authSession.isLoading) {
+        toast.push({
+          kind: "info",
+          title: "Auth session loading",
+          body: "Wait for the app session token before submitting a Schwab order.",
+        });
+        return;
+      }
+      if (!schwabCsrfToken) {
+        toast.push({
+          kind: "warn",
+          title: "Auth session required",
+          body: "Refresh the app session before submitting a Schwab order.",
+        });
+        return;
+      }
+      if (!schwabEquityOrderDraft.ready || !schwabEquityOrderDraft.body) {
+        toast.push({
+          kind: "warn",
+          title: "Schwab order blocked",
+          body: schwabEquityDraftBlockMessage,
+        });
+        return;
+      }
+
+      const taxPreflight = await runTaxPreflight("schwab", schwabAccount.id);
+      if (!taxPreflight || taxPreflight.action === "block") {
+        return;
+      }
+
+      setLiveConfirmError(null);
+      setLiveConfirmState({
+        title: `${ticketActionLabel} ${ticketInstrumentLabel}`,
+        detail: `Submit this live Schwab equity order through ${schwabExecutionAccountLabel}.`,
+        confirmLabel: `${ticketActionLabel} SCHWAB ORDER`,
+        confirmTone: selectedSideColor,
+        lines: [
+          { label: "ACCOUNT", value: schwabExecutionAccountLabel },
+          { label: "SYMBOL", value: slot.ticker },
+          { label: "ROUTE", value: "SCHWAB" },
+          { label: "ASSET", value: "SHARES" },
+          { label: "TYPE", value: orderTypeLabel },
+          { label: "TIF", value: tif },
+          {
+            label: "QTY",
+            value: `${qtyNum || 0} ${ticketQuantityUnit.toUpperCase()}`,
+          },
+          {
+            label:
+              orderType === "STP" || orderType === "STP_LMT"
+                ? "STOP"
+                : orderType === "MKT"
+                  ? "MARK"
+                  : "LIMIT",
+            value:
+              orderType === "STP_LMT"
+                ? stopLimitPriceDisplay
+                : fillPriceDisplay,
+          },
+          {
+            label: isLong ? "EST COST" : "EST CREDIT",
+            value: costDisplay,
+            valueColor: isLong ? CSS_COLOR.red : CSS_COLOR.green,
+          },
+          ...buildTaxPreflightConfirmLines(taxPreflight),
+        ],
+        onConfirm: () => submitLiveBrokerOrder(taxPreflight),
+      });
+      return;
+    }
+
+    if (liveUsesBrokerOption) {
+      if (!directOptionAccountReady || !directOptionAccount?.id) {
+        toast.push({
+          kind: "warn",
+          title: `${formatEnumLabel(optionBroker)} account required`,
+          body: `Sync an execution-ready ${formatEnumLabel(optionBroker)} account in Settings before submitting options.`,
+        });
+        return;
+      }
+      if (authSession.isLoading) {
+        toast.push({
+          kind: "info",
+          title: "Auth session loading",
+          body: `Wait for the app session token before submitting a ${formatEnumLabel(optionBroker)} option order.`,
+        });
+        return;
+      }
+      if (!directOptionCsrfToken) {
+        toast.push({
+          kind: "warn",
+          title: "Auth session required",
+          body: `Refresh the app session before submitting a ${formatEnumLabel(optionBroker)} option order.`,
+        });
+        return;
+      }
+      if (!brokerOptionOrderDraft.ready || !brokerOptionOrderDraft.body) {
+        toast.push({
+          kind: "warn",
+          title: `${formatEnumLabel(optionBroker)} option order blocked`,
+          body: brokerOptionDraftBlockMessage,
+        });
+        return;
+      }
+
+      const taxPreflight = await runTaxPreflight(
+        optionBroker,
+        directOptionAccount.id,
+      );
+      if (!taxPreflight || taxPreflight.action === "block") {
+        return;
+      }
+
+      setLiveConfirmError(null);
+      setLiveConfirmState({
+        title: `${ticketActionLabel} ${ticketInstrumentLabel}`,
+        detail: `Submit this live ${formatEnumLabel(optionBroker)} option order through ${directOptionExecutionAccountLabel}.`,
+        confirmLabel: `${ticketActionLabel} ${optionBroker.toUpperCase()} ORDER`,
+        confirmTone: selectedSideColor,
+        lines: [
+          { label: "ACCOUNT", value: directOptionExecutionAccountLabel },
+          { label: "SYMBOL", value: slot.ticker },
+          { label: "CONTRACT", value: ticketOptionContractShortLabel },
+          { label: "ROUTE", value: optionBroker.toUpperCase() },
+          { label: "TYPE", value: orderTypeLabel },
+          { label: "TIF", value: tif },
+          {
+            label: "QTY",
+            value: `${qtyNum || 0} ${ticketQuantityUnit.toUpperCase()}`,
+          },
+          {
+            label: orderType === "MKT" ? "MARK" : "LIMIT",
+            value: fillPriceDisplay,
           },
           {
             label: isLong ? "EST COST" : "EST CREDIT",
@@ -2762,7 +3580,12 @@ export const TradeOrderTicket = ({
     previewOrderMutation.isPending ||
     previewShadowOrderMutation.isPending ||
     snapTradeImpactMutation.isPending ||
-    robinhoodImpactMutation.isPending;
+    robinhoodImpactMutation.isPending ||
+    schwabEquityPreviewMutation.isPending ||
+    brokerOptionReviewMutation.isPending;
+  const directOptionAccountSyncPending =
+    (optionBroker === "robinhood" && robinhoodSyncMutation.isPending) ||
+    (optionBroker === "schwab" && schwabSyncMutation.isPending);
   const primarySubmitPending = executionIsShadow
     ? placeShadowOrderMutation.isPending
     : liveUsesSnapTrade
@@ -2771,6 +3594,14 @@ export const TradeOrderTicket = ({
         ? robinhoodSyncMutation.isPending ||
           submitRobinhoodOrderMutation.isPending ||
           taxPreflightPending
+      : liveUsesSchwab
+        ? schwabSyncMutation.isPending ||
+          submitSchwabEquityOrderMutation.isPending ||
+          taxPreflightPending
+      : liveUsesBrokerOption
+        ? directOptionAccountSyncPending ||
+          submitBrokerOptionMutation.isPending ||
+          taxPreflightPending
       : ibkrSubmitPending || taxPreflightPending;
   const sellCallSubmitBlocked = sellCallIntent.applies && !sellCallIntent.allowed;
   const snapTradeAuthLoading =
@@ -2778,18 +3609,27 @@ export const TradeOrderTicket = ({
     snapTradeAccountReady &&
     (snapTradeAuthEnabled && authSession.isLoading);
   const robinhoodAuthLoading = liveUsesRobinhood && authSession.isLoading;
+  const schwabAuthLoading = liveUsesSchwab && authSession.isLoading;
+  const brokerOptionAuthLoading = liveUsesBrokerOption && authSession.isLoading;
+  const readinessUsesDirectAccount =
+    liveUsesRobinhood || liveUsesSchwab || liveUsesBrokerOption;
+  const readinessDirectAccountReady = liveUsesRobinhood
+    ? robinhoodAccountReady
+    : liveUsesSchwab
+      ? schwabAccountReady
+      : directOptionAccountReady;
   const baseTicketReadinessModel = buildTicketReadinessModel({
     executionMode,
-    brokerRoute: liveUsesRobinhood ? "snaptrade" : liveBrokerRoute,
+    brokerRoute: readinessUsesDirectAccount ? "snaptrade" : liveBrokerRoute,
     gatewayTradingReady,
     brokerConfigured,
     brokerAuthenticated,
     accountId,
-    snapTradeExecutionReady: liveUsesRobinhood
-      ? robinhoodAccountReady
+    snapTradeExecutionReady: readinessUsesDirectAccount
+      ? readinessDirectAccountReady
       : snapTradeAccountReady,
-    snapTradeExecutionBlockers: liveUsesRobinhood
-      ? ["robinhood account"]
+    snapTradeExecutionBlockers: readinessUsesDirectAccount
+      ? [`${liveBrokerRoute} account`]
       : snapTradeAccount?.executionBlockers || [],
     ticketInstrumentReady,
     quoteReady: ticketIsShares ? equityQuoteReady : optionQuoteReady,
@@ -2801,11 +3641,11 @@ export const TradeOrderTicket = ({
     automationDeviationCount: liveDeviationFields.length,
   });
   const ticketReadinessModel =
-    liveUsesRobinhood &&
+    readinessUsesDirectAccount &&
     baseTicketReadinessModel.detail === "SnapTrade route ready"
       ? {
           ...baseTicketReadinessModel,
-          detail: "Robinhood route ready",
+          detail: `${formatEnumLabel(liveBrokerRoute)} route ready`,
         }
       : baseTicketReadinessModel;
   const primarySubmitDisabled = executionIsShadow
@@ -2827,6 +3667,22 @@ export const TradeOrderTicket = ({
           !robinhoodCsrfToken ||
           !robinhoodOrderDraft.ready ||
           sellCallSubmitBlocked
+      : liveUsesSchwab
+        ? schwabSyncMutation.isPending ||
+          submitSchwabEquityOrderMutation.isPending ||
+          taxPreflightPending ||
+          schwabAuthLoading ||
+          !schwabCsrfToken ||
+          !schwabEquityOrderDraft.ready ||
+          sellCallSubmitBlocked
+      : liveUsesBrokerOption
+        ? directOptionAccountSyncPending ||
+          submitBrokerOptionMutation.isPending ||
+          taxPreflightPending ||
+          brokerOptionAuthLoading ||
+          !directOptionCsrfToken ||
+          !brokerOptionOrderDraft.ready ||
+          sellCallSubmitBlocked
       : ibkrSubmitPending ||
         taxPreflightPending ||
         gatewayTradingBlocked ||
@@ -2835,6 +3691,10 @@ export const TradeOrderTicket = ({
     previewIsPending ||
     (liveUsesRobinhood &&
       (!robinhoodCsrfToken || !robinhoodOrderDraft.ready)) ||
+    (liveUsesSchwab &&
+      (!schwabCsrfToken || !schwabEquityOrderDraft.ready)) ||
+    (liveUsesBrokerOption &&
+      (!directOptionCsrfToken || !brokerOptionOrderDraft.ready)) ||
     sellCallSubmitBlocked;
   const primarySubmitColor = executionIsShadow ? CSS_COLOR.pink : selectedSideColor;
   const primarySubmitLabel = executionIsShadow
@@ -2879,6 +3739,38 @@ export const TradeOrderTicket = ({
                   : !robinhoodOrderDraft.ready
                     ? robinhoodDraftButtonLabel
                     : `${ticketActionLabel} ROBINHOOD ${qtyNum || 0} sh × ${fillPriceDisplay} · ${signedCostDisplay}`
+    : liveUsesSchwab
+      ? schwabSyncMutation.isPending
+        ? "SYNCING SCHWAB..."
+        : taxPreflightPending
+          ? "CHECKING TAX..."
+          : submitSchwabEquityOrderMutation.isPending
+            ? "SUBMITTING..."
+            : !schwabAccountReady
+              ? "SCHWAB ACCOUNT REQUIRED"
+              : schwabAuthLoading
+                ? "AUTH LOADING..."
+                : !schwabCsrfToken
+                  ? "AUTH SESSION REQUIRED"
+                  : !schwabEquityOrderDraft.ready
+                    ? schwabEquityDraftButtonLabel
+                    : `${ticketActionLabel} SCHWAB ${qtyNum || 0} sh × ${fillPriceDisplay} · ${signedCostDisplay}`
+    : liveUsesBrokerOption
+      ? directOptionAccountSyncPending
+        ? `SYNCING ${optionBroker.toUpperCase()}...`
+        : taxPreflightPending
+          ? "CHECKING TAX..."
+          : submitBrokerOptionMutation.isPending
+            ? "SUBMITTING..."
+            : !directOptionAccountReady
+              ? `${optionBroker.toUpperCase()} ACCOUNT REQUIRED`
+              : brokerOptionAuthLoading
+                ? "AUTH LOADING..."
+                : !directOptionCsrfToken
+                  ? "AUTH SESSION REQUIRED"
+                  : !brokerOptionOrderDraft.ready
+                    ? brokerOptionDraftButtonLabel
+                    : `${ticketActionLabel} ${optionBroker.toUpperCase()} ${qtyNum || 0} ct × ${fillPriceDisplay} · ${signedCostDisplay}`
     : gatewayTradingBlocked
       ? gatewayTradingBlockedLabel
       : taxPreflightPending
@@ -2900,13 +3792,28 @@ export const TradeOrderTicket = ({
 	    previewDisplayOrder?.auxPrice ??
 	    null;
   const robinhoodReviewSnapshot =
-    previewSnapshot?.provider === "robinhood"
+    previewSnapshot?.provider === "robinhood" && !previewSnapshot?.directBroker
       ? previewSnapshot.review
       : null;
   const robinhoodPlacementSnapshot =
-    previewSnapshot?.provider === "robinhood" && previewSnapshot.submittedAt
+    previewSnapshot?.provider === "robinhood" &&
+    !previewSnapshot?.directBroker &&
+    previewSnapshot.submittedAt
       ? previewSnapshot
       : null;
+  const directBrokerReviewSnapshot = previewSnapshot?.directBroker
+    ? previewSnapshot.brokerReview
+    : null;
+  const directBrokerPlacementSnapshot =
+    previewSnapshot?.directBroker && previewSnapshot.submittedAt
+      ? previewSnapshot
+      : null;
+  const directBrokerPlacementStatus =
+    directBrokerPlacementSnapshot?.order?.state ||
+    directBrokerPlacementSnapshot?.order?.status ||
+    directBrokerPlacementSnapshot?.status ||
+    previewDisplayOrder?.status ||
+    "SUBMITTED";
   const robinhoodEstimateIsCredit =
     String(previewDisplayOrder?.side || side).toUpperCase() === "SELL";
   const sellCallStatusColor = !sellCallIntent.applies
@@ -3439,7 +4346,7 @@ export const TradeOrderTicket = ({
         </div>
         <SegmentedControl
           ariaLabel="Order type"
-          options={TICKET_ORDER_TYPES.map((t) => ({ value: t, label: formatTicketOrderType(t) }))}
+          options={ticketTypeOptions.map(([value, label]) => ({ value, label }))}
           value={orderType}
           onChange={setOrderType}
         />
@@ -3807,11 +4714,7 @@ export const TradeOrderTicket = ({
       {/* TIF */}
       <SegmentedControl
         ariaLabel="Time in force"
-        options={
-          robinhoodRouteSelected
-            ? ["DAY", "GTC"]
-            : ["DAY", "GTC", "IOC", "FOK"]
-        }
+        options={ticketTimeInForceOptions}
         value={tif}
         onChange={setTif}
       />
@@ -3939,7 +4842,9 @@ export const TradeOrderTicket = ({
         >
           <div>
             <span style={{ color: CSS_COLOR.textMuted }}>
-              {robinhoodPlacementSnapshot ? "PLACED" : "PREVIEW"}
+              {robinhoodPlacementSnapshot || directBrokerPlacementSnapshot
+                ? "PLACED"
+                : "PREVIEW"}
             </span>{" "}
             <span style={{ color: CSS_COLOR.text, fontWeight: FONT_WEIGHTS.regular }}>
               {previewSnapshot.accountId}
@@ -3947,7 +4852,10 @@ export const TradeOrderTicket = ({
           </div>
           <div>
             <span style={{ color: CSS_COLOR.textMuted }}>
-              {previewSnapshot.provider === "robinhood" ? "ORDER" : "CONID"}
+              {previewSnapshot.provider === "robinhood" ||
+              previewSnapshot.directBroker
+                ? "ORDER"
+                : "CONID"}
             </span>{" "}
             <span style={{ color: CSS_COLOR.accent, fontWeight: FONT_WEIGHTS.regular }}>
               {previewSnapshot.resolvedContractId}
@@ -4039,6 +4947,66 @@ export const TradeOrderTicket = ({
               ) : null}
             </>
           ) : null}
+          {directBrokerReviewSnapshot ? (
+            <>
+              <div style={{ gridColumn: "1 / -1" }}>
+                <span style={{ color: CSS_COLOR.textMuted }}>
+                  {side === "SELL" ? "EST CREDIT" : "EST COST"}
+                </span>{" "}
+                <span
+                  style={{ color: side === "SELL" ? CSS_COLOR.green : CSS_COLOR.red }}
+                >
+                  {formatTicketMoney(directBrokerReviewSnapshot.estimatedValue)}
+                </span>
+              </div>
+              {directBrokerReviewSnapshot.estimatedFee != null &&
+              Number.isFinite(Number(directBrokerReviewSnapshot.estimatedFee)) ? (
+                <div style={{ gridColumn: "1 / -1" }}>
+                  <span style={{ color: CSS_COLOR.textMuted }}>EST FEES</span>{" "}
+                  <span style={{ color: CSS_COLOR.text }}>
+                    {formatTicketMoney(directBrokerReviewSnapshot.estimatedFee)}
+                  </span>
+                </div>
+              ) : null}
+              {directBrokerReviewSnapshot.collateralAmount != null &&
+              Number.isFinite(
+                Number(directBrokerReviewSnapshot.collateralAmount),
+              ) ? (
+                <div style={{ gridColumn: "1 / -1" }}>
+                  <span style={{ color: CSS_COLOR.textMuted }}>COLLATERAL</span>{" "}
+                  <span style={{ color: CSS_COLOR.amber }}>
+                    {formatTicketMoney(
+                      directBrokerReviewSnapshot.collateralAmount,
+                    )}
+                  </span>
+                </div>
+              ) : null}
+              {directBrokerReviewSnapshot.previewAccepted ? (
+                <div style={{ gridColumn: "1 / -1" }}>
+                  <span style={{ color: CSS_COLOR.textMuted }}>REVIEW</span>{" "}
+                  <span style={{ color: CSS_COLOR.green }}>
+                    BROKER PREVIEW ACCEPTED
+                  </span>
+                </div>
+              ) : null}
+              {directBrokerReviewSnapshot.alerts?.length ? (
+                <div style={{ gridColumn: "1 / -1" }}>
+                  <span style={{ color: CSS_COLOR.textMuted }}>ALERTS</span>{" "}
+                  <span style={{ color: CSS_COLOR.amber }}>
+                    {directBrokerReviewSnapshot.alerts.join(" · ")}
+                  </span>
+                </div>
+              ) : null}
+              {directBrokerReviewSnapshot.marketDataDisclosure ? (
+                <div style={{ gridColumn: "1 / -1" }}>
+                  <span style={{ color: CSS_COLOR.textMuted }}>MARKET DATA</span>{" "}
+                  <span style={{ color: CSS_COLOR.textSec }}>
+                    {directBrokerReviewSnapshot.marketDataDisclosure}
+                  </span>
+                </div>
+              ) : null}
+            </>
+          ) : null}
           {robinhoodPlacementSnapshot ? (
             <>
               <div style={{ gridColumn: "1 / -1" }}>
@@ -4052,6 +5020,24 @@ export const TradeOrderTicket = ({
                   <span style={{ color: CSS_COLOR.textMuted }}>ALERTS</span>{" "}
                   <span style={{ color: CSS_COLOR.amber }}>
                     {robinhoodPlacementSnapshot.alerts.join(" · ")}
+                  </span>
+                </div>
+              ) : null}
+            </>
+          ) : null}
+          {directBrokerPlacementSnapshot ? (
+            <>
+              <div style={{ gridColumn: "1 / -1" }}>
+                <span style={{ color: CSS_COLOR.textMuted }}>STATUS</span>{" "}
+                <span style={{ color: CSS_COLOR.green }}>
+                  {String(directBrokerPlacementStatus).toUpperCase()}
+                </span>
+              </div>
+              {directBrokerPlacementSnapshot.alerts?.length ? (
+                <div style={{ gridColumn: "1 / -1" }}>
+                  <span style={{ color: CSS_COLOR.textMuted }}>ALERTS</span>{" "}
+                  <span style={{ color: CSS_COLOR.amber }}>
+                    {directBrokerPlacementSnapshot.alerts.join(" · ")}
                   </span>
                 </div>
               ) : null}
@@ -4096,6 +5082,10 @@ export const TradeOrderTicket = ({
                 ? "PREVIEW SNAPTRADE"
               : liveUsesRobinhood
                 ? "PREVIEW ROBINHOOD"
+              : liveUsesSchwab
+                ? "PREVIEW SCHWAB"
+              : liveUsesBrokerOption
+                ? `PREVIEW ${optionBroker.toUpperCase()}`
               : "PREVIEW IBKR"}
         </button>
         <button
