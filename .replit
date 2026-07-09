@@ -93,3 +93,4 @@ PYTHONPATH = "/home/runner/.codex/skills/.python-deps"
 TZ = "America/Denver"
 
 [nix]
+channel = "stable-25_05"

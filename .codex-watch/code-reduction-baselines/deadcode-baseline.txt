@@ -1,0 +1,44 @@
+
+> workspace@0.0.0 deadcode /home/runner/workspace
+> PORT=18747 BASE_PATH=/ knip --include files,dependencies,catalog --no-config-hints
+
+Unused files (31)
+artifacts/api-server/src/services/account-position-quote-symbols.ts
+artifacts/api-server/src/services/bridge-order-read-state.ts       
+artifacts/backtest-worker/src/pattern-discovery-sweep.ts           
+artifacts/backtest-worker/src/pattern-discovery.smoke.ts           
+artifacts/pyrus/src/boot-neural-scene.tsx                          
+artifacts/pyrus/src/boot-neural.tsx                                
+artifacts/pyrus/src/components/brand/PyrusLogo.tsx                 
+artifacts/pyrus/src/components/LogoLoader.tsx                      
+artifacts/pyrus/src/components/marketing/brand-loader.tsx          
+artifacts/pyrus/src/components/marketing/neural-loader.tsx         
+artifacts/pyrus/src/components/marketing/neural-stage.tsx          
+artifacts/pyrus/src/components/marketing/pyrus-logo.standalone.tsx 
+artifacts/pyrus/src/components/neural/index.ts                     
+artifacts/pyrus/src/components/ui/ConnectionStatusPill.jsx         
+artifacts/pyrus/src/components/ui/field.tsx                        
+artifacts/pyrus/src/components/ui/PulseDot.jsx                     
+artifacts/pyrus/src/components/ui/RangeSlider.jsx                  
+artifacts/pyrus/src/components/ui/separator.tsx                    
+artifacts/pyrus/src/components/ui/Slider.jsx                       
+artifacts/pyrus/src/preview-algo.jsx                               
+artifacts/pyrus/src/preview-gates.jsx                              
+artifacts/pyrus/src/preview-ladders.jsx                            
+artifacts/pyrus/src/screens/account/RiskDashboardPanel.jsx         
+artifacts/pyrus/src/screens/algo/AlgoStatusBar.jsx                 
+artifacts/pyrus/src/screens/algo/GateLadder.jsx                    
+artifacts/pyrus/src/screens/algo/OperationsKpiStrip.jsx            
+artifacts/pyrus/src/screens/algo/PipelineStrip.jsx                 
+scripts/agent-chat.mjs                                             
+scripts/diag/cpu-profile-running-api.mjs                           
+scripts/ensure-ibkr-portal-runtime.mjs                             
+scripts/src/shadow-options-post-exit-enrich.ts                     
+Unused devDependencies (6)
+tsx                     artifacts/api-server/package.json:39:6  
+@radix-ui/react-slider  artifacts/pyrus/package.json:22:6       
+tsx                     lib/api-client-react/package.json:16:6  
+orval                   lib/api-spec/package.json:9:6           
+tsx                     lib/db/package.json:27:6                
+tsx                     lib/pyrus-signals-core/package.json:11:6
+ ELIFECYCLE  Command failed with exit code 1.

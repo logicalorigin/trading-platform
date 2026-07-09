@@ -125,6 +125,8 @@ const normalizeOptionContract = (position) => {
 export const normalizeAccountProvider = (account) => {
   const provider = normalizeText(account?.provider).toLowerCase();
   if (provider === "snaptrade") return "snaptrade";
+  if (provider === "robinhood") return "robinhood";
+  if (provider === "schwab") return "schwab";
   if (provider === "ibkr") return "ibkr";
   return provider ? "brokerage" : "unknown";
 };
@@ -199,7 +201,7 @@ const averageCostForSnapTradePosition = (position, optionContract = null) => {
   if (costBasis != null && quantity > 0) {
     return roundFinancialNumber(costBasis / quantity / multiplier);
   }
-  return 0;
+  return null;
 };
 
 const marketValueForSnapTradePosition = (position, optionContract = null) => {
@@ -223,7 +225,7 @@ const unrealizedPnlForSnapTradePosition = (position, optionContract = null) => {
     const costBasis = averageCost * quantity * multiplier;
     return roundFinancialNumber(marketValue - costBasis);
   }
-  return finiteNumber(position?.unrealizedPnl) ?? 0;
+  return finiteNumber(position?.unrealizedPnl);
 };
 
 const buildSnapTradePositionRows = ({ accountId, positions = [], netLiquidation }) =>
@@ -239,6 +241,16 @@ const buildSnapTradePositionRows = ({ accountId, positions = [], netLiquidation 
       position,
       optionContract,
     );
+    const costBasis =
+      averageCost != null && quantity !== 0
+        ? averageCost *
+          quantity *
+          optionMultiplierForSnapTradePosition(optionContract)
+        : finiteNumber(position?.costBasis);
+    const unrealizedPnlPercent =
+      unrealizedPnl != null && costBasis
+        ? (unrealizedPnl / Math.abs(costBasis)) * 100
+        : null;
     const weightPercent =
       netLiquidation && netLiquidation !== 0
         ? (marketValue / Math.abs(netLiquidation)) * 100
@@ -265,8 +277,11 @@ const buildSnapTradePositionRows = ({ accountId, positions = [], netLiquidation 
       dayChange: null,
       dayChangePercent: null,
       unrealizedPnl,
-      unrealizedPnlPercent: null,
+      unrealizedPnlPercent,
       marketValue,
+      brokerMarketValue: marketValue,
+      brokerUnrealizedPnl: unrealizedPnl,
+      brokerUnrealizedPnlPercent: unrealizedPnlPercent,
       weightPercent,
       accountWeightPercent: weightPercent,
       scopedWeightPercent: weightPercent,
@@ -521,6 +536,7 @@ const buildSnapTradePositionsAtDate = ({
   cash,
   buyingPower,
   positionMarketValue,
+  unrealizedPnl,
   updatedAt,
 }) => ({
   accountId,
@@ -532,6 +548,7 @@ const buildSnapTradePositionsAtDate = ({
   totals: {
     count: positions.length,
     marketValue: positionMarketValue,
+    unrealizedPnl,
     netLiquidation,
     cash,
     balance: {
@@ -586,6 +603,9 @@ export function buildSnapTradeAccountPanelData({
     positions: portfolio?.positions || [],
     netLiquidation,
   });
+  const unrealizedPnl =
+    sumNullable(positions.map((position) => position.unrealizedPnl)) ??
+    finiteNumber(portfolio?.totals?.unrealizedPnl);
 
   const assetBuckets = new Map();
   positions.forEach((position) => {
@@ -707,6 +727,12 @@ export function buildSnapTradeAccountPanelData({
           field: "SnapTradePortfolio.positionMarketValue",
           updatedAt,
         }),
+        unrealizedPnl: metric({
+          value: unrealizedPnl,
+          currency,
+          field: "SnapTradePortfolio.unrealizedPnl",
+          updatedAt,
+        }),
       },
     },
     allocation: {
@@ -724,6 +750,7 @@ export function buildSnapTradeAccountPanelData({
       totals: {
         count: positions.length,
         marketValue: positionMarketValue,
+        unrealizedPnl,
         netLiquidation,
         cash,
       },
@@ -763,6 +790,7 @@ export function buildSnapTradeAccountPanelData({
       cash,
       buyingPower,
       positionMarketValue,
+      unrealizedPnl,
       updatedAt,
     }),
     closedTrades,

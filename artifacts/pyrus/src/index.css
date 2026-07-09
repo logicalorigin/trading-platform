@@ -357,6 +357,105 @@ html[data-pyrus-reduced-motion="on"] .neural-overlay {
   transition: none;
 }
 
+/* Full-page brand atmosphere behind the boot loader + login — a soft neural-toned
+   glow, weighted toward the brand (left) and fading behind the form (right). The
+   CSS gradient reads immersive even with no WebGL; the neural cloud layers on top
+   on capable GPUs. Shared values mirrored in index.html for the pre-React loader. */
+.pyrus-brand-atmosphere {
+  background:
+    radial-gradient(78% 104% at 26% 42%,
+      rgba(22, 139, 255, 0.13) 0%,
+      rgba(120, 46, 156, 0.07) 30%,
+      rgba(255, 61, 42, 0.06) 47%,
+      rgba(247, 250, 255, 0) 72%),
+    radial-gradient(60% 80% at 80% 78%,
+      rgba(255, 61, 42, 0.04) 0%,
+      rgba(247, 250, 255, 0) 70%);
+}
+
+html[data-pyrus-theme="dark"] .pyrus-brand-atmosphere {
+  background:
+    radial-gradient(78% 104% at 26% 42%,
+      rgba(40, 150, 255, 0.24) 0%,
+      rgba(150, 70, 190, 0.13) 30%,
+      rgba(255, 80, 60, 0.11) 47%,
+      rgba(5, 9, 20, 0) 72%),
+    radial-gradient(60% 80% at 80% 78%,
+      rgba(255, 80, 60, 0.07) 0%,
+      rgba(5, 9, 20, 0) 70%);
+}
+
+/* Calm, anchored loading affordance for the form panel (boot + auth-check) — a
+   slim indeterminate bar with a quiet label, centered where the form appears. */
+@keyframes pyrus-loading-slide {
+  0% {
+    transform: translateX(-120%);
+  }
+  100% {
+    transform: translateX(320%);
+  }
+}
+
+.pyrus-loading {
+  align-items: center;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.pyrus-loading-bar {
+  background: rgba(16, 24, 39, 0.1);
+  border-radius: 999px;
+  height: 3px;
+  overflow: hidden;
+  position: relative;
+  width: 200px;
+}
+
+html[data-pyrus-theme="dark"] .pyrus-loading-bar {
+  background: rgba(244, 248, 255, 0.12);
+}
+
+.pyrus-loading-bar::after {
+  animation: pyrus-loading-slide 1.15s ease-in-out infinite;
+  background: linear-gradient(90deg, transparent, var(--ra-color-accent, #168bff), transparent);
+  border-radius: inherit;
+  bottom: 0;
+  content: "";
+  left: 0;
+  position: absolute;
+  top: 0;
+  width: 46%;
+}
+
+.pyrus-loading-label {
+  color: var(--ra-text-secondary, #64748b);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pyrus-loading-bar::after {
+    animation-duration: 2.6s;
+  }
+}
+
+/* Full-bleed neural cloud layer behind the boot/loader brand + content cells. */
+.pyrus-boot-cloud {
+  inset: 0;
+  opacity: 0.85;
+  pointer-events: none;
+  position: absolute;
+  z-index: 0;
+}
+
+/* Loading affordance sits under the logo lockup, with a little breathing room. */
+.pyrus-boot-loading {
+  margin-top: 14px;
+}
+
 :root {
   --ra-font-sans: 'IBM Plex Sans', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   --ra-font-display: var(--ra-font-sans);

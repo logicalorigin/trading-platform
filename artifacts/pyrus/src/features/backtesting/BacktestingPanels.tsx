@@ -92,6 +92,7 @@ import {
 } from "./backtestValidationWarnings";
 import { deriveSweepDimensions } from "./sweepDimensions";
 import { PatternDiscoveryPanel } from "./PatternDiscoveryPanel";
+import { OvernightExpectancyPanel } from "./OvernightExpectancyPanel";
 import { useRuntimeWorkloadFlag } from "../platform/workloadStats";
 import { useToast } from "../platform/platformContexts.jsx";
 import { describeUserFacingRuntimeError } from "../platform/userFacingRuntimeError.js";
@@ -1419,9 +1420,9 @@ export function BacktestWorkspace({
   const [universeMode, setUniverseMode] = useState<"watchlist" | "symbols">(
     "watchlist",
   );
-  const [workbenchView, setWorkbenchView] = useState<"strategy" | "discovery">(
-    "strategy",
-  );
+  const [workbenchView, setWorkbenchView] = useState<
+    "strategy" | "discovery" | "overnight"
+  >("strategy");
   const [watchlistId, setWatchlistId] = useState(defaultWatchlistId ?? "");
   const [symbolsText, setSymbolsText] = useState("");
   const [timeframe, setTimeframe] = useState<BarTimeframe>("1d");
@@ -2808,6 +2809,7 @@ export function BacktestWorkspace({
                   options={[
                     { value: "strategy", label: "Strategy" },
                     { value: "discovery", label: "Pattern Discovery" },
+                    { value: "overnight", label: "Overnight" },
                   ]}
                   value={workbenchView}
                   onChange={setWorkbenchView}
@@ -2967,6 +2969,8 @@ export function BacktestWorkspace({
 
       {workbenchView === "discovery" ? (
         <PatternDiscoveryPanel />
+      ) : workbenchView === "overnight" ? (
+        <OvernightExpectancyPanel />
       ) : (
         <>
       <SectionCard
@@ -3106,16 +3110,6 @@ export function BacktestWorkspace({
                   style={{ ...inputStyle(theme, scale), resize: "vertical" }}
                 />
               )}
-            </div>
-            <div
-              style={{
-                gridColumn: "1 / -1",
-                fontSize: scale.fs(9),
-                color: theme.textDim,
-              }}
-            >
-              Uses strategy defaults for the deep parameter set, portfolio
-              rules, execution profile, and optimizer tuning.
             </div>
             <button
               type="button"

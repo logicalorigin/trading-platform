@@ -76,8 +76,22 @@ import {
   toDate,
   toIbkrMonthCode,
 } from "../../lib/values";
+import { signHmacRequest, type OAuthParams } from "./oauth-signer";
 
 type HeaderInput = ConstructorParameters<typeof Headers>[0];
+
+export type IbkrClientOAuthConfig = {
+  consumerKey: string;
+  accessToken: string;
+  liveSessionToken: string;
+  realm: string;
+  nonce?: () => string;
+  timestamp?: () => string;
+};
+
+export type IbkrClientOptions = {
+  oauth?: IbkrClientOAuthConfig | null;
+};
 
 const IBKR_TO_INTERNAL_TIF: Record<string, TimeInForce> = {
   DAY: "day",
@@ -979,7 +993,10 @@ export class IbkrClient {
   private readonly optionChainWaiters: Array<() => void> = [];
   private readonly requestTimestamps: number[] = [];
 
-  constructor(private readonly config: IbkrRuntimeConfig) {}
+  constructor(
+    private readonly config: IbkrRuntimeConfig,
+    private readonly options: IbkrClientOptions = {},
+  ) {}
 
   private buildHeaders(initHeaders?: HeaderInput): Headers {
     const headers = new Headers({
@@ -1010,6 +1027,62 @@ export class IbkrClient {
     return withSearchParams(`${this.config.baseUrl}${path}`, params);
   }
 
+  private buildOAuthSignatureUrl(url: URL): string {
+    const signatureUrl = new URL(url.toString());
+    signatureUrl.search = "";
+    signatureUrl.hash = "";
+    return signatureUrl.toString();
+  }
+
+  private buildOAuthQueryParams(params: Record<string, QueryValue>): OAuthParams {
+    const oauthParams: OAuthParams = {};
+
+    Object.entries(params).forEach(([key, value]) => {
+      if (value === null || value === undefined) {
+        return;
+      }
+
+      if (Array.isArray(value)) {
+        if (value.length > 0) {
+          oauthParams[key] = value
+            .filter((item) => item !== null && item !== undefined)
+            .map((item) => (item instanceof Date ? item.toISOString() : String(item)))
+            .join(",");
+        }
+        return;
+      }
+
+      oauthParams[key] = value instanceof Date ? value.toISOString() : String(value);
+    });
+
+    return oauthParams;
+  }
+
+  private applyOAuthAuthorization(
+    headers: Headers,
+    method: string,
+    url: URL,
+    params: Record<string, QueryValue>,
+  ): void {
+    const oauth = this.options.oauth;
+    if (!oauth) {
+      return;
+    }
+
+    const signed = signHmacRequest({
+      method,
+      url: this.buildOAuthSignatureUrl(url),
+      consumerKey: oauth.consumerKey,
+      accessToken: oauth.accessToken,
+      liveSessionToken: oauth.liveSessionToken,
+      realm: oauth.realm,
+      queryParams: this.buildOAuthQueryParams(params),
+      nonce: oauth.nonce?.(),
+      timestamp: oauth.timestamp?.(),
+    });
+    headers.set("Authorization", signed.authorizationHeader);
+  }
+
   private buildWebSocketUrl(): string {
     const url = new URL(this.config.baseUrl);
     url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
@@ -1024,6 +1097,8 @@ export class IbkrClient {
     params: Record<string, QueryValue> = {},
   ): Promise<T> {
     const headers = this.buildHeaders(init.headers);
+    const url = this.buildUrl(path, params);
+    this.applyOAuthAuthorization(headers, init.method ?? "GET", url, params);
 
     if (init.body && !headers.has("Content-Type")) {
       headers.set("Content-Type", "application/json");
@@ -1050,7 +1125,7 @@ export class IbkrClient {
     }
 
     try {
-      return await fetchJson<T>(this.buildUrl(path, params), {
+      return await fetchJson<T>(url, {
         ...init,
         headers,
         signal: controller.signal,

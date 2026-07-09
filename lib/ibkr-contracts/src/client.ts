@@ -77,6 +77,8 @@ export type BrokerAccountSnapshot = {
   buyingPower: number;
   cash: number;
   netLiquidation: number;
+  dayPnl?: number | null;
+  dayPnlPercent?: number | null;
   accountType?: string | null;
   totalCashValue?: number | null;
   settledCash?: number | null;

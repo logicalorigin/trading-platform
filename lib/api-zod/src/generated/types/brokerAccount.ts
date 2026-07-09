@@ -18,6 +18,8 @@ export interface BrokerAccount {
   buyingPower: number;
   cash: number;
   netLiquidation: number;
+  dayPnl?: number | null;
+  dayPnlPercent?: number | null;
   accountType?: string | null;
   includedInTrading: boolean;
   totalCashValue?: number | null;

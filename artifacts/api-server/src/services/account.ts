@@ -7,6 +7,7 @@ import {
   isNotNull,
   lt,
   lte,
+  or,
   sql,
 } from "drizzle-orm";
 import {
@@ -166,6 +167,13 @@ import {
   getSnapTradeAccountPortfolio,
   type SnapTradeAccountPortfolioResponse,
 } from "./snaptrade-account-portfolio";
+import {
+  readSnapTradeAccountClosedTrades,
+  readSnapTradeAccountEquitySeedPoints,
+  type SnapTradeHistoryOptionContract,
+  type SnapTradeHistoryTrade,
+} from "./snaptrade-account-history";
+import { readRobinhoodAccountActivities } from "./robinhood-account-history";
 import { getRobinhoodAccessToken } from "./robinhood-oauth";
 import { ownedBy } from "./scoped-db";
 import { RobinhoodMcpSession } from "../providers/robinhood/mcp-client";
@@ -235,6 +243,19 @@ const accountMarketDateFormatter = new Intl.DateTimeFormat("en-CA", {
   day: "2-digit",
 });
 
+// True when the position was opened during the current market day (America/New_York).
+// Used so the day-change column reflects the change since WE entered (our unrealized
+// P&L), not the underlying's full move from prior close, which includes movement
+// before we took the position.
+const accountPositionOpenedOnCurrentMarketDay = (
+  openedAt: Date | null | undefined,
+  now: Date = new Date(),
+): boolean => {
+  const openedKey = accountMarketDateKey(openedAt ?? null);
+  const nowKey = accountMarketDateKey(now);
+  return Boolean(openedKey && nowKey && openedKey === nowKey);
+};
+
 type AccountUniverse = {
   requestedAccountId: string;
   accountIds: string[];
@@ -245,6 +266,89 @@ type AccountUniverse = {
   latestSnapshotAt: Date | null;
   staleReason: string | null;
 };
+
+const UUID_V4_OR_COMPATIBLE_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function isProviderBackedAccount(account: BrokerAccountSnapshot): boolean {
+  return account.provider === "snaptrade" || account.provider === "robinhood";
+}
+
+const IBKR_ACCOUNT_TEXT_PATTERN = /\b(?:interactive\s+brokers|ibkr)\b/i;
+
+function accountBrokerText(account: BrokerAccountSnapshot): string {
+  const accountWithBrokerFields = account as BrokerAccountSnapshot &
+    Record<string, unknown>;
+  return [
+    accountWithBrokerFields.brokerageName,
+    accountWithBrokerFields.brokerage,
+    accountWithBrokerFields.institutionName,
+    accountWithBrokerFields.institution,
+    accountWithBrokerFields.providerName,
+    account.displayName,
+  ]
+    .filter(
+      (value): value is string =>
+        typeof value === "string" && value.trim().length > 0,
+    )
+    .join(" ");
+}
+
+function isDirectIbkrAccount(account: BrokerAccountSnapshot): boolean {
+  return account.provider === "ibkr";
+}
+
+function isSnapTradeIbkrAccount(account: BrokerAccountSnapshot): boolean {
+  return (
+    account.provider === "snaptrade" &&
+    IBKR_ACCOUNT_TEXT_PATTERN.test(accountBrokerText(account))
+  );
+}
+
+function filterDirectSupersededProviderAccounts(
+  baseAccounts: BrokerAccountSnapshot[],
+  providerAccounts: BrokerAccountSnapshot[],
+): BrokerAccountSnapshot[] {
+  if (!baseAccounts.some(isDirectIbkrAccount)) {
+    return providerAccounts;
+  }
+  return providerAccounts.filter((account) => !isSnapTradeIbkrAccount(account));
+}
+
+function mergeAccountsWithDirectIbkrSupersedence(
+  baseAccounts: BrokerAccountSnapshot[],
+  providerAccounts: BrokerAccountSnapshot[],
+): BrokerAccountSnapshot[] {
+  return [
+    ...baseAccounts,
+    ...filterDirectSupersededProviderAccounts(baseAccounts, providerAccounts),
+  ];
+}
+
+function ibkrReadableAccountsForUniverse(
+  universe: AccountUniverse,
+): BrokerAccountSnapshot[] {
+  return universe.source === "live"
+    ? universe.accounts.filter((account) => !isProviderBackedAccount(account))
+    : universe.accounts;
+}
+
+function brokerAccountSnapshotCondition(universe: AccountUniverse) {
+  const localAccountIds = universe.accountIds.filter((accountId) =>
+    UUID_V4_OR_COMPATIBLE_PATTERN.test(accountId),
+  );
+  const providerAccountCondition = inArray(
+    brokerAccountsTable.providerAccountId,
+    universe.accountIds,
+  );
+  if (!localAccountIds.length) {
+    return providerAccountCondition;
+  }
+  return (
+    or(providerAccountCondition, inArray(brokerAccountsTable.id, localAccountIds)) ??
+    providerAccountCondition
+  );
+}
 
 type AccountRiskDetail = "fast" | "full";
 
@@ -1218,27 +1322,49 @@ async function readLiveAccountUniverseUncached(
     ? accounts
     : accounts.filter((account) => account.id === requestedAccountId);
 
+  const readProviderBackedAccounts = async () => [
+    ...(await (options.getSnapTradeAccounts ?? getSnapTradeBackedAccounts)(
+      mode,
+    ).catch((error) => {
+      logger.warn(
+        { err: error },
+        "SnapTrade account detail resolution failed; continuing account fallback waterfall",
+      );
+      return [] as BrokerAccountSnapshot[];
+    })),
+    ...(await (options.getRobinhoodAccounts ?? getRobinhoodBackedAccounts)(
+      mode,
+    ).catch((error) => {
+      logger.warn(
+        { err: error },
+        "Robinhood account detail resolution failed; continuing account fallback waterfall",
+      );
+      return [] as BrokerAccountSnapshot[];
+    })),
+  ];
+
+  if (isCombined && selectedAccounts.length) {
+    const combinedAccounts = mergeAccountsWithDirectIbkrSupersedence(
+      selectedAccounts,
+      await readProviderBackedAccounts(),
+    );
+    return {
+      requestedAccountId,
+      accountIds: combinedAccounts.map((account) => account.id),
+      isCombined,
+      accounts: combinedAccounts,
+      primaryCurrency: currencyOf(combinedAccounts),
+      source: "live",
+      latestSnapshotAt: latestTimestampOf(combinedAccounts),
+      staleReason: null,
+    };
+  }
+
   if (!selectedAccounts.length) {
-    const providerBackedAccounts = [
-      ...(await (options.getSnapTradeAccounts ?? getSnapTradeBackedAccounts)(
-        mode,
-      ).catch((error) => {
-        logger.warn(
-          { err: error },
-          "SnapTrade account detail resolution failed; continuing account fallback waterfall",
-        );
-        return [] as BrokerAccountSnapshot[];
-      })),
-      ...(await (options.getRobinhoodAccounts ?? getRobinhoodBackedAccounts)(
-        mode,
-      ).catch((error) => {
-        logger.warn(
-          { err: error },
-          "Robinhood account detail resolution failed; continuing account fallback waterfall",
-        );
-        return [] as BrokerAccountSnapshot[];
-      })),
-    ];
+    const providerBackedAccounts = filterDirectSupersededProviderAccounts(
+      accounts,
+      await readProviderBackedAccounts(),
+    );
     const selectedProviderBackedAccounts = isCombined
       ? providerBackedAccounts
       : providerBackedAccounts.filter(
@@ -1416,19 +1542,24 @@ async function readPositionsForUniverseUncached(
     return [];
   }
 
+  const ibkrAccounts = ibkrReadableAccountsForUniverse(universe);
+  if (!ibkrAccounts.length) {
+    return [];
+  }
+
   const readOpenPositions = async (): Promise<BrokerPositionSnapshot[]> => {
-    if (!universe.isCombined && universe.accountIds[0]) {
+    if (!universe.isCombined && ibkrAccounts[0]) {
       return filterOpenBrokerPositions(
         await listIbkrPositions({
-          accountId: universe.accountIds[0],
+          accountId: ibkrAccounts[0].id,
           mode,
         }),
       );
     }
 
     const positions = await Promise.all(
-      universe.accountIds.map((accountId) =>
-        listIbkrPositions({ accountId, mode }),
+      ibkrAccounts.map((account) =>
+        listIbkrPositions({ accountId: account.id, mode }),
       ),
     );
     return filterOpenBrokerPositions(positions.flat());
@@ -1501,9 +1632,14 @@ async function readOrdersForUniverseUncached(
     return { orders: [] };
   }
 
+  const ibkrAccounts = ibkrReadableAccountsForUniverse(universe);
+  if (!ibkrAccounts.length) {
+    return { orders: [] };
+  }
+
   const results = await Promise.all(
-    universe.accountIds.map((accountId) =>
-      listOrders({ accountId, mode }),
+    ibkrAccounts.map((account) =>
+      listOrders({ accountId: account.id, mode }),
     ),
   );
   const degraded = results.some((result) => result.degraded);
@@ -4251,6 +4387,104 @@ function withTradingInclusionDefault(
   });
 }
 
+function accountListSnapshotCondition(accounts: BrokerAccountSnapshot[]) {
+  const providerAccountIds = accounts
+    .map((account) => account.providerAccountId)
+    .filter((value): value is string => typeof value === "string" && value.length > 0);
+  const localAccountIds = accounts
+    .map((account) => account.id)
+    .filter((value): value is string => UUID_V4_OR_COMPATIBLE_PATTERN.test(value));
+  const conditions = [];
+  if (providerAccountIds.length) {
+    conditions.push(inArray(brokerAccountsTable.providerAccountId, providerAccountIds));
+  }
+  if (localAccountIds.length) {
+    conditions.push(inArray(brokerAccountsTable.id, localAccountIds));
+  }
+  return conditions.length > 1 ? or(...conditions) : conditions[0];
+}
+
+function accountListSnapshotKeys(account: BrokerAccountSnapshot): string[] {
+  return [account.id, account.providerAccountId].filter(
+    (value, index, values): value is string =>
+      typeof value === "string" && value.length > 0 && values.indexOf(value) === index,
+  );
+}
+
+async function withAccountListDayPnl(
+  accounts: BrokerAccountSnapshot[],
+): Promise<BrokerAccountSnapshot[]> {
+  const condition = accountListSnapshotCondition(accounts);
+  if (!accounts.length || !condition) {
+    return accounts;
+  }
+
+  try {
+    const snapshotRows = await db
+      .select({
+        localAccountId: brokerAccountsTable.id,
+        providerAccountId: brokerAccountsTable.providerAccountId,
+        asOf: balanceSnapshotsTable.asOf,
+        netLiquidation: balanceSnapshotsTable.netLiquidation,
+      })
+      .from(balanceSnapshotsTable)
+      .innerJoin(
+        brokerAccountsTable,
+        eq(balanceSnapshotsTable.accountId, brokerAccountsTable.id),
+      )
+      .where(condition)
+      .orderBy(desc(balanceSnapshotsTable.asOf))
+      .limit(Math.max(200, accounts.length * 20));
+
+    const rowsByKey = new Map<
+      string,
+      Array<{ asOf: Date; netLiquidation: number }>
+    >();
+    for (const row of snapshotRows) {
+      const netLiquidation = toNumber(row.netLiquidation);
+      if (netLiquidation == null) continue;
+      for (const key of [row.localAccountId, row.providerAccountId]) {
+        const bucket = rowsByKey.get(key) ?? [];
+        bucket.push({ asOf: row.asOf, netLiquidation });
+        rowsByKey.set(key, bucket);
+      }
+    }
+
+    return accounts.map((account) => {
+      const currentNav = toNumber(account.netLiquidation);
+      const marketDate = accountMarketDateKey(account.updatedAt) ?? accountMarketDateKey(new Date());
+      const rows =
+        accountListSnapshotKeys(account)
+          .map((key) => rowsByKey.get(key) ?? [])
+          .find((bucket) => bucket.length > 0) ?? [];
+      const baseline = marketDate
+        ? rows.find((row) => accountMarketDateKey(row.asOf) !== marketDate)
+        : null;
+      if (currentNav == null || !baseline) {
+        return {
+          ...account,
+          dayPnl: null,
+          dayPnlPercent: null,
+        };
+      }
+      const dayPnl = currentNav - baseline.netLiquidation;
+      return {
+        ...account,
+        dayPnl,
+        dayPnlPercent: baseline.netLiquidation
+          ? (dayPnl / Math.abs(baseline.netLiquidation)) * 100
+          : null,
+      };
+    });
+  } catch (error) {
+    logger.warn(
+      { err: error },
+      "Account list day P&L hydration failed; returning accounts without tab day P&L",
+    );
+    return accounts;
+  }
+}
+
 // Reads SnapTrade-linked brokerage accounts (e.g. E*TRADE) from the persisted
 // broker_accounts/broker_connections tables, then hydrates each with its live
 // portfolio balances (netLiquidation/cash/buyingPower/currency) via a short-lived
@@ -4891,11 +5125,14 @@ async function listAccountsUncached(
           "Account snapshot persistence failed after live account list",
         );
       });
+      const accounts = withTradingInclusionDefault(
+        mergeAccountsWithDirectIbkrSupersedence(
+          liveAccounts,
+          await additionalBrokerAccountsPromise,
+        ),
+      );
       return {
-        accounts: withTradingInclusionDefault([
-          ...liveAccounts,
-          ...(await additionalBrokerAccountsPromise),
-        ]),
+        accounts: await withAccountListDayPnl(accounts),
       };
     }
   } catch {
@@ -4909,28 +5146,35 @@ async function listAccountsUncached(
     run: () => getPersistedAccounts(COMBINED_ACCOUNT_ID, mode),
   });
   if (persistedAccounts.accounts.length) {
+    const accounts = withTradingInclusionDefault(
+      mergeAccountsWithDirectIbkrSupersedence(
+        persistedAccounts.accounts,
+        await additionalBrokerAccountsPromise,
+      ),
+    );
     return {
-      accounts: withTradingInclusionDefault([
-        ...persistedAccounts.accounts,
-        ...(await additionalBrokerAccountsPromise),
-      ]),
+      accounts: await withAccountListDayPnl(accounts),
     };
   }
 
   const flexAccounts = await getFlexAccounts(COMBINED_ACCOUNT_ID, mode);
   if (flexAccounts.length) {
+    const accounts = withTradingInclusionDefault(
+      mergeAccountsWithDirectIbkrSupersedence(
+        flexAccounts,
+        await additionalBrokerAccountsPromise,
+      ),
+    );
     return {
-      accounts: withTradingInclusionDefault([
-        ...flexAccounts,
-        ...(await additionalBrokerAccountsPromise),
-      ]),
+      accounts: await withAccountListDayPnl(accounts),
     };
   }
 
+  const accounts = withTradingInclusionDefault(
+    await additionalBrokerAccountsPromise,
+  );
   return {
-    accounts: withTradingInclusionDefault(
-      await additionalBrokerAccountsPromise,
-    ),
+    accounts: await withAccountListDayPnl(accounts),
   };
 }
 
@@ -5254,6 +5498,57 @@ export async function getAccountEquityHistory(input: {
   );
 }
 
+async function readProviderEquitySeedPointsForUniverse(
+  universe: AccountUniverse,
+): Promise<{
+  points: AccountEquityHistorySeedPoint[];
+  replacedProviderAccountIds: Set<string>;
+}> {
+  const snapTradeAccounts = universe.accounts.filter(
+    (account) => account.provider === "snaptrade",
+  );
+  if (!snapTradeAccounts.length) {
+    return { points: [], replacedProviderAccountIds: new Set() };
+  }
+
+  const results = await Promise.all(
+    snapTradeAccounts.map(async (account) => ({
+      account,
+      result: await readSnapTradeAccountEquitySeedPoints({
+        accountId: account.id,
+      }),
+    })),
+  );
+
+  const points: AccountEquityHistorySeedPoint[] = [];
+  const replacedProviderAccountIds = new Set<string>();
+
+  results.forEach(({ account, result }) => {
+    if (
+      result.selectedSnapshotSource !==
+      "SNAPTRADE_ACTIVITY_LEDGER_RECONSTRUCTION"
+    ) {
+      return;
+    }
+    points.push(...result.points);
+    replacedProviderAccountIds.add(account.providerAccountId);
+    if (account.providerAccountId.startsWith(SNAPTRADE_LOCAL_ID_PREFIX)) {
+      replacedProviderAccountIds.add(
+        account.providerAccountId.slice(SNAPTRADE_LOCAL_ID_PREFIX.length),
+      );
+    } else {
+      replacedProviderAccountIds.add(
+        `${SNAPTRADE_LOCAL_ID_PREFIX}${account.providerAccountId}`,
+      );
+    }
+  });
+
+  return {
+    points,
+    replacedProviderAccountIds,
+  };
+}
+
 async function getAccountEquityHistoryUncached(input: {
   accountId: string;
   range: AccountRange;
@@ -5299,9 +5594,7 @@ async function getAccountEquityHistoryUncached(input: {
         .orderBy(flexCashActivityTable.activityDate),
   });
 
-  const snapshotConditions = [
-    inArray(brokerAccountsTable.providerAccountId, universe.accountIds),
-  ];
+  const snapshotConditions = [brokerAccountSnapshotCondition(universe)];
   if (start) {
     snapshotConditions.push(gte(balanceSnapshotsTable.asOf, start));
   }
@@ -5328,9 +5621,21 @@ async function getAccountEquityHistoryUncached(input: {
         .where(and(...snapshotConditions))
         .orderBy(balanceSnapshotsTable.asOf),
   });
+  const providerEquitySeedPoints = await readProviderEquitySeedPointsForUniverse(
+    universe,
+  );
+  const rawSnapshotRowsForEquity =
+    providerEquitySeedPoints.replacedProviderAccountIds.size > 0
+      ? rawSnapshotRows.filter(
+          (row) =>
+            !providerEquitySeedPoints.replacedProviderAccountIds.has(
+              row.providerAccountId,
+            ),
+        )
+      : rawSnapshotRows;
   const snapshotRows = compactEquitySnapshotRows(
     dedupeEquitySnapshotRows(
-      filterPlaceholderZeroEquitySnapshotRows(rawSnapshotRows),
+      filterPlaceholderZeroEquitySnapshotRows(rawSnapshotRowsForEquity),
     ),
     range,
   );
@@ -5407,6 +5712,26 @@ async function getAccountEquityHistoryUncached(input: {
       });
     });
   }
+
+  providerEquitySeedPoints.points.forEach((point) => {
+    const key = point.timestamp.toISOString();
+    const current = byTimestamp.get(key);
+    if (current?.source === "FLEX") {
+      return;
+    }
+    byTimestamp.set(key, {
+      timestamp: point.timestamp,
+      netLiquidation:
+        (current?.netLiquidation ?? 0) + (toNumber(point.netLiquidation) ?? 0),
+      currency: point.currency,
+      source: point.source,
+      deposits: (current?.deposits ?? 0) + (toNumber(point.deposits) ?? 0),
+      withdrawals:
+        (current?.withdrawals ?? 0) + (toNumber(point.withdrawals) ?? 0),
+      dividends: (current?.dividends ?? 0) + (toNumber(point.dividends) ?? 0),
+      fees: (current?.fees ?? 0) + (toNumber(point.fees) ?? 0),
+    });
+  });
 
   const transferSafeSnapshotRows = aggregateCombinedEquitySnapshotRows(
     filterSnapshotsOnFlexTransferDates(snapshotRows, flexTransferDates),
@@ -5512,6 +5837,8 @@ async function getAccountEquityHistoryUncached(input: {
         ? "flex"
         : lastPoint?.source === "SHADOW_LEDGER"
           ? "shadow_ledger"
+          : lastPoint?.source === "SNAPTRADE_BALANCE_HISTORY"
+            ? "snaptrade_balance_history"
           : null;
 
   const lastRun = await withOptionalAccountSchemaFallback({
@@ -6048,15 +6375,31 @@ async function getAccountPositionsUncached(input: {
           }
           current.averageWeight += quantityWeight;
           current.unrealizedWeight += marketValueWeight;
+          // Same-day positions contribute change-since-entry (unrealized P&L); held
+          // positions contribute the prior-close day change. Keeps the combined/"All"
+          // view consistent with the per-account view (which applies the same mapping
+          // below). Owner report 2026-07-08.
+          const positionOpenedToday = accountPositionOpenedOnCurrentMarketDay(
+            openedAt.openedAt,
+          );
+          const contributedDayChange = positionOpenedToday
+            ? (hydratedMarket?.unrealizedPnl ??
+              position.unrealizedPnl ??
+              hydratedMarket?.dayChange ??
+              null)
+            : (hydratedMarket?.dayChange ?? null);
+          const contributedDayChangePercentBase = positionOpenedToday
+            ? (hydratedMarket?.unrealizedPnlPercent ?? position.unrealizedPnlPercent)
+            : hydratedMarket?.dayChangePercent;
           current.dayChange = upsertNullableTotal(
             current.dayChange,
-            hydratedMarket?.dayChange ?? null,
+            contributedDayChange,
           );
           current.dayChangePercent = upsertNullableTotal(
             current.dayChangePercent,
-            hydratedMarket?.dayChangePercent == null || marketValueWeight <= 0
+            contributedDayChangePercentBase == null || marketValueWeight <= 0
               ? null
-              : hydratedMarket.dayChangePercent * marketValueWeight,
+              : contributedDayChangePercentBase * marketValueWeight,
           );
           current.unrealizedPnl += hydratedMarket?.unrealizedPnl ?? position.unrealizedPnl;
           current.unrealizedPnlPercentAccumulator +=
@@ -6199,8 +6542,22 @@ async function getAccountPositionsUncached(input: {
           quantity: position.quantity,
           averageCost: positionAveragePrice(position),
           mark,
-          dayChange: hydratedMarket?.dayChange ?? null,
-          dayChangePercent: hydratedMarket?.dayChangePercent ?? null,
+          // Same-day positions show the change since OUR entry (unrealized P&L), not
+          // the underlying's full prior-close day move (which includes movement before
+          // we took the position). Held positions keep the prior-close day change.
+          // Owner report 2026-07-08. Mirrors the algo positions same-day logic.
+          dayChange: accountPositionOpenedOnCurrentMarketDay(openedAt.openedAt)
+            ? (hydratedMarket?.unrealizedPnl ??
+              position.unrealizedPnl ??
+              hydratedMarket?.dayChange ??
+              null)
+            : (hydratedMarket?.dayChange ?? null),
+          dayChangePercent: accountPositionOpenedOnCurrentMarketDay(openedAt.openedAt)
+            ? (hydratedMarket?.unrealizedPnlPercent ??
+              position.unrealizedPnlPercent ??
+              hydratedMarket?.dayChangePercent ??
+              null)
+            : (hydratedMarket?.dayChangePercent ?? null),
           unrealizedPnl: hydratedMarket?.unrealizedPnl ?? position.unrealizedPnl,
           unrealizedPnlPercent:
             hydratedMarket?.unrealizedPnlPercent ?? position.unrealizedPnlPercent,
@@ -6285,12 +6642,12 @@ export async function getAccountPositionsAtDate(input: {
   ];
 
   const balanceConditions = [
-    inArray(brokerAccountsTable.providerAccountId, universe.accountIds),
+    brokerAccountSnapshotCondition(universe),
     gte(balanceSnapshotsTable.asOf, window.start),
     lt(balanceSnapshotsTable.asOf, window.end),
   ];
   const previousBalanceConditions = [
-    inArray(brokerAccountsTable.providerAccountId, universe.accountIds),
+    brokerAccountSnapshotCondition(universe),
     lt(balanceSnapshotsTable.asOf, window.start),
   ];
 
@@ -6727,7 +7084,12 @@ async function getPositionLots(accountIds: string[]) {
 
 type NormalizedAccountTrade = {
   id: string;
-  source: "FLEX" | "LIVE_ORDER" | "LIVE_EXECUTION";
+  source:
+    | "FLEX"
+    | "LIVE_ORDER"
+    | "LIVE_EXECUTION"
+    | "SNAPTRADE_ACTIVITY"
+    | "ROBINHOOD_ACTIVITY";
   accountId: string;
   symbol: string;
   side: string;
@@ -7646,6 +8008,136 @@ const mergeLiveOrderActivityTrades = (
   });
 };
 
+const normalizeSnapTradeOptionContract = (
+  contract: SnapTradeHistoryOptionContract | null | undefined,
+): BrokerOrderSnapshot["optionContract"] | null => {
+  if (!contract) return null;
+  const expirationDate = new Date(contract.expirationDate);
+  if (Number.isNaN(expirationDate.getTime())) return null;
+  return {
+    ticker: contract.ticker,
+    underlying: contract.underlying,
+    expirationDate,
+    strike: contract.strike,
+    right: contract.right,
+    multiplier: contract.multiplier,
+    sharesPerContract: contract.sharesPerContract,
+    providerContractId: contract.providerContractId,
+    brokerContractId: contract.brokerContractId,
+  };
+};
+
+const snapTradeHistoryTradeToAccountTrade = (
+  trade: SnapTradeHistoryTrade,
+): NormalizedAccountTrade => {
+  const optionContract = normalizeSnapTradeOptionContract(trade.optionContract);
+  const closeDate = trade.closeDate;
+  return {
+    id: trade.id,
+    source: "SNAPTRADE_ACTIVITY",
+    accountId: trade.accountId,
+    symbol: normalizeSymbol(trade.symbol),
+    side: trade.side,
+    assetClass: trade.assetClass,
+    positionType: trade.positionType,
+    quantity: trade.quantity,
+    openDate: trade.openDate,
+    closeDate,
+    avgOpen: trade.avgOpen,
+    avgClose: trade.avgClose,
+    realizedPnl: trade.realizedPnl,
+    realizedPnlPercent: trade.realizedPnlPercent,
+    holdDurationMinutes: trade.holdDurationMinutes,
+    commissions: trade.commissions,
+    currency: trade.currency,
+    sourceType: trade.sourceType,
+    strategyLabel: trade.strategyLabel,
+    optionContract,
+    optionRight: trade.optionRight,
+    dte:
+      optionContract && closeDate
+        ? optionDteFromContract(optionContract, closeDate)
+        : null,
+  };
+};
+
+type RobinhoodAccountActivityRow = Awaited<
+  ReturnType<typeof readRobinhoodAccountActivities>
+>[number];
+
+const robinhoodActivityToAccountTrade = (
+  activity: RobinhoodAccountActivityRow,
+): NormalizedAccountTrade | null => {
+  const closeDate = activity.closedAt;
+  if (!closeDate || Number.isNaN(closeDate.getTime())) {
+    return null;
+  }
+  return {
+    id: `robinhood-activity:${activity.id}`,
+    source: "ROBINHOOD_ACTIVITY",
+    accountId: activity.accountId,
+    symbol: normalizeSymbol(activity.symbol || "UNKNOWN") || "UNKNOWN",
+    side: String(activity.side || "sell").trim().toLowerCase() || "sell",
+    assetClass: "Stocks",
+    positionType: "stock",
+    quantity: Math.abs(toNumber(activity.quantity) ?? 0),
+    openDate: null,
+    closeDate,
+    avgOpen: null,
+    avgClose: toNumber(activity.price),
+    realizedPnl: toNumber(activity.realizedGain),
+    realizedPnlPercent: null,
+    holdDurationMinutes: null,
+    commissions: null,
+    currency: activity.currency,
+    sourceType: "manual",
+    strategyLabel: "Manual",
+  };
+};
+
+async function listProviderActivityClosedTradesForUniverse(
+  universe: AccountUniverse,
+  input: AccountClosedTradeFilters,
+): Promise<NormalizedAccountTrade[]> {
+  const snapTradeAccountIds = universe.accounts
+    .filter((account) => account.provider === "snaptrade")
+    .map((account) => account.id);
+  const robinhoodAccountIds = universe.accounts
+    .filter((account) => account.provider === "robinhood")
+    .map((account) => account.id);
+
+  const [snapTradeTrades, robinhoodTrades] = await Promise.all([
+    Promise.all(
+      snapTradeAccountIds.map((accountId) =>
+        readSnapTradeAccountClosedTrades({
+          accountId,
+          from: input.from,
+          to: input.to,
+        }),
+      ),
+    ),
+    Promise.all(
+      robinhoodAccountIds.map((accountId) =>
+        readRobinhoodAccountActivities(accountId),
+      ),
+    ),
+  ]);
+
+  return [
+    ...snapTradeTrades.flat().map(snapTradeHistoryTradeToAccountTrade),
+    ...robinhoodTrades
+      .flat()
+      .map(robinhoodActivityToAccountTrade)
+      .filter((trade): trade is NormalizedAccountTrade => Boolean(trade)),
+  ]
+    .filter((trade) => accountTradeMatchesClosedTradeFilters(trade, input))
+    .sort((left, right) => {
+      const leftTime = left.closeDate?.getTime() ?? 0;
+      const rightTime = right.closeDate?.getTime() ?? 0;
+      return rightTime - leftTime;
+    });
+}
+
 async function listExecutionsForUniverse(
   universe: AccountUniverse,
   mode: RuntimeMode,
@@ -7669,10 +8161,23 @@ async function readExecutionsForUniverseUncached(
   input: AccountClosedTradeFilters,
   days: number,
 ): Promise<BrokerExecutionSnapshot[]> {
+  if (
+    universe.source === "robinhood" ||
+    universe.source === "snaptrade" ||
+    universe.source === "broker"
+  ) {
+    return [];
+  }
+
+  const ibkrAccounts = ibkrReadableAccountsForUniverse(universe);
+  if (!ibkrAccounts.length) {
+    return [];
+  }
+
   const executions = await Promise.all(
-    universe.accountIds.map((accountId) =>
+    ibkrAccounts.map((account) =>
       listIbkrExecutions({
-        accountId,
+        accountId: account.id,
         mode,
         days,
         limit: 500,
@@ -7892,13 +8397,19 @@ async function getAccountClosedTradesUncached(input: {
 }) {
   const mode = input.mode;
   const universe = await getLiveAccountUniverse(input.accountId, mode);
-  const [flexTrades, executions, orderResult] = await Promise.all([
+  const [flexTrades, providerTrades, executions, orderResult] = await Promise.all([
     listClosedTradesForUniverse(universe, input),
+    listProviderActivityClosedTradesForUniverse(universe, input),
     listExecutionsForUniverse(universe, mode, input),
     listOrdersForUniverse(universe, mode),
   ]);
+  const historicalTrades = [...flexTrades, ...providerTrades].sort((left, right) => {
+    const leftTime = left.closeDate?.getTime() ?? 0;
+    const rightTime = right.closeDate?.getTime() ?? 0;
+    return rightTime - leftTime;
+  });
   const executionTrades = mergeLiveExecutionActivityTrades(
-    flexTrades,
+    historicalTrades,
     executions,
     input,
     universe.primaryCurrency,

@@ -50,6 +50,7 @@ import {
 } from "../signals/signalSparklineModel.js";
 import { buildFallbackWatchlistItem } from "./runtimeMarketDataModel";
 import { resolveExtendedHoursQuoteDisplay } from "./extendedHoursQuote";
+import { SymbolHoverCard } from "./SymbolHoverCard.jsx";
 import { useRuntimeTickerSnapshot, useRuntimeTickerSnapshots } from "./runtimeTickerStore";
 import { useAlgoStaExecutionTimeframe } from "./algoStaExecutionTimeframeStore";
 import { MarketIdentityMark } from "./marketIdentity";
@@ -233,6 +234,7 @@ const WatchlistRow = memo(
     onAddSymbol,
     onToggleSelection,
     onSignalAction,
+    onResearchSymbol,
     signalStatesByTimeframe = {},
     signalEvents = EMPTY_SIGNAL_EVENTS,
     executionTimeframe = null,
@@ -785,26 +787,33 @@ const WatchlistRow = memo(
                 overflow: "hidden",
               }}
             >
-              <span
-                data-testid="watchlist-row-symbol"
-                className={priceFlashClassName}
-                style={{
-                  minWidth: 0,
-                  flex: "0 0 auto",
-                  fontSize: textSize("paragraph"),
-                  fontWeight: FONT_WEIGHTS.medium,
-                  fontFamily: T.sans,
-                  color: CSS_COLOR.text,
-                  letterSpacing: 0,
-                  overflow: "hidden",
-                  textOverflow: "ellipsis",
-                  whiteSpace: "nowrap",
-                  padding: sp("1px 3px"),
-                  borderRadius: dim(RADII.xs),
-                }}
+              <SymbolHoverCard
+                symbol={item.sym}
+                onTrade={(symbol) => onSignalAction?.(symbol, bestSignalState)}
+                onResearch={onResearchSymbol}
               >
-                {item.sym}
-              </span>
+                <span
+                  data-testid="watchlist-row-symbol"
+                  className={priceFlashClassName}
+                  tabIndex={0}
+                  style={{
+                    minWidth: 0,
+                    flex: "0 0 auto",
+                    fontSize: textSize("paragraph"),
+                    fontWeight: FONT_WEIGHTS.medium,
+                    fontFamily: T.sans,
+                    color: CSS_COLOR.text,
+                    letterSpacing: 0,
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                    padding: sp("1px 3px"),
+                    borderRadius: dim(RADII.xs),
+                  }}
+                >
+                  {item.sym}
+                </span>
+              </SymbolHoverCard>
             </span>
             {renderSignalCluster({ justifySelf: "end" })}
           </div>
@@ -940,6 +949,7 @@ export const Watchlist = ({
   onReorderSymbol,
   onRemoveSymbol,
   onSignalAction,
+  onResearchSymbol,
   busy = false,
   density = "default",
   headerAccessory = null,
@@ -1744,6 +1754,7 @@ export const Watchlist = ({
               onAddSymbol={onAddSymbol}
               onToggleSelection={toggleItemSelection}
               onSignalAction={onSignalAction}
+              onResearchSymbol={onResearchSymbol}
               signalStatesByTimeframe={signalMatrixBySymbol[item.sym]}
               signalEvents={signalEventsBySymbol.get(item.sym) || EMPTY_SIGNAL_EVENTS}
               executionTimeframe={watchlistExecutionTimeframe}

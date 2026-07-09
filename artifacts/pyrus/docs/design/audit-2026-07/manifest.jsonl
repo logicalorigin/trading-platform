@@ -1,0 +1,30 @@
+{"screen":"market","width":1440,"theme":"dark","label":"live-rth","sha":"f24887cc","ts":"2026-07-08T19:54:32Z","ok":true,"waitForMissed":"html[data-pyrus-theme=\"dark\"] .ra-shell","consoleErrorCount":0,"failedRequestCount":0}
+{"screen":"signals","width":1440,"theme":"dark","label":"live-rth","sha":"f24887cc","ts":"2026-07-08T19:55:16Z","ok":true,"waitForMissed":null,"consoleErrorCount":7,"failedRequestCount":10}
+{"screen":"flow","width":1440,"theme":"dark","label":"live-rth","sha":"f24887cc","ts":"2026-07-08T19:56:03Z","ok":true,"waitForMissed":"html[data-pyrus-theme=\"dark\"] .ra-shell","consoleErrorCount":0,"failedRequestCount":0}
+{"screen":"gex","width":1440,"theme":"dark","label":"live-rth","sha":"f24887cc","ts":"2026-07-08T19:56:40Z","ok":true,"waitForMissed":null,"consoleErrorCount":2,"failedRequestCount":1}
+{"screen":"trade","width":1440,"theme":"dark","label":"live-rth","sha":"f24887cc","ts":"2026-07-08T19:57:06Z","ok":true,"waitForMissed":null,"consoleErrorCount":0,"failedRequestCount":0}
+{"screen":"account","width":1440,"theme":"dark","label":"live-rth","sha":"f24887cc","ts":"2026-07-08T19:57:40Z","ok":true,"waitForMissed":null,"consoleErrorCount":3,"failedRequestCount":5}
+{"screen":"research","width":1440,"theme":"dark","label":"live-rth","sha":"f24887cc","ts":"2026-07-08T19:58:13Z","ok":true,"waitForMissed":null,"consoleErrorCount":1,"failedRequestCount":5}
+{"screen":"algo","width":1440,"theme":"dark","label":"live-rth","sha":"f24887cc","ts":"2026-07-08T19:58:45Z","ok":true,"waitForMissed":"html[data-pyrus-theme=\"dark\"] .ra-shell","consoleErrorCount":1,"failedRequestCount":0}
+{"screen":"backtest","width":1440,"theme":"dark","label":"live-rth","sha":"f24887cc","ts":"2026-07-08T19:59:18Z","ok":true,"waitForMissed":"html[data-pyrus-theme=\"dark\"] .ra-shell","consoleErrorCount":1,"failedRequestCount":0}
+{"screen":"diagnostics","width":1440,"theme":"dark","label":"live-rth","sha":"f24887cc","ts":"2026-07-08T19:59:55Z","ok":true,"waitForMissed":null,"consoleErrorCount":4,"failedRequestCount":7}
+{"screen":"settings","width":1440,"theme":"dark","label":"live-after-hours","sha":"f24887cc","ts":"2026-07-08T20:00:23Z","ok":true,"waitForMissed":null,"consoleErrorCount":4,"failedRequestCount":5}
+{"screen":"market","width":390,"theme":"dark","label":"live-after-hours","sha":"f24887cc","ts":"2026-07-08T20:01:07Z","ok":true,"waitForMissed":null,"consoleErrorCount":0,"failedRequestCount":1}
+{"screen":"signals","width":390,"theme":"dark","label":"live-after-hours","sha":"f24887cc","ts":"2026-07-08T20:01:29Z","ok":true,"waitForMissed":null,"consoleErrorCount":3,"failedRequestCount":1}
+{"screen":"flow","width":390,"theme":"dark","label":"live-after-hours","sha":"f24887cc","ts":"2026-07-08T20:01:56Z","ok":true,"waitForMissed":null,"consoleErrorCount":0,"failedRequestCount":10}
+{"screen":"gex","width":390,"theme":"dark","label":"live-after-hours","sha":"f24887cc","ts":"2026-07-08T20:02:23Z","ok":true,"waitForMissed":null,"consoleErrorCount":2,"failedRequestCount":1}
+{"screen":"trade","width":390,"theme":"dark","label":"live-after-hours","sha":"f24887cc","ts":"2026-07-08T20:02:50Z","ok":true,"waitForMissed":null,"consoleErrorCount":0,"failedRequestCount":2}
+{"screen":"account","width":390,"theme":"dark","label":"live-after-hours","sha":"f24887cc","ts":"2026-07-08T20:03:17Z","ok":true,"waitForMissed":null,"consoleErrorCount":3,"failedRequestCount":1}
+{"screen":"research","width":390,"theme":"dark","label":"live-after-hours","sha":"f24887cc","ts":"2026-07-08T20:03:45Z","ok":true,"waitForMissed":null,"consoleErrorCount":4,"failedRequestCount":1}
+{"screen":"algo","width":390,"theme":"dark","label":"live-after-hours","sha":"f24887cc","ts":"2026-07-08T20:04:10Z","ok":true,"waitForMissed":null,"consoleErrorCount":3,"failedRequestCount":2}
+{"screen":"backtest","width":390,"theme":"dark","label":"live-after-hours","sha":"f24887cc","ts":"2026-07-08T20:04:34Z","ok":true,"waitForMissed":"html[data-pyrus-theme=\"dark\"] .ra-shell","consoleErrorCount":3,"failedRequestCount":0}
+{"screen":"diagnostics","width":390,"theme":"dark","label":"live-after-hours","sha":"f24887cc","ts":"2026-07-08T20:05:04Z","ok":true,"waitForMissed":null,"consoleErrorCount":2,"failedRequestCount":1}
+{"screen":"settings","width":390,"theme":"dark","label":"live-after-hours","sha":"f24887cc","ts":"2026-07-08T20:05:31Z","ok":true,"waitForMissed":null,"consoleErrorCount":2,"failedRequestCount":1}
+{"screen":"market","width":1440,"theme":"dark","label":"live-after-hours-reshoot","sha":"f24887cc","ts":"2026-07-08T20:09:24Z","ok":true,"waitForMissed":null,"consoleErrorCount":6}
+{"screen":"flow","width":1440,"theme":"dark","label":"live-after-hours-reshoot","sha":"f24887cc","ts":"2026-07-08T20:10:14Z","ok":true,"waitForMissed":null,"consoleErrorCount":6}
+{"screen":"algo","width":1440,"theme":"dark","label":"live-after-hours-reshoot","sha":"f24887cc","ts":"2026-07-08T20:10:56Z","ok":true,"waitForMissed":null,"consoleErrorCount":2}
+{"screen":"backtest","width":1440,"theme":"dark","label":"live-after-hours-reshoot","sha":"f24887cc","ts":"2026-07-08T20:11:37Z","ok":true,"waitForMissed":null,"consoleErrorCount":3}
+{"ok":true,"waitForMissed":"html[data-pyrus-theme=\"dark\"] .ra-shell"}
+{"screen":"market","theme":"light","ok":true,"waitForMissed":null}
+{"screen":"account","theme":"light","ok":true,"waitForMissed":null}
+{"screen":"settings","theme":"light","ok":true,"waitForMissed":null}

@@ -68,6 +68,7 @@ export type SnapTradeAccountPortfolioResponse = {
     cash: number | null;
     buyingPower: number | null;
     positionMarketValue: number | null;
+    unrealizedPnl: number | null;
     netLiquidation: number | null;
     positionCount: number;
   };
@@ -523,6 +524,14 @@ function normalizePosition(
     record["average_purchase_price"] ?? record["averagePurchasePrice"],
   );
   const rawCostBasis = numberOrNull(record["cost_basis"] ?? record["costBasis"]);
+  const rawUnrealizedPnl = numberOrNull(
+    record["open_pnl"] ??
+      record["openPnl"] ??
+      record["unrealized_pnl"] ??
+      record["unrealizedPnl"] ??
+      record["unrealized_profit_loss"] ??
+      record["unrealizedProfitLoss"],
+  );
   const averagePurchasePrice = normalizeAveragePurchasePrice({
     value: rawAveragePurchasePrice ?? rawCostBasis,
     optionContract,
@@ -539,8 +548,8 @@ function normalizePosition(
   const unrealizedPnl =
     optionContract
       ? calculatedPositionUnrealizedPnl({ marketValue, costBasis }) ??
-        numberOrNull(record["open_pnl"] ?? record["unrealized_pnl"])
-      : numberOrNull(record["open_pnl"] ?? record["unrealized_pnl"]) ??
+        rawUnrealizedPnl
+      : rawUnrealizedPnl ??
         calculatedPositionUnrealizedPnl({ marketValue, costBasis });
   const currency = normalizeCurrency(
     record["currency"] ??
@@ -623,10 +632,14 @@ export function buildSnapTradeAccountPortfolioTotals(input: {
   const positionMarketValue = sumNullable(
     input.positions.map(marketValueForTotals),
   );
+  const unrealizedPnl = sumNullable(
+    input.positions.map((position) => position.unrealizedPnl),
+  );
   return {
     cash,
     buyingPower,
     positionMarketValue,
+    unrealizedPnl,
     netLiquidation:
       cash == null && positionMarketValue == null
         ? null

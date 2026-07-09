@@ -129,7 +129,7 @@ function App({ bootLoaderElapsedMs = null }: AppProps) {
           (so boot progress can reach `complete`) that forms the PYRUS logo and
           parts to reveal the app. No-ops on reduced-motion / no-WebGL / repeat
           loads — the Suspense BrandLoader above handles those. */}
-      <NeuralBootOverlay bootLoaderElapsedMs={bootLoaderElapsedMs} />
+      <NeuralBootOverlay />
     </PlatformErrorBoundary>
   );
 }

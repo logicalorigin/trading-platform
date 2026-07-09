@@ -10,6 +10,8 @@ test("resolveAccountProviderScope identifies shadow, specific, and mixed account
   const accounts = [
     { id: "ibkr:U1", provider: "ibkr" },
     { id: "snaptrade:acct-1", provider: "snaptrade" },
+    { id: "robinhood:acct-1", provider: "robinhood" },
+    { id: "schwab:acct-1", provider: "schwab" },
   ];
 
   assert.equal(resolveAccountProviderScope({ accountTab: "shadow", accounts }), "shadow");
@@ -18,6 +20,14 @@ test("resolveAccountProviderScope identifies shadow, specific, and mixed account
     "snaptrade",
   );
   assert.equal(resolveAccountProviderScope({ accountTab: "ibkr:U1", accounts }), "ibkr");
+  assert.equal(
+    resolveAccountProviderScope({ accountTab: "robinhood:acct-1", accounts }),
+    "robinhood",
+  );
+  assert.equal(
+    resolveAccountProviderScope({ accountTab: "schwab:acct-1", accounts }),
+    "schwab",
+  );
   assert.equal(resolveAccountProviderScope({ accountTab: "all", accounts }), "mixed");
 });
 
@@ -71,9 +81,14 @@ test("buildSnapTradeAccountPanelData maps portfolio balances and positions into 
   assert.equal(data.summary.metrics.netLiquidation.value, 400);
   assert.equal(data.summary.metrics.netLiquidation.source, "SNAPTRADE_PORTFOLIO");
   assert.equal(data.summary.metrics.totalCash.value, 100);
+  assert.equal(data.summary.metrics.unrealizedPnl.value, 50);
   assert.equal(data.positions.positions[0].symbol, "AAPL");
   assert.equal(data.positions.positions[0].positionType, "stock");
   assert.equal(data.positions.positions[0].source, "SNAPTRADE_POSITIONS");
+  assert.equal(data.positions.positions[0].unrealizedPnl, 50);
+  assert.equal(data.positions.positions[0].unrealizedPnlPercent, 20);
+  assert.equal(data.positions.positions[0].brokerUnrealizedPnl, 50);
+  assert.equal(data.positions.totals.unrealizedPnl, 50);
   assert.deepEqual(data.allocation.exposure, {
     grossLong: 300,
     grossShort: 0,
@@ -95,6 +110,7 @@ test("buildSnapTradeAccountPanelData maps portfolio balances and positions into 
   ]);
   assert.equal(data.equityHistory.latestSnapshotAt, "2026-07-02T20:00:00.000Z");
   assert.equal(data.positionsAtDate.positions.length, 1);
+  assert.equal(data.positionsAtDate.totals.unrealizedPnl, 50);
   assert.deepEqual(data.positionsAtDate.totals.balance, {
     netLiquidation: 400,
     dayPnl: null,
@@ -270,13 +286,17 @@ test("buildSnapTradeAccountPanelData normalizes E*TRADE SnapTrade option positio
   assert.equal(data.positions.positions[0].mark, 0.17);
   assert.equal(data.positions.positions[0].marketValue, 340);
   assert.equal(data.positions.positions[0].unrealizedPnl, -1330.2);
+  assert.equal(data.positions.positions[0].brokerUnrealizedPnl, -1330.2);
   assert.equal(data.positions.totals.marketValue, 340);
+  assert.equal(data.positions.totals.unrealizedPnl, -1330.2);
   assert.equal(data.positions.totals.netLiquidation, 347.98);
   assert.equal(data.summary.metrics.grossPositionValue.value, 340);
+  assert.equal(data.summary.metrics.unrealizedPnl.value, -1330.2);
   assert.equal(data.summary.metrics.netLiquidation.value, 347.98);
   assert.equal(data.equityHistory.points.length, 1);
   assert.equal(data.equityHistory.points[0].netLiquidation, 347.98);
   assert.equal(data.positionsAtDate.totals.marketValue, 340);
+  assert.equal(data.positionsAtDate.totals.unrealizedPnl, -1330.2);
   assert.equal(data.positionsAtDate.totals.balance.netLiquidation, 347.98);
 });
 

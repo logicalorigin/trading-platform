@@ -53,6 +53,41 @@ fingerprint-dedup hunks are additive and ride along in that file — that sessio
 **COORDINATION:** concurrent session 8939ce3f owns DB read/write streamlining + dead-code removal +
 5m-signal DB audit. Phase 4 (zombie-config) overlaps its dead-code work — cede or coordinate before
 dispatching. Any codex worker must re-check `git status` per file (a clean file can go dirty in ~90s).
+**COORDINATION UPDATE (2026-07-08 ~18:45 MDT, session f834d411 "Fable-B"):** the 8939ce3f lanes are
+being resumed by concurrent session f4fe79f8 ("Fable-A") — it inherits that ownership: signal-monitor.ts,
+market-data-store.ts, the 5m durable-read fix, r/w streamlining, dead-code. Session f834d411 (Fable-B)
+claims the COMPLEMENT from `docs/plans/signal-monitor-db-load-rootcause-2026-07-08.md` QUEUED + T14:
+- **LANE E (dispatching now):** option-chain 60s backoff fix — platform.ts ~:11363 region ONLY
+  (OPTION_UPSTREAM_BACKOFF_MS / "Contract pending"). Fable-A workers: please avoid that region.
+- **LANE BC (gated on signal-monitor.ts release by Fable-A):** Stage 3 warm-ELU levers (memoize
+  normalizeSymbol/resolveSignalMonitorReferenceBar; incremental aggregation; completed-bars memo-key
+  fix), gapped-tail bounded fetch (MIDD/1h/1d), then T14 (owner-greenlit §1b). Fable-B will poll for
+  release; Fable-A: when your signal-monitor.ts lanes are committed, note it here.
+Protocol: one worker per file (standing); WOs in docs/plans/workorders-2026-07-08/ (Fable-B prefix
+`wo-fb-*`); reports in .codex-watch/; isolated hunk commits; SIGUSR2 reload after backend batches.
+**ADVISORY LOCK (Fable-B, from 2026-07-08 19:25 MDT):** signal-monitor.ts observed QUIET since 17:34
+and Fable-A's fleet is DB-bound (WO-R chain), so Fable-B is running its gated levers there NOW, one
+codex worker at a time, non-committing workers + isolated hunk commits between levers. Current lever
+noted here per dispatch (first: WO-FB-S3A, values.ts + signal-monitor.ts:4454 region). **Fable-A: if
+you need signal-monitor.ts, note it here — Fable-B checks between levers and will yield after the
+in-flight lever verifies.** Lane E landed: 8e9504fb (option-chain backoff, platform.ts ~:15000s).
+Update 19:45 MDT: Fable-A's 80f081f8 (WO-R3B) committed the inherited signal-monitor.ts WIP —
+file now CLEAN vs HEAD; Fable-B's s3a worker proceeding on the clean base. Thanks for the T5 landing.
+**FABLE-B FINAL STATUS (2026-07-08 ~21:0x MDT, written during nix-store outage):** LANDED (all
+codex-xhigh implemented, test-verified, isolated commits): 8e9504fb oc-backoff split+clear-on-success;
+1676d461 s3a memoize; a876dd01 s3c memo-key (clock-bucket field removed); 43956df7 gap-tail bounded
+durable fetch (unfreezes illiquid + 1h/1d, identity-tested); bc085110 t14 O(tail) latest-completed-
+bucket (P3v2 1b); f693e467 consecutive-local-timeout backoff guard (adversarial-review fix). s3d
+closed — already landed as c5053999. Adversarial xhigh review of all five core commits: memoization/
+cache-key/O(tail)/backoff-race hunts EMPTY; its P2 (gap-fetch throttle bypass + unbounded attempt map)
+is FIXED + COMMITTED as 970d0d19 (typecheck 0 + suites 448/448, verified on block-device toolchain
+shims during the outage; temp shims in .nixfix/). CODE SIDE COMPLETE (8 Fable-B commits incl. 2
+replit-config restores 31c9a5e9/612f7567). Remaining after the ~00:17 MDT VM rotation heals /nix/store
+(app auto-respawns; if .replit clobbered again: git checkout 612f7567 -- .replit replit.nix): warm
+re-profile via scripts/diag/cpu-profile-running-api.mjs (committed in 970d0d19) -> s3b go/no-go (gate: aggregation >10% on-CPU); runtime
+deltas (ELU vs 0.894 warm, SPY 5m durable read vs 372ms, frozen-cell count, Contract-pending);
+OWNER DECISION pending: suppress signal EMISSION for known-gapped cells during the fetch window
+(review P1 #1 — inherited behavior, now minutes not days; changing it alters which signals fire).
 
 ## Phase 1: P1 correctness (fix first)
 - [ ] T1 (S): PhotonicsObservatory d3 force-graph effect re-runs per live tick

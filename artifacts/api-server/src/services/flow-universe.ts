@@ -109,7 +109,20 @@ type RankingCandidate = {
 
 const COOLDOWN_FAILURE_THRESHOLD = 2;
 const COOLDOWN_MS = 15 * 60_000;
+// Census S11: coalesce per-symbol ranking upserts into multi-row statements.
+const OBSERVATION_FLUSH_MAX_ROWS = 250;
+const OBSERVATION_FLUSH_DELAY_MS = 500;
 const OPTIONABLE_DERIVATIVE_SEC_TYPE_RE = /(^|,)\s*OPT\s*(,|$)/i;
+
+type PendingRankingObservation = {
+  symbol: string;
+  observedAt: Date;
+  hasEvents: boolean;
+  failed: boolean;
+  flowScore: number;
+  reason: string | null;
+  optionabilityMetadata: Record<string, unknown> | null;
+};
 
 function uniqueSymbols(symbols: readonly string[]): string[] {
   return [...new Set(symbols.map((symbol) => normalizeSymbol(symbol)).filter(Boolean))];
@@ -393,6 +406,13 @@ export function createFlowUniverseManager(options: FlowUniverseManagerOptions) {
   let scannedAtBySymbol = new Map<string, Date>();
   let currentBatch: string[] = [];
   let lastScanAt: Date | null = null;
+  let pendingObservations: PendingRankingObservation[] = [];
+  let pendingObservationFlush: {
+    promise: Promise<void>;
+    resolve: () => void;
+  } | null = null;
+  let observationFlushTimer: ReturnType<typeof setTimeout> | null = null;
+  let observationFlushChain: Promise<void> = Promise.resolve();
 
   function shortfallReason(
     selectedCount: number,
@@ -929,71 +949,137 @@ export function createFlowUniverseManager(options: FlowUniverseManagerOptions) {
     currentBatch = uniqueSymbols(symbols);
   }
 
+  // Census S11: recordObservation used to issue one single-row EWMA upsert per symbol
+  // (~500 per 15s scan batch); observations now queue and flush as multi-row upserts.
   async function recordObservation(input: FlowUniverseObservation): Promise<void> {
     const symbol = normalizeSymbol(input.symbol);
     if (!symbol) return;
     const observedAt = input.scannedAt ?? now();
     scannedAtBySymbol.set(symbol, observedAt);
     lastScanAt = observedAt;
-    const flowScore = scoreObservation(input.events);
-    const hasEvents = Boolean(input.events?.length);
     const failed = Boolean(input.failed);
-    const optionabilityMetadata =
-      !failed && input.optionabilityVerified !== false
-        ? {
-            optionability: {
-              status: "verified",
-              source: "scanner_scan",
-              verifiedAt: observedAt.toISOString(),
+    pendingObservations.push({
+      symbol,
+      observedAt,
+      hasEvents: Boolean(input.events?.length),
+      failed,
+      flowScore: scoreObservation(input.events),
+      reason: input.reason ?? null,
+      optionabilityMetadata:
+        !failed && input.optionabilityVerified !== false
+          ? {
+              optionability: {
+                status: "verified",
+                source: "scanner_scan",
+                verifiedAt: observedAt.toISOString(),
+              },
+            }
+          : null,
+    });
+    if (!pendingObservationFlush) {
+      let resolve!: () => void;
+      const promise = new Promise<void>((res) => {
+        resolve = res;
+      });
+      pendingObservationFlush = { promise, resolve };
+      observationFlushTimer = setTimeout(
+        startObservationFlush,
+        OBSERVATION_FLUSH_DELAY_MS,
+      );
+      observationFlushTimer.unref();
+    }
+    const flush = pendingObservationFlush;
+    if (pendingObservations.length >= OBSERVATION_FLUSH_MAX_ROWS) {
+      startObservationFlush();
+    }
+    return flush.promise;
+  }
+
+  function startObservationFlush(): void {
+    const flush = pendingObservationFlush;
+    if (!flush) return;
+    pendingObservationFlush = null;
+    if (observationFlushTimer) {
+      clearTimeout(observationFlushTimer);
+      observationFlushTimer = null;
+    }
+    const rows = pendingObservations;
+    pendingObservations = [];
+    // Chain flushes so EWMA updates apply in observation order.
+    observationFlushChain = observationFlushChain
+      .then(() => flushObservationRows(rows))
+      .finally(() => flush.resolve());
+  }
+
+  async function flushObservationRows(
+    rows: readonly PendingRankingObservation[],
+  ): Promise<void> {
+    // A multi-row ON CONFLICT DO UPDATE cannot touch the same row twice, so a
+    // repeated symbol starts a new statement; statements run sequentially.
+    const chunks: PendingRankingObservation[][] = [];
+    let chunk: PendingRankingObservation[] = [];
+    let chunkSymbols = new Set<string>();
+    for (const row of rows) {
+      if (
+        chunk.length >= OBSERVATION_FLUSH_MAX_ROWS ||
+        chunkSymbols.has(row.symbol)
+      ) {
+        chunks.push(chunk);
+        chunk = [];
+        chunkSymbols = new Set();
+      }
+      chunk.push(row);
+      chunkSymbols.add(row.symbol);
+    }
+    if (chunk.length) {
+      chunks.push(chunk);
+    }
+    for (const chunkRows of chunks) {
+      try {
+        await runtimeOptions.db
+          .insert(flowUniverseRankingsTable)
+          .values(
+            chunkRows.map((row) => ({
+              symbol: row.symbol,
+              market: "stocks",
+              source: "massive",
+              lastScannedAt: row.observedAt,
+              lastFlowAt: row.hasEvents ? row.observedAt : null,
+              flowScore: row.flowScore.toString(),
+              failureCount: row.failed ? 1 : 0,
+              cooldownUntil: null,
+              reason: row.reason,
+              metadata: row.optionabilityMetadata,
+              updatedAt: row.observedAt,
+            })),
+          )
+          .onConflictDoUpdate({
+            target: flowUniverseRankingsTable.symbol,
+            set: {
+              lastScannedAt: sql`excluded.last_scanned_at`,
+              // excluded.last_flow_at is non-null only when the row had events.
+              lastFlowAt: sql`coalesce(excluded.last_flow_at, ${flowUniverseRankingsTable.lastFlowAt})`,
+              flowScore: sql`case when excluded.last_flow_at is not null then ${flowUniverseRankingsTable.flowScore} * 0.80 + excluded.flow_score else ${flowUniverseRankingsTable.flowScore} * 0.95 end`,
+              // excluded.failure_count is 1 for failed observations, 0 otherwise.
+              failureCount: sql`case when excluded.failure_count > 0 then ${flowUniverseRankingsTable.failureCount} + 1 else 0 end`,
+              cooldownUntil: sql`case when excluded.failure_count > 0 then case when ${flowUniverseRankingsTable.failureCount} + 1 >= ${COOLDOWN_FAILURE_THRESHOLD} then excluded.last_scanned_at + ${sql.raw(String(COOLDOWN_MS))} * interval '1 millisecond' else ${flowUniverseRankingsTable.cooldownUntil} end else null end`,
+              reason: sql`excluded.reason`,
+              metadata: sql`case when excluded.metadata is not null then coalesce(${flowUniverseRankingsTable.metadata}, '{}'::jsonb) || excluded.metadata else ${flowUniverseRankingsTable.metadata} end`,
+              updatedAt: sql`excluded.updated_at`,
             },
+          });
+        if (isTransientFlowUniverseDegradedReason(degradedReason)) {
+          degradedReason = shortfallReason(selectedSymbols.length);
+        }
+        for (const row of chunkRows) {
+          if (row.optionabilityMetadata) {
+            verifiedSymbolSet.add(row.symbol);
           }
-        : null;
-    try {
-      await runtimeOptions.db
-        .insert(flowUniverseRankingsTable)
-        .values({
-          symbol,
-          market: "stocks",
-          source: "massive",
-          lastScannedAt: observedAt,
-          lastFlowAt: hasEvents ? observedAt : null,
-          flowScore: flowScore.toString(),
-          failureCount: failed ? 1 : 0,
-          cooldownUntil: null,
-          reason: input.reason ?? null,
-          metadata: optionabilityMetadata,
-          updatedAt: observedAt,
-        })
-        .onConflictDoUpdate({
-          target: flowUniverseRankingsTable.symbol,
-          set: {
-            lastScannedAt: observedAt,
-            lastFlowAt: hasEvents ? observedAt : sql`${flowUniverseRankingsTable.lastFlowAt}`,
-            flowScore: hasEvents
-              ? sql`${flowUniverseRankingsTable.flowScore} * 0.80 + ${flowScore.toString()}`
-              : sql`${flowUniverseRankingsTable.flowScore} * 0.95`,
-            failureCount: failed
-              ? sql`${flowUniverseRankingsTable.failureCount} + 1`
-              : 0,
-            cooldownUntil: failed
-              ? sql`case when ${flowUniverseRankingsTable.failureCount} + 1 >= ${COOLDOWN_FAILURE_THRESHOLD} then ${new Date(observedAt.getTime() + COOLDOWN_MS)} else ${flowUniverseRankingsTable.cooldownUntil} end`
-              : null,
-            reason: input.reason ?? null,
-            metadata: optionabilityMetadata
-              ? sql`coalesce(${flowUniverseRankingsTable.metadata}, '{}'::jsonb) || ${JSON.stringify(optionabilityMetadata)}::jsonb`
-              : sql`${flowUniverseRankingsTable.metadata}`,
-            updatedAt: observedAt,
-          },
-        });
-      if (isTransientFlowUniverseDegradedReason(degradedReason)) {
-        degradedReason = shortfallReason(selectedSymbols.length);
-      }
-      if (optionabilityMetadata) {
-        verifiedSymbolSet.add(symbol);
+        }
         verifiedSymbols = verifiedSymbolSet.size;
+      } catch {
+        // The scanner must keep running even before the DB schema is pushed.
       }
-    } catch {
-      // The scanner must keep running even before the DB schema is pushed.
     }
   }
 

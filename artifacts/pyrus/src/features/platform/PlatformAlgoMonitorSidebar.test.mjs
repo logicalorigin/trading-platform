@@ -185,15 +185,17 @@ test("Algo monitor action rows use the STA table MTF-aligned subset", () => {
   const staTableRows = filterAlgoMonitorStaSignalRowsForTable({
     signals: rows,
     signalMatrixBySymbol: {
+      // The gate reads currentSignalDirection (per-timeframe crossover), not the
+      // lagging trend, since de14395d — FAST's 2m diverges, SLOW confirms on all.
       FAST: {
-        "1m": { trendDirection: "bullish", status: "ok", active: true },
-        "2m": { trendDirection: "bearish", status: "ok", active: true },
-        "5m": { trendDirection: "bullish", status: "ok", active: true },
+        "1m": { currentSignalDirection: "buy", status: "ok", active: true },
+        "2m": { currentSignalDirection: "sell", status: "ok", active: true },
+        "5m": { currentSignalDirection: "buy", status: "ok", active: true },
       },
       SLOW: {
-        "1m": { trendDirection: "bullish", status: "ok", active: true },
-        "2m": { trendDirection: "bullish", status: "ok", active: true },
-        "5m": { trendDirection: "bullish", status: "ok", active: true },
+        "1m": { currentSignalDirection: "buy", status: "ok", active: true },
+        "2m": { currentSignalDirection: "buy", status: "ok", active: true },
+        "5m": { currentSignalDirection: "buy", status: "ok", active: true },
       },
     },
     mtfAlignmentConfig: {
@@ -443,7 +445,7 @@ test("Algo monitor sidebar treats evaluated diagnostic signal bubbles as hydrate
   assert.deepEqual(split.pendingRows, []);
 });
 
-test("Algo monitor sidebar treats info-only options session pause as scan paused, not gateway warning", () => {
+test("Algo monitor sidebar treats info-only options session pause as scan paused, not market-data warning", () => {
   const status = resolveAlgoMonitorReadinessStatus({
     readinessReady: false,
     deploymentEnabled: true,
@@ -456,25 +458,25 @@ test("Algo monitor sidebar treats info-only options session pause as scan paused
   });
 
   assert.deepEqual(status, {
-    gatewayReady: true,
+    marketDataReady: true,
     scanOn: false,
   });
 });
 
-test("Algo monitor sidebar preserves warning blockers as gateway warnings", () => {
+test("Algo monitor sidebar preserves warning blockers as market-data warnings", () => {
   const status = resolveAlgoMonitorReadinessStatus({
     readinessReady: false,
     deploymentEnabled: true,
     attentionItems: [
       {
         severity: "warning",
-        summary: "Gateway unavailable.",
+        summary: "Market data unavailable.",
       },
     ],
   });
 
   assert.deepEqual(status, {
-    gatewayReady: false,
+    marketDataReady: false,
     scanOn: false,
   });
 });

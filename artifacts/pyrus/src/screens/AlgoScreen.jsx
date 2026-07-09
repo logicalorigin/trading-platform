@@ -93,10 +93,6 @@ import {
   useShadowAccountSnapshotStream,
 } from "../features/platform/live-streams";
 import {
-  bridgeRuntimeTone,
-  hasGatewayLiveDataProof,
-} from "../features/platform/bridgeRuntimeModel";
-import {
   useAuthSession,
 } from "../features/auth/authSession.jsx";
 import { useAccountTab } from "../features/platform/useAccountTab.js";
@@ -318,22 +314,16 @@ const loadAlgoRuntimeHelpers = () => {
 };
 
 
-const isGatewayReadyForAlgo = (session) => {
-  const bridge = asRecord(session?.ibkrBridge);
-  return Boolean(
-    session?.configured?.ibkr &&
-      bridge.connected &&
-      bridge.authenticated &&
-      bridge.accountsLoaded &&
-      bridge.configuredLiveMarketDataMode &&
-      (bridge.healthFresh || hasGatewayLiveDataProof(bridge)),
-  );
-};
+// Market data now comes from Massive; the IBKR bridge is retired and the signal-options
+// algo pipeline is shadow-first, so "ready" here means market data is configured/available,
+// not that an IBKR gateway is connected.
+const isMarketDataReadyForAlgo = (session) => Boolean(session?.configured?.massive);
 
 export const AlgoScreen = ({
   session,
   environment,
   accounts = [],
+  accountTabsAccounts = accounts,
   selectedAccountId = null,
   signalMonitorEventsSourceStatus = "database",
   signalMonitorEventsLoaded = false,
@@ -413,9 +403,8 @@ export const AlgoScreen = ({
   const [algoRuntimeHelpers, setAlgoRuntimeHelpers] = useState(
     DEFAULT_ALGO_RUNTIME_HELPERS,
   );
-  const brokerConfigured = Boolean(session?.configured?.ibkr);
-  const gatewayReady = isGatewayReadyForAlgo(session);
-  const bridgeTone = bridgeRuntimeTone(session);
+  const marketDataConfigured = Boolean(session?.configured?.massive);
+  const marketDataReady = isMarketDataReadyForAlgo(session);
   const activeAccount =
     accounts.find((account) => account.id === selectedAccountId) ||
     accounts[0] ||
@@ -426,14 +415,15 @@ export const AlgoScreen = ({
     session?.ibkrBridge?.selectedAccountId ||
     null;
   const [algoAccountTabRaw, setAlgoAccountTab] = useAccountTab("shadow");
+  const positionAccounts = accountTabsAccounts.length ? accountTabsAccounts : accounts;
   const algoAccountTab = useMemo(() => {
     if (algoAccountTabRaw === "all" || algoAccountTabRaw === "shadow") {
       return algoAccountTabRaw;
     }
-    return accounts.some((account) => account.id === algoAccountTabRaw)
+    return positionAccounts.some((account) => account.id === algoAccountTabRaw)
       ? algoAccountTabRaw
       : "shadow";
-  }, [algoAccountTabRaw, accounts]);
+  }, [algoAccountTabRaw, positionAccounts]);
   const algoPositionsAccountId =
     algoAccountTab === "shadow"
       ? "shadow"
@@ -652,7 +642,7 @@ export const AlgoScreen = ({
           liveQuotes: false,
         }
       : {
-          mode: environment || "live",
+          mode: "live",
           assetClass: "all",
           liveQuotes: false,
         },
@@ -1424,20 +1414,11 @@ export const AlgoScreen = ({
     kind = ALGO_DEPLOYMENT_KIND.SIGNAL_OPTIONS,
     overnightFields = null,
   ) => {
-    if (!brokerConfigured) {
+    if (!marketDataConfigured) {
       toast.push({
         kind: "warn",
-        title: "IBKR data not configured",
-        body: "Market-data connectivity must be configured before creating a shadow deployment.",
-      });
-      return;
-    }
-
-    if (!activeAccountId) {
-      toast.push({
-        kind: "warn",
-        title: "No data account selected",
-        body: "The bridge is authenticated, but no IBKR data account is active yet.",
+        title: "Market data not configured",
+        body: "Market-data streaming (Massive) must be configured before creating a deployment.",
       });
       return;
     }
@@ -1489,7 +1470,7 @@ export const AlgoScreen = ({
             source: "overnight_spot_manual",
             parameters: { overnightSpotTrading: true },
             signalOptions: null,
-            marketDataAccountId: activeAccountId,
+            marketDataAccountId: activeAccountId || "shadow",
             executionAccountId: "shadow",
             overnightSpot: {
               enabled: true,
@@ -1531,7 +1512,7 @@ export const AlgoScreen = ({
           sourceRunId: selectedDraft.runId,
           sourceStudyId: selectedDraft.studyId,
           promotedAt: selectedDraft.promotedAt,
-          marketDataAccountId: activeAccountId,
+          marketDataAccountId: activeAccountId || "shadow",
           executionAccountId: "shadow",
           signalOptions: mergeSignalOptionsProfile(selectedDraft.config),
         },
@@ -1764,14 +1745,14 @@ export const AlgoScreen = ({
             : CSS_COLOR.textDim,
     },
     {
-      label: "Data Bridge",
-      value: cockpitReadiness?.ready ? "READY" : bridgeTone.label.toUpperCase(),
+      label: "Market Data",
+      value: cockpitReadiness?.ready ? "READY" : marketDataReady ? "LIVE" : "OFFLINE",
       detail:
         cockpitReadiness?.message ||
-        (session?.ibkrBridge?.transport === "tws"
-          ? `IB Gateway ${session?.ibkrBridge?.sessionMode || ""} · ${activeAccountId || "no account"}`
-          : `${session?.ibkrBridge?.transport || "bridge"} · ${activeAccountId || "no account"}`),
-      color: cockpitReadiness?.ready ? CSS_COLOR.green : bridgeTone.color,
+        (session?.configured?.massive
+          ? "Massive stock + option stream"
+          : "Market data not configured"),
+      color: cockpitReadiness?.ready || marketDataReady ? CSS_COLOR.green : CSS_COLOR.amber,
     },
     {
       label: "Today P&L",
@@ -2041,7 +2022,7 @@ export const AlgoScreen = ({
             setSelectedPipelineStageId={setSelectedPipelineStageId}
             cockpitAttentionItems={cockpitAttentionItems}
             signalOptionsRuleAdherence={signalOptionsRuleAdherence}
-            gatewayReady={gatewayReady}
+            marketDataReady={marketDataReady}
             signalScanReady={signalScanReady}
             signalScanBlockedReason={null}
             transitions={visibleTransitions}
@@ -2058,7 +2039,7 @@ export const AlgoScreen = ({
             signalOptionsPositions={signalOptionsPositions}
             signalOptionsLedgerPositionsQuery={signalOptionsLedgerPositionsQuery}
             positionAccountTabId={algoAccountTab}
-            positionAccounts={accounts}
+            positionAccounts={positionAccounts}
             onSelectPositionAccountTab={setAlgoAccountTab}
             positionAccountUsesShadowOverlay={algoPositionsUseShadowOverlay}
             symbolIndex={symbolIndex}
@@ -2073,7 +2054,6 @@ export const AlgoScreen = ({
             modeChangePending={setDeploymentModeMutation.isPending}
             accountId={activeAccountId}
             environment={environment}
-            bridgeTone={bridgeTone}
             handleToggleDeployment={handleToggleDeployment}
             handleRefreshSignals={handleRefreshSignals}
             enableDeploymentMutation={enableDeploymentMutation}

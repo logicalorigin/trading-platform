@@ -38,10 +38,10 @@ export const PlatformScreenRouter = ({
   session,
   environment,
   accounts,
-  // Live-mode account list for the Accounts screen tab strip: real brokerage
+  // Live-mode account list for brokerage account tab strips: real brokerage
   // accounts exist in mode "live" regardless of the trading environment, so
-  // the per-account tabs must not depend on the environment-driven `accounts`
-  // list above (which is empty in a shadow environment).
+  // per-account tabs must not depend on the environment-driven `accounts` list
+  // above (which is empty in a shadow environment).
   accountScreenAccounts = accounts,
   primaryAccountId,
   brokerConfigured,
@@ -293,6 +293,7 @@ export const PlatformScreenRouter = ({
           session={session}
           environment={environment}
           accounts={accounts}
+          accountTabsAccounts={accountScreenAccounts}
           selectedAccountId={primaryAccountId}
           signalMonitorEvents={signalMonitorEvents}
           signalMonitorEventsSourceStatus={signalMonitorEventsSourceStatus}

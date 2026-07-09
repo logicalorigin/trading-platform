@@ -4,6 +4,8 @@ Session ID: b21b5fa5-86c2-44ca-9006-aaa6beecc5b7 (dropped by container reset ~18
 Resumed by: 3dd4cb3d-8946-4962-8496-2634846ebd2e (2026-07-03 evening; dropped by SECOND container reset ~19:16 MDT; transcript unrecoverable)
 Resumed by: 63101575-7590-43f1-b9b1-f1f0558acf50 (2026-07-03 ~19:20 MDT)
 Resumed by: 5044e347-5a40-4ae3-9f7a-b26161a08416 (2026-07-04 ~14:20 MDT — post dummy-cred E2E; runtime re-verified: healthz 200, re-anchor guard live in app.ts+vite.config.ts, .pyrus-runtime/ibkr-cpg present, proxy trail ends with POST /sso/Authenticator 200 x2; no gateway process currently running — expected, gateways are API children and respawn on Connect)
+Resumed by: b9dafa30 → 134896bd → df03e38d → ca9f4967 (2026-07-05..06 — see body: per-user-VM feasibility, Track A/B pivot, own-origin de-risk FAILED, OAuth 1.0a crypto core BUILT). See "RESUMED 2026-07-08" at end for reconciled current state.
+Resumed by: 8d9ff43d-4bd1-400b-9950-f042019d77e0 (2026-07-08 — reconcile-only resume: no login/gateway work; verified repo state vs handoff, tests re-run green, added the RESUMED 2026-07-08 section)
 
 ## RECOVERY EVENT #2 2026-07-03 ~19:16 MDT (resolved 19:20)
 - Second container reset (uptime showed 0:03 at 19:19) wiped ~/.claude transcripts again AND
@@ -723,3 +725,45 @@ User chose (A): commit to IBKR OAuth 1.0a. Built the crypto core (the ~80% prova
 - DEFERRED (agent, when resumed): task#4 readiness stub → self-service (ibkr-oauth-readiness.ts, keep third-party approval gate);
   Phase 2 = services/ibkr-oauth-session.ts (ssodh/init + 60s tickle + 24h re-auth) + signing hook in providers/ibkr/client.ts
   (buildHeaders:984/request:1021); Phase 3 = paper order via existing order surface (ADR-002 gated).
+
+## RESUMED 2026-07-08 (~08:0x MDT) by 8d9ff43d — RECONCILE-ONLY (verified repo vs handoff; no login/gateway work)
+User asked to find + resume "the IBKR-connect-via-our-own-VM (avoid IBKR auth)" session. That IS this workstream.
+STRATEGIC REFRAME (must read): the "host CP Gateway on our own VM to avoid IBKR OAuth" premise was TESTED TO
+DESTRUCTION and ABANDONED on 2026-07-06 — the clean OWN-ORIGIN login (cloudflared root tunnel, NO subpath proxy,
+by ca9f4967) STILL bounced to login after a real 2FA-success, because the post-2FA server-side session-bind loop
+is a known IBeam/CP-Gateway behavior that happens even at a clean own-origin Docker (docs/plans/ibkr-vm-hosting-
+research.md). Hosting the gateway on our own VM does NOT dissolve it. The LIVE thread is now **IBKR OAuth 1.0a
+(Track A)** — officially-supported, cloud-native, unattended; ~80% buildable NOW pre-approval via self-service.
+
+REPO RECONCILED vs the 07-06 "TRACK A STARTED" note (verified this session):
+- OAuth crypto core is NO LONGER uncommitted — COMMITTED in `285dedf4` "feat(api): add IBKR OAuth core and Schwab
+  order gates" (logicalorigin, Mon Jul 6 13:12 MDT). Same commit shipped the Schwab attended-equity order routes,
+  the self-service readiness fields, regenerated clients, and all 5 IBKR plan docs (+ new ibkr-approval-readiness.md).
+- Present + verified on disk (main): providers/ibkr/oauth-signer.ts, oauth-live-session.ts (+ both *.test.ts),
+  services/ibkr-oauth-readiness.ts (+ .test.ts). OAuth core tests RE-RUN TODAY = **18/18 PASS** (tsx --test).
+- ibkr-oauth-readiness.ts is NO LONGER a pure stub: emits status `self_service_ready` when consumer key + signing +
+  encryption + DH param + access token are present, else `research_required`; third-party approval gate kept.
+- Legacy IBKR bridge surfaces retired AFTER the core (`9b621077 chore(api): retire legacy ibkr bridge surfaces`).
+
+STILL PENDING / NOT BUILT (verified absent this session):
+- Phase 2 `services/ibkr-oauth-session.ts` (ssodh/init + 60s tickle + 24h re-auth) — DOES NOT EXIST yet.
+- Signing hook in `providers/ibkr/client.ts` (buildHeaders/request) — NOT wired (no oauth-signer import there yet).
+- Phase 3 paper order — not started.
+
+THE ONE BLOCKER (USER-GATED, unchanged since 07-06): all 6 `IBKR_OAUTH_*` env secrets are still EMPTY (.env.example
+CONSUMER_KEY / SIGNING_KEY / ENCRYPTION_KEY / DH_PARAM / ACCESS_TOKEN / ACCESS_TOKEN_SECRET all blank) → readiness =
+`research_required`. Nothing downstream (LST round-trip, Phase 2, Phase 3) can be proven until the user runs Runbook
+Part A: docs/plans/ibkr-oauth-selfservice-runbook.md → log into
+https://ndcdyn.interactivebrokers.com/sso/Login?action=OAUTH&RL=1&ip2loc=US, pick a 9-char A-Z consumer key, upload
+the 3 EXISTING public files (.pyrus-runtime/ibkr-oauth/public_{signature,encryption}.pem + dhparam.pem), generate the
+Access Token + encrypted Secret, populate the 6 secrets (realm=limited_poa). Part B (third-party approval email to
+api@ibkr.com) can go in parallel — 3-6wk long pole.
+
+NEXT AGENT STEP (fires the moment the 6 secrets are populated): prove ONE live_session_token round-trip vs
+api.ibkr.com (LST signature validates) = cheapest de-risk of the whole ~80%-pre-approval thesis → then Phase 2
+(ibkr-oauth-session.ts + client.ts signing hook) → Phase 3 (paper order, ADR-002 gated).
+
+EXECUTION DIRECTIVE (user, 2026-07-08): build work is to be carried out via the **codex CLI** (v0.143.0, on PATH;
+.claude/skills/codex) with **fable-staged work orders** to minimize Claude token spend — staged plan, one sharp
+deliverable per stage, failable verify each stage. Applies to Phase 2/3 once creds unblock them. All work on main,
+no side-branching (standing user directive). This resume changed NO product code — only this handoff note.

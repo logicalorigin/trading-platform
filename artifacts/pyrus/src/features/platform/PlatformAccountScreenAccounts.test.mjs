@@ -5,11 +5,11 @@ import test from "node:test";
 const readLocalSource = (filename) =>
   readFileSync(new URL(filename, import.meta.url), "utf8");
 
-// The Accounts screen tab strip must always list real brokerage accounts
+// Brokerage account tab strips must always list real brokerage accounts
 // (All -> per-account tabs -> Shadow). Real accounts are live-mode entities,
-// so the tab strip's account list is fetched with mode "live" and must not
-// depend on the environment-driven accountsQuery, which is empty when the
-// trading environment is "shadow".
+// so tab account lists are fetched with mode "live" and must not depend on the
+// environment-driven accountsQuery, which is empty when the trading environment
+// is "shadow".
 
 test("PlatformApp fetches a dedicated live-mode account list for the Accounts screen", () => {
   const source = readLocalSource("./PlatformApp.jsx");
@@ -49,7 +49,7 @@ test("PlatformApp fetches a dedicated live-mode account list for the Accounts sc
   );
 });
 
-test("PlatformScreenRouter feeds the live-mode list to the Accounts screen only", () => {
+test("PlatformScreenRouter feeds the live-mode list to brokerage account tab strips", () => {
   const source = readLocalSource("./PlatformScreenRouter.jsx");
 
   const accountScreenBlock = source.match(/<MemoAccountScreen[\s\S]*?\/>/)?.[0];
@@ -65,6 +65,11 @@ test("PlatformScreenRouter feeds the live-mode list to the Accounts screen only"
   assert.match(
     algoScreenBlock,
     /accounts=\{accounts\}/,
-    "the algo screen must keep the environment-driven account list",
+    "the algo screen must keep the environment-driven account list for existing internals",
+  );
+  assert.match(
+    algoScreenBlock,
+    /accountTabsAccounts=\{accountScreenAccounts\}/,
+    "the algo screen account tabs must receive the live-mode account list",
   );
 });

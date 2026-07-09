@@ -10,13 +10,12 @@ import { useBootHandoffElapsedMs } from "./bootLoaderHandoff";
 import { preloadScreenModule } from "../features/platform/screenModulePreloader";
 import { readInitialPlatformScreen } from "../features/platform/initialPlatformScreen";
 import {
-  BOOT_SCREEN_MODULE_PRELOAD_TASK_IDS,
+  PLATFORM_BOOT_PROGRESS_TASK_IDS,
   completeBootProgressTask,
   failBootProgressTask,
   skipBootProgressTasks,
   startBootProgressTask,
   useBootProgress,
-  type BootProgressTaskId,
 } from "./bootProgress";
 import {
   rememberBrowserDiagnosticEvent,
@@ -25,15 +24,6 @@ import {
 type LazyComponentModule = { default: ComponentType };
 const ROOT_ROUTE_CHUNK_RETRIES = 4;
 const ROOT_ROUTE_CHUNK_RETRY_DELAY_MS = 500;
-const PLATFORM_BOOT_PROGRESS_TASK_IDS = [
-  "session",
-  "watchlists",
-  "accounts",
-  "signal-profile",
-  "signal-state",
-  "first-screen",
-  ...BOOT_SCREEN_MODULE_PRELOAD_TASK_IDS,
-] as const satisfies readonly BootProgressTaskId[];
 
 let platformAppImport: Promise<{ default: ComponentType }> | null = null;
 let chartParityLabImport: Promise<LazyComponentModule> | null = null;

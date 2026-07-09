@@ -1,5 +1,16 @@
-import { useCallback, useState } from "react";
-import { Button } from "../../components/ui/button.tsx";
+import {
+  Suspense,
+  lazy,
+  useCallback,
+  useEffect,
+  useState,
+  useSyncExternalStore,
+} from "react";
+import { Button } from "../../components/ui/Button.jsx";
+import { PyrusWordmark } from "../../components/brand/pyrus-wordmark";
+import { BrandResolve } from "../../components/marketing/brand-resolve";
+import { PyrusMark } from "../../components/marketing/pyrus-mark";
+import { usePrefersReducedMotion } from "../../components/marketing/pyrus-mark-3d";
 import {
   Card,
   CardContent,
@@ -9,11 +20,17 @@ import {
 } from "../../components/ui/card.tsx";
 import { Input } from "../../components/ui/input.tsx";
 import { Label } from "../../components/ui/label.tsx";
+import { LOADER_CLOUD_PROPS } from "../../components/neural/NeuralLoader";
+import {
+  isNeuralOpenerActive,
+  subscribeNeuralOpenerActive,
+} from "../../components/neural/neuralOpenerState";
+import { isWebglAvailable } from "../../lib/webglCapability";
+import { useViewportBelow } from "../../lib/responsive";
 import {
   CSS_COLOR,
   cssColorMix,
   dim,
-  ELEVATION,
   FONT_WEIGHTS,
   RADII,
   sp,
@@ -26,7 +43,15 @@ import {
   validateFirstRunInput,
   validateSignInInput,
 } from "../platform/headerSessionModel.js";
+import {
+  PLATFORM_BOOT_PROGRESS_TASK_IDS,
+  skipBootProgressTasks,
+} from "../../app/bootProgress";
 import { postAuthJson, useAuthSession } from "./authSession.jsx";
+
+const NeuralCoreScene = lazy(
+  () => import("../../components/marketing/neural-core-scene"),
+);
 
 // Slice 8: the SPA login wall. Rendered inside AppProviders but ABOVE
 // <PlatformApp/> so the workspace (and its SSE streams / platform queries) never
@@ -35,23 +60,141 @@ import { postAuthJson, useAuthSession } from "./authSession.jsx";
 // is what an operator without a session (or a signed-out session) sees. It reuses
 // the same endpoints + validators as the header sign-in popover.
 
-function FullScreenCenter({ children }) {
+function useNeuralOpenerActiveState() {
+  return useSyncExternalStore(
+    subscribeNeuralOpenerActive,
+    isNeuralOpenerActive,
+  );
+}
+
+// The neural cloud bleeds across the whole page (weighted toward the brand on the
+// left, fading behind the form on the right) so the whole surface is one immersive
+// atmosphere rather than two isolated halves.
+function AmbientCloud() {
+  const reducedMotion = usePrefersReducedMotion();
+  const openerActive = useNeuralOpenerActiveState();
+
+  if (reducedMotion || openerActive || !isWebglAvailable()) return null;
+
+  const mask =
+    "radial-gradient(120% 118% at 24% 46%, #000 0%, #000 34%, rgba(0,0,0,0.35) 66%, transparent 90%)";
+  return (
+    <div
+      aria-hidden="true"
+      style={{
+        position: "absolute",
+        inset: 0,
+        opacity: 0.85,
+        pointerEvents: "none",
+      }}
+    >
+      <div
+        style={{
+          height: "100%",
+          width: "100%",
+          maskImage: mask,
+          WebkitMaskImage: mask,
+        }}
+      >
+        <Suspense fallback={null}>
+          <NeuralCoreScene {...LOADER_CLOUD_PROPS} />
+        </Suspense>
+      </div>
+    </div>
+  );
+}
+
+function LoginShell({ children, loading = false }) {
+  const stacked = useViewportBelow(880);
+  const openerActive = useNeuralOpenerActiveState();
+  const markSize = stacked ? "h-[72px] w-[72px]" : "h-[140px] w-[140px]";
+
   return (
     <div
       style={{
         position: "fixed",
         inset: 0,
-        zIndex: 130,
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        padding: sp(16),
+        zIndex: 110,
         background: CSS_COLOR.bg0,
         overflowY: "auto",
       }}
-      className="dark"
     >
-      {children}
+      <div
+        className="pyrus-brand-atmosphere"
+        aria-hidden="true"
+        style={{ position: "absolute", inset: 0, pointerEvents: "none" }}
+      />
+      <AmbientCloud />
+      <div
+        style={{
+          position: "relative",
+          zIndex: 1,
+          minHeight: "100%",
+          display: "grid",
+          gridTemplateColumns: stacked ? "1fr" : "1fr 1fr",
+          gridTemplateRows: stacked ? "minmax(240px, 38vh) 1fr" : undefined,
+        }}
+      >
+        <div
+          data-testid="login-brand-stage"
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: sp(10),
+            padding: sp(24),
+            textAlign: "center",
+          }}
+        >
+          {openerActive ? (
+            <PyrusMark className={markSize} />
+          ) : (
+            <BrandResolve
+              loop
+              morph
+              logoVariant="svg"
+              haloBlur={0.45}
+              bloomBlur={1.8}
+              webglPolicy="available"
+              className={markSize}
+            />
+          )}
+          <PyrusWordmark title="PYRUS" width={stacked ? 150 : 200} />
+          <span
+            style={{
+              color: CSS_COLOR.textSec,
+              fontFamily: T.sans,
+              fontSize: textSize("body"),
+              letterSpacing: "0.02em",
+            }}
+          >
+            Real-time options flow & signal intelligence.
+          </span>
+          {loading ? (
+            <div
+              className="pyrus-loading pyrus-boot-loading"
+              role="status"
+              aria-label="Loading"
+            >
+              <div className="pyrus-loading-bar" aria-hidden="true" />
+              <span className="pyrus-loading-label" style={{ fontFamily: T.sans }}>
+                Loading
+              </span>
+            </div>
+          ) : null}
+        </div>
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: sp(24),
+          }}
+        >
+          <div style={{ width: "100%", maxWidth: dim(380) }}>{children}</div>
+        </div>
+      </div>
     </div>
   );
 }
@@ -120,10 +263,22 @@ export function LoginGate({ children }) {
     ],
   );
 
-  // Auth state not yet known — render nothing behind the boot overlay rather
-  // than flashing the wall or mounting the (unauthenticated) workspace.
+  // Signed-out visitors never mount PlatformApp, so its blocking boot tasks
+  // would never settle and the boot overlay would idle until its backstop.
+  // Skip them so the opener forms, disperses, and reveals the sign-in wall.
+  useEffect(() => {
+    if (!isLoading && !signedIn) {
+      skipBootProgressTasks(
+        PLATFORM_BOOT_PROGRESS_TASK_IDS,
+        "Signed-out visitor — showing sign-in",
+      );
+    }
+  }, [isLoading, signedIn]);
+
+  // Auth state not yet known — keep the 50/50 layout with a loading indicator on
+  // the right (never a blank right panel) until /api/auth/session resolves.
   if (isLoading) {
-    return <FullScreenCenter>{null}</FullScreenCenter>;
+    return <LoginShell loading>{null}</LoginShell>;
   }
 
   if (signedIn) {
@@ -131,8 +286,15 @@ export function LoginGate({ children }) {
   }
 
   return (
-    <FullScreenCenter>
-      <Card style={{ width: "100%", maxWidth: dim(380) }}>
+    <LoginShell>
+      <Card
+        style={{
+          width: "100%",
+          background: "transparent",
+          border: "none",
+          boxShadow: "none",
+        }}
+      >
         <CardHeader>
           <div style={{ display: "grid", gap: sp(6) }}>
             <CardTitle
@@ -140,11 +302,10 @@ export function LoginGate({ children }) {
                 fontFamily: T.sans,
                 fontSize: textSize("screenTitle"),
                 fontWeight: FONT_WEIGHTS.emphasis,
-                letterSpacing: "0.14em",
                 color: CSS_COLOR.text,
               }}
             >
-              PYRUS
+              {isFirstRun ? "First-time setup" : "Sign in"}
             </CardTitle>
             <CardDescription
               style={{
@@ -155,7 +316,7 @@ export function LoginGate({ children }) {
             >
               {isFirstRun
                 ? "Create the operator account to get started."
-                : "Sign in to continue."}
+                : "Welcome back. Sign in to continue."}
             </CardDescription>
           </div>
         </CardHeader>
@@ -270,19 +431,14 @@ export function LoginGate({ children }) {
 
             <Button
               type="submit"
-              variant="default"
-              size="default"
+              variant="primary"
+              size="lg"
               style={{
                 width: "100%",
-                background: CSS_COLOR.text,
-                color: CSS_COLOR.bg0,
-                fontFamily: T.sans,
-                padding: sp("10px 12px"),
                 opacity: pending ? 0.7 : 1,
-                cursor: pending ? "not-allowed" : "pointer",
               }}
               disabled={pending}
-              data-testid="login-gate-submit"
+              dataTestId="login-gate-submit"
             >
               {isFirstRun ? "Create account" : "Sign in"}
             </Button>
@@ -309,7 +465,7 @@ export function LoginGate({ children }) {
           </form>
         </CardContent>
       </Card>
-    </FullScreenCenter>
+    </LoginShell>
   );
 }
 

@@ -35,13 +35,14 @@ const STATUS_LABEL = {
 
 export const resolveOperationsStatus = ({
   gatewayReady,
+  marketDataReady = gatewayReady,
   scanOn,
   deploymentEnabled,
   attentionSeverity,
 }) => {
   if (deploymentEnabled === false) return "paused";
   if (attentionSeverity === "warning") return "warning";
-  if (!gatewayReady) return "warning";
+  if (!marketDataReady) return "warning";
   if (scanOn) return "healthy";
   return "attention";
 };
@@ -66,6 +67,7 @@ const StatusRow = ({ label, value, tone }) => (
 
 export const OperationsStatusOrb = ({
   gatewayReady,
+  marketDataReady = gatewayReady,
   scanOn,
   deploymentEnabled,
   attentionItems = [],
@@ -78,7 +80,7 @@ export const OperationsStatusOrb = ({
   }, [attentionItems]);
 
   const status = resolveOperationsStatus({
-    gatewayReady,
+    marketDataReady,
     scanOn,
     deploymentEnabled,
     attentionSeverity,
@@ -89,13 +91,13 @@ export const OperationsStatusOrb = ({
     () =>
       buildAlgoStatusFailurePoint({
         status,
-        gatewayReady,
+        marketDataReady,
         scanOn,
         deploymentEnabled,
         attentionItems,
         cockpitTradePath,
       }),
-    [attentionItems, cockpitTradePath, deploymentEnabled, gatewayReady, scanOn, status],
+    [attentionItems, cockpitTradePath, deploymentEnabled, marketDataReady, scanOn, status],
   );
 
   return (
@@ -158,9 +160,9 @@ export const OperationsStatusOrb = ({
             Algo status — {STATUS_LABEL[status]}
           </div>
           <StatusRow
-            label="Gateway"
-            value={gatewayReady ? "ready" : "pending"}
-            tone={gatewayReady ? CSS_COLOR.green : CSS_COLOR.red}
+            label="Market data"
+            value={marketDataReady ? "ready" : "pending"}
+            tone={marketDataReady ? CSS_COLOR.green : CSS_COLOR.red}
           />
           <StatusRow
             label="Scan"

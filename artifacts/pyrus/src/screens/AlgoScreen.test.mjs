@@ -4,6 +4,45 @@ import test from "node:test";
 
 const source = readFileSync(new URL("./AlgoScreen.jsx", import.meta.url), "utf8");
 
+test("Algo readiness uses Massive market data instead of the retired IBKR bridge", () => {
+  assert.match(
+    source,
+    /const isMarketDataReadyForAlgo = \(session\) => Boolean\(session\?\.configured\?\.massive\);/,
+  );
+  assert.match(source, /const marketDataConfigured = Boolean\(session\?\.configured\?\.massive\);/);
+  assert.match(source, /const marketDataReady = isMarketDataReadyForAlgo\(session\);/);
+  assert.doesNotMatch(source, /isGatewayReadyForAlgo|hasGatewayLiveDataProof|bridgeRuntimeTone/);
+});
+
+test("Algo shadow deployment creation is not blocked on IBKR account readiness", () => {
+  assert.match(source, /if \(!marketDataConfigured\) \{/);
+  assert.match(source, /title: "Market data not configured"/);
+  assert.match(
+    source,
+    /body: "Market-data streaming \(Massive\) must be configured before creating a deployment\."/,
+  );
+  assert.match(source, /marketDataAccountId: activeAccountId \|\| "shadow"/);
+  assert.doesNotMatch(source, /No data account selected/);
+  assert.doesNotMatch(source, /The bridge is authenticated, but no IBKR data account is active yet\./);
+});
+
+test("Algo account tabs use the live brokerage account list", () => {
+  assert.match(source, /accountTabsAccounts = accounts,/);
+  assert.match(
+    source,
+    /const positionAccounts = accountTabsAccounts\.length \? accountTabsAccounts : accounts;/,
+  );
+  assert.match(
+    source,
+    /return positionAccounts\.some\(\(account\) => account\.id === algoAccountTabRaw\)/,
+  );
+  assert.match(source, /positionAccounts=\{positionAccounts\}/);
+  assert.match(
+    source,
+    /algoPositionsUseShadowOverlay\s*\?\s*\{[\s\S]*?mode: "shadow"[\s\S]*?\}\s*:\s*\{[\s\S]*?mode: "live"/,
+  );
+});
+
 test("Algo STA display does not use the legacy Signal Monitor profile poll as a source gate", () => {
   assert.doesNotMatch(source, /useGetSignalMonitorProfile/);
   assert.doesNotMatch(source, /signalMonitorProfile\?\.enabled\s*===\s*false/);

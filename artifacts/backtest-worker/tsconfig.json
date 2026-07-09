@@ -16,6 +16,9 @@
       "path": "../../lib/backtest-core"
     },
     {
+      "path": "../../lib/market-calendar"
+    },
+    {
       "path": "../../lib/pyrus-signals-core"
     }
   ]

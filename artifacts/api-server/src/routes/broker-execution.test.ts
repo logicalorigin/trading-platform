@@ -1421,6 +1421,7 @@ test("SnapTrade portfolio route returns sanitized balances and positions", async
                   cash: number;
                   buyingPower: number;
                   positionMarketValue: number;
+                  unrealizedPnl: number;
                   netLiquidation: number;
                   positionCount: number;
                 };
@@ -1461,6 +1462,7 @@ test("SnapTrade portfolio route returns sanitized balances and positions", async
                 cash: 500,
                 buyingPower: 750,
                 positionMarketValue: 800,
+                unrealizedPnl: 20,
                 netLiquidation: 1300,
                 positionCount: 1,
               });

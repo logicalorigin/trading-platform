@@ -1018,6 +1018,7 @@ export const GetSnapTradeAccountPortfolioResponse = zod.object({
   "cash": zod.number().nullable(),
   "buyingPower": zod.number().nullable(),
   "positionMarketValue": zod.number().nullable(),
+  "unrealizedPnl": zod.number().nullable(),
   "netLiquidation": zod.number().nullable(),
   "positionCount": zod.number()
 }),
@@ -1086,7 +1087,7 @@ export const GetSnapTradeAccountHistoryResponse = zod.object({
   "currency": zod.string(),
   "trades": zod.array(zod.object({
   "id": zod.string(),
-  "source": zod.enum(['LIVE', 'LIVE_ORDER', 'LIVE_EXECUTION', 'FLEX', 'SHADOW', 'SHADOW_ACTIVITY', 'SNAPTRADE_ACTIVITY']),
+  "source": zod.enum(['LIVE', 'LIVE_ORDER', 'LIVE_EXECUTION', 'FLEX', 'SHADOW', 'SHADOW_ACTIVITY', 'SNAPTRADE_ACTIVITY', 'ROBINHOOD_ACTIVITY']),
   "accountId": zod.string(),
   "symbol": zod.string(),
   "side": zod.string(),
@@ -1769,6 +1770,8 @@ export const ListAccountsResponse = zod.object({
   "buyingPower": zod.number(),
   "cash": zod.number(),
   "netLiquidation": zod.number(),
+  "dayPnl": zod.number().nullish(),
+  "dayPnlPercent": zod.number().nullish(),
   "accountType": zod.string().nullish(),
   "includedInTrading": zod.boolean(),
   "totalCashValue": zod.number().nullish(),
@@ -2550,7 +2553,7 @@ export const GetAccountClosedTradesResponse = zod.object({
   "currency": zod.string(),
   "trades": zod.array(zod.object({
   "id": zod.string(),
-  "source": zod.enum(['LIVE', 'LIVE_ORDER', 'LIVE_EXECUTION', 'FLEX', 'SHADOW', 'SHADOW_ACTIVITY', 'SNAPTRADE_ACTIVITY']),
+  "source": zod.enum(['LIVE', 'LIVE_ORDER', 'LIVE_EXECUTION', 'FLEX', 'SHADOW', 'SHADOW_ACTIVITY', 'SNAPTRADE_ACTIVITY', 'ROBINHOOD_ACTIVITY']),
   "accountId": zod.string(),
   "symbol": zod.string(),
   "side": zod.string(),

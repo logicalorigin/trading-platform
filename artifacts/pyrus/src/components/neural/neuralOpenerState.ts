@@ -4,11 +4,19 @@
 // eager and cheap.
 
 let openerActive = false;
+const listeners = new Set<() => void>();
 
 export function setNeuralOpenerActive(value: boolean): void {
+  if (openerActive === value) return;
   openerActive = value;
+  listeners.forEach((listener) => listener());
 }
 
 export function isNeuralOpenerActive(): boolean {
   return openerActive;
+}
+
+export function subscribeNeuralOpenerActive(listener: () => void): () => void {
+  listeners.add(listener);
+  return () => listeners.delete(listener);
 }

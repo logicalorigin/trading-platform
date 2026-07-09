@@ -82,7 +82,11 @@ digits=2) and `src/screens/account/accountUtils.jsx` (exports `formatMoney` — 
 **Slice D — formatNumber ×~4 + formatDuration ×~3 (same protocol):**
 - Commit: `refactor(pyrus): consolidate number/duration formatters`
 
-**Slice E — collapse dual Button:**
+**Slice E — collapse dual Button: SUPERSEDED 2026-07-08.** The login-redesign lane
+(`docs/plans/workorders-2026-07-08/wo-login-01-split-panel-redesign.md`) performs this exact
+migration (house Button + delete `button.tsx`) as part of an INTENTIONAL login redesign; the
+`shot-login-before.png` baseline is stale by design. Skip this slice entirely and record it as
+superseded in the report.
 - `src/components/ui/button.tsx` (shadcn `Button` + `buttonVariants`) has ONE consumer:
   `src/features/auth/LoginGate.jsx`. The house component is `src/components/ui/Button.jsx`
   (~20 consumers). Migrate LoginGate to the house Button with a manual prop mapping

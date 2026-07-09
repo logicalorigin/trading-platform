@@ -2,7 +2,12 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
-import { accountTabLabel, providerLabel } from "./AccountTabs.jsx";
+import {
+  accountDayPnlValue,
+  accountTabLabel,
+  brokerBrandForAccount,
+  providerLabel,
+} from "./AccountTabs.jsx";
 import { maskAccountId } from "./accountUtils.jsx";
 
 const readLocalSource = (filename) =>
@@ -47,6 +52,55 @@ test("accountTabLabel prefers the display name but never renders a raw account n
     accountTabLabel({ providerAccountId: "U1234567" }),
     maskAccountId("U1234567"),
   );
+  assert.equal(
+    accountTabLabel({
+      displayName: "E*Trade Individual RETIREMENT ROTH IRA",
+      providerAccountId: "snaptrade:abc",
+    }),
+    "RETIREMENT ROTH IRA",
+  );
+  assert.equal(
+    accountTabLabel({
+      displayName: "IBKR Individual",
+      providerAccountId: "U7654321",
+    }),
+    "IBKR Individual",
+    "Raw account-id safety wins over display-name cleanup when cleanup would be empty.",
+  );
+});
+
+test("accountDayPnlValue reads day pnl fields used by account-list rows", () => {
+  assert.equal(accountDayPnlValue({ dayPnl: -71.15 }), -71.15);
+  assert.equal(accountDayPnlValue({ todayPnl: 12.5 }), 12.5);
+  assert.equal(accountDayPnlValue({ dayPnl: null, pnlToday: 0 }), 0);
+  assert.equal(accountDayPnlValue({}), null);
+});
+
+test("brokerBrandForAccount derives visible broker marks without trusting raw provider ids", () => {
+  assert.equal(
+    brokerBrandForAccount({
+      provider: "snaptrade",
+      displayName: "E*Trade RETIREMENT ROTH IRA",
+    }).label,
+    "E*TRADE",
+  );
+  assert.equal(
+    brokerBrandForAccount({
+      provider: "snaptrade",
+      displayName: "Interactive Brokers Individual",
+    }).label,
+    "IBKR",
+  );
+  assert.equal(brokerBrandForAccount({ provider: "ibkr" }).label, "IBKR");
+  assert.equal(
+    brokerBrandForAccount({ provider: "robinhood" }).label,
+    "Robinhood",
+  );
+  assert.equal(brokerBrandForAccount({ provider: "schwab" }).label, "Schwab");
+  assert.equal(
+    brokerBrandForAccount({ provider: "unknownBroker" }).label,
+    "Brokerage",
+  );
 });
 
 test("maskAccountId shows only the last four characters", () => {
@@ -71,12 +125,26 @@ test("AccountTabs frames the account rows with leading All and trailing Shadow t
   assert.ok(mapIndex < shadowIndex, "Shadow tab must render after the account tabs");
 });
 
-test("AccountTabs masks account identifiers and horizontally scrolls like the algo tabs", () => {
+test("AccountTabs masks account identifiers and wraps instead of horizontally scrolling", () => {
   const source = readLocalSource("./AccountTabs.jsx");
 
   // Account identifiers must be masked, never rendered in full.
   assert.match(source, /maskAccountId\(account\?\.providerAccountId\)/);
-  // Mirror the AlgoDeploymentTabs overflow pattern for many-account overflow.
-  assert.match(source, /overflowX: "auto"/);
+  // Many accounts should form multiple rows instead of hiding behind a
+  // horizontal scroller.
+  assert.match(source, /flexWrap: "wrap"/);
+  assert.match(source, /overflowX: "visible"/);
+  assert.doesNotMatch(source, /overflowX: "auto"/);
   assert.match(source, /role="tab"/);
+});
+
+test("AccountTabs renders broker marks with NLV and day P&L, not provider/source captions", () => {
+  const source = readLocalSource("./AccountTabs.jsx");
+
+  assert.match(source, /formatAccountMoney\(nav, currency, true, maskValues\)/);
+  assert.match(source, /formatAccountSignedMoney\(dayPnl, currency, true, maskValues\)/);
+  assert.match(source, /NLV/);
+  assert.match(source, /Day/);
+  assert.doesNotMatch(source, /caption=\{brand\.label\}/);
+  assert.doesNotMatch(source, /caption=\{`\$\{providerLabel\(account\)\}/);
 });

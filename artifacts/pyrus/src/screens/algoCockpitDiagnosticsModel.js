@@ -193,6 +193,7 @@ export const buildAttentionStream = ({
   attentionItems = [],
   ruleAdherence = [],
   gatewayReady = true,
+  marketDataReady = gatewayReady,
   gatewayBlocks = 0,
 } = {}) => {
   const stream = [];
@@ -229,14 +230,14 @@ export const buildAttentionStream = ({
       summary: record.detail || "",
     });
   });
-  if (!gatewayReady) {
+  if (!marketDataReady) {
     stream.push({
       id: "gateway-not-ready",
       kind: "gateway",
-      kindLabel: "GATEWAY",
+      kindLabel: "MARKET DATA",
       severity: "warning",
-      title: "Signal evaluation paused",
-      summary: "Signal evaluation is paused until the reported readiness blocker clears.",
+      title: "Market data pending",
+      summary: "Signal evaluation is waiting on the Massive market-data stream.",
     });
   }
   if (finiteNumber(gatewayBlocks) > 0) {

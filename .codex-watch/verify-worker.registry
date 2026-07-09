@@ -1,0 +1,3 @@
+# real verify worker pids (setsid detached; launcher pid was transient)
+pids: 109220 109223 109231 109791
+recorded 23:53:04Z

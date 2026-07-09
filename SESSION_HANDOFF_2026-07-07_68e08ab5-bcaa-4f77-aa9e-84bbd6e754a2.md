@@ -3,16 +3,16 @@
 ## Session Metadata
 
 - Session ID: `68e08ab5-bcaa-4f77-aa9e-84bbd6e754a2`
-- Saved At (MT): `2026-07-07 09:59:04 MDT`
-- Saved At (UTC): `2026-07-07T15:59:04.066Z`
-- Summary: 2026-07-07 09:59:04 MDT | 68e08ab5-bcaa-4f77-aa9e-84bbd6e754a2 | please find the 4 work sessions we mos recently had going
+- Saved At (MT): `2026-07-07 11:45:05 MDT`
+- Saved At (UTC): `2026-07-07T17:45:05.476Z`
+- Summary: 2026-07-07 11:45:05 MDT | 68e08ab5-bcaa-4f77-aa9e-84bbd6e754a2 | please find the 4 work sessions we mos recently had going
 - Runtime: `claude`
 - Repo Root: `/home/runner/workspace`
 - Thread CWD: `/home/runner/workspace`
 - Transcript Path: `/home/runner/.claude/projects/-home-runner-workspace/68e08ab5-bcaa-4f77-aa9e-84bbd6e754a2.jsonl`
 - Branch: `main`
-- HEAD: `4feae5d45340d85d9978979a00f92b41f2787b30`
-- Latest Commit: `refactor(web): share auth session query`
+- HEAD: `cd1e3eb2004aaa243a7e1a847ef3f01bf558b3aa`
+- Latest Commit: `fix(signal-options): daily-pnl per-position dedup, flip-close exit claim, synthetic entry-greek baseline + restart/gap-stop test batteries`
 - Latest Commit Session ID: `unknown`
 - Title: please find the 4 work sessions we mos recently had going
 - Model: `claude-fable-5`
@@ -616,18 +616,18 @@ please find the 4 work sessions we mos recently had going
 
 ## Recent User Messages
 
-- `2026-07-07 07:54:56 MDT` <bash-stdout></bash-stdout><bash-stderr>error: unexpected argument 'authorized,' found Usage: codex exec [OPTIONS] [PROMPT] codex exec [OPTIONS] &lt;COMMAND&gt; [ARGS] For more information, try '--help'. </bash-stderr>
-- `2026-07-07 08:07:38 MDT` <task-notification> <task-id>b2859he5x</task-id> <tool-use-id>toolu_01DUUhnbLAmuatrNqMNhpNrZ</tool-use-id> <output-file>/tmp/claude-1000/-home-runner-workspace/68e08ab5-bcaa-4f77-aa9e-84bbd6e754a2/tasks/b2859he5x.output</output-file> <status>completed</status> <summary>Background command "Run Codex worker in background to complete Task #3" completed (exit code 0)</summary> </task-notification>
-- `2026-07-07 08:14:31 MDT` <task-notification> <task-id>bm4mwpybe</task-id> <tool-use-id>toolu_01MzibkzJUJEtPyy8wwiN9LJ</tool-use-id> <output-file>/tmp/claude-1000/-home-runner-workspace/68e08ab5-bcaa-4f77-aa9e-84bbd6e754a2/tasks/bm4mwpybe.output</output-file> <status>completed</status> <summary>Background command "Independently re-run all Task-#3 gates plus api build" completed (exit code 0)</summary> </task-notification>
-- `2026-07-07 08:18:29 MDT` <task-notification> <task-id>byyf2tujg</task-id> <tool-use-id>toolu_012e6Czn5HxDF1EEFCH2QNNA</tool-use-id> <output-file>/tmp/claude-1000/-home-runner-workspace/68e08ab5-bcaa-4f77-aa9e-84bbd6e754a2/tasks/byyf2tujg.output</output-file> <status>completed</status> <summary>Background command "Re-run four test suites, report exit codes only" completed (exit code 0)</summary> </task-notification>
-- `2026-07-07 09:07:52 MDT` checking in
-- `2026-07-07 09:09:52 MDT` go ahead and land the ready slices
-- `2026-07-07 09:17:17 MDT` thanks. please while we wait for this, please investigate how we are handling the breadth section of the signals page. you'll want to think about what it is/means. im seeing that 1d breadth is fine, but the other selections aren't. this tells me there is an issue with how we are storing signals in the db. please investigate and fix
-- `2026-07-07 09:19:57 MDT` <task-notification> <task-id>bku3330wk</task-id> <tool-use-id>toolu_017j22AXvnmgPNmssoR5K5kt</tool-use-id> <output-file>/tmp/claude-1000/-home-runner-workspace/68e08ab5-bcaa-4f77-aa9e-84bbd6e754a2/tasks/bku3330wk.output</output-file> <status>completed</status> <summary>Background command "Run Codex mapper to produce landing manifest" completed (exit code 0)</summary> </task-notification>
-- `2026-07-07 09:27:30 MDT` <task-notification> <task-id>b0957wjbc</task-id> <tool-use-id>toolu_01CKkRWiHcVJztCuuiiw1oZr</tool-use-id> <output-file>/tmp/claude-1000/-home-runner-workspace/68e08ab5-bcaa-4f77-aa9e-84bbd6e754a2/tasks/b0957wjbc.output</output-file> <status>completed</status> <summary>Background command "Run Codex breadth investigator in background" completed (exit code 0)</summary> </task-notification>
-- `2026-07-07 09:37:45 MDT` <task-notification> <task-id>b8sy0a4w4</task-id> <tool-use-id>toolu_01NUSTguAnGX77AH4Zb7g5N2</tool-use-id> <output-file>/tmp/claude-1000/-home-runner-workspace/68e08ab5-bcaa-4f77-aa9e-84bbd6e754a2/tasks/b8sy0a4w4.output</output-file> <status>completed</status> <summary>Background command "Run Codex builder for breadth fix in background" completed (exit code 0)</summary> </task-notification>
-- `2026-07-07 09:52:22 MDT` checking in
-- `2026-07-07 09:56:50 MDT` <task-notification> <task-id>ba8h7prnt</task-id> <tool-use-id>toolu_01Nsqn3ayi7GsnVE9WQPWYLy</tool-use-id> <output-file>/tmp/claude-1000/-home-runner-workspace/68e08ab5-bcaa-4f77-aa9e-84bbd6e754a2/tasks/ba8h7prnt.output</output-file> <status>completed</status> <summary>Background command "Resume Codex landing executor for commits 4-9" completed (exit code 0)</summary> </task-notification>
+- `2026-07-07 10:38:53 MDT` ive pushed and rebuilt, breadth is better, but speed of hydration could be improved. im also still seeing many signals outside freshness, please investigate if you're not already
+- `2026-07-07 10:45:43 MDT` lets get these fixed. a. 1.4gb of use should not be enough pressure to cause us to shed work, please evaluate. 2. fix anything that "can't be true"/inconsistencie. /interview-me for ambiguties. use skills to do your best work
+- `2026-07-07 10:48:52 MDT` <task-notification> <task-id>br2hvz7on</task-id> <tool-use-id>toolu_015joAZwtDLrXzdz2BTXJrGd</tool-use-id> <output-file>/tmp/claude-1000/-home-runner-workspace/68e08ab5-bcaa-4f77-aa9e-84bbd6e754a2/tasks/br2hvz7on.output</output-file> <status>completed</status> <summary>Background command "Run Codex freshness and hydration investigator" completed (exit code 0)</summary> </task-notification>
+- `2026-07-07 10:50:24 MDT` one of the bugs im seeing is that when the algo screen loads, it loads an old/cached algo control panel setting set, then blanks for no deploymant available, and then to the correct algo screen/control panel setup. we solved this bug previously (i think its a db-line fight?)
+- `2026-07-07 10:54:58 MDT` on the signals screen, above the signals table
+- `2026-07-07 10:55:32 MDT` <task-notification> <task-id>bkz0sk1ou</task-id> <tool-use-id>toolu_01JSeYGde5tUpcPVzKrMsXnX</tool-use-id> <output-file>/tmp/claude-1000/-home-runner-workspace/68e08ab5-bcaa-4f77-aa9e-84bbd6e754a2/tasks/bkz0sk1ou.output</output-file> <status>completed</status> <summary>Background command "Run Codex ELU profiler worker in background" completed (exit code 0)</summary> </task-notification>
+- `2026-07-07 10:59:07 MDT` thanks. can you use fable to instruct and task a haiku subagent with installing login-03 from this url for our platform? https://ui.shadcn.com/blocks/login
+- `2026-07-07 11:00:54 MDT` please make sure you are looking for manamde restrictions put in place as well, like batching of the signals table/matrix etc or whatever/however we are delivering it to the ui. for instance, when i use the age column to sort the sTa table, i see issues like missing data and thing like that. need you to audit this and get it proper
+- `2026-07-07 11:07:13 MDT` <task-notification> <task-id>a48b0e65612d014c8</task-id> <tool-use-id>toolu_01PCNdyXzsVEfYpnk6n24BSD</tool-use-id> <output-file>/tmp/claude-1000/-home-runner-workspace/68e08ab5-bcaa-4f77-aa9e-84bbd6e754a2/tasks/a48b0e65612d014c8.output</output-file> <status>completed</status> <summary>Agent "Install shadcn login-03 block" finished</summary> <note>A task-notification fires each time this agent stops with no live background children of its own. The user can send it another message and resume it, so the same task-id may notify more than once.</note> <result>## Summary **Installation complete and minimal integration achieved.** ### Files Created (by shadcn CLI): - `artifacts/pyrus/src/components/ui/button.tsx` - `artifacts/pyrus/src/components/ui/card.tsx` - `artifacts/pyrus/src/components/ui…
+- `2026-07-07 11:13:08 MDT` <task-notification> <task-id>bsdvi0989</task-id> <tool-use-id>toolu_01M2SEuLAK97VL3F1MvgDRqF</tool-use-id> <output-file>/tmp/claude-1000/-home-runner-workspace/68e08ab5-bcaa-4f77-aa9e-84bbd6e754a2/tasks/bsdvi0989.output</output-file> <status>completed</status> <summary>Background command "Run Codex fix-wave builder in background" completed (exit code 0)</summary> </task-notification>
+- `2026-07-07 11:21:50 MDT` the restarts are me. what have you found so far?
+- `2026-07-07 11:43:45 MDT` <task-notification> <task-id>bpcik34se</task-id> <tool-use-id>toolu_01QVbMunjnM67BSxS4Qjs46N</tool-use-id> <output-file>/tmp/claude-1000/-home-runner-workspace/68e08ab5-bcaa-4f77-aa9e-84bbd6e754a2/tasks/bpcik34se.output</output-file> <status>completed</status> <summary>Background command "Run Codex landing2 mapper in background" completed (exit code 0)</summary> </task-notification>
 
 ## Session Activity Summary
 
@@ -637,324 +637,154 @@ please find the 4 work sessions we mos recently had going
 - `2026-07-07 07:27:17 MDT` Tool: Bash ls -t /home/runner/workspace/SESSION_HANDOFF_2026-07-0*.md | head -8
 - `2026-07-07 07:27:18 MDT` Tool: Read /home/runner/workspace/SESSION_HANDOFF_MASTER.md
 - `2026-07-07 07:27:36 MDT` Tool: Read /home/runner/workspace/SESSION_HANDOFF_2026-07-07_5360980c-fbf6-464f-9218-7740228e4d2f.md
-- … 112 lower-signal transcript events omitted …
-- `2026-07-07 09:52:22 MDT` User: checking in
-- `2026-07-07 09:52:28 MDT` Agent: Pulling the live pulse on the executor and the board:
-- `2026-07-07 09:52:32 MDT` Tool: Bash S=/tmp/claude-1000/-home-runner-workspace/68e08ab5-bcaa-4f77-aa9e-84bbd6e754a2; tail -6 $S/tasks/ba8h7prnt.output 2>/dev/null; echo "== chat since 15:45Z:"; no…
-- `2026-07-07 09:52:51 MDT` Agent: On pace — no intervention needed: - **Landing: 6 of 9 commits are in.** The executor amended the bridge-retirement commit with the approved `backend-settings.ts` hunk (now `9b6210…
-- `2026-07-07 09:56:50 MDT` User: <task-notification> <task-id>ba8h7prnt</task-id> <tool-use-id>toolu_01Nsqn3ayi7GsnVE9WQPWYLy</tool-use-id> <output-file>/tmp/claude-1000/-home-runner-workspace/68e08ab5-bcaa-4f77-…
-- `2026-07-07 09:56:57 MDT` Tool: Bash tail -18 /tmp/claude-1000/-home-runner-workspace/68e08ab5-bcaa-4f77-aa9e-84bbd6e754a2/scratchpad/codex-landing-resume-run.log; echo "== git:"; git log --onelin…
-- `2026-07-07 09:57:18 MDT` Tool: Bash node scripts/agent-chat.mjs post claude-lead "HEADS-UP @claude-fable-5360980c: SIGUSR2 API reload in ~30s (loads landed HEAD 4feae5d4 + breadth reader fix + an…
-- `2026-07-07 09:58:01 MDT` Tool: Bash for i in $(seq 1 24); do code=$(curl -s -o /dev/null -w '%{http_code}' -m 3 http://127.0.0.1:8080/api/healthz 2>/dev/null); [ "$code" = "200" ] && break; sleep…
-- `2026-07-07 09:58:37 MDT` Tool: Bash node scripts/agent-chat.mjs post claude-lead "RELEASED: git index claim lifted. Landed 9/9 on main (dcf7f449..4feae5d4), final gate green (clean-worktree tsc+b…
-- `2026-07-07 09:58:58 MDT` Agent: Everything is done and verified. The consolidated picture: ## Landing: 9/9 commits on `main`, final gate green `dcf7f449` → `4feae5d4`: P&L (which un-broke clean HEAD), entitlemen…
+- … 240 lower-signal transcript events omitted …
+- `2026-07-07 11:34:49 MDT` Tool: Edit /tmp/claude-1000/-home-runner-workspace/68e08ab5-bcaa-4f77-aa9e-84bbd6e754a2/scratchpad/codex-landing2-map.md
+- `2026-07-07 11:34:55 MDT` Tool: Bash S=/tmp/claude-1000/-home-runner-workspace/68e08ab5-bcaa-4f77-aa9e-84bbd6e754a2/scratchpad; codex exec -s danger-full-access - < $S/codex-landing2-map.md > $S/c…
+- `2026-07-07 11:35:07 MDT` Agent: Mapper is running. Updating the handoff so the plan state survives any drop, then I'll review the manifest when it lands:
+- `2026-07-07 11:35:16 MDT` Tool: Bash cat >> SESSION_HANDOFF_2026-07-07_68e08ab5-bcaa-4f77-aa9e-84bbd6e754a2.md <<'EOF' ### Update — Plan approved, Phase-1 landing in flight (2026-07-07 ~11:3x MDT)…
+- `2026-07-07 11:35:28 MDT` Agent: Handoff updated. Phase 1 is in motion: the mapper is re-deriving the manifest against the moved HEAD (`cd1e3eb2`) and the much smaller 44-file dirty set, with the two hard spots (…
+- `2026-07-07 11:43:45 MDT` User: <task-notification> <task-id>bpcik34se</task-id> <tool-use-id>toolu_01QVbMunjnM67BSxS4Qjs46N</tool-use-id> <output-file>/tmp/claude-1000/-home-runner-workspace/68e08ab5-bcaa-4f77-…
+- `2026-07-07 11:43:50 MDT` Tool: Read /home/runner/workspace/.codex-watch/landing2-manifest-2026-07-07.md
+- `2026-07-07 11:44:36 MDT` Tool: Write /tmp/claude-1000/-home-runner-workspace/68e08ab5-bcaa-4f77-aa9e-84bbd6e754a2/scratchpad/codex-landing2-execute.md
+- `2026-07-07 11:44:42 MDT` Tool: Bash S=/tmp/claude-1000/-home-runner-workspace/68e08ab5-bcaa-4f77-aa9e-84bbd6e754a2/scratchpad; codex exec -s danger-full-access - < $S/codex-landing2-execute.md >…
+- `2026-07-07 11:45:04 MDT` Agent: Phase 1 executor is running (`baf8hyxw0`) — 8 themed commits, hunk-partitioned per the manifest, each verified by typecheck at its own sha in an isolated worktree, with a final ga…
 
 ## High-Signal Changed Files
 
-- `.env.example`
-- `CLAUDE.md`
-- `SESSION_HANDOFF_2026-07-05_182a4859-3a9a-4166-a21c-d05fec4e58f6.md`
-- `SESSION_HANDOFF_2026-07-05_45ad4715-669e-4d4b-b117-9efbb977226a.md`
-- `SESSION_HANDOFF_2026-07-05_b9dafa30-72f6-415e-a500-95045ce2a39e.md`
+- `SESSION_HANDOFF_2026-07-07_5360980c-fbf6-464f-9218-7740228e4d2f.md`
+- `SESSION_HANDOFF_2026-07-07_68e08ab5-bcaa-4f77-aa9e-84bbd6e754a2.md`
+- `SESSION_HANDOFF_2026-07-07_e61dae50-84a9-4daa-83f1-6130b28bed55.md`
 - `SESSION_HANDOFF_CURRENT.md`
-- `SESSION_HANDOFF_LIVE_2026-07-03_ibkr-client-portal-hosted-connector.md`
 - `SESSION_HANDOFF_MASTER.md`
-- `artifacts/api-server/src/routes/broker-execution.test.ts`
-- `artifacts/api-server/src/routes/index.ts`
-- `artifacts/api-server/src/routes/platform.ts`
-- `artifacts/api-server/src/services/account.ts`
-- `artifacts/api-server/src/services/algo-cockpit-streams.test.ts`
-- `artifacts/api-server/src/services/algo-cockpit-streams.ts`
-- `artifacts/api-server/src/services/background-worker-pressure.test.ts`
-- `artifacts/api-server/src/services/overnight-spot-execution.ts`
-- `artifacts/api-server/src/services/overnight-spot-worker.ts`
-- `artifacts/api-server/src/services/platform.ts`
-- `artifacts/api-server/src/services/resource-pressure.test.ts`
-- `artifacts/api-server/src/services/resource-pressure.ts`
-- `artifacts/api-server/src/services/route-admission.test.ts`
-- `artifacts/api-server/src/services/route-admission.ts`
-- `artifacts/api-server/src/services/schwab-equity-orders.test.ts`
-- `artifacts/api-server/src/services/schwab-equity-orders.ts`
-- `artifacts/api-server/src/services/shadow-account.ts`
-- `artifacts/api-server/src/services/signal-monitor-evaluation-worker.ts`
-- `artifacts/api-server/src/services/signal-monitor-local-bar-cache-prefetch.test.ts`
-- `artifacts/api-server/src/services/signal-monitor-local-bar-cache.ts`
+- `artifacts/api-server/src/routes/signal-monitor.ts`
+- `artifacts/api-server/src/services/signal-monitor-completed-bars.test.ts`
 - `artifacts/api-server/src/services/signal-monitor-reconcile-minimal-readset.test.ts`
 - `artifacts/api-server/src/services/signal-monitor-stream.test.ts`
+- `artifacts/api-server/src/services/signal-monitor.ts`
+- `artifacts/api-server/src/services/signal-options-automation.test.ts`
+- `artifacts/api-server/src/services/signal-options-automation.ts`
+- `artifacts/pyrus/.replit-artifact/artifact.toml`
+- `artifacts/pyrus/package.json`
+- `artifacts/pyrus/src/app/AppContent.preloadContention.test.mjs`
+- `artifacts/pyrus/src/features/auth/LoginGate.jsx`
+- `artifacts/pyrus/src/features/backtesting/BacktestingPanels.tsx`
+- `artifacts/pyrus/src/features/flow/FlowDistributionScannerPanel.jsx`
+- `artifacts/pyrus/src/features/market/MultiChartGrid.jsx`
+- `artifacts/pyrus/src/features/platform/MarketDataSubscriptionProvider.jsx`
+- `artifacts/pyrus/src/features/platform/PlatformApp.jsx`
+- `artifacts/pyrus/src/features/platform/live-streams.test.mjs`
+- `artifacts/pyrus/src/features/platform/platformJsonRequest.js`
+- `artifacts/pyrus/src/features/platform/platformJsonRequest.test.mjs`
+- `artifacts/pyrus/src/features/platform/queryDefaults.js`
+- `artifacts/pyrus/src/features/signals/signalsMatrixHydration.js`
+- `artifacts/pyrus/src/features/signals/signalsMatrixHydration.test.mjs`
+- `artifacts/pyrus/src/features/signals/signalsRowModel.js`
+- `artifacts/pyrus/src/features/signals/signalsRowModel.test.mjs`
+- `artifacts/pyrus/src/screens/AlgoScreen.test.mjs`
 
 ## Repo State Snapshot
 
 ```text
-## main...origin/main [ahead 9]
- M .env.example
- M CLAUDE.md
- M SESSION_HANDOFF_2026-07-05_182a4859-3a9a-4166-a21c-d05fec4e58f6.md
- M SESSION_HANDOFF_2026-07-05_45ad4715-669e-4d4b-b117-9efbb977226a.md
- M SESSION_HANDOFF_2026-07-05_b9dafa30-72f6-415e-a500-95045ce2a39e.md
+## main...origin/main
+ M SESSION_HANDOFF_2026-07-07_5360980c-fbf6-464f-9218-7740228e4d2f.md
+ M SESSION_HANDOFF_2026-07-07_68e08ab5-bcaa-4f77-aa9e-84bbd6e754a2.md
+ M SESSION_HANDOFF_2026-07-07_e61dae50-84a9-4daa-83f1-6130b28bed55.md
  M SESSION_HANDOFF_CURRENT.md
- M SESSION_HANDOFF_LIVE_2026-07-03_ibkr-client-portal-hosted-connector.md
  M SESSION_HANDOFF_MASTER.md
- M artifacts/api-server/src/routes/broker-execution.test.ts
- M artifacts/api-server/src/routes/index.ts
- M artifacts/api-server/src/routes/platform.ts
- M artifacts/api-server/src/services/account.ts
- M artifacts/api-server/src/services/algo-cockpit-streams.test.ts
- M artifacts/api-server/src/services/algo-cockpit-streams.ts
- M artifacts/api-server/src/services/background-worker-pressure.test.ts
- M artifacts/api-server/src/services/overnight-spot-execution.ts
- M artifacts/api-server/src/services/overnight-spot-worker.ts
- M artifacts/api-server/src/services/platform.ts
- M artifacts/api-server/src/services/resource-pressure.test.ts
- M artifacts/api-server/src/services/resource-pressure.ts
- M artifacts/api-server/src/services/route-admission.test.ts
- M artifacts/api-server/src/services/route-admission.ts
- M artifacts/api-server/src/services/schwab-equity-orders.test.ts
- M artifacts/api-server/src/services/schwab-equity-orders.ts
- M artifacts/api-server/src/services/shadow-account.ts
- M artifacts/api-server/src/services/signal-monitor-evaluation-worker.ts
- M artifacts/api-server/src/services/signal-monitor-local-bar-cache-prefetch.test.ts
- M artifacts/api-server/src/services/signal-monitor-local-bar-cache.ts
+ M artifacts/api-server/src/routes/signal-monitor.ts
+ M artifacts/api-server/src/services/signal-monitor-completed-bars.test.ts
  M artifacts/api-server/src/services/signal-monitor-reconcile-minimal-readset.test.ts
  M artifacts/api-server/src/services/signal-monitor-stream.test.ts
  M artifacts/api-server/src/services/signal-monitor.ts
+ M artifacts/api-server/src/services/signal-options-automation.test.ts
  M artifacts/api-server/src/services/signal-options-automation.ts
- M artifacts/api-server/src/services/signal-options-ledger-recovery.test.ts
- M artifacts/api-server/src/services/signal-options-position-tick-manager.ts
- M artifacts/api-server/src/services/signal-options-worker.ts
- M artifacts/api-server/src/services/snaptrade-equity-orders.test.ts
- M artifacts/api-server/src/services/snaptrade-equity-orders.ts
- M artifacts/mcp-server/src/host/procinfo.test.mjs
- M artifacts/mcp-server/src/host/procinfo.ts
- M artifacts/pyrus/index.html
+ M artifacts/pyrus/.replit-artifact/artifact.toml
  M artifacts/pyrus/package.json
- M artifacts/pyrus/scripts/flightRecorder.mjs
- M artifacts/pyrus/scripts/runDevApp.mjs
- M artifacts/pyrus/src/app/App.tsx
- M artifacts/pyrus/src/app/AppContent.tsx
- M artifacts/pyrus/src/components/brand/pyrus-loader-mark.tsx
- M artifacts/pyrus/src/components/brand/pyrus-mark.tsx
- M artifacts/pyrus/src/components/brand/pyrus-wordmark.tsx
- M artifacts/pyrus/src/components/neural/NeuralCanvas.tsx
- M artifacts/pyrus/src/components/neural/NeuralLoader.tsx
- D artifacts/pyrus/src/components/neural/neural-core/NeuralPoints.tsx
- M artifacts/pyrus/src/components/neural/neural-core/useMorphMachine.ts
- M artifacts/pyrus/src/components/platform/signal-language/SignalDots.jsx
- M artifacts/pyrus/src/components/platform/signal-language/SignalDots.test.mjs
- M artifacts/pyrus/src/features/platform/AppHeader.jsx
- M artifacts/pyrus/src/features/platform/MobileMoreSheet.jsx
+ M artifacts/pyrus/src/app/AppContent.preloadContention.test.mjs
+ M artifacts/pyrus/src/features/auth/LoginGate.jsx
+ M artifacts/pyrus/src/features/backtesting/BacktestingPanels.tsx
+ M artifacts/pyrus/src/features/flow/FlowDistributionScannerPanel.jsx
+ M artifacts/pyrus/src/features/market/MultiChartGrid.jsx
+ M artifacts/pyrus/src/features/platform/MarketDataSubscriptionProvider.jsx
  M artifacts/pyrus/src/features/platform/PlatformApp.jsx
- M artifacts/pyrus/src/features/platform/PlatformShell.jsx
- M artifacts/pyrus/src/features/platform/PlatformWatchlist.jsx
- M artifacts/pyrus/src/features/platform/loadingFallbackTheme.test.mjs
- M artifacts/pyrus/src/features/platform/signalFrameState.js
- M artifacts/pyrus/src/features/signals/signalStateFreshness.js
- M artifacts/pyrus/src/features/signals/signalStateFreshness.test.mjs
+ M artifacts/pyrus/src/features/platform/live-streams.test.mjs
+ M artifacts/pyrus/src/features/platform/platformJsonRequest.js
+ M artifacts/pyrus/src/features/platform/platformJsonRequest.test.mjs
+ M artifacts/pyrus/src/features/platform/queryDefaults.js
+ M artifacts/pyrus/src/features/signals/signalsMatrixHydration.js
+ M artifacts/pyrus/src/features/signals/signalsMatrixHydration.test.mjs
  M artifacts/pyrus/src/features/signals/signalsRowModel.js
  M artifacts/pyrus/src/features/signals/signalsRowModel.test.mjs
- M artifacts/pyrus/src/features/trade/TradeOrderTicket.jsx
- M artifacts/pyrus/src/index.css
- M artifacts/pyrus/src/lib/formatters.js
- M artifacts/pyrus/src/lib/webglCapability.ts
- M artifacts/pyrus/src/main.tsx
- M artifacts/pyrus/src/screens/AccountScreen.jsx
+ M artifacts/pyrus/src/screens/AlgoScreen.test.mjs
+ M artifacts/pyrus/src/screens/DiagnosticsScreen.jsx
  M artifacts/pyrus/src/screens/SettingsScreen.jsx
+ M artifacts/pyrus/src/screens/SignalsScreen.jsx
+ M artifacts/pyrus/src/screens/SignalsScreen.state-contract.test.mjs
+ M artifacts/pyrus/src/screens/algo/AlgoLivePage.jsx
+ M artifacts/pyrus/src/screens/algo/AlgoLivePage.test.mjs
  M artifacts/pyrus/src/screens/algo/OperationsSignalTable.test.mjs
- M artifacts/pyrus/src/screens/algo/OvernightControlPanel.jsx
- M artifacts/pyrus/src/screens/algo/algoHelpers.js
- M artifacts/pyrus/vite.config.ts
- M docs/plans/ibkr-connector-local-setup-spec.md
- M lib/db/src/schema/index.ts
- M lib/ibkr-contracts/src/client.ts
+ M lib/db/src/index.ts
+ M lib/db/src/testing.ts
  M pnpm-lock.yaml
- M replit.md
- M scripts/README.md
- M scripts/check-replit-startup-guards.mjs
- M scripts/run-validation-command.mjs
 ?? .codex-watch-live-auth/
 ?? .codex-watch-live/
 ?? .codex-watch/
-?? CODEX_WORKER_IGNITION.md
-?? SESSION_HANDOFF_2026-07-05_0a16f7cc-0030-4762-8ef5-fd97147754d7.md
-?? SESSION_HANDOFF_2026-07-05_113d7d20-310a-4f34-8886-b650d04d28d0.md
-?? SESSION_HANDOFF_2026-07-05_134896bd-a1eb-47f1-b0ab-d6bca2e6be12.md
-?? SESSION_HANDOFF_2026-07-05_30002be4-9321-42dc-bd0a-424f277061ca.md
-?? SESSION_HANDOFF_2026-07-05_3031a953-6144-4a63-ae27-9f21173d48f6.md
-?? SESSION_HANDOFF_2026-07-05_5c7aa51d-8dd1-4203-b82f-9e43ad57fbb8.md
-?? SESSION_HANDOFF_2026-07-05_5de488c2-8ff8-4413-8789-b3f9b29eab00.md
-?? SESSION_HANDOFF_2026-07-05_60473da9-4bce-4a67-ab18-ff1acaca29de.md
-?? SESSION_HANDOFF_2026-07-05_627f9c4a-d576-41ba-be7b-345670c3b6f6.md
-?? SESSION_HANDOFF_2026-07-05_6765f941-f062-4a70-b852-fb42f1d5c54a.md
-?? SESSION_HANDOFF_2026-07-05_7943526c-b016-4b6b-87e3-c12b3b04f503.md
-?? SESSION_HANDOFF_2026-07-05_82f9cebc-58c7-4ae0-a1ac-be06b4787f96.md
-?? SESSION_HANDOFF_2026-07-05_d378bab2-87ad-4e12-8e67-1acd7567bb83.md
-?? SESSION_HANDOFF_2026-07-05_d6cc55a2-d861-4e14-8fb4-556e5452bb5f.md
-?? SESSION_HANDOFF_2026-07-06_019f38a7-58c8-70c3-8792-837c89329301.md
-?? SESSION_HANDOFF_2026-07-06_019f38ab-4b6b-7542-8d53-741907f0a993.md
-?? SESSION_HANDOFF_2026-07-06_019f38ad-342d-7142-9fbc-31940b1c40df.md
-?? SESSION_HANDOFF_2026-07-06_019f3912-e715-7722-ab78-f505ac1df1e1.md
-?? SESSION_HANDOFF_2026-07-06_019f392c-e9b0-74e1-9bf2-44398fbed56b.md
-?? SESSION_HANDOFF_2026-07-06_019f392d-0e71-7cc1-97cc-114d33008f0b.md
-?? SESSION_HANDOFF_2026-07-06_019f392d-ffa8-7141-857a-81679acf98cb.md
-?? SESSION_HANDOFF_2026-07-06_019f392f-97be-77a3-a59c-4fc965c2b4a0.md
-?? SESSION_HANDOFF_2026-07-06_019f3930-8c7b-7aa1-82ad-a7122dde5ccc.md
-?? SESSION_HANDOFF_2026-07-06_019f3934-8477-7773-a909-ca6e5957f143.md
-?? SESSION_HANDOFF_2026-07-06_019f3935-01a1-7ca2-99bf-9ffe88234139.md
-?? SESSION_HANDOFF_2026-07-06_019f3939-8ac7-7862-82ed-a5f35f211952.md
-?? SESSION_HANDOFF_2026-07-06_019f393b-3401-7d62-b799-89e3fa7afc9e.md
-?? SESSION_HANDOFF_2026-07-06_019f393d-bb8c-7ee1-a638-f516b9d9264e.md
-?? SESSION_HANDOFF_2026-07-06_019f393f-a4f7-7122-aa90-b5d21a9de800.md
-?? SESSION_HANDOFF_2026-07-06_019f3946-7cc9-75e1-b142-743975c67934.md
-?? SESSION_HANDOFF_2026-07-06_019f3946-e994-71e1-8d86-c0d7f8b0a1c4.md
-?? SESSION_HANDOFF_2026-07-06_019f394c-761a-70c1-840c-b251f16a8771.md
-?? SESSION_HANDOFF_2026-07-06_019f398d-d9cc-7a70-b9ed-daed51ab52e9.md
-?? SESSION_HANDOFF_2026-07-06_019f398e-01e7-7720-8574-9ac38dcc322b.md
-?? SESSION_HANDOFF_2026-07-06_13073e07-2d43-4d89-8e44-bed92d9f0362.md
-?? SESSION_HANDOFF_2026-07-06_1cec6f98-3b4b-44c6-bac3-3933b3f9c295.md
-?? SESSION_HANDOFF_2026-07-06_242a10dc-de69-44b3-b08c-00c1d0471796.md
-?? SESSION_HANDOFF_2026-07-06_24557ffb-3bb2-44c3-9eb9-4db3775df4b6.md
-?? SESSION_HANDOFF_2026-07-06_63e4317b-e5a6-4cd6-9caf-0a7fd723cf6a.md
-?? SESSION_HANDOFF_2026-07-06_65f6f1c1-acb9-4a2c-aa0c-e98cbfa4f678.md
-?? SESSION_HANDOFF_2026-07-06_662a18d9-e915-4a80-a97a-4392ec3aee60.md
-?? SESSION_HANDOFF_2026-07-06_7013d59a-1551-44f7-aa2e-661e31ed2316.md
-?? SESSION_HANDOFF_2026-07-06_711bf96b-b23a-40de-9246-ba1216e8050e.md
-?? SESSION_HANDOFF_2026-07-06_907ad490-5048-4d4b-826d-27a74395aee7.md
-?? SESSION_HANDOFF_2026-07-06_98a14f41-6230-4863-94b1-49a4655e39f7.md
-?? SESSION_HANDOFF_2026-07-06_adc68b55-16da-434d-9a66-fc4a4b40af90.md
-?? SESSION_HANDOFF_2026-07-06_b6ab8be7-3f75-44cb-8594-0295b0d54261.md
-?? SESSION_HANDOFF_2026-07-06_ca9f4967-61a3-4e1c-b09d-9a7b0f0892d6.md
-?? SESSION_HANDOFF_2026-07-06_cb3f16dd-d3c5-42bf-8a10-7c5d65c29513.md
-?? SESSION_HANDOFF_2026-07-06_df03e38d-88b8-4467-ab9e-df15f1c03a3c.md
-?? SESSION_HANDOFF_2026-07-06_dfe32281-f023-48ac-b75b-6260243d3ccc.md
-?? SESSION_HANDOFF_2026-07-06_e89674ed-76b4-4979-a13d-ffb784f9a28d.md
-?? SESSION_HANDOFF_2026-07-07_019f3cdc-d45c-79e3-9257-952d0418c08a.md
-?? SESSION_HANDOFF_2026-07-07_019f3d24-6d2e-7f63-a582-fd7d39f5ca04.md
-?? SESSION_HANDOFF_2026-07-07_019f3d25-40c2-72b1-8df2-dd5ff19ea30a.md
-?? SESSION_HANDOFF_2026-07-07_019f3d27-ae6e-7032-891c-49c299562aaf.md
-?? SESSION_HANDOFF_2026-07-07_019f3d29-4aab-7212-8f1f-141b9fbab640.md
-?? SESSION_HANDOFF_2026-07-07_019f3d2d-04aa-7110-b27e-166b1a3f9b64.md
-?? SESSION_HANDOFF_2026-07-07_019f3d33-1fe6-70d0-9753-4bbc5ea51a2b.md
-?? SESSION_HANDOFF_2026-07-07_019f3d35-c82a-7fc3-9b67-9528159dd5db.md
-?? SESSION_HANDOFF_2026-07-07_5360980c-fbf6-464f-9218-7740228e4d2f.md
-?? SESSION_HANDOFF_2026-07-07_68e08ab5-bcaa-4f77-aa9e-84bbd6e754a2.md
-?? SESSION_HANDOFF_2026-07-07_99067da6-77ef-4891-9e75-b26746320298.md
-?? SESSION_HANDOFF_2026-07-07_e61dae50-84a9-4daa-83f1-6130b28bed55.md
-?? artifacts/api-server/__mint-agent-session.mts
-?? artifacts/api-server/src/routes/tax.ts
-?? artifacts/api-server/src/services/platform-session.test.ts
-?? artifacts/api-server/src/services/platform-tax-preflight.test.ts
+?? artifacts/api-server/src/routes/signal-monitor-route-cache.test.ts
 ?? artifacts/api-server/src/services/signal-monitor-breadth-history.test.ts
-?? artifacts/api-server/src/services/signal-options-candidate-display.test.ts
-?? artifacts/api-server/src/services/signal-options-position-fold.test.ts
-?? artifacts/api-server/src/services/tax-planning-model.test.ts
-?? artifacts/api-server/src/services/tax-planning-model.ts
-?? artifacts/api-server/src/services/tax-planning.test.ts
-?? artifacts/api-server/src/services/tax-planning.ts
-?? artifacts/pyrus/public/brand/
-?? artifacts/pyrus/src/boot-neural-scene.tsx
-?? artifacts/pyrus/src/boot-neural.tsx
-?? artifacts/pyrus/src/components/marketing/
-?? artifacts/pyrus/src/lib/observe-visibility.ts
-?? artifacts/pyrus/src/lib/pyrus-mark-geometry.ts
-?? artifacts/pyrus/src/lib/webglCapability.test.ts
-?? artifacts/pyrus/src/screens/account/TaxCenterPanel.jsx
-?? artifacts/pyrus/src/screens/settings/TaxSettingsPanel.jsx
-?? artifacts/pyrus/src/styles/
-?? docs/plans/2026-07-06-approach-a-running-tally-tasks.md
-?? docs/plans/2026-07-06-running-tally-PICKUP.md
-?? docs/plans/2026-07-06-signal-options-push-native-redesign-scope.md
-?? docs/plans/2026-07-07-signal-options-live-money-plan.md
-?? lib/db/migrations/20260706_tax_planning_foundation.sql
-?? lib/db/src/schema/tax.ts
+?? artifacts/pyrus/src/components/ui/button.tsx
+?? artifacts/pyrus/src/components/ui/card.tsx
+?? artifacts/pyrus/src/components/ui/field.tsx
+?? artifacts/pyrus/src/components/ui/input.tsx
+?? artifacts/pyrus/src/components/ui/label.tsx
+?? artifacts/pyrus/src/components/ui/separator.tsx
+?? artifacts/pyrus/src/features/platform/queryDefaults.test.mjs
+?? docs/reviews/
 ```
 
 ## Diff Summary
 
 ```text
- .env.example               |   12 +
- CLAUDE.md                  |   16 +-
- ...66-a21c-d05fec4e58f6.md | 1318 +-----
- ...4b-b117-9efbb977226a.md | 1311 +----
- ...5e-a500-95045ce2a39e.md | 1303 +----
- SESSION_HANDOFF_CURRENT.md |   12 +-
- ...tal-hosted-connector.md |  266 ++
- SESSION_HANDOFF_MASTER.md  |  553 +--
- ...roker-execution.test.ts |   23 +
- .../src/routes/index.ts    |    4 +
- .../src/routes/platform.ts |    9 +
- .../services/account.ts    |   26 +-
- ...cockpit-streams.test.ts |  257 +
- ...algo-cockpit-streams.ts |  325 +-
- ...worker-pressure.test.ts |   71 +-
- ...night-spot-execution.ts |   14 +-
- ...vernight-spot-worker.ts |   41 +-
- .../services/platform.ts   |  106 +-
- ...source-pressure.test.ts |   52 +-
- .../resource-pressure.ts   |   19 +-
- ...route-admission.test.ts |   38 +
- .../route-admission.ts     |   14 +
- ...b-equity-orders.test.ts |   87 +
- ...schwab-equity-orders.ts |   61 +-
- .../shadow-account.ts      |    2 +-
- ...or-evaluation-worker.ts |  187 +-
- ...-cache-prefetch.test.ts |   52 +
- ...itor-local-bar-cache.ts |   21 +
- ...minimal-readset.test.ts |   84 +
- ...-monitor-stream.test.ts |  192 +
- .../signal-monitor.ts      |  228 +-
- ...l-options-automation.ts | 1191 ++++-
- ...ledger-recovery.test.ts |   56 +-
- ...osition-tick-manager.ts |   10 +-
- ...ignal-options-worker.ts |   60 +-
- ...e-equity-orders.test.ts |   26 +-
- ...ptrade-equity-orders.ts |   57 +
- .../host/procinfo.test.mjs |   18 +-
- .../src/host/procinfo.ts   |   28 +-
- artifacts/pyrus/index.html |   67 +-
- .../pyrus/package.json     |    1 -
- .../flightRecorder.mjs     |   63 +-
- .../scripts/runDevApp.mjs  |    4 +
- .../pyrus/src/app/App.tsx  |    4 +-
- .../src/app/AppContent.tsx |    4 +-
- .../pyrus-loader-mark.tsx  |   12 +-
- .../brand/pyrus-mark.tsx   |   34 +-
- .../pyrus-wordmark.tsx     |   23 +-
- .../NeuralCanvas.tsx       |  141 +-
- .../NeuralLoader.tsx       |  206 +-
- .../NeuralPoints.tsx       |  150 -
- .../useMorphMachine.ts     |    6 +-
- .../SignalDots.jsx         |   32 +-
- .../SignalDots.test.mjs    |   36 +-
- .../platform/AppHeader.jsx |  124 +-
- .../MobileMoreSheet.jsx    |    5 -
- .../PlatformApp.jsx        |    6 +-
- .../PlatformShell.jsx      |    5 -
- .../PlatformWatchlist.jsx  |    7 +-
- ...gFallbackTheme.test.mjs |   64 +-
- .../signalFrameState.js    |   10 +-
- ...signalStateFreshness.js |   19 +-
- ...StateFreshness.test.mjs |   17 +
- .../signalsRowModel.js     |   67 +-
- ...ignalsRowModel.test.mjs |   72 +-
- .../TradeOrderTicket.jsx   |  318 +-
- .../pyrus/src/index.css    |    1 +
- .../src/lib/formatters.js  |   23 +
- .../lib/webglCapability.ts |   79 +-
- .../pyrus/src/main.tsx     |   10 +
- .../AccountScreen.jsx      |   20 +
- .../SettingsScreen.jsx     |   15 +
- ...onsSignalTable.test.mjs |   24 +-
- ...ernightControlPanel.jsx |   24 +-
- .../algo/algoHelpers.js    |    8 +-
- .../pyrus/vite.config.ts   |  109 +-
- ...tor-local-setup-spec.md |  610 ++-
- lib/db/src/schema/index.ts |    1 +
- .../src/client.ts          |    2 +
- pnpm-lock.yaml             |  149 -
- replit.md                  |    2 +-
- scripts/README.md          |   19 +-
- ...plit-startup-guards.mjs |   28 +-
- ...-validation-command.mjs |  189 +-
- 84 files changed, 5365 insertions(+), 5595 deletions(-)
+ ...-464f-9218-7740228e4d2f.md |  424 +-
+ ...-4f77-aa9e-84bbd6e754a2.md |  422 +-
+ ...-4daa-83f1-6130b28bed55.md |  435 +-
+ SESSION_HANDOFF_CURRENT.md    |    6 +-
+ SESSION_HANDOFF_MASTER.md     |    6 +-
+ .../routes/signal-monitor.ts  |   75 +-
+ ...tor-completed-bars.test.ts |    6 +-
+ ...le-minimal-readset.test.ts |   84 +
+ ...nal-monitor-stream.test.ts |  240 +-
+ .../signal-monitor.ts         |  359 +-
+ ...options-automation.test.ts |   46 +
+ ...gnal-options-automation.ts |    9 +-
+ .../artifact.toml             |    2 +
+ artifacts/pyrus/package.json  |    2 +
+ ...preloadContention.test.mjs |   30 +
+ .../auth/LoginGate.jsx        |  358 +-
+ .../BacktestingPanels.tsx     |   37 -
+ ...stributionScannerPanel.jsx |   12 +
+ .../market/MultiChartGrid.jsx |    2 +-
+ ...taSubscriptionProvider.jsx |   12 +-
+ .../platform/PlatformApp.jsx  |   14 +-
+ .../live-streams.test.mjs     |   10 +
+ .../platformJsonRequest.js    |    5 +
+ ...atformJsonRequest.test.mjs |   20 +
+ .../platform/queryDefaults.js |   27 +-
+ .../signalsMatrixHydration.js |    2 +-
+ ...lsMatrixHydration.test.mjs |   19 +
+ .../signalsRowModel.js        |   49 +-
+ .../signalsRowModel.test.mjs  |   62 +
+ .../AlgoScreen.test.mjs       |    8 +
+ .../DiagnosticsScreen.jsx     |    3 +-
+ .../SettingsScreen.jsx        |    7 +-
+ .../screens/SignalsScreen.jsx |   72 +-
+ ...en.state-contract.test.mjs |   37 +
+ .../algo/AlgoLivePage.jsx     |    7 +-
+ .../AlgoLivePage.test.mjs     |   16 +
+ ...ationsSignalTable.test.mjs |   24 +-
+ lib/db/src/index.ts           |   26 +-
+ lib/db/src/testing.ts         |   32 +-
+ pnpm-lock.yaml                | 1613 +++++-
+ 40 files changed, 3286 insertions(+), 1334 deletions(-)
 ```
 
 ## Validations Detected In Transcript
@@ -968,13 +798,22 @@ please find the 4 work sessions we mos recently had going
 
 ## What Changed This Session
 
-- Replace this section with the concrete product and code changes completed in the session.
+- (Confirmed post-session by resume session `dbf9de08-71d7-4509-ac40-dd8b63453ff7` on 2026-07-07 ~12:40 MDT.)
+- Landing 1: 9/9 themed commits `dcf7f449..4feae5d4` landed on main, final gate green; user pushed and rebuilt (~10:38 MDT).
+- Post-push fix wave via Codex workers (reports in `.codex-watch/*-2026-07-07.md`): breadth investigation + fix, freshness/hydration investigation, ELU profile, algo-flicker, age-honesty, STA-freeze, signals-restrictions audit; shadcn login-03 installed by subagent.
+- Landing 2: executor `baf8hyxw0` completed AFTER the last autosave (18:12Z). 8/8 themed commits `0e6aa6c0..1d5e0b9d` landed on top of sibling base `65e9b71b` (lib/db pool.query test seam). Final gate green: api-server + pyrus typechecks, api build, 56 API tests + 9 web tests passed, `audit:replit-startup` ok. Report: `.codex-watch/landing2-execution-report-2026-07-07.md`.
+- All 8 commits carry the `Co-Authored-By: Claude Fable 5` trailer; git index empty at reconciliation.
 
 ## Current Status
 
-- Replace this section with current validation status, blockers, and any known runtime gaps.
+- main is ahead of origin/main by 9 commits (`65e9b71b` + the 8 landing2 commits) — NOT pushed.
+- Live API restarted 12:17 MDT with dist built 12:17 (after last commit) — landing2 code is live; healthz 200.
+- OPEN: agent-chat git-index claim posted 17:34Z by `claude-lead` was never RELEASED (session ended first). Landing verified complete; release message pending user approval.
+- HOLD residue intentionally left unstaged: `signal-monitor.ts` events-cache residue, `signal-options-automation.ts`/`.test.ts` WIP (Fix C — tally mode=on gated on comparator like-for-like fix per `claude-fable-5360980c` 17:15Z chat), `OperationsSignalTable.test.mjs`, late UI polish files. Sibling overnight-expectancy work (backtesting/backtest-worker/lib-db expectancy files) belongs to Codex session `019f3dd2-17b6-79d0-8b26-b64ef6d1c15d`.
 
 ## Next Recommended Steps
 
-1. Replace this item with the highest-priority next step.
-2. Replace this item with the next validation or bring-up step.
+1. Push the 9 commits (user action, per established flow) after any final review.
+2. Post RELEASED to agent-chat lifting the 17:34Z git-index claim (blocked by permission in resume session — needs user approval).
+3. Work the consolidated open task list extracted from the `.codex-watch` reports (see resume session `dbf9de08` handoff).
+4. Resolve the signal-options tally comparator like-for-like gate, then sync/commit Fix C hunks in `signal-options-automation.ts`.

@@ -1,0 +1,200 @@
+{
+  "startedAt": "2026-07-06T19:45:27.322Z",
+  "endedAt": "2026-07-06T19:47:34.577Z",
+  "durationMs": 127255,
+  "events": [
+    {
+      "atMs": 3216,
+      "kind": "console.warning",
+      "text": "THREE.Clock: This module has been deprecated. Please use THREE.Timer instead.",
+      "url": "http://127.0.0.1:18747/node_modules/.vite/deps/chunk-QXHFEY3F.js?v=e599cbd2"
+    },
+    {
+      "atMs": 3442,
+      "kind": "console.warning",
+      "text": "[.WebGL-0x397c03962400]GL Driver Message (OpenGL, Performance, GL_CLOSE_PATH_NV, High): GPU stall due to ReadPixels",
+      "url": "http://127.0.0.1:18747/"
+    },
+    {
+      "atMs": 3637,
+      "kind": "console.warning",
+      "text": "[.WebGL-0x397c03962400]GL Driver Message (OpenGL, Performance, GL_CLOSE_PATH_NV, High): GPU stall due to ReadPixels",
+      "url": "http://127.0.0.1:18747/"
+    },
+    {
+      "atMs": 3656,
+      "kind": "console.warning",
+      "text": "[.WebGL-0x397c03962400]GL Driver Message (OpenGL, Performance, GL_CLOSE_PATH_NV, High): GPU stall due to ReadPixels",
+      "url": "http://127.0.0.1:18747/"
+    },
+    {
+      "atMs": 21642,
+      "kind": "sample_failed",
+      "label": "tick",
+      "message": "dom sample timed out after 5000ms"
+    },
+    {
+      "atMs": 36579,
+      "kind": "sample_failed",
+      "label": "tick",
+      "message": "dom sample timed out after 5000ms"
+    },
+    {
+      "atMs": 38353,
+      "kind": "console.warning",
+      "text": "[.WebGL-0x397c03962400]GL Driver Message (OpenGL, Performance, GL_CLOSE_PATH_NV, High): GPU stall due to ReadPixels (this message will no longer repeat)",
+      "url": "http://127.0.0.1:18747/"
+    },
+    {
+      "atMs": 51707,
+      "kind": "sample_failed",
+      "label": "tick",
+      "message": "dom sample timed out after 5000ms"
+    },
+    {
+      "atMs": 66583,
+      "kind": "sample_failed",
+      "label": "tick",
+      "message": "dom sample timed out after 5000ms"
+    },
+    {
+      "atMs": 81579,
+      "kind": "sample_failed",
+      "label": "tick",
+      "message": "dom sample timed out after 5000ms"
+    },
+    {
+      "atMs": 96583,
+      "kind": "sample_failed",
+      "label": "tick",
+      "message": "dom sample timed out after 5000ms"
+    },
+    {
+      "atMs": 126584,
+      "kind": "sample_failed",
+      "label": "tick",
+      "message": "dom sample timed out after 5000ms"
+    }
+  ],
+  "eventCounts": {
+    "console.warning": 5,
+    "sample_failed": 7
+  },
+  "apiHeaders": [
+    {
+      "atMs": 906,
+      "source": "healthz",
+      "status": 200,
+      "pressure": "high",
+      "resource": "high",
+      "admission": "allow",
+      "routeClass": "active-screen"
+    },
+    {
+      "atMs": 38357,
+      "source": "browser",
+      "status": 200,
+      "url": "http://127.0.0.1:18747/api/auth/session",
+      "method": "GET",
+      "pressure": "high",
+      "resource": "high",
+      "admission": "allow",
+      "routeClass": "active-screen"
+    },
+    {
+      "atMs": 66624,
+      "source": "healthz",
+      "status": 200,
+      "pressure": "high",
+      "resource": "high",
+      "admission": "allow",
+      "routeClass": "active-screen"
+    },
+    {
+      "atMs": 109285,
+      "source": "browser",
+      "status": 202,
+      "url": "http://127.0.0.1:18747/api/diagnostics/client-metrics",
+      "method": "POST",
+      "pressure": "high",
+      "resource": "high",
+      "admission": "allow",
+      "routeClass": "active-screen"
+    },
+    {
+      "atMs": 127149,
+      "source": "healthz",
+      "status": 200,
+      "pressure": "high",
+      "resource": "high",
+      "admission": "allow",
+      "routeClass": "active-screen"
+    },
+    {
+      "atMs": 127252,
+      "source": "healthz",
+      "status": 200,
+      "pressure": "high",
+      "resource": "high",
+      "admission": "allow",
+      "routeClass": "active-screen"
+    }
+  ],
+  "apiHeaderCounts": {
+    "healthz:200:high:high:allow:active-screen": 4,
+    "browser:200:high:high:allow:active-screen": 1,
+    "browser:202:high:high:allow:active-screen": 1
+  },
+  "samples": [
+    {
+      "atMs": 1567,
+      "label": "initial",
+      "state": {
+        "text": "PYRUS Loading app shell 17% Loading app shell 17% PYRUS Loading app shell 17% Loading app shell 17%",
+        "hasLoginGate": false,
+        "platformStack": false,
+        "activeScreenId": null,
+        "loading": [
+          {
+            "id": "app-loading-fallback",
+            "text": "PYRUSLoading app shell17%Loading app shell 17%"
+          },
+          {
+            "id": "neural-stage",
+            "text": "PYRUSLoading app shell17%Loading app shell 17%"
+          },
+          {
+            "id": "neural-stage-fallback",
+            "text": "PYRUSLoading app shell17%Loading app shell 17%"
+          }
+        ],
+        "alerts": [],
+        "viteOverlay": false,
+        "rootCrash": false,
+        "fontsStatus": "loading",
+        "horizontalOverflow": false
+      }
+    },
+    {
+      "atMs": 109285,
+      "label": "tick",
+      "state": {
+        "text": "",
+        "hasLoginGate": false,
+        "platformStack": false,
+        "activeScreenId": null,
+        "loading": [
+          {
+            "id": "neural-stage",
+            "text": ""
+          }
+        ],
+        "alerts": [],
+        "viteOverlay": false,
+        "rootCrash": false,
+        "fontsStatus": "loaded",
+        "horizontalOverflow": false
+      }
+    }
+  ]
+}

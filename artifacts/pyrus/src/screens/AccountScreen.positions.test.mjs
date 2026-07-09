@@ -41,6 +41,25 @@ test("SnapTrade account positions enable live Massive quote hydration", () => {
   );
 });
 
+test("real account tabs request live mode even when the workspace is shadow", () => {
+  assert.match(
+    source,
+    /const resolveAccountMode = \(\{ shadowMode = false, environment \} = \{\}\) => \{\s*if \(shadowMode\) \{\s*return "shadow";\s*\}\s*return "live";\s*\};/,
+    "Only the Shadow account tab may use shadow mode; real brokerage tabs are live-mode entities.",
+  );
+});
+
+test("account tabs render above the account summary hero", () => {
+  const tabsIndex = source.indexOf("<AccountTabs");
+  const heroIndex = source.indexOf("<AccountHeroBlock");
+  assert.ok(tabsIndex >= 0, "Missing AccountTabs render");
+  assert.ok(heroIndex >= 0, "Missing AccountHeroBlock render");
+  assert.ok(
+    tabsIndex < heroIndex,
+    "Account tab selection should appear before the account info/KPI hero.",
+  );
+});
+
 test("SnapTrade account equity inspector uses provider-normalized positions", () => {
   assert.match(
     source,
@@ -49,7 +68,7 @@ test("SnapTrade account equity inspector uses provider-normalized positions", ()
   );
 });
 
-test("SnapTrade account history query feeds closed trades and equity history", () => {
+test("SnapTrade account history query does not override generic derived surfaces", () => {
   assert.match(
     source,
     /useGetSnapTradeAccountHistory/,
@@ -67,18 +86,23 @@ test("SnapTrade account history query feeds closed trades and equity history", (
   );
   assert.match(
     source,
-    /const tradesQueryForDisplay = snapTradeAccountPanelsEnabled\s*\?\s*buildProviderAccountQuery\(snapTradeHistoryQuery, snapTradePanelData\?\.closedTrades\)\s*:\s*tradesQuery;/,
-    "SnapTrade trading analysis must use history-backed closed trades",
+    /const tradesQueryForDisplay = tradesQuery;/,
+    "SnapTrade trading analysis must use the generic closed-trades endpoint",
   );
   assert.match(
     source,
-    /const performanceCalendarTradesQueryForDisplay = snapTradeAccountPanelsEnabled\s*\?\s*buildProviderAccountQuery\(snapTradeHistoryQuery, snapTradePanelData\?\.closedTrades\)\s*:\s*performanceCalendarTradesQuery;/,
-    "SnapTrade returns calendar must use history-backed closed trades",
+    /const performanceCalendarTradesQueryForDisplay = performanceCalendarTradesQuery;/,
+    "SnapTrade returns calendar must use the generic closed-trades endpoint",
   );
   assert.match(
     source,
-    /const performanceCalendarEquityQueryForDisplay = snapTradeAccountPanelsEnabled\s*\?\s*buildProviderAccountQuery\(snapTradeHistoryQuery, snapTradePanelData\?\.equityHistory\)\s*:\s*performanceCalendarEquityQuery;/,
-    "SnapTrade returns calendar must use history-backed equity points",
+    /const performanceCalendarEquityQueryForDisplay = performanceCalendarEquityQuery;/,
+    "SnapTrade returns calendar must use the generic true-NAV equity endpoint",
+  );
+  assert.doesNotMatch(
+    source,
+    /buildProviderAccountQuery\(snapTradeHistoryQuery, snapTradePanelData\?\.equityHistory\)/,
+    "SnapTrade activity-ledger equity reconstruction must not drive the displayed curve",
   );
 });
 

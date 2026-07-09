@@ -384,7 +384,7 @@ export const resolveHeaderScanWave = ({
   }
 
   const operationsStatus = resolveOperationsStatus({
-    gatewayReady: signalScanReady,
+    marketDataReady: signalScanReady,
     scanOn: deploymentEnabled,
     deploymentEnabled,
     attentionSeverity,
@@ -643,7 +643,7 @@ export const AlgoLivePage = ({
   // Attention
   cockpitAttentionItems,
   signalOptionsRuleAdherence,
-  gatewayReady,
+  marketDataReady,
   signalScanReady = true,
   signalScanBlockedReason = null,
   // Transitions
@@ -682,7 +682,6 @@ export const AlgoLivePage = ({
   modeChangePending = false,
   accountId,
   environment,
-  bridgeTone,
   handleToggleDeployment,
   handleRefreshSignals,
   enableDeploymentMutation,
@@ -856,7 +855,7 @@ export const AlgoLivePage = ({
   const attentionStream = buildAttentionStream({
     attentionItems: cockpitAttentionItems,
     ruleAdherence: signalOptionsRuleAdherence,
-    gatewayReady,
+    marketDataReady,
     gatewayBlocks: cockpitTradePath.gatewayBlocks,
   });
   const attentionSeverity = resolveAttentionSeverity(attentionStream);
@@ -897,14 +896,14 @@ export const AlgoLivePage = ({
       ? "Signal action scan already running"
       : "Run signal scan";
   const operationsStatus = resolveOperationsStatus({
-    gatewayReady,
+    marketDataReady,
     scanOn: Boolean(focusedDeployment?.enabled),
     deploymentEnabled: Boolean(focusedDeployment?.enabled),
     attentionSeverity,
   });
   const algoHeaderFailurePoint = buildAlgoStatusFailurePoint({
     status: operationsStatus,
-    gatewayReady,
+    marketDataReady,
     scanOn: Boolean(focusedDeployment?.enabled),
     deploymentEnabled: Boolean(focusedDeployment?.enabled),
     attentionItems: attentionStream,
@@ -925,13 +924,6 @@ export const AlgoLivePage = ({
     deployment: focusedDeployment,
     accountId,
   });
-  const bridgeToneLabel = String(bridgeTone?.label || "").trim();
-  const bridgeToneDuplicatesHeaderWave =
-    !gatewayReady &&
-    ["offline", "warning"].includes(
-      String(headerScanWave.badgeLabel || "").trim().toLowerCase(),
-    ) &&
-    ["offline", "warning"].includes(bridgeToneLabel.toLowerCase());
   const headerStatusItems = [
     deploymentMode
       ? { label: deploymentMode, color: CSS_COLOR.textSec, active: false }
@@ -944,13 +936,10 @@ export const AlgoLivePage = ({
           active: true,
         },
     {
-      label: gatewayReady ? "broker ready" : "broker off",
-      color: gatewayReady ? CSS_COLOR.green : CSS_COLOR.amber,
-      active: !gatewayReady,
+      label: marketDataReady ? "market data" : "market data off",
+      color: marketDataReady ? CSS_COLOR.green : CSS_COLOR.amber,
+      active: !marketDataReady,
     },
-    bridgeToneLabel && bridgeTone.color !== CSS_COLOR.green && !bridgeToneDuplicatesHeaderWave
-      ? { label: bridgeToneLabel, color: bridgeTone.color, active: true }
-      : null,
   ].filter(Boolean);
   const hasActivitySummary = Boolean(
     activitySummary?.segments?.some(

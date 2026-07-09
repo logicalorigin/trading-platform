@@ -15,6 +15,7 @@ import {
 } from "./snaptrade-readiness";
 import { loadSnapTradeUserCredential } from "./snaptrade-user-custody";
 import { getSnapTradeAccountPortfolio } from "./snaptrade-account-portfolio";
+import { loadStoredMarketBarsForSymbols } from "./market-data-store";
 import {
   calculateTransferAdjustedReturnPoints,
   classifyExternalCashTransfer,
@@ -23,6 +24,7 @@ import {
   type ActivityLedgerEquityEvent,
 } from "./account-equity-history-model";
 import { readEnvString } from "../lib/env";
+import { resolveNyseCalendarDay } from "@workspace/market-calendar";
 
 type SnapTradeCredentials = {
   clientId: string;
@@ -196,6 +198,27 @@ type ActivityLot = {
   valueRemaining: number;
   feeRemaining: number;
   openedAt: Date;
+};
+
+type EquityMarkActivity = {
+  day: string;
+  symbol: string;
+  side: "BUY" | "SELL";
+  quantity: number;
+  value: number;
+  fee: number;
+  currency: string;
+};
+
+type EquityMarkLot = {
+  quantityRemaining: number;
+  valueRemaining: number;
+  feeRemaining: number;
+};
+
+type EquityMarkBook = {
+  longLots: EquityMarkLot[];
+  shortLots: EquityMarkLot[];
 };
 
 const LOCAL_ID_PREFIX = "snaptrade:";
@@ -754,6 +777,16 @@ function activitySortAsc(
 function activityTradeSide(
   activity: SnapTradeHistoryActivity,
 ): "BUY" | "SELL" | null {
+  if (isOptionExpirationActivity(activity)) {
+    const quantity = activity.quantity ?? 0;
+    if (quantity > 0) {
+      return "BUY";
+    }
+    if (quantity < 0) {
+      return "SELL";
+    }
+    return null;
+  }
   if (activity.type === "BUY" || activity.type === "SELL") {
     return activity.type;
   }
@@ -774,6 +807,10 @@ function activityTradeSide(
   return null;
 }
 
+function isOptionExpirationActivity(activity: SnapTradeHistoryActivity): boolean {
+  return activity.type.toUpperCase() === "OPTIONEXPIRATION";
+}
+
 function activityKey(activity: SnapTradeHistoryActivity): string {
   return [
     activity.accountId,
@@ -788,6 +825,9 @@ function activityMultiplier(activity: SnapTradeHistoryActivity): number {
 
 function activityNotional(activity: SnapTradeHistoryActivity): number | null {
   const quantity = Math.abs(activity.quantity ?? 0);
+  if (isOptionExpirationActivity(activity) && quantity > 0) {
+    return 0;
+  }
   if (activity.amount != null && activity.amount !== 0) {
     return Math.abs(activity.amount);
   }
@@ -827,7 +867,13 @@ function consumeLots(input: {
         ? closeValue - openValue - openFee - closeFee
         : openValue - closeValue - openFee - closeFee;
     const openDate = lot.openedAt;
-    const closeDate = new Date(input.closingActivity.tradeDate);
+    const expirationCloseDate =
+      isOptionExpirationActivity(input.closingActivity) &&
+      input.closingActivity.optionContract?.expirationDate
+        ? parseDate(input.closingActivity.optionContract.expirationDate)
+        : null;
+    const closeDate =
+      expirationCloseDate ?? new Date(input.closingActivity.tradeDate);
     const feeAdjustedOpenValue =
       input.closeSide === "sell" ? openValue + openFee : openValue - openFee;
     const feeAdjustedCloseValue =
@@ -1124,6 +1170,240 @@ function activityLedgerEquityEvents(input: {
   return events;
 }
 
+function marketDateKey(value: Date | string | null | undefined): string | null {
+  const timestamp = value instanceof Date ? value : parseDate(value);
+  if (!timestamp || Number.isNaN(timestamp.getTime())) {
+    return null;
+  }
+  return resolveNyseCalendarDay(timestamp)?.date ?? null;
+}
+
+function barMarketDateKey(value: Date): string {
+  return value.toISOString().slice(0, 10);
+}
+
+function equityMarkActivities(
+  activities: SnapTradeHistoryActivity[],
+): EquityMarkActivity[] {
+  return activities
+    .filter((activity) => !activity.optionContract)
+    .sort(activitySortAsc)
+    .map((activity) => {
+      const side = activityTradeSide(activity);
+      const day = marketDateKey(activity.tradeDate);
+      const symbol = normalizeSymbol(activity.symbol ?? activity.rawSymbol);
+      const quantity = Math.abs(activity.quantity ?? 0);
+      const value = activityNotional(activity);
+      if (!side || !day || !symbol || quantity <= 0 || value == null) {
+        return null;
+      }
+      return {
+        day,
+        symbol,
+        side,
+        quantity,
+        value,
+        fee: Math.abs(activity.fee ?? 0),
+        currency: activity.currency,
+      };
+    })
+    .filter((activity): activity is EquityMarkActivity => activity !== null);
+}
+
+function reduceEquityMarkLots(
+  lots: EquityMarkLot[],
+  quantityToClose: number,
+): number {
+  let remaining = quantityToClose;
+  while (remaining > 1e-9 && lots.length) {
+    const lot = lots[0];
+    const closedQuantity = Math.min(remaining, lot.quantityRemaining);
+    const ratio = closedQuantity / lot.quantityRemaining;
+    lot.quantityRemaining -= closedQuantity;
+    lot.valueRemaining -= lot.valueRemaining * ratio;
+    lot.feeRemaining -= lot.feeRemaining * ratio;
+    remaining -= closedQuantity;
+    if (lot.quantityRemaining <= 1e-9) {
+      lots.shift();
+    }
+  }
+  return remaining;
+}
+
+function addEquityMarkLot(
+  lots: EquityMarkLot[],
+  activity: EquityMarkActivity,
+  quantity: number,
+) {
+  if (quantity <= 1e-9) {
+    return;
+  }
+  const ratio = quantity / activity.quantity;
+  lots.push({
+    quantityRemaining: quantity,
+    valueRemaining: activity.value * ratio,
+    feeRemaining: activity.fee * ratio,
+  });
+}
+
+function applyEquityMarkActivity(
+  books: Map<string, EquityMarkBook>,
+  activity: EquityMarkActivity,
+) {
+  const book = books.get(activity.symbol) ?? { longLots: [], shortLots: [] };
+  if (activity.side === "BUY") {
+    const remaining = reduceEquityMarkLots(book.shortLots, activity.quantity);
+    addEquityMarkLot(book.longLots, activity, remaining);
+  } else {
+    const remaining = reduceEquityMarkLots(book.longLots, activity.quantity);
+    addEquityMarkLot(book.shortLots, activity, remaining);
+  }
+  books.set(activity.symbol, book);
+}
+
+function equityMarkForBook(book: EquityMarkBook, close: number): number | null {
+  const longMark = book.longLots.reduce((sum, lot) => {
+    if (lot.quantityRemaining <= 1e-9) {
+      return sum;
+    }
+    return (
+      sum +
+      lot.quantityRemaining * close -
+      lot.valueRemaining -
+      lot.feeRemaining
+    );
+  }, 0);
+  const shortMark = book.shortLots.reduce((sum, lot) => {
+    if (lot.quantityRemaining <= 1e-9) {
+      return sum;
+    }
+    return (
+      sum +
+      lot.valueRemaining -
+      lot.quantityRemaining * close -
+      lot.feeRemaining
+    );
+  }, 0);
+  const totalQuantity =
+    book.longLots.reduce((sum, lot) => sum + lot.quantityRemaining, 0) +
+    book.shortLots.reduce((sum, lot) => sum + lot.quantityRemaining, 0);
+  return totalQuantity > 1e-9 ? roundFinancialNumber(longMark + shortMark) : null;
+}
+
+function equityMarkBookHasOpenQuantity(book: EquityMarkBook): boolean {
+  return (
+    book.longLots.some((lot) => lot.quantityRemaining > 1e-9) ||
+    book.shortLots.some((lot) => lot.quantityRemaining > 1e-9)
+  );
+}
+
+async function storedEquityMarkEvents(input: {
+  activities: SnapTradeHistoryActivity[];
+  terminal: BalanceHistoryPoint;
+}): Promise<ActivityLedgerEquityEvent[]> {
+  const markActivities = equityMarkActivities(input.activities);
+  if (!markActivities.length) {
+    return [];
+  }
+  const firstDay = markActivities[0]?.day;
+  const terminalDay = marketDateKey(input.terminal.timestamp);
+  if (!firstDay || !terminalDay || firstDay > terminalDay) {
+    return [];
+  }
+
+  const symbols = Array.from(
+    new Set(markActivities.map((activity) => activity.symbol)),
+  );
+  const barsBySymbol = await loadStoredMarketBarsForSymbols({
+    symbols,
+    timeframe: "1d",
+    sourceName: "massive-history",
+    from: new Date(`${firstDay}T00:00:00.000Z`),
+    to: input.terminal.timestamp,
+    limit: 5000,
+  });
+  if (!barsBySymbol.size) {
+    return [];
+  }
+
+  const closesByDay = new Map<string, Map<string, number>>();
+  for (const [symbol, bars] of barsBySymbol.entries()) {
+    for (const bar of bars) {
+      const day = barMarketDateKey(bar.timestamp);
+      if (day < firstDay || day > terminalDay) {
+        continue;
+      }
+      const closes = closesByDay.get(day) ?? new Map<string, number>();
+      closes.set(symbol, bar.close);
+      closesByDay.set(day, closes);
+    }
+  }
+
+  const activitiesByDay = new Map<string, EquityMarkActivity[]>();
+  for (const activity of markActivities) {
+    const dayActivities = activitiesByDay.get(activity.day) ?? [];
+    dayActivities.push(activity);
+    activitiesByDay.set(activity.day, dayActivities);
+  }
+
+  const days = Array.from(
+    new Set([...activitiesByDay.keys(), ...closesByDay.keys()]),
+  )
+    .filter((day) => day >= firstDay && day <= terminalDay)
+    .sort();
+  const books = new Map<string, EquityMarkBook>();
+  const latestCloses = new Map<string, number>();
+  const previousMarks = new Map<string, number>();
+  const events: ActivityLedgerEquityEvent[] = [];
+  let currency = input.terminal.currency;
+
+  for (const day of days) {
+    for (const activity of activitiesByDay.get(day) ?? []) {
+      currency = activity.currency || currency;
+      applyEquityMarkActivity(books, activity);
+    }
+    const closes = closesByDay.get(day);
+    closes?.forEach((close, symbol) => latestCloses.set(symbol, close));
+
+    const symbolsToMark = new Set([
+      ...Array.from(books.keys()),
+      ...Array.from(previousMarks.keys()),
+    ]);
+    for (const symbol of symbolsToMark) {
+      const book = books.get(symbol) ?? { longLots: [], shortLots: [] };
+      const previousMark = previousMarks.get(symbol) ?? 0;
+      const close =
+        closes?.get(symbol) ??
+        (previousMarks.has(symbol) ? latestCloses.get(symbol) : undefined);
+      const currentMark =
+        close == null
+          ? equityMarkBookHasOpenQuantity(book)
+            ? previousMark
+            : 0
+          : (equityMarkForBook(book, close) ?? 0);
+      const delta = roundFinancialNumber(currentMark - previousMark);
+      if (Math.abs(delta) > 0.000001) {
+        events.push({
+          timestamp: new Date(`${day}T12:00:00.000Z`),
+          currency,
+          realizedPnl: delta,
+          deposits: 0,
+          withdrawals: 0,
+          dividends: 0,
+          fees: 0,
+        });
+      }
+      if (Math.abs(currentMark) > 0.000001) {
+        previousMarks.set(symbol, currentMark);
+      } else {
+        previousMarks.delete(symbol);
+      }
+    }
+  }
+
+  return events;
+}
+
 function parseBalanceHistoryPayload(payload: unknown, fallbackCurrency: string) {
   const record = asRecord(payload);
   const rows = Array.isArray(record["history"]) ? record["history"] : null;
@@ -1335,11 +1615,11 @@ function equityHistoryFromBalancePoints(input: {
   };
 }
 
-function snapTradeEquityHistoryPoints(input: {
+async function snapTradeEquityHistoryPoints(input: {
   activities: SnapTradeHistoryActivity[];
   closedTrades: SnapTradeHistoryTrade[];
   storedBalancePoints: BalanceHistoryPoint[];
-}): { points: EquityHistoryInputPoint[]; selectedSnapshotSource: string } {
+}): Promise<{ points: EquityHistoryInputPoint[]; selectedSnapshotSource: string }> {
   if (
     balancePointsCoverActivitySpan({
       points: input.storedBalancePoints,
@@ -1361,17 +1641,24 @@ function snapTradeEquityHistoryPoints(input: {
   }
 
   // SnapTrade accounts on plans without historical /balanceHistory only have the
-  // current NLV snapshot. This reconstructs a realized/contribution-based curve
-  // from the activity ledger and anchors the final point to that current NLV. It
-  // is not historical mark-to-market because SnapTrade does not provide past
-  // positions or prices here; open-position MTM is absorbed into the anchor.
+  // current NLV snapshot. Reconstruct from the activity ledger and, where the
+  // durable store has daily equity closes, include open-stock mark deltas. Do not
+  // fabricate option premium history here; expirations are represented by the
+  // realized close generated from the activity ledger.
+  const markEvents = await storedEquityMarkEvents({
+    activities: input.activities,
+    terminal,
+  });
   const reconstructed = reconstructEquityHistoryFromActivityLedger({
     terminal,
     source: "SNAPTRADE_BALANCE_HISTORY",
-    events: activityLedgerEquityEvents({
-      activities: input.activities,
-      closedTrades: input.closedTrades,
-    }),
+    events: [
+      ...activityLedgerEquityEvents({
+        activities: input.activities,
+        closedTrades: input.closedTrades,
+      }),
+      ...markEvents,
+    ],
   });
   if (!reconstructed.length) {
     return {
@@ -1405,6 +1692,54 @@ function filterClosedTrades(input: {
     }
     return true;
   });
+}
+
+export async function readSnapTradeAccountClosedTrades(input: {
+  accountId: string;
+  from?: Date | string | null;
+  to?: Date | string | null;
+}): Promise<SnapTradeHistoryTrade[]> {
+  const activities = await readStoredActivities({
+    accountId: input.accountId,
+    from: null,
+    to: input.to,
+  });
+  return filterClosedTrades({
+    trades: buildClosedTradesFromActivities(activities),
+    from: input.from,
+    to: input.to,
+  });
+}
+
+export async function readSnapTradeAccountEquitySeedPoints(input: {
+  accountId: string;
+}): Promise<{
+  points: AccountEquityHistorySeedPoint[];
+  selectedSnapshotSource: string;
+}> {
+  const [activities, storedBalancePoints] = await Promise.all([
+    readStoredActivities({ accountId: input.accountId, from: null, to: null }),
+    readStoredBalanceSnapshots({ accountId: input.accountId }),
+  ]);
+  const closedTrades = buildClosedTradesFromActivities(activities);
+  const equityPoints = await snapTradeEquityHistoryPoints({
+    activities,
+    closedTrades,
+    storedBalancePoints,
+  });
+  return {
+    selectedSnapshotSource: equityPoints.selectedSnapshotSource,
+    points: equityPoints.points.map((point) => ({
+      timestamp: point.timestamp,
+      netLiquidation: point.netLiquidation,
+      currency: point.currency,
+      source: "SNAPTRADE_BALANCE_HISTORY",
+      deposits: point.deposits,
+      withdrawals: point.withdrawals,
+      dividends: point.dividends,
+      fees: point.fees,
+    })),
+  };
 }
 
 function publicAccount(account: LocalSnapTradeAccount): SnapTradeHistoryAccount {
@@ -1543,7 +1878,7 @@ export async function getSnapTradeAccountHistory(
     to: options.to,
   });
   const events = activityCashEvents(activities);
-  const equityPoints = snapTradeEquityHistoryPoints({
+  const equityPoints = await snapTradeEquityHistoryPoints({
     activities,
     closedTrades: allClosedTrades,
     storedBalancePoints,

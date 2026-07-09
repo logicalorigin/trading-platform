@@ -706,6 +706,7 @@ export interface SnapTradeAccountPortfolioTotals {
   cash: number | null;
   buyingPower: number | null;
   positionMarketValue: number | null;
+  unrealizedPnl: number | null;
   netLiquidation: number | null;
   positionCount: number;
 }
@@ -788,6 +789,7 @@ export const AccountTradeSource = {
   SHADOW: 'SHADOW',
   SHADOW_ACTIVITY: 'SHADOW_ACTIVITY',
   SNAPTRADE_ACTIVITY: 'SNAPTRADE_ACTIVITY',
+  ROBINHOOD_ACTIVITY: 'ROBINHOOD_ACTIVITY',
 } as const;
 
 /**
@@ -3772,6 +3774,8 @@ export interface BrokerAccount {
   buyingPower: number;
   cash: number;
   netLiquidation: number;
+  dayPnl?: number | null;
+  dayPnlPercent?: number | null;
   accountType?: string | null;
   includedInTrading: boolean;
   totalCashValue?: number | null;

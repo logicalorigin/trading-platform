@@ -598,7 +598,7 @@ export const resolveAlgoMonitorReadinessStatus = ({
   const hasInfoOnlyReadinessPause =
     readinessReady === false && attentionItems.length > 0 && !hasWarningAttention;
   return {
-    gatewayReady: hasInfoOnlyReadinessPause ? true : readinessReady !== false,
+    marketDataReady: hasInfoOnlyReadinessPause ? true : readinessReady !== false,
     scanOn: Boolean(deploymentEnabled && readinessReady !== false),
   };
 };
@@ -1296,7 +1296,11 @@ export const PlatformAlgoMonitorSidebar = memo(function PlatformAlgoMonitorSideb
     return {
       ...(source || {}),
       timeframes: displaySignalTimeframes,
-      requiredCount: Math.max(1, displaySignalTimeframes.length),
+      // product ruling 2026-07-07: filter follows the panel's configured n-of-N —
+      // thread the profile's requiredCount through (full-count fallback when only a
+      // live selection exists). staRowPassesMtfAlignment clamps to [1, frames.length].
+      requiredCount:
+        source?.requiredCount ?? Math.max(1, displaySignalTimeframes.length),
       enabled: source?.enabled !== false,
     };
   }, [
@@ -1626,7 +1630,7 @@ export const PlatformAlgoMonitorSidebar = memo(function PlatformAlgoMonitorSideb
                 {isFollowingDeployment ? "Following" : "Follow"}
               </button>
               <OperationsStatusOrb
-                gatewayReady={monitorReadinessStatus.gatewayReady}
+                marketDataReady={monitorReadinessStatus.marketDataReady}
                 scanOn={monitorReadinessStatus.scanOn}
                 deploymentEnabled={focusedDeployment?.enabled ?? true}
                 attentionItems={attentionItems}

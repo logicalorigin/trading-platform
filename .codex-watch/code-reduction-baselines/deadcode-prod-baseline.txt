@@ -1,0 +1,7 @@
+
+> workspace@0.0.0 deadcode:prod /home/runner/workspace
+> PORT=18747 BASE_PATH=/ knip --production --include files,exports,types,duplicates --no-config-hints --workspace @workspace/pyrus --workspace @workspace/api-server --workspace @workspace/backtest-worker --workspace @workspace/mcp-server --workspace @workspace/api-client-react --workspace @workspace/api-zod --workspace @workspace/api-spec --workspace @workspace/db --workspace @workspace/backtest-core --workspace @workspace/pyrus-signals-core --workspace @workspace/ibkr-contracts
+
+Duplicate exports (1)
+DEFAULT_PYRUS_SIGNALS_CHART_SIGNAL_SETTINGS|DEFAULT_PYRUS_SIGNALS_SIGNAL_SETTINGS  lib/pyrus-signals-core/src/index.ts
+ ELIFECYCLE  Command failed with exit code 1.

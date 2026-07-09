@@ -1,0 +1,302 @@
+.......X......
+
+Failed tests:
+
+✖ React loaders use the current Pyrus brand kit assets (2.405814ms)
+  AssertionError [ERR_ASSERTION]: The input was expected to not match the regular expression /\/brand\//. Input:
+  
+  '<!DOCTYPE html>\n' +
+    '<html lang="en">\n' +
+    '  <head>\n' +
+    '    <meta charset="UTF-8" />\n' +
+    '    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />\n' +
+    '    <link rel="icon" type="image/svg+xml" href="/brand/pyrus-mark.svg" />\n' +
+    '    <title>PYRUS Platform</title>\n' +
+    '    <script>\n' +
+    '      (() => {\n' +
+    '        const storageKey = "pyrus:state:v1";\n' +
+    '        const legacyStorageKey = "pyrus:state:v1";\n' +
+    '        const readState = () => {\n' +
+    '          try {\n' +
+    '            const raw =\n' +
+    '              window.localStorage?.getItem(storageKey) ??\n' +
+    '              window.localStorage?.getItem(legacyStorageKey) ??\n' +
+    '              "{}";\n' +
+    '            return JSON.parse(raw);\n' +
+    '          } catch {\n' +
+    '            return {};\n' +
+    '          }\n' +
+    '        };\n' +
+    '        const resolveSystemTheme = () => {\n' +
+    '          try {\n' +
+    '            return window.matchMedia?.("(prefers-color-scheme: dark)")?.matches\n' +
+    '              ? "dark"\n' +
+    '              : "light";\n' +
+    '          } catch {\n' +
+    '            return "light";\n' +
+    '          }\n' +
+    '        };\n' +
+    '        const resolveTheme = () => {\n' +
+    '          try {\n' +
+    '            const state = readState();\n' +
+    '            const preferenceTheme = state?.userPreferences?.appearance?.theme;\n' +
+    '            if (preferenceTheme === "light" || preferenceTheme === "dark") {\n' +
+    '              return preferenceTheme;\n' +
+    '            }\n' +
+    '            if (preferenceTheme === "system") {\n' +
+    '              return resolveSystemTheme();\n' +
+    '            }\n' +
+    '            if (state?.theme === "light" || state?.theme === "dark") {\n' +
+    '              return state.theme;\n' +
+    '            }\n' +
+    '            return resolveSystemTheme();\n' +
+    '          } catch {\n' +
+    '            return resolveSystemTheme();\n' +
+    '          }\n' +
+    '        };\n' +
+    '\n' +
+    '        const theme = resolveTheme();\n' +
+    '        document.documentElement.dataset.pyrusTheme = theme;\n' +
+    '        document.documentElement.dataset.pyrusTheme = theme;\n' +
+    '\n' +
+    '        const resolveAccentPreset = () => {\n' +
+    '          try {\n' +
+    '            const state = readState();\n' +
+    '            const preset = state?.userPreferences?.appearance?.accentPreset;\n' +
+    '            if (\n' +
+    '              preset === "pyrus" ||\n' +
+    '              preset === "coral" ||\n' +
+    '              preset === "amber" ||\n' +
+    '              preset === "green" ||\n' +
+    '              preset === "aurora"\n' +
+    '            ) {\n' +
+    '              return preset;\n' +
+    '            }\n' +
+    '            return "pyrus";\n' +
+    '          } catch {\n' +
+    '            return "pyrus";\n' +
+    '          }\n' +
+    '        };\n' +
+    '        const accentPreset = resolveAccentPreset();\n' +
+    '        document.documentElement.dataset.pyrusAccentPreset = accentPreset;\n' +
+    '        document.documentElement.dataset.pyrusAccentPreset = accentPreset;\n' +
+    '        // Paint the page bg + text color before any stylesheet loads to avoid\n' +
+    '        // a flash of unstyled (dark default) content during boot.\n' +
+    '        const root = document.documentElement;\n' +
+    '        const body = document.body;\n' +
+    '        const bg = theme === "dark" ? "#050814" : "#F7FAFF";\n' +
+    '        const fg = theme === "dark" ? "#F4F8FF" : "#101827";\n' +
+    '        root.style.background = bg;\n' +
+    '        if (body) {\n' +
+    '          body.style.background = bg;\n' +
+    '          body.style.color = fg;\n' +
+    '        } else {\n' +
+    '          // Apply on first DOMContentLoaded if body is not yet available.\n' +
+    '          document.addEventListener(\n' +
+    '            "DOMContentLoaded",\n' +
+    '            () => {\n' +
+    '              document.body.style.background = bg;\n' +
+    '              document.body.style.color = fg;\n' +
+    '            },\n' +
+    '            { once: true },\n' +
+    '          );\n' +
+    '        }\n' +
+    '      })();\n' +
+    '    </script>\n' +
+    '    <script>\n' +
+    '      (() => {\n' +
+    '        const benignMessages = new Set([\n' +
+    '          "ResizeObserver loop completed with undelivered notifications.",\n' +
+    '          "ResizeObserver loop limit exceeded",\n' +
+    '        ]);\n' +
+    '\n' +
+    '        window.addEventListener("error", (event) => {\n' +
+    '          if (!benignMessages.has(event.message)) {\n' +
+    '            return;\n' +
+    '          }\n' +
+    '\n' +
+    '          event.preventDefault();\n' +
+    '          event.stopImmediatePropagation();\n' +
+    '        }, true);\n' +
+    '\n' +
+    '        window.addEventListener("unhandledrejection", (event) => {\n' +
+    '          const reasonText = typeof event.reason === "string"\n' +
+    '            ? event.reason\n' +
+    '            : event.reason instanceof Error\n' +
+    '              ? event.reason.message\n' +
+    '              : "";\n' +
+    '\n' +
+    '          if (!benignMessages.has(reasonText)) {\n' +
+    '            return;\n' +
+    '          }\n' +
+    '\n' +
+    '          event.preventDefault();\n' +
+    '          event.stopImmediatePropagation();\n' +
+    '        });\n' +
+    '      })();\n' +
+    '    </script>\n' +
+    '    <script>\n' +
+    '      (() => {\n' +
+    '        const stateKey = "pyrus:state:v1";\n' +
+    '        const lastCrashKey = "pyrus:last-crash-diagnostics:v1";\n' +
+    '        const recentBrowserEventsKey = "pyrus:recent-browser-diagnostics:v1";\n' +
+    '        const sensitiveKeyPattern =\n' +
+    '          /(authorization|cookie|password|secret|token|account|accountid|selectedaccount|credential|apiKey|session)/i;\n' +
+    '        const benignMessages = new Set([\n' +
+    '          "ResizeObserver loop completed with undelivered notifications.",\n' +
+    '          "ResizeObserver loop limit exceeded",\n' +
+    '        ]);\n' +
+    '\n' +
+    '        const escapeHtml = (value) =>\n' +
+    '          String(value ?? "")\n' +
+    '            .replaceAll("&", "&amp;")\n' +
+    '            .replaceAll("<", "&lt;")\n' +
+    '            .replaceAll(">", "&gt;")\n' +
+    `            .replaceAll('"', "&quot;");\n` +
+    '\n' +
+    '        const redactString = (value) =>\n' +
+    '          String(value)\n' +
+    '            .replace(/\\bU\\d{4,}\\b/g, "U***")\n' +
+    '            .replace(\n' +
+    '              /([a-z][a-z0-9+.-]*:\\/\\/)[^/\\s:@]+:[^/\\s@]+@/gi,\n' +
+    '              "$1[redacted]@",\n' +
+    '            )\n' +
+    '            .replace(\n' +
+    '              /([?&](?:token|secret|password|api_key|apikey|authorization)=)[^&\\s]+/gi,\n' +
+    '              "$1[redacted]",\n' +
+    '            )\n' +
+    '            .slice(0, 1500);\n' +
+    '\n' +
+    '        const redactValue = (value, key = "", depth = 0) => {\n' +
+    '          if (sensitiveKeyPattern.test(key)) return "[redacted]";\n' +
+    '          if (value == null || typeof value === "boolean" || typeof value === "number") {\n' +
+    '            return value;\n' +
+    '          }\n' +
+    '          if (typeof value === "string") return redactString(value);\n' +
+    '          if (depth >= 5) return "[truncated]";\n' +
+    '          if (Array.isArray(value)) {\n' +
+    '            return value.slice(0, 12).map((entry) => redactValue(entry, key, depth + 1));\n' +
+    '          }\n' +
+    '          if (typeof value === "object") {\n' +
+    '            return Object.fromEntries(\n' +
+    '              Object.entries(value)\n' +
+    '                .slice(0, 40)\n' +
+    '                .map(([entryKey, entryValue]) => [\n' +
+    '                  entryKey,\n' +
+    '                  redactValue(entryValue, entryKey, depth + 1),\n' +
+    '                ]),\n' +
+    '            );\n' +
+    '          }\n' +
+    '          return String(value);\n' +
+    '        };\n' +
+    '\n' +
+    '        const recentBrowserEvents = () => {\n' +
+    '          try {\n' +
+    '            const raw = window.sessionStorage?.getItem(recentBrowserEventsKey);\n' +
+    '            const parsed = raw ? JSON.parse(raw) : [];\n' +
+    '            return Array.isArray(parsed) ? parsed : [];\n' +
+    '          } catch {\n' +
+    '            return [];\n' +
+    '          }\n' +
+    '        };\n' +
+    '\n' +
+    '        const getResourceTarget = (event) => {\n' +
+    '          const target = event?.target;\n' +
+    '          if (!target || target === window || target === document) return null;\n' +
+    '          const tagName =\n' +
+    '            typeof target.tagName === "string" ? target.tagName.toLowerCase() : "";\n' +
+    '          if (!tagName) return null;\n' +
+    '          const attr = (name) => {\n' +
+    '            try {\n' +
+    '              return typeof target.getAttribute === "function"\n' +
+    '                ? target.getAttribute(name) || ""\n' +
+    '                : "";\n' +
+    '            } catch {\n' +
+    '              return "";\n' +
+    '            }\n' +
+    '          };\n' +
+    '          const url =\n' +
+    '            typeof target.currentSrc === "string" && target.currentSrc\n' +
+    '              ? target.currentSrc\n' +
+    '              : typeof target.src === "string" && target.src\n' +
+    '                ? target.src\n' +
+    '                : typeof target.href === "string"\n' +
+    '                  ? target.href\n' +
+    '                  : attr("src") || attr("href") || "";\n' +
+    '          const rel = typeof target.rel === "string" ? target.rel : attr("rel");\n' +
+    '          const as = typeof target.as === "string" ? target.as : attr("as");\n' +
+    '          const type = typeof target.type === "string" ? target.type : attr("type");\n' +
+    '          const id = typeof target.id === "string" ? target.id : attr("id");\n' +
+    '          const inlineModuleImport =\n' +
+    '            !url && tagName === "script" && type === "module"\n' +
+    `              ? String(target.textContent || "").match(/import\\s+[^"']*["']([^"']+)["']/)?.[1] ||\n` +
+    '                ""\n' +
+    '              : "";\n' +
+    '          return {\n' +
+    '            tagName,\n' +
+    '            url,\n' +
+    '            rel,\n' +
+    '            as,\n' +
+    '            type,\n' +
+    '            id,\n' +
+    '            inlineModuleImport,\n' +
+    '          };\n' +
+    '        };\n' +
+    '\n' +
+    '        const resourcePathname = (url) => {\n' +
+    '          try {\n' +
+    '            return new URL(url, window.location.href).pathname;\n' +
+    '          } catch {\n' +
+    '            return "";\n' +
+    '          }\n' +
+    '        };\n' +
+    '\n' +
+    '        const isOptionalBootNeuralScriptPath = (pathname) =>\n' +
+    '          pathname.endsWith("/src/boot-neural.tsx") ||\n' +
+    '          pathname.endsWith("/src/boot-neural-scene.tsx") ||\n' +
+    '          /\\/assets\\/boot-neural(?:-scene)?-[^/]+\\.js$/.test(pathname);\n' +
+    '\n' +
+    '        const isOptionalScriptResource = (target) => {\n' +
+    '          if (target.tagName !== "script") return false;\n' +
+    '          const pathname = resourcePathname(target.url || target.inlineModuleImport);\n' +
+    '          const id = String(target.id || "").toLowerCase();\n' +
+    '          return (\n' +
+    '            pathname === "/@vite/client" ||\n' +
+    '            pathname === "/@react-refresh" ||\n' +
+    '            pathname.startsWith("/@replit/") ||\n' +
+    '            isOptionalBootNeuralScriptPath(pathname) ||\n' +
+    '            id === "replit-dev-banner"\n' +
+    '          );\n' +
+    '        };\n' +
+    '\n' +
+    '        const isFatalResourceError = (target) => {\n' +
+    '          if (!target) return false;\n' +
+    '          if (target.tagName === "script") return !isOptionalScriptResource(target);\n' +
+    '          if (target.tagName !== "link") return false;\n' +
+    '          const rel = String(target.rel || "").toLowerCase();\n' +
+    '          const as = String(target.as || "").toLowerCase();\n' +
+    '          return (\n' +
+    '            rel.includes("stylesheet") ||\n' +
+    '            rel.includes("modulepreload") ||\n' +
+    '            (rel.includes("preload") && (as === "script" || as === "style"))\n' +
+    '          );\n' +
+    '        };\n' +
+    '\n' +
+    '        const resourceError = (target) => {\n' +
+    '          const label = String(target?.tagName || "resource").toUpperCase();\n' +
+    '          const'... 15140 more characters
+  
+      at TestContext.<anonymous> (file:///home/runner/workspace/artifacts/pyrus/src/features/platform/loadingFallbackTheme.test.mjs:82:10)
+      at Test.runInAsyncScope (node:async_hooks:214:14)
+      at Test.run (node:internal/test_runner/test:1106:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:788:18)
+      at Test.postRun (node:internal/test_runner/test:1235:19)
+      at Test.run (node:internal/test_runner/test:1163:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:788:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: `<!DOCTYPE html>\n<html lang="en">\n  <head>\n    <meta charset="UTF-8" />\n    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />\n    <link rel="icon" type="image/svg+xml" href="/brand/pyrus-mark.svg" />\n    <title>PYRUS Platform</title>\n    <script>\n      (() => {\n        const storageKey = "pyrus:state:v1";\n        const legacyStorageKey = "pyrus:state:v1";\n        const readState = () => {\n          try {\n            const raw =\n              window.localStorage?.getItem(storageKey) ??\n              window.localStorage?.getItem(legacyStorageKey) ??\n              "{}";\n            return JSON.parse(raw);\n          } catch {\n            return {};\n          }\n        };\n        const resolveSystemTheme = () => {\n          try {\n            return window.matchMedia?.("(prefers-color-scheme: dark)")?.matches\n              ? "dark"\n              : "light";\n          } catch {\n            return "light";\n          }\n        };\n        const resolveTheme = () => {\n          try {\n            const state = readState();\n            const preferenceTheme = state?.userPreferences?.appearance?.theme;\n            if (preferenceTheme === "light" || preferenceTheme === "dark") {\n              return preferenceTheme;\n            }\n            if (preferenceTheme === "system") {\n              return resolveSystemTheme();\n            }\n            if (state?.theme === "light" || state?.theme === "dark") {\n              return state.theme;\n            }\n            return resolveSystemTheme();\n          } catch {\n            return resolveSystemTheme();\n          }\n        };\n\n        const theme = resolveTheme();\n        document.documentElement.dataset.pyrusTheme = theme;\n        document.documentElement.dataset.pyrusTheme = theme;\n\n        const resolveAccentPreset = () => {\n          try {\n            const state = readState();\n            const preset = state?.userPreferences?.appearance?.accentPreset;\n            if (\n              preset === "pyrus" ||\n              preset === "coral" ||\n              preset === "amber" ||\n              preset === "green" ||\n              preset === "aurora"\n            ) {\n              return preset;\n            }\n            return "pyrus";\n          } catch {\n            return "pyrus";\n          }\n        };\n        const accentPreset = resolveAccentPreset();\n        document.documentElement.dataset.pyrusAccentPreset = accentPreset;\n        document.documentElement.dataset.pyrusAccentPreset = accentPreset;\n        // Paint the page bg + text color before any stylesheet loads to avoid\n        // a flash of unstyled (dark default) content during boot.\n        const root = document.documentElement;\n        const body = document.body;\n        const bg = theme === "dark" ? "#050814" : "#F7FAFF";\n        const fg = theme === "dark" ? "#F4F8FF" : "#101827";\n        root.style.background = bg;\n        if (body) {\n          body.style.background = bg;\n          body.style.color = fg;\n        } else {\n          // Apply on first DOMContentLoaded if body is not yet available.\n          document.addEventListener(\n            "DOMContentLoaded",\n            () => {\n              document.body.style.background = bg;\n              document.body.style.color = fg;\n            },\n            { once: true },\n          );\n        }\n      })();\n    </script>\n    <script>\n      (() => {\n        const benignMessages = new Set([\n          "ResizeObserver loop completed with undelivered notifications.",\n          "ResizeObserver loop limit exceeded",\n        ]);\n\n        window.addEventListener("error", (event) => {\n          if (!benignMessages.has(event.message)) {\n            return;\n          }\n\n          event.preventDefault();\n          event.stopImmediatePropagation();\n        }, true);\n\n        window.addEventListener("unhandledrejection", (event) => {\n          const reasonText = typeof event.reason === "string"\n            ? event.reason\n            : event.reason instanceof Error\n              ? event.reason.message\n              : "";\n\n          if (!benignMessages.has(reasonText)) {\n            return;\n          }\n\n          event.preventDefault();\n          event.stopImmediatePropagation();\n        });\n      })();\n    </script>\n    <script>\n      (() => {\n        const stateKey = "pyrus:state:v1";\n        const lastCrashKey = "pyrus:last-crash-diagnostics:v1";\n        const recentBrowserEventsKey = "pyrus:recent-browser-diagnostics:v1";\n        const sensitiveKeyPattern =\n          /(authorization|cookie|password|secret|token|account|accountid|selectedaccount|credential|apiKey|session)/i;\n        const benignMessages = new Set([\n          "ResizeObserver loop completed with undelivered notifications.",\n          "ResizeObserver loop limit exceeded",\n        ]);\n\n        const escapeHtml = (value) =>\n          String(value ?? "")\n            .replaceAll("&", "&amp;")\n            .replaceAll("<", "&lt;")\n            .replaceAll(">", "&gt;")\n            .replaceAll('"', "&quot;");\n\n        const redactString = (value) =>\n          String(value)\n            .replace(/\\bU\\d{4,}\\b/g, "U***")\n            .replace(\n              /([a-z][a-z0-9+.-]*:\\/\\/)[^/\\s:@]+:[^/\\s@]+@/gi,\n              "$1[redacted]@",\n            )\n            .replace(\n              /([?&](?:token|secret|password|api_key|apikey|authorization)=)[^&\\s]+/gi,\n              "$1[redacted]",\n            )\n            .slice(0, 1500);\n\n        const redactValue = (value, key = "", depth = 0) => {\n          if (sensitiveKeyPattern.test(key)) return "[redacted]";\n          if (value == null || typeof value === "boolean" || typeof value === "number") {\n            return value;\n          }\n          if (typeof value === "string") return redactString(value);\n          if (depth >= 5) return "[truncated]";\n          if (Array.isArray(value)) {\n            return value.slice(0, 12).map((entry) => redactValue(entry, key, depth + 1));\n          }\n          if (typeof value === "object") {\n            return Object.fromEntries(\n              Object.entries(value)\n                .slice(0, 40)\n                .map(([entryKey, entryValue]) => [\n                  entryKey,\n                  redactValue(entryValue, entryKey, depth + 1),\n                ]),\n            );\n          }\n          return String(value);\n        };\n\n        const recentBrowserEvents = () => {\n          try {\n            const raw = window.sessionStorage?.getItem(recentBrowserEventsKey);\n            const parsed = raw ? JSON.parse(raw) : [];\n            return Array.isArray(parsed) ? parsed : [];\n          } catch {\n            return [];\n          }\n        };\n\n        const getResourceTarget = (event) => {\n          const target = event?.target;\n          if (!target || target === window || target === document) return null;\n          const tagName =\n            typeof target.tagName === "string" ? target.tagName.toLowerCase() : "";\n          if (!tagName) return null;\n          const attr = (name) => {\n            try {\n              return typeof target.getAttribute === "function"\n                ? target.getAttribute(name) || ""\n                : "";\n            } catch {\n              return "";\n            }\n          };\n          const url =\n            typeof target.currentSrc === "string" && target.currentSrc\n              ? target.currentSrc\n              : typeof target.src === "string" && target.src\n                ? target.src\n                : typeof target.href === "string"\n                  ? target.href\n                  : attr("src") || attr("href") || "";\n          const rel = typeof target.rel === "string" ? target.rel : attr("rel");\n          const as = typeof target.as === "string" ? target.as : attr("as");\n          const type = typeof target.type === "string" ? target.type : attr("type");\n          const id = typeof target.id === "string" ? target.id : attr("id");\n          const inlineModuleImport =\n            !url && tagName === "script" && type === "module"\n              ? String(target.textContent || "").match(/import\\s+[^"']*["']([^"']+)["']/)?.[1] ||\n                ""\n              : "";\n          return {\n            tagName,\n            url,\n            rel,\n            as,\n            type,\n            id,\n            inlineModuleImport,\n          };\n        };\n\n        const resourcePathname = (url) => {\n          try {\n            return new URL(url, window.location.href).pathname;\n          } catch {\n            return "";\n          }\n        };\n\n        const isOptionalBootNeuralScriptPath = (pathname) =>\n          pathname.endsWith("/src/boot-neural.tsx") ||\n          pathname.endsWith("/src/boot-neural-scene.tsx") ||\n          /\\/assets\\/boot-neural(?:-scene)?-[^/]+\\.js$/.test(pathname);\n\n        const isOptionalScriptResource = (target) => {\n          if (target.tagName !== "script") return false;\n          const pathname = resourcePathname(target.url || target.inlineModuleImport);\n          const id = String(target.id || "").toLowerCase();\n          return (\n            pathname === "/@vite/client" ||\n            pathname === "/@react-refresh" ||\n            pathname.startsWith("/@replit/") ||\n            isOptionalBootNeuralScriptPath(pathname) ||\n            id === "replit-dev-banner"\n          );\n        };\n\n        const isFatalResourceError = (target) => {\n          if (!target) return false;\n          if (target.tagName === "script") return !isOptionalScriptResource(target);\n          if (target.tagName !== "link") return false;\n          const rel = String(target.rel || "").toLowerCase();\n          const as = String(target.as || "").toLowerCase();\n          return (\n            rel.includes("stylesheet") ||\n            rel.includes("modulepreload") ||\n            (rel.includes("preload") && (as === "script" || as === "style"))\n          );\n        };\n\n        const resourceError = (target) => {\n          const label = String(target?.tagName || "resource").toUpperCase();\n          const`... 15140 more characters,
+    expected: /\/brand\//,
+    operator: 'doesNotMatch',
+    diff: 'simple'
+  }

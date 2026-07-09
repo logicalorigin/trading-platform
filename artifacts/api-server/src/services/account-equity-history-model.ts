@@ -2,6 +2,7 @@ import type { RuntimeMode } from "../lib/runtime";
 import { toIsoDateString } from "../lib/values";
 import type { BrokerAccountSnapshot } from "../providers/ibkr/client";
 import { calculateTransferAdjustedReturnSeries } from "@workspace/account-math";
+import { resolveNyseCalendarDay } from "@workspace/market-calendar";
 import {
   accountSnapshotBucketSizeMs,
   type AccountRange,
@@ -240,16 +241,23 @@ export function calculateTransferAdjustedReturnPoints(
   }));
 }
 
-function startOfUtcDay(value: Date): Date {
-  return new Date(
-    Date.UTC(value.getUTCFullYear(), value.getUTCMonth(), value.getUTCDate()),
-  );
+function marketDateKey(value: Date): string | null {
+  return resolveNyseCalendarDay(value)?.date ?? null;
 }
 
-function addUtcDays(value: Date, days: number): Date {
-  const next = new Date(value.getTime());
+function addCalendarDaysToMarketDateKey(value: string, days: number): string {
+  const next = new Date(`${value}T12:00:00.000Z`);
   next.setUTCDate(next.getUTCDate() + days);
-  return next;
+  return next.toISOString().slice(0, 10);
+}
+
+function equityPointTimestampForMarketDate(value: string): Date {
+  const closeAt = resolveNyseCalendarDay(`${value}T12:00:00.000Z`)?.regularCloseAt;
+  const close = closeAt ? new Date(closeAt) : null;
+  if (close && Number.isFinite(close.getTime())) {
+    return close;
+  }
+  return new Date(`${value}T17:00:00.000Z`);
 }
 
 function roundHistoryMoney(value: number): number {
@@ -287,9 +295,9 @@ export function reconstructEquityHistoryFromActivityLedger(input: {
     ];
   }
 
-  const firstDay = startOfUtcDay(sortedEvents[0]!.timestamp);
-  const terminalDay = startOfUtcDay(input.terminal.timestamp);
-  if (firstDay.getTime() > terminalDay.getTime()) {
+  const firstDay = marketDateKey(sortedEvents[0]!.timestamp);
+  const terminalDay = marketDateKey(input.terminal.timestamp);
+  if (!firstDay || !terminalDay || firstDay > terminalDay) {
     return [];
   }
 
@@ -300,11 +308,10 @@ export function reconstructEquityHistoryFromActivityLedger(input: {
     }
   >();
   for (const event of sortedEvents) {
-    const day = startOfUtcDay(event.timestamp);
-    if (day.getTime() > terminalDay.getTime()) {
+    const key = marketDateKey(event.timestamp);
+    if (!key || key > terminalDay) {
       continue;
     }
-    const key = day.toISOString();
     const current = eventsByDay.get(key) ?? {
       currency: event.currency || input.terminal.currency,
       deposits: 0,
@@ -325,10 +332,10 @@ export function reconstructEquityHistoryFromActivityLedger(input: {
   const cumulativeByDay = new Map<string, number>();
   for (
     let day = firstDay;
-    day.getTime() <= terminalDay.getTime();
-    day = addUtcDays(day, 1)
+    day <= terminalDay;
+    day = addCalendarDaysToMarketDateKey(day, 1)
   ) {
-    const key = day.toISOString();
+    const key = day;
     const event = eventsByDay.get(key);
     if (event) {
       cumulativeLedgerDelta +=
@@ -341,22 +348,26 @@ export function reconstructEquityHistoryFromActivityLedger(input: {
     cumulativeByDay.set(key, cumulativeLedgerDelta);
   }
 
-  const terminalKey = terminalDay.toISOString();
+  const terminalKey = terminalDay;
   const terminalLedgerDelta = cumulativeByDay.get(terminalKey) ?? 0;
   const openingAnchor = input.terminal.netLiquidation - terminalLedgerDelta;
   const points: AccountEquityHistorySeedPoint[] = [];
   const outputStartDay =
-    Math.abs(openingAnchor) > 0.000001 ? addUtcDays(firstDay, -1) : firstDay;
+    Math.abs(openingAnchor) > 0.000001
+      ? addCalendarDaysToMarketDateKey(firstDay, -1)
+      : firstDay;
   for (
     let day = outputStartDay;
-    day.getTime() <= terminalDay.getTime();
-    day = addUtcDays(day, 1)
+    day <= terminalDay;
+    day = addCalendarDaysToMarketDateKey(day, 1)
   ) {
-    const key = day.toISOString();
+    const key = day;
     const event = eventsByDay.get(key);
     points.push({
       timestamp:
-        key === terminalKey ? input.terminal.timestamp : new Date(day.getTime()),
+        key === terminalKey
+          ? input.terminal.timestamp
+          : equityPointTimestampForMarketDate(key),
       netLiquidation: roundHistoryMoney(
         openingAnchor + (cumulativeByDay.get(key) ?? 0),
       ),

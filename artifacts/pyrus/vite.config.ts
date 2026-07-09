@@ -144,90 +144,9 @@ const PRIORITY_PRELOAD_SOURCE_MODULES = [
   "/src/app/AppContent.tsx",
   "/src/features/platform/PlatformApp.jsx",
 ];
-const BOOT_NEURAL_SOURCE_MODULE = "/src/boot-neural.tsx";
-const BOOT_NEURAL_SCENE_SOURCE_MODULE = "/src/boot-neural-scene.tsx";
 
 function basePrefixFor(resolvedBase: string) {
   return resolvedBase.endsWith("/") ? resolvedBase : `${resolvedBase}/`;
-}
-
-function bootNeuralHtmlEntryPlugin(): import("vite").Plugin {
-  let resolvedBase = "/";
-  return {
-    name: "pyrus-boot-neural-html-entry",
-    configResolved(config) {
-      resolvedBase = config.base || "/";
-    },
-    transformIndexHtml: {
-      order: "post",
-      handler(html, ctx) {
-        const basePrefix = basePrefixFor(resolvedBase);
-        const devInjectTo = "head" as const;
-        const productionInjectTo = "head-prepend" as const;
-        const sceneUrlAssignment = (sceneUrl: string) =>
-          `window.__PYRUS_BOOT_NEURAL_SCENE_URL__=${JSON.stringify(sceneUrl)};`;
-
-        if (!ctx.bundle) {
-          return {
-            html,
-            tags: [
-              {
-                tag: "script",
-                children: sceneUrlAssignment(
-                  `${basePrefix}${BOOT_NEURAL_SCENE_SOURCE_MODULE.slice(1)}`,
-                ),
-                injectTo: devInjectTo,
-              },
-              {
-                tag: "script",
-                attrs: {
-                  type: "module",
-                  src: `${basePrefix}${BOOT_NEURAL_SOURCE_MODULE.slice(1)}`,
-                },
-                injectTo: devInjectTo,
-              },
-            ],
-          };
-        }
-
-        const findChunkBySourceModule = (sourceModule: string) =>
-          Object.values(ctx.bundle ?? {}).find(
-            (file) =>
-              file.type === "chunk" &&
-              file.facadeModuleId
-                ?.replaceAll("\\", "/")
-                .endsWith(sourceModule),
-          );
-
-        const bootChunk = findChunkBySourceModule(BOOT_NEURAL_SOURCE_MODULE);
-        const sceneChunk = findChunkBySourceModule(
-          BOOT_NEURAL_SCENE_SOURCE_MODULE,
-        );
-        if (!bootChunk || bootChunk.type !== "chunk") return html;
-        if (!sceneChunk || sceneChunk.type !== "chunk") return html;
-
-        return {
-          html,
-          tags: [
-            {
-              tag: "script",
-              children: sceneUrlAssignment(`${basePrefix}${sceneChunk.fileName}`),
-              injectTo: productionInjectTo,
-            },
-            {
-              tag: "script",
-              attrs: {
-                type: "module",
-                crossorigin: true,
-                src: `${basePrefix}${bootChunk.fileName}`,
-              },
-              injectTo: productionInjectTo,
-            },
-          ],
-        };
-      },
-    },
-  };
 }
 
 function criticalChunkModulePreloadPlugin(): import("vite").Plugin {
@@ -322,7 +241,6 @@ export default defineConfig({
     },
     react(),
     tailwindcss(),
-    bootNeuralHtmlEntryPlugin(),
     criticalChunkModulePreloadPlugin(),
     ...(enableReplitRuntimeErrorModal
       ? [
@@ -401,11 +319,6 @@ export default defineConfig({
     rollupOptions: {
       input: {
         app: path.resolve(import.meta.dirname, "index.html"),
-        "boot-neural": path.resolve(import.meta.dirname, "src/boot-neural.tsx"),
-        "boot-neural-scene": path.resolve(
-          import.meta.dirname,
-          "src/boot-neural-scene.tsx",
-        ),
       },
       output: {
         manualChunks(id) {
@@ -421,7 +334,6 @@ export default defineConfig({
             normalizedId.includes("/src/lib/formatters") ||
             normalizedId.includes("/src/lib/tooltipStyles") ||
             normalizedId.includes("/src/lib/workspaceState") ||
-            normalizedId.includes("/src/components/LogoLoader") ||
             normalizedId.includes("/src/components/platform/BottomSheet") ||
             normalizedId.includes("/src/components/platform/DeferredRender") ||
             normalizedId.includes("/src/components/platform/Drawer") ||

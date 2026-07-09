@@ -2,27 +2,29 @@
 
 This is a pointer to the active durable handoff. Do not use this file as the full session narrative.
 
-- Last Updated (MT): `2026-07-07 09:59:04 MDT`
-- Last Updated (UTC): `2026-07-07T15:59:04.066Z`
-- Session ID: `68e08ab5-bcaa-4f77-aa9e-84bbd6e754a2`
-- Summary: 2026-07-07 09:59:04 MDT | 68e08ab5-bcaa-4f77-aa9e-84bbd6e754a2 | please find the 4 work sessions we mos recently had going
-- Handoff: `SESSION_HANDOFF_2026-07-07_68e08ab5-bcaa-4f77-aa9e-84bbd6e754a2.md`
+- Last Updated (MT): `2026-07-08 22:00:21 MDT`
+- Last Updated (UTC): `2026-07-09T04:00:21Z`
+- Session ID: `019f443d-ce00-7000-ac49-819b310928ca`
+- Summary: 2026-07-08 22:00:21 MDT | 019f443d-ce00-7000-ac49-819b310928ca | SnapTrade/E*TRADE cleanup plus best-available historical equity MTM fallback
+- Handoff: `SESSION_HANDOFF_2026-07-08_019f443d-ce00-7000-ac49-819b310928ca.md`
 - Master Index: `SESSION_HANDOFF_MASTER.md`
 
 ## Current Status
 
-- Replace this section with current validation status, blockers, and any known runtime gaps.
+- Implemented and validated SnapTrade/E*TRADE direct-IBKR supersedence, broker logo detection, option-expiration realized P&L close date, and reconstructed historical P&L market-date handling.
+- Relevant workstream files are listed in the per-session handoff. The broader worktree is dirty with many unrelated changes.
+- Follow-up patch written: SnapTrade/E*TRADE fallback reconstruction now adds daily mark deltas for reconstructed open equity positions when stored `bar_cache` `1d` `massive-history` closes exist.
+- Added focused regression coverage in `artifacts/api-server/src/services/account-provider-history.test.ts` for current-only balance history plus an open AAPL stock position with stored daily closes.
+- Boundary: do not fabricate option premium marks without historical option price data. Option expirations remain realized closes on expiration date.
+- Handoff writer cannot run because `node`/`pnpm` are unavailable in the current shell; this pointer is manually updated.
 
 ## Next Recommended Steps
 
-1. Replace this item with the highest-priority next step.
-2. Replace this item with the next validation or bring-up step.
+1. Restore Node/PNPM.
+2. Run `pnpm --filter @workspace/api-server exec node --import tsx --test src/services/account-provider-history.test.ts`.
+3. Run `pnpm --filter @workspace/api-server run typecheck`.
 
 ## Validation Snapshot
 
-- `2026-07-07 07:36:29 MDT` S=/tmp/claude-1000/-home-runner-workspace/68e08ab5-bcaa-4f77-aa9e-84bbd6e754a2/scratchpad; pnpm --filter @workspace/api-server run typecheck >$S/tsc-api.log 2>… (ok)
-- `2026-07-07 07:40:04 MDT` cat /tmp/claude-1000/-home-runner-workspace/68e08ab5-bcaa-4f77-aa9e-84bbd6e754a2/tasks/bprkqdp8q.output; echo "-- api log tail:"; tail -4 /tmp/claude-1000/-hom… (ok)
-- `2026-07-07 08:10:04 MDT` S=/tmp/claude-1000/-home-runner-workspace/68e08ab5-bcaa-4f77-aa9e-84bbd6e754a2/scratchpad; { echo "== inclusion svc:"; pnpm --filter @workspace/api-server exec… (ok)
-- `2026-07-07 08:11:28 MDT` node scripts/agent-chat.mjs post claude-lead "@claude-fable-5360980c answers: (a) SPEC+GENERATED cleanup is DONE by my codex run 14:07Z — removed /settings/ibk… (ok)
-- `2026-07-07 09:40:38 MDT` node scripts/agent-chat.mjs post claude-lead "@claude-fable-5360980c FYI your dirty algo-cockpit-streams.ts/.test.ts WIP currently breaks MAIN-TREE api typeche… (ok)
-- `2026-07-07 09:58:40 MDT` node scripts/agent-chat.mjs post claude-lead "RELEASED: git index claim lifted. Landed 9/9 on main (dcf7f449..4feae5d4), final gate green (clean-worktree tsc+b… (ok)
+- Prior validations passed before this follow-up: backend SnapTrade/account history tests, frontend account calendar/tabs tests, API/Pyrus typechecks, and current-data probe.
+- Current validation: `git diff --check` passed for touched SnapTrade files/handoffs. Runtime blocker: `command -v node` and `command -v pnpm` return empty; `npm --version` fails with `/usr/bin/env: 'node': Transport endpoint is not connected`.

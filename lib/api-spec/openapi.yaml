@@ -5471,6 +5471,9 @@ components:
         positionMarketValue:
           type: number
           nullable: true
+        unrealizedPnl:
+          type: number
+          nullable: true
         netLiquidation:
           type: number
           nullable: true
@@ -5480,6 +5483,7 @@ components:
         - cash
         - buyingPower
         - positionMarketValue
+        - unrealizedPnl
         - netLiquidation
         - positionCount
 
@@ -9764,6 +9768,12 @@ components:
           type: number
         netLiquidation:
           type: number
+        dayPnl:
+          type: number
+          nullable: true
+        dayPnlPercent:
+          type: number
+          nullable: true
         accountType:
           type: string
           nullable: true
@@ -12233,7 +12243,7 @@ components:
           type: string
         source:
           type: string
-          enum: [LIVE, LIVE_ORDER, LIVE_EXECUTION, FLEX, SHADOW, SHADOW_ACTIVITY, SNAPTRADE_ACTIVITY]
+          enum: [LIVE, LIVE_ORDER, LIVE_EXECUTION, FLEX, SHADOW, SHADOW_ACTIVITY, SNAPTRADE_ACTIVITY, ROBINHOOD_ACTIVITY]
         accountId:
           type: string
         symbol:

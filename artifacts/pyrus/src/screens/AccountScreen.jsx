@@ -576,7 +576,7 @@ const resolveAccountMode = ({ shadowMode = false, environment } = {}) => {
   if (shadowMode) {
     return "shadow";
   }
-  return environment === "shadow" ? "shadow" : "live";
+  return "live";
 };
 
 const AccountSectionTransitionStatus = ({ compact = false }) => {
@@ -998,8 +998,6 @@ const AccountScreenInner = ({
   const snapTradeAccountPanelsEnabled = Boolean(
     isVisible && !safeQaMode && selectedSnapTradeAccount?.id,
   );
-  const genericAccountProviderScope =
-    accountProviderScope === "snaptrade" ? null : accountProviderScope;
   const effectiveOrderTab =
     shadowMode && orderTab === "working" ? "history" : orderTab;
   const accountRequestId = shadowMode ? SHADOW_ACCOUNT_ID : activeAccountId;
@@ -1021,7 +1019,17 @@ const AccountScreenInner = ({
       brokerConfigured &&
       brokerAuthenticated &&
       activeAccountId &&
-      genericAccountProviderScope !== null,
+      accountProviderScope !== "snaptrade",
+  );
+  const providerBackedAccountRoutesAvailable = Boolean(
+    !safeQaMode &&
+      activeAccountId &&
+      accountProviderScope !== "unknown" &&
+      accountProviderScope !== "shadow" &&
+      (accountProviderScope === "snaptrade" ||
+        accountProviderScope === "robinhood" ||
+        accountProviderScope === "schwab" ||
+        accountProviderScope === "mixed"),
   );
   // The opposite-mode tab to keep warm: from shadow, prewarm the live "All"
   // aggregate; from any live tab, prewarm shadow.
@@ -1034,7 +1042,7 @@ const AccountScreenInner = ({
     isVisible &&
       !safeQaMode &&
       !shadowMode &&
-      ibkrAccountRoutesAvailable &&
+      (ibkrAccountRoutesAvailable || providerBackedAccountRoutesAvailable) &&
       accountRequestId,
   );
   const genericAccountQueriesEnabled = Boolean(
@@ -1067,11 +1075,15 @@ const AccountScreenInner = ({
     }),
     [modeParams],
   );
+  const providerAccountSourceLabel = {
+    robinhood: "Robinhood",
+    schwab: "Schwab",
+  }[accountProviderScope];
   const accountSourceLabel = snapTradeAccountPanelsEnabled
     ? "SnapTrade"
     : shadowMode
       ? "Shadow Ledger"
-      : "Flex";
+      : (providerAccountSourceLabel ?? "Flex");
   const accountDataParams = useMemo(
     () => ({ ...modeParams }),
     [modeParams],
@@ -1254,9 +1266,6 @@ const AccountScreenInner = ({
         accountTab: tab,
         accounts,
       });
-      if (targetProviderScope === "snaptrade") {
-        return;
-      }
       if (targetProviderScope !== "shadow" && !genericAccountQueriesEnabled) {
         return;
       }
@@ -1631,12 +1640,7 @@ const AccountScreenInner = ({
     query: {
       staleTime: 15_000,
       refetchInterval: healthRefreshInterval,
-      enabled: Boolean(
-        isVisible &&
-          !shadowMode &&
-          !safeQaMode &&
-          genericAccountProviderScope !== null,
-      ),
+      enabled: Boolean(isVisible && !shadowMode && !safeQaMode),
       retry: false,
     },
   });
@@ -1974,12 +1978,8 @@ const AccountScreenInner = ({
   const summaryQueryForDisplay = snapTradeAccountPanelsEnabled
     ? buildProviderAccountQuery(snapTradePortfolioQuery, snapTradePanelData?.summary)
     : summaryQuery;
-  const equityQueryForPanel = snapTradeAccountPanelsEnabled
-    ? buildProviderAccountQuery(snapTradeHistoryQuery, snapTradePanelData?.equityHistory)
-    : equityQuery;
-  const intradayPnlQueryForDisplay = snapTradeAccountPanelsEnabled
-    ? buildIdleAccountQuery(snapTradePanelData?.equityHistory)
-    : intradayPnlQuery;
+  const equityQueryForPanel = equityQuery;
+  const intradayPnlQueryForDisplay = intradayPnlQuery;
   const allocationQueryForDisplay = snapTradeAccountPanelsEnabled
     ? buildProviderAccountQuery(snapTradePortfolioQuery, snapTradePanelData?.allocation)
     : allocationQuery;
@@ -1989,15 +1989,9 @@ const AccountScreenInner = ({
   const positionsAtDateQueryForDisplay = snapTradeAccountPanelsEnabled
     ? buildIdleAccountQuery(snapTradePanelData?.positionsAtDate)
     : positionsAtDateQuery;
-  const tradesQueryForDisplay = snapTradeAccountPanelsEnabled
-    ? buildProviderAccountQuery(snapTradeHistoryQuery, snapTradePanelData?.closedTrades)
-    : tradesQuery;
-  const performanceCalendarTradesQueryForDisplay = snapTradeAccountPanelsEnabled
-    ? buildProviderAccountQuery(snapTradeHistoryQuery, snapTradePanelData?.closedTrades)
-    : performanceCalendarTradesQuery;
-  const performanceCalendarEquityQueryForDisplay = snapTradeAccountPanelsEnabled
-    ? buildProviderAccountQuery(snapTradeHistoryQuery, snapTradePanelData?.equityHistory)
-    : performanceCalendarEquityQuery;
+  const tradesQueryForDisplay = tradesQuery;
+  const performanceCalendarTradesQueryForDisplay = performanceCalendarTradesQuery;
+  const performanceCalendarEquityQueryForDisplay = performanceCalendarEquityQuery;
   const snapTradeOrdersPanelData =
     snapTradeAccountPanelsEnabled && snapTradeRecentOrdersQuery.data
       ? snapTradePanelData?.orders
@@ -2305,12 +2299,8 @@ const AccountScreenInner = ({
       positionsQueryForDisplay.data?.updatedAt,
     ],
   );
-  const accountAnalysisQueryForDisplay = snapTradeAccountPanelsEnabled
-    ? tradesQueryForDisplay
-    : accountAnalysisQuery;
-  const accountAnalysisTradesForDisplay = snapTradeAccountPanelsEnabled
-    ? tradesQueryForDisplay.data?.trades || []
-    : accountAnalysisTrades;
+  const accountAnalysisQueryForDisplay = accountAnalysisQuery;
+  const accountAnalysisTradesForDisplay = accountAnalysisTrades;
   const accountOptionQuoteGroups = useMemo(
     () => buildPositionOptionQuoteGroups(openAccountPositions),
     [openAccountPositions],
@@ -2422,6 +2412,26 @@ const AccountScreenInner = ({
           owner={accountOptionQuoteOwner}
         />
 
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: sp(8),
+            minWidth: 0,
+          }}
+        >
+          <AccountTabs
+            accounts={accounts}
+            activeTabId={accountTab}
+            onSelectTab={setAccountTab}
+            onTabIntent={prefetchAccountTabLiveQueries}
+            accountIsPhone={accountIsPhone}
+            maskValues={maskAccountValues}
+          />
+          <AccountSectionTransitionStatus compact={accountIsPhone} />
+        </div>
+
         <DeferredPanelSuspense
           minHeight={accountIsPhone ? 58 : 42}
           title="Loading account summary"
@@ -2445,26 +2455,6 @@ const AccountScreenInner = ({
             isPhone={accountIsPhone}
           />
         </DeferredPanelSuspense>
-
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            gap: sp(8),
-            minWidth: 0,
-          }}
-        >
-          <AccountTabs
-            accounts={accounts}
-            activeTabId={accountTab}
-            onSelectTab={setAccountTab}
-            onTabIntent={prefetchAccountTabLiveQueries}
-            accountIsPhone={accountIsPhone}
-            maskValues={maskAccountValues}
-          />
-          <AccountSectionTransitionStatus compact={accountIsPhone} />
-        </div>
 
         <div
           className="ra-panel-enter ra-account-overview-grid"

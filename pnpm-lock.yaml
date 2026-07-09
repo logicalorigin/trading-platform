@@ -296,6 +296,9 @@ importers:
       '@workspace/db':
         specifier: workspace:*
         version: link:../../lib/db
+      '@workspace/market-calendar':
+        specifier: workspace:*
+        version: link:../../lib/market-calendar
       '@workspace/pyrus-signals-core':
         specifier: workspace:*
         version: link:../../lib/pyrus-signals-core
@@ -516,6 +519,9 @@ importers:
 
   lib/backtest-core:
     dependencies:
+      '@workspace/market-calendar':
+        specifier: workspace:*
+        version: link:../market-calendar
       zod:
         specifier: 'catalog:'
         version: 3.25.76

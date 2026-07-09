@@ -1,0 +1,465 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>PYRUS Account — Luminous Terminal (direction mockup)</title>
+<style>
+:root{
+  --bg0:#050814; --bg1:#090D18; --bg2:#101624;
+  --text:#F4F8FF; --sec:#B8C4D6; --dim:#94A3BA; --mut:#788AA0;
+  --accent:#168BFF; --green:#2ED889; --red:#FF3048; --amber:#E9B949; --cyan:#24C8DB;
+  --hair:rgba(180,200,255,0.08); --hair2:rgba(180,200,255,0.13);
+  --sans:'IBM Plex Sans',ui-sans-serif,system-ui,-apple-system,'Segoe UI',sans-serif;
+  --mono:'IBM Plex Mono',ui-monospace,'SF Mono',Menlo,Consolas,monospace;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg0);color:var(--text);font-family:var(--sans);font-size:11px;-webkit-font-smoothing:antialiased}
+.mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
+.up,.metric .v.up,.metric .sub.up,.num.up,.day .p.up{color:var(--green)}
+.dn,.metric .v.dn,.metric .sub.dn,.num.dn,.day .p.dn{color:var(--red)}
+.long{color:var(--accent)} .short{color:var(--red)}
+.lab{font-family:var(--mono);font-size:9px;letter-spacing:.14em;text-transform:uppercase;color:var(--mut);line-height:1}
+.micro{font-family:var(--mono);font-size:8px;letter-spacing:.08em;color:var(--mut)}
+.cap{font-size:10px;color:var(--dim)}
+.stitle{font-family:var(--mono);font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--sec);font-weight:500;margin:0}
+
+.app{width:1440px;margin:0 auto;min-height:100vh;display:flex;flex-direction:column}
+
+/* ---------- panels : bg1 + hairline; primary panels get the 1px luminous top highlight ---------- */
+.panel{background:var(--bg1);border:1px solid var(--hair);border-radius:8px}
+.panel.primary{box-shadow:inset 0 1px 0 rgba(200,222,255,0.07)}
+
+/* ---------- top bar ---------- */
+.topbar{display:flex;align-items:center;gap:24px;height:48px;padding:0 24px;border-bottom:1px solid var(--hair)}
+.wordmark{font-weight:700;font-size:13px;letter-spacing:.30em;color:var(--text)}
+.nav{display:flex;gap:20px;font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--mut)}
+.nav .on{color:var(--text)}
+.topbar .right{margin-left:auto;display:flex;align-items:center;gap:8px}
+.btn{font-family:var(--mono);font-size:10px;letter-spacing:.10em;text-transform:uppercase;border-radius:4px;padding:6px 14px;cursor:default;line-height:1}
+.btn.primary{background:var(--accent);color:#fff;border:1px solid var(--accent)}
+.btn.secondary{background:transparent;color:var(--sec);border:1px solid var(--hair2)}
+.btn.ghost{background:transparent;color:var(--dim);border:1px solid transparent}
+.clock{font-family:var(--mono);font-size:10px;color:var(--mut);padding-left:16px;border-left:1px solid var(--hair)}
+
+/* ---------- tab row ---------- */
+.tabrow{display:flex;align-items:center;gap:16px;height:44px;padding:0 24px;border-bottom:1px solid var(--hair)}
+.crumb{font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--dim)}
+.crumb b{color:var(--sec);font-weight:500}
+.tabs{display:flex;gap:4px;margin-left:8px}
+.tab{position:relative;font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--mut);padding:7px 14px 9px;border-radius:4px;cursor:default}
+.tab.active{color:var(--text);background:rgba(22,139,255,0.10)}
+.tab.active::after{content:'';position:absolute;left:10px;right:10px;bottom:0;height:2px;background:var(--accent)}
+.tab .n{color:var(--mut);margin-left:6px;letter-spacing:0}
+.tabrow .right{margin-left:auto;display:flex;align-items:center;gap:14px}
+
+/* ---------- command strip ---------- */
+.strip{margin:16px 24px 0;padding:0}
+.striptop{display:flex;align-items:stretch;padding:16px 24px 14px}
+.metric{display:flex;flex-direction:column;gap:8px;padding:0 32px;border-left:1px solid var(--hair)}
+.metric:first-child{padding-left:0;border-left:none}
+.metric .v{font-family:var(--mono);font-variant-numeric:tabular-nums;font-size:26px;font-weight:500;line-height:1;color:var(--text)}
+.metric .sub{font-family:var(--mono);font-size:10px;color:var(--mut);line-height:1}
+.stripstatus{margin-left:auto;display:flex;flex-direction:column;align-items:flex-end;justify-content:space-between;gap:8px;padding-left:24px}
+.live{display:inline-flex;align-items:center;gap:7px;font-family:var(--mono);font-size:9px;letter-spacing:.14em;color:var(--green)}
+.live .dot{width:6px;height:6px;border-radius:50%;background:var(--green);box-shadow:0 0 0 3px rgba(46,216,137,0.14),0 0 8px rgba(46,216,137,0.55)}
+.stripfoot{display:flex;gap:28px;align-items:center;padding:9px 24px;border-top:1px solid var(--hair)}
+.kv{display:inline-flex;align-items:baseline;gap:8px;white-space:nowrap}
+.kv .k{font-family:var(--mono);font-size:9px;letter-spacing:.12em;text-transform:uppercase;color:var(--mut)}
+.kv .v{font-family:var(--mono);font-variant-numeric:tabular-nums;font-size:10px;color:var(--sec)}
+.kv .v.up{color:var(--green)} .kv .v.dn{color:var(--red)}
+
+/* motion footnote chips */
+.mnote{font-family:var(--mono);font-size:8px;letter-spacing:.04em;color:var(--mut);opacity:.85;white-space:nowrap}
+
+/* ---------- workspace grid ---------- */
+.work{display:grid;grid-template-columns:1fr 424px;gap:16px;padding:16px 24px 8px;align-items:start}
+
+/* ---------- positions ---------- */
+.phead{display:flex;align-items:center;gap:12px;padding:13px 16px 11px;border-bottom:1px solid var(--hair)}
+.phead .right{margin-left:auto;display:flex;align-items:center;gap:10px}
+.seg{display:inline-flex;background:var(--bg2);border:1px solid var(--hair);border-radius:4px;padding:2px;gap:2px}
+.seg span{font-family:var(--mono);font-size:9px;letter-spacing:.10em;text-transform:uppercase;color:var(--mut);padding:4px 10px;border-radius:3px;line-height:1;cursor:default}
+.seg span.on{background:rgba(22,139,255,0.14);color:var(--text)}
+.seg span.focus-demo{outline:2px solid var(--accent);outline-offset:1px}
+
+.tbl{width:100%}
+.trow{display:grid;grid-template-columns:26px 76px 60px 56px 92px 100px 104px 104px 106px 120px;align-items:center;padding:0 16px 0 0;height:36px;border-top:1px solid var(--hair);position:relative}
+.thead{height:30px;border-top:none}
+.thead span{font-family:var(--mono);font-size:9px;letter-spacing:.12em;text-transform:uppercase;color:var(--mut)}
+.num{text-align:right;font-family:var(--mono);font-variant-numeric:tabular-nums;font-size:11px;color:var(--sec)}
+.thead .num{font-size:9px;color:var(--mut)}
+.sym{font-family:var(--mono);font-size:11px;font-weight:600;color:var(--text)}
+.side{font-family:var(--mono);font-size:9px;letter-spacing:.10em}
+.caret{color:var(--mut);font-size:8px;text-align:center}
+.trow:hover,.trow.hoverdemo{background:rgba(180,200,255,0.04)}
+.trow:hover::before,.trow.hoverdemo::before{content:'';position:absolute;left:0;top:0;bottom:0;width:2px;background:var(--accent)}
+.trow.open{background:rgba(22,139,255,0.05)}
+.trow.open::before{content:'';position:absolute;left:0;top:0;bottom:0;width:2px;background:var(--accent)}
+.wcell{display:flex;align-items:center;gap:8px;justify-content:flex-end;padding-right:0}
+.wbar{width:44px;height:3px;background:rgba(180,200,255,0.07);border-radius:1px;overflow:hidden}
+.wbar i{display:block;height:100%;background:var(--dim)}
+.stalecell{display:flex;align-items:center;justify-content:flex-end;gap:5px}
+.stale{display:inline-flex;align-items:center;font-family:var(--mono);font-size:8px;letter-spacing:.06em;color:var(--amber);border:1px solid rgba(233,185,73,0.35);border-radius:3px;padding:2px 4px;box-shadow:0 0 6px rgba(233,185,73,0.25);line-height:1;white-space:nowrap}
+.legend{display:flex;align-items:center;gap:22px;padding:8px 16px;border-top:1px solid var(--hair)}
+
+/* expanded detail band — a band, not a card: hairlines only */
+.detail{display:grid;grid-template-columns:236px 1fr 1fr;background:#070B16;border-top:1px solid var(--hair)}
+.dcol{padding:14px 18px;border-left:1px solid var(--hair);display:flex;flex-direction:column;gap:10px}
+.dcol:first-child{border-left:none}
+.dlab{font-family:var(--mono);font-size:9px;letter-spacing:.14em;text-transform:uppercase;color:var(--mut)}
+.lvl{display:flex;justify-content:space-between;align-items:baseline}
+.lvl .k{font-family:var(--mono);font-size:9px;letter-spacing:.10em;text-transform:uppercase;color:var(--mut)}
+.lvl .v{font-family:var(--mono);font-variant-numeric:tabular-nums;font-size:11px;color:var(--sec)}
+.sigchip{display:inline-flex;align-items:center;gap:6px;font-family:var(--mono);font-size:9px;letter-spacing:.12em;color:var(--accent);border:1px solid rgba(22,139,255,0.35);border-radius:4px;padding:4px 9px;line-height:1;align-self:flex-start}
+.sigchip .d{width:5px;height:5px;border-radius:50%;background:var(--accent)}
+.dnote{font-size:10px;color:var(--dim);line-height:1.5}
+
+.tfoot{display:grid;grid-template-columns:26px 76px 60px 56px 92px 100px 104px 104px 106px 120px;align-items:center;padding:0 16px 0 0;height:34px;border-top:1px solid var(--hair2)}
+.tfoot .k{font-family:var(--mono);font-size:9px;letter-spacing:.12em;text-transform:uppercase;color:var(--mut)}
+
+/* ---------- right column ---------- */
+.rcol{display:flex;flex-direction:column;gap:16px}
+.eqbody{padding:6px 16px 14px}
+.eqnum{display:flex;align-items:baseline;gap:12px;padding:12px 16px 2px}
+.eqnum .v{font-family:var(--mono);font-variant-numeric:tabular-nums;font-size:20px;font-weight:500;color:var(--text)}
+.eqnum .chg{font-family:var(--mono);font-variant-numeric:tabular-nums;font-size:11px}
+.eqsvg{display:block;width:100%;height:132px}
+
+/* ---------- calendar ---------- */
+.calhead{display:flex;align-items:center;gap:10px;padding:13px 16px 11px;border-bottom:1px solid var(--hair)}
+.calnav{font-family:var(--mono);font-size:10px;color:var(--dim);border:1px solid var(--hair);border-radius:4px;background:var(--bg2);width:20px;height:20px;display:inline-flex;align-items:center;justify-content:center;cursor:default}
+.calgrid{display:grid;grid-template-columns:repeat(7,1fr);gap:3px;padding:12px 16px 6px}
+.dow{font-family:var(--mono);font-size:8px;letter-spacing:.12em;text-transform:uppercase;color:var(--mut);text-align:center;padding-bottom:4px}
+.day{position:relative;height:38px;border-radius:4px;background:rgba(180,200,255,0.025);padding:4px 6px}
+.day .d{font-family:var(--mono);font-variant-numeric:tabular-nums;font-size:9px;color:var(--dim)}
+.day .p{position:absolute;left:6px;bottom:4px;font-family:var(--mono);font-variant-numeric:tabular-nums;font-size:8px;color:var(--sec)}
+.day.off{background:transparent}
+.day.off .d{color:rgba(120,138,160,0.4)}
+.calfoot{display:flex;gap:24px;padding:10px 16px 13px;border-top:1px solid var(--hair);margin-top:6px}
+
+.foot{padding:18px 24px 26px;text-align:center;font-family:var(--mono);font-size:10px;letter-spacing:.06em;color:var(--mut)}
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- top bar -->
+  <div class="topbar">
+    <span class="wordmark">PYRUS</span>
+    <div class="nav">
+      <span>Market</span><span>Signals</span><span>Flow</span><span>GEX</span><span>Trade</span>
+      <span class="on">Account</span><span>Research</span><span>Algo</span><span>Backtest</span><span>Diagnostics</span>
+    </div>
+    <div class="right">
+      <span class="btn ghost">Export</span>
+      <span class="btn secondary">Transfer</span>
+      <span class="btn primary">Trade</span>
+      <span class="clock">14:32:07 ET</span>
+    </div>
+  </div>
+
+  <!-- account context + tabs -->
+  <div class="tabrow">
+    <span class="crumb"><b>Core</b> · IBKR U8834021 · USD · Margin</span>
+    <div class="tabs">
+      <span class="tab active">All</span>
+      <span class="tab">Shadow<span class="n">· internal</span></span>
+    </div>
+    <div class="right">
+      <span class="kv"><span class="k">Snapshot</span><span class="v">14:32:05</span></span>
+      <span class="kv"><span class="k">Feed</span><span class="v">real-time</span></span>
+    </div>
+  </div>
+
+  <!-- ACCOUNT COMMAND STRIP : the one primary read -->
+  <div class="strip panel primary">
+    <div class="striptop">
+      <div class="metric">
+        <span class="lab">Day P&amp;L</span>
+        <span class="v up">+$1,284.50</span>
+        <span class="sub up">+2.73%</span>
+      </div>
+      <div class="metric">
+        <span class="lab">Total Equity</span>
+        <span class="v">$48,362.18</span>
+        <span class="sub">prev close 47,077.68</span>
+      </div>
+      <div class="metric">
+        <span class="lab">Exposure</span>
+        <span class="v">66.1%</span>
+        <span class="sub">net long <span class="long">$20,122</span></span>
+      </div>
+      <div class="metric">
+        <span class="lab">Buying Power</span>
+        <span class="v">$17,301.55</span>
+        <span class="sub">cash $16,415.78</span>
+      </div>
+      <div class="metric">
+        <span class="lab">Win Rate</span>
+        <span class="v">58.3%</span>
+        <span class="sub">21W · 15L · 30d</span>
+      </div>
+      <div class="stripstatus">
+        <span class="live"><span class="dot"></span>LIVE</span>
+        <span class="mnote">&lt;!-- motion: value-flash 190ms on tick --&gt;</span>
+      </div>
+    </div>
+    <div class="stripfoot">
+      <span class="kv"><span class="k">Realized day</span><span class="v up">+$955.08</span></span>
+      <span class="kv"><span class="k">Unrealized day</span><span class="v up">+$329.42</span></span>
+      <span class="kv"><span class="k">Margin used</span><span class="v">$9,733.20</span></span>
+      <span class="kv"><span class="k">Maint req</span><span class="v">$7,984.55</span></span>
+      <span class="kv"><span class="k">Positions</span><span class="v">5</span></span>
+      <span class="kv"><span class="k">Orders</span><span class="v">2 working</span></span>
+      <span class="kv"><span class="k">Fees mtd</span><span class="v">$41.62</span></span>
+    </div>
+  </div>
+
+  <!-- workspace : positions (2/3) + curve / calendar (1/3) -->
+  <div class="work">
+
+    <!-- POSITIONS -->
+    <div class="panel primary">
+      <div class="phead">
+        <h2 class="stitle">Positions</h2>
+        <span class="mono cap">5 open</span>
+        <div class="right">
+          <div class="seg"><span class="on">All</span><span>Equity</span><span>Options</span></div>
+        </div>
+      </div>
+      <div class="tbl">
+        <div class="trow thead">
+          <span></span>
+          <span>Symbol</span>
+          <span>Side</span>
+          <span class="num">Qty</span>
+          <span class="num">Avg Cost</span>
+          <span class="num">Last</span>
+          <span class="num">Day P&amp;L</span>
+          <span class="num">Open P&amp;L</span>
+          <span class="num">Mkt Value</span>
+          <span class="num">Weight</span>
+        </div>
+
+        <div class="trow">
+          <span class="caret">▸</span>
+          <span class="sym">SPY</span>
+          <span class="side long">LONG</span>
+          <span class="num">15</span>
+          <span class="num">731.15</span>
+          <span class="num">746.02</span>
+          <span class="num up">+46.80</span>
+          <span class="num up">+223.05</span>
+          <span class="num">11,190.30</span>
+          <span class="wcell"><span class="wbar"><i style="width:70%"></i></span><span class="num">23.1%</span></span>
+        </div>
+
+        <div class="trow open">
+          <span class="caret" style="color:var(--accent)">▾</span>
+          <span class="sym">NVDA</span>
+          <span class="side long">LONG</span>
+          <span class="num">45</span>
+          <span class="num">171.42</span>
+          <span class="num">178.10</span>
+          <span class="num up">+164.70</span>
+          <span class="num up">+300.60</span>
+          <span class="num">8,014.50</span>
+          <span class="wcell"><span class="wbar"><i style="width:50%"></i></span><span class="num">16.6%</span></span>
+        </div>
+
+        <!-- expanded symbol-detail band : hairline sections, no nested card -->
+        <div class="detail">
+          <div class="dcol">
+            <span class="dlab">NVDA · 15m</span>
+            <svg width="200" height="60" viewBox="0 0 200 60" aria-label="NVDA 15-minute candles">
+              <line x1="0" y1="30" x2="200" y2="30" stroke="rgba(180,200,255,0.08)" stroke-dasharray="2 3"/>
+              <g stroke-width="1">
+                <line x1="8"  y1="46" x2="8"  y2="30" stroke="#168BFF"/><rect x="5"  y="34" width="6" height="9"  fill="#168BFF"/>
+                <line x1="22" y1="44" x2="22" y2="26" stroke="#168BFF"/><rect x="19" y="29" width="6" height="11" fill="#168BFF"/>
+                <line x1="36" y1="40" x2="36" y2="24" stroke="#FF3048"/><rect x="33" y="27" width="6" height="9"  fill="#FF3048"/>
+                <line x1="50" y1="42" x2="50" y2="28" stroke="#168BFF"/><rect x="47" y="30" width="6" height="8"  fill="#168BFF"/>
+                <line x1="64" y1="38" x2="64" y2="20" stroke="#168BFF"/><rect x="61" y="23" width="6" height="11" fill="#168BFF"/>
+                <line x1="78" y1="34" x2="78" y2="18" stroke="#FF3048"/><rect x="75" y="21" width="6" height="8"  fill="#FF3048"/>
+                <line x1="92" y1="36" x2="92" y2="22" stroke="#168BFF"/><rect x="89" y="24" width="6" height="9"  fill="#168BFF"/>
+                <line x1="106" y1="30" x2="106" y2="14" stroke="#168BFF"/><rect x="103" y="17" width="6" height="10" fill="#168BFF"/>
+                <line x1="120" y1="28" x2="120" y2="12" stroke="#FF3048"/><rect x="117" y="14" width="6" height="9"  fill="#FF3048"/>
+                <line x1="134" y1="26" x2="134" y2="10" stroke="#168BFF"/><rect x="131" y="13" width="6" height="9"  fill="#168BFF"/>
+                <line x1="148" y1="22" x2="148" y2="8"  stroke="#168BFF"/><rect x="145" y="11" width="6" height="8"  fill="#168BFF"/>
+                <line x1="162" y1="20" x2="162" y2="6"  stroke="#FF3048"/><rect x="159" y="9"  width="6" height="7"  fill="#FF3048"/>
+                <line x1="176" y1="18" x2="176" y2="5"  stroke="#168BFF"/><rect x="173" y="8"  width="6" height="7"  fill="#168BFF"/>
+                <line x1="190" y1="14" x2="190" y2="4"  stroke="#168BFF"/><rect x="187" y="6"  width="6" height="6"  fill="#168BFF"/>
+              </g>
+            </svg>
+            <span class="micro">SESSION 173.88 – 178.42</span>
+          </div>
+          <div class="dcol">
+            <span class="dlab">Key Levels</span>
+            <div class="lvl"><span class="k">Entry</span><span class="v">171.42</span></div>
+            <div class="lvl"><span class="k">Last</span><span class="v" style="color:var(--text)">178.10</span></div>
+            <div class="lvl"><span class="k">Stop</span><span class="v">165.00</span></div>
+            <div class="lvl"><span class="k">Target</span><span class="v">195.00</span></div>
+            <div class="lvl"><span class="k">R multiple</span><span class="v up">+1.04R</span></div>
+          </div>
+          <div class="dcol">
+            <span class="dlab">Signal State</span>
+            <span class="sigchip"><span class="d"></span>LONG · CONFIRMED</span>
+            <p class="dnote">Momentum breakout above 170.80 · entered Jul 02 14:05 ET · holding 4d.<br>Next: trail stop to 168.40 on close above 180.</p>
+          </div>
+        </div>
+
+        <div class="trow">
+          <span class="caret">▸</span>
+          <span class="sym">TSLA</span>
+          <span class="side short">SHORT</span>
+          <span class="num">15</span>
+          <span class="num">411.80</span>
+          <span class="num">394.12</span>
+          <span class="num up">+126.75</span>
+          <span class="num up">+265.20</span>
+          <span class="num">5,911.80</span>
+          <span class="wcell"><span class="wbar"><i style="width:37%"></i></span><span class="num">12.2%</span></span>
+        </div>
+
+        <div class="trow hoverdemo">
+          <span class="caret">▸</span>
+          <span class="sym">AAPL</span>
+          <span class="side long">LONG</span>
+          <span class="num">12</span>
+          <span class="num">318.44</span>
+          <span class="num">313.57</span>
+          <span class="num up">+35.04</span>
+          <span class="num dn">−58.44</span>
+          <span class="num">3,762.84</span>
+          <span class="wcell"><span class="wbar"><i style="width:24%"></i></span><span class="num">7.8%</span></span>
+        </div>
+
+        <div class="trow">
+          <span class="caret">▸</span>
+          <span class="sym">MSFT</span>
+          <span class="side long">LONG</span>
+          <span class="num">8</span>
+          <span class="num">371.02</span>
+          <span class="num stalecell"><span class="stale">STALE</span><span style="color:var(--amber)">383.37</span></span>
+          <span class="num dn">−43.87</span>
+          <span class="num up">+98.80</span>
+          <span class="num">3,066.96</span>
+          <span class="wcell"><span class="wbar"><i style="width:19%"></i></span><span class="num">6.3%</span></span>
+        </div>
+
+        <div class="tfoot">
+          <span></span>
+          <span class="k">Total</span>
+          <span></span><span></span><span></span><span></span>
+          <span class="num up" style="color:var(--green)">+329.42</span>
+          <span class="num up" style="color:var(--green)">+829.21</span>
+          <span class="num" style="color:var(--text)">31,946.40</span>
+          <span class="num" style="padding-right:0">66.1%</span>
+        </div>
+        <div class="legend">
+          <span class="micro">HOVER = BG TINT + 2PX ACCENT RAIL · SHOWN ON AAPL</span>
+          <span class="micro">CLICK ROW = INLINE DETAIL · SHOWN ON NVDA</span>
+          <span class="mnote" style="margin-left:auto">&lt;!-- motion: row-flash on fill --&gt;</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- right : equity curve + calendar -->
+    <div class="rcol">
+
+      <div class="panel">
+        <div class="phead">
+          <h2 class="stitle">Equity Curve</h2>
+          <div class="right">
+            <div class="seg">
+              <span>1M</span><span class="on focus-demo">3M</span><span>YTD</span><span>ALL</span>
+            </div>
+            <span class="mnote">FOCUS RING</span>
+          </div>
+        </div>
+        <div class="eqnum">
+          <span class="v">$48,362</span>
+          <span class="chg up">+9.6% · 3M</span>
+          <span class="mnote" style="margin-left:auto">&lt;!-- motion: panel-enter 190ms --&gt;</span>
+        </div>
+        <div class="eqbody">
+          <svg class="eqsvg" viewBox="0 0 392 132" preserveAspectRatio="none" aria-label="Equity curve, 3 months, 44.1K to 48.4K">
+            <line x1="0" y1="22"  x2="392" y2="22"  stroke="rgba(180,200,255,0.06)"/>
+            <line x1="0" y1="66"  x2="392" y2="66"  stroke="rgba(180,200,255,0.06)"/>
+            <line x1="0" y1="110" x2="392" y2="110" stroke="rgba(180,200,255,0.06)"/>
+            <text x="391" y="18"  text-anchor="end" font-family="IBM Plex Mono,monospace" font-size="8" fill="#788AA0">48K</text>
+            <text x="391" y="62"  text-anchor="end" font-family="IBM Plex Mono,monospace" font-size="8" fill="#788AA0">46K</text>
+            <text x="391" y="106" text-anchor="end" font-family="IBM Plex Mono,monospace" font-size="8" fill="#788AA0">44K</text>
+            <polygon fill="rgba(22,139,255,0.08)" points="0,112 22,108 44,110 64,101 84,104 104,95 124,98 144,88 162,92 180,82 198,85 216,74 234,78 252,68 270,72 288,60 306,55 324,58 342,44 360,38 378,30 392,26 392,132 0,132"/>
+            <polyline fill="none" stroke="#168BFF" stroke-width="1.4" stroke-opacity="0.85" points="0,112 22,108 44,110 64,101 84,104 104,95 124,98 144,88 162,92 180,82 198,85 216,74 234,78 252,68 270,72 288,60 306,55 324,58 342,44 360,38 378,30 392,26"/>
+            <circle cx="392" cy="26" r="2.4" fill="#168BFF"/>
+          </svg>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="calhead">
+          <h2 class="stitle">P&amp;L Calendar</h2>
+          <div class="right" style="margin-left:auto;display:flex;align-items:center;gap:6px">
+            <span class="calnav">‹</span>
+            <span class="mono cap" style="color:var(--sec)">JUN 2026</span>
+            <span class="calnav">›</span>
+          </div>
+        </div>
+        <div class="calgrid">
+          <span class="dow">Su</span><span class="dow">Mo</span><span class="dow">Tu</span><span class="dow">We</span><span class="dow">Th</span><span class="dow">Fr</span><span class="dow">Sa</span>
+
+          <span class="day off"><span class="d"></span></span>
+          <span class="day" style="background:rgba(46,216,137,0.10)"><span class="d">1</span><span class="p up">+184</span></span>
+          <span class="day" style="background:rgba(255,48,72,0.09)"><span class="d">2</span><span class="p dn">−96</span></span>
+          <span class="day" style="background:rgba(46,216,137,0.16)"><span class="d">3</span><span class="p up">+312</span></span>
+          <span class="day" style="background:rgba(46,216,137,0.07)"><span class="d">4</span><span class="p up">+58</span></span>
+          <span class="day" style="background:rgba(255,48,72,0.14)"><span class="d">5</span><span class="p dn">−241</span></span>
+          <span class="day off"><span class="d">6</span></span>
+
+          <span class="day off"><span class="d">7</span></span>
+          <span class="day" style="background:rgba(46,216,137,0.12)"><span class="d">8</span><span class="p up">+205</span></span>
+          <span class="day" style="background:rgba(46,216,137,0.06)"><span class="d">9</span><span class="p up">+44</span></span>
+          <span class="day" style="background:rgba(255,48,72,0.08)"><span class="d">10</span><span class="p dn">−72</span></span>
+          <span class="day" style="background:rgba(46,216,137,0.22)"><span class="d">11</span><span class="p up">+486</span></span>
+          <span class="day" style="background:rgba(46,216,137,0.09)"><span class="d">12</span><span class="p up">+117</span></span>
+          <span class="day off"><span class="d">13</span></span>
+
+          <span class="day off"><span class="d">14</span></span>
+          <span class="day" style="background:rgba(255,48,72,0.18)"><span class="d">15</span><span class="p dn">−388</span></span>
+          <span class="day" style="background:rgba(46,216,137,0.08)"><span class="d">16</span><span class="p up">+92</span></span>
+          <span class="day" style="background:rgba(46,216,137,0.14)"><span class="d">17</span><span class="p up">+268</span></span>
+          <span class="day" style="background:rgba(255,48,72,0.07)"><span class="d">18</span><span class="p dn">−51</span></span>
+          <span class="day"><span class="d">19</span><span class="p" style="color:var(--mut)">HOL</span></span>
+          <span class="day off"><span class="d">20</span></span>
+
+          <span class="day off"><span class="d">21</span></span>
+          <span class="day" style="background:rgba(46,216,137,0.11)"><span class="d">22</span><span class="p up">+176</span></span>
+          <span class="day" style="background:rgba(255,48,72,0.11)"><span class="d">23</span><span class="p dn">−134</span></span>
+          <span class="day" style="background:rgba(46,216,137,0.26)"><span class="d">24</span><span class="p up">+612</span></span>
+          <span class="day" style="background:rgba(46,216,137,0.07)"><span class="d">25</span><span class="p up">+63</span></span>
+          <span class="day" style="background:rgba(255,48,72,0.10)"><span class="d">26</span><span class="p dn">−118</span></span>
+          <span class="day off"><span class="d">27</span></span>
+
+          <span class="day off"><span class="d">28</span></span>
+          <span class="day" style="background:rgba(46,216,137,0.13)"><span class="d">29</span><span class="p up">+247</span></span>
+          <span class="day" style="background:rgba(46,216,137,0.18)"><span class="d">30</span><span class="p up">+341</span></span>
+          <span class="day off"><span class="d"></span></span>
+          <span class="day off"><span class="d"></span></span>
+          <span class="day off"><span class="d"></span></span>
+          <span class="day off"><span class="d"></span></span>
+        </div>
+        <div class="calfoot">
+          <span class="kv"><span class="k">Month</span><span class="v up">+$2,847</span></span>
+          <span class="kv"><span class="k">Record</span><span class="v">13W · 8L</span></span>
+          <span class="kv"><span class="k">Best</span><span class="v up">+$612</span></span>
+          <span class="kv"><span class="k">Worst</span><span class="v dn">−$388</span></span>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <div class="foot">Direction mockup — Luminous Terminal · audit-2026-07 · sample data</div>
+</div>
+</body>
+</html>

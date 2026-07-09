@@ -372,3 +372,55 @@ Source audit (4 dims, a11y/state-weighted per the Tier-3 bar) of `DiagnosticsScr
 | SET-03 | Stale-while-loading without "refreshing" cue (SignalMonitor 2841, ThresholdPanel 257, Lane 937); IbkrLane fixed multi-col grids don't stack (239,590,751); fontWeight raw 500/600 → `FONT_WEIGHTS.*` (376,3476); hand-rolled `SettingCard` inside `Panel` = borderline nested-card mosaic (680-734). | see ids | state/responsive/ds | P3 | open |
 
 _(Tier 3 COMPLETE → **all screens audited**: Tier 1 (Market/Signals/Trade/Account) · Tier 2 (Flow/GEX/Research/Algo/Backtest) · Tier 3 (Diagnostics/Settings).)_
+
+---
+
+## §COH — Cohesion & Direction audit (2026-07-08)
+
+Source: `FRONTEND_COHESION_AUDIT_2026-07.md` (method, scorecards, direction proposal, roadmap). Evidence shots: `artifacts/pyrus/docs/design/audit-2026-07/` (manifest has capture labels; sha f24887cc). New dims: `cohesion | hierarchy | legibility | affordance | elevation`.
+
+### New systemic register (SYS-16…20)
+| id | finding | evidence | scope | sev | effort | reach |
+|----|---------|----------|-------|-----|--------|-------|
+| SYS-16 | **Focus suppression cluster** — `outline:none` on inputs with no replacement ring (SYS-09 covers button/[tabindex] only): accountUtils.jsx:401,429,651 · TradingAnalysisWorkbench.jsx:733 · PositionsPanel.jsx:159,4167 · GexScreen.jsx:157-158 (bare input, `border:0;outline:0`, no `.ra-textfield` wrapper) · AlgoSettingsRegion.jsx:173,843 · HaltStrip.jsx:145 · HeaderAccountStrip.jsx:114 · PlatformWatchlist.jsx:138. Fix once: universal input focus contract (2px accent ring + offset). | see ids (observed, source) | systemic/a11y | P1 | S–M | 7+ screens |
+| SYS-17 | **Typography dual source of truth + floor** — `typography.ts` TYPE_PX (micro 7 / label 8) disagrees with `--ra-type-*` (10px) in index.css; 7px micro is load-bearing in chrome (HeaderAccountStrip.jsx:45 NLV/BP), Account hero labels (AccountHeroBlock.jsx:81,91), Algo KPI sub-headers. Direction: one SoT + floor bump micro/label/caption 7/8/9 → 8/9/10. | typography.ts; index.css:565-570 (observed) | systemic | P2 | M | all |
+| SYS-18 | **No z-index scale** — inline zIndex 10→10020 across jsx (10,12,18…1000,10000,10020); CSS 0→1200. Add `--ra-z-*` token family + migrate. | rg zIndex (observed) | systemic | P2 | S | all |
+| SYS-19 | **Shell watchlist rail out-shouts every screen's primary read** — 5+ large bold colored prices are the strongest visual mass on most screens (recurring H3 pressure: market/flow/gex/account). Styling-level fix: demote rail price size/weight one step, or dim non-focused rows. | shots market/account/gex--w1440 (observed, visual) | systemic/hierarchy | P2 | S | most |
+| SYS-20 | **Button SoT gaps** — Signals ~10 raw `<button>`s (SignalsScreen.jsx:1289,2119,2926,4043,4263,4623) + role=button rows (4804) with no hover cue; Backtest `buttonStyle` (BacktestingPanels.tsx:931) cursor-only, no hover; Trade bespoke BUY/SELL hover-less (TradeOrderTicket.jsx:865). Adopt Button/`.ra-interactive` contract. | see ids (observed, source) | systemic/affordance | P2 | M | 3 screens |
+
+### COH register (cross-screen cohesion)
+| id | finding | evidence | dim | sev | effort | status |
+|----|---------|----------|-----|-----|--------|--------|
+| COH-01 | **Research is a divergent visual world** — own palette (researchThemes.js: ~107 hex olive/terracotta/gold; +7 hex PhotonicsObservatory.jsx:140-146), glyph+emoji icons (◆★⬢☢⚛🤖🇺🇸📋), 17 onMouseEnter hover mutations, 0 `.ra-*` motion. C11 chrome-seam FAIL (only screen). Direction: re-map hues onto token anchors, keep graph layout/identity (veto decision #3). Extends RES-15 (icons). | researchThemes.js:25-584; shot research--w1440 (observed) | cohesion | P1 | L | open |
+| COH-02 | **Account parallel component dialect** — 2nd `Pill` (accountUtils.jsx:493), 2nd `StatTile` (:533), `ToggleGroup` (:529), 4 bespoke button styles (:282-378) beside primitives.jsx equivalents. Merge into primitives. | accountUtils.jsx (observed) | cohesion | P2 | M | open |
+| COH-03 | **Mixed icon languages app-wide** — lucide standard (61 files) vs unicode glyphs: MarketUniverseTable.jsx:174 (▲▼→), FlowScreen.jsx:5049,5915-16,4242 (▲▼■★), MachineStateDiagram.jsx:200-207,889 (✓✕◌!⚡), OperationsAttentionStrip.jsx:16-19 (⚠•), Research set. Policy: lucide + tokenized `MicroGlyph` primitive for ≤10px cells (veto decision #4). Cites RES-15 (bump reach). | see ids (observed) | cohesion | P2 | M | open |
+| COH-04 | **Third StatusPill idiom** — OperationsSignalRow.jsx:948 (icon+alpha-border) vs canonical dot+text primitives.jsx:813, inside the flagship era-3 screen. Unify. | see ids (observed) | cohesion | P2 | S | open |
+| COH-05 | **Backtest theme-object styling dialect** — `cardStyle(theme,scale)`/`buttonStyle(...)` (BacktestingPanels.tsx:931,965) era-2 fn-pattern parallel to Card/surfaceStyle. Extends BT-06. | see ids (observed) | cohesion | P3 | M | open |
+| COH-06 | **Hover-mutation tail** (post SYS-11/GC-04): DiagnosticsScreen.jsx:534-541 EventList rows + PhotonicsObservatory 17 sites + MarketActivityPanel ×4 still mutate inline styles onMouseEnter. → CSS `.ra-hover-*`. | see ids (observed) | cohesion | P3 | S | open |
+| LIGHT-01 | **Light theme fails contrast floor (computed)** — textMuted #6F7E92 3.29–4.14:1 on all surfaces; amber #B87507 2.99–3.76:1; red/green marginal on bg2+. Dark theme healthy (textMuted ≥5.1 on bg0-2; red large-text-only on bg3/4). Decide: fix ~6 token values or freeze light (veto decision #1). | contrast matrix in audit report §1 (observed, math) | legibility | P1(if light kept) | S | open — decision |
+
+### Per-screen additions (continue existing sequences)
+| id | finding | evidence | dim | sev | status |
+|----|---------|----------|-----|-----|--------|
+| MKT-11 | **Chart annotation overload** — BUY/SELL/BEAR/TP/PWH/PBL bubbles overlap illegibly over candles in the dominant center chart slot; the RISK-ON verdict pill loses the squint to its own chart's noise. Needs annotation density/collision/fade rules. | shot market--w1440 (observed, live-rth) | hierarchy | P1 | open |
+| MKT-12 | Scanner rows give no rest-state click affordance (only selected row differs). | MarketUniverseTable.jsx:418 region; shot (observed) | affordance | P3 | open |
+| SIG-05 | Signals is the interaction outlier — no `.ra-interactive`/hover on ~10 buttons + clickable rows (see SYS-20 ids). | SignalsScreen.jsx (observed) | affordance | P2 | open |
+| SIG-06 | No era-3 motion adoption: no `ra-panel-enter`, value-flash unused (flashValue=0) while Flow/GEX/Market animate. | SignalsScreen.jsx (observed) | cohesion | P3 | open |
+| SIG-07 | Bias primary read out-shouted by screen title + "2,000" TRACKED tile + two large zero-circles (idle capture). | shot signals--w1440 (observed; needs-live-data re-verify) | hierarchy | P2 | open |
+| FLOW-05 | **No directional-pressure headline** — `compassScore`/`netPrem` computed (FlowScreen.jsx:2467,2458) but never surfaced as a regime-strip verdict; primary read buried in distribution donuts. | see ids + shot (observed) | hierarchy | P2 | open |
+| FLOW-06 | Right-rail Flow Scanner (large cyan tickers) out-competes the primary distribution read. | shot flow--w1440 (observed) | hierarchy | P3 | open |
+| GEX-08 | Spot price "$734.30" is the most salient number, out-weighing NET GEX/walls (the DESIGN.md primary read), which sit in secondary-weight KPI strip. | shot gex--w1440 (observed) | hierarchy | P2 | open |
+| GEX-09 | Ticker search input has no focus indicator (part of SYS-16). | GexScreen.jsx:157-158 (observed) | affordance | P2 | open→SYS-16 |
+| TRD-06 | BUY/SELL execution CTA outlined-only at bottom-corner fold edge — under-emphasized for the screen's action mandate. | TradeOrderTicket.jsx:874-881; shot (observed) | hierarchy | P2 | open |
+| ACC-07 | **Primary-read inversion** — P&L/exposure hero strip renders labels 7px / values 9px (1.29× ratio): the account's primary read is the smallest element on screen while shell watchlist prices dominate. Direction: command strip w/ 26px mono values. | AccountHeroBlock.jsx:81,91; shot (observed) | hierarchy | P1 | open |
+| ACC-08 | 6× outline:none in account files → SYS-16. | accountUtils.jsx:401,429,651 +3 | affordance | P1 | open→SYS-16 |
+| ALG-10 | Right config panel is a wall of saturated toggle switches out-weighing data; readiness signals scattered across 4 corners (SYNCING / SHADOW / ARMED / sidebar HEALTHY). | shot algo--w1440 (observed) | hierarchy | P2 | open |
+| DIAG-05 | **MachineStateDiagram fixed-width SVG clips at 390px** — right columns cut ("cha…"). | shot diagnostics--w390 (observed) | responsive | P1 | open |
+| DIAG-06 | Glyph icon vocabulary ✓✕◌!⚡→ dominates the screen vs lucide chrome — sharpest era seam after Research (part of COH-03). | MachineStateDiagram.jsx:200-207,889 (observed) | cohesion | P2 | open→COH-03 |
+| DIAG-07 | Diagram numerals in T.sans non-tabular ("15,292mb", "12/12"). | MachineStateDiagram (observed) | legibility | P3 | open |
+| SET-04 | **Readiness demoted** — screen leads with preferences form; operational readiness/blockers (the DESIGN.md primary read) live in a small MetricChip strip. Promote strip to command position. | shot settings--w1440 (observed) | hierarchy | P2 | open |
+| SET-05 | ~215px dead gutter between watchlist rail and left-aligned form at 1440. | shot settings--w1440 (observed) | hierarchy | P3 | open |
+| BT-09 | `buttonStyle` has no hover state (cursor only) — Queue Run/Sweep/Promote give zero pointer feedback (part of SYS-20). | BacktestingPanels.tsx:931 (observed) | affordance | P2 | open→SYS-20 |
+| CHR-01 | Active nav tab under-signaled (text color + 1px inset accent only). | AppHeader.jsx:587-591 (observed) | affordance | P2 | open |
+| CHR-02 | Chrome micro text at 7px floor (NLV/BP labels, ticker sublabels) — part of SYS-17 bump. | HeaderAccountStrip.jsx:45 (observed) | legibility | P2 | open→SYS-17 |
+| CHR-03 | Footer chrome scattered (no unified bar; indicators split across corners). | PlatformShell.jsx (observed) | cohesion | P3 | open |

@@ -308,6 +308,7 @@ export const buildFailurePointFromAlgoAttentionItem = (item) => {
 export const buildAlgoStatusFailurePoint = ({
   status,
   gatewayReady,
+  marketDataReady = gatewayReady,
   scanOn,
   deploymentEnabled,
   attentionItems = [],
@@ -320,15 +321,15 @@ export const buildAlgoStatusFailurePoint = ({
     .slice(0, 4);
   const causes = compact([
     deploymentEnabled === false ? "Deployment is paused." : null,
-    gatewayReady === false ? "Data bridge is not ready." : null,
+    marketDataReady === false ? "Market-data stream is not ready." : null,
     scanOn === false ? "Signal-options scan is not running." : null,
     rankedAttention.map(attentionLabel),
     gatewayBlocks > 0 ? `${formatCount(gatewayBlocks)} gateway block${gatewayBlocks === 1 ? "" : "s"} reported.` : null,
   ]);
   const firstCause = causes[0];
   const nextAction =
-    gatewayReady === false
-      ? "Start or repair the broker bridge, then re-check Algo readiness."
+    marketDataReady === false
+      ? "Configure or repair the Massive market-data stream, then re-check Algo readiness."
       : rankedAttention.length
         ? "Open the Algo attention/audit detail for the top warning item."
         : deploymentEnabled === false
@@ -342,7 +343,7 @@ export const buildAlgoStatusFailurePoint = ({
     source: "algo",
     reason: status,
     metrics: metricRows([
-      metric("Gateway", gatewayReady ? "ready" : "blocked"),
+      metric("Market data", marketDataReady ? "ready" : "blocked"),
       metric("Scan", scanOn ? "running" : "paused"),
       metric("Deployment", deploymentEnabled === false ? "paused" : "enabled"),
       metric("Attention", formatCount(rankedAttention.length)),

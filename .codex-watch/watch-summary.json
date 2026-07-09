@@ -1,0 +1,335 @@
+{
+  "appUrl": "http://127.0.0.1:18747/",
+  "startedAt": "2026-07-06T19:17:49.851Z",
+  "endedAt": "2026-07-06T19:22:49.915Z",
+  "durationMs": 300064,
+  "totalEvents": 14,
+  "eventCounts": {
+    "console.warning": 5,
+    "screenshot_error": 3,
+    "http": 1,
+    "console.error": 1,
+    "requestfailed": 4
+  },
+  "uniqueEventCount": 7,
+  "topEvents": [
+    {
+      "count": 4,
+      "key": "requestfailed:http://127.0.0.1:18747/api/diagnostics/client-metrics:net::ERR_ABORTED"
+    },
+    {
+      "count": 3,
+      "key": "console.warning:http://127.0.0.1:18747/:[.WebGL-0x7fc04eabc00]GL Driver Message (OpenGL, Performance, GL_CLOSE_PATH_NV, High): GPU stall due to ReadPixels"
+    },
+    {
+      "count": 3,
+      "key": "screenshot_error::page.screenshot: Timeout 30000ms exceeded.\nCall log:\n\u001b[2m  - taking page screenshot\u001b[22m\n\u001b[2m  - waiting for fonts to load...\u001b[22m\n"
+    },
+    {
+      "count": 1,
+      "key": "console.warning:http://127.0.0.1:18747/node_modules/.vite/deps/chunk-QXHFEY3F.js?v=e599cbd2:THREE.Clock: This module has been deprecated. Please use THREE.Timer instead."
+    },
+    {
+      "count": 1,
+      "key": "console.warning:http://127.0.0.1:18747/:[.WebGL-0x7fc04eabc00]GL Driver Message (OpenGL, Performance, GL_CLOSE_PATH_NV, High): GPU stall due to ReadPixels (this message will no longer repeat)"
+    },
+    {
+      "count": 1,
+      "key": "http:http://127.0.0.1:18747/api/diagnostics/client-metrics:500"
+    },
+    {
+      "count": 1,
+      "key": "console.error:http://127.0.0.1:18747/api/diagnostics/client-metrics:Failed to load resource: the server responded with a status of 500 (Internal Server Error)"
+    }
+  ],
+  "snapshots": [
+    {
+      "elapsedMs": 38151,
+      "label": "initial",
+      "screenshot": "/home/runner/workspace/.codex-watch/watch-038.png",
+      "state": {
+        "title": "PYRUS Platform",
+        "url": "http://127.0.0.1:18747/",
+        "readyState": "complete",
+        "visibleText": "PYRUS Sign in to continue. Email Password Sign in First-time setup PYRUS Loading workspace 37% Loading workspace route Loading workspace 37%",
+        "overlay": false,
+        "bootOverlayPresent": false,
+        "screenStackPresent": false,
+        "activeScreenId": null,
+        "loadErrors": [],
+        "visibleLoading": [],
+        "suspenseFallbackCount": 0,
+        "healthText": [
+          {
+            "id": "neural-stage",
+            "text": "PYRUSLoading workspace37%Loading workspace routeLoading workspace 37%"
+          },
+          {
+            "id": "neural-stage-fallback",
+            "text": "PYRUSLoading workspace37%Loading workspace routeLoading workspace 37%"
+          }
+        ],
+        "viewport": {
+          "width": 1600,
+          "height": 1000
+        },
+        "scroll": {
+          "width": 1600,
+          "height": 1000,
+          "horizontalOverflow": false
+        }
+      },
+      "recentEventCount": 0
+    },
+    {
+      "elapsedMs": 70270,
+      "label": "periodic",
+      "screenshot": "/home/runner/workspace/.codex-watch/watch-070.png",
+      "state": {
+        "title": "PYRUS Platform",
+        "url": "http://127.0.0.1:18747/",
+        "readyState": "complete",
+        "visibleText": "PYRUS Sign in to continue. Email Password Sign in First-time setup",
+        "overlay": false,
+        "bootOverlayPresent": false,
+        "screenStackPresent": false,
+        "activeScreenId": null,
+        "loadErrors": [],
+        "visibleLoading": [],
+        "suspenseFallbackCount": 0,
+        "healthText": [],
+        "viewport": {
+          "width": 1600,
+          "height": 1000
+        },
+        "scroll": {
+          "width": 1600,
+          "height": 1000,
+          "horizontalOverflow": false
+        }
+      },
+      "recentEventCount": 6
+    },
+    {
+      "elapsedMs": 135630,
+      "label": "periodic",
+      "screenshot": "/home/runner/workspace/.codex-watch/watch-136.png",
+      "state": {
+        "title": "PYRUS Platform",
+        "url": "http://127.0.0.1:18747/",
+        "readyState": "complete",
+        "visibleText": "PYRUS Sign in to continue. Email Password Sign in First-time setup",
+        "overlay": false,
+        "bootOverlayPresent": false,
+        "screenStackPresent": false,
+        "activeScreenId": null,
+        "loadErrors": [],
+        "visibleLoading": [],
+        "suspenseFallbackCount": 0,
+        "healthText": [],
+        "viewport": {
+          "width": 1600,
+          "height": 1000
+        },
+        "scroll": {
+          "width": 1600,
+          "height": 1000,
+          "horizontalOverflow": false
+        }
+      },
+      "recentEventCount": 4
+    },
+    {
+      "elapsedMs": 209753,
+      "label": "periodic",
+      "screenshot": "/home/runner/workspace/.codex-watch/watch-210.png",
+      "state": {
+        "title": "PYRUS Platform",
+        "url": "http://127.0.0.1:18747/",
+        "readyState": "complete",
+        "visibleText": "PYRUS Sign in to continue. Email Password Sign in First-time setup",
+        "overlay": false,
+        "bootOverlayPresent": false,
+        "screenStackPresent": false,
+        "activeScreenId": null,
+        "loadErrors": [],
+        "visibleLoading": [],
+        "suspenseFallbackCount": 0,
+        "healthText": [],
+        "viewport": {
+          "width": 1600,
+          "height": 1000
+        },
+        "scroll": {
+          "width": 1600,
+          "height": 1000,
+          "horizontalOverflow": false
+        }
+      },
+      "recentEventCount": 1
+    },
+    {
+      "elapsedMs": 291174,
+      "label": "periodic",
+      "screenshot": "/home/runner/workspace/.codex-watch/watch-291.png",
+      "state": {
+        "title": "PYRUS Platform",
+        "url": "http://127.0.0.1:18747/",
+        "readyState": "complete",
+        "visibleText": "PYRUS Loading app shell 17% Loading app shell 17%",
+        "overlay": false,
+        "bootOverlayPresent": false,
+        "screenStackPresent": false,
+        "activeScreenId": null,
+        "loadErrors": [],
+        "visibleLoading": [],
+        "suspenseFallbackCount": 0,
+        "healthText": [
+          {
+            "id": "app-loading-fallback",
+            "text": "PYRUSLoading app shell17%Loading app shell 17%"
+          }
+        ],
+        "viewport": {
+          "width": 1600,
+          "height": 1000
+        },
+        "scroll": {
+          "width": 1600,
+          "height": 1000,
+          "horizontalOverflow": false
+        }
+      },
+      "recentEventCount": 3
+    },
+    {
+      "elapsedMs": 299999,
+      "label": "periodic",
+      "screenshot": "/home/runner/workspace/.codex-watch/watch-300.png",
+      "state": {
+        "title": "PYRUS Platform",
+        "url": "http://127.0.0.1:18747/",
+        "readyState": "complete",
+        "visibleText": "PYRUS Sign in to continue. Email Password Sign in First-time setup",
+        "overlay": false,
+        "bootOverlayPresent": false,
+        "screenStackPresent": false,
+        "activeScreenId": null,
+        "loadErrors": [],
+        "visibleLoading": [],
+        "suspenseFallbackCount": 0,
+        "healthText": [],
+        "viewport": {
+          "width": 1600,
+          "height": 1000
+        },
+        "scroll": {
+          "width": 1600,
+          "height": 1000,
+          "horizontalOverflow": false
+        }
+      },
+      "recentEventCount": 3
+    }
+  ],
+  "events": [
+    {
+      "atMs": 41646,
+      "kind": "console.warning",
+      "text": "THREE.Clock: This module has been deprecated. Please use THREE.Timer instead.",
+      "url": "http://127.0.0.1:18747/node_modules/.vite/deps/chunk-QXHFEY3F.js?v=e599cbd2",
+      "line": 746,
+      "column": 14
+    },
+    {
+      "atMs": 41942,
+      "kind": "console.warning",
+      "text": "[.WebGL-0x7fc04eabc00]GL Driver Message (OpenGL, Performance, GL_CLOSE_PATH_NV, High): GPU stall due to ReadPixels",
+      "url": "http://127.0.0.1:18747/",
+      "line": 0,
+      "column": 0
+    },
+    {
+      "atMs": 42184,
+      "kind": "console.warning",
+      "text": "[.WebGL-0x7fc04eabc00]GL Driver Message (OpenGL, Performance, GL_CLOSE_PATH_NV, High): GPU stall due to ReadPixels",
+      "url": "http://127.0.0.1:18747/",
+      "line": 0,
+      "column": 0
+    },
+    {
+      "atMs": 42186,
+      "kind": "console.warning",
+      "text": "[.WebGL-0x7fc04eabc00]GL Driver Message (OpenGL, Performance, GL_CLOSE_PATH_NV, High): GPU stall due to ReadPixels",
+      "url": "http://127.0.0.1:18747/",
+      "line": 0,
+      "column": 0
+    },
+    {
+      "atMs": 78141,
+      "kind": "console.warning",
+      "text": "[.WebGL-0x7fc04eabc00]GL Driver Message (OpenGL, Performance, GL_CLOSE_PATH_NV, High): GPU stall due to ReadPixels (this message will no longer repeat)",
+      "url": "http://127.0.0.1:18747/",
+      "line": 0,
+      "column": 0
+    },
+    {
+      "atMs": 100338,
+      "kind": "screenshot_error",
+      "message": "page.screenshot: Timeout 30000ms exceeded.\nCall log:\n\u001b[2m  - taking page screenshot\u001b[22m\n\u001b[2m  - waiting for fonts to load...\u001b[22m\n"
+    },
+    {
+      "atMs": 141331,
+      "kind": "http",
+      "status": 500,
+      "url": "http://127.0.0.1:18747/api/diagnostics/client-metrics",
+      "method": "POST"
+    },
+    {
+      "atMs": 141331,
+      "kind": "console.error",
+      "text": "Failed to load resource: the server responded with a status of 500 (Internal Server Error)",
+      "url": "http://127.0.0.1:18747/api/diagnostics/client-metrics",
+      "line": 0,
+      "column": 0
+    },
+    {
+      "atMs": 165703,
+      "kind": "screenshot_error",
+      "message": "page.screenshot: Timeout 30000ms exceeded.\nCall log:\n\u001b[2m  - taking page screenshot\u001b[22m\n\u001b[2m  - waiting for fonts to load...\u001b[22m\n"
+    },
+    {
+      "atMs": 179697,
+      "kind": "requestfailed",
+      "url": "http://127.0.0.1:18747/api/diagnostics/client-metrics",
+      "method": "POST",
+      "failure": "net::ERR_ABORTED"
+    },
+    {
+      "atMs": 239840,
+      "kind": "screenshot_error",
+      "message": "page.screenshot: Timeout 30000ms exceeded.\nCall log:\n\u001b[2m  - taking page screenshot\u001b[22m\n\u001b[2m  - waiting for fonts to load...\u001b[22m\n"
+    },
+    {
+      "atMs": 298366,
+      "kind": "requestfailed",
+      "url": "http://127.0.0.1:18747/api/diagnostics/client-metrics",
+      "method": "POST",
+      "failure": "net::ERR_ABORTED"
+    },
+    {
+      "atMs": 298366,
+      "kind": "requestfailed",
+      "url": "http://127.0.0.1:18747/api/diagnostics/client-metrics",
+      "method": "POST",
+      "failure": "net::ERR_ABORTED"
+    },
+    {
+      "atMs": 298366,
+      "kind": "requestfailed",
+      "url": "http://127.0.0.1:18747/api/diagnostics/client-metrics",
+      "method": "POST",
+      "failure": "net::ERR_ABORTED"
+    }
+  ]
+}

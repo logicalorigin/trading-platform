@@ -10,15 +10,65 @@ import {
   textSize,
 } from "../../lib/uiTokens.jsx";
 import { motionVars } from "../../lib/motion.jsx";
-import { formatAccountMoney, maskAccountId } from "./accountUtils.jsx";
-
-const HIDE_SCROLLBAR_STYLE = {
-  scrollbarWidth: "none",
-  msOverflowStyle: "none",
-};
+import {
+  formatAccountMoney,
+  formatAccountPercent,
+  formatAccountSignedMoney,
+  maskAccountId,
+  toneForValue,
+} from "./accountUtils.jsx";
 
 const ALL_TAB_ID = "all";
 const SHADOW_TAB_ID = "shadow";
+
+const svgLogoDataUri = (text, fill, fontSize = 9) =>
+  "data:image/svg+xml," +
+  encodeURIComponent(
+    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><text x="12" y="15.5" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-weight="700" font-size="${fontSize}" fill="${fill}">${text}</text></svg>`,
+  );
+
+const BROKER_BRANDS = {
+  all: {
+    label: "All accounts",
+    logoUrl: svgLogoDataUri("ALL", "#168BFF", 8),
+    tone: CSS_COLOR.accent,
+  },
+  etrade: {
+    label: "E*TRADE",
+    logoUrl: svgLogoDataUri("E*", "#6F3FD8", 12),
+    tone: CSS_COLOR.purple,
+  },
+  ibkr: {
+    label: "IBKR",
+    logoUrl: svgLogoDataUri("IBKR", "#CC0000", 8),
+    tone: CSS_COLOR.red,
+  },
+  robinhood: {
+    label: "Robinhood",
+    logoUrl: svgLogoDataUri("RH", "#00C805", 10),
+    tone: CSS_COLOR.green,
+  },
+  schwab: {
+    label: "Schwab",
+    logoUrl: svgLogoDataUri("CS", "#00A0DF", 10),
+    tone: CSS_COLOR.blue,
+  },
+  snaptrade: {
+    label: "SnapTrade",
+    logoUrl: svgLogoDataUri("ST", "#168BFF", 10),
+    tone: CSS_COLOR.cyan,
+  },
+  shadow: {
+    label: "Shadow",
+    logoUrl: svgLogoDataUri("SH", "#FF5F9E", 9),
+    tone: CSS_COLOR.pink,
+  },
+  brokerage: {
+    label: "Brokerage",
+    logoUrl: svgLogoDataUri("BR", "#788AA0", 9),
+    tone: CSS_COLOR.textMuted,
+  },
+};
 
 // `provider` is the ONLY provider-identity field in the normalized account wire
 // shape (GET /api/accounts): 'ibkr' for IBKR, 'snaptrade' for every
@@ -39,10 +89,50 @@ export const providerLabel = (account) => {
   return PROVIDER_LABELS[provider] || "Brokerage";
 };
 
+export const brokerBrandForAccount = (account) => {
+  const provider =
+    typeof account?.provider === "string"
+      ? account.provider.trim().toLowerCase()
+      : "";
+  const brokerText = [
+    account?.brokerageName,
+    account?.brokerage,
+    account?.institutionName,
+    account?.institution,
+    account?.providerName,
+    account?.displayName,
+  ]
+    .filter((value) => typeof value === "string" && value.trim().length > 0)
+    .join(" ")
+    .toLowerCase();
+
+  if (/\be\s*\*\s*trade\b|\betrade\b/.test(brokerText)) {
+    return BROKER_BRANDS.etrade;
+  }
+  if (/\binteractive\s+brokers\b|\bibkr\b/.test(brokerText)) {
+    return BROKER_BRANDS.ibkr;
+  }
+  return BROKER_BRANDS[provider] || BROKER_BRANDS.brokerage;
+};
+
+const ACCOUNT_SOURCE_PREFIX_PATTERN =
+  /^(?:e\s*\*\s*trade|etrade|interactive brokers|ibkr|snaptrade|robinhood|charles schwab|schwab)\b[\s:./|-]*/i;
+const ACCOUNT_TYPE_WORD_PATTERN = /(?:^|[\s:./|-]+)individual(?:[\s:./|-]+|$)/gi;
+
+const cleanAccountDisplayName = (value) => {
+  const raw = typeof value === "string" ? value.trim() : "";
+  if (!raw) return "";
+  const cleaned = raw
+    .replace(ACCOUNT_SOURCE_PREFIX_PATTERN, "")
+    .replace(ACCOUNT_TYPE_WORD_PATTERN, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return cleaned || raw;
+};
+
 // The visible tab label must never expose a raw full account number. When the
 // synced displayName is (or embeds) the raw providerAccountId, fall back to the
-// masked id; otherwise use the human display name. Captions/titles are built
-// from the masked id only, so this is the sole place a name could leak.
+// masked id; otherwise use the cleaned human display name.
 export const accountTabLabel = (account) => {
   const maskedId = maskAccountId(account?.providerAccountId);
   const displayName =
@@ -55,77 +145,122 @@ export const accountTabLabel = (account) => {
   if (rawId && displayName.includes(rawId)) {
     return maskedId;
   }
-  return displayName;
+  return cleanAccountDisplayName(displayName);
 };
+
+const finiteAccountValue = (value) => {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : null;
+};
+
+export const accountDayPnlValue = (account) =>
+  [
+    account?.dayPnl,
+    account?.dailyPnl,
+    account?.todayPnl,
+    account?.pnlToday,
+  ]
+    .map(finiteAccountValue)
+    .find((value) => value !== null) ?? null;
+
+export const accountDayPnlPercentValue = (account) =>
+  [
+    account?.dayPnlPercent,
+    account?.dailyPnlPercent,
+    account?.todayPnlPercent,
+    account?.pnlTodayPercent,
+  ]
+    .map(finiteAccountValue)
+    .find((value) => value !== null) ?? null;
 
 const AccountTab = ({
   id,
   active,
-  tone,
-  dotLabel,
+  brand,
   label,
-  caption,
   title,
-  nav,
+  nav = null,
+  dayPnl = null,
+  dayPnlPercent = null,
   currency = "USD",
   maskValues = false,
+  compact = false,
   accountIsPhone,
   onSelect,
   onIntent,
 }) => {
-  // On phone, keep tabs to dot + label; reveal NAV/caption only when active.
-  const showDetail = !accountIsPhone || active;
-  const hasNav = nav != null && Number.isFinite(Number(nav));
+  const tone = brand?.tone || CSS_COLOR.accent;
+  const hasNav = finiteAccountValue(nav) !== null;
+  const hasDayPnl = finiteAccountValue(dayPnl) !== null;
+  const dayPnlTone = hasDayPnl ? toneForValue(dayPnl) : CSS_COLOR.textMuted;
+  const dayPercentText =
+    hasDayPnl && finiteAccountValue(dayPnlPercent) !== null
+      ? ` (${formatAccountPercent(dayPnlPercent, 2, maskValues)})`
+      : "";
   return (
-    <div
+    <button
+      type="button"
       role="tab"
-      tabIndex={0}
       aria-selected={active}
+      aria-label={title || label}
       data-testid={`account-tab-${id}`}
       title={title || label}
       onClick={() => onSelect?.(id)}
       onMouseEnter={() => onIntent?.(id)}
       onFocus={() => onIntent?.(id)}
-      onKeyDown={(event) => {
-        if (event.key === "Enter" || event.key === " ") {
-          event.preventDefault();
-          onSelect?.(id);
-        }
-      }}
       className="ra-interactive ra-touch-target"
       style={{
         ...motionVars({ accent: tone }),
-        display: "inline-flex",
+        appearance: "none",
+        border: `1px solid ${active ? cssColorMix(tone, 62) : CSS_COLOR.border}`,
+        borderRadius: dim(RADII.xs),
+        background: active ? cssColorMix(tone, 8) : CSS_COLOR.bg1,
+        boxShadow: "none",
+        display: "flex",
         alignItems: "center",
-        gap: sp(accountIsPhone ? 4 : 6),
-        flexShrink: 0,
-        maxWidth: dim(accountIsPhone ? 180 : 260),
-        padding: sp(accountIsPhone ? "5px 8px" : "6px 12px"),
-        borderBottom: `2px solid ${active ? tone : "transparent"}`,
-        background: active ? cssColorMix(tone, 6) : "transparent",
+        gap: sp(accountIsPhone ? 5 : 7),
+        flex: accountIsPhone
+          ? "1 1 calc(50% - 4px)"
+          : compact
+            ? "0 0 184px"
+            : "0 1 258px",
+        minWidth: dim(accountIsPhone ? 156 : compact ? 164 : 190),
+        maxWidth: accountIsPhone ? "none" : dim(compact ? 184 : 258),
+        minHeight: dim(accountIsPhone ? 52 : 56),
+        padding: sp(accountIsPhone ? "6px 8px" : "7px 10px"),
         color: active ? CSS_COLOR.text : CSS_COLOR.textSec,
         fontFamily: T.sans,
-        fontSize: fs(accountIsPhone ? 11 : 13),
+        fontSize: fs(accountIsPhone ? 10 : 12),
         fontWeight: active ? FONT_WEIGHTS.medium : FONT_WEIGHTS.regular,
         cursor: "pointer",
-        whiteSpace: "nowrap",
+        textAlign: "left",
         transition:
-          "background-color var(--ra-motion-standard) var(--ra-motion-ease), color var(--ra-motion-standard) var(--ra-motion-ease)",
+          "background-color var(--ra-motion-standard) var(--ra-motion-ease), border-color var(--ra-motion-standard) var(--ra-motion-ease), color var(--ra-motion-standard) var(--ra-motion-ease)",
       }}
     >
       <span
-        aria-label={dotLabel}
+        aria-hidden="true"
         style={{
           flexShrink: 0,
-          width: dim(8),
-          height: dim(8),
-          borderRadius: dim(RADII.pill),
-          background: tone,
+          height: dim(accountIsPhone ? 24 : 28),
+          width: dim(accountIsPhone ? 24 : 28),
         }}
-      />
+      >
+        <img
+          alt=""
+          draggable={false}
+          src={brand?.logoUrl || BROKER_BRANDS.brokerage.logoUrl}
+          style={{
+            display: "block",
+            height: "100%",
+            objectFit: "contain",
+            width: "100%",
+          }}
+        />
+      </span>
       <span
         style={{
-          display: "inline-flex",
+          display: "flex",
           flexDirection: "column",
           minWidth: 0,
           lineHeight: 1.15,
@@ -140,39 +275,43 @@ const AccountTab = ({
         >
           {label}
         </span>
-        {showDetail && caption ? (
+        {hasNav || hasDayPnl ? (
           <span
             style={{
-              color: CSS_COLOR.textMuted,
+              alignItems: "center",
+              display: "flex",
+              gap: sp(accountIsPhone ? 5 : 8),
               fontSize: textSize("caption"),
+              fontVariantNumeric: "tabular-nums",
               overflow: "hidden",
               textOverflow: "ellipsis",
               whiteSpace: "nowrap",
             }}
           >
-            {caption}
+            {hasNav ? (
+              <span style={{ color: CSS_COLOR.textMuted }}>
+                NLV{" "}
+                <span style={{ color: CSS_COLOR.textSec }}>
+                  {formatAccountMoney(nav, currency, true, maskValues)}
+                </span>
+              </span>
+            ) : null}
+            {hasDayPnl ? (
+              <span style={{ color: dayPnlTone }}>
+                Day {formatAccountSignedMoney(dayPnl, currency, true, maskValues)}
+                {dayPercentText}
+              </span>
+            ) : null}
           </span>
         ) : null}
       </span>
-      {showDetail && hasNav ? (
-        <span
-          style={{
-            flexShrink: 0,
-            fontVariantNumeric: "tabular-nums",
-            color: CSS_COLOR.textSec,
-          }}
-        >
-          {formatAccountMoney(nav, currency, true, maskValues)}
-        </span>
-      ) : null}
-    </div>
+    </button>
   );
 };
 
 // Full-width tab row for the Accounts page: a leading "All" cross-account
 // aggregate, one tab per live broker account (grouped so same-provider accounts
-// sit together), and a trailing "Shadow" tab. Mirrors AlgoDeploymentTabs.jsx:
-// role=tablist flex row + horizontal scroll + status dot + active underline.
+// sit together), and a trailing "Shadow" tab.
 // Props:
 //   accounts      BrokerAccount[] (id, provider, displayName, netLiquidation, …)
 //   activeTabId   "all" | <account.id> | "shadow"
@@ -191,15 +330,22 @@ export const AccountTabs = ({
   const grouped = [...accounts].sort((a, b) =>
     String(a?.provider || "").localeCompare(String(b?.provider || "")),
   );
-  // "All" NAV is a client-side sum of the listed accounts' net liquidation — a
-  // provider-neutral display total independent of the server "combined"
-  // aggregate that drives the panels below. Cross-currency accounts are summed
-  // as-is (USD is the platform base today); revisit if multi-currency accounts
-  // become common.
   const totalNav = grouped.reduce(
-    (sum, account) => sum + (Number(account?.netLiquidation) || 0),
+    (sum, account) => sum + (finiteAccountValue(account?.netLiquidation) ?? 0),
     0,
   );
+  const totalDayPnl = grouped.reduce(
+    (sum, account) => sum + (accountDayPnlValue(account) ?? 0),
+    0,
+  );
+  const hasTotalDayPnl = grouped.some(
+    (account) => accountDayPnlValue(account) !== null,
+  );
+  const totalDayPnlBase = totalNav - totalDayPnl;
+  const totalDayPnlPercent =
+    hasTotalDayPnl && totalDayPnlBase
+      ? (totalDayPnl / Math.abs(totalDayPnlBase)) * 100
+      : null;
   const allCurrency = grouped[0]?.currency || "USD";
 
   return (
@@ -210,26 +356,30 @@ export const AccountTabs = ({
       aria-label="Accounts"
       style={{
         display: "flex",
+        flexWrap: "wrap",
         alignItems: "stretch",
-        gap: sp(accountIsPhone ? 2 : 4),
+        alignContent: "flex-start",
+        gap: sp(accountIsPhone ? 4 : 5),
         width: "100%",
-        overflowX: "auto",
+        overflowX: "visible",
+        overflowY: "visible",
         background: CSS_COLOR.bg0,
         borderBottom: `1px solid ${CSS_COLOR.border}`,
-        ...HIDE_SCROLLBAR_STYLE,
+        padding: sp(accountIsPhone ? "4px 0 6px" : "6px 0 8px"),
       }}
     >
       <AccountTab
         id={ALL_TAB_ID}
         active={activeTabId === ALL_TAB_ID}
-        tone={CSS_COLOR.accent}
-        dotLabel="all accounts"
+        brand={BROKER_BRANDS.all}
         label="All"
-        caption={accounts.length ? `${accounts.length} accounts` : null}
         title="All accounts (aggregate)"
         nav={accounts.length ? totalNav : null}
+        dayPnl={hasTotalDayPnl ? totalDayPnl : null}
+        dayPnlPercent={totalDayPnlPercent}
         currency={allCurrency}
         maskValues={maskValues}
+        compact
         accountIsPhone={accountIsPhone}
         onSelect={onSelectTab}
         onIntent={onTabIntent}
@@ -237,17 +387,18 @@ export const AccountTabs = ({
       {grouped.map((account) => {
         const maskedId = maskAccountId(account?.providerAccountId);
         const label = accountTabLabel(account);
+        const brand = brokerBrandForAccount(account);
         return (
           <AccountTab
             key={account.id}
             id={account.id}
             active={activeTabId === account.id}
-            tone={CSS_COLOR.green}
-            dotLabel="connected"
+            brand={brand}
             label={label}
-            caption={`${providerLabel(account)} · ${maskedId}`}
-            title={`${label} — ${providerLabel(account)} ${maskedId}`}
+            title={`${label} ${maskedId}`}
             nav={account?.netLiquidation}
+            dayPnl={accountDayPnlValue(account)}
+            dayPnlPercent={accountDayPnlPercentValue(account)}
             currency={account?.currency || "USD"}
             maskValues={maskValues}
             accountIsPhone={accountIsPhone}
@@ -259,12 +410,10 @@ export const AccountTabs = ({
       <AccountTab
         id={SHADOW_TAB_ID}
         active={activeTabId === SHADOW_TAB_ID}
-        tone={CSS_COLOR.pink}
-        dotLabel="shadow"
+        brand={BROKER_BRANDS.shadow}
         label="Shadow"
-        caption="Internal"
         title="Shadow account (internal ledger)"
-        nav={null}
+        compact
         accountIsPhone={accountIsPhone}
         onSelect={onSelectTab}
         onIntent={onTabIntent}

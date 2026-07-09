@@ -1,0 +1,2 @@
+#!/bin/bash
+exec "/mnt/nixmodules/nix/store/9cyx2v23dip6p9q98384k9v06c96qskb-nodejs-24.13.0/bin/node" "/mnt/nixmodules/nix/store/61lr9izijvg30pcribjdxgjxvh3bysp4-pnpm-10.26.1/bin/pnpm" "$@"

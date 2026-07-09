@@ -6,7 +6,6 @@ import {
   calculateBacktestMetrics,
   calculateBenchmarkMetrics,
   rankCandidateResults,
-  resolveSignalOptionsExecutionProfile,
   signalOptionsRightForDirection,
   runBacktest,
   type BacktestBar,
@@ -31,6 +30,8 @@ import {
   historicalBarsTable,
   mtfPatternOccurrencesTable,
   mtfPatternResultsTable,
+  overnightSignalExpectancyResultsTable,
+  overnightSignalExpectancySamplesTable,
 } from "@workspace/db";
 import { and, asc, desc, eq, gt, inArray, lte, sql } from "drizzle-orm";
 import {
@@ -69,6 +70,26 @@ import {
   resolveWorkerOptionFillPolicy,
   resolveWorkerSameBarConservativeExit,
 } from "./option-fill-policy";
+import { resolveWorkerSignalOptionsProfile } from "./signal-options-profile";
+import {
+  addOvernightSamplesToStats,
+  buildCanonicalOvernightReturnMap,
+  createOvernightStatsAccumulator,
+  filterRegularTradingHoursBars,
+  listNyseRthSessions,
+  LOAD_TIMEFRAME_BY_SIGNAL_TIMEFRAME,
+  normalizeOvernightSignalTimeframes,
+  OVERNIGHT_RETURN_TIMEFRAME,
+  OVERNIGHT_SIGNAL_EXPECTANCY_KIND,
+  rollupBarsForSignalTimeframe,
+  sampleOvernightSignalState,
+  summarizeOvernightExpectancy,
+  WARMUP_DAYS_BY_LOAD_TIMEFRAME,
+  type OvernightRthSession,
+  type OvernightLoadTimeframe,
+  type OvernightSignalSample,
+  type OvernightSignalTimeframe,
+} from "./overnight-signal-expectancy";
 import {
   API_BASE_URL,
   BAR_STORAGE_TARGET_BYTES,
@@ -82,6 +103,10 @@ type ApiBarsResponse = {
   symbol: string;
   timeframe: string;
   bars: ApiBacktestBar[];
+  historyPage?: {
+    newestBarAt?: string | null;
+    hydrationStatus?: string | null;
+  } | null;
 };
 
 type ApiResolvedOptionContractResponse = {
@@ -129,6 +154,8 @@ type HistoricalBarsRequest = {
   to: Date;
   assetClass?: "equity" | "option";
   providerContractId?: string | null;
+  outsideRth?: boolean;
+  directMassive?: boolean;
 };
 
 type ResolvedOptionContract = {
@@ -171,6 +198,34 @@ type SimulatedOptionTrade = BacktestTrade & {
 
 const benchmarkSymbols = ["SPY", "QQQ"] as const;
 const BACKTEST_IBKR_RECENT_CUTOFF_MINUTES = 30;
+const BACKTEST_BARS_FETCH_PRIORITY = 8;
+const BACKTEST_BARS_REQUEST_FAMILY = "backtest-worker";
+const HISTORICAL_BAR_INSERT_CHUNK_SIZE = 10;
+const BACKTEST_BARS_MAX_INCOMPLETE_RETRIES = 3;
+const BACKTEST_BARS_INCOMPLETE_RETRY_DELAY_MS = 5_000;
+const BACKTEST_BARS_MAX_ACCEPTABLE_HISTORY_GAP_MS = 4 * 24 * 60 * 60 * 1000;
+const OVERNIGHT_SYMBOL_CONCURRENCY = Math.max(
+  1,
+  Math.floor(Number(process.env.OVERNIGHT_SYMBOL_CONCURRENCY ?? 16) || 16),
+);
+const MASSIVE_DIRECT_MAX_RETRIES = 3;
+const MASSIVE_DIRECT_RETRY_DELAY_MS = 1_000;
+
+const MASSIVE_API_KEY_ENV_NAMES = [
+  "MASSIVE_API_KEY",
+  "MASSIVE_MARKET_DATA_API_KEY",
+] as const;
+const MASSIVE_API_BASE_URL_ENV_NAMES = ["MASSIVE_API_BASE_URL"] as const;
+
+type MassiveRangeConfig = {
+  multiplier: number;
+  timespan: string;
+};
+
+const MASSIVE_RANGE_BY_TIMEFRAME: Partial<Record<string, MassiveRangeConfig>> = {
+  "15m": { multiplier: 15, timespan: "minute" },
+  "1h": { multiplier: 1, timespan: "hour" },
+};
 
 const newYorkTimeFormatter = new Intl.DateTimeFormat("en-US", {
   timeZone: "America/New_York",
@@ -184,6 +239,163 @@ function wait(ms: number): Promise<void> {
   return new Promise((resolve) => {
     setTimeout(resolve, ms);
   });
+}
+
+function readFirstEnv(names: readonly string[]): string | null {
+  for (const name of names) {
+    const value = process.env[name]?.trim();
+    if (value) return value;
+  }
+  return null;
+}
+
+function getMassiveDirectConfig(): { apiKey: string; baseUrl: string } {
+  const apiKey = readFirstEnv(MASSIVE_API_KEY_ENV_NAMES);
+  if (!apiKey) {
+    throw new Error("Massive API key is not configured for direct backtest fetches.");
+  }
+
+  return {
+    apiKey,
+    baseUrl:
+      readFirstEnv(MASSIVE_API_BASE_URL_ENV_NAMES)?.replace(/\/+$/, "") ??
+      "https://api.massive.com",
+  };
+}
+
+function buildMassiveDirectUrl(
+  pathOrUrl: string,
+  params: Record<string, string | number | boolean>,
+): URL {
+  const config = getMassiveDirectConfig();
+  const url = new URL(
+    pathOrUrl.startsWith("http") ? pathOrUrl : `${config.baseUrl}${pathOrUrl}`,
+  );
+  for (const [key, value] of Object.entries(params)) {
+    url.searchParams.set(key, String(value));
+  }
+  url.searchParams.set("apiKey", config.apiKey);
+  return url;
+}
+
+function readRetryAfterMs(response: Response, attempt: number): number {
+  const retryAfter = Number(response.headers.get("retry-after"));
+  if (Number.isFinite(retryAfter) && retryAfter > 0) {
+    return retryAfter * 1000;
+  }
+  return MASSIVE_DIRECT_RETRY_DELAY_MS * (attempt + 1);
+}
+
+async function fetchMassiveDirectJson(url: URL): Promise<unknown> {
+  for (let attempt = 0; attempt <= MASSIVE_DIRECT_MAX_RETRIES; attempt += 1) {
+    const response = await fetch(url);
+    if (response.ok) {
+      return response.json();
+    }
+
+    const body = await response.text().catch(() => "");
+    if (
+      attempt < MASSIVE_DIRECT_MAX_RETRIES &&
+      (response.status === 429 || response.status >= 500)
+    ) {
+      await wait(readRetryAfterMs(response, attempt));
+      continue;
+    }
+
+    throw new Error(
+      `Massive aggregate fetch failed with ${response.status}: ${body.slice(0, 300)}`,
+    );
+  }
+
+  throw new Error("Massive aggregate fetch exhausted retries.");
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function asArray(value: unknown): unknown[] {
+  return Array.isArray(value) ? value : [];
+}
+
+function asNumber(value: unknown): number | null {
+  const numeric = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(numeric) ? numeric : null;
+}
+
+function asString(value: unknown): string | null {
+  return typeof value === "string" ? value : null;
+}
+
+function mapMassiveDirectBar(value: unknown): BacktestBar | null {
+  const record = asRecord(value);
+  if (!record) return null;
+
+  const timestampMs = asNumber(record.t ?? record.timestamp);
+  const open = asNumber(record.o ?? record.open);
+  const high = asNumber(record.h ?? record.high);
+  const low = asNumber(record.l ?? record.low);
+  const close = asNumber(record.c ?? record.close);
+  const volume = asNumber(record.v ?? record.volume);
+  if (
+    timestampMs == null ||
+    open == null ||
+    high == null ||
+    low == null ||
+    close == null ||
+    volume == null
+  ) {
+    return null;
+  }
+
+  return {
+    startsAt: new Date(timestampMs),
+    open,
+    high,
+    low,
+    close,
+    volume,
+    source: "massive-direct",
+  };
+}
+
+function isBacktestBar(value: BacktestBar | null): value is BacktestBar {
+  return value !== null;
+}
+
+async function fetchMassiveDirectBarsRange(
+  input: HistoricalBarsRequest,
+): Promise<BacktestBar[]> {
+  const range = MASSIVE_RANGE_BY_TIMEFRAME[input.timeframe];
+  if (!range) {
+    throw new Error(`Direct Massive fetch does not support ${input.timeframe}.`);
+  }
+
+  const path =
+    `/v2/aggs/ticker/${encodeURIComponent(input.symbol)}` +
+    `/range/${range.multiplier}/${range.timespan}` +
+    `/${input.from.getTime()}/${input.to.getTime()}`;
+  let nextUrl: string | null = buildMassiveDirectUrl(path, {
+    adjusted: true,
+    sort: "asc",
+    limit: 50_000,
+  }).toString();
+  const bars: BacktestBar[] = [];
+  let pageCount = 0;
+
+  while (nextUrl && pageCount < 4) {
+    const payload = asRecord(await fetchMassiveDirectJson(new URL(nextUrl)));
+    bars.push(...asArray(payload?.results).map(mapMassiveDirectBar).filter(isBacktestBar));
+    const providerNextUrl = asString(payload?.next_url);
+    nextUrl = providerNextUrl
+      ? buildMassiveDirectUrl(providerNextUrl, {}).toString()
+      : null;
+    pageCount += 1;
+  }
+
+  return filterRegularSessionBars(input.timeframe, bars);
 }
 
 function isRegularSessionBar(date: Date): boolean {
@@ -229,16 +441,84 @@ function timeframeToDays(timeframe: string): number {
   }
 }
 
+function endOfUtcDay(date: Date): Date {
+  return new Date(
+    Date.UTC(
+      date.getUTCFullYear(),
+      date.getUTCMonth(),
+      date.getUTCDate(),
+      23,
+      59,
+      59,
+      999,
+    ),
+  );
+}
+
+function parseTimestampMs(value: string | null | undefined): number | null {
+  if (!value) {
+    return null;
+  }
+  const timestampMs = Date.parse(value);
+  return Number.isFinite(timestampMs) ? timestampMs : null;
+}
+
+function newestApiBarTimestampMs(bars: ApiBacktestBar[]): number | null {
+  let newestMs: number | null = null;
+  for (const bar of bars) {
+    const timestampMs = parseTimestampMs(bar.timestamp);
+    if (timestampMs == null) {
+      continue;
+    }
+    newestMs = newestMs == null ? timestampMs : Math.max(newestMs, timestampMs);
+  }
+  return newestMs;
+}
+
+function isIncompleteHistoricalBarsResponse(
+  payload: ApiBarsResponse,
+  input: HistoricalBarsRequest,
+): boolean {
+  const hydrationStatus = payload.historyPage?.hydrationStatus;
+  const historyStillHydrating =
+    hydrationStatus === "cold" ||
+    hydrationStatus === "partial" ||
+    hydrationStatus === "warming";
+
+  if (!historyStillHydrating) {
+    return false;
+  }
+
+  const newestMs =
+    parseTimestampMs(payload.historyPage?.newestBarAt) ??
+    newestApiBarTimestampMs(payload.bars);
+  if (newestMs == null) {
+    return true;
+  }
+
+  return (
+    input.to.getTime() - newestMs >
+    BACKTEST_BARS_MAX_ACCEPTABLE_HISTORY_GAP_MS
+  );
+}
+
 async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, init);
   if (!response.ok) {
-    throw new Error(`Unexpected ${response.status} from ${url}`);
+    const body = await response.text().catch(() => "");
+    throw new Error(
+      `Unexpected ${response.status} from ${url}: ${body.slice(0, 500)}`,
+    );
   }
 
   return (await response.json()) as T;
 }
 
 async function fetchBarsRange(input: HistoricalBarsRequest): Promise<BacktestBar[]> {
+  if (input.directMassive) {
+    return fetchMassiveDirectBarsRange(input);
+  }
+
   const url = new URL(`${API_BASE_URL}/bars`);
   url.searchParams.set("symbol", input.symbol);
   url.searchParams.set("timeframe", input.timeframe);
@@ -246,6 +526,9 @@ async function fetchBarsRange(input: HistoricalBarsRequest): Promise<BacktestBar
   url.searchParams.set("to", input.to.toISOString());
   url.searchParams.set("limit", "50000");
   url.searchParams.set("allowHistoricalSynthesis", "true");
+  url.searchParams.set("requireFreshHistorical", "true");
+  url.searchParams.set("fetchPriority", String(BACKTEST_BARS_FETCH_PRIORITY));
+  url.searchParams.set("requestFamily", BACKTEST_BARS_REQUEST_FAMILY);
   url.searchParams.set(
     "brokerRecentWindowMinutes",
     String(BACKTEST_IBKR_RECENT_CUTOFF_MINUTES),
@@ -256,12 +539,42 @@ async function fetchBarsRange(input: HistoricalBarsRequest): Promise<BacktestBar
   if (input.providerContractId) {
     url.searchParams.set("providerContractId", input.providerContractId);
   }
+  if (input.outsideRth != null) {
+    url.searchParams.set("outsideRth", String(input.outsideRth));
+  }
 
-  const payload = await fetchJson<ApiBarsResponse>(url.toString());
-  return filterRegularSessionBars(
-    input.timeframe,
-    payload.bars.map(normalizeApiBar),
-  );
+  for (let attempt = 0; attempt <= BACKTEST_BARS_MAX_INCOMPLETE_RETRIES; attempt += 1) {
+    const payload = await fetchJson<ApiBarsResponse>(url.toString());
+    if (!isIncompleteHistoricalBarsResponse(payload, input)) {
+      return filterRegularSessionBars(
+        input.timeframe,
+        payload.bars.map(normalizeApiBar),
+      );
+    }
+
+    if (attempt === BACKTEST_BARS_MAX_INCOMPLETE_RETRIES) {
+      throw new Error(
+        `Historical bars response incomplete for ${input.symbol} ${input.timeframe} ` +
+          `${input.from.toISOString()}-${input.to.toISOString()}`,
+      );
+    }
+
+    logger.warn(
+      {
+        symbol: input.symbol,
+        timeframe: input.timeframe,
+        from: input.from.toISOString(),
+        to: input.to.toISOString(),
+        hydrationStatus: payload.historyPage?.hydrationStatus ?? null,
+        newestBarAt: payload.historyPage?.newestBarAt ?? null,
+        attempt: attempt + 1,
+      },
+      "Historical bars response is still hydrating; retrying",
+    );
+    await wait(BACKTEST_BARS_INCOMPLETE_RETRY_DELAY_MS);
+  }
+
+  return [];
 }
 
 async function fetchBarsSegmented(input: HistoricalBarsRequest): Promise<BacktestBar[]> {
@@ -270,19 +583,23 @@ async function fetchBarsSegmented(input: HistoricalBarsRequest): Promise<Backtes
   let cursor = new Date(input.from.getTime());
 
   while (cursor < input.to) {
-    const segmentEnd = new Date(
-      Math.min(
-        input.to.getTime(),
-        cursor.getTime() + segmentDays * 24 * 60 * 60 * 1000,
-      ),
+    const segmentEndLimit = new Date(
+      cursor.getTime() + segmentDays * 24 * 60 * 60 * 1000 - 1,
     );
+    const segmentEndCandidate = endOfUtcDay(segmentEndLimit);
+    const segmentEnd =
+      segmentEndCandidate >= input.to
+        ? input.to
+        : segmentEndCandidate <= segmentEndLimit
+          ? segmentEndCandidate
+          : segmentEndLimit;
     const nextBars = await fetchBarsRange({
       ...input,
       from: cursor,
       to: segmentEnd,
     });
     results.push(...nextBars);
-    cursor = new Date(segmentEnd.getTime() + 60_000);
+    cursor = new Date(segmentEnd.getTime() + 1);
   }
 
   return results
@@ -360,9 +677,12 @@ async function evictNonPinnedDatasets(): Promise<void> {
 }
 
 async function insertBars(datasetId: string, bars: BacktestBar[]): Promise<void> {
-  const chunkSize = 1000;
-  for (let index = 0; index < bars.length; index += chunkSize) {
-    const chunk = bars.slice(index, index + chunkSize);
+  for (
+    let index = 0;
+    index < bars.length;
+    index += HISTORICAL_BAR_INSERT_CHUNK_SIZE
+  ) {
+    const chunk = bars.slice(index, index + HISTORICAL_BAR_INSERT_CHUNK_SIZE);
     await db.insert(historicalBarsTable).values(
       chunk.map((bar) => toHistoricalBarInsert(datasetId, bar)),
     );
@@ -503,6 +823,7 @@ async function loadDataset(
     preferSeededMinuteDataset: boolean;
     assetClass?: "equity" | "option";
     providerContractId?: string | null;
+    outsideRth?: boolean;
   },
 ): Promise<LoadedDataset> {
   const canonicalTimeframe =
@@ -538,6 +859,7 @@ async function loadDataset(
     to: input.to,
     assetClass: input.assetClass,
     providerContractId: input.providerContractId,
+    outsideRth: input.outsideRth,
   });
   const dataset = await persistDataset(
     input.symbol,
@@ -556,6 +878,12 @@ async function loadDataset(
         ? fetchedBars
         : aggregateBars(fetchedBars, input.timeframe as never),
   };
+}
+
+async function loadBarsWithoutPersistingDataset(
+  input: HistoricalBarsRequest,
+): Promise<BacktestBar[]> {
+  return fetchBarsSegmented({ ...input, directMassive: true });
 }
 
 async function loadStudyData(study: StudyRow): Promise<{
@@ -801,33 +1129,6 @@ function computeCommission(value: number, commissionBps: number): number {
 function applySlippage(price: number, side: "buy" | "sell", slippageBps: number): number {
   const multiplier = slippageBps / 10_000;
   return side === "buy" ? price * (1 + multiplier) : price * (1 - multiplier);
-}
-
-function resolveSignalOptionsProfileFromStudy(
-  study: StudyDefinition,
-): SignalOptionsExecutionProfile | null {
-  if (study.parameters["executionMode"] !== "signal_options") {
-    return null;
-  }
-
-  return resolveSignalOptionsExecutionProfile({
-    optionSelection: {
-      minDte: study.parameters["signalOptionsMinDte"],
-      targetDte: study.parameters["signalOptionsTargetDte"],
-      maxDte: study.parameters["signalOptionsMaxDte"],
-      callStrikeSlot: study.parameters["signalOptionsCallStrikeSlot"],
-      putStrikeSlot: study.parameters["signalOptionsPutStrikeSlot"],
-    },
-    riskCaps: {
-      maxPremiumPerEntry: study.parameters["signalOptionsMaxPremium"],
-      maxContracts: study.parameters["signalOptionsMaxContracts"],
-      maxOpenSymbols: study.parameters["signalOptionsMaxOpenSymbols"],
-      maxDailyLoss: study.parameters["signalOptionsMaxDailyLoss"],
-    },
-    liquidityGate: {
-      maxSpreadPctOfMid: study.parameters["signalOptionsMaxSpreadPct"],
-    },
-  });
 }
 
 function buildOptionDatasetRole(symbol: string, entryAt: Date): string {
@@ -1101,6 +1402,7 @@ function resolveSignalOptionsRiskExit(
 type RunOptionsBacktestDependencies = {
   resolveOptionContractForSignal?: typeof resolveOptionContractForSignal;
   loadDataset?: typeof loadDataset;
+  deploymentSignalOptionsProfile?: unknown;
 };
 
 export async function runOptionsBacktest(
@@ -1119,7 +1421,10 @@ export async function runOptionsBacktest(
   const trades: SimulatedOptionTrade[] = [];
   const datasetBindings: RunDatasetBinding[] = [];
   const positions = new Map<string, OptionPositionState>();
-  const signalOptionsProfile = resolveSignalOptionsProfileFromStudy(study);
+  const signalOptionsProfile = resolveWorkerSignalOptionsProfile(
+    study,
+    dependencies.deploymentSignalOptionsProfile,
+  );
   const dailyRealizedPnl = new Map<string, number>();
   let cash = study.portfolioRules.initialCapital;
   if (signalOptionsProfile && !optionFillPolicy) {
@@ -1567,6 +1872,7 @@ async function executeStudyRun(
   study: StudyDefinition,
   barsBySymbol: Record<string, BacktestBar[]>,
   primaryDatasetBindings: RunDatasetBinding[],
+  deploymentSignalOptionsProfile?: unknown,
 ): Promise<{
   result: PersistedResult;
   datasetBindings: RunDatasetBinding[];
@@ -1577,7 +1883,9 @@ async function executeStudyRun(
       parameters: study.parameters,
     })
   ) {
-    const optionResult = await runOptionsBacktest(study, barsBySymbol);
+    const optionResult = await runOptionsBacktest(study, barsBySymbol, {
+      deploymentSignalOptionsProfile,
+    });
     return {
       result: optionResult.result,
       datasetBindings: [...primaryDatasetBindings, ...optionResult.datasetBindings],
@@ -1663,7 +1971,7 @@ async function markRunFailed(runId: string, errorMessage: string): Promise<void>
     .update(backtestRunsTable)
     .set({
       status: "failed",
-      errorMessage,
+      errorMessage: compactErrorMessage(errorMessage),
       finishedAt: new Date(),
       updatedAt: new Date(),
     })
@@ -1686,7 +1994,7 @@ async function markJobFailed(jobId: string, error: Error): Promise<void> {
     .update(backtestStudyJobsTable)
     .set({
       status: "failed",
-      errorMessage: error.message,
+      errorMessage: compactErrorMessage(error.message),
       finishedAt: new Date(),
       updatedAt: new Date(),
     })
@@ -1783,6 +2091,9 @@ async function processSingleRun(job: JobRow): Promise<void> {
     .where(eq(backtestRunsTable.id, run.id));
 
   await heartbeat(job.id, 40);
+  const payload = (job.payload ?? {}) as {
+    deploymentSignalOptionsProfile?: unknown;
+  };
   const primaryDatasetBindings = datasets.map((dataset) => ({
     dataset,
     role: "primary",
@@ -1796,6 +2107,7 @@ async function processSingleRun(job: JobRow): Promise<void> {
     studyDefinition,
     barsBySymbol,
     primaryDatasetBindings,
+    payload.deploymentSignalOptionsProfile,
   );
   const enrichedResult = enrichResultMetrics({
     result: execution.result,
@@ -1900,6 +2212,7 @@ async function processSweep(job: JobRow): Promise<void> {
     walkForwardTrainingMonths?: number;
     walkForwardTestMonths?: number;
     walkForwardStepMonths?: number;
+    deploymentSignalOptionsProfile?: unknown;
   };
 
   const baseParameters = {
@@ -2030,6 +2343,7 @@ async function processSweep(job: JobRow): Promise<void> {
                   },
                   sliceBarsByWindow(barsBySymbol, window.testFrom, window.testTo),
                   primaryDatasetBindings,
+                  payload.deploymentSignalOptionsProfile,
                 )
               ).result,
             ),
@@ -2063,6 +2377,7 @@ async function processSweep(job: JobRow): Promise<void> {
           studyDefinition,
           barsBySymbol,
           primaryDatasetBindings,
+          payload.deploymentSignalOptionsProfile,
         );
 
         return {
@@ -2245,6 +2560,43 @@ async function claimNextJob(): Promise<JobRow | null> {
   return claimed ?? null;
 }
 
+async function claimJobById(jobId: string): Promise<JobRow> {
+  const [job] = await db
+    .select()
+    .from(backtestStudyJobsTable)
+    .where(eq(backtestStudyJobsTable.id, jobId))
+    .limit(1);
+
+  if (!job) {
+    throw new Error(`Backtest job ${jobId} was not found.`);
+  }
+  if (job.status !== "queued") {
+    throw new Error(`Backtest job ${jobId} is ${job.status}, expected queued.`);
+  }
+
+  const [claimed] = await db
+    .update(backtestStudyJobsTable)
+    .set({
+      status: "preparing_data",
+      startedAt: job.startedAt ?? new Date(),
+      lastHeartbeatAt: new Date(),
+      attemptCount: job.attemptCount + 1,
+      updatedAt: new Date(),
+    })
+    .where(
+      and(
+        eq(backtestStudyJobsTable.id, job.id),
+        eq(backtestStudyJobsTable.status, "queued"),
+      ),
+    )
+    .returning();
+
+  if (!claimed) {
+    throw new Error(`Backtest job ${jobId} could not be claimed.`);
+  }
+  return claimed;
+}
+
 function parsePatternDiscoveryConfig(
   study: typeof backtestStudiesTable.$inferSelect,
 ): PatternDiscoveryConfig {
@@ -2371,6 +2723,360 @@ async function persistPatternResults(
   });
 }
 
+type OvernightSignalExpectancyConfig = {
+  symbols: string[];
+  signalTimeframes: OvernightSignalTimeframe[];
+  signalSettingsByTimeframe: Record<
+    string,
+    Partial<PyrusSignalsSignalSettings>
+  >;
+  persistSamples: boolean;
+};
+
+const OVERNIGHT_SAMPLE_INSERT_CHUNK_SIZE = 25;
+const OVERNIGHT_SAMPLE_DELETE_CHUNK_SIZE = 5000;
+const JOB_ERROR_MESSAGE_MAX_LENGTH = 1200;
+
+function maybeRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+function compactErrorMessage(message: string): string {
+  const compact = message.replace(/\s+/g, " ").trim();
+  if (compact.length <= JOB_ERROR_MESSAGE_MAX_LENGTH) return compact;
+
+  const headLength = Math.floor((JOB_ERROR_MESSAGE_MAX_LENGTH - 5) / 2);
+  const tailLength = JOB_ERROR_MESSAGE_MAX_LENGTH - 5 - headLength;
+  return `${compact.slice(0, headLength)} ... ${compact.slice(-tailLength)}`;
+}
+
+function parseOvernightSignalExpectancyConfig(
+  study: StudyRow,
+): OvernightSignalExpectancyConfig {
+  const parameters = maybeRecord(study.parameters);
+  const signalSettingsByTimeframe = maybeRecord(
+    parameters.signalSettingsByTimeframe,
+  );
+  const persistSamples =
+    typeof parameters.persistSamples === "boolean"
+      ? parameters.persistSamples
+      : true;
+
+  return {
+    symbols: study.symbols,
+    signalTimeframes: normalizeOvernightSignalTimeframes(
+      Array.isArray(parameters.signalTimeframes)
+        ? parameters.signalTimeframes.map(String)
+        : null,
+    ),
+    signalSettingsByTimeframe: Object.fromEntries(
+      Object.entries(signalSettingsByTimeframe).map(([timeframe, settings]) => [
+        timeframe,
+        maybeRecord(settings) as Partial<PyrusSignalsSignalSettings>,
+      ]),
+    ),
+    persistSamples,
+  };
+}
+
+const numericString = (value: number | null | undefined): string | null =>
+  value == null || !Number.isFinite(value) ? null : value.toFixed(6);
+
+type OvernightSymbolResult = {
+  samples: OvernightSignalSample[];
+  coverageWarnings: string[];
+};
+
+async function processOvernightSymbol(input: {
+  symbol: string;
+  startsAt: Date;
+  dataTo: Date;
+  sessions: OvernightRthSession[];
+  loadTimeframes: OvernightLoadTimeframe[];
+  signalTimeframes: OvernightSignalTimeframe[];
+  signalSettingsByTimeframe: Record<
+    string,
+    Partial<PyrusSignalsSignalSettings>
+  >;
+}): Promise<OvernightSymbolResult> {
+  const coverageWarnings: string[] = [];
+  const barsByLoadTimeframe: Partial<Record<OvernightLoadTimeframe, BacktestBar[]>> =
+    {};
+
+  for (const timeframe of input.loadTimeframes) {
+    const warmupFrom = new Date(
+      input.startsAt.getTime() -
+        WARMUP_DAYS_BY_LOAD_TIMEFRAME[timeframe] * 86_400_000,
+    );
+    try {
+      const bars = await loadBarsWithoutPersistingDataset({
+        symbol: input.symbol,
+        timeframe,
+        from: warmupFrom,
+        to: input.dataTo,
+        assetClass: "equity",
+        outsideRth: false,
+      });
+      const rthBars = filterRegularTradingHoursBars(timeframe, bars);
+      barsByLoadTimeframe[timeframe] = rthBars;
+      if (rthBars.length === 0) {
+        coverageWarnings.push(`${input.symbol} ${timeframe}: no strict RTH bars`);
+      }
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : String(error);
+      coverageWarnings.push(
+        `${input.symbol} ${timeframe}: bar load failed: ${message.slice(0, 220)}`,
+      );
+      barsByLoadTimeframe[timeframe] = [];
+    }
+  }
+
+  const canonical15mBars = barsByLoadTimeframe["15m"] ?? [];
+  if (canonical15mBars.length === 0) {
+    return { samples: [], coverageWarnings };
+  }
+
+  const overnightReturns = buildCanonicalOvernightReturnMap({
+    canonical15mBars,
+    sessions: input.sessions,
+  });
+  const samples: OvernightSignalSample[] = [];
+  for (const signalTimeframe of input.signalTimeframes) {
+    const sourceTimeframe = LOAD_TIMEFRAME_BY_SIGNAL_TIMEFRAME[signalTimeframe];
+    const sourceBars = barsByLoadTimeframe[sourceTimeframe] ?? [];
+    const signalBars = rollupBarsForSignalTimeframe(
+      sourceBars,
+      sourceTimeframe,
+      signalTimeframe,
+    );
+    if (signalBars.length === 0) {
+      coverageWarnings.push(`${input.symbol} ${signalTimeframe}: no signal bars`);
+      continue;
+    }
+    samples.push(
+      ...sampleOvernightSignalState({
+        symbol: input.symbol,
+        timeframe: signalTimeframe,
+        bars: signalBars,
+        sessions: input.sessions,
+        overnightReturns,
+        settings: input.signalSettingsByTimeframe[signalTimeframe],
+      }),
+    );
+  }
+
+  return { samples, coverageWarnings };
+}
+
+async function persistOvernightSamples(
+  studyId: string,
+  jobId: string,
+  samples: OvernightSignalSample[],
+): Promise<void> {
+  for (
+    let index = 0;
+    index < samples.length;
+    index += OVERNIGHT_SAMPLE_INSERT_CHUNK_SIZE
+  ) {
+    const chunk = samples.slice(index, index + OVERNIGHT_SAMPLE_INSERT_CHUNK_SIZE);
+    if (chunk.length === 0) continue;
+    await db.insert(overnightSignalExpectancySamplesTable).values(
+      chunk.map((sample) => ({
+        studyId,
+        jobId,
+        symbol: sample.symbol,
+        sessionDate: sample.sessionDate,
+        timeframe: sample.timeframe,
+        status: sample.status,
+        exclusionReason: sample.exclusionReason,
+        signalAt: sample.signalAt,
+        signalAvailableAt: sample.signalAvailableAt,
+        entryAt: sample.entryAt,
+        entryPrice: numericString(sample.entryPrice),
+        exitAt: sample.exitAt,
+        exitPrice: numericString(sample.exitPrice),
+        returnPct: numericString(sample.returnPct),
+        metadata: sample.metadata,
+      })),
+    );
+  }
+}
+
+async function deleteOvernightSamplesForStudy(studyId: string): Promise<void> {
+  for (;;) {
+    const result = await db.execute(sql`
+      with batch as (
+        select id
+        from ${overnightSignalExpectancySamplesTable}
+        where study_id = ${studyId}
+        limit ${OVERNIGHT_SAMPLE_DELETE_CHUNK_SIZE}
+      )
+      delete from ${overnightSignalExpectancySamplesTable}
+      where id in (select id from batch)
+      returning id
+    `);
+    const deleted = Number(
+      (result as { rowCount?: unknown; rows?: unknown[] }).rowCount ??
+        (result as { rowCount?: unknown; rows?: unknown[] }).rows?.length ??
+        0,
+    );
+    if (deleted === 0) return;
+  }
+}
+
+async function processOvernightSignalExpectancy(job: JobRow): Promise<void> {
+  const study = await db
+    .select()
+    .from(backtestStudiesTable)
+    .where(eq(backtestStudiesTable.id, job.studyId))
+    .limit(1)
+    .then((rows) => rows[0] ?? null);
+  if (!study) {
+    throw new Error(`Job ${job.id} references missing study.`);
+  }
+
+  const config = parseOvernightSignalExpectancyConfig(study);
+  if (config.symbols.length === 0) {
+    throw new Error("Overnight signal-expectancy study has no symbols.");
+  }
+
+  await heartbeat(job.id, 2);
+  const sessions = listNyseRthSessions({
+    from: study.startsAt,
+    to: study.endsAt,
+  });
+  if (sessions.length === 0) {
+    throw new Error("Overnight signal-expectancy study has no NYSE RTH sessions.");
+  }
+
+  const lastNextOpenMs = sessions.reduce((latest, session) => {
+    const openMs = session.nextRegularOpenAt?.getTime() ?? 0;
+    return Math.max(latest, openMs + 15 * 60_000);
+  }, study.endsAt.getTime());
+  const dataTo = new Date(Math.max(study.endsAt.getTime(), lastNextOpenMs));
+  const loadTimeframes = [
+    ...new Set([
+      OVERNIGHT_RETURN_TIMEFRAME,
+      ...config.signalTimeframes.map(
+        (timeframe) => LOAD_TIMEFRAME_BY_SIGNAL_TIMEFRAME[timeframe],
+      ),
+    ]),
+  ] as OvernightLoadTimeframe[];
+  const accumulator = createOvernightStatsAccumulator(config.signalTimeframes);
+  const coverageWarnings: string[] = [];
+
+  await deleteOvernightSamplesForStudy(study.id);
+  await db
+    .delete(overnightSignalExpectancyResultsTable)
+    .where(eq(overnightSignalExpectancyResultsTable.studyId, study.id));
+
+  let processedSymbolCount = 0;
+
+  for (
+    let symbolIndex = 0;
+    symbolIndex < config.symbols.length;
+    symbolIndex += OVERNIGHT_SYMBOL_CONCURRENCY
+  ) {
+    if (await shouldCancel(job.id)) return;
+
+    const symbols = config.symbols.slice(
+      symbolIndex,
+      symbolIndex + OVERNIGHT_SYMBOL_CONCURRENCY,
+    );
+    const symbolResults = await Promise.all(
+      symbols.map((symbol) =>
+        processOvernightSymbol({
+          symbol,
+          startsAt: study.startsAt,
+          dataTo,
+          sessions,
+          loadTimeframes,
+          signalTimeframes: config.signalTimeframes,
+          signalSettingsByTimeframe: config.signalSettingsByTimeframe,
+        }),
+      ),
+    );
+
+    for (const result of symbolResults) {
+      coverageWarnings.push(...result.coverageWarnings);
+      addOvernightSamplesToStats(accumulator, result.samples);
+      if (config.persistSamples) {
+        await persistOvernightSamples(study.id, job.id, result.samples);
+      }
+    }
+
+    processedSymbolCount += symbols.length;
+    await heartbeat(
+      job.id,
+      5 + Math.floor((processedSymbolCount / config.symbols.length) * 85),
+    );
+  }
+
+  if (await shouldCancel(job.id)) return;
+  await heartbeat(job.id, 92);
+
+  const globalDataQuality = {
+    sourcePolicy: "massive_adjusted_rth_outsideRth_false",
+    returnPricePolicy: "15m_regular_close_to_next_regular_open",
+    signalAvailabilityPolicy: "bar_start_plus_timeframe_step_lte_regular_close",
+    universeSymbols: config.symbols.length,
+    processedSymbols: processedSymbolCount,
+    sessionCount: sessions.length,
+    coverageWarningCount: coverageWarnings.length,
+    coverageWarnings: coverageWarnings.slice(0, 100),
+    survivorshipBias:
+      "Current signal_universe_rankings.member snapshot; delisted and prior non-members are not reconstructed.",
+  };
+  const results = summarizeOvernightExpectancy(accumulator);
+
+  if (results.length > 0) {
+    await db.insert(overnightSignalExpectancyResultsTable).values(
+      results.map((result) => ({
+        studyId: study.id,
+        jobId: job.id,
+        timeframe: result.timeframe,
+        sampleCount: result.sampleCount,
+        eligibleSampleCount: result.eligibleSampleCount,
+        buyStateCount: result.buyStateCount,
+        validReturnCoveragePct: numericString(result.validReturnCoveragePct),
+        buyStateFrequencyPct: numericString(result.buyStateFrequencyPct),
+        expectancyPct: numericString(result.expectancyPct),
+        medianReturnPct: numericString(result.medianReturnPct),
+        winRatePct: numericString(result.winRatePct),
+        avgWinPct: numericString(result.avgWinPct),
+        avgLossPct: numericString(result.avgLossPct),
+        payoffRatio: numericString(result.payoffRatio),
+        stdReturnPct: numericString(result.stdReturnPct),
+        tStat: numericString(result.tStat),
+        ci95LowPct: numericString(result.ci95LowPct),
+        ci95HighPct: numericString(result.ci95HighPct),
+        rank: result.rank,
+        winnerStatus: result.winnerStatus,
+        pairwiseSummary: result.pairwiseSummary,
+        dataQuality: {
+          ...result.dataQuality,
+          ...globalDataQuality,
+        },
+      })),
+    );
+  }
+
+  await heartbeat(job.id, 100);
+  logger.info(
+    {
+      jobId: job.id,
+      studyId: study.id,
+      symbols: config.symbols.length,
+      sessions: sessions.length,
+      timeframes: config.signalTimeframes,
+    },
+    "Overnight signal expectancy completed",
+  );
+}
+
 async function processPatternDiscovery(job: JobRow): Promise<void> {
   const study = await db
     .select()
@@ -2491,6 +3197,8 @@ async function processJob(job: JobRow): Promise<void> {
       await processSweep(job);
     } else if (job.kind === "pattern_discovery") {
       await processPatternDiscovery(job);
+    } else if (job.kind === OVERNIGHT_SIGNAL_EXPECTANCY_KIND) {
+      await processOvernightSignalExpectancy(job);
     } else {
       throw new Error(`Unsupported job kind: ${job.kind}`);
     }
@@ -2593,6 +3301,25 @@ if (isDirectEntrypoint) {
         logger.error(
           { err: error instanceof Error ? error : new Error(String(error)) },
           "Benchmark seed failed",
+        );
+        process.exit(1);
+      });
+  } else if (command === "run-job") {
+    const jobId = process.argv[3];
+    if (!jobId) {
+      logger.error("Missing job id for run-job command");
+      process.exit(1);
+    }
+    claimJobById(jobId)
+      .then((job) => processJob(job))
+      .then(() => {
+        logger.info({ jobId }, "Backtest job complete");
+        process.exit(0);
+      })
+      .catch((error) => {
+        logger.error(
+          { err: error instanceof Error ? error : new Error(String(error)), jobId },
+          "Backtest job command failed",
         );
         process.exit(1);
       });

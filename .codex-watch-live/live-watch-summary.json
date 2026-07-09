@@ -1,0 +1,707 @@
+{
+  "appUrl": "http://127.0.0.1:18747/",
+  "startedAt": "2026-07-06T19:29:46.591Z",
+  "endedAt": "2026-07-06T19:34:57.831Z",
+  "durationMs": 311240,
+  "startProcesses": [
+    "   1398 Mon Jul  6 12:21:12 2026 /nix/store/9cyx2v23dip6p9q98384k9v06c96qskb-nodejs-24.13.0/bin/node artifacts/mcp-server/dist/index.mjs",
+    "   1623 Mon Jul  6 12:21:36 2026 /nix/store/9cyx2v23dip6p9q98384k9v06c96qskb-nodejs-24.13.0/bin/node artifacts/mcp-server/dist/index.mjs",
+    "  22939 Mon Jul  6 13:19:19 2026 /nix/store/cikdc61gfwvdma6y0p9b5d5d448aqcv6-nodejs-24.12.0/bin/node /nix/store/61lr9izijvg30pcribjdxgjxvh3bysp4-pnpm-10.26.1/bin/pnpm --filter @workspace/pyrus run dev:replit",
+    "  22957 Mon Jul  6 13:19:21 2026 /nix/store/9cyx2v23dip6p9q98384k9v06c96qskb-nodejs-24.13.0/bin/node ./scripts/runDevApp.mjs",
+    "  22968 Mon Jul  6 13:19:24 2026 /nix/store/cikdc61gfwvdma6y0p9b5d5d448aqcv6-nodejs-24.12.0/bin/node /nix/store/61lr9izijvg30pcribjdxgjxvh3bysp4-pnpm-10.26.1/bin/pnpm --filter @workspace/api-server run dev",
+    "  22989 Mon Jul  6 13:19:25 2026 /nix/store/9cyx2v23dip6p9q98384k9v06c96qskb-nodejs-24.13.0/bin/node /home/runner/workspace/artifacts/pyrus/node_modules/.bin/../vite/bin/vite.js --config vite.config.ts --host 0.0.0.0",
+    "  23001 Mon Jul  6 13:19:26 2026 /nix/store/9cyx2v23dip6p9q98384k9v06c96qskb-nodejs-24.13.0/bin/node --enable-source-maps ./dist/index.mjs",
+    "  25994 Mon Jul  6 13:29:43 2026 /bin/bash -lc pnpm exec node <<'NODE' const { chromium } = require('@playwright/test'); const fs = require('fs'); const path = require('path'); const { execFileSync } = require('child_process');  const appUrl = process.env.PYRUS_APP_URL || 'http://127.0.0.1:18747/'; const durationMs = Number(process.env.WATCH_MS || 5 * 60 * 1000); const tickMs = 15_000; const outDir = path.join(process.cwd(), '.codex-watch-live'); fs.mkdirSync(outDir, { recursive: true });  const startedAt = Date.now(); const events = []; const apiHeaders = []; const domSamples = []; const screenshots = []; const eventKeys = new Map();  function shortUrl(url) {   try {     const u = new URL(url);     return `${u.origin}${u.pathname}${u.search}`;   } catch {     return url;   } } function add(kind, detail) {   const event = { atMs: Date.now() - startedAt, kind, ...detail };   events.push(event);   const key = `${kind}:${detail.status || ''}:${detail.failure || ''}:${detail.url || ''}:${detail.text || detail.message || ''}`.slice(0, 900);   eventKeys.set(key, (eventKeys.get(key) || 0) + 1);   return event; } function processSnapshot() {   try {     const out = execFileSync('ps', ['-eo', 'pid,lstart,cmd'], { encoding: 'utf8' });     return out.split('\\n').filter((line) => /runDevApp|vite\\.js|dist\\/index\\.mjs|api-server run dev|pyrus run dev:replit/.test(line));   } catch (error) {     return [`process snapshot failed: ${error.message}`];   } } async function sampleHealthz() {   const atMs = Date.now() - startedAt;   try {     const response = await fetch('http://127.0.0.1:8080/api/healthz', { method: 'GET', signal: AbortSignal.timeout(3000) });     apiHeaders.push({       atMs,       source: 'healthz',       status: response.status,       pressure: response.headers.get('x-pyrus-pressure-level'),       resource: response.headers.get('x-pyrus-resource-level'),       observedResource: response.headers.get('x-pyrus-observed-resource-level'),       admission: response.headers.get('x-pyrus-admission-action'),       routeClass: response.headers.get('x-pyrus-route-class'),     });   } catch (error) {     add('healthz_failed', { message: error.message });   } }  (async () => {   const startProcesses = processSnapshot();   await sampleHealthz();   const browser = await chromium.launch({ headless: true });   const context = await browser.newContext({ viewport: { width: 1600, height: 1000 }, deviceScaleFactor: 1 });   const page = await context.newPage();    async function issueScreenshot(reason) {     const elapsedSec = Math.round((Date.now() - startedAt) / 1000);     const file = path.join(outDir, `issue-${elapsedSec}-${reason.replace(/[^a-z0-9_-]+/gi, '-').slice(0, 32)}.png`);     try {       await page.screenshot({ path: file, fullPage: false, timeout: 5000 });       screenshots.push({ atMs: Date.now() - startedAt, reason, file });     } catch (error) {       add('screenshot_failed', { reason, message: error.message });     }   }    page.on('console', (msg) => {     const type = msg.type();     if (!['error', 'warning'].includes(type)) return;     const loc = msg.location();     add(`console.${type}`, {       text: msg.text(),       url: loc?.url ? shortUrl(loc.url) : undefined,       line: loc?.lineNumber,       column: loc?.columnNumber,     });   });   page.on('pageerror', (error) => {     add('pageerror', { message: error.message, stack: error.stack });     issueScreenshot('pageerror');   });   page.on('requestfailed', (request) => {     add('requestfailed', { url: shortUrl(request.url()), method: request.method(), failure: request.failure()?.errorText });   });   page.on('response', (response) => {     const url = shortUrl(response.url());     const headers = response.headers();     if (url.includes('/api/')) {       const pressure = headers['x-pyrus-pressure-level'];       const resource = headers['x-pyrus-resource-level'];       const admission = headers['x-pyrus-admission-action'];       if (pressure || resource || admission || response.status() >= 400) {         apiHeaders.push({           atMs: Date.now() - startedAt,           source: 'browser-response',           status: response.status(),           url,           method: response.request().method(),           pressure,           resource,           observedResource: headers['x-pyrus-observed-resource-level'],           admission,           routeClass: headers['x-pyrus-route-class'],         });       }     }     if (response.status() >= 400) {       add('http', { status: response.status(), url, method: response.request().method() });       issueScreenshot(`http-${response.status()}`);     }   });    console.log(JSON.stringify({ event: 'live_watch_start', appUrl, durationMs, startedAt: new Date(startedAt).toISOString(), startProcesses }));   await page.goto(appUrl, { waitUntil: 'domcontentloaded', timeout: 30_000 });    async function sampleDom(label) {     try {       const state = await page.evaluate(() => {         const visibleText = (document.body?.innerText || '').replace(/\\s+/g, ' ').slice(0, 900);         const isVisible = (el) => {           const style = window.getComputedStyle(el);           const rect = el.getBoundingClientRect();           return style.visibility !== 'hidden' && style.display !== 'none' && Number(style.opacity || '1') !== 0 && rect.width > 0 && rect.height > 0;         };         const overlays = {           vite: Boolean(document.querySelector('vite-error-overlay')),           rootCrash: Boolean(document.querySelector('[data-testid=\"root-crash-diagnostics\"]')),           appLoading: Array.from(document.querySelectorAll('[data-testid=\"app-loading-fallback\"], [data-testid=\"neural-stage\"], [data-testid=\"neural-stage-fallback\"], [data-testid=\"pyrus-boot-progress-overlay\"]')).filter(isVisible).map((el) => ({ id: el.getAttribute('data-testid'), text: el.textContent?.replace(/\\s+/g, ' ').slice(0, 160) })),           alerts: Array.from(document.querySelectorAll('[role=\"alert\"], [data-testid*=\"error\" i], [data-testid*=\"warning\" i], [data-testid*=\"offline\" i]')).filter(isVisible).map((el) => ({ id: el.getAttribute('data-testid') || el.getAttribute('role'), text: el.textContent?.replace(/\\s+/g, ' ').slice(0, 220) })).slice(0, 20),         };         return {           title: document.title,           url: location.href,           readyState: document.readyState,           visibilityState: document.visibilityState,           visibleText,           hasSignIn: /Sign in to continue/i.test(visibleText),           overlays,           fontsStatus: document.fonts?.status || null,           viewport: { width: window.innerWidth, height: window.innerHeight },           horizontalOverflow: document.documentElement.scrollWidth > window.innerWidth + 2 || document.body.scrollWidth > window.innerWidth + 2,         };       });       domSamples.push({ atMs: Date.now() - startedAt, label, state });       if (state.overlays.vite || state.overlays.rootCrash || state.overlays.appLoading.length || state.overlays.alerts.length) {         add('visible_runtime_state', { label, state });         await issueScreenshot('visible-runtime-state');       }       return state;     } catch (error) {       add('dom_sample_failed', { message: error.message });       return null;     }   }    await sampleDom('initial');   let nextHealth = startedAt + 60_000;   while (Date.now() < startedAt + durationMs) {     await new Promise((resolve) => setTimeout(resolve, Math.min(tickMs, startedAt + durationMs - Date.now())));     const state = await sampleDom('tick');     if (Date.now() >= nextHealth) {       await sampleHealthz();       nextHealth += 60_000;     }     const elapsedSec = Math.round((Date.now() - startedAt) / 1000);     console.log(JSON.stringify({ event: 'live_tick', elapsedSec, totalEvents: events.length, hasSignIn: state?.hasSignIn, appLoadingCount: state?.overlays?.appLoading?.length || 0, alerts: state?.overlays?.alerts?.length || 0, fontsStatus: state?.fontsStatus }));   }    const endProcesses = processSnapshot();   await sampleHealthz();   const summary = {     appUrl,     startedAt: new Date(startedAt).toISOString(),     endedAt: new Date().toISOString(),     durationMs: Date.now() - startedAt,     startProcesses,     endProcesses,     processStable: JSON.stringify(startProcesses) === JSON.stringify(endProcesses),     eventCounts: events.reduce((acc, event) => { acc[event.kind] = (acc[event.kind] || 0) + 1; return acc; }, {}),     topEvents: Array.from(eventKeys.entries()).sort((a, b) => b[1] - a[1]).slice(0, 30).map(([key, count]) => ({ count, key })),     apiHeaderCounts: apiHeaders.reduce((acc, h) => {       const key = `${h.source}:${h.status}:${h.pressure || ''}:${h.resource || ''}:${h.admission || ''}`;       acc[key] = (acc[key] || 0) + 1;       return acc;     }, {}),     apiHeaders,     domSamples,     screenshots,     events,   };   const summaryPath = path.join(outDir, 'live-watch-summary.json');   fs.writeFileSync(summaryPath, JSON.stringify(summary, null, 2));   console.log(JSON.stringify({ event: 'live_watch_done', summaryPath, processStable: summary.processStable, eventCounts: summary.eventCounts, apiHeaderCounts: summary.apiHeaderCounts }));   await browser.close(); })().catch((error) => {   console.error(JSON.stringify({ event: 'live_watch_failed', message: error.message, stack: error.stack }));   process.exitCode = 1; }); NODE"
+  ],
+  "endProcesses": [
+    "   1398 Mon Jul  6 12:21:12 2026 /nix/store/9cyx2v23dip6p9q98384k9v06c96qskb-nodejs-24.13.0/bin/node artifacts/mcp-server/dist/index.mjs",
+    "   1623 Mon Jul  6 12:21:36 2026 /nix/store/9cyx2v23dip6p9q98384k9v06c96qskb-nodejs-24.13.0/bin/node artifacts/mcp-server/dist/index.mjs",
+    "  22939 Mon Jul  6 13:19:19 2026 /nix/store/cikdc61gfwvdma6y0p9b5d5d448aqcv6-nodejs-24.12.0/bin/node /nix/store/61lr9izijvg30pcribjdxgjxvh3bysp4-pnpm-10.26.1/bin/pnpm --filter @workspace/pyrus run dev:replit",
+    "  22957 Mon Jul  6 13:19:21 2026 /nix/store/9cyx2v23dip6p9q98384k9v06c96qskb-nodejs-24.13.0/bin/node ./scripts/runDevApp.mjs",
+    "  22968 Mon Jul  6 13:19:24 2026 /nix/store/cikdc61gfwvdma6y0p9b5d5d448aqcv6-nodejs-24.12.0/bin/node /nix/store/61lr9izijvg30pcribjdxgjxvh3bysp4-pnpm-10.26.1/bin/pnpm --filter @workspace/api-server run dev",
+    "  22989 Mon Jul  6 13:19:25 2026 /nix/store/9cyx2v23dip6p9q98384k9v06c96qskb-nodejs-24.13.0/bin/node /home/runner/workspace/artifacts/pyrus/node_modules/.bin/../vite/bin/vite.js --config vite.config.ts --host 0.0.0.0",
+    "  23001 Mon Jul  6 13:19:26 2026 /nix/store/9cyx2v23dip6p9q98384k9v06c96qskb-nodejs-24.13.0/bin/node --enable-source-maps ./dist/index.mjs",
+    "  25994 Mon Jul  6 13:29:43 2026 /bin/bash -lc pnpm exec node <<'NODE' const { chromium } = require('@playwright/test'); const fs = require('fs'); const path = require('path'); const { execFileSync } = require('child_process');  const appUrl = process.env.PYRUS_APP_URL || 'http://127.0.0.1:18747/'; const durationMs = Number(process.env.WATCH_MS || 5 * 60 * 1000); const tickMs = 15_000; const outDir = path.join(process.cwd(), '.codex-watch-live'); fs.mkdirSync(outDir, { recursive: true });  const startedAt = Date.now(); const events = []; const apiHeaders = []; const domSamples = []; const screenshots = []; const eventKeys = new Map();  function shortUrl(url) {   try {     const u = new URL(url);     return `${u.origin}${u.pathname}${u.search}`;   } catch {     return url;   } } function add(kind, detail) {   const event = { atMs: Date.now() - startedAt, kind, ...detail };   events.push(event);   const key = `${kind}:${detail.status || ''}:${detail.failure || ''}:${detail.url || ''}:${detail.text || detail.message || ''}`.slice(0, 900);   eventKeys.set(key, (eventKeys.get(key) || 0) + 1);   return event; } function processSnapshot() {   try {     const out = execFileSync('ps', ['-eo', 'pid,lstart,cmd'], { encoding: 'utf8' });     return out.split('\\n').filter((line) => /runDevApp|vite\\.js|dist\\/index\\.mjs|api-server run dev|pyrus run dev:replit/.test(line));   } catch (error) {     return [`process snapshot failed: ${error.message}`];   } } async function sampleHealthz() {   const atMs = Date.now() - startedAt;   try {     const response = await fetch('http://127.0.0.1:8080/api/healthz', { method: 'GET', signal: AbortSignal.timeout(3000) });     apiHeaders.push({       atMs,       source: 'healthz',       status: response.status,       pressure: response.headers.get('x-pyrus-pressure-level'),       resource: response.headers.get('x-pyrus-resource-level'),       observedResource: response.headers.get('x-pyrus-observed-resource-level'),       admission: response.headers.get('x-pyrus-admission-action'),       routeClass: response.headers.get('x-pyrus-route-class'),     });   } catch (error) {     add('healthz_failed', { message: error.message });   } }  (async () => {   const startProcesses = processSnapshot();   await sampleHealthz();   const browser = await chromium.launch({ headless: true });   const context = await browser.newContext({ viewport: { width: 1600, height: 1000 }, deviceScaleFactor: 1 });   const page = await context.newPage();    async function issueScreenshot(reason) {     const elapsedSec = Math.round((Date.now() - startedAt) / 1000);     const file = path.join(outDir, `issue-${elapsedSec}-${reason.replace(/[^a-z0-9_-]+/gi, '-').slice(0, 32)}.png`);     try {       await page.screenshot({ path: file, fullPage: false, timeout: 5000 });       screenshots.push({ atMs: Date.now() - startedAt, reason, file });     } catch (error) {       add('screenshot_failed', { reason, message: error.message });     }   }    page.on('console', (msg) => {     const type = msg.type();     if (!['error', 'warning'].includes(type)) return;     const loc = msg.location();     add(`console.${type}`, {       text: msg.text(),       url: loc?.url ? shortUrl(loc.url) : undefined,       line: loc?.lineNumber,       column: loc?.columnNumber,     });   });   page.on('pageerror', (error) => {     add('pageerror', { message: error.message, stack: error.stack });     issueScreenshot('pageerror');   });   page.on('requestfailed', (request) => {     add('requestfailed', { url: shortUrl(request.url()), method: request.method(), failure: request.failure()?.errorText });   });   page.on('response', (response) => {     const url = shortUrl(response.url());     const headers = response.headers();     if (url.includes('/api/')) {       const pressure = headers['x-pyrus-pressure-level'];       const resource = headers['x-pyrus-resource-level'];       const admission = headers['x-pyrus-admission-action'];       if (pressure || resource || admission || response.status() >= 400) {         apiHeaders.push({           atMs: Date.now() - startedAt,           source: 'browser-response',           status: response.status(),           url,           method: response.request().method(),           pressure,           resource,           observedResource: headers['x-pyrus-observed-resource-level'],           admission,           routeClass: headers['x-pyrus-route-class'],         });       }     }     if (response.status() >= 400) {       add('http', { status: response.status(), url, method: response.request().method() });       issueScreenshot(`http-${response.status()}`);     }   });    console.log(JSON.stringify({ event: 'live_watch_start', appUrl, durationMs, startedAt: new Date(startedAt).toISOString(), startProcesses }));   await page.goto(appUrl, { waitUntil: 'domcontentloaded', timeout: 30_000 });    async function sampleDom(label) {     try {       const state = await page.evaluate(() => {         const visibleText = (document.body?.innerText || '').replace(/\\s+/g, ' ').slice(0, 900);         const isVisible = (el) => {           const style = window.getComputedStyle(el);           const rect = el.getBoundingClientRect();           return style.visibility !== 'hidden' && style.display !== 'none' && Number(style.opacity || '1') !== 0 && rect.width > 0 && rect.height > 0;         };         const overlays = {           vite: Boolean(document.querySelector('vite-error-overlay')),           rootCrash: Boolean(document.querySelector('[data-testid=\"root-crash-diagnostics\"]')),           appLoading: Array.from(document.querySelectorAll('[data-testid=\"app-loading-fallback\"], [data-testid=\"neural-stage\"], [data-testid=\"neural-stage-fallback\"], [data-testid=\"pyrus-boot-progress-overlay\"]')).filter(isVisible).map((el) => ({ id: el.getAttribute('data-testid'), text: el.textContent?.replace(/\\s+/g, ' ').slice(0, 160) })),           alerts: Array.from(document.querySelectorAll('[role=\"alert\"], [data-testid*=\"error\" i], [data-testid*=\"warning\" i], [data-testid*=\"offline\" i]')).filter(isVisible).map((el) => ({ id: el.getAttribute('data-testid') || el.getAttribute('role'), text: el.textContent?.replace(/\\s+/g, ' ').slice(0, 220) })).slice(0, 20),         };         return {           title: document.title,           url: location.href,           readyState: document.readyState,           visibilityState: document.visibilityState,           visibleText,           hasSignIn: /Sign in to continue/i.test(visibleText),           overlays,           fontsStatus: document.fonts?.status || null,           viewport: { width: window.innerWidth, height: window.innerHeight },           horizontalOverflow: document.documentElement.scrollWidth > window.innerWidth + 2 || document.body.scrollWidth > window.innerWidth + 2,         };       });       domSamples.push({ atMs: Date.now() - startedAt, label, state });       if (state.overlays.vite || state.overlays.rootCrash || state.overlays.appLoading.length || state.overlays.alerts.length) {         add('visible_runtime_state', { label, state });         await issueScreenshot('visible-runtime-state');       }       return state;     } catch (error) {       add('dom_sample_failed', { message: error.message });       return null;     }   }    await sampleDom('initial');   let nextHealth = startedAt + 60_000;   while (Date.now() < startedAt + durationMs) {     await new Promise((resolve) => setTimeout(resolve, Math.min(tickMs, startedAt + durationMs - Date.now())));     const state = await sampleDom('tick');     if (Date.now() >= nextHealth) {       await sampleHealthz();       nextHealth += 60_000;     }     const elapsedSec = Math.round((Date.now() - startedAt) / 1000);     console.log(JSON.stringify({ event: 'live_tick', elapsedSec, totalEvents: events.length, hasSignIn: state?.hasSignIn, appLoadingCount: state?.overlays?.appLoading?.length || 0, alerts: state?.overlays?.alerts?.length || 0, fontsStatus: state?.fontsStatus }));   }    const endProcesses = processSnapshot();   await sampleHealthz();   const summary = {     appUrl,     startedAt: new Date(startedAt).toISOString(),     endedAt: new Date().toISOString(),     durationMs: Date.now() - startedAt,     startProcesses,     endProcesses,     processStable: JSON.stringify(startProcesses) === JSON.stringify(endProcesses),     eventCounts: events.reduce((acc, event) => { acc[event.kind] = (acc[event.kind] || 0) + 1; return acc; }, {}),     topEvents: Array.from(eventKeys.entries()).sort((a, b) => b[1] - a[1]).slice(0, 30).map(([key, count]) => ({ count, key })),     apiHeaderCounts: apiHeaders.reduce((acc, h) => {       const key = `${h.source}:${h.status}:${h.pressure || ''}:${h.resource || ''}:${h.admission || ''}`;       acc[key] = (acc[key] || 0) + 1;       return acc;     }, {}),     apiHeaders,     domSamples,     screenshots,     events,   };   const summaryPath = path.join(outDir, 'live-watch-summary.json');   fs.writeFileSync(summaryPath, JSON.stringify(summary, null, 2));   console.log(JSON.stringify({ event: 'live_watch_done', summaryPath, processStable: summary.processStable, eventCounts: summary.eventCounts, apiHeaderCounts: summary.apiHeaderCounts }));   await browser.close(); })().catch((error) => {   console.error(JSON.stringify({ event: 'live_watch_failed', message: error.message, stack: error.stack }));   process.exitCode = 1; }); NODE"
+  ],
+  "processStable": true,
+  "eventCounts": {
+    "console.warning": 6,
+    "visible_runtime_state": 7,
+    "screenshot_failed": 6
+  },
+  "topEvents": [
+    {
+      "count": 7,
+      "key": "visible_runtime_state::::"
+    },
+    {
+      "count": 6,
+      "key": "screenshot_failed::::page.screenshot: Timeout 5000ms exceeded.\nCall log:\n\u001b[2m  - taking page screenshot\u001b[22m\n"
+    },
+    {
+      "count": 3,
+      "key": "console.warning:::http://127.0.0.1:18747/:[.WebGL-0x3364054c5800]GL Driver Message (OpenGL, Performance, GL_CLOSE_PATH_NV, High): GPU stall due to ReadPixels"
+    },
+    {
+      "count": 1,
+      "key": "console.warning:::http://127.0.0.1:18747/:WebGL: CONTEXT_LOST_WEBGL: loseContext: context lost"
+    },
+    {
+      "count": 1,
+      "key": "console.warning:::http://127.0.0.1:18747/node_modules/.vite/deps/chunk-QXHFEY3F.js?v=e599cbd2:THREE.Clock: This module has been deprecated. Please use THREE.Timer instead."
+    },
+    {
+      "count": 1,
+      "key": "console.warning:::http://127.0.0.1:18747/:[.WebGL-0x3364054c5800]GL Driver Message (OpenGL, Performance, GL_CLOSE_PATH_NV, High): GPU stall due to ReadPixels (this message will no longer repeat)"
+    }
+  ],
+  "apiHeaderCounts": {
+    "healthz:200:high:high:allow": 7,
+    "browser-response:200:high:high:allow": 1,
+    "browser-response:202:high:high:allow": 3
+  },
+  "apiHeaders": [
+    {
+      "atMs": 54,
+      "source": "healthz",
+      "status": 200,
+      "pressure": "high",
+      "resource": "high",
+      "observedResource": "high",
+      "admission": "allow",
+      "routeClass": "active-screen"
+    },
+    {
+      "atMs": 48413,
+      "source": "browser-response",
+      "status": 200,
+      "url": "http://127.0.0.1:18747/api/auth/session",
+      "method": "GET",
+      "pressure": "high",
+      "resource": "high",
+      "observedResource": "high",
+      "admission": "allow",
+      "routeClass": "active-screen"
+    },
+    {
+      "atMs": 123161,
+      "source": "browser-response",
+      "status": 202,
+      "url": "http://127.0.0.1:18747/api/diagnostics/client-metrics",
+      "method": "POST",
+      "pressure": "high",
+      "resource": "high",
+      "observedResource": "high",
+      "admission": "allow",
+      "routeClass": "active-screen"
+    },
+    {
+      "atMs": 128151,
+      "source": "healthz",
+      "status": 200,
+      "pressure": "high",
+      "resource": "high",
+      "observedResource": "high",
+      "admission": "allow",
+      "routeClass": "active-screen"
+    },
+    {
+      "atMs": 163952,
+      "source": "healthz",
+      "status": 200,
+      "pressure": "high",
+      "resource": "high",
+      "observedResource": "high",
+      "admission": "allow",
+      "routeClass": "active-screen"
+    },
+    {
+      "atMs": 232843,
+      "source": "browser-response",
+      "status": 202,
+      "url": "http://127.0.0.1:18747/api/diagnostics/client-metrics",
+      "method": "POST",
+      "pressure": "high",
+      "resource": "high",
+      "observedResource": "high",
+      "admission": "allow",
+      "routeClass": "active-screen"
+    },
+    {
+      "atMs": 237851,
+      "source": "healthz",
+      "status": 200,
+      "pressure": "high",
+      "resource": "high",
+      "observedResource": "high",
+      "admission": "allow",
+      "routeClass": "active-screen"
+    },
+    {
+      "atMs": 274340,
+      "source": "healthz",
+      "status": 200,
+      "pressure": "high",
+      "resource": "high",
+      "observedResource": "high",
+      "admission": "allow",
+      "routeClass": "active-screen"
+    },
+    {
+      "atMs": 304684,
+      "source": "browser-response",
+      "status": 202,
+      "url": "http://127.0.0.1:18747/api/diagnostics/client-metrics",
+      "method": "POST",
+      "pressure": "high",
+      "resource": "high",
+      "observedResource": "high",
+      "admission": "allow",
+      "routeClass": "active-screen"
+    },
+    {
+      "atMs": 309688,
+      "source": "healthz",
+      "status": 200,
+      "pressure": "high",
+      "resource": "high",
+      "observedResource": "high",
+      "admission": "allow",
+      "routeClass": "active-screen"
+    },
+    {
+      "atMs": 311123,
+      "source": "healthz",
+      "status": 200,
+      "pressure": "high",
+      "resource": "high",
+      "observedResource": "high",
+      "admission": "allow",
+      "routeClass": "active-screen"
+    }
+  ],
+  "domSamples": [
+    {
+      "atMs": 9954,
+      "label": "initial",
+      "state": {
+        "title": "PYRUS Platform",
+        "url": "http://127.0.0.1:18747/",
+        "readyState": "interactive",
+        "visibilityState": "visible",
+        "visibleText": "PYRUS Loading app shell 17% Loading app shell 17% PYRUS Loading app shell 17% Loading app shell 17%",
+        "hasSignIn": false,
+        "overlays": {
+          "vite": false,
+          "rootCrash": false,
+          "appLoading": [
+            {
+              "id": "app-loading-fallback",
+              "text": "PYRUSLoading app shell17%Loading app shell 17%"
+            },
+            {
+              "id": "neural-stage",
+              "text": "PYRUSLoading app shell17%Loading app shell 17%"
+            },
+            {
+              "id": "neural-stage-fallback",
+              "text": "PYRUSLoading app shell17%Loading app shell 17%"
+            }
+          ],
+          "alerts": []
+        },
+        "fontsStatus": "loading",
+        "viewport": {
+          "width": 1600,
+          "height": 1000
+        },
+        "horizontalOverflow": false
+      }
+    },
+    {
+      "atMs": 48421,
+      "label": "tick",
+      "state": {
+        "title": "PYRUS Platform",
+        "url": "http://127.0.0.1:18747/",
+        "readyState": "complete",
+        "visibilityState": "visible",
+        "visibleText": "",
+        "hasSignIn": false,
+        "overlays": {
+          "vite": false,
+          "rootCrash": false,
+          "appLoading": [
+            {
+              "id": "neural-stage",
+              "text": ""
+            }
+          ],
+          "alerts": []
+        },
+        "fontsStatus": "loaded",
+        "viewport": {
+          "width": 1600,
+          "height": 1000
+        },
+        "horizontalOverflow": false
+      }
+    },
+    {
+      "atMs": 123148,
+      "label": "tick",
+      "state": {
+        "title": "PYRUS Platform",
+        "url": "http://127.0.0.1:18747/",
+        "readyState": "complete",
+        "visibilityState": "visible",
+        "visibleText": "",
+        "hasSignIn": false,
+        "overlays": {
+          "vite": false,
+          "rootCrash": false,
+          "appLoading": [
+            {
+              "id": "neural-stage",
+              "text": ""
+            }
+          ],
+          "alerts": []
+        },
+        "fontsStatus": "loaded",
+        "viewport": {
+          "width": 1600,
+          "height": 1000
+        },
+        "horizontalOverflow": false
+      }
+    },
+    {
+      "atMs": 158947,
+      "label": "tick",
+      "state": {
+        "title": "PYRUS Platform",
+        "url": "http://127.0.0.1:18747/",
+        "readyState": "complete",
+        "visibilityState": "visible",
+        "visibleText": "PYRUS Sign in to continue. Email Password Sign in First-time setup",
+        "hasSignIn": true,
+        "overlays": {
+          "vite": false,
+          "rootCrash": false,
+          "appLoading": [
+            {
+              "id": "neural-stage",
+              "text": ""
+            }
+          ],
+          "alerts": []
+        },
+        "fontsStatus": "loaded",
+        "viewport": {
+          "width": 1600,
+          "height": 1000
+        },
+        "horizontalOverflow": false
+      }
+    },
+    {
+      "atMs": 232844,
+      "label": "tick",
+      "state": {
+        "title": "PYRUS Platform",
+        "url": "http://127.0.0.1:18747/",
+        "readyState": "complete",
+        "visibilityState": "visible",
+        "visibleText": "PYRUS Sign in to continue. Email Password Sign in First-time setup",
+        "hasSignIn": true,
+        "overlays": {
+          "vite": false,
+          "rootCrash": false,
+          "appLoading": [
+            {
+              "id": "neural-stage",
+              "text": ""
+            }
+          ],
+          "alerts": []
+        },
+        "fontsStatus": "loaded",
+        "viewport": {
+          "width": 1600,
+          "height": 1000
+        },
+        "horizontalOverflow": false
+      }
+    },
+    {
+      "atMs": 269338,
+      "label": "tick",
+      "state": {
+        "title": "PYRUS Platform",
+        "url": "http://127.0.0.1:18747/",
+        "readyState": "complete",
+        "visibilityState": "visible",
+        "visibleText": "PYRUS Sign in to continue. Email Password Sign in First-time setup",
+        "hasSignIn": true,
+        "overlays": {
+          "vite": false,
+          "rootCrash": false,
+          "appLoading": [
+            {
+              "id": "neural-stage",
+              "text": ""
+            }
+          ],
+          "alerts": []
+        },
+        "fontsStatus": "loading",
+        "viewport": {
+          "width": 1600,
+          "height": 1000
+        },
+        "horizontalOverflow": false
+      }
+    },
+    {
+      "atMs": 304685,
+      "label": "tick",
+      "state": {
+        "title": "PYRUS Platform",
+        "url": "http://127.0.0.1:18747/",
+        "readyState": "complete",
+        "visibilityState": "visible",
+        "visibleText": "PYRUS Sign in to continue. Email Password Sign in First-time setup",
+        "hasSignIn": true,
+        "overlays": {
+          "vite": false,
+          "rootCrash": false,
+          "appLoading": [
+            {
+              "id": "neural-stage",
+              "text": ""
+            }
+          ],
+          "alerts": []
+        },
+        "fontsStatus": "loading",
+        "viewport": {
+          "width": 1600,
+          "height": 1000
+        },
+        "horizontalOverflow": false
+      }
+    }
+  ],
+  "screenshots": [
+    {
+      "atMs": 10316,
+      "reason": "visible-runtime-state",
+      "file": "/home/runner/workspace/.codex-watch-live/issue-10-visible-runtime-state.png"
+    }
+  ],
+  "events": [
+    {
+      "atMs": 9953,
+      "kind": "console.warning",
+      "text": "WebGL: CONTEXT_LOST_WEBGL: loseContext: context lost",
+      "url": "http://127.0.0.1:18747/",
+      "line": 0,
+      "column": 0
+    },
+    {
+      "atMs": 9954,
+      "kind": "visible_runtime_state",
+      "label": "initial",
+      "state": {
+        "title": "PYRUS Platform",
+        "url": "http://127.0.0.1:18747/",
+        "readyState": "interactive",
+        "visibilityState": "visible",
+        "visibleText": "PYRUS Loading app shell 17% Loading app shell 17% PYRUS Loading app shell 17% Loading app shell 17%",
+        "hasSignIn": false,
+        "overlays": {
+          "vite": false,
+          "rootCrash": false,
+          "appLoading": [
+            {
+              "id": "app-loading-fallback",
+              "text": "PYRUSLoading app shell17%Loading app shell 17%"
+            },
+            {
+              "id": "neural-stage",
+              "text": "PYRUSLoading app shell17%Loading app shell 17%"
+            },
+            {
+              "id": "neural-stage-fallback",
+              "text": "PYRUSLoading app shell17%Loading app shell 17%"
+            }
+          ],
+          "alerts": []
+        },
+        "fontsStatus": "loading",
+        "viewport": {
+          "width": 1600,
+          "height": 1000
+        },
+        "horizontalOverflow": false
+      }
+    },
+    {
+      "atMs": 11997,
+      "kind": "console.warning",
+      "text": "THREE.Clock: This module has been deprecated. Please use THREE.Timer instead.",
+      "url": "http://127.0.0.1:18747/node_modules/.vite/deps/chunk-QXHFEY3F.js?v=e599cbd2",
+      "line": 746,
+      "column": 14
+    },
+    {
+      "atMs": 12186,
+      "kind": "console.warning",
+      "text": "[.WebGL-0x3364054c5800]GL Driver Message (OpenGL, Performance, GL_CLOSE_PATH_NV, High): GPU stall due to ReadPixels",
+      "url": "http://127.0.0.1:18747/",
+      "line": 0,
+      "column": 0
+    },
+    {
+      "atMs": 12375,
+      "kind": "console.warning",
+      "text": "[.WebGL-0x3364054c5800]GL Driver Message (OpenGL, Performance, GL_CLOSE_PATH_NV, High): GPU stall due to ReadPixels",
+      "url": "http://127.0.0.1:18747/",
+      "line": 0,
+      "column": 0
+    },
+    {
+      "atMs": 12431,
+      "kind": "console.warning",
+      "text": "[.WebGL-0x3364054c5800]GL Driver Message (OpenGL, Performance, GL_CLOSE_PATH_NV, High): GPU stall due to ReadPixels",
+      "url": "http://127.0.0.1:18747/",
+      "line": 0,
+      "column": 0
+    },
+    {
+      "atMs": 12872,
+      "kind": "console.warning",
+      "text": "[.WebGL-0x3364054c5800]GL Driver Message (OpenGL, Performance, GL_CLOSE_PATH_NV, High): GPU stall due to ReadPixels (this message will no longer repeat)",
+      "url": "http://127.0.0.1:18747/",
+      "line": 0,
+      "column": 0
+    },
+    {
+      "atMs": 48421,
+      "kind": "visible_runtime_state",
+      "label": "tick",
+      "state": {
+        "title": "PYRUS Platform",
+        "url": "http://127.0.0.1:18747/",
+        "readyState": "complete",
+        "visibilityState": "visible",
+        "visibleText": "",
+        "hasSignIn": false,
+        "overlays": {
+          "vite": false,
+          "rootCrash": false,
+          "appLoading": [
+            {
+              "id": "neural-stage",
+              "text": ""
+            }
+          ],
+          "alerts": []
+        },
+        "fontsStatus": "loaded",
+        "viewport": {
+          "width": 1600,
+          "height": 1000
+        },
+        "horizontalOverflow": false
+      }
+    },
+    {
+      "atMs": 53425,
+      "kind": "screenshot_failed",
+      "reason": "visible-runtime-state",
+      "message": "page.screenshot: Timeout 5000ms exceeded.\nCall log:\n\u001b[2m  - taking page screenshot\u001b[22m\n"
+    },
+    {
+      "atMs": 123148,
+      "kind": "visible_runtime_state",
+      "label": "tick",
+      "state": {
+        "title": "PYRUS Platform",
+        "url": "http://127.0.0.1:18747/",
+        "readyState": "complete",
+        "visibilityState": "visible",
+        "visibleText": "",
+        "hasSignIn": false,
+        "overlays": {
+          "vite": false,
+          "rootCrash": false,
+          "appLoading": [
+            {
+              "id": "neural-stage",
+              "text": ""
+            }
+          ],
+          "alerts": []
+        },
+        "fontsStatus": "loaded",
+        "viewport": {
+          "width": 1600,
+          "height": 1000
+        },
+        "horizontalOverflow": false
+      }
+    },
+    {
+      "atMs": 128151,
+      "kind": "screenshot_failed",
+      "reason": "visible-runtime-state",
+      "message": "page.screenshot: Timeout 5000ms exceeded.\nCall log:\n\u001b[2m  - taking page screenshot\u001b[22m\n"
+    },
+    {
+      "atMs": 158947,
+      "kind": "visible_runtime_state",
+      "label": "tick",
+      "state": {
+        "title": "PYRUS Platform",
+        "url": "http://127.0.0.1:18747/",
+        "readyState": "complete",
+        "visibilityState": "visible",
+        "visibleText": "PYRUS Sign in to continue. Email Password Sign in First-time setup",
+        "hasSignIn": true,
+        "overlays": {
+          "vite": false,
+          "rootCrash": false,
+          "appLoading": [
+            {
+              "id": "neural-stage",
+              "text": ""
+            }
+          ],
+          "alerts": []
+        },
+        "fontsStatus": "loaded",
+        "viewport": {
+          "width": 1600,
+          "height": 1000
+        },
+        "horizontalOverflow": false
+      }
+    },
+    {
+      "atMs": 163952,
+      "kind": "screenshot_failed",
+      "reason": "visible-runtime-state",
+      "message": "page.screenshot: Timeout 5000ms exceeded.\nCall log:\n\u001b[2m  - taking page screenshot\u001b[22m\n"
+    },
+    {
+      "atMs": 232844,
+      "kind": "visible_runtime_state",
+      "label": "tick",
+      "state": {
+        "title": "PYRUS Platform",
+        "url": "http://127.0.0.1:18747/",
+        "readyState": "complete",
+        "visibilityState": "visible",
+        "visibleText": "PYRUS Sign in to continue. Email Password Sign in First-time setup",
+        "hasSignIn": true,
+        "overlays": {
+          "vite": false,
+          "rootCrash": false,
+          "appLoading": [
+            {
+              "id": "neural-stage",
+              "text": ""
+            }
+          ],
+          "alerts": []
+        },
+        "fontsStatus": "loaded",
+        "viewport": {
+          "width": 1600,
+          "height": 1000
+        },
+        "horizontalOverflow": false
+      }
+    },
+    {
+      "atMs": 237851,
+      "kind": "screenshot_failed",
+      "reason": "visible-runtime-state",
+      "message": "page.screenshot: Timeout 5000ms exceeded.\nCall log:\n\u001b[2m  - taking page screenshot\u001b[22m\n"
+    },
+    {
+      "atMs": 269338,
+      "kind": "visible_runtime_state",
+      "label": "tick",
+      "state": {
+        "title": "PYRUS Platform",
+        "url": "http://127.0.0.1:18747/",
+        "readyState": "complete",
+        "visibilityState": "visible",
+        "visibleText": "PYRUS Sign in to continue. Email Password Sign in First-time setup",
+        "hasSignIn": true,
+        "overlays": {
+          "vite": false,
+          "rootCrash": false,
+          "appLoading": [
+            {
+              "id": "neural-stage",
+              "text": ""
+            }
+          ],
+          "alerts": []
+        },
+        "fontsStatus": "loading",
+        "viewport": {
+          "width": 1600,
+          "height": 1000
+        },
+        "horizontalOverflow": false
+      }
+    },
+    {
+      "atMs": 274339,
+      "kind": "screenshot_failed",
+      "reason": "visible-runtime-state",
+      "message": "page.screenshot: Timeout 5000ms exceeded.\nCall log:\n\u001b[2m  - taking page screenshot\u001b[22m\n"
+    },
+    {
+      "atMs": 304685,
+      "kind": "visible_runtime_state",
+      "label": "tick",
+      "state": {
+        "title": "PYRUS Platform",
+        "url": "http://127.0.0.1:18747/",
+        "readyState": "complete",
+        "visibilityState": "visible",
+        "visibleText": "PYRUS Sign in to continue. Email Password Sign in First-time setup",
+        "hasSignIn": true,
+        "overlays": {
+          "vite": false,
+          "rootCrash": false,
+          "appLoading": [
+            {
+              "id": "neural-stage",
+              "text": ""
+            }
+          ],
+          "alerts": []
+        },
+        "fontsStatus": "loading",
+        "viewport": {
+          "width": 1600,
+          "height": 1000
+        },
+        "horizontalOverflow": false
+      }
+    },
+    {
+      "atMs": 309688,
+      "kind": "screenshot_failed",
+      "reason": "visible-runtime-state",
+      "message": "page.screenshot: Timeout 5000ms exceeded.\nCall log:\n\u001b[2m  - taking page screenshot\u001b[22m\n"
+    }
+  ]
+}

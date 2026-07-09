@@ -8,6 +8,7 @@ import {
   startTransition,
 } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { readCurrentBootHandoffElapsedMs } from "../../app/bootLoaderHandoff";
 import { isPyrusSafeQaMode } from "../../app/qa-mode";
 import { NeuralLoader } from "../../components/neural/NeuralLoader";
 import {
@@ -5417,7 +5418,7 @@ export default function PlatformApp() {
           data-testid="pyrus-boot-progress-overlay"
         >
           <NeuralLoader
-            bootHandoffElapsedMs={null}
+            bootHandoffElapsedMs={readCurrentBootHandoffElapsedMs(null)}
             label="Loading workspace"
             progress={bootProgress}
             testId="workspace-boot-progress-loader"

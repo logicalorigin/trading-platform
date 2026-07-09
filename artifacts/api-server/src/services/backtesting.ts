@@ -45,6 +45,7 @@ import type {
   BacktestSweep,
   HistoricalBarDataset,
 } from "@workspace/db";
+import { tradingDaysBetween } from "@workspace/market-calendar";
 import { and, asc, desc, eq, gte, lte, sql, type SQL } from "drizzle-orm";
 import { HttpError } from "../lib/errors";
 import { getMassiveRuntimeConfig } from "../lib/runtime";
@@ -238,9 +239,15 @@ function addUtcDays(value: Date, days: number): Date {
 }
 
 function calculateDte(occurredAt: Date, expirationDate: Date): number {
-  const start = startOfUtcDay(occurredAt).getTime();
-  const expiration = startOfUtcDay(expirationDate).getTime();
-  return Math.round((expiration - start) / (24 * 60 * 60 * 1_000));
+  // Wave-2 C1 (trading-day DTE, product ruling 2026-07-07): NY trading days
+  // from the signal's NY date to the expiry's calendar date (its UTC date is
+  // the expiry key — Massive/IBKR store expiries at UTC midnight), not UTC
+  // calendar days. Matches the live automation lane and fixes weekend/holiday
+  // window shrinkage in backtest tenor selection.
+  return tradingDaysBetween(
+    occurredAt,
+    expirationDate.toISOString().slice(0, 10),
+  );
 }
 
 function selectExpiryWindow(
@@ -2025,7 +2032,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 async function resolveBacktestDeploymentSignalOptionsSnapshot(input: {
   studyId: string;
-  preferredRunId?: string | null;
 }): Promise<BacktestDeploymentSignalOptionsSnapshot | null> {
   const deployments = await db
     .select({
@@ -2036,12 +2042,7 @@ async function resolveBacktestDeploymentSignalOptionsSnapshot(input: {
     .where(
       sql`${algoDeploymentsTable.config} ->> 'sourceStudyId' = ${input.studyId}`,
     )
-    .orderBy(
-      input.preferredRunId
-        ? sql`case when ${algoDeploymentsTable.config} ->> 'sourceRunId' = ${input.preferredRunId} then 0 else 1 end`
-        : sql`0`,
-      desc(algoDeploymentsTable.updatedAt),
-    )
+    .orderBy(desc(algoDeploymentsTable.updatedAt))
     .limit(5);
 
   for (const deployment of deployments) {
@@ -2212,6 +2213,15 @@ export async function createBacktestRun(input: CreateRunInput) {
     ...(input.parameters ?? {}),
   });
 
+  // Resolved before the transaction: the helper queries through the shared db
+  // pool, and awaiting a second pool connection while holding the tx connection
+  // can self-deadlock under pool saturation. preferredRunId is dropped — it was
+  // the freshly generated run id, which no deployment can reference yet.
+  const deploymentSignalOptionsSnapshot =
+    await resolveBacktestDeploymentSignalOptionsSnapshot({
+      studyId: study.id,
+    });
+
   const result = await db.transaction(async (tx) => {
     const [run] = await tx
       .insert(backtestRunsTable)
@@ -2228,12 +2238,6 @@ export async function createBacktestRun(input: CreateRunInput) {
         executionProfile: study.executionProfile,
       })
       .returning();
-
-    const deploymentSignalOptionsSnapshot =
-      await resolveBacktestDeploymentSignalOptionsSnapshot({
-        studyId: study.id,
-        preferredRunId: run.id,
-      });
 
     await tx.insert(backtestStudyJobsTable).values({
       studyId: study.id,
@@ -3154,6 +3158,13 @@ export async function createBacktestSweep(input: CreateSweepInput) {
         )
       : [];
 
+  // Resolved before the transaction for the same pool-hazard reason as in
+  // createBacktestRun.
+  const deploymentSignalOptionsSnapshot =
+    await resolveBacktestDeploymentSignalOptionsSnapshot({
+      studyId: study.id,
+    });
+
   const sweep = await db.transaction(async (tx) => {
     const [createdSweep] = await tx
       .insert(backtestSweepsTable)
@@ -3165,11 +3176,6 @@ export async function createBacktestSweep(input: CreateSweepInput) {
         candidateCompletedCount: 0,
       })
       .returning();
-
-    const deploymentSignalOptionsSnapshot =
-      await resolveBacktestDeploymentSignalOptionsSnapshot({
-        studyId: study.id,
-      });
 
     await tx.insert(backtestStudyJobsTable).values({
       studyId: study.id,
@@ -3363,3 +3369,9 @@ export async function listBacktestDraftStrategies() {
     })),
   };
 }
+
+// Wave-2 C1 (2026-07-07): expose the trading-day DTE math for unit tests
+// (backtesting.ts previously had no test seam).
+export const __backtestingInternalsForTests = {
+  calculateDte,
+};

@@ -215,6 +215,7 @@ function defaultDevMallocArenaMax() {
 function apiServiceEnv() {
   return {
     PORT: apiPort,
+    PYRUS_DB_PROFILE: "api",
     LOG_LEVEL: process.env.LOG_LEVEL || "warn",
     MALLOC_ARENA_MAX: defaultDevMallocArenaMax(),
     NODE_OPTIONS: nodeOptionsWithMaxOldSpace(API_NODE_MAX_OLD_SPACE_MB),
@@ -265,6 +266,9 @@ function marketDataWorkerEnv() {
   return {
     LOG_LEVEL: process.env.LOG_LEVEL || "warn",
     RUST_LOG: process.env.RUST_LOG || "market_data_worker=info,info",
+    // Rust worker serializes ingest + retention on one connection.
+    MARKET_DATA_WORKER_DB_POOL_MAX:
+      process.env.MARKET_DATA_WORKER_DB_POOL_MAX || "1",
     ...(nonEmptyEnv("DATABASE_URL") || !nonEmptyEnv("LOCAL_DATABASE_URL")
       ? {}
       : { DATABASE_URL: process.env.LOCAL_DATABASE_URL }),

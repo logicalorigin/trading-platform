@@ -34,15 +34,26 @@ test("algo header does not show warning for info-only options session pause", ()
   assert.notEqual(wave.status, "offline");
 });
 
-test("algo header still shows warning for warning-level scan blockers", () => {
+test("algo header still shows offline for warning-level scan blockers", () => {
   const wave = resolveHeaderScanWave({
     deploymentEnabled: true,
     signalScanReady: false,
     attentionSeverity: "warning",
   });
 
-  assert.equal(wave.badgeLabel, "warning");
+  assert.equal(wave.badgeLabel, "offline");
   assert.equal(wave.status, "offline");
+});
+
+test("algo header labels readiness as market data and drops bridge runtime chips", () => {
+  assert.match(source, /marketDataReady,/);
+  assert.match(
+    source,
+    /label: marketDataReady \? "market data" : "market data off"/,
+  );
+  assert.doesNotMatch(source, /broker ready|broker off/);
+  assert.doesNotMatch(source, /bridgeToneLabel|bridgeToneDuplicatesHeaderWave/);
+  assert.doesNotMatch(source, /\bbridgeTone\b/);
 });
 
 test("algo option quote stream aggregation opens one subscription for visible groups", () => {
@@ -184,11 +195,14 @@ test("STA MTF config uses the configured draft timeframe set for table and KPI c
     staSignalTimeframes: ["1m", "2m", "5m"],
   });
 
+  // product ruling 2026-07-07: the draft's requiredCount is honored (clamped
+  // to the selection), not forced to full-count.
   assert.deepEqual(config.timeframes, ["1m", "2m"]);
-  assert.equal(config.requiredCount, 2);
+  assert.equal(config.requiredCount, 1);
 });
 
-test("STA MTF config requires every configured frame", () => {
+test("STA MTF config honors the configured n-of-N", () => {
+  // product ruling 2026-07-07: overrules the prior full-count intent.
   const config = resolveEffectiveStaMtfAlignmentConfig({
     mtfAlignmentDraft: {
       enabled: true,
@@ -199,7 +213,7 @@ test("STA MTF config requires every configured frame", () => {
   });
 
   assert.deepEqual(config.timeframes, ["5m", "15m", "1h"]);
-  assert.equal(config.requiredCount, 3);
+  assert.equal(config.requiredCount, 2);
 });
 
 test("algo account tabs route shadow to automation overlay and live tabs to broker rows", () => {

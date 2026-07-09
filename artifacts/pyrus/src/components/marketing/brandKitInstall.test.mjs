@@ -17,9 +17,6 @@ const requiredFiles = [
   "src/components/marketing/neural-core/pyrus-logo-points.ts",
   "src/components/marketing/neural-core/pyrus-wordmark-points.ts",
   "src/components/marketing/neural-core-scene.tsx",
-  "src/components/marketing/neural-stage.tsx",
-  "src/components/marketing/neural-loader.tsx",
-  "src/components/marketing/brand-loader.tsx",
   "src/components/marketing/brand-resolve.tsx",
   "src/components/marketing/pyrus-mark.tsx",
   "src/components/marketing/pyrus-mark-shared.tsx",
@@ -63,6 +60,9 @@ test("adapted neural install does not import react-three-fiber", () => {
 
 test("neural cloud is only wired to loader surfaces", () => {
   const app = read("src/app/App.tsx");
+  // The immersive loader layout (cloud + brand) is shared by the boot curtain
+  // and the app/workspace loaders via BootShellLayout.
+  const bootShell = read("src/components/neural/BootShellLayout.tsx");
   const neuralLoader = read("src/components/neural/NeuralLoader.tsx");
   const brandResolve = read("src/components/marketing/brand-resolve.tsx");
   const neuralCanvas = read("src/components/neural/NeuralCanvas.tsx");
@@ -71,11 +71,13 @@ test("neural cloud is only wired to loader surfaces", () => {
   assert.doesNotMatch(app, /NeuralBackdrop|neural-backdrop/);
   assert.doesNotMatch(app, /LogoLoader/);
   assert.match(app, /NeuralLoader/);
-  assert.match(neuralLoader, /BrandResolve/);
-  assert.match(neuralLoader, /NeuralCoreScene/);
-  assert.match(neuralLoader, /isWebglAvailable/);
-  assert.doesNotMatch(neuralLoader, /canUseWebGL/);
-  assert.match(neuralLoader, /webglPolicy="available"/);
+  // NeuralLoader delegates its rendered surface to the shared BootShellLayout.
+  assert.match(neuralLoader, /BootShellLayout/);
+  assert.match(bootShell, /BrandResolve/);
+  assert.match(bootShell, /NeuralCoreScene/);
+  assert.match(bootShell, /isWebglAvailable/);
+  assert.doesNotMatch(bootShell, /canUseWebGL/);
+  assert.match(bootShell, /webglPolicy="available"/);
   assert.match(brandResolve, /NeuralCoreScene/);
   assert.match(brandResolve, /webglPolicy/);
   assert.match(brandResolve, /morph/);
@@ -83,17 +85,20 @@ test("neural cloud is only wired to loader surfaces", () => {
   assert.doesNotMatch(neuralTypes, /ambient/);
 });
 
-test("neural loader keeps hooks before opener fallback", () => {
-  const neuralLoader = read("src/components/neural/NeuralLoader.tsx");
-  const reducedMotionHook = neuralLoader.indexOf(
+test("shared loader runs capability hooks before rendering", () => {
+  const bootShell = read("src/components/neural/BootShellLayout.tsx");
+  const reducedMotionHook = bootShell.indexOf(
     "const reducedMotion = usePrefersReducedMotion();",
   );
-  const openerFallback = neuralLoader.indexOf("if (isNeuralOpenerActive())");
+  const returnIdx = bootShell.indexOf("return (");
 
   assert.notEqual(reducedMotionHook, -1);
-  assert.notEqual(openerFallback, -1);
+  assert.notEqual(returnIdx, -1);
   assert.ok(
-    reducedMotionHook < openerFallback,
-    "Expected NeuralLoader hooks to run before the opener-active fallback branch",
+    reducedMotionHook < returnIdx,
+    "Expected BootShellLayout capability hooks to run before its render",
   );
+  // NeuralLoader still short-circuits to the static loader while the opener owns
+  // a WebGL context.
+  assert.match(read("src/components/neural/NeuralLoader.tsx"), /if \(isNeuralOpenerActive\(\)\)/);
 });

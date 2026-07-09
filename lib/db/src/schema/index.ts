@@ -11,6 +11,7 @@ export * from "./flow";
 export * from "./instruments";
 export * from "./market-data";
 export * from "./pattern-discovery";
+export * from "./overnight-signal-expectancy";
 export * from "./preferences";
 export * from "./robinhood";
 export * from "./schwab";

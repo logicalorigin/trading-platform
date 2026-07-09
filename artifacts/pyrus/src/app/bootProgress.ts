@@ -86,6 +86,16 @@ export const BOOT_SCREEN_MODULE_PRELOAD_TASK_IDS = [
   "screen-preload-backtest",
 ] as const satisfies readonly BootProgressTaskId[];
 
+export const PLATFORM_BOOT_PROGRESS_TASK_IDS = [
+  "session",
+  "watchlists",
+  "accounts",
+  "signal-profile",
+  "signal-state",
+  "first-screen",
+  ...BOOT_SCREEN_MODULE_PRELOAD_TASK_IDS,
+] as const satisfies readonly BootProgressTaskId[];
+
 export const BOOT_SCREEN_MODULE_PRELOAD_TASK_BY_SCREEN_ID: Record<
   string,
   (typeof BOOT_SCREEN_MODULE_PRELOAD_TASK_IDS)[number] | undefined

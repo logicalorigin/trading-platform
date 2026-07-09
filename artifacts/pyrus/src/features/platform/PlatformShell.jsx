@@ -852,6 +852,17 @@ export const PlatformShell = ({
   const handleAlgoAction = useCallback(() => {
     handleSetScreen("algo");
   }, [handleSetScreen]);
+  // Symbol intel-card quick action: hand the symbol off, then open Research
+  // (same idiom as the algo sidebar's onOpenTradeSymbol below).
+  const handleOpenResearchSymbol = useCallback(
+    (symbol) => {
+      if (symbol) {
+        onSelectSymbol?.(symbol);
+      }
+      handleSetScreen("research");
+    },
+    [handleSetScreen, onSelectSymbol],
+  );
   const handleAlgoLiveEvents = useCallback(
     (events) => {
       const liveEvents = Array.isArray(events) ? events : [];
@@ -1295,6 +1306,7 @@ export const PlatformShell = ({
                 onReorderSymbol={onReorderSymbolInWatchlist}
                 onRemoveSymbol={onRemoveSymbolFromWatchlist}
                 onSignalAction={onSignalAction}
+                onResearchSymbol={handleOpenResearchSymbol}
                 busy={Boolean(watchlistsBusy?.mutating)}
                 headerAccessory={
                   <AppTooltip content="Collapse watchlist">

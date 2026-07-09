@@ -1,0 +1,696 @@
+{
+  "appUrl": "http://127.0.0.1:18747/",
+  "apiUrl": "http://127.0.0.1:8080",
+  "startedAt": "2026-07-07T18:34:42.163Z",
+  "endedAt": "2026-07-07T18:36:42.580Z",
+  "durationMs": 120417,
+  "outDir": "/home/runner/workspace/.codex-watch-current/2026-07-07T18-34-42-163Z",
+  "startProcesses": [
+    "    172 Tue Jul  7 12:17:19 2026 /nix/store/cikdc61gfwvdma6y0p9b5d5d448aqcv6-nodejs-24.12.0/bin/node /nix/store/61lr9izijvg30pcribjdxgjxvh3bysp4-pnpm-10.26.1/bin/pnpm --filter @workspace/pyrus run dev:replit",
+    "    302 Tue Jul  7 12:17:20 2026 /nix/store/9cyx2v23dip6p9q98384k9v06c96qskb-nodejs-24.13.0/bin/node ./scripts/runDevApp.mjs",
+    "    321 Tue Jul  7 12:17:21 2026 /nix/store/cikdc61gfwvdma6y0p9b5d5d448aqcv6-nodejs-24.12.0/bin/node /nix/store/61lr9izijvg30pcribjdxgjxvh3bysp4-pnpm-10.26.1/bin/pnpm --filter @workspace/api-server run dev",
+    "    346 Tue Jul  7 12:17:22 2026 /nix/store/9cyx2v23dip6p9q98384k9v06c96qskb-nodejs-24.13.0/bin/node --enable-source-maps ./dist/index.mjs",
+    "    354 Tue Jul  7 12:17:22 2026 /nix/store/9cyx2v23dip6p9q98384k9v06c96qskb-nodejs-24.13.0/bin/node /home/runner/workspace/artifacts/pyrus/node_modules/.bin/../vite/bin/vite.js --config vite.config.ts --host 0.0.0.0",
+    "    932 Tue Jul  7 12:19:33 2026 /nix/store/9cyx2v23dip6p9q98384k9v06c96qskb-nodejs-24.13.0/bin/node artifacts/mcp-server/dist/index.mjs",
+    "   3192 Tue Jul  7 12:24:19 2026 /nix/store/9cyx2v23dip6p9q98384k9v06c96qskb-nodejs-24.13.0/bin/node artifacts/mcp-server/dist/index.mjs",
+    "   3557 Tue Jul  7 12:25:28 2026 /nix/store/9cyx2v23dip6p9q98384k9v06c96qskb-nodejs-24.13.0/bin/node artifacts/mcp-server/dist/index.mjs",
+    "   4371 Tue Jul  7 12:27:01 2026 /nix/store/9cyx2v23dip6p9q98384k9v06c96qskb-nodejs-24.13.0/bin/node artifacts/mcp-server/dist/index.mjs",
+    "  12729 Tue Jul  7 12:34:40 2026 /bin/bash -lc node <<'NODE' const { chromium } = require('@playwright/test'); const fs = require('fs'); const path = require('path'); const { execFileSync } = require('child_process');  const appUrl = process.env.PYRUS_APP_URL || 'http://127.0.0.1:18747/'; const apiUrl = process.env.PYRUS_API_URL || 'http://127.0.0.1:8080'; const durationMs = Number(process.env.WATCH_MS || 2 * 60 * 1000); const tickMs = 10_000; const startedAt = Date.now(); const stamp = new Date(startedAt).toISOString().replace(/[:.]/g, '-'); const outDir = path.join(process.cwd(), '.codex-watch-current', stamp); fs.mkdirSync(outDir, { recursive: true });  const events = []; const apiHeaders = []; const samples = []; const screenshots = []; const eventKeys = new Map();  function shortUrl(url) {   try {     const u = new URL(url);     return `${u.origin}${u.pathname}${u.search}`;   } catch {     return url;   } }  function add(kind, detail = {}) {   const event = { atMs: Date.now() - startedAt, kind, ...detail };   events.push(event);   const key = `${kind}:${detail.status || ''}:${detail.failure || ''}:${detail.url || ''}:${detail.text || detail.message || ''}`.slice(0, 900);   eventKeys.set(key, (eventKeys.get(key) || 0) + 1);   return event; }  function processSnapshot() {   try {     const out = execFileSync('ps', ['-eo', 'pid,lstart,cmd'], { encoding: 'utf8' });     return out.split('\\n').filter((line) => /runDevApp|vite\\.js|dist\\/index\\.mjs|api-server run dev|pyrus run dev:replit/.test(line));   } catch (error) {     return [`process snapshot failed: ${error.message}`];   } }  async function sampleHealthz(label) {   const atMs = Date.now() - startedAt;   try {     const response = await fetch(`${apiUrl}/api/healthz`, { method: 'GET', signal: AbortSignal.timeout(5000) });     const body = await response.text().catch(() => '');     apiHeaders.push({       atMs,       label,       source: 'healthz',       status: response.status,       pressure: response.headers.get('x-pyrus-pressure-level'),       resource: response.headers.get('x-pyrus-resource-level'),       observedResource: response.headers.get('x-pyrus-observed-resource-level'),       admission: response.headers.get('x-pyrus-admission-action'),       routeClass: response.headers.get('x-pyrus-route-class'),       body: body.slice(0, 200),     });   } catch (error) {     add('healthz_failed', { label, message: error.message });   } }  async function main() {   const startProcesses = processSnapshot();   await sampleHealthz('start');   const browser = await chromium.launch({ headless: true });   const context = await browser.newContext({ viewport: { width: 1600, height: 1000 }, deviceScaleFactor: 1 });   const page = await context.newPage();   page.setDefaultTimeout(8000);    async function screenshot(reason) {     const elapsedSec = Math.round((Date.now() - startedAt) / 1000);     const file = path.join(outDir, `watch-${elapsedSec}-${reason.replace(/[^a-z0-9_-]+/gi, '-').slice(0, 40)}.png`);     try {       await page.screenshot({ path: file, fullPage: false, timeout: 8000 });       screenshots.push({ atMs: Date.now() - startedAt, reason, file });     } catch (error) {       add('screenshot_failed', { reason, message: error.message });     }   }    page.on('console', (msg) => {     const type = msg.type();     if (!['error', 'warning'].includes(type)) return;     const loc = msg.location();     add(`console.${type}`, { text: msg.text().slice(0, 1000), url: loc?.url ? shortUrl(loc.url) : undefined, line: loc?.lineNumber, column: loc?.columnNumber });   });   page.on('pageerror', (error) => add('pageerror', { message: error.message, stack: String(error.stack || '').slice(0, 1500) }));   page.on('requestfailed', (request) => add('requestfailed', { url: shortUrl(request.url()), method: request.method(), failure: request.failure()?.errorText }));   page.on('response', (response) => {     const url = shortUrl(response.url());     const headers = response.headers();     if (url.includes('/api/')) {       const pressure = headers['x-pyrus-pressure-level'];       const resource = headers['x-pyrus-resource-level'];       const admission = headers['x-pyrus-admission-action'];       if (pressure || resource || admission || response.status() >= 400) {         apiHeaders.push({ atMs: Date.now() - startedAt, source: 'browser-response', status: response.status(), url, method: response.request().method(), pressure, resource, observedResource: headers['x-pyrus-observed-resource-level'], admission, routeClass: headers['x-pyrus-route-class'] });       }     }     if (response.status() >= 400) add('http', { status: response.status(), url, method: response.request().method() });   });    console.log(JSON.stringify({ event: 'watch2_start', appUrl, durationMs, outDir, startProcesses }));   await page.goto(appUrl, { waitUntil: 'domcontentloaded', timeout: 30_000 });   try {     await page.waitForFunction(() => Boolean(       document.querySelector('[data-testid=\"platform-screen-stack\"]') ||       document.querySelector('[data-testid=\"market-render-root\"]') ||       document.querySelector('[data-testid=\"login-gate-submit\"]') ||       document.querySelector('[data-testid=\"root-crash-diagnostics\"]') ||       document.querySelector('vite-error-overlay') ||       document.querySelector('[data-testid=\"app-loading-fallback\"]') ||       document.querySelector('[data-testid=\"pyrus-boot-progress-overlay\"]')     ), { timeout: 20_000 });   } catch (error) {     add('readiness_selector_timeout', { message: error.message });   }    async function sampleDom(label) {     try {       const state = await page.evaluate(() => {         const visibleText = (document.body?.innerText || '').replace(/\\s+/g, ' ').trim();         const isVisible = (el) => {           const style = window.getComputedStyle(el);           const rect = el.getBoundingClientRect();           return style.visibility !== 'hidden' && style.display !== 'none' && Number(style.opacity || '1') !== 0 && rect.width > 0 && rect.height > 0;         };         const visible = (selector) => Array.from(document.querySelectorAll(selector)).filter(isVisible);         const ids = ['platform-screen-stack','market-render-root','signals-screen','algo-screen','flow-screen','diagnostics-screen','settings-screen','login-gate-submit','app-loading-fallback','neural-stage','neural-stage-fallback','pyrus-boot-progress-overlay','root-crash-diagnostics','toast-stack','footer-memory-pressure-indicator'];         const visibleTestIds = ids.filter((id) => visible(`[data-testid=\"${id}\"]`).length > 0);         const alerts = visible('[role=\"alert\"], [data-testid*=\"error\" i], [data-testid*=\"warning\" i], [data-testid*=\"offline\" i]').map((el) => ({ id: el.getAttribute('data-testid') || el.getAttribute('role') || el.tagName, text: (el.textContent || '').replace(/\\s+/g, ' ').trim().slice(0, 260) })).slice(0, 30);         const buttons = visible('button').map((el) => (el.textContent || el.getAttribute('aria-label') || '').replace(/\\s+/g, ' ').trim()).filter(Boolean).slice(0, 25);         return {           title: document.title,           url: location.href,           readyState: document.readyState,           visibilityState: document.visibilityState,           text: visibleText.slice(0, 1400),           textLength: visibleText.length,           hasLoginGate: visible('[data-testid=\"login-gate-submit\"]').length > 0 || /Sign in to continue|First-time setup/i.test(visibleText),           visibleTestIds,           alerts,           buttons,           viteOverlay: Boolean(document.querySelector('vite-error-overlay')),           rootCrash: visible('[data-testid=\"root-crash-diagnostics\"]').length > 0,           horizontalOverflow: document.documentElement.scrollWidth > window.innerWidth + 2 || document.body.scrollWidth > window.innerWidth + 2,           viewport: { width: window.innerWidth, height: window.innerHeight },           documentSize: { width: document.documentElement.scrollWidth, height: document.documentElement.scrollHeight },           fontsStatus: document.fonts?.status || null,         };       });       samples.push({ atMs: Date.now() - startedAt, label, state });       if (state.viteOverlay || state.rootCrash || state.alerts.length || state.horizontalOverflow || state.visibleTestIds.includes('app-loading-fallback')) {         add('visible_runtime_state', { label, state });       }       return state;     } catch (error) {       add('dom_sample_failed', { label, message: error.message });       return null;     }   }    await sampleDom('initial');   await screenshot('initial');   let nextHealth = startedAt + 60_000;   while (Date.now() < startedAt + durationMs) {     await new Promise((resolve) => setTimeout(resolve, Math.min(tickMs, startedAt + durationMs - Date.now())));     const state = await sampleDom('tick');     if (Date.now() >= nextHealth) {       await sampleHealthz(`t${Math.round((Date.now() - startedAt) / 1000)}`);       nextHealth += 60_000;     }     console.log(JSON.stringify({ event: 'watch2_tick', elapsedSec: Math.round((Date.now() - startedAt) / 1000), totalEvents: events.length, visibleTestIds: state?.visibleTestIds, hasLoginGate: state?.hasLoginGate, alerts: state?.alerts?.length || 0, overflow: state?.horizontalOverflow }));   }    await sampleDom('final');   await screenshot('final');   await sampleHealthz('end');   const endProcesses = processSnapshot();   const summary = {     appUrl, apiUrl, startedAt: new Date(startedAt).toISOString(), endedAt: new Date().toISOString(), durationMs: Date.now() - startedAt, outDir,     startProcesses, endProcesses, processStable: JSON.stringify(startProcesses) === JSON.stringify(endProcesses),     eventCounts: events.reduce((acc, event) => { acc[event.kind] = (acc[event.kind] || 0) + 1; return acc; }, {}),     topEvents: Array.from(eventKeys.entries()).sort((a,b)=>b[1]-a[1]).slice(0,30).map(([key,count]) => ({ count, key })),     apiHeaderCounts: apiHeaders.reduce((acc,h) => { const key = `${h.source}:${h.status}:${h.pressure || ''}:${h.resource || ''}:${h.observedResource || ''}:${h.admission || ''}:${h.routeClass || ''}`; acc[key]=(acc[key]||0)+1; return acc; }, {}),     apiHeaders, samples, screenshots, events,   };   const summaryPath = path.join(outDir, 'watch-summary.json');   fs.writeFileSync(summaryPath, JSON.stringify(summary, null, 2));   console.log(JSON.stringify({ event: 'watch2_done', summaryPath, processStable: summary.processStable, eventCounts: summary.eventCounts, apiHeaderCounts: summary.apiHeaderCounts, screenshots: screenshots.length, sampleCount: samples.length }));   await browser.close(); }  main().catch((error) => {   const summaryPath = path.join(outDir, 'watch-failed.json');   fs.writeFileSync(summaryPath, JSON.stringify({ message: error.message, stack: error.stack, events, samples, apiHeaders }, null, 2));   console.error(JSON.stringify({ event: 'watch2_failed', summaryPath, message: error.message, stack: error.stack }));   process.exitCode = 1; }); NODE"
+  ],
+  "endProcesses": [
+    "    172 Tue Jul  7 12:17:19 2026 /nix/store/cikdc61gfwvdma6y0p9b5d5d448aqcv6-nodejs-24.12.0/bin/node /nix/store/61lr9izijvg30pcribjdxgjxvh3bysp4-pnpm-10.26.1/bin/pnpm --filter @workspace/pyrus run dev:replit",
+    "    302 Tue Jul  7 12:17:20 2026 /nix/store/9cyx2v23dip6p9q98384k9v06c96qskb-nodejs-24.13.0/bin/node ./scripts/runDevApp.mjs",
+    "    321 Tue Jul  7 12:17:21 2026 /nix/store/cikdc61gfwvdma6y0p9b5d5d448aqcv6-nodejs-24.12.0/bin/node /nix/store/61lr9izijvg30pcribjdxgjxvh3bysp4-pnpm-10.26.1/bin/pnpm --filter @workspace/api-server run dev",
+    "    346 Tue Jul  7 12:17:22 2026 /nix/store/9cyx2v23dip6p9q98384k9v06c96qskb-nodejs-24.13.0/bin/node --enable-source-maps ./dist/index.mjs",
+    "    354 Tue Jul  7 12:17:22 2026 /nix/store/9cyx2v23dip6p9q98384k9v06c96qskb-nodejs-24.13.0/bin/node /home/runner/workspace/artifacts/pyrus/node_modules/.bin/../vite/bin/vite.js --config vite.config.ts --host 0.0.0.0",
+    "    932 Tue Jul  7 12:19:33 2026 /nix/store/9cyx2v23dip6p9q98384k9v06c96qskb-nodejs-24.13.0/bin/node artifacts/mcp-server/dist/index.mjs",
+    "   3192 Tue Jul  7 12:24:19 2026 /nix/store/9cyx2v23dip6p9q98384k9v06c96qskb-nodejs-24.13.0/bin/node artifacts/mcp-server/dist/index.mjs",
+    "   3557 Tue Jul  7 12:25:28 2026 /nix/store/9cyx2v23dip6p9q98384k9v06c96qskb-nodejs-24.13.0/bin/node artifacts/mcp-server/dist/index.mjs",
+    "   4371 Tue Jul  7 12:27:01 2026 /nix/store/9cyx2v23dip6p9q98384k9v06c96qskb-nodejs-24.13.0/bin/node artifacts/mcp-server/dist/index.mjs",
+    "  12729 Tue Jul  7 12:34:40 2026 /bin/bash -lc node <<'NODE' const { chromium } = require('@playwright/test'); const fs = require('fs'); const path = require('path'); const { execFileSync } = require('child_process');  const appUrl = process.env.PYRUS_APP_URL || 'http://127.0.0.1:18747/'; const apiUrl = process.env.PYRUS_API_URL || 'http://127.0.0.1:8080'; const durationMs = Number(process.env.WATCH_MS || 2 * 60 * 1000); const tickMs = 10_000; const startedAt = Date.now(); const stamp = new Date(startedAt).toISOString().replace(/[:.]/g, '-'); const outDir = path.join(process.cwd(), '.codex-watch-current', stamp); fs.mkdirSync(outDir, { recursive: true });  const events = []; const apiHeaders = []; const samples = []; const screenshots = []; const eventKeys = new Map();  function shortUrl(url) {   try {     const u = new URL(url);     return `${u.origin}${u.pathname}${u.search}`;   } catch {     return url;   } }  function add(kind, detail = {}) {   const event = { atMs: Date.now() - startedAt, kind, ...detail };   events.push(event);   const key = `${kind}:${detail.status || ''}:${detail.failure || ''}:${detail.url || ''}:${detail.text || detail.message || ''}`.slice(0, 900);   eventKeys.set(key, (eventKeys.get(key) || 0) + 1);   return event; }  function processSnapshot() {   try {     const out = execFileSync('ps', ['-eo', 'pid,lstart,cmd'], { encoding: 'utf8' });     return out.split('\\n').filter((line) => /runDevApp|vite\\.js|dist\\/index\\.mjs|api-server run dev|pyrus run dev:replit/.test(line));   } catch (error) {     return [`process snapshot failed: ${error.message}`];   } }  async function sampleHealthz(label) {   const atMs = Date.now() - startedAt;   try {     const response = await fetch(`${apiUrl}/api/healthz`, { method: 'GET', signal: AbortSignal.timeout(5000) });     const body = await response.text().catch(() => '');     apiHeaders.push({       atMs,       label,       source: 'healthz',       status: response.status,       pressure: response.headers.get('x-pyrus-pressure-level'),       resource: response.headers.get('x-pyrus-resource-level'),       observedResource: response.headers.get('x-pyrus-observed-resource-level'),       admission: response.headers.get('x-pyrus-admission-action'),       routeClass: response.headers.get('x-pyrus-route-class'),       body: body.slice(0, 200),     });   } catch (error) {     add('healthz_failed', { label, message: error.message });   } }  async function main() {   const startProcesses = processSnapshot();   await sampleHealthz('start');   const browser = await chromium.launch({ headless: true });   const context = await browser.newContext({ viewport: { width: 1600, height: 1000 }, deviceScaleFactor: 1 });   const page = await context.newPage();   page.setDefaultTimeout(8000);    async function screenshot(reason) {     const elapsedSec = Math.round((Date.now() - startedAt) / 1000);     const file = path.join(outDir, `watch-${elapsedSec}-${reason.replace(/[^a-z0-9_-]+/gi, '-').slice(0, 40)}.png`);     try {       await page.screenshot({ path: file, fullPage: false, timeout: 8000 });       screenshots.push({ atMs: Date.now() - startedAt, reason, file });     } catch (error) {       add('screenshot_failed', { reason, message: error.message });     }   }    page.on('console', (msg) => {     const type = msg.type();     if (!['error', 'warning'].includes(type)) return;     const loc = msg.location();     add(`console.${type}`, { text: msg.text().slice(0, 1000), url: loc?.url ? shortUrl(loc.url) : undefined, line: loc?.lineNumber, column: loc?.columnNumber });   });   page.on('pageerror', (error) => add('pageerror', { message: error.message, stack: String(error.stack || '').slice(0, 1500) }));   page.on('requestfailed', (request) => add('requestfailed', { url: shortUrl(request.url()), method: request.method(), failure: request.failure()?.errorText }));   page.on('response', (response) => {     const url = shortUrl(response.url());     const headers = response.headers();     if (url.includes('/api/')) {       const pressure = headers['x-pyrus-pressure-level'];       const resource = headers['x-pyrus-resource-level'];       const admission = headers['x-pyrus-admission-action'];       if (pressure || resource || admission || response.status() >= 400) {         apiHeaders.push({ atMs: Date.now() - startedAt, source: 'browser-response', status: response.status(), url, method: response.request().method(), pressure, resource, observedResource: headers['x-pyrus-observed-resource-level'], admission, routeClass: headers['x-pyrus-route-class'] });       }     }     if (response.status() >= 400) add('http', { status: response.status(), url, method: response.request().method() });   });    console.log(JSON.stringify({ event: 'watch2_start', appUrl, durationMs, outDir, startProcesses }));   await page.goto(appUrl, { waitUntil: 'domcontentloaded', timeout: 30_000 });   try {     await page.waitForFunction(() => Boolean(       document.querySelector('[data-testid=\"platform-screen-stack\"]') ||       document.querySelector('[data-testid=\"market-render-root\"]') ||       document.querySelector('[data-testid=\"login-gate-submit\"]') ||       document.querySelector('[data-testid=\"root-crash-diagnostics\"]') ||       document.querySelector('vite-error-overlay') ||       document.querySelector('[data-testid=\"app-loading-fallback\"]') ||       document.querySelector('[data-testid=\"pyrus-boot-progress-overlay\"]')     ), { timeout: 20_000 });   } catch (error) {     add('readiness_selector_timeout', { message: error.message });   }    async function sampleDom(label) {     try {       const state = await page.evaluate(() => {         const visibleText = (document.body?.innerText || '').replace(/\\s+/g, ' ').trim();         const isVisible = (el) => {           const style = window.getComputedStyle(el);           const rect = el.getBoundingClientRect();           return style.visibility !== 'hidden' && style.display !== 'none' && Number(style.opacity || '1') !== 0 && rect.width > 0 && rect.height > 0;         };         const visible = (selector) => Array.from(document.querySelectorAll(selector)).filter(isVisible);         const ids = ['platform-screen-stack','market-render-root','signals-screen','algo-screen','flow-screen','diagnostics-screen','settings-screen','login-gate-submit','app-loading-fallback','neural-stage','neural-stage-fallback','pyrus-boot-progress-overlay','root-crash-diagnostics','toast-stack','footer-memory-pressure-indicator'];         const visibleTestIds = ids.filter((id) => visible(`[data-testid=\"${id}\"]`).length > 0);         const alerts = visible('[role=\"alert\"], [data-testid*=\"error\" i], [data-testid*=\"warning\" i], [data-testid*=\"offline\" i]').map((el) => ({ id: el.getAttribute('data-testid') || el.getAttribute('role') || el.tagName, text: (el.textContent || '').replace(/\\s+/g, ' ').trim().slice(0, 260) })).slice(0, 30);         const buttons = visible('button').map((el) => (el.textContent || el.getAttribute('aria-label') || '').replace(/\\s+/g, ' ').trim()).filter(Boolean).slice(0, 25);         return {           title: document.title,           url: location.href,           readyState: document.readyState,           visibilityState: document.visibilityState,           text: visibleText.slice(0, 1400),           textLength: visibleText.length,           hasLoginGate: visible('[data-testid=\"login-gate-submit\"]').length > 0 || /Sign in to continue|First-time setup/i.test(visibleText),           visibleTestIds,           alerts,           buttons,           viteOverlay: Boolean(document.querySelector('vite-error-overlay')),           rootCrash: visible('[data-testid=\"root-crash-diagnostics\"]').length > 0,           horizontalOverflow: document.documentElement.scrollWidth > window.innerWidth + 2 || document.body.scrollWidth > window.innerWidth + 2,           viewport: { width: window.innerWidth, height: window.innerHeight },           documentSize: { width: document.documentElement.scrollWidth, height: document.documentElement.scrollHeight },           fontsStatus: document.fonts?.status || null,         };       });       samples.push({ atMs: Date.now() - startedAt, label, state });       if (state.viteOverlay || state.rootCrash || state.alerts.length || state.horizontalOverflow || state.visibleTestIds.includes('app-loading-fallback')) {         add('visible_runtime_state', { label, state });       }       return state;     } catch (error) {       add('dom_sample_failed', { label, message: error.message });       return null;     }   }    await sampleDom('initial');   await screenshot('initial');   let nextHealth = startedAt + 60_000;   while (Date.now() < startedAt + durationMs) {     await new Promise((resolve) => setTimeout(resolve, Math.min(tickMs, startedAt + durationMs - Date.now())));     const state = await sampleDom('tick');     if (Date.now() >= nextHealth) {       await sampleHealthz(`t${Math.round((Date.now() - startedAt) / 1000)}`);       nextHealth += 60_000;     }     console.log(JSON.stringify({ event: 'watch2_tick', elapsedSec: Math.round((Date.now() - startedAt) / 1000), totalEvents: events.length, visibleTestIds: state?.visibleTestIds, hasLoginGate: state?.hasLoginGate, alerts: state?.alerts?.length || 0, overflow: state?.horizontalOverflow }));   }    await sampleDom('final');   await screenshot('final');   await sampleHealthz('end');   const endProcesses = processSnapshot();   const summary = {     appUrl, apiUrl, startedAt: new Date(startedAt).toISOString(), endedAt: new Date().toISOString(), durationMs: Date.now() - startedAt, outDir,     startProcesses, endProcesses, processStable: JSON.stringify(startProcesses) === JSON.stringify(endProcesses),     eventCounts: events.reduce((acc, event) => { acc[event.kind] = (acc[event.kind] || 0) + 1; return acc; }, {}),     topEvents: Array.from(eventKeys.entries()).sort((a,b)=>b[1]-a[1]).slice(0,30).map(([key,count]) => ({ count, key })),     apiHeaderCounts: apiHeaders.reduce((acc,h) => { const key = `${h.source}:${h.status}:${h.pressure || ''}:${h.resource || ''}:${h.observedResource || ''}:${h.admission || ''}:${h.routeClass || ''}`; acc[key]=(acc[key]||0)+1; return acc; }, {}),     apiHeaders, samples, screenshots, events,   };   const summaryPath = path.join(outDir, 'watch-summary.json');   fs.writeFileSync(summaryPath, JSON.stringify(summary, null, 2));   console.log(JSON.stringify({ event: 'watch2_done', summaryPath, processStable: summary.processStable, eventCounts: summary.eventCounts, apiHeaderCounts: summary.apiHeaderCounts, screenshots: screenshots.length, sampleCount: samples.length }));   await browser.close(); }  main().catch((error) => {   const summaryPath = path.join(outDir, 'watch-failed.json');   fs.writeFileSync(summaryPath, JSON.stringify({ message: error.message, stack: error.stack, events, samples, apiHeaders }, null, 2));   console.error(JSON.stringify({ event: 'watch2_failed', summaryPath, message: error.message, stack: error.stack }));   process.exitCode = 1; }); NODE"
+  ],
+  "processStable": true,
+  "eventCounts": {
+    "visible_runtime_state": 1,
+    "console.warning": 4
+  },
+  "topEvents": [
+    {
+      "count": 2,
+      "key": "console.warning:::http://127.0.0.1:18747/:[.WebGL-0x25040013ee00]GL Driver Message (OpenGL, Performance, GL_CLOSE_PATH_NV, High): GPU stall due to ReadPixels"
+    },
+    {
+      "count": 1,
+      "key": "visible_runtime_state::::"
+    },
+    {
+      "count": 1,
+      "key": "console.warning:::http://127.0.0.1:18747/:[.WebGL-0x25040013f400]GL Driver Message (OpenGL, Performance, GL_CLOSE_PATH_NV, High): GPU stall due to ReadPixels"
+    },
+    {
+      "count": 1,
+      "key": "console.warning:::http://127.0.0.1:18747/:[.WebGL-0x25040013f400]GL Driver Message (OpenGL, Performance, GL_CLOSE_PATH_NV, High): GPU stall due to ReadPixels (this message will no longer repeat)"
+    }
+  ],
+  "apiHeaderCounts": {
+    "healthz:200:normal:normal:watch:allow:active-screen": 4,
+    "browser-response:200:normal:normal:watch:allow:active-screen": 1,
+    "browser-response:202:normal:normal:watch:allow:active-screen": 3
+  },
+  "apiHeaders": [
+    {
+      "atMs": 23,
+      "label": "start",
+      "source": "healthz",
+      "status": 200,
+      "pressure": "normal",
+      "resource": "normal",
+      "observedResource": "watch",
+      "admission": "allow",
+      "routeClass": "active-screen",
+      "body": "{\"status\":\"ok\"}"
+    },
+    {
+      "atMs": 11249,
+      "source": "browser-response",
+      "status": 200,
+      "url": "http://127.0.0.1:18747/api/auth/session",
+      "method": "GET",
+      "pressure": "normal",
+      "resource": "normal",
+      "observedResource": "watch",
+      "admission": "allow",
+      "routeClass": "active-screen"
+    },
+    {
+      "atMs": 42169,
+      "source": "browser-response",
+      "status": 202,
+      "url": "http://127.0.0.1:18747/api/diagnostics/client-metrics",
+      "method": "POST",
+      "pressure": "normal",
+      "resource": "normal",
+      "observedResource": "watch",
+      "admission": "allow",
+      "routeClass": "active-screen"
+    },
+    {
+      "atMs": 66166,
+      "label": "t66",
+      "source": "healthz",
+      "status": 200,
+      "pressure": "normal",
+      "resource": "normal",
+      "observedResource": "watch",
+      "admission": "allow",
+      "routeClass": "active-screen",
+      "body": "{\"status\":\"ok\"}"
+    },
+    {
+      "atMs": 70988,
+      "source": "browser-response",
+      "status": 202,
+      "url": "http://127.0.0.1:18747/api/diagnostics/client-metrics",
+      "method": "POST",
+      "pressure": "normal",
+      "resource": "normal",
+      "observedResource": "watch",
+      "admission": "allow",
+      "routeClass": "active-screen"
+    },
+    {
+      "atMs": 102684,
+      "source": "browser-response",
+      "status": 202,
+      "url": "http://127.0.0.1:18747/api/diagnostics/client-metrics",
+      "method": "POST",
+      "pressure": "normal",
+      "resource": "normal",
+      "observedResource": "watch",
+      "admission": "allow",
+      "routeClass": "active-screen"
+    },
+    {
+      "atMs": 120013,
+      "label": "t120",
+      "source": "healthz",
+      "status": 200,
+      "pressure": "normal",
+      "resource": "normal",
+      "observedResource": "watch",
+      "admission": "allow",
+      "routeClass": "active-screen",
+      "body": "{\"status\":\"ok\"}"
+    },
+    {
+      "atMs": 120271,
+      "label": "end",
+      "source": "healthz",
+      "status": 200,
+      "pressure": "normal",
+      "resource": "normal",
+      "observedResource": "watch",
+      "admission": "allow",
+      "routeClass": "active-screen",
+      "body": "{\"status\":\"ok\"}"
+    }
+  ],
+  "samples": [
+    {
+      "atMs": 3625,
+      "label": "initial",
+      "state": {
+        "title": "PYRUS Platform",
+        "url": "http://127.0.0.1:18747/",
+        "readyState": "interactive",
+        "visibilityState": "visible",
+        "text": "Loading app shell 17% Loading app shell 17%",
+        "textLength": 43,
+        "hasLoginGate": false,
+        "visibleTestIds": [
+          "app-loading-fallback"
+        ],
+        "alerts": [],
+        "buttons": [],
+        "viteOverlay": false,
+        "rootCrash": false,
+        "horizontalOverflow": false,
+        "viewport": {
+          "width": 1600,
+          "height": 1000
+        },
+        "documentSize": {
+          "width": 1600,
+          "height": 1000
+        },
+        "fontsStatus": "loading"
+      }
+    },
+    {
+      "atMs": 16095,
+      "label": "tick",
+      "state": {
+        "title": "PYRUS Platform",
+        "url": "http://127.0.0.1:18747/",
+        "readyState": "complete",
+        "visibilityState": "visible",
+        "text": "PYRUS Sign in to continue. Email Password Sign in First-time setup",
+        "textLength": 66,
+        "hasLoginGate": true,
+        "visibleTestIds": [
+          "login-gate-submit"
+        ],
+        "alerts": [],
+        "buttons": [
+          "Sign in",
+          "First-time setup"
+        ],
+        "viteOverlay": false,
+        "rootCrash": false,
+        "horizontalOverflow": false,
+        "viewport": {
+          "width": 1600,
+          "height": 1000
+        },
+        "documentSize": {
+          "width": 1600,
+          "height": 1000
+        },
+        "fontsStatus": "loaded"
+      }
+    },
+    {
+      "atMs": 26104,
+      "label": "tick",
+      "state": {
+        "title": "PYRUS Platform",
+        "url": "http://127.0.0.1:18747/",
+        "readyState": "complete",
+        "visibilityState": "visible",
+        "text": "PYRUS Sign in to continue. Email Password Sign in First-time setup",
+        "textLength": 66,
+        "hasLoginGate": true,
+        "visibleTestIds": [
+          "login-gate-submit"
+        ],
+        "alerts": [],
+        "buttons": [
+          "Sign in",
+          "First-time setup"
+        ],
+        "viteOverlay": false,
+        "rootCrash": false,
+        "horizontalOverflow": false,
+        "viewport": {
+          "width": 1600,
+          "height": 1000
+        },
+        "documentSize": {
+          "width": 1600,
+          "height": 1000
+        },
+        "fontsStatus": "loaded"
+      }
+    },
+    {
+      "atMs": 36140,
+      "label": "tick",
+      "state": {
+        "title": "PYRUS Platform",
+        "url": "http://127.0.0.1:18747/",
+        "readyState": "complete",
+        "visibilityState": "visible",
+        "text": "PYRUS Sign in to continue. Email Password Sign in First-time setup",
+        "textLength": 66,
+        "hasLoginGate": true,
+        "visibleTestIds": [
+          "login-gate-submit"
+        ],
+        "alerts": [],
+        "buttons": [
+          "Sign in",
+          "First-time setup"
+        ],
+        "viteOverlay": false,
+        "rootCrash": false,
+        "horizontalOverflow": false,
+        "viewport": {
+          "width": 1600,
+          "height": 1000
+        },
+        "documentSize": {
+          "width": 1600,
+          "height": 1000
+        },
+        "fontsStatus": "loaded"
+      }
+    },
+    {
+      "atMs": 46148,
+      "label": "tick",
+      "state": {
+        "title": "PYRUS Platform",
+        "url": "http://127.0.0.1:18747/",
+        "readyState": "complete",
+        "visibilityState": "visible",
+        "text": "PYRUS Sign in to continue. Email Password Sign in First-time setup",
+        "textLength": 66,
+        "hasLoginGate": true,
+        "visibleTestIds": [
+          "login-gate-submit"
+        ],
+        "alerts": [],
+        "buttons": [
+          "Sign in",
+          "First-time setup"
+        ],
+        "viteOverlay": false,
+        "rootCrash": false,
+        "horizontalOverflow": false,
+        "viewport": {
+          "width": 1600,
+          "height": 1000
+        },
+        "documentSize": {
+          "width": 1600,
+          "height": 1000
+        },
+        "fontsStatus": "loaded"
+      }
+    },
+    {
+      "atMs": 56160,
+      "label": "tick",
+      "state": {
+        "title": "PYRUS Platform",
+        "url": "http://127.0.0.1:18747/",
+        "readyState": "complete",
+        "visibilityState": "visible",
+        "text": "PYRUS Sign in to continue. Email Password Sign in First-time setup",
+        "textLength": 66,
+        "hasLoginGate": true,
+        "visibleTestIds": [
+          "login-gate-submit"
+        ],
+        "alerts": [],
+        "buttons": [
+          "Sign in",
+          "First-time setup"
+        ],
+        "viteOverlay": false,
+        "rootCrash": false,
+        "horizontalOverflow": false,
+        "viewport": {
+          "width": 1600,
+          "height": 1000
+        },
+        "documentSize": {
+          "width": 1600,
+          "height": 1000
+        },
+        "fontsStatus": "loaded"
+      }
+    },
+    {
+      "atMs": 66166,
+      "label": "tick",
+      "state": {
+        "title": "PYRUS Platform",
+        "url": "http://127.0.0.1:18747/",
+        "readyState": "complete",
+        "visibilityState": "visible",
+        "text": "PYRUS Sign in to continue. Email Password Sign in First-time setup",
+        "textLength": 66,
+        "hasLoginGate": true,
+        "visibleTestIds": [
+          "login-gate-submit"
+        ],
+        "alerts": [],
+        "buttons": [
+          "Sign in",
+          "First-time setup"
+        ],
+        "viteOverlay": false,
+        "rootCrash": false,
+        "horizontalOverflow": false,
+        "viewport": {
+          "width": 1600,
+          "height": 1000
+        },
+        "documentSize": {
+          "width": 1600,
+          "height": 1000
+        },
+        "fontsStatus": "loaded"
+      }
+    },
+    {
+      "atMs": 76262,
+      "label": "tick",
+      "state": {
+        "title": "PYRUS Platform",
+        "url": "http://127.0.0.1:18747/",
+        "readyState": "complete",
+        "visibilityState": "visible",
+        "text": "PYRUS Sign in to continue. Email Password Sign in First-time setup",
+        "textLength": 66,
+        "hasLoginGate": true,
+        "visibleTestIds": [
+          "login-gate-submit"
+        ],
+        "alerts": [],
+        "buttons": [
+          "Sign in",
+          "First-time setup"
+        ],
+        "viteOverlay": false,
+        "rootCrash": false,
+        "horizontalOverflow": false,
+        "viewport": {
+          "width": 1600,
+          "height": 1000
+        },
+        "documentSize": {
+          "width": 1600,
+          "height": 1000
+        },
+        "fontsStatus": "loaded"
+      }
+    },
+    {
+      "atMs": 86277,
+      "label": "tick",
+      "state": {
+        "title": "PYRUS Platform",
+        "url": "http://127.0.0.1:18747/",
+        "readyState": "complete",
+        "visibilityState": "visible",
+        "text": "PYRUS Sign in to continue. Email Password Sign in First-time setup",
+        "textLength": 66,
+        "hasLoginGate": true,
+        "visibleTestIds": [
+          "login-gate-submit"
+        ],
+        "alerts": [],
+        "buttons": [
+          "Sign in",
+          "First-time setup"
+        ],
+        "viteOverlay": false,
+        "rootCrash": false,
+        "horizontalOverflow": false,
+        "viewport": {
+          "width": 1600,
+          "height": 1000
+        },
+        "documentSize": {
+          "width": 1600,
+          "height": 1000
+        },
+        "fontsStatus": "loaded"
+      }
+    },
+    {
+      "atMs": 96306,
+      "label": "tick",
+      "state": {
+        "title": "PYRUS Platform",
+        "url": "http://127.0.0.1:18747/",
+        "readyState": "complete",
+        "visibilityState": "visible",
+        "text": "PYRUS Sign in to continue. Email Password Sign in First-time setup",
+        "textLength": 66,
+        "hasLoginGate": true,
+        "visibleTestIds": [
+          "login-gate-submit"
+        ],
+        "alerts": [],
+        "buttons": [
+          "Sign in",
+          "First-time setup"
+        ],
+        "viteOverlay": false,
+        "rootCrash": false,
+        "horizontalOverflow": false,
+        "viewport": {
+          "width": 1600,
+          "height": 1000
+        },
+        "documentSize": {
+          "width": 1600,
+          "height": 1000
+        },
+        "fontsStatus": "loaded"
+      }
+    },
+    {
+      "atMs": 106312,
+      "label": "tick",
+      "state": {
+        "title": "PYRUS Platform",
+        "url": "http://127.0.0.1:18747/",
+        "readyState": "complete",
+        "visibilityState": "visible",
+        "text": "PYRUS Sign in to continue. Email Password Sign in First-time setup",
+        "textLength": 66,
+        "hasLoginGate": true,
+        "visibleTestIds": [
+          "login-gate-submit"
+        ],
+        "alerts": [],
+        "buttons": [
+          "Sign in",
+          "First-time setup"
+        ],
+        "viteOverlay": false,
+        "rootCrash": false,
+        "horizontalOverflow": false,
+        "viewport": {
+          "width": 1600,
+          "height": 1000
+        },
+        "documentSize": {
+          "width": 1600,
+          "height": 1000
+        },
+        "fontsStatus": "loaded"
+      }
+    },
+    {
+      "atMs": 116331,
+      "label": "tick",
+      "state": {
+        "title": "PYRUS Platform",
+        "url": "http://127.0.0.1:18747/",
+        "readyState": "complete",
+        "visibilityState": "visible",
+        "text": "PYRUS Sign in to continue. Email Password Sign in First-time setup",
+        "textLength": 66,
+        "hasLoginGate": true,
+        "visibleTestIds": [
+          "login-gate-submit"
+        ],
+        "alerts": [],
+        "buttons": [
+          "Sign in",
+          "First-time setup"
+        ],
+        "viteOverlay": false,
+        "rootCrash": false,
+        "horizontalOverflow": false,
+        "viewport": {
+          "width": 1600,
+          "height": 1000
+        },
+        "documentSize": {
+          "width": 1600,
+          "height": 1000
+        },
+        "fontsStatus": "loaded"
+      }
+    },
+    {
+      "atMs": 120013,
+      "label": "tick",
+      "state": {
+        "title": "PYRUS Platform",
+        "url": "http://127.0.0.1:18747/",
+        "readyState": "complete",
+        "visibilityState": "visible",
+        "text": "PYRUS Sign in to continue. Email Password Sign in First-time setup",
+        "textLength": 66,
+        "hasLoginGate": true,
+        "visibleTestIds": [
+          "login-gate-submit"
+        ],
+        "alerts": [],
+        "buttons": [
+          "Sign in",
+          "First-time setup"
+        ],
+        "viteOverlay": false,
+        "rootCrash": false,
+        "horizontalOverflow": false,
+        "viewport": {
+          "width": 1600,
+          "height": 1000
+        },
+        "documentSize": {
+          "width": 1600,
+          "height": 1000
+        },
+        "fontsStatus": "loaded"
+      }
+    },
+    {
+      "atMs": 120168,
+      "label": "final",
+      "state": {
+        "title": "PYRUS Platform",
+        "url": "http://127.0.0.1:18747/",
+        "readyState": "complete",
+        "visibilityState": "visible",
+        "text": "PYRUS Sign in to continue. Email Password Sign in First-time setup",
+        "textLength": 66,
+        "hasLoginGate": true,
+        "visibleTestIds": [
+          "login-gate-submit"
+        ],
+        "alerts": [],
+        "buttons": [
+          "Sign in",
+          "First-time setup"
+        ],
+        "viteOverlay": false,
+        "rootCrash": false,
+        "horizontalOverflow": false,
+        "viewport": {
+          "width": 1600,
+          "height": 1000
+        },
+        "documentSize": {
+          "width": 1600,
+          "height": 1000
+        },
+        "fontsStatus": "loaded"
+      }
+    }
+  ],
+  "screenshots": [
+    {
+      "atMs": 6070,
+      "reason": "initial",
+      "file": "/home/runner/workspace/.codex-watch-current/2026-07-07T18-34-42-163Z/watch-4-initial.png"
+    },
+    {
+      "atMs": 120271,
+      "reason": "final",
+      "file": "/home/runner/workspace/.codex-watch-current/2026-07-07T18-34-42-163Z/watch-120-final.png"
+    }
+  ],
+  "events": [
+    {
+      "atMs": 3625,
+      "kind": "visible_runtime_state",
+      "label": "initial",
+      "state": {
+        "title": "PYRUS Platform",
+        "url": "http://127.0.0.1:18747/",
+        "readyState": "interactive",
+        "visibilityState": "visible",
+        "text": "Loading app shell 17% Loading app shell 17%",
+        "textLength": 43,
+        "hasLoginGate": false,
+        "visibleTestIds": [
+          "app-loading-fallback"
+        ],
+        "alerts": [],
+        "buttons": [],
+        "viteOverlay": false,
+        "rootCrash": false,
+        "horizontalOverflow": false,
+        "viewport": {
+          "width": 1600,
+          "height": 1000
+        },
+        "documentSize": {
+          "width": 1600,
+          "height": 1000
+        },
+        "fontsStatus": "loading"
+      }
+    },
+    {
+      "atMs": 5076,
+      "kind": "console.warning",
+      "text": "[.WebGL-0x25040013ee00]GL Driver Message (OpenGL, Performance, GL_CLOSE_PATH_NV, High): GPU stall due to ReadPixels",
+      "url": "http://127.0.0.1:18747/",
+      "line": 0,
+      "column": 0
+    },
+    {
+      "atMs": 5078,
+      "kind": "console.warning",
+      "text": "[.WebGL-0x25040013f400]GL Driver Message (OpenGL, Performance, GL_CLOSE_PATH_NV, High): GPU stall due to ReadPixels",
+      "url": "http://127.0.0.1:18747/",
+      "line": 0,
+      "column": 0
+    },
+    {
+      "atMs": 5534,
+      "kind": "console.warning",
+      "text": "[.WebGL-0x25040013ee00]GL Driver Message (OpenGL, Performance, GL_CLOSE_PATH_NV, High): GPU stall due to ReadPixels",
+      "url": "http://127.0.0.1:18747/",
+      "line": 0,
+      "column": 0
+    },
+    {
+      "atMs": 5534,
+      "kind": "console.warning",
+      "text": "[.WebGL-0x25040013f400]GL Driver Message (OpenGL, Performance, GL_CLOSE_PATH_NV, High): GPU stall due to ReadPixels (this message will no longer repeat)",
+      "url": "http://127.0.0.1:18747/",
+      "line": 0,
+      "column": 0
+    }
+  ]
+}

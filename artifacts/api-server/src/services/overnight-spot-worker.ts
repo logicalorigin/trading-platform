@@ -6,10 +6,7 @@ import {
   type OvernightSpotSignalScanResult,
   type OvernightSpotWorkerDeployment,
 } from "./overnight-spot-execution";
-import {
-  getApiResourcePressureSnapshot,
-  isApiResourcePressureHardBlock,
-} from "./resource-pressure";
+import { getApiResourcePressureSnapshot } from "./resource-pressure";
 import type { ApiResourcePressureSnapshot } from "./resource-pressure";
 import {
   subscribeAlgoCockpitChanges,
@@ -44,7 +41,6 @@ type WorkerDependencies = {
     deploymentId: string;
     runActions: true;
     recordSignals: true;
-    skipEntryWork?: boolean;
   }) => Promise<OvernightSpotSignalScanResult>;
   getResourcePressure: () => ApiResourcePressureSnapshot;
   getMarketSessionKey: (now: Date) => UsEquityMarketSessionKey;
@@ -240,14 +236,12 @@ function defaultDependencies(
 async function runDeploymentScanWithTimeout(input: {
   deployment: OvernightSpotWorkerDeployment;
   dependencies: WorkerDependencies;
-  skipEntryWork?: boolean;
 }) {
   const { deployment, dependencies } = input;
   const scanPromise = dependencies.scanDeployment({
     deploymentId: deployment.id,
     runActions: true,
     recordSignals: true,
-    skipEntryWork: input.skipEntryWork === true,
   });
   if (dependencies.scanTimeoutMs === null) {
     return scanPromise;
@@ -281,7 +275,6 @@ async function runDeployment(input: {
   deployment: OvernightSpotWorkerDeployment;
   runtime: DeploymentRuntime;
   dependencies: WorkerDependencies;
-  skipEntryWork?: boolean;
 }) {
   const { deployment, runtime, dependencies } = input;
   if (activeDeploymentIds.has(deployment.id)) {
@@ -299,7 +292,6 @@ async function runDeployment(input: {
     const result = await runDeploymentScanWithTimeout({
       deployment,
       dependencies,
-      skipEntryWork: input.skipEntryWork === true,
     });
     runtime.scanCount += 1;
     runtime.failureCount = 0;
@@ -415,7 +407,6 @@ export function createOvernightSpotWorker(
         }
       });
 
-      const pressure = dependencies.getResourcePressure();
       // Overnight-spot trades the overnight session; during RTH it would scan the
       // live feed with a hardcoded overnight tradingSession, get no/wide quotes,
       // and emit "overnight signal blocked" events (user-facing toasts). Keep it
@@ -445,25 +436,18 @@ export function createOvernightSpotWorker(
           continue;
         }
 
-        // Under hard resource pressure, DEGRADE to an exit-only (sell) scan so open
-        // longs stay closeable, instead of fully pausing — a full pause left them
-        // unmanaged and, since the loop blocker is DB row parsing not scan bodies,
-        // pausing never returned loop time anyway. RTH still fully pauses below:
-        // overnight quotes are unavailable during the regular session, so any plan
-        // there would only emit blocked-quote toasts.
-        const skipEntryWork = isApiResourcePressureHardBlock(pressure);
-
         if (inRegularSession) {
           pauseDeploymentForRegularSession({ runtime, nowMs });
           continue;
         }
 
+        // Scans always include entry work, even under resource pressure
+        // (entry-skip gate removed per owner directive 2026-07-07).
         runtime.nextScanDueAtMs = null;
         await runDeployment({
           deployment,
           runtime,
           dependencies,
-          skipEntryWork,
         });
       }
     } catch (error) {

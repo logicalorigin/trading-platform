@@ -1,6 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import {
+  balanceSnapshotsTable,
+  brokerAccountsTable,
+  brokerConnectionsTable,
+  db,
+} from "@workspace/db";
+import { withTestDb } from "@workspace/db/testing";
 import type { BrokerAccountSnapshot } from "../providers/ibkr/client";
 
 import {
@@ -34,6 +41,7 @@ function portfolio(input: {
   buyingPower: number | null;
   netLiquidation: number | null;
   positionMarketValue?: number | null;
+  unrealizedPnl?: number | null;
   positions?: SnapTradeAccountPortfolioResponse["positions"];
   baseCurrency?: string;
 }): SnapTradeAccountPortfolioResponse {
@@ -55,6 +63,7 @@ function portfolio(input: {
       cash: input.cash,
       buyingPower: input.buyingPower,
       positionMarketValue: input.positionMarketValue ?? null,
+      unrealizedPnl: input.unrealizedPnl ?? null,
       netLiquidation: input.netLiquidation,
       positionCount: input.positions?.length ?? 0,
     },
@@ -104,6 +113,98 @@ test("listAccounts merges SnapTrade accounts onto the live IBKR branch", async (
     result.accounts.map((a) => a.provider),
     ["ibkr", "snaptrade", "snaptrade"],
   );
+});
+
+test("listAccounts lets direct IBKR supersede SnapTrade-linked IBKR accounts", async () => {
+  const result = await listAccounts(
+    { mode: "live" },
+    {
+      listLiveAccounts: async () => [snapshot("U1", "ibkr")],
+      getPersistedAccounts: emptyPersisted,
+      getFlexAccounts: emptyFlex,
+      recordSnapshots: noopRecordSnapshots,
+      getSnapTradeAccounts: async () => [
+        {
+          ...snapshot("snaptrade-ibkr", "snaptrade"),
+          displayName: "Interactive Brokers Individual",
+        },
+        {
+          ...snapshot("etrade-a", "snaptrade"),
+          displayName: "E*TRADE RETIREMENT ROTH IRA",
+        },
+      ],
+      getRobinhoodAccounts: async () => [],
+    },
+  );
+
+  assert.deepEqual(
+    result.accounts.map((a) => `${a.provider}:${a.id}`),
+    ["ibkr:U1", "snaptrade:etrade-a"],
+  );
+});
+
+test("listAccounts hydrates account day P&L from persisted balance snapshots", async () => {
+  await withTestDb(async () => {
+    const [connection] = await db
+      .insert(brokerConnectionsTable)
+      .values({
+        name: "IBKR",
+        connectionType: "broker",
+        brokerProvider: "ibkr",
+        mode: "live",
+        status: "connected",
+      })
+      .returning({ id: brokerConnectionsTable.id });
+    const [account] = await db
+      .insert(brokerAccountsTable)
+      .values({
+        connectionId: connection.id,
+        providerAccountId: "U1",
+        displayName: "IBKR Individual",
+        mode: "live",
+        baseCurrency: "USD",
+      })
+      .returning({ id: brokerAccountsTable.id });
+    await db.insert(balanceSnapshotsTable).values([
+      {
+        accountId: account.id,
+        currency: "USD",
+        cash: "1000",
+        buyingPower: "1000",
+        netLiquidation: "1000",
+        asOf: new Date("2026-07-07T20:00:00.000Z"),
+      },
+      {
+        accountId: account.id,
+        currency: "USD",
+        cash: "1050",
+        buyingPower: "1050",
+        netLiquidation: "1050",
+        asOf: new Date("2026-07-08T15:00:00.000Z"),
+      },
+    ]);
+
+    const result = await listAccounts(
+      { mode: "live" },
+      {
+        listLiveAccounts: async () => [
+          {
+            ...snapshot("U1", "ibkr"),
+            netLiquidation: 1075,
+            updatedAt: new Date("2026-07-08T16:00:00.000Z"),
+          },
+        ],
+        getPersistedAccounts: emptyPersisted,
+        getFlexAccounts: emptyFlex,
+        recordSnapshots: noopRecordSnapshots,
+        getSnapTradeAccounts: async () => [],
+        getRobinhoodAccounts: async () => [],
+      },
+    );
+
+    assert.equal(result.accounts[0].dayPnl, 75);
+    assert.equal(result.accounts[0].dayPnlPercent, 7.5);
+  });
 });
 
 test("listAccounts leaves IBKR list unchanged when SnapTrade is empty", async () => {

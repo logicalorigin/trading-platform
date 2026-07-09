@@ -158,7 +158,9 @@ export const findLatestCalendarActivityDate = ({
 
   equityPoints.forEach((point) => {
     if (finiteNumber(point?.netLiquidation) == null) return;
-    considerDay(pnlBucketDay(point?.timestamp ?? point?.timestampMs));
+    const timestamp = point?.timestamp ?? point?.timestampMs;
+    const marketDate = accountMarketDateKey(timestamp);
+    considerDay(pnlBucketDay(marketDate ?? timestamp));
   });
 
   if (!candidateDays.length) return null;
@@ -194,7 +196,8 @@ const buildEquityDailyMap = (equityPoints = []) => {
   equityPoints.forEach((point) => {
     const parsed = point?.timestamp ?? point?.timestampMs;
     const timestamp = parsed instanceof Date ? new Date(parsed.getTime()) : new Date(parsed);
-    const day = pnlBucketDay(timestamp);
+    const marketDate = accountMarketDateKey(timestamp);
+    const day = pnlBucketDay(marketDate ?? timestamp);
     if (!day || Number.isNaN(timestamp.getTime())) return;
     const nav = finiteNumber(point?.netLiquidation);
     if (nav == null) return;

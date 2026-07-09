@@ -10,6 +10,7 @@ export interface SnapTradeAccountPortfolioTotals {
   cash: number | null;
   buyingPower: number | null;
   positionMarketValue: number | null;
+  unrealizedPnl: number | null;
   netLiquidation: number | null;
   positionCount: number;
 }
