@@ -573,10 +573,13 @@ export const AlgoScreen = ({
   // a failed fetch rendered as a successful empty list, and the page showed the
   // misleading "should be seeded at startup" state instead of "temporarily
   // unavailable, refresh".
+  const deploymentListEmptyUnavailable = Boolean(
+    deploymentsQuery.data?.cacheStatus === "unavailable" && !deployments.length,
+  );
   const deploymentListUnavailable = Boolean(
     !deploymentsQuery.isFetching &&
       !deployments.length &&
-      (deploymentsQuery.data?.cacheStatus === "unavailable" ||
+      (deploymentListEmptyUnavailable ||
         (deploymentsQuery.isError && !deploymentsQuery.data)),
   );
   const candidateDrafts = useMemo(() => {
