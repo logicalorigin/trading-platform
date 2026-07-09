@@ -214,6 +214,7 @@ const admitAccountRoute = async (
 const stockAggregateStreamSessions = new Map<
   string,
   {
+    appUserId: string;
     token: symbol;
     setSymbols(symbols: string[]): Promise<void>;
   }
@@ -3419,6 +3420,7 @@ router.get("/streams/accounts/shadow", async (req, res) => {
 });
 
 router.get("/streams/stocks/aggregates", async (req, res) => {
+  const { user } = await requireUser(req);
   const rawSymbols = Array.isArray(req.query.symbols)
     ? req.query.symbols.join(",")
     : typeof req.query.symbols === "string"
@@ -3539,6 +3541,7 @@ router.get("/streams/stocks/aggregates", async (req, res) => {
 
     if (sessionId) {
       stockAggregateStreamSessions.set(sessionId, {
+        appUserId: user.id,
         token: sessionToken,
         async setSymbols(nextSymbols: string[]) {
           symbols = normalizeStreamSymbols(nextSymbols);
@@ -3566,6 +3569,7 @@ router.get("/streams/stocks/aggregates", async (req, res) => {
 });
 
 router.post("/streams/stocks/aggregates/sessions/:sessionId/symbols", async (req, res) => {
+  const { user } = await requireUser(req);
   const sessionId = req.params.sessionId?.trim() || "";
   const session = sessionId ? stockAggregateStreamSessions.get(sessionId) : null;
   if (!session) {
@@ -3575,6 +3579,16 @@ router.post("/streams/stocks/aggregates/sessions/:sessionId/symbols", async (req
       status: 404,
       detail: "Open a stock aggregate stream before updating its symbols.",
       code: "stock_aggregate_stream_session_not_found",
+    });
+    return;
+  }
+  if (session.appUserId !== user.id) {
+    res.status(403).type("application/problem+json").json({
+      type: "https://pyrus.local/problems/forbidden",
+      title: "Stock aggregate stream session is not owned by the authenticated user",
+      status: 403,
+      detail: "Open your own stock aggregate stream before updating its symbols.",
+      code: "stock_aggregate_stream_session_forbidden",
     });
     return;
   }
