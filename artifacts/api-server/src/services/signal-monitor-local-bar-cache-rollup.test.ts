@@ -225,77 +225,94 @@ test("disabled live aggregate persistence skips per-aggregate rollup scan work",
   }
 });
 
-test("bound: per-aggregate scan stays within the recent window regardless of history depth", () => {
-  // Retain far more than the deep history so nothing is pruned and we can prove
-  // the scan does NOT grow with the retained depth.
+test("bound: per-aggregate scan is bounded by the recent session window, not deep history", () => {
+  // The rollup scan window is session-aware: intra-session it is the 4h recent
+  // window, but right after a weekend/holiday reopen it reaches back across the
+  // closed gap to the prior session's close (≤ ~93.5h across a holiday weekend).
+  // So we cannot assert a fixed wall-clock 4h cap (that would flake whenever CI
+  // runs just after a reopen). Instead prove the real invariant: the scan is
+  // bounded by the recent SESSION window and does NOT grow with deep retained
+  // history. Retain far more than the deep block so nothing is pruned.
   const previousRetention =
     process.env.PYRUS_SIGNAL_MONITOR_LOCAL_BAR_CACHE_RETENTION_MS;
   const previousPersist =
     process.env.PYRUS_SIGNAL_MONITOR_LOCAL_BAR_CACHE_PERSIST_LIVE_AGGREGATES;
   process.env.PYRUS_SIGNAL_MONITOR_LOCAL_BAR_CACHE_RETENTION_MS = String(
-    100 * 60 * 60_000,
+    400 * 60 * 60_000,
   );
   process.env.PYRUS_SIGNAL_MONITOR_LOCAL_BAR_CACHE_PERSIST_LIVE_AGGREGATES = "1";
   internals.reset();
   try {
     const symbol = "DEEP";
-    // Anchor "now" to a fixed instant so window math is deterministic relative
-    // to the synthetic bar timestamps. Bars are ingested with real Date() as
-    // observedAt internally, but the scan window is computed from observedAt
-    // (now) minus 4h, and we ingest the freshest bar at ~now.
     const now = Date.now();
 
-    // 80h of minute history = 4800 minutes, ending shortly before "now".
-    const historyMinutes = 80 * 60;
-    const baseMs = now - historyMinutes * MINUTE_MS;
-    for (let minute = 0; minute < historyMinutes; minute += 1) {
-      const open = 50 + (minute % 50) * 0.01;
+    // Deep history 200h back — beyond the ~93.5h max session-aware reach, so it
+    // can NEVER enter the scan window — but retained (< 400h). 600 minutes.
+    const ancientCount = 600;
+    const ancientBaseMs = now - 200 * 60 * MINUTE_MS;
+    for (let minute = 0; minute < ancientCount; minute += 1) {
       internals.ingest(
-        aggregateAtMinute(symbol, baseMs, minute, {
-          open,
-          high: open + 0.1,
-          low: open - 0.1,
-          close: open + 0.02,
+        aggregateAtMinute(symbol, ancientBaseMs, minute, {
+          open: 50,
+          high: 50.1,
+          low: 49.9,
+          close: 50.02,
           volume: 5,
         }),
       );
     }
 
-    // After ingesting the entire 80h history, the most recent enqueue (the
-    // freshest bar, near "now") must have scanned only the recent window.
-    const diagnosticsDeep = internals.lastEnqueueScannedBarCount;
-    // 4h window => at most ~241 minute bars (240 + boundary inclusivity).
-    const windowMinutesCap = 4 * 60 + 1;
+    // Recent history: 3h of continuous minutes ending at ~now. 3h < the 4h
+    // MINIMUM window, so every recent bar is inside the scan in EVERY session
+    // state (deep-RTH, extended-hours, or just after a gap reopen). This makes
+    // the scanned count deterministic regardless of the wall-clock time CI runs.
+    const recentCount = 180;
+    const recentBaseMs = now - recentCount * MINUTE_MS;
+    for (let minute = 0; minute < recentCount; minute += 1) {
+      internals.ingest(
+        aggregateAtMinute(symbol, recentBaseMs, minute, {
+          open: 60 + minute * 0.001,
+          high: 60.1,
+          low: 59.9,
+          close: 60.05,
+          volume: 5,
+        }),
+      );
+    }
+
+    // The freshest enqueue scanned the recent window: it saw the ~180 recent bars
+    // but NONE of the 600 ancient bars.
+    const scanned = internals.lastEnqueueScannedBarCount;
+    assert.ok(scanned > 0, "expected the recent enqueue to scan at least one bar");
     assert.ok(
-      diagnosticsDeep > 0,
-      "expected the deep-history enqueue to have scanned at least one bar",
+      scanned <= recentCount + 1,
+      `scan ${scanned} exceeded the recent window (${recentCount}); deep history leaked in`,
     );
     assert.ok(
-      diagnosticsDeep <= windowMinutesCap,
-      `deep-history scan ${diagnosticsDeep} exceeded recent-window cap ${windowMinutesCap}`,
+      scanned < ancientCount,
+      `scan ${scanned} should be far below deep history depth ${ancientCount}`,
     );
 
-    // Now ingest one more fresh aggregate and re-check the scan count: it must
-    // remain bounded and must NOT have grown with the (now deeper) history.
-    const extraStartMs = baseMs + historyMinutes * MINUTE_MS;
+    // One more fresh aggregate: the scan grows by ~1, still bounded by the recent
+    // window and NOT by the (deeper) retained history.
+    const extraStartMs = recentBaseMs + recentCount * MINUTE_MS;
     internals.ingest(
       aggregateAtMinute(symbol, extraStartMs, 0, {
-        open: 60,
-        high: 60.1,
-        low: 59.9,
-        close: 60.05,
+        open: 61,
+        high: 61.1,
+        low: 60.9,
+        close: 61.05,
         volume: 5,
       }),
     );
     const scanAfterExtra = internals.lastEnqueueScannedBarCount;
     assert.ok(
-      scanAfterExtra <= windowMinutesCap,
-      `post-extra scan ${scanAfterExtra} exceeded recent-window cap ${windowMinutesCap}`,
+      scanAfterExtra <= recentCount + 2,
+      `post-extra scan ${scanAfterExtra} exceeded the recent window`,
     );
-    // The scan is bounded by the window, not the ~4800-bar retained history.
     assert.ok(
-      scanAfterExtra < historyMinutes / 10,
-      `scan ${scanAfterExtra} should be far below history depth ${historyMinutes}`,
+      scanAfterExtra < ancientCount,
+      `scan ${scanAfterExtra} should stay far below history depth ${ancientCount}`,
     );
   } finally {
     internals.reset();
