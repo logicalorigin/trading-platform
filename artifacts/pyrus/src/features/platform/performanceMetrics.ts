@@ -254,9 +254,14 @@ const installLongTaskObserver = () => {
   return () => observer.disconnect();
 };
 
+let uninstallPerformanceMetricsGlobals: (() => void) | null = null;
+
 export const installPyrusPerformanceMetrics = () => {
-  if (metrics.installed || typeof window === "undefined") {
-    return;
+  if (typeof window === "undefined") {
+    return () => {};
+  }
+  if (metrics.installed && uninstallPerformanceMetricsGlobals) {
+    return uninstallPerformanceMetricsGlobals;
   }
 
   metrics.installed = true;
@@ -266,11 +271,26 @@ export const installPyrusPerformanceMetrics = () => {
   }
   window.addEventListener(API_TIMING_EVENT, handleApiTiming);
   const disconnectLongTaskObserver = installLongTaskObserver();
+  let uninstalled = false;
 
-  window.addEventListener("beforeunload", () => {
+  function uninstallPerformanceMetrics() {
+    if (uninstalled) {
+      return;
+    }
+    uninstalled = true;
     window.removeEventListener(API_TIMING_EVENT, handleApiTiming);
+    window.removeEventListener("beforeunload", handleBeforeUnload);
     disconnectLongTaskObserver();
-  }, { once: true });
+    metrics.installed = false;
+    uninstallPerformanceMetricsGlobals = null;
+  }
+  function handleBeforeUnload() {
+    uninstallPerformanceMetrics();
+  }
+
+  uninstallPerformanceMetricsGlobals = uninstallPerformanceMetrics;
+  window.addEventListener("beforeunload", handleBeforeUnload, { once: true });
+  return uninstallPerformanceMetrics;
 };
 
 export const markScreenSwitchStart = (
@@ -506,7 +526,7 @@ export const usePyrusPerformanceMetricsReporter = () => {
       return undefined;
     }
 
-    installPyrusPerformanceMetrics();
+    const uninstallPerformanceMetrics = installPyrusPerformanceMetrics();
 
     const intervalId = window.setInterval(() => {
       postPerformanceMetrics("interval");
@@ -527,6 +547,7 @@ export const usePyrusPerformanceMetricsReporter = () => {
       window.clearInterval(intervalId);
       window.removeEventListener(SCREEN_READY_EVENT, handleFirstReady);
       document.removeEventListener("visibilitychange", handleVisibilityChange);
+      uninstallPerformanceMetrics();
     };
   }, []);
 };
