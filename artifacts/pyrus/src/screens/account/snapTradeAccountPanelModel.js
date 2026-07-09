@@ -589,17 +589,17 @@ export function buildSnapTradeAccountPanelData({
   const buyingPower =
     finiteNumber(portfolio?.totals?.buyingPower) ??
     sumNullable((portfolio?.balances || []).map((balance) => balance.buyingPower));
-  const positionMarketValue =
+  const rawPositionMarketValue =
     sumNullable(
       (portfolio?.positions || []).map((position) =>
         marketValueForSnapTradePosition(position, normalizeOptionContract(position)),
       ),
     ) ??
-    finiteNumber(portfolio?.totals?.positionMarketValue) ??
-    0;
+    finiteNumber(portfolio?.totals?.positionMarketValue);
+  const positionMarketValue = rawPositionMarketValue ?? 0;
   const netLiquidation =
-    cash != null || positionMarketValue != null
-      ? (cash ?? 0) + positionMarketValue
+    cash != null || rawPositionMarketValue != null
+      ? (cash ?? 0) + (rawPositionMarketValue ?? 0)
       : finiteNumber(portfolio?.totals?.netLiquidation);
   const positions = buildSnapTradePositionRows({
     accountId,

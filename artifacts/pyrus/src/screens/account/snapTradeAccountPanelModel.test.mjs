@@ -121,6 +121,48 @@ test("buildSnapTradeAccountPanelData maps portfolio balances and positions into 
   assert.equal(data.risk, null);
 });
 
+test("buildSnapTradeAccountPanelData uses reported net liquidation when cash and positions are absent", () => {
+  const fallback = buildSnapTradeAccountPanelData({
+    account: { id: "snaptrade:acct-1", currency: "USD", provider: "snaptrade" },
+    portfolio: {
+      syncedAt: "2026-07-02T20:00:00.000Z",
+      account: { id: "snaptrade:acct-1", baseCurrency: "USD" },
+      balances: [],
+      positions: [],
+      totals: { netLiquidation: 5000 },
+      dataFreshness: { asOf: "2026-07-02T20:00:00.000Z" },
+    },
+    now: new Date("2026-07-02T20:00:00.000Z"),
+  });
+
+  assert.equal(fallback.summary.metrics.netLiquidation.value, 5000);
+  assert.equal(fallback.positions.totals.netLiquidation, 5000);
+
+  const mathWins = buildSnapTradeAccountPanelData({
+    account: { id: "snaptrade:acct-1", currency: "USD", provider: "snaptrade" },
+    portfolio: {
+      syncedAt: "2026-07-02T20:00:00.000Z",
+      account: { id: "snaptrade:acct-1", baseCurrency: "USD" },
+      balances: [{ currency: "USD", cash: 100, buyingPower: 100 }],
+      positions: [
+        {
+          symbol: "AAPL",
+          assetClass: "equity",
+          quantity: 2,
+          price: 150,
+          marketValue: 300,
+          currency: "USD",
+        },
+      ],
+      totals: { netLiquidation: 5000 },
+      dataFreshness: { asOf: "2026-07-02T20:00:00.000Z" },
+    },
+    now: new Date("2026-07-02T20:00:00.000Z"),
+  });
+
+  assert.equal(mathWins.summary.metrics.netLiquidation.value, 400);
+});
+
 test("buildSnapTradeAccountPanelData merges SnapTrade history into calendar and equity shapes", () => {
   const data = buildSnapTradeAccountPanelData({
     account: {
