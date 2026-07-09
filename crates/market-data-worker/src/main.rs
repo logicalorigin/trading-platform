@@ -86,6 +86,7 @@ fn build_http_client() -> Result<reqwest::Client> {
     Ok(reqwest::Client::builder()
         .timeout(Duration::from_secs(20))
         .connect_timeout(Duration::from_secs(10))
+        .redirect(reqwest::redirect::Policy::none())
         .build()?)
 }
 

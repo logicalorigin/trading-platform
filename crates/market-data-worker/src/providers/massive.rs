@@ -137,6 +137,7 @@ pub async fn fetch_option_chain_snapshots(
     }
 
     let mut snapshots = Vec::new();
+    let provider_origin = url.clone();
     let mut next_url = Some(url);
     let mut page_count = 0usize;
     let mut metadata = ProviderRequestMetadata::empty();
@@ -146,15 +147,24 @@ pub async fn fetch_option_chain_snapshots(
             next_url = Some(url);
             break;
         }
-        let response = client.get(url).send().await?;
+        let response = client
+            .get(url)
+            .send()
+            .await
+            .map_err(reqwest::Error::without_url)?;
         let page_metadata =
             ProviderRequestMetadata::from_response(response.status(), response.headers());
-        let payload = response.error_for_status()?.json::<ChainResponse>().await?;
+        let payload = response
+            .error_for_status()
+            .map_err(reqwest::Error::without_url)?
+            .json::<ChainResponse>()
+            .await
+            .map_err(reqwest::Error::without_url)?;
         metadata.merge(page_metadata);
         snapshots.extend(payload.results.into_iter().filter_map(map_chain_result));
         next_url = match payload.next_url {
             Some(value) if !value.trim().is_empty() => {
-                Some(build_next_url(&value, &config.api_key)?)
+                Some(build_next_url(&value, &config.api_key, &provider_origin)?)
             }
             _ => None,
         };
@@ -210,8 +220,16 @@ fn parse_rate_limit_reset_value(value: &str) -> Option<DateTime<Utc>> {
         .map(|date| date.with_timezone(&Utc))
 }
 
-fn build_next_url(value: &str, api_key: &str) -> Result<Url> {
-    let mut url = Url::parse(value)?;
+fn build_next_url(value: &str, api_key: &str, initial_url: &Url) -> Result<Url> {
+    let mut url = initial_url
+        .join(value.trim())
+        .map_err(|_| anyhow!("provider returned an invalid pagination URL"))?;
+    if url.scheme() != initial_url.scheme()
+        || url.host_str() != initial_url.host_str()
+        || url.port_or_known_default() != initial_url.port_or_known_default()
+    {
+        return Err(anyhow!("provider pagination URL changed origin"));
+    }
     if !url.query_pairs().any(|(key, _)| key == "apiKey") {
         url.query_pairs_mut().append_pair("apiKey", api_key);
     }
@@ -261,4 +279,68 @@ fn map_chain_result(result: ChainResult) -> Option<OptionChainSnapshot> {
             .and_then(|day| day.volume)
             .map(|value| value.round() as i32),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+    use std::thread;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn provider_errors_do_not_expose_the_api_key() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = [0_u8; 2048];
+            let _ = stream.read(&mut request);
+            stream
+                .write_all(
+                    b"HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                )
+                .unwrap();
+        });
+        let api_key = "dont-log-me";
+        let config = MarketDataProviderConfig {
+            provider: "massive".into(),
+            base_url: format!("http://{address}"),
+            api_key: api_key.into(),
+        };
+
+        let error = fetch_option_chain_snapshots(&Client::new(), &config, "SPY", 1)
+            .await
+            .unwrap_err();
+        server.join().unwrap();
+
+        assert!(!error.to_string().contains(api_key));
+        assert!(!format!("{error:#}").contains(api_key));
+        let request_error = error.downcast_ref::<reqwest::Error>().unwrap();
+        assert_eq!(
+            request_error.status(),
+            Some(reqwest::StatusCode::INTERNAL_SERVER_ERROR)
+        );
+        assert!(request_error.url().is_none());
+    }
+
+    #[test]
+    fn pagination_stays_on_the_configured_origin() {
+        let initial = Url::parse("https://api.massive.com/v3/snapshot/options/SPY").unwrap();
+        let next = build_next_url(
+            "https://api.massive.com/v3/snapshot/options/SPY?cursor=next",
+            "secret",
+            &initial,
+        )
+        .unwrap();
+        assert_eq!(
+            next.query_pairs()
+                .filter(|(key, value)| key == "apiKey" && value == "secret")
+                .count(),
+            1,
+        );
+        assert!(build_next_url("https://evil.invalid/page", "secret", &initial).is_err());
+        assert!(build_next_url("http://api.massive.com/page", "secret", &initial).is_err());
+    }
 }
