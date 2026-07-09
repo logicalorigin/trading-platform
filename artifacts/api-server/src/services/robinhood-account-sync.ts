@@ -28,6 +28,9 @@ export type RobinhoodConnectionSyncAccount = {
   agentic: boolean | null;
   status: "open" | "closed" | "archived" | null;
   baseCurrency: string;
+  // Robinhood options approval tier from get_accounts (e.g. "option_level_2").
+  // Empty string when options are not approved for the account.
+  optionLevel: string;
   executionReady: boolean;
   executionBlockers: string[];
   mode: "live";
@@ -62,6 +65,7 @@ type NormalizedAccount = {
   status: "open" | "closed" | "archived" | null;
   deactivated: boolean;
   baseCurrency: string;
+  optionLevel: string;
 };
 
 const LOCAL_ID_PREFIX = "robinhood:";
@@ -82,6 +86,10 @@ const CONNECTION_BASE_CAPABILITIES = [
 // agentic_allowed without an extra get_accounts MCP round-trip.
 const AGENTIC_CAPABILITY = "robinhood-agentic";
 const EXECUTION_CAPABILITIES = ["orders", "executions", "execution-ready"];
+// Options approval tier persisted on the account row (no schema migration) so
+// the settings UI and order tooling can read the tier without an extra
+// get_accounts round-trip. Only tagged when the account carries an approval.
+const OPTION_LEVEL_CAPABILITY_PREFIX = "robinhood-option-level:";
 
 function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -252,6 +260,7 @@ function normalizeAccount(value: unknown): NormalizedAccount {
       readBoolean(record, ["deactivated", "is_deactivated", "isDeactivated"]) ===
       true,
     baseCurrency: normalizeCurrency(record),
+    optionLevel: readString(record, ["option_level", "optionLevel"]) ?? "",
   };
 }
 
@@ -290,10 +299,17 @@ function accountExecutionReady(
   );
 }
 
-function accountCapabilities(executionReady: boolean): string[] {
-  return executionReady
+function accountCapabilities(
+  executionReady: boolean,
+  optionLevel: string,
+): string[] {
+  const capabilities = executionReady
     ? [...ACCOUNT_BASE_CAPABILITIES, AGENTIC_CAPABILITY, ...EXECUTION_CAPABILITIES]
     : [...ACCOUNT_BASE_CAPABILITIES];
+  if (optionLevel) {
+    capabilities.push(`${OPTION_LEVEL_CAPABILITY_PREFIX}${optionLevel}`);
+  }
+  return capabilities;
 }
 
 async function upsertConnection(input: {
@@ -453,7 +469,7 @@ export async function syncRobinhoodConnections(
       account,
       executionBlockers,
       executionReady,
-      capabilities: accountCapabilities(executionReady),
+      capabilities: accountCapabilities(executionReady, account.optionLevel),
     };
   });
   const anyExecutionReady = evaluated.some((entry) => entry.executionReady);
@@ -483,6 +499,7 @@ export async function syncRobinhoodConnections(
       agentic: entry.account.agentic,
       status: entry.account.status,
       baseCurrency: entry.account.baseCurrency,
+      optionLevel: entry.account.optionLevel,
       executionReady: entry.executionReady,
       executionBlockers: entry.executionBlockers,
       mode: "live",

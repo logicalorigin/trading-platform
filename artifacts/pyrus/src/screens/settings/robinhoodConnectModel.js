@@ -39,6 +39,43 @@ export const ROBINHOOD_NEXT_ACTION_LABELS = Object.freeze({
   manual_review: "manual review",
 });
 
+// Robinhood options upgrade deep link. The account-scoped variant
+// (?account_number=<full number>) is intentionally NOT used: the sync response
+// contract never exposes full account numbers, so we link to the generic
+// upgrade flow where the user selects the account on their own device.
+export const ROBINHOOD_UPGRADE_OPTIONS_URL =
+  "https://applink.robinhood.com/upgrade_options";
+
+// Formats the get_accounts option_level tier (e.g. "option_level_2") for
+// display. Returns null when options are not approved (empty/unparseable).
+export function formatRobinhoodOptionLevel(optionLevel) {
+  const match = String(optionLevel || "").match(/(\d+)/u);
+  return match ? `Level ${match[1]}` : null;
+}
+
+// Human-friendly copy for the per-account execution blocker codes emitted by
+// artifacts/api-server/src/services/robinhood-account-sync.ts. Unmapped codes
+// fall back to their raw value so new blockers still render.
+export const ROBINHOOD_ACCOUNT_BLOCKER_LABELS = Object.freeze({
+  "robinhood.account.non_agentic": "not an agentic account",
+  "robinhood.account.agentic_unverified": "agentic status unverified",
+  "robinhood.account.deactivated": "deactivated",
+  "robinhood.account.closed": "closed",
+  "robinhood.account.archived": "archived",
+  "robinhood.account.status_unverified": "status unverified",
+});
+
+export function formatRobinhoodAccountBlockers(blockers) {
+  const labels = Array.from(
+    new Set(
+      (Array.isArray(blockers) ? blockers : [])
+        .map((code) => ROBINHOOD_ACCOUNT_BLOCKER_LABELS[code] || code)
+        .filter(Boolean),
+    ),
+  );
+  return labels.length ? labels.join(", ") : "blocked";
+}
+
 // Maps the browser-facing ?robinhood=<outcome> callback flag to banner copy.
 export function formatRobinhoodConnectOutcome(outcome) {
   switch (outcome) {

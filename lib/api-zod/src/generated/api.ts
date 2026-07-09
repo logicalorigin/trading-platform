@@ -1491,6 +1491,7 @@ export const SyncRobinhoodConnectionsResponse = zod.object({
   "agentic": zod.boolean().nullable().describe('True when the account is the dedicated Agentic account. Null means the MCP payload did not identify it.'),
   "status": zod.enum(['open', 'closed', 'archived']).nullable(),
   "baseCurrency": zod.string(),
+  "optionLevel": zod.string().describe('Robinhood options approval tier from get_accounts (e.g. \"option_level_2\"). Empty string when options are not approved. Not a full account number.'),
   "executionReady": zod.boolean(),
   "executionBlockers": zod.array(zod.string()),
   "mode": zod.enum(['live']),

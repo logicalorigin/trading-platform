@@ -61,9 +61,12 @@ import {
   canManageSnapTradeConnections,
 } from "./snapTradeConnectModel.js";
 import {
+  ROBINHOOD_UPGRADE_OPTIONS_URL,
   ROBINHOOD_USER_STATUS_LABELS,
+  formatRobinhoodAccountBlockers,
   formatRobinhoodConnectOutcome,
   formatRobinhoodLimitation,
+  formatRobinhoodOptionLevel,
 } from "./robinhoodConnectModel.js";
 import {
   SCHWAB_USER_STATUS_LABELS,
@@ -2955,20 +2958,68 @@ export function SnapTradeConnectPanel({ enabled = true }) {
                   minWidth: 0,
                 }}
               >
-                {robinhoodSyncedAccounts.map((account) => (
-                  <StatusRow
-                    key={account.id}
-                    label={account.displayName}
-                    value={
-                      account.executionReady
-                        ? "execution ready"
-                        : "research required"
-                    }
-                    tone={
-                      account.executionReady ? CSS_COLOR.green : CSS_COLOR.amber
-                    }
-                  />
-                ))}
+                {robinhoodSyncedAccounts.map((account) => {
+                  const optionLabel = formatRobinhoodOptionLevel(
+                    account.optionLevel,
+                  );
+                  return (
+                    <div
+                      key={account.id}
+                      style={{ display: "grid", gap: sp(2), minWidth: 0 }}
+                    >
+                      <StatusRow label={account.displayName} value="" />
+                      <StatusRow
+                        label="Options"
+                        value={
+                          optionLabel ?? (
+                            <a
+                              href={ROBINHOOD_UPGRADE_OPTIONS_URL}
+                              target="_blank"
+                              rel="noreferrer"
+                              style={{
+                                color: CSS_COLOR.amber,
+                                textDecoration: "underline",
+                              }}
+                            >
+                              not approved — upgrade
+                            </a>
+                          )
+                        }
+                        tone={optionLabel ? CSS_COLOR.green : CSS_COLOR.amber}
+                      />
+                      <StatusRow
+                        label="Agentic"
+                        value={
+                          account.agentic === true
+                            ? "enabled"
+                            : account.agentic === false
+                              ? "disabled"
+                              : "unverified"
+                        }
+                        tone={
+                          account.agentic === true
+                            ? CSS_COLOR.green
+                            : CSS_COLOR.amber
+                        }
+                      />
+                      <StatusRow
+                        label="Execution"
+                        value={
+                          account.executionReady
+                            ? "ready"
+                            : formatRobinhoodAccountBlockers(
+                                account.executionBlockers,
+                              )
+                        }
+                        tone={
+                          account.executionReady
+                            ? CSS_COLOR.green
+                            : CSS_COLOR.amber
+                        }
+                      />
+                    </div>
+                  );
+                })}
               </div>
             ) : null}
           </div>

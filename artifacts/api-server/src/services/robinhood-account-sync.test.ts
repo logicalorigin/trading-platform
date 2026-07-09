@@ -105,12 +105,14 @@ const TWO_ACCOUNTS = {
       type: "agentic",
       status: "active",
       currency: "usd",
+      option_level: "option_level_2",
     },
     {
       id: "individual-acct-2",
       is_agentic: false,
       account_number: "87654321",
       status: "open",
+      option_level: "",
     },
   ],
 };
@@ -147,6 +149,8 @@ test("Robinhood sync reads accounts over MCP and upserts sanitized broker record
       // execution-ready with no residual blockers.
       assert.equal(agentic.executionReady, true);
       assert.equal(agentic.executionBlockers.length, 0);
+      // Options approval tier is captured from the get_accounts record.
+      assert.equal(agentic.optionLevel, "option_level_2");
 
       const agenticRow = await db
         .select()
@@ -156,6 +160,12 @@ test("Robinhood sync reads accounts over MCP and upserts sanitized broker record
       assert.ok(agenticRow[0]!.capabilities.includes("robinhood-agentic"));
       assert.ok(agenticRow[0]!.capabilities.includes("execution-ready"));
       assert.ok(agenticRow[0]!.capabilities.includes("orders"));
+      // Option level is persisted as a capability tag (no schema migration).
+      assert.ok(
+        agenticRow[0]!.capabilities.includes(
+          "robinhood-option-level:option_level_2",
+        ),
+      );
 
       const individual = result.accounts.find(
         (account) => account.robinhoodAccountId === "individual-acct-2",
@@ -163,6 +173,20 @@ test("Robinhood sync reads accounts over MCP and upserts sanitized broker record
       assert.ok(individual);
       assert.equal(individual.agentic, false);
       assert.equal(individual.executionReady, false);
+      // Empty option_level means options are not approved; no tag is stored.
+      assert.equal(individual.optionLevel, "");
+      const individualRow = await db
+        .select()
+        .from(brokerAccountsTable)
+        .where(
+          eq(brokerAccountsTable.providerAccountId, "robinhood:individual-acct-2"),
+        );
+      assert.equal(individualRow.length, 1);
+      assert.ok(
+        !individualRow[0]!.capabilities.some((capability) =>
+          capability.startsWith("robinhood-option-level:"),
+        ),
+      );
       assert.ok(
         individual.executionBlockers.includes("robinhood.account.non_agentic"),
       );

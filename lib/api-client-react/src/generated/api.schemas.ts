@@ -1468,6 +1468,8 @@ export interface RobinhoodConnectionSyncAccount {
   agentic: boolean | null;
   status: RobinhoodConnectionSyncAccountStatus;
   baseCurrency: string;
+  /** Robinhood options approval tier from get_accounts (e.g. "option_level_2"). Empty string when options are not approved. Not a full account number. */
+  optionLevel: string;
   executionReady: boolean;
   executionBlockers: string[];
   mode: RobinhoodConnectionSyncAccountMode;

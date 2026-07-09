@@ -6446,6 +6446,9 @@ components:
           enum: [open, closed, archived]
         baseCurrency:
           type: string
+        optionLevel:
+          type: string
+          description: Robinhood options approval tier from get_accounts (e.g. "option_level_2"). Empty string when options are not approved. Not a full account number.
         executionReady:
           type: boolean
         executionBlockers:
@@ -6466,6 +6469,7 @@ components:
         - agentic
         - status
         - baseCurrency
+        - optionLevel
         - executionReady
         - executionBlockers
         - mode
