@@ -26,6 +26,7 @@ import {
 import { createTaxOrderPreflight } from "../services/tax-planning";
 import { AUTH_CSRF_HEADER, __resetAuthRateLimitsForTests } from "./auth";
 import { __brokerExecutionRouteInternalsForTests } from "./broker-execution";
+import { filterIbkrGatewayRequestHeaders } from "./ibkr-portal";
 
 beforeEach(() => {
   __resetAuthRateLimitsForTests();
@@ -673,6 +674,27 @@ test("IBKR portal re-anchors Authenticator-family root API escapes under the gat
       assert.equal(resp.headers.get("location"), expectedLocation);
     }
   });
+});
+
+test("IBKR gateway proxy strips PYRUS credentials and preserves gateway cookies", () => {
+  const headers = filterIbkrGatewayRequestHeaders({
+    authorization: "Bearer app-secret",
+    cookie: "gateway_session=kept; pyrus_session=app-secret; theme=dark",
+    "proxy-authorization": "Basic app-secret",
+    "x-csrf-token": "app-csrf-secret",
+    "x-gateway-header": "kept",
+  });
+
+  assert.equal(headers.cookie, "gateway_session=kept; theme=dark");
+  assert.equal(headers["x-gateway-header"], "kept");
+  assert.equal(headers.authorization, undefined);
+  assert.equal(headers["proxy-authorization"], undefined);
+  assert.equal(headers["x-csrf-token"], undefined);
+  assert.equal(
+    filterIbkrGatewayRequestHeaders({ cookie: "pyrus_session=app-secret" })
+      .cookie,
+    undefined,
+  );
 });
 
 test("IBKR portal opens for admins (bypass) and for flag-on members with ibkr_access (SPEC §6 allow path)", async () => {

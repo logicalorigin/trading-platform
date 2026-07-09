@@ -16,7 +16,12 @@ import {
   GetIbkrPortalStatusResponse,
 } from "@workspace/api-zod";
 
-import { requireUser, requireUserCsrf } from "./auth";
+import {
+  AUTH_CSRF_HEADER,
+  AUTH_SESSION_COOKIE,
+  requireUser,
+  requireUserCsrf,
+} from "./auth";
 import { HttpError } from "../lib/errors";
 import type { AuthenticatedSession } from "../services/auth";
 import {
@@ -229,6 +234,39 @@ function rewriteBody(body: string, gatewayOrigin: string): string {
     );
 }
 
+export function filterIbkrGatewayRequestHeaders(
+  headers: Request["headers"],
+): Record<string, string | string[]> {
+  const forwardHeaders: Record<string, string | string[]> = {};
+  for (const [key, value] of Object.entries(headers)) {
+    if (value === undefined) continue;
+    const lower = key.toLowerCase();
+    if (
+      lower === "accept-encoding" ||
+      lower === "content-length" ||
+      lower === "authorization" ||
+      lower === "proxy-authorization" ||
+      lower === AUTH_CSRF_HEADER
+    ) {
+      continue;
+    }
+    // The gateway answers conditional requests with malformed 304 framing.
+    if (lower === "if-none-match" || lower === "if-modified-since") continue;
+    if (lower === "cookie") {
+      const cookie = (Array.isArray(value) ? value.join("; ") : value)
+        .split(";")
+        .map((part) => part.trim())
+        .filter(Boolean)
+        .filter((part) => part.split("=", 1)[0] !== AUTH_SESSION_COOKIE)
+        .join("; ");
+      if (cookie) forwardHeaders[key] = cookie;
+      continue;
+    }
+    forwardHeaders[key] = value;
+  }
+  return forwardHeaders;
+}
+
 async function proxyToGateway(req: Request, res: Response): Promise<void> {
   const startedAt = Date.now();
   const tracePath = (req.originalUrl.slice(GW_BASE.length) || "/").split("?")[0];
@@ -256,19 +294,7 @@ async function proxyToGateway(req: Request, res: Response): Promise<void> {
   const rest = req.originalUrl.slice(GW_BASE.length) || "/";
   const outBody = encodeRequestBody(req);
 
-  const forwardHeaders: Record<string, string | string[]> = {};
-  for (const [key, value] of Object.entries(req.headers)) {
-    if (value === undefined) continue;
-    const lower = key.toLowerCase();
-    if (lower === "accept-encoding" || lower === "content-length") continue;
-    // Never forward conditional-request headers: the gateway answers 304s with
-    // malformed framing (trailing bytes after `Connection: close`), which makes
-    // Node's HTTP client error out and this proxy 502 cached assets — the
-    // popup's login page then renders without its stylesheets/scripts. Always
-    // fetch fresh (loopback bandwidth is free) so the 304 path never happens.
-    if (lower === "if-none-match" || lower === "if-modified-since") continue;
-    forwardHeaders[key] = value;
-  }
+  const forwardHeaders = filterIbkrGatewayRequestHeaders(req.headers);
   forwardHeaders["host"] = `127.0.0.1:${gateway.port}`;
   if (outBody) {
     forwardHeaders["content-length"] = String(outBody.length);
