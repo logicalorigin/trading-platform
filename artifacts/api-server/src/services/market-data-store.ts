@@ -491,7 +491,10 @@ export function __handleMarketDataStoreErrorForTests(
 }
 
 export async function loadStoredMarketBars(
-  input: MarketDataStoreRequest & { sourceName: string },
+  input: MarketDataStoreRequest & {
+    sourceName: string;
+    order?: "asc" | "desc";
+  },
 ): Promise<BrokerBarSnapshot[]> {
   const window = resolveDurableHistoryWindow(input);
   if (!window) {
@@ -532,7 +535,7 @@ export async function loadStoredMarketBars(
     };
     const readRows = (rowLimit: number) =>
       runWithMarketDataStoreContext("bar-cache-read", () =>
-        window.from
+        window.from && input.order !== "desc"
           ? db
               .select(barColumns)
               .from(barCacheTable)

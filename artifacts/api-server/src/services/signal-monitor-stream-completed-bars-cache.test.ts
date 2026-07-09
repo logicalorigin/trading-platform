@@ -28,6 +28,9 @@ const {
   resetSignalMonitorMatrixStreamForTests: resetStream,
   seedSignalMonitorBackfilledBaseForTests: seedBackfilledBase,
   getSignalMonitorBackfilledBaseForTests: getBackfilledBase,
+  flushSignalMonitorCompletedBarsGapFetchesForTests: flushGapFetches,
+  getSignalMonitorCompletedBarsGapFetchStatsForTests: gapFetchStats,
+  setSignalMonitorCompletedBarsGapFetchLoaderForTests: setGapFetchLoader,
   stateToResponseForSnapshot,
   signalMonitorStreamLaneLatestCompletedBarAt: laneLatestCompletedBarAt,
 } = __signalMonitorInternalsForTests;
@@ -110,6 +113,77 @@ function toBackfilledBaseBars(
     freshness: "live",
     marketDataMode: "live",
   })) as never[];
+}
+
+function toHistoryBars<T extends Array<Record<string, unknown>>>(bars: T) {
+  return bars.map((bar) => ({
+    ...bar,
+    source: "massive-history",
+    freshness: "live",
+    marketDataMode: "live",
+    delayed: false,
+  })) as never[];
+}
+
+function aggregateToCompletedBar(entry: StockMinuteAggregateMessage) {
+  return {
+    timestamp: new Date(entry.startMs),
+    open: entry.open,
+    high: entry.high,
+    low: entry.low,
+    close: entry.close,
+    volume: entry.volume,
+    bid: null,
+    ask: null,
+    mid: null,
+    quoteAsOf: null,
+    source: "massive-history",
+    providerContractId: null,
+    outsideRth: true,
+    partial: false,
+    transport: "massive_rest",
+    delayed: false,
+    freshness: "live",
+    marketDataMode: "live",
+    dataUpdatedAt: new Date(entry.startMs + 60_000),
+    ageMs: null,
+  };
+}
+
+function buildCompletedBars(input: {
+  latestStartMs: number;
+  count: number;
+  stepMs: number;
+}) {
+  return Array.from({ length: input.count }, (_, index) => {
+    const startMs =
+      input.latestStartMs - (input.count - 1 - index) * input.stepMs;
+    const close = Number(
+      (100 + index * 0.08 + Math.sin(index / 7) * 1.2).toFixed(4),
+    );
+    return {
+      timestamp: new Date(startMs),
+      open: close,
+      high: close + 0.6,
+      low: close - 0.6,
+      close,
+      volume: 10_000 + index,
+      bid: null,
+      ask: null,
+      mid: null,
+      quoteAsOf: null,
+      source: "massive-history",
+      providerContractId: null,
+      outsideRth: true,
+      partial: false,
+      transport: "massive_rest",
+      delayed: false,
+      freshness: "live",
+      marketDataMode: "live",
+      dataUpdatedAt: new Date(startMs + input.stepMs),
+      ageMs: null,
+    };
+  });
 }
 
 function readFullLocalMemorySeries(evaluatedAt: Date) {
@@ -467,19 +541,157 @@ test("stale backfilled base gap is filled from local 1m memory without changing 
     timeframe: "1m",
     evaluatedAt,
   });
+  const streamBars = loadSignalMonitorStreamCompletedBars({
+    symbol: SYMBOL,
+    timeframe: "1m",
+    evaluatedAt,
+    limit: 240,
+  });
+  const contiguousBars = mergeCompletedBars(fullSeries as never[], streamBars, 240);
   const contiguous = evalCompletedBars({
     profile: makeProfile(),
     symbol: SYMBOL,
     timeframe: "1m",
     evaluatedAt,
-    completedBars: fullSeries,
+    completedBars: contiguousBars,
   });
 
   assert.ok(gapFilled, "stream eval should produce a state");
   assert.deepEqual(gapFilled, contiguous);
 });
 
-test("contiguous base plus live edge is unchanged when local memory is available", () => {
+test("stale backfilled base gap is filled from durable history without changing signal output", async () => {
+  const evaluatedAt = recentEvaluatedAt();
+  const aggregates = buildMinuteAggregates({ evaluatedAt, count: 260 });
+  seedStreamBars(aggregates.slice(-5));
+
+  const fullSeries = aggregates
+    .slice(-240)
+    .map((entry) => aggregateToCompletedBar(entry));
+  const staleBase = toHistoryBars(fullSeries.slice(0, 210));
+  const fetchedGap = toHistoryBars(fullSeries.slice(210, 236));
+  const expectedFrom = fullSeries[210]?.timestamp.getTime();
+  const expectedTo = fullSeries[235]?.timestamp.getTime();
+  let fetchCalls = 0;
+  setGapFetchLoader(async (request) => {
+    fetchCalls += 1;
+    assert.equal(request.symbol, SYMBOL);
+    assert.equal(request.timeframe, "1m");
+    assert.equal(request.from.getTime(), expectedFrom);
+    assert.equal(request.to.getTime(), expectedTo);
+    assert.equal(request.limit, fetchedGap.length);
+    return fetchedGap;
+  });
+
+  seedBackfilledBase({
+    symbol: SYMBOL,
+    timeframe: "1m",
+    bars: staleBase,
+    refreshedAtMs: evaluatedAt.getTime() - 60 * 60_000,
+    source: "backfill",
+  });
+
+  const firstPass = evalStreamBars({
+    profile: makeProfile(),
+    symbol: SYMBOL,
+    timeframe: "1m",
+    evaluatedAt,
+  });
+  assert.ok(firstPass, "first stream eval should produce a state");
+  assert.equal(gapFetchStats().queuedCount, 1);
+
+  await flushGapFetches();
+  assert.equal(fetchCalls, 1);
+  assert.equal(gapFetchStats().promotedCount, 1);
+
+  const gapFilled = evalStreamBars({
+    profile: makeProfile(),
+    symbol: SYMBOL,
+    timeframe: "1m",
+    evaluatedAt,
+  });
+  const streamBars = loadSignalMonitorStreamCompletedBars({
+    symbol: SYMBOL,
+    timeframe: "1m",
+    evaluatedAt,
+    limit: 240,
+  });
+  const contiguousBars = mergeCompletedBars(fullSeries as never[], streamBars, 240);
+  const contiguous = evalCompletedBars({
+    profile: makeProfile(),
+    symbol: SYMBOL,
+    timeframe: "1m",
+    evaluatedAt,
+    completedBars: contiguousBars,
+  });
+
+  assert.ok(gapFilled, "stream eval should produce a state after fetch");
+  assert.deepEqual(gapFilled, contiguous);
+});
+
+test("stale 1h backfilled base gap is filled from durable history without changing signal output", async () => {
+  const evaluatedAt = new Date("2026-06-09T15:00:00.000Z");
+  const hourMs = 60 * 60_000;
+  const fullSeries = buildCompletedBars({
+    latestStartMs: evaluatedAt.getTime() - hourMs,
+    count: 240,
+    stepMs: hourMs,
+  });
+  const staleBase = toHistoryBars(fullSeries.slice(0, 210));
+  const fetchedGap = toHistoryBars(fullSeries.slice(210));
+  const expectedFrom = fullSeries[210]?.timestamp.getTime();
+  const expectedTo = fullSeries.at(-1)?.timestamp.getTime();
+  let fetchCalls = 0;
+  setGapFetchLoader(async (request) => {
+    fetchCalls += 1;
+    assert.equal(request.symbol, SYMBOL);
+    assert.equal(request.timeframe, "1h");
+    assert.equal(request.from.getTime(), expectedFrom);
+    assert.equal(request.to.getTime(), expectedTo);
+    assert.equal(request.limit, fetchedGap.length);
+    return fetchedGap;
+  });
+
+  seedBackfilledBase({
+    symbol: SYMBOL,
+    timeframe: "1h",
+    bars: staleBase,
+    refreshedAtMs: evaluatedAt.getTime() - 2 * hourMs,
+    source: "backfill",
+  });
+
+  const firstPass = evalStreamBars({
+    profile: makeProfile(),
+    symbol: SYMBOL,
+    timeframe: "1h",
+    evaluatedAt,
+  });
+  assert.ok(firstPass, "first 1h stream eval should produce a state");
+  assert.equal(gapFetchStats().queuedCount, 1);
+
+  await flushGapFetches();
+  assert.equal(fetchCalls, 1);
+  assert.equal(gapFetchStats().promotedCount, 1);
+
+  const gapFilled = evalStreamBars({
+    profile: makeProfile(),
+    symbol: SYMBOL,
+    timeframe: "1h",
+    evaluatedAt,
+  });
+  const contiguous = evalCompletedBars({
+    profile: makeProfile(),
+    symbol: SYMBOL,
+    timeframe: "1h",
+    evaluatedAt,
+    completedBars: fullSeries as never[],
+  });
+
+  assert.ok(gapFilled, "1h stream eval should produce a state after fetch");
+  assert.deepEqual(gapFilled, contiguous);
+});
+
+test("contiguous base plus live edge is unchanged and never queues durable gap fetch", async () => {
   const evaluatedAt = recentEvaluatedAt();
   const aggregates = buildMinuteAggregates({ evaluatedAt, count: 245 });
   seedLocalMemoryBars(aggregates);
@@ -493,6 +705,11 @@ test("contiguous base plus live edge is unchanged when local memory is available
     bars: baseBars,
     refreshedAtMs: evaluatedAt.getTime() - 60_000,
     source: "backfill",
+  });
+  let fetchCalls = 0;
+  setGapFetchLoader(async () => {
+    fetchCalls += 1;
+    return [];
   });
 
   const streamBars = loadSignalMonitorStreamCompletedBars({
@@ -520,4 +737,7 @@ test("contiguous base plus live edge is unchanged when local memory is available
 
   assert.ok(streamState, "stream eval should produce a state");
   assert.deepEqual(streamState, oldMergeState);
+  await flushGapFetches();
+  assert.equal(fetchCalls, 0);
+  assert.equal(gapFetchStats().queuedCount, 0);
 });

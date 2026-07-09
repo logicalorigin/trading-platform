@@ -104,7 +104,10 @@ import {
   runWithSignalMonitorStoredBarsPrefetch,
   storeSourceNames,
 } from "./signal-monitor-local-bar-cache";
-import { onBarCacheRowsChanged } from "./market-data-store";
+import {
+  loadStoredMarketBars,
+  onBarCacheRowsChanged,
+} from "./market-data-store";
 
 export type SignalMonitorTimeframe = "1m" | "2m" | "5m" | "15m" | "1h" | "1d";
 export type SignalMonitorMatrixTimeframe = SignalMonitorTimeframe;
@@ -5015,6 +5018,23 @@ function loadSignalMonitorStreamCompletedBars(input: {
 const SIGNAL_MONITOR_LOCAL_MEMORY_GAP_FILL_TIMEFRAMES = new Set<
   SignalMonitorMatrixTimeframe
 >(["1m", "2m", "5m", "15m"]);
+const SIGNAL_MONITOR_GAP_FETCH_MAX_BARS = 240;
+const SIGNAL_MONITOR_GAP_FETCH_MAX_CELLS_PER_CYCLE = 8;
+const SIGNAL_MONITOR_GAP_FETCH_DRAIN_INTERVAL_MS = 1_000;
+const SIGNAL_MONITOR_GAP_FETCH_RETRY_MS = 5 * 60_000;
+
+type SignalMonitorCompletedBarsGapFetchCandidate = {
+  symbol: string;
+  timeframe: SignalMonitorMatrixTimeframe;
+  fromMs: number;
+  toMs: number;
+  limit: number;
+};
+
+type SignalMonitorCompletedBarsMergeResult = {
+  bars: SignalMonitorBarSnapshot[];
+  gapFetchCandidate: SignalMonitorCompletedBarsGapFetchCandidate | null;
+};
 
 function signalMonitorEarliestBarTimestampMs(
   bars: readonly SignalMonitorBarSnapshot[],
@@ -5121,14 +5141,108 @@ function loadSignalMonitorLocalMemoryGapFillBars(input: {
   });
 }
 
-function mergeCompletedBarsWithLocalMemoryGapFill(input: {
+function signalMonitorCompletedBarsGapFetchLimit(input: {
+  timeframe: SignalMonitorMatrixTimeframe;
+  fromMs: number;
+  toMs: number;
+  limit: number;
+}): number | null {
+  if (input.toMs < input.fromMs) {
+    return null;
+  }
+  const timeframeMs = TIMEFRAME_MS[input.timeframe];
+  const windowBars =
+    Math.floor((input.toMs - input.fromMs) / timeframeMs) + 1;
+  if (!Number.isFinite(windowBars) || windowBars <= 0) {
+    return null;
+  }
+  return Math.max(
+    1,
+    Math.min(
+      SIGNAL_MONITOR_GAP_FETCH_MAX_BARS,
+      positiveInteger(
+        input.limit,
+        SIGNAL_MONITOR_MATRIX_BARS_LIMIT,
+        1,
+        SIGNAL_MONITOR_MATRIX_BARS_LIMIT,
+      ),
+      windowBars,
+    ),
+  );
+}
+
+function resolveSignalMonitorCompletedBarsGapFetchCandidate(input: {
+  symbol: string;
+  timeframe: SignalMonitorMatrixTimeframe;
+  evaluatedAt: Date;
+  liveEdgeBars: readonly SignalMonitorBarSnapshot[];
+  mergedBars: readonly SignalMonitorBarSnapshot[];
+  limit: number;
+}): SignalMonitorCompletedBarsGapFetchCandidate | null {
+  const timestampMs = Array.from(
+    new Set(
+      input.mergedBars
+        .map((bar) => signalMonitorBarTimestampMs(bar))
+        .filter((timestamp): timestamp is number => timestamp != null),
+    ),
+  ).sort((left, right) => left - right);
+  if (!timestampMs.length) {
+    return null;
+  }
+  const timeframeMs = TIMEFRAME_MS[input.timeframe];
+  const targetMs = signalMonitorCompletedBarsGapTargetMs({
+    liveEdgeBars: input.liveEdgeBars,
+    timeframe: input.timeframe,
+    evaluatedAt: input.evaluatedAt,
+  });
+  let fromMs: number | null = null;
+  let toMs: number | null = null;
+  for (let index = timestampMs.length - 1; index > 0; index -= 1) {
+    const rightMs = timestampMs[index]!;
+    const leftMs = timestampMs[index - 1]!;
+    if (rightMs - leftMs > timeframeMs) {
+      fromMs = leftMs + timeframeMs;
+      toMs = rightMs;
+      break;
+    }
+  }
+  if (fromMs == null || toMs == null) {
+    const latestMs = timestampMs.at(-1)!;
+    if (targetMs - latestMs <= timeframeMs) {
+      return null;
+    }
+    fromMs = latestMs + timeframeMs;
+    toMs = targetMs;
+  }
+  const limit = signalMonitorCompletedBarsGapFetchLimit({
+    timeframe: input.timeframe,
+    fromMs,
+    toMs,
+    limit: input.limit,
+  });
+  if (limit == null) {
+    return null;
+  }
+  const symbol = normalizeSymbol(input.symbol).toUpperCase();
+  return symbol
+    ? {
+        symbol,
+        timeframe: input.timeframe,
+        fromMs,
+        toMs,
+        limit,
+      }
+    : null;
+}
+
+function mergeCompletedBarsWithLocalMemoryGapFillResult(input: {
   symbol: string;
   timeframe: SignalMonitorMatrixTimeframe;
   evaluatedAt: Date;
   baseBars: SignalMonitorBarSnapshot[];
   liveEdgeBars: SignalMonitorBarSnapshot[];
   limit: number;
-}): SignalMonitorBarSnapshot[] {
+}): SignalMonitorCompletedBarsMergeResult {
   if (
     !shouldFillSignalMonitorCompletedBarsGapFromLocalMemory({
       baseBars: input.baseBars,
@@ -5137,7 +5251,18 @@ function mergeCompletedBarsWithLocalMemoryGapFill(input: {
       evaluatedAt: input.evaluatedAt,
     })
   ) {
-    return mergeCompletedBars(input.baseBars, input.liveEdgeBars, input.limit);
+    const bars = mergeCompletedBars(
+      input.baseBars,
+      input.liveEdgeBars,
+      input.limit,
+    );
+    return {
+      bars,
+      gapFetchCandidate: resolveSignalMonitorCompletedBarsGapFetchCandidate({
+        ...input,
+        mergedBars: bars,
+      }),
+    };
   }
 
   const gapFillBars = loadSignalMonitorLocalMemoryGapFillBars({
@@ -5146,11 +5271,32 @@ function mergeCompletedBarsWithLocalMemoryGapFill(input: {
     evaluatedAt: input.evaluatedAt,
     limit: input.limit,
   });
-  return mergeCompletedBars(
-    [...input.baseBars, ...gapFillBars],
+  const effectiveBaseBars = gapFillBars.length
+    ? mergeCompletedBars(input.baseBars, gapFillBars, input.limit)
+    : input.baseBars;
+  const bars = mergeCompletedBars(
+    effectiveBaseBars,
     input.liveEdgeBars,
     input.limit,
   );
+  return {
+    bars,
+    gapFetchCandidate: resolveSignalMonitorCompletedBarsGapFetchCandidate({
+      ...input,
+      mergedBars: bars,
+    }),
+  };
+}
+
+function mergeCompletedBarsWithLocalMemoryGapFill(input: {
+  symbol: string;
+  timeframe: SignalMonitorMatrixTimeframe;
+  evaluatedAt: Date;
+  baseBars: SignalMonitorBarSnapshot[];
+  liveEdgeBars: SignalMonitorBarSnapshot[];
+  limit: number;
+}): SignalMonitorBarSnapshot[] {
+  return mergeCompletedBarsWithLocalMemoryGapFillResult(input).bars;
 }
 
 // Closed-at of the freshest COMPLETED bar the live in-memory aggregate ring can
@@ -5336,6 +5482,305 @@ function createSignalMonitorBackgroundDbGate(limit: number) {
 const runSignalMonitorBackgroundDbRead = createSignalMonitorBackgroundDbGate(
   SIGNAL_MONITOR_BACKGROUND_DB_CONCURRENCY,
 );
+
+type SignalMonitorCompletedBarsGapFetchBarsLoader = (input: {
+  symbol: string;
+  timeframe: SignalMonitorMatrixTimeframe;
+  from: Date;
+  to: Date;
+  limit: number;
+}) => Promise<SignalMonitorBarSnapshot[]>;
+
+const pendingSignalMonitorCompletedBarsGapFetches = new Map<
+  string,
+  SignalMonitorCompletedBarsGapFetchCandidate
+>();
+const inFlightSignalMonitorCompletedBarsGapFetches = new Set<string>();
+const signalMonitorCompletedBarsGapFetchLastAttemptByCell = new Map<
+  string,
+  { toMs: number; attemptedAtMs: number }
+>();
+let signalMonitorCompletedBarsGapFetchTimer: NodeJS.Timeout | null = null;
+let signalMonitorCompletedBarsGapFetchDrainInFlight = false;
+let signalMonitorCompletedBarsGapFetchNextDrainNotBeforeMs = 0;
+let loadSignalMonitorCompletedBarsGapFetchBarsOverride:
+  | SignalMonitorCompletedBarsGapFetchBarsLoader
+  | null = null;
+const signalMonitorCompletedBarsGapFetchDiagnostics = {
+  queuedCount: 0,
+  fetchCount: 0,
+  promotedCount: 0,
+  emptyCount: 0,
+  failureCount: 0,
+  skippedThrottleCount: 0,
+  lastError: null as string | null,
+  lastWindow: null as
+    | {
+        symbol: string;
+        timeframe: SignalMonitorMatrixTimeframe;
+        from: string;
+        to: string;
+        limit: number;
+      }
+    | null,
+};
+
+async function loadSignalMonitorCompletedBarsGapFetchBars(input: {
+  symbol: string;
+  timeframe: SignalMonitorMatrixTimeframe;
+  fromMs: number;
+  toMs: number;
+  limit: number;
+}): Promise<SignalMonitorBarSnapshot[]> {
+  const loader = loadSignalMonitorCompletedBarsGapFetchBarsOverride;
+  const request = {
+    symbol: input.symbol,
+    timeframe: input.timeframe,
+    from: new Date(input.fromMs),
+    to: new Date(input.toMs),
+    limit: input.limit,
+  };
+  if (loader) {
+    return loader(request);
+  }
+
+  const sourceResults: SignalMonitorBarSnapshot[][] = [];
+  for (const sourceName of storeSourceNames()) {
+    const bars = await runSignalMonitorBackgroundDbRead(() =>
+      loadStoredMarketBars({
+        symbol: request.symbol,
+        timeframe: request.timeframe,
+        from: request.from,
+        to: request.to,
+        limit: request.limit,
+        order: "desc",
+        assetClass: "equity",
+        outsideRth: true,
+        source: "trades",
+        recentWindowMinutes: 0,
+        sourceName,
+      }),
+    );
+    sourceResults.push(bars as SignalMonitorBarSnapshot[]);
+  }
+  return mergeCompletedBars(sourceResults.flat(), [], request.limit);
+}
+
+function scheduleSignalMonitorCompletedBarsGapFetchDrain(): void {
+  if (signalMonitorCompletedBarsGapFetchTimer) {
+    return;
+  }
+  const delayMs = Math.max(
+    0,
+    signalMonitorCompletedBarsGapFetchNextDrainNotBeforeMs - Date.now(),
+  );
+  signalMonitorCompletedBarsGapFetchTimer = setTimeout(() => {
+    signalMonitorCompletedBarsGapFetchTimer = null;
+    void drainSignalMonitorCompletedBarsGapFetches();
+  }, delayMs);
+}
+
+function queueSignalMonitorCompletedBarsGapFetch(
+  candidate: SignalMonitorCompletedBarsGapFetchCandidate | null,
+): void {
+  if (!candidate) {
+    return;
+  }
+  const key = signalMonitorBackfillCellKey(candidate.symbol, candidate.timeframe);
+  if (inFlightSignalMonitorCompletedBarsGapFetches.has(key)) {
+    return;
+  }
+  const nowMs = Date.now();
+  const lastAttempt =
+    signalMonitorCompletedBarsGapFetchLastAttemptByCell.get(key);
+  if (
+    lastAttempt &&
+    lastAttempt.toMs >= candidate.toMs &&
+    nowMs - lastAttempt.attemptedAtMs < SIGNAL_MONITOR_GAP_FETCH_RETRY_MS
+  ) {
+    signalMonitorCompletedBarsGapFetchDiagnostics.skippedThrottleCount += 1;
+    return;
+  }
+  pendingSignalMonitorCompletedBarsGapFetches.set(key, candidate);
+  signalMonitorCompletedBarsGapFetchDiagnostics.queuedCount += 1;
+  scheduleSignalMonitorCompletedBarsGapFetchDrain();
+}
+
+async function processSignalMonitorCompletedBarsGapFetch(
+  candidate: SignalMonitorCompletedBarsGapFetchCandidate,
+): Promise<void> {
+  const key = signalMonitorBackfillCellKey(candidate.symbol, candidate.timeframe);
+  if (inFlightSignalMonitorCompletedBarsGapFetches.has(key)) {
+    return;
+  }
+  inFlightSignalMonitorCompletedBarsGapFetches.add(key);
+  const attemptedAtMs = Date.now();
+  signalMonitorCompletedBarsGapFetchLastAttemptByCell.set(key, {
+    toMs: candidate.toMs,
+    attemptedAtMs,
+  });
+  try {
+    const currentBaseBars =
+      signalMonitorBackfilledBaseByCell.get(key)?.bars ?? [];
+    if (!currentBaseBars.length) {
+      return;
+    }
+    const limit = signalMonitorCompletedBarsGapFetchLimit({
+      timeframe: candidate.timeframe,
+      fromMs: candidate.fromMs,
+      toMs: candidate.toMs,
+      limit: candidate.limit,
+    });
+    if (limit == null) {
+      return;
+    }
+    signalMonitorCompletedBarsGapFetchDiagnostics.fetchCount += 1;
+    signalMonitorCompletedBarsGapFetchDiagnostics.lastWindow = {
+      symbol: candidate.symbol,
+      timeframe: candidate.timeframe,
+      from: new Date(candidate.fromMs).toISOString(),
+      to: new Date(candidate.toMs).toISOString(),
+      limit,
+    };
+    const gapBars = await loadSignalMonitorCompletedBarsGapFetchBars({
+      symbol: candidate.symbol,
+      timeframe: candidate.timeframe,
+      fromMs: candidate.fromMs,
+      toMs: candidate.toMs,
+      limit,
+    });
+    if (!gapBars.length) {
+      signalMonitorCompletedBarsGapFetchDiagnostics.emptyCount += 1;
+      return;
+    }
+    const refreshedBaseBars =
+      signalMonitorBackfilledBaseByCell.get(key)?.bars ?? currentBaseBars;
+    const refreshedTimestamps = new Set(
+      refreshedBaseBars
+        .map((bar) => signalMonitorBarTimestampMs(bar))
+        .filter((timestampMs): timestampMs is number => timestampMs != null),
+    );
+    const hasNewTimestamp = gapBars.some((bar) => {
+      const timestampMs = signalMonitorBarTimestampMs(bar);
+      return timestampMs != null && !refreshedTimestamps.has(timestampMs);
+    });
+    const refreshedLatestMs =
+      signalMonitorBackfilledBaseLatestBarMs(refreshedBaseBars);
+    const promotedBars = mergeCompletedBars(
+      refreshedBaseBars,
+      gapBars,
+      SIGNAL_MONITOR_MATRIX_BARS_LIMIT,
+    );
+    const promotedLatestMs =
+      signalMonitorBackfilledBaseLatestBarMs(promotedBars);
+    if (
+      promotedLatestMs == null ||
+      (!hasNewTimestamp &&
+        refreshedLatestMs != null &&
+        promotedLatestMs <= refreshedLatestMs)
+    ) {
+      return;
+    }
+    rememberSignalMonitorBackfilledBaseBars({
+      symbol: candidate.symbol,
+      timeframe: candidate.timeframe,
+      bars: promotedBars,
+      refreshedAtMs: Date.now(),
+      source: "backfill",
+    });
+    signalMonitorCompletedBarsGapFetchDiagnostics.promotedCount += 1;
+  } catch (error) {
+    signalMonitorCompletedBarsGapFetchDiagnostics.failureCount += 1;
+    signalMonitorCompletedBarsGapFetchDiagnostics.lastError =
+      error instanceof Error ? error.message : String(error);
+    logger.warn(
+      {
+        err: error,
+        symbol: candidate.symbol,
+        timeframe: candidate.timeframe,
+        from: new Date(candidate.fromMs).toISOString(),
+        to: new Date(candidate.toMs).toISOString(),
+        limit: candidate.limit,
+      },
+      "Signal monitor completed-bars gap fetch failed",
+    );
+  } finally {
+    inFlightSignalMonitorCompletedBarsGapFetches.delete(key);
+  }
+}
+
+async function drainSignalMonitorCompletedBarsGapFetches(
+  options: { ignoreRateLimit?: boolean } = {},
+): Promise<void> {
+  if (signalMonitorCompletedBarsGapFetchDrainInFlight) {
+    return;
+  }
+  if (!pendingSignalMonitorCompletedBarsGapFetches.size) {
+    return;
+  }
+  const nowMs = Date.now();
+  if (
+    !options.ignoreRateLimit &&
+    nowMs < signalMonitorCompletedBarsGapFetchNextDrainNotBeforeMs
+  ) {
+    scheduleSignalMonitorCompletedBarsGapFetchDrain();
+    return;
+  }
+  signalMonitorCompletedBarsGapFetchDrainInFlight = true;
+  signalMonitorCompletedBarsGapFetchNextDrainNotBeforeMs =
+    nowMs + SIGNAL_MONITOR_GAP_FETCH_DRAIN_INTERVAL_MS;
+  try {
+    const candidates = Array.from(
+      pendingSignalMonitorCompletedBarsGapFetches.entries(),
+    ).slice(0, SIGNAL_MONITOR_GAP_FETCH_MAX_CELLS_PER_CYCLE);
+    for (const [key] of candidates) {
+      pendingSignalMonitorCompletedBarsGapFetches.delete(key);
+    }
+    await Promise.all(
+      candidates.map(([, candidate]) =>
+        processSignalMonitorCompletedBarsGapFetch(candidate),
+      ),
+    );
+  } finally {
+    signalMonitorCompletedBarsGapFetchDrainInFlight = false;
+    if (pendingSignalMonitorCompletedBarsGapFetches.size) {
+      scheduleSignalMonitorCompletedBarsGapFetchDrain();
+    }
+  }
+}
+
+async function flushSignalMonitorCompletedBarsGapFetchesForTests(): Promise<void> {
+  if (signalMonitorCompletedBarsGapFetchTimer) {
+    clearTimeout(signalMonitorCompletedBarsGapFetchTimer);
+    signalMonitorCompletedBarsGapFetchTimer = null;
+  }
+  let guard = 0;
+  while (pendingSignalMonitorCompletedBarsGapFetches.size && guard < 1_000) {
+    await drainSignalMonitorCompletedBarsGapFetches({ ignoreRateLimit: true });
+    guard += 1;
+  }
+}
+
+function resetSignalMonitorCompletedBarsGapFetchForTests(): void {
+  if (signalMonitorCompletedBarsGapFetchTimer) {
+    clearTimeout(signalMonitorCompletedBarsGapFetchTimer);
+    signalMonitorCompletedBarsGapFetchTimer = null;
+  }
+  pendingSignalMonitorCompletedBarsGapFetches.clear();
+  inFlightSignalMonitorCompletedBarsGapFetches.clear();
+  signalMonitorCompletedBarsGapFetchLastAttemptByCell.clear();
+  signalMonitorCompletedBarsGapFetchDrainInFlight = false;
+  signalMonitorCompletedBarsGapFetchNextDrainNotBeforeMs = 0;
+  loadSignalMonitorCompletedBarsGapFetchBarsOverride = null;
+  signalMonitorCompletedBarsGapFetchDiagnostics.queuedCount = 0;
+  signalMonitorCompletedBarsGapFetchDiagnostics.fetchCount = 0;
+  signalMonitorCompletedBarsGapFetchDiagnostics.promotedCount = 0;
+  signalMonitorCompletedBarsGapFetchDiagnostics.emptyCount = 0;
+  signalMonitorCompletedBarsGapFetchDiagnostics.failureCount = 0;
+  signalMonitorCompletedBarsGapFetchDiagnostics.skippedThrottleCount = 0;
+  signalMonitorCompletedBarsGapFetchDiagnostics.lastError = null;
+  signalMonitorCompletedBarsGapFetchDiagnostics.lastWindow = null;
+}
 
 function signalMonitorBackfillCellKey(
   symbol: string,
@@ -9959,6 +10404,9 @@ function evaluateSignalMonitorMatrixStateFromStreamBars(input: {
   const baseContentStamp = baseEntry?.contentStamp ?? 0;
   const aggregateRevision = getSignalMonitorAggregateRevision(input.symbol);
   let completedBars: SignalMonitorBarSnapshot[];
+  let completedBarsGapFetchCandidate:
+    | SignalMonitorCompletedBarsGapFetchCandidate
+    | null = null;
   const cachedCell = lruCacheTouch(signalMonitorStreamCompletedBarsCache, cellKey);
   if (
     cachedCell &&
@@ -10003,8 +10451,8 @@ function evaluateSignalMonitorMatrixStateFromStreamBars(input: {
           liveEdgeBars: streamBars,
         })
       : streamBars;
-    const mergedBars = baseBars.length
-      ? mergeCompletedBarsWithLocalMemoryGapFill({
+    const mergeResult = baseBars.length
+      ? mergeCompletedBarsWithLocalMemoryGapFillResult({
           symbol: input.symbol,
           timeframe: input.timeframe,
           evaluatedAt: input.evaluatedAt,
@@ -10012,38 +10460,45 @@ function evaluateSignalMonitorMatrixStateFromStreamBars(input: {
           liveEdgeBars: trustedStreamBars,
           limit: SIGNAL_MONITOR_MATRIX_BARS_LIMIT,
         })
-      : trustedStreamBars;
+      : { bars: trustedStreamBars, gapFetchCandidate: null };
+    completedBarsGapFetchCandidate = mergeResult.gapFetchCandidate;
+    queueSignalMonitorCompletedBarsGapFetch(completedBarsGapFetchCandidate);
+    const mergedBars = mergeResult.bars;
     // Single slice (mergeCompletedBars already applies the limit, but the
     // empty-base branch does not) so the cached array is the exact series the
     // eval consumes — also removes the prior double-slice on the hot path.
     completedBars = mergedBars.slice(-SIGNAL_MONITOR_MATRIX_BARS_LIMIT);
     const latestBarTimestampMs =
       signalMonitorBarTimestampMs(completedBars.at(-1)) ?? null;
-    lruCacheSet(
-      signalMonitorStreamCompletedBarsCache,
-      cellKey,
-      {
-        key: buildSignalMonitorStreamCompletedBarsCacheKey({
-          baseContentStamp,
-          aggregateRevision,
-          completedBarsCount: completedBars.length,
+    if (!completedBarsGapFetchCandidate) {
+      lruCacheSet(
+        signalMonitorStreamCompletedBarsCache,
+        cellKey,
+        {
+          key: buildSignalMonitorStreamCompletedBarsCacheKey({
+            baseContentStamp,
+            aggregateRevision,
+            completedBarsCount: completedBars.length,
+            latestBarTimestampMs,
+          }),
+          bars: completedBars,
           latestBarTimestampMs,
-        }),
-        bars: completedBars,
-        latestBarTimestampMs,
-      },
-      SIGNAL_MONITOR_STREAM_COMPLETED_BARS_CACHE_MAX,
-    );
+        },
+        SIGNAL_MONITOR_STREAM_COMPLETED_BARS_CACHE_MAX,
+      );
+    }
   }
   if (!completedBars.length) {
     return null;
   }
-  promoteSignalMonitorBackfilledBaseFromStream({
-    symbol: input.symbol,
-    timeframe: input.timeframe,
-    completedBars,
-    evaluatedAt: input.evaluatedAt,
-  });
+  if (!completedBarsGapFetchCandidate) {
+    promoteSignalMonitorBackfilledBaseFromStream({
+      symbol: input.symbol,
+      timeframe: input.timeframe,
+      completedBars,
+      evaluatedAt: input.evaluatedAt,
+    });
+  }
   return evaluateSignalMonitorMatrixStateFromCompletedBars({
     profile: input.profile,
     symbol: input.symbol,
@@ -12405,6 +12860,7 @@ export async function subscribeSignalMonitorMatrixStream(input: {
 function resetSignalMonitorMatrixStreamForTests() {
   signalMonitorMatrixStreamSubscribers.clear();
   signalMonitorServerOwnedProducers.clear();
+  resetSignalMonitorCompletedBarsGapFetchForTests();
   unsubscribeSignalMonitorBackfilledBaseBarCacheRowsChanged?.();
   unsubscribeSignalMonitorBackfilledBaseBarCacheRowsChanged = null;
   signalMonitorBackfilledBaseByCell.clear();
@@ -14354,8 +14810,29 @@ export const __signalMonitorInternalsForTests = {
   SIGNAL_MONITOR_BACKFILL_REFRESH_MS,
   SIGNAL_MONITOR_BACKFILL_MAX_CELLS_PER_CYCLE,
   SIGNAL_MONITOR_BACKFILL_CONCURRENCY_LIMIT,
+  SIGNAL_MONITOR_GAP_FETCH_MAX_BARS,
+  SIGNAL_MONITOR_GAP_FETCH_MAX_CELLS_PER_CYCLE,
+  SIGNAL_MONITOR_GAP_FETCH_DRAIN_INTERVAL_MS,
   refreshSignalMonitorBackfilledBaseBarsForTests:
     refreshSignalMonitorBackfilledBaseBars,
+  async flushSignalMonitorCompletedBarsGapFetchesForTests() {
+    await flushSignalMonitorCompletedBarsGapFetchesForTests();
+  },
+  getSignalMonitorCompletedBarsGapFetchStatsForTests() {
+    return {
+      pendingCount: pendingSignalMonitorCompletedBarsGapFetches.size,
+      inFlightCount: inFlightSignalMonitorCompletedBarsGapFetches.size,
+      ...signalMonitorCompletedBarsGapFetchDiagnostics,
+      lastWindow: signalMonitorCompletedBarsGapFetchDiagnostics.lastWindow
+        ? { ...signalMonitorCompletedBarsGapFetchDiagnostics.lastWindow }
+        : null,
+    };
+  },
+  setSignalMonitorCompletedBarsGapFetchLoaderForTests(
+    loader: SignalMonitorCompletedBarsGapFetchBarsLoader | null,
+  ) {
+    loadSignalMonitorCompletedBarsGapFetchBarsOverride = loader;
+  },
   getSignalMonitorBackfillRefreshDiagnosticsForTests() {
     const diagnostic =
       signalMonitorBackfillRefreshDiagnostics.lastDiagnostic;
