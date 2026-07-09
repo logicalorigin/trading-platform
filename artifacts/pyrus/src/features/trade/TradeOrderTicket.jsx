@@ -15,6 +15,7 @@ import {
   useSearchSnapTradeAccountSymbols,
   useSubmitSnapTradeEquityOrder,
   useSubmitOrders,
+  useSyncRobinhoodConnections,
 } from "@workspace/api-client-react";
 import {
   ensureTradeTickerInfo,
@@ -66,6 +67,11 @@ import { buildSignalOptionsDeviation } from "./automationDeviationModel";
 import { buildTicketReadinessModel } from "./tradeTicketReadinessModel.js";
 import { useSnapTradeExecutionAccountState } from "../broker/snapTradeExecutionAccountStore.js";
 import { buildSnapTradeEquityOrderDraft } from "./snapTradeOrderTicketModel.js";
+import {
+  buildRobinhoodEquityOrderDraft,
+  placeRobinhoodEquityOrderRequest,
+  reviewRobinhoodEquityOrderRequest,
+} from "./robinhoodEquityOrderRequests.js";
 import {
   CSS_COLOR,
   cssColorAlpha,
@@ -364,6 +370,9 @@ export const TradeOrderTicket = ({
   const selectedContractMeta =
     slot.cp === "C" ? row?.cContract : row?.pContract;
   const [ticketAssetMode, setTicketAssetMode] = useState("option");
+  const [equityBroker, setEquityBroker] = useState("snaptrade");
+  const [selectedRobinhoodAccountId, setSelectedRobinhoodAccountId] =
+    useState("");
   const normalizedTicketAssetMode = normalizeTicketAssetMode(ticketAssetMode);
   const ticketIsShares = normalizedTicketAssetMode === "equity";
   const ticketIsOptions = !ticketIsShares;
@@ -459,7 +468,57 @@ export const TradeOrderTicket = ({
   const snapTradeExecutionState = useSnapTradeExecutionAccountState();
   const snapTradeAccount = snapTradeExecutionState.selectedAccount || null;
   const snapTradeAccountReady = Boolean(snapTradeAccount?.executionReady);
-  const liveBrokerRoute = ticketIsShares ? "snaptrade" : "ibkr";
+  const liveBrokerRoute = ticketIsShares ? equityBroker : "ibkr";
+  const robinhoodRouteSelected =
+    ticketIsShares && liveBrokerRoute === "robinhood";
+  const robinhoodCsrfToken = robinhoodRouteSelected
+    ? authSession.csrfToken || ""
+    : "";
+  const robinhoodCsrfHeaders = useMemo(
+    () => (robinhoodCsrfToken ? { "x-csrf-token": robinhoodCsrfToken } : {}),
+    [robinhoodCsrfToken],
+  );
+  const robinhoodSyncMutation = useSyncRobinhoodConnections({
+    request: { headers: robinhoodCsrfHeaders },
+  });
+  const robinhoodAccounts = useMemo(
+    () =>
+      (robinhoodSyncMutation.data?.accounts || []).filter(
+        (account) =>
+          account.agentic === true && account.executionReady === true,
+      ),
+    [robinhoodSyncMutation.data],
+  );
+  const robinhoodAccount =
+    robinhoodAccounts.find(
+      (account) => account.id === selectedRobinhoodAccountId,
+    ) ||
+    robinhoodAccounts[0] ||
+    null;
+  const robinhoodAccountReady = Boolean(robinhoodAccount?.executionReady);
+  useEffect(() => {
+    if (robinhoodAccount?.id !== selectedRobinhoodAccountId) {
+      setSelectedRobinhoodAccountId(robinhoodAccount?.id || "");
+    }
+  }, [robinhoodAccount?.id, selectedRobinhoodAccountId]);
+  useEffect(() => {
+    if (
+      robinhoodRouteSelected &&
+      robinhoodCsrfToken &&
+      !robinhoodSyncMutation.data &&
+      !robinhoodSyncMutation.isPending &&
+      !robinhoodSyncMutation.isError
+    ) {
+      robinhoodSyncMutation.mutate();
+    }
+  }, [
+    robinhoodCsrfToken,
+    robinhoodRouteSelected,
+    robinhoodSyncMutation.data,
+    robinhoodSyncMutation.isError,
+    robinhoodSyncMutation.isPending,
+    robinhoodSyncMutation.mutate,
+  ]);
   const snapTradeAuthEnabled = Boolean(
     liveBrokerRoute === "snaptrade" && snapTradeAccountReady,
   );
@@ -477,7 +536,11 @@ export const TradeOrderTicket = ({
     [taxPreflightCsrfToken],
   );
   const liveOrderPayloadReady = ticketIsShares
-    ? Boolean(snapTradeAccountReady && slot.ticker)
+    ? Boolean(
+        (liveBrokerRoute === "robinhood"
+          ? robinhoodAccountReady
+          : snapTradeAccountReady) && slot.ticker,
+      )
     : Boolean(accountId && selectedContractMeta && expInfo.actualDate);
   const gatewayTradingBlocked = !gatewayTradingReady;
   const gatewayTradingBlockedLabel =
@@ -681,6 +744,12 @@ export const TradeOrderTicket = ({
   const snapTradeImpactMutation = useCheckSnapTradeEquityOrderImpact({
     request: { headers: snapTradeCsrfHeaders },
   });
+  const robinhoodImpactMutation = useMutation({
+    mutationFn: reviewRobinhoodEquityOrderRequest,
+  });
+  const submitRobinhoodOrderMutation = useMutation({
+    mutationFn: placeRobinhoodEquityOrderRequest,
+  });
   const taxPreflightMutation = useCreateTaxOrderPreflight({
     request: { headers: taxPreflightCsrfHeaders },
   });
@@ -711,6 +780,8 @@ export const TradeOrderTicket = ({
   const executionIsShadow = executionMode === "shadow";
   const liveUsesSnapTrade =
     !executionIsShadow && liveBrokerRoute === "snaptrade";
+  const liveUsesRobinhood =
+    !executionIsShadow && liveBrokerRoute === "robinhood";
   const snapTradeSymbolSearchText = String(slot.ticker || "")
     .trim()
     .toUpperCase();
@@ -773,12 +844,18 @@ export const TradeOrderTicket = ({
         : "Last 24h clear";
   const snapTradeExecutionAccountLabel =
     snapTradeAccount?.displayName || "Sync SnapTrade";
+  const robinhoodExecutionAccountLabel =
+    robinhoodAccount?.displayName || "Sync Robinhood";
   const selectedExecutionLabel = executionIsShadow
     ? "SHADOW"
     : liveUsesSnapTrade
       ? snapTradeAccountReady
         ? "SNAPTRADE LIVE"
         : "SNAPTRADE SETUP"
+    : liveUsesRobinhood
+      ? robinhoodAccountReady
+        ? "ROBINHOOD LIVE"
+        : "ROBINHOOD SETUP"
     : brokerConfigured
       ? gatewayTradingReady
         ? `IBKR ${environment.toUpperCase()}`
@@ -790,6 +867,8 @@ export const TradeOrderTicket = ({
     ? "shadow"
     : liveUsesSnapTrade
       ? snapTradeExecutionAccountLabel
+    : liveUsesRobinhood
+      ? robinhoodExecutionAccountLabel
     : brokerConfigured
       ? accountId || MISSING_VALUE
       : MISSING_VALUE;
@@ -797,6 +876,10 @@ export const TradeOrderTicket = ({
     ? CSS_COLOR.pink
     : liveUsesSnapTrade
       ? snapTradeAccountReady
+        ? CSS_COLOR.green
+        : CSS_COLOR.amber
+    : liveUsesRobinhood
+      ? robinhoodAccountReady
         ? CSS_COLOR.green
         : CSS_COLOR.amber
     : brokerConfigured
@@ -827,6 +910,17 @@ export const TradeOrderTicket = ({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [requestedNonce, requestedSide]);
+  const selectEquityBroker = (broker) => {
+    const nextBroker = broker === "robinhood" ? "robinhood" : "snaptrade";
+    setEquityBroker(nextBroker);
+    setPreviewSnapshot(null);
+    if (nextBroker === "robinhood" && tif !== "DAY" && tif !== "GTC") {
+      setTif("DAY");
+    }
+    if (nextBroker === "robinhood" && robinhoodSyncMutation.isError) {
+      robinhoodSyncMutation.reset();
+    }
+  };
   const renderTicketAssetModeControls = () => (
     <div data-testid="trade-ticket-asset-mode">
       <SegmentedControl
@@ -875,6 +969,40 @@ export const TradeOrderTicket = ({
         value={executionMode}
         onChange={setExecutionMode}
       />
+      {ticketIsShares ? (
+        <SegmentedControl
+          ariaLabel="Equity broker"
+          options={[
+            { value: "snaptrade", label: "SNAPTRADE" },
+            { value: "robinhood", label: "ROBINHOOD" },
+          ]}
+          value={equityBroker}
+          onChange={selectEquityBroker}
+        />
+      ) : null}
+      {ticketIsShares && robinhoodRouteSelected && robinhoodAccounts.length ? (
+        <select
+          aria-label="Robinhood execution account"
+          value={robinhoodAccount?.id || ""}
+          onChange={(event) => setSelectedRobinhoodAccountId(event.target.value)}
+          style={{
+            width: "100%",
+            background: CSS_COLOR.bg1,
+            border: `1px solid ${CSS_COLOR.border}`,
+            borderRadius: dim(RADII.xs),
+            color: CSS_COLOR.textSec,
+            fontFamily: T.sans,
+            fontSize: textSize("body"),
+            padding: sp("5px 7px"),
+          }}
+        >
+          {robinhoodAccounts.map((account) => (
+            <option key={account.id} value={account.id}>
+              {account.displayName}
+            </option>
+          ))}
+        </select>
+      ) : null}
       {!executionIsShadow && liveUsesSnapTrade && !snapTradeAccountReady ? (
         <div
           style={{
@@ -892,7 +1020,26 @@ export const TradeOrderTicket = ({
           submitting shares.
         </div>
       ) : null}
-      {!executionIsShadow && !liveUsesSnapTrade && !gatewayTradingReady && (
+      {!executionIsShadow && liveUsesRobinhood && !robinhoodAccountReady ? (
+        <div
+          style={{
+            background: `${cssColorMix(CSS_COLOR.amber, 7)}`,
+            border: `1px solid ${cssColorMix(CSS_COLOR.amber, 21)}`,
+            borderRadius: dim(RADII.xs),
+            padding: sp("6px 8px"),
+            fontSize: textSize("body"),
+            color: CSS_COLOR.amber,
+            fontFamily: T.sans,
+            lineHeight: 1.35,
+          }}
+        >
+          {robinhoodSyncMutation.isPending
+            ? "Loading execution-ready Robinhood Agentic accounts."
+            : "Connect and sync an execution-ready Robinhood Agentic account in Settings before submitting shares."}
+        </div>
+      ) : null}
+      {!executionIsShadow && !liveUsesSnapTrade && !gatewayTradingReady &&
+        !liveUsesRobinhood && (
         <div
           style={{
             background: `${cssColorMix(CSS_COLOR.amber, 7)}`,
@@ -1169,11 +1316,11 @@ export const TradeOrderTicket = ({
   }, [executionMode]);
 
   useEffect(() => {
-    if (executionMode === "shadow" || liveUsesSnapTrade) {
+    if (executionMode === "shadow" || liveUsesSnapTrade || liveUsesRobinhood) {
       setAttachStopLoss(false);
       setAttachTakeProfit(false);
     }
-  }, [executionMode, liveUsesSnapTrade]);
+  }, [executionMode, liveUsesRobinhood, liveUsesSnapTrade]);
 
   useEffect(() => {
     setPreviewSnapshot(null);
@@ -1208,6 +1355,8 @@ export const TradeOrderTicket = ({
     brokerAuthenticated,
     automationTicketContext,
     liveBrokerRoute,
+    robinhoodAccount?.id,
+    robinhoodAccountReady,
     snapTradeAccount?.id,
     snapTradeAccountReady,
   ]);
@@ -1318,6 +1467,17 @@ export const TradeOrderTicket = ({
         orderPrices,
       })
     : { ready: false, reason: "route", body: null };
+  const robinhoodOrderDraft = liveUsesRobinhood
+    ? buildRobinhoodEquityOrderDraft({
+        account: robinhoodAccount,
+        symbol: slot.ticker,
+        side,
+        orderType,
+        tif,
+        quantity: qtyNum,
+        orderPrices,
+      })
+    : { ready: false, reason: "route", body: null };
   const snapTradeDraftBlockMessage =
     {
       snaptrade_account:
@@ -1335,6 +1495,25 @@ export const TradeOrderTicket = ({
       price: "PRICE REQUIRED",
       stop: "STOP REQUIRED",
     }[snapTradeOrderDraft.reason] || "SNAPTRADE BLOCKED";
+  const robinhoodDraftBlockMessage =
+    {
+      robinhood_account:
+        "Select an execution-ready Robinhood Agentic account.",
+      symbol: "Select a ticker before submitting a Robinhood order.",
+      quantity: "Enter a positive share quantity.",
+      price: "Enter a positive limit price.",
+      stop: "Enter a positive stop trigger.",
+      order_type: "Select a supported Robinhood order type.",
+      time_in_force: "Robinhood equity orders support DAY or GTC.",
+    }[robinhoodOrderDraft.reason] ||
+    "The Robinhood order payload is not ready yet.";
+  const robinhoodDraftButtonLabel =
+    {
+      quantity: "QTY REQUIRED",
+      price: "PRICE REQUIRED",
+      stop: "STOP REQUIRED",
+      time_in_force: "DAY / GTC REQUIRED",
+    }[robinhoodOrderDraft.reason] || "ROBINHOOD BLOCKED";
   const fillPrice = orderPrices.fillPrice;
   const orderTypeLabel = formatTicketOrderType(orderType);
   const cost = fillPrice * qtyNum * ticketMultiplier;
@@ -1463,7 +1642,8 @@ export const TradeOrderTicket = ({
     sellCallIntent.applies && sellCallIntent.strategyIntent === "sell_to_close";
   const shadowAddExposureWarningActive =
     sameShadowContractExposure && !shadowSellToCloseIntent;
-  const orderRequest = !liveUsesSnapTrade && liveOrderPayloadReady
+  const orderRequest =
+    !liveUsesSnapTrade && !liveUsesRobinhood && liveOrderPayloadReady
     ? {
         accountId,
         mode: environment,
@@ -1668,7 +1848,10 @@ export const TradeOrderTicket = ({
       ? Number(value).toFixed(digits)
       : MISSING_VALUE;
   const hasAttachedExits =
-    !executionIsShadow && !liveUsesSnapTrade && (attachStopLoss || attachTakeProfit);
+    !executionIsShadow &&
+    !liveUsesSnapTrade &&
+    !liveUsesRobinhood &&
+    (attachStopLoss || attachTakeProfit);
   const attachedExitCount = (attachStopLoss ? 1 : 0) + (attachTakeProfit ? 1 : 0);
   const attachedExitLabel =
     attachedExitCount === 2
@@ -1684,7 +1867,8 @@ export const TradeOrderTicket = ({
   ]
     .filter(Boolean)
     .join(" / ");
-  const attachedExitTogglesDisabled = executionIsShadow || liveUsesSnapTrade;
+  const attachedExitTogglesDisabled =
+    executionIsShadow || liveUsesSnapTrade || liveUsesRobinhood;
   const stopLossExitDisabled =
     attachedExitTogglesDisabled || !attachStopLoss;
   const takeProfitExitDisabled =
@@ -1826,6 +2010,84 @@ export const TradeOrderTicket = ({
 	      }
 
       previewShadowOrderMutation.mutate(shadowOrderRequest);
+      return;
+    }
+
+    if (liveUsesRobinhood) {
+      if (!robinhoodCsrfToken) {
+        toast.push({
+          kind: "warn",
+          title: "Auth session required",
+          body: "Refresh the app session before previewing a Robinhood order.",
+        });
+        return;
+      }
+      if (
+        !robinhoodAccount?.id ||
+        !robinhoodOrderDraft.ready ||
+        !robinhoodOrderDraft.body
+      ) {
+        toast.push({
+          kind: "warn",
+          title: "Robinhood preview blocked",
+          body: robinhoodDraftBlockMessage,
+        });
+        return;
+      }
+
+      try {
+        const preview = await robinhoodImpactMutation.mutateAsync({
+          accountId: robinhoodAccount.id,
+          csrfToken: robinhoodCsrfToken,
+          body: robinhoodOrderDraft.body,
+        });
+        const previewPrice =
+          preview?.order?.limitPrice ??
+          (side === "BUY"
+            ? preview?.review?.askPrice
+            : preview?.review?.bidPrice) ??
+          preview?.review?.lastTradePrice ??
+          null;
+        const estimatedValue = Number.isFinite(preview?.order?.notionalValue)
+          ? preview.order.notionalValue
+          : Number.isFinite(previewPrice) &&
+              Number.isFinite(preview?.order?.quantity)
+            ? previewPrice * preview.order.quantity
+            : null;
+        setPreviewSnapshot({
+          ...preview,
+          provider: "robinhood",
+          accountId: preview?.account?.id || robinhoodAccount.id,
+          resolvedContractId: "ROBINHOOD",
+          symbol: preview?.order?.symbol || slot.ticker,
+          fillPrice: previewPrice,
+          orderPayload: {
+            route: "ROBINHOOD",
+            ...preview?.order,
+          },
+          estimatedValue,
+        });
+        toast.push({
+          kind: "success",
+          title: "Robinhood preview ready",
+          body: [
+            preview?.order?.side,
+            preview?.order?.quantity,
+            preview?.order?.symbol,
+            robinhoodExecutionAccountLabel,
+          ]
+            .filter(Boolean)
+            .join(" · "),
+        });
+      } catch (error) {
+        toast.push({
+          kind: "error",
+          title: "Robinhood preview failed",
+          body:
+            error?.message ||
+            "Robinhood could not review this equity order.",
+        });
+      }
       return;
     }
 
@@ -2015,6 +2277,56 @@ export const TradeOrderTicket = ({
       return;
     }
 
+    if (liveUsesRobinhood) {
+      if (
+        !robinhoodCsrfToken ||
+        !robinhoodAccount?.id ||
+        !robinhoodOrderDraft.ready ||
+        !robinhoodOrderDraft.body
+      ) {
+        throw new Error(robinhoodDraftBlockMessage);
+      }
+      const result = await submitRobinhoodOrderMutation.mutateAsync({
+        accountId: robinhoodAccount.id,
+        csrfToken: robinhoodCsrfToken,
+        body: {
+          ...robinhoodOrderDraft.body,
+          ...taxSubmissionFields,
+        },
+      });
+      setPreviewSnapshot((current) => ({
+        ...(current?.provider === "robinhood" ? current : {}),
+        ...result,
+        provider: "robinhood",
+        accountId: result?.account?.id || robinhoodAccount.id,
+        resolvedContractId:
+          result?.order?.brokerageOrderId || "ROBINHOOD SUBMITTED",
+        symbol: result?.order?.symbol || slot.ticker,
+        fillPrice:
+          current?.provider === "robinhood"
+            ? current.fillPrice
+            : result?.order?.limitPrice ?? result?.order?.stopPrice ?? null,
+        orderPayload: {
+          route: "ROBINHOOD",
+          ...result?.order,
+        },
+      }));
+      toast.push({
+        kind: "success",
+        title: `Submitted ${ticketInstrumentLabel}`,
+        body: [
+          result?.order?.side,
+          result?.order?.quantity,
+          result?.order?.symbol,
+          result?.order?.state,
+          result?.order?.brokerageOrderId,
+        ]
+          .filter(Boolean)
+          .join(" · "),
+      });
+      return;
+    }
+
     if (!orderRequest) {
       toast.push({
         kind: "error",
@@ -2120,6 +2432,89 @@ export const TradeOrderTicket = ({
           { label: "ACCOUNT", value: snapTradeExecutionAccountLabel },
           { label: "SYMBOL", value: slot.ticker },
           { label: "ROUTE", value: "SNAPTRADE" },
+          { label: "ASSET", value: "SHARES" },
+          { label: "TYPE", value: orderTypeLabel },
+          { label: "TIF", value: tif },
+          {
+            label: "QTY",
+            value: `${qtyNum || 0} ${ticketQuantityUnit.toUpperCase()}`,
+          },
+          {
+            label:
+              orderType === "STP" || orderType === "STP_LMT"
+                ? "STOP"
+                : orderType === "MKT"
+                  ? "MARK"
+                  : "LIMIT",
+            value:
+              orderType === "STP_LMT"
+                ? stopLimitPriceDisplay
+                : fillPriceDisplay,
+          },
+          {
+            label: isLong ? "EST COST" : "EST CREDIT",
+            value: costDisplay,
+            valueColor: isLong ? CSS_COLOR.red : CSS_COLOR.green,
+          },
+          ...buildTaxPreflightConfirmLines(taxPreflight),
+        ],
+        onConfirm: () => submitLiveBrokerOrder(taxPreflight),
+      });
+      return;
+    }
+
+    if (liveUsesRobinhood) {
+      if (!robinhoodAccountReady || !robinhoodAccount?.id) {
+        toast.push({
+          kind: "warn",
+          title: "Robinhood account required",
+          body: "Connect and sync an execution-ready Robinhood Agentic account in Settings before submitting shares.",
+        });
+        return;
+      }
+      if (authSession.isLoading) {
+        toast.push({
+          kind: "info",
+          title: "Auth session loading",
+          body: "Wait for the app session token before submitting a Robinhood order.",
+        });
+        return;
+      }
+      if (!robinhoodCsrfToken) {
+        toast.push({
+          kind: "warn",
+          title: "Auth session required",
+          body: "Refresh the app session before submitting a Robinhood order.",
+        });
+        return;
+      }
+      if (!robinhoodOrderDraft.ready || !robinhoodOrderDraft.body) {
+        toast.push({
+          kind: "warn",
+          title: "Robinhood order blocked",
+          body: robinhoodDraftBlockMessage,
+        });
+        return;
+      }
+
+      const taxPreflight = await runTaxPreflight(
+        "robinhood",
+        robinhoodAccount.id,
+      );
+      if (!taxPreflight || taxPreflight.action === "block") {
+        return;
+      }
+
+      setLiveConfirmError(null);
+      setLiveConfirmState({
+        title: `${ticketActionLabel} ${ticketInstrumentLabel}`,
+        detail: `Submit this live Robinhood equity order through ${robinhoodExecutionAccountLabel}.`,
+        confirmLabel: `${ticketActionLabel} ROBINHOOD ORDER`,
+        confirmTone: selectedSideColor,
+        lines: [
+          { label: "ACCOUNT", value: robinhoodExecutionAccountLabel },
+          { label: "SYMBOL", value: slot.ticker },
+          { label: "ROUTE", value: "ROBINHOOD" },
           { label: "ASSET", value: "SHARES" },
           { label: "TYPE", value: orderTypeLabel },
           { label: "TIF", value: tif },
@@ -2366,26 +2761,36 @@ export const TradeOrderTicket = ({
   const previewIsPending =
     previewOrderMutation.isPending ||
     previewShadowOrderMutation.isPending ||
-    snapTradeImpactMutation.isPending;
+    snapTradeImpactMutation.isPending ||
+    robinhoodImpactMutation.isPending;
   const primarySubmitPending = executionIsShadow
     ? placeShadowOrderMutation.isPending
     : liveUsesSnapTrade
       ? submitSnapTradeOrderMutation.isPending || taxPreflightPending
+      : liveUsesRobinhood
+        ? robinhoodSyncMutation.isPending ||
+          submitRobinhoodOrderMutation.isPending ||
+          taxPreflightPending
       : ibkrSubmitPending || taxPreflightPending;
   const sellCallSubmitBlocked = sellCallIntent.applies && !sellCallIntent.allowed;
   const snapTradeAuthLoading =
     liveUsesSnapTrade &&
     snapTradeAccountReady &&
     (snapTradeAuthEnabled && authSession.isLoading);
-  const ticketReadinessModel = buildTicketReadinessModel({
+  const robinhoodAuthLoading = liveUsesRobinhood && authSession.isLoading;
+  const baseTicketReadinessModel = buildTicketReadinessModel({
     executionMode,
-    brokerRoute: liveBrokerRoute,
+    brokerRoute: liveUsesRobinhood ? "snaptrade" : liveBrokerRoute,
     gatewayTradingReady,
     brokerConfigured,
     brokerAuthenticated,
     accountId,
-    snapTradeExecutionReady: snapTradeAccountReady,
-    snapTradeExecutionBlockers: snapTradeAccount?.executionBlockers || [],
+    snapTradeExecutionReady: liveUsesRobinhood
+      ? robinhoodAccountReady
+      : snapTradeAccountReady,
+    snapTradeExecutionBlockers: liveUsesRobinhood
+      ? ["robinhood account"]
+      : snapTradeAccount?.executionBlockers || [],
     ticketInstrumentReady,
     quoteReady: ticketIsShares ? equityQuoteReady : optionQuoteReady,
     spreadPct,
@@ -2395,6 +2800,14 @@ export const TradeOrderTicket = ({
     shadowExposureWarning: shadowAddExposureWarningActive,
     automationDeviationCount: liveDeviationFields.length,
   });
+  const ticketReadinessModel =
+    liveUsesRobinhood &&
+    baseTicketReadinessModel.detail === "SnapTrade route ready"
+      ? {
+          ...baseTicketReadinessModel,
+          detail: "Robinhood route ready",
+        }
+      : baseTicketReadinessModel;
   const primarySubmitDisabled = executionIsShadow
     ? placeShadowOrderMutation.isPending ||
       automationAlreadyShadowFilled ||
@@ -2406,12 +2819,22 @@ export const TradeOrderTicket = ({
         !snapTradeCsrfToken ||
         !snapTradeOrderDraft.ready ||
         sellCallSubmitBlocked
+      : liveUsesRobinhood
+        ? robinhoodSyncMutation.isPending ||
+          submitRobinhoodOrderMutation.isPending ||
+          taxPreflightPending ||
+          robinhoodAuthLoading ||
+          !robinhoodCsrfToken ||
+          !robinhoodOrderDraft.ready ||
+          sellCallSubmitBlocked
       : ibkrSubmitPending ||
         taxPreflightPending ||
         gatewayTradingBlocked ||
         sellCallSubmitBlocked;
   const previewDisabled =
     previewIsPending ||
+    (liveUsesRobinhood &&
+      (!robinhoodCsrfToken || !robinhoodOrderDraft.ready)) ||
     sellCallSubmitBlocked;
   const primarySubmitColor = executionIsShadow ? CSS_COLOR.pink : selectedSideColor;
   const primarySubmitLabel = executionIsShadow
@@ -2440,6 +2863,22 @@ export const TradeOrderTicket = ({
               : !snapTradeOrderDraft.ready
                 ? snapTradeDraftButtonLabel
                 : `${ticketActionLabel} SNAPTRADE ${qtyNum || 0} sh × ${fillPriceDisplay} · ${signedCostDisplay}`
+    : liveUsesRobinhood
+      ? robinhoodSyncMutation.isPending
+        ? "SYNCING ROBINHOOD..."
+        : taxPreflightPending
+          ? "CHECKING TAX..."
+          : submitRobinhoodOrderMutation.isPending
+            ? "SUBMITTING..."
+            : !robinhoodAccountReady
+              ? "ROBINHOOD ACCOUNT REQUIRED"
+              : robinhoodAuthLoading
+                ? "AUTH LOADING..."
+                : !robinhoodCsrfToken
+                  ? "AUTH SESSION REQUIRED"
+                  : !robinhoodOrderDraft.ready
+                    ? robinhoodDraftButtonLabel
+                    : `${ticketActionLabel} ROBINHOOD ${qtyNum || 0} sh × ${fillPriceDisplay} · ${signedCostDisplay}`
     : gatewayTradingBlocked
       ? gatewayTradingBlockedLabel
       : taxPreflightPending
@@ -2460,6 +2899,16 @@ export const TradeOrderTicket = ({
 	    previewDisplayOrder?.lmtPrice ??
 	    previewDisplayOrder?.auxPrice ??
 	    null;
+  const robinhoodReviewSnapshot =
+    previewSnapshot?.provider === "robinhood"
+      ? previewSnapshot.review
+      : null;
+  const robinhoodPlacementSnapshot =
+    previewSnapshot?.provider === "robinhood" && previewSnapshot.submittedAt
+      ? previewSnapshot
+      : null;
+  const robinhoodEstimateIsCredit =
+    String(previewDisplayOrder?.side || side).toUpperCase() === "SELL";
   const sellCallStatusColor = !sellCallIntent.applies
     ? CSS_COLOR.textDim
     : sellCallIntent.allowed
@@ -3358,7 +3807,11 @@ export const TradeOrderTicket = ({
       {/* TIF */}
       <SegmentedControl
         ariaLabel="Time in force"
-        options={["DAY", "GTC", "IOC", "FOK"]}
+        options={
+          robinhoodRouteSelected
+            ? ["DAY", "GTC"]
+            : ["DAY", "GTC", "IOC", "FOK"]
+        }
         value={tif}
         onChange={setTif}
       />
@@ -3485,13 +3938,17 @@ export const TradeOrderTicket = ({
           }}
         >
           <div>
-            <span style={{ color: CSS_COLOR.textMuted }}>PREVIEW</span>{" "}
+            <span style={{ color: CSS_COLOR.textMuted }}>
+              {robinhoodPlacementSnapshot ? "PLACED" : "PREVIEW"}
+            </span>{" "}
             <span style={{ color: CSS_COLOR.text, fontWeight: FONT_WEIGHTS.regular }}>
               {previewSnapshot.accountId}
             </span>
           </div>
           <div>
-            <span style={{ color: CSS_COLOR.textMuted }}>CONID</span>{" "}
+            <span style={{ color: CSS_COLOR.textMuted }}>
+              {previewSnapshot.provider === "robinhood" ? "ORDER" : "CONID"}
+            </span>{" "}
             <span style={{ color: CSS_COLOR.accent, fontWeight: FONT_WEIGHTS.regular }}>
               {previewSnapshot.resolvedContractId}
             </span>
@@ -3532,6 +3989,74 @@ export const TradeOrderTicket = ({
               </span>
             </div>
           ) : null}
+          {robinhoodReviewSnapshot ? (
+            <>
+              {[
+                [
+                  "LAST",
+                  formatTicketMoney(robinhoodReviewSnapshot.lastTradePrice),
+                  CSS_COLOR.text,
+                ],
+                [
+                  "PREV CLOSE",
+                  formatTicketMoney(robinhoodReviewSnapshot.previousClose),
+                  CSS_COLOR.text,
+                ],
+                [
+                  "BID / ASK",
+                  `${formatTicketMoney(robinhoodReviewSnapshot.bidPrice)} / ${formatTicketMoney(robinhoodReviewSnapshot.askPrice)}`,
+                  CSS_COLOR.text,
+                ],
+                [
+                  robinhoodEstimateIsCredit ? "EST CREDIT" : "EST COST",
+                  formatTicketMoney(previewSnapshot.estimatedValue),
+                  robinhoodEstimateIsCredit ? CSS_COLOR.green : CSS_COLOR.red,
+                ],
+              ].map(([label, value, color], index) => (
+                <div
+                  key={label}
+                  style={{ gridColumn: index > 1 ? "1 / -1" : undefined }}
+                >
+                  <span style={{ color: CSS_COLOR.textMuted }}>{label}</span>{" "}
+                  <span style={{ color }}>{value}</span>
+                </div>
+              ))}
+              {robinhoodReviewSnapshot.alerts?.length ? (
+                <div style={{ gridColumn: "1 / -1" }}>
+                  <span style={{ color: CSS_COLOR.textMuted }}>ALERTS</span>{" "}
+                  <span style={{ color: CSS_COLOR.amber }}>
+                    {robinhoodReviewSnapshot.alerts.join(" · ")}
+                  </span>
+                </div>
+              ) : null}
+              {robinhoodReviewSnapshot.marketDataDisclosure ? (
+                <div style={{ gridColumn: "1 / -1" }}>
+                  <span style={{ color: CSS_COLOR.textMuted }}>MARKET DATA</span>{" "}
+                  <span style={{ color: CSS_COLOR.textSec }}>
+                    {robinhoodReviewSnapshot.marketDataDisclosure}
+                  </span>
+                </div>
+              ) : null}
+            </>
+          ) : null}
+          {robinhoodPlacementSnapshot ? (
+            <>
+              <div style={{ gridColumn: "1 / -1" }}>
+                <span style={{ color: CSS_COLOR.textMuted }}>STATUS</span>{" "}
+                <span style={{ color: CSS_COLOR.green }}>
+                  {robinhoodPlacementSnapshot.order?.state || "SUBMITTED"}
+                </span>
+              </div>
+              {robinhoodPlacementSnapshot.alerts?.length ? (
+                <div style={{ gridColumn: "1 / -1" }}>
+                  <span style={{ color: CSS_COLOR.textMuted }}>ALERTS</span>{" "}
+                  <span style={{ color: CSS_COLOR.amber }}>
+                    {robinhoodPlacementSnapshot.alerts.join(" · ")}
+                  </span>
+                </div>
+              ) : null}
+            </>
+          ) : null}
         </div>
       )}
       <div
@@ -3569,6 +4094,8 @@ export const TradeOrderTicket = ({
               ? "PREVIEW SHADOW"
               : liveUsesSnapTrade
                 ? "PREVIEW SNAPTRADE"
+              : liveUsesRobinhood
+                ? "PREVIEW ROBINHOOD"
               : "PREVIEW IBKR"}
         </button>
         <button
