@@ -97,15 +97,6 @@ export const buildCockpitGateSummary = (cockpit) => {
   const signals = Array.isArray(record.signals) ? record.signals : [];
   const candidates = Array.isArray(record.candidates) ? record.candidates : [];
   const events = Array.isArray(record.events) ? record.events : [];
-  const fallbackFresh = signals.filter(
-    (signal) => asRecord(signal).fresh === true,
-  ).length;
-  const fallbackNotFresh = Math.max(0, signals.length - fallbackFresh);
-  const fallbackEntryEvents = countEventsOfType(
-    events,
-    "signal_options_shadow_entry",
-  );
-  const reasonCounters = deriveReasonCounters(events);
   const diagnosticsHasFreshness =
     hasOwn(signalFreshness, "fresh") || hasOwn(signalFreshness, "notFresh");
   const diagnosticsHasTradePath =
@@ -121,6 +112,19 @@ export const buildCockpitGateSummary = (cockpit) => {
   const diagnosticSkipCategoryRows = topCockpitCounterEntries(
     diagnostics.skipCategories,
   );
+  const fallbackFresh = diagnosticsHasFreshness
+    ? 0
+    : signals.filter((signal) => asRecord(signal).fresh === true).length;
+  const fallbackNotFresh = Math.max(0, signals.length - fallbackFresh);
+  const fallbackEntryEvents = diagnosticsHasTradePath
+    ? 0
+    : countEventsOfType(events, "signal_options_shadow_entry");
+  const reasonCounters =
+    diagnosticSkipRows.length &&
+    diagnosticEntryRows.length &&
+    diagnosticOptionRows.length
+      ? null
+      : deriveReasonCounters(events);
   const lifecycle = asRecord(diagnostics.lifecycle);
   const markHealth = asRecord(diagnostics.markHealth);
 
@@ -162,14 +166,14 @@ export const buildCockpitGateSummary = (cockpit) => {
     },
     skipReasonRows: diagnosticSkipRows.length
       ? diagnosticSkipRows
-      : topCockpitCounterEntries(reasonCounters.skipReasons),
+      : topCockpitCounterEntries(reasonCounters?.skipReasons),
     skipCategoryRows: diagnosticSkipCategoryRows,
     entryGateRows: diagnosticEntryRows.length
       ? diagnosticEntryRows
-      : topCockpitCounterEntries(reasonCounters.entryGateReasons),
+      : topCockpitCounterEntries(reasonCounters?.entryGateReasons),
     optionChainRows: diagnosticOptionRows.length
       ? diagnosticOptionRows
-      : topCockpitCounterEntries(reasonCounters.optionChainReasons),
+      : topCockpitCounterEntries(reasonCounters?.optionChainReasons),
     readinessRows: readinessIncidentRows(diagnostics.readinessIncidents),
     lifecycleRows: orderedMetricRows(lifecycle, [
       "candidates",
