@@ -6,6 +6,7 @@ import { apiGet } from "./http/api-client";
 import { ok, fail, fromHttpError } from "./tools/result";
 import { httpTools } from "./tools/registry";
 import { hostTools } from "./tools/host-tools";
+import { diagnosticEventsTool } from "./tools/diagnostic-events";
 
 const server = new McpServer({
   name: "pyrus-diagnostics",
@@ -32,6 +33,17 @@ for (const tool of httpTools) {
   );
 }
 
+// Direct DB read: the HTTP endpoint is intentionally user-authenticated.
+server.registerTool(
+  diagnosticEventsTool.name,
+  {
+    description: diagnosticEventsTool.description,
+    inputSchema: diagnosticEventsTool.inputShape,
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  },
+  (args: Record<string, unknown>) => diagnosticEventsTool.run(args ?? {}),
+);
+
 // Subsystem 3: read-only host/supervisor introspection (no signals).
 for (const tool of hostTools) {
   server.registerTool(
@@ -56,7 +68,7 @@ async function main(): Promise<void> {
   await server.connect(transport);
   // stdout is the MCP wire; status goes to stderr only.
   log.info(
-    `ready (stdio) — ${httpTools.length} http + ${hostTools.length} host tools; API=${config.apiBaseUrl}`,
+    `ready (stdio) — ${httpTools.length} http + 1 db + ${hostTools.length} host tools; API=${config.apiBaseUrl}`,
   );
 }
 
