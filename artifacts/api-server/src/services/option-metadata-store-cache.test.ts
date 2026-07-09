@@ -11,6 +11,8 @@ import {
   __resetDurableOptionMetadataStoreForTests,
   __resetOptionMetadataInstrumentCacheForTests,
   getDurableOptionMetadataDiagnostics,
+  loadDurableOptionChain,
+  loadDurableOptionExpirations,
   persistDurableOptionChain,
 } from "./option-metadata-store";
 import {
@@ -207,4 +209,40 @@ test("durable option metadata yields to finite DB pool pressure", async () => {
   assert.equal(diagnostics.writeSuccess, 0);
   assert.equal(diagnostics.writeSkippedPressure, 1);
   assert.equal(__getOptionMetadataInstrumentCacheSizeForTests(), 0);
+});
+
+test("durable option metadata reads yield to hard DB pool pressure", async () => {
+  await persistDurableOptionChain({
+    contracts: [
+      optionContract({
+        ticker: "O:SPY260717C00600000",
+        strike: 600,
+        right: "call",
+      }),
+    ],
+    source: "massive",
+    asOf: new Date("2026-06-26T16:00:00.000Z"),
+  });
+  __resetApiResourcePressureForTests();
+  updateApiResourcePressure({ dbPoolActive: 12, dbPoolWaiting: 8, dbPoolMax: 12 });
+  updateApiResourcePressure({ dbPoolActive: 12, dbPoolWaiting: 8, dbPoolMax: 12 });
+
+  const expirations = await loadDurableOptionExpirations({
+    underlying: "SPY",
+    maxAgeMs: Number.POSITIVE_INFINITY,
+    staleMaxAgeMs: Number.POSITIVE_INFINITY,
+    now: new Date("2026-06-26T16:00:00.000Z"),
+  });
+  const chain = await loadDurableOptionChain({
+    underlying: "SPY",
+    expirationDate: new Date("2026-07-17T00:00:00.000Z"),
+    maxAgeMs: Number.POSITIVE_INFINITY,
+    staleMaxAgeMs: Number.POSITIVE_INFINITY,
+    now: new Date("2026-06-26T16:00:00.000Z"),
+  });
+  const diagnostics = getDurableOptionMetadataDiagnostics();
+
+  assert.equal(expirations, null);
+  assert.equal(chain, null);
+  assert.equal(diagnostics.miss, 2);
 });

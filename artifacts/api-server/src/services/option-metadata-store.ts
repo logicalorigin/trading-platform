@@ -167,6 +167,10 @@ function shouldContinueDurableOptionMetadataWrite(): boolean {
   return false;
 }
 
+function shouldSkipDurableOptionMetadataReadForPressure(): boolean {
+  return getApiResourcePressureSnapshot().hardResourceLevel === "high";
+}
+
 function claimDurableOptionMetadataWriteSlot(): boolean {
   if (activeOptionMetadataWrites >= OPTION_METADATA_WRITE_MAX_CONCURRENCY) {
     return false;
@@ -1084,7 +1088,8 @@ export async function loadDurableOptionExpirations(input: {
   });
   if (
     isDurableOptionMetadataDisabled() ||
-    isDurableOptionMetadataBackoffActive(scope)
+    isDurableOptionMetadataBackoffActive(scope) ||
+    shouldSkipDurableOptionMetadataReadForPressure()
   ) {
     counters.miss += 1;
     return null;
@@ -1187,7 +1192,8 @@ export async function loadDurableOptionChain(input: {
   });
   if (
     isDurableOptionMetadataDisabled() ||
-    isDurableOptionMetadataBackoffActive(scope)
+    isDurableOptionMetadataBackoffActive(scope) ||
+    shouldSkipDurableOptionMetadataReadForPressure()
   ) {
     counters.miss += 1;
     return null;
