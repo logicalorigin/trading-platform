@@ -979,22 +979,31 @@ const barCacheRowChangedPredicate = sql`
 // the time, but a genuinely-changed row — a provider correction/restatement, a
 // massive-history backfill gap-fill, or a trade-bar-filter force-accept — DOES
 // rewrite bar_cache below the cache's high-water, where a delta-only refetch would
-// miss it. Both writers below add RETURNING(symbol, timeframe, starts_at): because
-// the upsert's setWhere skips no-op re-upserts, Postgres returns ONLY rows actually
-// inserted/updated, so this fires exactly on real changes (~1 row/flush in steady
-// state). The cache subscribes and invalidates a cell only when a changed startsAt
-// is <= its high-water; above-water appends are ignored (the delta-fetch handles
-// them). In-process and complete: the API is the sole bar_cache writer (the Rust
-// worker only runs retention DELETEs), so this catches 100% of relevant changes
-// with no IPC.
+// miss it. Each writer captures the key's pre-write max and uses the guarded
+// upsert's RETURNING rows to classify the whole key as append-only or historical;
+// no-op re-upserts return no rows and emit nothing. The cache marks append-only
+// keys delta-due and fully invalidates historical keys. In-process and complete:
+// the API is the sole bar_cache writer (the Rust worker only runs retention
+// DELETEs), so this catches 100% of relevant changes with no IPC.
 export type BarCacheChange = {
   symbol: string;
   timeframe: string;
   sourceName: string;
   startsAtMs: number;
+  maxStartsAtMs: number;
+  kind: "append" | "historical";
 };
 type BarCacheChangeListener = (changes: BarCacheChange[]) => void;
 const barCacheChangeListeners = new Set<BarCacheChangeListener>();
+
+type BarCacheWriteKey = {
+  symbol: string;
+  timeframe: string;
+  sourceName: string;
+};
+type ChangedBarCacheRow = BarCacheWriteKey & {
+  startsAt: Date | string;
+};
 
 export function onBarCacheRowsChanged(
   listener: BarCacheChangeListener,
@@ -1007,6 +1016,121 @@ export function onBarCacheRowsChanged(
 
 function startsAtToMs(value: Date | string): number {
   return value instanceof Date ? value.getTime() : new Date(value).getTime();
+}
+
+function barCacheChangeKey(input: BarCacheWriteKey): string {
+  return [input.symbol, input.timeframe, input.sourceName].join("|");
+}
+
+async function loadPreviousBarCacheMaxStartsAt(
+  rows: readonly BarCacheWriteKey[],
+): Promise<Map<string, number | null> | null> {
+  const keysByValue = new Map<string, BarCacheWriteKey>();
+  for (const row of rows) {
+    keysByValue.set(barCacheChangeKey(row), row);
+  }
+  const keys = Array.from(keysByValue.values());
+  if (!keys.length) {
+    return new Map();
+  }
+  const symbolValues = sql.join(
+    keys.map((key) => sql`${key.symbol}`),
+    sql`, `,
+  );
+  const timeframeValues = sql.join(
+    keys.map((key) => sql`${key.timeframe}`),
+    sql`, `,
+  );
+  const sourceValues = sql.join(
+    keys.map((key) => sql`${key.sourceName}`),
+    sql`, `,
+  );
+  type PreviousMaxRow = {
+    symbol: string;
+    timeframe: string;
+    source_name: string;
+    max_starts_at: Date | string | null;
+  };
+
+  try {
+    const result = await runWithMarketDataStoreContext(
+      "bar-cache-write-high-water",
+      () =>
+        db.execute(sql<PreviousMaxRow>`
+          select keys.symbol, keys.timeframe, keys.source as source_name,
+                 latest.starts_at as max_starts_at
+          from unnest(
+            array[${symbolValues}]::text[],
+            array[${timeframeValues}]::text[],
+            array[${sourceValues}]::text[]
+          ) as keys(symbol, timeframe, source)
+          left join lateral (
+            select starts_at
+            from bar_cache
+            where symbol = keys.symbol
+              and timeframe = keys.timeframe
+              and source = keys.source
+            order by starts_at desc
+            limit 1
+          ) latest on true
+        `),
+    );
+    const previousMaxByKey = new Map<string, number | null>(
+      keys.map((key) => [barCacheChangeKey(key), null]),
+    );
+    for (const row of result.rows as PreviousMaxRow[]) {
+      previousMaxByKey.set(
+        barCacheChangeKey({
+          symbol: row.symbol,
+          timeframe: row.timeframe,
+          sourceName: row.source_name,
+        }),
+        row.max_starts_at == null ? null : startsAtToMs(row.max_starts_at),
+      );
+    }
+    return previousMaxByKey;
+  } catch {
+    // Persistence remains authoritative. An unavailable pre-write high-water is
+    // classified conservatively as historical below so readers do a full reload.
+    return null;
+  }
+}
+
+function buildBarCacheChanges(
+  rows: readonly ChangedBarCacheRow[],
+  previousMaxByKey: Map<string, number | null> | null,
+): BarCacheChange[] {
+  const summaryByKey = new Map<
+    string,
+    { maxStartsAtMs: number; historical: boolean }
+  >();
+  for (const row of rows) {
+    const key = barCacheChangeKey(row);
+    const startsAtMs = startsAtToMs(row.startsAt);
+    const previousMaxStartsAtMs = previousMaxByKey?.get(key) ?? null;
+    const existing = summaryByKey.get(key);
+    summaryByKey.set(key, {
+      maxStartsAtMs: Math.max(
+        existing?.maxStartsAtMs ?? previousMaxStartsAtMs ?? startsAtMs,
+        startsAtMs,
+      ),
+      historical:
+        previousMaxByKey === null ||
+        existing?.historical === true ||
+        (previousMaxStartsAtMs != null && startsAtMs <= previousMaxStartsAtMs),
+    });
+  }
+  return rows.map((row) => {
+    const summary = summaryByKey.get(barCacheChangeKey(row))!;
+    return {
+      symbol: row.symbol,
+      timeframe: row.timeframe,
+      sourceName: row.sourceName,
+      startsAtMs: startsAtToMs(row.startsAt),
+      maxStartsAtMs: summary.maxStartsAtMs,
+      kind: summary.historical ? "historical" : "append",
+    };
+  });
 }
 
 function dispatchBarCacheChanges(changes: BarCacheChange[]): void {
@@ -1051,7 +1175,21 @@ export async function persistMarketDataBars(input: {
       input.bars,
       input.request.timeframe,
     );
-    const changedBarKeys: BarCacheChange[] = [];
+    const shouldDispatchChanges = barCacheChangeListeners.size > 0;
+    const previousMaxByKey = shouldDispatchChanges
+      ? await loadPreviousBarCacheMaxStartsAt(
+          normalizedBars.length
+            ? [
+                {
+                  symbol,
+                  timeframe: input.request.timeframe,
+                  sourceName: input.sourceName,
+                },
+              ]
+            : [],
+        )
+      : null;
+    const changedRowsForNotification: ChangedBarCacheRow[] = [];
     for (
       let offset = 0;
       offset < normalizedBars.length;
@@ -1107,17 +1245,23 @@ export async function persistMarketDataBars(input: {
                 startsAt: barCacheTable.startsAt,
               }),
         );
-        for (const row of changedRows) {
-          changedBarKeys.push({
-            symbol: row.symbol,
-            timeframe: row.timeframe,
-            sourceName: input.sourceName,
-            startsAtMs: startsAtToMs(row.startsAt),
-          });
+        if (shouldDispatchChanges) {
+          for (const row of changedRows) {
+            changedRowsForNotification.push({
+              symbol: row.symbol,
+              timeframe: row.timeframe,
+              sourceName: input.sourceName,
+              startsAt: row.startsAt,
+            });
+          }
         }
       }
     }
-    dispatchBarCacheChanges(changedBarKeys);
+    if (shouldDispatchChanges) {
+      dispatchBarCacheChanges(
+        buildBarCacheChanges(changedRowsForNotification, previousMaxByKey),
+      );
+    }
     // A successful write proves the store is healthy again — clear any backoff.
     marketDataStoreBackoff.clear();
     return true;
@@ -1213,7 +1357,17 @@ export async function persistMarketDataBarsForSymbols(input: {
     if (!rows.length) {
       return false;
     }
-    const changedBarKeys: BarCacheChange[] = [];
+    const shouldDispatchChanges = barCacheChangeListeners.size > 0;
+    const previousMaxByKey = shouldDispatchChanges
+      ? await loadPreviousBarCacheMaxStartsAt(
+          rows.map((row) => ({
+            symbol: row.symbol,
+            timeframe: row.timeframe,
+            sourceName: row.source,
+          })),
+        )
+      : null;
+    const changedRowsForNotification: ChangedBarCacheRow[] = [];
     for (
       let offset = 0;
       offset < rows.length;
@@ -1251,16 +1405,22 @@ export async function persistMarketDataBarsForSymbols(input: {
               startsAt: barCacheTable.startsAt,
             }),
       );
-      for (const row of changedRows) {
-        changedBarKeys.push({
-          symbol: row.symbol,
-          timeframe: row.timeframe,
-          sourceName: input.sourceName,
-          startsAtMs: startsAtToMs(row.startsAt),
-        });
+      if (shouldDispatchChanges) {
+        for (const row of changedRows) {
+          changedRowsForNotification.push({
+            symbol: row.symbol,
+            timeframe: row.timeframe,
+            sourceName: input.sourceName,
+            startsAt: row.startsAt,
+          });
+        }
       }
     }
-    dispatchBarCacheChanges(changedBarKeys);
+    if (shouldDispatchChanges) {
+      dispatchBarCacheChanges(
+        buildBarCacheChanges(changedRowsForNotification, previousMaxByKey),
+      );
+    }
     marketDataStoreBackoff.clear();
     return true;
   } catch (error) {
@@ -1388,7 +1548,17 @@ export async function persistMarketDataBarsMixed(input: {
       return { okByIndex, error: null };
     }
 
-    const changedBarKeys: BarCacheChange[] = [];
+    const shouldDispatchChanges = barCacheChangeListeners.size > 0;
+    const previousMaxByKey = shouldDispatchChanges
+      ? await loadPreviousBarCacheMaxStartsAt(
+          rows.map((row) => ({
+            symbol: row.symbol,
+            timeframe: row.timeframe,
+            sourceName: row.source,
+          })),
+        )
+      : null;
+    const changedRowsForNotification: ChangedBarCacheRow[] = [];
     let lastChunkError: unknown = null;
     let anyChunkSucceeded = false;
     for (
@@ -1445,13 +1615,15 @@ export async function persistMarketDataBarsMixed(input: {
               }),
         );
         anyChunkSucceeded = true;
-        for (const row of changedRows) {
-          changedBarKeys.push({
-            symbol: row.symbol,
-            timeframe: row.timeframe,
-            sourceName: row.source,
-            startsAtMs: startsAtToMs(row.startsAt),
-          });
+        if (shouldDispatchChanges) {
+          for (const row of changedRows) {
+            changedRowsForNotification.push({
+              symbol: row.symbol,
+              timeframe: row.timeframe,
+              sourceName: row.source,
+              startsAt: row.startsAt,
+            });
+          }
         }
       } catch (error) {
         lastChunkError = error;
@@ -1461,7 +1633,11 @@ export async function persistMarketDataBarsMixed(input: {
         }
       }
     }
-    dispatchBarCacheChanges(changedBarKeys);
+    if (shouldDispatchChanges) {
+      dispatchBarCacheChanges(
+        buildBarCacheChanges(changedRowsForNotification, previousMaxByKey),
+      );
+    }
     if (anyChunkSucceeded && !lastChunkError) {
       // A fully-successful flush proves the store is healthy again — clear any
       // backoff. If any chunk failed, leave the backoff to handleStoreError above.

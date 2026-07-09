@@ -30,6 +30,8 @@ const TIMEFRAME = "1m" as const;
 const SOURCES = isMassiveStocksRealtimeConfigured()
   ? ["massive-websocket", "massive-history"]
   : ["massive-delayed-websocket", "massive-history"];
+const STORED_BARS_DELTA_ENV = "PYRUS_SIGNALS_STORED_BARS_DELTA";
+const originalStoredBarsDeltaMode = process.env[STORED_BARS_DELTA_ENV];
 
 let testDb: TestDatabase;
 const internals = __signalMonitorLocalBarCacheInternalsForTests;
@@ -46,9 +48,15 @@ before(async () => {
 });
 after(async () => {
   internals.reset();
+  if (originalStoredBarsDeltaMode === undefined) {
+    delete process.env[STORED_BARS_DELTA_ENV];
+  } else {
+    process.env[STORED_BARS_DELTA_ENV] = originalStoredBarsDeltaMode;
+  }
   await testDb.cleanup();
 });
 beforeEach(async () => {
+  process.env[STORED_BARS_DELTA_ENV] = "on";
   internals.reset();
   __resetApiResourcePressureForTests();
   __resetMarketDataStoreBackoffForTests();
@@ -544,6 +552,247 @@ test("stored-bar invalidation diagnostics separate change events from per-cell b
       beforeInvalidation.invalidationFullCount,
     0,
   );
+});
+
+test("stored-bars delta defaults off and repeats the byte-identical full read", async () => {
+  delete process.env[STORED_BARS_DELTA_ENV];
+  await seed("AAPL", 3);
+  let fullReads = 0;
+  let deltaReads = 0;
+  internals.__setLoadStoredMarketBarsForSymbolsForTests(async (input) => {
+    fullReads += 1;
+    return loadStoredMarketBarsForSymbols(input);
+  });
+  internals.__setLoadStoredMarketBarsForSymbolsSinceForTests(async (input) => {
+    deltaReads += 1;
+    return loadStoredMarketBarsForSymbolsSince(input);
+  });
+
+  const evaluatedAt = new Date();
+  const loadAapl = () =>
+    runWithSignalMonitorStoredBarsPrefetch(
+      { symbols: ["AAPL"], timeframes: [TIMEFRAME], evaluatedAt, limit: 50 },
+      () =>
+        loadSignalMonitorLocalBarCache({
+          symbol: "AAPL",
+          timeframe: TIMEFRAME,
+          evaluatedAt,
+          limit: 50,
+        }),
+    );
+  const first = await loadAapl();
+  const second = await loadAapl();
+  process.env[STORED_BARS_DELTA_ENV] = "off";
+  const explicitOff = await loadAapl();
+
+  assert.deepEqual(second, first);
+  assert.deepEqual(explicitOff, first);
+  assert.equal(fullReads, SOURCES.length * 3);
+  assert.equal(deltaReads, 0);
+  assert.deepEqual(
+    getSignalMonitorLocalBarCacheDiagnostics().storedBarsDelta,
+    {
+      mode: "off",
+      deltaReads: 0,
+      fullReads: SOURCES.length * 3,
+      appliedAppends: 0,
+      gapFallbacks: 0,
+      shadowChecks: 0,
+      shadowMismatches: 0,
+    },
+  );
+});
+
+test("delta windows equal full reads for cold cache, append sequences, corrections, and gaps", async () => {
+  const startsAt = await seed("AAPL", 2);
+  const evaluatedAt = new Date();
+  const limit = 50;
+  const deltaReadLimits: number[] = [];
+  internals.__setLoadStoredMarketBarsForSymbolsSinceForTests(async (input) => {
+    deltaReadLimits.push(input.limit ?? 0);
+    return loadStoredMarketBarsForSymbolsSince(input);
+  });
+  const loadAapl = () =>
+    runWithSignalMonitorStoredBarsPrefetch(
+      { symbols: ["AAPL"], timeframes: [TIMEFRAME], evaluatedAt, limit },
+      () =>
+        loadSignalMonitorLocalBarCache({
+          symbol: "AAPL",
+          timeframe: TIMEFRAME,
+          evaluatedAt,
+          limit,
+        }),
+    );
+  const compareWithFullRead = async (deltaServed: unknown) => {
+    process.env[STORED_BARS_DELTA_ENV] = "off";
+    const full = await loadAapl();
+    process.env[STORED_BARS_DELTA_ENV] = "on";
+    assert.deepEqual(deltaServed, full);
+  };
+
+  const cold = await loadAapl();
+  await compareWithFullRead(cold);
+
+  const appendBars = [2, 3].map((offset) => ({
+    timestamp: new Date(startsAt[0]!.getTime() + offset * 60_000),
+    open: 150 + offset,
+    high: 151 + offset,
+    low: 149 + offset,
+    close: 150.5 + offset,
+    volume: 5_000 + offset,
+  }));
+  await persistMarketDataBarsForSymbols({
+    timeframe: TIMEFRAME,
+    sourceName: SOURCES[0]!,
+    assetClass: "equity",
+    outsideRth: true,
+    source: "trades",
+    recentWindowMinutes: 0,
+    bySymbol: [{ symbol: "AAPL", bars: appendBars }],
+  });
+  const afterAppend = await loadAapl();
+  await compareWithFullRead(afterAppend);
+  assert.equal(
+    getSignalMonitorLocalBarCacheDiagnostics().storedBarsDelta.appliedAppends,
+    2,
+  );
+  assert.ok(
+    deltaReadLimits.length > 0 && deltaReadLimits.every((value) => value < limit),
+    `expected a small delta LIMIT below ${limit}, got ${deltaReadLimits.join(", ")}`,
+  );
+
+  await persistMarketDataBarsForSymbols({
+    timeframe: TIMEFRAME,
+    sourceName: SOURCES[0]!,
+    assetClass: "equity",
+    outsideRth: true,
+    source: "trades",
+    recentWindowMinutes: 0,
+    bySymbol: [
+      {
+        symbol: "AAPL",
+        bars: [
+          {
+            timestamp: startsAt[0]!,
+            open: 175,
+            high: 176,
+            low: 174,
+            close: 175.5,
+            volume: 7_500,
+          },
+        ],
+      },
+    ],
+  });
+  const afterCorrection = await loadAapl();
+  await compareWithFullRead(afterCorrection);
+
+  const gapAt = new Date(appendBars[1]!.timestamp.getTime() + 2 * 60_000);
+  await persistMarketDataBarsForSymbols({
+    timeframe: TIMEFRAME,
+    sourceName: SOURCES[0]!,
+    assetClass: "equity",
+    outsideRth: true,
+    source: "trades",
+    recentWindowMinutes: 0,
+    bySymbol: [
+      {
+        symbol: "AAPL",
+        bars: [
+          {
+            timestamp: gapAt,
+            open: 180,
+            high: 181,
+            low: 179,
+            close: 180.5,
+            volume: 8_000,
+          },
+        ],
+      },
+    ],
+  });
+  const beforeGap = getSignalMonitorLocalBarCacheDiagnostics().storedBarsDelta;
+  const afterGap = await loadAapl();
+  const afterGapDiagnostics =
+    getSignalMonitorLocalBarCacheDiagnostics().storedBarsDelta;
+  assert.equal(
+    afterGapDiagnostics.gapFallbacks - beforeGap.gapFallbacks,
+    1,
+  );
+  await compareWithFullRead(afterGap);
+});
+
+test("shadow mode serves the full read and counts deterministic deep-compare mismatches", async () => {
+  process.env[STORED_BARS_DELTA_ENV] = "shadow";
+  const limit = 50;
+  const symbol = Array.from({ length: 100 }, (_unused, index) => `SH${index}`).find(
+    (candidate) =>
+      internals.isStoredBarsDeltaShadowSample(
+        `${candidate}|${TIMEFRAME}|${SOURCES[0]}|${limit}`,
+      ),
+  );
+  assert.ok(symbol, "expected a deterministic shadow-sampled symbol");
+  const startsAt = await seed(symbol, 2);
+  const evaluatedAt = new Date();
+  const loadSymbol = () =>
+    runWithSignalMonitorStoredBarsPrefetch(
+      { symbols: [symbol], timeframes: [TIMEFRAME], evaluatedAt, limit },
+      () =>
+        loadSignalMonitorLocalBarCache({
+          symbol,
+          timeframe: TIMEFRAME,
+          evaluatedAt,
+          limit,
+        }),
+    );
+
+  await loadSymbol();
+  const appendedAt = new Date(startsAt.at(-1)!.getTime() + 60_000);
+  await persistMarketDataBarsForSymbols({
+    timeframe: TIMEFRAME,
+    sourceName: SOURCES[0]!,
+    assetClass: "equity",
+    outsideRth: true,
+    source: "trades",
+    recentWindowMinutes: 0,
+    bySymbol: [
+      {
+        symbol,
+        bars: [
+          {
+            timestamp: appendedAt,
+            open: 190,
+            high: 191,
+            low: 189,
+            close: 190.5,
+            volume: 9_000,
+          },
+        ],
+      },
+    ],
+  });
+  internals.__setLoadStoredMarketBarsForSymbolsSinceForTests(async (input) => {
+    const loaded = await loadStoredMarketBarsForSymbolsSince(input);
+    const bars = loaded.get(symbol);
+    if (input.sourceName === SOURCES[0] && bars?.length) {
+      loaded.set(
+        symbol,
+        bars.map((bar) => ({ ...bar, close: bar.close + 1 })),
+      );
+    }
+    return loaded;
+  });
+
+  const shadowServed = await loadSymbol();
+  const diagnostics =
+    getSignalMonitorLocalBarCacheDiagnostics().storedBarsDelta;
+  assert.equal(diagnostics.mode, "shadow");
+  assert.ok(diagnostics.shadowChecks >= 1);
+  assert.ok(diagnostics.shadowMismatches >= 1);
+
+  process.env[STORED_BARS_DELTA_ENV] = "off";
+  const full = await loadSymbol();
+  assert.deepEqual(shadowServed, full);
 });
 
 test("event-loop-only pressure does not suppress stored-bar DB augmentation", async () => {

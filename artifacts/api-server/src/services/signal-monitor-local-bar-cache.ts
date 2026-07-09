@@ -1,4 +1,5 @@
 import { AsyncLocalStorage } from "node:async_hooks";
+import { isDeepStrictEqual } from "node:util";
 
 import {
   resolvePreviousUsEquitySessionClose,
@@ -100,6 +101,9 @@ const STORED_BARS_PREFETCH_TARGET_ROWS_PER_QUERY = 480;
 // used for full reads is irrelevant here; batch deltas wide to coalesce many
 // symbols into a single pooled connection instead of one acquisition per symbol.
 const STORED_BARS_DELTA_SYMBOL_BATCH = 64;
+const STORED_BARS_DELTA_READ_LIMIT = 8;
+const STORED_BARS_DELTA_SHADOW_SAMPLE_DIVISOR = 16;
+type StoredBarsDeltaMode = "off" | "shadow" | "on";
 export function storeSourceNames(): string[] {
   const streamSourceName = isMassiveStocksRealtimeConfigured()
     ? "massive-websocket"
@@ -133,6 +137,7 @@ type StoredBarsCacheCell = {
   limit: number;
   bars: BrokerBarSnapshot[];
   highWaterMs: number | null;
+  pendingMaxStartsAtMs: number | null;
   lastDeltaBucketMs: number | null;
   deltaDue: boolean;
   invalidated: boolean;
@@ -151,6 +156,12 @@ let storedBarsCacheInvalidationEventsCount = 0;
 let storedBarsCacheInvalidationFullCount = 0;
 let storedBarsCacheInvalidationDeltaDueCount = 0;
 let storedBarsCacheEvictionCount = 0;
+let storedBarsDeltaReadCount = 0;
+let storedBarsDeltaFullReadCount = 0;
+let storedBarsDeltaAppliedAppendCount = 0;
+let storedBarsDeltaGapFallbackCount = 0;
+let storedBarsDeltaShadowCheckCount = 0;
+let storedBarsDeltaShadowMismatchCount = 0;
 // Prefetch-vs-fallback accounting for readStoredBars. The fallback branch takes one
 // pooled connection per source, so its rate gauges whether the per-symbol path is a
 // real cost or a structural rarity (audit-flagged "rare but uncounted"). Split by
@@ -244,6 +255,21 @@ function storedBarsCacheMaxCells(): number {
     0,
     100_000,
   );
+}
+
+function storedBarsDeltaMode(): StoredBarsDeltaMode {
+  const mode = process.env["PYRUS_SIGNALS_STORED_BARS_DELTA"]
+    ?.trim()
+    .toLowerCase();
+  return mode === "on" || mode === "shadow" ? mode : "off";
+}
+
+function isStoredBarsDeltaShadowSample(key: string): boolean {
+  let hash = 0;
+  for (let index = 0; index < key.length; index += 1) {
+    hash = Math.imul(hash, 31) + key.charCodeAt(index);
+  }
+  return (hash >>> 0) % STORED_BARS_DELTA_SHADOW_SAMPLE_DIVISOR === 0;
 }
 
 function storedBarsPrefetchConcurrency(): number {
@@ -582,6 +608,7 @@ function writeStoredBarsCacheCell(input: {
     limit: Math.max(1, Math.floor(input.limit || 1)),
     bars,
     highWaterMs: highWaterMsForBars(bars),
+    pendingMaxStartsAtMs: null,
     lastDeltaBucketMs: input.deltaBucketMs,
     deltaDue: false,
     invalidated: false,
@@ -597,17 +624,27 @@ function updateStoredBarsCacheCellWithDelta(input: {
   cell: StoredBarsCacheCell;
   deltaBars: BrokerBarSnapshot[];
   deltaBucketMs: number;
+  evaluatedAtMs: number;
 }): StoredBarsCacheCell {
   const bars = mergeBarsByTimestamp(
     [...input.cell.bars, ...input.deltaBars],
     input.cell.limit,
   );
+  const highWaterMs = highWaterMsForBars(bars);
+  const pendingMaxStartsAtMs =
+    input.cell.pendingMaxStartsAtMs != null &&
+    (highWaterMs == null || highWaterMs < input.cell.pendingMaxStartsAtMs)
+      ? input.cell.pendingMaxStartsAtMs
+      : null;
   const cell: StoredBarsCacheCell = {
     ...input.cell,
     bars,
-    highWaterMs: highWaterMsForBars(bars),
+    highWaterMs,
+    pendingMaxStartsAtMs,
     lastDeltaBucketMs: input.deltaBucketMs,
-    deltaDue: false,
+    deltaDue:
+      pendingMaxStartsAtMs != null &&
+      pendingMaxStartsAtMs <= input.evaluatedAtMs,
     invalidated: false,
     lastAccessMs: Date.now(),
   };
@@ -637,13 +674,18 @@ function ensureStoredBarsCacheSubscription(): void {
           continue;
         }
         storedBarsCacheInvalidationCount += 1;
-        if (cell.highWaterMs == null || change.startsAtMs <= cell.highWaterMs) {
+        if (change.kind === "historical" || cell.highWaterMs == null) {
           storedBarsCacheInvalidationFullCount += 1;
           cell.invalidated = true;
           cell.deltaDue = false;
-        } else {
+          cell.pendingMaxStartsAtMs = null;
+        } else if (change.maxStartsAtMs > cell.highWaterMs) {
           storedBarsCacheInvalidationDeltaDueCount += 1;
           cell.deltaDue = true;
+          cell.pendingMaxStartsAtMs = Math.max(
+            cell.pendingMaxStartsAtMs ?? change.maxStartsAtMs,
+            change.maxStartsAtMs,
+          );
         }
       }
     }
@@ -723,7 +765,7 @@ async function loadDeltaStoredBarsForPrefetch(
       await deltaLoader({
         symbols,
         timeframe: input.timeframe,
-        limit: input.limit,
+        limit: Math.min(input.limit, STORED_BARS_DELTA_READ_LIMIT),
         to: input.to,
         after: input.after,
         assetClass: "equity",
@@ -735,6 +777,36 @@ async function loadDeltaStoredBarsForPrefetch(
     );
   }
   return result;
+}
+
+function deltaBarsExtendCachedTail(input: {
+  cell: StoredBarsCacheCell;
+  deltaBars: readonly BrokerBarSnapshot[];
+  evaluatedAtMs: number;
+}): boolean {
+  if (input.cell.highWaterMs == null) {
+    return false;
+  }
+  const stepMs = TIMEFRAME_MS[input.cell.timeframe];
+  let expectedMs = input.cell.highWaterMs + stepMs;
+  let lastDeltaMs: number | null = null;
+  for (const bar of input.deltaBars) {
+    const timestamp = dateOrNull(bar.timestamp);
+    if (
+      !timestamp ||
+      timestamp.getTime() !== expectedMs ||
+      timestamp.getTime() > input.evaluatedAtMs
+    ) {
+      return false;
+    }
+    lastDeltaMs = timestamp.getTime();
+    expectedMs += stepMs;
+  }
+  return !(
+    input.cell.pendingMaxStartsAtMs != null &&
+    input.cell.pendingMaxStartsAtMs <= input.evaluatedAtMs &&
+    lastDeltaMs !== input.cell.pendingMaxStartsAtMs
+  );
 }
 
 function shouldPruneMinuteBarsForSymbol(
@@ -1023,6 +1095,123 @@ async function readStoredBars(input: {
   return mergeBarsByTimestamp(results.flat(), input.limit);
 }
 
+async function loadStoredBarsForSymbolsForShadow(input: {
+  symbols: string[];
+  timeframe: SignalMonitorLocalBarCacheTimeframe;
+  limit: number;
+  to: Date;
+  sourceName: string;
+}): Promise<Map<string, BrokerBarSnapshot[]>> {
+  ensureStoredBarsCacheSubscription();
+  const evaluatedAtMs = input.to.getTime();
+  const deltaBucketMs = evaluatedBucketMs(evaluatedAtMs, input.timeframe);
+  const sampledCells = new Map<string, StoredBarsCacheCell>();
+  const deltaReadSymbolsByAfter = new Map<number, string[]>();
+  for (const rawSymbol of input.symbols) {
+    const symbol = normalizeSymbol(rawSymbol);
+    if (!symbol) {
+      continue;
+    }
+    const key = storedBarsCellKey({
+      symbol,
+      timeframe: input.timeframe,
+      sourceName: input.sourceName,
+      limit: input.limit,
+    });
+    const cell = storedBarsCrossCycleCache.get(key);
+    if (!cell || cell.invalidated || !isStoredBarsDeltaShadowSample(key)) {
+      continue;
+    }
+    sampledCells.set(symbol, cell);
+    if (
+      cell.highWaterMs != null &&
+      (cell.deltaDue || (cell.lastDeltaBucketMs ?? -1) < deltaBucketMs) &&
+      cell.highWaterMs < evaluatedAtMs
+    ) {
+      const symbols = deltaReadSymbolsByAfter.get(cell.highWaterMs) ?? [];
+      symbols.push(symbol);
+      deltaReadSymbolsByAfter.set(cell.highWaterMs, symbols);
+    }
+  }
+
+  storedBarsCacheFullReadCount += 1;
+  storedBarsDeltaFullReadCount += 1;
+  const full = await loadFullStoredBarsForPrefetch({
+    symbols: input.symbols,
+    timeframe: input.timeframe,
+    limit: input.limit,
+    to: input.to,
+    sourceName: input.sourceName,
+  });
+  const deltaSymbols = new Set(
+    Array.from(deltaReadSymbolsByAfter.values()).flat(),
+  );
+  for (const [symbol, cell] of sampledCells) {
+    if (deltaSymbols.has(symbol)) {
+      continue;
+    }
+    storedBarsDeltaShadowCheckCount += 1;
+    if (
+      !isDeepStrictEqual(
+        barsThroughEvaluatedAt(cell.bars, evaluatedAtMs, input.limit),
+        full.get(symbol) ?? [],
+      )
+    ) {
+      storedBarsDeltaShadowMismatchCount += 1;
+    }
+  }
+
+  for (const [afterMs, symbols] of deltaReadSymbolsByAfter) {
+    storedBarsCacheDeltaReadCount += 1;
+    storedBarsDeltaReadCount += 1;
+    const loaded = await loadDeltaStoredBarsForPrefetch({
+      symbols,
+      timeframe: input.timeframe,
+      limit: input.limit,
+      to: input.to,
+      after: new Date(afterMs),
+      sourceName: input.sourceName,
+    });
+    for (const symbol of symbols) {
+      const cell = sampledCells.get(symbol);
+      if (!cell) {
+        continue;
+      }
+      const deltaBars = loaded.get(symbol) ?? [];
+      if (!deltaBarsExtendCachedTail({ cell, deltaBars, evaluatedAtMs })) {
+        storedBarsDeltaGapFallbackCount += 1;
+        continue;
+      }
+      const candidate = barsThroughEvaluatedAt(
+        mergeBarsByTimestamp([...cell.bars, ...deltaBars], input.limit),
+        evaluatedAtMs,
+        input.limit,
+      );
+      storedBarsDeltaShadowCheckCount += 1;
+      if (!isDeepStrictEqual(candidate, full.get(symbol) ?? [])) {
+        storedBarsDeltaShadowMismatchCount += 1;
+      }
+    }
+  }
+
+  for (const rawSymbol of input.symbols) {
+    const symbol = normalizeSymbol(rawSymbol);
+    if (!symbol) {
+      continue;
+    }
+    writeStoredBarsCacheCell({
+      symbol,
+      timeframe: input.timeframe,
+      sourceName: input.sourceName,
+      limit: input.limit,
+      bars: full.get(symbol) ?? [],
+      evaluatedAtMs,
+      deltaBucketMs,
+    });
+  }
+  return full;
+}
+
 async function loadStoredBarsForSymbolsForPrefetch(input: {
   symbols: string[];
   timeframe: SignalMonitorLocalBarCacheTimeframe;
@@ -1030,8 +1219,10 @@ async function loadStoredBarsForSymbolsForPrefetch(input: {
   to: Date;
   sourceName: string;
 }): Promise<Map<string, BrokerBarSnapshot[]>> {
-  if (storedBarsCacheMaxCells() <= 0) {
+  const deltaMode = storedBarsDeltaMode();
+  if (deltaMode === "off" || storedBarsCacheMaxCells() <= 0) {
     storedBarsCacheFullReadCount += 1;
+    storedBarsDeltaFullReadCount += 1;
     return loadFullStoredBarsForPrefetch({
       symbols: input.symbols,
       timeframe: input.timeframe,
@@ -1039,6 +1230,9 @@ async function loadStoredBarsForSymbolsForPrefetch(input: {
       to: input.to,
       sourceName: input.sourceName,
     });
+  }
+  if (deltaMode === "shadow") {
+    return loadStoredBarsForSymbolsForShadow(input);
   }
 
   ensureStoredBarsCacheSubscription();
@@ -1087,6 +1281,7 @@ async function loadStoredBarsForSymbolsForPrefetch(input: {
 
   if (fullReadSymbols.length) {
     storedBarsCacheFullReadCount += 1;
+    storedBarsDeltaFullReadCount += 1;
     const loaded = await loadFullStoredBarsForPrefetch({
       symbols: fullReadSymbols,
       timeframe: input.timeframe,
@@ -1112,8 +1307,10 @@ async function loadStoredBarsForSymbolsForPrefetch(input: {
     }
   }
 
+  const gapFallbackSymbols: string[] = [];
   for (const [afterMs, symbols] of deltaReadSymbolsByAfter) {
     storedBarsCacheDeltaReadCount += 1;
+    storedBarsDeltaReadCount += 1;
     const loaded = await loadDeltaStoredBarsForPrefetch({
       symbols,
       timeframe: input.timeframe,
@@ -1127,12 +1324,54 @@ async function loadStoredBarsForSymbolsForPrefetch(input: {
       if (!existing) {
         continue;
       }
+      const deltaBars = loaded.get(symbol) ?? [];
+      if (
+        !deltaBarsExtendCachedTail({
+          cell: existing,
+          deltaBars,
+          evaluatedAtMs,
+        })
+      ) {
+        storedBarsDeltaGapFallbackCount += 1;
+        gapFallbackSymbols.push(symbol);
+        continue;
+      }
       const cell = updateStoredBarsCacheCellWithDelta({
         cell: existing,
-        deltaBars: loaded.get(symbol) ?? [],
+        deltaBars,
+        deltaBucketMs,
+        evaluatedAtMs,
+      });
+      storedBarsDeltaAppliedAppendCount += deltaBars.length;
+      storedBarsCacheHitCount += 1;
+      result.set(
+        symbol,
+        barsThroughEvaluatedAt(cell.bars, evaluatedAtMs, input.limit),
+      );
+    }
+  }
+
+  if (gapFallbackSymbols.length) {
+    storedBarsCacheFullReadCount += 1;
+    storedBarsDeltaFullReadCount += 1;
+    const symbols = Array.from(new Set(gapFallbackSymbols));
+    const loaded = await loadFullStoredBarsForPrefetch({
+      symbols,
+      timeframe: input.timeframe,
+      limit: input.limit,
+      to: input.to,
+      sourceName: input.sourceName,
+    });
+    for (const symbol of symbols) {
+      const cell = writeStoredBarsCacheCell({
+        symbol,
+        timeframe: input.timeframe,
+        sourceName: input.sourceName,
+        limit: input.limit,
+        bars: loaded.get(symbol) ?? [],
+        evaluatedAtMs,
         deltaBucketMs,
       });
-      storedBarsCacheHitCount += 1;
       result.set(
         symbol,
         barsThroughEvaluatedAt(cell.bars, evaluatedAtMs, input.limit),
@@ -1548,6 +1787,15 @@ export function getSignalMonitorLocalBarCacheDiagnostics() {
       invalidationDeltaDueCount: storedBarsCacheInvalidationDeltaDueCount,
       evictionCount: storedBarsCacheEvictionCount,
     },
+    storedBarsDelta: {
+      mode: storedBarsDeltaMode(),
+      deltaReads: storedBarsDeltaReadCount,
+      fullReads: storedBarsDeltaFullReadCount,
+      appliedAppends: storedBarsDeltaAppliedAppendCount,
+      gapFallbacks: storedBarsDeltaGapFallbackCount,
+      shadowChecks: storedBarsDeltaShadowCheckCount,
+      shadowMismatches: storedBarsDeltaShadowMismatchCount,
+    },
     storedBarsRead: {
       prefetchHitCount: storedBarsPrefetchHitCount,
       fallbackCount: storedBarsPrefetchFallbackCount,
@@ -1600,6 +1848,12 @@ export const __signalMonitorLocalBarCacheInternalsForTests = {
     storedBarsCacheInvalidationFullCount = 0;
     storedBarsCacheInvalidationDeltaDueCount = 0;
     storedBarsCacheEvictionCount = 0;
+    storedBarsDeltaReadCount = 0;
+    storedBarsDeltaFullReadCount = 0;
+    storedBarsDeltaAppliedAppendCount = 0;
+    storedBarsDeltaGapFallbackCount = 0;
+    storedBarsDeltaShadowCheckCount = 0;
+    storedBarsDeltaShadowMismatchCount = 0;
     storedBarsPrefetchHitCount = 0;
     storedBarsPrefetchFallbackCount = 0;
     storedBarsPrefetchFallbackNoPrefetchCount = 0;
@@ -1634,6 +1888,7 @@ export const __signalMonitorLocalBarCacheInternalsForTests = {
   storeSourceNames,
   readMemoryBars,
   storedBarsPrefetchSymbolBatchSize,
+  isStoredBarsDeltaShadowSample,
   STORED_BARS_DELTA_SYMBOL_BATCH,
   get lastEnqueueScannedBarCount(): number {
     return lastEnqueueScannedBarCount;

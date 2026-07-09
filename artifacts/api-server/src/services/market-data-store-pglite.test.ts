@@ -13,8 +13,12 @@ import {
   loadStoredMarketBarsBySymbol,
   loadStoredMarketBarsForSymbols,
   loadStoredMarketBarsForSymbolsSince,
+  onBarCacheRowsChanged,
   persistMarketDataBars,
+  persistMarketDataBarsMixed,
+  type BarCacheChange,
   __resetMarketDataStoreBackoffForTests,
+  __resetStoreInstrumentCacheForTests,
 } from "./market-data-store";
 import {
   __resetApiResourcePressureForTests,
@@ -39,6 +43,7 @@ after(async () => {
 beforeEach(async () => {
   __resetApiResourcePressureForTests();
   __resetMarketDataStoreBackoffForTests();
+  __resetStoreInstrumentCacheForTests();
   // Fresh state per test: truncate the tables this suite touches.
   await testDb.client.exec(
     "truncate table bar_cache, instruments restart identity cascade",
@@ -406,4 +411,126 @@ test("durable writer normalizes misaligned intraday bars before they enter bar_c
     ]),
     expected,
   );
+});
+
+test("bar-cache notifications classify tail appends and historical corrections against the pre-write max", async () => {
+  const symbol = "AAPL";
+  const sourceName = "massive-history";
+  const timeframe = "1m" as const;
+  const base = Math.floor((Date.now() - TWO_HOURS_MS) / 60_000) * 60_000;
+  const bars = [0, 1, 2, 3].map((offset) => ({
+    timestamp: new Date(base + offset * 60_000),
+    open: 100 + offset,
+    high: 101 + offset,
+    low: 99 + offset,
+    close: 100.5 + offset,
+    volume: 1_000 + offset,
+  }));
+  const dispatched: BarCacheChange[][] = [];
+  const unsubscribe = onBarCacheRowsChanged((changes) =>
+    dispatched.push(changes),
+  );
+
+  try {
+    await persistMarketDataBars({
+      request: { symbol, timeframe, assetClass: "equity" },
+      sourceName,
+      bars: bars.slice(0, 2),
+    });
+    assert.equal(dispatched.flat().length, 2);
+    assert.ok(dispatched.flat().every((change) => change.kind === "append"));
+    assert.ok(
+      dispatched
+        .flat()
+        .every((change) => change.maxStartsAtMs === bars[1]!.timestamp.getTime()),
+    );
+
+    dispatched.length = 0;
+    await persistMarketDataBars({
+      request: { symbol, timeframe, assetClass: "equity" },
+      sourceName,
+      bars: [bars[2]!],
+    });
+    assert.deepEqual(dispatched.flat(), [
+      {
+        symbol,
+        timeframe,
+        sourceName,
+        startsAtMs: bars[2]!.timestamp.getTime(),
+        maxStartsAtMs: bars[2]!.timestamp.getTime(),
+        kind: "append",
+      },
+    ]);
+
+    dispatched.length = 0;
+    await persistMarketDataBars({
+      request: { symbol, timeframe, assetClass: "equity" },
+      sourceName,
+      bars: [{ ...bars[0]!, close: 999 }, bars[3]!],
+    });
+    const correction = dispatched.flat();
+    assert.equal(correction.length, 2);
+    assert.ok(correction.every((change) => change.kind === "historical"));
+    assert.ok(
+      correction.every(
+        (change) => change.maxStartsAtMs === bars[3]!.timestamp.getTime(),
+      ),
+    );
+  } finally {
+    unsubscribe();
+  }
+});
+
+test("mixed bar-cache writes classify each symbol/timeframe/source tuple independently", async () => {
+  const sourceName = "massive-history";
+  const base = Math.floor((Date.now() - TWO_HOURS_MS) / 60_000) * 60_000;
+  const makeBar = (symbolOffset: number, minuteOffset: number) => ({
+    timestamp: new Date(base + minuteOffset * 60_000),
+    open: 100 + symbolOffset + minuteOffset,
+    high: 101 + symbolOffset + minuteOffset,
+    low: 99 + symbolOffset + minuteOffset,
+    close: 100.5 + symbolOffset + minuteOffset,
+    volume: 1_000 + minuteOffset,
+  });
+  const dispatched: BarCacheChange[][] = [];
+  const unsubscribe = onBarCacheRowsChanged((changes) =>
+    dispatched.push(changes),
+  );
+
+  try {
+    await persistMarketDataBarsMixed({
+      assetClass: "equity",
+      entries: [
+        { symbol: "AAPL", timeframe: "1m", sourceName, bars: [makeBar(0, 0)] },
+        { symbol: "MSFT", timeframe: "1m", sourceName, bars: [makeBar(50, 0)] },
+      ],
+    });
+    dispatched.length = 0;
+
+    await persistMarketDataBarsMixed({
+      assetClass: "equity",
+      entries: [
+        { symbol: "AAPL", timeframe: "1m", sourceName, bars: [makeBar(0, 1)] },
+        {
+          symbol: "MSFT",
+          timeframe: "1m",
+          sourceName,
+          bars: [{ ...makeBar(50, 0), close: 999 }, makeBar(50, 1)],
+        },
+      ],
+    });
+
+    const aapl = dispatched.flat().filter((change) => change.symbol === "AAPL");
+    const msft = dispatched.flat().filter((change) => change.symbol === "MSFT");
+    assert.equal(aapl.length, 1);
+    assert.equal(aapl[0]!.kind, "append");
+    assert.equal(aapl[0]!.maxStartsAtMs, base + 60_000);
+    assert.equal(msft.length, 2);
+    assert.ok(msft.every((change) => change.kind === "historical"));
+    assert.ok(
+      msft.every((change) => change.maxStartsAtMs === base + 60_000),
+    );
+  } finally {
+    unsubscribe();
+  }
 });
