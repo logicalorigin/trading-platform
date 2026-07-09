@@ -35,6 +35,7 @@ externalPort = 3000
 
 [userenv.development]
 IBKR_ASYNC_SIDECAR_ROUTING_ENABLED = "true"
+PYRUS_SIGNALS_INCREMENTAL_EVAL = "shadow"
 
 [userenv.shared]
 IBKR_TRANSPORT = "tws"
