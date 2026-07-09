@@ -143,3 +143,30 @@ test("IBKR diagnostic events use the shared runtime-unattached code", () => {
   assert.equal(events[0]?.category, "bridge-runtime");
   assert.equal(events[0]?.code, "ibkr_bridge_runtime_unattached");
 });
+
+test("a retired IBKR bridge emits zero diagnostic events (no perpetual warning loop)", () => {
+  // platform.ts hard-codes bridgeRuntimeStatus:"retired"; the bridge can never be
+  // configured, so without the early-return every 15s tick would fire a vestigial
+  // ibkr_bridge_required (and health/stream) warning forever.
+  const events = __diagnosticsInternalsForTests.buildIbkrDiagnosticEvents(
+    {
+      bridgeRuntimeStatus: "retired",
+      bridgeRuntimeReason: "bridge_retired",
+      bridgeUrlConfigured: false,
+      bridgeTokenConfigured: false,
+      healthFresh: false,
+      streamFresh: false,
+      streamState: "unavailable",
+      strictReason: "bridge_retired",
+    },
+    {
+      configured: false,
+      reachable: false,
+      connected: false,
+      authenticated: false,
+      competing: false,
+    },
+  );
+
+  assert.deepEqual(events, []);
+});
