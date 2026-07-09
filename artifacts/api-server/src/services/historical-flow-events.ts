@@ -774,18 +774,9 @@ async function loadStoredHistoricalFlowEvents(input: {
       return [];
     }
 
-    // N+1 fix: the old per-window loop issued one pooled query per time bucket
-    // (~50-210 acquisitions per request against a 12-slot pool). Replace it with a
-    // SINGLE range scan spanning [first window start, last window end) using the
-    // same constant filters (underlying, provider) and the same asc(occurredAt)
-    // ordering, then apply the per-window top-N limit in JS. Windows are disjoint
-    // and globally ascending in time, so [windows[0].from, last window .to) covers
-    // every window, and filtering the globally-ordered scan to each window
-    // preserves that window's asc(occurredAt) order — making each window's first-N
-    // rows identical to the old `.orderBy(asc(occurredAt)).limit(perBucketLimit)`
-    // result, and the window-by-window accumulation row-for-row identical. No
-    // global LIMIT is applied: an asc-ordered cap would bias toward the earliest
-    // window and drop later windows' top-N, breaking equivalence.
+    // N+1 fix: scan the full range once, then apply the per-window premium
+    // sampler in JS. No global LIMIT is applied: an asc-ordered cap would bias
+    // toward the earliest window and drop later windows' top-N rows.
     const scannedRows = await db
       .select()
       .from(flowEventsTable)
@@ -811,11 +802,27 @@ async function loadStoredHistoricalFlowEvents(input: {
           const occurredMs = row.occurredAt.getTime();
           return occurredMs >= windowFromMs && occurredMs < windowToMs;
         })
+        .sort((left, right) => {
+          const premiumDelta =
+            Number(right.premium ?? 0) - Number(left.premium ?? 0);
+          if (premiumDelta !== 0) {
+            return premiumDelta;
+          }
+          return left.occurredAt.getTime() - right.occurredAt.getTime();
+        })
         .slice(0, Math.min(sample.perBucketLimit, sample.rowLimit - rows.length));
       rows.push(...bucketRows);
     }
 
-    return rows.map(storedRowToFlowEvent);
+    return rows
+      .sort((left, right) => {
+        const timeDelta = left.occurredAt.getTime() - right.occurredAt.getTime();
+        if (timeDelta !== 0) {
+          return timeDelta;
+        }
+        return Number(right.premium ?? 0) - Number(left.premium ?? 0);
+      })
+      .map(storedRowToFlowEvent);
   } catch (error) {
     disableHistoricalFlowStoreAfterError(error, "loadStoredHistoricalFlowEvents");
     return [];

@@ -331,6 +331,9 @@ const SCORE_MODEL_RECOMMENDATION_MIN_ALIGNMENT_SCORE = 0;
 const SCORE_MODEL_RECOMMENDATION_TOP_BAND_FRACTION = 0.2;
 
 function finiteNumber(value: unknown): number | null {
+  if (value == null) {
+    return null;
+  }
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
 }

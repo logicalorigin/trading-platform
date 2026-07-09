@@ -546,20 +546,22 @@ export async function fetchOrderSnapshotPayload(input: {
   }
 
   const timeoutMs = orderSnapshotTimeoutMs();
-  const controller = new AbortController();
-  const timeout = setTimeout(() => {
-    controller.abort(
-      new HttpError(504, "IBKR order stream snapshot timed out.", {
-        code: "orders_timeout",
-        detail: `Order stream snapshot did not respond within ${timeoutMs}ms.`,
-      }),
-    );
-  }, timeoutMs);
-  timeout.unref?.();
+  let timeout: ReturnType<typeof setTimeout> | null = null;
+  const timeoutPromise = new Promise<BrokerOrderSnapshot[]>((_, reject) => {
+    timeout = setTimeout(() => {
+      reject(
+        new HttpError(504, "IBKR order stream snapshot timed out.", {
+          code: "orders_timeout",
+          detail: `Order stream snapshot did not respond within ${timeoutMs}ms.`,
+        }),
+      );
+    }, timeoutMs);
+    timeout.unref?.();
+  });
 
   try {
     const payload = {
-      orders: await listIbkrOrders(input),
+      orders: await Promise.race([listIbkrOrders(input), timeoutPromise]),
     };
     orderSnapshotCache.set(cacheKey, { payload, cachedAt: Date.now() });
     clearOrderReadSuppression("orders_timeout");
@@ -598,7 +600,9 @@ export async function fetchOrderSnapshotPayload(input: {
     }
     throw error;
   } finally {
-    clearTimeout(timeout);
+    if (timeout) {
+      clearTimeout(timeout);
+    }
   }
 }
 

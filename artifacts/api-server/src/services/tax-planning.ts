@@ -33,6 +33,8 @@ import {
 import { HttpError } from "../lib/errors";
 
 const TAX_PREFLIGHT_TTL_MS = 2 * 60 * 1000;
+const TAX_PREFLIGHT_ORDER_SUBMISSION_CONSUMED_MARKER =
+  "__order_submission_consumed__";
 const LEGACY_SHADOW_ACCOUNT_ID = "shadow";
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -982,6 +984,12 @@ export async function assertTaxPreflightForOrderSubmission(input: {
       expose: true,
     });
   }
+  if (preflight.submittedOrderId) {
+    throw new HttpError(409, "Tax/compliance preflight has already been used.", {
+      code: "tax_preflight_already_used",
+      expose: true,
+    });
+  }
 
   const now = input.now ?? new Date();
   if (preflight.expiresAt.getTime() <= now.getTime()) {
@@ -1040,16 +1048,30 @@ export async function assertTaxPreflightForOrderSubmission(input: {
     );
   }
 
-  await db
+  const consumed = await db
     .update(taxPreflightChecksTable)
     .set({
       acknowledgedAt:
         (preflight.requiredAcknowledgements || []).length > 0
           ? now
           : preflight.acknowledgedAt,
+      submittedOrderId: TAX_PREFLIGHT_ORDER_SUBMISSION_CONSUMED_MARKER,
       updatedAt: now,
     })
-    .where(eq(taxPreflightChecksTable.id, preflight.id));
+    .where(
+      and(
+        eq(taxPreflightChecksTable.id, preflight.id),
+        isNull(taxPreflightChecksTable.submittedOrderId),
+      ),
+    )
+    .returning({ id: taxPreflightChecksTable.id });
+
+  if (consumed.length === 0) {
+    throw new HttpError(409, "Tax/compliance preflight has already been used.", {
+      code: "tax_preflight_already_used",
+      expose: true,
+    });
+  }
 
   return {
     preflightToken: token,
@@ -1066,7 +1088,9 @@ export async function recordTaxPreflightOrderSubmitted(input: {
 }): Promise<void> {
   if (!input.preflightToken) return;
   const appUserId = input.appUserId ?? requireCurrentAppUserId();
-  const submittedOrderId = input.submittedOrderId?.trim() || null;
+  const submittedOrderId =
+    input.submittedOrderId?.trim() ||
+    TAX_PREFLIGHT_ORDER_SUBMISSION_CONSUMED_MARKER;
   await db
     .update(taxPreflightChecksTable)
     .set({

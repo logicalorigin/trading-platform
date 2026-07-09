@@ -16,6 +16,7 @@ import {
 import { loadSnapTradeUserCredential } from "./snaptrade-user-custody";
 import { getSnapTradeAccountPortfolio } from "./snaptrade-account-portfolio";
 import { loadStoredMarketBarsForSymbols } from "./market-data-store";
+import { isApiResourcePressureHardBlock } from "./resource-pressure";
 import {
   calculateTransferAdjustedReturnPoints,
   classifyExternalCashTransfer,
@@ -653,10 +654,14 @@ function dbNumber(value: number | null): string | null {
   return value == null ? null : value.toFixed(6);
 }
 
+function shouldSkipSnapTradeHistoryPersistForPressure(): boolean {
+  return isApiResourcePressureHardBlock();
+}
+
 async function storeActivities(
   activities: SnapTradeHistoryActivity[],
 ): Promise<number> {
-  if (!activities.length) {
+  if (!activities.length || shouldSkipSnapTradeHistoryPersistForPressure()) {
     return 0;
   }
   const now = new Date();
@@ -957,6 +962,8 @@ function buildClosedTradesFromActivities(
       const key = activityKey(activity);
       const isBuy = side === "BUY";
       const optionType = activity.optionType ?? "";
+      const isEquityShortSale =
+        !activity.optionContract && !activity.optionTicker && !optionType;
       const longQueue = longLots.get(key) ?? [];
       const shortQueue = shortLots.get(key) ?? [];
 
@@ -985,7 +992,10 @@ function buildClosedTradesFromActivities(
         return;
       }
 
-      if (optionType.includes("TO_OPEN") && !longQueue.length) {
+      if (
+        (optionType.includes("TO_OPEN") || isEquityShortSale) &&
+        !longQueue.length
+      ) {
         shortQueue.push({
           activity,
           quantityRemaining: quantity,
@@ -1512,7 +1522,7 @@ async function storeBalanceSnapshots(input: {
   accountId: string;
   points: BalanceHistoryPoint[];
 }): Promise<number> {
-  if (!input.points.length) {
+  if (!input.points.length || shouldSkipSnapTradeHistoryPersistForPressure()) {
     return 0;
   }
   const existing = await db

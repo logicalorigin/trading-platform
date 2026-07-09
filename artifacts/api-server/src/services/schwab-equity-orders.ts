@@ -6,6 +6,7 @@ import {
   db,
 } from "@workspace/db";
 import { HttpError } from "../lib/errors";
+import { logger } from "../lib/logger";
 import {
   SCHWAB_TRADER_API_TIMEOUT_CODE,
   SchwabTraderApiClient,
@@ -70,6 +71,8 @@ export type SchwabEquityOrderSubmitResponse = {
   account: SchwabEquityOrderAccount;
   orderId: string | null;
   status: "submitted";
+  reconcileRequired?: true;
+  reconciliationReason?: "tax_preflight_order_submit_record_failed";
 };
 
 export const SCHWAB_ORDER_SUBMIT_RECONCILE_CODE =
@@ -485,11 +488,33 @@ export async function submitSchwabEquityOrder(
   if ("status" in result && result.status === "unknown") {
     throw schwabOrderSubmitReconcileRequiredError({ now, account, outcome: result });
   }
-  await recordTaxPreflightOrderSubmitted({
-    appUserId: options.appUserId,
-    preflightToken: taxPreflight?.preflightToken,
-    submittedOrderId: result.orderId,
-  });
+  try {
+    await recordTaxPreflightOrderSubmitted({
+      appUserId: options.appUserId,
+      preflightToken: taxPreflight?.preflightToken,
+      submittedOrderId: result.orderId,
+    });
+  } catch (error) {
+    logger.warn(
+      {
+        err: error,
+        appUserId: options.appUserId,
+        accountId: options.accountId,
+        schwabAccountId: account.id,
+        orderId: result.orderId,
+      },
+      "Schwab order placed but tax preflight submit record failed; reconciliation required",
+    );
+    return {
+      provider: "schwab",
+      submittedAt: now.toISOString(),
+      account: publicAccount(account),
+      orderId: result.orderId,
+      status: "submitted",
+      reconcileRequired: true,
+      reconciliationReason: "tax_preflight_order_submit_record_failed",
+    };
+  }
   return {
     provider: "schwab",
     submittedAt: now.toISOString(),

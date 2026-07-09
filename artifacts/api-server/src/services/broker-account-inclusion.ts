@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray, not } from "drizzle-orm";
+import { asc, eq, inArray, sql } from "drizzle-orm";
 
 import {
   brokerAccountsTable,
@@ -55,31 +55,14 @@ export async function setBrokerAccountInclusions(input: {
   includedAccountIds: string[];
 }): Promise<BrokerAccountInclusionResponse> {
   const uniqueIds = [...new Set(input.includedAccountIds)];
-  if (uniqueIds.length > 0) {
-    await db
-      .update(brokerAccountsTable)
-      .set({ includedInTrading: true, updatedAt: new Date() })
-      .where(
-        and(
-          eq(brokerAccountsTable.appUserId, input.appUserId),
-          inArray(brokerAccountsTable.id, uniqueIds),
-        ),
-      );
-    await db
-      .update(brokerAccountsTable)
-      .set({ includedInTrading: false, updatedAt: new Date() })
-      .where(
-        and(
-          eq(brokerAccountsTable.appUserId, input.appUserId),
-          not(inArray(brokerAccountsTable.id, uniqueIds)),
-        ),
-      );
-  } else {
-    await db
-      .update(brokerAccountsTable)
-      .set({ includedInTrading: false, updatedAt: new Date() })
-      .where(eq(brokerAccountsTable.appUserId, input.appUserId));
-  }
+  const includedInTrading =
+    uniqueIds.length > 0
+      ? inArray(brokerAccountsTable.id, uniqueIds)
+      : sql<boolean>`false`;
+  await db
+    .update(brokerAccountsTable)
+    .set({ includedInTrading, updatedAt: new Date() })
+    .where(eq(brokerAccountsTable.appUserId, input.appUserId));
 
   return listBrokerAccountInclusions({ appUserId: input.appUserId });
 }

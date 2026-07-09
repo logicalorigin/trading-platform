@@ -291,6 +291,7 @@ export function routePythonComputeJobType(
 export class PythonComputeRuntime implements PythonComputeRuntimeLike {
   private child: ChildProcess | null = null;
   private startPromise: Promise<PythonComputeDiagnostics> | null = null;
+  private restartTimer: ReturnType<typeof setTimeout> | null = null;
   private diagnostics: PythonComputeDiagnostics;
   private stopping = false;
   private reprobing = false;
@@ -542,6 +543,10 @@ export class PythonComputeRuntime implements PythonComputeRuntimeLike {
 
   stop(): void {
     this.stopping = true;
+    if (this.restartTimer) {
+      clearTimeout(this.restartTimer);
+      this.restartTimer = null;
+    }
     if (this.child) {
       stopPythonComputeChildProcess(this.child);
       this.child = null;
@@ -727,11 +732,16 @@ export class PythonComputeRuntime implements PythonComputeRuntimeLike {
       30_000,
       1_000 * 2 ** Math.min(this.diagnostics.restartCount, 5),
     );
-    setTimeout(() => {
+    this.restartTimer = setTimeout(() => {
+      this.restartTimer = null;
+      if (this.stopping) {
+        return;
+      }
       void this.start().catch((error) => {
         this.markDegraded(error instanceof Error ? error.message : String(error));
       });
-    }, backoffMs).unref();
+    }, backoffMs);
+    this.restartTimer.unref();
   }
 }
 

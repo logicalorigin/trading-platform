@@ -217,10 +217,6 @@ const optionPriceLooksContractScaled = (
     Math.abs(rawAveragePrice - rawMarketPrice) <= 1e-9 &&
     Number.isFinite(unrealizedPnl) &&
     Math.abs(unrealizedPnl) <= 0.01;
-  if (price >= multiplier * 0.5 && rawPriceIsFlatFallback) {
-    return true;
-  }
-
   const inferredCostBasis =
     Number.isFinite(marketValue) && Number.isFinite(unrealizedPnl)
       ? Math.abs(marketValue - unrealizedPnl)
@@ -243,6 +239,10 @@ const optionPriceLooksContractScaled = (
     if (premiumDistance <= 0.02 && contractScaledDistance > 0.02) {
       return false;
     }
+  }
+
+  if (rawPriceIsFlatFallback) {
+    return false;
   }
 
   return price >= multiplier * 0.5;

@@ -2062,15 +2062,28 @@ export function getMarketDataLinePressureSnapshot() {
   };
 }
 
-function sameInstrumentSet(
-  left: Array<Pick<MarketDataLease, "instrumentKey">>,
-  right: Array<Pick<MarketDataLease, "instrumentKey">>,
+function sameLineSet(left: readonly string[], right: readonly string[]): boolean {
+  if (left.length !== right.length) {
+    return false;
+  }
+  const rightIds = new Set(right);
+  return left.every((id) => rightIds.has(id));
+}
+
+function sameInstrumentAndLineSet(
+  left: Array<Pick<MarketDataLease, "instrumentKey" | "lineIds">>,
+  right: Array<Pick<MarketDataLease, "instrumentKey" | "lineIds">>,
 ): boolean {
   if (left.length !== right.length) {
     return false;
   }
-  const rightKeys = new Set(right.map((item) => item.instrumentKey));
-  return left.every((item) => rightKeys.has(item.instrumentKey));
+  const rightByInstrument = new Map(
+    right.map((item) => [item.instrumentKey, item]),
+  );
+  return left.every((item) => {
+    const matching = rightByInstrument.get(item.instrumentKey);
+    return matching ? sameLineSet(item.lineIds, matching.lineIds) : false;
+  });
 }
 
 export function admitMarketDataLeases(input: {
@@ -2120,7 +2133,7 @@ export function admitMarketDataLeases(input: {
         lease.pool === pool &&
         lease.fallbackProvider === fallbackProvider,
     );
-    if (sameInstrumentSet(existingOwnerLeases, normalizedRequests)) {
+    if (sameInstrumentAndLineSet(existingOwnerLeases, normalizedRequests)) {
       const currentLineCount = activeBrokerBudgetLineIds().size;
       const currentPoolLineCount = activeLineIdsForStrictPoolScope(pool).size;
       const poolCap = getMarketDataPoolEffectiveLineCap(pool, budget);

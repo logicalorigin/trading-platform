@@ -1306,9 +1306,13 @@ async function readLiveAccountUniverseUncached(
   mode: RuntimeMode,
   options: Pick<
     ListAccountsOptions,
-    "listLiveAccounts" | "getSnapTradeAccounts" | "getRobinhoodAccounts"
+    | "appUserId"
+    | "listLiveAccounts"
+    | "getSnapTradeAccounts"
+    | "getRobinhoodAccounts"
   > = {},
 ): Promise<AccountUniverse> {
+  const appUserId = options.appUserId ?? null;
   let liveReadFailed = false;
   const accounts = await (options.listLiveAccounts ?? listIbkrAccounts)(
     mode,
@@ -1325,6 +1329,7 @@ async function readLiveAccountUniverseUncached(
   const readProviderBackedAccounts = async () => [
     ...(await (options.getSnapTradeAccounts ?? getSnapTradeBackedAccounts)(
       mode,
+      appUserId,
     ).catch((error) => {
       logger.warn(
         { err: error },
@@ -1334,6 +1339,7 @@ async function readLiveAccountUniverseUncached(
     })),
     ...(await (options.getRobinhoodAccounts ?? getRobinhoodBackedAccounts)(
       mode,
+      appUserId,
     ).catch((error) => {
       logger.warn(
         { err: error },
@@ -4301,6 +4307,7 @@ export async function recordAccountSnapshots(
 }
 
 type ListAccountsOptions = {
+  appUserId?: string;
   listLiveAccounts?: (mode: RuntimeMode) => Promise<BrokerAccountSnapshot[]>;
   getPersistedAccounts?: (
     requestedAccountId: string,
@@ -4316,9 +4323,11 @@ type ListAccountsOptions = {
   recordSnapshots?: (accounts: BrokerAccountSnapshot[]) => Promise<void>;
   getSnapTradeAccounts?: (
     mode: RuntimeMode,
+    appUserId: string | null,
   ) => Promise<BrokerAccountSnapshot[]>;
   getRobinhoodAccounts?: (
     mode: RuntimeMode,
+    appUserId: string | null,
   ) => Promise<BrokerAccountSnapshot[]>;
 };
 
@@ -4494,7 +4503,10 @@ async function withAccountListDayPnl(
 // rather than dropping it from the list.
 async function getSnapTradeBackedAccounts(
   mode: RuntimeMode,
+  appUserId: string | null,
 ): Promise<BrokerAccountSnapshot[]> {
+  if (!appUserId) return [];
+
   const rows = await db
     .select({
       id: brokerAccountsTable.id,
@@ -4515,6 +4527,7 @@ async function getSnapTradeBackedAccounts(
     )
     .where(
       and(
+        eq(brokerAccountsTable.appUserId, appUserId),
         eq(brokerAccountsTable.mode, mode),
         eq(brokerAccountsTable.includedInTrading, true),
         eq(brokerConnectionsTable.brokerProvider, "snaptrade"),
@@ -4571,8 +4584,11 @@ async function getSnapTradeBackedAccounts(
 
 export async function getRobinhoodBackedAccounts(
   mode: RuntimeMode,
+  appUserId: string | null,
   deps: Parameters<typeof applyRobinhoodAccountBalances>[1] = {},
 ): Promise<BrokerAccountSnapshot[]> {
+  if (!appUserId) return [];
+
   const rows = await db
     .select({
       id: brokerAccountsTable.id,
@@ -4595,12 +4611,8 @@ export async function getRobinhoodBackedAccounts(
       eq(brokerConnectionsTable.id, brokerAccountsTable.connectionId),
     )
     .where(
-      // No ownedBy() here: the /accounts route sets no app-user context, so
-      // ownedBy() throws "Authentication required" and the merge is swallowed.
-      // Mirror getSnapTradeBackedAccounts, which is intentionally unscoped on
-      // this route. Route-level user-scoping for /accounts (covering SnapTrade
-      // + Robinhood together) is the WO-15 follow-up residual.
       and(
+        eq(brokerAccountsTable.appUserId, appUserId),
         eq(brokerAccountsTable.mode, mode),
         eq(brokerAccountsTable.includedInTrading, true),
         eq(brokerConnectionsTable.brokerProvider, "robinhood"),
@@ -5064,10 +5076,19 @@ export async function listAccounts(
   options: ListAccountsOptions = {},
 ) {
   const mode = input.mode ?? getRuntimeMode();
-  if (Object.keys(options).length === 0) {
+  const appUserId = options.appUserId ?? null;
+  const hasDependencyOverrides = Boolean(
+    options.listLiveAccounts ||
+      options.getPersistedAccounts ||
+      options.getFlexAccounts ||
+      options.recordSnapshots ||
+      options.getSnapTradeAccounts ||
+      options.getRobinhoodAccounts,
+  );
+  if (!hasDependencyOverrides) {
     return readAccountRouteResponseCache(
       "accounts",
-      { mode },
+      { appUserId, mode },
       () => listAccountsUncached({ mode }, options),
       ACCOUNT_LIST_RESPONSE_CACHE_TTL_MS,
       ACCOUNT_LIST_RESPONSE_STALE_TTL_MS,
@@ -5081,6 +5102,7 @@ async function listAccountsUncached(
   options: ListAccountsOptions,
 ) {
   const mode = input.mode;
+  const appUserId = options.appUserId ?? null;
   const listLiveAccounts = options.listLiveAccounts ?? listIbkrAccounts;
   const getPersistedAccounts =
     options.getPersistedAccounts ?? emptyPersistedBackedAccounts;
@@ -5094,20 +5116,24 @@ async function listAccountsUncached(
   // Persisted broker accounts are additive to whatever IBKR source wins the waterfall
   // below. Resolve them in parallel and degrade to IBKR-only on any failure so a
   // provider outage never breaks the account list.
-  const snapTradeAccountsPromise = getSnapTradeAccounts(mode).catch((error) => {
-    logger.warn(
-      { err: error },
-      "SnapTrade account merge failed; returning brokers without SnapTrade accounts",
-    );
-    return [] as BrokerAccountSnapshot[];
-  });
-  const robinhoodAccountsPromise = getRobinhoodAccounts(mode).catch((error) => {
-    logger.warn(
-      { err: error },
-      "Robinhood account merge failed; returning brokers without Robinhood accounts",
-    );
-    return [] as BrokerAccountSnapshot[];
-  });
+  const snapTradeAccountsPromise = getSnapTradeAccounts(mode, appUserId).catch(
+    (error) => {
+      logger.warn(
+        { err: error },
+        "SnapTrade account merge failed; returning brokers without SnapTrade accounts",
+      );
+      return [] as BrokerAccountSnapshot[];
+    },
+  );
+  const robinhoodAccountsPromise = getRobinhoodAccounts(mode, appUserId).catch(
+    (error) => {
+      logger.warn(
+        { err: error },
+        "Robinhood account merge failed; returning brokers without Robinhood accounts",
+      );
+      return [] as BrokerAccountSnapshot[];
+    },
+  );
   const additionalBrokerAccountsPromise = Promise.all([
     snapTradeAccountsPromise,
     robinhoodAccountsPromise,

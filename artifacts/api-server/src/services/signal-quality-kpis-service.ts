@@ -64,6 +64,8 @@ const BAR_FETCH_HARD_BUDGET_MS = 480_000;
 const KPI_COMPUTE_CONCURRENCY = 1;
 const MIN_CALIBRATION_SYMBOL_COVERAGE_RATIO = 0.98;
 const MAX_CALIBRATION_SYMBOL_TIMEOUT_RATIO = 0.01;
+const SNAPSHOT_METADATA_KEY = "__signalQualityKpiSnapshot";
+const SNAPSHOT_FALLBACK_SCAN_LIMIT = 20;
 
 type StrategySignalTimeframe = "1m" | "2m" | "5m" | "15m" | "1h" | "1d";
 const STRATEGY_SIGNAL_TIMEFRAMES: readonly StrategySignalTimeframe[] = [
@@ -820,6 +822,16 @@ function errorHasPostgresCode(error: unknown, code: string): boolean {
   return false;
 }
 
+function nonDraftSnapshotCondition() {
+  return sql`
+    coalesce(
+      ${signalQualityKpiSnapshotsTable.response}
+        -> ${SNAPSHOT_METADATA_KEY} ->> 'draft',
+      'false'
+    ) <> 'true'
+  `;
+}
+
 async function resolveDeploymentContext(deploymentId: string) {
   const [deployment] = await db
     .select()
@@ -1217,7 +1229,79 @@ function signalQualityKpiResponseFromSnapshot(
   ) {
     return null;
   }
-  return record as unknown as SignalQualityKpiResponse;
+  const response = { ...record };
+  delete response[SNAPSHOT_METADATA_KEY];
+  return response as unknown as SignalQualityKpiResponse;
+}
+
+function signalQualityKpiSnapshotHasMetadata(value: unknown): boolean {
+  return Object.prototype.hasOwnProperty.call(
+    asRecord(value),
+    SNAPSHOT_METADATA_KEY,
+  );
+}
+
+function sameStringArray(left: readonly string[], right: readonly string[]) {
+  return (
+    left.length === right.length &&
+    left.every((value, index) => value === right[index])
+  );
+}
+
+function snapshotMatchesResolvedRequest(
+  response: SignalQualityKpiResponse,
+  request: ResolvedSignalQualityRequest,
+): boolean {
+  return (
+    response.settings.signalTimeframe === request.settings.signalTimeframe &&
+    response.settings.timeHorizon === request.settings.timeHorizon &&
+    response.settings.outcomeHorizonBars === request.settings.outcomeHorizonBars &&
+    response.settings.outcomeTimeframe === request.settings.outcomeTimeframe &&
+    response.settings.bosConfirmation === request.settings.bosConfirmation &&
+    response.settings.chochAtrBuffer === request.settings.chochAtrBuffer &&
+    response.settings.chochBodyExpansionAtr ===
+      request.settings.chochBodyExpansionAtr &&
+    response.settings.chochVolumeGate === request.settings.chochVolumeGate &&
+    response.mtf.enabled === request.mtf.enabled &&
+    response.mtf.requiredCount === request.mtf.requiredCount &&
+    sameStringArray(response.mtf.timeframes, request.mtf.timeframes)
+  );
+}
+
+function signalQualityKpiResponseFromFallbackSnapshot(
+  value: unknown,
+  request: ResolvedSignalQualityRequest,
+): SignalQualityKpiResponse | null {
+  const hasMetadata = signalQualityKpiSnapshotHasMetadata(value);
+  const response = signalQualityKpiResponseFromSnapshot(value);
+  if (!response) {
+    return null;
+  }
+  if (
+    !hasMetadata &&
+    request.settings &&
+    request.mtf &&
+    !snapshotMatchesResolvedRequest(response, request)
+  ) {
+    return null;
+  }
+  return response;
+}
+
+function firstSignalQualityKpiFallbackSnapshot(
+  snapshots: { response: unknown }[],
+  request: ResolvedSignalQualityRequest,
+): SignalQualityKpiResponse | null {
+  for (const snapshot of snapshots) {
+    const response = signalQualityKpiResponseFromFallbackSnapshot(
+      snapshot.response,
+      request,
+    );
+    if (response) {
+      return response;
+    }
+  }
+  return null;
 }
 
 async function readSignalQualityKpiSnapshot(
@@ -1240,32 +1324,40 @@ async function readSignalQualityKpiSnapshot(
       return exact;
     }
 
-    const [latestSameDay] = await db
+    const latestSameDay = await db
       .select({ response: signalQualityKpiSnapshotsTable.response })
       .from(signalQualityKpiSnapshotsTable)
       .where(
         and(
           eq(signalQualityKpiSnapshotsTable.deploymentId, request.deploymentId),
           eq(signalQualityKpiSnapshotsTable.asOfDay, request.day),
+          nonDraftSnapshotCondition(),
         ),
       )
       .orderBy(desc(signalQualityKpiSnapshotsTable.generatedAt))
-      .limit(1);
-    const sameDay = signalQualityKpiResponseFromSnapshot(
-      latestSameDay?.response,
+      .limit(SNAPSHOT_FALLBACK_SCAN_LIMIT);
+    const sameDay = firstSignalQualityKpiFallbackSnapshot(
+      latestSameDay,
+      request,
     );
     if (sameDay) {
       return sameDay;
     }
 
-    const [latestDeploymentSnapshot] = await db
+    const latestDeploymentSnapshots = await db
       .select({ response: signalQualityKpiSnapshotsTable.response })
       .from(signalQualityKpiSnapshotsTable)
-      .where(eq(signalQualityKpiSnapshotsTable.deploymentId, request.deploymentId))
+      .where(
+        and(
+          eq(signalQualityKpiSnapshotsTable.deploymentId, request.deploymentId),
+          nonDraftSnapshotCondition(),
+        ),
+      )
       .orderBy(desc(signalQualityKpiSnapshotsTable.generatedAt))
-      .limit(1);
-    return signalQualityKpiResponseFromSnapshot(
-      latestDeploymentSnapshot?.response,
+      .limit(SNAPSHOT_FALLBACK_SCAN_LIMIT);
+    return firstSignalQualityKpiFallbackSnapshot(
+      latestDeploymentSnapshots,
+      request,
     );
   } catch (error) {
     if (errorHasPostgresCode(error, "42P01")) {
@@ -1289,6 +1381,12 @@ async function writeSignalQualityKpiSnapshot(
   response: SignalQualityKpiResponse,
 ): Promise<void> {
   const calibration = response.kpis.scoreModelComparisons.calibration;
+  const snapshotResponse = {
+    ...(response as unknown as Record<string, unknown>),
+    [SNAPSHOT_METADATA_KEY]: {
+      draft: request.draft !== undefined,
+    },
+  };
   const row = {
     deploymentId: request.deploymentId,
     settingsHash: request.settingsHash,
@@ -1300,7 +1398,7 @@ async function writeSignalQualityKpiSnapshot(
     evaluatedSymbolCount: response.coverage.evaluatedSymbolCount,
     symbolsWithBars: response.coverage.symbolsWithBars,
     symbolsTimedOut: response.coverage.symbolsTimedOut,
-    response: response as unknown as Record<string, unknown>,
+    response: snapshotResponse,
     updatedAt: new Date(),
   };
   await db

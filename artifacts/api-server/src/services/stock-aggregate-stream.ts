@@ -435,12 +435,14 @@ function updateAccumulator(input: {
 }) {
   const { startMs, endMs } = getMinuteWindow(input.observedAt);
   const existing = accumulators.get(input.symbol);
+  const previousDayVolume = existing?.lastObservedDayVolume;
   const nextVolumeIncrement =
-    existing?.lastObservedDayVolume !== null &&
-    existing?.lastObservedDayVolume !== undefined &&
-    input.dayVolume !== null &&
-    input.dayVolume >= existing.lastObservedDayVolume
-      ? input.dayVolume - existing.lastObservedDayVolume
+    previousDayVolume !== null &&
+    previousDayVolume !== undefined &&
+    input.dayVolume !== null
+      ? input.dayVolume >= previousDayVolume
+        ? input.dayVolume - previousDayVolume
+        : input.dayVolume
       : 0;
 
   if (!existing || existing.startMs !== startMs) {

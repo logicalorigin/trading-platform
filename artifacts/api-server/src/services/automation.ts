@@ -996,7 +996,7 @@ export async function setAlgoDeploymentEnabled(input: {
 }) {
   const existing = await getDeploymentOrThrow(input.deploymentId);
 
-  if (input.enabled) {
+  if (input.enabled && existing.mode === "live") {
     await assertAlgoGatewayReady();
   }
   const providerAccountId = input.enabled
@@ -1169,11 +1169,22 @@ export async function updateAlgoDeploymentStrategySettings(input: {
     .where(eq(algoDeploymentsTable.id, input.deploymentId))
     .returning();
 
-  const signalMonitorProfile = await updateSignalMonitorProfile({
-    environment: existing.mode,
-    timeframe: signalTimeframe,
-    pyrusSignalsSettings: nextPyrusSignalsSettings,
-  });
+  let signalMonitorProfile: Awaited<
+    ReturnType<typeof updateSignalMonitorProfile>
+  >;
+  try {
+    signalMonitorProfile = await updateSignalMonitorProfile({
+      environment: existing.mode,
+      timeframe: signalTimeframe,
+      pyrusSignalsSettings: nextPyrusSignalsSettings,
+    });
+  } catch (error) {
+    await db
+      .update(algoDeploymentsTable)
+      .set({ config: existing.config })
+      .where(eq(algoDeploymentsTable.id, input.deploymentId));
+    throw error;
+  }
   const deployment = updated ?? existing;
 
   await db.insert(automationDiagnosticsTable).values({

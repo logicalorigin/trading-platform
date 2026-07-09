@@ -10,6 +10,7 @@ import {
   type AlgoDeployment,
   type ExecutionEvent,
 } from "@workspace/db";
+import { logger } from "../lib/logger";
 import { asNumber, asRecord, asString, normalizeSymbol } from "../lib/values";
 import type { BrokerOrderSnapshot } from "../providers/ibkr/client";
 import { getAlgoDeploymentForExecution } from "./automation";
@@ -42,6 +43,8 @@ const OVERNIGHT_SPOT_BLOCKED_EVENT = "overnight_spot_signal_blocked";
 const OVERNIGHT_SPOT_FAILED_EVENT = "overnight_spot_order_failed";
 const OVERNIGHT_SPOT_LIVE_ORDER_INTENT_EVENT =
   "overnight_spot_live_order_intent";
+const OVERNIGHT_SPOT_LIVE_POST_SUBMIT_RECORD_FAILED_EVENT =
+  "overnight_spot_live_post_submit_record_failed";
 const OVERNIGHT_SPOT_QUOTE_BATCH_SIZE = 3;
 
 type OvernightSpotDeployment = Pick<
@@ -616,24 +619,6 @@ async function handleReadyPlan(input: {
   let liveEventType: string | null = null;
   try {
     brokerOrder = await input.deps.placeLiveOrder(input.plan.order);
-    const draft = buildOvernightSpotExecutionEventDraft(input.plan, {
-      deploymentId: input.deployment.id,
-      occurredAt: input.now,
-    });
-    liveEventType = draft.eventType;
-    liveEvent = await insertEvent(input.deps, {
-      deployment: input.deployment,
-      eventType: draft.eventType,
-      summary: draft.summary,
-      symbol: draft.symbol,
-      payload: {
-        ...draft.payload,
-        clientOrderId: input.plan.clientOrderId,
-        sourceIntentEventId,
-        brokerOrder,
-      },
-      occurredAt: draft.occurredAt,
-    });
   } catch (error) {
     const event = await insertEvent(input.deps, {
       deployment: input.deployment,
@@ -664,14 +649,116 @@ async function handleReadyPlan(input: {
     };
   }
 
-  await input.deps.markLiveOrderIntent({
-    intentEvent,
-    status: "filled",
-    occurredAt: new Date(Math.max(input.now.getTime(), Date.now())),
-    terminalEventId: eventId(liveEvent),
-    terminalEventType: liveEventType,
-    brokerOrder,
+  const draft = buildOvernightSpotExecutionEventDraft(input.plan, {
+    deploymentId: input.deployment.id,
+    occurredAt: input.now,
   });
+  liveEventType = draft.eventType;
+  try {
+    liveEvent = await insertEvent(input.deps, {
+      deployment: input.deployment,
+      eventType: draft.eventType,
+      summary: draft.summary,
+      symbol: draft.symbol,
+      payload: {
+        ...draft.payload,
+        clientOrderId: input.plan.clientOrderId,
+        sourceIntentEventId,
+        brokerOrder,
+      },
+      occurredAt: draft.occurredAt,
+    });
+  } catch (error) {
+    const occurredAt = new Date(Math.max(input.now.getTime(), Date.now()));
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    logger.warn(
+      {
+        err: error,
+        deploymentId: input.deployment.id,
+        clientOrderId: input.plan.clientOrderId,
+        symbol: input.plan.order.symbol,
+      },
+      "Overnight spot live order placed but post-submit record failed; reconciliation required",
+    );
+    let reconciliationEvent: Record<string, unknown> | null = null;
+    try {
+      reconciliationEvent = await insertEvent(input.deps, {
+        deployment: input.deployment,
+        eventType: OVERNIGHT_SPOT_LIVE_POST_SUBMIT_RECORD_FAILED_EVENT,
+        summary: `${input.plan.order.symbol} overnight spot live order placed; post-submit record failed`,
+        symbol: input.plan.order.symbol,
+        payload: {
+          ...payload,
+          sourceIntentEventId,
+          attemptedEventType: draft.eventType,
+          brokerOrder,
+          error: errorMessage,
+          reconciliationRequired: true,
+        },
+        occurredAt,
+      });
+    } catch (reconciliationError) {
+      logger.warn(
+        {
+          err: reconciliationError,
+          deploymentId: input.deployment.id,
+          clientOrderId: input.plan.clientOrderId,
+          symbol: input.plan.order.symbol,
+        },
+        "Overnight spot post-submit reconciliation event failed",
+      );
+    }
+    try {
+      await input.deps.markLiveOrderIntent({
+        intentEvent,
+        status: "reconciliation_required",
+        occurredAt,
+        terminalEventId: eventId(reconciliationEvent),
+        terminalEventType: OVERNIGHT_SPOT_LIVE_POST_SUBMIT_RECORD_FAILED_EVENT,
+        brokerOrder,
+        error: errorMessage,
+        reason: "post_submit_record_failed",
+      });
+    } catch (intentError) {
+      logger.warn(
+        {
+          err: intentError,
+          deploymentId: input.deployment.id,
+          clientOrderId: input.plan.clientOrderId,
+          symbol: input.plan.order.symbol,
+        },
+        "Overnight spot live order intent reconciliation mark failed",
+      );
+    }
+    return {
+      status: "executed" as const,
+      eventType: OVERNIGHT_SPOT_LIVE_POST_SUBMIT_RECORD_FAILED_EVENT,
+      eventId: eventId(reconciliationEvent),
+      reason: "post_submit_record_failed",
+      brokerOrder,
+    };
+  }
+
+  try {
+    await input.deps.markLiveOrderIntent({
+      intentEvent,
+      status: "filled",
+      occurredAt: new Date(Math.max(input.now.getTime(), Date.now())),
+      terminalEventId: eventId(liveEvent),
+      terminalEventType: liveEventType,
+      brokerOrder,
+    });
+  } catch (error) {
+    logger.warn(
+      {
+        err: error,
+        deploymentId: input.deployment.id,
+        clientOrderId: input.plan.clientOrderId,
+        symbol: input.plan.order.symbol,
+      },
+      "Overnight spot live order placed but intent terminal update failed",
+    );
+  }
   return {
     status: "executed" as const,
     eventType: liveEventType ?? undefined,

@@ -200,7 +200,8 @@ export function decideProviderClassification(
   }
 
   if (
-    row.customerV1Status === "eligible_for_private_beta" &&
+    (row.customerV1Status === "eligible_for_private_beta" ||
+      row.customerV1Status === "eligible_after_exception") &&
     row.defaultBlockReason === "PROVIDER_ELIGIBLE" &&
     scopeReadiness.outcome === "ready"
   ) {

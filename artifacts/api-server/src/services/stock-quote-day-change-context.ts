@@ -47,6 +47,9 @@ function dayChangeContextTtlMs(): number {
 }
 
 function finiteNumber(value: unknown): number | null {
+  if (value == null) {
+    return null;
+  }
   const number = Number(value);
   return Number.isFinite(number) ? number : null;
 }

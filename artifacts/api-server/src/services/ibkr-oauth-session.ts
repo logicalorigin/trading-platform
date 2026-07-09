@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 
+import { logger } from "../lib/logger";
 import {
   computeDhChallenge,
   computeLiveSessionToken,
@@ -398,7 +399,14 @@ export class IbkrOAuthSessionManager {
     await this.initialize(credentials, acquired.liveSessionToken);
 
     const timer = this.timers.setInterval(
-      () => this.handleInterval(sessionId),
+      () => {
+        void this.handleInterval(sessionId).catch((error) => {
+          logger.warn(
+            { err: error, sessionId },
+            "IBKR OAuth maintenance interval failed",
+          );
+        });
+      },
       this.tickleIntervalMs,
     );
     timer.unref?.();

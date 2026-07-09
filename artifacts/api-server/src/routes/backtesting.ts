@@ -51,6 +51,7 @@ import {
   resolveBacktestOptionContract,
 } from "../services/backtesting";
 import { promoteMtfPatternToDeployment } from "../services/signal-options-automation";
+import { requireAdminCsrf } from "./auth";
 
 const router: IRouter = Router();
 
@@ -327,6 +328,7 @@ router.get(
 router.post(
   "/backtests/pattern-discovery/promote",
   async (req, res): Promise<void> => {
+    await requireAdminCsrf(req);
     const body = z
       .object({
         deploymentId: z.string().min(1),

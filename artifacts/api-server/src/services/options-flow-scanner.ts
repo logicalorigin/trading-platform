@@ -188,6 +188,55 @@ function normalizeStrikeCoverage(
     : null;
 }
 
+const SCAN_PHASE_RANK: Record<OptionsFlowScannerScanPhase, number> = {
+  seed: 1,
+  expanded: 2,
+  manual: 3,
+};
+
+const STRIKE_COVERAGE_RANK: Record<
+  NonNullable<OptionsFlowScannerRequest["strikeCoverage"]>,
+  number
+> = {
+  fast: 1,
+  standard: 2,
+  full: 3,
+};
+
+function mergeScanPhase(
+  left: OptionsFlowScannerScanPhase | undefined,
+  right: OptionsFlowScannerScanPhase | undefined,
+): OptionsFlowScannerScanPhase | undefined {
+  const leftPhase = normalizeScanPhase(left);
+  const rightPhase = normalizeScanPhase(right);
+  if (!leftPhase) {
+    return rightPhase ?? undefined;
+  }
+  if (!rightPhase) {
+    return leftPhase;
+  }
+  return SCAN_PHASE_RANK[rightPhase] > SCAN_PHASE_RANK[leftPhase]
+    ? rightPhase
+    : leftPhase;
+}
+
+function mergeStrikeCoverage(
+  left: OptionsFlowScannerRequest["strikeCoverage"] | undefined,
+  right: OptionsFlowScannerRequest["strikeCoverage"] | undefined,
+): OptionsFlowScannerRequest["strikeCoverage"] | undefined {
+  const leftCoverage = normalizeStrikeCoverage(left);
+  const rightCoverage = normalizeStrikeCoverage(right);
+  if (!leftCoverage) {
+    return rightCoverage ?? undefined;
+  }
+  if (!rightCoverage) {
+    return leftCoverage;
+  }
+  return STRIKE_COVERAGE_RANK[rightCoverage] > STRIKE_COVERAGE_RANK[leftCoverage]
+    ? rightCoverage
+    : leftCoverage;
+}
+
 function normalizeMarketDataMode(
   value: OptionsFlowScannerTransportStatus["marketDataMode"],
 ): OptionsFlowScannerMarketDataMode | null {
@@ -233,15 +282,15 @@ function mergeQueuedRequest(
     unusualThreshold: current.unusualThreshold ?? next.unusualThreshold,
     lineBudget: mergeLineBudget(current.lineBudget, next.lineBudget),
     allowPartial: Boolean(current.allowPartial && next.allowPartial),
-    phase: next.phase ?? current.phase,
+    phase: mergeScanPhase(current.phase, next.phase),
     expirationScanCount:
       normalizePositiveInteger(next.expirationScanCount) ??
       normalizePositiveInteger(current.expirationScanCount) ??
       undefined,
-    strikeCoverage:
-      normalizeStrikeCoverage(next.strikeCoverage) ??
-      normalizeStrikeCoverage(current.strikeCoverage) ??
-      undefined,
+    strikeCoverage: mergeStrikeCoverage(
+      current.strikeCoverage,
+      next.strikeCoverage,
+    ),
   };
 }
 

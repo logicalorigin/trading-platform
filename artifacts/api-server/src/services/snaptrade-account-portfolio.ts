@@ -456,6 +456,25 @@ function normalizeAveragePurchasePrice(input: {
   return input.value;
 }
 
+function averagePurchasePriceFromCostBasis(input: {
+  value: number | null;
+  quantity: number | null;
+  optionContract: SnapTradePositionOptionContract | null;
+}): number | null {
+  if (input.value == null || input.quantity == null) {
+    return null;
+  }
+  const quantity = Math.abs(input.quantity);
+  if (quantity <= 1e-9) {
+    return null;
+  }
+  return normalizeAveragePurchasePrice({
+    value: roundFinancialNumber(Math.abs(input.value) / quantity),
+    optionContract: input.optionContract,
+    contractScaled: true,
+  });
+}
+
 function calculatedPositionMarketValue(input: {
   quantity: number | null;
   price: number | null;
@@ -532,11 +551,18 @@ function normalizePosition(
       record["unrealized_profit_loss"] ??
       record["unrealizedProfitLoss"],
   );
-  const averagePurchasePrice = normalizeAveragePurchasePrice({
-    value: rawAveragePurchasePrice ?? rawCostBasis,
-    optionContract,
-    contractScaled: rawAveragePurchasePrice == null && rawCostBasis != null,
-  });
+  const averagePurchasePrice =
+    rawAveragePurchasePrice != null
+      ? normalizeAveragePurchasePrice({
+          value: rawAveragePurchasePrice,
+          optionContract,
+          contractScaled: false,
+        })
+      : averagePurchasePriceFromCostBasis({
+          value: rawCostBasis,
+          quantity,
+          optionContract,
+        });
   const marketValue =
     calculatedPositionMarketValue({ quantity, price, optionContract }) ??
     numberOrNull(record["market_value"] ?? record["marketValue"]);

@@ -145,28 +145,31 @@ function buildBrokerReadiness(
   const strictReason =
     textOrNull(runtimeMetrics?.["strictReason"]) ??
     textOrNull(metrics["strictReason"]);
+  const readinessUnknown = Object.values(checks).every((check) => check === null);
   const reason =
-    checks.configured === false
-      ? "broker_not_configured"
-      : checks.reachable === false
-        ? "broker_unreachable"
-        : checks.connected === false
-          ? "gateway_disconnected"
-          : checks.authenticated === false
-            ? "gateway_login_required"
-            : checks.competing === true
-              ? "competing_broker_session"
-              : checks.strictReady === false
-                ? strictReason ?? "gateway_not_ready"
-                : checks.streamFresh === false
-                  ? "broker_stream_stale"
-                  : checks.healthFresh === false
-                    ? "broker_health_stale"
-                    : null;
+    readinessUnknown
+      ? "broker_readiness_unknown"
+      : checks.configured === false
+        ? "broker_not_configured"
+        : checks.reachable === false
+          ? "broker_unreachable"
+          : checks.connected === false
+            ? "gateway_disconnected"
+            : checks.authenticated === false
+              ? "gateway_login_required"
+              : checks.competing === true
+                ? "competing_broker_session"
+                : checks.strictReady === false
+                  ? strictReason ?? "gateway_not_ready"
+                  : checks.streamFresh === false
+                    ? "broker_stream_stale"
+                    : checks.healthFresh === false
+                      ? "broker_health_stale"
+                      : null;
 
   return {
-    status: reason ? "blocked" : "ready",
-    ready: !reason,
+    status: readinessUnknown ? "unknown" : reason ? "blocked" : "ready",
+    ready: !readinessUnknown && !reason,
     reason,
     checks,
   };

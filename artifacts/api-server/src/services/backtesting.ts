@@ -2771,7 +2771,13 @@ export async function getPatternOccurrences(
 
   const bySymbol = new Map<
     string,
-    { symbol: string; count: number; wins: number; sumReturn: number }
+    {
+      symbol: string;
+      count: number;
+      realizedReturnCount: number;
+      wins: number;
+      sumReturn: number;
+    }
   >();
   for (const row of rows) {
     const ret =
@@ -2779,11 +2785,13 @@ export async function getPatternOccurrences(
     const agg = bySymbol.get(row.symbol) ?? {
       symbol: row.symbol,
       count: 0,
+      realizedReturnCount: 0,
       wins: 0,
       sumReturn: 0,
     };
     agg.count += 1;
     if (ret != null) {
+      agg.realizedReturnCount += 1;
       agg.sumReturn += ret;
       if (ret > 0) agg.wins += 1;
     }
@@ -2792,12 +2800,16 @@ export async function getPatternOccurrences(
   const perSymbol = [...bySymbol.values()].map((agg) => ({
     symbol: agg.symbol,
     count: agg.count,
-    // % of occurrences where the underlying rose (same convention as the
-    // leaderboard winRatePct; interpret against the pattern's bias).
+    // % of realized returns where the underlying rose (same convention as the
+    // leaderboard winRatePct; missing forward data is excluded from this KPI).
     winRatePct:
-      agg.count > 0 ? Number(((agg.wins / agg.count) * 100).toFixed(2)) : null,
+      agg.realizedReturnCount > 0
+        ? Number(((agg.wins / agg.realizedReturnCount) * 100).toFixed(2))
+        : null,
     meanReturnPct:
-      agg.count > 0 ? Number((agg.sumReturn / agg.count).toFixed(6)) : null,
+      agg.realizedReturnCount > 0
+        ? Number((agg.sumReturn / agg.realizedReturnCount).toFixed(6))
+        : null,
   }));
 
   return {

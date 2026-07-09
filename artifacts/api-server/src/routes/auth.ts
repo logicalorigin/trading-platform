@@ -24,24 +24,39 @@ const router: IRouter = Router();
 // In-memory fixed-window rate limiter for auth endpoints. Single-instance
 // scope only; a distributed limiter is required before multi-instance deploy.
 type RateWindow = { count: number; resetAt: number };
+const MAX_RATE_BUCKETS = 10_000;
 const rateBuckets = new Map<string, RateWindow>();
 
 function clientIp(req: Request): string {
-  const forwarded = req.headers["x-forwarded-for"];
-  const raw = Array.isArray(forwarded) ? forwarded[0] : forwarded;
-  return String(raw || req.ip || req.socket?.remoteAddress || "unknown")
+  return String(req.ip || req.socket?.remoteAddress || "unknown")
     .split(",")[0]
     .trim();
 }
 
+function pruneRateBuckets(now: number, protectedKey: string): void {
+  for (const [existingKey, window] of rateBuckets) {
+    if (existingKey === protectedKey) continue;
+    if (window.resetAt <= now) rateBuckets.delete(existingKey);
+  }
+  if (rateBuckets.size < MAX_RATE_BUCKETS) return;
+  const bucketsByReset = Array.from(rateBuckets.entries())
+    .filter(([existingKey]) => existingKey !== protectedKey)
+    .sort(([, left], [, right]) => left.resetAt - right.resetAt);
+  for (const [existingKey] of bucketsByReset) {
+    if (rateBuckets.size < MAX_RATE_BUCKETS) break;
+    rateBuckets.delete(existingKey);
+  }
+}
+
 function enforceRateLimit(key: string, limit: number, windowMs: number): void {
   const now = Date.now();
-  if (rateBuckets.size > 10_000) {
-    for (const [existingKey, window] of rateBuckets) {
-      if (window.resetAt <= now) rateBuckets.delete(existingKey);
-    }
-  }
   const bucket = rateBuckets.get(key);
+  if (
+    rateBuckets.size > MAX_RATE_BUCKETS ||
+    (!bucket && rateBuckets.size >= MAX_RATE_BUCKETS)
+  ) {
+    pruneRateBuckets(now, key);
+  }
   if (!bucket || bucket.resetAt <= now) {
     rateBuckets.set(key, { count: 1, resetAt: now + windowMs });
     return;

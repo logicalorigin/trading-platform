@@ -312,6 +312,22 @@ export async function enqueueMarketDataJob(
 
 const INGEST_JOB_DEFAULT_PRIORITY = 5;
 
+type MarketDataIngestBatchRow = {
+  kind: MarketDataIngestJobKind;
+  symbol: string;
+  timeframe: string | null;
+  windowStart: Date | null;
+  windowEnd: Date | null;
+  priority: number;
+  status: "queued";
+  attemptCount: number;
+  maxAttempts: number;
+  nextRunAt: Date;
+  dedupeKey: string;
+  payload: Record<string, unknown> | null;
+  updatedAt: Date;
+};
+
 function resolveIngestPriority(priority: number | undefined): number {
   return Number.isFinite(priority) && (priority ?? 0) > 0
     ? Math.floor(priority as number)
@@ -390,34 +406,40 @@ export async function enqueueMarketDataJobs(
     } else {
       const { db, pool, marketDataIngestJobsTable } = dbModule;
       const now = new Date();
-      // De-duplicate by dedupeKey within this batch: a multi-row insert cannot
-      // upsert the same conflict target twice in one statement. The single-job
-      // path coalesces these via repeated onConflict; we mirror that by
-      // inserting the first occurrence and treating later duplicates as queued
-      // (same dedupeKey -> same row).
-      const seenDedupeKeys = new Set<string>();
-      const rows: Record<string, unknown>[] = [];
+      // Coalesce by dedupeKey within this batch: a multi-row insert cannot
+      // upsert the same conflict target twice in one statement. Mirror the
+      // single-job path's repeated onConflict semantics before inserting.
+      const rowsByDedupeKey = new Map<string, MarketDataIngestBatchRow>();
       for (const job of insertable) {
         const input = inputs[job.index]!;
-        if (!seenDedupeKeys.has(job.dedupeKey)) {
-          seenDedupeKeys.add(job.dedupeKey);
-          rows.push({
-            kind: input.kind,
-            symbol: job.symbol,
-            timeframe: input.timeframe?.trim() || null,
-            windowStart: input.windowStart ?? null,
-            windowEnd: input.windowEnd ?? null,
-            priority: resolveIngestPriority(input.priority),
-            status: "queued",
-            attemptCount: 0,
-            maxAttempts: resolveIngestMaxAttempts(input.maxAttempts),
-            nextRunAt: input.nextRunAt ?? now,
-            dedupeKey: job.dedupeKey,
-            payload: job.payload,
-            updatedAt: now,
-          });
+        const row: MarketDataIngestBatchRow = {
+          kind: input.kind,
+          symbol: job.symbol,
+          timeframe: input.timeframe?.trim() || null,
+          windowStart: input.windowStart ?? null,
+          windowEnd: input.windowEnd ?? null,
+          priority: resolveIngestPriority(input.priority),
+          status: "queued",
+          attemptCount: 0,
+          maxAttempts: resolveIngestMaxAttempts(input.maxAttempts),
+          nextRunAt: input.nextRunAt ?? now,
+          dedupeKey: job.dedupeKey,
+          payload: job.payload,
+          updatedAt: now,
+        };
+        const existing = rowsByDedupeKey.get(job.dedupeKey);
+        if (existing) {
+          existing.priority = Math.min(existing.priority, row.priority);
+          existing.maxAttempts = Math.max(existing.maxAttempts, row.maxAttempts);
+          if (row.nextRunAt.getTime() < existing.nextRunAt.getTime()) {
+            existing.nextRunAt = row.nextRunAt;
+          }
+          existing.payload = row.payload ?? existing.payload;
+        } else {
+          rowsByDedupeKey.set(job.dedupeKey, row);
         }
       }
+      const rows = [...rowsByDedupeKey.values()];
 
       try {
         await db

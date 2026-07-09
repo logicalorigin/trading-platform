@@ -171,6 +171,8 @@ import {
   withCallerShadowScope,
 } from "../services/shadow-account";
 import { runWithShadowAccountId } from "../services/shadow-account-context";
+import { requireEntitlementCsrf, requireUser } from "./auth";
+
 const router: IRouter = Router();
 let nextOptionQuoteSseDemandId = 1;
 const STOCK_AGGREGATE_STREAM_SNAPSHOT_HISTORY_LIMIT = 24;
@@ -1754,9 +1756,12 @@ router.get("/broker-connections", async (_req, res) => {
 });
 
 router.get("/accounts", async (req, res) => {
+  const { user } = await requireUser(req);
   if (!(await admitAccountRoute(res))) return;
   const query = ListAccountsQueryParams.parse(req.query);
-  const data = ListAccountsResponse.parse(await listAccounts(query));
+  const data = ListAccountsResponse.parse(
+    await listAccounts(query, { appUserId: user.id }),
+  );
 
   res.json(data);
 });
@@ -2109,6 +2114,7 @@ router.post("/shadow/orders", async (req, res) => {
 });
 
 router.post("/orders", async (req, res) => {
+  await requireEntitlementCsrf("broker_connect")(req);
   const body = PlaceOrderBody.parse(req.body);
   res.status(201).json(await placeOrder(body));
 });
@@ -2120,6 +2126,7 @@ router.post("/orders/preview", async (req, res) => {
 });
 
 router.post("/orders/submit", async (req, res) => {
+  await requireEntitlementCsrf("broker_connect")(req);
   if (Array.isArray(req.body?.ibkrOrders)) {
     res.status(201).json(await submitRawOrders({
       accountId:
