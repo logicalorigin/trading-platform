@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import {
@@ -18,6 +19,10 @@ import {
   deriveSnapTradeUserId,
   recordSnapTradeUserCredential,
 } from "./snaptrade-user-custody";
+import {
+  __resetApiResourcePressureForTests,
+  updateApiResourcePressure,
+} from "./resource-pressure";
 
 const TEST_ENCRYPTION_KEY = Buffer.alloc(32, 23).toString("base64url");
 
@@ -300,6 +305,120 @@ test("SnapTrade account history degrades gracefully when beta balance history is
       );
     }),
   );
+});
+
+test("SnapTrade history persistence yields under hard DB pool pressure", async () => {
+  await withBootstrapToken(async () =>
+    withTestDb(async () => {
+      const { auth, account, snapTradeUserId } =
+        await createSnapTradeAccount("history-pressure@example.com");
+      const fetchImpl: typeof fetch = async (url) => {
+        const requestUrl = new URL(String(url));
+        assert.equal(requestUrl.searchParams.get("userId"), snapTradeUserId);
+        if (requestUrl.pathname === "/api/v1/accounts/acct-history-1/activities") {
+          return new Response(
+            JSON.stringify({
+              data: [
+                {
+                  id: "pressure-activity",
+                  symbol: null,
+                  price: null,
+                  units: null,
+                  amount: 100,
+                  currency: { code: "USD" },
+                  type: "CONTRIBUTION",
+                  description: "Cash contribution",
+                  trade_date: "2026-07-01T00:00:00.000Z",
+                  settlement_date: "2026-07-01T00:00:00.000Z",
+                  fee: 0,
+                },
+              ],
+              pagination: { offset: 0, limit: 1000, total: 1 },
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          );
+        }
+        if (requestUrl.pathname === "/api/v1/accounts/acct-history-1/balanceHistory") {
+          return new Response(
+            JSON.stringify({
+              history: [{ date: "2026-07-01", total_value: "1000.00" }],
+              currency: "USD",
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          );
+        }
+        return new Response(JSON.stringify({ message: "unexpected path" }), {
+          status: 404,
+          headers: { "content-type": "application/json" },
+        });
+      };
+
+      __resetApiResourcePressureForTests();
+      try {
+        updateApiResourcePressure({
+          dbPoolActive: 12,
+          dbPoolWaiting: 8,
+          dbPoolMax: 12,
+        });
+        updateApiResourcePressure({
+          dbPoolActive: 12,
+          dbPoolWaiting: 8,
+          dbPoolMax: 12,
+        });
+
+        const ingest = await ingestSnapTradeAccountHistory({
+          appUserId: auth.user.id,
+          accountId: account.id,
+          env: {
+            SNAPTRADE_CLIENTID: "client-123",
+            SNAPTRADE_API_KEY: "consumer-secret",
+          },
+          encryptionKey: TEST_ENCRYPTION_KEY,
+          now: new Date("2026-07-01T20:00:00.000Z"),
+          fetchImpl,
+        });
+
+        assert.equal(ingest.activitiesFetched, 1);
+        assert.equal(ingest.activitiesStored, 0);
+        assert.equal(ingest.balanceSnapshotsStored, 0);
+        assert.equal(
+          (await db.select().from(snapTradeAccountActivitiesTable)).length,
+          0,
+        );
+        assert.equal((await db.select().from(balanceSnapshotsTable)).length, 0);
+      } finally {
+        __resetApiResourcePressureForTests();
+      }
+    }),
+  );
+});
+
+test("SnapTrade background refresh entry points yield under hard DB pool pressure", () => {
+  const source = readFileSync(
+    new URL("./snaptrade-history-scheduler.ts", import.meta.url),
+    "utf8",
+  );
+  const allStart = source.indexOf("export async function refreshAllSnapTradeAccountHistory");
+  const allList = source.indexOf("listSnapTradeAccountsForRefresh", allStart);
+  const allPressure = source.indexOf(
+    "shouldSkipSnapTradeHistoryRefreshForPressure()",
+    allStart,
+  );
+  const onReadStart = source.indexOf("export function refreshSnapTradeAccountHistoryOnRead");
+  const onReadIngest = source.indexOf("void ingestSnapTradeAccountHistory", onReadStart);
+  const onReadPressure = source.indexOf(
+    "shouldSkipSnapTradeHistoryRefreshForPressure()",
+    onReadStart,
+  );
+
+  assert.notEqual(allStart, -1);
+  assert.notEqual(allList, -1);
+  assert.notEqual(allPressure, -1);
+  assert.ok(allPressure < allList);
+  assert.notEqual(onReadStart, -1);
+  assert.notEqual(onReadIngest, -1);
+  assert.notEqual(onReadPressure, -1);
+  assert.ok(onReadPressure < onReadIngest);
 });
 
 test("SnapTrade account history reconstructs sparse equity from the activity ledger", async () => {

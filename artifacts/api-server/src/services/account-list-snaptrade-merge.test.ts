@@ -11,11 +11,13 @@ import { withTestDb } from "@workspace/db/testing";
 import type { BrokerAccountSnapshot } from "../providers/ibkr/client";
 
 import {
+  __accountPositionInternalsForTests,
   __accountUniverseInternalsForTests,
   applyRobinhoodAccountBalances,
   applySnapTradeAccountBalances,
   listAccounts,
 } from "./account";
+import { runAsAppUser } from "./app-user-context";
 import type { SnapTradeAccountPortfolioResponse } from "./snaptrade-account-portfolio";
 
 function snapshot(
@@ -443,6 +445,144 @@ test("account detail resolver resolves Robinhood accounts by local broker accoun
   assert.deepEqual(universe.accountIds, ["broker-account-uuid"]);
   assert.equal(universe.source, "robinhood");
   assert.equal(universe.accounts[0].netLiquidation, 40);
+});
+
+test("account detail resolver uses request app user for provider fallback", async () => {
+  const snapTrade = {
+    ...snapshot("snaptrade-local-account", "snaptrade"),
+    cash: 50,
+    buyingPower: 50,
+    netLiquidation: 50,
+  };
+  const observedAppUserIds: Array<string | null> = [];
+
+  const universe = await runAsAppUser("user-from-request", () =>
+    __accountUniverseInternalsForTests.readLiveAccountUniverseUncached(
+      "snaptrade-local-account",
+      "live",
+      {
+        listLiveAccounts: async () => {
+          throw new Error("IBKR unavailable");
+        },
+        getSnapTradeAccounts: async (_mode, appUserId) => {
+          observedAppUserIds.push(appUserId);
+          return [snapTrade];
+        },
+        getRobinhoodAccounts: async () => [],
+      },
+    ),
+  );
+
+  assert.deepEqual(observedAppUserIds, ["user-from-request"]);
+  assert.equal(universe.requestedAccountId, "snaptrade-local-account");
+  assert.deepEqual(universe.accountIds, ["snaptrade-local-account"]);
+  assert.equal(universe.source, "snaptrade");
+  assert.equal(universe.staleReason, "ibkr_unavailable_using_provider_accounts");
+});
+
+test("account universe cache keys include the request app user", () => {
+  const first = __accountUniverseInternalsForTests.liveAccountUniverseCacheKey(
+    "combined",
+    "live",
+    "user-1",
+  );
+  const second = __accountUniverseInternalsForTests.liveAccountUniverseCacheKey(
+    "combined",
+    "live",
+    "user-2",
+  );
+
+  assert.notEqual(first, second);
+});
+
+test("combined account positions include normalized SnapTrade portfolio rows", async () => {
+  const snapTradeAccount = snapshot("etrade-a", "snaptrade");
+  const ibkrAccount = snapshot("U1", "ibkr");
+  const positions = await __accountPositionInternalsForTests.readPositionsForUniverseUncached(
+    {
+      requestedAccountId: "combined",
+      accountIds: [ibkrAccount.id, snapTradeAccount.id],
+      isCombined: true,
+      accounts: [ibkrAccount, snapTradeAccount],
+      primaryCurrency: "USD",
+      source: "live",
+      latestSnapshotAt: null,
+      staleReason: null,
+    },
+    "live",
+    {
+      appUserId: "user-1",
+      listIbkrPositions: async ({ accountId }) => [
+        {
+          id: `${accountId}:AAPL`,
+          accountId,
+          symbol: "AAPL",
+          assetClass: "equity" as const,
+          quantity: 2,
+          averagePrice: 200,
+          marketPrice: 210,
+          marketValue: 420,
+          unrealizedPnl: 20,
+          unrealizedPnlPercent: 5,
+          optionContract: null,
+        },
+      ],
+      fetchSnapTradePortfolio: async ({ appUserId, accountId }) => {
+        assert.equal(appUserId, "user-1");
+        assert.equal(accountId, snapTradeAccount.id);
+        return portfolio({
+          cash: 0,
+          buyingPower: 0,
+          netLiquidation: 340,
+          positions: [
+            {
+              snapTradePositionId: "option:BLDP260821C00005000",
+              symbol: "BLDP",
+              rawSymbol: "BLDP  260821C00005000",
+              description: "BLDP Aug 21 2026 5 Call",
+              instrumentKind: "option",
+              assetClass: "option",
+              optionContract: {
+                ticker: "BLDP260821C00005000",
+                underlying: "BLDP",
+                expirationDate: "2026-08-21",
+                strike: 5,
+                right: "call",
+                multiplier: 100,
+                sharesPerContract: 100,
+                providerContractId: null,
+                brokerContractId: null,
+              },
+              quantity: 20,
+              side: "long",
+              price: 0.17,
+              averagePurchasePrice: 0.8351,
+              marketValue: 340,
+              costBasis: 1_670.2,
+              unrealizedPnl: -1_330.2,
+              currency: "USD",
+              cashEquivalent: false,
+            },
+          ],
+        });
+      },
+    },
+  );
+
+  assert.deepEqual(
+    positions.map((position) => position.accountId),
+    [ibkrAccount.id, snapTradeAccount.id],
+  );
+  assert.equal(positions[1]?.quantity, 20);
+  assert.equal(positions[1]?.averagePrice, 0.8351);
+  assert.equal(positions[1]?.marketPrice, 0.17);
+  assert.equal(positions[1]?.marketValue, 340);
+  assert.equal(positions[1]?.unrealizedPnl, -1_330.2);
+  assert.equal(positions[1]?.optionContract?.ticker, "BLDP260821C00005000");
+  assert.equal(
+    positions[1]?.optionContract?.expirationDate.toISOString(),
+    "2026-08-21T00:00:00.000Z",
+  );
 });
 
 test("applySnapTradeAccountBalances populates live balances onto snapshots", async () => {

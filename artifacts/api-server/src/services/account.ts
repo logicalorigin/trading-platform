@@ -39,6 +39,7 @@ import {
 } from "../lib/transient-db-error";
 import { normalizeSymbol, toIsoDateString } from "../lib/values";
 import { getRuntimeMode, type RuntimeMode } from "../lib/runtime";
+import { getCurrentAppUserId } from "./app-user-context";
 import {
   assertIbkrGatewayTradingAvailable,
   getBars,
@@ -1312,7 +1313,7 @@ async function readLiveAccountUniverseUncached(
     | "getRobinhoodAccounts"
   > = {},
 ): Promise<AccountUniverse> {
-  const appUserId = options.appUserId ?? null;
+  const appUserId = options.appUserId ?? getCurrentAppUserId();
   let liveReadFailed = false;
   const accounts = await (options.listLiveAccounts ?? listIbkrAccounts)(
     mode,
@@ -4729,12 +4730,24 @@ export async function getRobinhoodBackedAccounts(
 }
 
 const SNAPTRADE_PRESENCE_CACHE_TTL_MS = 30_000;
-let snapTradePresenceCache: { value: boolean; expiresAtMs: number } | null =
-  null;
-let snapTradePresenceInFlight: Promise<boolean> | null = null;
+const SNAPTRADE_GLOBAL_PRESENCE_CACHE_KEY = "__global__";
+const snapTradePresenceCache = new Map<
+  string,
+  { value: boolean; expiresAtMs: number }
+>();
+const snapTradePresenceInFlight = new Map<string, Promise<boolean>>();
 
-async function readSnapTradeAccountPresence(): Promise<boolean> {
+async function readSnapTradeAccountPresence(
+  appUserId: string | null,
+): Promise<boolean> {
   try {
+    const conditions = [
+      eq(brokerConnectionsTable.brokerProvider, "snaptrade"),
+      eq(brokerConnectionsTable.status, "connected"),
+    ];
+    if (appUserId) {
+      conditions.push(eq(brokerAccountsTable.appUserId, appUserId));
+    }
     const rows = await db
       .select({ id: brokerAccountsTable.id })
       .from(brokerAccountsTable)
@@ -4742,12 +4755,7 @@ async function readSnapTradeAccountPresence(): Promise<boolean> {
         brokerConnectionsTable,
         eq(brokerConnectionsTable.id, brokerAccountsTable.connectionId),
       )
-      .where(
-        and(
-          eq(brokerConnectionsTable.brokerProvider, "snaptrade"),
-          eq(brokerConnectionsTable.status, "connected"),
-        ),
-      )
+      .where(and(...conditions))
       .limit(1);
     return rows.length > 0;
   } catch (error) {
@@ -4759,25 +4767,32 @@ async function readSnapTradeAccountPresence(): Promise<boolean> {
   }
 }
 
-export async function hasSnapTradeBackedAccounts(): Promise<boolean> {
+export async function hasSnapTradeBackedAccounts(input: {
+  appUserId?: string | null;
+} = {}): Promise<boolean> {
+  const appUserId = input.appUserId ?? getCurrentAppUserId();
+  const cacheKey = appUserId ?? SNAPTRADE_GLOBAL_PRESENCE_CACHE_KEY;
   const nowMs = Date.now();
-  if (snapTradePresenceCache && snapTradePresenceCache.expiresAtMs > nowMs) {
-    return snapTradePresenceCache.value;
+  const cached = snapTradePresenceCache.get(cacheKey);
+  if (cached && cached.expiresAtMs > nowMs) {
+    return cached.value;
   }
-  if (!snapTradePresenceInFlight) {
-    snapTradePresenceInFlight = readSnapTradeAccountPresence()
+  let inFlight = snapTradePresenceInFlight.get(cacheKey);
+  if (!inFlight) {
+    inFlight = readSnapTradeAccountPresence(appUserId)
       .then((value) => {
-        snapTradePresenceCache = {
+        snapTradePresenceCache.set(cacheKey, {
           value,
           expiresAtMs: Date.now() + SNAPTRADE_PRESENCE_CACHE_TTL_MS,
-        };
+        });
         return value;
       })
       .finally(() => {
-        snapTradePresenceInFlight = null;
+        snapTradePresenceInFlight.delete(cacheKey);
       });
+    snapTradePresenceInFlight.set(cacheKey, inFlight);
   }
-  return snapTradePresenceInFlight;
+  return inFlight;
 }
 
 function snapTradeBalanceValuesFromPortfolio(
@@ -5127,7 +5142,7 @@ export async function listAccounts(
   options: ListAccountsOptions = {},
 ) {
   const mode = input.mode ?? getRuntimeMode();
-  const appUserId = options.appUserId ?? null;
+  const appUserId = options.appUserId ?? getCurrentAppUserId();
   const hasDependencyOverrides = Boolean(
     options.listLiveAccounts ||
       options.getPersistedAccounts ||

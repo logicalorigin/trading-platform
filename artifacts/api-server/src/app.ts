@@ -22,6 +22,7 @@ import { isRawJson } from "./lib/raw-json";
 import { readSessionToken } from "./routes/auth";
 import { getIbkrGatewayReanchorLocation } from "./routes/ibkr-portal";
 import { readAuthSessionFromToken } from "./services/auth";
+import { runAsAppUser } from "./services/app-user-context";
 import { runWithIbkrPortalUser } from "./services/ibkr-portal-context";
 
 const app: Express = express();
@@ -225,7 +226,9 @@ app.use((req, _res, next) => {
   readAuthSessionFromToken(token)
     .then((session) => {
       if (session) {
-        runWithIbkrPortalUser(session.user.id, next);
+        runAsAppUser(session.user.id, () =>
+          runWithIbkrPortalUser(session.user.id, next),
+        );
       } else {
         next();
       }

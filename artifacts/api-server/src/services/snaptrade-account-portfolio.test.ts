@@ -481,6 +481,90 @@ test("SnapTrade account portfolio rejects another user's local account", async (
   );
 });
 
+test("SnapTrade account portfolio aborts slow provider reads", async () => {
+  await withBootstrapToken(async () =>
+    withTestDb(async ({ db }) => {
+      const auth = await createUser("slow-provider@example.com");
+      await recordSnapTradeUserCredential({
+        appUserId: auth.user.id,
+        snapTradeUserId: deriveSnapTradeUserId(auth.user.id),
+        userSecret: "snaptrade-user-secret",
+        encryptionKey: TEST_ENCRYPTION_KEY,
+      });
+
+      const [connection] = await db
+        .insert(brokerConnectionsTable)
+        .values({
+          appUserId: auth.user.id,
+          name: "snaptrade:auth-slow-provider",
+          connectionType: "broker",
+          brokerProvider: "snaptrade",
+          mode: "live",
+          status: "connected",
+          capabilities: ["accounts", "positions", "snaptrade"],
+        })
+        .returning({ id: brokerConnectionsTable.id });
+      const [account] = await db
+        .insert(brokerAccountsTable)
+        .values({
+          appUserId: auth.user.id,
+          connectionId: connection.id,
+          providerAccountId: "snaptrade:acct-slow-provider",
+          displayName: "Slow Provider",
+          mode: "live",
+          baseCurrency: "USD",
+        })
+        .returning({ id: brokerAccountsTable.id });
+
+      let sawAbortSignal = false;
+      const fetchImpl: typeof fetch = async (_url, init) =>
+        new Promise<Response>((resolve, reject) => {
+          const signal = init?.signal;
+          sawAbortSignal = sawAbortSignal || Boolean(signal);
+          const timer = setTimeout(() => {
+            resolve(
+              new Response(JSON.stringify([]), {
+                status: 200,
+                headers: { "content-type": "application/json" },
+              }),
+            );
+          }, 50);
+          signal?.addEventListener(
+            "abort",
+            () => {
+              clearTimeout(timer);
+              reject(new Error("aborted"));
+            },
+            { once: true },
+          );
+        });
+
+      await assert.rejects(
+        getSnapTradeAccountPortfolio({
+          appUserId: auth.user.id,
+          accountId: account.id,
+          env: {
+            SNAPTRADE_CLIENTID: "client-123",
+            SNAPTRADE_API_KEY: "consumer-secret",
+            SNAPTRADE_PORTFOLIO_REQUEST_TIMEOUT_MS: "5",
+          },
+          encryptionKey: TEST_ENCRYPTION_KEY,
+          fetchImpl,
+        }),
+        (error) => {
+          assert.equal((error as { statusCode?: number }).statusCode, 502);
+          assert.equal(
+            (error as { code?: string }).code,
+            "snaptrade_portfolio_timeout",
+          );
+          return true;
+        },
+      );
+      assert.equal(sawAbortSignal, true);
+    }),
+  );
+});
+
 test("SnapTrade account portfolio rejects invalid positions payloads", async () => {
   await withBootstrapToken(async () =>
     withTestDb(async ({ db }) => {

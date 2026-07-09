@@ -102,6 +102,19 @@ type LocalSnapTradeAccount = {
 };
 
 const LOCAL_ID_PREFIX = "snaptrade:";
+const DEFAULT_SNAPTRADE_PORTFOLIO_REQUEST_TIMEOUT_MS = 8_000;
+
+function snapTradePortfolioRequestTimeoutMs(
+  env: NodeJS.ProcessEnv | Record<string, string | undefined>,
+): number {
+  const parsed = Number.parseInt(
+    readEnvString(env, "SNAPTRADE_PORTFOLIO_REQUEST_TIMEOUT_MS") ?? "",
+    10,
+  );
+  return Number.isFinite(parsed) && parsed > 0
+    ? parsed
+    : DEFAULT_SNAPTRADE_PORTFOLIO_REQUEST_TIMEOUT_MS;
+}
 
 function configuredSnapTradeCredentials(
   env: NodeJS.ProcessEnv | Record<string, string | undefined>,
@@ -202,6 +215,7 @@ async function fetchSnapTradeJson(input: {
   query: string;
   consumerKey: string;
   fetchImpl: typeof fetch;
+  timeoutMs: number;
 }): Promise<unknown> {
   const { signature } = buildSnapTradeSignature({
     path: input.path,
@@ -212,11 +226,15 @@ async function fetchSnapTradeJson(input: {
 
   let response: Response;
   let payload: unknown;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), input.timeoutMs);
+  timeout.unref?.();
   try {
     response = await input.fetchImpl(
       `${SNAPTRADE_API_BASE_URL}${input.path}?${input.query}`,
       {
         method: "GET",
+        signal: controller.signal,
         headers: {
           Accept: "application/json",
           Signature: signature,
@@ -226,9 +244,16 @@ async function fetchSnapTradeJson(input: {
     payload = await readJsonSafely(response);
   } catch {
     throw new HttpError(502, "SnapTrade portfolio read failed", {
-      code: "snaptrade_portfolio_network_error",
+      code: controller.signal.aborted
+        ? "snaptrade_portfolio_timeout"
+        : "snaptrade_portfolio_network_error",
       expose: false,
+      data: controller.signal.aborted
+        ? { path: input.path, timeoutMs: input.timeoutMs }
+        : undefined,
     });
+  } finally {
+    clearTimeout(timeout);
   }
 
   if (!response.ok) {
@@ -715,6 +740,7 @@ export async function getSnapTradeAccountPortfolio(
   const fetchImpl = options.fetchImpl ?? fetch;
   const syncedAt = options.now ?? new Date();
   const { clientId, consumerKey } = configuredSnapTradeCredentials(env);
+  const timeoutMs = snapTradePortfolioRequestTimeoutMs(env);
   const query = buildUserScopedQuery({
     clientId,
     timestamp: Math.floor(syncedAt.getTime() / 1000).toString(),
@@ -729,12 +755,14 @@ export async function getSnapTradeAccountPortfolio(
       query,
       consumerKey,
       fetchImpl,
+      timeoutMs,
     }),
     fetchSnapTradeJson({
       path: `/accounts/${encodedAccountId}/positions/all`,
       query,
       consumerKey,
       fetchImpl,
+      timeoutMs,
     }),
   ]);
 
