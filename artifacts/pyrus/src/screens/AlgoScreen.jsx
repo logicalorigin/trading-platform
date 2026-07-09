@@ -163,6 +163,10 @@ const EMPTY_SIGNAL_OPTIONS_CANDIDATES = Object.freeze([]);
 const EMPTY_SIGNAL_OPTIONS_SIGNALS = Object.freeze([]);
 const EMPTY_SIGNAL_OPTIONS_POSITIONS = Object.freeze([]);
 const retainPreviousData = (previousData) => previousData;
+const retainPreviousAccountData = (accountId) => (previousData) =>
+  String(previousData?.accountId || "") === String(accountId || "")
+    ? previousData
+    : undefined;
 
 const sourceArrayTimestampMs = (item) => {
   const record = asRecord(item);
@@ -648,12 +652,14 @@ export const AlgoScreen = ({
           mode: "shadow",
           assetClass: "all",
           source: "automation",
-          liveQuotes: false,
+          detail: "fast",
+          liveQuotes: true,
         }
       : {
           mode: "live",
           assetClass: "all",
-          liveQuotes: false,
+          detail: "fast",
+          liveQuotes: true,
         },
     {
       query: {
@@ -663,7 +669,7 @@ export const AlgoScreen = ({
           ? 30_000
           : QUERY_DEFAULTS.staleTime,
         refetchInterval: signalOptionsLedgerPositionsRefetchInterval,
-        placeholderData: retainPreviousData,
+        placeholderData: retainPreviousAccountData(algoPositionsAccountId),
         retry: false,
       },
     },

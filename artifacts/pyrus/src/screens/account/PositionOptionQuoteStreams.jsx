@@ -77,30 +77,26 @@ export const optionProviderContractIds = (contract) =>
   ]);
 
 export const rowOptionProviderContractIds = (row) => {
+  const structuredProviderContractId = structuredOptionProviderContractId(
+    row?.optionContract,
+  );
   return uniqueProviderContractIds([
     ...optionProviderContractIds(row?.optionContract),
     primaryOptionProviderContractId(row?.optionContract),
-    ...optionQuoteProviderContractIds(row?.optionQuote),
+    ...(structuredProviderContractId
+      ? []
+      : optionQuoteProviderContractIds(row?.optionQuote)),
   ]);
 };
 
 const rowOptionQuoteSubscriptionProviderContractIds = (row) => {
-  const contractProviderContractIds = optionProviderContractIds(row?.optionContract);
-  const quoteProviderContractIds = optionQuoteProviderContractIds(row?.optionQuote);
-  const opraProviderContractIds = uniqueProviderContractIds([
-    ...contractProviderContractIds.filter((providerContractId) =>
-      normalizeOpraOptionTicker(providerContractId),
-    ),
-    ...quoteProviderContractIds.filter((providerContractId) =>
-      normalizeOpraOptionTicker(providerContractId),
-    ),
-  ]);
+  const providerContractIds = rowOptionProviderContractIds(row);
+  const opraProviderContractIds = providerContractIds.filter(
+    (providerContractId) => normalizeOpraOptionTicker(providerContractId),
+  );
   return opraProviderContractIds.length
     ? opraProviderContractIds
-    : uniqueProviderContractIds([
-        ...contractProviderContractIds,
-        ...quoteProviderContractIds,
-      ]);
+    : providerContractIds;
 };
 
 const rowOptionUnderlying = (row) => {

@@ -263,8 +263,14 @@ export const shadowOrdersTable = pgTable(
       table.symbol,
       table.placedAt.desc(),
     ),
-    uniqueIndex("shadow_orders_source_event_idx").on(table.sourceEventId),
-    uniqueIndex("shadow_orders_client_order_idx").on(table.clientOrderId),
+    uniqueIndex("shadow_orders_account_source_event_idx").on(
+      table.accountId,
+      table.sourceEventId,
+    ),
+    uniqueIndex("shadow_orders_account_client_order_idx").on(
+      table.accountId,
+      table.clientOrderId,
+    ),
   ],
 );
 
@@ -307,7 +313,10 @@ export const shadowFillsTable = pgTable(
       table.accountId,
       table.occurredAt,
     ),
-    uniqueIndex("shadow_fills_source_event_idx").on(table.sourceEventId),
+    uniqueIndex("shadow_fills_account_source_event_idx").on(
+      table.accountId,
+      table.sourceEventId,
+    ),
   ],
 );
 

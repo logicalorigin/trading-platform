@@ -178,8 +178,22 @@ const SHADOW_ORDER_HISTORY_LIMIT = 5_000;
 const SHADOW_STATE_REFRESH_TTL_MS = 2_000;
 const SHADOW_BENCHMARK_BARS_CACHE_TTL_MS = 60_000;
 const SHADOW_BENCHMARK_BARS_MAX_WAIT_MS = 750;
-const SHADOW_EQUITY_HISTORY_MARK_REFRESH_MAX_WAIT_MS = 1_000;
 const SHADOW_SUMMARY_EQUITY_HISTORY_MAX_WAIT_MS = 500;
+// Bucket-first equity-history read (replaces the unbounded `select *` scan of
+// shadow_balance_snapshots — 285k rows / ~30MB per 1Y rebuild). Sample the
+// newest few snapshots per time bucket (index-seek via the existing
+// (account_id, as_of) index) plus a first-per-day anchor so ledger jumps
+// survive, then feed the UNCHANGED source/live-ledger/compaction/bucketing
+// pipeline. Bucket count ~= point budget so the read stays bounded for any span.
+const SHADOW_EQUITY_HISTORY_POINT_BUDGET = Math.max(
+  60,
+  Number(process.env.SHADOW_EQUITY_HISTORY_POINT_BUDGET ?? 1_200),
+);
+const SHADOW_EQUITY_HISTORY_BUCKET_CANDIDATES = Math.max(
+  1,
+  Number(process.env.SHADOW_EQUITY_HISTORY_BUCKET_CANDIDATES ?? 3),
+);
+const SHADOW_EQUITY_HISTORY_MIN_BUCKET_MS = 60_000;
 const SHADOW_DAY_CHANGE_QUOTE_MAX_WAIT_MS = 1_250;
 const SHADOW_DAY_CHANGE_QUOTE_TASK_MAX_WAIT_MS = Math.max(
   250,
@@ -523,9 +537,22 @@ const shadowFreshStateCache = new Map<
 >();
 const shadowFreshStateInFlight = new Map<string, Promise<ShadowTotals>>();
 let shadowFreshStateCacheVersion = 0;
-let shadowPositionMarkRefreshInFlight:
-  | Promise<Awaited<ReturnType<typeof refreshShadowPositionMarks>>>
-  | null = null;
+const shadowPositionMarkRefreshInFlight = new Map<
+  string,
+  Promise<Awaited<ReturnType<typeof refreshShadowPositionMarks>>>
+>();
+// Last completion time per account for reader-triggered mark refresh. Gating the
+// shared kick on this converts the pathological "every 1s account-page poll kicks
+// a full-ledger replay/write" loop into at most one refresh per cooldown, which —
+// with write-side coalescing — is what stops the ~5x snapshot write acceleration
+// (report §E, gates 2-3). Event-driven callers use refreshShadowPositionMarks()
+// directly and are never throttled.
+const shadowPositionMarkRefreshLastAt = new Map<string, number>();
+const SHADOW_MARK_REFRESH_MIN_INTERVAL_MS = Math.max(
+  0,
+  Number(process.env.SHADOW_MARK_REFRESH_MIN_INTERVAL_MS ?? 5_000),
+);
+const shadowNoopMarkRefresh = { updatedCount: 0 } as const;
 const SHADOW_READ_CACHE_TTL_MS = 2_500;
 const SHADOW_READ_CACHE_STALE_TTL_MS = 60_000;
 const SHADOW_READ_CACHE_STALE_WAIT_MS = 1_500;
@@ -867,15 +894,22 @@ function resetShadowAccountReadDiagnosticsForTests() {
   shadowReadDiagnosticStatsByRoute.clear();
 }
 
+// Slice 5.5: partition every read cache + in-flight join by the resolved account
+// so one user's cached ledger can never be served to another. Defaults to the
+// platform account (background/marketing/unauthenticated), preserving prior keys.
+// Single source of truth so direct shadowReadCache.get() readers match the
+// prefix withShadowReadCache writes under (previously they read the raw key and
+// silently missed every entry).
+function shadowReadCacheAccountKey(rawKey: string): string {
+  return `${currentShadowAccountId()} ${rawKey}`;
+}
+
 async function withShadowReadCache<T>(
   rawKey: string,
   factory: () => Promise<T>,
   options: ShadowReadCacheOptions = {},
 ): Promise<T> {
-  // Slice 5.5: partition every read cache + in-flight join by the resolved account
-  // so one user's cached ledger can never be served to another. Defaults to the
-  // platform account (background/marketing/unauthenticated), preserving prior keys.
-  const key = `${currentShadowAccountId()} ${rawKey}`;
+  const key = shadowReadCacheAccountKey(rawKey);
   const now = Date.now();
   const cached = shadowReadCache.get(key);
   if (cached && cached.expiresAt > now) {
@@ -1111,20 +1145,28 @@ function trackShadowFreshStateRefresh(
 }
 
 function kickShadowPositionMarkRefresh() {
-  if (shadowPositionMarkRefreshInFlight) {
-    return shadowPositionMarkRefreshInFlight;
+  const accountId = currentShadowAccountId();
+  const pending = shadowPositionMarkRefreshInFlight.get(accountId);
+  if (pending) {
+    return pending;
+  }
+  const lastAt = shadowPositionMarkRefreshLastAt.get(accountId) ?? 0;
+  if (Date.now() - lastAt < SHADOW_MARK_REFRESH_MIN_INTERVAL_MS) {
+    return Promise.resolve(shadowNoopMarkRefresh);
   }
 
-  shadowPositionMarkRefreshInFlight = refreshShadowPositionMarks()
+  const request = refreshShadowPositionMarks()
     .catch((error) => {
       logger.debug?.({ err: error }, "Shadow mark refresh failed");
       return { updatedCount: 0 };
     })
     .finally(() => {
-      shadowPositionMarkRefreshInFlight = null;
+      shadowPositionMarkRefreshLastAt.set(accountId, Date.now());
+      shadowPositionMarkRefreshInFlight.delete(accountId);
     });
+  shadowPositionMarkRefreshInFlight.set(accountId, request);
 
-  return shadowPositionMarkRefreshInFlight;
+  return request;
 }
 
 function toNumber(value: unknown): number | null {
@@ -4625,13 +4667,19 @@ export async function previewShadowOrder(input: ShadowOrderInput) {
 
 export async function placeShadowOrder(input: ShadowOrderInput) {
   const normalized = normalizeShadowOrderInput(input);
+  const shadowAccountId = currentShadowAccountId();
   await ensureShadowAccount();
 
   if (normalized.sourceEventId) {
     const [existing] = await dbTrading
       .select()
       .from(shadowOrdersTable)
-      .where(eq(shadowOrdersTable.sourceEventId, normalized.sourceEventId))
+      .where(
+        and(
+          eq(shadowOrdersTable.accountId, shadowAccountId),
+          eq(shadowOrdersTable.sourceEventId, normalized.sourceEventId),
+        ),
+      )
       .limit(1);
     if (existing) {
       if (existing.source !== normalized.source) {
@@ -4658,7 +4706,12 @@ export async function placeShadowOrder(input: ShadowOrderInput) {
     const [existing] = await dbTrading
       .select()
       .from(shadowOrdersTable)
-      .where(eq(shadowOrdersTable.clientOrderId, normalized.clientOrderId))
+      .where(
+        and(
+          eq(shadowOrdersTable.accountId, shadowAccountId),
+          eq(shadowOrdersTable.clientOrderId, normalized.clientOrderId),
+        ),
+      )
       .limit(1);
     if (existing) {
       return orderRowToResponse(existing);
@@ -4686,7 +4739,7 @@ export async function placeShadowOrder(input: ShadowOrderInput) {
   await dbTrading.transaction(async (tx) => {
     await tx.insert(shadowOrdersTable).values({
       id: orderId,
-      accountId: currentShadowAccountId(),
+      accountId: shadowAccountId,
       source: normalized.source ?? "manual",
       sourceEventId: normalized.sourceEventId ?? null,
       clientOrderId:
@@ -4713,7 +4766,7 @@ export async function placeShadowOrder(input: ShadowOrderInput) {
 
     await tx.insert(shadowFillsTable).values({
       id: fillId,
-      accountId: currentShadowAccountId(),
+      accountId: shadowAccountId,
       orderId,
       sourceEventId: normalized.sourceEventId ?? null,
       symbol,
@@ -4747,6 +4800,7 @@ export async function placeShadowOrder(input: ShadowOrderInput) {
     await recomputeShadowAccountFromLedger(tx, now);
   });
 
+  invalidateShadowFreshStateCache();
   await writeShadowBalanceSnapshot(snapshotSource, now);
 
   const [order] = await dbTrading
@@ -6282,11 +6336,12 @@ async function writeShadowPositionMarkBatch(
     writes.map((write) => sql`${write.updatedAt}`),
     sql`, `,
   );
+  const accountId = currentShadowAccountId();
 
   await db.transaction(async (tx) => {
     await tx.insert(shadowPositionMarksTable).values(
       writes.map((write) => ({
-        accountId: SHADOW_ACCOUNT_ID,
+        accountId,
         positionId: write.position.id,
         mark: write.mark,
         marketValue: write.marketValue,
@@ -6384,15 +6439,40 @@ export async function refreshShadowPositionMarks() {
     });
     const marketValue = quantity * price * multiplier;
     const unrealizedPnl = (price - averageCost) * quantity * multiplier;
+    const nextMark = money(price);
+    const nextMarketValue = money(marketValue);
+    const nextUnrealizedPnl = money(unrealizedPnl);
+    // ponytail: coalesce unchanged-content marks. A flat quote reproduces the
+    // stored mark/value/pnl exactly (money() normalizes both sides), so skipping
+    // it writes zero shadow_position_marks rows and — because updatedCount then
+    // excludes this position — zero balance snapshots for an all-flat source.
+    // This is what stops the read-triggered table growth (report §3.3, gate 3).
+    const priorMark =
+      position.mark == null ? null : money(toNumber(position.mark) ?? Number.NaN);
+    const priorMarketValue =
+      position.marketValue == null
+        ? null
+        : money(toNumber(position.marketValue) ?? Number.NaN);
+    const priorUnrealizedPnl =
+      position.unrealizedPnl == null
+        ? null
+        : money(toNumber(position.unrealizedPnl) ?? Number.NaN);
+    if (
+      priorMark === nextMark &&
+      priorMarketValue === nextMarketValue &&
+      priorUnrealizedPnl === nextUnrealizedPnl
+    ) {
+      continue;
+    }
     markWrites.push({
       position,
       contract,
       optionQuote,
       optionPricing,
       markPrice: price,
-      mark: money(price),
-      marketValue: money(marketValue),
-      unrealizedPnl: money(unrealizedPnl),
+      mark: nextMark,
+      marketValue: nextMarketValue,
+      unrealizedPnl: nextUnrealizedPnl,
       source: mark.source,
       asOf: mark.asOf,
       updatedAt: new Date(),
@@ -8176,20 +8256,11 @@ function buildDefaultShadowEquityHistoryRows<T extends ShadowEquityHistoryLedger
 async function computeShadowEquityHistoryTerminalTotals(
   source: ShadowSourceScope | null = null,
 ): Promise<ShadowTotals> {
+  // Chart reads no longer kick a mark refresh: a GET must not trigger position
+  // mark / balance-snapshot writes (report §2.3 item 1, gate 2). Marks are kept
+  // warm by the cooldown-throttled kick on the continuously-polled positions
+  // path; the terminal point uses whatever current marks exist.
   await ensureShadowAccount();
-  let timeout: ReturnType<typeof setTimeout> | null = null;
-  await Promise.race([
-    kickShadowPositionMarkRefresh().then(() => undefined),
-    new Promise<void>((resolve) => {
-      timeout = setTimeout(
-        resolve,
-        SHADOW_EQUITY_HISTORY_MARK_REFRESH_MAX_WAIT_MS,
-      );
-    }),
-  ]);
-  if (timeout) {
-    clearTimeout(timeout);
-  }
   return computeShadowTotalsForSource(source, {
     useCurrentTimestampForOpenPositions: true,
   });
@@ -8278,6 +8349,150 @@ function shadowEquityHistoryBucketSizeMs<
   }
 
   return defaultBucketSizeMs;
+}
+
+// Pure: read span -> how coarsely to sample snapshots. Each bucket yields up to
+// `candidates` newest + 1 oldest row, so bucket count is sized to
+// budget / (candidates + 1): total sampled rows track the point budget for any
+// span (~1200 vs up to 285k for the old full scan). candidates (newest N per
+// bucket, NOT LIMIT 1) keeps rows for live-ledger filtering to validate.
+function shadowEquityHistoryReadPolicy(spanMs: number): {
+  bucketMs: number;
+  candidates: number;
+} {
+  const candidates = SHADOW_EQUITY_HISTORY_BUCKET_CANDIDATES;
+  const buckets = Math.max(
+    1,
+    Math.floor(SHADOW_EQUITY_HISTORY_POINT_BUDGET / (candidates + 1)),
+  );
+  const bucketMs = Math.max(
+    SHADOW_EQUITY_HISTORY_MIN_BUCKET_MS,
+    Math.ceil(Math.max(1, spanMs) / buckets),
+  );
+  return { bucketMs, candidates };
+}
+
+type ShadowEquityHistoryReadRow = Pick<
+  ShadowBalanceSnapshotRow,
+  | "id"
+  | "asOf"
+  | "source"
+  | "cash"
+  | "realizedPnl"
+  | "fees"
+  | "netLiquidation"
+  | "createdAt"
+  | "currency"
+>;
+
+function mapShadowSnapshotReadRow(
+  row: Record<string, unknown>,
+): ShadowEquityHistoryReadRow {
+  return {
+    id: String(row.id),
+    asOf: new Date(row.as_of as string | number | Date),
+    source: String(row.source),
+    cash: String(row.cash),
+    realizedPnl: String(row.realized_pnl),
+    fees: String(row.fees),
+    netLiquidation: String(row.net_liquidation),
+    createdAt: new Date(row.created_at as string | number | Date),
+    currency: String(row.currency),
+  };
+}
+
+// Bucket-first bounded read: the newest `candidates` snapshots per time bucket
+// (index-seek per bucket, no full-table sort) PLUS the first snapshot of each
+// day (so deposits/fills/ledger jumps are never sampled away), projecting only
+// the columns the pipeline consumes. Source-agnostic — the returned set feeds
+// the UNCHANGED selection/live-ledger/compaction/bucketing pipeline, which
+// decides correctness. Replaces `select * ... order by as_of` over the whole
+// table (up to 285k rows / ~30MB per rebuild).
+//
+// Each bucket samples its newest `candidates` rows AND its oldest row, and each
+// day contributes its first row. So the gate-1 adversarial case — an older valid
+// row under more-than-`candidates` newer invalid rows in one bucket — is
+// preserved: that older row is the bucket's oldest (or the day's first).
+//
+// ponytail: the remaining ceiling is a valid row that is neither newest-N,
+// oldest, nor first-of-day in its bucket AND is hidden under newer invalid rows
+// (rare — needs >candidates+2 same-bucket rows around it). Raise
+// SHADOW_EQUITY_HISTORY_BUCKET_CANDIDATES, or add a source index / persisted
+// chart read-model, if that ever bites.
+async function readShadowEquityHistorySnapshotRowsBucketed(input: {
+  accountId: string;
+  start: Date | null;
+  end: Date;
+}): Promise<ShadowEquityHistoryReadRow[]> {
+  const { accountId, end } = input;
+  let start = input.start;
+  if (!start) {
+    const firstResult = (await db.execute(sql`
+      select min(as_of) as first
+      from shadow_balance_snapshots
+      where account_id = ${accountId}
+    `)) as unknown as { rows: Array<{ first: unknown }> };
+    const first = firstResult.rows[0]?.first;
+    if (!first) {
+      return [];
+    }
+    start = new Date(first as string | number | Date);
+  }
+  const { bucketMs, candidates } = shadowEquityHistoryReadPolicy(
+    end.getTime() - start.getTime(),
+  );
+  const interval = `${bucketMs / 1000} seconds`;
+  const startIso = start.toISOString();
+  const endIso = end.toISOString();
+
+  const bucketed = (await db.execute(sql`
+    select s.as_of, s.source, s.cash, s.realized_pnl, s.fees,
+      s.net_liquidation, s.created_at, s.currency, s.id
+    from generate_series(
+      ${startIso}::timestamptz, ${endIso}::timestamptz, ${interval}::interval
+    ) as b(bucket_start)
+    cross join lateral (
+      (
+        select as_of, source, cash, realized_pnl, fees,
+          net_liquidation, created_at, currency, id
+        from shadow_balance_snapshots
+        where account_id = ${accountId}
+          and as_of >= b.bucket_start
+          and as_of < b.bucket_start + ${interval}::interval
+        order by as_of desc
+        limit ${candidates}
+      )
+      union
+      (
+        select as_of, source, cash, realized_pnl, fees,
+          net_liquidation, created_at, currency, id
+        from shadow_balance_snapshots
+        where account_id = ${accountId}
+          and as_of >= b.bucket_start
+          and as_of < b.bucket_start + ${interval}::interval
+        order by as_of asc
+        limit 1
+      )
+    ) s
+  `)) as unknown as { rows: Array<Record<string, unknown>> };
+
+  const anchors = (await db.execute(sql`
+    select distinct on (date_trunc('day', as_of))
+      as_of, source, cash, realized_pnl, fees,
+      net_liquidation, created_at, currency, id
+    from shadow_balance_snapshots
+    where account_id = ${accountId} and as_of >= ${startIso}::timestamptz
+    order by date_trunc('day', as_of), as_of asc
+  `)) as unknown as { rows: Array<Record<string, unknown>> };
+
+  const byId = new Map<string, ShadowEquityHistoryReadRow>();
+  for (const raw of [...bucketed.rows, ...anchors.rows]) {
+    const mapped = mapShadowSnapshotReadRow(raw);
+    byId.set(mapped.id, mapped);
+  }
+  return Array.from(byId.values()).sort(
+    (left, right) => left.asOf.getTime() - right.asOf.getTime(),
+  );
 }
 
 export async function backfillSignalOptionsReplayEquitySnapshotsFromRun(input: {
@@ -8554,17 +8769,11 @@ export async function getShadowAccountEquityHistory(input: {
         const account =
           (await readShadowAccount()) ?? (await ensureShadowAccount());
         const start = accountRangeStart(range);
-        const conditions: SQL<unknown>[] = [
-          eq(shadowBalanceSnapshotsTable.accountId, currentShadowAccountId()),
-        ];
-        if (start) {
-          conditions.push(gte(shadowBalanceSnapshotsTable.asOf, start));
-        }
-        const rows = await db
-          .select()
-          .from(shadowBalanceSnapshotsTable)
-          .where(and(...conditions))
-          .orderBy(shadowBalanceSnapshotsTable.asOf);
+        const rows = await readShadowEquityHistorySnapshotRowsBucketed({
+          accountId: currentShadowAccountId(),
+          start,
+          end: new Date(),
+        });
         const selection = selectShadowEquityHistoryRows(rows, { source });
         const totals = selection.includeLiveTerminal
           ? await computeShadowEquityHistoryTerminalTotals(source)
@@ -9043,11 +9252,13 @@ function readReusableShadowPositionsResponseForAssetClass(input: {
 
   const now = Date.now();
   const cached = shadowReadCache.get(
-    shadowPositionsReadCacheKey({
-      assetClassFilter: "all",
-      source: input.source,
-      includeLiveQuotes: input.includeLiveQuotes,
-    }),
+    shadowReadCacheAccountKey(
+      shadowPositionsReadCacheKey({
+        assetClassFilter: "all",
+        source: input.source,
+        includeLiveQuotes: input.includeLiveQuotes,
+      }),
+    ),
   );
   if (!cached || cached.staleExpiresAt <= now) {
     return null;
@@ -9097,11 +9308,13 @@ function readReusableLiveQuotedShadowPositionsResponse(input: {
 
   const now = Date.now();
   const cached = shadowReadCache.get(
-    shadowPositionsReadCacheKey({
-      assetClassFilter: input.assetClassFilter ?? "all",
-      source: input.source,
-      includeLiveQuotes: true,
-    }),
+    shadowReadCacheAccountKey(
+      shadowPositionsReadCacheKey({
+        assetClassFilter: input.assetClassFilter ?? "all",
+        source: input.source,
+        includeLiveQuotes: true,
+      }),
+    ),
   );
   if (!cached || cached.staleExpiresAt <= now) {
     return null;
@@ -9151,11 +9364,13 @@ function readReusableShadowAllocationFromPositions(input: {
   const allocationKey = `allocation:${shadowSourceCacheKey(input.source)}`;
   for (const includeLiveQuotes of [true, false]) {
     const cached = shadowReadCache.get(
-      shadowPositionsReadCacheKey({
-        assetClassFilter: "all",
-        source: input.source,
-        includeLiveQuotes,
-      }),
+      shadowReadCacheAccountKey(
+        shadowPositionsReadCacheKey({
+          assetClassFilter: "all",
+          source: input.source,
+          includeLiveQuotes,
+        }),
+      ),
     );
     if (!cached || cached.staleExpiresAt <= now) {
       continue;
@@ -9260,6 +9475,7 @@ function recordLastKnownShadowPositionDayChange(
 function buildFastShadowPositionsResponseFromRows(input: {
   positions: ShadowPositionRow[];
   account: ShadowAccountRow | null;
+  totals?: ShadowTotals | null;
   assetClassFilter: ShadowPositionTypeFilter;
   source: ShadowSourceScope | null;
   observedAt?: Date;
@@ -9278,6 +9494,7 @@ function buildFastShadowPositionsResponseFromRows(input: {
         )
       : sourceFiltered;
   const accountCash =
+    toNumber(input.totals?.cash) ??
     toNumber(input.account?.cash) ??
     toNumber(input.account?.startingBalance) ??
     SHADOW_STARTING_BALANCE;
@@ -9422,11 +9639,15 @@ async function buildFastShadowPositionsResponse(input: {
       input.source,
     )}`,
     async () => {
-      const [account, positions] = await Promise.all([
-        readShadowAccount(),
-        readOpenShadowPositions(),
-      ]);
-      void kickShadowPositionMarkRefresh();
+      const sourceBundle = input.source
+        ? await readShadowLedgerBundleForSource(input.source)
+        : null;
+      const [account, positions] = sourceBundle
+        ? [sourceBundle.account, sourceBundle.positions]
+        : await Promise.all([readShadowAccount(), readOpenShadowPositions()]);
+      // No mark-refresh kick on the high-pressure fast path: a saturated-server
+      // positions GET must not start mark/snapshot writes (gate 2). Marks are
+      // produced by the cooldown-throttled kick on the normal positions path.
       // Decouple day change from resource pressure without deepening it: serve the
       // last-known cache for free, and only run the (baseline-marks-only, no option-quote
       // fetch) day-change query to bootstrap positions not yet in the cache. Once warm,
@@ -9450,6 +9671,7 @@ async function buildFastShadowPositionsResponse(input: {
       return buildFastShadowPositionsResponseFromRows({
         account,
         positions,
+        totals: sourceBundle?.totals ?? null,
         assetClassFilter: input.assetClassFilter,
         source: input.source,
       });
@@ -9995,7 +10217,7 @@ function readFreshCachedShadowEquityHistoryReturnMetrics(input: {
 }): ShadowAccountSummaryReturnMetrics | undefined {
   const source = normalizeShadowSourceScope(input.source);
   const cacheKey = `equity-history:1D::${shadowSourceCacheKey(source)}`;
-  const cached = shadowReadCache.get(cacheKey);
+  const cached = shadowReadCache.get(shadowReadCacheAccountKey(cacheKey));
   if (!cached || cached.expiresAt <= Date.now()) {
     return undefined;
   }
@@ -15091,6 +15313,10 @@ export const __shadowWatchlistBacktestInternalsForTests = {
   shadowReusableEquityHistoryRange,
   sliceShadowAccountEquityHistoryToRange,
   shadowEquityHistoryBucketSizeMs,
+  shadowEquityHistoryReadPolicy,
+  readShadowEquityHistorySnapshotRowsBucketed,
+  readFreshCachedShadowEquityHistoryReturnMetrics,
+  kickShadowPositionMarkRefresh,
   bucketShadowEquityHistoryRows,
   selectLatestShadowPositionMarksByPositionId,
   buildShadowPositionDayChange,
@@ -16132,16 +16358,18 @@ export async function recordShadowAutomationEvent(
   event: ExecutionEvent,
   options: ShadowAutomationMirrorOptions = {},
 ) {
-  if (event.eventType === "signal_options_shadow_entry") {
-    return recordShadowAutomationEntry(event, options);
-  }
-  if (event.eventType === "signal_options_shadow_exit") {
-    return recordShadowAutomationExit(event, options);
-  }
-  if (event.eventType === "signal_options_shadow_mark") {
-    return recordShadowAutomationMark(event, options);
-  }
-  return null;
+  return runWithShadowAccountId(SHADOW_ACCOUNT_ID, async () => {
+    if (event.eventType === "signal_options_shadow_entry") {
+      return recordShadowAutomationEntry(event, options);
+    }
+    if (event.eventType === "signal_options_shadow_exit") {
+      return recordShadowAutomationExit(event, options);
+    }
+    if (event.eventType === "signal_options_shadow_mark") {
+      return recordShadowAutomationMark(event, options);
+    }
+    return null;
+  });
 }
 
 async function recordShadowAutomationEntry(

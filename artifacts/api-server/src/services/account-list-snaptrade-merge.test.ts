@@ -18,7 +18,10 @@ import {
   listAccounts,
 } from "./account";
 import { runAsAppUser } from "./app-user-context";
-import type { SnapTradeAccountPortfolioResponse } from "./snaptrade-account-portfolio";
+import {
+  __snapTradeAccountPortfolioInternalsForTests,
+  type SnapTradeAccountPortfolioResponse,
+} from "./snaptrade-account-portfolio";
 
 function snapshot(
   id: string,
@@ -511,24 +514,25 @@ test("combined account positions include normalized SnapTrade portfolio rows", a
     },
     "live",
     {
-      appUserId: "user-1",
-      listIbkrPositions: async ({ accountId }) => [
-        {
-          id: `${accountId}:AAPL`,
-          accountId,
-          symbol: "AAPL",
-          assetClass: "equity" as const,
-          quantity: 2,
-          averagePrice: 200,
-          marketPrice: 210,
-          marketValue: 420,
-          unrealizedPnl: 20,
-          unrealizedPnlPercent: 5,
-          optionContract: null,
-        },
-      ],
-      fetchSnapTradePortfolio: async ({ appUserId, accountId }) => {
-        assert.equal(appUserId, "user-1");
+      listIbkrPositions: async ({ accountId }) => {
+        assert.ok(accountId);
+        return [
+          {
+            id: `${accountId}:AAPL`,
+            accountId,
+            symbol: "AAPL",
+            assetClass: "equity" as const,
+            quantity: 2,
+            averagePrice: 200,
+            marketPrice: 210,
+            marketValue: 420,
+            unrealizedPnl: 20,
+            unrealizedPnlPercent: 5,
+            optionContract: null,
+          },
+        ];
+      },
+      readSnapTradePortfolio: (accountId) => {
         assert.equal(accountId, snapTradeAccount.id);
         return portfolio({
           cash: 0,
@@ -582,6 +586,165 @@ test("combined account positions include normalized SnapTrade portfolio rows", a
   assert.equal(
     positions[1]?.optionContract?.expirationDate.toISOString(),
     "2026-08-21T00:00:00.000Z",
+  );
+});
+
+test("SnapTrade-only positions do not call the IBKR position reader", async () => {
+  const snapTradeAccount = snapshot("etrade-only", "snaptrade");
+  let ibkrReads = 0;
+
+  const positions = await __accountPositionInternalsForTests.readPositionsForUniverseUncached(
+    {
+      requestedAccountId: snapTradeAccount.id,
+      accountIds: [snapTradeAccount.id],
+      isCombined: false,
+      accounts: [snapTradeAccount],
+      primaryCurrency: "USD",
+      source: "snaptrade",
+      latestSnapshotAt: null,
+      staleReason: null,
+    },
+    "live",
+    {
+      listIbkrPositions: async () => {
+        ibkrReads += 1;
+        return [];
+      },
+      readSnapTradePortfolio: () =>
+        portfolio({
+          cash: 0,
+          buyingPower: 0,
+          netLiquidation: 0,
+        }),
+    },
+  );
+
+  assert.equal(ibkrReads, 0);
+  assert.deepEqual(positions, []);
+});
+
+test("generic positions consume the latest user-scoped SnapTrade portfolio", async () => {
+  const snapTradeAccount = snapshot("etrade-shared-cache", "snaptrade");
+  const latestPortfolio = portfolio({
+    cash: 0,
+    buyingPower: 0,
+    netLiquidation: 125,
+    positions: [
+      {
+        snapTradePositionId: "stock:AAPL",
+        symbol: "AAPL",
+        rawSymbol: "AAPL",
+        description: "Apple Inc.",
+        instrumentKind: "stock",
+        assetClass: "equity",
+        optionContract: null,
+        quantity: 1,
+        side: "long",
+        price: 125,
+        averagePurchasePrice: 100,
+        marketValue: 125,
+        costBasis: 100,
+        unrealizedPnl: 25,
+        currency: "USD",
+        cashEquivalent: false,
+      },
+    ],
+  });
+  __snapTradeAccountPortfolioInternalsForTests.rememberLatestPortfolio({
+    appUserId: "user-1",
+    accountId: snapTradeAccount.id,
+    value: latestPortfolio,
+  });
+  const universe = {
+    requestedAccountId: snapTradeAccount.id,
+    accountIds: [snapTradeAccount.id],
+    isCombined: false,
+    accounts: [snapTradeAccount],
+    primaryCurrency: "USD",
+    source: "snaptrade" as const,
+    latestSnapshotAt: null,
+    staleReason: null,
+  };
+
+  const ownerPositions = await runAsAppUser("user-1", () =>
+    __accountPositionInternalsForTests.readPositionsForUniverseUncached(
+      universe,
+      "live",
+    ),
+  );
+  const otherUserPositions = await runAsAppUser("user-2", () =>
+    __accountPositionInternalsForTests.readPositionsForUniverseUncached(
+      universe,
+      "live",
+    ),
+  );
+  const balancedUniverse = await runAsAppUser("user-1", () =>
+    __accountPositionInternalsForTests.applyLatestSnapTradeBalancesToUniverse(
+      universe,
+    ),
+  );
+
+  assert.equal(ownerPositions.length, 1);
+  assert.equal(ownerPositions[0]?.id, `snaptrade:${snapTradeAccount.id}:stock:AAPL`);
+  assert.deepEqual(otherUserPositions, []);
+  assert.equal(balancedUniverse.accounts[0]?.cash, 0);
+  assert.equal(balancedUniverse.accounts[0]?.netLiquidation, 125);
+  assert.equal(balancedUniverse.accounts[0]?.updatedAt.toISOString(), latestPortfolio.syncedAt);
+});
+
+test("latest SnapTrade portfolio cache rejects out-of-order completions", () => {
+  const accountId = "etrade-out-of-order";
+  const newer = {
+    ...portfolio({ cash: 200, buyingPower: 200, netLiquidation: 200 }),
+    syncedAt: "2026-07-09T19:02:00.000Z",
+    dataFreshness: { asOf: "2026-07-09T19:01:59.000Z" },
+  };
+  const older = {
+    ...portfolio({ cash: 100, buyingPower: 100, netLiquidation: 100 }),
+    syncedAt: "2026-07-09T19:01:00.000Z",
+    dataFreshness: { asOf: "2026-07-09T19:00:59.000Z" },
+  };
+
+  __snapTradeAccountPortfolioInternalsForTests.rememberLatestPortfolio({
+    appUserId: "user-1",
+    accountId,
+    value: newer,
+  });
+  __snapTradeAccountPortfolioInternalsForTests.rememberLatestPortfolio({
+    appUserId: "user-1",
+    accountId,
+    value: older,
+  });
+
+  assert.equal(
+    __snapTradeAccountPortfolioInternalsForTests.readLatestPortfolio({
+      appUserId: "user-1",
+      accountId,
+    }),
+    newer,
+  );
+
+  const mixedAccountId = `${accountId}-mixed-freshness`;
+  const newerWithoutProviderAsOf = {
+    ...newer,
+    dataFreshness: { asOf: null },
+  };
+  __snapTradeAccountPortfolioInternalsForTests.rememberLatestPortfolio({
+    appUserId: "user-1",
+    accountId: mixedAccountId,
+    value: newerWithoutProviderAsOf,
+  });
+  __snapTradeAccountPortfolioInternalsForTests.rememberLatestPortfolio({
+    appUserId: "user-1",
+    accountId: mixedAccountId,
+    value: older,
+  });
+  assert.equal(
+    __snapTradeAccountPortfolioInternalsForTests.readLatestPortfolio({
+      appUserId: "user-1",
+      accountId: mixedAccountId,
+    }),
+    newerWithoutProviderAsOf,
   );
 });
 

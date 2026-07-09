@@ -25,3 +25,16 @@ test("signal-options shadow exit mirror treats an already-flat position as a no-
   // Any other error must still propagate.
   assert.match(body, /throw error;/);
 });
+
+test("automation mirror dispatch is pinned to the platform shadow ledger", () => {
+  const start = source.indexOf("export async function recordShadowAutomationEvent");
+  const end = source.indexOf("async function recordShadowAutomationEntry", start);
+  assert.notEqual(start, -1, "Missing recordShadowAutomationEvent");
+  assert.notEqual(end, -1, "Missing recordShadowAutomationEvent end marker");
+  const body = source.slice(start, end);
+
+  assert.match(
+    body,
+    /return runWithShadowAccountId\(SHADOW_ACCOUNT_ID,\s*async \(\) => \{/,
+  );
+});

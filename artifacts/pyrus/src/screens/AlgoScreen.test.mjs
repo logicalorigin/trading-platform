@@ -18,6 +18,28 @@ test("Algo readiness uses Massive market data instead of the retired IBKR bridge
   assert.doesNotMatch(source, /isGatewayReadyForAlgo|hasGatewayLiveDataProof|bridgeRuntimeTone/);
 });
 
+test("Algo account-position placeholders cannot cross account tabs", () => {
+  assert.match(
+    source,
+    /const retainPreviousAccountData = \(accountId\) => \(previousData\) =>[\s\S]*?previousData\?\.accountId[\s\S]*?previousData[\s\S]*?undefined;/,
+  );
+  assert.match(
+    source,
+    /const signalOptionsLedgerPositionsQuery = useGetAccountPositions\([\s\S]*?placeholderData: retainPreviousAccountData\(algoPositionsAccountId\),/,
+  );
+});
+
+test("Algo account positions use the Accounts fast live-quote normalization", () => {
+  const query = source.match(
+    /const signalOptionsLedgerPositionsQuery = useGetAccountPositions\([\s\S]*?\n  \);/,
+  )?.[0];
+
+  assert.ok(query, "Missing Algo account positions query");
+  assert.equal((query.match(/detail: "fast"/g) || []).length, 2);
+  assert.equal((query.match(/liveQuotes: true/g) || []).length, 2);
+  assert.doesNotMatch(query, /liveQuotes: false/);
+});
+
 test("Algo shadow deployment creation is not blocked on IBKR account readiness", () => {
   assert.match(source, /if \(!marketDataConfigured\) \{/);
   assert.match(source, /title: "Market data not configured"/);

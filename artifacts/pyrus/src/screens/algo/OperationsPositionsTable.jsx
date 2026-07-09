@@ -112,10 +112,10 @@ export const OperationsPositionsTable = ({
         showFilters={false}
         isPhone={algoIsPhone}
         liveOptionQuotesEnabled={true}
-        streamLiveOptionQuotes={false}
+        streamLiveOptionQuotes={!filterByDeployment}
         optionQuoteStreamOwner="algo-position-option-quotes"
         optionQuoteStreamIntent="automation-live"
-        registerMarketDataSymbols={false}
+        registerMarketDataSymbols={!filterByDeployment}
         surfaceId="algo"
       />
     </div>

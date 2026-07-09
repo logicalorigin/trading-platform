@@ -49,6 +49,19 @@ test("SnapTrade account positions enable live Massive quote hydration", () => {
   );
 });
 
+test("Accounts and Algo current-position tables share the generic account positions source", () => {
+  assert.match(
+    source,
+    /const positionsQueryForDisplay = positionsQuery;/,
+    "Current positions must use the canonical generic account endpoint on every account tab.",
+  );
+  assert.doesNotMatch(
+    source,
+    /const positionsQueryForDisplay = snapTradeAccountPanelsEnabled[\s\S]*?snapTradePanelData\?\.positions/,
+    "SnapTrade current positions must not bypass the canonical account positions endpoint.",
+  );
+});
+
 test("real account tabs request live mode even when the workspace is shadow", () => {
   assert.match(
     source,

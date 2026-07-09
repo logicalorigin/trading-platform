@@ -9,13 +9,46 @@ import {
 } from "@workspace/db";
 import { withTestDb } from "@workspace/db/testing";
 import { bootstrapInitialUser } from "./auth";
-import { getSnapTradeAccountPortfolio } from "./snaptrade-account-portfolio";
+import {
+  __snapTradeAccountPortfolioInternalsForTests,
+  getSnapTradeAccountPortfolio,
+} from "./snaptrade-account-portfolio";
 import {
   deriveSnapTradeUserId,
   recordSnapTradeUserCredential,
 } from "./snaptrade-user-custody";
 
 const TEST_ENCRYPTION_KEY = Buffer.alloc(32, 17).toString("base64url");
+
+test("SnapTrade option position ids distinguish contracts when display symbols collapse", () => {
+  const normalize =
+    __snapTradeAccountPortfolioInternalsForTests.normalizePosition;
+  const position = (rawSymbol: string, index: number) =>
+    normalize(
+      {
+        instrument: {
+          kind: "option",
+          symbol: "AAPL",
+          raw_symbol: rawSymbol,
+          currency: "USD",
+        },
+        units: "1",
+        price: "1",
+        average_purchase_price: "1",
+        cost_basis: "100",
+      },
+      index,
+      "USD",
+    );
+  const call = position("AAPL  260821C00200000", 0);
+  const put = position("AAPL  260821P00200000", 1);
+
+  assert.equal(call.optionContract?.ticker, "AAPL260821C00200000");
+  assert.equal(put.optionContract?.ticker, "AAPL260821P00200000");
+  assert.equal(call.snapTradePositionId, "option:AAPL260821C00200000");
+  assert.equal(put.snapTradePositionId, "option:AAPL260821P00200000");
+  assert.notEqual(call.snapTradePositionId, put.snapTradePositionId);
+});
 
 async function withBootstrapToken<T>(fn: () => Promise<T>): Promise<T> {
   const previous = process.env["PYRUS_AUTH_BOOTSTRAP_TOKEN"];
@@ -237,6 +270,14 @@ test("SnapTrade account portfolio signs user-scoped balance and position reads",
         fetchImpl,
       });
 
+      assert.equal(
+        __snapTradeAccountPortfolioInternalsForTests.readLatestPortfolio({
+          appUserId: auth.user.id,
+          accountId: account.id,
+        }),
+        result,
+      );
+
       assert.deepEqual(
         requestedUrls.map((url) => new URL(url).pathname).sort(),
         [
@@ -280,7 +321,7 @@ test("SnapTrade account portfolio signs user-scoped balance and position reads",
           optionContract: null,
         },
         {
-          snapTradePositionId: "option:OPTT  260821C00000500",
+          snapTradePositionId: "option:OPTT260821C00000500",
           symbol: "OPTT",
           rawSymbol: "OPTT  260821C00000500",
           description: "OPTT Aug 21 2026 0.5 Call",

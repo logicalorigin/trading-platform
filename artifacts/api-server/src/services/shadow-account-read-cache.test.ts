@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
-import { asc } from "drizzle-orm";
+import { asc, eq } from "drizzle-orm";
 
 import {
   db,
@@ -17,6 +17,12 @@ import {
   refreshShadowPositionMarks,
   SHADOW_ACCOUNT_ID,
 } from "./shadow-account";
+import { runWithShadowAccountId } from "./shadow-account-context";
+
+const shadowAccountSource = readFileSync(
+  new URL("./shadow-account.ts", import.meta.url),
+  "utf8",
+);
 
 const waitTurn = () => new Promise((resolve) => setImmediate(resolve));
 const testMoney = (value: number) => Number(value.toFixed(6)).toString();
@@ -68,6 +74,92 @@ type TestShadowPositionsResponse = {
   stale?: boolean;
   reason?: string;
 };
+
+test("fast shadow positions use one source-scoped ledger bundle for rows and totals", () => {
+  const start = shadowAccountSource.indexOf(
+    "async function buildFastShadowPositionsResponse",
+  );
+  const end = shadowAccountSource.indexOf(
+    "export async function getShadowAccountPositions",
+    start,
+  );
+  assert.notEqual(start, -1, "Missing buildFastShadowPositionsResponse");
+  assert.notEqual(end, -1, "Missing fast response end marker");
+  const body = shadowAccountSource.slice(start, end);
+
+  assert.match(
+    body,
+    /input\.source\s*\?\s*await readShadowLedgerBundleForSource\(input\.source\)\s*:\s*null/,
+  );
+  assert.match(body, /totals: sourceBundle\?\.totals \?\? null/);
+});
+
+test("shadow mark refresh single-flight is partitioned by account", () => {
+  const start = shadowAccountSource.indexOf(
+    "function kickShadowPositionMarkRefresh",
+  );
+  const end = shadowAccountSource.indexOf("function toNumber", start);
+  assert.notEqual(start, -1, "Missing kickShadowPositionMarkRefresh");
+  assert.notEqual(end, -1, "Missing mark refresh end marker");
+  const body = shadowAccountSource.slice(start, end);
+
+  assert.match(body, /const accountId = currentShadowAccountId\(\);/);
+  assert.match(body, /shadowPositionMarkRefreshInFlight\.get\(accountId\)/);
+  assert.match(body, /shadowPositionMarkRefreshInFlight\.set\(accountId, request\)/);
+  assert.match(body, /shadowPositionMarkRefreshInFlight\.delete\(accountId\)/);
+});
+
+test("mark refresh writes mark history to the current shadow account", async () => {
+  const testDb = await createTestDb();
+  const accountId = "shadow-user-mark-test";
+  const positionId = "00000000-0000-4000-8000-000000000099";
+  internals.setResolveEquityMarkForTests(() => ({
+    price: 125,
+    bid: null,
+    ask: null,
+    source: "quote",
+    asOf: new Date("2026-07-09T14:30:00.000Z"),
+  }));
+
+  try {
+    await db.insert(shadowAccountsTable).values({
+      id: accountId,
+      displayName: "User shadow",
+      currency: "USD",
+      startingBalance: "25000",
+      cash: "24900",
+      status: "active",
+    });
+    await db.insert(shadowPositionsTable).values({
+      id: positionId,
+      accountId,
+      positionKey: "equity:AAPL",
+      symbol: "AAPL",
+      assetClass: "equity",
+      positionType: "stock",
+      quantity: "1",
+      averageCost: "100",
+      mark: "100",
+      marketValue: "100",
+      unrealizedPnl: "0",
+      status: "open",
+    });
+
+    const result = await runWithShadowAccountId(accountId, () =>
+      refreshShadowPositionMarks(),
+    );
+    const marks = await testDb.db
+      .select()
+      .from(shadowPositionMarksTable)
+      .where(eq(shadowPositionMarksTable.positionId, positionId));
+
+    assert.equal(result.updatedCount, 1);
+    assert.equal(marks.length, 1);
+    assert.equal(marks[0]?.accountId, accountId);
+  } finally {
+    internals.setResolveEquityMarkForTests(null);
+  }
+});
 
 test("mark refresh batches mark writes and preserves per-row values", async () => {
   const testDb = await createTestDb();
@@ -635,6 +727,48 @@ test("shadow positions pressure fallback builds a bounded degraded snapshot from
   assert.equal(response.totals.netLiquidation, 1300);
 });
 
+test("source-scoped pressure positions use source cash instead of whole-ledger cash", () => {
+  const observedAt = new Date("2026-07-09T14:45:00.000Z");
+  const response = internals.buildFastShadowPositionsResponseFromRows({
+    account: {
+      cash: "1000",
+      startingBalance: "500",
+    } as never,
+    totals: {
+      cash: 400,
+      startingBalance: 500,
+      realizedPnl: 0,
+      unrealizedPnl: 25,
+      fees: 0,
+      marketValue: 125,
+      netLiquidation: 525,
+      updatedAt: observedAt,
+    },
+    assetClassFilter: "all",
+    source: "automation",
+    observedAt,
+    positions: [
+      {
+        id: "automation-position",
+        symbol: "AAPL",
+        assetClass: "equity",
+        positionKey: "equity:AAPL",
+        quantity: "1",
+        averageCost: "100",
+        mark: "125",
+        marketValue: "125",
+        unrealizedPnl: "25",
+        asOf: observedAt,
+        openedAt: observedAt,
+      },
+    ] as never,
+  });
+
+  assert.equal(response.positions.length, 1);
+  assert.equal(response.totals.cash, 400);
+  assert.equal(response.totals.netLiquidation, 525);
+});
+
 test("shadow positions pressure fallback surfaces day change decoupled from pressure", () => {
   const observedAt = new Date("2026-07-09T14:45:00.000Z");
   const baseInput = {
@@ -730,7 +864,7 @@ test("shadow account positions pressure path does not start a full refresh", () 
   assert.doesNotMatch(pressureBlock, /readFullPositions/);
 });
 
-test("shadow positions fast wrapper warms day change off the read path", () => {
+test("shadow positions fast wrapper warms day change without kicking mark refresh", () => {
   const source = readFileSync(new URL("./shadow-account.ts", import.meta.url), "utf8");
   const start = source.indexOf("async function buildFastShadowPositionsResponse");
   const end = source.indexOf("export async function getShadowAccountPositions", start);
@@ -738,7 +872,9 @@ test("shadow positions fast wrapper warms day change off the read path", () => {
   assert.notEqual(end, -1, "Missing function boundary after fast positions wrapper");
 
   const block = source.slice(start, end);
-  assert.match(block, /void kickShadowPositionMarkRefresh\(\)/);
+  // Gate 2: a high-pressure positions GET (served by the fast path) must not
+  // start a mark refresh — no mark/snapshot writes from the saturated path.
+  assert.doesNotMatch(block, /kickShadowPositionMarkRefresh\(\)/);
   assert.match(block, /void readShadowPositionDayChanges\(/);
   assert.match(block, /recordLastKnownShadowPositionDayChange/);
   assert.doesNotMatch(block, /await\s+readShadowPositionDayChanges/);
@@ -786,13 +922,13 @@ test("equity-history base snapshot scan yields under hard DB pool pressure", () 
   const pressureCheck = block.indexOf(
     'getApiResourcePressureSnapshot().hardResourceLevel === "high"',
   );
-  const snapshotScan = block.indexOf(".from(shadowBalanceSnapshotsTable)");
+  const snapshotScan = block.indexOf("readShadowEquityHistorySnapshotRowsBucketed({");
 
   assert.notEqual(pressureCheck, -1, "Missing hard-pressure fallback");
-  assert.notEqual(snapshotScan, -1, "Missing shadow balance snapshot scan");
+  assert.notEqual(snapshotScan, -1, "Missing bucket-first snapshot read");
   assert.ok(
     pressureCheck < snapshotScan,
-    "equity-history must fall back before opening the snapshot scan",
+    "equity-history must fall back before opening the bounded snapshot read",
   );
 });
 

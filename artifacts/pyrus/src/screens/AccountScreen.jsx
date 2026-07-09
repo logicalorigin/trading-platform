@@ -1983,9 +1983,7 @@ const AccountScreenInner = ({
   const allocationQueryForDisplay = snapTradeAccountPanelsEnabled
     ? buildProviderAccountQuery(snapTradePortfolioQuery, snapTradePanelData?.allocation)
     : allocationQuery;
-  const positionsQueryForDisplay = snapTradeAccountPanelsEnabled
-    ? buildProviderAccountQuery(snapTradePortfolioQuery, snapTradePanelData?.positions)
-    : positionsQuery;
+  const positionsQueryForDisplay = positionsQuery;
   const positionsAtDateQueryForDisplay = snapTradeAccountPanelsEnabled
     ? buildIdleAccountQuery(snapTradePanelData?.positionsAtDate)
     : positionsAtDateQuery;

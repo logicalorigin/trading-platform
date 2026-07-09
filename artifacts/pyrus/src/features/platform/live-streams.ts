@@ -7373,6 +7373,17 @@ export const useIbkrOptionQuoteStream = ({
       }, 3_000);
     };
 
+    const scheduleWebSocketReconnect = () => {
+      if (closed || reconnectTimer) {
+        return;
+      }
+      setOptionHydrationDiagnostics({ wsState: "reconnecting" });
+      reconnectTimer = setTimeout(() => {
+        reconnectTimer = null;
+        startWebSocket();
+      }, OPTION_QUOTE_WEBSOCKET_RECONNECT_MS);
+    };
+
     const startWebSocket = () => {
       if (
         closed ||
@@ -7424,6 +7435,7 @@ export const useIbkrOptionQuoteStream = ({
           socket = null;
         }
         startRestFallback();
+        scheduleWebSocketReconnect();
       };
 
       socket.addEventListener("open", () => {
@@ -7455,6 +7467,7 @@ export const useIbkrOptionQuoteStream = ({
         }
         if (payload.type === "ready") {
           ready = true;
+          stopRestFallback();
           setOptionHydrationDiagnostics({
             wsState: "ready",
             requestedQuotes:
@@ -7521,8 +7534,7 @@ export const useIbkrOptionQuoteStream = ({
           return;
         }
 
-        setOptionHydrationDiagnostics({ wsState: "reconnecting" });
-        reconnectTimer = setTimeout(startWebSocket, 1_000);
+        scheduleWebSocketReconnect();
       });
     };
 

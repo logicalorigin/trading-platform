@@ -11,6 +11,13 @@ const peakMigrationSource = readFileSync(
   new URL("../../migrations/20260629_shadow_position_marks_peak_idx.sql", import.meta.url),
   "utf8",
 );
+const idempotencyMigrationSource = readFileSync(
+  new URL(
+    "../../migrations/20260709_shadow_order_idempotency_account_scope.sql",
+    import.meta.url,
+  ),
+  "utf8",
+);
 
 const requiredIndexes = [
   "shadow_orders_account_placed_at_idx",
@@ -58,5 +65,48 @@ test("shadow position mark peak lookup index stays in schema and migration", () 
   assert.match(
     peakMigrationSource,
     /ON shadow_position_marks \(position_id, mark DESC\)/i,
+  );
+});
+
+test("shadow order idempotency is unique within each account", () => {
+  assert.match(
+    schemaSource,
+    /shadow_orders_account_source_event_idx"[\s\S]*table\.accountId[\s\S]*table\.sourceEventId/,
+  );
+  assert.match(
+    schemaSource,
+    /shadow_orders_account_client_order_idx"[\s\S]*table\.accountId[\s\S]*table\.clientOrderId/,
+  );
+  assert.match(
+    schemaSource,
+    /shadow_fills_account_source_event_idx"[\s\S]*table\.accountId[\s\S]*table\.sourceEventId/,
+  );
+  assert.doesNotMatch(schemaSource, /shadow_orders_source_event_idx/);
+  assert.doesNotMatch(schemaSource, /shadow_orders_client_order_idx/);
+  assert.doesNotMatch(schemaSource, /shadow_fills_source_event_idx/);
+
+  assert.match(
+    idempotencyMigrationSource,
+    /CREATE UNIQUE INDEX IF NOT EXISTS shadow_orders_account_source_event_idx[\s\S]*ON shadow_orders \(account_id, source_event_id\)/i,
+  );
+  assert.match(
+    idempotencyMigrationSource,
+    /CREATE UNIQUE INDEX IF NOT EXISTS shadow_orders_account_client_order_idx[\s\S]*ON shadow_orders \(account_id, client_order_id\)/i,
+  );
+  assert.match(
+    idempotencyMigrationSource,
+    /CREATE UNIQUE INDEX IF NOT EXISTS shadow_fills_account_source_event_idx[\s\S]*ON shadow_fills \(account_id, source_event_id\)/i,
+  );
+  assert.match(
+    idempotencyMigrationSource,
+    /DROP INDEX IF EXISTS shadow_orders_source_event_idx/i,
+  );
+  assert.match(
+    idempotencyMigrationSource,
+    /DROP INDEX IF EXISTS shadow_orders_client_order_idx/i,
+  );
+  assert.match(
+    idempotencyMigrationSource,
+    /DROP INDEX IF EXISTS shadow_fills_source_event_idx/i,
   );
 });

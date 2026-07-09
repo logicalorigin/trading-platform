@@ -921,6 +921,24 @@ test("shared option quote sockets are limited to visible chain demand", () => {
   );
 });
 
+test("account option quote REST fallback retries and re-upgrades to WebSocket", () => {
+  const source = readFileSync(new URL("./live-streams.ts", import.meta.url), "utf8");
+  const hook = source.match(
+    /export const useIbkrOptionQuoteStream = \([\s\S]*?\n};\n\nexport const __liveStreamsInternalsForTests/,
+  )?.[0];
+
+  assert.ok(hook, "expected the account option quote stream hook");
+  assert.match(hook, /const scheduleWebSocketReconnect = \(\) => \{/);
+  assert.match(
+    hook,
+    /const fallbackToRest = \(\) => \{[\s\S]*?startRestFallback\(\);[\s\S]*?scheduleWebSocketReconnect\(\);[\s\S]*?\};/,
+  );
+  assert.match(
+    hook,
+    /if \(payload\.type === "ready"\) \{[\s\S]*?ready = true;[\s\S]*?stopRestFallback\(\);/,
+  );
+});
+
 test("signal matrix stream url omits requestOrigin (backend rejects unknown origins with 400)", () => {
   const url = getSignalMonitorMatrixStreamUrl({
     environment: "shadow",

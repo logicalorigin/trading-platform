@@ -103,6 +103,86 @@ type LocalSnapTradeAccount = {
 
 const LOCAL_ID_PREFIX = "snaptrade:";
 const DEFAULT_SNAPTRADE_PORTFOLIO_REQUEST_TIMEOUT_MS = 8_000;
+export const SNAPTRADE_ACCOUNT_PORTFOLIO_CACHE_TTL_MS = 45_000;
+
+const latestSnapTradeAccountPortfolioCache = new Map<
+  string,
+  { value: SnapTradeAccountPortfolioResponse; expiresAt: number }
+>();
+
+const latestSnapTradeAccountPortfolioCacheKey = (input: {
+  appUserId: string;
+  accountId: string;
+}) => `${input.appUserId}\u001f${input.accountId}`;
+
+function snapTradePortfolioFreshness(input: SnapTradeAccountPortfolioResponse) {
+  const dataAsOf = Date.parse(input.dataFreshness.asOf ?? "");
+  const syncedAt = Date.parse(input.syncedAt);
+  const normalizedSyncedAt = Number.isFinite(syncedAt)
+    ? syncedAt
+    : Number.NEGATIVE_INFINITY;
+  return {
+    effectiveAt: Number.isFinite(dataAsOf) ? dataAsOf : normalizedSyncedAt,
+    syncedAt: normalizedSyncedAt,
+  };
+}
+
+function snapTradePortfolioIsNewer(
+  candidate: SnapTradeAccountPortfolioResponse,
+  current: SnapTradeAccountPortfolioResponse,
+) {
+  const candidateFreshness = snapTradePortfolioFreshness(candidate);
+  const currentFreshness = snapTradePortfolioFreshness(current);
+  if (candidateFreshness.effectiveAt !== currentFreshness.effectiveAt) {
+    return candidateFreshness.effectiveAt > currentFreshness.effectiveAt;
+  }
+  return candidateFreshness.syncedAt >= currentFreshness.syncedAt;
+}
+
+export function rememberLatestSnapTradeAccountPortfolio(input: {
+  appUserId: string;
+  accountId: string;
+  value: SnapTradeAccountPortfolioResponse;
+  expiresAt?: number;
+}) {
+  const key = latestSnapTradeAccountPortfolioCacheKey(input);
+  const expiresAt =
+    input.expiresAt ??
+    Date.now() + SNAPTRADE_ACCOUNT_PORTFOLIO_CACHE_TTL_MS;
+  const current = latestSnapTradeAccountPortfolioCache.get(key);
+  if (
+    current &&
+    current.expiresAt > Date.now() &&
+    !snapTradePortfolioIsNewer(input.value, current.value)
+  ) {
+    current.expiresAt = Math.max(current.expiresAt, expiresAt);
+    return;
+  }
+  latestSnapTradeAccountPortfolioCache.set(key, {
+    value: input.value,
+    expiresAt,
+  });
+}
+
+export function readLatestSnapTradeAccountPortfolio(input: {
+  appUserId: string | null;
+  accountId: string;
+  now?: number;
+}): SnapTradeAccountPortfolioResponse | null {
+  if (!input.appUserId) {
+    return null;
+  }
+  const key = latestSnapTradeAccountPortfolioCacheKey({
+    appUserId: input.appUserId,
+    accountId: input.accountId,
+  });
+  const cached = latestSnapTradeAccountPortfolioCache.get(key);
+  if (!cached || cached.expiresAt <= (input.now ?? Date.now())) {
+    latestSnapTradeAccountPortfolioCache.delete(key);
+    return null;
+  }
+  return cached.value;
+}
 
 function snapTradePortfolioRequestTimeoutMs(
   env: NodeJS.ProcessEnv | Record<string, string | undefined>,
@@ -630,7 +710,7 @@ function normalizePosition(
   );
 
   return {
-    snapTradePositionId: `${instrumentKind}:${symbol}`,
+    snapTradePositionId: `${instrumentKind}:${optionContract?.ticker ?? rawSymbol ?? symbol}`,
     symbol: optionContract?.underlying ?? symbol,
     rawSymbol,
     description,
@@ -719,6 +799,12 @@ export function buildSnapTradeAccountPortfolioTotals(input: {
   };
 }
 
+export const __snapTradeAccountPortfolioInternalsForTests = {
+  normalizePosition,
+  readLatestPortfolio: readLatestSnapTradeAccountPortfolio,
+  rememberLatestPortfolio: rememberLatestSnapTradeAccountPortfolio,
+};
+
 export async function getSnapTradeAccountPortfolio(
   options: GetSnapTradeAccountPortfolioOptions,
 ): Promise<SnapTradeAccountPortfolioResponse> {
@@ -773,7 +859,7 @@ export async function getSnapTradeAccountPortfolio(
   );
   const positions = positionsPayloadResult.positions;
 
-  return {
+  const response: SnapTradeAccountPortfolioResponse = {
     provider: "snaptrade",
     syncedAt: syncedAt.toISOString(),
     account,
@@ -784,4 +870,10 @@ export async function getSnapTradeAccountPortfolio(
       asOf: positionsPayloadResult.asOf,
     },
   };
+  rememberLatestSnapTradeAccountPortfolio({
+    appUserId: options.appUserId,
+    accountId: options.accountId,
+    value: response,
+  });
+  return response;
 }

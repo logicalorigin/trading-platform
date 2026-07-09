@@ -7,16 +7,22 @@ const source = readFileSync(
   "utf8",
 );
 
-test("algo operations positions do not register stock underlyings into account position quote stream", () => {
+test("algo broker positions register the same live quote demand as Accounts", () => {
   const positionsPanelUsage = source.match(
     /<PositionsPanel[\s\S]*?surfaceId="algo"[\s\S]*?\/>/,
   )?.[0];
 
   assert.ok(positionsPanelUsage, "Missing algo PositionsPanel usage");
-  assert.match(positionsPanelUsage, /streamLiveOptionQuotes=\{false\}/);
+  assert.match(
+    positionsPanelUsage,
+    /streamLiveOptionQuotes=\{!filterByDeployment\}/,
+  );
   assert.match(positionsPanelUsage, /optionQuoteStreamOwner="algo-position-option-quotes"/);
   assert.match(positionsPanelUsage, /optionQuoteStreamIntent="automation-live"/);
-  assert.match(positionsPanelUsage, /registerMarketDataSymbols=\{false\}/);
+  assert.match(
+    positionsPanelUsage,
+    /registerMarketDataSymbols=\{!filterByDeployment\}/,
+  );
 });
 
 test("algo operations positions switch between shadow overlay and raw broker rows", () => {
