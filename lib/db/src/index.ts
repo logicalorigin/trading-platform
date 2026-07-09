@@ -306,6 +306,34 @@ export const tradingPool = new Pool({
 });
 attachPostgresPoolErrorHandler(tradingPool);
 
+/**
+ * Reserved auth lane: a small dedicated pool so login/session reads and writes
+ * can never be starved by data-plane read storms saturating the shared pool —
+ * the login-timeout pathology (the 8s client session-check budget lost to a
+ * shared-pool acquire queue). Same shape and rationale as tradingPool: separate
+ * physical connections the bar-read firehose cannot occupy, lazy (zero
+ * connections until the first auth query runs). Tight 5s statement_timeout: auth
+ * queries are ms-scale; anything slower is pathological and must release its
+ * scarce connection fast.
+ */
+export const authPool = new Pool({
+  connectionString: resolvedDatabaseUrl,
+  max: readPositiveInteger("DB_AUTH_POOL_MAX", 2),
+  ...(heliumDatabase ? { ssl: false } : {}),
+  ...(readOptionalPositiveInteger("DB_CONNECTION_TIMEOUT_MS") !== undefined ||
+  defaultConnectionTimeoutMillis !== undefined
+    ? {
+        connectionTimeoutMillis:
+          readOptionalPositiveInteger("DB_CONNECTION_TIMEOUT_MS") ??
+          defaultConnectionTimeoutMillis,
+      }
+    : {}),
+  statement_timeout: 5_000,
+  application_name: "pyrus-api-auth",
+  idle_in_transaction_session_timeout: idleInTransactionSessionTimeoutMillis,
+});
+attachPostgresPoolErrorHandler(authPool);
+
 const instrumentedClients = new WeakSet<object>();
 let sharedPoolAdmissionScheduler: DbAdmissionScheduler<pg.PoolClient> | null =
   null;
@@ -572,6 +600,34 @@ export const db: WorkspaceDatabase = new Proxy({} as WorkspaceDatabase, {
 }) as WorkspaceDatabase;
 
 /**
+ * Drizzle client over the reserved auth pool. Auth-critical reads/writes (session
+ * lookup by token, login credential check + session insert, logout) run here so
+ * they never queue behind a data-plane read storm saturating the shared `pool`.
+ * Mirrors `db`: a forwarding Proxy over `activeAuthDb` so the same test seam
+ * (`__setDbForTests`) points it at the in-process PGlite instance, keeping auth
+ * service tests running against the test DB.
+ */
+const productionAuthDb: WorkspaceDatabase = drizzle(authPool, { schema });
+let activeAuthDb: WorkspaceDatabase = productionAuthDb;
+
+export const dbAuth: WorkspaceDatabase = new Proxy({} as WorkspaceDatabase, {
+  get(_target, property) {
+    const value = Reflect.get(
+      activeAuthDb as object,
+      property,
+      activeAuthDb as object,
+    );
+    return typeof value === "function" ? value.bind(activeAuthDb) : value;
+  },
+  has(_target, property) {
+    return Reflect.has(activeAuthDb as object, property);
+  },
+  getPrototypeOf() {
+    return Reflect.getPrototypeOf(activeAuthDb as object);
+  },
+}) as WorkspaceDatabase;
+
+/**
  * TEST-ONLY seam. Swaps the drizzle instance that `db` forwards to and returns
  * a restore function that reinstates the previous one. Never invoked by
  * production code. The argument is intentionally typed structurally so a
@@ -581,9 +637,12 @@ export const db: WorkspaceDatabase = new Proxy({} as WorkspaceDatabase, {
  */
 export function __setDbForTests(next: WorkspaceDatabase): () => void {
   const previous = activeDb;
+  const previousAuth = activeAuthDb;
   activeDb = next;
+  activeAuthDb = next;
   return () => {
     activeDb = previous;
+    activeAuthDb = previousAuth;
   };
 }
 

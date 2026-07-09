@@ -7,7 +7,7 @@ import {
 import { and, eq, gt, isNotNull, isNull, sql } from "drizzle-orm";
 import {
   authSessionsTable,
-  db,
+  dbAuth,
   getPostgresDiagnosticContext,
   type PostgresDiagnosticContext,
   usersTable,
@@ -199,7 +199,7 @@ export async function createAuthSession(
   const expiresAt =
     input.expiresAt ?? new Date(Date.now() + DEFAULT_SESSION_TTL_MS);
 
-  const [session] = await db
+  const [session] = await dbAuth
     .insert(authSessionsTable)
     .values({
       userId: input.userId,
@@ -216,7 +216,7 @@ export async function createAuthSession(
     });
   }
 
-  const [user] = await db
+  const [user] = await dbAuth
     .select()
     .from(usersTable)
     .where(eq(usersTable.id, input.userId))
@@ -251,7 +251,7 @@ export async function bootstrapInitialUser(
 
   // Serialize concurrent bootstrap attempts with a transaction-scoped advisory
   // lock so exactly one admin can ever be created (check-then-insert is atomic).
-  const user = await db.transaction(async (tx) => {
+  const user = await dbAuth.transaction(async (tx) => {
     await tx.execute(sql`SELECT pg_advisory_xact_lock(4066105526)`);
     const [countRow] = await tx
       .select({ value: sql<number>`count(*)::int` })
@@ -291,7 +291,7 @@ export async function loginUser(input: LoginInput): Promise<AuthResult> {
   // null password_hash and authenticate via the parent-site handoff; excluding
   // them here also prevents a launch user that shares an email from shadowing an
   // admin's password login.
-  const [user] = await db
+  const [user] = await dbAuth
     .select()
     .from(usersTable)
     .where(
@@ -350,7 +350,7 @@ async function readAuthSessionFromTokenUncached(
   now: Date,
 ): Promise<AuthenticatedSession | null> {
   const tokenHash = sha256Base64Url(sessionToken);
-  const [row] = await db
+  const [row] = await dbAuth
     .select({
       session: authSessionsTable,
       user: usersTable,
@@ -381,7 +381,7 @@ export async function refreshAuthSessionCsrfToken(
   session: AuthenticatedSession,
 ): Promise<string> {
   const csrf = csrfToken();
-  await db
+  await dbAuth
     .update(authSessionsTable)
     .set({
       csrfTokenHash: sha256Base64Url(csrf),
@@ -401,7 +401,7 @@ export function validateAuthCsrfToken(
 }
 
 export async function revokeAuthSession(sessionToken: string): Promise<void> {
-  await db
+  await dbAuth
     .update(authSessionsTable)
     .set({ revokedAt: new Date(), updatedAt: new Date() })
     .where(eq(authSessionsTable.tokenHash, sha256Base64Url(sessionToken)));
