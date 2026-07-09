@@ -2964,28 +2964,39 @@ const MONITORED_STORAGE_TABLES = [
 ] as const;
 
 async function buildMonitoredStorageTableStats() {
+  // One round trip for all monitored tables. The min/max bound column differs
+  // per table, so those come from a union-all CTE built from the static list.
+  const boundsSql = MONITORED_STORAGE_TABLES.map(
+    (table) =>
+      `select '${table.table}'::text as relname, min(${table.column}) as oldest_at, max(${table.column}) as newest_at from ${table.table}`,
+  ).join(" union all ");
+  const result = await pool.query<{
+    relname: string;
+    row_count: string;
+    dead_row_count: string;
+    total_bytes: string;
+    oldest_at: Date | null;
+    newest_at: Date | null;
+  }>(
+    `with bounds as (${boundsSql})
+     select c.relname,
+            coalesce(s.n_live_tup, 0)::text as row_count,
+            coalesce(s.n_dead_tup, 0)::text as dead_row_count,
+            coalesce(pg_total_relation_size(c.oid), 0)::text as total_bytes,
+            b.oldest_at,
+            b.newest_at
+       from pg_class c
+       join pg_namespace n on n.oid = c.relnamespace
+       left join pg_stat_user_tables s on s.relid = c.oid
+       left join bounds b on b.relname = c.relname
+      where n.nspname = 'public'
+        and c.relname = any($1)`,
+    [MONITORED_STORAGE_TABLES.map((table) => table.table)],
+  );
+  const rowsByTable = new Map(result.rows.map((row) => [row.relname, row]));
   const stats: JsonRecord[] = [];
   for (const table of MONITORED_STORAGE_TABLES) {
-    const result = await pool.query<{
-      row_count: string;
-      dead_row_count: string;
-      total_bytes: string;
-      oldest_at: Date | null;
-      newest_at: Date | null;
-    }>(
-      `select coalesce(s.n_live_tup, 0)::text as row_count,
-              coalesce(s.n_dead_tup, 0)::text as dead_row_count,
-              coalesce(pg_total_relation_size(c.oid), 0)::text as total_bytes,
-              (select min(${table.column}) from ${table.table}) as oldest_at,
-              (select max(${table.column}) from ${table.table}) as newest_at
-         from pg_class c
-         join pg_namespace n on n.oid = c.relnamespace
-         left join pg_stat_user_tables s on s.relid = c.oid
-        where n.nspname = 'public'
-          and c.relname = $1`,
-      [table.table],
-    );
-    const row = result.rows[0];
+    const row = rowsByTable.get(table.table);
     stats.push({
       table: table.table,
       rowEstimate: Number(row?.row_count ?? 0),
