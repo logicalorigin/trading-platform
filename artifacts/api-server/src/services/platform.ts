@@ -4815,10 +4815,31 @@ export async function placeOrder(input: PlaceOrderInput) {
   const client = getIbkrClientPortalClient();
   await validateOrderIntentForRouting(input, client);
   const order = await client.placeOrder(input);
-  await recordTaxPreflightOrderSubmitted({
-    preflightToken: taxPreflight?.preflightToken,
-    submittedOrderId: order.id,
-  });
+  // IBKR has ACCEPTED the live order. A post-submit bookkeeping failure must NOT
+  // throw — that makes the caller see a failed submit and retry, placing a
+  // DUPLICATE live order (SYS-DUP-ORDER). Mirror the overnight/Schwab fix: log and
+  // return the accepted order with a reconcile marker so the caller does not retry.
+  try {
+    await recordTaxPreflightOrderSubmitted({
+      preflightToken: taxPreflight?.preflightToken,
+      submittedOrderId: order.id,
+    });
+  } catch (error) {
+    logger.warn(
+      {
+        err: error,
+        accountId: input.accountId,
+        symbol: input.symbol,
+        orderId: order.id,
+      },
+      "IBKR order placed but tax preflight submit record failed; reconciliation required",
+    );
+    return {
+      ...order,
+      reconcileRequired: true,
+      reconciliationReason: "tax_preflight_order_submit_record_failed",
+    };
+  }
   return order;
 }
 
@@ -4873,10 +4894,30 @@ export async function submitRawOrders(input: {
     accountId: input.accountId,
     orders: input.ibkrOrders,
   });
-  await recordTaxPreflightOrderSubmitted({
-    preflightToken: taxPreflight?.preflightToken,
-    submittedOrderId: submittedOrderIdText(result),
-  });
+  // IBKR has ACCEPTED the raw order(s). A post-submit bookkeeping failure must NOT
+  // throw — that makes the caller see a failed submit and retry, placing a
+  // DUPLICATE live order (SYS-DUP-ORDER). Mirror the overnight/Schwab fix: log and
+  // return the accepted order with a reconcile marker so the caller does not retry.
+  try {
+    await recordTaxPreflightOrderSubmitted({
+      preflightToken: taxPreflight?.preflightToken,
+      submittedOrderId: submittedOrderIdText(result),
+    });
+  } catch (error) {
+    logger.warn(
+      {
+        err: error,
+        accountId: input.accountId,
+        submittedOrderId: submittedOrderIdText(result),
+      },
+      "IBKR raw orders placed but tax preflight submit record failed; reconciliation required",
+    );
+    return {
+      ...result,
+      reconcileRequired: true,
+      reconciliationReason: "tax_preflight_order_submit_record_failed",
+    };
+  }
   return result;
 }
 
