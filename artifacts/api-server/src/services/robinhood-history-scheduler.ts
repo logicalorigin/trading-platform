@@ -1,6 +1,11 @@
 import { and, eq, isNotNull } from "drizzle-orm";
 
-import { brokerAccountsTable, brokerConnectionsTable, db } from "@workspace/db";
+import {
+  brokerAccountsTable,
+  brokerConnectionsTable,
+  db,
+} from "@workspace/db";
+import * as dbExports from "@workspace/db";
 import { logger } from "../lib/logger";
 import { ingestRobinhoodAccountHistory } from "./robinhood-account-history";
 
@@ -19,6 +24,10 @@ import { ingestRobinhoodAccountHistory } from "./robinhood-account-history";
 const ROBINHOOD_HISTORY_REFRESH_INTERVAL_MS = 6 * 60 * 60 * 1000; // every 6h
 // Stagger past the connect herd + other DB-touching workers that start at boot.
 const ROBINHOOD_HISTORY_INITIAL_DELAY_MS = 50_000;
+type DbLaneRunner = <T>(lane: "bulk", fn: () => T) => T;
+const runInDbLane = (
+  dbExports as typeof dbExports & { runInDbLane: DbLaneRunner }
+).runInDbLane;
 
 type RobinhoodAccountRef = { accountId: string; appUserId: string };
 
@@ -151,11 +160,11 @@ export function startRobinhoodHistoryRefreshScheduler(): void {
       );
 
   setTimeout(() => {
-    void runOnce("scheduled-initial");
+    void runInDbLane("bulk", () => runOnce("scheduled-initial"));
   }, ROBINHOOD_HISTORY_INITIAL_DELAY_MS).unref?.();
 
   const timer = setInterval(() => {
-    void runOnce("scheduled");
+    void runInDbLane("bulk", () => runOnce("scheduled"));
   }, ROBINHOOD_HISTORY_REFRESH_INTERVAL_MS);
   timer.unref?.();
 }

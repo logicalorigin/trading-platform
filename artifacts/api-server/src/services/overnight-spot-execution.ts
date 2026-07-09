@@ -10,6 +10,7 @@ import {
   type AlgoDeployment,
   type ExecutionEvent,
 } from "@workspace/db";
+import * as dbExports from "@workspace/db";
 import { logger } from "../lib/logger";
 import { asNumber, asRecord, asString, normalizeSymbol } from "../lib/values";
 import type { BrokerOrderSnapshot } from "../providers/ibkr/client";
@@ -37,6 +38,11 @@ import {
   evaluateSignalMonitor,
   getSignalMonitorProfileRow,
 } from "./signal-monitor";
+
+type DbLaneRunner = <T>(lane: "background", fn: () => T) => T;
+const runInDbLane = (
+  dbExports as typeof dbExports & { runInDbLane: DbLaneRunner }
+).runInDbLane;
 
 const OVERNIGHT_SPOT_TRACKED_EVENT = "overnight_spot_signal_tracked";
 const OVERNIGHT_SPOT_BLOCKED_EVENT = "overnight_spot_signal_blocked";
@@ -1251,18 +1257,20 @@ async function insertExecutionEvent(input: OvernightSpotExecutionEventInput) {
 }
 
 async function insertDiagnosticEvent(input: OvernightSpotExecutionEventInput) {
-  const [event] = await db
-    .insert(automationDiagnosticsTable)
-    .values({
-      deploymentId: input.deploymentId,
-      providerAccountId: input.providerAccountId,
-      symbol: input.symbol,
-      eventType: input.eventType,
-      summary: input.summary,
-      payload: input.payload,
-      occurredAt: input.occurredAt,
-    })
-    .returning();
+  const [event] = await runInDbLane("background", () =>
+    db
+      .insert(automationDiagnosticsTable)
+      .values({
+        deploymentId: input.deploymentId,
+        providerAccountId: input.providerAccountId,
+        symbol: input.symbol,
+        eventType: input.eventType,
+        summary: input.summary,
+        payload: input.payload,
+        occurredAt: input.occurredAt,
+      })
+      .returning(),
+  );
   // Phase 2 retention: best-effort, self-throttled prune piggybacked on the
   // diagnostic write. Off the write path (fire-and-forget) and never throws back.
   void pruneAutomationDiagnostics().catch(() => {});
@@ -1355,17 +1363,19 @@ async function pruneAutomationDiagnostics(
     cutoff: Date,
   ) => Promise<unknown> = deleteAutomationDiagnosticsOlderThan,
 ): Promise<void> {
-  const { shouldPrune, cutoff } = computeAutomationDiagnosticsPrune(
-    now.getTime(),
-    lastAutomationDiagnosticsPruneMs,
-  );
-  if (!shouldPrune) {
-    return;
-  }
-  // Set synchronously (before the await) so concurrent diagnostic writes can't
-  // each launch a prune in the same window.
-  lastAutomationDiagnosticsPruneMs = now.getTime();
-  await deleteOlderThan(cutoff);
+  return runInDbLane("background", async () => {
+    const { shouldPrune, cutoff } = computeAutomationDiagnosticsPrune(
+      now.getTime(),
+      lastAutomationDiagnosticsPruneMs,
+    );
+    if (!shouldPrune) {
+      return;
+    }
+    // Set synchronously (before the await) so concurrent diagnostic writes can't
+    // each launch a prune in the same window.
+    lastAutomationDiagnosticsPruneMs = now.getTime();
+    await deleteOlderThan(cutoff);
+  });
 }
 
 async function evaluateSignals(input: {

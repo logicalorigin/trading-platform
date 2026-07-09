@@ -1,4 +1,8 @@
-import { describeDatabaseRuntimeConnection, pool } from "@workspace/db";
+import {
+  describeDatabaseRuntimeConnection,
+  pool,
+} from "@workspace/db";
+import * as dbExports from "@workspace/db";
 import {
   isTransientPostgresError,
   summarizeTransientPostgresError,
@@ -34,8 +38,13 @@ export type StorageHealthSnapshot = {
 };
 
 type StorageHealthProbe = () => Promise<void>;
+type DbLaneRunner = <T>(lane: "background", fn: () => T) => T;
 
 let storageHealthProbeForTests: StorageHealthProbe | null = null;
+const DEFAULT_STORAGE_HEALTH_PROBE_INTERVAL_MS = 5 * 60 * 1000;
+const runInDbLane = (
+  dbExports as typeof dbExports & { runInDbLane: DbLaneRunner }
+).runInDbLane;
 
 function nowIso(): string {
   return new Date().toISOString();
@@ -100,33 +109,56 @@ let cachedStorageHealth = buildSnapshot({
 });
 
 async function defaultStorageHealthProbe(): Promise<void> {
-  const client = await pool.connect();
-  const probeId = `probe-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-  try {
-    await client.query("begin");
-    await client.query(
-      "create temp table if not exists pyrus_storage_health_probe (id text primary key, value text not null) on commit drop",
-    );
-    await client.query(
-      "insert into pyrus_storage_health_probe (id, value) values ($1, $2)",
-      [probeId, "ok"],
-    );
-    const result = await client.query(
-      "select value from pyrus_storage_health_probe where id = $1",
-      [probeId],
-    );
-    if (result.rows[0]?.value !== "ok") {
-      throw new Error("Postgres read/write probe did not return the inserted row.");
-    }
-    await client.query("commit");
-  } catch (error) {
+  return runInDbLane("background", async () => {
+    const client = await pool.connect();
+    const probeId = `probe-${Date.now()}-${Math.random().toString(36).slice(2)}`;
     try {
-      await client.query("rollback");
-    } catch {}
-    throw error;
-  } finally {
-    client.release();
+      await client.query("begin");
+      await client.query(
+        "create temp table if not exists pyrus_storage_health_probe (id text primary key, value text not null) on commit drop",
+      );
+      await client.query(
+        "insert into pyrus_storage_health_probe (id, value) values ($1, $2)",
+        [probeId, "ok"],
+      );
+      const result = await client.query(
+        "select value from pyrus_storage_health_probe where id = $1",
+        [probeId],
+      );
+      if (result.rows[0]?.value !== "ok") {
+        throw new Error("Postgres read/write probe did not return the inserted row.");
+      }
+      await client.query("commit");
+    } catch (error) {
+      try {
+        await client.query("rollback");
+      } catch {}
+      throw error;
+    } finally {
+      client.release();
+    }
+  });
+}
+
+function storageHealthProbeIntervalMs(): number {
+  const parsed = Number(process.env["STORAGE_HEALTH_PROBE_INTERVAL_MS"]);
+  return Number.isFinite(parsed) && parsed > 0
+    ? Math.floor(parsed)
+    : DEFAULT_STORAGE_HEALTH_PROBE_INTERVAL_MS;
+}
+
+function canReuseCachedStorageHealth(nowMs: number): boolean {
+  if (storageHealthProbeForTests) {
+    return false;
   }
+  if (cachedStorageHealth.reason === "storage_probe_pending") {
+    return false;
+  }
+  const checkedAtMs = Date.parse(cachedStorageHealth.checkedAt);
+  return (
+    Number.isFinite(checkedAtMs) &&
+    nowMs - checkedAtMs < storageHealthProbeIntervalMs()
+  );
 }
 
 export function getCachedStorageHealthSnapshot(): StorageHealthSnapshot {
@@ -153,6 +185,9 @@ export async function refreshStorageHealthSnapshot(): Promise<StorageHealthSnaps
       error: connection.parseError,
       pingMs: null,
     });
+    return cachedStorageHealth;
+  }
+  if (canReuseCachedStorageHealth(Date.now())) {
     return cachedStorageHealth;
   }
 

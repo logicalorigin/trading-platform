@@ -8,6 +8,7 @@ import {
   snapTradeAccountActivitiesTable,
   type SnapTradeAccountActivity,
 } from "@workspace/db";
+import * as dbExports from "@workspace/db";
 import { HttpError } from "../lib/errors";
 import {
   buildSnapTradeSignature,
@@ -26,6 +27,11 @@ import {
 } from "./account-equity-history-model";
 import { readEnvString } from "../lib/env";
 import { resolveNyseCalendarDay } from "@workspace/market-calendar";
+
+type DbLaneRunner = <T>(lane: "bulk", fn: () => T) => T;
+const runInDbLane = (
+  dbExports as typeof dbExports & { runInDbLane: DbLaneRunner }
+).runInDbLane;
 
 type SnapTradeCredentials = {
   clientId: string;
@@ -665,55 +671,57 @@ async function storeActivities(
     return 0;
   }
   const now = new Date();
-  await db
-    .insert(snapTradeAccountActivitiesTable)
-    .values(
-      activities.map((activity) => ({
-        accountId: activity.accountId,
-        snapTradeActivityId: activity.id,
-        tradeDate: new Date(activity.tradeDate),
-        settlementDate: activity.settlementDate
-          ? new Date(activity.settlementDate)
-          : null,
-        type: activity.type,
-        optionType: activity.optionType,
-        symbol: activity.symbol,
-        rawSymbol: activity.rawSymbol,
-        description: activity.description,
-        optionTicker: activity.optionTicker,
-        quantity: dbNumber(activity.quantity),
-        price: dbNumber(activity.price),
-        amount: dbNumber(activity.amount),
-        fee: dbNumber(activity.fee),
-        currency: activity.currency,
-        externalReferenceId: activity.externalReferenceId,
-        rawPayload: activity as unknown as Record<string, unknown>,
-        updatedAt: now,
-      })),
-    )
-    .onConflictDoUpdate({
-      target: [
-        snapTradeAccountActivitiesTable.accountId,
-        snapTradeAccountActivitiesTable.snapTradeActivityId,
-      ],
-      set: {
-        tradeDate: sql`excluded.trade_date`,
-        settlementDate: sql`excluded.settlement_date`,
-        type: sql`excluded.type`,
-        optionType: sql`excluded.option_type`,
-        symbol: sql`excluded.symbol`,
-        rawSymbol: sql`excluded.raw_symbol`,
-        description: sql`excluded.description`,
-        optionTicker: sql`excluded.option_ticker`,
-        quantity: sql`excluded.quantity`,
-        price: sql`excluded.price`,
-        amount: sql`excluded.amount`,
-        fee: sql`excluded.fee`,
-        currency: sql`excluded.currency`,
-        externalReferenceId: sql`excluded.external_reference_id`,
-        rawPayload: sql`excluded.raw_payload`,
-        updatedAt: now,
-      },
+  await runInDbLane("bulk", async () => {
+    await db
+      .insert(snapTradeAccountActivitiesTable)
+      .values(
+        activities.map((activity) => ({
+          accountId: activity.accountId,
+          snapTradeActivityId: activity.id,
+          tradeDate: new Date(activity.tradeDate),
+          settlementDate: activity.settlementDate
+            ? new Date(activity.settlementDate)
+            : null,
+          type: activity.type,
+          optionType: activity.optionType,
+          symbol: activity.symbol,
+          rawSymbol: activity.rawSymbol,
+          description: activity.description,
+          optionTicker: activity.optionTicker,
+          quantity: dbNumber(activity.quantity),
+          price: dbNumber(activity.price),
+          amount: dbNumber(activity.amount),
+          fee: dbNumber(activity.fee),
+          currency: activity.currency,
+          externalReferenceId: activity.externalReferenceId,
+          rawPayload: activity as unknown as Record<string, unknown>,
+          updatedAt: now,
+        })),
+      )
+      .onConflictDoUpdate({
+        target: [
+          snapTradeAccountActivitiesTable.accountId,
+          snapTradeAccountActivitiesTable.snapTradeActivityId,
+        ],
+        set: {
+          tradeDate: sql`excluded.trade_date`,
+          settlementDate: sql`excluded.settlement_date`,
+          type: sql`excluded.type`,
+          optionType: sql`excluded.option_type`,
+          symbol: sql`excluded.symbol`,
+          rawSymbol: sql`excluded.raw_symbol`,
+          description: sql`excluded.description`,
+          optionTicker: sql`excluded.option_ticker`,
+          quantity: sql`excluded.quantity`,
+          price: sql`excluded.price`,
+          amount: sql`excluded.amount`,
+          fee: sql`excluded.fee`,
+          currency: sql`excluded.currency`,
+          externalReferenceId: sql`excluded.external_reference_id`,
+          rawPayload: sql`excluded.raw_payload`,
+          updatedAt: now,
+        },
+      });
     });
   return activities.length;
 }

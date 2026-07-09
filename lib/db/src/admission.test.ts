@@ -274,6 +274,35 @@ test("acquisitions outside runInDbLane use the interactive lane", async () => {
   second.release();
 });
 
+test("scheduler tick wrapper propagates lane to nested async db calls", async () => {
+  const { scheduler } = makeScheduler({
+    maxInFlight: 2,
+    bulkMax: 1,
+  });
+
+  const tick = () =>
+    runInDbLane("bulk", async () => {
+      await Promise.resolve();
+      const nestedDbCall = async () => {
+        assert.equal(currentDbLane(), "bulk");
+        const client = await scheduler.acquire();
+        try {
+          assert.equal(currentDbLane(), "bulk");
+          return client.query("select scheduled_bulk_tick");
+        } finally {
+          client.release();
+        }
+      };
+      return nestedDbCall();
+    });
+
+  const result = await tick();
+
+  assert.deepEqual(result.rows, [{ sql: "select scheduled_bulk_tick" }]);
+  assert.equal(scheduler.getDiagnostics().bulk.admittedTotal, 1);
+  assert.equal(scheduler.getDiagnostics().interactive.admittedTotal, 0);
+});
+
 test("randomized mixed traffic preserves lane caps, pool cap, and counters", async () => {
   const pool = new FakePool(7);
   const { scheduler } = makeScheduler({

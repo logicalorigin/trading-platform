@@ -22,6 +22,7 @@ import {
   type DiagnosticEvent,
   type DiagnosticSnapshot,
 } from "@workspace/db";
+import * as dbExports from "@workspace/db";
 import { logger } from "../lib/logger";
 import { isLongLivedApiRequestUrl } from "../lib/request-logging";
 import {
@@ -58,6 +59,10 @@ const SIGNAL_OPTIONS_SKIPPED_EVENT = "signal_options_candidate_skipped";
 const SIGNAL_OPTIONS_EXIT_EVENT = "signal_options_shadow_exit";
 const DIAGNOSTICS_HEAVY_READ_CACHE_TTL_MS = 60_000;
 const DIAGNOSTICS_HEAVY_READ_STALE_TTL_MS = 5 * 60_000;
+type DbLaneRunner = <T>(lane: "background", fn: () => T) => T;
+const runInDbLane = (
+  dbExports as typeof dbExports & { runInDbLane: DbLaneRunner }
+).runInDbLane;
 
 export type DiagnosticSeverity = "info" | "warning";
 export type DiagnosticStatus = "ok" | "degraded" | "down" | "unknown";
@@ -3299,14 +3304,18 @@ async function persistSnapshots(
   if (!snapshots.length) {
     return;
   }
-  await safeDb(
-    "insert diagnostic snapshots",
-    async () => {
-      await db
-        .insert(diagnosticSnapshotsTable)
-        .values(snapshots.map(diagnosticSnapshotRow));
-    },
-    undefined,
+  await runInDbLane(
+    "background",
+    () =>
+      safeDb(
+        "insert diagnostic snapshots",
+        async () => {
+          await db
+            .insert(diagnosticSnapshotsTable)
+            .values(snapshots.map(diagnosticSnapshotRow));
+        },
+        undefined,
+      ),
   );
 }
 
@@ -3405,43 +3414,47 @@ async function upsertEvent(
     return payload;
   }
 
-  await safeDb(
-    "upsert diagnostic event",
-    async () => {
-      await db
-        .insert(diagnosticEventsTable)
-        .values({
-          incidentKey: key,
-          subsystem: input.subsystem,
-          category: input.category,
-          code: input.code ?? null,
-          severity: input.severity,
-          status: "open",
-          message: input.message,
-          firstSeenAt: new Date(payload.firstSeenAt),
-          lastSeenAt: new Date(payload.lastSeenAt),
-          eventCount: 1,
-          dimensions: input.dimensions ?? {},
-          raw,
-        })
-        .onConflictDoUpdate({
-          target: diagnosticEventsTable.incidentKey,
-          set: {
-            severity: input.severity,
-            status: "open",
-            message: input.message,
-            lastSeenAt: new Date(payload.lastSeenAt),
-            eventCount:
-              input.countOccurrence === false
-                ? sql`case when ${diagnosticEventsTable.status} = 'open' then 1 else ${diagnosticEventsTable.eventCount} + 1 end`
-                : sql`${diagnosticEventsTable.eventCount} + 1`,
-            dimensions: input.dimensions ?? {},
-            raw,
-            updatedAt: new Date(),
-          },
-        });
-    },
-    undefined,
+  await runInDbLane(
+    "background",
+    () =>
+      safeDb(
+        "upsert diagnostic event",
+        async () => {
+          await db
+            .insert(diagnosticEventsTable)
+            .values({
+              incidentKey: key,
+              subsystem: input.subsystem,
+              category: input.category,
+              code: input.code ?? null,
+              severity: input.severity,
+              status: "open",
+              message: input.message,
+              firstSeenAt: new Date(payload.firstSeenAt),
+              lastSeenAt: new Date(payload.lastSeenAt),
+              eventCount: 1,
+              dimensions: input.dimensions ?? {},
+              raw,
+            })
+            .onConflictDoUpdate({
+              target: diagnosticEventsTable.incidentKey,
+              set: {
+                severity: input.severity,
+                status: "open",
+                message: input.message,
+                lastSeenAt: new Date(payload.lastSeenAt),
+                eventCount:
+                  input.countOccurrence === false
+                    ? sql`case when ${diagnosticEventsTable.status} = 'open' then 1 else ${diagnosticEventsTable.eventCount} + 1 end`
+                    : sql`${diagnosticEventsTable.eventCount} + 1`,
+                dimensions: input.dimensions ?? {},
+                raw,
+                updatedAt: new Date(),
+              },
+            });
+        },
+        undefined,
+      ),
   );
   lastPersistedDiagnosticEventByKey.set(key, nextSignature);
 
@@ -3466,24 +3479,28 @@ async function resolveEvent(event: DiagnosticEventPayload): Promise<void> {
   // "unchanged" and correctly flips the DB row back to open.
   lastPersistedDiagnosticEventByKey.delete(event.incidentKey);
 
-  await safeDb(
-    "resolve diagnostic event",
-    async () => {
-      await db
-        .update(diagnosticEventsTable)
-        .set({
-          status: "resolved",
-          lastSeenAt: new Date(resolved.lastSeenAt),
-          updatedAt: new Date(),
-        })
-        .where(
-          and(
-            eq(diagnosticEventsTable.incidentKey, event.incidentKey),
-            eq(diagnosticEventsTable.status, "open"),
-          ),
-        );
-    },
-    undefined,
+  await runInDbLane(
+    "background",
+    () =>
+      safeDb(
+        "resolve diagnostic event",
+        async () => {
+          await db
+            .update(diagnosticEventsTable)
+            .set({
+              status: "resolved",
+              lastSeenAt: new Date(resolved.lastSeenAt),
+              updatedAt: new Date(),
+            })
+            .where(
+              and(
+                eq(diagnosticEventsTable.incidentKey, event.incidentKey),
+                eq(diagnosticEventsTable.status, "open"),
+              ),
+            );
+        },
+        undefined,
+      ),
   );
 }
 
@@ -3497,15 +3514,19 @@ async function resolveInactiveCollectorEvents(
       !activeIncidentKeys.has(event.incidentKey),
   );
 
-  const dbCandidates = await safeDb(
-    "list open diagnostic events for resolution",
+  const dbCandidates = await runInDbLane(
+    "background",
     () =>
-      db
-        .select()
-        .from(diagnosticEventsTable)
-        .where(eq(diagnosticEventsTable.status, "open"))
-        .limit(1_000),
-    [],
+      safeDb(
+        "list open diagnostic events for resolution",
+        () =>
+          db
+            .select()
+            .from(diagnosticEventsTable)
+            .where(eq(diagnosticEventsTable.status, "open"))
+            .limit(1_000),
+        [],
+      ),
   );
 
   const candidatesByKey = new Map<string, DiagnosticEventPayload>();
@@ -4540,27 +4561,31 @@ export async function collectDiagnosticSnapshot(
     )
   ) {
     lastDiagnosticsRetentionCleanupAt = Date.now();
-    await safeDb(
-      "diagnostics retention cleanup",
-      async () => {
-        await db
-          .delete(diagnosticSnapshotsTable)
-          .where(
-            lte(
-              diagnosticSnapshotsTable.observedAt,
-              new Date(Date.now() - SNAPSHOT_RETENTION_MS),
-            ),
-          );
-        await db
-          .delete(diagnosticEventsTable)
-          .where(
-            lte(
-              diagnosticEventsTable.lastSeenAt,
-              new Date(Date.now() - SNAPSHOT_RETENTION_MS),
-            ),
-          );
-      },
-      undefined,
+    await runInDbLane(
+      "background",
+      () =>
+        safeDb(
+          "diagnostics retention cleanup",
+          async () => {
+            await db
+              .delete(diagnosticSnapshotsTable)
+              .where(
+                lte(
+                  diagnosticSnapshotsTable.observedAt,
+                  new Date(Date.now() - SNAPSHOT_RETENTION_MS),
+                ),
+              );
+            await db
+              .delete(diagnosticEventsTable)
+              .where(
+                lte(
+                  diagnosticEventsTable.lastSeenAt,
+                  new Date(Date.now() - SNAPSHOT_RETENTION_MS),
+                ),
+              );
+          },
+          undefined,
+        ),
     );
   }
 

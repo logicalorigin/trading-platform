@@ -1,4 +1,5 @@
 import { db, auditEventsTable } from "@workspace/db";
+import * as dbExports from "@workspace/db";
 import { logger } from "../lib/logger";
 
 export type AuditEventType =
@@ -28,12 +29,16 @@ type AuditEventSubject = {
 };
 
 type JsonRecord = Record<string, unknown>;
+type DbLaneRunner = <T>(lane: "background", fn: () => T) => T;
 
 const MAX_STRING_LENGTH = 512;
 const MAX_ARRAY_ITEMS = 20;
 const MAX_OBJECT_KEYS = 30;
 const MAX_DEPTH = 4;
 const MAX_PAYLOAD_BYTES = 8_000;
+const runInDbLane = (
+  dbExports as typeof dbExports & { runInDbLane: DbLaneRunner }
+).runInDbLane;
 
 function truncateString(value: string, maxLength = MAX_STRING_LENGTH): string {
   if (value.length <= maxLength) return value;
@@ -107,14 +112,16 @@ export async function recordAuditEvent(input: AuditEventInput): Promise<void> {
   const subject = normalizeSubject(input.subject);
   const resource = normalizeSubject(input.resource);
   try {
-    await db.insert(auditEventsTable).values({
-      appUserId: input.appUserId,
-      eventType: truncateString(input.eventType, 96),
-      subjectType: subject.type,
-      subjectId: subject.id,
-      resourceType: resource.type,
-      resourceId: resource.id,
-      payload: normalizeAuditPayload(input.payload),
+    await runInDbLane("background", async () => {
+      await db.insert(auditEventsTable).values({
+        appUserId: input.appUserId,
+        eventType: truncateString(input.eventType, 96),
+        subjectType: subject.type,
+        subjectId: subject.id,
+        resourceType: resource.type,
+        resourceId: resource.id,
+        payload: normalizeAuditPayload(input.payload),
+      });
     });
   } catch (error) {
     logger.warn(
