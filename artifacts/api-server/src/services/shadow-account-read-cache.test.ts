@@ -635,6 +635,56 @@ test("shadow positions pressure fallback builds a bounded degraded snapshot from
   assert.equal(response.totals.netLiquidation, 1300);
 });
 
+test("shadow positions pressure fallback surfaces day change decoupled from pressure", () => {
+  const observedAt = new Date("2026-07-09T14:45:00.000Z");
+  const baseInput = {
+    account: { cash: "1000", startingBalance: "500" } as never,
+    assetClassFilter: "option" as const,
+    source: null,
+    observedAt,
+    positions: [
+      {
+        id: "rh-daychange-position",
+        symbol: "RH",
+        assetClass: "option",
+        positionKey: "option:RH:20260710:152.5:C",
+        quantity: "2",
+        averageCost: "7.03",
+        mark: "14.4",
+        marketValue: "2880",
+        optionContract: {
+          ticker: "RH 20260710 152.5 C",
+          underlying: "RH",
+          expirationDate: new Date("2026-07-10T00:00:00.000Z"),
+          strike: 152.5,
+          right: "call",
+          multiplier: 100,
+          sharesPerContract: 100,
+          providerContractId: "twsopt:rh-daychange",
+        },
+        asOf: observedAt,
+        openedAt: new Date("2026-07-08T14:30:00.000Z"),
+      },
+    ] as never,
+  };
+
+  // A freshly-computed baseline day change is surfaced instead of being blanked to $0.
+  const withFresh = internals.buildFastShadowPositionsResponseFromRows({
+    ...baseInput,
+    dayChangesByPositionId: new Map([
+      ["rh-daychange-position", { dayChange: 960, dayChangePercent: 50 }],
+    ]),
+  });
+  assert.equal(withFresh.positions[0]?.dayChange, 960);
+  assert.equal(withFresh.positions[0]?.dayChangePercent, 50);
+
+  // A later pressure build with no fresh value reuses the last-known cached day change
+  // recorded above, so it is never reset to $0.
+  const fromCache = internals.buildFastShadowPositionsResponseFromRows(baseInput);
+  assert.equal(fromCache.positions[0]?.dayChange, 960);
+  assert.equal(fromCache.positions[0]?.dayChangePercent, 50);
+});
+
 test("shadow account positions use immediate stale cache strategy", () => {
   const source = readFileSync(new URL("./shadow-account.ts", import.meta.url), "utf8");
   const start = source.indexOf("export async function getShadowAccountPositions");

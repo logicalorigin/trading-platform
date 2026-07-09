@@ -30,6 +30,7 @@ import {
   algoDeploymentsTable,
   backtestRunPointsTable,
   db,
+  dbTrading,
   pool,
   executionEventsTable,
   shadowAccountsTable,
@@ -4613,14 +4614,14 @@ export async function placeShadowOrder(input: ShadowOrderInput) {
   await ensureShadowAccount();
 
   if (normalized.sourceEventId) {
-    const [existing] = await db
+    const [existing] = await dbTrading
       .select()
       .from(shadowOrdersTable)
       .where(eq(shadowOrdersTable.sourceEventId, normalized.sourceEventId))
       .limit(1);
     if (existing) {
       if (existing.source !== normalized.source) {
-        const [updated] = await db
+        const [updated] = await dbTrading
           .update(shadowOrdersTable)
           .set({
             source: normalized.source,
@@ -4640,7 +4641,7 @@ export async function placeShadowOrder(input: ShadowOrderInput) {
     }
   }
   if (normalized.clientOrderId) {
-    const [existing] = await db
+    const [existing] = await dbTrading
       .select()
       .from(shadowOrdersTable)
       .where(eq(shadowOrdersTable.clientOrderId, normalized.clientOrderId))
@@ -4668,7 +4669,7 @@ export async function placeShadowOrder(input: ShadowOrderInput) {
     optionContract,
   });
 
-  await db.transaction(async (tx) => {
+  await dbTrading.transaction(async (tx) => {
     await tx.insert(shadowOrdersTable).values({
       id: orderId,
       accountId: currentShadowAccountId(),
@@ -4734,7 +4735,7 @@ export async function placeShadowOrder(input: ShadowOrderInput) {
 
   await writeShadowBalanceSnapshot(snapshotSource, now);
 
-  const [order] = await db
+  const [order] = await dbTrading
     .select()
     .from(shadowOrdersTable)
     .where(eq(shadowOrdersTable.id, orderId))
@@ -9197,12 +9198,39 @@ function recordLastKnownShadowPositionStops(
   lastKnownShadowPositionStops.set(positionId, value);
 }
 
+// Last-known canonical day change per shadow position id. Same rationale as the stops
+// cache: the pressure fast-fallback skips the heavy canonical build and would otherwise
+// blank dayChange/dayChangePercent (rendering $0 in the positions table). Instead it
+// serves the most recent good canonical value recorded by the full path, decoupling the
+// day-change display from resource pressure. Bounded to LAST_KNOWN_SHADOW_STOPS_CAP.
+const lastKnownShadowPositionDayChange = new Map<string, ShadowPositionDayChange>();
+
+function recordLastKnownShadowPositionDayChange(
+  positionId: string,
+  value: ShadowPositionDayChange,
+): void {
+  if (value.dayChange == null && value.dayChangePercent == null) {
+    return;
+  }
+  if (
+    lastKnownShadowPositionDayChange.size >= LAST_KNOWN_SHADOW_STOPS_CAP &&
+    !lastKnownShadowPositionDayChange.has(positionId)
+  ) {
+    const oldest = lastKnownShadowPositionDayChange.keys().next().value;
+    if (oldest) {
+      lastKnownShadowPositionDayChange.delete(oldest);
+    }
+  }
+  lastKnownShadowPositionDayChange.set(positionId, value);
+}
+
 function buildFastShadowPositionsResponseFromRows(input: {
   positions: ShadowPositionRow[];
   account: ShadowAccountRow | null;
   assetClassFilter: ShadowPositionTypeFilter;
   source: ShadowSourceScope | null;
   observedAt?: Date;
+  dayChangesByPositionId?: Map<string, ShadowPositionDayChange> | null;
 }): ShadowAccountPositionsResponseShape {
   const observedAt = input.observedAt ?? new Date();
   const sourceFiltered = input.positions.filter((position) =>
@@ -9248,6 +9276,15 @@ function buildFastShadowPositionsResponseFromRows(input: {
     const openedAt = position.openedAt ?? position.asOf ?? observedAt;
     const positionType = shadowPositionType(position);
     const lastKnownStops = lastKnownShadowPositionStops.get(position.id);
+    // Decouple day change from resource pressure: prefer the freshly-computed baseline
+    // day change, else the last canonical value, so the fast-fallback doesn't blank it to
+    // $0 (see recordLastKnownShadowPositionDayChange).
+    const freshDayChange = input.dayChangesByPositionId?.get(position.id) ?? null;
+    if (freshDayChange) {
+      recordLastKnownShadowPositionDayChange(position.id, freshDayChange);
+    }
+    const lastKnownDayChange =
+      freshDayChange ?? lastKnownShadowPositionDayChange.get(position.id) ?? null;
 
     return {
       id: position.id,
@@ -9264,8 +9301,8 @@ function buildFastShadowPositionsResponseFromRows(input: {
       quantity,
       averageCost,
       mark,
-      dayChange: null,
-      dayChangePercent: null,
+      dayChange: lastKnownDayChange?.dayChange ?? null,
+      dayChangePercent: lastKnownDayChange?.dayChangePercent ?? null,
       unrealizedPnl,
       unrealizedPnlPercent: averageCost
         ? ((mark - averageCost) / averageCost) * 100
@@ -9356,11 +9393,24 @@ async function buildFastShadowPositionsResponse(input: {
         readShadowAccount(),
         readOpenShadowPositions(),
       ]);
+      // Decouple day change from resource pressure without deepening it: serve the
+      // last-known cache for free, and only run the (baseline-marks-only, no option-quote
+      // fetch) day-change query to bootstrap positions not yet in the cache. Once warm,
+      // this adds zero DB load under pressure. Failures fall back to the cache.
+      const needsDayChangeBootstrap = positions.some(
+        (position) => !lastKnownShadowPositionDayChange.has(position.id),
+      );
+      const dayChangesByPositionId = needsDayChangeBootstrap
+        ? await readShadowPositionDayChanges(positions, new Date(), null, {
+            fetchMissingOptionQuotes: false,
+          }).catch(() => null)
+        : null;
       return buildFastShadowPositionsResponseFromRows({
         account,
         positions,
         assetClassFilter: input.assetClassFilter,
         source: input.source,
+        dayChangesByPositionId,
       });
     },
     {
@@ -9621,6 +9671,9 @@ export async function getShadowAccountPositions(input: {
             storedDayChange,
             quoteDayChange,
           });
+          // Cache the canonical day change so the pressure fast-fallback can serve it
+          // instead of blanking day change to $0 under load.
+          recordLastKnownShadowPositionDayChange(position.id, dayChange);
           const attribution = buildPositionSourceAttribution(position, orders);
           const optionQuoteSnapshot =
             displayOptionQuote && responseProviderContractId
@@ -16110,26 +16163,44 @@ async function recordShadowAutomationExit(
   ) {
     return null;
   }
-  return placeShadowOrder({
-    accountId: SHADOW_ACCOUNT_ID,
-    mode: "shadow",
-    symbol,
-    assetClass: "option",
-    side: "sell",
-    type: "limit",
-    quantity,
-    limitPrice: price,
-    stopPrice: null,
-    timeInForce: "day",
-    optionContract: contract,
-    source: options.source ?? "automation",
-    sourceEventId: event.id,
-    clientOrderId: `shadow-auto-exit-${event.id}`,
-    positionKey: shadowAutomationPayloadPositionKey(payload),
-    requestedFillPrice: price,
-    payload,
-    placedAt: event.occurredAt,
-  });
+  try {
+    return await placeShadowOrder({
+      accountId: SHADOW_ACCOUNT_ID,
+      mode: "shadow",
+      symbol,
+      assetClass: "option",
+      side: "sell",
+      type: "limit",
+      quantity,
+      limitPrice: price,
+      stopPrice: null,
+      timeInForce: "day",
+      optionContract: contract,
+      source: options.source ?? "automation",
+      sourceEventId: event.id,
+      clientOrderId: `shadow-auto-exit-${event.id}`,
+      positionKey: shadowAutomationPayloadPositionKey(payload),
+      requestedFillPrice: price,
+      payload,
+      placedAt: event.occurredAt,
+    });
+  } catch (error) {
+    // The shadow position is already flat — its entry was never mirrored (e.g. skipped
+    // outside a trading session) or it was already closed — so this exit has nothing to
+    // sell and the mirror is already in the exit's intended state. Treat as a benign
+    // no-op instead of throwing on every read-triggered repair pass.
+    if (
+      error instanceof HttpError &&
+      error.code === "shadow_long_only_position_required"
+    ) {
+      logger.debug?.(
+        { eventId: event.id, symbol },
+        "Skipped signal-options Shadow exit mirror: position already flat",
+      );
+      return null;
+    }
+    throw error;
+  }
 }
 
 async function recordShadowAutomationMark(
