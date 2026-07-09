@@ -76,9 +76,8 @@ test("neural cloud is only wired to loader surfaces", () => {
   assert.match(bootShell, /NeuralCoreScene/);
   assert.match(bootShell, /isNeuralWebglRendererSupported/);
   assert.doesNotMatch(bootShell, /canUseWebGL/);
-  assert.match(bootShell, /webglPolicy="available"/);
   assert.match(brandResolve, /NeuralCoreScene/);
-  assert.match(brandResolve, /webglPolicy/);
+  assert.match(brandResolve, /isWebglAvailable/);
   assert.match(brandResolve, /morph/);
   assert.doesNotMatch(neuralCanvas, /ambient/);
   assert.doesNotMatch(neuralTypes, /ambient/);
@@ -106,6 +105,23 @@ test("shared loader runs capability hooks before rendering", () => {
   assert.match(read("src/components/neural/NeuralLoader.tsx"), /if \(isNeuralOpenerActive\(\)\)/);
   assert.match(
     brandResolve,
-    /const webglReady =\s+mounted &&\s+\(webglPolicy === "available"/,
+    /const showSphere =\s+mounted && !sphereFailed && !reducedMotion && isWebglAvailable\(\)/,
   );
+  assert.match(brandResolve, /componentDidCatch\(\) \{\s+this\.props\.onError\(\);/);
+});
+
+test("brand resolve keeps only the live app rendering contract", () => {
+  const brandResolve = read("src/components/marketing/brand-resolve.tsx");
+  const brandCss = read("src/styles/brand.css");
+
+  assert.doesNotMatch(
+    brandResolve,
+    /\b(openOnDots|suppressCrisp|dotsAreMark|webglPolicy|logoVariant|sphereMask)\b/,
+  );
+  assert.doesNotMatch(brandResolve, /morphDriveRef\?:/);
+  assert.doesNotMatch(
+    brandCss,
+    /brand-resolve-(sphere|logo|guide)/,
+  );
+  assert.doesNotMatch(brandCss, /brand-loader-word--resolve|pyrus-splash-pulse/);
 });

@@ -69,12 +69,8 @@ export function BootBrandColumn({
         <PyrusMark className={markClass} />
       ) : (
         <BrandResolve
-          loop
-          morph
-          logoVariant="svg"
           haloBlur={0.45}
           bloomBlur={1.8}
-          webglPolicy="available"
           className={markClass}
         />
       )}

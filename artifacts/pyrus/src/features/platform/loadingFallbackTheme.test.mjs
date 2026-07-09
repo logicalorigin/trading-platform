@@ -10,6 +10,7 @@ const indexCss = read("src/index.css");
 const viteConfig = read("vite.config.ts");
 const appContent = read("src/app/AppContent.tsx");
 const brandLoader = read("src/components/BrandLoader.tsx");
+const brandResolve = read("src/components/marketing/brand-resolve.tsx");
 const crashDiagnostics = read("src/app/crashDiagnostics.tsx");
 const appHeader = read("src/features/platform/AppHeader.jsx");
 const platformApp = read("src/features/platform/PlatformApp.jsx");
@@ -52,7 +53,8 @@ test("launch and header brand surfaces use neural resolve animation", () => {
   assert.doesNotMatch(platformApp, /LogoLoader/);
   assert.match(appHeader, /BrandResolve/);
   assert.match(appHeader, /HEADER_MARK_SPHERE_PROPS/);
-  assert.match(appHeader, /webglPolicy="available"/);
+  assert.doesNotMatch(appHeader, /webglPolicy=/);
+  assert.match(brandResolve, /isWebglAvailable/);
 });
 
 test("React loaders use the current Pyrus brand kit assets", () => {

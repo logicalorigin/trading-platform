@@ -79,15 +79,11 @@ function HeaderBrandLockup({
       }}
     >
       <BrandResolve
-        loop
-        morph
-        logoVariant="svg"
         className={markClassName}
         haloBlur={0.45}
         bloomBlur={1.8}
         sphereInsetClassName="-inset-[72%]"
         sphereProps={HEADER_MARK_SPHERE_PROPS}
-        webglPolicy="available"
       />
       <PyrusWordmark width={wordmarkWidth ?? (compact ? 116 : 150)} title="PYRUS" />
     </div>
