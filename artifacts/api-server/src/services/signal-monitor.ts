@@ -4990,15 +4990,10 @@ function loadSignalMonitorStreamCompletedBars(input: {
     return [];
   }
 
-  const timeframeMs = TIMEFRAME_MS[input.timeframe];
-  const childBarsPerOutput = Math.max(
-    1,
-    Math.floor(timeframeMs / TIMEFRAME_MS["1m"]),
-  );
-  const historyLimit = Math.max(
-    120,
-    Math.min(300, input.limit * childBarsPerOutput),
-  );
+  const historyLimit = signalMonitorStreamSourceMinuteHistoryLimit({
+    timeframe: input.timeframe,
+    limit: input.limit,
+  });
   const minuteBars = loadSignalMonitorStreamSourceMinuteBars({
     symbol: input.symbol,
     evaluatedAt: input.evaluatedAt,
@@ -5013,6 +5008,18 @@ function loadSignalMonitorStreamCompletedBars(input: {
     limit: input.limit,
     includeProvisional: input.includeProvisional,
   });
+}
+
+function signalMonitorStreamSourceMinuteHistoryLimit(input: {
+  timeframe: SignalMonitorMatrixTimeframe;
+  limit: number;
+}): number {
+  const timeframeMs = TIMEFRAME_MS[input.timeframe];
+  const childBarsPerOutput = Math.max(
+    1,
+    Math.floor(timeframeMs / TIMEFRAME_MS["1m"]),
+  );
+  return Math.max(120, Math.min(300, input.limit * childBarsPerOutput));
 }
 
 const SIGNAL_MONITOR_LOCAL_MEMORY_GAP_FILL_TIMEFRAMES = new Set<
@@ -5299,6 +5306,97 @@ function mergeCompletedBarsWithLocalMemoryGapFill(input: {
   return mergeCompletedBarsWithLocalMemoryGapFillResult(input).bars;
 }
 
+function signalMonitorStreamLaneLatestCompletedBarAtFromTail(input: {
+  symbol: string;
+  timeframe: SignalMonitorMatrixTimeframe;
+  evaluatedAt: Date;
+}): Date | null {
+  if (input.timeframe === "1d") {
+    return null;
+  }
+
+  const minuteBars = loadSignalMonitorStreamSourceMinuteBars({
+    symbol: input.symbol,
+    evaluatedAt: input.evaluatedAt,
+    historyLimit: signalMonitorStreamSourceMinuteHistoryLimit({
+      timeframe: input.timeframe,
+      limit: SIGNAL_MONITOR_STALE_RETRY_BARS,
+    }),
+  });
+  if (input.timeframe === "1m") {
+    for (let index = minuteBars.length - 1; index >= 0; index -= 1) {
+      const bar = minuteBars[index];
+      const timestamp = dateOrNull(bar?.timestamp);
+      if (
+        timestamp &&
+        bar?.partial !== true &&
+        isSignalMonitorBarComplete({
+          timestamp,
+          dataUpdatedAt: dateOrNull(bar.dataUpdatedAt),
+          timeframe: "1m",
+          evaluatedAt: input.evaluatedAt,
+        })
+      ) {
+        return signalMonitorBarClosedAt(bar);
+      }
+    }
+    return null;
+  }
+
+  const timeframeMs = TIMEFRAME_MS[input.timeframe];
+  const requiredChildBars = Math.floor(timeframeMs / TIMEFRAME_MS["1m"]);
+  let bucketMs: number | null = null;
+  let childBuckets = new Set<number>();
+
+  const completedBucketClosedAt = (): Date | null => {
+    if (bucketMs == null || childBuckets.size < requiredChildBars) {
+      return null;
+    }
+    const dataUpdatedAt = new Date(bucketMs + timeframeMs);
+    return isSignalMonitorBarComplete({
+      timestamp: new Date(bucketMs),
+      dataUpdatedAt,
+      timeframe: input.timeframe,
+      evaluatedAt: input.evaluatedAt,
+    })
+      ? dataUpdatedAt
+      : null;
+  };
+
+  for (let index = minuteBars.length - 1; index >= 0; index -= 1) {
+    const bar = minuteBars[index];
+    const timestamp = dateOrNull(bar?.timestamp);
+    if (!timestamp) {
+      continue;
+    }
+    const nextBucketMs =
+      Math.floor(timestamp.getTime() / timeframeMs) * timeframeMs;
+    if (bucketMs == null) {
+      bucketMs = nextBucketMs;
+    } else if (nextBucketMs !== bucketMs) {
+      const closedAt = completedBucketClosedAt();
+      if (closedAt) {
+        return closedAt;
+      }
+      bucketMs = nextBucketMs;
+      childBuckets = new Set();
+    }
+    if (
+      bar?.partial !== true &&
+      isSignalMonitorBarComplete({
+        timestamp,
+        dataUpdatedAt: dateOrNull(bar.dataUpdatedAt),
+        timeframe: "1m",
+        evaluatedAt: input.evaluatedAt,
+      })
+    ) {
+      childBuckets.add(Math.floor(timestamp.getTime() / TIMEFRAME_MS["1m"]));
+    }
+  }
+
+  return completedBucketClosedAt();
+}
+
 // Closed-at of the freshest COMPLETED bar the live in-memory aggregate ring can
 // produce for a lane right now, or null when the ring carries nothing usable
 // (e.g. an illiquid symbol with no recent prints, or 1d which never streams).
@@ -5319,13 +5417,7 @@ function signalMonitorStreamLaneLatestCompletedBarAt(input: {
   if (input.timeframe === "1d") {
     return null;
   }
-  const streamBars = loadSignalMonitorStreamCompletedBars({
-    symbol: input.symbol,
-    timeframe: input.timeframe,
-    evaluatedAt: input.evaluatedAt,
-    limit: SIGNAL_MONITOR_STALE_RETRY_BARS,
-  });
-  return signalMonitorBarClosedAt(streamBars.at(-1));
+  return signalMonitorStreamLaneLatestCompletedBarAtFromTail(input);
 }
 
 async function refreshSignalMonitorLocalBarCacheWarmup(): Promise<void> {
@@ -14899,6 +14991,7 @@ export const __signalMonitorInternalsForTests = {
   resolveSignalMonitorBrokerRecentWindowMinutes,
   isSignalMonitorStateCurrentForLane,
   signalMonitorStreamLaneLatestCompletedBarAt,
+  signalMonitorStreamLaneLatestCompletedBarAtFromTail,
   traceSignalMonitorLaneCurrentness,
   shouldBypassSignalMonitorCompletedBarsCache,
   shouldRetrySignalMonitorCompletedBars,

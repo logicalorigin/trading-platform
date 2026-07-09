@@ -33,17 +33,23 @@ const {
   setSignalMonitorCompletedBarsGapFetchLoaderForTests: setGapFetchLoader,
   stateToResponseForSnapshot,
   signalMonitorStreamLaneLatestCompletedBarAt: laneLatestCompletedBarAt,
+  signalMonitorStreamLaneLatestCompletedBarAtFromTail:
+    laneLatestCompletedBarAtFromTail,
 } = __signalMonitorInternalsForTests;
 
 after(async () => {
   await pool.end();
 });
 
-beforeEach(() => {
+function resetStreamFixture(): void {
   resetStream();
   resetCaches();
   __stockAggregateStreamTestInternals.reset();
   __signalMonitorLocalBarCacheInternalsForTests.reset();
+}
+
+beforeEach(() => {
+  resetStreamFixture();
 });
 
 const SYMBOL = "SPY";
@@ -73,6 +79,49 @@ const aggregate = (startMs: number, close: number): StockMinuteAggregateMessage 
   delayed: false,
   source: "massive-websocket",
 });
+
+function dateOrNull(value: unknown): Date | null {
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? null : value;
+  }
+  if (typeof value === "string" || typeof value === "number") {
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? null : date;
+  }
+  return null;
+}
+
+function completedBarClosedAt(value: unknown): Date | null {
+  const bar = value as { dataUpdatedAt?: unknown; timestamp?: unknown } | undefined;
+  return dateOrNull(bar?.dataUpdatedAt) ?? dateOrNull(bar?.timestamp);
+}
+
+function oldLaneLatestCompletedBarAtByAggregation(
+  input: Parameters<typeof laneLatestCompletedBarAt>[0],
+): Date | null {
+  const streamBars = loadSignalMonitorStreamCompletedBars({
+    ...input,
+    limit: 64,
+  });
+  return completedBarClosedAt(streamBars.at(-1));
+}
+
+function seedMinuteStarts(
+  starts: string[],
+  options: {
+    delayed?: boolean;
+    futureClose?: boolean;
+  } = {},
+): void {
+  starts.forEach((start, index) => {
+    const startMs = Date.parse(start);
+    __stockAggregateStreamTestInternals.ingestAggregateForTests({
+      ...aggregate(startMs, 100 + index),
+      delayed: options.delayed === true,
+      endMs: options.futureClose ? startMs + 30 * 60_000 : startMs + 59_999,
+    });
+  });
+}
 
 function recentEvaluatedAt(): Date {
   return new Date(Math.floor(Date.now() / 60_000) * 60_000);
@@ -397,6 +446,118 @@ test("source minute bars memo reuses same-depth loads across stream timeframes",
       misses: 1,
     });
   });
+});
+
+// --- P3v2 slice 1b: latest completed bucket derives from the ring tail ---
+
+test("tail latest-completed derivation matches the aggregation path", () => {
+  const previousFullBucket = [
+    "2026-06-09T14:55:00.000Z",
+    "2026-06-09T14:56:00.000Z",
+    "2026-06-09T14:57:00.000Z",
+    "2026-06-09T14:58:00.000Z",
+    "2026-06-09T14:59:00.000Z",
+  ];
+  const fullBoundaryBucket = [
+    "2026-06-09T15:00:00.000Z",
+    "2026-06-09T15:01:00.000Z",
+    "2026-06-09T15:02:00.000Z",
+    "2026-06-09T15:03:00.000Z",
+    "2026-06-09T15:04:00.000Z",
+  ];
+  const scenarios: Array<{
+    name: string;
+    timeframe: Parameters<typeof laneLatestCompletedBarAt>[0]["timeframe"];
+    evaluatedAt: string;
+    expectedIso: string | null;
+    seed: () => void;
+  }> = [
+    {
+      name: "empty ring",
+      timeframe: "5m",
+      evaluatedAt: "2026-06-09T15:02:00.000Z",
+      expectedIso: null,
+      seed: () => {},
+    },
+    {
+      name: "mid-bucket live edge skips the incomplete latest bucket",
+      timeframe: "5m",
+      evaluatedAt: "2026-06-09T15:02:00.000Z",
+      expectedIso: "2026-06-09T15:00:00.000Z",
+      seed: () => seedMinuteStarts([...previousFullBucket, ...fullBoundaryBucket.slice(0, 2)]),
+    },
+    {
+      name: "delayed provisional tail bars do not count as completed",
+      timeframe: "5m",
+      evaluatedAt: "2026-06-09T15:05:00.000Z",
+      expectedIso: "2026-06-09T15:00:00.000Z",
+      seed: () => {
+        seedMinuteStarts(previousFullBucket);
+        seedMinuteStarts(fullBoundaryBucket, { delayed: true, futureClose: true });
+      },
+    },
+    {
+      name: "exact bucket boundary counts the bucket that just closed",
+      timeframe: "5m",
+      evaluatedAt: "2026-06-09T15:05:00.000Z",
+      expectedIso: "2026-06-09T15:05:00.000Z",
+      seed: () => seedMinuteStarts(fullBoundaryBucket),
+    },
+    {
+      name: "gapped tail falls back to the previous full bucket",
+      timeframe: "5m",
+      evaluatedAt: "2026-06-09T15:05:00.000Z",
+      expectedIso: "2026-06-09T15:00:00.000Z",
+      seed: () => {
+        seedMinuteStarts(previousFullBucket);
+        seedMinuteStarts([
+          "2026-06-09T15:00:00.000Z",
+          "2026-06-09T15:01:00.000Z",
+          "2026-06-09T15:03:00.000Z",
+          "2026-06-09T15:04:00.000Z",
+        ]);
+      },
+    },
+    {
+      name: "1m provisional tail falls back to the latest completed minute",
+      timeframe: "1m",
+      evaluatedAt: "2026-06-09T15:02:00.000Z",
+      expectedIso: "2026-06-09T15:02:00.000Z",
+      seed: () => {
+        seedMinuteStarts([
+          "2026-06-09T15:00:00.000Z",
+          "2026-06-09T15:01:00.000Z",
+        ]);
+        seedMinuteStarts(["2026-06-09T15:02:00.000Z"], {
+          delayed: true,
+          futureClose: true,
+        });
+      },
+    },
+  ];
+
+  for (const scenario of scenarios) {
+    resetStreamFixture();
+    scenario.seed();
+    const input = {
+      symbol: SYMBOL,
+      timeframe: scenario.timeframe,
+      evaluatedAt: new Date(scenario.evaluatedAt),
+    };
+    const oldValue = oldLaneLatestCompletedBarAtByAggregation(input);
+    const nextValue = laneLatestCompletedBarAtFromTail(input);
+
+    assert.equal(
+      oldValue?.toISOString() ?? null,
+      scenario.expectedIso,
+      `${scenario.name}: fixture should exercise the expected old-path close`,
+    );
+    assert.equal(
+      nextValue?.toISOString() ?? null,
+      oldValue?.toISOString() ?? null,
+      `${scenario.name}: tail derivation must match aggregation`,
+    );
+  }
 });
 
 // --- P3v2 slice 1a: stored-state read shaping memoizes per-row ring loads ---
