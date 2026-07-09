@@ -15,6 +15,7 @@ import { monitorEventLoopDelay, performance } from "node:perf_hooks";
 import {
   brokerConnectionsTable,
   db,
+  getDbAdmissionDiagnostics,
   instrumentsTable,
   watchlistItemsTable,
   watchlistsTable,
@@ -3336,12 +3337,23 @@ export async function getRuntimeDiagnostics() {
     ingest: marketDataIngest,
     stockAggregates: marketDataStreams.stockAggregates,
   });
+  const dbPoolAdmissionLanes = Object.entries(getDbAdmissionDiagnostics())
+    .filter(([, stats]) => Object.values(stats).some((value) => value > 0))
+    .map(([lane, stats]) => ({
+      lane,
+      queued: stats.queued,
+      inFlight: stats.inFlight,
+      admitted: stats.admittedTotal,
+      maxWaitMs: stats.maxWaitMs,
+      p95WaitMs: stats.recentWaitMsP95,
+    }));
   const ibkrConfiguredForDiagnostics =
     configured.ibkr || ibkrRuntime.desktopAgentOnline;
 
   return {
     timestamp: new Date(),
     marketDataWorkPlan,
+    dbPoolAdmission: { lanes: dbPoolAdmissionLanes },
     api: {
       uptimeMs: Math.round(process.uptime() * 1000),
       memoryMb: {

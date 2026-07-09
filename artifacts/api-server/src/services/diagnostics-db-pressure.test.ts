@@ -6,6 +6,10 @@ const diagnosticsSource = readFileSync(
   new URL("./diagnostics.ts", import.meta.url),
   "utf8",
 );
+const platformSource = readFileSync(
+  new URL("./platform.ts", import.meta.url),
+  "utf8",
+);
 
 function sourceBlock(start: string, end: string): string {
   const startIndex = diagnosticsSource.indexOf(start);
@@ -21,6 +25,36 @@ test("diagnostics resource pressure surfaces DB pool waiters", () => {
   assert.match(diagnosticsSource, /metricKey:\s*"resource_pressure\.db_pool_waiting"/);
   assert.match(diagnosticsSource, /dbPoolWaiting:\s*dbPool\.waiting/);
   assert.match(diagnosticsSource, /db_pool_waiting:\s*dbPool\.waiting/);
+});
+
+test("runtime diagnostics surfaces active DB pool admission lane gauges", () => {
+  const start = platformSource.indexOf(
+    "export async function getRuntimeDiagnostics()",
+  );
+  const end = platformSource.indexOf(
+    "export async function getRuntimeDiagnosticsCompact()",
+    start,
+  );
+  assert.notEqual(start, -1, "missing runtime diagnostics builder");
+  assert.notEqual(end, -1, "missing compact diagnostics boundary");
+  const runtimeDiagnosticsSource = platformSource.slice(start, end);
+
+  assert.match(
+    runtimeDiagnosticsSource,
+    /Object\.entries\(getDbAdmissionDiagnostics\(\)\)/,
+  );
+  assert.match(
+    runtimeDiagnosticsSource,
+    /\.filter\(\(\[, stats\]\) => Object\.values\(stats\)\.some\(\(value\) => value > 0\)\)/,
+  );
+  assert.match(
+    runtimeDiagnosticsSource,
+    /lane,\s*queued: stats\.queued,\s*inFlight: stats\.inFlight,\s*admitted: stats\.admittedTotal,\s*maxWaitMs: stats\.maxWaitMs,\s*p95WaitMs: stats\.recentWaitMsP95/,
+  );
+  assert.match(
+    runtimeDiagnosticsSource,
+    /dbPoolAdmission:\s*{ lanes: dbPoolAdmissionLanes }/,
+  );
 });
 
 test("diagnostics collector avoids DB bursts while recording snapshots and events", () => {
