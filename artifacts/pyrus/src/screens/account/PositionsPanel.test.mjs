@@ -171,6 +171,23 @@ test("prior-day equity position day PnL follows live mark versus previous close"
   );
 });
 
+test("Spot column renders the underlying day change under the price", () => {
+  // Resolver prefers a direct snapshot percent, else derives from previous close.
+  assert.match(source, /const resolvePositionUnderlyingDayChangePercent = \(/);
+  assert.match(
+    source,
+    /snapshot\?\.dayChangePercent[\s\S]*?snapshot\?\.changePercent[\s\S]*?snapshot\?\.pct/,
+  );
+  assert.match(source, /\(\(price - previousClose\) \/ previousClose\) \* 100/);
+  // The Spot cell surfaces it as the DenseStackedValue secondary with signed tone.
+  const cellStart = source.indexOf("const DenseUnderlyingPriceCell");
+  const cellEnd = source.indexOf("const StopEditAffordance", cellStart);
+  const cell = source.slice(cellStart, cellEnd);
+  assert.match(cell, /resolvePositionUnderlyingDayChangePercent\(/);
+  assert.match(cell, /signedPercent\(underlyingDayChangePercent/);
+  assert.match(cell, /secondaryTone=\{toneForValue\(underlyingDayChangePercent\)\}/);
+});
+
 test("prior-day SHORT equity day $ and day % carry the same sign", () => {
   const row = {
     id: "U123:TSLA",

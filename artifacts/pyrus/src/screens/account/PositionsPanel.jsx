@@ -1694,6 +1694,29 @@ const resolvePositionUnderlyingPrice = (row, snapshotsBySymbol = {}) => {
   );
 };
 
+const resolvePositionUnderlyingDayChangePercent = (row, snapshotsBySymbol = {}) => {
+  const symbol = resolvePositionUnderlyingSymbol(row);
+  const snapshot = symbol ? snapshotsBySymbol?.[symbol] : null;
+  const staticUnderlying = row?.underlyingMarket || null;
+  const direct = firstFiniteNumber(
+    snapshot?.dayChangePercent,
+    snapshot?.changePercent,
+    snapshot?.pct,
+    staticUnderlying?.dayChangePercent,
+  );
+  if (direct != null) return direct;
+  const price = resolvePositionUnderlyingPrice(row, snapshotsBySymbol);
+  const previousClose = firstPositiveFiniteNumber(
+    snapshot?.prevClose,
+    snapshot?.previousClose,
+    staticUnderlying?.previousClose,
+    staticUnderlying?.prevClose,
+  );
+  return price != null && previousClose != null && previousClose > 0
+    ? ((price - previousClose) / previousClose) * 100
+    : null;
+};
+
 const positionUnderlyingPriceTitle = (row, snapshotsBySymbol, maskValues) => {
   const symbol = resolvePositionUnderlyingSymbol(row);
   const snapshot = symbol ? snapshotsBySymbol?.[symbol] : null;
@@ -2680,28 +2703,35 @@ const DenseUnderlyingPriceCell = ({
   expanded,
 }) => {
   const underlyingPrice = resolvePositionUnderlyingPrice(row, snapshotsBySymbol);
+  const underlyingDayChangePercent = resolvePositionUnderlyingDayChangePercent(
+    row,
+    snapshotsBySymbol,
+  );
   const flashClassName = useValueFlash(underlyingPrice);
   return (
     <td style={denseTableCellStyle(column, expanded)}>
-      <AppTooltip content={positionUnderlyingPriceTitle(row, snapshotsBySymbol, maskValues)}>
-        <span
-          className={flashClassName}
-          style={{
-            ...denseColumnTextStyle({
-              align: column.align,
-              color: underlyingPrice != null ? CSS_COLOR.text : CSS_COLOR.textDim,
-            }),
-            display: "inline-flex",
-            justifyContent: denseVisualAlign(column.align),
-            maxWidth: "100%",
-            padding: sp("1px 2px"),
-            borderRadius: dim(RADII.xs),
-            whiteSpace: "nowrap",
-          }}
-        >
-          {formatAccountPrice(underlyingPrice, 2, maskValues)}
-        </span>
-      </AppTooltip>
+      <span
+        className={flashClassName}
+        style={{
+          display: "block",
+          maxWidth: "100%",
+          padding: sp("1px 2px"),
+          borderRadius: dim(RADII.xs),
+        }}
+      >
+        <DenseStackedValue
+          primary={formatAccountPrice(underlyingPrice, 2, maskValues)}
+          secondary={
+            underlyingDayChangePercent != null
+              ? signedPercent(underlyingDayChangePercent, 2, maskValues)
+              : null
+          }
+          primaryTone={underlyingPrice != null ? CSS_COLOR.text : CSS_COLOR.textDim}
+          secondaryTone={toneForValue(underlyingDayChangePercent)}
+          align={column.align}
+          title={positionUnderlyingPriceTitle(row, snapshotsBySymbol, maskValues)}
+        />
+      </span>
     </td>
   );
 };
