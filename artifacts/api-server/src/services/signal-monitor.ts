@@ -356,6 +356,7 @@ type SignalMonitorMatrixStreamSubscriber = {
   serverOwnedProducer: boolean;
   onEvent: (event: SignalMonitorMatrixStreamEvent) => void | Promise<void>;
   lastStateSignatures: Map<string, string>;
+  lastDisplayStates: Map<string, SignalMonitorMatrixStreamState>;
   lastPersistDirtyKeys: Map<string, string>;
   // Last state emitted per cell: the wire-side signal latch. A directionless
   // re-evaluation must not erase a latched buy/sell on the stream any more
@@ -6537,6 +6538,14 @@ const signalMonitorBarEntriesMemo = new WeakMap<
   object,
   SignalMonitorPyrusBarEntry[]
 >();
+const signalMonitorStableBarEntriesMemo = new WeakMap<
+  SignalMonitorPyrusBarEntry[],
+  SignalMonitorPyrusBarEntry[]
+>();
+const signalMonitorChartBarsMemo = new WeakMap<
+  SignalMonitorPyrusBarEntry[],
+  PyrusSignalsBar[]
+>();
 
 function barsToPyrusSignalsBarEntries(
   inputBars: Awaited<ReturnType<typeof getBars>>["bars"],
@@ -6585,7 +6594,25 @@ function barsToPyrusSignalsBarEntries(
 function stableSignalMonitorPyrusBarEntries(
   entries: SignalMonitorPyrusBarEntry[],
 ): SignalMonitorPyrusBarEntry[] {
-  return entries.filter((entry) => entry.sourceBar.partial !== true);
+  const memoized = signalMonitorStableBarEntriesMemo.get(entries);
+  if (memoized) {
+    return memoized;
+  }
+  const stableEntries = entries.filter((entry) => entry.sourceBar.partial !== true);
+  signalMonitorStableBarEntriesMemo.set(entries, stableEntries);
+  return stableEntries;
+}
+
+function signalMonitorChartBarsFromPyrusBarEntries(
+  entries: SignalMonitorPyrusBarEntry[],
+): PyrusSignalsBar[] {
+  const memoized = signalMonitorChartBarsMemo.get(entries);
+  if (memoized) {
+    return memoized;
+  }
+  const chartBars = entries.map((entry) => entry.chartBar);
+  signalMonitorChartBarsMemo.set(entries, chartBars);
+  return chartBars;
 }
 
 // True when the final series bar provably closed: it carries a provider close
@@ -8554,7 +8581,7 @@ export async function evaluateSignalMonitorSymbolFromCompletedBars(input: {
       barsToPyrusSignalsBarEntries(input.completedBars),
       signalStabilityPolicy,
     );
-    const chartBars = chartBarEntries.map((entry) => entry.chartBar);
+    const chartBars = signalMonitorChartBarsFromPyrusBarEntries(chartBarEntries);
     const latestBar = chartBars.at(-1);
     const latestBarEntry = chartBarEntries.at(-1);
 
@@ -9038,6 +9065,12 @@ const signalMonitorIndicatorSnapshotBaseCache = new Map<
 >();
 let signalMonitorIndicatorSnapshotBaseCacheHits = 0;
 let signalMonitorIndicatorSnapshotBaseCacheMisses = 0;
+let signalMonitorCompletedBarsFingerprintMemo = new WeakMap<
+  PyrusSignalsBar[],
+  string
+>();
+let signalMonitorCompletedBarsFingerprintMemoHits = 0;
+let signalMonitorCompletedBarsFingerprintMemoMisses = 0;
 
 // #2 upstream dirty-track. The heavy-eval memo above only guards the downstream
 // indicator math, AFTER the per-(symbol,timeframe) bar aggregation+merge has
@@ -9241,28 +9274,54 @@ function signalMonitorPyrusSettingsSignature(
 function fingerprintSignalMonitorMatrixCompletedBars(
   chartBars: PyrusSignalsBar[],
 ): string {
+  const memoized = signalMonitorCompletedBarsFingerprintMemo.get(chartBars);
+  if (memoized) {
+    signalMonitorCompletedBarsFingerprintMemoHits += 1;
+    return memoized;
+  }
+  signalMonitorCompletedBarsFingerprintMemoMisses += 1;
   // Hash the whole completed-bar series so corrected historical bars cannot hit a
   // cache entry whose first/last edge still matches. This is still much cheaper
   // than the indicator/structure evaluation it guards.
   const n = chartBars.length;
   if (!n) {
+    signalMonitorCompletedBarsFingerprintMemo.set(chartBars, "0");
     return "0";
   }
   let hash = 2166136261;
   for (const bar of chartBars) {
-    const fields = [bar.time, bar.o, bar.h, bar.l, bar.c, bar.v];
-    for (const field of fields) {
-      const value = Number.isFinite(Number(field)) ? Number(field) : 0;
-      // Fold the integer and fractional parts separately so the fingerprint is
-      // lossless to 1e-8 — finer than any real OHLCV/price tick — instead of the
-      // old Math.trunc(value*1000) that ignored sub-0.001 bar corrections.
-      const whole = Math.trunc(value);
-      const frac = Math.round((value - whole) * 1e8);
-      hash = Math.imul(hash ^ (whole | 0), 16777619) >>> 0;
-      hash = Math.imul(hash ^ (frac | 0), 16777619) >>> 0;
-    }
+    hash = mixSignalMonitorCompletedBarFingerprintField(hash, bar.time);
+    hash = mixSignalMonitorCompletedBarFingerprintField(hash, bar.o);
+    hash = mixSignalMonitorCompletedBarFingerprintField(hash, bar.h);
+    hash = mixSignalMonitorCompletedBarFingerprintField(hash, bar.l);
+    hash = mixSignalMonitorCompletedBarFingerprintField(hash, bar.c);
+    hash = mixSignalMonitorCompletedBarFingerprintField(hash, bar.v);
   }
-  return `${n}:${hash}`;
+  const fingerprint = `${n}:${hash}`;
+  signalMonitorCompletedBarsFingerprintMemo.set(chartBars, fingerprint);
+  return fingerprint;
+}
+
+function mixSignalMonitorCompletedBarFingerprintField(
+  hash: number,
+  field: unknown,
+): number {
+  const value = Number.isFinite(Number(field)) ? Number(field) : 0;
+  // Fold the integer and fractional parts separately so the fingerprint is
+  // lossless to 1e-8 — finer than any real OHLCV/price tick — instead of the old
+  // Math.trunc(value*1000) that ignored sub-0.001 bar corrections.
+  const whole = Math.trunc(value);
+  const frac = Math.round((value - whole) * 1e8);
+  let nextHash = Math.imul(hash ^ (whole | 0), 16777619) >>> 0;
+  nextHash = Math.imul(nextHash ^ (frac | 0), 16777619) >>> 0;
+  return nextHash;
+}
+
+function getSignalMonitorCompletedBarsFingerprintMemoStatsForTests() {
+  return {
+    hits: signalMonitorCompletedBarsFingerprintMemoHits,
+    misses: signalMonitorCompletedBarsFingerprintMemoMisses,
+  };
 }
 
 function evaluateSignalMonitorMatrixHeavyEvaluation(input: {
@@ -9336,6 +9395,9 @@ function resetSignalMonitorMatrixHeavyEvaluationCache() {
   signalMonitorIndicatorSnapshotBaseCache.clear();
   signalMonitorIndicatorSnapshotBaseCacheHits = 0;
   signalMonitorIndicatorSnapshotBaseCacheMisses = 0;
+  signalMonitorCompletedBarsFingerprintMemo = new WeakMap();
+  signalMonitorCompletedBarsFingerprintMemoHits = 0;
+  signalMonitorCompletedBarsFingerprintMemoMisses = 0;
   signalMonitorStreamCompletedBarsCache.clear();
   signalMonitorStreamCompletedBarsCacheHits = 0;
   signalMonitorStreamCompletedBarsCacheMisses = 0;
@@ -9368,7 +9430,7 @@ export function evaluateSignalMonitorMatrixStateFromCompletedBars(input: {
   const chartBarEntries = stableSignalMonitorPyrusBarEntries(
     barsToPyrusSignalsBarEntries(input.completedBars),
   );
-  const chartBars = chartBarEntries.map((entry) => entry.chartBar);
+  const chartBars = signalMonitorChartBarsFromPyrusBarEntries(chartBarEntries);
   const latestBar = chartBars.at(-1);
   const latestBarEntry = chartBarEntries.at(-1);
 
@@ -9889,7 +9951,7 @@ async function resolveSignalMonitorMatrixPythonStates(input: {
         timeframe: cell.timeframe,
         freshWindowBars: input.profile.freshWindowBars,
         settings,
-        bars: entries.map((entry) => entry.chartBar),
+        bars: signalMonitorChartBarsFromPyrusBarEntries(entries),
       };
     })
     .filter((cell): cell is NonNullable<typeof cell> => Boolean(cell));
@@ -10703,6 +10765,75 @@ function signalMonitorMatrixStreamStateKey(input: {
   return `${normalizeSymbol(input.symbol).toUpperCase()}:${input.timeframe}`;
 }
 
+function signalMonitorMatrixStreamSignatureFilterState(
+  state: SignalMonitorMatrixStreamState,
+) {
+  return (
+    signalMonitorFilterStateOrNull(
+      state.filterState ?? asRecord(state.indicatorSnapshot).filterState,
+    ) ?? null
+  );
+}
+
+function signalMonitorMatrixStreamSignatureDateMs(value: unknown) {
+  return dateOrNull(value)?.getTime() ?? null;
+}
+
+function signalMonitorMatrixStreamSignatureScalar(value: unknown) {
+  if (value == null) {
+    return null;
+  }
+  return typeof value === "number" && !Number.isFinite(value) ? null : value;
+}
+
+function signalMonitorMatrixStreamSignatureJsonEqual(
+  left: unknown,
+  right: unknown,
+) {
+  return left === right || JSON.stringify(left) === JSON.stringify(right);
+}
+
+function signalMonitorMatrixStreamStateSignatureFieldsEqual(
+  left: SignalMonitorMatrixStreamState,
+  right: SignalMonitorMatrixStreamState,
+) {
+  return (
+    normalizeSymbol(left.symbol).toUpperCase() ===
+      normalizeSymbol(right.symbol).toUpperCase() &&
+    left.timeframe === right.timeframe &&
+    signalMonitorMatrixStreamSignatureScalar(left.currentSignalDirection) ===
+      signalMonitorMatrixStreamSignatureScalar(right.currentSignalDirection) &&
+    signalMonitorMatrixStreamSignatureDateMs(left.currentSignalAt) ===
+      signalMonitorMatrixStreamSignatureDateMs(right.currentSignalAt) &&
+    signalMonitorMatrixStreamSignatureScalar(left.currentSignalPrice) ===
+      signalMonitorMatrixStreamSignatureScalar(right.currentSignalPrice) &&
+    signalMonitorMatrixStreamSignatureScalar(left.currentSignalClose) ===
+      signalMonitorMatrixStreamSignatureScalar(right.currentSignalClose) &&
+    signalMonitorMatrixStreamSignatureScalar(left.latestBarClose) ===
+      signalMonitorMatrixStreamSignatureScalar(right.latestBarClose) &&
+    signalMonitorMatrixStreamSignatureScalar(left.currentSignalMfePercent) ===
+      signalMonitorMatrixStreamSignatureScalar(right.currentSignalMfePercent) &&
+    signalMonitorMatrixStreamSignatureScalar(left.currentSignalMaePercent) ===
+      signalMonitorMatrixStreamSignatureScalar(right.currentSignalMaePercent) &&
+    signalMonitorMatrixStreamSignatureJsonEqual(
+      signalMonitorMatrixStreamSignatureFilterState(left),
+      signalMonitorMatrixStreamSignatureFilterState(right),
+    ) &&
+    signalMonitorMatrixStreamSignatureDateMs(left.latestBarAt) ===
+      signalMonitorMatrixStreamSignatureDateMs(right.latestBarAt) &&
+    signalMonitorMatrixStreamSignatureScalar(left.barsSinceSignal) ===
+      signalMonitorMatrixStreamSignatureScalar(right.barsSinceSignal) &&
+    Boolean(left.fresh) === Boolean(right.fresh) &&
+    left.status === right.status &&
+    signalMonitorMatrixStreamSignatureScalar(left.lastError) ===
+      signalMonitorMatrixStreamSignatureScalar(right.lastError) &&
+    signalMonitorMatrixStreamSignatureScalar(left.actionEligible) ===
+      signalMonitorMatrixStreamSignatureScalar(right.actionEligible) &&
+    signalMonitorMatrixStreamSignatureScalar(left.actionBlocker) ===
+      signalMonitorMatrixStreamSignatureScalar(right.actionBlocker)
+  );
+}
+
 function signalMonitorMatrixStreamStateSignature(
   state: SignalMonitorMatrixStreamState,
 ) {
@@ -10716,10 +10847,7 @@ function signalMonitorMatrixStreamStateSignature(
     latestBarClose: state.latestBarClose ?? null,
     currentSignalMfePercent: state.currentSignalMfePercent ?? null,
     currentSignalMaePercent: state.currentSignalMaePercent ?? null,
-    filterState:
-      signalMonitorFilterStateOrNull(
-        state.filterState ?? asRecord(state.indicatorSnapshot).filterState,
-      ) ?? null,
+    filterState: signalMonitorMatrixStreamSignatureFilterState(state),
     latestBarAt: dateOrNull(state.latestBarAt)?.toISOString() ?? null,
     barsSinceSignal: state.barsSinceSignal ?? null,
     fresh: Boolean(state.fresh),
@@ -10841,6 +10969,7 @@ function recordSignalMonitorMatrixStreamSnapshot(
       key,
       signalMonitorMatrixStreamStateSignature(state),
     );
+    subscriber.lastDisplayStates.set(key, state);
     subscriber.lastStates.set(key, state);
   });
 }
@@ -10853,11 +10982,23 @@ function changedSignalMonitorMatrixStreamStates<
 ) {
   return states.filter((state) => {
     const key = signalMonitorMatrixStreamStateKey(state);
+    const previousDisplayState = subscriber.lastDisplayStates.get(key);
+    if (
+      previousDisplayState &&
+      signalMonitorMatrixStreamStateSignatureFieldsEqual(
+        previousDisplayState,
+        state,
+      )
+    ) {
+      return false;
+    }
     const signature = signalMonitorMatrixStreamStateSignature(state);
     if (subscriber.lastStateSignatures.get(key) === signature) {
+      subscriber.lastDisplayStates.set(key, state);
       return false;
     }
     subscriber.lastStateSignatures.set(key, signature);
+    subscriber.lastDisplayStates.set(key, state);
     subscriber.lastStates.set(key, state);
     return true;
   });
@@ -11569,6 +11710,7 @@ function createSignalMonitorMatrixStreamSubscriptionForTests(input: {
     serverOwnedProducer: input.serverOwnedProducer === true,
     onEvent: input.onEvent,
     lastStateSignatures: new Map(),
+    lastDisplayStates: new Map(),
     lastPersistDirtyKeys: new Map(),
     lastStates: new Map(),
   };
@@ -14988,6 +15130,8 @@ export const __signalMonitorInternalsForTests = {
   selectStableSignalMonitorSignalEvent,
   applyStoredSignalDirectionLatch,
   signalMonitorMatrixStateFromPython,
+  signalMonitorMatrixStreamStateSignature,
+  signalMonitorMatrixStreamStateSignatureFieldsEqual,
   evaluateSignalMonitorMatrixStateFromStreamBars,
   isFreshSignalMonitorMatrixStreamState,
   normalizeSignalMonitorMatrixStreamScope,
@@ -15002,8 +15146,11 @@ export const __signalMonitorInternalsForTests = {
   evaluateSignalMonitorMatrixStateFromCompletedBars,
   getSignalMonitorMatrixHeavyEvaluationCacheStats,
   getSignalMonitorIndicatorSnapshotBaseCacheStats,
+  getSignalMonitorCompletedBarsFingerprintMemoStatsForTests,
+  fingerprintSignalMonitorMatrixCompletedBars,
   buildSignalMonitorIndicatorSnapshot,
   barsToPyrusSignalsBarEntries,
+  signalMonitorChartBarsFromPyrusBarEntries,
   isSignalMonitorCachedCompletedBarsBarBehind,
   lruCacheSet,
   lruCacheTouch,

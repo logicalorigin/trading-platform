@@ -15,8 +15,14 @@ import {
 const {
   getSignalMonitorMatrixHeavyEvaluationCacheStats: cacheStats,
   getSignalMonitorIndicatorSnapshotBaseCacheStats: baseStats,
+  getSignalMonitorCompletedBarsFingerprintMemoStatsForTests: fingerprintStats,
+  fingerprintSignalMonitorMatrixCompletedBars,
   buildSignalMonitorIndicatorSnapshot,
   barsToPyrusSignalsBarEntries,
+  stableSignalMonitorPyrusBarEntries,
+  signalMonitorChartBarsFromPyrusBarEntries,
+  signalMonitorMatrixStreamStateSignature,
+  signalMonitorMatrixStreamStateSignatureFieldsEqual,
   isSignalMonitorCachedCompletedBarsBarBehind,
   lruCacheSet,
   lruCacheTouch,
@@ -403,6 +409,89 @@ test("barsToPyrusSignalsBarEntries: frozen input bars + entries never mutated (i
   assert.ok(stable.length >= 0);
   // Re-request with the same frozen array => memo hit returns the same frozen reference.
   assert.strictEqual(barsToPyrusSignalsBarEntries(bars as never), entries);
+});
+
+test("completed-bars fingerprint memo: same chart-bars identity hits, same content on a new array stays correct", () => {
+  const bars = buildBars();
+  const entries = stableSignalMonitorPyrusBarEntries(
+    barsToPyrusSignalsBarEntries(bars as never),
+  );
+  const chartBars = signalMonitorChartBarsFromPyrusBarEntries(entries);
+  assert.strictEqual(
+    signalMonitorChartBarsFromPyrusBarEntries(entries),
+    chartBars,
+  );
+
+  const first = fingerprintSignalMonitorMatrixCompletedBars(chartBars);
+  const second = fingerprintSignalMonitorMatrixCompletedBars(chartBars);
+  assert.equal(second, first);
+  assert.deepEqual(fingerprintStats(), { hits: 1, misses: 1 });
+
+  const sameContent = chartOf(
+    stableSignalMonitorPyrusBarEntries(
+      barsToPyrusSignalsBarEntries(buildBars() as never),
+    ),
+  );
+  assert.notStrictEqual(sameContent, chartBars);
+  assert.equal(fingerprintSignalMonitorMatrixCompletedBars(sameContent), first);
+  assert.deepEqual(fingerprintStats(), { hits: 1, misses: 2 });
+});
+
+test("matrix evaluation reuses completed-bars identity through fingerprint memo", () => {
+  const profile = makeProfile({});
+  const bars = buildBars();
+
+  evalAt("2026-06-09T15:00:00.000Z", profile, bars);
+  assert.deepEqual(fingerprintStats(), { hits: 0, misses: 1 });
+
+  evalAt("2026-06-09T15:00:00.000Z", profile, bars);
+  assert.deepEqual(fingerprintStats(), { hits: 1, misses: 1 });
+});
+
+test("matrix stream signatures change only when signature fields change", () => {
+  const state = {
+    id: "profile-test:AAPL:5m",
+    profileId: "profile-test",
+    symbol: "aapl",
+    timeframe: "5m",
+    currentSignalDirection: "buy",
+    currentSignalAt: new Date("2026-06-09T14:55:00.000Z"),
+    currentSignalPrice: 100,
+    currentSignalClose: 101,
+    currentSignalMfePercent: 1.25,
+    currentSignalMaePercent: -0.5,
+    latestBarAt: new Date("2026-06-09T15:00:00.000Z"),
+    latestBarClose: 102,
+    barsSinceSignal: 1,
+    fresh: true,
+    status: "ok",
+    active: true,
+    lastEvaluatedAt: new Date("2026-06-09T15:00:00.000Z"),
+    lastError: null,
+    filterState: { pass: true },
+    indicatorSnapshot: null,
+    actionEligible: true,
+    actionBlocker: null,
+  } as any;
+  const unchanged = { ...state } as any;
+  const changed = { ...state, latestBarClose: 103 } as any;
+
+  assert.equal(
+    signalMonitorMatrixStreamStateSignature(unchanged),
+    signalMonitorMatrixStreamStateSignature(state),
+  );
+  assert.equal(
+    signalMonitorMatrixStreamStateSignatureFieldsEqual(state, unchanged),
+    true,
+  );
+  assert.notEqual(
+    signalMonitorMatrixStreamStateSignature(changed),
+    signalMonitorMatrixStreamStateSignature(state),
+  );
+  assert.equal(
+    signalMonitorMatrixStreamStateSignatureFieldsEqual(state, changed),
+    false,
+  );
 });
 
 // Serve-side freshness guard for the re-enabled completed-bars cache: a cached snapshot
