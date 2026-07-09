@@ -734,7 +734,7 @@ const BARS_BATCH_CONCURRENCY = 6;
 const BARS_BATCH_SPARKLINE_DEFAULT_POINT_LIMIT = 40;
 const BARS_BATCH_SPARKLINE_MAX_POINT_LIMIT = 240;
 const SPARKLINE_SEED_MAX_SYMBOLS = 600;
-const SPARKLINE_SEED_DB_BATCH_SIZE = 4;
+const SPARKLINE_SEED_DB_BATCH_SIZE = 64;
 // Sparkline seeding is background hydration. Runtime evidence
 // after the rebuild showed 31-32 symbol historical backfill chunks taking
 // 10s+ under contention; letting client and server concurrency compose into
@@ -1279,6 +1279,7 @@ function parseBarsBatchRecord(record: Record<string, unknown>, index: number) {
       [
         "outsideRth",
         "allowHistoricalSynthesis",
+        "requireFreshHistorical",
         "allowStudyFallback",
         "preferCursor",
       ],
@@ -2413,6 +2414,7 @@ router.get("/bars", async (req, res) => {
       [
         "outsideRth",
         "allowHistoricalSynthesis",
+        "requireFreshHistorical",
         "allowStudyFallback",
         "preferCursor",
       ],

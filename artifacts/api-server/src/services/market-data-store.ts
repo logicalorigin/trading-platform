@@ -69,6 +69,7 @@ export type MarketDataStoreBarInput = {
   close: number;
   volume: number;
 };
+export type PersistMarketDataBarsResult = boolean | "skipped";
 
 const DEFAULT_RECENT_WINDOW_MINUTES = 60;
 // Chunk bar_cache upserts to the Postgres bind-parameter ceiling: each row binds
@@ -462,14 +463,17 @@ async function ensureStoreInstrument(input: {
   return (await ensureStoreInstruments([input])).get(symbol) ?? null;
 }
 
-const handleStoreError = (error: unknown, operation: string): void => {
+const handleStoreError = (
+  error: unknown,
+  operation: string,
+): "skipped" | "failed" => {
   // Pool-acquire timeouts mean "all connections are busy right now" (e.g. the
   // cold-start read burst), not "the store is broken" — backing off here would
   // bypass the cache during the exact window the pool is saturated, so we let the
   // next call retry immediately. Every other error opens a short, self-healing
   // backoff instead of the old permanent disable.
   if (isPoolContentionError(error)) {
-    return;
+    return "skipped";
   }
   marketDataStoreBackoff.markFailure({
     error,
@@ -477,10 +481,13 @@ const handleStoreError = (error: unknown, operation: string): void => {
     message: `durable market data store temporarily unavailable (${operation}); serving provider fallback`,
     nowMs: Date.now(),
   });
+  return "failed";
 };
 
-export function __handleMarketDataStoreErrorForTests(error: unknown): void {
-  handleStoreError(error, "test");
+export function __handleMarketDataStoreErrorForTests(
+  error: unknown,
+): "skipped" | "failed" {
+  return handleStoreError(error, "test");
 }
 
 export async function loadStoredMarketBars(
@@ -1003,8 +1010,14 @@ export async function persistMarketDataBars(input: {
   request: MarketDataStoreRequest;
   sourceName: string;
   bars: MarketDataStoreBarInput[];
-}): Promise<boolean> {
-  if (!input.bars.length || !shouldUseDurableMarketDataStore(input.request)) {
+}): Promise<PersistMarketDataBarsResult> {
+  if (!input.bars.length) {
+    return false;
+  }
+  if (marketDataStoreBackoff.isActive(Date.now())) {
+    return "skipped";
+  }
+  if (!shouldUseDurableMarketDataStore(input.request)) {
     return false;
   }
 
@@ -1093,8 +1106,9 @@ export async function persistMarketDataBars(input: {
     marketDataStoreBackoff.clear();
     return true;
   } catch (error) {
-    handleStoreError(error, "persistMarketDataBars");
-    return false;
+    return handleStoreError(error, "persistMarketDataBars") === "skipped"
+      ? "skipped"
+      : false;
   }
 }
 

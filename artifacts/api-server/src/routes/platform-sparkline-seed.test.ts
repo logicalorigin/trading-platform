@@ -53,7 +53,7 @@ test("sparkline seed uses one bounded DB backfill path for cache misses", () => 
   const loader = sparklineSeedLoaderSource();
 
   assert.match(loader, /if \(misses\.length\) \{/);
-  assert.match(source, /const SPARKLINE_SEED_DB_BATCH_SIZE = 4;/);
+  assert.match(source, /const SPARKLINE_SEED_DB_BATCH_SIZE = 64;/);
   assert.match(loader, /SPARKLINE_SEED_DB_CONCURRENCY/);
   assert.match(loader, /runSparklineSeedDbBackfill\(\(\) =>\s*loadStoredMarketBarsBySymbol/);
   assert.match(
@@ -62,6 +62,24 @@ test("sparkline seed uses one bounded DB backfill path for cache misses", () => 
   );
   assert.doesNotMatch(source, /shouldSkipSparklineSeedDbBackfillForPressure/);
   assert.doesNotMatch(source, /snapshot\.inputs\.dbPoolWaiting/);
+});
+
+test("sparkline seed DB batch size turns 96 symbols into 2 chunks", () => {
+  const match = source.match(/const SPARKLINE_SEED_DB_BATCH_SIZE = (\d+);/);
+  assert.ok(match, "Missing SPARKLINE_SEED_DB_BATCH_SIZE");
+  const batchSize = Number(match[1]);
+  const symbols = Array.from({ length: 96 }, (_unused, index) => `S${index}`);
+  const chunks: string[][] = [];
+  for (let index = 0; index < symbols.length; index += batchSize) {
+    chunks.push(symbols.slice(index, index + batchSize));
+  }
+
+  assert.equal(batchSize, 64);
+  assert.equal(chunks.length, 2);
+  assert.deepEqual(
+    chunks.map((chunk) => chunk.length),
+    [64, 32],
+  );
 });
 
 test("sparkline seed returns live misses while scheduling historical backfill", () => {
@@ -78,7 +96,9 @@ test("sparkline seed returns live misses while scheduling historical backfill", 
 
 test("runtime diagnostics route supports compact polling", () => {
   const start = source.indexOf('router.get("/diagnostics/runtime"');
-  const end = source.indexOf('router.get("/diagnostics/ibkr-perf"', start);
+  // Bound by the next route registration (the old "/diagnostics/ibkr-perf"
+  // end marker was retired with the legacy IBKR bridge surfaces).
+  const end = source.indexOf("router.get(", start + 1);
   assert.notEqual(start, -1, "Missing runtime diagnostics route");
   assert.notEqual(end, -1, "Missing runtime diagnostics route end marker");
   const route = source.slice(start, end);

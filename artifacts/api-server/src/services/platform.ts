@@ -8338,6 +8338,7 @@ type GetBarsInput = {
   outsideRth?: boolean;
   source?: "trades" | "midpoint" | "bid_ask";
   allowHistoricalSynthesis?: boolean;
+  requireFreshHistorical?: boolean;
   allowStudyFallback?: boolean;
   brokerRecentWindowMinutes?: number | null;
 };
@@ -8520,6 +8521,7 @@ const OPTION_BAR_LIMIT_CAPS_BY_TIMEFRAME: Partial<
   "1year": 100,
 };
 const DEFAULT_BARS_LIMIT = 200;
+const REQUIRED_FRESH_HISTORICAL_MAX_GAP_MS = 4 * 24 * 60 * 60 * 1_000;
 const BROKER_RECENT_HISTORY_MS = 60 * 60 * 1_000;
 const BROKER_HISTORY_STEP_MS: Partial<
   Record<GetBarsInput["timeframe"], number>
@@ -9053,11 +9055,19 @@ const barsHydrationCounters = {
   synthesisCacheBypassed: 0,
 };
 const BARS_BACKGROUND_PERSIST_CONCURRENCY_MAX = 4;
+const BARS_BACKGROUND_PERSIST_QUEUE_MAX_ENTRIES = 512;
 type BarsBackgroundPersistInput = Parameters<typeof persistMarketDataBars>[0];
+type BarsBackgroundPersistOutcome = Awaited<
+  ReturnType<typeof persistMarketDataBars>
+>;
 type BarsBackgroundPersistWorker = (
   input: BarsBackgroundPersistInput,
-) => Promise<boolean>;
-const barsBackgroundPersistQueue: BarsBackgroundPersistInput[] = [];
+) => Promise<BarsBackgroundPersistOutcome>;
+type BarsBackgroundPersistQueueEntry = {
+  key: string;
+  input: BarsBackgroundPersistInput;
+};
+const barsBackgroundPersistQueue: BarsBackgroundPersistQueueEntry[] = [];
 const barsBackgroundPersistIdleResolvers = new Set<() => void>();
 let barsBackgroundPersistWorker: BarsBackgroundPersistWorker =
   persistMarketDataBars;
@@ -9065,6 +9075,9 @@ let barsBackgroundPersistActive = 0;
 let barsBackgroundPersistEnqueued = 0;
 let barsBackgroundPersistCompleted = 0;
 let barsBackgroundPersistFailed = 0;
+let barsBackgroundPersistSkipped = 0;
+let barsBackgroundPersistCoalesced = 0;
+let barsBackgroundPersistDropped = 0;
 let barsBackgroundPersistMaxQueueLength = 0;
 
 function barsBackgroundPersistConcurrency(): number {
@@ -9072,7 +9085,12 @@ function barsBackgroundPersistConcurrency(): number {
     1,
     Math.min(
       BARS_BACKGROUND_PERSIST_CONCURRENCY_MAX,
-      readPositiveIntegerEnv("BARS_BACKGROUND_PERSIST_CONCURRENCY", 1),
+      // ponytail: default 3 (was 1). A single writer drained ~1.5 bars/s against
+      // the saturated pool, so the queue pinned at its cap and shift()-dropped
+      // closed bars with no retry — they never landed in bar_cache, so every
+      // read re-gap-filled forever. 3 (<= the cap of 4, <=3 of 12 pool conns)
+      // lets closed bars land; env-tune BARS_BACKGROUND_PERSIST_CONCURRENCY.
+      readPositiveIntegerEnv("BARS_BACKGROUND_PERSIST_CONCURRENCY", 3),
     ),
   );
 }
@@ -9093,12 +9111,14 @@ function drainBarsBackgroundPersistQueue(): void {
     barsBackgroundPersistActive < concurrency &&
     barsBackgroundPersistQueue.length > 0
   ) {
-    const input = barsBackgroundPersistQueue.shift()!;
+    const { input } = barsBackgroundPersistQueue.shift()!;
     barsBackgroundPersistActive += 1;
     void barsBackgroundPersistWorker(input)
       .then((ok) => {
-        if (ok) {
+        if (ok === true) {
           barsBackgroundPersistCompleted += 1;
+        } else if (ok === "skipped") {
+          barsBackgroundPersistSkipped += 1;
         } else {
           barsBackgroundPersistFailed += 1;
         }
@@ -9116,9 +9136,38 @@ function drainBarsBackgroundPersistQueue(): void {
   resolveBarsBackgroundPersistIdle();
 }
 
+function barsBackgroundPersistWindowKey(input: BarsBackgroundPersistInput): string {
+  const request = input.request;
+  return [
+    request.symbol.trim().toUpperCase(),
+    request.timeframe,
+    input.sourceName,
+    request.from?.getTime() ?? "",
+    request.to?.getTime() ?? "",
+    request.limit ?? "",
+  ].join("|");
+}
+
 function queueBarsBackgroundPersist(input: BarsBackgroundPersistInput): void {
   barsBackgroundPersistEnqueued += 1;
-  barsBackgroundPersistQueue.push(input);
+  const key = barsBackgroundPersistWindowKey(input);
+  const existingIndex = barsBackgroundPersistQueue.findIndex(
+    (entry) => entry.key === key,
+  );
+  if (existingIndex >= 0) {
+    barsBackgroundPersistQueue[existingIndex] = { key, input };
+    barsBackgroundPersistCoalesced += 1;
+    drainBarsBackgroundPersistQueue();
+    return;
+  }
+  while (
+    barsBackgroundPersistQueue.length >=
+    BARS_BACKGROUND_PERSIST_QUEUE_MAX_ENTRIES
+  ) {
+    barsBackgroundPersistQueue.shift();
+    barsBackgroundPersistDropped += 1;
+  }
+  barsBackgroundPersistQueue.push({ key, input });
   barsBackgroundPersistMaxQueueLength = Math.max(
     barsBackgroundPersistMaxQueueLength,
     barsBackgroundPersistQueue.length,
@@ -9134,6 +9183,9 @@ function getBarsBackgroundPersistDiagnostics() {
     enqueued: barsBackgroundPersistEnqueued,
     completed: barsBackgroundPersistCompleted,
     failed: barsBackgroundPersistFailed,
+    skipped: barsBackgroundPersistSkipped,
+    coalesced: barsBackgroundPersistCoalesced,
+    dropped: barsBackgroundPersistDropped,
     maxQueueLength: barsBackgroundPersistMaxQueueLength,
   };
 }
@@ -9230,6 +9282,7 @@ function buildBarsCacheKey(input: GetBarsInput): string {
     outsideRth: input.outsideRth ?? null,
     source: input.source ?? null,
     allowHistoricalSynthesis: input.allowHistoricalSynthesis ?? null,
+    requireFreshHistorical: input.requireFreshHistorical ?? null,
     allowStudyFallback: input.allowStudyFallback ?? null,
     brokerRecentWindowMinutes: input.brokerRecentWindowMinutes ?? null,
   });
@@ -9246,7 +9299,20 @@ function buildBarsScopeKey(input: GetBarsInput): string {
     providerContractId: input.providerContractId ?? null,
     outsideRth: input.outsideRth ?? null,
     source: input.source ?? null,
-    allowHistoricalSynthesis: input.allowHistoricalSynthesis ?? null,
+    // Normalized to the boolean the fetch path actually branches on
+    // (everywhere it is only ever tested as `!== false`), so true/undefined
+    // requests share one scope instead of fragmenting into two. The
+    // synthesis=false mode stays a separate scope on purpose: allowSyn also
+    // changes the BROKER fetch window (shouldLimitBrokerHistoryToRecent), so
+    // even an all-broker-bars allowSyn=true entry may cover a narrower broker
+    // range than an allowSyn=false fetch would return, and
+    // isHistoricalSynthesisBar is a delayed-bar heuristic that cannot prove a
+    // cached row set matches a broker-only fetch. Not provably safe → not shared.
+    allowHistoricalSynthesis: input.allowHistoricalSynthesis !== false,
+    // requireFreshHistorical is intentionally NOT part of the scope: a
+    // fresh-historical fetch runs the identical pipeline, so its result can
+    // serve non-fresh requests. The one unsafe direction (fresh request
+    // served by a non-fresh entry) is rejected in the reuse lookups below.
     allowStudyFallback: input.allowStudyFallback ?? null,
     brokerRecentWindowMinutes: input.brokerRecentWindowMinutes ?? null,
   });
@@ -9656,6 +9722,39 @@ function shouldServeBarsCacheEntry(
   return false;
 }
 
+function isRequiredFreshHistoricalResponseIncomplete(
+  requestInput: GetBarsInput,
+  value: GetBarsResult,
+): boolean {
+  if (
+    requestInput.requireFreshHistorical !== true ||
+    requestInput.allowHistoricalSynthesis === false ||
+    !requestInput.from ||
+    !requestInput.to
+  ) {
+    return false;
+  }
+
+  const hydrationStatus = value.historyPage?.hydrationStatus;
+  if (
+    hydrationStatus !== "cold" &&
+    hydrationStatus !== "partial" &&
+    hydrationStatus !== "warming"
+  ) {
+    return false;
+  }
+
+  const newestBarAt = value.historyPage?.newestBarAt ?? null;
+  if (!newestBarAt) {
+    return true;
+  }
+
+  return (
+    requestInput.to.getTime() - newestBarAt.getTime() >
+    REQUIRED_FRESH_HISTORICAL_MAX_GAP_MS
+  );
+}
+
 function findReusableCachedBarsEntry(
   input: GetBarsInput,
   now: number,
@@ -9687,6 +9786,14 @@ function findReusableCachedBarsEntry(
     // making the lookup O(cacheSize * barsPerEntry); now it runs once, on the
     // single matching entry.
     if (entry.scopeKey !== scopeKey) {
+      continue;
+    }
+
+    // Fresh-historical entries serve non-fresh requests, never vice versa.
+    if (
+      input.requireFreshHistorical === true &&
+      entry.input.requireFreshHistorical !== true
+    ) {
       continue;
     }
 
@@ -9735,6 +9842,14 @@ function findReusableBarsInFlight(
     }
 
     if (buildBarsScopeKey(entry.input) !== scopeKey) {
+      continue;
+    }
+
+    // Fresh-historical entries serve non-fresh requests, never vice versa.
+    if (
+      input.requireFreshHistorical === true &&
+      entry.input.requireFreshHistorical !== true
+    ) {
       continue;
     }
 
@@ -9881,6 +9996,8 @@ export async function getBarsWithDebug(
   const key = buildBarsCacheKey(sanitizedInput);
   const requestedAt = Date.now();
   const dedupeEnabled = isChartHydrationDedupeEnabled();
+  const requireFreshHistorical =
+    sanitizedInput.requireFreshHistorical === true;
   const debugContext = {
     family: normalizeBarsRequestFamily(options.family),
     priority:
@@ -9903,12 +10020,14 @@ export async function getBarsWithDebug(
     });
   }
 
-  const reusableCached = findReusableCachedBarsEntry(
-    sanitizedInput,
-    requestedAt,
-    false,
-    { priority: options.priority },
-  );
+  const reusableCached = requireFreshHistorical
+    ? null
+    : findReusableCachedBarsEntry(
+        sanitizedInput,
+        requestedAt,
+        false,
+        { priority: options.priority },
+      );
 
   if (reusableCached) {
     barsHydrationCounters.cacheHit += 1;
@@ -9924,7 +10043,8 @@ export async function getBarsWithDebug(
 
   const cached = barsCache.get(key);
   const freshCachedServeable = Boolean(
-    cached?.expiresAt &&
+    !requireFreshHistorical &&
+      cached?.expiresAt &&
       cached.expiresAt > requestedAt &&
       shouldServeBarsCacheEntry(sanitizedInput, cached.value, {
         priority: options.priority,
@@ -9954,12 +10074,14 @@ export async function getBarsWithDebug(
     barsHydrationCounters.synthesisCacheBypassed += 1;
   }
 
-  const reusableStale = findReusableCachedBarsEntry(
-    sanitizedInput,
-    requestedAt,
-    true,
-    { priority: options.priority },
-  );
+  const reusableStale = requireFreshHistorical
+    ? null
+    : findReusableCachedBarsEntry(
+        sanitizedInput,
+        requestedAt,
+        true,
+        { priority: options.priority },
+      );
   if (reusableStale) {
     barsHydrationCounters.cacheHit += 1;
     barsHydrationCounters.staleServed += 1;
@@ -10057,7 +10179,8 @@ function refreshBarsCache(
       const settledAt = Date.now();
       if (
         startedInvalidationVersion === barsCacheInvalidationVersion &&
-        value.emptyReason !== "broker-history-error"
+        value.emptyReason !== "broker-history-error" &&
+        !isRequiredFreshHistoricalResponseIncomplete(input, value)
       ) {
         const ttlMs = barsCacheTtlMsForInput(input, settledAt);
         barsCache.set(key, {
@@ -10737,7 +10860,6 @@ async function getBaseBarsImpl(
       historicalSynthesisAvailable,
     },
   );
-  const ibkrBars: BrokerBarSnapshot[] = [];
   let attemptedBrokerHistory = false;
   let brokerHistoryError: unknown = null;
   const storedHistoricalBars = allowHistoricalSynthesis
@@ -10765,12 +10887,12 @@ async function getBaseBarsImpl(
             createAbortError: createBarsRequestAbortedError,
           },
         ),
-        ibkrBars,
+        [],
       )
     : [];
   throwIfBarsSignalAborted(options.signal);
   const desiredBars = Math.max(
-    input.limit ?? ibkrBars.length + storedHistoricalBars.length,
+    input.limit ?? storedHistoricalBars.length,
     1,
   );
   const coverageNow = new Date();
@@ -10778,7 +10900,7 @@ async function getBaseBarsImpl(
     shouldFetchHistoricalSynthesisForRecentCoverage({
       request: input,
       storedHistoricalBars,
-      brokerBars: ibkrBars,
+      brokerBars: [],
       now: coverageNow,
       enabled:
         allowHistoricalSynthesis &&
@@ -10804,7 +10926,7 @@ async function getBaseBarsImpl(
   );
   const needsGapFill =
     historicalProviderAvailable &&
-    (storedHistoricalBars.length + ibkrBars.length < desiredBars ||
+    (storedHistoricalBars.length < desiredBars ||
       recentCoverageNeedsGapFill);
   const needsProviderHistoryFetch =
     historicalProviderAvailable &&
@@ -10813,7 +10935,7 @@ async function getBaseBarsImpl(
       chartBackfillRequest ||
       providerCursorContinuationRequested);
 
-  let bars = [...storedHistoricalBars, ...ibkrBars];
+  let bars = [...storedHistoricalBars];
   let gapFilled = false;
   let massiveBarsPage: MassiveAggregateBarsPage | null = null;
   let massiveCursorExhausted = false;
@@ -11097,27 +11219,6 @@ type IbkrOptionExpirationDates = Awaited<
 >;
 type OptionChainStrikeCoverage = "fast" | "standard" | "full";
 type OptionChainQuoteHydration = "metadata" | "snapshot";
-
-function shouldYieldOptionChainBatchForPressure(): boolean {
-  const snapshot = getApiResourcePressureSnapshot();
-  if (snapshot.hardResourceLevel !== "normal") {
-    return true;
-  }
-
-  const waiting = snapshot.inputs.dbPoolWaiting ?? 0;
-  if (waiting > 0) {
-    return true;
-  }
-
-  const active = snapshot.inputs.dbPoolActive;
-  const max = snapshot.inputs.dbPoolMax;
-  return (
-    typeof active === "number" &&
-    typeof max === "number" &&
-    max > 0 &&
-    active >= max
-  );
-}
 
 function readPositiveIntegerEnv(name: string, fallback: number): number {
   const raw = process.env[name];
@@ -13933,6 +14034,9 @@ export function __resetOptionChainCachesForTests(input?: {
   barsBackgroundPersistEnqueued = 0;
   barsBackgroundPersistCompleted = 0;
   barsBackgroundPersistFailed = 0;
+  barsBackgroundPersistSkipped = 0;
+  barsBackgroundPersistCoalesced = 0;
+  barsBackgroundPersistDropped = 0;
   barsBackgroundPersistMaxQueueLength = 0;
   barsCacheInvalidationVersion = 0;
   chartHistoryCursors.clear();
@@ -16158,30 +16262,10 @@ export async function batchOptionChains(input: {
     contracts: IbkrOptionChainContracts;
     debug: RequestDebugMetadata;
     error: string | null;
-    pressureDeferred?: boolean;
   };
-  const buildPressureDeferredBatchResult = (
-    expirationDate: Date,
-  ): BatchOptionChainFetchResult => ({
-    expirationDate,
-    contracts: [],
-    error: null,
-    pressureDeferred: true,
-    debug: {
-      cacheStatus: "miss",
-      totalMs: Math.max(0, Date.now() - requestedAt),
-      upstreamMs: null,
-      degraded: true,
-      reason: "options_batch_deferred_pressure",
-    },
-  });
   const fetchBatchExpiration = async (
     expirationDate: Date,
   ): Promise<BatchOptionChainFetchResult> => {
-    if (shouldYieldOptionChainBatchForPressure()) {
-      return buildPressureDeferredBatchResult(expirationDate);
-    }
-
     try {
       throwIfOptionRequestAborted(input.signal);
       const { contracts, debug } = await getCachedIbkrOptionChainWithDebug({
@@ -16229,16 +16313,6 @@ export async function batchOptionChains(input: {
   const finalizeBatchResult = (
     entry: BatchOptionChainFetchResult,
   ): BatchOptionChainResult => {
-    if (entry.pressureDeferred) {
-      return {
-        expirationDate: entry.expirationDate,
-        status: "empty",
-        contracts: [],
-        error: null,
-        debug: entry.debug,
-      };
-    }
-
     if (entry.error) {
       return {
         expirationDate: entry.expirationDate,
@@ -16285,27 +16359,16 @@ export async function batchOptionChains(input: {
   );
 
   for (const entry of fetchResults) {
-    if (entry.error || entry.pressureDeferred || entry.contracts.length > 0) {
+    if (entry.error || entry.contracts.length > 0) {
       continue;
     }
     for (const delayMs of input.emptyRetryDelaysMs ?? OPTION_CHAIN_EMPTY_RETRY_DELAYS_MS) {
-      if (shouldYieldOptionChainBatchForPressure()) {
-        const pressureDeferred = buildPressureDeferredBatchResult(
-          entry.expirationDate,
-        );
-        entry.contracts = pressureDeferred.contracts;
-        entry.debug = pressureDeferred.debug;
-        entry.error = pressureDeferred.error;
-        entry.pressureDeferred = true;
-        break;
-      }
       await waitForOptionChainRetry(delayMs, input.signal);
       const retry = await fetchBatchExpiration(entry.expirationDate);
       entry.contracts = retry.contracts;
       entry.debug = retry.debug;
       entry.error = retry.error;
-      entry.pressureDeferred = retry.pressureDeferred;
-      if (entry.error || entry.pressureDeferred || entry.contracts.length > 0) {
+      if (entry.error || entry.contracts.length > 0) {
         break;
       }
     }
