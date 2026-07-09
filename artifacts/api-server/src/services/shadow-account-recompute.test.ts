@@ -12,6 +12,7 @@ import {
 import { createTestDb, type TestDatabase } from "@workspace/db/testing";
 
 import {
+  invalidateShadowLedgerAnalyticsOrderClassification,
   recomputeShadowAccountFromLedger,
   SHADOW_ACCOUNT_ID,
 } from "./shadow-account";
@@ -125,6 +126,66 @@ test("empty ledger -> startingBalance, zero pnl/fees", async () => {
   assert.equal(Number(account.cash), START);
   assert.equal(Number(account.realizedPnl), 0);
   assert.equal(Number(account.fees), 0);
+});
+
+test("memo-warm recompute stays correct across repeats and picks up new orders", async () => {
+  const first = await seedOrder({ source: "manual" });
+  await seedFill(first, { cashDelta: "-100", realizedPnl: "10", fees: "1" });
+
+  // First pass classifies + memoizes; second pass must produce identical
+  // totals while serving the classification from the memo.
+  for (let i = 0; i < 2; i += 1) {
+    await db.transaction(async (tx) => {
+      await recomputeShadowAccountFromLedger(tx, new Date());
+    });
+    const account = await readAccount();
+    assert.equal(Number(account.cash), START - 100);
+    assert.equal(Number(account.realizedPnl), 10);
+  }
+
+  // A brand-new order (memo-unknown) must be fetched and included, and a new
+  // forward-test order must be fetched and EXCLUDED.
+  const second = await seedOrder({ source: "manual" });
+  await seedFill(second, { cashDelta: "50", realizedPnl: "5", fees: "0.5" });
+  const forwardTest = await seedOrder({
+    source: "manual",
+    payload: { forwardTest: true },
+  });
+  await seedFill(forwardTest, { cashDelta: "7777", realizedPnl: "6666", fees: "55" });
+
+  await db.transaction(async (tx) => {
+    await recomputeShadowAccountFromLedger(tx, new Date());
+  });
+  const account = await readAccount();
+  assert.equal(Number(account.cash), START - 100 + 50);
+  assert.equal(Number(account.realizedPnl), 15);
+  assert.equal(Number(account.fees), 1.5);
+});
+
+test("classification-input update + invalidation flips qualification on the next recompute", async () => {
+  // Starts qualifying (counts toward totals)...
+  const order = await seedOrder({ source: "manual" });
+  await seedFill(order, { cashDelta: "-200", realizedPnl: "20", fees: "2" });
+  await db.transaction(async (tx) => {
+    await recomputeShadowAccountFromLedger(tx, new Date());
+  });
+  assert.equal(Number((await readAccount()).realizedPnl), 20);
+
+  // ...then a classification input changes (the placeShadowOrder dedup-update
+  // path rewrites clientOrderId/source and invalidates the memo entry).
+  await db
+    .update(shadowOrdersTable)
+    .set({ clientOrderId: "shadow-equity-forward-x" })
+    .where(eq(shadowOrdersTable.id, order));
+  invalidateShadowLedgerAnalyticsOrderClassification(order);
+
+  await db.transaction(async (tx) => {
+    await recomputeShadowAccountFromLedger(tx, new Date());
+  });
+  const account = await readAccount();
+  // Forward-test orders are excluded — totals fall back to the empty ledger.
+  assert.equal(Number(account.cash), START);
+  assert.equal(Number(account.realizedPnl), 0);
 });
 
 test("a NULL-free realizedPnl set and all-qualifying ledger sums every fill", async () => {

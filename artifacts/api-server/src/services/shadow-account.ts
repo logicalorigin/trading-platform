@@ -1739,7 +1739,9 @@ function isLiveShadowOrder(order?: ShadowOrderRow | null): boolean {
   );
 }
 
-function isDefaultShadowLedgerAnalyticsOrder(order?: ShadowOrderRow | null): boolean {
+function isDefaultShadowLedgerAnalyticsOrder(
+  order?: Pick<ShadowOrderRow, "source" | "clientOrderId" | "payload"> | null,
+): boolean {
   if (!order || isForwardTestShadowOrder(order)) {
     return false;
   }
@@ -1748,6 +1750,25 @@ function isDefaultShadowLedgerAnalyticsOrder(order?: ShadowOrderRow | null): boo
     effectiveSource === SIGNAL_OPTIONS_REPLAY_SOURCE ||
     !isSimulationShadowOrderSource(effectiveSource)
   );
+}
+
+// Per-order analytics-classification memo for recomputeShadowAccountFromLedger.
+// The recompute runs once per automation execution event inside the held write
+// transaction; without the memo it re-materialized EVERY historical order's
+// ~4KB jsonb payload on every event (1,894 orders ≈ 8.8MB per event, measured
+// 2026-07-09 — the top-4 pool consumer in the slow-query firehose) purely to
+// re-derive a boolean. The classification inputs (source, clientOrderId,
+// payload) only change at placeShadowOrder's source-conflict dedup update,
+// which invalidates below; order ids are UUIDs and never reused. Bounded FIFO.
+const shadowLedgerAnalyticsOrderMemo = new Map<string, boolean>();
+const SHADOW_LEDGER_ANALYTICS_MEMO_MAX = 65_536;
+let shadowLedgerAnalyticsMemoGeneration = 0;
+
+export function invalidateShadowLedgerAnalyticsOrderClassification(
+  orderId: string,
+): void {
+  shadowLedgerAnalyticsMemoGeneration += 1;
+  shadowLedgerAnalyticsOrderMemo.delete(orderId);
 }
 
 function shadowOrderMatchesSource(order: ShadowOrderRow | undefined, source: string) {
@@ -4608,6 +4629,9 @@ export async function placeShadowOrder(input: ShadowOrderInput) {
           })
           .where(eq(shadowOrdersTable.id, existing.id))
           .returning();
+        // source/clientOrderId are analytics-classification inputs — drop the
+        // memoized verdict so the next recompute re-reads this order.
+        invalidateShadowLedgerAnalyticsOrderClassification(existing.id);
         invalidateShadowFreshStateCache();
         notifyShadowAccountChanged();
         return orderRowToResponse(updated);
@@ -9559,13 +9583,23 @@ export async function getShadowAccountPositions(input: {
                     : null,
                 }
               : quoteDayChange;
+          // Same-day positions use the live-mark unrealized P&L (their day change IS
+          // the full move since entry). Prior-day positions MUST use the accurate
+          // baseline-mark day change (storedDayChange, from real captured prior-day-close
+          // marks); the option quote's own day change is unreliable (option
+          // prevClose/change is frequently 0/absent) and previously overrode a correct
+          // baseline with $0. quoteDayChange stays a fallback only when there is no
+          // stored baseline at all.
           const dayChange =
-            pricing.valuationEligible && valuationDayChange?.dayChange != null
+            sameDayPosition &&
+            pricing.valuationEligible &&
+            valuationDayChange?.dayChange != null
               ? valuationDayChange
-              : storedDayChange.dayChange == null &&
-                  quoteDayChange?.dayChange != null
-                ? quoteDayChange
-                : storedDayChange;
+              : storedDayChange.dayChange != null
+                ? storedDayChange
+                : quoteDayChange?.dayChange != null
+                  ? quoteDayChange
+                  : storedDayChange;
           const attribution = buildPositionSourceAttribution(position, orders);
           const optionQuoteSnapshot =
             displayOptionQuote && responseProviderContractId
@@ -14229,15 +14263,52 @@ export async function recomputeShadowAccountFromLedger(
     .from(shadowFillsTable)
     .where(eq(shadowFillsTable.accountId, currentShadowAccountId()));
   const orderIds = orderIdRows.map((row) => row.orderId);
-  const orders = orderIds.length
-    ? await tx
-        .select()
-        .from(shadowOrdersTable)
-        .where(inArray(shadowOrdersTable.id, orderIds))
-    : [];
-  const ledgerOrderIds = orders
-    .filter((order) => isDefaultShadowLedgerAnalyticsOrder(order))
-    .map((order) => order.id);
+  // Memoized classification: fetch only orders not yet classified, and only
+  // the three columns the classifier reads. Steady state is one new small row
+  // per event instead of the whole order history's jsonb payloads (see memo
+  // comment at shadowLedgerAnalyticsOrderMemo).
+  const generationAtFetch = shadowLedgerAnalyticsMemoGeneration;
+  const unknownOrderIds = orderIds.filter(
+    (orderId) => !shadowLedgerAnalyticsOrderMemo.has(orderId),
+  );
+  const freshClassifications = new Map<string, boolean>();
+  if (unknownOrderIds.length) {
+    const rows = await tx
+      .select({
+        id: shadowOrdersTable.id,
+        source: shadowOrdersTable.source,
+        clientOrderId: shadowOrdersTable.clientOrderId,
+        payload: shadowOrdersTable.payload,
+      })
+      .from(shadowOrdersTable)
+      .where(inArray(shadowOrdersTable.id, unknownOrderIds));
+    for (const row of rows) {
+      freshClassifications.set(row.id, isDefaultShadowLedgerAnalyticsOrder(row));
+    }
+    // Skip memoization when a classification-input update raced this fetch —
+    // the fresh values still serve THIS recompute; the next one re-reads.
+    // Rows missing from the fetch (e.g. another tx's uncommitted order) stay
+    // unmemoized so they are re-fetched once committed.
+    if (generationAtFetch === shadowLedgerAnalyticsMemoGeneration) {
+      for (const [orderId, qualifies] of freshClassifications) {
+        if (
+          shadowLedgerAnalyticsOrderMemo.size >= SHADOW_LEDGER_ANALYTICS_MEMO_MAX
+        ) {
+          const oldest = shadowLedgerAnalyticsOrderMemo.keys().next().value;
+          if (oldest !== undefined) {
+            shadowLedgerAnalyticsOrderMemo.delete(oldest);
+          }
+        }
+        shadowLedgerAnalyticsOrderMemo.set(orderId, qualifies);
+      }
+    }
+  }
+  const ledgerOrderIds = orderIds.filter(
+    (orderId) =>
+      freshClassifications.get(orderId) ??
+      shadowLedgerAnalyticsOrderMemo.get(orderId) ??
+      false,
+  );
   const startingBalance = toNumber(account.startingBalance) ?? SHADOW_STARTING_BALANCE;
   let cashDelta = 0;
   let realizedPnl = 0;
