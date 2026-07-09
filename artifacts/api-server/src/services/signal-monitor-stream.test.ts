@@ -560,7 +560,7 @@ test("matrix stream display freshness matches REST response freshness", () => {
   assert.equal(streamed.fresh, response.fresh);
 });
 
-function profile(id = "profile-test") {
+function profile(id = "profile-test", overrides: Record<string, unknown> = {}) {
   return {
     id,
     environment: "shadow",
@@ -572,6 +572,7 @@ function profile(id = "profile-test") {
     pollIntervalSeconds: 60,
     maxSymbols: 500,
     evaluationConcurrency: 6,
+    ...overrides,
   } as any;
 }
 
@@ -1230,6 +1231,51 @@ test("server-owned producer evaluates bar-close ticks with no UI subscriber", ()
     // The producer evaluated the universe symbol despite zero UI subscribers,
     // and only for the tick's symbol (keystone gap fixed).
     assert.deepEqual(evalCalls, ["AAPL:1m"]);
+    __signalMonitorInternalsForTests.resetSignalMonitorMatrixStreamForTests();
+  });
+});
+
+test("server-owned producer replaces same-universe subscriber after profile settings change", () => {
+  withSignalMonitorBarEvaluationEnabled(() => {
+    __signalMonitorInternalsForTests.resetSignalMonitorMatrixStreamForTests();
+    const scope =
+      __signalMonitorInternalsForTests.buildSignalMonitorServerOwnedProducerScope(
+        {
+          environment: "shadow",
+          symbols: ["AAPL"],
+          timeframes: ["1m"],
+        },
+      );
+
+    __signalMonitorInternalsForTests.registerSignalMonitorServerOwnedProducer({
+      environment: "shadow",
+      profile: profile("profile-test", {
+        pyrusSignalsSettings: { waitForBarClose: false },
+      }),
+      scope,
+    });
+    __signalMonitorInternalsForTests.registerSignalMonitorServerOwnedProducer({
+      environment: "shadow",
+      profile: profile("profile-test", {
+        pyrusSignalsSettings: { waitForBarClose: true },
+      }),
+      scope,
+    });
+
+    const waitForBarCloseValues: unknown[] = [];
+    __signalMonitorInternalsForTests.emitSignalMonitorMatrixStreamAggregateDelta({
+      message: { symbol: "AAPL" },
+      evaluatedAt,
+      evaluateState(input) {
+        waitForBarCloseValues.push(
+          (input.profile.pyrusSignalsSettings as Record<string, unknown>)
+            .waitForBarClose,
+        );
+        return streamState(input.symbol, input.timeframe, "server-owned");
+      },
+    });
+
+    assert.deepEqual(waitForBarCloseValues, [true]);
     __signalMonitorInternalsForTests.resetSignalMonitorMatrixStreamForTests();
   });
 });

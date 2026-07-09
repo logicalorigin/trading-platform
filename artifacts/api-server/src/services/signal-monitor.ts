@@ -45,11 +45,7 @@ import {
 } from "@workspace/market-calendar";
 import { HttpError } from "../lib/errors";
 import { logger } from "../lib/logger";
-import {
-  getRuntimeMode,
-  isMassiveStocksRealtimeConfigured,
-  type RuntimeMode,
-} from "../lib/runtime";
+import { getRuntimeMode, type RuntimeMode } from "../lib/runtime";
 import {
   createTransientPostgresBackoff,
   isStatementTimeoutError,
@@ -498,7 +494,6 @@ const DEFAULT_SIGNAL_MONITOR_BAR_SOURCE_POLICY: SignalMonitorBarSourcePolicy =
   "mixed";
 const SIGNAL_MONITOR_BARS_PRIORITY = 8;
 const SIGNAL_MONITOR_MATRIX_BARS_PRIORITY = 5;
-const SIGNAL_MONITOR_LIVE_EDGE_BARS_PRIORITY = 9;
 const SIGNAL_MONITOR_BARS_FAMILY = "signal-matrix";
 const SIGNAL_MONITOR_UNIVERSE_SCOPE_KEY = "__signalMonitorUniverseScope";
 const SIGNAL_MONITOR_UNIVERSE_SCOPE_DEFAULT_VERSION_KEY =
@@ -6240,17 +6235,20 @@ function computeSignalMonitorIndicatorSnapshotBase(input: {
 // never cached. This removes the per-tick MTF re-aggregation from the hot loop.
 function buildSignalMonitorIndicatorSnapshot(input: {
   chartBars: PyrusSignalsBar[];
+  completedBarsFingerprint?: string;
   evaluation: ReturnType<typeof evaluatePyrusSignalsSignals>;
   settings: ReturnType<typeof resolvePyrusSignalsSignalSettings>;
+  settingsSignature?: string;
   signal: PyrusSignalsSignalEvent | null;
   symbol: string;
   timeframe: SignalMonitorMatrixTimeframe;
 }): SignalMonitorIndicatorSnapshot | null {
-  const fingerprint = fingerprintSignalMonitorMatrixCompletedBars(
-    input.chartBars,
-  );
+  const fingerprint =
+    input.completedBarsFingerprint ??
+    fingerprintSignalMonitorMatrixCompletedBars(input.chartBars);
   const key = [
-    signalMonitorPyrusSettingsSignature(input.settings),
+    input.settingsSignature ??
+      signalMonitorPyrusSettingsSignature(input.settings),
     input.symbol,
     input.timeframe,
   ].join("\0");
@@ -6481,14 +6479,8 @@ function filterSignalMonitorBarsForSourcePolicy(
   return policy === "ibkr-only" ? bars.filter(isSignalMonitorIbkrBar) : bars;
 }
 
-function shouldAllowSignalMonitorBrokerLiveEdgeRetry(
-  policy: SignalMonitorBarSourcePolicy,
-) {
-  return policy === "ibkr-only" || !isMassiveStocksRealtimeConfigured();
-}
-
 function resolveSignalMonitorBrokerRecentWindowMinutes(input: {
-  mode: "primary" | "full-retry" | "live-edge";
+  mode: "primary" | "full-retry";
 }): number | null {
   return input.mode === "primary"
     ? null
@@ -7568,7 +7560,6 @@ export async function loadSignalMonitorCompletedBars(input: {
   retryStale?: boolean;
   barSourcePolicy?: SignalMonitorBarSourcePolicy;
   priority?: number;
-  liveEdgePriority?: number;
   includeProvisionalLiveEdge?: boolean;
   allowHistoricalFallback?: boolean;
   signal?: AbortSignal;
@@ -7728,22 +7719,18 @@ export async function loadSignalMonitorCompletedBars(input: {
     signalMonitorCompletedBarsCache.set(cacheKey, supersetEntry);
     return supersetEntry.value;
   }
-  const fetchBars = (mode: "primary" | "full-retry" | "live-edge") => {
-    const priority =
-      mode === "live-edge"
-        ? (input.liveEdgePriority ?? SIGNAL_MONITOR_LIVE_EDGE_BARS_PRIORITY)
-        : (input.priority ?? SIGNAL_MONITOR_BARS_PRIORITY);
+  const fetchBars = (mode: "primary" | "full-retry") => {
+    const priority = input.priority ?? SIGNAL_MONITOR_BARS_PRIORITY;
     return getBarsWithDebug(
       {
         symbol: input.symbol,
         timeframe: providerTimeframe,
-        limit: mode === "live-edge" ? liveEdgeLimit : providerLimit,
+        limit: providerLimit,
         to: queryTo,
         assetClass: "equity",
         outsideRth: true,
         source: "trades",
-        allowHistoricalSynthesis:
-          barSourcePolicy === "ibkr-only" ? false : mode !== "live-edge",
+        allowHistoricalSynthesis: barSourcePolicy !== "ibkr-only",
         brokerRecentWindowMinutes:
           resolveSignalMonitorBrokerRecentWindowMinutes({
             mode,
@@ -7756,8 +7743,6 @@ export async function loadSignalMonitorCompletedBars(input: {
       },
     );
   };
-  const allowBrokerLiveEdgeRetry =
-    shouldAllowSignalMonitorBrokerLiveEdgeRetry(barSourcePolicy);
   let completedBars: SignalMonitorBarSnapshot[] = [];
   const acceptNewerBars = (
     retryCompletedBars: SignalMonitorBarSnapshot[],
@@ -7777,19 +7762,11 @@ export async function loadSignalMonitorCompletedBars(input: {
       currentLatestBarAt.getTime() === retryLatestBarAt.getTime() &&
       isSignalMonitorDelayedBar(currentLatestBar) &&
       !isSignalMonitorDelayedBar(retryLatestBar);
-    const retryReplacesNonIbkrLatest =
-      allowBrokerLiveEdgeRetry &&
-      currentLatestBarAt &&
-      retryLatestBarAt &&
-      currentLatestBarAt.getTime() === retryLatestBarAt.getTime() &&
-      !isSignalMonitorIbkrBar(currentLatestBar) &&
-      isSignalMonitorIbkrBar(retryLatestBar);
     if (
       retryLatestBarAt &&
       (!currentLatestBarAt ||
         retryLatestBarAt.getTime() > currentLatestBarAt.getTime() ||
-        retryReplacesDelayedLatest ||
-        retryReplacesNonIbkrLatest)
+        retryReplacesDelayedLatest)
     ) {
       completedBars = merge
         ? mergeCompletedBars(completedBars, retryCompletedBars, completedLimit)
@@ -7911,9 +7888,7 @@ export async function loadSignalMonitorCompletedBars(input: {
 
     return null;
   };
-  const fetchCompletedBars = async (
-    mode: "primary" | "full-retry" | "live-edge",
-  ) => {
+  const fetchCompletedBars = async (mode: "primary" | "full-retry") => {
     throwIfSignalMonitorAborted(input.signal);
     const result = buildCompletedBars((await fetchBars(mode)).bars);
     throwIfSignalMonitorAborted(input.signal);
@@ -7952,19 +7927,6 @@ export async function loadSignalMonitorCompletedBars(input: {
       })
     ) {
       acceptNewerBars(await fetchCompletedBars("full-retry"), false);
-      throwIfSignalMonitorAborted(input.signal);
-      latestBar = completedBars.at(-1);
-    }
-    if (
-      allowBrokerLiveEdgeRetry &&
-      input.retryStale !== false &&
-      shouldRetrySignalMonitorCompletedBars({
-        completedBars,
-        timeframe: input.timeframe,
-        evaluatedAt: input.evaluatedAt,
-      })
-    ) {
-      acceptNewerBars(await fetchCompletedBars("live-edge"), true);
       throwIfSignalMonitorAborted(input.signal);
       latestBar = completedBars.at(-1);
     }
@@ -8629,19 +8591,25 @@ function fingerprintSignalMonitorMatrixCompletedBars(
 
 function evaluateSignalMonitorMatrixHeavyEvaluation(input: {
   settings: ReturnType<typeof resolvePyrusSignalsSignalSettings>;
+  settingsSignature?: string;
   symbol: string;
   timeframe: SignalMonitorMatrixTimeframe;
   chartBars: PyrusSignalsBar[];
+  completedBarsFingerprint?: string;
   lastBarClosed: boolean;
 }): SignalMonitorMatrixHeavyEvaluation {
   // lastBarClosed is part of the evaluation's identity (it decides whether the
   // final bar's signal event exists), so it joins the fingerprint — a cached
   // result computed under one closure state can never serve the other.
-  const fingerprint = `${fingerprintSignalMonitorMatrixCompletedBars(input.chartBars)}:${
+  const barsFingerprint =
+    input.completedBarsFingerprint ??
+    fingerprintSignalMonitorMatrixCompletedBars(input.chartBars);
+  const fingerprint = `${barsFingerprint}:${
     input.lastBarClosed ? "lc1" : "lc0"
   }`;
   const key = [
-    signalMonitorPyrusSettingsSignature(input.settings),
+    input.settingsSignature ??
+      signalMonitorPyrusSettingsSignature(input.settings),
     input.symbol,
     input.timeframe,
   ].join("\u0000");
@@ -8749,6 +8717,9 @@ export function evaluateSignalMonitorMatrixStateFromCompletedBars(input: {
   const settings = resolvePyrusSignalsSignalSettings(
     asRecord(input.profile.pyrusSignalsSettings),
   );
+  const settingsSignature = signalMonitorPyrusSettingsSignature(settings);
+  const completedBarsFingerprint =
+    fingerprintSignalMonitorMatrixCompletedBars(chartBars);
   // Only the heavy indicator pass (evaluatePyrusSignalsSignals) is memoized — it is
   // a pure function of (settings, completed-bar OHLCV). Signal selection and the
   // snapshot are recomputed every call so they always reflect the live
@@ -8756,9 +8727,11 @@ export function evaluateSignalMonitorMatrixStateFromCompletedBars(input: {
   // recompute from input.evaluatedAt, so a cache hit never serves a stale field.
   const evaluation = evaluateSignalMonitorMatrixHeavyEvaluation({
     settings,
+    settingsSignature,
     symbol: input.symbol,
     timeframe: input.timeframe,
     chartBars,
+    completedBarsFingerprint,
     lastBarClosed: signalMonitorLastBarClosed(chartBarEntries),
   });
   const signal = selectStableSignalMonitorSignalEvent(
@@ -8767,8 +8740,10 @@ export function evaluateSignalMonitorMatrixStateFromCompletedBars(input: {
   );
   const indicatorSnapshot = buildSignalMonitorIndicatorSnapshot({
     chartBars,
+    completedBarsFingerprint,
     evaluation,
     settings,
+    settingsSignature,
     signal,
     symbol: input.symbol,
     timeframe: input.timeframe,
