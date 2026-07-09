@@ -13,6 +13,7 @@ type PoolLike = object & {
     event: "error",
     listener: (error: Error, client: unknown) => void,
   ): unknown;
+  on(event: "connect", listener: (client: unknown) => void): unknown;
 };
 
 type ClientLike = object & {
@@ -122,6 +123,39 @@ export function attachPostgresPoolErrorHandler(
     } catch {
       // An error listener must never become a new uncaught exception path.
     }
+  });
+
+  // node-postgres emits the pool-level "error" above ONLY for idle clients. A
+  // CHECKED-OUT client the server terminates (e.g. via
+  // idle_in_transaction_session_timeout) emits "error" on the client itself;
+  // with no listener that is an uncaught exception that kills the process
+  // (observed 2026-07-09: api crash "terminating connection due to
+  // idle-in-transaction timeout" during pool saturation). Attach a per-client
+  // listener as each connection is created so the error is reported and the
+  // pool discards the broken client instead of the process dying.
+  const attachedClients = new WeakSet<object>();
+  pool.on("connect", (client: unknown) => {
+    if (!client || typeof client !== "object" || attachedClients.has(client)) {
+      return;
+    }
+    attachedClients.add(client);
+    const clientLike = client as Partial<ClientLike>;
+    if (typeof clientLike.on !== "function") {
+      return;
+    }
+    clientLike.on("error", (error: Error) => {
+      try {
+        reporter({
+          event: "postgres-pool-error",
+          transient: isTransientPostgresError(error),
+          error: summarizeTransientPostgresError(error),
+          database: describeRuntime(),
+          client: summarizePoolClient(client),
+        });
+      } catch {
+        // An error listener must never become a new uncaught exception path.
+      }
+    });
   });
 
   return true;
