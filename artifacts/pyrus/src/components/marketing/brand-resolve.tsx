@@ -163,8 +163,9 @@ export function BrandResolve({
   // Sphere only when it will actually animate and can render. Until mounted we
   // avoid the first-paint WebGL probe (matches PyrusMark3D).
   const webglReady =
-    webglPolicy === "available" ? isWebglAvailable() : canUseWebGL();
-  const showSphere = mounted && !reducedMotion && webglReady;
+    mounted &&
+    (webglPolicy === "available" ? isWebglAvailable() : canUseWebGL());
+  const showSphere = !reducedMotion && webglReady;
   // morph: the canvas overflows the box so the neural sphere EXPANDS beyond the
   // boundary, then converges into the box-sized mark. Percentage inset scales
   // with the box, so it's consistent at every size.

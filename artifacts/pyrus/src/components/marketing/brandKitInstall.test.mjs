@@ -86,6 +86,7 @@ test("neural cloud is only wired to loader surfaces", () => {
 
 test("shared loader runs capability hooks before rendering", () => {
   const bootShell = read("src/components/neural/BootShellLayout.tsx");
+  const brandResolve = read("src/components/marketing/brand-resolve.tsx");
   const bootShellLayoutBody = bootShell.slice(
     bootShell.indexOf("export function BootShellLayout"),
   );
@@ -103,4 +104,8 @@ test("shared loader runs capability hooks before rendering", () => {
   // NeuralLoader still short-circuits to the static loader while the opener owns
   // a WebGL context.
   assert.match(read("src/components/neural/NeuralLoader.tsx"), /if \(isNeuralOpenerActive\(\)\)/);
+  assert.match(
+    brandResolve,
+    /const webglReady =\s+mounted &&\s+\(webglPolicy === "available"/,
+  );
 });
