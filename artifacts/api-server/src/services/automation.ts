@@ -55,6 +55,11 @@ type ListExecutionEventsInput = {
   limit?: number;
   includePayload?: boolean;
 };
+type NormalizedListExecutionEventsInput = {
+  deploymentId?: string;
+  limit: number;
+  includePayload: boolean;
+};
 
 const STRATEGY_SIGNAL_TIMEFRAMES = ["1m", "2m", "5m", "15m", "1h", "1d"] as const;
 const PYRUS_SIGNALS_BOS_CONFIRMATIONS = ["close", "wicks"] as const;
@@ -88,6 +93,25 @@ const deploymentListInFlight = new Map<
   string,
   Promise<AlgoDeploymentListResponse>
 >();
+const EXECUTION_EVENTS_LIST_CACHE_TTL_MS = 2_000;
+type ListExecutionEventsResult = {
+  events: ReturnType<typeof executionEventToResponse>[];
+};
+type ListExecutionEventsReader = (
+  input: NormalizedListExecutionEventsInput,
+) => Promise<ListExecutionEventsResult>;
+const executionEventsListCache = new Map<
+  string,
+  {
+    expiresAt: number;
+    value: ListExecutionEventsResult;
+  }
+>();
+const executionEventsListInFlight = new Map<
+  string,
+  Promise<ListExecutionEventsResult>
+>();
+let listExecutionEventsReaderForTests: ListExecutionEventsReader | null = null;
 let mixedDeploymentRepairInFlight: Promise<void> | null = null;
 const overnightEventReassignmentInFlight = new Set<string>();
 const OVERNIGHT_EVENT_REASSIGNMENT_BATCH_SIZE = 1_000;
@@ -1193,9 +1217,30 @@ function mergeExecutionEventRows<T extends { occurredAt: Date }>(
     .slice(0, limit);
 }
 
-export async function listExecutionEvents(input: ListExecutionEventsInput) {
-  const limit = Math.min(Math.max(input.limit ?? 100, 1), 500);
-  const includePayload = input.includePayload === true;
+function normalizeListExecutionEventsInput(
+  input: ListExecutionEventsInput,
+): NormalizedListExecutionEventsInput {
+  return {
+    deploymentId: input.deploymentId,
+    limit: Math.min(Math.max(input.limit ?? 100, 1), 500),
+    includePayload: input.includePayload === true,
+  };
+}
+
+function executionEventsListCacheKey(
+  input: NormalizedListExecutionEventsInput,
+): string {
+  return [
+    input.deploymentId?.trim() || "all",
+    input.limit,
+    input.includePayload ? "payload" : "summary",
+  ].join("|");
+}
+
+async function readExecutionEventsUncached(
+  input: NormalizedListExecutionEventsInput,
+): Promise<ListExecutionEventsResult> {
+  const { limit, includePayload } = input;
 
   // Project scalar columns only for the default feed and OMIT the jsonb `payload`
   // unless the caller opted in (`view=full`/includePayload). The `candidate_skipped`
@@ -1272,6 +1317,43 @@ export async function listExecutionEvents(input: ListExecutionEventsInput) {
   };
 }
 
+export async function listExecutionEvents(
+  input: ListExecutionEventsInput,
+): Promise<ListExecutionEventsResult> {
+  const normalized = normalizeListExecutionEventsInput(input);
+  const key = executionEventsListCacheKey(normalized);
+  const now = Date.now();
+  const cached = executionEventsListCache.get(key);
+  if (cached && cached.expiresAt > now) {
+    return cached.value;
+  }
+  if (cached) {
+    executionEventsListCache.delete(key);
+  }
+  const existing = executionEventsListInFlight.get(key);
+  if (existing) {
+    return existing;
+  }
+
+  const reader = listExecutionEventsReaderForTests ?? readExecutionEventsUncached;
+  const request = reader(normalized)
+    .then((value) => {
+      executionEventsListCache.set(key, {
+        value,
+        expiresAt: Date.now() + EXECUTION_EVENTS_LIST_CACHE_TTL_MS,
+      });
+      return value;
+    })
+    .finally(() => {
+      if (executionEventsListInFlight.get(key) === request) {
+        executionEventsListInFlight.delete(key);
+      }
+    });
+  executionEventsListInFlight.set(key, request);
+  request.catch(() => {});
+  return request;
+}
+
 export const __algoAutomationInternalsForTests = {
   buildDeploymentListResponse,
   clearDeploymentListCacheForTests,
@@ -1286,4 +1368,11 @@ export const __algoAutomationInternalsForTests = {
   visibleDeploymentRows,
   readSignalTimeframe,
   mergeExecutionEventRows,
+  clearExecutionEventsListCacheForTests() {
+    executionEventsListCache.clear();
+    executionEventsListInFlight.clear();
+  },
+  setListExecutionEventsReaderForTests(reader: ListExecutionEventsReader | null) {
+    listExecutionEventsReaderForTests = reader;
+  },
 };
