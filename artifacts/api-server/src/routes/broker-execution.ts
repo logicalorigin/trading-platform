@@ -91,6 +91,46 @@ import {
   CancelSnapTradeEquityOrderBody,
   CancelSnapTradeEquityOrderResponse,
 } from "./snaptrade-equity-order-schemas";
+import {
+  cancelRobinhoodOptionOrder,
+  listRobinhoodOptionOrders,
+  placeRobinhoodOptionOrder,
+  reviewRobinhoodOptionOrder,
+} from "../services/robinhood-option-orders";
+import {
+  CancelRobinhoodOptionOrderBody,
+  CancelRobinhoodOptionOrderResponse,
+  ListRobinhoodOptionOrdersResponse,
+  PlaceRobinhoodOptionOrderBody,
+  PlaceRobinhoodOptionOrderResponse,
+  ReviewRobinhoodOptionOrderBody,
+  ReviewRobinhoodOptionOrderResponse,
+} from "./robinhood-option-order-schemas";
+import {
+  checkSnapTradeOptionOrderImpact,
+  listSnapTradeRecentOptionOrders,
+  submitSnapTradeOptionOrder,
+} from "../services/snaptrade-option-orders";
+import {
+  CheckSnapTradeOptionOrderImpactBody,
+  CheckSnapTradeOptionOrderImpactResponse,
+  ListSnapTradeRecentOptionOrdersResponse,
+  SubmitSnapTradeOptionOrderBody,
+  SubmitSnapTradeOptionOrderResponse,
+} from "./snaptrade-option-order-schemas";
+import {
+  cancelSchwabOptionOrder,
+  previewSchwabOptionOrder,
+  submitSchwabOptionOrder,
+} from "../services/schwab-option-orders";
+import {
+  CancelSchwabOptionOrderBody,
+  CancelSchwabOptionOrderResponse,
+  PreviewSchwabOptionOrderBody,
+  PreviewSchwabOptionOrderResponse,
+  SubmitSchwabOptionOrderBody,
+  SubmitSchwabOptionOrderResponse,
+} from "./schwab-option-order-schemas";
 import { HttpError } from "../lib/errors";
 import { logger } from "../lib/logger";
 import { recordAuditEvent } from "../services/audit-events";
@@ -795,6 +835,224 @@ router.post(
     });
     const data = CancelSnapTradeEquityOrderResponse.parse(
       await cancelSnapTradeEquityOrder({
+        appUserId: session.user.id,
+        accountId: req.params.accountId,
+        orderId: body.orderId,
+      }),
+    );
+    res.json(data);
+  },
+);
+
+// --- Robinhood options ---
+router.post(
+  "/broker-execution/robinhood/accounts/:accountId/options/impact",
+  async (req, res) => {
+    const session = await requireAdminCsrf(req);
+    const body = ReviewRobinhoodOptionOrderBody.parse(req.body ?? {});
+    void recordAuditEvent({
+      appUserId: session.user.id,
+      eventType: "broker.order_mutation_attempt",
+      subject: { type: "broker_provider", id: "robinhood" },
+      resource: { type: "broker_account", id: req.params.accountId },
+      payload: { action: "option_impact" },
+    });
+    const data = ReviewRobinhoodOptionOrderResponse.parse(
+      await reviewRobinhoodOptionOrder({
+        appUserId: session.user.id,
+        accountId: req.params.accountId,
+        input: body,
+      }),
+    );
+    res.json(data);
+  },
+);
+
+router.post(
+  "/broker-execution/robinhood/accounts/:accountId/options",
+  async (req, res) => {
+    const session = await requireAdminCsrf(req);
+    const body = PlaceRobinhoodOptionOrderBody.parse(req.body ?? {});
+    void recordAuditEvent({
+      appUserId: session.user.id,
+      eventType: "broker.order_mutation_attempt",
+      subject: { type: "broker_provider", id: "robinhood" },
+      resource: { type: "broker_account", id: req.params.accountId },
+      payload: { action: "option_submit" },
+    });
+    const data = PlaceRobinhoodOptionOrderResponse.parse(
+      await placeRobinhoodOptionOrder({
+        appUserId: session.user.id,
+        accountId: req.params.accountId,
+        input: body,
+      }),
+    );
+    res.json(data);
+  },
+);
+
+router.get(
+  "/broker-execution/robinhood/accounts/:accountId/options/recent",
+  async (req, res) => {
+    const session = await requireEntitlement("broker_connect")(req);
+    const data = ListRobinhoodOptionOrdersResponse.parse(
+      await listRobinhoodOptionOrders({
+        appUserId: session.user.id,
+        accountId: req.params.accountId,
+      }),
+    );
+    res.json(data);
+  },
+);
+
+router.post(
+  "/broker-execution/robinhood/accounts/:accountId/options/cancel",
+  async (req, res) => {
+    const session = await requireEntitlementCsrf("broker_connect")(req);
+    const body = CancelRobinhoodOptionOrderBody.parse(req.body ?? {});
+    void recordAuditEvent({
+      appUserId: session.user.id,
+      eventType: "broker.order_mutation_attempt",
+      subject: { type: "broker_provider", id: "robinhood" },
+      resource: { type: "broker_account", id: req.params.accountId },
+      payload: { action: "option_cancel", orderId: body.orderId },
+    });
+    const data = CancelRobinhoodOptionOrderResponse.parse(
+      await cancelRobinhoodOptionOrder({
+        appUserId: session.user.id,
+        accountId: req.params.accountId,
+        input: body,
+      }),
+    );
+    res.json(data);
+  },
+);
+
+// --- SnapTrade options ---
+router.post(
+  "/broker-execution/snaptrade/accounts/:accountId/options/impact",
+  async (req, res) => {
+    const session = await requireAdminCsrf(req);
+    const body = CheckSnapTradeOptionOrderImpactBody.parse(req.body ?? {});
+    void recordAuditEvent({
+      appUserId: session.user.id,
+      eventType: "broker.order_mutation_attempt",
+      subject: { type: "broker_provider", id: "snaptrade" },
+      resource: { type: "broker_account", id: req.params.accountId },
+      payload: { action: "option_impact" },
+    });
+    const data = CheckSnapTradeOptionOrderImpactResponse.parse(
+      await checkSnapTradeOptionOrderImpact({
+        appUserId: session.user.id,
+        accountId: req.params.accountId,
+        input: body,
+      }),
+    );
+    res.json(data);
+  },
+);
+
+router.post(
+  "/broker-execution/snaptrade/accounts/:accountId/options",
+  async (req, res) => {
+    const session = await requireAdminCsrf(req);
+    const body = SubmitSnapTradeOptionOrderBody.parse(req.body ?? {});
+    void recordAuditEvent({
+      appUserId: session.user.id,
+      eventType: "broker.order_mutation_attempt",
+      subject: { type: "broker_provider", id: "snaptrade" },
+      resource: { type: "broker_account", id: req.params.accountId },
+      payload: { action: "option_submit" },
+    });
+    const data = SubmitSnapTradeOptionOrderResponse.parse(
+      await submitSnapTradeOptionOrder({
+        appUserId: session.user.id,
+        accountId: req.params.accountId,
+        input: body,
+      }),
+    );
+    res.json(data);
+  },
+);
+
+router.get(
+  "/broker-execution/snaptrade/accounts/:accountId/options/recent",
+  async (req, res) => {
+    const session = await requireEntitlement("broker_connect")(req);
+    const data = ListSnapTradeRecentOptionOrdersResponse.parse(
+      await listSnapTradeRecentOptionOrders({
+        appUserId: session.user.id,
+        accountId: req.params.accountId,
+      }),
+    );
+    res.json(data);
+  },
+);
+
+// --- Schwab options ---
+router.post(
+  "/broker-execution/schwab/accounts/:accountId/options/preview",
+  async (req, res) => {
+    const session = await requireEntitlementCsrf("broker_connect")(req);
+    const body = PreviewSchwabOptionOrderBody.parse(req.body ?? {});
+    void recordAuditEvent({
+      appUserId: session.user.id,
+      eventType: "broker.order_mutation_attempt",
+      subject: { type: "broker_provider", id: "schwab" },
+      resource: { type: "broker_account", id: req.params.accountId },
+      payload: { action: "option_preview" },
+    });
+    await requireSchwabOrderReadiness();
+    const data = PreviewSchwabOptionOrderResponse.parse(
+      await previewSchwabOptionOrder({
+        appUserId: session.user.id,
+        accountId: req.params.accountId,
+        input: body,
+      }),
+    );
+    res.json(data);
+  },
+);
+
+router.post(
+  "/broker-execution/schwab/accounts/:accountId/options",
+  async (req, res) => {
+    const session = await requireEntitlementCsrf("broker_connect")(req);
+    const body = SubmitSchwabOptionOrderBody.parse(req.body ?? {});
+    void recordAuditEvent({
+      appUserId: session.user.id,
+      eventType: "broker.order_mutation_attempt",
+      subject: { type: "broker_provider", id: "schwab" },
+      resource: { type: "broker_account", id: req.params.accountId },
+      payload: { action: "option_submit" },
+    });
+    await requireSchwabOrderReadiness();
+    const data = SubmitSchwabOptionOrderResponse.parse(
+      await submitSchwabOptionOrder({
+        appUserId: session.user.id,
+        accountId: req.params.accountId,
+        input: body,
+      }),
+    );
+    res.json(data);
+  },
+);
+
+router.post(
+  "/broker-execution/schwab/accounts/:accountId/options/cancel",
+  async (req, res) => {
+    const session = await requireEntitlementCsrf("broker_connect")(req);
+    const body = CancelSchwabOptionOrderBody.parse(req.body ?? {});
+    void recordAuditEvent({
+      appUserId: session.user.id,
+      eventType: "broker.order_mutation_attempt",
+      subject: { type: "broker_provider", id: "schwab" },
+      resource: { type: "broker_account", id: req.params.accountId },
+      payload: { action: "option_cancel", orderId: body.orderId },
+    });
+    await requireSchwabOrderReadiness();
+    const data = CancelSchwabOptionOrderResponse.parse(
+      await cancelSchwabOptionOrder({
         appUserId: session.user.id,
         accountId: req.params.accountId,
         orderId: body.orderId,

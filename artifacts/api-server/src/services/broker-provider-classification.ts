@@ -317,7 +317,7 @@ export const initialProviderClassificationRows = [
     requiredScopes: AUTOMATION_TRADING_REQUIRED_SCOPES,
     knownLimitations: [
       "Robinhood Agentic Trading is beta: long equities in the dedicated Agentic account only (agentic_allowed=true); non-agentic accounts are rejected upstream.",
-      "Equity order tooling (review/place/cancel, order types, time-in-force) is schema-verified from the live authorized tools/list fixture; options order tooling remains unverified until an equivalent fixture is captured.",
+      "Equity and single-leg options order tooling (review/place/cancel, order types, time-in-force) is schema-verified from the full live authorized tools/list fixture, including the option chain/instrument resolution tools.",
       "No order replace tool is documented; cancel plus re-place is the only amendment path.",
     ],
     sourceRefs: [robinhoodAgenticSourceRef, planSourceRef],
