@@ -78,6 +78,18 @@ export const SubmitSnapTradeOptionOrderResponse = z.object({
   }),
 });
 
+export const CancelSnapTradeOptionOrderBody = z.object({
+  orderId: z.string(),
+});
+
+export const CancelSnapTradeOptionOrderResponse = z.object({
+  provider: z.enum(["snaptrade"]),
+  canceledAt: z.string(),
+  account,
+  orderId: z.string(),
+  status: z.string(),
+});
+
 export const ListSnapTradeRecentOptionOrdersResponse = z.object({
   provider: z.enum(["snaptrade"]),
   checkedAt: z.string(),

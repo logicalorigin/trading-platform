@@ -107,17 +107,22 @@ import {
   ReviewRobinhoodOptionOrderResponse,
 } from "./robinhood-option-order-schemas";
 import {
+  cancelSnapTradeOptionOrder,
   checkSnapTradeOptionOrderImpact,
   listSnapTradeRecentOptionOrders,
   submitSnapTradeOptionOrder,
 } from "../services/snaptrade-option-orders";
 import {
+  CancelSnapTradeOptionOrderBody,
+  CancelSnapTradeOptionOrderResponse,
   CheckSnapTradeOptionOrderImpactBody,
   CheckSnapTradeOptionOrderImpactResponse,
   ListSnapTradeRecentOptionOrdersResponse,
   SubmitSnapTradeOptionOrderBody,
   SubmitSnapTradeOptionOrderResponse,
 } from "./snaptrade-option-order-schemas";
+import { listSchwabRecentOrders } from "../services/schwab-orders-read";
+import { ListSchwabRecentOrdersResponse } from "./schwab-orders-read-schemas";
 import {
   cancelSchwabOptionOrder,
   previewSchwabOptionOrder,
@@ -1056,6 +1061,46 @@ router.post(
         appUserId: session.user.id,
         accountId: req.params.accountId,
         orderId: body.orderId,
+      }),
+    );
+    res.json(data);
+  },
+);
+
+// --- Schwab recent orders (equity + options) ---
+router.get(
+  "/broker-execution/schwab/accounts/:accountId/orders/recent",
+  async (req, res) => {
+    const session = await requireEntitlement("broker_connect")(req);
+    await requireSchwabOrderReadiness();
+    const data = ListSchwabRecentOrdersResponse.parse(
+      await listSchwabRecentOrders({
+        appUserId: session.user.id,
+        accountId: req.params.accountId,
+      }),
+    );
+    res.json(data);
+  },
+);
+
+// --- SnapTrade option cancel ---
+router.post(
+  "/broker-execution/snaptrade/accounts/:accountId/options/cancel",
+  async (req, res) => {
+    const session = await requireEntitlementCsrf("broker_connect")(req);
+    const body = CancelSnapTradeOptionOrderBody.parse(req.body ?? {});
+    void recordAuditEvent({
+      appUserId: session.user.id,
+      eventType: "broker.order_mutation_attempt",
+      subject: { type: "broker_provider", id: "snaptrade" },
+      resource: { type: "broker_account", id: req.params.accountId },
+      payload: { action: "option_cancel", orderId: body.orderId },
+    });
+    const data = CancelSnapTradeOptionOrderResponse.parse(
+      await cancelSnapTradeOptionOrder({
+        appUserId: session.user.id,
+        accountId: req.params.accountId,
+        input: body,
       }),
     );
     res.json(data);

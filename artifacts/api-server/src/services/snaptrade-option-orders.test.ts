@@ -7,6 +7,7 @@ import { runAsAppUser } from "./app-user-context";
 import { bootstrapInitialUser } from "./auth";
 import {
   buildOccSymbol,
+  cancelSnapTradeOptionOrder,
   checkSnapTradeOptionOrderImpact,
   listSnapTradeRecentOptionOrders,
   submitSnapTradeOptionOrder,
@@ -467,6 +468,97 @@ test("SnapTrade option validation rejects malformed contracts and orders before 
       },
     );
   }
+});
+
+test("SnapTrade option cancel posts the documented cancel path with the brokerage order id", async () => {
+  await withBootstrapToken(async () =>
+    withTestDb(async () => {
+      const auth = await createUser("option-cancel@example.com");
+      const snapTradeUserId = await createSnapTradeCredential(auth.user.id);
+      const account = await createSnapTradeAccount({
+        appUserId: auth.user.id,
+        providerAccountId: "snaptrade:acct-option-cancel",
+      });
+
+      let requestedBody: Record<string, unknown> | null = null;
+      const result = await cancelSnapTradeOptionOrder({
+        appUserId: auth.user.id,
+        accountId: account.id,
+        input: { orderId: "option-order-xyz" },
+        env: {
+          SNAPTRADE_CLIENTID: "client-option-123",
+          SNAPTRADE_API_KEY: "consumer-option-secret",
+        },
+        encryptionKey: TEST_ENCRYPTION_KEY,
+        now: new Date("2026-07-01T20:30:00.000Z"),
+        fetchImpl: async (url, init) => {
+          const requestUrl = new URL(String(url));
+          assert.equal(requestUrl.origin, "https://api.snaptrade.com");
+          assert.equal(
+            requestUrl.pathname,
+            "/api/v1/accounts/acct-option-cancel/trading/cancel",
+          );
+          assert.equal(init?.method, "POST");
+          assert.equal(requestUrl.searchParams.get("userId"), snapTradeUserId);
+          assert.equal(
+            requestUrl.searchParams.get("userSecret"),
+            "snaptrade-option-user-secret",
+          );
+          assert.ok(
+            (new Headers(init?.headers).get("Signature") ?? "").length > 20,
+          );
+          requestedBody = JSON.parse(String(init?.body)) as Record<
+            string,
+            unknown
+          >;
+          return new Response(
+            JSON.stringify({ status: "CANCELLED", account: { number: "U8888888" } }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          );
+        },
+      });
+
+      assert.deepEqual(requestedBody, {
+        brokerage_order_id: "option-order-xyz",
+      });
+      assert.equal(result.provider, "snaptrade");
+      assert.equal(result.status, "CANCELLED");
+      assert.equal(result.orderId, "option-order-xyz");
+      assert.equal(result.account.id, account.id);
+      assert.doesNotMatch(
+        JSON.stringify(result),
+        /snaptrade-option-user-secret|consumer-option-secret|client-option-123|U8888888/,
+      );
+    }),
+  );
+});
+
+test("SnapTrade option cancel rejects an empty order id", async () => {
+  await withBootstrapToken(async () =>
+    withTestDb(async () => {
+      const auth = await createUser("option-cancel-empty@example.com");
+      await createSnapTradeCredential(auth.user.id);
+      const account = await createSnapTradeAccount({
+        appUserId: auth.user.id,
+        providerAccountId: "snaptrade:acct-option-cancel-empty",
+      });
+      await assert.rejects(
+        cancelSnapTradeOptionOrder({
+          appUserId: auth.user.id,
+          accountId: account.id,
+          input: { orderId: "  " },
+          env: {
+            SNAPTRADE_CLIENTID: "client-option-123",
+            SNAPTRADE_API_KEY: "consumer-option-secret",
+          },
+          encryptionKey: TEST_ENCRYPTION_KEY,
+          fetchImpl: async () => new Response("{}", { status: 200 }),
+        }),
+        (error: unknown) =>
+          (error as { code?: string }).code === "snaptrade_order_id_required",
+      );
+    }),
+  );
 });
 
 test("SnapTrade recent option orders reuse recentOrders and exclude equity records", async () => {
