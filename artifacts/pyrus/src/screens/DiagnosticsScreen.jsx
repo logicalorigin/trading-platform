@@ -352,14 +352,24 @@ function postClientEvent(input) {
 
 function postClientMetrics(input) {
   if (isPyrusSafeQaMode()) {
-    return;
+    return Promise.resolve();
   }
-  fetch("/api/diagnostics/client-metrics", {
+  return fetch("/api/diagnostics/client-metrics", {
     method: "POST",
     headers: { "Content-Type": "application/json", Accept: "application/json" },
     body: JSON.stringify(input),
-  }).catch(() => {});
+  }).then((response) => {
+    if (!response.ok) {
+      throw new Error(`Client metrics post failed (${response.status})`);
+    }
+  });
 }
+
+const formatDiagnosticAsyncError = (error) => {
+  if (error instanceof Error && error.message) return error.message;
+  if (typeof error === "string" && error.trim()) return error;
+  return "Unknown error";
+};
 
 const JsonBlock = ({ value }) => (
   <pre
@@ -831,6 +841,8 @@ export default function DiagnosticsScreen({
   const [latest, setLatest] = useState(null);
   const [historyData, setHistoryData] = useState({ points: [], snapshots: [] });
   const [events, setEvents] = useState([]);
+  const [historyEventsRefreshError, setHistoryEventsRefreshError] = useState(null);
+  const [browserMetricsPostError, setBrowserMetricsPostError] = useState(null);
   const [selectedEvent, setSelectedEvent] = useState(null);
   const [eventDetail, setEventDetail] = useState(null);
   const [streamState, setStreamState] = useState("connecting");
@@ -839,6 +851,8 @@ export default function DiagnosticsScreen({
   const audioContextRef = useRef(null);
   const alertsRef = useRef({});
   const diagnosticsOpenLoggedRef = useRef(false);
+  const historyEventsRefreshGenerationRef = useRef(0);
+  const browserMetricsInFlightRef = useRef(false);
   useEffect(() => {
     onReadinessChange?.({
       contentReady: diagnosticsVisible,
@@ -957,17 +971,36 @@ export default function DiagnosticsScreen({
   }, [alertPreferences.dismissedAlerts]);
 
   const loadHistoryAndEvents = useCallback(() => {
+    const generation = historyEventsRefreshGenerationRef.current + 1;
+    historyEventsRefreshGenerationRef.current = generation;
     const params = {
       from: timeWindow.from.toISOString(),
       to: timeWindow.to.toISOString(),
       limit: 240,
     };
-    listDiagnosticHistory(params)
-      .then((payload) => setHistoryData(payload))
-      .catch(() => {});
-    listDiagnosticEvents(params)
-      .then((payload) => setEvents(payload.events || []))
-      .catch(() => {});
+    Promise.allSettled([
+      listDiagnosticHistory(params),
+      listDiagnosticEvents(params),
+    ]).then(([historyResult, eventsResult]) => {
+      if (generation !== historyEventsRefreshGenerationRef.current) {
+        return;
+      }
+
+      const failures = [];
+      if (historyResult.status === "fulfilled") {
+        setHistoryData(historyResult.value);
+      } else {
+        failures.push(`History: ${formatDiagnosticAsyncError(historyResult.reason)}`);
+      }
+
+      if (eventsResult.status === "fulfilled") {
+        setEvents(eventsResult.value.events || []);
+      } else {
+        failures.push(`Events: ${formatDiagnosticAsyncError(eventsResult.reason)}`);
+      }
+
+      setHistoryEventsRefreshError(failures.length ? failures.join(" / ") : null);
+    });
   }, [timeWindow.from, timeWindow.to]);
 
   useEffect(() => {
@@ -1007,10 +1040,33 @@ export default function DiagnosticsScreen({
 
     let cancelled = false;
     const collect = () => {
+      if (browserMetricsInFlightRef.current) {
+        return;
+      }
+
+      browserMetricsInFlightRef.current = true;
       collectBrowserResourceMetrics(browserMetricsInputRef.current).then((payload) => {
         if (!cancelled) {
-          postClientMetrics(payload);
+          return postClientMetrics(payload);
         }
+        return undefined;
+      }).then(() => {
+        if (!cancelled) {
+          setBrowserMetricsPostError(null);
+        }
+      }).catch((error) => {
+        if (!cancelled) {
+          const message = formatDiagnosticAsyncError(error);
+          setBrowserMetricsPostError(message);
+          postClientEvent({
+            category: "diagnostics-client-metrics",
+            severity: "warning",
+            message: "Browser metrics refresh failed",
+            raw: { error: message },
+          });
+        }
+      }).finally(() => {
+        browserMetricsInFlightRef.current = false;
       });
     };
     collect();
@@ -1884,6 +1940,9 @@ export default function DiagnosticsScreen({
             )}
           </Panel>
           <Panel title="Browser Events">
+            {browserMetricsPostError ? (
+              <StateRow label="Metrics refresh" value={browserMetricsPostError} tone={CSS_COLOR.red} />
+            ) : null}
             <StateRow label="Events / 5m" value={formatCount(browserMetrics.eventCount5m)} />
             <StateRow label="Warnings / 5m" value={formatCount(browserMetrics.warningCount5m)} tone={browserMetrics.warningCount5m > 0 ? CSS_COLOR.amber : CSS_COLOR.green} />
             <StateRow label="Last category" value={browserMetrics.lastCategory} />
@@ -1995,6 +2054,9 @@ export default function DiagnosticsScreen({
       {activeTab === "Events" && (
         <div style={{ display: "grid", gridTemplateColumns: `minmax(0, 1fr) minmax(${dim(320)}px, 0.7fr)`, gap: sp(14) }}>
           <Panel title="Events">
+            {historyEventsRefreshError ? (
+              <StateRow label="Refresh error" value={historyEventsRefreshError} tone={CSS_COLOR.red} />
+            ) : null}
             <EventList events={events} onSelect={setSelectedEvent} />
           </Panel>
           <Panel title="Event Detail">
