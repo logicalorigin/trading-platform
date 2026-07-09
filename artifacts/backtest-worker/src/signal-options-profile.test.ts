@@ -1,8 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import type { StudyDefinition } from "@workspace/backtest-core";
+import {
+  defaultConservativeOptionFillPolicy,
+  type StudyDefinition,
+} from "@workspace/backtest-core";
 
+import { resolveWorkerOptionFillPolicy } from "./option-fill-policy";
 import { resolveWorkerSignalOptionsProfile } from "./signal-options-profile";
 
 const study = (
@@ -86,4 +90,22 @@ test("falls back to conservative defaults without a linked deployment", () => {
   assert.equal(profile.exitPolicy.hardStopPct, -40);
   assert.equal(profile.exitPolicy.progressiveTrailEnabled, false);
   assert.equal(profile.riskCaps.maxPremiumPerEntry, 500);
+});
+
+test("conservative fill limits cannot be disabled by non-positive overrides", () => {
+  for (const value of [0, -1]) {
+    const policy = resolveWorkerOptionFillPolicy({
+      optionFillModel: "conservative_quote",
+      optionFillMaxSpreadPct: value,
+      optionFillMaxQuoteAgeMs: value,
+    });
+    assert.equal(
+      policy?.maxSpreadPctOfMid,
+      defaultConservativeOptionFillPolicy.maxSpreadPctOfMid,
+    );
+    assert.equal(
+      policy?.maxQuoteAgeMs,
+      defaultConservativeOptionFillPolicy.maxQuoteAgeMs,
+    );
+  }
 });

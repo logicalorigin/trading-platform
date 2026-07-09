@@ -20,8 +20,10 @@ export type WorkerOptionFillResult =
       reason: OptionFillRejectionReason;
     };
 
-function finiteNumberParameter(value: unknown): number | null {
-  return typeof value === "number" && Number.isFinite(value) ? value : null;
+function positiveNumberParameter(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) && value > 0
+    ? value
+    : null;
 }
 
 export function resolveWorkerOptionFillPolicy(
@@ -36,10 +38,10 @@ export function resolveWorkerOptionFillPolicy(
     ...defaultConservativeOptionFillPolicy,
     model,
     maxSpreadPctOfMid:
-      finiteNumberParameter(parameters?.optionFillMaxSpreadPct) ??
+      positiveNumberParameter(parameters?.optionFillMaxSpreadPct) ??
       defaultConservativeOptionFillPolicy.maxSpreadPctOfMid,
     maxQuoteAgeMs:
-      finiteNumberParameter(parameters?.optionFillMaxQuoteAgeMs) ??
+      positiveNumberParameter(parameters?.optionFillMaxQuoteAgeMs) ??
       defaultConservativeOptionFillPolicy.maxQuoteAgeMs,
   };
 }
