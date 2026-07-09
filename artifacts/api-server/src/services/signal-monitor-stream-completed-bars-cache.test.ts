@@ -31,6 +31,9 @@ const {
   flushSignalMonitorCompletedBarsGapFetchesForTests: flushGapFetches,
   getSignalMonitorCompletedBarsGapFetchStatsForTests: gapFetchStats,
   setSignalMonitorCompletedBarsGapFetchLoaderForTests: setGapFetchLoader,
+  queueSignalMonitorCompletedBarsGapFetchForTests: queueGapFetch,
+  SIGNAL_MONITOR_GAP_FETCH_LAST_ATTEMPT_MAX_ENTRIES:
+    GAP_FETCH_LAST_ATTEMPT_MAX_ENTRIES,
   stateToResponseForSnapshot,
   signalMonitorStreamLaneLatestCompletedBarAt: laneLatestCompletedBarAt,
   signalMonitorStreamLaneLatestCompletedBarAtFromTail:
@@ -850,6 +853,115 @@ test("stale 1h backfilled base gap is filled from durable history without changi
 
   assert.ok(gapFilled, "1h stream eval should produce a state after fetch");
   assert.deepEqual(gapFilled, contiguous);
+});
+
+test("empty durable gap fetch retry is throttled by cell attempt time across an advancing window", async () => {
+  const realDateNow = Date.now;
+  const nowMs = Date.parse("2026-06-09T15:00:00.000Z");
+  const minuteMs = 60_000;
+  const baseBars = toHistoryBars(
+    buildCompletedBars({
+      latestStartMs: nowMs - 10 * minuteMs,
+      count: 30,
+      stepMs: minuteMs,
+    }),
+  );
+  let fetchCalls = 0;
+  setGapFetchLoader(async () => {
+    fetchCalls += 1;
+    return [];
+  });
+
+  try {
+    Date.now = () => nowMs;
+    seedBackfilledBase({
+      symbol: SYMBOL,
+      timeframe: "1m",
+      bars: baseBars,
+      refreshedAtMs: nowMs - minuteMs,
+      source: "backfill",
+    });
+    queueGapFetch({
+      symbol: SYMBOL,
+      timeframe: "1m",
+      fromMs: nowMs - 9 * minuteMs,
+      toMs: nowMs - 5 * minuteMs,
+      limit: 5,
+    });
+    assert.equal(gapFetchStats().queuedCount, 1);
+
+    await flushGapFetches();
+    assert.equal(fetchCalls, 1);
+    assert.equal(gapFetchStats().emptyCount, 1);
+    assert.equal(gapFetchStats().lastAttemptCount, 1);
+
+    Date.now = () => nowMs + minuteMs;
+    queueGapFetch({
+      symbol: SYMBOL,
+      timeframe: "1m",
+      fromMs: nowMs - 8 * minuteMs,
+      toMs: nowMs - 4 * minuteMs,
+      limit: 5,
+    });
+
+    const stats = gapFetchStats();
+    assert.equal(stats.queuedCount, 1);
+    assert.equal(stats.pendingCount, 0);
+    assert.equal(stats.skippedThrottleCount, 1);
+    assert.equal(fetchCalls, 1);
+  } finally {
+    Date.now = realDateNow;
+    resetStreamFixture();
+  }
+});
+
+test("completed-bars gap fetch attempt map evicts oldest cells at the cap", async () => {
+  const realDateNow = Date.now;
+  const nowMs = Date.parse("2026-06-09T15:00:00.000Z");
+  const minuteMs = 60_000;
+  const baseBars = toHistoryBars(
+    buildCompletedBars({
+      latestStartMs: nowMs - minuteMs,
+      count: 2,
+      stepMs: minuteMs,
+    }),
+  );
+  setGapFetchLoader(async () => []);
+
+  try {
+    Date.now = () => nowMs;
+    const cellCount = GAP_FETCH_LAST_ATTEMPT_MAX_ENTRIES + 1;
+    for (let index = 0; index < cellCount; index += 1) {
+      const symbol = `GAPBOUND${index}`;
+      seedBackfilledBase({
+        symbol,
+        timeframe: "1m",
+        bars: baseBars,
+        refreshedAtMs: nowMs,
+        source: "backfill",
+      });
+      queueGapFetch({
+        symbol,
+        timeframe: "1m",
+        fromMs: nowMs,
+        toMs: nowMs,
+        limit: 1,
+      });
+    }
+    assert.equal(gapFetchStats().queuedCount, cellCount);
+
+    await flushGapFetches();
+    const stats = gapFetchStats();
+    assert.equal(stats.fetchCount, cellCount);
+    assert.equal(stats.emptyCount, cellCount);
+    assert.equal(
+      stats.lastAttemptCount,
+      GAP_FETCH_LAST_ATTEMPT_MAX_ENTRIES,
+    );
+  } finally {
+    Date.now = realDateNow;
+    resetStreamFixture();
+  }
 });
 
 test("contiguous base plus live edge is unchanged and never queues durable gap fetch", async () => {

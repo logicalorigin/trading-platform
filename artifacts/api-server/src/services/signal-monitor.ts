@@ -5029,6 +5029,7 @@ const SIGNAL_MONITOR_GAP_FETCH_MAX_BARS = 240;
 const SIGNAL_MONITOR_GAP_FETCH_MAX_CELLS_PER_CYCLE = 8;
 const SIGNAL_MONITOR_GAP_FETCH_DRAIN_INTERVAL_MS = 1_000;
 const SIGNAL_MONITOR_GAP_FETCH_RETRY_MS = 5 * 60_000;
+const SIGNAL_MONITOR_GAP_FETCH_LAST_ATTEMPT_MAX_ENTRIES = 4_096;
 
 type SignalMonitorCompletedBarsGapFetchCandidate = {
   symbol: string;
@@ -5590,7 +5591,7 @@ const pendingSignalMonitorCompletedBarsGapFetches = new Map<
 const inFlightSignalMonitorCompletedBarsGapFetches = new Set<string>();
 const signalMonitorCompletedBarsGapFetchLastAttemptByCell = new Map<
   string,
-  { toMs: number; attemptedAtMs: number }
+  { attemptedAtMs: number }
 >();
 let signalMonitorCompletedBarsGapFetchTimer: NodeJS.Timeout | null = null;
 let signalMonitorCompletedBarsGapFetchDrainInFlight = false;
@@ -5687,7 +5688,6 @@ function queueSignalMonitorCompletedBarsGapFetch(
     signalMonitorCompletedBarsGapFetchLastAttemptByCell.get(key);
   if (
     lastAttempt &&
-    lastAttempt.toMs >= candidate.toMs &&
     nowMs - lastAttempt.attemptedAtMs < SIGNAL_MONITOR_GAP_FETCH_RETRY_MS
   ) {
     signalMonitorCompletedBarsGapFetchDiagnostics.skippedThrottleCount += 1;
@@ -5707,10 +5707,14 @@ async function processSignalMonitorCompletedBarsGapFetch(
   }
   inFlightSignalMonitorCompletedBarsGapFetches.add(key);
   const attemptedAtMs = Date.now();
-  signalMonitorCompletedBarsGapFetchLastAttemptByCell.set(key, {
-    toMs: candidate.toMs,
-    attemptedAtMs,
-  });
+  lruCacheSet(
+    signalMonitorCompletedBarsGapFetchLastAttemptByCell,
+    key,
+    {
+      attemptedAtMs,
+    },
+    SIGNAL_MONITOR_GAP_FETCH_LAST_ATTEMPT_MAX_ENTRIES,
+  );
   try {
     const currentBaseBars =
       signalMonitorBackfilledBaseByCell.get(key)?.bars ?? [];
@@ -14914,6 +14918,8 @@ export const __signalMonitorInternalsForTests = {
     return {
       pendingCount: pendingSignalMonitorCompletedBarsGapFetches.size,
       inFlightCount: inFlightSignalMonitorCompletedBarsGapFetches.size,
+      lastAttemptCount:
+        signalMonitorCompletedBarsGapFetchLastAttemptByCell.size,
       ...signalMonitorCompletedBarsGapFetchDiagnostics,
       lastWindow: signalMonitorCompletedBarsGapFetchDiagnostics.lastWindow
         ? { ...signalMonitorCompletedBarsGapFetchDiagnostics.lastWindow }
@@ -14925,6 +14931,12 @@ export const __signalMonitorInternalsForTests = {
   ) {
     loadSignalMonitorCompletedBarsGapFetchBarsOverride = loader;
   },
+  queueSignalMonitorCompletedBarsGapFetchForTests(
+    candidate: SignalMonitorCompletedBarsGapFetchCandidate,
+  ) {
+    queueSignalMonitorCompletedBarsGapFetch(candidate);
+  },
+  SIGNAL_MONITOR_GAP_FETCH_LAST_ATTEMPT_MAX_ENTRIES,
   getSignalMonitorBackfillRefreshDiagnosticsForTests() {
     const diagnostic =
       signalMonitorBackfillRefreshDiagnostics.lastDiagnostic;
