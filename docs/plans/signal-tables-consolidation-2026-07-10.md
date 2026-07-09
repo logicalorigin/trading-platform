@@ -32,10 +32,15 @@ row. It is also small (36,209 rows / 88 MB, upsert-bounded). **Verdict: keep as-
 
 ## What survived verification (actionable)
 
-1. **Riley decision needed — `overnight_signal_expectancy_samples` (1.4 GB, 2.45M rows):** the one
-   sizeable unmanaged table. It has no retention pruner. Options: keep (study still active),
-   add a retention pruner like the other tables, or archive+drop if the study is finished.
-   NOT safe to truncate — earlier draft was wrong.
+1. **`overnight_signal_expectancy_samples` (1.4 GB, 2.45M rows) — investigated 2026-07-09:**
+   NOT an abandoned relic. The feature is two days old (migration 20260707); one study ran
+   2026-07-07 → 07-08 03:59Z producing 2.45M samples + 18 results; the API reads BOTH tables by
+   studyId (backtesting.ts:2538/2625). "Never tuned" decomposed: (a) bulk-written once then quiet,
+   (b) pg_stat activity counters wiped by Neon compute restarts, so autovacuum's thresholds never
+   see the historical writes — an artifact, not neglect; (c) the REAL gaps: no ANALYZE ever
+   (fixed 2026-07-09 — first ANALYZE run, logged in run-vacuum.log) and **no retention pruner**,
+   so each future study run adds ~2.5M rows forever. Action: add a study-scoped retention pruner
+   (keep last N studies) to lib/db/src/retention.ts — Riley to pick N.
 2. **`signal_options_seen_signals` debug columns are write-only** (verified: the dedup reader at
    automation.ts:9687-9690 selects only signal_key/reason/payload_retryable; premium_cap /
    chain_debug_reason / expirations_debug_reason are never selected). Optional small writer-side
