@@ -1479,3 +1479,9 @@ export function evaluatePyrusSignalsSignals(input: {
     signalEvents,
   };
 }
+
+export {
+  createIncrementalPyrusSignalsEvaluator,
+  type IncrementalPyrusSignalsEvaluator,
+  type IncrementalPyrusSignalsEvaluationOptions,
+} from "./incremental";
