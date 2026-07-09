@@ -520,9 +520,13 @@ const postPerformanceMetrics = (reason: string) => {
   }).catch(() => {});
 };
 
-export const usePyrusPerformanceMetricsReporter = () => {
+export const usePyrusPerformanceMetricsReporter = ({ enabled = true } = {}) => {
   useEffect(() => {
-    if (typeof window === "undefined" || typeof document === "undefined") {
+    if (
+      !enabled ||
+      typeof window === "undefined" ||
+      typeof document === "undefined"
+    ) {
       return undefined;
     }
 
@@ -549,5 +553,5 @@ export const usePyrusPerformanceMetricsReporter = () => {
       document.removeEventListener("visibilitychange", handleVisibilityChange);
       uninstallPerformanceMetrics();
     };
-  }, []);
+  }, [enabled]);
 };

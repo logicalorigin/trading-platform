@@ -7,9 +7,6 @@ import {
   useSyncExternalStore,
 } from "react";
 import { Button } from "../../components/ui/Button.jsx";
-import { PyrusWordmark } from "../../components/brand/pyrus-wordmark";
-import { BrandResolve } from "../../components/marketing/brand-resolve";
-import { PyrusMark } from "../../components/marketing/pyrus-mark";
 import { usePrefersReducedMotion } from "../../components/marketing/pyrus-mark-3d";
 import {
   Card,
@@ -21,11 +18,12 @@ import {
 import { Input } from "../../components/ui/input.tsx";
 import { Label } from "../../components/ui/label.tsx";
 import { LOADER_CLOUD_PROPS } from "../../components/neural/NeuralLoader";
+import { BootBrandColumn } from "../../components/neural/BootShellLayout";
 import {
   isNeuralOpenerActive,
   subscribeNeuralOpenerActive,
 } from "../../components/neural/neuralOpenerState";
-import { isWebglAvailable } from "../../lib/webglCapability";
+import { isNeuralWebglRendererSupported } from "../../lib/webglCapability";
 import { useViewportBelow } from "../../lib/responsive";
 import {
   CSS_COLOR,
@@ -52,6 +50,9 @@ import { postAuthJson, useAuthSession } from "./authSession.jsx";
 const NeuralCoreScene = lazy(
   () => import("../../components/marketing/neural-core-scene"),
 );
+const LOGIN_AMBIENT_CLOUD_OPACITY = 0.42;
+const LOGIN_CLOUD_MASK =
+  "radial-gradient(105% 108% at 24% 45%, #000 0%, #000 30%, rgba(0,0,0,0.18) 54%, transparent 74%)";
 
 // Slice 8: the SPA login wall. Rendered inside AppProviders but ABOVE
 // <PlatformApp/> so the workspace (and its SSE streams / platform queries) never
@@ -74,17 +75,17 @@ function AmbientCloud() {
   const reducedMotion = usePrefersReducedMotion();
   const openerActive = useNeuralOpenerActiveState();
 
-  if (reducedMotion || openerActive || !isWebglAvailable()) return null;
+  if (reducedMotion || openerActive || !isNeuralWebglRendererSupported()) {
+    return null;
+  }
 
-  const mask =
-    "radial-gradient(120% 118% at 24% 46%, #000 0%, #000 34%, rgba(0,0,0,0.35) 66%, transparent 90%)";
   return (
     <div
       aria-hidden="true"
       style={{
         position: "absolute",
         inset: 0,
-        opacity: 0.85,
+        opacity: LOGIN_AMBIENT_CLOUD_OPACITY,
         pointerEvents: "none",
       }}
     >
@@ -92,8 +93,8 @@ function AmbientCloud() {
         style={{
           height: "100%",
           width: "100%",
-          maskImage: mask,
-          WebkitMaskImage: mask,
+          maskImage: LOGIN_CLOUD_MASK,
+          WebkitMaskImage: LOGIN_CLOUD_MASK,
         }}
       >
         <Suspense fallback={null}>
@@ -106,8 +107,6 @@ function AmbientCloud() {
 
 function LoginShell({ children, loading = false }) {
   const stacked = useViewportBelow(880);
-  const openerActive = useNeuralOpenerActiveState();
-  const markSize = stacked ? "h-[72px] w-[72px]" : "h-[140px] w-[140px]";
 
   return (
     <div
@@ -132,58 +131,17 @@ function LoginShell({ children, loading = false }) {
           minHeight: "100%",
           display: "grid",
           gridTemplateColumns: stacked ? "1fr" : "1fr 1fr",
-          gridTemplateRows: stacked ? "minmax(240px, 38vh) 1fr" : undefined,
+          gridTemplateRows: stacked ? "minmax(220px, 34vh) 1fr" : undefined,
         }}
       >
-        <div
-          data-testid="login-brand-stage"
-          style={{
-            display: "flex",
-            flexDirection: "column",
-            alignItems: "center",
-            justifyContent: "center",
-            gap: sp(10),
-            padding: sp(24),
-            textAlign: "center",
-          }}
-        >
-          {openerActive ? (
-            <PyrusMark className={markSize} />
-          ) : (
-            <BrandResolve
-              loop
-              morph
-              logoVariant="svg"
-              haloBlur={0.45}
-              bloomBlur={1.8}
-              webglPolicy="available"
-              className={markSize}
-            />
-          )}
-          <PyrusWordmark title="PYRUS" width={stacked ? 150 : 200} />
-          <span
-            style={{
-              color: CSS_COLOR.textSec,
-              fontFamily: T.sans,
-              fontSize: textSize("body"),
-              letterSpacing: "0.02em",
-            }}
-          >
-            Real-time options flow & signal intelligence.
-          </span>
-          {loading ? (
-            <div
-              className="pyrus-loading pyrus-boot-loading"
-              role="status"
-              aria-label="Loading"
-            >
-              <div className="pyrus-loading-bar" aria-hidden="true" />
-              <span className="pyrus-loading-label" style={{ fontFamily: T.sans }}>
-                Loading
-              </span>
-            </div>
-          ) : null}
-        </div>
+        {/* Shared brand column — identical markup/position to the boot curtain and
+            app loaders so the mark never hops when the loading screen hands off to
+            the sign-in wall. */}
+        <BootBrandColumn
+          loading={loading}
+          stacked={stacked}
+          testId="login-brand-stage"
+        />
         <div
           style={{
             display: "flex",
@@ -236,8 +194,9 @@ export function LoginGate({ children }) {
         } else {
           await postAuthJson("/api/auth/login", buildSignInBody(input));
         }
-        // Keep the button in its loading state until the session query flips —
-        // the gate then swaps this wall for the app in one paint.
+        // On success the session query flips and the gate swaps this wall for
+        // the app; the finally below re-enables the form for every other outcome
+        // (error, timeout, or a 200 whose session didn't take) so it can't latch.
         await refresh();
       } catch (submitError) {
         if (submitError?.data?.code === "bootstrap_already_complete") {
@@ -249,6 +208,7 @@ export function LoginGate({ children }) {
               (isFirstRun ? "Setup failed." : "Sign in failed."),
           );
         }
+      } finally {
         setPending(false);
       }
     },

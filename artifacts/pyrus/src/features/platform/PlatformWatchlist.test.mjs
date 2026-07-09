@@ -275,7 +275,11 @@ test("signal matrix surfaces seed sparklines without the market history bars pat
   );
   assert.match(
     source,
-    /Keep the full signal-scanning universe off the Trade screen quote[\s\S]*\.\.\.\(screen === "trade" \? \[\] : signalMonitorUniverseSymbols\)/,
+    /const realtimeSignalMarketDataUniverseSymbols = useMemo\(\(\) => \{[\s\S]*signalMatrixPressureCaps\.signalMatrixWideSymbolLimit[\s\S]*signalMonitorUniverseSymbols\.slice\(0, limit\)/,
+  );
+  assert.match(
+    source,
+    /Keep the broad signal-scanning universe off the Trade screen quote[\s\S]*\.\.\.\(screen === "trade" \? \[\] : realtimeSignalMarketDataUniverseSymbols\)/,
   );
   assert.match(
     source,
@@ -308,7 +312,7 @@ test("signal matrix surfaces seed sparklines without the market history bars pat
   );
   assert.match(
     source,
-    /const runtimeAggregateOnlySparklineSymbols = useMemo\([\s\S]*\.\.\.runtimeSparklineSymbols,[\s\S]*\.\.\.prioritySparklineSymbols,[\s\S]*\.\.\.signalMonitorDisplaySymbols/s,
+    /const runtimeAggregateOnlySparklineSymbols = useMemo\([\s\S]*\.\.\.runtimeSparklineSymbols,[\s\S]*\.\.\.prioritySparklineSymbols,[\s\S]*\.\.\.signalMatrixUniverseSymbols/s,
   );
   assert.match(
     source,
@@ -489,7 +493,15 @@ test("platform auxiliary signal surfaces receive bounded matrix overlays", () =>
   );
   assert.match(
     shellSource,
-    /const algoMonitorSurfaceDataEnabled = Boolean\(\s*!criticalApiMutationPaused &&\s*!tradeScreenConnectionPriority &&\s*\(desktopActivitySidebarVisible \|\|\s*mobileActivityVisible \|\|\s*algoFrameRuntimeEnabled\),?\s*\);/s,
+    /const explicitAlgoActivitySurfaceOpen = Boolean\(\s*activeScreen === "algo"[\s\S]*notificationsOpen,\s*\);/s,
+  );
+  assert.match(
+    shellSource,
+    /const algoMonitorSurfaceDataEnabled = Boolean\(\s*!criticalApiMutationPaused &&\s*!tradeScreenConnectionPriority &&\s*explicitAlgoActivitySurfaceOpen,?\s*\);/s,
+  );
+  assert.doesNotMatch(
+    shellSource,
+    /desktopActivitySidebarVisible \|\|\s*mobileActivityVisible \|\|\s*algoFrameRuntimeEnabled/,
   );
   assert.match(
     shellCallSource,
@@ -569,6 +581,10 @@ test("platform prioritizes signal matrix bootstrap ahead of market streams", () 
   assert.match(
     shellSource,
     /const tradeScreenConnectionPriority = activeScreen === "trade";[\s\S]*const algoFrameRuntimeEnabled = Boolean\(\s*frameAuxiliaryDataEnabled &&[\s\S]*!tradeScreenConnectionPriority &&[\s\S]*!criticalApiMutationPaused &&/,
+  );
+  assert.match(
+    shellSource,
+    /const explicitAlgoActivitySurfaceOpen = Boolean\(\s*activeScreen === "algo"[\s\S]*notificationsOpen,\s*\);/s,
   );
   assert.match(
     shellSource,

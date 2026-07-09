@@ -902,27 +902,28 @@ export const PlatformShell = ({
   }, [environment]);
 
   const tradeScreenConnectionPriority = activeScreen === "trade";
-  const algoFrameRuntimeEnabled = Boolean(
-    frameAuxiliaryDataEnabled &&
-      !tradeScreenConnectionPriority &&
-      !criticalApiMutationPaused &&
-      (activeScreen === "algo" ||
-        (!auxiliaryDrawerViewport && !activitySidebarCollapsed) ||
-        (auxiliaryDrawerViewport && (mobileActivityOpen || mobilePulseOpen)) ||
-        notificationsOpen),
-  );
   const desktopActivitySidebarVisible = Boolean(
     !auxiliaryDrawerViewport && !activitySidebarCollapsed,
   );
   const mobileActivityVisible = Boolean(
     auxiliaryDrawerViewport && mobileActivityOpen,
   );
+  const explicitAlgoActivitySurfaceOpen = Boolean(
+    activeScreen === "algo" ||
+      mobileActivityVisible ||
+      (auxiliaryDrawerViewport && mobilePulseOpen) ||
+      notificationsOpen,
+  );
+  const algoFrameRuntimeEnabled = Boolean(
+    frameAuxiliaryDataEnabled &&
+      !tradeScreenConnectionPriority &&
+      !criticalApiMutationPaused &&
+      explicitAlgoActivitySurfaceOpen,
+  );
   const algoMonitorSurfaceDataEnabled = Boolean(
     !criticalApiMutationPaused &&
       !tradeScreenConnectionPriority &&
-      (desktopActivitySidebarVisible ||
-        mobileActivityVisible ||
-        algoFrameRuntimeEnabled),
+      explicitAlgoActivitySurfaceOpen,
   );
   const algoRealtimeStreamsEnabled = Boolean(
     algoFrameRuntimeEnabled &&

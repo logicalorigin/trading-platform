@@ -33,6 +33,14 @@ test("real account positions queries request live quote snapshots", () => {
   );
 });
 
+test("account positions REST polling yields to the live account-page stream", () => {
+  assert.match(
+    source,
+    /const positionsRestQueriesEnabled = Boolean\(liveAccountQueriesEnabled\);/,
+    "Positions REST polling must use the stream freshness fallback gate instead of staying always-on.",
+  );
+});
+
 test("SnapTrade account positions enable live Massive quote hydration", () => {
   assert.match(
     source,

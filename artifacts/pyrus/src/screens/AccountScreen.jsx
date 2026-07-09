@@ -1607,7 +1607,7 @@ const AccountScreenInner = ({
   const ordersPanelQueriesEnabled = Boolean(
     primaryAccountRestQueriesEnabled,
   );
-  const positionsRestQueriesEnabled = Boolean(genericAccountQueriesEnabled);
+  const positionsRestQueriesEnabled = Boolean(liveAccountQueriesEnabled);
   useRuntimeWorkloadFlag("account:live", Boolean(liveRefreshInterval), {
     kind: "poll",
     label: "Account live",

@@ -11,6 +11,7 @@ const appContentSource = readFileSync(
   new URL("./AppContent.tsx", import.meta.url),
   "utf8",
 );
+const appSource = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
 const platformAppSource = readFileSync(
   new URL("../features/platform/PlatformApp.jsx", import.meta.url),
   "utf8",
@@ -41,16 +42,44 @@ test("AppContent no longer eagerly preloads non-initial priority screens during 
   );
 });
 
-test("AppContent still preloads the two first-paint chunks (initial screen + workspace)", () => {
+test("root app only preloads the lightweight app shell before auth is known", () => {
   assert.match(
+    appSource,
+    /preloadDynamicImport\(loadAppContent/,
+    "the app shell chunk should still be preloaded",
+  );
+  assert.doesNotMatch(
+    appSource,
+    /PlatformApp-warm|features\/platform\/PlatformApp|preloadScreenModule|readInitialPlatformScreen/,
+    "the root app must not preload workspace/screen chunks before auth resolves",
+  );
+});
+
+test("normal workspace preloading is gated behind signed-in auth state", () => {
+  assert.doesNotMatch(
     appContentSource,
-    /preloadInitialPlatformScreenModule\(initialScreen\)/,
-    "the initial-screen chunk must still be preloaded for first paint",
+    /if \(typeof window !== "undefined"\) \{\s*preloadInitialAppContentRoute\(\);\s*\}/,
+    "normal workspace preloading must not run at AppContent module load",
   );
   assert.match(
     appContentSource,
-    /preloadDynamicImport\(loadPlatformApp/,
-    "the workspace (PlatformApp) chunk must still be preloaded for first paint",
+    /function AuthenticatedWorkspacePreloader/,
+    "workspace preloading should live in a component that can read auth state",
+  );
+  assert.match(
+    appContentSource,
+    /const \{\s*signedIn,\s*isLoading[\s\S]*?\} = useAuthSession\(\);/,
+    "workspace preloading must read the canonical auth session",
+  );
+  assert.match(
+    appContentSource,
+    /if \([^)]*isLoading[\s\S]*?!signedIn[\s\S]*?\) \{/,
+    "workspace preloading must return while auth is loading or signed out",
+  );
+  assert.match(
+    appContentSource,
+    /preloadInitialWorkspaceRoute\(\);/,
+    "signed-in users should still warm the workspace route",
   );
 });
 

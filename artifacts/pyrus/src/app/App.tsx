@@ -8,9 +8,6 @@ import {
   type DynamicImportRetry,
 } from "../lib/dynamicImport";
 import { PlatformErrorBoundary } from "../components/platform/PlatformErrorBoundary";
-import { readInitialPlatformScreen } from "../features/platform/initialPlatformScreen";
-// @ts-ignore JS module keeps screen chunk preload state outside the React registry.
-import { preloadScreenModule } from "../features/platform/screenModulePreloader";
 import { useBootHandoffElapsedMs } from "./bootLoaderHandoff";
 import {
   completeBootProgressTask,
@@ -65,23 +62,6 @@ if (typeof window !== "undefined") {
     retries: 4,
     retryDelayMs: 500,
   });
-  // Warm the workspace route chunk (PlatformApp) in parallel with AppContent so
-  // its download overlaps instead of waiting for AppContent to finish loading —
-  // the cold-launch hot path is two serial lazy boundaries otherwise. Same
-  // module specifier AppContent uses, so Vite serves the one shared chunk.
-  preloadDynamicImport(
-    () =>
-      // @ts-expect-error JSX module has no declaration file in this TS config
-      import("../features/platform/PlatformApp.jsx"),
-    {
-      label: "PlatformApp-warm",
-      retries: 1,
-    },
-  );
-  // Warm the persisted first screen in the same startup turn as the frame. If
-  // this waits for AppContent, PlatformApp can render its shell first and leave
-  // the user staring at the screen skeleton while the route chunk starts late.
-  void preloadScreenModule(readInitialPlatformScreen())?.catch?.(() => {});
 }
 
 const AppContent = lazyWithRetry(async () => {

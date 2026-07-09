@@ -2,7 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { PersistQueryClientProvider } from "@tanstack/react-query-persist-client";
 import { useEffect, useMemo, type PropsWithChildren } from "react";
 import { TooltipProvider } from "../components/ui/TooltipProvider";
-import { AuthProvider } from "../features/auth/authSession.jsx";
+import { AuthProvider, useAuthSession } from "../features/auth/authSession.jsx";
 import { usePyrusPerformanceMetricsReporter } from "../features/platform/performanceMetrics";
 import { createPyrusPersistOptions } from "./queryPersistence";
 
@@ -63,9 +63,16 @@ const auditLocalStorageOnce = () => {
   }
 };
 
-export function AppProviders({ children }: PropsWithChildren) {
-  usePyrusPerformanceMetricsReporter();
+function AuthenticatedRuntime({ children }: PropsWithChildren) {
+  const authSession = useAuthSession();
+  usePyrusPerformanceMetricsReporter({
+    enabled: Boolean(authSession.signedIn && !authSession.isLoading && !authSession.isError),
+  });
 
+  return <>{children}</>;
+}
+
+export function AppProviders({ children }: PropsWithChildren) {
   useEffect(() => {
     auditLocalStorageOnce();
   }, []);
@@ -78,7 +85,9 @@ export function AppProviders({ children }: PropsWithChildren) {
 
   const tooltipWrapped = (
     <TooltipProvider delayDuration={500} skipDelayDuration={150}>
-      <AuthProvider>{children}</AuthProvider>
+      <AuthProvider>
+        <AuthenticatedRuntime>{children}</AuthenticatedRuntime>
+      </AuthProvider>
     </TooltipProvider>
   );
 

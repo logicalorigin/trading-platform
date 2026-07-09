@@ -75,7 +75,7 @@ test("neural cloud is only wired to loader surfaces", () => {
   assert.match(neuralLoader, /BootShellLayout/);
   assert.match(bootShell, /BrandResolve/);
   assert.match(bootShell, /NeuralCoreScene/);
-  assert.match(bootShell, /isWebglAvailable/);
+  assert.match(bootShell, /isNeuralWebglRendererSupported/);
   assert.doesNotMatch(bootShell, /canUseWebGL/);
   assert.match(bootShell, /webglPolicy="available"/);
   assert.match(brandResolve, /NeuralCoreScene/);
@@ -87,10 +87,13 @@ test("neural cloud is only wired to loader surfaces", () => {
 
 test("shared loader runs capability hooks before rendering", () => {
   const bootShell = read("src/components/neural/BootShellLayout.tsx");
-  const reducedMotionHook = bootShell.indexOf(
+  const bootShellLayoutBody = bootShell.slice(
+    bootShell.indexOf("export function BootShellLayout"),
+  );
+  const reducedMotionHook = bootShellLayoutBody.indexOf(
     "const reducedMotion = usePrefersReducedMotion();",
   );
-  const returnIdx = bootShell.indexOf("return (");
+  const returnIdx = bootShellLayoutBody.indexOf("return (");
 
   assert.notEqual(reducedMotionHook, -1);
   assert.notEqual(returnIdx, -1);

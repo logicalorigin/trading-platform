@@ -3536,6 +3536,18 @@ export default function PlatformApp() {
     sym,
     watchlistSymbols,
   ]);
+  const realtimeSignalMarketDataUniverseSymbols = useMemo(() => {
+    const limit = signalMatrixPressureCaps.signalMatrixWideSymbolLimit;
+    if (limit === 0) {
+      return [];
+    }
+    return limit == null
+      ? signalMonitorUniverseSymbols
+      : signalMonitorUniverseSymbols.slice(0, limit);
+  }, [
+    signalMatrixPressureCaps.signalMatrixWideSymbolLimit,
+    signalMonitorUniverseSymbols,
+  ]);
   const headerSignalContextSymbols = useMemo(
     () =>
       buildHeaderSignalContextSymbols({
@@ -3638,11 +3650,11 @@ export default function PlatformApp() {
           ...watchlistMarketDataSymbols,
           ...headerSignalContextSymbols,
           ...recentSignalMarketDataSymbols,
-          // Keep the full signal-scanning universe off the Trade screen quote
+          // Keep the broad signal-scanning universe off the Trade screen quote
           // stream. Trade charts share the browser/proxy connection budget with
-          // long-lived SSE streams; subscribing ~1.5k background symbols can
+          // long-lived SSE streams; subscribing the full background universe can
           // starve visible /api/bars hydration before the request reaches the API.
-          ...(screen === "trade" ? [] : signalMonitorUniverseSymbols),
+          ...(screen === "trade" ? [] : realtimeSignalMarketDataUniverseSymbols),
         ]
           .map(normalizeTickerSymbol)
           .filter(Boolean),
@@ -3651,9 +3663,9 @@ export default function PlatformApp() {
     [
       headerSignalContextSymbols,
       recentSignalMarketDataSymbols,
+      realtimeSignalMarketDataUniverseSymbols,
       screen,
       watchlistMarketDataSymbols,
-      signalMonitorUniverseSymbols,
     ],
   );
   const quoteStreamPinnedSymbols = useMemo(
@@ -4481,7 +4493,7 @@ export default function PlatformApp() {
             ...new Set([
               ...runtimeSparklineSymbols,
               ...prioritySparklineSymbols,
-              ...signalMonitorDisplaySymbols,
+              ...signalMatrixUniverseSymbols,
             ]),
           ]
         : [],
@@ -4489,8 +4501,8 @@ export default function PlatformApp() {
       prioritySparklineSymbols,
       runtimeSparklineSymbols,
       screen,
+      signalMatrixUniverseSymbols,
       signalMatrixRouteRequestActive,
-      signalMonitorDisplaySymbols,
     ],
   );
   const runtimeStreamedAggregateSymbols = useMemo(

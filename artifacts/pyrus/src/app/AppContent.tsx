@@ -5,10 +5,8 @@ import { NeuralLoader } from "../components/neural/NeuralLoader";
 import { lazyWithRetry, preloadDynamicImport } from "../lib/dynamicImport";
 import { PlatformErrorBoundary } from "../components/platform/PlatformErrorBoundary";
 import { LoginGate } from "../features/auth/LoginGate.jsx";
+import { useAuthSession } from "../features/auth/authSession.jsx";
 import { useBootHandoffElapsedMs } from "./bootLoaderHandoff";
-// @ts-ignore JS module keeps screen chunk preload state outside the React registry.
-import { preloadScreenModule } from "../features/platform/screenModulePreloader";
-import { readInitialPlatformScreen } from "../features/platform/initialPlatformScreen";
 import {
   PLATFORM_BOOT_PROGRESS_TASK_IDS,
   completeBootProgressTask,
@@ -22,6 +20,9 @@ import {
 } from "./crashDiagnostics";
 
 type LazyComponentModule = { default: ComponentType };
+type ScreenModulePreloaderModule = {
+  preloadScreenModule: (screenId: string) => Promise<unknown> | null | undefined;
+};
 const ROOT_ROUTE_CHUNK_RETRIES = 4;
 const ROOT_ROUTE_CHUNK_RETRY_DELAY_MS = 500;
 
@@ -116,26 +117,29 @@ const resolveLabMode = (): string | null => {
   return new URLSearchParams(window.location.search).get("lab");
 };
 
-const preloadPlatformScreenModule = (screenId: string) => {
-  const preload = preloadScreenModule(screenId);
-  if (preload && typeof preload.catch === "function") {
-    void preload.catch(() => {});
-  }
+const loadScreenModulePreloader = () =>
+  // @ts-ignore JS module keeps screen chunk preload state outside the React registry.
+  import("../features/platform/screenModulePreloader") as Promise<ScreenModulePreloaderModule>;
+
+const preloadInitialPlatformScreenModule = () => {
+  void Promise.all([
+    import("../features/platform/initialPlatformScreen"),
+    loadScreenModulePreloader(),
+  ])
+    .then(([{ readInitialPlatformScreen }, { preloadScreenModule }]) => {
+      void preloadScreenModule(readInitialPlatformScreen())?.catch?.(() => {});
+    })
+    .catch(() => {});
 };
 
-const preloadInitialPlatformScreenModule = (initialScreen = readInitialPlatformScreen()) => {
-  preloadPlatformScreenModule(initialScreen);
-};
-
-export const preloadInitialAppContentRoute = () => {
-  const labMode = resolveLabMode();
+const preloadLabRoute = (labMode: string | null) => {
   if (labMode === "chart-parity") {
     preloadDynamicImport(loadChartParityLab, {
       label: "ChartParityLab",
       retries: ROOT_ROUTE_CHUNK_RETRIES,
       retryDelayMs: ROOT_ROUTE_CHUNK_RETRY_DELAY_MS,
     });
-    return;
+    return true;
   }
   if (labMode === "ticker-search") {
     preloadDynamicImport(loadTickerSearchLab, {
@@ -143,10 +147,17 @@ export const preloadInitialAppContentRoute = () => {
       retries: ROOT_ROUTE_CHUNK_RETRIES,
       retryDelayMs: ROOT_ROUTE_CHUNK_RETRY_DELAY_MS,
     });
-    return;
+    return true;
   }
-  const initialScreen = readInitialPlatformScreen();
-  preloadInitialPlatformScreenModule(initialScreen);
+  return false;
+};
+
+export const preloadInitialLabRoute = () => {
+  preloadLabRoute(resolveLabMode());
+};
+
+export const preloadInitialWorkspaceRoute = () => {
+  preloadInitialPlatformScreenModule();
   preloadDynamicImport(loadPlatformApp, {
     label: "PlatformApp",
     retries: ROOT_ROUTE_CHUNK_RETRIES,
@@ -156,6 +167,13 @@ export const preloadInitialAppContentRoute = () => {
   // module-load time raced first paint (requestIdleCallback's 2s timeout
   // force-fired mid-boot, saturating the connection pool), so it is intentionally
   // not done on this path.
+};
+
+export const preloadInitialAppContentRoute = () => {
+  if (preloadLabRoute(resolveLabMode())) {
+    return;
+  }
+  preloadInitialWorkspaceRoute();
 };
 
 const getPreloadedInitialAppContentRoute = (labMode: string | null) => {
@@ -173,7 +191,7 @@ type AppContentProps = {
 };
 
 if (typeof window !== "undefined") {
-  preloadInitialAppContentRoute();
+  preloadInitialLabRoute();
 }
 
 const PlatformApp = lazyWithRetry(loadPlatformApp, {
@@ -206,6 +224,26 @@ function DevCrashTrigger({ mode }: { mode: string | null }) {
   if (mode === "render") {
     throw new Error("PYRUS dev crash diagnostics trigger");
   }
+  return null;
+}
+
+function AuthenticatedWorkspacePreloader({
+  labMode,
+}: {
+  labMode: string | null;
+}) {
+  const { signedIn, isLoading } = useAuthSession();
+
+  useEffect(() => {
+    if (isLoading || !signedIn) {
+      return;
+    }
+    if (labMode === "chart-parity" || labMode === "ticker-search") {
+      return;
+    }
+    preloadInitialWorkspaceRoute();
+  }, [isLoading, labMode, signedIn]);
+
   return null;
 }
 
@@ -442,6 +480,7 @@ function AppContent({ bootLoaderElapsedMs = null }: AppContentProps) {
     <>
       <DevCrashTrigger mode={crashMode} />
       <AppProviders>
+        <AuthenticatedWorkspacePreloader labMode={labMode} />
         <PlatformErrorBoundary
           label="PYRUS workspace"
           minHeight="100vh"
