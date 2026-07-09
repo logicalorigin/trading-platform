@@ -8,6 +8,8 @@ import { and, eq, gt, isNotNull, isNull, sql } from "drizzle-orm";
 import {
   authSessionsTable,
   db,
+  getPostgresDiagnosticContext,
+  type PostgresDiagnosticContext,
   usersTable,
   type User,
 } from "@workspace/db";
@@ -34,6 +36,19 @@ export type AuthenticatedSession = {
   user: PublicAuthUser;
   csrfTokenHash: string;
   expiresAt: Date;
+};
+
+type AuthSessionLookupMemo = Map<
+  string,
+  Promise<AuthenticatedSession | null>
+>;
+
+const authSessionLookupMemoKey: unique symbol = Symbol(
+  "authSessionLookupMemo",
+);
+
+type AuthSessionLookupMemoContext = PostgresDiagnosticContext & {
+  [authSessionLookupMemoKey]?: AuthSessionLookupMemo;
 };
 
 export type AuthResult = {
@@ -98,6 +113,14 @@ function csrfToken(): string {
 
 function sha256Base64Url(value: string): string {
   return createHash("sha256").update(value, "utf8").digest("base64url");
+}
+
+function requestAuthSessionLookupMemo(): AuthSessionLookupMemo | null {
+  const context =
+    getPostgresDiagnosticContext() as AuthSessionLookupMemoContext | null;
+  if (!context) return null;
+  context[authSessionLookupMemoKey] ??= new Map();
+  return context[authSessionLookupMemoKey];
 }
 
 function scrypt(
@@ -295,10 +318,37 @@ export async function loginUser(input: LoginInput): Promise<AuthResult> {
 
 export async function readAuthSessionFromToken(
   sessionToken: string | null | undefined,
-  now = new Date(),
+  now?: Date,
 ): Promise<AuthenticatedSession | null> {
   if (!sessionToken) return null;
 
+  const memo = now === undefined ? requestAuthSessionLookupMemo() : null;
+  if (memo) {
+    const cached = memo.get(sessionToken);
+    if (cached) return cached;
+
+    // Request-scope only: app.ts creates this ALS context per HTTP request.
+    // Key by the exact token and cache null too; a mid-request revocation after
+    // the first read is observed on the next request, so the first read wins for
+    // one in-flight request without extending validity across requests.
+    const lookup = readAuthSessionFromTokenUncached(
+      sessionToken,
+      new Date(),
+    ).catch((error) => {
+      memo.delete(sessionToken);
+      throw error;
+    });
+    memo.set(sessionToken, lookup);
+    return lookup;
+  }
+
+  return readAuthSessionFromTokenUncached(sessionToken, now ?? new Date());
+}
+
+async function readAuthSessionFromTokenUncached(
+  sessionToken: string,
+  now: Date,
+): Promise<AuthenticatedSession | null> {
   const tokenHash = sha256Base64Url(sessionToken);
   const [row] = await db
     .select({
