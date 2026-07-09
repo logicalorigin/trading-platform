@@ -5,9 +5,11 @@ import { eq } from "drizzle-orm";
 
 import {
   balanceSnapshotsTable,
+  barCacheTable,
   brokerAccountsTable,
   brokerConnectionsTable,
   db,
+  instrumentsTable,
   shadowAccountsTable,
   shadowBalanceSnapshotsTable,
   shadowPositionMarksTable,
@@ -19,6 +21,7 @@ import {
 } from "./index";
 import {
   pruneBalanceSnapshots,
+  pruneBarCache,
   pruneClosedShadowPositionMarks,
   pruneInactiveSignalMonitorSymbolStates,
   pruneShadowBalanceSnapshots,
@@ -51,9 +54,28 @@ after(async () => {
 });
 beforeEach(async () => {
   await testDb.client.exec(
-    "truncate table balance_snapshots, broker_accounts, broker_connections, shadow_balance_snapshots, shadow_position_marks, shadow_positions, shadow_accounts, signal_monitor_breadth_snapshots, signal_monitor_events, signal_monitor_symbol_states, signal_monitor_profiles restart identity cascade",
+    "truncate table balance_snapshots, bar_cache, instruments, broker_accounts, broker_connections, shadow_balance_snapshots, shadow_position_marks, shadow_positions, shadow_accounts, signal_monitor_breadth_snapshots, signal_monitor_events, signal_monitor_symbol_states, signal_monitor_profiles restart identity cascade",
   );
 });
+
+async function seedBar(
+  instrumentId: string,
+  timeframe: string,
+  startsAt: Date,
+): Promise<void> {
+  await db.insert(barCacheTable).values({
+    instrumentId,
+    symbol: "SPY",
+    timeframe,
+    startsAt,
+    open: "1",
+    high: "1",
+    low: "1",
+    close: "1",
+    volume: "1",
+    source: "massive-history",
+  });
+}
 
 async function seedTwoBrokerAccounts(): Promise<{ a: string; b: string }> {
   const [conn] = await db
@@ -423,6 +445,9 @@ test("resolveSnapshotRetentionConfig applies defaults and env overrides", () => 
     shadowPositionMarkDays: 180,
     signalMonitorEventDays: 120,
     signalMonitorInactiveStateDays: 90,
+    barCacheIntradayDays: 60,
+    barCacheDailyDays: 400,
+    barCacheMaxRowsPerRun: 1_000_000,
     batchSize: 5_000,
   });
 
@@ -431,11 +456,16 @@ test("resolveSnapshotRetentionConfig applies defaults and env overrides", () => 
     BALANCE_SNAPSHOT_RETENTION_DAYS: "365",
     SNAPSHOT_RETENTION_BATCH_SIZE: "1000",
     SHADOW_POSITION_MARK_RETENTION_DAYS: "not-a-number",
+    BAR_CACHE_INTRADAY_RETENTION_DAYS: "45",
+    BAR_CACHE_RETENTION_MAX_ROWS_PER_RUN: "250000",
   });
   assert.equal(overridden.signalBreadthSnapshotDays, 30);
   assert.equal(overridden.balanceSnapshotDays, 365);
   assert.equal(overridden.batchSize, 1_000);
   assert.equal(overridden.shadowPositionMarkDays, 180); // invalid -> default
+  assert.equal(overridden.barCacheIntradayDays, 45);
+  assert.equal(overridden.barCacheMaxRowsPerRun, 250_000);
+  assert.equal(overridden.barCacheDailyDays, 400); // unset -> default
 });
 
 test("runAllSnapshotRetention runs all configured sweeps, dry-run by default", async () => {
@@ -444,6 +474,7 @@ test("runAllSnapshotRetention runs all configured sweeps, dry-run by default", a
     results.map((r) => r.table).sort(),
     [
       "balance_snapshots",
+      "bar_cache",
       "shadow_balance_snapshots",
       "shadow_position_marks",
       "signal_monitor_breadth_snapshots",
@@ -471,4 +502,71 @@ test("batched delete converges across multiple iterations", async () => {
   const rows = await db.select().from(balanceSnapshotsTable);
   assert.equal(rows.length, 1);
   assert.equal(rows[0]!.asOf.getTime(), daysAgo(1).getTime());
+});
+
+test("pruneBarCache is timeframe-aware: prunes stale intraday, keeps recent + daily+", async () => {
+  const [ins] = await db
+    .insert(instrumentsTable)
+    .values({ symbol: "SPY", assetClass: "equity" })
+    .returning({ id: instrumentsTable.id });
+  const id = ins!.id;
+  // Windows at NOW (2026-06-25): intraday cutoff = -60d, daily cutoff = -400d.
+  await seedBar(id, "1m", daysAgo(5)); //   keep: recent intraday
+  await seedBar(id, "1m", daysAgo(120)); // DELETE: stale intraday
+  await seedBar(id, "5m", daysAgo(90)); //  DELETE: stale intraday
+  await seedBar(id, "1d", daysAgo(120)); // keep: daily within 400d
+  await seedBar(id, "1w", daysAgo(300)); // keep: weekly within 400d
+  await seedBar(id, "1d", daysAgo(500)); // DELETE: daily past 400d
+
+  const dry = await pruneBarCache({
+    intradayRetentionDays: 60,
+    dailyRetentionDays: 400,
+    now: NOW,
+  });
+  assert.equal(dry.dryRun, true);
+  assert.equal(dry.deleted, 0);
+  assert.equal(dry.candidates, 3); // bounded probe still exact below the cap
+
+  const run = await pruneBarCache({
+    intradayRetentionDays: 60,
+    dailyRetentionDays: 400,
+    now: NOW,
+    dryRun: false,
+  });
+  assert.equal(run.deleted, 3);
+
+  const survivors = await db.select().from(barCacheTable);
+  assert.deepEqual(
+    survivors
+      .map((r) => `${r.timeframe}@${r.startsAt.toISOString()}`)
+      .sort(),
+    [
+      `1d@${daysAgo(120).toISOString()}`,
+      `1m@${daysAgo(5).toISOString()}`,
+      `1w@${daysAgo(300).toISOString()}`,
+    ],
+  );
+});
+
+test("pruneBarCache caps deletions per run so a sweep can't pin the DB", async () => {
+  const [ins] = await db
+    .insert(instrumentsTable)
+    .values({ symbol: "SPY", assetClass: "equity" })
+    .returning({ id: instrumentsTable.id });
+  const id = ins!.id;
+  for (let i = 0; i < 5; i++) {
+    await seedBar(id, "1m", daysAgo(120 + i)); // all stale intraday, eligible
+  }
+
+  const run = await pruneBarCache({
+    intradayRetentionDays: 60,
+    dailyRetentionDays: 400,
+    now: NOW,
+    dryRun: false,
+    batchSize: 5,
+    maxRowsPerRun: 2,
+  });
+  assert.equal(run.deleted, 2); // stops at the cap, leaving the rest for next run
+  const remaining = await db.select().from(barCacheTable);
+  assert.equal(remaining.length, 3);
 });

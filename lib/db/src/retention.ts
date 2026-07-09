@@ -1,8 +1,9 @@
-import { inArray, sql, type SQL } from "drizzle-orm";
+import { inArray, notInArray, sql, type SQL } from "drizzle-orm";
 
 import { db } from "./index";
 import {
   balanceSnapshotsTable,
+  barCacheTable,
   shadowBalanceSnapshotsTable,
   shadowPositionMarksTable,
   shadowPositionsTable,
@@ -263,6 +264,86 @@ export async function pruneInactiveSignalMonitorSymbolStates(
   });
 }
 
+/** Daily-and-coarser timeframes: tiny in volume, kept far longer than intraday. */
+export const BAR_CACHE_LONG_TIMEFRAMES = ["1d", "1w", "1M", "1mo"] as const;
+/** Cap rows deleted per scheduled sweep so one run can't pin the shared DB. */
+export const DEFAULT_BAR_CACHE_MAX_ROWS_PER_RUN = 1_000_000;
+/** Report "at least N" eligible rows via a bounded probe (a full count(*) on
+ * this ~18M-row table trips the 15s statement_timeout). */
+const BAR_CACHE_CANDIDATE_PROBE_CAP = 50_000;
+
+export type BarCacheRetentionOptions = {
+  /** Sub-daily bars older than `now - intradayRetentionDays` are eligible. */
+  intradayRetentionDays: number;
+  /** Daily+ bars older than `now - dailyRetentionDays` are eligible. */
+  dailyRetentionDays: number;
+  now?: Date;
+  batchSize?: number;
+  dryRun?: boolean;
+  /** Max rows deleted this run; the backlog drains over successive sweeps. */
+  maxRowsPerRun?: number;
+};
+
+/**
+ * `bar_cache` is the signal-monitor's working bar store. The ONLY production
+ * reader is signal-monitor.ts (`loadStoredMarketBars*`), whose deepest lookback
+ * is ~10 days (`SIGNAL_MONITOR_MARKET_CLOSE_LOOKBACK_DAYS`); backtesting does NOT
+ * read it. Left unbounded it grew to ~18M rows / 8GB (3.7yr of mostly-intraday
+ * bars written once and never re-read), starving the shared DB's 128MB cache and
+ * inflating every upsert (4 indexes + WAL) — the structural half of the 12-slot
+ * pool saturation. Retention is timeframe-aware: sub-daily bars (the bulk) are
+ * pruned to `intradayRetentionDays`; daily-and-coarser bars are tiny and kept to
+ * `dailyRetentionDays`, so long-horizon signals/charts are never starved.
+ *
+ * Unlike the snapshot sweeps this does NOT reuse `sweep()`: it skips the upfront
+ * exact count (a full `count(*)` here trips the 15s statement_timeout) in favour
+ * of a bounded candidate probe, and caps `maxRowsPerRun` so a single scheduled
+ * sweep does bounded IO while the historical backlog drains over successive runs.
+ * The deletable predicate is stable as rows disappear, so successive runs
+ * converge; the newest bars (which every reader needs) never match it.
+ */
+export async function pruneBarCache(
+  opts: BarCacheRetentionOptions,
+): Promise<RetentionResult> {
+  const now = opts.now ?? new Date();
+  const dryRun = opts.dryRun ?? true;
+  const batchSize = opts.batchSize ?? DEFAULT_RETENTION_BATCH_SIZE;
+  const maxRowsPerRun = opts.maxRowsPerRun ?? DEFAULT_BAR_CACHE_MAX_ROWS_PER_RUN;
+  const intradayCutoff = new Date(
+    now.getTime() - opts.intradayRetentionDays * 86_400_000,
+  );
+  const dailyCutoff = new Date(
+    now.getTime() - opts.dailyRetentionDays * 86_400_000,
+  );
+  const t = barCacheTable;
+  const long = [...BAR_CACHE_LONG_TIMEFRAMES];
+  const deletable = sql`((${inArray(t.timeframe, long)} and ${t.startsAt} < ${dailyCutoff}) or (${notInArray(t.timeframe, long)} and ${t.startsAt} < ${intradayCutoff}))`;
+
+  const probed = await db.execute<{ n: number }>(
+    sql`select count(*)::int as n from (select 1 from ${t} where ${deletable} limit ${BAR_CACHE_CANDIDATE_PROBE_CAP}) s`,
+  );
+  const candidates = Number(probed.rows[0]?.n ?? 0);
+
+  let deleted = 0;
+  if (!dryRun && candidates > 0) {
+    while (deleted < maxRowsPerRun) {
+      const limit = Math.min(batchSize, maxRowsPerRun - deleted);
+      const deleteBatch = sql`delete from ${t} where ${t.id} in (select ${t.id} from ${t} where ${deletable} limit ${limit}) returning ${t.id}`;
+      const removed = await db.execute<{ id: string }>(deleteBatch);
+      if (removed.rows.length === 0) break;
+      deleted += removed.rows.length;
+    }
+  }
+
+  return {
+    table: "bar_cache",
+    cutoff: intradayCutoff.toISOString(),
+    candidates,
+    deleted,
+    dryRun,
+  };
+}
+
 /**
  * Per-table retention windows (days) + batch size, the single source of truth
  * shared by the CLI and the api-server scheduler. Defaults are the conservative,
@@ -275,6 +356,9 @@ export type SnapshotRetentionConfig = {
   shadowPositionMarkDays: number;
   signalMonitorEventDays: number;
   signalMonitorInactiveStateDays: number;
+  barCacheIntradayDays: number;
+  barCacheDailyDays: number;
+  barCacheMaxRowsPerRun: number;
   batchSize: number;
 };
 
@@ -306,6 +390,17 @@ export function resolveSnapshotRetentionConfig(
       env,
       "SIGNAL_MONITOR_INACTIVE_STATE_RETENTION_DAYS",
       90,
+    ),
+    // Sub-daily bars: kept ~6x the signal-monitor's ~10d lookback; daily+ bars
+    // are tiny, kept long so long-horizon signals/charts are never starved.
+    barCacheIntradayDays: envInt(env, "BAR_CACHE_INTRADAY_RETENTION_DAYS", 60),
+    barCacheDailyDays: envInt(env, "BAR_CACHE_DAILY_RETENTION_DAYS", 400),
+    barCacheMaxRowsPerRun: envInt(
+      env,
+      "BAR_CACHE_RETENTION_MAX_ROWS_PER_RUN",
+      DEFAULT_BAR_CACHE_MAX_ROWS_PER_RUN,
+      1,
+      50_000_000,
     ),
     batchSize: envInt(env, "SNAPSHOT_RETENTION_BATCH_SIZE", DEFAULT_RETENTION_BATCH_SIZE),
   };
@@ -346,6 +441,14 @@ export async function runAllSnapshotRetention(opts?: {
     await pruneInactiveSignalMonitorSymbolStates({
       ...common,
       retentionDays: config.signalMonitorInactiveStateDays,
+    }),
+    await pruneBarCache({
+      now: opts?.now,
+      batchSize: config.batchSize,
+      dryRun: opts?.dryRun,
+      intradayRetentionDays: config.barCacheIntradayDays,
+      dailyRetentionDays: config.barCacheDailyDays,
+      maxRowsPerRun: config.barCacheMaxRowsPerRun,
     }),
   ];
 }
