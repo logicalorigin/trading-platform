@@ -77,36 +77,36 @@ const NEW_YORK_CLOCK_FORMATTER = new Intl.DateTimeFormat("en-US", {
 });
 
 const MARKET_SESSIONS: Record<UsEquityMarketSessionKey, UsEquityMarketSession> = {
-  overnight: {
+  overnight: Object.freeze({
     key: "overnight",
     label: "OVN",
     title: "Overnight",
     open: true,
-  },
-  pre: {
+  }),
+  pre: Object.freeze({
     key: "pre",
     label: "PRE",
     title: "Premarket",
     open: true,
-  },
-  rth: {
+  }),
+  rth: Object.freeze({
     key: "rth",
     label: "RTH",
     title: "Regular trading hours",
     open: true,
-  },
-  after: {
+  }),
+  after: Object.freeze({
     key: "after",
     label: "AFT",
     title: "After-hours",
     open: true,
-  },
-  closed: {
+  }),
+  closed: Object.freeze({
     key: "closed",
     label: "CLSD",
     title: "Closed",
     open: false,
-  },
+  }),
 };
 
 const dateKey = (year: number, month: number, day: number): string =>
@@ -208,6 +208,19 @@ const goodFridayKey = (year: number): string => {
 // records never change for a given year.
 const nyseHolidayRecordsByYear = new Map<number, NyseHoliday[]>();
 
+const NYSE_AD_HOC_HOLIDAYS: Readonly<Record<string, string>> = {
+  "2001-09-11": "September 11 attacks",
+  "2001-09-12": "September 11 attacks",
+  "2001-09-13": "September 11 attacks",
+  "2001-09-14": "September 11 attacks",
+  "2004-06-11": "National Day of Mourning for President Ronald Reagan",
+  "2007-01-02": "National Day of Mourning for President Gerald R. Ford",
+  "2012-10-29": "Hurricane Sandy",
+  "2012-10-30": "Hurricane Sandy",
+  "2018-12-05": "National Day of Mourning for President George H. W. Bush",
+  "2025-01-09": "National Day of Mourning for President Jimmy Carter",
+};
+
 const buildNyseHolidayRecords = (year: number): NyseHoliday[] => {
   const cachedHolidayRecords = nyseHolidayRecordsByYear.get(year);
   if (cachedHolidayRecords) {
@@ -227,10 +240,12 @@ const buildNyseHolidayRecords = (year: number): NyseHoliday[] => {
       }),
       "New Year's Day",
     );
-    add(
-      dateKey(holidayYear, 1, nthWeekdayOfMonth(holidayYear, 1, 1, 3)),
-      "Martin Luther King, Jr. Day",
-    );
+    if (holidayYear >= 1998) {
+      add(
+        dateKey(holidayYear, 1, nthWeekdayOfMonth(holidayYear, 1, 1, 3)),
+        "Martin Luther King, Jr. Day",
+      );
+    }
     add(
       dateKey(holidayYear, 2, nthWeekdayOfMonth(holidayYear, 2, 1, 3)),
       "Washington's Birthday",
@@ -240,10 +255,12 @@ const buildNyseHolidayRecords = (year: number): NyseHoliday[] => {
       dateKey(holidayYear, 5, lastWeekdayOfMonth(holidayYear, 5, 1)),
       "Memorial Day",
     );
-    add(
-      observedFixedHolidayDateKey(holidayYear, 6, 19),
-      "Juneteenth National Independence Day",
-    );
+    if (holidayYear >= 2022) {
+      add(
+        observedFixedHolidayDateKey(holidayYear, 6, 19),
+        "Juneteenth National Independence Day",
+      );
+    }
     add(
       observedFixedHolidayDateKey(holidayYear, 7, 4),
       "Independence Day",
@@ -257,6 +274,11 @@ const buildNyseHolidayRecords = (year: number): NyseHoliday[] => {
       "Thanksgiving Day",
     );
     add(observedFixedHolidayDateKey(holidayYear, 12, 25), "Christmas Day");
+    for (const [date, name] of Object.entries(NYSE_AD_HOC_HOLIDAYS)) {
+      if (date.startsWith(`${holidayYear}-`)) {
+        add(date, name);
+      }
+    }
   };
 
   addYear(year - 1);
@@ -426,17 +448,19 @@ const resolveNyseEarlyClose = (
 };
 
 export const listNyseHolidays = (year: number): NyseHoliday[] => {
-  if (!Number.isInteger(year)) {
+  if (!isSupportedCalendarYear(year)) {
     return [];
   }
 
-  return buildNyseHolidayRecords(year).filter((holiday) =>
-    holiday.date.startsWith(`${year}-`),
-  );
+  return buildNyseHolidayRecords(year)
+    .filter((holiday) => holiday.date.startsWith(`${year}-`))
+    .map((holiday) => ({ ...holiday }));
 };
 
 export const listNyseEarlyCloses = (year: number): NyseEarlyClose[] =>
-  Number.isInteger(year) ? [...buildNyseEarlyCloseRecords(year)] : [];
+  isSupportedCalendarYear(year)
+    ? buildNyseEarlyCloseRecords(year).map((close) => ({ ...close }))
+    : [];
 
 const resolveNyseCalendarDayFromParts = (
   parts: Pick<NewYorkClockParts, "year" | "month" | "day">,
@@ -475,12 +499,7 @@ const resolveNyseCalendarDayFromParts = (
 export const resolveNyseCalendarDay = (
   value: Date | number | string,
 ): NyseCalendarDay | null => {
-  const date = value instanceof Date ? value : new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return null;
-  }
-
-  const parts = resolveNewYorkClockParts(date);
+  const parts = resolveNewYorkDayParts(value);
   return parts ? resolveNyseCalendarDayFromParts(parts) : null;
 };
 
@@ -709,6 +728,30 @@ export const resolvePreviousUsEquitySessionClose = (
 
 const MARKET_DATE_KEY_PATTERN = /^(\d{4})-(\d{2})-(\d{2})$/;
 
+const isSupportedCalendarYear = (year: number): boolean =>
+  Number.isInteger(year) && year >= 1000 && year <= 9999;
+
+const parseMarketDateKey = (
+  value: string,
+): Pick<NewYorkClockParts, "year" | "month" | "day"> | null => {
+  const match = MARKET_DATE_KEY_PATTERN.exec(value);
+  if (!match) {
+    return null;
+  }
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  if (!isSupportedCalendarYear(year)) {
+    return null;
+  }
+  const date = new Date(Date.UTC(year, month - 1, day));
+  return date.getUTCFullYear() === year &&
+    date.getUTCMonth() === month - 1 &&
+    date.getUTCDate() === day
+    ? { year, month, day }
+    : null;
+};
+
 // Resolve input to New York calendar-day parts. A bare YYYY-MM-DD string names
 // a NY day directly — `new Date("YYYY-MM-DD")` is UTC midnight, i.e. 19:00/20:00
 // ET the PREVIOUS NY day, which would off-by-one every date-key caller (DTE).
@@ -716,13 +759,9 @@ const resolveNewYorkDayParts = (
   value: Date | number | string,
 ): Pick<NewYorkClockParts, "year" | "month" | "day"> | null => {
   if (typeof value === "string") {
-    const match = MARKET_DATE_KEY_PATTERN.exec(value);
-    if (match) {
-      return {
-        year: Number(match[1]),
-        month: Number(match[2]),
-        day: Number(match[3]),
-      };
+    const parts = parseMarketDateKey(value);
+    if (parts || MARKET_DATE_KEY_PATTERN.test(value)) {
+      return parts;
     }
   }
   const date = value instanceof Date ? value : new Date(value);
