@@ -1,5 +1,4 @@
 import { PYRUS_LOGO_PTS } from "./pyrus-logo-points";
-import { PYRUS_WORDMARK_PTS } from "./pyrus-wordmark-points";
 
 export const CHARSETS = {
   binary: "01",
@@ -216,30 +215,6 @@ export function ringTargets(dirs: Float32Array, scale: number): Float32Array {
     out[i * 3] = (px + jx) * scale;
     out[i * 3 + 1] = (py + jy) * scale;
     out[i * 3 + 2] = (hashRand(i * 5.33 + 1.7) - 0.5) * 0.012 * scale;
-  }
-  return out;
-}
-
-/**
- * The ACTUAL Pyrus WORDMARK as exactly `count` points in mark-fraction units
- * (y-up), centered on x=0 at vertical center `cy`. The points are sampled from
- * the real brand wordmark PNG (PYRUS_WORDMARK_PTS, normalized x in [-1,1]), scaled
- * UNIFORMLY by `halfW` so the letterform aspect is preserved (halfH is ignored).
- * Deterministic subsample (no Math.random) so builds stay reproducible.
- */
-function wordmarkPoints(
-  count: number,
-  halfW: number,
-  _halfH: number,
-  cy: number,
-): Array<[number, number]> {
-  if (count <= 0) return [];
-  const src = PYRUS_WORDMARK_PTS;
-  const out: Array<[number, number]> = [];
-  const stride = src.length / count;
-  for (let i = 0; i < count; i++) {
-    const [bx, by] = src[Math.floor(i * stride) % src.length];
-    out.push([bx * halfW, cy + by * halfW]); // uniform scale preserves the aspect
   }
   return out;
 }

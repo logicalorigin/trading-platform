@@ -15,7 +15,6 @@ const requiredFiles = [
   "src/components/marketing/neural-core/types.ts",
   "src/components/marketing/neural-core/index.ts",
   "src/components/marketing/neural-core/pyrus-logo-points.ts",
-  "src/components/marketing/neural-core/pyrus-wordmark-points.ts",
   "src/components/marketing/neural-core-scene.tsx",
   "src/components/marketing/brand-resolve.tsx",
   "src/components/marketing/pyrus-mark.tsx",
@@ -46,9 +45,9 @@ test("brand kit compatibility entry points and assets are installed", () => {
     size("src/components/marketing/neural-core/pyrus-logo-points.ts") > 2_000_000,
     "Expected source sampled Pyrus logo point cloud, not a placeholder",
   );
-  assert.ok(
-    size("src/components/marketing/neural-core/pyrus-wordmark-points.ts") > 30_000,
-    "Expected source sampled Pyrus wordmark point cloud, not a placeholder",
+  assert.doesNotMatch(
+    read("src/components/marketing/neural-core/helpers.ts"),
+    /pyrus-wordmark-points|PYRUS_WORDMARK_PTS/,
   );
 });
 
