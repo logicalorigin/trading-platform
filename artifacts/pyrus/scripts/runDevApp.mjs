@@ -348,6 +348,28 @@ function spawnService(name, args, env) {
   return child;
 }
 
+// Launch the detached kill-watchdog (WO-RESTART-FORENSICS). It samples cheap
+// procfs/cgroup state so a FUTURE abrupt supervisor tree-kill can be classified
+// (manual restart vs platform reconcile vs resource kill) without asking. Spawned
+// detached + unref'd in its OWN session so a process-group kill of this supervisor
+// does not take it down; its own pidfile lock makes respawns idempotent (never
+// stacks). Best-effort only — a failure here must never block app bring-up.
+function startKillWatchdog() {
+  try {
+    const watchdogPath = fileURLToPath(new URL("./dev-kill-watchdog.mjs", import.meta.url));
+    const child = spawn(process.execPath, [watchdogPath], {
+      cwd: repoRoot,
+      detached: true,
+      stdio: "ignore",
+      env: process.env,
+    });
+    child.on("error", () => {});
+    child.unref();
+  } catch {
+    // Watchdog is diagnostics-only; ignore any spawn failure.
+  }
+}
+
 function exitPromise(name, child) {
   return new Promise((resolve) => {
     child.once("exit", (code, signal) => {
@@ -1076,6 +1098,7 @@ try {
   });
   startLifecycleHeartbeat();
   flightRecorder.writeHeartbeat(currentFlightHeartbeat());
+  startKillWatchdog();
 
   // Phase-duration instrumentation: measured from the moment this supervisor owns
   // the lock and begins spawning services, so the numbers reflect launch cost (not
