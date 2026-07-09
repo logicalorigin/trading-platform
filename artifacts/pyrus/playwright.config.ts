@@ -17,6 +17,9 @@ const executablePath = process.env.REPLIT_PLAYWRIGHT_CHROMIUM_EXECUTABLE || unde
 export default defineConfig({
   testDir: "./e2e",
   use: {
+    // Optional pre-authenticated session (Playwright storageState JSON) for e2e that
+    // must run past the login gate. Unset = anonymous (existing behavior).
+    storageState: process.env.PYRUS_STORAGE_STATE || undefined,
     launchOptions: {
       executablePath,
       args: ["--no-sandbox", "--disable-dev-shm-usage"],
