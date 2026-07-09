@@ -22,6 +22,10 @@ import {
   type MarketDataStoreBarInput,
   type MarketDataStoreTimeframe,
 } from "./market-data-store";
+import {
+  getApiResourcePressureSnapshot,
+  isApiResourcePressureHardBlock,
+} from "./resource-pressure";
 
 export type SignalMonitorLocalBarCacheTimeframe =
   | "1m"
@@ -155,6 +159,8 @@ let storedBarsPrefetchHitCount = 0;
 let storedBarsPrefetchFallbackCount = 0;
 let storedBarsPrefetchFallbackNoPrefetchCount = 0;
 let storedBarsPrefetchFallbackMismatchCount = 0;
+let storedBarsPrefetchPressureSkipCount = 0;
+let lastStoredBarsPrefetchPressureSkippedAt: Date | null = null;
 
 const minuteBarsBySymbol = new Map<string, Map<number, CachedBar>>();
 const minuteBarLastPrunedAtMsBySymbol = new Map<string, number>();
@@ -986,6 +992,11 @@ async function readStoredBars(input: {
     storedBarsPrefetchHitCount += 1;
     return mergeBarsByTimestamp(prefetched.flat(), input.limit);
   }
+  if (getApiResourcePressureSnapshot().level === "high") {
+    storedBarsPrefetchPressureSkipCount += 1;
+    lastStoredBarsPrefetchPressureSkippedAt = new Date();
+    return [];
+  }
   storedBarsPrefetchFallbackCount += 1;
   if (prefetch === undefined) {
     storedBarsPrefetchFallbackNoPrefetchCount += 1;
@@ -1167,6 +1178,24 @@ export async function runWithSignalMonitorStoredBarsPrefetch<T>(
   timeframes.forEach((timeframe) => {
     byTimeframe.set(timeframe, new Map());
   });
+  if (isApiResourcePressureHardBlock()) {
+    storedBarsPrefetchPressureSkipCount += 1;
+    lastStoredBarsPrefetchPressureSkippedAt = new Date();
+    for (const timeframe of timeframes) {
+      const bySource = byTimeframe.get(timeframe)!;
+      for (const sourceName of sourceNames) {
+        bySource.set(sourceName, new Map());
+      }
+    }
+    return storedBarsPrefetchStore.run(
+      {
+        evaluatedAtMs: input.evaluatedAt.getTime(),
+        limit: input.limit,
+        byTimeframe,
+      },
+      fn,
+    );
+  }
   const tasks = timeframes.flatMap((timeframe) =>
     sourceNames.map((sourceName) => ({ timeframe, sourceName })),
   );
@@ -1524,6 +1553,9 @@ export function getSignalMonitorLocalBarCacheDiagnostics() {
       fallbackCount: storedBarsPrefetchFallbackCount,
       fallbackNoPrefetchCount: storedBarsPrefetchFallbackNoPrefetchCount,
       fallbackMismatchCount: storedBarsPrefetchFallbackMismatchCount,
+      pressureSkipCount: storedBarsPrefetchPressureSkipCount,
+      lastPressureSkippedAt:
+        lastStoredBarsPrefetchPressureSkippedAt?.toISOString() ?? null,
     },
     lastEnqueueScannedBarCount,
   };
@@ -1568,6 +1600,12 @@ export const __signalMonitorLocalBarCacheInternalsForTests = {
     storedBarsCacheInvalidationFullCount = 0;
     storedBarsCacheInvalidationDeltaDueCount = 0;
     storedBarsCacheEvictionCount = 0;
+    storedBarsPrefetchHitCount = 0;
+    storedBarsPrefetchFallbackCount = 0;
+    storedBarsPrefetchFallbackNoPrefetchCount = 0;
+    storedBarsPrefetchFallbackMismatchCount = 0;
+    storedBarsPrefetchPressureSkipCount = 0;
+    lastStoredBarsPrefetchPressureSkippedAt = null;
     persistMarketDataBarsMixedOverride = null;
     loadStoredMarketBarsForSymbolsOverride = null;
     loadStoredMarketBarsForSymbolsSinceOverride = null;

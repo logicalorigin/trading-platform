@@ -22,6 +22,7 @@ import {
   isPoolContentionError,
 } from "../lib/transient-db-error";
 import { normalizeSymbol } from "../lib/values";
+import { isApiResourcePressureHardBlock } from "./resource-pressure";
 import type {
   BrokerBarSnapshot,
   MarketDataFreshness,
@@ -496,6 +497,9 @@ export async function loadStoredMarketBars(
     order?: "asc" | "desc";
   },
 ): Promise<BrokerBarSnapshot[]> {
+  if (isApiResourcePressureHardBlock()) {
+    return [];
+  }
   const window = resolveDurableHistoryWindow(input);
   if (!window) {
     return [];
@@ -609,6 +613,9 @@ export async function loadStoredMarketBarsBySymbol(input: {
   // deserializing the unused OHLV columns across the universe-wide read was the
   // dominant event-loop cost (the SQL itself is ~13ms).
 }): Promise<Record<string, Array<{ timestamp: Date; close: number }>>> {
+  if (isApiResourcePressureHardBlock()) {
+    return {};
+  }
   const symbols = Array.from(
     new Set(input.symbols.map((symbol) => normalizeSymbol(symbol)).filter(Boolean)),
   );
@@ -807,6 +814,9 @@ export async function loadStoredMarketBarsForSymbols(
   },
 ): Promise<Map<string, BrokerBarSnapshot[]>> {
   const out = new Map<string, BrokerBarSnapshot[]>();
+  if (isApiResourcePressureHardBlock()) {
+    return out;
+  }
   const symbols = Array.from(
     new Set(input.symbols.map((symbol) => normalizeSymbol(symbol)).filter(Boolean)),
   );
@@ -888,6 +898,9 @@ export async function loadStoredMarketBarsForSymbolsSince(
   },
 ): Promise<Map<string, BrokerBarSnapshot[]>> {
   const out = new Map<string, BrokerBarSnapshot[]>();
+  if (isApiResourcePressureHardBlock()) {
+    return out;
+  }
   const symbols = Array.from(
     new Set(input.symbols.map((symbol) => normalizeSymbol(symbol)).filter(Boolean)),
   );

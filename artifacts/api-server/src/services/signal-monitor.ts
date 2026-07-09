@@ -137,6 +137,11 @@ type SignalMonitorMatrixCellRequest = {
   timeframe: SignalMonitorMatrixTimeframe;
 };
 const SIGNAL_MONITOR_CELL_KEY_SEPARATOR = "\u0000";
+
+function isSignalMonitorHardResourcePressure(): boolean {
+  return getApiResourcePressureSnapshot().hardResourceLevel === "high";
+}
+
 export type SignalMonitorCanonicalEventCandidate = {
   signal: PyrusSignalsSignalEvent;
   signalAt: Date;
@@ -3966,6 +3971,9 @@ async function loadSignalMonitorCatalogExpansionSymbols(input: {
     maxSymbols,
   ).symbols;
   if (seedSymbols.length >= maxSymbols) {
+    return { symbols: seedSymbols, rankedAt: null };
+  }
+  if (isSignalMonitorHardResourcePressure()) {
     return { symbols: seedSymbols, rankedAt: null };
   }
 
@@ -12146,6 +12154,9 @@ export async function listLatestTrustedSignalMonitorEventsForProfile(input: {
   symbols?: string[];
   timeframes?: SignalMonitorMatrixTimeframe[];
 }): Promise<SignalMonitorLatestTrustedSignalEvent[]> {
+  if (isSignalMonitorHardResourcePressure()) {
+    return [];
+  }
   const symbols = normalizeSignalMonitorMatrixSymbols(input.symbols);
   const timeframes = parseSignalMatrixTimeframes(input.timeframes);
   const trustedEvents = trustedSignalMonitorCanonicalEventsSql(input.profile.id, {
@@ -12227,6 +12238,9 @@ async function listLatestTrustedSignalMonitorBarsForCells(
     timeframe: SignalMonitorMatrixTimeframe;
   }>,
 ): Promise<Map<string, SignalMonitorLatestTrustedBar>> {
+  if (isSignalMonitorHardResourcePressure()) {
+    return new Map();
+  }
   if (!cells.length) {
     return new Map();
   }
@@ -12415,6 +12429,9 @@ export async function buildSignalMonitorCurrentCellParityReport(input: {
   includeInactive?: boolean;
 }): Promise<SignalMonitorCurrentCellParityReport> {
   const report = buildEmptySignalMonitorCurrentCellParityReport(input);
+  if (isSignalMonitorHardResourcePressure()) {
+    return report;
+  }
   const symbols = report.requested.symbols;
   const timeframes = report.requested.timeframes;
   const conditions = [
@@ -14875,6 +14892,9 @@ export async function getSignalMonitorProfile(input: {
   if (cached && cached.expiresAt > nowMs) {
     return cached.promise;
   }
+  if (isSignalMonitorHardResourcePressure()) {
+    return profileToResponse(getRuntimeSignalMonitorProfile(environment));
+  }
   const promise = loadSignalMonitorProfileFresh(environment);
   signalMonitorProfileCache.set(environment, {
     promise,
@@ -15207,6 +15227,7 @@ export const __signalMonitorInternalsForTests = {
   getSignalMonitorPersistScheduleStatsForTests,
   waitForSignalMonitorPersistIdleForTests,
   // B4 (profile heartbeat gate)
+  invalidateSignalMonitorProfileCache,
   shouldWriteSignalMonitorProfileEvaluationMetadata,
   recordSignalMonitorProfileEvaluationMetadataWrite,
   resetSignalMonitorProfileHeartbeatForTests,
@@ -16143,6 +16164,9 @@ export async function getSignalDirectionsForSymbolAsOf(input: {
   if (!symbol || !timeframes.length) {
     return directions;
   }
+  if (isSignalMonitorHardResourcePressure()) {
+    return directions;
+  }
   const environment = resolveEnvironment(input.environment);
   const profile = await getOrCreateProfile(environment);
   const result = await db.execute(sql`
@@ -16444,7 +16468,10 @@ export async function listSignalMonitorEvents(input: {
 function shouldServeSignalMonitorEventsRuntimeFallback(
   nowMs = Date.now(),
 ): boolean {
-  return signalMonitorEventsReadDbBackoff.isActive(nowMs);
+  return (
+    signalMonitorEventsReadDbBackoff.isActive(nowMs) ||
+    isSignalMonitorHardResourcePressure()
+  );
 }
 
 function markSignalMonitorEventsReadFallback(input: {

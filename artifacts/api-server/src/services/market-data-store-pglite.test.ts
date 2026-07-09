@@ -12,6 +12,7 @@ import {
   loadStoredMarketBars,
   loadStoredMarketBarsBySymbol,
   loadStoredMarketBarsForSymbols,
+  loadStoredMarketBarsForSymbolsSince,
   persistMarketDataBars,
   __resetMarketDataStoreBackoffForTests,
 } from "./market-data-store";
@@ -145,6 +146,46 @@ test("durable bar reads continue while API pressure is high", async () => {
   });
 
   assert.equal(bars.length, 2);
+});
+
+test("durable bar reads yield to hard DB-pool pressure", async () => {
+  const symbol = "AAPL";
+  const sourceName = "massive";
+  const timeframe = "1m" as const;
+  const [olderTs] = await seedBars({ symbol, sourceName, timeframe });
+  updateApiResourcePressure({ dbPoolActive: 12, dbPoolWaiting: 8, dbPoolMax: 12 });
+  updateApiResourcePressure({ dbPoolActive: 12, dbPoolWaiting: 8, dbPoolMax: 12 });
+
+  const single = await loadStoredMarketBars({
+    symbol,
+    timeframe,
+    sourceName,
+    limit: 100,
+  });
+  const bySymbol = await loadStoredMarketBarsBySymbol({
+    symbols: [symbol],
+    timeframe,
+    sourceName,
+    limit: 100,
+  });
+  const batch = await loadStoredMarketBarsForSymbols({
+    symbols: [symbol],
+    timeframe,
+    sourceName,
+    limit: 100,
+  });
+  const delta = await loadStoredMarketBarsForSymbolsSince({
+    symbols: [symbol],
+    timeframe,
+    sourceName,
+    limit: 100,
+    after: olderTs,
+  });
+
+  assert.deepEqual(single, []);
+  assert.deepEqual(bySymbol, {});
+  assert.equal(batch.size, 0);
+  assert.equal(delta.size, 0);
 });
 
 test("loadStoredMarketBars filters by source and timeframe", async () => {

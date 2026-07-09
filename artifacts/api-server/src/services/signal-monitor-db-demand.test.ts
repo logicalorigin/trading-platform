@@ -6,9 +6,14 @@ import { sql } from "drizzle-orm";
 
 import {
   __signalMonitorInternalsForTests,
+  getSignalMonitorProfile,
   getSignalDirectionsForSymbolAsOf,
   updateSignalMonitorProfileEvaluationMetadata,
 } from "./signal-monitor";
+import {
+  __resetApiResourcePressureForTests,
+  updateApiResourcePressure,
+} from "./resource-pressure";
 
 // DB read/write-demand cuts for signal-monitor (work-order B). Importing the
 // service opens the real @workspace/db pool at module load, so run with
@@ -59,6 +64,37 @@ test("B1: catalog expansion JOIN is memoized per effective limit and re-reads af
       "invalidation forces a fresh read",
     );
   });
+});
+
+test("signal monitor optional reads yield before DB work under hard pool pressure", async () => {
+  __resetApiResourcePressureForTests();
+  I.invalidateSignalMonitorCatalogExpansionMemo();
+  I.invalidateSignalMonitorProfileCache();
+  I.resetSignalMonitorEventsReadFallbackBackoffForTests();
+  const base = I.getSignalMonitorCatalogExpansionMemoStats();
+  try {
+    updateApiResourcePressure({ dbPoolActive: 12, dbPoolWaiting: 8, dbPoolMax: 12 });
+    updateApiResourcePressure({ dbPoolActive: 12, dbPoolWaiting: 8, dbPoolMax: 12 });
+
+    const expansion = await I.loadSignalMonitorCatalogExpansionSymbols({
+      seedSymbols: ["AAA"],
+      maxSymbols: 5,
+    });
+    assert.deepEqual(expansion.symbols, ["AAA"]);
+    assert.equal(
+      I.getSignalMonitorCatalogExpansionMemoStats().misses,
+      base.misses,
+      "catalog expansion must not open the ranked catalog JOIN under pressure",
+    );
+
+    assert.equal(I.shouldServeSignalMonitorEventsRuntimeFallback(), true);
+    const profile = await getSignalMonitorProfile({ environment: "shadow" });
+    assert.equal(profile.environment, "shadow");
+  } finally {
+    I.invalidateSignalMonitorProfileCache();
+    I.resetSignalMonitorEventsReadFallbackBackoffForTests();
+    __resetApiResourcePressureForTests();
+  }
 });
 
 // ── B2: event_key dedup batch ───────────────────────────────────────────────
@@ -222,6 +258,26 @@ test("event MTF directions match six latest-at-or-before queries with determinis
     assert.equal(expected["2m"], "sell", "same-time tie uses id DESC");
     assert.equal(expected["15m"], null, "missing timeframe stays null");
   });
+});
+
+test("event MTF directions yield before DB work under hard pool pressure", async () => {
+  __resetApiResourcePressureForTests();
+  try {
+    updateApiResourcePressure({ dbPoolActive: 12, dbPoolWaiting: 8, dbPoolMax: 12 });
+    updateApiResourcePressure({ dbPoolActive: 12, dbPoolWaiting: 8, dbPoolMax: 12 });
+
+    assert.deepEqual(
+      await getSignalDirectionsForSymbolAsOf({
+        environment: "shadow",
+        symbol: "AAPL",
+        timeframes: ["1m", "2m", "5m", "bogus"],
+        asOf: new Date("2026-06-09T15:06:00.000Z"),
+      }),
+      { "1m": null, "2m": null, "5m": null },
+    );
+  } finally {
+    __resetApiResourcePressureForTests();
+  }
 });
 
 // ── B4: profile heartbeat gate ──────────────────────────────────────────────

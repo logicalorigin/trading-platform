@@ -546,7 +546,7 @@ test("stored-bar invalidation diagnostics separate change events from per-cell b
   );
 });
 
-test("high API pressure does not suppress stored-bar DB augmentation", async () => {
+test("event-loop-only pressure does not suppress stored-bar DB augmentation", async () => {
   let fullReads = 0;
   let deltaReads = 0;
   internals.__setLoadStoredMarketBarsForSymbolsForTests(async () => {
@@ -571,6 +571,64 @@ test("high API pressure does not suppress stored-bar DB augmentation", async () 
 
   assert.equal(fullReads, SOURCES.length);
   assert.equal(deltaReads, 0);
+});
+
+test("high API pressure skips unbatched stored-bar fallback reads", async () => {
+  await seed("AAPL", 4);
+  updateApiResourcePressure({ eventLoopUtilization: 0.95 });
+
+  const before = getSignalMonitorLocalBarCacheDiagnostics().storedBarsRead;
+  const bars = await loadSignalMonitorLocalBarCache({
+    symbol: "AAPL",
+    timeframe: TIMEFRAME,
+    evaluatedAt: new Date(),
+    limit: 50,
+  });
+  const after = getSignalMonitorLocalBarCacheDiagnostics().storedBarsRead;
+
+  assert.deepEqual(bars, []);
+  assert.equal(after.pressureSkipCount - before.pressureSkipCount, 1);
+  assert.equal(after.fallbackCount - before.fallbackCount, 0);
+});
+
+test("finite DB-pool pressure skips stored-bar DB augmentation without fallback reads", async () => {
+  internals.__setLoadStoredMarketBarsForSymbolsForTests(async () => {
+    throw new Error("full stored-bar prefetch should be skipped");
+  });
+  internals.__setLoadStoredMarketBarsForSymbolsSinceForTests(async () => {
+    throw new Error("delta stored-bar prefetch should be skipped");
+  });
+  updateApiResourcePressure({ dbPoolActive: 12, dbPoolWaiting: 8, dbPoolMax: 12 });
+  updateApiResourcePressure({ dbPoolActive: 12, dbPoolWaiting: 8, dbPoolMax: 12 });
+
+  const evaluatedAt = new Date();
+  const bars = await runWithSignalMonitorStoredBarsPrefetch(
+    {
+      symbols: ["AAPL", "MSFT"],
+      timeframes: [TIMEFRAME],
+      evaluatedAt,
+      limit: 50,
+    },
+    () =>
+      loadSignalMonitorLocalBarCache({
+        symbol: "AAPL",
+        timeframe: TIMEFRAME,
+        evaluatedAt,
+        limit: 50,
+      }),
+  );
+
+  assert.deepEqual(bars, []);
+  const diagnostics = getSignalMonitorLocalBarCacheDiagnostics();
+  assert.equal(diagnostics.storedBarsCache.fullReadCount, 0);
+  assert.equal(diagnostics.storedBarsCache.deltaReadCount, 0);
+  assert.equal(diagnostics.storedBarsRead.prefetchHitCount, 1);
+  assert.equal(diagnostics.storedBarsRead.fallbackCount, 0);
+  assert.equal(diagnostics.storedBarsRead.pressureSkipCount, 1);
+  assert.match(
+    diagnostics.storedBarsRead.lastPressureSkippedAt ?? "",
+    /^\d{4}-\d{2}-\d{2}T/,
+  );
 });
 
 test("stored-bar prefetch chunks broad symbol batches by row budget before reading bar_cache", async () => {
