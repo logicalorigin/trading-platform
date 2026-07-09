@@ -1,10 +1,8 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { PersistQueryClientProvider } from "@tanstack/react-query-persist-client";
-import { useEffect, useMemo, type PropsWithChildren } from "react";
+import { useEffect, type PropsWithChildren } from "react";
 import { TooltipProvider } from "../components/ui/TooltipProvider";
 import { AuthProvider, useAuthSession } from "../features/auth/authSession.jsx";
 import { usePyrusPerformanceMetricsReporter } from "../features/platform/performanceMetrics";
-import { createPyrusPersistOptions } from "./queryPersistence";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -22,7 +20,14 @@ const queryClient = new QueryClient({
 });
 
 const LOCAL_STORAGE_WARN_BYTES = 2 * 1024 * 1024;
+const RETIRED_QUERY_CACHE_KEY = "pyrus-react-query-cache";
 let storageAuditCompleted = false;
+
+const clearRetiredQueryCache = () => {
+  try {
+    window.localStorage?.removeItem(RETIRED_QUERY_CACHE_KEY);
+  } catch {}
+};
 
 const auditLocalStorageOnce = () => {
   if (storageAuditCompleted) return;
@@ -74,37 +79,17 @@ function AuthenticatedRuntime({ children }: PropsWithChildren) {
 
 export function AppProviders({ children }: PropsWithChildren) {
   useEffect(() => {
+    clearRetiredQueryCache();
     auditLocalStorageOnce();
   }, []);
 
-  // Selectively persist reference/structural query data so a reload paints
-  // last-session lists/config instantly instead of starting from an empty
-  // cache. The allowlist (queryPersistence.ts) is default-deny, so live
-  // prices/positions/account financials are never restored stale.
-  const persistOptions = useMemo(() => createPyrusPersistOptions(), []);
-
-  const tooltipWrapped = (
-    <TooltipProvider delayDuration={500} skipDelayDuration={150}>
-      <AuthProvider>
-        <AuthenticatedRuntime>{children}</AuthenticatedRuntime>
-      </AuthProvider>
-    </TooltipProvider>
-  );
-
-  if (persistOptions) {
-    return (
-      <PersistQueryClientProvider
-        client={queryClient}
-        persistOptions={persistOptions}
-      >
-        {tooltipWrapped}
-      </PersistQueryClientProvider>
-    );
-  }
-
   return (
     <QueryClientProvider client={queryClient}>
-      {tooltipWrapped}
+      <TooltipProvider delayDuration={500} skipDelayDuration={150}>
+        <AuthProvider>
+          <AuthenticatedRuntime>{children}</AuthenticatedRuntime>
+        </AuthProvider>
+      </TooltipProvider>
     </QueryClientProvider>
   );
 }
