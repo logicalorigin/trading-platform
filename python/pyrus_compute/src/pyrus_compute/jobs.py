@@ -1416,7 +1416,10 @@ def run_portfolio_optimization(
         current_weights,
         input_data.constraints.maxTurnover,
     )
-    target_weights = _normalize_weights(target_weights)
+    target_weights = _normalize_weights(
+        target_weights,
+        allow_short=not input_data.constraints.longOnly,
+    )
     risk_contribution = _risk_contribution(target_weights, covariance)
     turnover = 0.5 * float(np.sum(np.abs(target_weights - current_weights)))
     portfolio_variance = max(float(target_weights @ covariance @ target_weights), 0.0)
@@ -1466,7 +1469,10 @@ def _current_portfolio_weights(
     if input_data.constraints.longOnly and np.any(weights < 0):
         weights = np.maximum(weights, 0.0)
         warnings.append("negative current weights were clamped for long-only optimization")
-    return _normalize_weights(weights), warnings
+    return (
+        _normalize_weights(weights, allow_short=not input_data.constraints.longOnly),
+        warnings,
+    )
 
 
 def _optimization_covariance(
@@ -1633,12 +1639,25 @@ def _risk_contribution(weights: np.ndarray, covariance: np.ndarray) -> np.ndarra
     return cast(np.ndarray, weights * marginal / portfolio_variance)
 
 
-def _normalize_weights(weights: np.ndarray) -> np.ndarray:
-    clean = np.maximum(np.where(np.isfinite(weights), weights, 0.0), 0.0)
-    total = float(np.sum(clean))
+def _normalize_weights(weights: np.ndarray, allow_short: bool = False) -> np.ndarray:
+    clean = np.where(np.isfinite(weights), weights, 0.0)
+    if not allow_short:
+        clean = np.maximum(clean, 0.0)
+    total = float(np.sum(np.abs(clean)) if allow_short else np.sum(clean))
     if total <= 0:
         return np.full(len(clean), 1 / len(clean), dtype=float) if len(clean) else clean
     return clean / total
+
+
+def _finite_or_none(value: float) -> float | None:
+    return value if math.isfinite(value) else None
+
+
+def _json_finite_matrix(matrix: np.ndarray, decimals: int) -> list[list[float | None]]:
+    return [
+        [_finite_or_none(value) for value in row]
+        for row in np.round(matrix, decimals).tolist()
+    ]
 
 
 def run_portfolio_risk(input_data: PortfolioRiskInput) -> tuple[dict[str, Any], list[str]]:
@@ -1716,15 +1735,15 @@ def run_portfolio_risk(input_data: PortfolioRiskInput) -> tuple[dict[str, Any], 
     }
     symbols = [item["symbol"] for item in concentration if item["symbol"] in returns_by_symbol]
     min_len = min((len(returns_by_symbol[symbol]) for symbol in symbols), default=0)
-    covariance: list[list[float]] | None = None
-    correlation: list[list[float]] | None = None
+    covariance: list[list[float | None]] | None = None
+    correlation: list[list[float | None]] | None = None
 
     if len(symbols) >= 2 and min_len >= 3:
         matrix = np.array([returns_by_symbol[symbol][-min_len:] for symbol in symbols], dtype=float)
         covariance_matrix = np.cov(matrix)
         correlation_matrix = np.corrcoef(matrix)
-        covariance = np.round(covariance_matrix, 10).tolist()
-        correlation = np.round(correlation_matrix, 6).tolist()
+        covariance = _json_finite_matrix(covariance_matrix, 10)
+        correlation = _json_finite_matrix(correlation_matrix, 6)
     else:
         warnings.append("insufficient_return_history_for_covariance")
 

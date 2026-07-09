@@ -36,6 +36,7 @@ class StoredJob:
     request: JobRequest
     result: JobResult
     task: asyncio.Task[None] | None = None
+    executor_active: bool = False
 
 
 ALL_CAPABILITIES = [
@@ -65,6 +66,9 @@ ALL_CAPABILITIES = [
         description="Signal matrix indicator and event evaluation for completed chart bars.",
     ),
 ]
+
+TERMINAL_JOB_STATUSES = {JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED}
+TERMINAL_JOB_RETENTION_LIMIT = 200
 
 
 def parse_allowed_job_types(raw: str | None) -> set[JobType] | None:
@@ -135,13 +139,37 @@ class JobStore:
             return {capability.jobType for capability in ALL_CAPABILITIES}
         return self._allowed_job_types
 
+    def _in_flight_jobs(self) -> int:
+        return sum(
+            1
+            for job in self._jobs.values()
+            if job.executor_active
+            or job.result.status in {JobStatus.QUEUED, JobStatus.RUNNING}
+        )
+
+    def _prune_terminal_jobs(self) -> None:
+        terminal_job_ids = [
+            job_id
+            for job_id, job in self._jobs.items()
+            if job.result.status in TERMINAL_JOB_STATUSES and not job.executor_active
+        ]
+        for job_id in terminal_job_ids[:-TERMINAL_JOB_RETENTION_LIMIT]:
+            del self._jobs[job_id]
+
+    def _release_executor_job(self, job_id: str) -> None:
+        stored = self._jobs.get(job_id)
+        if stored is not None:
+            stored.executor_active = False
+        self._prune_terminal_jobs()
+
     async def submit(self, request: JobRequest) -> JobAccepted:
         if request.jobType not in self.allowed_job_types:
             raise HTTPException(
                 status_code=403,
                 detail="python_compute_job_type_not_allowed_for_lane",
             )
-        if self.active_jobs >= max_concurrent_jobs():
+        self._prune_terminal_jobs()
+        if self._in_flight_jobs() >= max_concurrent_jobs():
             raise HTTPException(status_code=429, detail="python_compute_job_capacity_exhausted")
 
         job_id = uuid.uuid4().hex
@@ -166,25 +194,36 @@ class JobStore:
         stored = self._jobs.get(job_id)
         if stored is None:
             raise HTTPException(status_code=404, detail="python_compute_job_not_found")
-        if stored.result.status in {JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED}:
+        if stored.result.status in TERMINAL_JOB_STATUSES:
             return stored.result
         stored.result.status = JobStatus.CANCELLED
         stored.result.completedAt = utc_now()
         if stored.task is not None:
             stored.task.cancel()
+        self._prune_terminal_jobs()
         return stored.result
 
     async def _run(self, job_id: str) -> None:
         stored = self._jobs[job_id]
         if stored.result.status == JobStatus.CANCELLED:
+            self._prune_terminal_jobs()
             return
         stored.result.status = JobStatus.RUNNING
         stored.result.startedAt = utc_now()
         started = time.perf_counter()
         try:
             loop = asyncio.get_running_loop()
+            stored.executor_active = True
+            try:
+                executor_future = self._executor.submit(run_job, stored.request)
+            except Exception:  # noqa: BLE001
+                stored.executor_active = False
+                raise
+            executor_future.add_done_callback(
+                lambda _future: loop.call_soon_threadsafe(self._release_executor_job, job_id)
+            )
             result, warnings = await asyncio.wait_for(
-                loop.run_in_executor(self._executor, run_job, stored.request),
+                asyncio.wrap_future(executor_future),
                 timeout=stored.request.options.timeoutMs / 1000,
             )
             if stored.result.status == JobStatus.CANCELLED:
@@ -211,6 +250,7 @@ class JobStore:
             if stored.result.status != JobStatus.CANCELLED:
                 stored.result.completedAt = utc_now()
             stored.result.durationMs = round((time.perf_counter() - started) * 1000, 4)
+            self._prune_terminal_jobs()
 
 
 def max_concurrent_jobs() -> int:
