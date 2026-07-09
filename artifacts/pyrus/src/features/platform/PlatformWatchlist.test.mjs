@@ -493,15 +493,15 @@ test("platform auxiliary signal surfaces receive bounded matrix overlays", () =>
   );
   assert.match(
     shellSource,
-    /const explicitAlgoActivitySurfaceOpen = Boolean\(\s*activeScreen === "algo"[\s\S]*notificationsOpen,\s*\);/s,
+    /const explicitAlgoActivitySurfaceOpen = Boolean\(\s*activeScreen === "algo" \|\|\s*desktopActivitySidebarVisible \|\|[\s\S]*notificationsOpen,\s*\);/s,
   );
   assert.match(
     shellSource,
     /const algoMonitorSurfaceDataEnabled = Boolean\(\s*!criticalApiMutationPaused &&\s*!tradeScreenConnectionPriority &&\s*explicitAlgoActivitySurfaceOpen,?\s*\);/s,
   );
-  assert.doesNotMatch(
+  assert.match(
     shellSource,
-    /desktopActivitySidebarVisible \|\|\s*mobileActivityVisible \|\|\s*algoFrameRuntimeEnabled/,
+    /activeScreen === "algo" \|\|\s*desktopActivitySidebarVisible \|\|\s*mobileActivityVisible/,
   );
   assert.match(
     shellCallSource,
@@ -584,7 +584,7 @@ test("platform prioritizes signal matrix bootstrap ahead of market streams", () 
   );
   assert.match(
     shellSource,
-    /const explicitAlgoActivitySurfaceOpen = Boolean\(\s*activeScreen === "algo"[\s\S]*notificationsOpen,\s*\);/s,
+    /const explicitAlgoActivitySurfaceOpen = Boolean\(\s*activeScreen === "algo" \|\|\s*desktopActivitySidebarVisible \|\|[\s\S]*notificationsOpen,\s*\);/s,
   );
   assert.match(
     shellSource,

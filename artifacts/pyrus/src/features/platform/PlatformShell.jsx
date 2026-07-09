@@ -910,6 +910,7 @@ export const PlatformShell = ({
   );
   const explicitAlgoActivitySurfaceOpen = Boolean(
     activeScreen === "algo" ||
+      desktopActivitySidebarVisible ||
       mobileActivityVisible ||
       (auxiliaryDrawerViewport && mobilePulseOpen) ||
       notificationsOpen,
