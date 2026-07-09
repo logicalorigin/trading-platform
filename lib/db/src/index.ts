@@ -2,6 +2,15 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import { drizzle } from "drizzle-orm/node-postgres";
 import pg from "pg";
+import {
+  createDbAdmissionScheduler,
+  currentDbLane,
+  getDbAdmissionDiagnostics,
+  resolveDbAdmissionSchedulerConfig,
+  setDbAdmissionDiagnosticsSource,
+  type DbAdmissionDiagnostics,
+  type DbAdmissionScheduler,
+} from "./admission";
 import { attachPostgresPoolErrorHandler } from "./pool-error-handler";
 import { resolveDatabaseRuntimeConfig } from "./runtime";
 import * as schema from "./schema";
@@ -298,6 +307,8 @@ export const tradingPool = new Pool({
 attachPostgresPoolErrorHandler(tradingPool);
 
 const instrumentedClients = new WeakSet<object>();
+let sharedPoolAdmissionScheduler: DbAdmissionScheduler<pg.PoolClient> | null =
+  null;
 
 function instrumentQuery(
   originalQuery: (...args: unknown[]) => unknown,
@@ -417,7 +428,16 @@ function instrumentPostgresPoolDiagnostics(targetPool: pg.Pool): void {
     connect: (...args: unknown[]) => unknown;
   };
   const originalQuery = queryablePool.query.bind(targetPool);
-  const originalConnect = queryablePool.connect.bind(targetPool);
+  const originalConnect = queryablePool.connect.bind(targetPool) as () => Promise<
+    pg.PoolClient
+  >;
+  sharedPoolAdmissionScheduler = createDbAdmissionScheduler<pg.PoolClient>(
+    resolveDbAdmissionSchedulerConfig(resolvedPoolMax),
+    originalConnect,
+  );
+  setDbAdmissionDiagnosticsSource(
+    sharedPoolAdmissionScheduler.getDiagnostics,
+  );
   const routedQuery = (...args: unknown[]) =>
     poolQueryOverrideForTests
       ? poolQueryOverrideForTests(...args)
@@ -427,24 +447,51 @@ function instrumentPostgresPoolDiagnostics(targetPool: pg.Pool): void {
   queryablePool.connect = (...args: unknown[]) => {
     const startedAtMs = Date.now();
     const callback = args[0];
+    const acquireClient = () =>
+      sharedPoolAdmissionScheduler?.acquire(currentDbLane()) ??
+      originalConnect();
 
     if (typeof callback === "function") {
-      return originalConnect((error: unknown, client: pg.PoolClient, done: unknown) => {
-        emitPostgresPoolDiagnostic({
-          type: "acquire",
-          source: "pool",
-          startedAtMs,
-          error,
-        });
-        return (callback as (...callbackArgs: unknown[]) => unknown)(
-          error,
-          client ? instrumentClient(client) : client,
-          done,
-        );
-      });
+      void acquireClient().then(
+        (client) => {
+          emitPostgresPoolDiagnostic({
+            type: "acquire",
+            source: "pool",
+            startedAtMs,
+          });
+          const instrumentedClient = instrumentClient(client);
+          try {
+            (callback as (...callbackArgs: unknown[]) => unknown)(
+              null,
+              instrumentedClient,
+              instrumentedClient.release,
+            );
+          } catch (error) {
+            setImmediate(() => {
+              throw error;
+            });
+          }
+        },
+        (error) => {
+          emitPostgresPoolDiagnostic({
+            type: "acquire",
+            source: "pool",
+            startedAtMs,
+            error,
+          });
+          try {
+            (callback as (...callbackArgs: unknown[]) => unknown)(error);
+          } catch (callbackError) {
+            setImmediate(() => {
+              throw callbackError;
+            });
+          }
+        },
+      );
+      return undefined;
     }
 
-    const result = originalConnect();
+    const result = acquireClient();
     if (result && typeof (result as Promise<pg.PoolClient>).then === "function") {
       return (result as Promise<pg.PoolClient>).then(
         (client) => {
@@ -551,6 +598,8 @@ export type PostgresPoolStats = {
   active: number;
   /** Acquire requests queued because every connection is checked out. */
   waiting: number;
+  /** Admission bus lane gauges for the shared pool. */
+  admission?: DbAdmissionDiagnostics;
 };
 
 /**
@@ -568,9 +617,19 @@ export function getPoolStats(): PostgresPoolStats {
     idle,
     active: Math.max(0, total - idle),
     waiting: pool.waitingCount,
+    admission: getDbAdmissionDiagnostics(),
   };
 }
 
+export {
+  createDbAdmissionScheduler,
+  currentDbLane,
+  getDbAdmissionDiagnostics,
+  resolveDbAdmissionSchedulerConfig,
+  runInDbLane,
+  type DbAdmissionDiagnostics,
+  type DbLane,
+} from "./admission";
 export {
   attachPostgresClientErrorHandler,
   attachPostgresPoolErrorHandler,
