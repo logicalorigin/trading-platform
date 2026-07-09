@@ -15,7 +15,9 @@
 - Ops: `.replit` ports fix applied then reverted by Replit control-plane (port reconciliation —
   left as Replit set it); run-rule docs (CLAUDE.md/AGENTS.md/replit.md) updated to authorize
   agent-driven restart and document the `REPLIT_MODE=workflow` procedure (incl. the pid2
-  no-auto-restart-on-clean-SIGTERM gotcha).
+  no-auto-restart-on-clean-SIGTERM gotcha). **(Historical: that `REPLIT_MODE=workflow` shell-restart
+  procedure was RETIRED 2026-07-09 — sanctioned reload is now SIGUSR2 to the pid2-owned supervisor;
+  see AGENTS.md / CLAUDE.md.)**
 
 **B in progress:**
 - ✅ **DB test harness** (PGlite) — `lib/db` forwarding-Proxy seam + `@workspace/db/testing` (`createTestDb`/

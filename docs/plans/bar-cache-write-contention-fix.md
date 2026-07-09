@@ -119,8 +119,10 @@ retention work.
 
 ## Apply / verify / rollback
 
-- **Apply (after close):** make the two edits, rebuild the bundle, restart via
-  `REPLIT_MODE=workflow pnpm --filter @workspace/pyrus run dev:replit`.
+- **Apply (after close):** make the two edits, then reload the API in place via SIGUSR2 to the
+  pid2-owned supervisor (`kill -USR2 "$(pgrep -f 'runDevApp[.]mjs' | head -1)"`; it rebuilds +
+  restarts the API child — see CLAUDE.md "Project Run Rules"). The retired
+  `REPLIT_MODE=workflow ... dev:replit` shell-launch must not be used.
 - **Verify (flight recorder):** `bar_cache` insert p95 drops out of multi-second range;
   `api-db-pool-pressure` waiters fall; `/bars` still hydrates at the next open; signal
   freshness recovers (producer reads/writes finish under the 15s budget).

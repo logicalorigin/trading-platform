@@ -275,8 +275,10 @@ check(
     replitDocs.includes("intentional Run-button restart immediately") &&
     replitDocs.includes("instead of exiting as a duplicate no-op") &&
     replitDocs.includes("PYRUS_DEV_DUPLICATE_CHECK_ONLY=1") &&
-    replitDocs.includes("REPLIT_MODE=workflow"),
-  "replit.md must document the dev:replit artifact runner, Replit-owned restart marker, immediate controlled handoff restart path, and duplicate-check-only smoke-test marker.",
+    replitDocs.includes("REPLIT_MODE=workflow") &&
+    replitDocs.includes("Sanctioned reload = SIGUSR2") &&
+    replitDocs.includes("RETIRED"),
+  "replit.md must document the dev:replit artifact runner, Replit-owned restart marker, immediate controlled handoff restart path, duplicate-check-only smoke-test marker, the RETIRED REPLIT_MODE=workflow shell-launch restart, and the sanctioned SIGUSR2 in-place reload.",
 );
 check(
   replitDocs.includes("set/delete Replit env vars") &&
