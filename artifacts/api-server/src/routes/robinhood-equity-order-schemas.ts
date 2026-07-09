@@ -105,3 +105,16 @@ export const ListRobinhoodEquityOrdersResponse = z.object({
     }),
   ),
 });
+
+export const CancelRobinhoodEquityOrderBody = z.object({
+  orderId: z.string(),
+});
+
+export const CancelRobinhoodEquityOrderResponse = z.object({
+  provider: z.enum(["robinhood"]),
+  canceledAt: z.string(),
+  account,
+  orderId: z.string(),
+  state: z.string().nullable(),
+  status: z.enum(["canceled"]),
+});

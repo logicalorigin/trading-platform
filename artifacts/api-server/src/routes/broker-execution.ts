@@ -41,11 +41,14 @@ import {
 import { readIbkrOAuthReadiness } from "../services/ibkr-oauth-readiness";
 import { syncRobinhoodConnections } from "../services/robinhood-account-sync";
 import {
+  cancelRobinhoodEquityOrder,
   listRobinhoodEquityOrders,
   placeRobinhoodEquityOrder,
   reviewRobinhoodEquityOrder,
 } from "../services/robinhood-equity-orders";
 import {
+  CancelRobinhoodEquityOrderBody,
+  CancelRobinhoodEquityOrderResponse,
   ListRobinhoodEquityOrdersResponse,
   PlaceRobinhoodEquityOrderBody,
   PlaceRobinhoodEquityOrderResponse,
@@ -78,11 +81,16 @@ import {
 import { getSnapTradeAccountPortfolio } from "../services/snaptrade-account-portfolio";
 import { generateSnapTradeConnectionPortal } from "../services/snaptrade-connection-portal";
 import {
+  cancelSnapTradeEquityOrder,
   checkSnapTradeEquityOrderImpact,
   listSnapTradeRecentOrders,
   searchSnapTradeAccountSymbols,
   submitSnapTradeEquityOrder,
 } from "../services/snaptrade-equity-orders";
+import {
+  CancelSnapTradeEquityOrderBody,
+  CancelSnapTradeEquityOrderResponse,
+} from "./snaptrade-equity-order-schemas";
 import { HttpError } from "../lib/errors";
 import { logger } from "../lib/logger";
 import { recordAuditEvent } from "../services/audit-events";
@@ -744,6 +752,52 @@ router.get(
       await listRobinhoodEquityOrders({
         appUserId: session.user.id,
         accountId: req.params.accountId,
+      }),
+    );
+    res.json(data);
+  },
+);
+
+router.post(
+  "/broker-execution/robinhood/accounts/:accountId/orders/cancel",
+  async (req, res) => {
+    const session = await requireEntitlementCsrf("broker_connect")(req);
+    const body = CancelRobinhoodEquityOrderBody.parse(req.body ?? {});
+    void recordAuditEvent({
+      appUserId: session.user.id,
+      eventType: "broker.order_mutation_attempt",
+      subject: { type: "broker_provider", id: "robinhood" },
+      resource: { type: "broker_account", id: req.params.accountId },
+      payload: { action: "cancel", orderId: body.orderId },
+    });
+    const data = CancelRobinhoodEquityOrderResponse.parse(
+      await cancelRobinhoodEquityOrder({
+        appUserId: session.user.id,
+        accountId: req.params.accountId,
+        orderId: body.orderId,
+      }),
+    );
+    res.json(data);
+  },
+);
+
+router.post(
+  "/broker-execution/snaptrade/accounts/:accountId/orders/cancel",
+  async (req, res) => {
+    const session = await requireEntitlementCsrf("broker_connect")(req);
+    const body = CancelSnapTradeEquityOrderBody.parse(req.body ?? {});
+    void recordAuditEvent({
+      appUserId: session.user.id,
+      eventType: "broker.order_mutation_attempt",
+      subject: { type: "broker_provider", id: "snaptrade" },
+      resource: { type: "broker_account", id: req.params.accountId },
+      payload: { action: "cancel", orderId: body.orderId },
+    });
+    const data = CancelSnapTradeEquityOrderResponse.parse(
+      await cancelSnapTradeEquityOrder({
+        appUserId: session.user.id,
+        accountId: req.params.accountId,
+        orderId: body.orderId,
       }),
     );
     res.json(data);

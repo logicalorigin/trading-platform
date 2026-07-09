@@ -10,6 +10,7 @@ import { withTestDb } from "@workspace/db/testing";
 import { runAsAppUser } from "./app-user-context";
 import { bootstrapInitialUser } from "./auth";
 import {
+  cancelRobinhoodEquityOrder,
   placeRobinhoodEquityOrder,
   reviewRobinhoodEquityOrder,
 } from "./robinhood-equity-orders";
@@ -392,6 +393,57 @@ test("rejects an order that specifies both quantity and notionalValue", async ()
         }),
         (error: unknown) =>
           (error as { code?: string }).code === "robinhood_order_quantity_invalid",
+      );
+    }),
+  );
+});
+
+test("cancel sends account_number + order_id and reports canceled", async () => {
+  await withBootstrapToken(async () =>
+    withTestDb(async () => {
+      const appUserId = await seedConnectedUser("rh-cancel@example.com");
+      const accountId = await seedRobinhoodAccount({ appUserId });
+
+      const { fetchImpl, calls } = mcpFetch(() => ({
+        data: { id: "6a4ff1ab-4b8b-4bb5-b4fc-17a1772ceddc", state: "cancelled" },
+      }));
+
+      const result = await cancelRobinhoodEquityOrder({
+        appUserId,
+        accountId,
+        orderId: "6a4ff1ab-4b8b-4bb5-b4fc-17a1772ceddc",
+        encryptionKey: TEST_ENCRYPTION_KEY,
+        fetchImpl,
+      });
+
+      assert.equal(calls.length, 1);
+      assert.equal(calls[0]!.name, "cancel_equity_order");
+      assert.deepEqual(calls[0]!.args, {
+        account_number: ACCOUNT_NUMBER,
+        order_id: "6a4ff1ab-4b8b-4bb5-b4fc-17a1772ceddc",
+      });
+      assert.equal(result.status, "canceled");
+      assert.equal(result.state, "cancelled");
+      assert.equal(result.orderId, "6a4ff1ab-4b8b-4bb5-b4fc-17a1772ceddc");
+    }),
+  );
+});
+
+test("cancel rejects an empty order id", async () => {
+  await withBootstrapToken(async () =>
+    withTestDb(async () => {
+      const appUserId = await seedConnectedUser("rh-cancel-empty@example.com");
+      const accountId = await seedRobinhoodAccount({ appUserId });
+      await assert.rejects(
+        cancelRobinhoodEquityOrder({
+          appUserId,
+          accountId,
+          orderId: "   ",
+          encryptionKey: TEST_ENCRYPTION_KEY,
+          fetchImpl: mcpFetch(() => ({})).fetchImpl,
+        }),
+        (error: unknown) =>
+          (error as { code?: string }).code === "robinhood_order_id_required",
       );
     }),
   );

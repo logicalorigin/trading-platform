@@ -1397,3 +1397,74 @@ export async function searchSnapTradeAccountSymbols(
     bestMatch: selectBestAccountSymbol(symbols, queryText),
   };
 }
+
+export type SnapTradeEquityOrderCancelResponse = {
+  provider: "snaptrade";
+  canceledAt: string;
+  account: SnapTradeEquityOrderAccount;
+  orderId: string;
+  status: string;
+};
+
+export type CancelSnapTradeEquityOrderOptions = {
+  appUserId: string;
+  accountId: string;
+  orderId: string;
+  env?: NodeJS.ProcessEnv | Record<string, string | undefined>;
+  fetchImpl?: typeof fetch;
+  now?: Date;
+  encryptionKey?: string;
+};
+
+// Current (non-deprecated) SnapTrade cancel endpoint:
+// POST /accounts/{accountId}/trading/cancel with { brokerage_order_id }.
+const SNAPTRADE_CANCEL_ORDER_PATH = "/trading/cancel";
+
+export async function cancelSnapTradeEquityOrder(
+  options: CancelSnapTradeEquityOrderOptions,
+): Promise<SnapTradeEquityOrderCancelResponse> {
+  const env = options.env ?? process.env;
+  const fetchImpl = options.fetchImpl ?? fetch;
+  const now = options.now ?? new Date();
+  const orderId = options.orderId?.trim();
+  if (!orderId) {
+    throw new HttpError(422, "SnapTrade order id is required", {
+      code: "snaptrade_order_id_required",
+    });
+  }
+  const { credential, account, credentials } = await loadOrderContext({
+    appUserId: options.appUserId,
+    accountId: options.accountId,
+    env,
+    encryptionKey: options.encryptionKey,
+  });
+  assertExecutionReady(account);
+
+  const encodedAccountId = encodeURIComponent(account.snapTradeAccountId);
+  const query = buildUserScopedQuery({
+    clientId: credentials.clientId,
+    timestamp: Math.floor(now.getTime() / 1000).toString(),
+    snapTradeUserId: credential.snapTradeUserId,
+    userSecret: credential.userSecret,
+  });
+  const payload = await postSnapTradeJson({
+    path: `/accounts/${encodedAccountId}${SNAPTRADE_CANCEL_ORDER_PATH}`,
+    query,
+    content: { brokerage_order_id: orderId },
+    consumerKey: credentials.consumerKey,
+    fetchImpl,
+    message: "SnapTrade order cancel failed",
+    networkCode: "snaptrade_order_cancel_network_error",
+    failedCode: "snaptrade_order_cancel_failed",
+  });
+  const status =
+    readString(asRecord(payload), ["status", "state"]) ?? "CANCELED";
+
+  return {
+    provider: "snaptrade",
+    canceledAt: now.toISOString(),
+    account: publicAccount(account),
+    orderId,
+    status,
+  };
+}

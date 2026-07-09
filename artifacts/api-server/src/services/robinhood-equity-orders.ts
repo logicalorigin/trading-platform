@@ -130,6 +130,15 @@ export type RobinhoodRecentOrdersResponse = {
   orders: RobinhoodRecentOrder[];
 };
 
+export type RobinhoodEquityOrderCancelResponse = {
+  provider: "robinhood";
+  canceledAt: string;
+  account: RobinhoodEquityOrderAccount;
+  orderId: string;
+  state: string | null;
+  status: "canceled";
+};
+
 export type ReviewRobinhoodEquityOrderOptions = {
   appUserId: string;
   accountId: string;
@@ -155,6 +164,17 @@ export type PlaceRobinhoodEquityOrderOptions = {
 export type ListRobinhoodEquityOrdersOptions = {
   appUserId: string;
   accountId: string;
+  env?: NodeJS.ProcessEnv | Record<string, string | undefined>;
+  fetchImpl?: typeof fetch;
+  now?: Date;
+  encryptionKey?: string;
+  mcpUrl?: string;
+};
+
+export type CancelRobinhoodEquityOrderOptions = {
+  appUserId: string;
+  accountId: string;
+  orderId: string;
   env?: NodeJS.ProcessEnv | Record<string, string | undefined>;
   fetchImpl?: typeof fetch;
   now?: Date;
@@ -868,5 +888,46 @@ export async function listRobinhoodEquityOrders(
     checkedAt: now.toISOString(),
     account: publicAccount(account),
     orders: parseRecentOrders(payload),
+  };
+}
+
+export async function cancelRobinhoodEquityOrder(
+  options: CancelRobinhoodEquityOrderOptions,
+): Promise<RobinhoodEquityOrderCancelResponse> {
+  const fetchImpl = options.fetchImpl ?? fetch;
+  const now = options.now ?? new Date();
+  const orderId = options.orderId?.trim();
+  if (!orderId) {
+    throw new HttpError(422, "Robinhood order id is required", {
+      code: "robinhood_order_id_required",
+    });
+  }
+  const account = await loadLocalRobinhoodAccount(
+    options.appUserId,
+    options.accountId,
+  );
+  assertAgenticExecutionReady(account);
+
+  const session = await openSession({
+    appUserId: options.appUserId,
+    env: options.env,
+    fetchImpl,
+    now,
+    encryptionKey: options.encryptionKey,
+    mcpUrl: options.mcpUrl,
+  });
+  const payload = await session.callTool({
+    name: "cancel_equity_order",
+    arguments: { account_number: account.accountNumber, order_id: orderId },
+  });
+  const record = orderRecordFrom(payload);
+
+  return {
+    provider: "robinhood",
+    canceledAt: now.toISOString(),
+    account: publicAccount(account),
+    orderId,
+    state: readString(record, ["state", "status"]),
+    status: "canceled",
   };
 }
