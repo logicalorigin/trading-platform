@@ -1,4 +1,5 @@
 import { createInsertSchema } from "drizzle-zod";
+import { sql } from "drizzle-orm";
 import {
   boolean,
   index,
@@ -72,6 +73,17 @@ export const universeCatalogListingsTable = pgTable(
       table.active,
       table.ibkrHydrationStatus,
     ),
+    // Census S14: partial index for the shared optionability gate used by the
+    // universe scans; the predicate must stay byte-identical to the call-site
+    // SQL. Keep aligned with
+    // lib/db/migrations/20260707_universe_catalog_optionable_partial_idx.sql.
+    index("universe_catalog_optionable_ticker_idx")
+      .on(table.normalizedTicker)
+      .where(sql`(
+    coalesce(${table.contractMeta}->>'derivativeSecTypes', '') ~* '(^|,)\\s*OPT\\s*(,|$)'
+    or ${table.contractMeta}->>'optionabilityStatus' = 'verified'
+    or ${table.contractMeta}->'optionability'->>'status' = 'verified'
+  )`),
   ],
 );
 
