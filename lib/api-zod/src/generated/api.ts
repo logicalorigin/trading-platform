@@ -7,6 +7,11 @@
  */
 import * as zod from 'zod';
 
+const booleanQueryParam = zod.preprocess(
+  (value) => value === 'true' ? true : value === 'false' ? false : value,
+  zod.boolean(),
+);
+
 
 /**
  * Returns server health status
@@ -2095,7 +2100,7 @@ export const GetAccountPositionsParams = zod.object({
 export const GetAccountPositionsQueryParams = zod.object({
   "assetClass": zod.enum(['all', 'equity', 'stock', 'etf', 'option']).optional().describe('Position-type filter. Canonical values are `all`, `stock`, `etf`, `option`; legacy `equity` matches stock and ETF.'),
   "source": zod.coerce.string().optional().describe('Optional source scope for shadow ledger positions, such as `automation`.'),
-  "liveQuotes": zod.coerce.boolean().optional().describe('Set to `false` to skip blocking live option quote hydration for shadow positions.'),
+  "liveQuotes": booleanQueryParam.optional().describe('Set to `false` to skip blocking live option quote hydration for shadow positions.'),
   "mode": zod.enum(['shadow', 'live']).optional()
 })
 
@@ -3810,9 +3815,9 @@ export const SearchUniverseTickersQueryParams = zod.object({
   "market": zod.enum(['stocks', 'etf', 'indices', 'futures', 'fx', 'crypto', 'otc']).optional().describe('Restrict results to a market.'),
   "markets": zod.array(zod.enum(['stocks', 'etf', 'indices', 'futures', 'fx', 'crypto', 'otc'])).optional().describe('Restrict results to one or more markets. Takes precedence over market when provided.'),
   "type": zod.coerce.string().optional().describe('Optional Massive ticker type filter.'),
-  "active": zod.coerce.boolean().optional().describe('Restrict results to active tickers.'),
+  "active": booleanQueryParam.optional().describe('Restrict results to active tickers.'),
   "mode": zod.enum(['search', 'trade-resolve']).optional().describe('Optional search mode. Use trade-resolve when Trade needs an exact IBKR-tradable contract.'),
-  "strictTrade": zod.coerce.boolean().optional().describe('Require an exact IBKR-tradable contract instead of returning fuzzy discovery matches.'),
+  "strictTrade": booleanQueryParam.optional().describe('Require an exact IBKR-tradable contract instead of returning fuzzy discovery matches.'),
   "limit": zod.coerce.number().min(1).optional().describe('Requested number of ranked search results to return. No artificial maximum is enforced by the API; clients should request progressively larger pages for large universes.')
 })
 
@@ -3884,14 +3889,14 @@ export const GetBarsQueryParams = zod.object({
   "from": zod.date().optional(),
   "to": zod.date().optional(),
   "historyCursor": zod.coerce.string().nullish().describe('Opaque server-issued cursor for provider-native historical continuation. Falls back to from\/to when invalid or expired.'),
-  "preferCursor": zod.coerce.boolean().optional().describe('Prefer historyCursor continuation before the normal from\/to window when a cursor is present.'),
+  "preferCursor": booleanQueryParam.optional().describe('Prefer historyCursor continuation before the normal from\/to window when a cursor is present.'),
   "assetClass": zod.enum(['equity', 'option']).optional(),
   "market": zod.enum(['stocks', 'etf', 'indices', 'futures', 'fx', 'crypto', 'otc']).optional().describe('Provider market context from ticker search; used to avoid cross-asset historical fallbacks.'),
   "providerContractId": zod.coerce.string().nullish(),
-  "outsideRth": zod.coerce.boolean().optional(),
+  "outsideRth": booleanQueryParam.optional(),
   "source": zod.enum(['trades', 'midpoint', 'bid_ask']).optional(),
-  "allowHistoricalSynthesis": zod.coerce.boolean().optional().describe('Allow Massive historical synthesis when cached\/provider history is incomplete. Defaults to enabled for equities unless explicitly false.'),
-  "allowStudyFallback": zod.coerce.boolean().optional().describe('Allow chart-only synthetic option quote fallback bars when aggregate history is empty. Do not use synthetic quote fallback for backtests, signals, or order logic; Massive aggregate history remains valid for backtests.'),
+  "allowHistoricalSynthesis": booleanQueryParam.optional().describe('Allow Massive historical synthesis when cached\/provider history is incomplete. Defaults to enabled for equities unless explicitly false.'),
+  "allowStudyFallback": booleanQueryParam.optional().describe('Allow chart-only synthetic option quote fallback bars when aggregate history is empty. Do not use synthetic quote fallback for backtests, signals, or order logic; Massive aggregate history remains valid for backtests.'),
   "brokerRecentWindowMinutes": zod.coerce.number().min(getBarsQueryBrokerRecentWindowMinutesMin).optional().describe('Equity-only broker fallback limit, in minutes, when Massive history is unavailable.')
 })
 
@@ -4235,8 +4240,8 @@ export const GetOptionChartBarsQueryParams = zod.object({
   "from": zod.date().optional(),
   "to": zod.date().optional(),
   "historyCursor": zod.coerce.string().nullish().describe('Opaque server-issued cursor for provider-native historical continuation. Falls back to from\/to when invalid or expired.'),
-  "preferCursor": zod.coerce.boolean().optional().describe('Prefer historyCursor continuation before the normal from\/to window when a cursor is present.'),
-  "outsideRth": zod.coerce.boolean().optional()
+  "preferCursor": booleanQueryParam.optional().describe('Prefer historyCursor continuation before the normal from\/to window when a cursor is present.'),
+  "outsideRth": booleanQueryParam.optional()
 })
 
 export const getOptionChartBarsResponseTwoDebugRequestedCountMin = 0;
@@ -4433,7 +4438,7 @@ export const GetFootprintsQueryParams = zod.object({
   "to": zod.date().optional(),
   "providerContractId": zod.coerce.string().nullish(),
   "optionTicker": zod.coerce.string().nullish(),
-  "outsideRth": zod.coerce.boolean().optional(),
+  "outsideRth": booleanQueryParam.optional(),
   "ticksPerRow": zod.coerce.number().min(1).max(getFootprintsQueryTicksPerRowMax).optional(),
   "imbalancePercent": zod.coerce.number().min(getFootprintsQueryImbalancePercentMin).max(getFootprintsQueryImbalancePercentMax).optional(),
   "maxBars": zod.coerce.number().min(1).max(getFootprintsQueryMaxBarsMax).optional(),
@@ -4527,7 +4532,7 @@ export const StreamFootprintsQueryParams = zod.object({
   "to": zod.date().optional(),
   "providerContractId": zod.coerce.string().nullish(),
   "optionTicker": zod.coerce.string().nullish(),
-  "outsideRth": zod.coerce.boolean().optional(),
+  "outsideRth": booleanQueryParam.optional(),
   "ticksPerRow": zod.coerce.number().min(1).max(streamFootprintsQueryTicksPerRowMax).optional(),
   "imbalancePercent": zod.coerce.number().min(streamFootprintsQueryImbalancePercentMin).max(streamFootprintsQueryImbalancePercentMax).optional(),
   "maxBars": zod.coerce.number().min(1).max(streamFootprintsQueryMaxBarsMax).optional(),
@@ -4877,8 +4882,8 @@ export const ListFlowEventsQueryParams = zod.object({
   "historicalBucketSeconds": zod.coerce.number().min(listFlowEventsQueryHistoricalBucketSecondsMin).max(listFlowEventsQueryHistoricalBucketSecondsMax).optional().describe('Historical chart sampling bucket size, in seconds. Supplying a time window uses this to avoid returning multiple historical prints for the same chart candle.'),
   "from": zod.date().optional().describe('Earliest option flow trade timestamp to include. Supplying a time window hydrates Massive historical trade prints instead of the snapshot scanner.'),
   "to": zod.date().optional().describe('Latest option flow trade timestamp to include. Supplying a time window hydrates Massive historical trade prints instead of the snapshot scanner.'),
-  "blocking": zod.coerce.boolean().optional().describe('Wait for an on-demand Massive-backed flow refresh instead of returning a transient empty refreshing response.'),
-  "queueRefresh": zod.coerce.boolean().optional().describe('Queue an options-flow scanner refresh when a nonblocking request misses the current scanner snapshot. Broad scanner UI reads set this false so they only consume already published scanner snapshots.')
+  "blocking": booleanQueryParam.optional().describe('Wait for an on-demand Massive-backed flow refresh instead of returning a transient empty refreshing response.'),
+  "queueRefresh": booleanQueryParam.optional().describe('Queue an options-flow scanner refresh when a nonblocking request misses the current scanner snapshot. Broad scanner UI reads set this false so they only consume already published scanner snapshots.')
 })
 
 export const listFlowEventsResponseSourceIbkrExpirationCountMin = 0;
@@ -5684,8 +5689,8 @@ export const GetResearchHighBetaUniverseQueryParams = zod.object({
   "minDollarVolume": zod.coerce.number().default(getResearchHighBetaUniverseQueryMinDollarVolumeDefault),
   "minMarketCap": zod.coerce.number().default(getResearchHighBetaUniverseQueryMinMarketCapDefault),
   "exchanges": zod.coerce.string().optional().describe('Comma-separated FMP exchanges to query. Defaults to NASDAQ, NYSE, and AMEX.'),
-  "dryRun": zod.coerce.boolean().default(getResearchHighBetaUniverseQueryDryRunDefault),
-  "refresh": zod.coerce.boolean().default(getResearchHighBetaUniverseQueryRefreshDefault)
+  "dryRun": booleanQueryParam.default(getResearchHighBetaUniverseQueryDryRunDefault),
+  "refresh": booleanQueryParam.default(getResearchHighBetaUniverseQueryRefreshDefault)
 })
 
 export const GetResearchHighBetaUniverseResponse = zod.object({
@@ -6829,7 +6834,7 @@ export const listExecutionEventsQueryLimitMax = 500;
 export const ListExecutionEventsQueryParams = zod.object({
   "deploymentId": zod.coerce.string().optional(),
   "limit": zod.coerce.number().min(1).max(listExecutionEventsQueryLimitMax).optional(),
-  "includePayload": zod.coerce.boolean().optional()
+  "includePayload": booleanQueryParam.optional()
 })
 
 export const ListExecutionEventsResponse = zod.object({

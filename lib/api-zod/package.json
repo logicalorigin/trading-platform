@@ -3,6 +3,9 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
+  "scripts": {
+    "test": "node --test src/query-boolean-coercion.test.mjs"
+  },
   "exports": {
     ".": "./src/index.ts"
   },
