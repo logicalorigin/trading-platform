@@ -124,10 +124,8 @@ pub async fn persist_option_chain_snapshots(
 
     let mut tx = pool.begin().await?;
     let underlying_id = ensure_instrument_tx(&mut tx, &symbol, "equity", None).await?;
-    tx.commit().await?;
 
     for batch in unique_snapshots.chunks(batch_size) {
-        let mut tx = pool.begin().await?;
         let option_instrument_ids = ensure_option_instruments_tx(&mut tx, &symbol, batch).await?;
         let option_contract_ids =
             ensure_option_contracts_tx(&mut tx, underlying_id, &option_instrument_ids, batch)
@@ -141,7 +139,6 @@ pub async fn persist_option_chain_snapshots(
             batch,
         )
         .await?;
-        tx.commit().await?;
 
         persisted += batch.len();
         if persisted < total {
@@ -153,6 +150,7 @@ pub async fn persist_option_chain_snapshots(
         }
     }
 
+    tx.commit().await?;
     Ok(persisted)
 }
 

@@ -152,9 +152,12 @@ pub async fn fetch_option_chain_snapshots(
         let payload = response.error_for_status()?.json::<ChainResponse>().await?;
         metadata.merge(page_metadata);
         snapshots.extend(payload.results.into_iter().filter_map(map_chain_result));
-        next_url = payload
-            .next_url
-            .and_then(|value| build_next_url(&value, &config.api_key).ok());
+        next_url = match payload.next_url {
+            Some(value) if !value.trim().is_empty() => {
+                Some(build_next_url(&value, &config.api_key)?)
+            }
+            _ => None,
+        };
         page_count += 1;
     }
 

@@ -25,8 +25,8 @@ use crate::ingest::{
     persist_option_chain_snapshots, persist_provider_request_log, ProviderRequestLogInput,
 };
 use crate::jobs::{
-    claim_next_job, complete_job, fail_gex_jobs_with_failed_prerequisites, fail_job, heartbeat_job,
-    IngestJob,
+    claim_next_job, complete_job, fail_expired_jobs_over_attempt_limit,
+    fail_gex_jobs_with_failed_prerequisites, fail_job, heartbeat_job, IngestJob,
 };
 use crate::providers::massive::{fetch_option_chain_snapshots, OptionChainFetchResult};
 
@@ -216,6 +216,15 @@ async fn run_loop(config: WorkerConfig, max_jobs: Option<usize>) -> Result<()> {
                 error!(err = %error, "market-data worker prerequisite reconciliation failed");
             }
         }
+        match fail_expired_jobs_over_attempt_limit(&pool).await {
+            Ok(count) if count > 0 => {
+                info!(count, "marked expired market-data jobs failed after max attempts");
+            }
+            Ok(_) => {}
+            Err(error) => {
+                error!(err = %error, "market-data worker expired job reconciliation failed");
+            }
+        }
         tokio::select! {
             _ = tokio::signal::ctrl_c() => {
                 info!("market-data worker shutting down");
@@ -375,7 +384,7 @@ where
     let heartbeat_target = job.clone();
     let lease_ms = config.job_lease_ms;
     let interval_ms = (lease_ms / 3).clamp(1_000, 30_000) as u64;
-    let handle = tokio::spawn(async move {
+    let mut handle = tokio::spawn(async move {
         loop {
             tokio::time::sleep(Duration::from_millis(interval_ms)).await;
             match heartbeat_job(&heartbeat_pool, &heartbeat_target, lease_ms).await {
@@ -398,9 +407,18 @@ where
             }
         }
     });
-    let result = future.await;
-    handle.abort();
-    result
+    tokio::select! {
+        result = future => {
+            handle.abort();
+            result
+        }
+        heartbeat = &mut handle => {
+            match heartbeat {
+                Ok(()) => bail!("market-data job lease moved before work completed"),
+                Err(error) => Err(error.into()),
+            }
+        }
+    }
 }
 
 async fn log_provider_request(

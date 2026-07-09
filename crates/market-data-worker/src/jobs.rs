@@ -32,6 +32,7 @@ pub async fn claim_next_job(pool: &PgPool, config: &WorkerConfig) -> Result<Opti
             or (
               candidate.status = 'running'
               and candidate.lease_expires_at < now()
+              and candidate.attempt_count < candidate.max_attempts
             )
           )
             and (
@@ -59,7 +60,7 @@ pub async fn claim_next_job(pool: &PgPool, config: &WorkerConfig) -> Result<Opti
           lease_owner = $1,
           lease_expires_at = $2,
           last_heartbeat_at = now(),
-          attempt_count = jobs.attempt_count + case when jobs.status = 'queued' then 1 else 0 end,
+          attempt_count = jobs.attempt_count + 1,
           updated_at = now()
         where jobs.id = (select id from next_job)
         returning
@@ -77,6 +78,30 @@ pub async fn claim_next_job(pool: &PgPool, config: &WorkerConfig) -> Result<Opti
     .fetch_optional(pool)
     .await?;
     Ok(job)
+}
+
+pub async fn fail_expired_jobs_over_attempt_limit(pool: &PgPool) -> Result<u64> {
+    let result = sqlx::query(
+        r#"
+        update market_data_ingest_jobs
+        set
+          status = 'failed',
+          lease_owner = null,
+          lease_expires_at = null,
+          last_error = concat(
+            'job lease expired after ',
+            attempt_count,
+            ' attempts'
+          ),
+          updated_at = now()
+        where status = 'running'
+          and lease_expires_at < now()
+          and attempt_count >= max_attempts
+        "#,
+    )
+    .execute(pool)
+    .await?;
+    Ok(result.rows_affected())
 }
 
 pub async fn heartbeat_job(pool: &PgPool, job: &IngestJob, lease_ms: i64) -> Result<bool> {
@@ -196,6 +221,15 @@ pub async fn fail_gex_jobs_with_failed_prerequisites(pool: &PgPool) -> Result<u6
           where candidate.kind = 'gex_snapshot'
             and candidate.status = 'queued'
             and coalesce(candidate.payload->>'dedupeBucket', '') <> ''
+            and not exists (
+              select 1
+              from market_data_ingest_jobs completed
+              where completed.symbol = candidate.symbol
+                and completed.kind = 'option_chain_snapshot'
+                and completed.status = 'completed'
+                and coalesce(completed.payload->>'dedupeBucket', '') =
+                  coalesce(candidate.payload->>'dedupeBucket', '')
+            )
           order by
             candidate.id,
             prerequisite.updated_at desc nulls last,

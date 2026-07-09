@@ -144,7 +144,11 @@ struct GexExpirationCoverage {
 pub fn contract_gex(contract: &GexContract, spot: f64) -> Option<f64> {
     let gamma = contract.gamma?;
     let open_interest = contract.open_interest?;
-    if !(spot > 0.0 && gamma.is_finite() && open_interest.is_finite()) {
+    if !(spot > 0.0
+        && gamma.is_finite()
+        && open_interest.is_finite()
+        && open_interest >= 0.0)
+    {
         return None;
     }
     let sign = match contract.right {
