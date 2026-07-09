@@ -3,6 +3,19 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import * as ts from "typescript";
+import {
+  __accountPageStreamInternalsForTests,
+  clearAccountPageSnapshotCache,
+  subscribeAccountPageSnapshots,
+  type AccountPageDerivedPayload,
+  type AccountPageLivePayload,
+} from "./account-page-streams";
+import {
+  __resetSseStreamDiagnosticsForTests,
+  getSseEmitCounters,
+  serializeSseEventData,
+} from "./sse-stream-diagnostics";
+import { runWithShadowAccountId } from "./shadow-account-context";
 
 const source = readFileSync(new URL("./account-page-streams.ts", import.meta.url), "utf8");
 const sourceFile = ts.createSourceFile(
@@ -64,6 +77,168 @@ function getAccountPositionLiveQuoteFlags(functionName: string): string[] {
 
   visit(target);
   return flags;
+}
+
+type TimerHandle = {
+  callback: () => void;
+  unref: () => void;
+};
+
+function createFakeTimers() {
+  const intervals = new Set<TimerHandle>();
+  const timeouts = new Set<TimerHandle>();
+  return {
+    setInterval: ((callback: () => void) => {
+      const handle = { callback, unref: () => {} };
+      intervals.add(handle);
+      return handle as never;
+    }) as unknown as typeof setInterval,
+    clearInterval: ((handle: TimerHandle) => {
+      intervals.delete(handle);
+    }) as unknown as typeof clearInterval,
+    setTimeout: ((callback: () => void) => {
+      const handle = { callback, unref: () => {} };
+      timeouts.add(handle);
+      return handle as never;
+    }) as unknown as typeof setTimeout,
+    clearTimeout: ((handle: TimerHandle) => {
+      timeouts.delete(handle);
+    }) as unknown as typeof clearTimeout,
+    fireTimeouts: () => {
+      for (const handle of [...timeouts]) {
+        timeouts.delete(handle);
+        handle.callback();
+      }
+    },
+    fireIntervals: () => {
+      for (const handle of [...intervals]) handle.callback();
+    },
+  };
+}
+
+async function flushAsyncWork() {
+  await new Promise<void>((resolve) => setImmediate(resolve));
+}
+
+function livePayload(input: {
+  stamp: string;
+  accountFetchStamp?: string;
+  quoteStamp?: string;
+  quantity?: number;
+  netLiquidation?: number;
+  equityValue?: number;
+}): AccountPageLivePayload {
+  const buildUpdatedAt = new Date(input.stamp);
+  const accountFetchUpdatedAt = new Date(
+    input.accountFetchStamp ?? input.stamp,
+  );
+  const quoteUpdatedAt = new Date(
+    input.quoteStamp ?? "2026-07-07T00:00:00.000Z",
+  );
+  return {
+    stream: "account-page-live",
+    accountId: "account-test",
+    mode: "live",
+    orderTab: "working",
+    assetClass: null,
+    updatedAt: input.stamp,
+    summary: {
+      updatedAt: accountFetchUpdatedAt,
+      accounts: [{ updatedAt: accountFetchUpdatedAt }],
+      fx: { timestamp: accountFetchUpdatedAt },
+      metrics: {
+        netLiquidation: {
+          value: input.netLiquidation ?? 100,
+          updatedAt: accountFetchUpdatedAt,
+        },
+      },
+    } as never,
+    intradayEquity: {
+      asOf: accountFetchUpdatedAt,
+      latestSnapshotAt: accountFetchUpdatedAt,
+      liveTerminalIncluded: true,
+      terminalPointSource: "live_account_summary",
+      points: [
+        {
+          timestamp: accountFetchUpdatedAt,
+          netLiquidation: input.equityValue ?? 100,
+          source: "IBKR_ACCOUNT_SUMMARY",
+        },
+      ],
+    } as never,
+    allocation: { updatedAt: accountFetchUpdatedAt } as never,
+    positions: {
+      updatedAt: accountFetchUpdatedAt,
+      positions: [
+        {
+          id: "position-1",
+          quantity: input.quantity ?? 1,
+          quote: {
+            mark: 100,
+            updatedAt: quoteUpdatedAt,
+            dataUpdatedAt: quoteUpdatedAt,
+            ageMs: input.stamp.endsWith("01.000Z") ? 1_000 : 2_000,
+            cacheAgeMs: input.stamp.endsWith("01.000Z") ? 1_000 : 2_000,
+          },
+        },
+      ],
+    } as never,
+    orders: { updatedAt: buildUpdatedAt, orders: [] } as never,
+    risk: { updatedAt: accountFetchUpdatedAt } as never,
+  };
+}
+
+function derivedPayload(input: {
+  stamp: string;
+  settledCash?: number;
+  equityValue?: number;
+}): AccountPageDerivedPayload {
+  const updatedAt = new Date(input.stamp);
+  const equityHistory = {
+    asOf: updatedAt,
+    latestSnapshotAt: updatedAt,
+    liveTerminalIncluded: true,
+    terminalPointSource: "live_account_summary",
+    points: [
+      {
+        timestamp: updatedAt,
+        netLiquidation: input.equityValue ?? 100,
+        source: "IBKR_ACCOUNT_SUMMARY",
+      },
+    ],
+  };
+  return {
+    stream: "account-page-derived",
+    accountId: "account-test",
+    mode: "live",
+    range: "1D",
+    tradeFilters: {
+      from: null,
+      to: null,
+      symbol: null,
+      assetClass: null,
+      pnlSign: null,
+      holdDuration: null,
+    },
+    performanceCalendarFrom: null,
+    updatedAt: input.stamp,
+    equityHistory: equityHistory as never,
+    benchmarkEquityHistory: {
+      SPY: equityHistory,
+      QQQ: equityHistory,
+      DIA: equityHistory,
+    } as never,
+    performanceCalendarEquity: equityHistory as never,
+    performanceCalendarTrades: { updatedAt, trades: [] } as never,
+    closedTrades: { updatedAt, trades: [] } as never,
+    cashActivity: {
+      updatedAt,
+      settledCash: input.settledCash ?? 50,
+      activities: [],
+      dividends: [],
+    } as never,
+    flexHealth: { lastStatus: "completed" } as never,
+  };
 }
 
 test("shadow account-page live positions keep quote hydration", () => {
@@ -160,4 +335,167 @@ test("the last-live cache is bounded by TTL and a max-entry cap", () => {
     writeBody,
     /while\s*\(accountPageLastLiveCache\.size\s*>\s*ACCOUNT_PAGE_LAST_LIVE_MAX_ENTRIES\)/,
   );
+});
+
+test("account-page caches isolate the resolved shadow account scope", () => {
+  const { cacheKeyForInput } = __accountPageStreamInternalsForTests;
+  const input = { accountId: "shadow", mode: "shadow" } as const;
+  const first = runWithShadowAccountId("shadow-user-1", () =>
+    cacheKeyForInput(input),
+  );
+  const second = runWithShadowAccountId("shadow-user-2", () =>
+    cacheKeyForInput(input),
+  );
+
+  assert.notEqual(first, second);
+});
+
+test("account-page payload identity ignores build stamps but keeps source changes", () => {
+  const { retainAccountPagePayload } = __accountPageStreamInternalsForTests;
+  const live = retainAccountPagePayload(null, livePayload({
+    stamp: "2026-07-07T00:00:01.000Z",
+  }));
+  const sameLive = retainAccountPagePayload(live, livePayload({
+    stamp: "2026-07-07T00:00:02.000Z",
+  }));
+  const changedLive = retainAccountPagePayload(live, livePayload({
+    stamp: "2026-07-07T00:00:03.000Z",
+    quantity: 2,
+  }));
+  const refreshedLive = retainAccountPagePayload(live, livePayload({
+    stamp: "2026-07-07T00:00:03.000Z",
+    quoteStamp: "2026-07-07T00:00:03.000Z",
+  }));
+  const changedSummary = retainAccountPagePayload(live, livePayload({
+    stamp: "2026-07-07T00:00:03.000Z",
+    netLiquidation: 101,
+  }));
+  const changedEquity = retainAccountPagePayload(live, livePayload({
+    stamp: "2026-07-07T00:00:03.000Z",
+    equityValue: 101,
+  }));
+  assert.strictEqual(sameLive, live);
+  assert.notStrictEqual(changedLive, live);
+  assert.notStrictEqual(refreshedLive, live);
+  assert.notStrictEqual(changedSummary, live);
+  assert.notStrictEqual(changedEquity, live);
+
+  const derived = retainAccountPagePayload(null, derivedPayload({
+    stamp: "2026-07-07T00:00:01.000Z",
+  }));
+  const sameDerived = retainAccountPagePayload(derived, derivedPayload({
+    stamp: "2026-07-07T00:00:02.000Z",
+  }));
+  const changedDerived = retainAccountPagePayload(derived, derivedPayload({
+    stamp: "2026-07-07T00:00:03.000Z",
+    settledCash: 51,
+  }));
+  const changedDerivedEquity = retainAccountPagePayload(derived, derivedPayload({
+    stamp: "2026-07-07T00:00:03.000Z",
+    equityValue: 101,
+  }));
+  assert.strictEqual(sameDerived, derived);
+  assert.notStrictEqual(changedDerived, derived);
+  assert.notStrictEqual(changedDerivedEquity, derived);
+});
+
+test("account-page subscriber emits and serializes each changed lane exactly once", async () => {
+  __resetSseStreamDiagnosticsForTests();
+  clearAccountPageSnapshotCache();
+  const timers = createFakeTimers();
+  const { retainAccountPagePayload } = __accountPageStreamInternalsForTests;
+  const initialLive = retainAccountPagePayload(null, livePayload({
+    stamp: "2026-07-07T00:00:01.000Z",
+  }));
+  const unchangedLive = retainAccountPagePayload(initialLive, livePayload({
+    stamp: "2026-07-07T00:00:02.000Z",
+  }));
+  const changedLive = retainAccountPagePayload(initialLive, livePayload({
+    stamp: "2026-07-07T00:00:03.000Z",
+    quantity: 2,
+  }));
+  const initialDerived = retainAccountPagePayload(null, derivedPayload({
+    stamp: "2026-07-07T00:00:01.000Z",
+  }));
+  const unchangedDerived = retainAccountPagePayload(initialDerived, derivedPayload({
+    stamp: "2026-07-07T00:00:02.000Z",
+  }));
+  const changedDerived = retainAccountPagePayload(initialDerived, derivedPayload({
+    stamp: "2026-07-07T00:00:03.000Z",
+    settledCash: 51,
+  }));
+  const livePayloads = [unchangedLive, changedLive];
+  const derivedPayloads = [unchangedDerived, changedDerived];
+  const liveEmits: AccountPageLivePayload[] = [];
+  const derivedEmits: AccountPageDerivedPayload[] = [];
+  let liveFetches = 0;
+  let derivedFetches = 0;
+  const unsubscribe = subscribeAccountPageSnapshots(
+    { accountId: "account-test", mode: "live" },
+    (payload) => {
+      liveEmits.push(payload);
+      serializeSseEventData(payload);
+    },
+    (payload) => {
+      derivedEmits.push(payload);
+      serializeSseEventData(payload);
+    },
+    {
+      initialLivePayload: initialLive,
+      initialDerivedPayload: initialDerived,
+      fetchLivePayload: async () => livePayloads[liveFetches++]!,
+      fetchDerivedPayload: async () => derivedPayloads[derivedFetches++]!,
+      setInterval: timers.setInterval,
+      clearInterval: timers.clearInterval,
+      setTimeout: timers.setTimeout,
+      clearTimeout: timers.clearTimeout,
+    },
+  );
+
+  try {
+    timers.fireTimeouts();
+    await flushAsyncWork();
+    assert.equal(getSseEmitCounters().events, 0);
+    assert.equal(liveEmits.length, 0);
+    assert.equal(derivedEmits.length, 0);
+
+    timers.fireIntervals();
+    await flushAsyncWork();
+    assert.equal(getSseEmitCounters().events, 2);
+    assert.equal(liveEmits.length, 1);
+    assert.equal(derivedEmits.length, 1);
+  } finally {
+    unsubscribe();
+    clearAccountPageSnapshotCache();
+    __resetSseStreamDiagnosticsForTests();
+  }
+});
+
+test("account-page subscription change detection is object-identity only", () => {
+  const body = functionSource("subscribeAccountPageSnapshots");
+  assert.doesNotMatch(body, /stableStringify/);
+  assert.match(body, /snapshot\s*!==\s*lastLivePayload/);
+  assert.match(body, /snapshot\s*!==\s*lastDerivedPayload/);
+
+  const liveBuilder = functionSource("fetchAccountPageLivePayload");
+  assert.match(
+    liveBuilder,
+    /return retainAccountPageLivePayload\(cacheKey, value, version\)/,
+  );
+  assert.match(
+    liveBuilder,
+    /shadowAccountId:\s*shadowAccountIdForCache\(normalized\.accountId\)/,
+  );
+  const primaryBuilder = functionSource("fetchAccountPagePrimaryPayload");
+  assert.match(
+    primaryBuilder,
+    /shadowAccountId:\s*shadowAccountIdForCache\(normalized\.accountId\)/,
+  );
+  const benchmarkBuilder = functionSource("fetchAccountPageBenchmarkEquityHistory");
+  assert.match(
+    benchmarkBuilder,
+    /shadowAccountId:\s*shadowAccountIdForCache\(input\.accountId\)/,
+  );
+  const derivedBuilder = functionSource("fetchAccountPageDerivedPayload");
+  assert.match(derivedBuilder, /const value = retainAccountPagePayload\(/);
 });

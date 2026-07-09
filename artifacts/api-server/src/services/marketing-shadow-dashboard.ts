@@ -751,6 +751,7 @@ export function subscribeMarketingShadowDashboardSnapshots(
   let inFlight = false;
   let queued = false;
   let queuedTimer: ReturnType<typeof setTimeout> | null = null;
+  let lastPayload = options.initialPayload ?? null;
   let lastSignature = options.initialPayload
     ? signatureForPayload(options.initialPayload)
     : "";
@@ -801,10 +802,14 @@ export function subscribeMarketingShadowDashboardSnapshots(
       if (!active) {
         return;
       }
-      const signature = signatureForPayload(payload);
-      const changed = signature !== lastSignature;
-      if (changed) {
+      let changed = false;
+      if (payload !== lastPayload) {
+        const signature = signatureForPayload(payload);
+        changed = signature !== lastSignature;
         lastSignature = signature;
+        lastPayload = payload;
+      }
+      if (changed) {
         onSnapshot(payload);
       }
       await options.onPollSuccess?.({ payload, changed });
@@ -823,7 +828,10 @@ export function subscribeMarketingShadowDashboardSnapshots(
     void tick();
   }, intervalMs);
   timer.unref?.();
-  const unsubscribeShadow = subscribeShadowChanges(() => {
+  const unsubscribeShadow = subscribeShadowChanges((change) => {
+    if (change.reason === "mark_refresh") {
+      return;
+    }
     void tick();
   });
   const unsubscribeAlgo = subscribeAlgoChanges((change) => {

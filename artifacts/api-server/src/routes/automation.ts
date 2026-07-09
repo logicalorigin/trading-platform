@@ -39,6 +39,12 @@ import {
   filterExecutionEventsForSession,
   firstReadableAlgoDeploymentId,
 } from "../services/automation-authorization";
+import {
+  recordSseStreamClose,
+  recordSseStreamOpen,
+  serializeSseEventData,
+  type SseStreamCloseReason,
+} from "../services/sse-stream-diagnostics";
 
 const router: IRouter = Router();
 const SIGNAL_OPTIONS_SHADOW_SCAN_ROUTE_TIMEOUT_MS = 45_000;
@@ -114,7 +120,7 @@ function writeSseEvent(
   payload: unknown,
 ) {
   res.write(`event: ${event}\n`);
-  res.write(`data: ${JSON.stringify(payload)}\n\n`);
+  res.write(`data: ${serializeSseEventData(payload)}\n\n`);
 }
 
 async function scopeAlgoCockpitPayloadForSession<T extends {
@@ -561,21 +567,30 @@ router.get("/streams/algo/cockpit", async (req, res): Promise<void> => {
   res.setHeader("X-Accel-Buffering", "no");
   res.flushHeaders?.();
   res.write("retry: 5000\n\n");
+  recordSseStreamOpen("algo-cockpit");
 
   let closed = false;
   let unsubscribe = () => {};
+  let closeReason: SseStreamCloseReason = "server_cleanup";
   const cleanup = () => {
     if (closed) {
       return;
     }
     closed = true;
     unsubscribe();
+    recordSseStreamClose("algo-cockpit", closeReason);
     if (!res.destroyed) {
       res.end();
     }
   };
-  req.on("aborted", cleanup);
-  res.on("close", cleanup);
+  req.on("aborted", () => {
+    closeReason = "request_aborted";
+    cleanup();
+  });
+  res.on("close", () => {
+    closeReason = "client_close";
+    cleanup();
+  });
 
   try {
     const input = {
@@ -645,6 +660,7 @@ router.get("/streams/algo/cockpit", async (req, res): Promise<void> => {
         detail: error instanceof Error ? error.message : "Unknown stream error.",
       });
     }
+    closeReason = "setup_error";
     cleanup();
   }
 });

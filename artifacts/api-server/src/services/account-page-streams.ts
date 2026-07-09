@@ -19,6 +19,7 @@ import {
   isShadowAccountId,
 } from "./shadow-account";
 import { subscribeShadowAccountChanges } from "./shadow-account-events";
+import { currentShadowAccountId } from "./shadow-account-context";
 import { invalidateShadowAccountSnapshotBaseCache } from "./shadow-account-streams";
 import { normalizeAccountPositionTypeFilter } from "./account-position-type";
 
@@ -150,6 +151,7 @@ const accountPageLiveInflight = new Map<
   string,
   Promise<AccountPageLivePayload>
 >();
+const accountPageLiveContentCache = new Map<string, AccountPageLivePayload>();
 const accountPageDerivedCache = new Map<
   string,
   { value: AccountPageDerivedPayload; expiresAt: number }
@@ -262,6 +264,179 @@ function stableStringify(value: unknown): string {
   return JSON.stringify(value);
 }
 
+// These response-level stamps describe fetch/build time, not a content revision.
+// Summary also copies the account-fetch stamp into accounts, metrics, and fx.
+const ACCOUNT_PAGE_VOLATILE_ROOT_UPDATED_AT_SECTIONS = new Set([
+  "summary",
+  "allocation",
+  "positions",
+  "orders",
+  "risk",
+  "performanceCalendarTrades",
+  "closedTrades",
+  "cashActivity",
+]);
+// Ages are derived from the preserved source timestamps and advance on wall clock alone.
+const ACCOUNT_PAGE_VOLATILE_DERIVED_KEYS = new Set(["ageMs", "cacheAgeMs"]);
+const ACCOUNT_PAGE_EQUITY_HISTORY_SECTIONS = new Set([
+  "intradayEquity",
+  "equityHistory",
+  "benchmarkEquityHistory",
+  "performanceCalendarEquity",
+]);
+
+// ponytail: full content walk is the correctness fallback until every source exposes a revision.
+function sameAccountPageContent(
+  left: unknown,
+  right: unknown,
+  depth = 0,
+  ignoreUpdatedAt = false,
+  rootSection: string | null = null,
+  parentKey: string | null = null,
+): boolean {
+  if (Object.is(left, right)) {
+    return true;
+  }
+  if (left instanceof Date || right instanceof Date) {
+    return (
+      left instanceof Date &&
+      right instanceof Date &&
+      Object.is(left.getTime(), right.getTime())
+    );
+  }
+  if (
+    left === null ||
+    right === null ||
+    typeof left !== "object" ||
+    typeof right !== "object"
+  ) {
+    return false;
+  }
+  if (Array.isArray(left) || Array.isArray(right)) {
+    if (!Array.isArray(left) || !Array.isArray(right) || left.length !== right.length) {
+      return false;
+    }
+    for (let index = 0; index < left.length; index += 1) {
+      if (
+        !sameAccountPageContent(
+          left[index],
+          right[index],
+          depth + 1,
+          false,
+          rootSection,
+          parentKey,
+        )
+      ) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  const leftRecord = left as Record<string, unknown>;
+  const rightRecord = right as Record<string, unknown>;
+  const sameVolatileLiveEquityPoint =
+    rootSection !== null &&
+    ACCOUNT_PAGE_EQUITY_HISTORY_SECTIONS.has(rootSection) &&
+    leftRecord["source"] === "IBKR_ACCOUNT_SUMMARY" &&
+    rightRecord["source"] === "IBKR_ACCOUNT_SUMMARY";
+  const sameVolatileLiveEquityResponse =
+    rootSection !== null &&
+    ACCOUNT_PAGE_EQUITY_HISTORY_SECTIONS.has(rootSection) &&
+    leftRecord["liveTerminalIncluded"] === true &&
+    rightRecord["liveTerminalIncluded"] === true &&
+    leftRecord["terminalPointSource"] === "live_account_summary" &&
+    rightRecord["terminalPointSource"] === "live_account_summary";
+  let leftKeyCount = 0;
+  let rightKeyCount = 0;
+  for (const key in leftRecord) {
+    if (
+      !Object.prototype.hasOwnProperty.call(leftRecord, key) ||
+      ACCOUNT_PAGE_VOLATILE_DERIVED_KEYS.has(key) ||
+      (key === "updatedAt" &&
+        (depth === 0 || ignoreUpdatedAt || rootSection === "summary")) ||
+      (key === "timestamp" && rootSection === "summary" && parentKey === "fx") ||
+      (key === "timestamp" && sameVolatileLiveEquityPoint) ||
+      ((key === "asOf" || key === "latestSnapshotAt") &&
+        sameVolatileLiveEquityResponse)
+    ) {
+      continue;
+    }
+    leftKeyCount += 1;
+    if (
+      !Object.prototype.hasOwnProperty.call(rightRecord, key) ||
+      !sameAccountPageContent(
+        leftRecord[key],
+        rightRecord[key],
+        depth + 1,
+        depth === 0 && ACCOUNT_PAGE_VOLATILE_ROOT_UPDATED_AT_SECTIONS.has(key),
+        depth === 0 ? key : rootSection,
+        key,
+      )
+    ) {
+      return false;
+    }
+  }
+  for (const key in rightRecord) {
+    if (
+      Object.prototype.hasOwnProperty.call(rightRecord, key) &&
+      !ACCOUNT_PAGE_VOLATILE_DERIVED_KEYS.has(key) &&
+      !(
+        key === "updatedAt" &&
+        (depth === 0 || ignoreUpdatedAt || rootSection === "summary")
+      ) &&
+      !(key === "timestamp" && rootSection === "summary" && parentKey === "fx") &&
+      !(key === "timestamp" && sameVolatileLiveEquityPoint) &&
+      !(
+        (key === "asOf" || key === "latestSnapshotAt") &&
+        sameVolatileLiveEquityResponse
+      )
+    ) {
+      rightKeyCount += 1;
+    }
+  }
+  return leftKeyCount === rightKeyCount;
+}
+
+function retainAccountPagePayload<T extends { updatedAt: string }>(
+  previous: T | null,
+  candidate: T,
+): T {
+  if (previous && sameAccountPageContent(previous, candidate)) {
+    return previous;
+  }
+  candidate.updatedAt = new Date().toISOString();
+  return candidate;
+}
+
+function retainAccountPageLivePayload(
+  cacheKey: string,
+  candidate: AccountPageLivePayload,
+  version: number,
+): AccountPageLivePayload {
+  const previous =
+    version === accountPageSnapshotCacheVersion
+      ? accountPageLiveContentCache.get(cacheKey) ?? null
+      : null;
+  const value = retainAccountPagePayload(previous, candidate);
+  if (version === accountPageSnapshotCacheVersion) {
+    accountPageLiveContentCache.delete(cacheKey);
+    accountPageLiveContentCache.set(cacheKey, value);
+    while (accountPageLiveContentCache.size > ACCOUNT_PAGE_LAST_LIVE_MAX_ENTRIES) {
+      const oldest = accountPageLiveContentCache.keys().next().value;
+      if (oldest === undefined) break;
+      accountPageLiveContentCache.delete(oldest);
+    }
+  }
+  return value;
+}
+
+export const __accountPageStreamInternalsForTests = {
+  cacheKeyForInput,
+  retainAccountPagePayload,
+  sameAccountPageContent,
+};
+
 function isoOrNull(value: Date | null | undefined): string | null {
   return value instanceof Date && Number.isFinite(value.getTime())
     ? value.toISOString()
@@ -332,7 +507,12 @@ function cacheKeyForInput(input: AccountPageSnapshotInput): string {
     from: isoOrNull(normalized.from),
     to: isoOrNull(normalized.to),
     performanceCalendarFrom: isoOrNull(normalized.performanceCalendarFrom),
+    shadowAccountId: shadowAccountIdForCache(normalized.accountId),
   });
+}
+
+function shadowAccountIdForCache(accountId: string): string | null {
+  return isShadowAccountId(accountId) ? currentShadowAccountId() : null;
 }
 
 export function clearAccountPageSnapshotCache() {
@@ -342,6 +522,7 @@ export function clearAccountPageSnapshotCache() {
   accountPageSnapshotInflight.clear();
   accountPagePrimaryInflight.clear();
   accountPageLiveInflight.clear();
+  accountPageLiveContentCache.clear();
   accountPageDerivedInflight.clear();
   accountPageLastLiveCache.clear();
   accountPageSnapshotCacheVersion += 1;
@@ -431,17 +612,20 @@ export async function fetchAccountPageLivePayload(
   input: AccountPageSnapshotInput,
 ): Promise<AccountPageLivePayload> {
   const normalized = normalizeInput(input);
+  const isShadow = isShadowAccountId(normalized.accountId);
   const cacheKey = stableStringify({
     accountId: normalized.accountId,
     mode: normalized.mode,
     orderTab: normalized.orderTab,
     assetClass: normalized.assetClass,
+    shadowAccountId: shadowAccountIdForCache(normalized.accountId),
   });
   const inFlight = accountPageLiveInflight.get(cacheKey);
   if (inFlight) {
     return inFlight;
   }
 
+  const version = accountPageSnapshotCacheVersion;
   const startedAt = Date.now();
   const request = (async () => {
     try {
@@ -449,7 +633,6 @@ export async function fetchAccountPageLivePayload(
         accountId: normalized.accountId,
         mode: normalized.mode,
       };
-      const isShadow = isShadowAccountId(normalized.accountId);
 
       // For shadow accounts the live tick used to call
       // fetchAccountPagePrimaryPayload and then DISCARD it: positions, summary,
@@ -495,7 +678,7 @@ export async function fetchAccountPageLivePayload(
           mode: normalized.mode,
           orderTab: normalized.orderTab,
           assetClass: normalized.assetClass,
-          updatedAt: new Date().toISOString(),
+          updatedAt: "",
           summary,
           intradayEquity,
           allocation,
@@ -520,7 +703,7 @@ export async function fetchAccountPageLivePayload(
           mode: normalized.mode,
           orderTab: normalized.orderTab,
           assetClass: normalized.assetClass,
-          updatedAt: new Date().toISOString(),
+          updatedAt: "",
           summary: primary.summary,
           intradayEquity,
           allocation: primary.allocation,
@@ -529,7 +712,7 @@ export async function fetchAccountPageLivePayload(
           risk: primary.risk,
         };
       }
-      return value;
+      return retainAccountPageLivePayload(cacheKey, value, version);
     } finally {
       recordAccountPageTiming("liveMs", startedAt);
     }
@@ -555,6 +738,7 @@ export async function fetchAccountPagePrimaryPayload(
     mode: normalized.mode,
     orderTab: normalized.orderTab,
     assetClass: normalized.assetClass,
+    shadowAccountId: shadowAccountIdForCache(normalized.accountId),
   });
   const now = Date.now();
   const cached = accountPagePrimaryCache.get(cacheKey);
@@ -675,6 +859,7 @@ async function fetchAccountPageBenchmarkEquityHistory(input: {
     mode: input.mode,
     range: input.range ?? null,
     benchmark: input.benchmark,
+    shadowAccountId: shadowAccountIdForCache(input.accountId),
   });
   const cached = accountPageBenchmarkEquityCache.get(cacheKey);
   const now = Date.now();
@@ -800,7 +985,7 @@ export async function fetchAccountPageDerivedPayload(
         ]);
       }
 
-      const value: AccountPageDerivedPayload = {
+      const candidate: AccountPageDerivedPayload = {
         stream: "account-page-derived",
         accountId: normalized.accountId,
         mode: normalized.mode,
@@ -814,7 +999,7 @@ export async function fetchAccountPageDerivedPayload(
           holdDuration: normalized.holdDuration,
         },
         performanceCalendarFrom: isoOrNull(normalized.performanceCalendarFrom),
-        updatedAt: new Date().toISOString(),
+        updatedAt: "",
         equityHistory,
         benchmarkEquityHistory: {
           SPY: benchmarkRows[0]!,
@@ -827,6 +1012,10 @@ export async function fetchAccountPageDerivedPayload(
         cashActivity,
         flexHealth,
       };
+      const value = retainAccountPagePayload(
+        version === accountPageSnapshotCacheVersion ? cached?.value ?? null : null,
+        candidate,
+      );
       if (version === accountPageSnapshotCacheVersion) {
         accountPageDerivedCache.set(cacheKey, {
           value,
@@ -919,6 +1108,12 @@ export function subscribeAccountPageSnapshots(
     initialDerivedPayload?: AccountPageDerivedPayload;
     initialLiveDelayMs?: number;
     initialDerivedDelayMs?: number;
+    fetchLivePayload?: typeof fetchAccountPageLivePayload;
+    fetchDerivedPayload?: typeof fetchAccountPageDerivedPayload;
+    setInterval?: typeof setInterval;
+    clearInterval?: typeof clearInterval;
+    setTimeout?: typeof setTimeout;
+    clearTimeout?: typeof clearTimeout;
     onPollSuccess?: (input: {
       payload: AccountPageLivePayload | AccountPageDerivedPayload;
       kind: "live" | "derived";
@@ -930,16 +1125,19 @@ export function subscribeAccountPageSnapshots(
   let liveInFlight = false;
   let derivedInFlight = false;
   let queued = false;
-  let lastLiveSignature = options.initialPayload
-    ? stableStringify(livePayloadFromBootstrap(options.initialPayload))
-    : options.initialLivePayload
-      ? stableStringify(options.initialLivePayload)
-    : "";
-  let lastDerivedSignature = options.initialPayload
-    ? stableStringify(derivedPayloadFromBootstrap(options.initialPayload))
-    : options.initialDerivedPayload
-      ? stableStringify(options.initialDerivedPayload)
-    : "";
+  let lastLivePayload = options.initialPayload
+    ? livePayloadFromBootstrap(options.initialPayload)
+    : options.initialLivePayload ?? null;
+  let lastDerivedPayload = options.initialPayload
+    ? derivedPayloadFromBootstrap(options.initialPayload)
+    : options.initialDerivedPayload ?? null;
+  const fetchLivePayload = options.fetchLivePayload ?? fetchAccountPageLivePayload;
+  const fetchDerivedPayload =
+    options.fetchDerivedPayload ?? fetchAccountPageDerivedPayload;
+  const setPollInterval = options.setInterval ?? setInterval;
+  const clearPollInterval = options.clearInterval ?? clearInterval;
+  const setPollTimeout = options.setTimeout ?? setTimeout;
+  const clearPollTimeout = options.clearTimeout ?? clearTimeout;
 
   const tickLive = async () => {
     if (!active || liveInFlight) {
@@ -952,15 +1150,14 @@ export function subscribeAccountPageSnapshots(
     try {
       do {
         queued = false;
-        const snapshot = await fetchAccountPageLivePayload(input);
+        const snapshot = await fetchLivePayload(input);
         if (!active) {
           return;
         }
         writeCachedAccountPageLivePayload(input, snapshot);
-        const signature = stableStringify(snapshot);
-        const changed = signature !== lastLiveSignature;
+        const changed = snapshot !== lastLivePayload;
         if (changed) {
-          lastLiveSignature = signature;
+          lastLivePayload = snapshot;
           onLive(snapshot);
         }
         await options.onPollSuccess?.({ payload: snapshot, kind: "live", changed });
@@ -978,14 +1175,13 @@ export function subscribeAccountPageSnapshots(
     }
     derivedInFlight = true;
     try {
-      const snapshot = await fetchAccountPageDerivedPayload(input);
+      const snapshot = await fetchDerivedPayload(input);
       if (!active) {
         return;
       }
-      const signature = stableStringify(snapshot);
-      const changed = signature !== lastDerivedSignature;
+      const changed = snapshot !== lastDerivedPayload;
       if (changed) {
-        lastDerivedSignature = signature;
+        lastDerivedPayload = snapshot;
         onDerived(snapshot);
       }
       await options.onPollSuccess?.({ payload: snapshot, kind: "derived", changed });
@@ -999,7 +1195,7 @@ export function subscribeAccountPageSnapshots(
   // Cache-first: if a recent live payload is cached and the caller didn't seed
   // an initial payload, paint it immediately (tagged `refreshing`) so real
   // account data shows without waiting on the bridge. The first live poll then
-  // replaces it (the cached signature isn't recorded, so the fresh payload is
+  // replaces it (the cached identity isn't retained, so the fresh payload is
   // always treated as changed and clears the spinner). Deferred to a microtask
   // so the subscribe call returns first.
   if (!options.initialLivePayload && !options.initialPayload) {
@@ -1016,17 +1212,17 @@ export function subscribeAccountPageSnapshots(
   let derivedTimer: ReturnType<typeof setInterval> | null = null;
   const liveDelay = Math.max(0, options.initialLiveDelayMs ?? 0);
   const derivedDelay = Math.max(0, options.initialDerivedDelayMs ?? 0);
-  const firstLiveTimer = setTimeout(() => {
+  const firstLiveTimer = setPollTimeout(() => {
     void tickLive();
-    liveTimer = setInterval(() => {
+    liveTimer = setPollInterval(() => {
       void tickLive();
     }, ACCOUNT_PAGE_STREAM_INTERVAL_MS);
     liveTimer.unref?.();
   }, liveDelay);
   firstLiveTimer.unref?.();
-  const firstDerivedTimer = setTimeout(() => {
+  const firstDerivedTimer = setPollTimeout(() => {
     void tickDerived();
-    derivedTimer = setInterval(() => {
+    derivedTimer = setPollInterval(() => {
       void tickDerived();
     }, ACCOUNT_PAGE_DERIVED_STREAM_INTERVAL_MS);
     derivedTimer.unref?.();
@@ -1047,13 +1243,13 @@ export function subscribeAccountPageSnapshots(
 
   return () => {
     active = false;
-    clearTimeout(firstLiveTimer);
-    clearTimeout(firstDerivedTimer);
+    clearPollTimeout(firstLiveTimer);
+    clearPollTimeout(firstDerivedTimer);
     if (liveTimer) {
-      clearInterval(liveTimer);
+      clearPollInterval(liveTimer);
     }
     if (derivedTimer) {
-      clearInterval(derivedTimer);
+      clearPollInterval(derivedTimer);
     }
     unsubscribeShadowChanges();
   };

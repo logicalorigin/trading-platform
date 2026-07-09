@@ -46,6 +46,12 @@ export type AlgoCockpitStreamPayload = {
   signalMonitorProfile: Awaited<ReturnType<typeof getSignalMonitorProfile>> | null;
 };
 
+const ALGO_COCKPIT_STREAM_SIGNATURE_VOLATILE_FIELDS = {
+  updatedAt: null,
+  cockpit: { generatedAt: null },
+  performance: { generatedAt: null },
+} as const;
+
 const stableStringify = (value: unknown): string => JSON.stringify(value);
 const algoCockpitPayloadSignatureCache = new WeakMap<
   AlgoCockpitStreamPayload,
@@ -57,7 +63,22 @@ function getAlgoCockpitPayloadChangeSignature(
 ): string {
   let signature = algoCockpitPayloadSignatureCache.get(payload);
   if (signature === undefined) {
-    signature = stableStringify({ ...payload, updatedAt: null });
+    signature = stableStringify({
+      ...payload,
+      updatedAt: ALGO_COCKPIT_STREAM_SIGNATURE_VOLATILE_FIELDS.updatedAt,
+      cockpit: payload.cockpit
+        ? {
+            ...payload.cockpit,
+            ...ALGO_COCKPIT_STREAM_SIGNATURE_VOLATILE_FIELDS.cockpit,
+          }
+        : null,
+      performance: payload.performance
+        ? {
+            ...payload.performance,
+            ...ALGO_COCKPIT_STREAM_SIGNATURE_VOLATILE_FIELDS.performance,
+          }
+        : null,
+    });
     algoCockpitPayloadSignatureCache.set(payload, signature);
   }
   return signature;

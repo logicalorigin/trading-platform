@@ -7,6 +7,11 @@ import {
   type AlgoCockpitStreamInput,
   type AlgoCockpitStreamPayload,
 } from "./algo-cockpit-streams";
+import {
+  __resetSseStreamDiagnosticsForTests,
+  getSseEmitCounters,
+  serializeSseEventData,
+} from "./sse-stream-diagnostics";
 
 const source = readFileSync(new URL("./algo-cockpit-streams.ts", import.meta.url), "utf8");
 
@@ -282,5 +287,58 @@ test("algo cockpit shared poller keeps other subscribers flowing after one subsc
   } finally {
     unsubscribeA();
     unsubscribeB();
+  }
+});
+
+test("algo cockpit ignores volatile rebuild stamps but emits one semantic change", async () => {
+  __resetSseStreamDiagnosticsForTests();
+  const timers = createFakeTimers();
+  const input = {
+    deploymentId: "deployment-volatile-stamps",
+    mode: "shadow" as const,
+    eventLimit: 25,
+  };
+  const payloads = [
+    { stamp: "01", event: "same" },
+    { stamp: "02", event: "same" },
+    { stamp: "03", event: "changed" },
+  ].map(({ stamp, event }) => ({
+    ...streamPayload(event, input),
+    updatedAt: `2026-07-07T00:00:${stamp}.000Z`,
+    cockpit: { generatedAt: `2026-07-07T00:00:${stamp}.000Z` } as never,
+    performance: { generatedAt: `2026-07-07T00:00:${stamp}.000Z` } as never,
+  }));
+  const changed: boolean[] = [];
+  let fetchCount = 0;
+  const unsubscribe = subscribeAlgoCockpitSnapshots(
+    input,
+    (payload) => {
+      serializeSseEventData(payload);
+    },
+    {
+      ...streamTestOptions(timers, async () => payloads[fetchCount++]!),
+      onPollSuccess: (result) => {
+        changed.push(result.changed);
+      },
+    },
+  );
+
+  try {
+    await flushAsyncWork();
+    assert.deepEqual(changed, [true]);
+    assert.equal(getSseEmitCounters().events, 1);
+
+    timers.fireIntervals();
+    await flushAsyncWork();
+    assert.deepEqual(changed, [true, false]);
+    assert.equal(getSseEmitCounters().events, 1);
+
+    timers.fireIntervals();
+    await flushAsyncWork();
+    assert.deepEqual(changed, [true, false, true]);
+    assert.equal(getSseEmitCounters().events, 2);
+  } finally {
+    unsubscribe();
+    __resetSseStreamDiagnosticsForTests();
   }
 });

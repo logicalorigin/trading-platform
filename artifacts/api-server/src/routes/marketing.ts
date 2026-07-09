@@ -7,6 +7,12 @@ import {
   type MarketingShadowDashboardInput,
   type MarketingShadowDashboardPayload,
 } from "../services/marketing-shadow-dashboard";
+import {
+  recordSseStreamClose,
+  recordSseStreamOpen,
+  serializeSseEventData,
+  type SseStreamCloseReason,
+} from "../services/sse-stream-diagnostics";
 
 export const MARKETING_DASHBOARD_TOKEN_ENV = "PYRUS_MARKETING_DASHBOARD_TOKEN";
 export const MARKETING_DASHBOARD_NEXT_TOKEN_ENV =
@@ -98,7 +104,7 @@ function sendAuthFailure(
 
 function writeSseEvent(res: Response, event: string, payload: unknown) {
   res.write(`event: ${event}\n`);
-  res.write(`data: ${JSON.stringify(payload)}\n\n`);
+  res.write(`data: ${serializeSseEventData(payload)}\n\n`);
 }
 
 function asyncRoute(
@@ -158,16 +164,19 @@ export function createMarketingRouter(
       res.setHeader("X-Accel-Buffering", "no");
       res.flushHeaders?.();
       res.write("retry: 5000\n\n");
+      recordSseStreamOpen("marketing-shadow-dashboard");
 
       let closed = false;
       let unsubscribe = () => {};
       let heartbeat: ReturnType<typeof setInterval> | null = null;
+      let closeReason: SseStreamCloseReason = "server_cleanup";
       const cleanup = () => {
         if (closed) {
           return;
         }
         closed = true;
         unsubscribe();
+        recordSseStreamClose("marketing-shadow-dashboard", closeReason);
         if (heartbeat) {
           clearHeartbeatInterval(heartbeat);
           heartbeat = null;
@@ -176,8 +185,14 @@ export function createMarketingRouter(
           res.end();
         }
       };
-      req.on("aborted", cleanup);
-      res.on("close", cleanup);
+      req.on("aborted", () => {
+        closeReason = "request_aborted";
+        cleanup();
+      });
+      res.on("close", () => {
+        closeReason = "client_close";
+        cleanup();
+      });
 
       try {
         const initialPayload = await fetchSnapshot(input);
@@ -221,6 +236,7 @@ export function createMarketingRouter(
                 : "Unknown stream error.",
           });
         }
+        closeReason = "setup_error";
         cleanup();
       }
     }),
