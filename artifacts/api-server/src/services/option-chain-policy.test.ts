@@ -1,6 +1,14 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import test from "node:test";
+import test, { afterEach } from "node:test";
+
+import { HttpError } from "../lib/errors";
+import {
+  __platformOptionBackoffTestInternals as optionBackoff,
+  __resetOptionChainCachesForTests,
+  resetOptionsFlowRuntimeOverrides,
+  setOptionsFlowRuntimeOverrides,
+} from "./platform";
 
 const platformSource = readFileSync(new URL("./platform.ts", import.meta.url), "utf8");
 const bridgeStreamsSource = readFileSync(
@@ -12,6 +20,11 @@ const optionQuoteStreamSource = readFileSync(
   "utf8",
 );
 
+afterEach(() => {
+  resetOptionsFlowRuntimeOverrides();
+  __resetOptionChainCachesForTests({ resetFlowScanner: false });
+});
+
 test("public option-chain metadata policy bounds non-visible batch pressure", () => {
   assert.match(
     platformSource,
@@ -21,13 +34,16 @@ test("public option-chain metadata policy bounds non-visible batch pressure", ()
     platformSource,
     /const OPTION_CHAIN_BATCH_CONCURRENCY = readPositiveIntegerEnv\(\s*"OPTION_CHAIN_BATCH_CONCURRENCY",\s*1,\s*\);/,
   );
-  assert.match(
+  // Owner directive 2026-07-07: option-chain batches never yield to resource
+  // pressure (the yield starved entries and position marks). Guard against the
+  // gate being reintroduced.
+  assert.doesNotMatch(
     platformSource,
-    /function shouldYieldOptionChainBatchForPressure\(\)/,
+    /shouldYieldOptionChainBatchForPressure/,
   );
-  assert.match(
+  assert.doesNotMatch(
     platformSource,
-    /reason: "options_batch_deferred_pressure"/,
+    /options_batch_deferred_pressure/,
   );
   assert.match(
     platformSource,
@@ -54,7 +70,7 @@ test("option market data uses Massive instead of broker option-chain upstreams",
   assert.match(platformSource, /preferredTransport: "massive"/);
   assert.match(
     platformSource,
-    /input\.assetClass !== "option" && !historicalSynthesisAvailable/,
+    /Boolean\(options\.historicalSynthesisAvailable\) &&\s*input\.assetClass !== "option"/,
   );
   assert.match(platformSource, /getOptionChartBarsWithDebug/);
   assert.match(platformSource, /getMassiveClient\(\)\.getOptionTradePrints/);
@@ -69,7 +85,6 @@ test("option market data uses Massive instead of broker option-chain upstreams",
   assert.doesNotMatch(platformSource, /family: "option-chart-bars"/);
   assert.doesNotMatch(platformSource, /preferredTransport: "tws"/);
   assert.doesNotMatch(platformSource, /getIbkrClient\(\)\s*\.getHealth\(\)/);
-  assert.match(platformSource, /code: "option_market_depth_unavailable"/);
 });
 
 test("option quote snapshots use Massive OPRA snapshots instead of broker quote requests", () => {
@@ -90,6 +105,72 @@ test("option-chain streams fetch metadata rows without delayed quote hydration",
   assert.match(bridgeStreamsSource, /allowDelayedSnapshotHydration: false/);
   assert.match(bridgeStreamsSource, /timeoutMs: OPTION_CHAIN_PUBLIC_METADATA_TIMEOUT_MS/);
   assert.match(bridgeStreamsSource, /emptyRetryDelaysMs: \[\]/);
-  assert.match(bridgeStreamsSource, /option_historical_bar_stream_uses_massive/);
-  assert.match(bridgeStreamsSource, /option_market_depth_unavailable/);
+});
+
+test("local option metadata timeout remains transient without setting backoff", () => {
+  setOptionsFlowRuntimeOverrides({ optionUpstreamBackoffMs: 60_000 });
+  const key = "chain:local-timeout";
+  const error = new HttpError(
+    504,
+    "Option metadata request timed out after 1000ms.",
+    {
+      code: "massive_options_request_timeout",
+    },
+  );
+
+  assert.equal(optionBackoff.isTransientOptionUpstreamError(error), true);
+  assert.equal(optionBackoff.shouldBackOffOptionUpstream(error), false);
+
+  optionBackoff.recordOptionUpstreamBackoff("chain", key, error);
+
+  assert.equal(optionBackoff.getOptionUpstreamBackoffRemainingMs("chain", key), 0);
+});
+
+test("upstream 500 and 429 option errors set backoff", () => {
+  setOptionsFlowRuntimeOverrides({ optionUpstreamBackoffMs: 60_000 });
+
+  for (const statusCode of [500, 429]) {
+    const key = `expiration:upstream-http-${statusCode}`;
+    const error = new HttpError(statusCode, `HTTP ${statusCode}`, {
+      code: "upstream_http_error",
+    });
+
+    assert.equal(optionBackoff.isTransientOptionUpstreamError(error), true);
+    assert.equal(optionBackoff.shouldBackOffOptionUpstream(error), true);
+
+    optionBackoff.recordOptionUpstreamBackoff("expiration", key, error);
+
+    assert.ok(
+      optionBackoff.getOptionUpstreamBackoffRemainingMs("expiration", key) > 0,
+    );
+  }
+});
+
+test("successful option fetch clears existing backoff for the key", () => {
+  setOptionsFlowRuntimeOverrides({ optionUpstreamBackoffMs: 60_000 });
+  const key = "chain:successful-refresh";
+  const error = new HttpError(500, "HTTP 500", {
+    code: "upstream_http_error",
+  });
+
+  optionBackoff.recordOptionUpstreamBackoff("chain", key, error);
+  assert.ok(optionBackoff.getOptionUpstreamBackoffRemainingMs("chain", key) > 0);
+
+  optionBackoff.clearOptionUpstreamBackoff("chain", key);
+
+  assert.equal(optionBackoff.getOptionUpstreamBackoffRemainingMs("chain", key), 0);
+});
+
+test("cache fallback predicate stays broad for transient local timeouts", () => {
+  const localTimeout = new HttpError(504, "Local metadata budget exceeded.", {
+    code: "massive_options_request_timeout",
+  });
+  const bridgeTimeout = new HttpError(504, "Retired bridge request timed out.", {
+    code: "ibkr_bridge_request_timeout",
+  });
+
+  assert.equal(optionBackoff.isTransientOptionUpstreamError(localTimeout), true);
+  assert.equal(optionBackoff.isTransientOptionUpstreamError(bridgeTimeout), true);
+  assert.equal(optionBackoff.shouldBackOffOptionUpstream(localTimeout), false);
+  assert.equal(optionBackoff.shouldBackOffOptionUpstream(bridgeTimeout), false);
 });

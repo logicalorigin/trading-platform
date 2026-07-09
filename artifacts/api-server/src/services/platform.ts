@@ -14020,6 +14020,14 @@ export const __platformQuoteSnapshotTestInternals = {
   },
 };
 
+export const __platformOptionBackoffTestInternals = {
+  isTransientOptionUpstreamError,
+  shouldBackOffOptionUpstream,
+  recordOptionUpstreamBackoff,
+  clearOptionUpstreamBackoff,
+  getOptionUpstreamBackoffRemainingMs,
+};
+
 function pruneOptionChainCache(now: number): void {
   for (const [key, entry] of optionChainCache) {
     if (entry.staleExpiresAt <= now) {
@@ -14990,11 +14998,34 @@ function isTransientOptionUpstreamError(error: unknown): boolean {
   return error.statusCode >= 500 || error.statusCode === 429;
 }
 
+function shouldBackOffOptionUpstream(error: unknown): boolean {
+  if (!(error instanceof HttpError)) {
+    return false;
+  }
+
+  if (error.code === "upstream_request_failed") {
+    return true;
+  }
+
+  if (error.code !== "upstream_http_error") {
+    return false;
+  }
+
+  return error.statusCode >= 500 || error.statusCode === 429;
+}
+
 function getOptionBackoffKey(
   kind: "chain" | "expiration",
   key: string,
 ): string {
   return `${kind}:${key}`;
+}
+
+function clearOptionUpstreamBackoff(
+  kind: "chain" | "expiration",
+  key: string,
+): void {
+  optionUpstreamBackoffUntilByKey.delete(getOptionBackoffKey(kind, key));
 }
 
 function isOptionUpstreamBackedOff(
@@ -15026,7 +15057,7 @@ function recordOptionUpstreamBackoff(
   key: string,
   error: unknown,
 ): void {
-  if (!isTransientOptionUpstreamError(error)) {
+  if (!shouldBackOffOptionUpstream(error)) {
     return;
   }
 
@@ -15621,6 +15652,7 @@ function refreshOptionChainCache(
       } else if (!optionChainCache.has(key)) {
         optionChainCache.delete(key);
       }
+      clearOptionUpstreamBackoff("chain", key);
       return value;
     } finally {
       optionChainInFlight.delete(key);
@@ -15984,6 +16016,7 @@ function refreshOptionExpirationCache(
       } else if (!optionExpirationCache.has(key)) {
         optionExpirationCache.delete(key);
       }
+      clearOptionUpstreamBackoff("expiration", key);
       return value;
     } finally {
       optionExpirationInFlight.delete(key);
