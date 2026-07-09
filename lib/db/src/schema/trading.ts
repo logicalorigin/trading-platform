@@ -629,6 +629,7 @@ export const flexOpenPositionsTable = pgTable(
     id: uuid("id").defaultRandom().primaryKey(),
     providerAccountId: varchar("provider_account_id", { length: 128 }).notNull(),
     symbol: varchar("symbol", { length: 64 }).notNull(),
+    contractKey: text("contract_key").notNull().default(""),
     description: text("description"),
     assetClass: varchar("asset_class", { length: 32 }).notNull().default("stock"),
     positionType: varchar("position_type", { length: 32 }),
@@ -646,10 +647,11 @@ export const flexOpenPositionsTable = pgTable(
     index("flex_open_positions_symbol_idx").on(table.symbol),
     index("flex_open_positions_position_type_idx").on(table.positionType),
     index("flex_open_positions_as_of_idx").on(table.asOf),
-    uniqueIndex("flex_open_positions_unique_account_symbol_as_of_idx").on(
+    uniqueIndex("flex_open_positions_unique_account_symbol_as_of_contract_key_idx").on(
       table.providerAccountId,
       table.symbol,
       table.asOf,
+      table.contractKey,
     ),
   ],
 );

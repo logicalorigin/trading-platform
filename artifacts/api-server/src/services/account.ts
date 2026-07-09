@@ -2333,7 +2333,8 @@ function opraOptionTickerForRow(
     return null;
   }
 
-  const opraExpiration = expiration.length === 8 ? expiration.slice(2) : expiration;
+  const opraExpiration =
+    expiration.length === 8 ? expiration.slice(2) : expiration;
   const strikeKey = String(Math.round(strike * 1000)).padStart(8, "0");
   return `O:${underlying}${opraExpiration}${right}${strikeKey}`;
 }
@@ -2590,6 +2591,27 @@ const FLEX_OPEN_POSITION_CONTRACT_ID_KEYS = [
   "ibContractId",
   "ibkrContractId",
 ];
+const FLEX_OPEN_POSITION_UNDERLYING_KEYS = [
+  "underlyingSymbol",
+  "underlying",
+  "underlyingTicker",
+  "symbol",
+];
+const FLEX_OPEN_POSITION_EXPIRATION_KEYS = [
+  "expirationDate",
+  "expiration",
+  "expiry",
+  "expDate",
+  "maturity",
+  "lastTradeDateOrContractMonth",
+];
+const FLEX_OPEN_POSITION_STRIKE_KEYS = ["strike", "strikePrice"];
+const FLEX_OPEN_POSITION_RIGHT_KEYS = [
+  "right",
+  "putCall",
+  "callPut",
+  "optionType",
+];
 const FLEX_OPEN_POSITION_STREAK_GAP_MS = 8 * 24 * 60 * 60 * 1000;
 
 type FlexOpenPositionRecord = typeof flexOpenPositionsTable.$inferSelect;
@@ -2629,6 +2651,33 @@ function flexOpenPositionContractId(
   raw: Record<string, unknown> | null | undefined,
 ): string | null {
   return rawString(raw, FLEX_OPEN_POSITION_CONTRACT_ID_KEYS);
+}
+
+function flexOpenPositionContractKey(
+  attrs: Record<string, string>,
+  symbol: string,
+): string {
+  const contractId = firstString(attrs, FLEX_OPEN_POSITION_CONTRACT_ID_KEYS);
+  if (contractId) {
+    return `id:${contractId}`;
+  }
+
+  const underlying = normalizeSymbol(
+    firstString(attrs, FLEX_OPEN_POSITION_UNDERLYING_KEYS) ?? symbol,
+  ).replace(/[^A-Z0-9]/g, "");
+  const expiration = optionExpirationKey(
+    firstString(attrs, FLEX_OPEN_POSITION_EXPIRATION_KEYS),
+  );
+  const strike = firstNumber(attrs, FLEX_OPEN_POSITION_STRIKE_KEYS);
+  const right = optionRightCode(firstString(attrs, FLEX_OPEN_POSITION_RIGHT_KEYS));
+  if (!underlying || !expiration || strike === null || !right) {
+    return "";
+  }
+
+  const opraExpiration =
+    expiration.length === 8 ? expiration.slice(2) : expiration;
+  const strikeKey = String(Math.round(strike * 1000)).padStart(8, "0");
+  return `O:${underlying}${opraExpiration}${right}${strikeKey}`;
 }
 
 function flexOpenPositionText(candidate: FlexOpenPositionCandidate): string {
@@ -3925,6 +3974,7 @@ async function upsertFlexReport(xml: string, runId: string): Promise<{
       {
         providerAccountId,
         symbol,
+        contractKey: flexOpenPositionContractKey(attrs, symbol),
         description: firstString(attrs, ["description"]),
         assetClass,
         positionType: classifyAccountPositionType({
@@ -3956,6 +4006,7 @@ async function upsertFlexReport(xml: string, runId: string): Promise<{
           flexOpenPositionsTable.providerAccountId,
           flexOpenPositionsTable.symbol,
           flexOpenPositionsTable.asOf,
+          flexOpenPositionsTable.contractKey,
         ],
         set: {
           quantity: sql`excluded.quantity`,
