@@ -86,8 +86,10 @@ replit-config restores 31c9a5e9/612f7567). Remaining after the ~00:17 MDT VM rot
 (app auto-respawns; if .replit clobbered again: git checkout 612f7567 -- .replit replit.nix): warm
 re-profile via scripts/diag/cpu-profile-running-api.mjs (committed in 970d0d19) -> s3b go/no-go (gate: aggregation >10% on-CPU); runtime
 deltas (ELU vs 0.894 warm, SPY 5m durable read vs 372ms, frozen-cell count, Contract-pending);
-OWNER DECISION pending: suppress signal EMISSION for known-gapped cells during the fetch window
-(review P1 #1 — inherited behavior, now minutes not days; changing it alters which signals fire).
+OWNER DECISION (Riley, 2026-07-08, session e65fd323): review P1 #1 — RESOLVED = **leave as-is**.
+Gapped cells keep evaluating gapped history until the on-demand gap-tail fetch lands (now minutes,
+was days pre-change) — strictly better than pre-change, so NO emission-suppression change is made;
+emission logic untouched. This closes the pending owner item (no WO, no identity-test carve-out).
 
 ## Phase 1: P1 correctness (fix first)
 - [ ] T1 (S): PhotonicsObservatory d3 force-graph effect re-runs per live tick
