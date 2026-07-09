@@ -2483,6 +2483,82 @@ async function normalizeSignalOptionsDeploymentBranding(
   return updated ?? { ...deployment, ...patch, updatedAt: new Date() };
 }
 
+// ---------------------------------------------------------------------------
+// signal_options_shadow_mark EVENT-row rate limit (WO-EE-FIREHOSE, Deliverable 2)
+//
+// Marks persist to the shadow_position_marks TABLE on every recorded tick via
+// the recordShadowAutomationEvent mirror in insertSignalOptionsEvent — which
+// runs even when the event is only buffered (not written to execution_events) —
+// so mark history, the source for peak/high-water reads, keeps full fidelity.
+// The redundant per-tick execution_events ROW is what bloats the ledger (146k
+// rows/7d), so we floor JUST that row to at most one per position per
+// SIGNAL_OPTIONS_MARK_EVENT_MIN_INTERVAL_MS (default 5min, 0 disables). The code
+// carries no entry/exit-adjacency marker on a mark event (entry/exit are
+// separate event types, unaffected here), so the floor applies uniformly.
+const SIGNAL_OPTIONS_MARK_EVENT_FLOOR_MAX_KEYS = 4_096;
+const signalOptionsMarkEventFloorByPosition = new Map<string, number>();
+
+function resolveSignalOptionsMarkEventMinIntervalMs(): number {
+  const raw = Number(process.env.SIGNAL_OPTIONS_MARK_EVENT_MIN_INTERVAL_MS);
+  return Number.isFinite(raw) && raw >= 0 ? Math.floor(raw) : 300_000;
+}
+
+// Pure + test-injectable: allow a mark EVENT row for this position now? Records
+// the timestamp when it allows, and LRU-bounds the index. floorMs<=0 disables.
+function signalOptionsMarkEventFloorAllows(input: {
+  store: Map<string, number>;
+  key: string;
+  nowMs: number;
+  floorMs: number;
+  maxKeys: number;
+}): boolean {
+  const { store, key, nowMs, floorMs, maxKeys } = input;
+  if (floorMs <= 0) return true;
+  const last = store.get(key);
+  if (last != null && nowMs - last < floorMs) {
+    return false;
+  }
+  store.delete(key);
+  store.set(key, nowMs);
+  while (store.size > maxKeys) {
+    const oldest = store.keys().next().value;
+    if (oldest === undefined) break;
+    store.delete(oldest);
+  }
+  return true;
+}
+
+// Non-mark events always persist; LIVE mark events are floored per position.
+function shouldPersistSignalOptionsMarkEventRow(input: {
+  deploymentId: string;
+  event: ExecutionEvent;
+  occurredAt: Date;
+}): boolean {
+  if (input.event.eventType !== SIGNAL_OPTIONS_MARK_EVENT) {
+    return true;
+  }
+  const payload = asRecord(input.event.payload);
+  // Backfill/replay marks reconstruct the ledger with HISTORICAL timestamps and
+  // rely on backfillEventKey idempotency — never floor them; the floor targets
+  // only the live per-tick scan firehose. (Historical events carry a
+  // backfillEventKey; live marks never do.)
+  if (
+    compactString(payload.backfillEventKey) ||
+    isSignalOptionsReplayEvent(input.event)
+  ) {
+    return true;
+  }
+  const position = asRecord(payload.position);
+  const positionKey = compactString(position.id) ?? input.event.symbol ?? "";
+  return signalOptionsMarkEventFloorAllows({
+    store: signalOptionsMarkEventFloorByPosition,
+    key: `${input.deploymentId} ${positionKey}`,
+    nowMs: input.occurredAt.getTime(),
+    floorMs: resolveSignalOptionsMarkEventMinIntervalMs(),
+    maxKeys: SIGNAL_OPTIONS_MARK_EVENT_FLOOR_MAX_KEYS,
+  });
+}
+
 async function insertSignalOptionsEvent(input: {
   deployment: AlgoDeployment;
   symbol?: string | null;
@@ -2506,9 +2582,14 @@ async function insertSignalOptionsEvent(input: {
     payload,
     occurredAt,
   });
-  const event = shouldPersistSignalOptionsEventToLedger({
-    event: bufferedEvent,
-  })
+  const persistToLedger =
+    shouldPersistSignalOptionsEventToLedger({ event: bufferedEvent }) &&
+    shouldPersistSignalOptionsMarkEventRow({
+      deploymentId: input.deployment.id,
+      event: bufferedEvent,
+      occurredAt,
+    });
+  const event = persistToLedger
     ? await db
         .insert(executionEventsTable)
         .values({
@@ -14415,30 +14496,240 @@ export async function manageSignalOptionsActivePositionQuote(input: {
   });
 }
 
-async function emitSkippedCandidate(input: {
+// ---------------------------------------------------------------------------
+// signal_options_candidate_skipped EVENT coalescing (WO-EE-FIREHOSE, Deliverable 1)
+//
+// The scan re-emits one skip event per candidate PER SCAN CYCLE, so the SAME
+// candidate (same signalKey) skipped for the same reason fires every cycle —
+// ~853k rows/7d that nobody reads as individual rows. We collapse repeats of the
+// same (deploymentId, symbol, reason, signalKey) inside a
+// SIGNAL_OPTIONS_SKIP_EVENT_COALESCE_MS window (default 15min, 0 disables) into
+// ONE row whose count/firstSeenAt/lastSeenAt track the window — reusing the
+// gateway-blocked update path (recordSignalOptionsGatewayBlocked) but driven by
+// an in-memory LRU window index instead of a re-query.
+//
+// signalKey is IN the key on purpose: the seen-signal dedup store
+// (signal_options_seen_signals, unique on deployment_id+signal_key) is rebuilt
+// from these rows, so each distinct signalKey MUST keep its own row or a live
+// signal could be re-processed. The FULL last-skip payload is retained (no field
+// trimming) because live dedup + cockpit read many nested payload fields.
+type SignalOptionsSkipCoalesceWindow = {
+  eventId: string;
+  firstSeenAt: string;
+  createdAt: Date;
+  windowStartMs: number;
+  count: number;
+};
+const SIGNAL_OPTIONS_SKIP_COALESCE_MAX_KEYS = 4_096;
+const signalOptionsSkipCoalesceWindows = new Map<
+  string,
+  SignalOptionsSkipCoalesceWindow
+>();
+
+function resolveSignalOptionsSkipCoalesceMs(): number {
+  const raw = Number(process.env.SIGNAL_OPTIONS_SKIP_EVENT_COALESCE_MS);
+  return Number.isFinite(raw) && raw >= 0 ? Math.floor(raw) : 900_000;
+}
+
+function signalOptionsSkipCoalesceKey(
+  deploymentId: string,
+  symbol: string | null | undefined,
+  reason: string,
+  signalKey: string | null | undefined,
+): string {
+  return [deploymentId, symbol ?? "", reason, signalKey ?? ""].join(" ");
+}
+
+// Pure + test-injectable: return the still-open window for a key (LRU-touched),
+// or null after evicting an expired/absent one. windowMs<=0 disables coalescing.
+function getOpenSignalOptionsSkipCoalesceWindow(input: {
+  store: Map<string, SignalOptionsSkipCoalesceWindow>;
+  key: string;
+  nowMs: number;
+  windowMs: number;
+}): SignalOptionsSkipCoalesceWindow | null {
+  const { store, key, nowMs, windowMs } = input;
+  const win = store.get(key);
+  if (!win) return null;
+  if (windowMs <= 0 || nowMs - win.windowStartMs >= windowMs) {
+    store.delete(key);
+    return null;
+  }
+  store.delete(key);
+  store.set(key, win);
+  return win;
+}
+
+// Pure + test-injectable: open a fresh window, LRU-bounding the index.
+function registerSignalOptionsSkipCoalesceWindow(input: {
+  store: Map<string, SignalOptionsSkipCoalesceWindow>;
+  key: string;
+  window: SignalOptionsSkipCoalesceWindow;
+  maxKeys: number;
+}): void {
+  const { store, key, window, maxKeys } = input;
+  store.delete(key);
+  store.set(key, window);
+  while (store.size > maxKeys) {
+    const oldest = store.keys().next().value;
+    if (oldest === undefined) break;
+    store.delete(oldest);
+  }
+}
+
+function buildSignalOptionsSkippedPayload(input: {
+  candidate: SignalOptionsCandidate;
+  signalKey: string;
+  reason: string;
+  detail?: Record<string, unknown>;
+  count: number;
+  firstSeenAt: string;
+  lastSeenAt: string;
+}): Record<string, unknown> {
+  return {
+    signalKey: input.signalKey,
+    signal: input.candidate.signal ?? null,
+    action: input.candidate.action ?? null,
+    candidate: {
+      ...input.candidate,
+      status: "skipped",
+    },
+    reason: input.reason,
+    ...(input.detail ?? {}),
+    count: input.count,
+    firstSeenAt: input.firstSeenAt,
+    lastSeenAt: input.lastSeenAt,
+  };
+}
+
+type SignalOptionsSkipEmitInput = {
   deployment: AlgoDeployment;
   candidate: SignalOptionsCandidate;
   signalKey: string;
   reason: string;
   detail?: Record<string, unknown>;
-}) {
-  await insertSignalOptionsEvent({
+};
+
+// UPDATE branch: refresh the coalesced row in place (count/firstSeenAt/lastSeenAt
+// + occurredAt), then run the same skip-event side effects the insert path does
+// (recent-skip tally, dashboard invalidation, cockpit notify, seen-signal
+// upsert) so read/dedup state stays byte-consistent with today.
+async function coalesceSignalOptionsSkippedCandidate(input: {
+  emit: SignalOptionsSkipEmitInput;
+  window: SignalOptionsSkipCoalesceWindow;
+  now: Date;
+}): Promise<void> {
+  const { emit, window, now } = input;
+  const count = window.count + 1;
+  const summary = `${emit.candidate.symbol} shadow candidate skipped: ${emit.reason}`;
+  const payload = signalOptionsPayloadWithRunMetadata({
+    deployment: emit.deployment,
+    payload: buildSignalOptionsSkippedPayload({
+      candidate: emit.candidate,
+      signalKey: emit.signalKey,
+      reason: emit.reason,
+      detail: emit.detail,
+      count,
+      firstSeenAt: window.firstSeenAt,
+      lastSeenAt: now.toISOString(),
+    }),
+  });
+  await db
+    .update(executionEventsTable)
+    .set({ summary, payload, occurredAt: now, updatedAt: now })
+    .where(eq(executionEventsTable.id, window.eventId));
+  window.count = count;
+
+  const merged: ExecutionEvent = {
+    id: window.eventId,
+    deploymentId: emit.deployment.id,
+    algoRunId: null,
+    providerAccountId: emit.deployment.providerAccountId,
+    symbol: emit.candidate.symbol
+      ? normalizeSymbol(emit.candidate.symbol).toUpperCase()
+      : null,
+    eventType: SIGNAL_OPTIONS_SKIPPED_EVENT,
+    summary,
+    payload,
+    occurredAt: now,
+    createdAt: window.createdAt,
+    updatedAt: now,
+  };
+  recordSignalOptionsRecentSkip(emit.deployment.id, merged);
+  invalidateSignalOptionsDashboardCaches(emit.deployment.id);
+  notifyAlgoCockpitChanged({
+    deploymentId: emit.deployment.id,
+    mode: emit.deployment.mode,
+    reason: SIGNAL_OPTIONS_SKIPPED_EVENT,
+  });
+  void upsertSignalOptionsSeenSignal(merged).catch((error) => {
+    logger.warn?.(
+      {
+        err: error,
+        deploymentId: emit.deployment.id,
+        eventId: merged.id,
+        eventType: merged.eventType,
+      },
+      "Failed to upsert signal-options seen-signal sidecar row",
+    );
+  });
+}
+
+async function emitSkippedCandidate(input: SignalOptionsSkipEmitInput) {
+  const now = new Date();
+  const windowMs = resolveSignalOptionsSkipCoalesceMs();
+  const key = signalOptionsSkipCoalesceKey(
+    input.deployment.id,
+    input.candidate.symbol,
+    input.reason,
+    input.signalKey,
+  );
+  const openWindow = getOpenSignalOptionsSkipCoalesceWindow({
+    store: signalOptionsSkipCoalesceWindows,
+    key,
+    nowMs: now.getTime(),
+    windowMs,
+  });
+  if (openWindow) {
+    await coalesceSignalOptionsSkippedCandidate({ emit: input, window: openWindow, now });
+    return;
+  }
+
+  const firstSeenAt = now.toISOString();
+  const event = await insertSignalOptionsEvent({
     deployment: input.deployment,
     symbol: input.candidate.symbol,
     eventType: SIGNAL_OPTIONS_SKIPPED_EVENT,
     summary: `${input.candidate.symbol} shadow candidate skipped: ${input.reason}`,
-    payload: {
+    occurredAt: now,
+    payload: buildSignalOptionsSkippedPayload({
+      candidate: input.candidate,
       signalKey: input.signalKey,
-      signal: input.candidate.signal ?? null,
-      action: input.candidate.action ?? null,
-      candidate: {
-        ...input.candidate,
-        status: "skipped",
-      },
       reason: input.reason,
-      ...(input.detail ?? {}),
-    },
+      detail: input.detail,
+      count: 1,
+      firstSeenAt,
+      lastSeenAt: firstSeenAt,
+    }),
   });
+
+  // Only open a coalescing window when a real ledger row exists to UPDATE later.
+  // When tally is authoritative the skip may be buffer-only (no persisted row);
+  // then behave exactly as before (one buffered event, no window).
+  if (windowMs > 0 && shouldPersistSignalOptionsEventToLedger({ event })) {
+    registerSignalOptionsSkipCoalesceWindow({
+      store: signalOptionsSkipCoalesceWindows,
+      key,
+      window: {
+        eventId: event.id,
+        firstSeenAt,
+        createdAt: event.createdAt,
+        windowStartMs: now.getTime(),
+        count: 1,
+      },
+      maxKeys: SIGNAL_OPTIONS_SKIP_COALESCE_MAX_KEYS,
+    });
+  }
 }
 
 function candidateContractSelectionEventExists(input: {
@@ -21596,6 +21887,19 @@ export const __signalOptionsAutomationInternalsForTests = {
   signalOptionsEventsWithRecentSkips,
   readSignalOptionsDashboardEvents,
   shouldPersistSignalOptionsEventToLedger,
+  // WO-EE-FIREHOSE Deliverable 1/2 — pure coalescing/floor decisions.
+  resolveSignalOptionsSkipCoalesceMs,
+  signalOptionsSkipCoalesceKey,
+  getOpenSignalOptionsSkipCoalesceWindow,
+  registerSignalOptionsSkipCoalesceWindow,
+  buildSignalOptionsSkippedPayload,
+  SIGNAL_OPTIONS_SKIP_COALESCE_MAX_KEYS,
+  resolveSignalOptionsMarkEventMinIntervalMs,
+  signalOptionsMarkEventFloorAllows,
+  shouldPersistSignalOptionsMarkEventRow,
+  SIGNAL_OPTIONS_MARK_EVENT_FLOOR_MAX_KEYS,
+  __resetSignalOptionsMarkEventFloorForTests: () =>
+    signalOptionsMarkEventFloorByPosition.clear(),
   isSignalOptionsReplayEvent,
   runtimeSignalOptionsEvents,
   stateSignalOptionsEvents,

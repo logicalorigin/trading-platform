@@ -9,6 +9,7 @@ import {
   brokerAccountsTable,
   brokerConnectionsTable,
   db,
+  executionEventsTable,
   instrumentsTable,
   shadowAccountsTable,
   shadowBalanceSnapshotsTable,
@@ -20,9 +21,11 @@ import {
   signalMonitorSymbolStatesTable,
 } from "./index";
 import {
+  EXECUTION_EVENTS_DIAGNOSTIC_TYPES,
   pruneBalanceSnapshots,
   pruneBarCache,
   pruneClosedShadowPositionMarks,
+  pruneExecutionEventsDiagnostics,
   pruneInactiveSignalMonitorSymbolStates,
   pruneShadowBalanceSnapshots,
   pruneSignalMonitorBreadthSnapshots,
@@ -54,7 +57,7 @@ after(async () => {
 });
 beforeEach(async () => {
   await testDb.client.exec(
-    "truncate table balance_snapshots, bar_cache, instruments, broker_accounts, broker_connections, shadow_balance_snapshots, shadow_position_marks, shadow_positions, shadow_accounts, signal_monitor_breadth_snapshots, signal_monitor_events, signal_monitor_symbol_states, signal_monitor_profiles restart identity cascade",
+    "truncate table balance_snapshots, bar_cache, execution_events, instruments, broker_accounts, broker_connections, shadow_balance_snapshots, shadow_position_marks, shadow_positions, shadow_accounts, signal_monitor_breadth_snapshots, signal_monitor_events, signal_monitor_symbol_states, signal_monitor_profiles restart identity cascade",
   );
 });
 
@@ -448,6 +451,8 @@ test("resolveSnapshotRetentionConfig applies defaults and env overrides", () => 
     barCacheIntradayDays: 60,
     barCacheDailyDays: 400,
     barCacheMaxRowsPerRun: 1_000_000,
+    executionEventsDiagnosticHours: 48,
+    executionEventsDiagnosticMaxRowsPerRun: 1_000_000,
     batchSize: 5_000,
   });
 
@@ -475,6 +480,7 @@ test("runAllSnapshotRetention runs all configured sweeps, dry-run by default", a
     [
       "balance_snapshots",
       "bar_cache",
+      "execution_events",
       "shadow_balance_snapshots",
       "shadow_position_marks",
       "signal_monitor_breadth_snapshots",
@@ -573,4 +579,106 @@ test("pruneBarCache caps deletions per run so a sweep can't pin the DB", async (
   assert.ok(run.durationMs >= 0);
   const remaining = await db.select().from(barCacheTable);
   assert.equal(remaining.length, 3);
+});
+
+// ---------------------------------------------------------------------------
+// execution_events diagnostic retention (WO-EE-FIREHOSE, Deliverable 3)
+// ---------------------------------------------------------------------------
+
+const EE_RETENTION_HOURS = 48;
+
+function hoursAgo(n: number): Date {
+  return new Date(NOW.getTime() - n * 3_600_000);
+}
+
+async function insertExecutionEvent(
+  eventType: string,
+  occurredAt: Date,
+): Promise<void> {
+  await db.insert(executionEventsTable).values({
+    eventType,
+    summary: `${eventType} @ ${occurredAt.toISOString()}`,
+    payload: {},
+    occurredAt,
+  });
+}
+
+test("execution_events: prunes diagnostic types past 48h, keeps trade types forever", async () => {
+  // Diagnostic types older than the cutoff — eligible.
+  await insertExecutionEvent("signal_options_candidate_skipped", hoursAgo(72));
+  await insertExecutionEvent("signal_options_shadow_mark", hoursAgo(72));
+  await insertExecutionEvent("signal_options_gateway_blocked", hoursAgo(49));
+  await insertExecutionEvent("overnight_spot_signal_blocked", hoursAgo(100));
+  // Diagnostic type INSIDE the window — must survive.
+  await insertExecutionEvent("signal_options_candidate_skipped", hoursAgo(1));
+  // Trade/lifecycle types, ancient — must NEVER be pruned.
+  await insertExecutionEvent("signal_options_shadow_entry", hoursAgo(1000));
+  await insertExecutionEvent("signal_options_shadow_exit", hoursAgo(1000));
+  await insertExecutionEvent("signal_options_candidate_created", hoursAgo(1000));
+  await insertExecutionEvent("signal_options_manual_deviation", hoursAgo(1000));
+
+  const dry = await pruneExecutionEventsDiagnostics({
+    retentionHours: EE_RETENTION_HOURS,
+    now: NOW,
+  });
+  assert.equal(dry.dryRun, true);
+  assert.equal(dry.table, "execution_events");
+  assert.equal(dry.candidates, 4); // the 4 aged diagnostic rows
+  assert.equal(dry.deleted, 0);
+  assert.equal((await db.select().from(executionEventsTable)).length, 9);
+
+  const run = await pruneExecutionEventsDiagnostics({
+    retentionHours: EE_RETENTION_HOURS,
+    now: NOW,
+    dryRun: false,
+  });
+  assert.equal(run.deleted, 4);
+  assert.equal(run.hitCap, false);
+
+  const remaining = await db.select().from(executionEventsTable);
+  assert.equal(remaining.length, 5);
+  assert.deepEqual(
+    remaining.map((r) => r.eventType).sort(),
+    [
+      "signal_options_candidate_created",
+      "signal_options_candidate_skipped", // the in-window one
+      "signal_options_manual_deviation",
+      "signal_options_shadow_entry",
+      "signal_options_shadow_exit",
+    ],
+  );
+});
+
+test("execution_events: allowlist never includes trade/lifecycle types", () => {
+  const diag = new Set<string>(EXECUTION_EVENTS_DIAGNOSTIC_TYPES);
+  for (const trade of [
+    "signal_options_shadow_entry",
+    "signal_options_shadow_exit",
+    "signal_options_shadow_execution",
+    "signal_options_candidate_created",
+    "signal_options_manual_deviation",
+    "overnight_spot_live_entry",
+    "overnight_spot_live_order_intent",
+  ]) {
+    assert.equal(diag.has(trade), false, `${trade} must not be prunable`);
+  }
+});
+
+test("execution_events: maxRowsPerRun caps the drain and reports hitCap", async () => {
+  for (let i = 0; i < 5; i++) {
+    await insertExecutionEvent(
+      "signal_options_candidate_skipped",
+      hoursAgo(72 + i),
+    );
+  }
+  const run = await pruneExecutionEventsDiagnostics({
+    retentionHours: EE_RETENTION_HOURS,
+    now: NOW,
+    dryRun: false,
+    batchSize: 2,
+    maxRowsPerRun: 3,
+  });
+  assert.equal(run.deleted, 3);
+  assert.equal(run.hitCap, true);
+  assert.equal((await db.select().from(executionEventsTable)).length, 2);
 });

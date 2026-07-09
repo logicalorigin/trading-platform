@@ -166,6 +166,9 @@ import { releaseMarketDataLeases } from "./market-data-admission";
 import {
   buildSnapTradeAccountPortfolioTotals,
   getSnapTradeAccountPortfolio,
+  readLatestSnapTradeAccountPortfolio,
+  rememberLatestSnapTradeAccountPortfolio,
+  SNAPTRADE_ACCOUNT_PORTFOLIO_CACHE_TTL_MS,
   type SnapTradeAccountPortfolioResponse,
 } from "./snaptrade-account-portfolio";
 import {
@@ -222,7 +225,8 @@ const ACCOUNT_SCHEMA_READINESS_CACHE_TTL_MS = 30_000;
 // portfolio endpoint and caches the result briefly so repeated list builds (each
 // a cold miss on the 5s route-response cache) do not fan out to SnapTrade upstream
 // on every request.
-const SNAPTRADE_BALANCE_CACHE_TTL_MS = 45_000;
+const SNAPTRADE_BALANCE_CACHE_TTL_MS =
+  SNAPTRADE_ACCOUNT_PORTFOLIO_CACHE_TTL_MS;
 const SNAPTRADE_BALANCE_FETCH_CONCURRENCY = 4;
 const ROBINHOOD_LOCAL_ID_PREFIX = "robinhood:";
 const ROBINHOOD_BALANCE_CACHE_TTL_MS = 45_000;
@@ -1284,9 +1288,14 @@ async function emptyPersistedBackedAccounts(): Promise<{
   return { accounts: [], latestSnapshotAt: null };
 }
 
-function liveAccountUniverseCacheKey(accountId: string, mode: RuntimeMode): string {
+function liveAccountUniverseCacheKey(
+  accountId: string,
+  mode: RuntimeMode,
+  appUserId: string | null,
+): string {
   return JSON.stringify({
     accountId: accountId || COMBINED_ACCOUNT_ID,
+    appUserId,
     mode,
   });
 }
@@ -1295,10 +1304,14 @@ async function getLiveAccountUniverse(
   accountId: string,
   mode: RuntimeMode,
 ): Promise<AccountUniverse> {
+  const appUserId = getCurrentAppUserId();
   return readShortLivedAccountCache(
     liveAccountUniverseReadCache,
-    liveAccountUniverseCacheKey(accountId, mode),
-    () => readLiveAccountUniverseUncached(accountId, mode),
+    liveAccountUniverseCacheKey(accountId, mode, appUserId),
+    () =>
+      readLiveAccountUniverseUncached(accountId, mode, {
+        appUserId: appUserId ?? undefined,
+      }),
   );
 }
 
@@ -1313,7 +1326,8 @@ async function readLiveAccountUniverseUncached(
     | "getRobinhoodAccounts"
   > = {},
 ): Promise<AccountUniverse> {
-  const appUserId = options.appUserId ?? getCurrentAppUserId();
+  const appUserId =
+    options.appUserId === undefined ? getCurrentAppUserId() : options.appUserId;
   let liveReadFailed = false;
   const accounts = await (options.listLiveAccounts ?? listIbkrAccounts)(
     mode,
@@ -1537,27 +1551,123 @@ async function listPositionsForUniverse(
   );
 }
 
+function snapTradePortfolioPositionToBrokerPosition(
+  accountId: string,
+  position: SnapTradeAccountPortfolioResponse["positions"][number],
+): BrokerPositionSnapshot {
+  const rawQuantity = toNumber(position.quantity) ?? 0;
+  const quantity = position.side === "short" ? -Math.abs(rawQuantity) : rawQuantity;
+  const optionContract = position.optionContract
+    ? {
+        ...position.optionContract,
+        expirationDate: new Date(
+          `${position.optionContract.expirationDate}T00:00:00.000Z`,
+        ),
+      }
+    : null;
+  const multiplier = optionContract?.multiplier || optionContract?.sharesPerContract || 1;
+  const averagePrice = toNumber(position.averagePurchasePrice) ?? 0;
+  const marketPrice = toNumber(position.price) ?? 0;
+  const marketValue =
+    toNumber(position.marketValue) ?? marketPrice * quantity * multiplier;
+  const costBasis =
+    toNumber(position.costBasis) ?? averagePrice * quantity * multiplier;
+  const unrealizedPnl =
+    toNumber(position.unrealizedPnl) ?? marketValue - costBasis;
+
+  return {
+    id: `snaptrade:${accountId}:${position.snapTradePositionId}`,
+    accountId,
+    symbol: position.symbol,
+    assetClass: position.assetClass === "option" ? "option" : "equity",
+    providerSecurityType: position.instrumentKind,
+    quantity,
+    averagePrice,
+    marketPrice,
+    marketValue,
+    unrealizedPnl,
+    unrealizedPnlPercent:
+      Math.abs(costBasis) > POSITION_QUANTITY_EPSILON
+        ? (unrealizedPnl / Math.abs(costBasis)) * 100
+        : 0,
+    optionContract,
+    openedAt: null,
+    openedAtSource: "unknown",
+    quote: null,
+  };
+}
+
+function applyLatestSnapTradeBalancesToUniverse(
+  universe: AccountUniverse,
+): AccountUniverse {
+  const appUserId = getCurrentAppUserId();
+  let changed = false;
+  const accounts = universe.accounts.map((account) => {
+    if (account.provider !== "snaptrade") {
+      return account;
+    }
+    const portfolio = readLatestSnapTradeAccountPortfolio({
+      appUserId,
+      accountId: account.id,
+    });
+    if (!portfolio) {
+      return account;
+    }
+    changed = true;
+    const syncedAt = new Date(portfolio.syncedAt);
+    return {
+      ...account,
+      ...snapTradeBalanceValuesFromPortfolio(portfolio, account.currency),
+      updatedAt: Number.isNaN(syncedAt.getTime()) ? account.updatedAt : syncedAt,
+    };
+  });
+  if (!changed) {
+    return universe;
+  }
+  return {
+    ...universe,
+    accounts,
+    latestSnapshotAt: latestTimestampOf(accounts),
+    primaryCurrency: currencyOf(accounts),
+  };
+}
+
 async function readPositionsForUniverseUncached(
   universe: AccountUniverse,
   mode: RuntimeMode,
+  options: {
+    listIbkrPositions?: typeof listIbkrPositions;
+    readSnapTradePortfolio?: (
+      accountId: string,
+    ) => SnapTradeAccountPortfolioResponse | null;
+  } = {},
 ): Promise<BrokerPositionSnapshot[]> {
-  if (
-    universe.source === "robinhood" ||
-    universe.source === "snaptrade" ||
-    universe.source === "broker"
-  ) {
-    return [];
-  }
+  const snapTradeAccounts = universe.accounts.filter(
+    (account) => account.provider === "snaptrade",
+  );
+  const appUserId = getCurrentAppUserId();
+  const readSnapTradePortfolio =
+    options.readSnapTradePortfolio ??
+    ((accountId: string) =>
+      readLatestSnapTradeAccountPortfolio({ appUserId, accountId }));
+  const snapTradePositions = snapTradeAccounts.flatMap((account) => {
+    const portfolio = readSnapTradePortfolio(account.id);
+    return (portfolio?.positions ?? []).map((position) =>
+      snapTradePortfolioPositionToBrokerPosition(account.id, position),
+    );
+  });
 
-  const ibkrAccounts = ibkrReadableAccountsForUniverse(universe);
+  const ibkrAccounts = ibkrReadableAccountsForUniverse(universe).filter(
+    (account) => account.provider === "ibkr",
+  );
   if (!ibkrAccounts.length) {
-    return [];
+    return filterOpenBrokerPositions(snapTradePositions);
   }
 
   const readOpenPositions = async (): Promise<BrokerPositionSnapshot[]> => {
     if (!universe.isCombined && ibkrAccounts[0]) {
       return filterOpenBrokerPositions(
-        await listIbkrPositions({
+        await (options.listIbkrPositions ?? listIbkrPositions)({
           accountId: ibkrAccounts[0].id,
           mode,
         }),
@@ -1566,13 +1676,19 @@ async function readPositionsForUniverseUncached(
 
     const positions = await Promise.all(
       ibkrAccounts.map((account) =>
-        listIbkrPositions({ accountId: account.id, mode }),
+        (options.listIbkrPositions ?? listIbkrPositions)({
+          accountId: account.id,
+          mode,
+        }),
       ),
     );
     return filterOpenBrokerPositions(positions.flat());
   };
 
-  return readOpenPositions();
+  return filterOpenBrokerPositions([
+    ...(await readOpenPositions()),
+    ...snapTradePositions,
+  ]);
 }
 
 export async function getAccountPositionVisibilityProbe(input: {
@@ -4876,9 +4992,16 @@ async function resolveSnapTradeAccountBalance(
         portfolio,
         record.snapshot.currency,
       );
+      const expiresAt = now() + SNAPTRADE_BALANCE_CACHE_TTL_MS;
       snapTradeAccountBalanceCache.set(accountId, {
         value,
-        expiresAt: now() + SNAPTRADE_BALANCE_CACHE_TTL_MS,
+        expiresAt,
+      });
+      rememberLatestSnapTradeAccountPortfolio({
+        appUserId,
+        accountId,
+        value: portfolio,
+        expiresAt,
       });
       return value;
     } catch (error) {
@@ -6190,12 +6313,16 @@ async function buildRealPositionAttribution(input: {
     return attribution;
   }
 
-  let events: Array<{ deploymentId: string | null; payload: Record<string, unknown> }> = [];
+  let events: Array<{ deploymentId: string | null; brokerOrder: unknown }> = [];
   try {
     events = await db
       .select({
         deploymentId: executionEventsTable.deploymentId,
-        payload: executionEventsTable.payload,
+        // Only payload.brokerOrder is read (symbol + optionContract id/ticker),
+        // so project just that jsonb sub-object instead of the whole payload —
+        // byte-identical attribution, far less jsonb hauled on the interactive
+        // positions path (LIMIT 1000). (WO-EE-FIREHOSE, Deliverable 4)
+        brokerOrder: sql<unknown>`${executionEventsTable.payload} -> 'brokerOrder'`,
       })
       .from(executionEventsTable)
       .where(
@@ -6214,15 +6341,25 @@ async function buildRealPositionAttribution(input: {
     return attribution;
   }
 
+  return foldRealPositionAttribution(events);
+}
+
+// Pure fold from the (deploymentId, brokerOrder) projection to the per-position
+// attribution map. Extracted so the read-shape narrowing above is unit-testable
+// without a DB. (WO-EE-FIREHOSE, Deliverable 4)
+function foldRealPositionAttribution(
+  events: Array<{ deploymentId: string | null; brokerOrder: unknown }>,
+): Map<string, RealPositionAttribution> {
+  const attribution = new Map<string, RealPositionAttribution>();
   const deploymentsByKey = new Map<string, Set<string>>();
   for (const event of events) {
     const deploymentId = event.deploymentId;
     if (!deploymentId) {
       continue;
     }
-    const payload = (event.payload ?? {}) as Record<string, unknown>;
-    const brokerOrder = payload.brokerOrder as
+    const brokerOrder = event.brokerOrder as
       | { symbol?: string | null; optionContract?: RealPositionAttribution["sourceAttribution"][number] | unknown }
+      | null
       | undefined;
     if (!brokerOrder || typeof brokerOrder.symbol !== "string") {
       continue;
@@ -6265,7 +6402,9 @@ async function getAccountPositionsUncached(input: {
   detail: AccountPositionsDetail;
 }) {
   const mode = input.mode;
-  const universe = await getLiveAccountUniverse(input.accountId, mode);
+  const universe = applyLatestSnapTradeBalancesToUniverse(
+    await getLiveAccountUniverse(input.accountId, mode),
+  );
   const assetClassFilter = resolveAccountPositionTypeFilter(input.assetClass);
   const allPositions = await listPositionsForUniverse(universe, mode);
   const positions = allPositions.filter((position) =>
@@ -9367,10 +9506,12 @@ export const __accountEquityHistoryInternalsForTests = {
 };
 
 export const __accountUniverseInternalsForTests = {
+  liveAccountUniverseCacheKey,
   readLiveAccountUniverseUncached,
 };
 
 export const __accountPositionInternalsForTests = {
+  applyLatestSnapTradeBalancesToUniverse,
   aggregateBalanceRows,
   accountPositionMarketDataSymbol,
   buildAccountPositionTotals,
@@ -9391,6 +9532,7 @@ export const __accountPositionInternalsForTests = {
   optionQuoteForPosition,
   optionQuoteDemandProviderContractIdsForPosition,
   optionQuoteProviderContractIdsForPosition,
+  readPositionsForUniverseUncached,
   stabilizeExecutionOpenDatesForPositions,
   selectFlexOpenPositionCandidate,
   selectBalanceBoundaryRows,
@@ -9415,6 +9557,9 @@ export const __accountOrderInternalsForTests = {
   positionGroupKey,
   terminalOrderStatus,
   workingOrderStatus,
+  // WO-EE-FIREHOSE Deliverable 4 — read-shape fold over the narrowed projection.
+  foldRealPositionAttribution,
+  realAttributionPositionKey,
 };
 
 export const __accountTradeAnnotationInternalsForTests = {

@@ -4,6 +4,7 @@ import { db } from "./index";
 import {
   balanceSnapshotsTable,
   barCacheTable,
+  executionEventsTable,
   shadowBalanceSnapshotsTable,
   shadowPositionMarksTable,
   shadowPositionsTable,
@@ -355,6 +356,94 @@ export async function pruneBarCache(
 }
 
 /**
+ * `execution_events` diagnostic-class types that are ephemeral debugging noise
+ * (candidate-skip firehose ~853k rows/7d, per-tick shadow marks, gateway-blocked
+ * coalesced status, transient scan-status). This is an EXPLICIT ALLOWLIST: only
+ * these exact types are ever eligible, so every trade/lifecycle type
+ * (signal_options_shadow_entry / _shadow_exit / _shadow_execution /
+ * _candidate_created / _manual_deviation, overnight_spot live/entry/order rows)
+ * is structurally NEVER pruned regardless of age. Add a type here only if it is
+ * pure diagnostics; when in doubt, leave it out.
+ */
+export const EXECUTION_EVENTS_DIAGNOSTIC_TYPES = [
+  "signal_options_candidate_skipped",
+  "signal_options_shadow_mark",
+  "signal_options_gateway_blocked",
+  "signal_options_scan_running",
+  "signal_options_scan_long_running",
+  "signal_options_scan_stale",
+  "signal_options_signal_scan_degraded",
+  "overnight_spot_signal_blocked",
+] as const;
+
+/** Cap rows deleted per scheduled sweep so the first ~1M-row drain can't pin the
+ * shared DB — the backlog drains over successive sweeps like the bar_cache pruner. */
+export const DEFAULT_EXECUTION_EVENTS_DIAGNOSTIC_MAX_ROWS_PER_RUN = 1_000_000;
+/** Bounded candidate probe (a full count(*) over the deletable set can trip the
+ * 15s statement_timeout on a bloated table). */
+const EXECUTION_EVENTS_DIAGNOSTIC_PROBE_CAP = 50_000;
+
+export type ExecutionEventsDiagnosticRetentionOptions = {
+  /** Diagnostic rows older than `now - retentionHours` are eligible. */
+  retentionHours: number;
+  now?: Date;
+  batchSize?: number;
+  dryRun?: boolean;
+  /** Max rows deleted this run; the backlog drains over successive sweeps. */
+  maxRowsPerRun?: number;
+};
+
+/**
+ * `execution_events` diagnostic retention. The candidate-skip firehose alone hit
+ * ~853k rows / 1.6GB over 7 days; coalescing at the writer caps the forward rate,
+ * and this sweep drains the historical backlog and holds diagnostic types to a
+ * short window (default 48h). Trade/lifecycle types are excluded by construction
+ * (allowlist above), so trade history is kept forever. Mirrors `pruneBarCache`:
+ * bounded probe instead of a full count, `maxRowsPerRun` cap + `hitCap` so the
+ * background-lane scheduler switches to its backlog cadence while ~1M rows drain.
+ */
+export async function pruneExecutionEventsDiagnostics(
+  opts: ExecutionEventsDiagnosticRetentionOptions,
+): Promise<RetentionResult> {
+  const startedAt = Date.now();
+  const now = opts.now ?? new Date();
+  const dryRun = opts.dryRun ?? true;
+  const batchSize = opts.batchSize ?? DEFAULT_RETENTION_BATCH_SIZE;
+  const maxRowsPerRun =
+    opts.maxRowsPerRun ?? DEFAULT_EXECUTION_EVENTS_DIAGNOSTIC_MAX_ROWS_PER_RUN;
+  const cutoff = new Date(now.getTime() - opts.retentionHours * 3_600_000);
+  const t = executionEventsTable;
+  const types = [...EXECUTION_EVENTS_DIAGNOSTIC_TYPES];
+  const deletable = sql`${inArray(t.eventType, types)} and ${t.occurredAt} < ${cutoff}`;
+
+  const probed = await db.execute<{ n: number }>(
+    sql`select count(*)::int as n from (select 1 from ${t} where ${deletable} limit ${EXECUTION_EVENTS_DIAGNOSTIC_PROBE_CAP}) s`,
+  );
+  const candidates = Number(probed.rows[0]?.n ?? 0);
+
+  let deleted = 0;
+  if (!dryRun && candidates > 0) {
+    while (deleted < maxRowsPerRun) {
+      const limit = Math.min(batchSize, maxRowsPerRun - deleted);
+      const deleteBatch = sql`delete from ${t} where ${t.id} in (select ${t.id} from ${t} where ${deletable} limit ${limit}) returning ${t.id}`;
+      const removed = await db.execute<{ id: string }>(deleteBatch);
+      if (removed.rows.length === 0) break;
+      deleted += removed.rows.length;
+    }
+  }
+
+  return {
+    table: "execution_events",
+    cutoff: cutoff.toISOString(),
+    candidates,
+    deleted,
+    hitCap: !dryRun && maxRowsPerRun > 0 && deleted === maxRowsPerRun,
+    durationMs: Math.max(0, Date.now() - startedAt),
+    dryRun,
+  };
+}
+
+/**
  * Per-table retention windows (days) + batch size, the single source of truth
  * shared by the CLI and the api-server scheduler. Defaults are the conservative,
  * forward-looking values chosen for Task 7.
@@ -369,6 +458,8 @@ export type SnapshotRetentionConfig = {
   barCacheIntradayDays: number;
   barCacheDailyDays: number;
   barCacheMaxRowsPerRun: number;
+  executionEventsDiagnosticHours: number;
+  executionEventsDiagnosticMaxRowsPerRun: number;
   batchSize: number;
 };
 
@@ -409,6 +500,23 @@ export function resolveSnapshotRetentionConfig(
       env,
       "BAR_CACHE_RETENTION_MAX_ROWS_PER_RUN",
       DEFAULT_BAR_CACHE_MAX_ROWS_PER_RUN,
+      1,
+      50_000_000,
+    ),
+    // Skip/mark/gateway/scan diagnostics are same-day-only debugging data
+    // (owner decision, WO-EE-FIREHOSE); trade history is kept forever via the
+    // allowlist. 48h default; min 1h so a misconfig can't disable retention.
+    executionEventsDiagnosticHours: envInt(
+      env,
+      "EXECUTION_EVENTS_DIAGNOSTIC_RETENTION_HOURS",
+      48,
+      1,
+      100_000,
+    ),
+    executionEventsDiagnosticMaxRowsPerRun: envInt(
+      env,
+      "EXECUTION_EVENTS_DIAGNOSTIC_RETENTION_MAX_ROWS_PER_RUN",
+      DEFAULT_EXECUTION_EVENTS_DIAGNOSTIC_MAX_ROWS_PER_RUN,
       1,
       50_000_000,
     ),
@@ -459,6 +567,13 @@ export async function runAllSnapshotRetention(opts?: {
       intradayRetentionDays: config.barCacheIntradayDays,
       dailyRetentionDays: config.barCacheDailyDays,
       maxRowsPerRun: config.barCacheMaxRowsPerRun,
+    }),
+    await pruneExecutionEventsDiagnostics({
+      now: opts?.now,
+      batchSize: config.batchSize,
+      dryRun: opts?.dryRun,
+      retentionHours: config.executionEventsDiagnosticHours,
+      maxRowsPerRun: config.executionEventsDiagnosticMaxRowsPerRun,
     }),
   ];
 }
