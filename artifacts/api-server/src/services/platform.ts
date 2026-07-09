@@ -11368,6 +11368,8 @@ const OPTION_UPSTREAM_BACKOFF_MS = readPositiveIntegerEnv(
   "OPTION_UPSTREAM_BACKOFF_MS",
   readPositiveIntegerEnv("IBKR_BRIDGE_OPTIONS_BACKOFF_MS", 60_000),
 );
+const OPTION_UPSTREAM_LOCAL_TIMEOUT_BACKOFF_THRESHOLD = 3;
+const OPTION_UPSTREAM_LOCAL_TIMEOUT_COUNT_MAX_ENTRIES = 4096;
 const OPTION_CHAIN_CACHE_MAX_ENTRIES = 128;
 const OPTION_CHAIN_STRIKES_AROUND_MONEY = 6;
 const OPTION_CHAIN_FAST_STRIKES_AROUND_MONEY = 2;
@@ -14010,6 +14012,7 @@ const optionContractResolutionCache = new Map<
   }
 >();
 const optionUpstreamBackoffUntilByKey = new Map<string, number>();
+const optionUpstreamLocalTimeoutCountByKey = new Map<string, number>();
 const flowScannerExpirationRotationOffsets = new Map<string, number>();
 const flowScannerContractRotationOffsets = new Map<string, number>();
 
@@ -14022,6 +14025,7 @@ export function __resetOptionChainCachesForTests(input?: {
   optionExpirationInFlight.clear();
   optionContractResolutionCache.clear();
   optionUpstreamBackoffUntilByKey.clear();
+  optionUpstreamLocalTimeoutCountByKey.clear();
   optionsFlowAggregateSeedOffset = 0;
   flowScannerExpirationRotationOffsets.clear();
   flowScannerContractRotationOffsets.clear();
@@ -15118,6 +15122,13 @@ function shouldBackOffOptionUpstream(error: unknown): boolean {
   return error.statusCode >= 500 || error.statusCode === 429;
 }
 
+function isLocalOptionUpstreamTimeoutError(error: unknown): boolean {
+  return (
+    error instanceof HttpError &&
+    error.code === "massive_options_request_timeout"
+  );
+}
+
 function getOptionBackoffKey(
   kind: "chain" | "expiration",
   key: string,
@@ -15125,11 +15136,40 @@ function getOptionBackoffKey(
   return `${kind}:${key}`;
 }
 
+function incrementOptionUpstreamLocalTimeoutCount(key: string): number {
+  const count =
+    (optionUpstreamLocalTimeoutCountByKey.get(key) ?? 0) + 1;
+  if (
+    !optionUpstreamLocalTimeoutCountByKey.has(key) &&
+    optionUpstreamLocalTimeoutCountByKey.size >=
+      OPTION_UPSTREAM_LOCAL_TIMEOUT_COUNT_MAX_ENTRIES
+  ) {
+    const oldestKey = optionUpstreamLocalTimeoutCountByKey.keys().next().value;
+    if (typeof oldestKey === "string") {
+      optionUpstreamLocalTimeoutCountByKey.delete(oldestKey);
+    }
+  }
+  optionUpstreamLocalTimeoutCountByKey.set(
+    key,
+    Math.min(count, OPTION_UPSTREAM_LOCAL_TIMEOUT_BACKOFF_THRESHOLD),
+  );
+  return count;
+}
+
+function setOptionUpstreamBackoff(key: string): void {
+  optionUpstreamBackoffUntilByKey.set(
+    key,
+    Date.now() + getOptionsFlowRuntimeConfig().optionUpstreamBackoffMs,
+  );
+}
+
 function clearOptionUpstreamBackoff(
   kind: "chain" | "expiration",
   key: string,
 ): void {
-  optionUpstreamBackoffUntilByKey.delete(getOptionBackoffKey(kind, key));
+  const backoffKey = getOptionBackoffKey(kind, key);
+  optionUpstreamBackoffUntilByKey.delete(backoffKey);
+  optionUpstreamLocalTimeoutCountByKey.delete(backoffKey);
 }
 
 function isOptionUpstreamBackedOff(
@@ -15161,14 +15201,24 @@ function recordOptionUpstreamBackoff(
   key: string,
   error: unknown,
 ): void {
-  if (!shouldBackOffOptionUpstream(error)) {
+  const backoffKey = getOptionBackoffKey(kind, key);
+  if (shouldBackOffOptionUpstream(error)) {
+    optionUpstreamLocalTimeoutCountByKey.delete(backoffKey);
+    setOptionUpstreamBackoff(backoffKey);
     return;
   }
 
-  optionUpstreamBackoffUntilByKey.set(
-    getOptionBackoffKey(kind, key),
-    Date.now() + getOptionsFlowRuntimeConfig().optionUpstreamBackoffMs,
-  );
+  if (!isLocalOptionUpstreamTimeoutError(error)) {
+    optionUpstreamLocalTimeoutCountByKey.delete(backoffKey);
+    return;
+  }
+
+  if (
+    incrementOptionUpstreamLocalTimeoutCount(backoffKey) >=
+    OPTION_UPSTREAM_LOCAL_TIMEOUT_BACKOFF_THRESHOLD
+  ) {
+    setOptionUpstreamBackoff(backoffKey);
+  }
 }
 
 // Reasons that reflect the options market-data provider being temporarily unavailable

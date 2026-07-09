@@ -107,7 +107,7 @@ test("option-chain streams fetch metadata rows without delayed quote hydration",
   assert.match(bridgeStreamsSource, /emptyRetryDelaysMs: \[\]/);
 });
 
-test("local option metadata timeout remains transient without setting backoff", () => {
+test("local option metadata timeout backs off only after consecutive stalls", () => {
   setOptionsFlowRuntimeOverrides({ optionUpstreamBackoffMs: 60_000 });
   const key = "chain:local-timeout";
   const error = new HttpError(
@@ -122,8 +122,13 @@ test("local option metadata timeout remains transient without setting backoff", 
   assert.equal(optionBackoff.shouldBackOffOptionUpstream(error), false);
 
   optionBackoff.recordOptionUpstreamBackoff("chain", key, error);
+  optionBackoff.recordOptionUpstreamBackoff("chain", key, error);
 
   assert.equal(optionBackoff.getOptionUpstreamBackoffRemainingMs("chain", key), 0);
+
+  optionBackoff.recordOptionUpstreamBackoff("chain", key, error);
+
+  assert.ok(optionBackoff.getOptionUpstreamBackoffRemainingMs("chain", key) > 0);
 });
 
 test("upstream 500 and 429 option errors set backoff", () => {
@@ -157,6 +162,23 @@ test("successful option fetch clears existing backoff for the key", () => {
   assert.ok(optionBackoff.getOptionUpstreamBackoffRemainingMs("chain", key) > 0);
 
   optionBackoff.clearOptionUpstreamBackoff("chain", key);
+
+  assert.equal(optionBackoff.getOptionUpstreamBackoffRemainingMs("chain", key), 0);
+});
+
+test("successful option fetch resets consecutive local timeout count", () => {
+  setOptionsFlowRuntimeOverrides({ optionUpstreamBackoffMs: 60_000 });
+  const key = "chain:successful-after-timeouts";
+  const error = new HttpError(504, "Local metadata budget exceeded.", {
+    code: "massive_options_request_timeout",
+  });
+
+  optionBackoff.recordOptionUpstreamBackoff("chain", key, error);
+  optionBackoff.recordOptionUpstreamBackoff("chain", key, error);
+  assert.equal(optionBackoff.getOptionUpstreamBackoffRemainingMs("chain", key), 0);
+
+  optionBackoff.clearOptionUpstreamBackoff("chain", key);
+  optionBackoff.recordOptionUpstreamBackoff("chain", key, error);
 
   assert.equal(optionBackoff.getOptionUpstreamBackoffRemainingMs("chain", key), 0);
 });
