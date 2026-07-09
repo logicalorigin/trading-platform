@@ -28,22 +28,21 @@ function run(
 }
 
 test("opener stays looping while content is not ready", () => {
-  const m = new MorphMachine("opener");
+  const m = new MorphMachine();
   run(m, TIMING.minLoopMs + 2000); // well past minLoop, but never ready
   assert.equal(m.state, "loading-loop");
   assert.equal(m.morph, 0);
-  assert.equal(m.opacity, 1);
 });
 
 test("opener will not form before the minimum loop has elapsed", () => {
-  const m = new MorphMachine("opener");
+  const m = new MorphMachine();
   // Ready immediately, but only run for less than minLoopMs.
   run(m, TIMING.minLoopMs - 100, { readyAtMs: 0 });
   assert.equal(m.state, "loading-loop");
 });
 
 test("opener forms, disperses and reveals once boot is complete", () => {
-  const m = new MorphMachine("opener");
+  const m = new MorphMachine();
   const total =
     TIMING.minLoopMs +
     TIMING.formingMs +
@@ -52,14 +51,13 @@ test("opener forms, disperses and reveals once boot is complete", () => {
     500;
   const { revealedCount, disperseCount } = run(m, total, { readyAtMs: 0 });
   assert.equal(m.state, "revealed");
-  assert.equal(m.opacity, 0);
   assert.equal(m.morph, 1);
   assert.equal(revealedCount, 1, "reveal fires exactly once");
   assert.equal(disperseCount, 1, "disperse-start fires exactly once");
 });
 
 test("opener reveals via the max-wait backstop even if never ready", () => {
-  const m = new MorphMachine("opener");
+  const m = new MorphMachine();
   const total =
     TIMING.maxWaitMs +
     TIMING.formingMs +
@@ -71,19 +69,8 @@ test("opener reveals via the max-wait backstop even if never ready", () => {
   assert.equal(revealedCount, 1);
 });
 
-test("tight mode forms the mark and holds it forever, never revealing", () => {
-  const m = new MorphMachine("tight");
-  const { revealedCount, disperseCount } = run(m, TIMING.maxWaitMs + 5000);
-  assert.equal(m.state, "formed");
-  assert.equal(m.morph, 1);
-  assert.equal(m.scatter, 0);
-  assert.equal(m.opacity, 1);
-  assert.equal(revealedCount, 0);
-  assert.equal(disperseCount, 0);
-});
-
 test("morph monotonically increases through forming", () => {
-  const m = new MorphMachine("opener");
+  const m = new MorphMachine();
   m.setContentReady(true);
   // advance past minLoop into forming
   run(m, TIMING.minLoopMs + 50, { readyAtMs: 0 });

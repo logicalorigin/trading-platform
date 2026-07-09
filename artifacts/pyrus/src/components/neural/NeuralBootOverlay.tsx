@@ -141,7 +141,6 @@ export function NeuralBootOverlay() {
     >
       <Suspense fallback={<BootShellScreen />}>
         <NeuralCanvas
-          mode="opener"
           contentReady={progress.complete}
           onDisperseStart={handleDisperseStart}
           onReveal={() => {

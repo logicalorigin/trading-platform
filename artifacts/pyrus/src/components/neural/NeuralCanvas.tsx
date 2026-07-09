@@ -3,10 +3,8 @@ import NeuralCore, {
   type NeuralCoreProps,
 } from "@/components/marketing/neural-core";
 import { MorphMachine } from "./neural-core/useMorphMachine";
-import type { NeuralMode } from "./neural-core/types";
 
 export type NeuralCanvasProps = {
-  mode: NeuralMode;
   contentReady?: boolean;
   onReveal?: () => void;
   onDisperseStart?: () => void;
@@ -48,26 +46,10 @@ const OPENER_CORE_PROPS = {
   driftY: 0.04,
 } satisfies Partial<NeuralCoreProps>;
 
-const TIGHT_CORE_PROPS = {
-  look: "balanced",
-  particles: 14000,
-  orbitCount: 5400,
-  particleSize: 0.19,
-  coreOpacity: 0.42,
-  orbitOpacity: 0.28,
-  distortion: 0.62,
-  morph: true,
-  morphCycleMs: 9000,
-  ringScale: 0.8,
-  lockup: true,
-  lockupMarkOnly: true,
-} satisfies Partial<NeuralCoreProps>;
-
 // Loader-only compatibility boundary. The visual implementation is the source
 // website's NeuralCore cloud; this wrapper preserves the local opener callbacks
 // used by NeuralBootOverlay.
 export default function NeuralCanvas({
-  mode,
   contentReady = false,
   onReveal,
   onDisperseStart,
@@ -90,9 +72,7 @@ export default function NeuralCanvas({
   }, [onDisperseStart]);
 
   useEffect(() => {
-    if (mode !== "opener") return undefined;
-
-    const machine = new MorphMachine(mode);
+    const machine = new MorphMachine();
     let frameId = 0;
     let last = performance.now();
     let revealFired = false;
@@ -117,16 +97,12 @@ export default function NeuralCanvas({
 
     frameId = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(frameId);
-  }, [mode]);
-
-  const props =
-    mode === "opener"
-      ? { ...OPENER_CORE_PROPS, morphDriveRef: driveRef }
-      : TIGHT_CORE_PROPS;
+  }, []);
 
   return (
     <NeuralCore
-      {...props}
+      {...OPENER_CORE_PROPS}
+      morphDriveRef={driveRef}
       className="h-full w-full"
       style={{ height: "100%", width: "100%" }}
     />
