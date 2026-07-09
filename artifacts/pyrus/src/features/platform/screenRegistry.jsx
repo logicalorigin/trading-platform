@@ -149,7 +149,7 @@ const createPreloadableScreen = (screenId, label) => {
   };
 };
 
-const MarketScreen = createPreloadableScreen("market-demo", "MarketDemoScreen");
+const MarketScreen = createPreloadableScreen("market", "MarketDemoScreen");
 const MarketDemoScreen = createPreloadableScreen("market-demo", "MarketDemoScreen");
 const SignalsScreen = createPreloadableScreen("signals", "SignalsScreen");
 const FlowScreen = createPreloadableScreen("flow", "FlowScreen");

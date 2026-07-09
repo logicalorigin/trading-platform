@@ -7,7 +7,7 @@ import {
 import { retryDynamicImport } from "../../lib/dynamicImport";
 
 const SCREEN_LOADERS = {
-  market: () => import("../../screens/MarketScreen.jsx"),
+  market: () => import("../../screens/MarketDemoScreen.jsx"),
   "market-demo": () => import("../../screens/MarketDemoScreen.jsx"),
   signals: () => import("../../screens/SignalsScreen.jsx"),
   flow: () => import("../../screens/FlowScreen.jsx"),
