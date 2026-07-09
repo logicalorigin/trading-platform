@@ -1,4 +1,7 @@
-import { parseExpirationValue } from "../../lib/formatters";
+import {
+  normalizeOptionRightLabel,
+  parseExpirationValue,
+} from "../../lib/formatters";
 
 const asRecord = (value) =>
   value && typeof value === "object" && !Array.isArray(value) ? value : {};
@@ -30,22 +33,13 @@ const numbersDiffer = (left, right, tolerance = 0.005) => {
   return Math.abs(leftNumber - rightNumber) > tolerance;
 };
 
-const plannedContractFields = (contract) => {
+const contractFields = (contract) => {
   const value = asRecord(contract);
+  const right = normalizeOptionRightLabel(value.right);
   return {
     expirationDate: dateKey(value.expirationDate),
     strike: finiteNumber(value.strike),
-    right: lower(value.right) === "put" ? "put" : "call",
-    providerContractId: nonEmptyString(value.providerContractId),
-  };
-};
-
-const actualContractFields = (contract) => {
-  const value = asRecord(contract);
-  return {
-    expirationDate: dateKey(value.expirationDate),
-    strike: finiteNumber(value.strike),
-    right: lower(value.right) === "put" ? "put" : "call",
+    right: right ? (right === "P" ? "put" : "call") : null,
     providerContractId: nonEmptyString(value.providerContractId),
   };
 };
@@ -63,8 +57,8 @@ export function buildSignalOptionsDeviation(automationContext, orderRequest) {
   const plannedContract = asRecord(candidate.selectedContract);
   const plannedOrderPlan = asRecord(candidate.orderPlan);
   const actualContract = asRecord(actual.optionContract);
-  const planned = plannedContractFields(plannedContract);
-  const resolvedActual = actualContractFields(actualContract);
+  const planned = contractFields(plannedContract);
+  const resolvedActual = contractFields(actualContract);
   const changedFields = [];
 
   if (upper(actual.symbol) !== symbol) {
