@@ -142,7 +142,7 @@ export async function pruneSignalMonitorBreadthSnapshots(
     cutoff,
     dryRun,
     count: sql`select count(*)::int as n from ${t} where ${deletable}`,
-    deleteBatch: sql`delete from ${t} where ${t.id} in (select ${t.id} from ${t} where ${deletable} limit ${batchSize}) returning ${t.id}`,
+    deleteBatch: sql`delete from ${t} where ctid = any(array(select ctid from ${t} where ${deletable} limit ${batchSize})) returning ${t.id}`,
   });
 }
 
@@ -165,7 +165,7 @@ export async function pruneBalanceSnapshots(
     cutoff,
     dryRun,
     count: sql`select count(*)::int as n from ${t} where ${deletable}`,
-    deleteBatch: sql`delete from ${t} where ${t.id} in (select ${t.id} from ${t} where ${deletable} limit ${batchSize}) returning ${t.id}`,
+    deleteBatch: sql`delete from ${t} where ctid = any(array(select ctid from ${t} where ${deletable} limit ${batchSize})) returning ${t.id}`,
   });
 }
 
@@ -191,7 +191,7 @@ export async function pruneClosedShadowPositionMarks(
     cutoff,
     dryRun,
     count: sql`select count(*)::int as n from ${m} where ${deletable}`,
-    deleteBatch: sql`delete from ${m} where ${m.id} in (select ${m.id} from ${m} where ${deletable} limit ${batchSize}) returning ${m.id}`,
+    deleteBatch: sql`delete from ${m} where ctid = any(array(select ctid from ${m} where ${deletable} limit ${batchSize})) returning ${m.id}`,
   });
 }
 
@@ -217,7 +217,7 @@ export async function pruneShadowBalanceSnapshots(
     cutoff,
     dryRun,
     count: sql`select count(*)::int as n from ${t} where ${deletable}`,
-    deleteBatch: sql`delete from ${t} where ${t.id} in (select ${t.id} from ${t} where ${deletable} limit ${batchSize}) returning ${t.id}`,
+    deleteBatch: sql`delete from ${t} where ctid = any(array(select ctid from ${t} where ${deletable} limit ${batchSize})) returning ${t.id}`,
   });
 }
 
@@ -245,7 +245,7 @@ export async function pruneSignalMonitorEvents(
     cutoff,
     dryRun,
     count: sql`select count(*)::int as n from ${t} where ${deletable}`,
-    deleteBatch: sql`delete from ${t} where ${t.id} in (select ${t.id} from ${t} where ${deletable} limit ${batchSize}) returning ${t.id}`,
+    deleteBatch: sql`delete from ${t} where ctid = any(array(select ctid from ${t} where ${deletable} limit ${batchSize})) returning ${t.id}`,
   });
 }
 
@@ -268,7 +268,7 @@ export async function pruneInactiveSignalMonitorSymbolStates(
     cutoff,
     dryRun,
     count: sql`select count(*)::int as n from ${t} where ${deletable}`,
-    deleteBatch: sql`delete from ${t} where ${t.id} in (select ${t.id} from ${t} where ${deletable} limit ${batchSize}) returning ${t.id}`,
+    deleteBatch: sql`delete from ${t} where ctid = any(array(select ctid from ${t} where ${deletable} limit ${batchSize})) returning ${t.id}`,
   });
 }
 
@@ -337,7 +337,7 @@ export async function pruneBarCache(
   if (!dryRun && candidates > 0) {
     while (deleted < maxRowsPerRun) {
       const limit = Math.min(batchSize, maxRowsPerRun - deleted);
-      const deleteBatch = sql`delete from ${t} where ${t.id} in (select ${t.id} from ${t} where ${deletable} limit ${limit}) returning ${t.id}`;
+      const deleteBatch = sql`delete from ${t} where ctid = any(array(select ctid from ${t} where ${deletable} limit ${limit})) returning ${t.id}`;
       const removed = await db.execute<{ id: string }>(deleteBatch);
       if (removed.rows.length === 0) break;
       deleted += removed.rows.length;
@@ -425,7 +425,7 @@ export async function pruneExecutionEventsDiagnostics(
   if (!dryRun && candidates > 0) {
     while (deleted < maxRowsPerRun) {
       const limit = Math.min(batchSize, maxRowsPerRun - deleted);
-      const deleteBatch = sql`delete from ${t} where ${t.id} in (select ${t.id} from ${t} where ${deletable} limit ${limit}) returning ${t.id}`;
+      const deleteBatch = sql`delete from ${t} where ctid = any(array(select ctid from ${t} where ${deletable} limit ${limit})) returning ${t.id}`;
       const removed = await db.execute<{ id: string }>(deleteBatch);
       if (removed.rows.length === 0) break;
       deleted += removed.rows.length;

@@ -491,7 +491,7 @@ test("runAllSnapshotRetention runs all configured sweeps, dry-run by default", a
   assert.ok(results.every((r) => r.dryRun === true && r.deleted === 0));
 });
 
-test("batched delete converges across multiple iterations", async () => {
+test("ctid batched delete converges across multiple iterations", async () => {
   const { a } = await seedTwoBrokerAccounts();
   for (let i = 0; i < 12; i++) {
     await insertBalance(a, daysAgo(300 - i)); // all far older than cutoff
@@ -538,6 +538,7 @@ test("pruneBarCache is timeframe-aware: prunes stale intraday, keeps recent + da
     dailyRetentionDays: 400,
     now: NOW,
     dryRun: false,
+    batchSize: 2, // exercise a multi-statement ctid drain
   });
   assert.equal(run.deleted, 3);
   assert.equal(run.hitCap, false);
@@ -571,14 +572,14 @@ test("pruneBarCache caps deletions per run so a sweep can't pin the DB", async (
     dailyRetentionDays: 400,
     now: NOW,
     dryRun: false,
-    batchSize: 5,
-    maxRowsPerRun: 2,
+    batchSize: 2,
+    maxRowsPerRun: 3,
   });
-  assert.equal(run.deleted, 2); // stops at the cap, leaving the rest for next run
+  assert.equal(run.deleted, 3); // stops at the cap, leaving the rest for next run
   assert.equal(run.hitCap, true);
   assert.ok(run.durationMs >= 0);
   const remaining = await db.select().from(barCacheTable);
-  assert.equal(remaining.length, 3);
+  assert.equal(remaining.length, 2);
 });
 
 // ---------------------------------------------------------------------------
@@ -631,6 +632,7 @@ test("execution_events: prunes diagnostic types past 48h, keeps trade types fore
     retentionHours: EE_RETENTION_HOURS,
     now: NOW,
     dryRun: false,
+    batchSize: 2, // exercise a multi-statement ctid drain
   });
   assert.equal(run.deleted, 4);
   assert.equal(run.hitCap, false);
