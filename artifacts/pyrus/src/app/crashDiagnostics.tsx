@@ -88,9 +88,25 @@ const redactString = (value: string): string => {
     /([?&](?:token|secret|password|api_key|apikey|authorization)=)[^&\s]+/gi,
     "$1[redacted]",
   );
-  return withoutQuerySecrets.length > MAX_STRING_LENGTH
-    ? `${withoutQuerySecrets.slice(0, MAX_STRING_LENGTH)}...`
-    : withoutQuerySecrets;
+  const redacted = withoutQuerySecrets
+    .replace(/(\b(?:authorization|proxy-authorization)\s*:\s*)[^\r\n]*/gi, "$1[redacted]")
+    .replace(/(\b(?:cookie|set-cookie)\s*:\s*)[^\r\n]*/gi, "$1[redacted]")
+    .replace(
+      /(["'])([a-z0-9_.-]*(?:password|secret|token|api[_-]?key|session|authorization|cookie)[a-z0-9_.-]*)\1(\s*:\s*)(["'])(.*?)\4/gi,
+      "$1$2$1$3$4[redacted]$4",
+    )
+    .replace(
+      /\b([a-z0-9_.-]*(?:password|secret|token|api[_-]?key|session)[a-z0-9_.-]*)(\s*[:=]\s*)(?:bearer\s+|basic\s+)?(?:["'][^"'\r\n]*["']|[^\s,;&\r\n]+)/gi,
+      "$1$2[redacted]",
+    )
+    .replace(/\b(Bearer|Basic)\s+[a-z0-9._~+/=-]+/gi, "$1 [redacted]")
+    .replace(
+      /\beyJ[a-z0-9_-]{8,}\.[a-z0-9_-]{8,}\.[a-z0-9_-]{8,}\b/gi,
+      "[redacted]",
+    );
+  return redacted.length > MAX_STRING_LENGTH
+    ? `${redacted.slice(0, MAX_STRING_LENGTH)}...`
+    : redacted;
 };
 
 export const redactCrashDiagnosticValue = (
