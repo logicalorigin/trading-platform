@@ -327,6 +327,94 @@ const capBarsToRecentLimit = (
 // own session boundaries while still reflecting the live last-trade price.
 const isDailyTimeframe = (timeframe: string): boolean => timeframe === "1d";
 
+const NEW_YORK_MARKET_TIME_ZONE = "America/New_York";
+
+const NEW_YORK_DATE_TIME_FORMATTER = new Intl.DateTimeFormat("en-US", {
+  timeZone: NEW_YORK_MARKET_TIME_ZONE,
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+  hour: "2-digit",
+  minute: "2-digit",
+  hourCycle: "h23",
+});
+
+type NewYorkDateTimeParts = {
+  year: number;
+  month: number;
+  day: number;
+  hour: number;
+  minute: number;
+};
+
+const readNewYorkDateTimeParts = (date: Date): NewYorkDateTimeParts | null => {
+  const parts = NEW_YORK_DATE_TIME_FORMATTER.formatToParts(date);
+  const read = (type: Intl.DateTimeFormatPartTypes) =>
+    parts.find((part) => part.type === type)?.value ?? "";
+  const year = Number(read("year"));
+  const month = Number(read("month"));
+  const day = Number(read("day"));
+  const hour = Number(read("hour"));
+  const minute = Number(read("minute"));
+  if (
+    !Number.isFinite(year) ||
+    !Number.isFinite(month) ||
+    !Number.isFinite(day) ||
+    !Number.isFinite(hour) ||
+    !Number.isFinite(minute)
+  ) {
+    return null;
+  }
+  return { year, month, day, hour, minute };
+};
+
+const resolveNewYorkDateKey = (timeMs: number): string => {
+  if (!Number.isFinite(timeMs)) {
+    return "";
+  }
+  const parts = readNewYorkDateTimeParts(new Date(timeMs));
+  if (!parts) {
+    return resolveUtcDateKey(timeMs);
+  }
+  const month = String(parts.month).padStart(2, "0");
+  const day = String(parts.day).padStart(2, "0");
+  return `${parts.year}-${month}-${day}`;
+};
+
+const resolveNewYorkMidnightUtcMs = (dateKey: string): number | null => {
+  const match = dateKey.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) {
+    return null;
+  }
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const expectedWallTime = Date.UTC(year, month - 1, day, 0, 0, 0, 0);
+  const expectedDate = new Date(expectedWallTime);
+  if (
+    expectedDate.getUTCFullYear() !== year ||
+    expectedDate.getUTCMonth() !== month - 1 ||
+    expectedDate.getUTCDate() !== day
+  ) {
+    return null;
+  }
+  const guessParts = readNewYorkDateTimeParts(expectedDate);
+  if (!guessParts) {
+    return null;
+  }
+  const actualWallTime = Date.UTC(
+    guessParts.year,
+    guessParts.month - 1,
+    guessParts.day,
+    guessParts.hour,
+    guessParts.minute,
+    0,
+    0,
+  );
+  const resolved = expectedWallTime - (actualWallTime - expectedWallTime);
+  return Number.isFinite(resolved) ? resolved : null;
+};
+
 const resolveTimestampMs = (value: MarketBar["timestamp"] | MarketBar["time"]): number | null => {
   if (value instanceof Date) {
     return value.getTime();
@@ -911,17 +999,20 @@ const mergeBarsWithMinuteAggregateList = (
 
     if (
       lastStartMs == null ||
-      resolveUtcDateKey(latestAggregate.startMs) !== resolveUtcDateKey(lastStartMs)
+      resolveNewYorkDateKey(latestAggregate.startMs) !==
+        resolveNewYorkDateKey(lastStartMs)
     ) {
-      const liveDateKey = resolveUtcDateKey(latestAggregate.startMs);
+      const liveDateKey = resolveNewYorkDateKey(latestAggregate.startMs);
       const liveSessionAggregates = minuteAggregates
-        .filter((aggregate) => resolveUtcDateKey(aggregate.startMs) === liveDateKey)
+        .filter(
+          (aggregate) => resolveNewYorkDateKey(aggregate.startMs) === liveDateKey,
+        )
         .slice()
         .sort((left, right) => left.startMs - right.startMs);
-      const liveSessionStartMs = Date.parse(`${liveDateKey}T00:00:00.000Z`);
+      const liveSessionStartMs = resolveNewYorkMidnightUtcMs(liveDateKey);
       const liveSessionBar = buildBarFromMinuteAggregateBucket(
         liveSessionAggregates,
-        Number.isFinite(liveSessionStartMs)
+        liveSessionStartMs != null
           ? liveSessionStartMs
           : liveSessionAggregates[0]?.startMs,
       );

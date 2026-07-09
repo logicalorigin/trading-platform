@@ -26,16 +26,32 @@ export async function readAuthSession({ signal } = {}) {
 
 // Shared POST helper for the public auth endpoints (login / bootstrap / logout).
 // Throws an Error carrying `.data` (the parsed error body) and `.status`.
+// Login/bootstrap can be slow under DB pressure; bound the wait so a stalled
+// request rejects (clearing the submit button) instead of hanging forever.
+const AUTH_POST_TIMEOUT_MS = 20000;
+
 export async function postAuthJson(path, body, headers = {}) {
-  const response = await fetch(path, {
-    method: "POST",
-    headers: {
-      Accept: "application/json",
-      "Content-Type": "application/json",
-      ...headers,
-    },
-    body: JSON.stringify(body),
-  });
+  let response;
+  try {
+    response = await fetch(path, {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+        ...headers,
+      },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(AUTH_POST_TIMEOUT_MS),
+    });
+  } catch (fetchError) {
+    if (
+      fetchError?.name === "TimeoutError" ||
+      fetchError?.name === "AbortError"
+    ) {
+      throw new Error("Sign in timed out. Please try again.");
+    }
+    throw fetchError;
+  }
   let payload = null;
   try {
     payload = await response.json();

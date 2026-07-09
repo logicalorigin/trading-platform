@@ -3163,6 +3163,7 @@ export const AlgoSettingsRegion = ({
   focusedDeployment,
   controlBaselineReady = true,
   handleApplyExpandedCapacity,
+  saveInProgress = false,
   updateProfileMutation,
   updateStrategySettingsMutation,
 }) => {
@@ -3185,6 +3186,7 @@ export const AlgoSettingsRegion = ({
   const disabled =
     !focusedDeployment ||
     !controlBaselineReady ||
+    saveInProgress ||
     updateProfileMutation?.isPending ||
     updateStrategySettingsMutation?.isPending;
 

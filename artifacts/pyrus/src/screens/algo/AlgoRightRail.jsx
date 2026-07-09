@@ -346,6 +346,7 @@ export const AlgoRightRail = ({
                   focusedDeployment={focusedDeployment}
                   controlBaselineReady={controlsReady}
                   handleApplyExpandedCapacity={handleApplyExpandedCapacity}
+                  saveInProgress={pending}
                   updateProfileMutation={updateProfileMutation}
                   updateStrategySettingsMutation={updateStrategySettingsMutation}
                 />
