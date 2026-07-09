@@ -8,12 +8,14 @@ import { getMassiveApiDiagnostics } from "../providers/massive/market-data";
 import { getMassiveStockQuoteStreamDiagnostics } from "./massive-stock-quote-stream";
 import { getMarketDataAdmissionDiagnostics } from "./market-data-admission";
 import { getSignalMonitorLocalBarCacheDiagnostics } from "./signal-monitor-local-bar-cache";
+import { getSignalMonitorIncrementalEvalStats } from "./signal-monitor";
 import { getStockAggregateStreamDiagnostics } from "./stock-aggregate-stream";
 
 export function getRuntimeMarketDataDiagnostics() {
   return {
     massiveStockQuotes: getMassiveStockQuoteStreamDiagnostics(),
     signalMonitorLocalBars: getSignalMonitorLocalBarCacheDiagnostics(),
+    signalMonitorIncrementalEval: getSignalMonitorIncrementalEvalStats(),
     optionQuotes: getBridgeOptionQuoteStreamDiagnostics(),
     stockAggregates: getStockAggregateStreamDiagnostics(),
     marketDataAdmission: getMarketDataAdmissionDiagnostics(),

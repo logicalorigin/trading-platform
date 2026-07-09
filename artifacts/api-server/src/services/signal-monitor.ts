@@ -9680,7 +9680,7 @@ function evaluateSignalMonitorMatrixHeavyEvaluationWithIncremental(input: {
   return incremental;
 }
 
-function getSignalMonitorIncrementalEvalStats() {
+export function getSignalMonitorIncrementalEvalStats() {
   return {
     mode: signalMonitorIncrementalEvalMode(),
     appends: signalMonitorIncrementalEvalAppends,
