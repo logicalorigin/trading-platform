@@ -322,7 +322,7 @@ export async function loadFlowUniverseOptionabilityCandidates(input: {
   if (candidates.length < limit) {
     append(
       await loadCandidateRows(input.db, {
-        limit: Math.max(limit * 4, limit + prioritySymbols.length),
+        limit: limit * 4,
         markets,
         prioritySymbols,
         force: input.force,
