@@ -6478,6 +6478,37 @@ function buildShadowPositionDayChange(input: {
   };
 }
 
+// Picks the day change shown for a shadow position row.
+// - Same-day positions use the live-mark valuation (their day change IS the full move
+//   since entry).
+// - Prior-day positions use the accurate baseline-mark day change (storedDayChange,
+//   computed from real captured prior-day-close marks). The option quote's own day
+//   change is unreliable (option prevClose/change is frequently 0/absent) and must NOT
+//   override a valid baseline — that regression rendered gaining prior-day options as $0.
+// - quoteDayChange is only a fallback when there is no stored baseline at all.
+export function selectShadowPositionDayChange(input: {
+  sameDayPosition: boolean;
+  valuationEligible: boolean;
+  valuationDayChange: ShadowPositionDayChange | null;
+  storedDayChange: ShadowPositionDayChange;
+  quoteDayChange: ShadowPositionDayChange | null;
+}): ShadowPositionDayChange {
+  if (
+    input.sameDayPosition &&
+    input.valuationEligible &&
+    input.valuationDayChange?.dayChange != null
+  ) {
+    return input.valuationDayChange;
+  }
+  if (input.storedDayChange.dayChange != null) {
+    return input.storedDayChange;
+  }
+  if (input.quoteDayChange?.dayChange != null) {
+    return input.quoteDayChange;
+  }
+  return input.storedDayChange;
+}
+
 function shadowPositionDayChangeBaselineMarketValue(input: {
   baselineMarkMarketValue: number | null;
   openedAt: Date;
@@ -9583,23 +9614,13 @@ export async function getShadowAccountPositions(input: {
                     : null,
                 }
               : quoteDayChange;
-          // Same-day positions use the live-mark unrealized P&L (their day change IS
-          // the full move since entry). Prior-day positions MUST use the accurate
-          // baseline-mark day change (storedDayChange, from real captured prior-day-close
-          // marks); the option quote's own day change is unreliable (option
-          // prevClose/change is frequently 0/absent) and previously overrode a correct
-          // baseline with $0. quoteDayChange stays a fallback only when there is no
-          // stored baseline at all.
-          const dayChange =
-            sameDayPosition &&
-            pricing.valuationEligible &&
-            valuationDayChange?.dayChange != null
-              ? valuationDayChange
-              : storedDayChange.dayChange != null
-                ? storedDayChange
-                : quoteDayChange?.dayChange != null
-                  ? quoteDayChange
-                  : storedDayChange;
+          const dayChange = selectShadowPositionDayChange({
+            sameDayPosition,
+            valuationEligible: pricing.valuationEligible,
+            valuationDayChange,
+            storedDayChange,
+            quoteDayChange,
+          });
           const attribution = buildPositionSourceAttribution(position, orders);
           const optionQuoteSnapshot =
             displayOptionQuote && responseProviderContractId
