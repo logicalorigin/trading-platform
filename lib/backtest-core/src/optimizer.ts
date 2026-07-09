@@ -242,12 +242,15 @@ export function buildCandidatesForMode(
     case "random":
       return buildRandomCandidates(baseParameters, dimensions, randomBudget);
     case "walk_forward": {
-      const gridCandidates = buildGridCandidates(baseParameters, dimensions);
-      if (gridCandidates.length <= 100) {
-        return gridCandidates;
+      let candidateCount = 1;
+      for (const dimension of dimensions) {
+        candidateCount *= dimension.values.length;
+        if (candidateCount > 100) {
+          return buildRandomCandidates(baseParameters, dimensions, randomBudget);
+        }
       }
 
-      return buildRandomCandidates(baseParameters, dimensions, randomBudget);
+      return buildGridCandidates(baseParameters, dimensions);
     }
     default:
       return buildGridCandidates(baseParameters, dimensions);
