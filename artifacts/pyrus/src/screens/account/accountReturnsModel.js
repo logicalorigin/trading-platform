@@ -29,6 +29,15 @@ const sumFinite = (values) =>
     return numeric == null ? sum : sum + numeric;
   }, 0);
 
+// Like sumFinite, but returns null (not 0) when no value is finite, so an
+// absent/degraded positions response is not misreported as a confident zero.
+const sumNullable = (values) => {
+  const finiteValues = values.map(finiteNumber).filter((value) => value != null);
+  return finiteValues.length
+    ? finiteValues.reduce((sum, value) => sum + value, 0)
+    : null;
+};
+
 const lastFinite = (values) => {
   for (let index = values.length - 1; index >= 0; index -= 1) {
     const numeric = finiteNumber(values[index]);
@@ -349,11 +358,15 @@ export const buildAccountReturnsModel = ({
   const trades = tradesResponse?.trades || [];
   const tradeStats = buildTradeStats(trades);
   const positions = getOpenPositionRows(positionsResponse?.positions || []);
-  const unrealizedPnl =
-    Array.isArray(positionsResponse?.positions)
-      ? sumFinite(positions.map((position) => position.unrealizedPnl))
-      : (finiteNumber(positionsResponse?.totals?.unrealizedPnl) ??
-        sumFinite(positions.map((position) => position.unrealizedPnl)));
+  // Prefer the per-row sum when open rows carry finite unrealized P&L; otherwise
+  // fall back to the response totals. When there is no positions response at all
+  // (loading/errored/degraded), stay null so the KPI renders "—" instead of a
+  // false "+$0". A present response with no open rows and no totals is genuinely
+  // unknown, not zero.
+  const unrealizedPnl = positionsResponse
+    ? (sumNullable(positions.map((position) => position.unrealizedPnl)) ??
+      finiteNumber(positionsResponse?.totals?.unrealizedPnl))
+    : null;
   const netLiquidation =
     metricNumber(summary, "netLiquidation") ?? finiteNumber(lastPoint?.netLiquidation);
   const totalCash =
