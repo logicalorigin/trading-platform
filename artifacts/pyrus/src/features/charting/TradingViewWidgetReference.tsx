@@ -1,7 +1,6 @@
 import { memo, useMemo } from "react";
 import { AppTooltip } from "@/components/ui/tooltip";
 
-
 type TradingViewWidgetReferenceProps = {
   symbol?: string;
   interval?: string;
@@ -9,6 +8,16 @@ type TradingViewWidgetReferenceProps = {
   locale?: string;
   dataTestId?: string;
 };
+
+type TradingViewDocumentOptions = Required<
+  Pick<
+    TradingViewWidgetReferenceProps,
+    "symbol" | "interval" | "theme" | "locale"
+  >
+>;
+
+export const TRADING_VIEW_SANDBOX =
+  "allow-scripts allow-popups allow-popups-to-escape-sandbox";
 
 const resolveTradingViewInterval = (interval: string): string => {
   switch (interval) {
@@ -27,47 +36,45 @@ const resolveTradingViewInterval = (interval: string): string => {
   }
 };
 
-export const TradingViewWidgetReference = memo(({
-  symbol = "NASDAQ:AAPL",
-  interval = "1D",
-  theme = "dark",
-  locale = "en",
-  dataTestId,
-}: TradingViewWidgetReferenceProps) => {
-  const srcDoc = useMemo(() => {
-    const [exchange = "NASDAQ", ticker = "AAPL"] = symbol.split(":");
-    const copyrightHref = `https://www.tradingview.com/symbols/${exchange}-${ticker}/`;
-    const copyrightLabel = `${ticker} stock chart`;
-    const config = JSON.stringify({
-      allow_symbol_change: true,
-      calendar: false,
-      details: false,
-      hide_side_toolbar: true,
-      hide_top_toolbar: false,
-      hide_legend: false,
-      hide_volume: false,
-      hotlist: false,
-      interval: resolveTradingViewInterval(interval),
-      locale,
-      save_image: true,
-      style: "1",
-      symbol,
-      theme,
-      timezone: "Etc/UTC",
-      backgroundColor: theme === "dark" ? "#16151A" : "#ffffff",
-      gridColor: "rgba(46, 46, 46, 0.06)",
-      watchlist: [],
-      withdateranges: false,
-      compareSymbols: [],
-      studies: [],
-      autosize: true,
-    });
+export const buildTradingViewSrcDoc = ({
+  symbol,
+  interval,
+  theme,
+  locale,
+}: TradingViewDocumentOptions): string => {
+  const [exchange = "NASDAQ", ticker = "AAPL"] = symbol.split(":");
+  const copyrightHref = `https://www.tradingview.com/symbols/${encodeURIComponent(exchange)}-${encodeURIComponent(ticker)}/`;
+  const config = JSON.stringify({
+    allow_symbol_change: true,
+    calendar: false,
+    details: false,
+    hide_side_toolbar: true,
+    hide_top_toolbar: false,
+    hide_legend: false,
+    hide_volume: false,
+    hotlist: false,
+    interval: resolveTradingViewInterval(interval),
+    locale,
+    save_image: true,
+    style: "1",
+    symbol,
+    theme,
+    timezone: "Etc/UTC",
+    backgroundColor: theme === "dark" ? "#16151A" : "#ffffff",
+    gridColor: "rgba(46, 46, 46, 0.06)",
+    watchlist: [],
+    withdateranges: false,
+    compareSymbols: [],
+    studies: [],
+    autosize: true,
+  }).replaceAll("<", "\\u003c");
 
-    return `<!DOCTYPE html>
+  return `<!DOCTYPE html>
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src https://s3.tradingview.com; style-src 'unsafe-inline'; img-src https: data:; connect-src https: wss:; frame-src https:; font-src https: data:; base-uri 'none'; form-action 'none'; object-src 'none'" />
     <style>
       html, body {
         margin: 0;
@@ -110,29 +117,45 @@ export const TradingViewWidgetReference = memo(({
     <div class="tradingview-widget-container">
       <div class="tradingview-widget-container__widget"></div>
       <div class="tradingview-widget-copyright">
-        <a href="${copyrightHref}" rel="noopener nofollow" target="_blank">${copyrightLabel}</a>
+        <a href="${copyrightHref}" rel="noopener nofollow" target="_blank">View chart on TradingView</a>
         <span>by TradingView</span>
       </div>
       <script type="text/javascript" src="https://s3.tradingview.com/external-embedding/embed-widget-advanced-chart.js" async>${config}</script>
     </div>
   </body>
 </html>`;
-  }, [interval, locale, symbol, theme]);
+};
 
-  return (
-    <AppTooltip content="TradingView Widget Reference"><iframe
-      data-testid={dataTestId}
-      srcDoc={srcDoc}
-      sandbox="allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox"
-      style={{
-        width: "100%",
-        height: "100%",
-        border: "none",
-        display: "block",
-        background: theme === "dark" ? "#16151A" : "#ffffff",
-      }}
-    /></AppTooltip>
-  );
-});
+export const TradingViewWidgetReference = memo(
+  ({
+    symbol = "NASDAQ:AAPL",
+    interval = "1D",
+    theme = "dark",
+    locale = "en",
+    dataTestId,
+  }: TradingViewWidgetReferenceProps) => {
+    const srcDoc = useMemo(
+      () => buildTradingViewSrcDoc({ symbol, interval, theme, locale }),
+      [interval, locale, symbol, theme],
+    );
+
+    return (
+      <AppTooltip content="TradingView Widget Reference">
+        <iframe
+          data-testid={dataTestId}
+          srcDoc={srcDoc}
+          sandbox={TRADING_VIEW_SANDBOX}
+          style={{
+            width: "100%",
+            height: "100%",
+            border: "none",
+            display: "block",
+            background: theme === "dark" ? "#16151A" : "#ffffff",
+          }}
+        />
+      </AppTooltip>
+    );
+  },
+);
 
 TradingViewWidgetReference.displayName = "TradingViewWidgetReference";
