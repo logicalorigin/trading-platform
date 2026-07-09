@@ -6,7 +6,6 @@ import type { CSSProperties } from "react";
  * from any paid component.
  */
 export interface NeuralCoreProps {
-  mode?: "cpu" | "gpu"; // default "gpu"
   coreColor?: string; // inner color (Pyrus blue by default)
   outerColor?: string; // outer color (Pyrus red by default)
   look?: "balanced" | "neon" | "soft"; // default "balanced"

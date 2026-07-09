@@ -14,3 +14,7 @@ test("ambient clouds skip unused morph target generation", () => {
     /if \(morphTargetsEnabled\) \{[\s\S]*?lockupTargets\([\s\S]*?ringTargets\(/,
   );
 });
+
+test("the neural renderer has one supported GPU path", () => {
+  assert.doesNotMatch(source, /p\.mode|PointsMaterial|function vnoise/);
+});

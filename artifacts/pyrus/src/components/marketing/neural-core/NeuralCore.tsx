@@ -24,7 +24,6 @@ const sharedTime = () =>
   ((typeof performance !== "undefined" ? performance.now() : 0) - NEURAL_EPOCH) / 1000;
 
 const DEFAULTS = {
-  mode: "gpu",
   coreColor: "#3DB8FF", // Pyrus blue
   outerColor: "#FF3D2A", // Pyrus red
   look: "balanced",
@@ -71,12 +70,6 @@ const DEFAULTS = {
   maxFps: 0, // frame-rate cap (0 = native); the backdrop opts into ~30
 } as const;
 
-/** Cheap deterministic 3D value noise for the CPU path (no GLSL). */
-function vnoise(x: number, y: number, z: number): number {
-  const s = Math.sin(x * 12.9898 + y * 78.233 + z * 37.719) * 43758.5453;
-  return (s - Math.floor(s)) * 2 - 1;
-}
-
 export default function NeuralCore(userProps: NeuralCoreProps) {
   const p = { ...DEFAULTS, ...userProps };
   const mountRef = useRef<HTMLDivElement>(null);
@@ -121,24 +114,19 @@ export default function NeuralCore(userProps: NeuralCoreProps) {
     scene.add(group);
     const disposables: { dispose(): void }[] = [];
 
-    const isGpu = p.mode === "gpu";
     const morphTargetsEnabled = Boolean(p.morph || p.morphDriveRef);
-    const atlas = isGpu ? makeGlyphAtlas(CHARSETS[p.charSet]) : null;
-    const atlasTex = atlas ? new THREE.CanvasTexture(atlas.canvas) : null;
-    if (atlasTex) {
-      // Linear (no mipmaps) keeps glyphs crisp when points are downscaled small.
-      atlasTex.minFilter = THREE.LinearFilter;
-      atlasTex.magFilter = THREE.LinearFilter;
-      atlasTex.needsUpdate = true;
-      disposables.push(atlasTex);
-    }
+    const atlas = makeGlyphAtlas(CHARSETS[p.charSet]);
+    const atlasTex = new THREE.CanvasTexture(atlas.canvas);
+    // Linear (no mipmaps) keeps glyphs crisp when points are downscaled small.
+    atlasTex.minFilter = THREE.LinearFilter;
+    atlasTex.magFilter = THREE.LinearFilter;
+    atlasTex.needsUpdate = true;
+    disposables.push(atlasTex);
 
     // Per-layer state needed each frame.
     type Layer = {
       points: THREE.Points;
-      material: THREE.ShaderMaterial | THREE.PointsMaterial;
-      dirs: Float32Array;
-      radius: number;
+      material: THREE.ShaderMaterial;
       timeScale: number;
       // nebulaCloud: a SECOND additive draw of the same geometry - the soft
       // nebula that owns the dispersed cloud and dissolves out as the crisp
@@ -197,7 +185,6 @@ export default function NeuralCore(userProps: NeuralCoreProps) {
       geo.setAttribute("position", new THREE.BufferAttribute(pos, 3));
       disposables.push(geo);
 
-      if (isGpu && atlas && atlasTex) {
         geo.setAttribute("aDir", new THREE.BufferAttribute(dirs, 3));
         geo.setAttribute("aRing", new THREE.BufferAttribute(rings, 3));
         geo.setAttribute("aSpin", new THREE.BufferAttribute(spins, 1));
@@ -283,25 +270,7 @@ export default function NeuralCore(userProps: NeuralCoreProps) {
           // opens the scene; the tick takes over from the first frame.
           points.visible = false;
         }
-        layers.push({ points, material: mat, dirs, radius, timeScale, nebula });
-      } else {
-        // CPU baseline: vertex-colored round points, displaced on the CPU.
-        const colors = new Float32Array(count * 3);
-        for (let i = 0; i < count; i++) {
-          const c = core.clone().lerp(outer, colorMix[i]);
-          colors[i * 3] = c.r; colors[i * 3 + 1] = c.g; colors[i * 3 + 2] = c.b;
-        }
-        geo.setAttribute("color", new THREE.BufferAttribute(colors, 3));
-        const mat = new THREE.PointsMaterial({
-          size: p.particleSize * sizeMul * 0.012, vertexColors: true,
-          transparent: true, opacity, depthWrite: false, blending,
-          sizeAttenuation: true,
-        });
-        disposables.push(mat);
-        const points = new THREE.Points(geo, mat);
-        group.add(points);
-        layers.push({ points, material: mat, dirs, radius, timeScale });
-      }
+        layers.push({ points, material: mat, timeScale, nebula });
     }
 
     buildLayer(p.particles, p.radius, p.coreOpacity, p.look === "neon" ? 1.3 : 1.0, 1.0);
@@ -316,9 +285,7 @@ export default function NeuralCore(userProps: NeuralCoreProps) {
       // Keep glyph scale a constant fraction of the (possibly resized) canvas.
       const vh = renderer.domElement.height || 1;
       for (const layer of layers) {
-        if (layer.material instanceof THREE.ShaderMaterial) {
-          layer.material.uniforms.uViewportH.value = vh;
-        }
+        layer.material.uniforms.uViewportH.value = vh;
       }
     });
     ro.observe(mount);
@@ -448,38 +415,24 @@ export default function NeuralCore(userProps: NeuralCoreProps) {
       // the crisp rendition fades in over an already-recognizable mark).
       const crossT = ease(Math.max(0, Math.min(1, (m - 0.55) / 0.3)));
       for (const layer of layers) {
-        if (layer.material instanceof THREE.ShaderMaterial) {
-          layer.material.uniforms.uTime.value = t * layer.timeScale;
-          // Spin time is UNSCALED and SHARED for every layer: the orbit layer's
-          // noise runs at orbitTimeScale, but its ring dots must rotate in
-          // lockstep with the core layer's or the lockup splits into two marks
-          // shearing apart.
-          layer.material.uniforms.uSpinTime.value = spinClock;
-          layer.material.uniforms.uMorph.value = m;
-          layer.material.uniforms.uScatter.value = scatter;
-          if (layer.nebula) {
-            const nu = layer.nebula.material.uniforms;
-            nu.uTime.value = t * layer.timeScale;
-            nu.uSpinTime.value = spinClock;
-            nu.uMorph.value = m;
-            nu.uScatter.value = scatter;
-            nu.uOpacity.value = layer.nebula.opacity * (1 - crossT);
-            layer.nebula.points.visible = crossT < 0.999;
-            layer.material.uniforms.uFade.value = crossT;
-            layer.points.visible = crossT > 0.001;
-          }
-        } else {
-          // CPU displacement of positions along each direction.
-          const pos = layer.points.geometry.getAttribute("position") as THREE.BufferAttribute;
-          const arr = pos.array as Float32Array;
-          const tn = t * p.noiseSpeed * layer.timeScale;
-          for (let i = 0; i < arr.length; i += 3) {
-            const dx = layer.dirs[i], dy = layer.dirs[i + 1], dz = layer.dirs[i + 2];
-            const n = vnoise(dx * 1.6 + tn, dy * 1.6, dz * 1.6 - tn);
-            const disp = layer.radius * (1 + n * p.distortion);
-            arr[i] = dx * disp; arr[i + 1] = dy * disp; arr[i + 2] = dz * disp;
-          }
-          pos.needsUpdate = true;
+        layer.material.uniforms.uTime.value = t * layer.timeScale;
+        // Spin time is UNSCALED and SHARED for every layer: the orbit layer's
+        // noise runs at orbitTimeScale, but its ring dots must rotate in
+        // lockstep with the core layer's or the lockup splits into two marks
+        // shearing apart.
+        layer.material.uniforms.uSpinTime.value = spinClock;
+        layer.material.uniforms.uMorph.value = m;
+        layer.material.uniforms.uScatter.value = scatter;
+        if (layer.nebula) {
+          const nu = layer.nebula.material.uniforms;
+          nu.uTime.value = t * layer.timeScale;
+          nu.uSpinTime.value = spinClock;
+          nu.uMorph.value = m;
+          nu.uScatter.value = scatter;
+          nu.uOpacity.value = layer.nebula.opacity * (1 - crossT);
+          layer.nebula.points.visible = crossT < 0.999;
+          layer.material.uniforms.uFade.value = crossT;
+          layer.points.visible = crossT > 0.001;
         }
       }
 
