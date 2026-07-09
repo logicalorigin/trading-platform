@@ -115,6 +115,31 @@ export function resolveAlgoGatewayReadiness(
   };
 }
 
+// Shadow deployments run against the shadow ledger with Massive market data and do
+// NOT require a live broker gateway (the IBKR Client Portal live-execution path is
+// retired). For shadow COCKPIT/DISPLAY readiness, ignore the live-broker gateway
+// checks entirely and keep only the market-session timing gate, so the algo screen
+// never surfaces a "broker/bridge not connected" blocker for a paper deployment.
+// This is display-only; real live-execution gating still uses resolveAlgoGatewayReadiness.
+export function resolveAlgoShadowDisplayReadiness(
+  now: Date = new Date(),
+): AlgoGatewayReadiness {
+  if (resolveUsEquityMarketStatus(now).session.key !== "rth") {
+    return {
+      ready: false,
+      reason: "market_session_quiet",
+      message: "Options strategy execution is outside the regular options session.",
+      diagnostics: {},
+    };
+  }
+  return {
+    ready: true,
+    reason: null,
+    message: "Shadow options automation is ready (Massive market data).",
+    diagnostics: {},
+  };
+}
+
 export async function getAlgoGatewayReadiness(): Promise<AlgoGatewayReadiness> {
   // Read only the lightweight gateway readiness signals, not the full
   // getRuntimeDiagnostics blob. This call is on the cockpit/STA hot read path

@@ -726,29 +726,120 @@ export function startRuntimeFlightRecorder(): void {
   heartbeatTimer.unref?.();
 }
 
+// Slow-query firehose diet (census S3+D5): the recorder wrote full SQL + stack +
+// context per slow event and grew to 306 MB/day, amplifying exactly under DB
+// pressure. Truncate SQL, drop the (always-empty) stack, rate-limit per
+// query-family, and cap the intra-day slow-event bytes.
+const SLOW_EVENT_SQL_MAX_CHARS = 300;
+const SLOW_EVENT_RATE_WINDOW_MS = 60_000;
+const SLOW_EVENT_RATE_BURST = 5; // first N per family per window emitted freely
+const SLOW_EVENT_RATE_THROTTLE_MS = 10_000; // then at most one per 10s
+const SLOW_EVENT_INTRADAY_BYTE_CAP_DEFAULT = 64 * 1024 * 1024;
+
+type SlowEventRateState = {
+  windowStartMs: number;
+  countInWindow: number;
+  suppressedSinceEmit: number;
+  lastThrottledEmitAt: number;
+};
+
+const slowEventRateStateByFamily = new Map<string, SlowEventRateState>();
+let slowEventIntradayBytes = 0;
+let slowEventIntradayDateKey = "";
+let slowEventCapNoticeEmitted = false;
+let slowEventIntradayByteCap = SLOW_EVENT_INTRADAY_BYTE_CAP_DEFAULT;
+
 function appendPostgresPoolDiagnosticEvent(
   event: PostgresPoolDiagnosticEvent,
+  nowMs: number = Date.now(),
 ): void {
   const eventName =
     event.type === "acquire"
       ? "api-db-pool-acquire-slow"
       : "api-db-query-slow";
-  appendRuntimeFlightRecorderEvent(eventName, {
+  const family = `${event.type}:${
+    event.queryName ?? (event.sql ? event.sql.slice(0, 60) : "unknown")
+  }`;
+
+  // Rate-limit per family: emit the first BURST per rolling minute, then at most
+  // one per THROTTLE window carrying the count suppressed since the last emit.
+  const existing = slowEventRateStateByFamily.get(family);
+  const state: SlowEventRateState =
+    !existing || nowMs - existing.windowStartMs >= SLOW_EVENT_RATE_WINDOW_MS
+      ? {
+          windowStartMs: nowMs,
+          countInWindow: 0,
+          suppressedSinceEmit: existing?.suppressedSinceEmit ?? 0,
+          lastThrottledEmitAt: existing?.lastThrottledEmitAt ?? 0,
+        }
+      : existing;
+  slowEventRateStateByFamily.set(family, state);
+  state.countInWindow += 1;
+  let suppressedCount = 0;
+  if (state.countInWindow <= SLOW_EVENT_RATE_BURST) {
+    suppressedCount = state.suppressedSinceEmit;
+    state.suppressedSinceEmit = 0;
+  } else if (nowMs - state.lastThrottledEmitAt >= SLOW_EVENT_RATE_THROTTLE_MS) {
+    suppressedCount = state.suppressedSinceEmit;
+    state.suppressedSinceEmit = 0;
+    state.lastThrottledEmitAt = nowMs;
+  } else {
+    state.suppressedSinceEmit += 1;
+    return;
+  }
+
+  // Intra-day size cap: once the day's slow-event budget is spent, stop appending
+  // slow events (other recorder event kinds keep flowing).
+  const dateKey = new Date(nowMs).toISOString().slice(0, 10);
+  if (dateKey !== slowEventIntradayDateKey) {
+    slowEventIntradayDateKey = dateKey;
+    slowEventIntradayBytes = 0;
+    slowEventCapNoticeEmitted = false;
+  }
+  if (slowEventIntradayBytes >= slowEventIntradayByteCap) {
+    if (!slowEventCapNoticeEmitted) {
+      slowEventCapNoticeEmitted = true;
+      appendRuntimeFlightRecorderEvent("api-db-slow-recording-capped", {
+        dateKey,
+        capBytes: slowEventIntradayByteCap,
+      });
+    }
+    return;
+  }
+
+  const detail: JsonRecord = {
     source: event.source,
     durationMs: event.durationMs,
-    sql: event.sql,
+    sql:
+      event.sql == null ? null : event.sql.slice(0, SLOW_EVENT_SQL_MAX_CHARS),
     queryName: event.queryName,
     error: event.error,
     pool: event.pool,
-    stack: event.stack,
     context: event.context,
-  });
+  };
+  if (suppressedCount > 0) {
+    detail["suppressedCount"] = suppressedCount;
+  }
+  slowEventIntradayBytes += JSON.stringify(detail).length;
+  appendRuntimeFlightRecorderEvent(eventName, detail);
 }
 
 export function __appendPostgresPoolDiagnosticEventForTests(
   event: PostgresPoolDiagnosticEvent,
+  nowMs?: number,
 ): void {
-  appendPostgresPoolDiagnosticEvent(event);
+  appendPostgresPoolDiagnosticEvent(event, nowMs);
+}
+
+export function __resetPostgresPoolDiagnosticRateLimitForTests(overrides?: {
+  byteCap?: number;
+}): void {
+  slowEventRateStateByFamily.clear();
+  slowEventIntradayBytes = 0;
+  slowEventIntradayDateKey = "";
+  slowEventCapNoticeEmitted = false;
+  slowEventIntradayByteCap =
+    overrides?.byteCap ?? SLOW_EVENT_INTRADAY_BYTE_CAP_DEFAULT;
 }
 
 export function installRuntimeFlightRecorderDbDiagnostics(): void {

@@ -11,6 +11,7 @@ import {
 import {
   __appendPostgresPoolDiagnosticEventForTests,
   __recordMemorySampleForTests,
+  __resetPostgresPoolDiagnosticRateLimitForTests,
   appendFlightRecorderJsonLine,
   flushRuntimeFlightRecorderBuffersSync,
   rssPressureThresholdBytes,
@@ -281,6 +282,155 @@ test("DB diagnostic flight-recorder events include request workload context", ()
       workloadFamily: "live-data",
     });
   } finally {
+    if (previousRecorderDir === undefined) {
+      delete process.env["PYRUS_FLIGHT_RECORDER_DIR"];
+    } else {
+      process.env["PYRUS_FLIGHT_RECORDER_DIR"] = previousRecorderDir;
+    }
+    rmSync(recorderDir, { recursive: true, force: true });
+  }
+});
+
+function readDayEvents(recorderDir: string): Array<Record<string, unknown>> {
+  const file = path.join(
+    recorderDir,
+    `api-events-${new Date().toISOString().slice(0, 10)}.jsonl`,
+  );
+  return readFileSync(file, "utf8")
+    .trim()
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => JSON.parse(line) as Record<string, unknown>);
+}
+
+test("slow-query recorder truncates SQL to 300 chars and drops the stack field", () => {
+  const previousRecorderDir = process.env["PYRUS_FLIGHT_RECORDER_DIR"];
+  const recorderDir = mkdtempSync(path.join(tmpdir(), "pyrus-flight-recorder-"));
+  process.env["PYRUS_FLIGHT_RECORDER_DIR"] = recorderDir;
+  __resetPostgresPoolDiagnosticRateLimitForTests();
+
+  try {
+    __appendPostgresPoolDiagnosticEventForTests({
+      type: "query",
+      source: "pool",
+      durationMs: 2500,
+      sql: "x".repeat(500),
+      queryName: "trunc-test",
+      error: null,
+      pool: { max: 12, total: 12, idle: 0, active: 12, waiting: 4 },
+      stack: ["frame-a", "frame-b"],
+      context: null,
+    });
+    flushRuntimeFlightRecorderBuffersSync();
+
+    const event = readDayEvents(recorderDir).find(
+      (item) => item["queryName"] === "trunc-test",
+    );
+    assert.ok(event, "the truncated slow-query event should be recorded");
+    assert.equal((event["sql"] as string).length, 300);
+    assert.equal("stack" in event, false);
+  } finally {
+    __resetPostgresPoolDiagnosticRateLimitForTests();
+    if (previousRecorderDir === undefined) {
+      delete process.env["PYRUS_FLIGHT_RECORDER_DIR"];
+    } else {
+      process.env["PYRUS_FLIGHT_RECORDER_DIR"] = previousRecorderDir;
+    }
+    rmSync(recorderDir, { recursive: true, force: true });
+  }
+});
+
+test("slow-query recorder rate-limits per family and carries a suppressedCount", () => {
+  const previousRecorderDir = process.env["PYRUS_FLIGHT_RECORDER_DIR"];
+  const recorderDir = mkdtempSync(path.join(tmpdir(), "pyrus-flight-recorder-"));
+  process.env["PYRUS_FLIGHT_RECORDER_DIR"] = recorderDir;
+  __resetPostgresPoolDiagnosticRateLimitForTests();
+
+  const event = (extra: Record<string, unknown> = {}) => ({
+    type: "query" as const,
+    source: "pool" as const,
+    durationMs: 2500,
+    sql: "select 1",
+    queryName: "rate-test",
+    error: null,
+    pool: { max: 12, total: 12, idle: 0, active: 12, waiting: 4 },
+    stack: [],
+    context: null,
+    ...extra,
+  });
+
+  try {
+    const t0 = 10_000_000;
+    // 5-burst + first over-burst emit via the 10s throttle gate (lastThrottled=0),
+    // then 4 suppressed within the same instant.
+    for (let i = 0; i < 10; i += 1) {
+      __appendPostgresPoolDiagnosticEventForTests(event(), t0);
+    }
+    // One more after the throttle window flushes the 4 suppressed on its emit.
+    __appendPostgresPoolDiagnosticEventForTests(event(), t0 + 11_000);
+    flushRuntimeFlightRecorderBuffersSync();
+
+    const slow = readDayEvents(recorderDir).filter(
+      (item) => item["queryName"] === "rate-test",
+    );
+    // 5 burst + 1 throttled-at-t0 + 1 throttled-at-t0+11s = 7 recorded of 11.
+    assert.equal(slow.length, 7);
+    assert.equal(slow[slow.length - 1]?.["suppressedCount"], 4);
+    // Burst lines carry no suppressedCount noise.
+    assert.equal("suppressedCount" in (slow[0] as object), false);
+  } finally {
+    __resetPostgresPoolDiagnosticRateLimitForTests();
+    if (previousRecorderDir === undefined) {
+      delete process.env["PYRUS_FLIGHT_RECORDER_DIR"];
+    } else {
+      process.env["PYRUS_FLIGHT_RECORDER_DIR"] = previousRecorderDir;
+    }
+    rmSync(recorderDir, { recursive: true, force: true });
+  }
+});
+
+test("slow-query recorder stops appending after the intra-day byte cap and flags it once", () => {
+  const previousRecorderDir = process.env["PYRUS_FLIGHT_RECORDER_DIR"];
+  const recorderDir = mkdtempSync(path.join(tmpdir(), "pyrus-flight-recorder-"));
+  process.env["PYRUS_FLIGHT_RECORDER_DIR"] = recorderDir;
+  // Tiny cap so a few events exhaust the day's slow-event budget.
+  __resetPostgresPoolDiagnosticRateLimitForTests({ byteCap: 200 });
+
+  try {
+    for (let i = 0; i < 8; i += 1) {
+      __appendPostgresPoolDiagnosticEventForTests({
+        type: "query",
+        source: "pool",
+        durationMs: 2500,
+        sql: "select 1",
+        // Distinct family per event so the rate-limiter never suppresses — the
+        // byte cap is the only gate under test.
+        queryName: `cap-test-${i}`,
+        error: null,
+        pool: { max: 12, total: 12, idle: 0, active: 12, waiting: 4 },
+        stack: [],
+        context: null,
+      });
+    }
+    flushRuntimeFlightRecorderBuffersSync();
+
+    const events = readDayEvents(recorderDir);
+    const slow = events.filter(
+      (item) =>
+        typeof item["queryName"] === "string" &&
+        (item["queryName"] as string).startsWith("cap-test-"),
+    );
+    const capNotices = events.filter(
+      (item) => item["event"] === "api-db-slow-recording-capped",
+    );
+
+    // At least one slow event recorded before the cap, but not all 8.
+    assert.ok(slow.length >= 1 && slow.length < 8, `capped count: ${slow.length}`);
+    // The cap is flagged exactly once (other event kinds keep flowing).
+    assert.equal(capNotices.length, 1);
+    assert.equal(capNotices[0]?.["capBytes"], 200);
+  } finally {
+    __resetPostgresPoolDiagnosticRateLimitForTests();
     if (previousRecorderDir === undefined) {
       delete process.env["PYRUS_FLIGHT_RECORDER_DIR"];
     } else {
