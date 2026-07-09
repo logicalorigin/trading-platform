@@ -10,6 +10,7 @@ import {
   toIsoDateString,
 } from "../../lib/values";
 import { fetchJson, withSearchParams, type QueryValue } from "../../lib/http";
+import { logger } from "../../lib/logger";
 import type { FmpRuntimeConfig } from "../../lib/runtime";
 
 export type ResearchFundamentals = {
@@ -58,6 +59,14 @@ export type FmpHighBetaScreenerCandidate = {
   isEtf: boolean | null;
   isActivelyTrading: boolean | null;
   source: "fmp-company-screener";
+};
+
+export type FmpHighBetaScreenerDiagnostics = {
+  lastRunAt: string | null;
+  lastRequestedExchanges: string[];
+  lastSuccessfulExchangeCount: number;
+  lastFailedExchanges: string[];
+  lastPartial: boolean;
 };
 
 export type ResearchIncomeStatementPeriod = {
@@ -204,6 +213,32 @@ const FMP_PROVIDER_SYMBOLS_REVERSE = Object.fromEntries(
     internalSymbol,
   ]),
 );
+
+const fmpHighBetaScreenerDiagnostics: FmpHighBetaScreenerDiagnostics = {
+  lastRunAt: null,
+  lastRequestedExchanges: [],
+  lastSuccessfulExchangeCount: 0,
+  lastFailedExchanges: [],
+  lastPartial: false,
+};
+
+export function getFmpHighBetaScreenerDiagnostics(): FmpHighBetaScreenerDiagnostics {
+  return {
+    ...fmpHighBetaScreenerDiagnostics,
+    lastRequestedExchanges: [
+      ...fmpHighBetaScreenerDiagnostics.lastRequestedExchanges,
+    ],
+    lastFailedExchanges: [...fmpHighBetaScreenerDiagnostics.lastFailedExchanges],
+  };
+}
+
+export function __resetFmpHighBetaScreenerDiagnosticsForTests(): void {
+  fmpHighBetaScreenerDiagnostics.lastRunAt = null;
+  fmpHighBetaScreenerDiagnostics.lastRequestedExchanges = [];
+  fmpHighBetaScreenerDiagnostics.lastSuccessfulExchangeCount = 0;
+  fmpHighBetaScreenerDiagnostics.lastFailedExchanges = [];
+  fmpHighBetaScreenerDiagnostics.lastPartial = false;
+}
 
 function round(value: number | null, digits: number): number | null {
   if (value === null) {
@@ -827,7 +862,7 @@ export class FmpResearchClient {
       .filter(Boolean);
     const limit = Math.max(1, Math.min(Math.floor(input.limit ?? 1000), 5000));
 
-    const payloads = await Promise.all(
+    const settledPayloads = await Promise.allSettled(
       exchanges.map((exchange) =>
         this.fetchStable<unknown[]>(
           "/company-screener",
@@ -843,9 +878,38 @@ export class FmpResearchClient {
             limit,
           },
           { signal: input.signal },
-        ).catch(() => []),
+        ),
       ),
     );
+    const failedExchanges = settledPayloads.flatMap((result, index) =>
+      result.status === "rejected"
+        ? [{ exchange: exchanges[index] ?? "UNKNOWN", error: result.reason }]
+        : [],
+    );
+    const payloads = settledPayloads.flatMap((result) =>
+      result.status === "fulfilled" ? [result.value] : [],
+    );
+
+    fmpHighBetaScreenerDiagnostics.lastRunAt = new Date().toISOString();
+    fmpHighBetaScreenerDiagnostics.lastRequestedExchanges = [...exchanges];
+    fmpHighBetaScreenerDiagnostics.lastSuccessfulExchangeCount = payloads.length;
+    fmpHighBetaScreenerDiagnostics.lastFailedExchanges = failedExchanges.map(
+      ({ exchange }) => exchange,
+    );
+    fmpHighBetaScreenerDiagnostics.lastPartial = failedExchanges.length > 0;
+
+    failedExchanges.forEach(({ exchange, error }) => {
+      logger.warn(
+        {
+          err: error,
+          exchange,
+          failedExchangeCount: failedExchanges.length,
+          requestedExchangeCount: exchanges.length,
+          partial: true,
+        },
+        "FMP high-beta screener exchange fetch failed",
+      );
+    });
 
     const bySymbol = new Map<string, FmpHighBetaScreenerCandidate>();
     payloads
