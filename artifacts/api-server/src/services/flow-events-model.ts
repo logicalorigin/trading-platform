@@ -147,6 +147,7 @@ export function flowEventMatchesFilters(
   event: unknown,
   filters: FlowEventsFilters,
   unusualThreshold: number | undefined,
+  now?: Date,
 ): boolean {
   const row = event as {
     isUnusual?: unknown;
@@ -156,11 +157,25 @@ export function flowEventMatchesFilters(
     side?: unknown;
   };
   const premium = Number(row.premium ?? 0);
+  if (filters.minPremium > 0 && premium < filters.minPremium) {
+    return false;
+  }
+  if (filters.scope === "all" && filters.maxDte === null) {
+    return true;
+  }
+
   const expirationDate =
     row.expirationDate instanceof Date
       ? row.expirationDate
       : new Date(String(row.expirationDate ?? ""));
-  const dte = getExpirationDte(expirationDate);
+  const dte = getExpirationDte(expirationDate, now);
+  if (filters.maxDte !== null && (dte === null || dte > filters.maxDte)) {
+    return false;
+  }
+  if (filters.scope === "all") {
+    return true;
+  }
+
   const side = String(row.side ?? "").toLowerCase();
   const matchesUnusualScope =
     Boolean(row.isUnusual) ||
@@ -168,18 +183,7 @@ export function flowEventMatchesFilters(
     premium >= 250_000 ||
     (side === "buy" && premium >= 100_000) ||
     (dte !== null && dte <= 1 && premium >= 50_000);
-  if (filters.scope === "unusual" && !matchesUnusualScope) {
-    return false;
-  }
-  if (filters.minPremium > 0 && premium < filters.minPremium) {
-    return false;
-  }
-  if (filters.maxDte !== null) {
-    if (dte === null || dte > filters.maxDte) {
-      return false;
-    }
-  }
-  return true;
+  return matchesUnusualScope;
 }
 
 export function filterFlowEventsForRequest(
@@ -188,9 +192,22 @@ export function filterFlowEventsForRequest(
   unusualThreshold: number | undefined,
   limit: number,
 ): unknown[] {
-  return (events || [])
-    .filter((event) => flowEventMatchesFilters(event, filters, unusualThreshold))
-    .slice(0, limit);
+  const maxResults = Math.floor(limit);
+  if (!(maxResults > 0)) {
+    return [];
+  }
+
+  const filtered: unknown[] = [];
+  const now = new Date();
+  for (const event of events || []) {
+    if (flowEventMatchesFilters(event, filters, unusualThreshold, now)) {
+      filtered.push(event);
+      if (filtered.length >= maxResults) {
+        break;
+      }
+    }
+  }
+  return filtered;
 }
 
 export function flowEventsFilterCacheKey(filters: FlowEventsFilters): string {
