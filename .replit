@@ -1,6 +1,5 @@
-modules = ["nodejs-24"]
+modules = ["nodejs-24", "python-3.11", "postgresql-16"]
 audio = true
-run = ["bash", "scripts/run-replit-dev.sh"]
 
 [deployment]
 router = "application"
@@ -9,6 +8,9 @@ deploymentTarget = "autoscale"
 [deployment.postBuild]
 args = ["pnpm", "store", "prune"]
 env = { "CI" = "true" }
+
+[workflows]
+runButton = "artifacts/pyrus: web"
 
 [agent]
 stack = "PNPM_WORKSPACE"
@@ -22,73 +24,22 @@ timeoutMs = 20000
 requiredFiles = [".replit", "replit.nix"]
 
 [[ports]]
-localPort = 3002
-externalPort = 6800
-
-[[ports]]
-localPort = 3007
-externalPort = 3002
-
-[[ports]]
-localPort = 3008
-externalPort = 6000
-
-[[ports]]
-localPort = 4010
-externalPort = 5173
-
-[[ports]]
-localPort = 8000
-externalPort = 8000
-
-[[ports]]
 localPort = 8080
 externalPort = 8080
-
-[[ports]]
-localPort = 8081
-externalPort = 80
-
-[[ports]]
-localPort = 8082
-externalPort = 4200
-
-[[ports]]
-localPort = 18081
-externalPort = 8008
-
-[[ports]]
-localPort = 18082
-externalPort = 8081
-exposeLocalhost = true
-
-[[ports]]
-localPort = 18083
-externalPort = 8099
-
-[[ports]]
-localPort = 18084
-externalPort = 9000
 
 [[ports]]
 localPort = 18747
 externalPort = 3000
 
-[[ports]]
-localPort = 18748
-externalPort = 5000
-
-[[ports]]
-localPort = 18749
-externalPort = 3001
-
-[[ports]]
-localPort = 18759
-externalPort = 3003
-
 [userenv]
+
+[userenv.development]
+IBKR_ASYNC_SIDECAR_ROUTING_ENABLED = "true"
 
 [userenv.shared]
 IBKR_TRANSPORT = "tws"
 PYTHONPATH = "/home/runner/.codex/skills/.python-deps"
 TZ = "America/Denver"
+
+[nix]
+channel = "stable-25_05"
