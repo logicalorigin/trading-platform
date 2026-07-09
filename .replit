@@ -1,4 +1,4 @@
-modules = ["nodejs-24"]
+modules = ["nodejs-24", "python-3.11", "postgresql-16"]
 audio = true
 
 [deployment]
@@ -8,6 +8,9 @@ deploymentTarget = "autoscale"
 [deployment.postBuild]
 args = ["pnpm", "store", "prune"]
 env = { "CI" = "true" }
+
+[workflows]
+runButton = "artifacts/pyrus: web"
 
 [agent]
 stack = "PNPM_WORKSPACE"
@@ -21,107 +24,22 @@ timeoutMs = 20000
 requiredFiles = [".replit", "replit.nix"]
 
 [[ports]]
-localPort = 3002
-externalPort = 6800
-
-[[ports]]
-localPort = 3007
-externalPort = 3002
-
-[[ports]]
-localPort = 3008
-externalPort = 6000
-
-[[ports]]
-localPort = 4010
-externalPort = 5173
-
-[[ports]]
-localPort = 8000
-externalPort = 8000
-
-[[ports]]
 localPort = 8080
 externalPort = 8080
-
-[[ports]]
-localPort = 8081
-externalPort = 80
-
-[[ports]]
-localPort = 8082
-externalPort = 4200
-
-[[ports]]
-localPort = 18081
-externalPort = 8008
-
-[[ports]]
-localPort = 18082
-externalPort = 8081
-exposeLocalhost = true
-
-[[ports]]
-localPort = 18083
-externalPort = 8099
-
-[[ports]]
-localPort = 18084
-externalPort = 9000
 
 [[ports]]
 localPort = 18747
 externalPort = 3000
 
-[[ports]]
-localPort = 18748
-externalPort = 5000
-
-[[ports]]
-localPort = 18749
-externalPort = 3001
-
-[[ports]]
-localPort = 18759
-externalPort = 3003
-
 [userenv]
+
+[userenv.development]
+IBKR_ASYNC_SIDECAR_ROUTING_ENABLED = "true"
 
 [userenv.shared]
 IBKR_TRANSPORT = "tws"
 PYTHONPATH = "/home/runner/.codex/skills/.python-deps"
 TZ = "America/Denver"
 
-[workflows]
-runButton = "Project"
-
-[[workflows.workflow]]
-name = "Project"
-mode = "parallel"
-author = "agent"
-
-[workflows.workflow.metadata]
-outputType = "console"
-
-[[workflows.workflow.tasks]]
-task = "shell.exec"
-args = "PORT=8080 LOG_LEVEL=warn pnpm --filter @workspace/api-server run dev"
-
-[[workflows.workflow.tasks]]
-task = "shell.exec"
-args = "PORT=18747 BASE_PATH=/ pnpm --filter @workspace/rayalgo run dev"
-
-[[workflows.workflow.tasks]]
-task = "shell.exec"
-args = "echo 'IBKR live broker features use the Windows IB Gateway activation flow. Start activation from the RayAlgo header; do not store bridge URL secrets in Replit.'"
-
-[[workflows.workflow]]
-name = "IBKR Bridge"
-author = "agent"
-
-[workflows.workflow.metadata]
-outputType = "console"
-
-[[workflows.workflow.tasks]]
-task = "shell.exec"
-args = "echo 'Do not run the IBKR bridge in Replit for TWS mode. Start activation from the RayAlgo header on the Windows machine running IB Gateway; the fresh tunnel URL is stored by activation.'"
+[nix]
+channel = "stable-25_05"
