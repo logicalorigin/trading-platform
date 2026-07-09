@@ -8483,21 +8483,25 @@ let signalMonitorIndicatorSnapshotBaseCacheMisses = 0;
 // #2 upstream dirty-track. The heavy-eval memo above only guards the downstream
 // indicator math, AFTER the per-(symbol,timeframe) bar aggregation+merge has
 // already run every flush. That aggregation is the dominant hot-path cost, yet
-// its output (the merged completedBars) is a pure function of just three inputs:
-//   1. the completed-bucket boundary for the timeframe (clock-driven; advances
-//      once per minute for 1m, every 5m for 5m, etc. — see signalMonitorCompletedBarsQueryTo),
-//   2. the async backfilled base content for the cell (signalMonitorBackfilledBaseByCell.contentStamp),
-//   3. any out-of-order aggregate that corrects an already-completed minute (revision below).
-// When none changed since the last evaluation, the merged bars cannot have
-// changed, so we reuse them and skip load/filter/merge. We still run the
+// its output (the merged completedBars) is a pure function of the cell's actual
+// completed-bar inputs: async backfilled base content, stream aggregate progress,
+// and any correction to an already-completed minute. A wall-clock bucket by
+// itself is NOT an input: it can advance while an illiquid or higher-timeframe
+// cell's completed series is unchanged. When the input identity below still
+// matches, reuse the merged bars and skip load/filter/merge. We still run the
 // downstream eval every cycle, so the time-dependent staleness/age fields keep
 // recomputing from the live evaluatedAt (a cache hit can never freeze staleness).
 // The cache is keyed by cell (not subscriber) — the merged bars are
 // subscriber-independent, so this also collapses the per-subscriber duplication.
 const SIGNAL_MONITOR_STREAM_COMPLETED_BARS_CACHE_MAX = 8_000;
+type SignalMonitorStreamCompletedBarsCacheEntry = {
+  key: string;
+  bars: SignalMonitorBarSnapshot[];
+  latestBarTimestampMs: number | null;
+};
 const signalMonitorStreamCompletedBarsCache = new Map<
   string,
-  { key: string; bars: SignalMonitorBarSnapshot[] }
+  SignalMonitorStreamCompletedBarsCacheEntry
 >();
 let signalMonitorStreamCompletedBarsCacheHits = 0;
 let signalMonitorStreamCompletedBarsCacheMisses = 0;
@@ -8540,16 +8544,21 @@ const signalMonitorAggregateRevisionBySymbol = new Map<
   string,
   { maxStartMs: number; revision: number }
 >();
+function signalMonitorAggregateRevisionKey(symbol: string): string {
+  return normalizeSymbol(symbol).toUpperCase();
+}
 function recordSignalMonitorAggregateRevision(
   symbol: string,
   startMs: number,
+  observedAtMs?: number,
 ): void {
-  if (!Number.isFinite(startMs)) {
+  const key = signalMonitorAggregateRevisionKey(symbol);
+  if (!key || !Number.isFinite(startMs)) {
     return;
   }
-  const entry = signalMonitorAggregateRevisionBySymbol.get(symbol);
+  const entry = signalMonitorAggregateRevisionBySymbol.get(key);
   if (!entry) {
-    signalMonitorAggregateRevisionBySymbol.set(symbol, {
+    signalMonitorAggregateRevisionBySymbol.set(key, {
       maxStartMs: startMs,
       revision: 0,
     });
@@ -8557,10 +8566,100 @@ function recordSignalMonitorAggregateRevision(
     entry.maxStartMs = startMs;
   } else if (startMs < entry.maxStartMs) {
     entry.revision += 1;
+  } else if (
+    observedAtMs != null &&
+    Number.isFinite(observedAtMs) &&
+    startMs + TIMEFRAME_MS["1m"] <= observedAtMs
+  ) {
+    entry.revision += 1;
   }
 }
 function getSignalMonitorAggregateRevision(symbol: string): number {
-  return signalMonitorAggregateRevisionBySymbol.get(symbol)?.revision ?? 0;
+  return (
+    signalMonitorAggregateRevisionBySymbol.get(
+      signalMonitorAggregateRevisionKey(symbol),
+    )?.revision ?? 0
+  );
+}
+function getSignalMonitorAggregateMaxStartMs(symbol: string): number | null {
+  return (
+    signalMonitorAggregateRevisionBySymbol.get(
+      signalMonitorAggregateRevisionKey(symbol),
+    )?.maxStartMs ?? null
+  );
+}
+
+function latestSignalMonitorStreamCompletedBucketMs(input: {
+  symbol: string;
+  timeframe: SignalMonitorMatrixTimeframe;
+  evaluatedAt: Date;
+}): number | null {
+  if (input.timeframe === "1d") {
+    return null;
+  }
+  const maxStartMs = getSignalMonitorAggregateMaxStartMs(input.symbol);
+  if (maxStartMs == null) {
+    return null;
+  }
+  const completedMinuteBoundaryMs = signalMonitorCompletedBarsQueryTo({
+    timeframe: "1m",
+    evaluatedAt: input.evaluatedAt,
+  }).getTime();
+  const latestCompletedMinuteStartMs = Math.min(
+    maxStartMs,
+    completedMinuteBoundaryMs - TIMEFRAME_MS["1m"],
+  );
+  const timeframeMs = TIMEFRAME_MS[input.timeframe];
+  const requiredChildSpanMs = timeframeMs - TIMEFRAME_MS["1m"];
+  const latestCompleteBucketCandidateMs =
+    latestCompletedMinuteStartMs - requiredChildSpanMs;
+  if (
+    !Number.isFinite(latestCompleteBucketCandidateMs) ||
+    latestCompleteBucketCandidateMs < 0
+  ) {
+    return null;
+  }
+  return (
+    Math.floor(latestCompleteBucketCandidateMs / timeframeMs) * timeframeMs
+  );
+}
+
+function buildSignalMonitorStreamCompletedBarsCacheKey(input: {
+  baseContentStamp: number;
+  aggregateRevision: number;
+  completedBarsCount: number;
+  latestBarTimestampMs: number | null;
+}): string {
+  return [
+    input.baseContentStamp,
+    input.aggregateRevision,
+    input.completedBarsCount,
+    input.latestBarTimestampMs ?? "none",
+  ].join(":");
+}
+
+function isSignalMonitorStreamCompletedBarsCacheEntryCurrent(input: {
+  entry: SignalMonitorStreamCompletedBarsCacheEntry;
+  symbol: string;
+  timeframe: SignalMonitorMatrixTimeframe;
+  evaluatedAt: Date;
+}): boolean {
+  const streamLatestCompletedBucketMs = latestSignalMonitorStreamCompletedBucketMs({
+    symbol: input.symbol,
+    timeframe: input.timeframe,
+    evaluatedAt: input.evaluatedAt,
+  });
+  if (streamLatestCompletedBucketMs != null) {
+    return (
+      input.entry.latestBarTimestampMs != null &&
+      streamLatestCompletedBucketMs <= input.entry.latestBarTimestampMs
+    );
+  }
+  return !isSignalMonitorCachedCompletedBarsBarBehind({
+    completedBars: input.entry.bars,
+    timeframe: input.timeframe,
+    evaluatedAt: input.evaluatedAt,
+  });
 }
 function getSignalMonitorStreamCompletedBarsCacheStats() {
   return {
@@ -9851,21 +9950,32 @@ function evaluateSignalMonitorMatrixStateFromStreamBars(input: {
   evaluatedAt: Date;
 }): SignalMonitorMatrixStateResult | null {
   // #2 upstream dirty-track (see signalMonitorStreamCompletedBarsCache above):
-  // the merged completedBars are a pure function of the completed-bucket boundary,
-  // the backfilled base content, and any out-of-order completed-minute correction.
+  // the merged completedBars are a pure function of the backfilled base content,
+  // stream aggregate progress, and any out-of-order completed-minute correction.
   // Skip the load/filter/merge when none changed; ALWAYS run the downstream eval
   // so staleness/age recompute from the live evaluatedAt.
   const cellKey = signalMonitorBackfillCellKey(input.symbol, input.timeframe);
   const baseEntry = signalMonitorBackfilledBaseByCell.get(cellKey);
-  const dirtyKey = `${signalMonitorCompletedBarsQueryTo({
-    timeframe: input.timeframe,
-    evaluatedAt: input.evaluatedAt,
-  }).getTime()}:${baseEntry?.contentStamp ?? 0}:${getSignalMonitorAggregateRevision(
-    input.symbol,
-  )}`;
+  const baseContentStamp = baseEntry?.contentStamp ?? 0;
+  const aggregateRevision = getSignalMonitorAggregateRevision(input.symbol);
   let completedBars: SignalMonitorBarSnapshot[];
   const cachedCell = lruCacheTouch(signalMonitorStreamCompletedBarsCache, cellKey);
-  if (cachedCell && cachedCell.key === dirtyKey) {
+  if (
+    cachedCell &&
+    cachedCell.key ===
+      buildSignalMonitorStreamCompletedBarsCacheKey({
+        baseContentStamp,
+        aggregateRevision,
+        completedBarsCount: cachedCell.bars.length,
+        latestBarTimestampMs: cachedCell.latestBarTimestampMs,
+      }) &&
+    isSignalMonitorStreamCompletedBarsCacheEntryCurrent({
+      entry: cachedCell,
+      symbol: input.symbol,
+      timeframe: input.timeframe,
+      evaluatedAt: input.evaluatedAt,
+    })
+  ) {
     signalMonitorStreamCompletedBarsCacheHits += 1;
     completedBars = cachedCell.bars;
   } else {
@@ -9907,10 +10017,21 @@ function evaluateSignalMonitorMatrixStateFromStreamBars(input: {
     // empty-base branch does not) so the cached array is the exact series the
     // eval consumes — also removes the prior double-slice on the hot path.
     completedBars = mergedBars.slice(-SIGNAL_MONITOR_MATRIX_BARS_LIMIT);
+    const latestBarTimestampMs =
+      signalMonitorBarTimestampMs(completedBars.at(-1)) ?? null;
     lruCacheSet(
       signalMonitorStreamCompletedBarsCache,
       cellKey,
-      { key: dirtyKey, bars: completedBars },
+      {
+        key: buildSignalMonitorStreamCompletedBarsCacheKey({
+          baseContentStamp,
+          aggregateRevision,
+          completedBarsCount: completedBars.length,
+          latestBarTimestampMs,
+        }),
+        bars: completedBars,
+        latestBarTimestampMs,
+      },
       SIGNAL_MONITOR_STREAM_COMPLETED_BARS_CACHE_MAX,
     );
   }
@@ -10808,9 +10929,13 @@ function queueSignalMonitorMatrixStreamAggregate(
   signalMonitorMatrixStreamAggregateEventCount += 1;
   signalMonitorMatrixStreamLastAggregateAt = new Date();
   // Feed the #2 dirty-track: only out-of-order corrections to already-completed
-  // minutes bump the revision (forward minute advances are caught by the completed
-  // boundary; forming-minute updates never change completed bars).
-  recordSignalMonitorAggregateRevision(symbol, Number(message.startMs));
+  // minutes bump the revision. Forward minute advances are captured by aggregate
+  // high-water progress; forming-minute updates never change completed bars.
+  recordSignalMonitorAggregateRevision(
+    symbol,
+    Number(message.startMs),
+    signalMonitorMatrixStreamLastAggregateAt.getTime(),
+  );
   for (const subscriber of signalMonitorMatrixStreamSubscribers.values()) {
     if (
       signalMonitorMatrixStreamTimeframesForNormalizedSymbol(

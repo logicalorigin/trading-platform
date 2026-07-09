@@ -193,6 +193,17 @@ test("a hit holds across sub-minute evaluatedAt drift (same completed boundary)"
   assert.deepEqual(barsCacheStats(), { size: 1, hits: 1, misses: 1 });
 });
 
+test("a hit holds when the clock boundary advances but stream inputs do not", () => {
+  primeRing("2026-06-09T15:00:00.000Z");
+  recordRevision(SYMBOL, new Date("2026-06-09T14:59:00.000Z").getTime());
+
+  evalAt("2026-06-09T15:00:00.000Z");
+  assert.deepEqual(barsCacheStats(), { size: 1, hits: 0, misses: 1 });
+
+  evalAt("2026-06-09T15:01:00.000Z");
+  assert.deepEqual(barsCacheStats(), { size: 1, hits: 1, misses: 1 });
+});
+
 test("stream-base promotion preserves cache hits while backfill refreshes bust the cell", () => {
   const evaluatedAt = new Date("2026-06-09T15:00:00.000Z");
   primeRing(evaluatedAt.toISOString());
@@ -267,14 +278,20 @@ test("stream-base promotion preserves cache hits while backfill refreshes bust t
   assert.deepEqual(barsCacheStats(), { size: 1, hits: 1, misses: 2 });
 });
 
-test("crossing the completed-bar boundary busts the cell (re-aggregates)", () => {
+test("a new completed stream bar busts the cell (re-aggregates)", () => {
   primeRing("2026-06-09T15:00:00.000Z");
+  recordRevision(SYMBOL, new Date("2026-06-09T14:59:00.000Z").getTime());
 
   evalAt("2026-06-09T15:00:00.000Z");
   assert.equal(barsCacheStats().misses, 1);
 
-  // One minute later: boundary advances 15:00:00 -> 15:01:00, so a forming minute
-  // may have been promoted to completed -> must recompute, not skip.
+  __stockAggregateStreamTestInternals.ingestAggregateForTests(
+    aggregate(new Date("2026-06-09T15:00:00.000Z").getTime(), 104),
+  );
+  recordRevision(SYMBOL, new Date("2026-06-09T15:00:00.000Z").getTime());
+
+  // The new 15:00 minute aggregate is complete at 15:01, so the completed-bar
+  // input really changed and must recompute.
   evalAt("2026-06-09T15:01:00.000Z");
   assert.equal(barsCacheStats().misses, 2);
   assert.equal(barsCacheStats().hits, 0);
