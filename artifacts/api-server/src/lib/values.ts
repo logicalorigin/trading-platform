@@ -194,15 +194,28 @@ export function toDate(value: unknown): Date | null {
   return Number.isNaN(date.getTime()) ? null : date;
 }
 
+const NORMALIZE_SYMBOL_CACHE_LIMIT = 8192;
+const normalizeSymbolCache = new Map<string, string>();
+
 export function normalizeSymbol(symbol: string): string {
+  const cached = normalizeSymbolCache.get(symbol);
+  if (cached !== undefined) {
+    return cached;
+  }
+
   const normalized = symbol.trim().toUpperCase();
+  let result = normalized;
 
   // Massive follows SIP-style share class tickers like BRK.B rather than BRK-B.
   if (/^[A-Z]{1,5}[ -][A-Z]{1,2}$/.test(normalized)) {
-    return normalized.replace(/[ -]/, ".");
+    result = normalized.replace(/[ -]/, ".");
   }
 
-  return normalized;
+  if (normalizeSymbolCache.size >= NORMALIZE_SYMBOL_CACHE_LIMIT) {
+    normalizeSymbolCache.clear();
+  }
+  normalizeSymbolCache.set(symbol, result);
+  return result;
 }
 
 export function toIsoDateString(date: Date): string {

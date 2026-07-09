@@ -4451,6 +4451,15 @@ function signalMonitorBarClose(
   return close != null && close > 0 ? close : null;
 }
 
+type SignalMonitorReferenceBarCandidate = {
+  reference: SignalMonitorBarSnapshot;
+  timestampMs: number;
+};
+const signalMonitorReferenceBarCandidatesCache = new WeakMap<
+  SignalMonitorBarSnapshot[],
+  SignalMonitorReferenceBarCandidate[]
+>();
+
 function resolveSignalMonitorReferenceBar(input: {
   bar: SignalMonitorBarSnapshot;
   referenceBars: SignalMonitorBarSnapshot[];
@@ -4459,19 +4468,28 @@ function resolveSignalMonitorReferenceBar(input: {
   if (barMs == null) {
     return null;
   }
-  const references = input.referenceBars
-    .filter((reference) => reference !== input.bar)
-    .filter((reference) => !isSignalMonitorLiveEdgeBar(reference))
-    .filter((reference) => signalMonitorBarClose(reference) != null)
-    .map((reference) => ({
-      reference,
-      timestampMs: signalMonitorBarTimestampMs(reference),
-    }))
-    .filter(
-      (entry): entry is { reference: SignalMonitorBarSnapshot; timestampMs: number } =>
-        entry.timestampMs != null,
-    )
-    .sort((left, right) => left.timestampMs - right.timestampMs);
+  let cachedReferences = signalMonitorReferenceBarCandidatesCache.get(
+    input.referenceBars,
+  );
+  if (!cachedReferences) {
+    cachedReferences = input.referenceBars
+      .filter((reference) => !isSignalMonitorLiveEdgeBar(reference))
+      .filter((reference) => signalMonitorBarClose(reference) != null)
+      .map((reference) => ({
+        reference,
+        timestampMs: signalMonitorBarTimestampMs(reference),
+      }))
+      .filter(
+        (entry): entry is SignalMonitorReferenceBarCandidate =>
+          entry.timestampMs != null,
+      )
+      .sort((left, right) => left.timestampMs - right.timestampMs);
+    signalMonitorReferenceBarCandidatesCache.set(
+      input.referenceBars,
+      cachedReferences,
+    );
+  }
+  const references = cachedReferences.filter((entry) => entry.reference !== input.bar);
   if (!references.length) {
     return null;
   }
