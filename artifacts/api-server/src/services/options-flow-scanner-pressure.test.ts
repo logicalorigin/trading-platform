@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test, { afterEach } from "node:test";
 
 import { __resetProviderRuntimeConfigCacheForTests } from "../lib/runtime";
@@ -119,6 +120,38 @@ test("Massive scanner scheduling ignores stale admission line cap", () => {
   });
 
   assert.ok(resolveOptionsFlowScannerEffectiveConcurrency() > 0);
+});
+
+test("flow-universe catalog refreshes yield under hard DB pool pressure", () => {
+  const managerSource = readFileSync(
+    new URL("./flow-universe.ts", import.meta.url),
+    "utf8",
+  );
+  const plannerSource = readFileSync(
+    new URL("./flow-universe-planner.ts", import.meta.url),
+    "utf8",
+  );
+  const managerRefresh = managerSource.indexOf("async function refresh(");
+  const managerLoad = managerSource.indexOf("await loadCandidates()", managerRefresh);
+  const managerPressure = managerSource.indexOf(
+    "shouldSkipFlowUniverseDbRefreshForPressure()",
+    managerRefresh,
+  );
+  const plannerRefresh = plannerSource.indexOf("async function refresh()");
+  const plannerLoad = plannerSource.indexOf("loadPlannerCandidates", plannerRefresh);
+  const plannerPressure = plannerSource.indexOf(
+    "isApiResourcePressureHardBlock()",
+    plannerRefresh,
+  );
+
+  assert.notEqual(managerRefresh, -1);
+  assert.notEqual(managerLoad, -1);
+  assert.notEqual(managerPressure, -1);
+  assert.ok(managerPressure < managerLoad);
+  assert.notEqual(plannerRefresh, -1);
+  assert.notEqual(plannerLoad, -1);
+  assert.notEqual(plannerPressure, -1);
+  assert.ok(plannerPressure < plannerLoad);
 });
 
 test("options flow scanner is NOT paused by broker-latency-only high pressure", () => {

@@ -5,6 +5,7 @@ import {
 } from "@workspace/db/schema";
 import { isTransientPostgresError } from "../lib/transient-db-error";
 import { normalizeSymbol } from "../lib/values";
+import { isApiResourcePressureHardBlock } from "./resource-pressure";
 
 export type FlowUniverseMode = "watchlist" | "market" | "hybrid";
 export type FlowUniverseCoverage = {
@@ -232,6 +233,10 @@ function isTransientFlowUniverseDegradedReason(reason: string | null): boolean {
       (reason.includes("database unavailable") ||
         reason.includes("persistence unavailable")),
   );
+}
+
+function shouldSkipFlowUniverseDbRefreshForPressure(): boolean {
+  return isApiResourcePressureHardBlock();
 }
 
 function scoreObservation(events: FlowUniverseObservation["events"]): number {
@@ -839,6 +844,15 @@ export function createFlowUniverseManager(options: FlowUniverseManagerOptions) {
   }
 
   async function refresh(input: { pinnedSymbols?: readonly string[] } = {}) {
+    if (shouldSkipFlowUniverseDbRefreshForPressure()) {
+      const refreshedAt = now();
+      selectedSymbols = lastGoodSymbols.length ? lastGoodSymbols : selectedSymbols;
+      lastRefreshAt = refreshedAt;
+      degradedReason =
+        shortfallReason(selectedSymbols.length) ??
+        "Flow universe refresh skipped under resource pressure.";
+      return selectedSymbols;
+    }
     if (runtimeOptions.mode === "watchlist") {
       await loadCandidates().catch(() => []);
       const requestedSymbols = uniqueSymbols(
@@ -1014,6 +1028,9 @@ export function createFlowUniverseManager(options: FlowUniverseManagerOptions) {
   async function flushObservationRows(
     rows: readonly PendingRankingObservation[],
   ): Promise<void> {
+    if (shouldSkipFlowUniverseDbRefreshForPressure()) {
+      return;
+    }
     // A multi-row ON CONFLICT DO UPDATE cannot touch the same row twice, so a
     // repeated symbol starts a new statement; statements run sequentially.
     const chunks: PendingRankingObservation[][] = [];

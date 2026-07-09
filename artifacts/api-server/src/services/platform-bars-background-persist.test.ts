@@ -5,6 +5,10 @@ import {
   __platformBarsCacheTestInternals,
   __resetOptionChainCachesForTests,
 } from "./platform";
+import {
+  __resetApiResourcePressureForTests,
+  updateApiResourcePressure,
+} from "./resource-pressure";
 
 const waitTurn = () => new Promise((resolve) => setImmediate(resolve));
 
@@ -77,6 +81,7 @@ test("background bar-cache persists drain one at a time by default", async () =>
         completed: 0,
         failed: 0,
         skipped: 0,
+        pressureSkipped: 0,
         coalesced: 0,
         dropped: 0,
         maxQueueLength: 2,
@@ -105,6 +110,50 @@ test("background bar-cache persists drain one at a time by default", async () =>
       releases.shift()?.();
     }
     await __platformBarsCacheTestInternals.waitForBarsBackgroundPersistIdleForTests();
+    __platformBarsCacheTestInternals.setBarsBackgroundPersistWorkerForTests(null);
+    __resetOptionChainCachesForTests({ resetFlowScanner: false });
+    if (previousConcurrency === undefined) {
+      delete process.env.BARS_BACKGROUND_PERSIST_CONCURRENCY;
+    } else {
+      process.env.BARS_BACKGROUND_PERSIST_CONCURRENCY = previousConcurrency;
+    }
+  }
+});
+
+test("background bar-cache persist yields to hard DB-pool pressure", async () => {
+  const previousConcurrency = process.env.BARS_BACKGROUND_PERSIST_CONCURRENCY;
+  process.env.BARS_BACKGROUND_PERSIST_CONCURRENCY = "1";
+  __resetOptionChainCachesForTests({ resetFlowScanner: false });
+  __resetApiResourcePressureForTests();
+
+  let calls = 0;
+  try {
+    __platformBarsCacheTestInternals.setBarsBackgroundPersistWorkerForTests(
+      async () => {
+        calls += 1;
+        return true;
+      },
+    );
+    updateApiResourcePressure({ dbPoolActive: 12, dbPoolWaiting: 8, dbPoolMax: 12 });
+    updateApiResourcePressure({ dbPoolActive: 12, dbPoolWaiting: 8, dbPoolMax: 12 });
+
+    __platformBarsCacheTestInternals.queueBarsBackgroundPersistForTests(
+      makePersistInput("PRESSURE"),
+    );
+    await __platformBarsCacheTestInternals.waitForBarsBackgroundPersistIdleForTests();
+
+    const diagnostics =
+      __platformBarsCacheTestInternals.getBarsBackgroundPersistDiagnostics();
+    assert.equal(calls, 0);
+    assert.equal(diagnostics.active, 0);
+    assert.equal(diagnostics.queued, 0);
+    assert.equal(diagnostics.enqueued, 1);
+    assert.equal(diagnostics.completed, 0);
+    assert.equal(diagnostics.failed, 0);
+    assert.equal(diagnostics.skipped, 1);
+    assert.equal(diagnostics.pressureSkipped, 1);
+  } finally {
+    __resetApiResourcePressureForTests();
     __platformBarsCacheTestInternals.setBarsBackgroundPersistWorkerForTests(null);
     __resetOptionChainCachesForTests({ resetFlowScanner: false });
     if (previousConcurrency === undefined) {

@@ -35,3 +35,22 @@ test("stock quote snapshot service does not fall back to broker quote lines", ()
   assert.match(body, /fetchMassiveRestStockQuoteSnapshots\(symbols\)/);
   assert.doesNotMatch(body, /fetchBridgeQuoteSnapshots|getIbkrClient\(\)/);
 });
+
+test("news fallback can run when IBKR Client Portal is unavailable", () => {
+  const start = platformSource.indexOf("async function getNewsUncached");
+  const end = platformSource.indexOf("\nexport async function getNews", start);
+  assert.notEqual(start, -1, "getNewsUncached is missing");
+  assert.notEqual(end, -1, "getNewsUncached end marker is missing");
+  const body = platformSource.slice(start, end);
+  const tryStart = body.indexOf("try {");
+  const catchStart = body.indexOf("} catch", tryStart);
+  assert.notEqual(tryStart, -1, "IBKR news try block is missing");
+  assert.notEqual(catchStart, -1, "IBKR news catch block is missing");
+
+  assert.match(body.slice(tryStart, catchStart), /getIbkrClient\(\)/);
+  assert.match(body, /getMassiveClient\(\)\.getNews\(input\)/);
+  assert.ok(
+    body.indexOf("getIbkrClient()") > tryStart,
+    "IBKR client construction must not happen before fallback-safe try block",
+  );
+});

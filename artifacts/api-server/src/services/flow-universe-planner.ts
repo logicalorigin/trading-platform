@@ -5,6 +5,7 @@ import {
   universeSourceMembershipsTable,
 } from "@workspace/db/schema";
 import { normalizeSymbol } from "../lib/values";
+import { isApiResourcePressureHardBlock } from "./resource-pressure";
 
 export type FlowUniversePlannerPrioritySource =
   | "account"
@@ -537,6 +538,11 @@ export function createFlowUniversePlanner(options: FlowUniversePlannerOptions) {
   });
 
   async function refresh(): Promise<void> {
+    if (isApiResourcePressureHardBlock()) {
+      lastRefreshAt = now();
+      lastError = "Flow universe planner refresh skipped under resource pressure.";
+      return;
+    }
     try {
       candidates = await loadPlannerCandidates(runtimeOptions);
       lastRefreshAt = now();

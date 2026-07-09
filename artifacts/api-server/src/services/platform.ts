@@ -39,6 +39,7 @@ import {
 import { logger } from "../lib/logger";
 import {
   getApiResourcePressureSnapshot,
+  isApiResourcePressureHardBlock,
   type ApiResourcePressureDriver,
   type ApiResourcePressureLevel,
   type ApiResourcePressureSnapshot,
@@ -5372,9 +5373,9 @@ async function getNewsUncached(input: { ticker?: string; limit?: number }) {
   // IBKR is the primary news source (user has Reuters subscription via IBKR).
   // We only fall back to Massive when IBKR returns no headlines — typically
   // for tickerless requests, since IBKR's /iserver/news requires a conid.
-  const ibkrClient = getIbkrClient();
   let articles: Awaited<ReturnType<ReturnType<typeof getIbkrClient>["getNews"]>> = [];
   try {
+    const ibkrClient = getIbkrClient();
     articles = await ibkrClient.getNews(input);
   } catch {
     articles = [];
@@ -9076,6 +9077,7 @@ let barsBackgroundPersistEnqueued = 0;
 let barsBackgroundPersistCompleted = 0;
 let barsBackgroundPersistFailed = 0;
 let barsBackgroundPersistSkipped = 0;
+let barsBackgroundPersistPressureSkipped = 0;
 let barsBackgroundPersistCoalesced = 0;
 let barsBackgroundPersistDropped = 0;
 let barsBackgroundPersistMaxQueueLength = 0;
@@ -9106,6 +9108,16 @@ function resolveBarsBackgroundPersistIdle(): void {
 }
 
 function drainBarsBackgroundPersistQueue(): void {
+  if (isApiResourcePressureHardBlock()) {
+    const skipped = barsBackgroundPersistQueue.length;
+    if (skipped > 0) {
+      barsBackgroundPersistQueue.length = 0;
+      barsBackgroundPersistSkipped += skipped;
+      barsBackgroundPersistPressureSkipped += skipped;
+    }
+    resolveBarsBackgroundPersistIdle();
+    return;
+  }
   const concurrency = barsBackgroundPersistConcurrency();
   while (
     barsBackgroundPersistActive < concurrency &&
@@ -9150,6 +9162,12 @@ function barsBackgroundPersistWindowKey(input: BarsBackgroundPersistInput): stri
 
 function queueBarsBackgroundPersist(input: BarsBackgroundPersistInput): void {
   barsBackgroundPersistEnqueued += 1;
+  if (isApiResourcePressureHardBlock()) {
+    barsBackgroundPersistSkipped += 1;
+    barsBackgroundPersistPressureSkipped += 1;
+    resolveBarsBackgroundPersistIdle();
+    return;
+  }
   const key = barsBackgroundPersistWindowKey(input);
   const existingIndex = barsBackgroundPersistQueue.findIndex(
     (entry) => entry.key === key,
@@ -9184,6 +9202,7 @@ function getBarsBackgroundPersistDiagnostics() {
     completed: barsBackgroundPersistCompleted,
     failed: barsBackgroundPersistFailed,
     skipped: barsBackgroundPersistSkipped,
+    pressureSkipped: barsBackgroundPersistPressureSkipped,
     coalesced: barsBackgroundPersistCoalesced,
     dropped: barsBackgroundPersistDropped,
     maxQueueLength: barsBackgroundPersistMaxQueueLength,
@@ -14039,6 +14058,7 @@ export function __resetOptionChainCachesForTests(input?: {
   barsBackgroundPersistCompleted = 0;
   barsBackgroundPersistFailed = 0;
   barsBackgroundPersistSkipped = 0;
+  barsBackgroundPersistPressureSkipped = 0;
   barsBackgroundPersistCoalesced = 0;
   barsBackgroundPersistDropped = 0;
   barsBackgroundPersistMaxQueueLength = 0;
