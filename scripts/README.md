@@ -61,6 +61,18 @@ directory to define separate Replit app runners.
   (`.replit`, `replit.nix`, and artifact TOMLs) with filesystem permissions.
   Keep them locked during routine work; unlock only for an intentional
   startup-config maintenance window.
+- `replit-config-clobber.mjs` detects the platform "Post-Recovery checkpoint"
+  clobber signature (deleted `replit.nix`, stripped `[nix]` channel, dropped
+  `postgresql-16` module, dropped `[workflows] runButton`, dropped the
+  `[userenv.development]` sidecar flag, injected stale `[[ports]]` blocks).
+  Used by the startup guard, the restore script, and the PYRUS dev supervisor
+  (warn only — the supervisor never writes `.replit`).
+- `restore-replit-config.mjs` (`pnpm run replit:config:restore`) diffs the live
+  `.replit`/`replit.nix` against the checked-in canonical copies in
+  `scripts/replit-config/`; with `-- --write` it restores them in one batch and
+  re-locks. A restore write triggers ONE workspace reload. If the canonical
+  startup config intentionally changes, update `scripts/replit-config/`
+  in the same maintenance window.
 - `check-api-codegen-drift.mjs` regenerates the OpenAPI clients and fails if the
   generated output changes.
 - `check-markdown-paths.mjs` verifies path-like references in maintained docs.

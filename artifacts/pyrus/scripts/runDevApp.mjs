@@ -13,6 +13,10 @@ import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { createFlightRecorder } from "./flightRecorder.mjs";
+import {
+  RESTORE_COMMAND,
+  detectReplitConfigClobber,
+} from "../../../scripts/replit-config-clobber.mjs";
 
 const repoRoot = path.resolve(fileURLToPath(new URL("../../..", import.meta.url)));
 const apiPort = process.env.PYRUS_API_PORT || "8080";
@@ -1030,6 +1034,34 @@ try {
     forceSupervisorTakeover,
     runningInsideReplitWorkflow,
   });
+
+  // Recovery-clobber detection (warn only — NEVER auto-write .replit or
+  // replit.nix from the supervisor: a save of either file triggers a full
+  // workspace reload). Replit's platform "Post-Recovery checkpoint" flow can
+  // rewrite .replit from control-plane state and delete replit.nix, which
+  // bricks shells and detaches the Run button from the PYRUS workflow.
+  try {
+    const clobberProblems = detectReplitConfigClobber(repoRoot);
+    if (clobberProblems.length > 0) {
+      const banner = [
+        "".padEnd(76, "!"),
+        "[pyrus-dev] REPLIT STARTUP CONFIG CLOBBER DETECTED (recovery-checkpoint signature):",
+        ...clobberProblems.map((problem) => `[pyrus-dev]   - ${problem}`),
+        `[pyrus-dev] Restore the checked-in canonical config with: ${RESTORE_COMMAND}`,
+        "[pyrus-dev] (diff first with: pnpm run replit:config:restore) — the restore write triggers ONE workspace reload.",
+        "".padEnd(76, "!"),
+      ].join("\n");
+      console.error(banner);
+      writeLifecycleEvent("replit-config-clobber-detected", {
+        problems: clobberProblems,
+        restoreCommand: RESTORE_COMMAND,
+      });
+    }
+  } catch (error) {
+    console.warn(
+      `[pyrus-dev] replit-config clobber detection unavailable: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
 
   const lockAcquired = await acquireSupervisorLock();
   if (!lockAcquired) {

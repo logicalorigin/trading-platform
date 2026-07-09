@@ -113,3 +113,9 @@ playwright-report/
 # profiling + ephemeral multi-agent coordination artifacts
 *.cpuprofile
 AGENT_CHAT_LIVE.jsonl
+
+# Codex/Claude watch scratch debris (screenshots, session JSON, pid/registry
+# files) — agent checkpoints must not sweep these into commits
+/.codex-watch/
+/.codex-watch-*/
+/.codex-log-watch/

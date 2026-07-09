@@ -1,7 +1,8 @@
 #!/usr/bin/env node
-import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { detectReplitConfigClobber } from "./replit-config-clobber.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const failures = [];
@@ -84,7 +85,10 @@ check(
   ".replit must not define a root run command; use Replit's default Run Replit App entry.",
 );
 check(
-  /^\s*\[workflows\]\s*$(?:[\s\S]*?)^\s*runButton\s*=\s*"artifacts\/pyrus: web"\s*$/m.test(
+  // Section-scoped: runButton must appear inside [workflows] itself (no other
+  // section header may intervene), so a runButton stranded under a different
+  // section cannot satisfy this check.
+  /^\s*\[workflows\]\s*\r?\n(?:(?!\s*\[)[^\n]*\r?\n)*?\s*runButton\s*=\s*"artifacts\/pyrus: web"\s*(?:\r?\n|$)/m.test(
     replit,
   ),
   ".replit must keep [workflows] runButton = \"artifacts/pyrus: web\" so the primary Run button targets the single PYRUS app workflow.",
@@ -105,6 +109,25 @@ check(
     replit,
   ),
   ".replit must not force DATABASE_URL to the workspace-local Postgres socket; use Replit's managed PG* env by default.",
+);
+
+// Platform "Post-Recovery checkpoint" clobber signature (2026-07-09 lockout):
+// deleted replit.nix, stripped the [nix] channel, dropped postgresql-16,
+// dropped [workflows] runButton, dropped the [userenv.development] sidecar
+// flag, and injected stale [[ports]] blocks. Fail loudly on any of it.
+for (const problem of detectReplitConfigClobber(repoRoot)) {
+  check(false, `recovery-clobber signature: ${problem}`);
+}
+const nixPath = path.join(repoRoot, "replit.nix");
+check(
+  existsSync(nixPath) && statSync(nixPath).size > 0,
+  "replit.nix must exist and be non-empty; the recovery clobber deletes it and bricks all shells.",
+);
+check(
+  existsSync(path.join(repoRoot, "scripts/replit-config/dot-replit")) &&
+    existsSync(path.join(repoRoot, "scripts/replit-config/replit.nix")) &&
+    existsSync(path.join(repoRoot, "scripts/restore-replit-config.mjs")),
+  "Canonical Replit config snapshots (scripts/replit-config/) and scripts/restore-replit-config.mjs must stay checked in for one-command recovery.",
 );
 
 const apiPackage = JSON.parse(read("artifacts/api-server/package.json"));
@@ -352,8 +375,10 @@ check(
     rootScripts["replit:config:unlock"] ===
       "node scripts/protect-replit-config.mjs unlock" &&
     rootScripts["replit:config:status"] ===
-      "node scripts/protect-replit-config.mjs status",
-  "package.json must keep the Replit startup config lock/unlock/status scripts.",
+      "node scripts/protect-replit-config.mjs status" &&
+    rootScripts["replit:config:restore"] ===
+      "node scripts/restore-replit-config.mjs",
+  "package.json must keep the Replit startup config lock/unlock/status/restore scripts.",
 );
 check(
   rootScripts["replit:scribe:artifacts"] ===

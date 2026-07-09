@@ -24,6 +24,7 @@
     "replit:config:lock": "node scripts/protect-replit-config.mjs lock",
     "replit:config:unlock": "node scripts/protect-replit-config.mjs unlock",
     "replit:config:status": "node scripts/protect-replit-config.mjs status",
+    "replit:config:restore": "node scripts/restore-replit-config.mjs",
     "replit:scribe:artifacts": "pnpm --filter @workspace/scripts run replit:scribe:artifacts",
     "db:market-data:audit": "pnpm --filter @workspace/scripts run db:market-data:audit",
     "db:phase0:audit": "pnpm --filter @workspace/scripts run db:phase0:audit",
