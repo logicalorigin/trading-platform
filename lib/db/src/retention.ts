@@ -53,6 +53,10 @@ export type RetentionResult = {
   candidates: number;
   /** Rows actually deleted (0 when dryRun). */
   deleted: number;
+  /** True when this run stopped at a per-run delete cap. */
+  hitCap: boolean;
+  /** Wall-clock time spent in this table sweep. */
+  durationMs: number;
   dryRun: boolean;
 };
 
@@ -96,6 +100,7 @@ async function sweep(input: {
   /** `delete ... limit <batch> returning id` over the deletable set. */
   deleteBatch: SQL;
 }): Promise<RetentionResult> {
+  const startedAt = Date.now();
   const counted = await db.execute<{ n: number }>(input.count);
   const candidates = Number(counted.rows[0]?.n ?? 0);
 
@@ -113,6 +118,8 @@ async function sweep(input: {
     cutoff: input.cutoff.toISOString(),
     candidates,
     deleted,
+    hitCap: false,
+    durationMs: Math.max(0, Date.now() - startedAt),
     dryRun: input.dryRun,
   };
 }
@@ -305,6 +312,7 @@ export type BarCacheRetentionOptions = {
 export async function pruneBarCache(
   opts: BarCacheRetentionOptions,
 ): Promise<RetentionResult> {
+  const startedAt = Date.now();
   const now = opts.now ?? new Date();
   const dryRun = opts.dryRun ?? true;
   const batchSize = opts.batchSize ?? DEFAULT_RETENTION_BATCH_SIZE;
@@ -340,6 +348,8 @@ export async function pruneBarCache(
     cutoff: intradayCutoff.toISOString(),
     candidates,
     deleted,
+    hitCap: !dryRun && maxRowsPerRun > 0 && deleted === maxRowsPerRun,
+    durationMs: Math.max(0, Date.now() - startedAt),
     dryRun,
   };
 }

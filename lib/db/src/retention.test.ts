@@ -534,6 +534,8 @@ test("pruneBarCache is timeframe-aware: prunes stale intraday, keeps recent + da
     dryRun: false,
   });
   assert.equal(run.deleted, 3);
+  assert.equal(run.hitCap, false);
+  assert.ok(run.durationMs >= 0);
 
   const survivors = await db.select().from(barCacheTable);
   assert.deepEqual(
@@ -567,6 +569,8 @@ test("pruneBarCache caps deletions per run so a sweep can't pin the DB", async (
     maxRowsPerRun: 2,
   });
   assert.equal(run.deleted, 2); // stops at the cap, leaving the rest for next run
+  assert.equal(run.hitCap, true);
+  assert.ok(run.durationMs >= 0);
   const remaining = await db.select().from(barCacheTable);
   assert.equal(remaining.length, 3);
 });
