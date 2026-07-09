@@ -48,6 +48,31 @@ test("diagnostics collector avoids DB bursts while recording snapshots and event
   assert.doesNotMatch(collectorBlock, /Promise\.all\(\s*activeEvents\.map/);
 });
 
+test("diagnostics collector skips overlapping ticks", () => {
+  const collectorStateIndex = diagnosticsSource.indexOf(
+    "let diagnosticsCollectorInFlight = false;",
+  );
+  assert.notEqual(collectorStateIndex, -1, "missing collector in-flight state");
+
+  const collectorBlock = diagnosticsSource.slice(
+    diagnosticsSource.indexOf("export function startDiagnosticsCollector"),
+  );
+  assert.match(
+    collectorBlock,
+    /if \(diagnosticsCollectorInFlight\) {\s*return;\s*}/,
+  );
+  assert.match(
+    collectorBlock,
+    /diagnosticsCollectorInFlight = true;[\s\S]*\.finally\(\(\) => {\s*diagnosticsCollectorInFlight = false;/,
+  );
+
+  const guardIndex = collectorBlock.indexOf("if (diagnosticsCollectorInFlight)");
+  const collectIndex = collectorBlock.indexOf(".then(collect)");
+  assert.notEqual(guardIndex, -1);
+  assert.notEqual(collectIndex, -1);
+  assert.ok(guardIndex < collectIndex);
+});
+
 test("diagnostics heavy reads reuse cached telemetry under DB pool pressure", () => {
   const saturationBlock = sourceBlock(
     "function diagnosticsDbPoolIsSaturated",

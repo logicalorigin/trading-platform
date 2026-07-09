@@ -516,6 +516,7 @@ const subscribers = new Set<(message: DiagnosticsStreamMessage) => void>();
 
 let latestPayload: DiagnosticsLatestPayload | null = null;
 let collectorTimer: NodeJS.Timeout | null = null;
+let diagnosticsCollectorInFlight = false;
 let lastDbWarningAt = 0;
 
 // Write-hygiene state (census R3+S12): collapse the observability system's own
@@ -4945,6 +4946,7 @@ export function __resetDiagnosticsStateForTests(): void {
   automationRecentEventsInFlight = null;
   storageMetricsCache = null;
   storageMetricsInFlight = null;
+  diagnosticsCollectorInFlight = false;
 }
 
 export function subscribeDiagnostics(
@@ -4972,7 +4974,12 @@ export function startDiagnosticsCollector(
   }
 
   const tick = () => {
-    void collect()
+    if (diagnosticsCollectorInFlight) {
+      return;
+    }
+    diagnosticsCollectorInFlight = true;
+    void Promise.resolve()
+      .then(collect)
       .then((input) => collectDiagnosticSnapshot(input))
       .catch((error) => {
         logger.warn({ err: error }, "Diagnostics collection failed");
@@ -4984,9 +4991,12 @@ export function startDiagnosticsCollector(
           message:
             error instanceof Error
               ? error.message
-              : "Diagnostics collection failed",
+            : "Diagnostics collection failed",
           raw: { error: String(error) },
         });
+      })
+      .finally(() => {
+        diagnosticsCollectorInFlight = false;
       });
   };
 

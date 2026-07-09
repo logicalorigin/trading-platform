@@ -73,3 +73,30 @@ test("marketing dashboard snapshot stages cold DB reads", () => {
   const block = source.slice(start, end);
   assert.doesNotMatch(block, /Promise\.all/);
 });
+
+test("marketing dashboard default snapshots share cache and in-flight work", () => {
+  const source = readFileSync(
+    new URL("./marketing-shadow-dashboard.ts", import.meta.url),
+    "utf8",
+  );
+  const start = source.indexOf(
+    "export async function fetchMarketingShadowDashboardSnapshot",
+  );
+  const end = source.indexOf(
+    "async function fetchMarketingShadowDashboardSnapshotUncached",
+    start,
+  );
+  assert.notEqual(start, -1);
+  assert.notEqual(end, -1);
+
+  const block = source.slice(start, end);
+  assert.match(block, /Object\.keys\(dependencies\)\.length === 0/);
+  assert.match(block, /marketingSnapshotCache\.get\(cacheKey\)/);
+  assert.match(block, /marketingSnapshotInFlight\.get\(cacheKey\)/);
+  assert.match(block, /marketingSnapshotInFlight\.set\(cacheKey, inFlight\)/);
+  assert.match(block, /marketingSnapshotInFlight\.delete\(cacheKey\)/);
+  assert.match(
+    block,
+    /MARKETING_SHADOW_DASHBOARD_SNAPSHOT_CACHE_MS/,
+  );
+});

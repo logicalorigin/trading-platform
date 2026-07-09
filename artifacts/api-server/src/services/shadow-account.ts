@@ -3334,13 +3334,27 @@ async function readShadowFillsForOrderIds(
   return rows.flat();
 }
 
-async function readShadowOrdersForAccount(): Promise<ShadowOrderRow[]> {
+async function readShadowOrdersForAccountUncached(
+  limit = shadowLedgerDashboardReadLimit(),
+): Promise<ShadowOrderRow[]> {
   return await db
     .select()
     .from(shadowOrdersTable)
     .where(eq(shadowOrdersTable.accountId, currentShadowAccountId()))
     .orderBy(desc(shadowOrdersTable.placedAt))
-    .limit(shadowLedgerDashboardReadLimit());
+    .limit(limit);
+}
+
+async function readShadowOrdersForAccount(): Promise<ShadowOrderRow[]> {
+  const limit = shadowLedgerDashboardReadLimit();
+  return withShadowReadCache(
+    `orders:account-bounded:${limit}`,
+    () => readShadowOrdersForAccountUncached(limit),
+    {
+      ttlMs: SHADOW_DERIVED_READ_CACHE_TTL_MS,
+      staleStrategy: "immediate",
+    },
+  );
 }
 
 async function readShadowOrdersForSource(
@@ -8527,7 +8541,10 @@ export async function getShadowAccountEquityHistory(input: {
   return withShadowReadCache(
     `equity-history:${range}::${shadowSourceCacheKey(source)}`,
     async () => {
-      if (isShadowAccountDbBackoffActive()) {
+      if (
+        isShadowAccountDbBackoffActive() ||
+        getApiResourcePressureSnapshot().hardResourceLevel === "high"
+      ) {
         return buildFallbackShadowAccountEquityHistory({
           range,
           benchmark: null,

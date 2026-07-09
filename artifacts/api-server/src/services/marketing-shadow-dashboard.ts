@@ -37,6 +37,7 @@ export const MARKETING_SHADOW_DASHBOARD_MAX_EVENT_LIMIT = 100;
 export const MARKETING_SHADOW_DASHBOARD_DEFAULT_EQUITY_RANGE: AccountRange = "1D";
 export const MARKETING_SHADOW_DASHBOARD_STREAM_INTERVAL_MS = 5_000;
 export const MARKETING_SHADOW_DASHBOARD_STREAM_COALESCE_MS = 1_000;
+export const MARKETING_SHADOW_DASHBOARD_SNAPSHOT_CACHE_MS = 5_000;
 export const MARKETING_SHADOW_DASHBOARD_STALE_MS = 24 * 60 * 60_000;
 export const MARKETING_SHADOW_DASHBOARD_LABEL = "Shadow trading";
 
@@ -156,6 +157,15 @@ const defaultDependencies: MarketingShadowDashboardDependencies = {
   now: () => new Date(),
 };
 
+const marketingSnapshotCache = new Map<
+  string,
+  { payload: MarketingShadowDashboardPayload; expiresAt: number }
+>();
+const marketingSnapshotInFlight = new Map<
+  string,
+  Promise<MarketingShadowDashboardPayload>
+>();
+
 function resolveDependencies(
   dependencies: Partial<MarketingShadowDashboardDependencies> = {},
 ): MarketingShadowDashboardDependencies {
@@ -185,6 +195,12 @@ export function normalizeMarketingShadowDashboardInput(
     equityRange,
     eventLimit,
   };
+}
+
+function marketingShadowDashboardCacheKey(
+  normalized: NormalizedMarketingShadowDashboardInput,
+): string {
+  return JSON.stringify(normalized);
 }
 
 function numberOrNull(value: unknown): number | null {
@@ -528,7 +544,41 @@ export async function fetchMarketingShadowDashboardSnapshot(
   dependencies: Partial<MarketingShadowDashboardDependencies> = {},
 ): Promise<MarketingShadowDashboardPayload> {
   const normalized = normalizeMarketingShadowDashboardInput(input);
+  if (Object.keys(dependencies).length === 0) {
+    const cacheKey = marketingShadowDashboardCacheKey(normalized);
+    const cached = marketingSnapshotCache.get(cacheKey);
+    if (cached && cached.expiresAt > Date.now()) {
+      return cached.payload;
+    }
+    let inFlight = marketingSnapshotInFlight.get(cacheKey);
+    if (!inFlight) {
+      inFlight = fetchMarketingShadowDashboardSnapshotUncached(
+        normalized,
+        defaultDependencies,
+      )
+        .then((payload) => {
+          marketingSnapshotCache.set(cacheKey, {
+            payload,
+            expiresAt: Date.now() + MARKETING_SHADOW_DASHBOARD_SNAPSHOT_CACHE_MS,
+          });
+          return payload;
+        })
+        .finally(() => {
+          marketingSnapshotInFlight.delete(cacheKey);
+        });
+      marketingSnapshotInFlight.set(cacheKey, inFlight);
+    }
+    return inFlight;
+  }
+
   const deps = resolveDependencies(dependencies);
+  return fetchMarketingShadowDashboardSnapshotUncached(normalized, deps);
+}
+
+async function fetchMarketingShadowDashboardSnapshotUncached(
+  normalized: NormalizedMarketingShadowDashboardInput,
+  deps: MarketingShadowDashboardDependencies,
+): Promise<MarketingShadowDashboardPayload> {
   // The first dashboard snapshot often lands during app warmup. These reads are
   // cached below the service layer, but cold parallel fan-out can occupy the
   // entire shared DB pool alongside signal-monitor bar-cache warmup.
