@@ -2,6 +2,23 @@ function byteLength(text: string): number {
   return Buffer.byteLength(text, "utf8");
 }
 
+function utf8Prefix(text: string, maxBytes: number): string {
+  let bytes = 0;
+  let end = 0;
+  for (const char of text) {
+    const charBytes = byteLength(char);
+    if (bytes + charBytes > maxBytes) break;
+    bytes += charBytes;
+    end += char.length;
+  }
+  return text.slice(0, end);
+}
+
+function fitWithNote(text: string, note: string, maxBytes: number): string {
+  const suffix = byteLength(note) <= maxBytes ? note : utf8Prefix("_truncated", maxBytes);
+  return utf8Prefix(text, maxBytes - byteLength(suffix)) + suffix;
+}
+
 function safeStringify(value: unknown): string {
   try {
     return JSON.stringify(value, null, 2) ?? String(value);
@@ -41,9 +58,14 @@ export function toToolText(value: unknown, maxBytes: number): string {
   }
   for (const cap of [50, 20, 5, 1]) {
     const text = safeStringify(capArrays(value, cap));
-    if (byteLength(text) <= maxBytes) {
-      return `${text}\n\n/* _truncated: arrays capped to ${cap} items to fit the ${maxBytes}-byte limit. Narrow the query (subsystem / severity / time window / limit) for more. */`;
+    const note = `\n\n/* _truncated: arrays capped to ${cap} items to fit the ${maxBytes}-byte limit. Narrow the query (subsystem / severity / time window / limit) for more. */`;
+    if (byteLength(text) + byteLength(note) <= maxBytes) {
+      return text + note;
     }
   }
-  return `${full.slice(0, maxBytes)}\n\n/* _truncated: response hard-cut at ${maxBytes} bytes. */`;
+  return fitWithNote(
+    full,
+    `\n\n/* _truncated: response hard-cut at ${maxBytes} bytes. */`,
+    maxBytes,
+  );
 }

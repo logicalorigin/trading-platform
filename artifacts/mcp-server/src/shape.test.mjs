@@ -23,6 +23,14 @@ test("a single huge string falls back to a hard cut", () => {
   const value = { blob: "z".repeat(100_000) };
   const maxBytes = 2_000;
   const text = toToolText(value, maxBytes);
-  assert.ok(Buffer.byteLength(text, "utf8") <= maxBytes + 80, "hard cut stays near the cap");
+  assert.ok(Buffer.byteLength(text, "utf8") <= maxBytes, "hard cut respects the byte cap");
+  assert.ok(text.includes("_truncated"));
+});
+
+test("a hard cut counts UTF-8 bytes instead of JavaScript characters", () => {
+  const value = { blob: "😀".repeat(100_000) };
+  const maxBytes = 2_000;
+  const text = toToolText(value, maxBytes);
+  assert.ok(Buffer.byteLength(text, "utf8") <= maxBytes, "multi-byte text respects the byte cap");
   assert.ok(text.includes("_truncated"));
 });
