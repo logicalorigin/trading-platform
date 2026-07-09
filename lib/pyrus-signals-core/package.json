@@ -6,6 +6,10 @@
   "exports": {
     ".": "./src/index.ts"
   },
+  "scripts": {
+    "fixtures:regen": "tsx src/__fixtures__/regen-fixtures.ts",
+    "fixtures:warmup-report": "tsx src/__fixtures__/warmup-report.ts"
+  },
   "devDependencies": {
     "@types/node": "catalog:",
     "tsx": "catalog:"
