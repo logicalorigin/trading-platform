@@ -12,7 +12,7 @@ const server = new McpServer({
   version: "0.1.0",
 });
 
-// Subsystems 1-2: read-only HTTP diagnostics.
+// Public read-only HTTP diagnostics.
 for (const tool of httpTools) {
   server.registerTool(
     tool.name,
@@ -21,10 +21,9 @@ for (const tool of httpTools) {
       inputSchema: tool.inputShape,
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
-    async (args: Record<string, unknown>) => {
+    async () => {
       try {
-        const query = tool.buildQuery?.(args ?? {});
-        const data = await apiGet(tool.endpoint, query ? { query } : {});
+        const data = await apiGet(tool.endpoint);
         return ok(data);
       } catch (error) {
         return fromHttpError(tool.endpoint, error);

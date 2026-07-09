@@ -14,32 +14,16 @@ export class ApiError extends Error {
   }
 }
 
-export type QueryValue = string | number | boolean | undefined | null;
-
-export interface ApiGetOptions {
-  query?: Record<string, QueryValue>;
-}
-
 /**
  * Read-only by construction: only ever issues GET with no body. `endpointPath`
  * is the OpenAPI path (e.g. "/diagnostics/latest").
  */
-export async function apiGet(endpointPath: string, opts: ApiGetOptions = {}): Promise<unknown> {
+export async function apiGet(endpointPath: string): Promise<unknown> {
   const url = new URL(config.apiBaseUrl + API_PREFIX + endpointPath);
-  for (const [key, value] of Object.entries(opts.query ?? {})) {
-    if (value !== undefined && value !== null) {
-      url.searchParams.set(key, String(value));
-    }
-  }
-
-  const headers: Record<string, string> = { accept: "application/json" };
-  if (config.apiBearer) {
-    headers["authorization"] = `Bearer ${config.apiBearer}`;
-  }
 
   const res = await fetch(url, {
     method: "GET",
-    headers,
+    headers: { accept: "application/json" },
     signal: AbortSignal.timeout(config.apiTimeoutMs),
   });
   if (!res.ok) {

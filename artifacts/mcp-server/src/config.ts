@@ -12,13 +12,9 @@ function strEnv(name: string, fallback: string): string {
   return raw === undefined || raw.trim() === "" ? fallback : raw.trim();
 }
 
-const apiBearerRaw = process.env["PYRUS_MCP_API_BEARER"];
-
 export const config = {
   // Where the PYRUS API lives. Default assumes co-location in this workspace.
   apiBaseUrl: strEnv("PYRUS_MCP_API_BASE_URL", "http://localhost:8080").replace(/\/+$/u, ""),
-  // Optional bearer, forwarded if the API ever gets a token gate. Unused today.
-  apiBearer: apiBearerRaw && apiBearerRaw.trim() !== "" ? apiBearerRaw.trim() : null,
   apiTimeoutMs: intEnv("PYRUS_MCP_API_TIMEOUT_MS", 20_000),
   // Backstop so a giant payload can't blow the LLM context. ~32 KB.
   maxResponseBytes: intEnv("PYRUS_MCP_MAX_RESPONSE_BYTES", 32_768),

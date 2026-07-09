@@ -3,10 +3,7 @@ import {
   GetReadinessResponse,
   GetRuntimeDiagnosticsResponse,
   GetLatestDiagnosticsResponse,
-  ListDiagnosticEventsResponse,
-  ListBrokerConnectionsResponse,
 } from "@workspace/api-zod";
-import type { QueryValue } from "../http/api-client";
 
 /**
  * A read-only HTTP diagnostic tool. `responseSchema` is the generated api-zod
@@ -22,11 +19,7 @@ export interface HttpTool {
   operationId: string;
   responseSchema: z.ZodTypeAny;
   inputShape: z.ZodRawShape;
-  buildQuery?: (args: Record<string, unknown>) => Record<string, QueryValue>;
 }
-
-const str = (args: Record<string, unknown>, key: string): string | undefined =>
-  typeof args[key] === "string" ? (args[key] as string) : undefined;
 
 export const httpTools: HttpTool[] = [
   // --- Subsystem 1: API request routing & pressure -------------------------
@@ -58,38 +51,6 @@ export const httpTools: HttpTool[] = [
     endpoint: "/diagnostics/runtime",
     operationId: "getRuntimeDiagnostics",
     responseSchema: GetRuntimeDiagnosticsResponse,
-    inputShape: {},
-  },
-  {
-    name: "list_diagnostic_events",
-    description:
-      "Diagnostic events/incidents (open and resolved). Filter by subsystem, severity (info|warning), and an ISO from/to time window.",
-    method: "GET",
-    endpoint: "/diagnostics/events",
-    operationId: "listDiagnosticEvents",
-    responseSchema: ListDiagnosticEventsResponse,
-    inputShape: {
-      subsystem: z.string().optional().describe("Filter to one diagnostics subsystem"),
-      severity: z.enum(["info", "warning"]).optional(),
-      from: z.string().optional().describe("ISO timestamp lower bound"),
-      to: z.string().optional().describe("ISO timestamp upper bound"),
-    },
-    buildQuery: (args) => ({
-      subsystem: str(args, "subsystem"),
-      severity: str(args, "severity"),
-      from: str(args, "from"),
-      to: str(args, "to"),
-    }),
-  },
-  // --- Subsystem 2: provider / data-source routing -------------------------
-  {
-    name: "list_broker_connections",
-    description:
-      "Configured broker and market-data connections (provider, mode shadow/live, status, capabilities). The inventory of where data and orders can be routed.",
-    method: "GET",
-    endpoint: "/broker-connections",
-    operationId: "listBrokerConnections",
-    responseSchema: ListBrokerConnectionsResponse,
     inputShape: {},
   },
 ];

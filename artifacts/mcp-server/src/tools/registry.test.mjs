@@ -18,6 +18,13 @@ test("registry is non-empty and names are unique", () => {
   assert.equal(new Set(names).size, names.length, "tool names must be unique");
 });
 
+test("registry exposes only diagnostics endpoints that are public by contract", () => {
+  assert.deepEqual(
+    httpTools.map((tool) => tool.name),
+    ["get_readiness", "get_diagnostics", "get_runtime_diagnostics"],
+  );
+});
+
 test("every HTTP tool is read-only (GET) with a valid endpoint", () => {
   for (const tool of httpTools) {
     assert.equal(tool.method, "GET", `${tool.name} must be GET (read-only)`);
