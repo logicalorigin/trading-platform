@@ -31,7 +31,7 @@ const router: IRouter = Router();
 // that reaches the layer, which would wrongly gate readiness, marketing, and the
 // IBKR helper/desktop/bridge M2M endpoints. Matching explicit prefixes keeps
 // those — plus health, auth, inbound telemetry, boot, and platform's /ibkr/* +
-// /session + shared /streams/* — public.
+// /session + remaining shared /streams/* — public.
 //
 // The frontend login gate is Slice 8; until then the app requires signing in via
 // the header widget and anonymous/headless requests to gated routes get 401.
@@ -47,13 +47,14 @@ const REQUIRE_USER_PATHS = [
   /^\/accounts(\/|$)/,
   /^\/positions(\/|$)/,
   /^\/orders(\/|$)/,
+  /^\/executions(\/|$)/,
   /^\/watchlists(\/|$)/,
   /^\/shadow\/orders(\/|$)/,
-  // Per-user shadow (paper-trading) SSE streams (Slice 5.5): these reach shadow
-  // account readers per-connection and must be scoped to the authenticated caller.
-  // (/streams/accounts — the IBKR bridge snapshot — stays public; it has no shadow reader.)
-  /^\/streams\/accounts\/page(\/|$)/,
-  /^\/streams\/accounts\/shadow(\/|$)/,
+  // Broker and account SSE streams contain user-scoped orders, executions,
+  // positions, balances, or shadow-account data.
+  /^\/streams\/orders(\/|$)/,
+  /^\/streams\/executions(\/|$)/,
+  /^\/streams\/accounts(\/|$)/,
   // Member data routers (distinct prefixes; algo routes gate per handler).
   /^\/backtests(\/|$)/,
   /^\/charting(\/|$)/,
