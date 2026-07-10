@@ -8470,7 +8470,9 @@ export function signalOptionsShadowSellFillPrice(
   mid: number | null | undefined,
   bid: number | null | undefined,
   fallbackPrice: number,
+  stopFloorPrice?: number | null,
 ): number {
+  let fill: number;
   if (
     typeof mid === "number" &&
     Number.isFinite(mid) &&
@@ -8480,12 +8482,30 @@ export function signalOptionsShadowSellFillPrice(
     bid > 0
   ) {
     const gapFraction = (mid - bid) / mid;
-    if (gapFraction > SIGNAL_OPTIONS_DEGENERATE_SELL_GAP_FRACTION) {
-      return Number(mid.toFixed(2));
-    }
-    return Number((mid - (mid - bid) * 0.9).toFixed(2));
+    fill =
+      gapFraction > SIGNAL_OPTIONS_DEGENERATE_SELL_GAP_FRACTION
+        ? mid
+        : mid - (mid - bid) * 0.9;
+  } else {
+    fill = fallbackPrice;
   }
-  return Number(fallbackPrice.toFixed(2));
+  // Floor-at-stop (product ruling 2026-07-09): a protective stop that TRIGGERED at
+  // `stopFloorPrice` is modeled as filling at the stop level — the level a resting
+  // protective order would have executed at when touched — instead of whatever the
+  // market had decayed to by the scan that noticed the breach. Callers pass the floor
+  // ONLY for stop-level triggers (runner_trail_stop / hard_stop); scale-outs,
+  // opposite-signal, wire-break, early-invalidation and overnight exits keep the
+  // near-bid model. Because the trigger condition is mark <= stop, the floor
+  // dominates stop exits by construction; the trade-off (optimistic on true
+  // gap-throughs, no slippage haircut) is deliberate and documented in the tests.
+  if (
+    typeof stopFloorPrice === "number" &&
+    Number.isFinite(stopFloorPrice) &&
+    stopFloorPrice > 0
+  ) {
+    fill = Math.max(fill, stopFloorPrice);
+  }
+  return Number(fill.toFixed(2));
 }
 
 function computeSignalOptionsDailyRealizedPnl(
@@ -14201,10 +14221,17 @@ async function refreshActivePosition(input: {
       "Signal-options wire_structure_break held in shadow (enforce flag off); no wire exit placed",
     );
   }
+  // Stop-level triggers carry their trigger level as a fill floor; every other
+  // exit reason passes null and keeps the unfloored sell model.
+  const stopFillFloorPrice =
+    exitReason === "runner_trail_stop" || exitReason === "hard_stop"
+      ? finiteNumber(stop.stopPrice)
+      : null;
   let exitPrice = signalOptionsShadowSellFillPrice(
     liquidity.mid,
     liquidity.bid,
     markPrice,
+    stopFillFloorPrice,
   );
   // Provenance of the exit fill price. "live" when the live-eligibility gate
   // admits; rewritten to "delayed"/"mark" only when the SHADOW exit fallback
@@ -14300,6 +14327,7 @@ async function refreshActivePosition(input: {
           ? shadowExitFallback.bid
           : null,
         shadowExitFallback.mid,
+        stopFillFloorPrice,
       );
       exitFillQuoteSource = shadowExitFallback.fillQuoteSource;
     }

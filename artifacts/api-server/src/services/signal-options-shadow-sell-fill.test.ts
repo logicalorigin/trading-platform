@@ -53,3 +53,38 @@ test("threshold boundary is exactly 40% of mid (inclusive stays near-bid)", () =
   // gap just over 40% -> degenerate -> mid
   assert.equal(signalOptionsShadowSellFillPrice(10, 5.9, 10), 10);
 });
+
+// Floor-at-stop (product ruling 2026-07-09): stop-level triggers (runner_trail_stop /
+// hard_stop) fill no worse than the stop level that triggered them — the level a
+// resting protective order would have executed at when touched. Callers pass the
+// floor only for those reasons. DELIBERATE trade-off: on a true gap-through the
+// floored fill is optimistic (no slippage haircut); the stop trigger is mark <= stop,
+// so the floor dominates stop exits by construction.
+
+test("stop floor lifts a near-bid fill up to the stop level", () => {
+  // near-bid would be 3.52 (see first test); stop trailed to 3.65 -> fill 3.65
+  assert.equal(signalOptionsShadowSellFillPrice(3.7, 3.5, 3.7, 3.65), 3.65);
+});
+
+test("stop floor lifts a degenerate mid fill up to the stop level", () => {
+  // BRKR shape: degenerate quote -> mid 3.925; trail stop at 4.10 -> fill 4.10
+  assert.equal(signalOptionsShadowSellFillPrice(3.925, 2.05, 3.925, 4.1), 4.1);
+});
+
+test("stop floor lifts a fallback-price fill up to the stop level", () => {
+  // no usable bid -> fallback 3.92; stop 4.00 -> fill 4.00
+  assert.equal(signalOptionsShadowSellFillPrice(3.925, null, 3.925, 4.0), 4.0);
+});
+
+test("a fill already above the stop is left alone", () => {
+  // near-bid 3.52 with a lower stop 3.40 -> keep 3.52 (max, not clamp-down)
+  assert.equal(signalOptionsShadowSellFillPrice(3.7, 3.5, 3.7, 3.4), 3.52);
+});
+
+test("null / non-finite / non-positive floors leave the model unchanged", () => {
+  assert.equal(signalOptionsShadowSellFillPrice(3.7, 3.5, 3.7, null), 3.52);
+  assert.equal(signalOptionsShadowSellFillPrice(3.7, 3.5, 3.7, undefined), 3.52);
+  assert.equal(signalOptionsShadowSellFillPrice(3.7, 3.5, 3.7, Number.NaN), 3.52);
+  assert.equal(signalOptionsShadowSellFillPrice(3.7, 3.5, 3.7, 0), 3.52);
+  assert.equal(signalOptionsShadowSellFillPrice(3.7, 3.5, 3.7, -2), 3.52);
+});
