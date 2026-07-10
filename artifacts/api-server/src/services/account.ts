@@ -11,6 +11,7 @@ import {
   sql,
 } from "drizzle-orm";
 import {
+  algoDeploymentsTable,
   balanceSnapshotsTable,
   brokerAccountsTable,
   brokerConnectionsTable,
@@ -6409,10 +6410,14 @@ function realAttributionPositionKey(input: {
 // local ledger join is the source of truth. Positions with no matching
 // automation event stay "manual" (the prior hardcoded default).
 async function buildRealPositionAttribution(input: {
-  accountIds: string[];
+  appUserId: string | null;
+  providerAccountIds: string[];
   positions: BrokerPositionSnapshot[];
 }): Promise<Map<string, RealPositionAttribution>> {
   const attribution = new Map<string, RealPositionAttribution>();
+  const providerAccountIds = Array.from(
+    new Set(input.providerAccountIds.filter(Boolean)),
+  );
   const symbols = Array.from(
     new Set(
       input.positions
@@ -6420,9 +6425,18 @@ async function buildRealPositionAttribution(input: {
         .filter(Boolean),
     ),
   );
-  if (!symbols.length) {
+  if (!input.appUserId || !providerAccountIds.length || !symbols.length) {
     return attribution;
   }
+
+  const ownedProviderAccountIds = db
+    .select({ providerAccountId: brokerAccountsTable.providerAccountId })
+    .from(brokerAccountsTable)
+    .where(inArray(brokerAccountsTable.providerAccountId, providerAccountIds))
+    .groupBy(brokerAccountsTable.providerAccountId)
+    .having(
+      sql<boolean>`bool_and(${brokerAccountsTable.appUserId} is not distinct from ${input.appUserId})`,
+    );
 
   let events: Array<{ deploymentId: string | null; brokerOrder: unknown }> = [];
   try {
@@ -6436,10 +6450,23 @@ async function buildRealPositionAttribution(input: {
         brokerOrder: sql<unknown>`${executionEventsTable.payload} -> 'brokerOrder'`,
       })
       .from(executionEventsTable)
+      .innerJoin(
+        algoDeploymentsTable,
+        eq(executionEventsTable.deploymentId, algoDeploymentsTable.id),
+      )
       .where(
         and(
           isNotNull(executionEventsTable.deploymentId),
           inArray(executionEventsTable.symbol, symbols),
+          inArray(executionEventsTable.providerAccountId, providerAccountIds),
+          eq(
+            executionEventsTable.providerAccountId,
+            algoDeploymentsTable.providerAccountId,
+          ),
+          inArray(
+            algoDeploymentsTable.providerAccountId,
+            ownedProviderAccountIds,
+          ),
         ),
       )
       .orderBy(desc(executionEventsTable.occurredAt))
@@ -6604,7 +6631,10 @@ async function getAccountPositionsUncached(input: {
       },
     );
     realAttribution = await buildRealPositionAttribution({
-      accountIds: universe.accountIds,
+      appUserId: input.appUserId,
+      providerAccountIds: universe.accounts.map(
+        (account) => account.providerAccountId,
+      ),
       positions,
     });
     marketHydration = await hydratePositionMarkets(
@@ -9692,6 +9722,7 @@ export const __accountOrderInternalsForTests = {
   terminalOrderStatus,
   workingOrderStatus,
   // WO-EE-FIREHOSE Deliverable 4 — read-shape fold over the narrowed projection.
+  buildRealPositionAttribution,
   foldRealPositionAttribution,
   realAttributionPositionKey,
 };
