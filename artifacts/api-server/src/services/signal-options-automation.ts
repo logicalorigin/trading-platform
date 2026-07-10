@@ -4818,9 +4818,10 @@ export function buildSignalOptionsShadowOrderPlan(
   }
 
   const lastStep = profile.fillPolicy.chaseSteps.at(-1) ?? 0.9;
-  const ask = liquidity.ask ?? liquidity.mid;
-  const simulatedFillPrice = Number(
-    Math.min(ask, liquidity.mid + (ask - liquidity.mid) * lastStep).toFixed(2),
+  const simulatedFillPrice = signalOptionsShadowBuyFillPrice(
+    liquidity.mid,
+    liquidity.ask,
+    lastStep,
   );
   const premiumQuantityCap =
     profile.riskHaltControls.premiumBudgetEnabled === false
@@ -4847,6 +4848,29 @@ export function buildSignalOptionsShadowOrderPlan(
     fillPolicy: profile.fillPolicy,
     liquidity,
   };
+}
+
+// Hard age cap for fallback ENTRY quotes: freshness tags alone let a 62-minute-old
+// "mark"-source quote through on 2026-07-09 (ASTN). Exits are exempt — a breached
+// stop must close on whatever price exists.
+export const SIGNAL_OPTIONS_SHADOW_ENTRY_QUOTE_MAX_AGE_MS = 15 * 60_000;
+
+function signalOptionsQuoteAgeMs(
+  quote: SignalOptionsOptionQuote,
+): number | null {
+  if (
+    typeof quote.ageMs === "number" &&
+    Number.isFinite(quote.ageMs) &&
+    quote.ageMs >= 0
+  ) {
+    return quote.ageMs;
+  }
+  const stamp = quote.quoteUpdatedAt ?? quote.dataUpdatedAt ?? quote.updatedAt;
+  if (!stamp) {
+    return null;
+  }
+  const time = stamp instanceof Date ? stamp.getTime() : new Date(stamp).getTime();
+  return Number.isFinite(time) ? Math.max(0, Date.now() - time) : null;
 }
 
 /**
@@ -4920,7 +4944,7 @@ function resolveSignalOptionsShadowFallbackLiquidity(
  * candidate that has no usable LIVE two-sided quote can still fill — tagged
  * non-live via `fillQuoteSource`. Never used by the live trading path.
  */
-function buildSignalOptionsShadowFallbackOrderPlan(
+export function buildSignalOptionsShadowFallbackOrderPlan(
   quote: SignalOptionsOptionQuote,
   profile: SignalOptionsExecutionProfile,
 ) {
@@ -4933,10 +4957,66 @@ function buildSignalOptionsShadowFallbackOrderPlan(
       fillQuoteSource: liquidity.fillQuoteSource,
     };
   }
+  // Fail-closed ENTRY gates (owner ruling 2026-07-09; see
+  // docs/plans/phantom-fills-audit-2026-07-09.md). The fallback RESOLVER stays
+  // permissive because exits must always be able to price a close; an ENTRY whose
+  // quote cannot prove liquidity is exactly what the profile's gates exist to
+  // block — bid-0 / one-sided / stale quotes previously nulled the very fields
+  // the gates check and every gate silently passed (ASTN: bid 0, quote 62 min
+  // old, entered at 2.57 and hard-stopped 18s later at 0.05). Same toggle
+  // semantics as the live path in resolveSignalOptionsLiquidity.
+  const entryControls = profile.liquidityHaltControls;
+  const entryGateReasons: string[] = [];
+  const hasTwoSidedEntryQuote =
+    liquidity.bid != null &&
+    liquidity.ask != null &&
+    liquidity.bid > 0 &&
+    liquidity.ask > 0 &&
+    liquidity.ask >= liquidity.bid;
+  if (
+    profile.liquidityGate.requireBidAsk &&
+    entryControls.bidAskRequiredEnabled !== false &&
+    !hasTwoSidedEntryQuote
+  ) {
+    entryGateReasons.push("missing_bid_ask");
+  }
+  if (
+    entryControls.minBidGateEnabled !== false &&
+    (liquidity.bid == null ||
+      liquidity.bid <= 0 ||
+      liquidity.bid < profile.liquidityGate.minBid)
+  ) {
+    entryGateReasons.push("bid_below_minimum");
+  }
+  if (
+    entryControls.spreadGateEnabled !== false &&
+    liquidity.spreadPctOfMid != null &&
+    liquidity.spreadPctOfMid > profile.liquidityGate.maxSpreadPctOfMid
+  ) {
+    entryGateReasons.push("spread_too_wide");
+  }
+  const entryQuoteAgeMs = signalOptionsQuoteAgeMs(quote);
+  if (
+    profile.liquidityGate.requireFreshQuote &&
+    entryControls.freshQuoteRequiredEnabled !== false &&
+    entryQuoteAgeMs != null &&
+    entryQuoteAgeMs > SIGNAL_OPTIONS_SHADOW_ENTRY_QUOTE_MAX_AGE_MS
+  ) {
+    entryGateReasons.push("quote_not_fresh");
+  }
+  if (entryGateReasons.length > 0) {
+    return {
+      ok: false as const,
+      reason: entryGateReasons[0],
+      liquidity: { ...liquidity, ok: false as const, reasons: entryGateReasons },
+      fillQuoteSource: liquidity.fillQuoteSource,
+    };
+  }
   const lastStep = profile.fillPolicy.chaseSteps.at(-1) ?? 0.9;
-  const ask = liquidity.ask != null && liquidity.ask > 0 ? liquidity.ask : liquidity.mid;
-  const simulatedFillPrice = Number(
-    Math.min(ask, liquidity.mid + (ask - liquidity.mid) * lastStep).toFixed(2),
+  const simulatedFillPrice = signalOptionsShadowBuyFillPrice(
+    liquidity.mid,
+    liquidity.ask,
+    lastStep,
   );
   const premiumQuantityCap =
     profile.riskHaltControls.premiumBudgetEnabled === false
@@ -8465,6 +8545,33 @@ function signalOptionsRealizedPnl(
 // fills); the point of the guard is only to keep a non-market quote from
 // corrupting realized P&L / the halt.
 export const SIGNAL_OPTIONS_DEGENERATE_SELL_GAP_FRACTION = 0.4;
+
+// Symmetric guard for the BUY side: entry fills chase lastStep (default 90%) of the
+// way toward the ask. On a degenerate spread the ask is as much a fantasy as the bid
+// is on exits — 2026-07-09 ASTN: mark 0.50, ask 2.80, bid 0 filled at 2.57 and
+// hard-stopped 18 seconds later for a synthetic -$1,263. Above the same gap
+// threshold, fill at the mid.
+export function signalOptionsShadowBuyFillPrice(
+  mid: number,
+  ask: number | null | undefined,
+  lastStep: number,
+): number {
+  let fill = mid;
+  if (
+    typeof ask === "number" &&
+    Number.isFinite(ask) &&
+    ask > 0 &&
+    ask >= mid &&
+    mid > 0
+  ) {
+    const gapFraction = (ask - mid) / mid;
+    fill =
+      gapFraction > SIGNAL_OPTIONS_DEGENERATE_SELL_GAP_FRACTION
+        ? mid
+        : Math.min(ask, mid + (ask - mid) * lastStep);
+  }
+  return Number(fill.toFixed(2));
+}
 
 export function signalOptionsShadowSellFillPrice(
   mid: number | null | undefined,
