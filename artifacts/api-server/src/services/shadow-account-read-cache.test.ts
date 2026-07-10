@@ -1198,3 +1198,19 @@ test("shadow trade diagnostics uses shared stale-immediate read cache", () => {
   assert.match(body, /SHADOW_TRADE_DIAGNOSTICS_CACHE_TTL_MS/);
   assert.match(body, /SHADOW_TRADE_DIAGNOSTICS_CACHE_STALE_TTL_MS/);
 });
+
+// Retirement doctrine (docs/plans/pressure-gate-retirement-2026-07-10.md): every
+// user-visible pressure degrade must count its firings so "this gate never fires"
+// is provable. Guard the diagnostic surface those verdicts read from.
+test("read diagnostics expose pressure-degrade serve counters", async () => {
+  const { getShadowAccountReadDiagnostics } = await import("./shadow-account");
+  const diagnostics = getShadowAccountReadDiagnostics();
+  assert.deepEqual(Object.keys(diagnostics.pressureDegrades).sort(), [
+    "equityHistoryDbBackoffFallback",
+    "equityHistoryPressureFallback",
+    "positionsFastPath",
+  ]);
+  for (const value of Object.values(diagnostics.pressureDegrades)) {
+    assert.equal(typeof value, "number");
+  }
+});

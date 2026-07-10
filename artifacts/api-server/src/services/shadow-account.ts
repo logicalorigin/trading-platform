@@ -895,6 +895,16 @@ function recordShadowReadDiagnostic(input: {
   shadowReadDiagnosticStatsByRoute.set(route, stats);
 }
 
+// Every user-visible pressure degrade must count its own firings so "we never
+// needed this gate" is provable with numbers instead of argued (retirement
+// doctrine: docs/plans/pressure-gate-retirement-2026-07-10.md). Stale-cache
+// serving is already counted per-route via staleServedCount above.
+const shadowPressureDegradeServeCounts = {
+  positionsFastPath: 0,
+  equityHistoryPressureFallback: 0,
+  equityHistoryDbBackoffFallback: 0,
+};
+
 export function getShadowAccountReadDiagnostics() {
   const routes = Array.from(shadowReadDiagnosticStatsByRoute.values())
     .map((stats) => ({
@@ -927,6 +937,7 @@ export function getShadowAccountReadDiagnostics() {
     },
     recent: shadowReadDiagnosticRecent.map((event) => ({ ...event })),
     routes,
+    pressureDegrades: { ...shadowPressureDegradeServeCounts },
   };
 }
 
@@ -8907,10 +8918,15 @@ export async function getShadowAccountEquityHistory(input: {
   return withShadowReadCache(
     `equity-history:${range}::${shadowSourceCacheKey(source)}`,
     async () => {
-      if (
-        isShadowAccountDbBackoffActive() ||
-        getApiResourcePressureSnapshot().hardResourceLevel === "high"
-      ) {
+      const equityHistoryDbBackoff = isShadowAccountDbBackoffActive();
+      const equityHistoryHardPressure =
+        getApiResourcePressureSnapshot().hardResourceLevel === "high";
+      if (equityHistoryDbBackoff || equityHistoryHardPressure) {
+        if (equityHistoryHardPressure) {
+          shadowPressureDegradeServeCounts.equityHistoryPressureFallback += 1;
+        } else {
+          shadowPressureDegradeServeCounts.equityHistoryDbBackoffFallback += 1;
+        }
         return buildFallbackShadowAccountEquityHistory({
           range,
           benchmark: null,
@@ -10292,6 +10308,7 @@ export async function getShadowAccountPositions(input: {
     ttlMs: SHADOW_DERIVED_READ_CACHE_TTL_MS,
   };
   if (shouldServeFastShadowPositionsForPressure()) {
+    shadowPressureDegradeServeCounts.positionsFastPath += 1;
     return buildFastShadowPositionsResponse({
       assetClassFilter,
       source,
