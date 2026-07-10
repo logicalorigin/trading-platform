@@ -284,10 +284,10 @@ test("SnapTrade routes reject authenticated non-admin sessions", async () => {
   );
 });
 
-test("trade submission stays admin-only even for a broker_connect member", async () => {
+test("SnapTrade order mutations stay admin-only even for a broker_connect member", async () => {
   // Regression guard: the connect/read lifecycle is requireEntitlement,
-  // but order submission must remain requireAdminCsrf. Without this, a future
-  // edit copying the sibling entitlement guard onto the submit routes would let
+  // but order impact, submission, and replacement must remain requireAdminCsrf.
+  // Without this, a future edit copying the sibling entitlement guard would let
   // any paid member place live orders — and every other test would stay green.
   await withSnapTradeEnv(async () =>
     withTestDb(async () =>
@@ -296,7 +296,7 @@ test("trade submission stays admin-only even for a broker_connect member", async
         let called = false;
         globalThis.fetch = (async () => {
           called = true;
-          throw new Error("upstream fetch should not run for a non-admin submit");
+          throw new Error("upstream fetch should not run for a non-admin order mutation");
         }) as typeof fetch;
         try {
           const [member] = await db
@@ -318,6 +318,7 @@ test("trade submission stays admin-only even for a broker_connect member", async
           for (const path of [
             "/broker-execution/snaptrade/accounts/acct-1/orders/impact",
             "/broker-execution/snaptrade/accounts/acct-1/orders",
+            "/broker-execution/snaptrade/accounts/acct-1/orders/order-1/replace",
           ]) {
             const resp = await previousFetch(`${baseUrl}${path}`, {
               method: "POST",

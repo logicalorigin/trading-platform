@@ -1144,7 +1144,7 @@ router.post(
 router.post(
   "/broker-execution/snaptrade/accounts/:accountId/orders/:orderId/replace",
   async (req, res) => {
-    const session = await requireEntitlementCsrf("broker_connect")(req);
+    const session = await requireAdminCsrf(req);
     const body = ReplaceSnapTradeEquityOrderBody.parse(req.body ?? {});
     void recordAuditEvent({
       appUserId: session.user.id,
