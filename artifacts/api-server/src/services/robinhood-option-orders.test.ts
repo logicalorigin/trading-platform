@@ -391,6 +391,78 @@ test("place submits the resolved leg after a matching option tax preflight", asy
   );
 });
 
+test("place resolves with reconciliation required when the post-submit tax record fails", async (t) => {
+  await withBootstrapToken(async () =>
+    withTestDb(async (testDb) => {
+      const appUserId = await seedConnectedUser(
+        "rh-option-reconcile@example.com",
+      );
+      const accountId = await seedRobinhoodAccount(appUserId);
+      const preflight = await runAsAppUser(appUserId, () =>
+        createTaxOrderPreflight({
+          order: {
+            accountId,
+            mode: "live",
+            symbol: "AAPL",
+            assetClass: "option",
+            side: "buy",
+            type: "limit",
+            quantity: 1,
+            limitPrice: 2.45,
+            stopPrice: null,
+            timeInForce: "day",
+            optionContract: {
+              underlying: "AAPL",
+              expirationDate: "2026-08-21",
+              strike: 210,
+              right: "call",
+            },
+            route: "robinhood",
+            intent: null,
+          },
+        }),
+      );
+      const { fetchImpl } = mcpFetch((name) => {
+        if (name === "get_option_instruments") return instrumentPayload();
+        assert.equal(name, "place_option_order");
+        t.mock.method(testDb.db, "update", () => {
+          throw new Error("tax preflight submit record failed");
+        });
+        return {
+          data: {
+            order: { id: "rh-option-order-reconcile", state: "confirmed" },
+          },
+        };
+      });
+
+      const result = await placeRobinhoodOptionOrder({
+        appUserId,
+        accountId,
+        input: {
+          ...baseOrder(),
+          confirm: true,
+          refId: "22222222-2222-4222-8222-222222222222",
+          taxPreflightToken: preflight.preflightToken,
+          taxAcknowledgements: preflight.requiredAcknowledgements,
+        },
+        encryptionKey: TEST_ENCRYPTION_KEY,
+        fetchImpl,
+      });
+
+      assert.equal(
+        result.order.brokerageOrderId,
+        "rh-option-order-reconcile",
+      );
+      assert.equal(result.order.state, "confirmed");
+      assert.equal(result.reconcileRequired, true);
+      assert.equal(
+        result.reconciliationReason,
+        "tax_preflight_order_submit_record_failed",
+      );
+    }),
+  );
+});
+
 test("rejects an invalid stop-market leg before account or MCP access", async () => {
   await assert.rejects(
     reviewRobinhoodOptionOrder({

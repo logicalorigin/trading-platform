@@ -4,6 +4,7 @@ import { and, eq } from "drizzle-orm";
 
 import { brokerAccountsTable, brokerConnectionsTable, db } from "@workspace/db";
 import { HttpError } from "../lib/errors";
+import { logger } from "../lib/logger";
 import { RobinhoodMcpSession } from "../providers/robinhood/mcp-client";
 import { getRobinhoodAccessToken } from "./robinhood-oauth";
 import {
@@ -141,6 +142,8 @@ export type RobinhoodOptionOrderPlaceResponse = {
     refId: string;
   };
   alerts: string[];
+  reconcileRequired?: true;
+  reconciliationReason?: "tax_preflight_order_submit_record_failed";
 };
 
 export type RobinhoodOptionRecentOrder = {
@@ -1126,12 +1129,39 @@ export async function placeRobinhoodOptionOrder(
     "brokerage_order_id",
   ]);
 
-  await recordTaxPreflightOrderSubmitted({
-    appUserId: options.appUserId,
-    preflightToken: taxPreflight?.preflightToken,
-    submittedOrderId: brokerageOrderId,
-    provider: "robinhood",
-  });
+  try {
+    await recordTaxPreflightOrderSubmitted({
+      appUserId: options.appUserId,
+      preflightToken: taxPreflight?.preflightToken,
+      submittedOrderId: brokerageOrderId,
+      provider: "robinhood",
+    });
+  } catch (error) {
+    logger.warn(
+      {
+        err: error,
+        appUserId: options.appUserId,
+        accountId: options.accountId,
+        robinhoodAccountId: account.id,
+        orderId: brokerageOrderId,
+      },
+      "Robinhood option order placed but tax preflight submit record failed; reconciliation required",
+    );
+    return {
+      provider: "robinhood",
+      submittedAt: now.toISOString(),
+      account: publicAccount(account),
+      order: {
+        ...orderDetails(order, instrument),
+        brokerageOrderId,
+        state: readString(record, ["state", "status"]),
+        refId,
+      },
+      alerts: readAlerts(alertRecord),
+      reconcileRequired: true,
+      reconciliationReason: "tax_preflight_order_submit_record_failed",
+    };
+  }
 
   return {
     provider: "robinhood",

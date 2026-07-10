@@ -343,6 +343,69 @@ test("place submits with ref_id after a matching preflight and parses the order 
   );
 });
 
+test("place resolves with reconciliation required when the post-submit tax record fails", async (t) => {
+  await withBootstrapToken(async () =>
+    withTestDb(async (testDb) => {
+      const appUserId = await seedConnectedUser(
+        "rh-place-reconcile@example.com",
+      );
+      const accountId = await seedRobinhoodAccount({ appUserId });
+      const preflight = await runAsAppUser(appUserId, () =>
+        createTaxOrderPreflight({
+          order: {
+            accountId,
+            mode: "live",
+            symbol: "PLUG",
+            assetClass: "equity",
+            side: "buy",
+            type: "market",
+            quantity: 0,
+            limitPrice: null,
+            stopPrice: null,
+            timeInForce: "day",
+            optionContract: null,
+            route: "robinhood",
+            intent: null,
+          },
+        }),
+      );
+      const { fetchImpl } = mcpFetch((name) => {
+        assert.equal(name, "place_equity_order");
+        t.mock.method(testDb.db, "update", () => {
+          throw new Error("tax preflight submit record failed");
+        });
+        return { data: { id: "rh-order-reconcile", state: "confirmed" } };
+      });
+
+      const result = await placeRobinhoodEquityOrder({
+        appUserId,
+        accountId,
+        input: {
+          confirm: true,
+          symbol: "PLUG",
+          side: "BUY",
+          orderType: "Market",
+          timeInForce: "Day",
+          notionalValue: 5,
+          refId: "22222222-2222-4222-8222-222222222222",
+          taxPreflightToken: preflight.preflightToken,
+          taxAcknowledgements: preflight.requiredAcknowledgements,
+        },
+        encryptionKey: TEST_ENCRYPTION_KEY,
+        fetchImpl,
+      });
+
+      assert.equal(result.order.brokerageOrderId, "rh-order-reconcile");
+      assert.equal(result.order.state, "confirmed");
+      assert.equal(result.reconcileRequired, true);
+      assert.equal(
+        result.reconciliationReason,
+        "tax_preflight_order_submit_record_failed",
+      );
+    }),
+  );
+});
+
 test("non-agentic account is rejected", async () => {
   await withBootstrapToken(async () =>
     withTestDb(async () => {

@@ -424,6 +424,100 @@ test("SnapTrade option submit requires and consumes a matching option tax prefli
   );
 });
 
+test("SnapTrade option submit resolves with reconciliation required when the post-submit tax record fails", async (t) => {
+  await withBootstrapToken(async () =>
+    withTestDb(async (testDb) => {
+      const auth = await createUser("option-submit-reconcile@example.com");
+      await createSnapTradeCredential(auth.user.id);
+      const account = await createSnapTradeAccount({
+        appUserId: auth.user.id,
+        providerAccountId: "snaptrade:acct-option-submit-reconcile",
+      });
+      const occSymbol = "MSFT  260918P00450000";
+      const preflight = await runAsAppUser(auth.user.id, () =>
+        createTaxOrderPreflight({
+          order: {
+            accountId: account.id,
+            mode: "live",
+            symbol: "MSFT",
+            assetClass: "option",
+            side: "sell",
+            type: "limit",
+            quantity: 1,
+            limitPrice: 3.25,
+            stopPrice: null,
+            timeInForce: "gtc",
+            optionContract: {
+              ticker: occSymbol,
+              underlying: "MSFT",
+              expirationDate: "2026-09-18",
+              strike: 450,
+              right: "put",
+              multiplier: 100,
+              sharesPerContract: 100,
+              providerContractId: occSymbol,
+              brokerContractId: occSymbol,
+            },
+            route: "snaptrade",
+            intent: null,
+          },
+        }),
+      );
+
+      const result = await submitSnapTradeOptionOrder({
+        appUserId: auth.user.id,
+        accountId: account.id,
+        input: {
+          confirm: true,
+          underlyingSymbol: "MSFT",
+          expiration: "2026-09-18",
+          strike: 450,
+          optionType: "Put",
+          action: "SELL_TO_OPEN",
+          orderType: "Limit",
+          timeInForce: "GTC",
+          units: 1,
+          price: 3.25,
+          taxPreflightToken: preflight.preflightToken,
+          taxAcknowledgements: preflight.requiredAcknowledgements,
+        },
+        env: {
+          SNAPTRADE_CLIENTID: "client-option-123",
+          SNAPTRADE_API_KEY: "consumer-option-secret",
+        },
+        encryptionKey: TEST_ENCRYPTION_KEY,
+        now: new Date("2026-07-01T20:20:00.000Z"),
+        fetchImpl: async () => {
+          t.mock.method(testDb.db, "update", () => {
+            throw new Error("tax preflight submit record failed");
+          });
+          return new Response(
+            JSON.stringify({
+              brokerage_order_id: "option-order-reconcile",
+              orders: [
+                {
+                  brokerage_order_id: "option-order-reconcile",
+                  status: "ACCEPTED",
+                  option_symbol: { ticker: occSymbol },
+                },
+              ],
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          );
+        },
+      });
+
+      assert.equal(result.order.brokerageOrderId, "option-order-reconcile");
+      assert.equal(result.order.status, "ACCEPTED");
+      assert.equal(result.reconcileRequired, true);
+      assert.equal(
+        result.reconciliationReason,
+        "tax_preflight_order_submit_record_failed",
+      );
+    }),
+  );
+});
+
 test("SnapTrade option validation rejects malformed contracts and orders before access", async () => {
   const baseInput = {
     underlyingSymbol: "AAPL",

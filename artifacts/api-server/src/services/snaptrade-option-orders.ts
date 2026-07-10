@@ -3,6 +3,7 @@ import { and, eq } from "drizzle-orm";
 import { brokerAccountsTable, brokerConnectionsTable, db } from "@workspace/db";
 import { readEnvString } from "../lib/env";
 import { HttpError } from "../lib/errors";
+import { logger } from "../lib/logger";
 import {
   listSnapTradeRecentOrders,
   type ListSnapTradeRecentOrdersOptions,
@@ -94,6 +95,8 @@ export type SnapTradeOptionOrderSubmitResponse = {
     brokerageOrderId: string;
     status: string;
   };
+  reconcileRequired?: true;
+  reconciliationReason?: "tax_preflight_order_submit_record_failed";
 };
 
 export type CheckSnapTradeOptionOrderImpactOptions = {
@@ -771,12 +774,33 @@ export async function submitSnapTradeOptionOrder(
     failedCode: "snaptrade_option_order_submit_failed",
   });
   const parsed = parseSubmitResponse(payload, normalizedInput);
-  await recordTaxPreflightOrderSubmitted({
-    appUserId: options.appUserId,
-    preflightToken: taxPreflight?.preflightToken,
-    submittedOrderId: parsed.order.brokerageOrderId,
-    provider: "snaptrade",
-  });
+  try {
+    await recordTaxPreflightOrderSubmitted({
+      appUserId: options.appUserId,
+      preflightToken: taxPreflight?.preflightToken,
+      submittedOrderId: parsed.order.brokerageOrderId,
+      provider: "snaptrade",
+    });
+  } catch (error) {
+    logger.warn(
+      {
+        err: error,
+        appUserId: options.appUserId,
+        accountId: options.accountId,
+        snapTradeAccountId: account.id,
+        orderId: parsed.order.brokerageOrderId,
+      },
+      "SnapTrade option order placed but tax preflight submit record failed; reconciliation required",
+    );
+    return {
+      provider: "snaptrade",
+      submittedAt: now.toISOString(),
+      account: publicAccount(account),
+      ...parsed,
+      reconcileRequired: true,
+      reconciliationReason: "tax_preflight_order_submit_record_failed",
+    };
+  }
 
   return {
     provider: "snaptrade",
