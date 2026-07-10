@@ -329,6 +329,7 @@ async function proxyToGateway(req: Request, res: Response): Promise<void> {
 
     const upstream = httpRequest(
       {
+        agent: false,
         host: "127.0.0.1",
         port: gateway.proxyPort,
         method: req.method,
@@ -445,15 +446,41 @@ function gatewayUpgradePath(request: IncomingMessage): string | null {
   return `${url.pathname.slice(GW_BASE.length) || "/"}${url.search}`;
 }
 
+function configuredGatewayHosts(): string[] {
+  return ["REPLIT_DEV_DOMAIN", "REPLIT_DOMAINS"].flatMap((name) =>
+    (process.env[name] ?? "")
+      .split(",")
+      .map((value) => value.trim())
+      .filter(Boolean)
+      .flatMap((value) => {
+        try {
+          return [
+            new URL(value.includes("://") ? value : `https://${value}`).host,
+          ];
+        } catch {
+          return [];
+        }
+      }),
+  );
+}
+
 function hasSameGatewayOrigin(request: IncomingMessage): boolean {
   const origin = request.headers.origin;
   const host = request.headers.host;
   if (typeof origin !== "string" || !host) return false;
   try {
     const parsed = new URL(origin);
+    const rawForwardedHost = request.headers["x-forwarded-host"];
+    const forwardedHost = (
+      Array.isArray(rawForwardedHost) ? rawForwardedHost[0] : rawForwardedHost
+    )
+      ?.split(",", 1)[0]
+      ?.trim();
     return (
       (parsed.protocol === "http:" || parsed.protocol === "https:") &&
-      parsed.host.toLowerCase() === host.toLowerCase()
+      [host, forwardedHost, ...configuredGatewayHosts()].some(
+        (candidate) => candidate?.toLowerCase() === parsed.host.toLowerCase(),
+      )
     );
   } catch {
     return false;

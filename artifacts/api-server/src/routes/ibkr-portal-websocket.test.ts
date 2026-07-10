@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import { once } from "node:events";
-import { createServer, type Server } from "node:http";
+import {
+  createServer,
+  request as httpRequest,
+  type Server,
+} from "node:http";
 import type { AddressInfo } from "node:net";
 import test from "node:test";
 
@@ -46,11 +50,32 @@ function toBuffer(data: RawData): Buffer {
   return data;
 }
 
+function gatewayGet(
+  url: string,
+  headers: Record<string, string>,
+): Promise<{ body: string; status: number }> {
+  return new Promise((resolve, reject) => {
+    const request = httpRequest(url, { headers }, (response) => {
+      const chunks: Buffer[] = [];
+      response.on("data", (chunk: Buffer) => chunks.push(chunk));
+      response.once("end", () => {
+        resolve({
+          body: Buffer.concat(chunks).toString("utf8"),
+          status: response.statusCode ?? 0,
+        });
+      });
+    });
+    request.once("error", reject);
+    request.end();
+  });
+}
+
 test("IBKR noVNC WebSocket proxy authenticates and preserves the binary tunnel", async () => {
   await withTestDb(async () => {
     const previousEnabled = process.env["IBKR_SESSION_HOST_ENABLED"];
     const previousToken = process.env["IBKR_SESSION_HOST_CONTROL_TOKEN"];
     const previousUrl = process.env["IBKR_SESSION_HOST_URL"];
+    const previousReplitDevDomain = process.env["REPLIT_DEV_DOMAIN"];
     const previousFetch = globalThis.fetch;
     const upstreamServer = createServer();
     const upstreamWebSockets = new WebSocketServer({ server: upstreamServer });
@@ -62,6 +87,21 @@ test("IBKR noVNC WebSocket proxy authenticates and preserves the binary tunnel",
       let upstreamPath = "";
       let upstreamCookie = "";
       let upstreamAuthorization: string | undefined;
+      const requestCountBySocket = new WeakMap<object, number>();
+      upstreamServer.on("request", (request, response) => {
+        const count = (requestCountBySocket.get(request.socket) ?? 0) + 1;
+        requestCountBySocket.set(request.socket, count);
+        if (count > 1) {
+          request.socket.destroy();
+          return;
+        }
+        response.writeHead(200, {
+          "connection": "keep-alive",
+          "content-length": "5",
+          "content-type": "text/plain",
+        });
+        response.end("asset");
+      });
       upstreamWebSockets.on("connection", (socket, request) => {
         upstreamPath = request.url ?? "";
         upstreamCookie = request.headers.cookie ?? "";
@@ -74,6 +114,7 @@ test("IBKR noVNC WebSocket proxy authenticates and preserves the binary tunnel",
       process.env["IBKR_SESSION_HOST_ENABLED"] = "1";
       process.env["IBKR_SESSION_HOST_CONTROL_TOKEN"] = "host-token";
       process.env["IBKR_SESSION_HOST_URL"] = "http://127.0.0.1:18748";
+      process.env["REPLIT_DEV_DOMAIN"] = "pyrus.example.test";
       globalThis.fetch = (async (input) =>
         Response.json(
           String(input).endsWith("/release")
@@ -106,6 +147,22 @@ test("IBKR noVNC WebSocket proxy authenticates and preserves the binary tunnel",
         `ws://127.0.0.1:${apiPort}` +
         "/api/broker-execution/ibkr-portal/gateway/websockify?token=test";
 
+      const assetUrl =
+        `http://127.0.0.1:${apiPort}` +
+        "/api/broker-execution/ibkr-portal/gateway/core/rfb.js";
+      const assetHeaders = {
+        connection: "keep-alive",
+        cookie: `pyrus_session=${session.sessionToken}`,
+      };
+      assert.deepEqual(await gatewayGet(assetUrl, assetHeaders), {
+        body: "asset",
+        status: 200,
+      });
+      assert.deepEqual(await gatewayGet(assetUrl, assetHeaders), {
+        body: "asset",
+        status: 200,
+      });
+
       assert.equal(await rejectedWebSocketStatus(url), 401);
       assert.equal(
         await rejectedWebSocketStatus(url, {
@@ -121,7 +178,7 @@ test("IBKR noVNC WebSocket proxy authenticates and preserves the binary tunnel",
           cookie:
             `pyrus_session=${session.sessionToken}; ` +
             "gateway_session=kept",
-          origin: `http://127.0.0.1:${apiPort}`,
+          origin: "https://pyrus.example.test",
         },
       });
       await once(client, "open");
@@ -160,6 +217,11 @@ test("IBKR noVNC WebSocket proxy authenticates and preserves the binary tunnel",
         delete process.env["IBKR_SESSION_HOST_URL"];
       } else {
         process.env["IBKR_SESSION_HOST_URL"] = previousUrl;
+      }
+      if (previousReplitDevDomain === undefined) {
+        delete process.env["REPLIT_DEV_DOMAIN"];
+      } else {
+        process.env["REPLIT_DEV_DOMAIN"] = previousReplitDevDomain;
       }
     }
   });

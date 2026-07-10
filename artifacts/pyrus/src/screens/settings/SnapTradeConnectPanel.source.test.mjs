@@ -55,7 +55,8 @@ test("SnapTrade connect panel exposes copy-link and QR handoff for broker launch
   assert.match(source, /copyBrokerConnectLaunchUrl\(connectHandoff\.url\)/);
   assert.match(source, /copyStatus === "copied" \? "Copied" : "Copy link"/);
   assert.match(source, /broker connect QR code/);
-  assert.match(source, /Open this link in a <strong>desktop browser<\/strong>/);
+  assert.match(source, /On a phone or when popups are\s+blocked/);
+  assert.match(source, />\s*Open login\s*</);
 
   assert.match(source, /url: start\.authorizationUrl,[\s\S]*expiresAt: start\.expiresAt,/);
   assert.match(source, /brokerKey: ROBINHOOD_BROKER_CHOICE\.value,[\s\S]*url: start\.authorizationUrl,/);
@@ -64,6 +65,22 @@ test("SnapTrade connect panel exposes copy-link and QR handoff for broker launch
   assert.match(source, /clearConnectHandoff\(ROBINHOOD_BROKER_CHOICE\.value\)/);
   assert.match(source, /clearConnectHandoff\(SCHWAB_BROKER_CHOICE\.value\)/);
   assert.match(source, /clearConnectHandoff\(IBKR_PORTAL_BROKER_CHOICE\.value\)/);
+});
+
+test("IBKR keeps mobile provisioning in the active tab and reserves popups only on desktop", () => {
+  const source = readLocalSource("./SnapTradeConnectPanel.jsx");
+  const connectBlock =
+    /const connectIbkrPortal = async \(\) => \{[\s\S]*?\n  \};/.exec(source)?.[0] ?? "";
+
+  assert.match(source, /isMobileIbkrLaunchBrowser/);
+  assert.match(connectBlock, /const mobileLaunch = isMobileIbkrLaunchBrowser\(\)/);
+  assert.match(
+    connectBlock,
+    /mobileLaunch\s*\?\s*null\s*:\s*openBrokerPopup\("about:blank", "ibkr-portal-login"\)/,
+  );
+  assert.match(connectBlock, /const loginUrl = new URL\(loginPath, window\.location\.origin\)\.href/);
+  assert.match(connectBlock, /if \(mobileLaunch\) \{\s*window\.location\.assign\(loginUrl\);\s*return;/);
+  assert.match(connectBlock, /popup\.location\.replace\(loginUrl\)/);
 });
 
 test("broker picker hydrates connected edges from server truth on load, unioned with sync freshness", () => {

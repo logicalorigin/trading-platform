@@ -43,6 +43,7 @@ import { Button } from "../../components/ui/Button.jsx";
 import { SurfacePanel } from "../../components/platform/primitives.jsx";
 import { useAuthSession } from "../../features/auth/authSession.jsx";
 import { writeSnapTradeExecutionAccountState } from "../../features/broker/snapTradeExecutionAccountStore.js";
+import { isMobileIbkrLaunchBrowser } from "../../features/platform/ibkrBridgeSession.js";
 import {
   CSS_COLOR,
   FONT_WEIGHTS,
@@ -369,7 +370,7 @@ function BrokerConnectHandoff({ handoff, copyStatus, onCopy }) {
 
   return (
     <div
-      aria-label={`${handoff.label} desktop handoff`}
+      aria-label={`${handoff.label} login handoff`}
       style={{
         border: `1px solid ${cssColorMix(CSS_COLOR.border, 60)}`,
         borderRadius: dim(RADII.sm),
@@ -390,9 +391,8 @@ function BrokerConnectHandoff({ handoff, copyStatus, onCopy }) {
             lineHeight: 1.45,
           }}
         >
-          On desktop? The window opened automatically. On a phone or need
-          another device? Open this link in a <strong>desktop browser</strong> —
-          you'll stay signed in and it finishes here.
+          The login window opens automatically. On a phone or when popups are
+          blocked, use the link below and return here when login finishes.
         </div>
         <div
           style={{
@@ -417,7 +417,7 @@ function BrokerConnectHandoff({ handoff, copyStatus, onCopy }) {
               overflowWrap: "anywhere",
             }}
           >
-            Open link
+            Open login
           </a>
           {copyStatus === "error" ? (
             <span
@@ -1674,10 +1674,22 @@ export function SnapTradeConnectPanel({ enabled = true }) {
     }
     setLocalError("");
     setIbkrPopupBlocked(false);
+    // Mobile browsers foreground a newly opened blank tab and can suspend the
+    // opener before its async provisioning request starts. Keep provisioning
+    // in the active tab on mobile, then navigate that tab to the hosted login.
+    const mobileLaunch = isMobileIbkrLaunchBrowser();
+    const popup = mobileLaunch
+      ? null
+      : openBrokerPopup("about:blank", "ibkr-portal-login");
     let started;
     try {
       started = await ibkrPortalConnectMutation.mutateAsync();
     } catch (error) {
+      try {
+        popup?.close();
+      } catch {
+        // The connect error is already surfaced in PYRUS.
+      }
       setLocalError(
         readErrorMessage(error, "IBKR Client Portal connection could not be started."),
       );
@@ -1685,17 +1697,33 @@ export function SnapTradeConnectPanel({ enabled = true }) {
     }
     const loginPath = started?.loginPath || ibkrPortalReadiness?.loginPath;
     if (!loginPath) {
+      try {
+        popup?.close();
+      } catch {
+        // The missing login URL is already surfaced in PYRUS.
+      }
       setLocalError("IBKR Client Portal login URL was not returned.");
       return;
     }
+    const loginUrl = new URL(loginPath, window.location.origin).href;
     showConnectHandoff({
       brokerKey: IBKR_PORTAL_BROKER_CHOICE.value,
       label: IBKR_PORTAL_BROKER_CHOICE.label,
       url: loginPath,
       expiresAt: null,
     });
-    const popup = openBrokerPopup(loginPath, "ibkr-portal-login");
+    if (mobileLaunch) {
+      window.location.assign(loginUrl);
+      return;
+    }
     if (!popup) {
+      setIbkrPopupBlocked(true);
+      void ibkrPortalReadinessQuery.refetch();
+      return;
+    }
+    try {
+      popup.location.replace(loginUrl);
+    } catch {
       setIbkrPopupBlocked(true);
       void ibkrPortalReadinessQuery.refetch();
       return;
