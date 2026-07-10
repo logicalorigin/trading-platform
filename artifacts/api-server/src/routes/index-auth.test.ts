@@ -24,6 +24,10 @@ test("execution and account stream routes reject unauthenticated requests", asyn
       "/streams/orders",
       "/streams/executions",
       "/streams/accounts",
+      "/ExEcUtIoNs",
+      "/StReAmS/OrDeRs",
+      "/StReAmS/ExEcUtIoNs",
+      "/StReAmS/AcCoUnTs",
     ]) {
       const response = await fetch(`${baseUrl}${path}`, {
         signal: AbortSignal.timeout(5_000),
@@ -43,16 +47,22 @@ test("execution and account stream routes reject unauthenticated requests", asyn
 
 test("flow scanner benchmark rejects unauthenticated requests", async () => {
   await withServer(async (baseUrl) => {
-    const response = await fetch(`${baseUrl}/flow/scanner/benchmark`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: "{}",
-    });
+    for (const path of [
+      "/flow/scanner/benchmark",
+      "/FlOw/ScAnNeR/BeNcHmArK",
+    ]) {
+      const response = await fetch(`${baseUrl}${path}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: "{}",
+      });
 
-    assert.equal(response.status, 401);
-    assert.equal(
-      ((await response.json()) as { code?: string }).code,
-      "auth_required",
-    );
+      assert.equal(response.status, 401, path);
+      assert.equal(
+        ((await response.json()) as { code?: string }).code,
+        "auth_required",
+        path,
+      );
+    }
   });
 });

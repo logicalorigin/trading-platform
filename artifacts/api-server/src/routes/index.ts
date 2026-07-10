@@ -78,7 +78,7 @@ function gate(
 }
 
 router.use((req: Request, _res: Response, next: NextFunction) => {
-  const path = req.path;
+  const path = req.path.toLowerCase();
   if (REQUIRE_ADMIN_PATHS.some((pattern) => pattern.test(path))) {
     gate(requireAdmin, req, next);
     return;
