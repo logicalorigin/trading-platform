@@ -727,6 +727,7 @@ function calculateLatestMarketDayPnlFromHistory(
 
 async function resolveAccountSummaryReturnMetrics(input: {
   accountId: string;
+  appUserId: string | null;
   mode: RuntimeMode;
   source?: string | null;
 }) {
@@ -734,6 +735,7 @@ async function resolveAccountSummaryReturnMetrics(input: {
     try {
       const history = await getAccountEquityHistory({
         accountId: input.accountId,
+        appUserId: input.appUserId,
         range,
         mode: input.mode,
         source: input.source,
@@ -757,6 +759,7 @@ async function resolveAccountSummaryReturnMetrics(input: {
     try {
       return await getAccountEquityHistory({
         accountId: input.accountId,
+        appUserId: input.appUserId,
         range,
         mode: input.mode,
         source: input.source,
@@ -5521,6 +5524,7 @@ async function getAccountSummaryUncached(input: {
 
   const returnMetrics = await resolveAccountSummaryReturnMetrics({
     accountId: input.accountId,
+    appUserId: input.appUserId,
     mode,
     source: input.source,
   });
@@ -5772,6 +5776,7 @@ async function resolveBenchmarkPercents(input: {
 
 export async function getAccountEquityHistory(input: {
   accountId: string;
+  appUserId?: string | null;
   range?: AccountRange;
   benchmark?: string | null;
   mode?: RuntimeMode;
@@ -5786,17 +5791,20 @@ export async function getAccountEquityHistory(input: {
   }
 
   const mode = input.mode ?? getRuntimeMode();
+  const appUserId =
+    input.appUserId === undefined ? getCurrentAppUserId() : input.appUserId;
   const range = normalizeAccountRange(input.range);
   return readAccountRouteResponseCache(
     "equity-history",
     {
       accountId: input.accountId,
+      appUserId,
       benchmark: input.benchmark || null,
       mode,
       range,
       source: input.source ?? null,
     },
-    () => getAccountEquityHistoryUncached({ ...input, mode, range }),
+    () => getAccountEquityHistoryUncached({ ...input, appUserId, mode, range }),
     input.benchmark
       ? ACCOUNT_ROUTE_DERIVED_RESPONSE_CACHE_TTL_MS
       : ACCOUNT_ROUTE_EQUITY_HISTORY_RESPONSE_CACHE_TTL_MS,
@@ -5856,6 +5864,7 @@ async function readProviderEquitySeedPointsForUniverse(
 
 async function getAccountEquityHistoryUncached(input: {
   accountId: string;
+  appUserId: string | null;
   range: AccountRange;
   benchmark?: string | null;
   mode: RuntimeMode;
@@ -5863,7 +5872,11 @@ async function getAccountEquityHistoryUncached(input: {
 }) {
   const mode = input.mode;
   const range = input.range;
-  const universe = await getLiveAccountUniverse(input.accountId, mode);
+  const universe = await getLiveAccountUniverse(
+    input.accountId,
+    mode,
+    input.appUserId,
+  );
   const start = accountRangeStart(range);
   const flexConditions = [inArray(flexNavHistoryTable.providerAccountId, universe.accountIds)];
   if (start) {
@@ -8675,6 +8688,7 @@ async function listClosedTradesForUniverse(
 
 export async function getAccountClosedTrades(input: {
   accountId: string;
+  appUserId?: string | null;
   from?: Date | null;
   to?: Date | null;
   symbol?: string | null;
@@ -8696,10 +8710,13 @@ export async function getAccountClosedTrades(input: {
   }
 
   const mode = input.mode ?? getRuntimeMode();
+  const appUserId =
+    input.appUserId === undefined ? getCurrentAppUserId() : input.appUserId;
   return readAccountRouteResponseCache(
     "closed-trades",
     {
       accountId: input.accountId,
+      appUserId,
       assetClass: input.assetClass ?? null,
       from: input.from?.toISOString() ?? null,
       holdDuration: input.holdDuration ?? null,
@@ -8709,13 +8726,14 @@ export async function getAccountClosedTrades(input: {
       symbol: input.symbol ? normalizeSymbol(input.symbol) : null,
       to: input.to?.toISOString() ?? null,
     },
-    () => getAccountClosedTradesUncached({ ...input, mode }),
+    () => getAccountClosedTradesUncached({ ...input, appUserId, mode }),
     ACCOUNT_ROUTE_CLOSED_TRADES_RESPONSE_CACHE_TTL_MS,
   );
 }
 
 async function getAccountClosedTradesUncached(input: {
   accountId: string;
+  appUserId: string | null;
   from?: Date | null;
   to?: Date | null;
   symbol?: string | null;
@@ -8726,7 +8744,11 @@ async function getAccountClosedTradesUncached(input: {
   source?: string | null;
 }) {
   const mode = input.mode;
-  const universe = await getLiveAccountUniverse(input.accountId, mode);
+  const universe = await getLiveAccountUniverse(
+    input.accountId,
+    mode,
+    input.appUserId,
+  );
   const [flexTrades, providerTrades, executions, orderResult] = await Promise.all([
     listClosedTradesForUniverse(universe, input),
     listProviderActivityClosedTradesForUniverse(universe, input),
@@ -8862,6 +8884,7 @@ function normalizeAccountRiskDetail(detail?: AccountRiskDetail): AccountRiskDeta
 
 export async function getAccountRisk(input: {
   accountId: string;
+  appUserId?: string | null;
   mode?: RuntimeMode;
   source?: string | null;
   detail?: AccountRiskDetail;
@@ -8872,21 +8895,28 @@ export async function getAccountRisk(input: {
   }
 
   const mode = input.mode ?? getRuntimeMode();
+  const appUserId =
+    input.appUserId === undefined ? getCurrentAppUserId() : input.appUserId;
   if (detail === "full") {
-    return getAccountRiskWithNonBlockingFullDetail({ ...input, mode });
+    return getAccountRiskWithNonBlockingFullDetail({ ...input, appUserId, mode });
   }
-  return getAccountRiskUncached({ ...input, mode, detail });
+  return getAccountRiskUncached({ ...input, appUserId, mode, detail });
 }
 
 async function getAccountRiskUncached(input: {
   accountId: string;
+  appUserId: string | null;
   mode: RuntimeMode;
   source?: string | null;
   detail?: AccountRiskDetail;
 }) {
   const mode = input.mode;
   const detail = normalizeAccountRiskDetail(input.detail);
-  const universe = await getLiveAccountUniverse(input.accountId, mode);
+  const universe = await getLiveAccountUniverse(
+    input.accountId,
+    mode,
+    input.appUserId,
+  );
   const [positions, closedTrades] = await Promise.all([
     listPositionsForUniverse(universe, mode),
     listClosedTradesForUniverse(universe, {}),
@@ -9151,11 +9181,13 @@ type AccountFullRiskDetailMetadata = {
 
 function accountFullRiskCacheKey(input: {
   accountId: string;
+  appUserId: string | null;
   mode: RuntimeMode;
   source?: string | null;
 }): string {
   return stableAccountReadCacheKey("full-risk", {
     accountId: input.accountId,
+    appUserId: input.appUserId,
     mode: input.mode,
     source: input.source ?? null,
   });
@@ -9199,6 +9231,7 @@ function markAccountRiskFullRefreshPending(
 
 function refreshAccountFullRiskCache(input: {
   accountId: string;
+  appUserId: string | null;
   mode: RuntimeMode;
   source?: string | null;
 }): Promise<AccountRiskPayload> {
@@ -9233,6 +9266,7 @@ function refreshAccountFullRiskCache(input: {
 
 function scheduleAccountFullRiskRefresh(input: {
   accountId: string;
+  appUserId: string | null;
   mode: RuntimeMode;
   source?: string | null;
 }): Promise<AccountRiskPayload> {
@@ -9248,6 +9282,7 @@ function scheduleAccountFullRiskRefresh(input: {
 
 async function getAccountRiskWithNonBlockingFullDetail(input: {
   accountId: string;
+  appUserId: string | null;
   mode: RuntimeMode;
   source?: string | null;
 }) {
