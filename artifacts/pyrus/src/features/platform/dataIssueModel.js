@@ -9,15 +9,6 @@ const SEVERITY_RANK = {
 };
 
 const ERROR_STATUSES = new Set(["error", "failed", "fail", "blocked", "down"]);
-const LOADING_STATUSES = new Set([
-  "loading",
-  "pending",
-  "queued",
-  "refreshing",
-  "scanning",
-  "starting",
-  "connecting",
-]);
 const UNAVAILABLE_STATUSES = new Set([
   "unavailable",
   "empty",
@@ -163,14 +154,7 @@ export const collectDataIssuesFromRecord = (recordValue, options = {}) => {
     unavailableDetail ||
     errorText;
   const quiet = reasonLooksQuiet(reason, errorText, record.reason, record.degradedReason);
-  const pendingOnly =
-    LOADING_STATUSES.has(status) &&
-    !errorText &&
-    !record.stale &&
-    !record.fallbackUsed &&
-    !record.unavailableCode;
-
-  if (pendingOnly || quiet) return [];
+  if (quiet) return [];
 
   const issues = [];
   const seen = new Set();

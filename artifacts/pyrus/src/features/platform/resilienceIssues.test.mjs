@@ -37,6 +37,14 @@ test("stale issue copy does not imply an old backend snapshot fallback", () => {
   );
 });
 
+test("loading records stay quiet unless another state reports a problem", () => {
+  assert.deepEqual(collectDataIssuesFromRecord({ status: "loading" }), []);
+
+  const issues = collectDataIssuesFromRecord({ status: "loading", sourceStatus: "error" });
+
+  assert.ok(issues.some((issue) => /unavailable/i.test(issue.title)));
+});
+
 test("collectWidgetIssues surfaces a degraded record", () => {
   const issues = collectWidgetIssues({ degraded: true, reason: "orders_backoff" }, {
     valueLabel: "Orders",
