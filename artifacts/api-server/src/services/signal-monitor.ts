@@ -16788,6 +16788,8 @@ export async function listSignalMonitorEvents(input: {
   }
   const cursor = decodeSignalMonitorEventsCursor(input.cursor);
   if (cursor) {
+    // The tie-break OR below does not become an index range bound in PostgreSQL.
+    conditions.push(lte(signalMonitorEventsTable.signalAt, cursor.signalAt));
     const cursorCondition = or(
       lt(signalMonitorEventsTable.signalAt, cursor.signalAt),
       and(

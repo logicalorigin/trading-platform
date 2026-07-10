@@ -1355,6 +1355,68 @@ test("signal monitor events read checks fallback latch before retrying the datab
   );
 });
 
+test("signal monitor events cursor reads stay projected and index-range bounded", () => {
+  const source = readFileSync(new URL("./signal-monitor.ts", import.meta.url), "utf8");
+  const loadStart = source.indexOf("async function loadSignalMonitorEventRows");
+  const loadEnd = source.indexOf(
+    "async function readSignalMonitorPassiveStoredStateFresh",
+    loadStart,
+  );
+  const listStart = source.indexOf("export async function listSignalMonitorEvents");
+  const listEnd = source.indexOf(
+    "function shouldServeSignalMonitorEventsRuntimeFallback",
+    listStart,
+  );
+  assert.notEqual(loadStart, -1);
+  assert.notEqual(loadEnd, -1);
+  assert.notEqual(listStart, -1);
+  assert.notEqual(listEnd, -1);
+
+  const loadBlock = source.slice(loadStart, loadEnd);
+  const selectStart = loadBlock.indexOf(".select({");
+  const selectEnd = loadBlock.indexOf("})", selectStart);
+  assert.notEqual(selectStart, -1);
+  assert.notEqual(selectEnd, -1);
+  const projectedColumns = Array.from(
+    loadBlock.slice(selectStart, selectEnd).matchAll(/^\s+(\w+):/gm),
+    (match) => match[1],
+  );
+  assert.deepEqual(projectedColumns, [
+    "id",
+    "profileId",
+    "environment",
+    "symbol",
+    "timeframe",
+    "direction",
+    "signalAt",
+    "signalPrice",
+    "close",
+    "emittedAt",
+    "source",
+  ]);
+  assert.match(loadBlock, /\.limit\(input\.limit \+ 1\)/);
+
+  const listBlock = source.slice(listStart, listEnd);
+  assert.match(
+    listBlock,
+    /conditions\.push\(gte\(signalMonitorEventsTable\.signalAt, from\)\)/,
+  );
+  assert.match(
+    listBlock,
+    /conditions\.push\(lte\(signalMonitorEventsTable\.signalAt, to\)\)/,
+  );
+  const cursorRangeBound = listBlock.indexOf(
+    "conditions.push(lte(signalMonitorEventsTable.signalAt, cursor.signalAt))",
+  );
+  const cursorTieBreak = listBlock.indexOf("const cursorCondition = or(");
+  assert.notEqual(cursorRangeBound, -1);
+  assert.notEqual(cursorTieBreak, -1);
+  assert.ok(
+    cursorRangeBound < cursorTieBreak,
+    "cursor timestamp must bound the index scan before the id tie-break filter",
+  );
+});
+
 test("signal monitor state fallback carries its source through the API contract", () => {
   const fallback =
     __signalMonitorInternalsForTests.buildSignalMonitorStateUnavailableResult(
