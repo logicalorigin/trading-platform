@@ -137,9 +137,9 @@ async function defaultStorageHealthProbe(): Promise<StorageHealthProbeTimings> {
   return runInDbLane("background", async () => {
     const admittedAt = Date.now();
     const client = await pool.connect();
-    const acquiredAt = Date.now();
-    const probeId = `probe-${Date.now()}-${Math.random().toString(36).slice(2)}`;
     try {
+      const acquiredAt = Date.now();
+      const probeId = `probe-${Date.now()}-${Math.random().toString(36).slice(2)}`;
       await client.query("begin");
       await client.query(
         "create temp table if not exists pyrus_storage_health_probe (id text primary key, value text not null) on commit drop",
@@ -156,6 +156,11 @@ async function defaultStorageHealthProbe(): Promise<StorageHealthProbeTimings> {
         throw new Error("Postgres read/write probe did not return the inserted row.");
       }
       await client.query("commit");
+      return {
+        laneWaitMs: admittedAt - laneRequestedAt,
+        acquireMs: acquiredAt - admittedAt,
+        execMs: Date.now() - acquiredAt,
+      };
     } catch (error) {
       try {
         await client.query("rollback");
@@ -164,11 +169,6 @@ async function defaultStorageHealthProbe(): Promise<StorageHealthProbeTimings> {
     } finally {
       client.release();
     }
-    return {
-      laneWaitMs: admittedAt - laneRequestedAt,
-      acquireMs: acquiredAt - admittedAt,
-      execMs: Date.now() - acquiredAt,
-    };
   });
 }
 
