@@ -37,6 +37,7 @@ minimumReleaseAgeExclude:
 packages:
   - artifacts/*
   - lib/*
+  - security/*
   - scripts
 
 catalog:
