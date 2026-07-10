@@ -12,6 +12,7 @@ import { createAuthSession } from "../services/auth";
 import { AUTH_CSRF_HEADER } from "./auth";
 
 const source = readFileSync(new URL("./platform.ts", import.meta.url), "utf8");
+const nativeFetch = globalThis.fetch;
 const accountServiceSource = readFileSync(
   new URL("../services/account.ts", import.meta.url),
   "utf8",
@@ -323,6 +324,104 @@ const liveOrderMutationCases = [
     },
   },
 ] as const;
+
+test("logo proxy serves only bounded raster images with defensive headers", { concurrency: false }, async () => {
+  const png = Buffer.from([
+    0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00,
+  ]);
+  const upstreamCalls: Array<{ url: string; redirect: string | undefined }> = [];
+  const upstreamFetch: typeof fetch = async (input, init) => {
+    const url = input instanceof Request ? input.url : String(input);
+    upstreamCalls.push({ url, redirect: init?.redirect });
+    const path = new URL(url).pathname;
+    if (path === "/valid.png" || path === "/http.png") {
+      return new Response(png, {
+        status: 200,
+        headers: {
+          "content-length": String(png.length),
+          "content-type": "Image/PNG; charset=binary",
+        },
+      });
+    }
+    if (path === "/html") {
+      return new Response("<script>globalThis.pwned = true</script>", {
+        status: 200,
+        headers: { "content-type": "text/html" },
+      });
+    }
+    if (path === "/image.svg") {
+      return new Response("<svg><script>globalThis.pwned = true</script></svg>", {
+        status: 200,
+        headers: { "content-type": "image/svg+xml" },
+      });
+    }
+    if (path === "/spoofed.png") {
+      return new Response("<script>globalThis.pwned = true</script>", {
+        status: 200,
+        headers: { "content-type": "image/png" },
+      });
+    }
+    if (path === "/oversize.webp") {
+      return new Response(Buffer.alloc(250_001), {
+        status: 200,
+        headers: { "content-type": "image/webp" },
+      });
+    }
+    if (path === "/redirect") {
+      return new Response(null, {
+        status: 302,
+        headers: { location: "https://evil.example/payload" },
+      });
+    }
+    return new Response(png, { status: 200 });
+  };
+
+  globalThis.fetch = upstreamFetch;
+  try {
+    await withServer(async (baseUrl) => {
+      const proxy = (url: string) =>
+        nativeFetch(
+          `${baseUrl}/universe/logo-proxy?url=${encodeURIComponent(url)}`,
+        );
+      const valid = await proxy("https://storage.googleapis.com/valid.png");
+      assert.equal(valid.status, 200);
+      assert.equal(valid.headers.get("content-type"), "image/png");
+      assert.equal(valid.headers.get("x-content-type-options"), "nosniff");
+      assert.equal(valid.headers.get("content-disposition"), "inline");
+      assert.equal(
+        valid.headers.get("content-security-policy"),
+        "default-src 'none'; sandbox",
+      );
+      assert.equal(valid.headers.get("cross-origin-resource-policy"), "same-origin");
+      assert.deepEqual(Buffer.from(await valid.arrayBuffer()), png);
+
+      for (const path of [
+        "html",
+        "image.svg",
+        "missing-content-type",
+        "spoofed.png",
+        "oversize.webp",
+        "redirect",
+      ]) {
+        const rejected = await proxy(`https://storage.googleapis.com/${path}`);
+        assert.equal(rejected.status, 204, path);
+      }
+
+      const callsBeforeHttp = upstreamCalls.length;
+      const http = await proxy("http://storage.googleapis.com/http.png");
+      assert.equal(http.status, 403);
+      assert.equal(upstreamCalls.length, callsBeforeHttp);
+      assert.ok(upstreamCalls.length > 0);
+      assert.ok(upstreamCalls.every((call) => call.redirect === "manual"));
+      assert.equal(
+        upstreamCalls.filter((call) => new URL(call.url).pathname === "/redirect").length,
+        1,
+      );
+    });
+  } finally {
+    globalThis.fetch = nativeFetch;
+  }
+});
 
 test("account positions route supports explicit quote and fast-detail controls", () => {
   const handler = routeSource("/accounts/:accountId/positions");

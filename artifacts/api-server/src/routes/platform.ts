@@ -277,6 +277,75 @@ const LOGO_PROXY_ALLOWED_HOSTS = new Set([
   "images.financialmodelingprep.com",
 ]);
 const LOGO_PROXY_TIMEOUT_MS = 2_000;
+const LOGO_PROXY_MAX_BYTES = 250_000;
+const LOGO_PROXY_CONTENT_TYPES = new Set([
+  "image/gif",
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+]);
+
+function isAllowedLogoProxyUrl(url: URL): boolean {
+  return (
+    url.protocol === "https:" &&
+    !url.username &&
+    !url.password &&
+    !url.port &&
+    LOGO_PROXY_ALLOWED_HOSTS.has(url.hostname)
+  );
+}
+
+function hasLogoProxyMagicBytes(contentType: string, bytes: Buffer): boolean {
+  if (contentType === "image/png") {
+    return (
+      bytes.length >= 8 &&
+      bytes[0] === 0x89 &&
+      bytes.subarray(1, 8).equals(Buffer.from("PNG\r\n\x1a\n", "binary"))
+    );
+  }
+  if (contentType === "image/jpeg") {
+    return (
+      bytes.length >= 3 &&
+      bytes[0] === 0xff &&
+      bytes[1] === 0xd8 &&
+      bytes[2] === 0xff
+    );
+  }
+  if (contentType === "image/gif") {
+    const signature = bytes.toString("ascii", 0, 6);
+    return signature === "GIF87a" || signature === "GIF89a";
+  }
+  return (
+    contentType === "image/webp" &&
+    bytes.length >= 12 &&
+    bytes.toString("ascii", 0, 4) === "RIFF" &&
+    bytes.toString("ascii", 8, 12) === "WEBP"
+  );
+}
+
+async function readBoundedLogoProxyBody(
+  response: Awaited<ReturnType<typeof fetch>>,
+): Promise<Buffer | null> {
+  if (!response.body) return null;
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let totalBytes = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      totalBytes += value.byteLength;
+      if (totalBytes > LOGO_PROXY_MAX_BYTES) {
+        await reader.cancel();
+        return null;
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  return Buffer.concat(chunks, totalBytes);
+}
 
 function sameOriginLogoUrl(logoUrl: string | null): string | null {
   if (!logoUrl || logoUrl.startsWith("data:") || logoUrl.startsWith("/")) {
@@ -284,7 +353,7 @@ function sameOriginLogoUrl(logoUrl: string | null): string | null {
   }
   try {
     const parsed = new URL(logoUrl);
-    if (!LOGO_PROXY_ALLOWED_HOSTS.has(parsed.hostname)) {
+    if (!isAllowedLogoProxyUrl(parsed)) {
       return null;
     }
     return `/api/universe/logo-proxy?url=${encodeURIComponent(logoUrl)}`;
@@ -2396,8 +2465,8 @@ router.get("/universe/logo-proxy", async (req, res) => {
     res.status(400).json({ error: "Invalid logo URL." });
     return;
   }
-  if (!LOGO_PROXY_ALLOWED_HOSTS.has(parsed.hostname)) {
-    res.status(403).json({ error: "Logo host is not allowed." });
+  if (!isAllowedLogoProxyUrl(parsed)) {
+    res.status(403).json({ error: "Logo URL is not allowed." });
     return;
   }
   const requestSignal = createRequestAbortSignal(req, res);
@@ -2413,17 +2482,40 @@ router.get("/universe/logo-proxy", async (req, res) => {
   }
   try {
     const upstream = await fetch(parsed, {
-      headers: { Accept: "image/avif,image/webp,image/svg+xml,image/*,*/*;q=0.8" },
+      headers: { Accept: "image/png,image/jpeg,image/gif,image/webp" },
+      redirect: "manual",
       signal: timeoutController.signal,
     });
-    if (!upstream.ok || !upstream.body) {
+    const contentType = (upstream.headers.get("content-type") ?? "")
+      .split(";", 1)[0]
+      .trim()
+      .toLowerCase();
+    const contentLengthHeader = upstream.headers.get("content-length");
+    const contentLength = Number(contentLengthHeader);
+    if (
+      !upstream.ok ||
+      !upstream.body ||
+      !LOGO_PROXY_CONTENT_TYPES.has(contentType) ||
+      (contentLengthHeader !== null &&
+        (!Number.isFinite(contentLength) ||
+          contentLength < 0 ||
+          contentLength > LOGO_PROXY_MAX_BYTES))
+    ) {
+      await upstream.body?.cancel();
+      res.status(204).end();
+      return;
+    }
+    const bytes = await readBoundedLogoProxyBody(upstream);
+    if (!bytes?.length || !hasLogoProxyMagicBytes(contentType, bytes)) {
       res.status(204).end();
       return;
     }
     res.setHeader("Cache-Control", "public, max-age=86400, stale-while-revalidate=604800");
     res.setHeader("Cross-Origin-Resource-Policy", "same-origin");
-    res.type(upstream.headers.get("content-type") || "image/svg+xml");
-    const bytes = Buffer.from(await upstream.arrayBuffer());
+    res.setHeader("Content-Disposition", "inline");
+    res.setHeader("Content-Security-Policy", "default-src 'none'; sandbox");
+    res.setHeader("Content-Type", contentType);
+    res.setHeader("X-Content-Type-Options", "nosniff");
     res.send(bytes);
   } catch {
     if (!res.headersSent) {
