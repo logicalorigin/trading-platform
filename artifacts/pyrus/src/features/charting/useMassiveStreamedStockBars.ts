@@ -165,6 +165,11 @@ const LIVE_BAR_FALLBACK_STREAM_COOLDOWN_MS = 10_000;
 const LIVE_BAR_FALLBACK_SUCCESS_COOLDOWN_MS = 15_000;
 const LIVE_BAR_STREAM_MAX_CONNECTIONS = 64;
 const INTRADAY_PREPEND_MIN_LOOKBACK_MS = 7 * 24 * 60 * 60 * 1_000;
+const COARSE_PREPEND_MAX_LOOKBACK_MS: Record<string, number> = {
+  "1w": 156 * 7 * 24 * 60 * 60 * 1_000,
+  "1month": 120 * 30 * 24 * 60 * 60 * 1_000,
+  "1year": 20 * 365 * 24 * 60 * 60 * 1_000,
+};
 const EMPTY_OLDER_HISTORY_WINDOW_EXHAUSTION_LIMIT = 120;
 
 const liveBarStreamEntries = new Map<string, LiveBarStreamEntry>();
@@ -533,7 +538,12 @@ const resolvePrependLookbackMs = (
   if (!stepMs) {
     return 0;
   }
-  if (normalizeChartTimeframe(timeframe) === "1d") {
+  const normalizedTimeframe = normalizeChartTimeframe(timeframe);
+  const coarseMaxLookbackMs = COARSE_PREPEND_MAX_LOOKBACK_MS[normalizedTimeframe];
+  if (coarseMaxLookbackMs) {
+    return Math.min(pageWindowMs, coarseMaxLookbackMs);
+  }
+  if (normalizedTimeframe === "1d") {
     return pageWindowMs;
   }
   return Math.max(pageWindowMs * 3, INTRADAY_PREPEND_MIN_LOOKBACK_MS);

@@ -50,6 +50,8 @@ export const CHART_HYDRATION_ROLES = Object.freeze([
   "option",
 ]);
 
+const COARSE_PREPEND_TIMEFRAMES = new Set(["1w", "1month", "1year"]);
+
 export const normalizeChartHydrationRole = (role) =>
   CHART_HYDRATION_ROLES.includes(role) ? role : "primary";
 
@@ -202,10 +204,15 @@ export const resolveVisibleRangeHydrationAction = ({
     Number.isFinite(oldestLoadedAtMs)
   ) {
     const minimumPageSize = getInitialChartBarLimit(timeframe, normalizeChartHydrationRole(role));
+    const fixedPageFloor = COARSE_PREPEND_TIMEFRAMES.has(
+      normalizeChartTimeframe(timeframe),
+    )
+      ? 0
+      : role === "option" ? 240 : 360;
     const prependPageSize = Math.max(
       minimumPageSize,
       Math.ceil(visibleBars * 2),
-      role === "option" ? 240 : 360,
+      fixedPageFloor,
     );
 
     return {

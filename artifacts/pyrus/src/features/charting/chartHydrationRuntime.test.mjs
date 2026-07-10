@@ -4,6 +4,10 @@ import {
   resolveVisibleRangeHydrationAction,
   CHART_HYDRATION_ACTION,
 } from "./chartHydrationRuntime.js";
+import { __chartStreamingTestInternals } from "./useMassiveStreamedStockBars";
+
+const { resolvePrependLookbackMs } = __chartStreamingTestInternals;
+const DAY_MS = 24 * 60 * 60 * 1_000;
 
 // Focused guard for "Chart older candle hydration on pan/zoom" option (a):
 // PREPEND_OLDER must fire at the left edge even while the initial window is
@@ -108,4 +112,44 @@ test("an in-flight prepend suppresses another prepend", () => {
   });
   assert.equal(action.action, CHART_HYDRATION_ACTION.NONE);
   assert.equal(action.reason, "prepend-in-flight");
+});
+
+test("coarse timeframe prepends use their initial bar limits as page floors", () => {
+  for (const [timeframe, pageSize] of [
+    ["1w", 156],
+    ["1month", 120],
+    ["1year", 20],
+  ]) {
+    const action = resolveVisibleRangeHydrationAction({
+      ...base,
+      timeframe,
+      range: { from: 0, to: 1 },
+    });
+
+    assert.equal(action.action, CHART_HYDRATION_ACTION.PREPEND_OLDER);
+    assert.equal(action.pageSize, pageSize, timeframe);
+  }
+});
+
+test("coarse timeframe prepend lookbacks are one page with a bounded maximum window", () => {
+  for (const [timeframe, pageSize, maxWindowMs] of [
+    ["1w", 156, 156 * 7 * DAY_MS],
+    ["1month", 120, 120 * 30 * DAY_MS],
+    ["1year", 20, 20 * 365 * DAY_MS],
+  ]) {
+    assert.equal(resolvePrependLookbackMs(timeframe, pageSize), maxWindowMs);
+    assert.equal(resolvePrependLookbackMs(timeframe, 10_000), maxWindowMs);
+  }
+});
+
+test("fine timeframe prepend page floors and lookbacks stay unchanged", () => {
+  const action = resolveVisibleRangeHydrationAction({
+    ...base,
+    timeframe: "5m",
+  });
+
+  assert.equal(action.pageSize, 360);
+  assert.equal(resolvePrependLookbackMs("5m", 360), 7 * DAY_MS);
+  assert.equal(resolvePrependLookbackMs("1h", 360), 45 * DAY_MS);
+  assert.equal(resolvePrependLookbackMs("1d", 360), 360 * DAY_MS);
 });
