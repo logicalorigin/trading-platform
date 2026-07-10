@@ -195,3 +195,48 @@ test("hosted IBKR mode surfaces release failures after removing broker routing",
     }
   }
 });
+
+test("hosted IBKR mode rejects a non-loopback control URL without sending its token", async () => {
+  const previousEnabled = process.env["IBKR_SESSION_HOST_ENABLED"];
+  const previousToken = process.env["IBKR_SESSION_HOST_CONTROL_TOKEN"];
+  const previousUrl = process.env["IBKR_SESSION_HOST_URL"];
+  const previousFetch = globalThis.fetch;
+  let fetchCalled = false;
+
+  process.env["IBKR_SESSION_HOST_ENABLED"] = "1";
+  process.env["IBKR_SESSION_HOST_CONTROL_TOKEN"] = "host-token";
+  process.env["IBKR_SESSION_HOST_URL"] = "http://169.254.169.254/latest";
+  globalThis.fetch = (async () => {
+    fetchCalled = true;
+    return Response.json({});
+  }) as typeof fetch;
+
+  try {
+    await assert.rejects(
+      () => ensureGateway("99999999-9999-4999-8999-999999999999"),
+      (error: unknown) =>
+        typeof error === "object" &&
+        error !== null &&
+        "code" in error &&
+        error.code === "ibkr_session_host_config_invalid",
+    );
+    assert.equal(fetchCalled, false);
+  } finally {
+    globalThis.fetch = previousFetch;
+    if (previousEnabled === undefined) {
+      delete process.env["IBKR_SESSION_HOST_ENABLED"];
+    } else {
+      process.env["IBKR_SESSION_HOST_ENABLED"] = previousEnabled;
+    }
+    if (previousToken === undefined) {
+      delete process.env["IBKR_SESSION_HOST_CONTROL_TOKEN"];
+    } else {
+      process.env["IBKR_SESSION_HOST_CONTROL_TOKEN"] = previousToken;
+    }
+    if (previousUrl === undefined) {
+      delete process.env["IBKR_SESSION_HOST_URL"];
+    } else {
+      process.env["IBKR_SESSION_HOST_URL"] = previousUrl;
+    }
+  }
+});

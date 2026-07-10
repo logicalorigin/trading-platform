@@ -76,11 +76,35 @@ const gateways = new Map<string, Entry>();
 function hostedConfig(): { baseUrl: string; token: string } | null {
   if (process.env["IBKR_SESSION_HOST_ENABLED"] !== "1") return null;
   const token = process.env["IBKR_SESSION_HOST_CONTROL_TOKEN"]?.trim();
-  if (!token) return null;
+  const rawUrl =
+    process.env["IBKR_SESSION_HOST_URL"]?.trim() ??
+    "http://127.0.0.1:18748";
+  let url: URL;
+  try {
+    url = new URL(rawUrl);
+  } catch {
+    throw new HttpError(503, "The IBKR session host configuration is invalid.", {
+      code: "ibkr_session_host_config_invalid",
+      expose: true,
+    });
+  }
+  if (
+    !token ||
+    url.protocol !== "http:" ||
+    url.hostname !== "127.0.0.1" ||
+    url.username !== "" ||
+    url.password !== "" ||
+    url.pathname !== "/" ||
+    url.search !== "" ||
+    url.hash !== ""
+  ) {
+    throw new HttpError(503, "The IBKR session host configuration is invalid.", {
+      code: "ibkr_session_host_config_invalid",
+      expose: true,
+    });
+  }
   return {
-    baseUrl:
-      process.env["IBKR_SESSION_HOST_URL"]?.replace(/\/+$/, "") ??
-      "http://127.0.0.1:18748",
+    baseUrl: url.origin,
     token,
   };
 }
