@@ -1,5 +1,12 @@
 # Phantom exit-fill audit — 2026-07-09 realized P&L
 
+> **EXECUTED 2026-07-09 ~23:40 MDT (Riley-ordered).** Both surgery transactions committed.
+> Acceptance: Jul-9 realized −6,912.27 → **−3,586.91** (40 fills); latest NLV 137,511 →
+> **140,840**; account cash **117,452.46**; fills-fold vs account-row diff **0.00**; ASTN
+> fully voided (0 fills, 0 positions) and still absent after a mirror-repair cycle (the
+> backfill-flag exemption held). Rollback path: `_phantom_backup_*_20260709` tables in the
+> DB (drop after a clean RTH session).
+
 Audit of the -$6,912 realized P&L booked on 2026-07-09 (42 fills, 17 realizing sells), all
 executed BEFORE the degenerate-spread sell fix + stop-floor ruling went live (`c3c5eaab`,
 ~18:19 MDT). Method: per-fill reconstruction of the quote mid at exit from `shadow_position_marks`
