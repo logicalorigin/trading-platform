@@ -2112,6 +2112,8 @@ const historicalFlowCooldowns = new Map<
 >();
 let lastHistoricalFlowCooldownPruneMs = 0;
 let flowEventsOnDemandActive = 0;
+let historicalFlowEventsLaunches = 0;
+let historicalFlowEventsJoins = 0;
 
 export type FlowPremiumDistributionStatus =
   | "ok"
@@ -3720,6 +3722,8 @@ export function getPlatformResourceDiagnostics() {
     flowEvents: {
       entries: flowEventsCache.size,
       inFlight: flowEventsInFlight.size,
+      historicalLaunches: historicalFlowEventsLaunches,
+      historicalJoins: historicalFlowEventsJoins,
       ttlMs: FLOW_EVENTS_CACHE_TTL_MS,
       ...countExpired(flowEventsCache.values()),
     },
@@ -14150,6 +14154,8 @@ export function __resetOptionChainCachesForTests(input?: {
   historicalFlowCooldowns.clear();
   lastHistoricalFlowCooldownPruneMs = 0;
   flowEventsOnDemandActive = 0;
+  historicalFlowEventsLaunches = 0;
+  historicalFlowEventsJoins = 0;
   liveWarmupBackgroundHoldUntil = 0;
   optionsFlowSessionBlockReason = null;
   optionsFlowSessionBlockCheckedAt = 0;
@@ -18038,10 +18044,8 @@ export async function listFlowEvents(input: {
             reason: HISTORICAL_FLOW_REFRESHING_REASON,
           });
         }
-        return listHistoricalFlowEvents({
+        return refreshHistoricalFlowEventsCache(cacheKey, {
           underlying,
-          providerName: getMarketDataConnectionName(),
-          client: getMassiveClient(),
           limit,
           filters,
           unusualThreshold,
@@ -18078,10 +18082,8 @@ export async function listFlowEvents(input: {
           reason: HISTORICAL_FLOW_REFRESHING_REASON,
         });
       }
-      return listHistoricalFlowEvents({
+      return refreshHistoricalFlowEventsCache(cacheKey, {
         underlying,
-        providerName: getMarketDataConnectionName(),
-        client: getMassiveClient(),
         limit,
         filters,
         unusualThreshold,
@@ -18378,9 +18380,11 @@ function refreshHistoricalFlowEventsCache(
 ): Promise<FlowEventsResult> {
   const existing = flowEventsInFlight.get(cacheKey);
   if (existing) {
+    historicalFlowEventsJoins += 1;
     return existing;
   }
 
+  historicalFlowEventsLaunches += 1;
   const cached = flowEventsCache.get(cacheKey);
   flowEventsOnDemandActive += 1;
   const request = listHistoricalFlowEvents({
