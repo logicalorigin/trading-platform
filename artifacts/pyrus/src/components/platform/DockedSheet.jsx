@@ -11,8 +11,8 @@ import { ELEVATION, RADII, T, dim } from "../../lib/uiTokens.jsx";
  *
  * The `children` are EAGERLY mounted (kept clipped/hidden while collapsed), so
  * the body — e.g. the order ticket — is fully preloaded at page load and the
- * expand reveals it instantly with no wait. It's hidden via maxHeight:0 +
- * overflow:hidden + opacity:0, so the loading state is never visible on the page.
+ * expand reveals it instantly with no wait. It's clipped and inert while
+ * collapsed, so it is neither visible nor keyboard-accessible on the page.
  */
 export const DockedSheet = ({
   expanded = false,
@@ -47,6 +47,7 @@ export const DockedSheet = ({
       <div
         id={bodyId}
         aria-hidden={expanded ? undefined : "true"}
+        inert={!expanded}
         style={{
           position: "absolute",
           bottom: "100%",
