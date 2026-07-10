@@ -12,6 +12,10 @@ import { createAuthSession } from "../services/auth";
 import { AUTH_CSRF_HEADER } from "./auth";
 
 const source = readFileSync(new URL("./platform.ts", import.meta.url), "utf8");
+const accountServiceSource = readFileSync(
+  new URL("../services/account.ts", import.meta.url),
+  "utf8",
+);
 const serviceCalls = new Map<string, number>();
 
 function countedService(name: string) {
@@ -36,8 +40,14 @@ function inertSubscription() {
   return async () => () => undefined;
 }
 
+let getAccountSummaryImpl: (...args: unknown[]) => Promise<unknown> =
+  countedService("getAccountSummary");
+let getAccountPositionsImpl: (...args: unknown[]) => Promise<unknown> =
+  countedService("getAccountPositions");
 let getAccountRiskImpl: (...args: unknown[]) => Promise<unknown> =
   countedService("getAccountRisk");
+let snapTradeBackedAccountsPresent = false;
+let robinhoodBackedAccountsPresent = false;
 
 mock.module(new URL("../lib/runtime.ts", import.meta.url).href, {
   namedExports: {
@@ -57,12 +67,13 @@ mock.module(new URL("../services/account.ts", import.meta.url).href, {
     getAccountClosedTrades: countedService("getAccountClosedTrades"),
     getAccountEquityHistory: countedService("getAccountEquityHistory"),
     getAccountOrders: countedService("getAccountOrders"),
-    getAccountPositions: countedService("getAccountPositions"),
+    getAccountPositions: (...args: unknown[]) => getAccountPositionsImpl(...args),
     getAccountPositionsAtDate: countedService("getAccountPositionsAtDate"),
     getAccountRisk: (...args: unknown[]) => getAccountRiskImpl(...args),
-    getAccountSummary: countedService("getAccountSummary"),
+    getAccountSummary: (...args: unknown[]) => getAccountSummaryImpl(...args),
     getFlexHealth: inertService({ ok: true }),
-    hasSnapTradeBackedAccounts: async () => false,
+    hasRobinhoodBackedAccounts: async () => robinhoodBackedAccountsPresent,
+    hasSnapTradeBackedAccounts: async () => snapTradeBackedAccountsPresent,
     listAccounts: countedService("listAccounts"),
     testFlexToken: inertService({ ok: true }),
   },
@@ -223,6 +234,14 @@ function routeSource(path: string, method = "get"): string {
   return source.slice(start, next === -1 ? undefined : next);
 }
 
+function accountServiceBlock(startMarker: string, endMarker: string): string {
+  const start = accountServiceSource.indexOf(startMarker);
+  assert.notEqual(start, -1, `Missing ${startMarker}`);
+  const end = accountServiceSource.indexOf(endMarker, start + startMarker.length);
+  assert.notEqual(end, -1, `Missing ${endMarker}`);
+  return accountServiceSource.slice(start, end);
+}
+
 async function withServer<T>(fn: (baseUrl: string) => Promise<T>): Promise<T> {
   const app = express();
   app.use(express.json());
@@ -269,6 +288,7 @@ async function seedMemberAuth(input: {
   assert.ok(user);
   const session = await createAuthSession({ userId: user.id });
   return {
+    userId: user.id,
     cookie: `pyrus_session=${session.sessionToken}`,
     csrfToken: session.csrfToken,
   };
@@ -313,6 +333,139 @@ test("account positions route supports explicit quote and fast-detail controls",
     handler,
     /SHADOW_ACCOUNT_ID/,
     "shadow accounts must not be opted out of live quotes by default",
+  );
+});
+
+test("account detail routes thread the requesting user and preserve scoped 404s", async () => {
+  await withTestDb(async () =>
+    withServer(async (baseUrl) => {
+      const accountId = "seeded-provider-account";
+      const owner = await seedMemberAuth({
+        email: "account-detail-owner@example.com",
+      });
+      const otherUser = await seedMemberAuth({
+        email: "account-detail-other@example.com",
+      });
+      const observedCalls: Array<{
+        route: "summary" | "positions";
+        accountId: string;
+        appUserId: string | null;
+      }> = [];
+      const detailResponse =
+        (route: "summary" | "positions") => async (rawInput: unknown) => {
+          const input = rawInput as {
+            accountId?: unknown;
+            appUserId?: unknown;
+          };
+          const observed = {
+            route,
+            accountId: String(input.accountId ?? ""),
+            appUserId:
+              typeof input.appUserId === "string" ? input.appUserId : null,
+          };
+          observedCalls.push(observed);
+          if (
+            observed.accountId !== accountId ||
+            observed.appUserId !== owner.userId
+          ) {
+            throw new HttpError(404, `Account "${accountId}" was not found.`, {
+              code: "account_not_found",
+              expose: true,
+            });
+          }
+          return route === "summary"
+            ? { accounts: [{ id: accountId, owner: owner.userId }] }
+            : { positions: [{ id: `${accountId}:AAPL`, accountId }] };
+        };
+
+      snapTradeBackedAccountsPresent = true;
+      getAccountSummaryImpl = detailResponse("summary");
+      getAccountPositionsImpl = detailResponse("positions");
+      try {
+        for (const route of ["summary", "positions"] as const) {
+          const ownerResponse = await fetch(
+            `${baseUrl}/accounts/${accountId}/${route}`,
+            { headers: { cookie: owner.cookie } },
+          );
+          assert.equal(ownerResponse.status, 200);
+          const ownerBody = (await ownerResponse.json()) as {
+            accounts?: unknown[];
+            positions?: unknown[];
+          };
+          assert.equal(
+            route === "summary"
+              ? ownerBody.accounts?.length
+              : ownerBody.positions?.length,
+            1,
+          );
+
+          const otherResponse = await fetch(
+            `${baseUrl}/accounts/${accountId}/${route}`,
+            { headers: { cookie: otherUser.cookie } },
+          );
+          assert.equal(otherResponse.status, 404);
+          assert.equal(
+            ((await otherResponse.json()) as { code?: string }).code,
+            "account_not_found",
+          );
+        }
+
+        assert.deepEqual(
+          observedCalls.map(({ route, appUserId }) => ({ route, appUserId })),
+          [
+            { route: "summary", appUserId: owner.userId },
+            { route: "summary", appUserId: otherUser.userId },
+            { route: "positions", appUserId: owner.userId },
+            { route: "positions", appUserId: otherUser.userId },
+          ],
+        );
+
+        // Provider-aware admission: a Robinhood-only owner (no IBKR, no
+        // SnapTrade presence) is admitted rather than rejected with a 503
+        // before scoped resolution (WO-P2-ACCTSCOPE reviewer High finding).
+        snapTradeBackedAccountsPresent = false;
+        robinhoodBackedAccountsPresent = true;
+        const robinhoodOwnerResponse = await fetch(
+          `${baseUrl}/accounts/${accountId}/summary`,
+          { headers: { cookie: owner.cookie } },
+        );
+        assert.equal(robinhoodOwnerResponse.status, 200);
+      } finally {
+        snapTradeBackedAccountsPresent = false;
+        robinhoodBackedAccountsPresent = false;
+        getAccountSummaryImpl = countedService("getAccountSummary");
+        getAccountPositionsImpl = countedService("getAccountPositions");
+      }
+    }),
+  );
+});
+
+test("account detail service caches include the requesting user scope", () => {
+  const summary = accountServiceBlock(
+    "export async function getAccountSummary(",
+    "async function getAccountSummaryUncached(",
+  );
+  assert.match(summary, /appUserId/);
+  assert.match(
+    summary,
+    /readAccountRouteResponseCache\([\s\S]*?appUserId/,
+    "summary response caching must not reuse one user's detail for another user",
+  );
+
+  const positions = accountServiceBlock(
+    "export async function getAccountPositions(",
+    "function resolveAccountPositionTypeFilter(",
+  );
+  assert.match(positions, /appUserId/);
+
+  const universeCacheKey = accountServiceBlock(
+    "function accountUniverseReadCacheKey(",
+    "function accountPositionsCacheKey(",
+  );
+  assert.match(
+    universeCacheKey,
+    /appUserId/,
+    "position-derived caches must separate same-shaped requests by app user",
   );
 });
 

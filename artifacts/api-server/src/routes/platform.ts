@@ -151,6 +151,7 @@ import {
   getAccountRisk,
   getAccountSummary,
   getFlexHealth,
+  hasRobinhoodBackedAccounts,
   hasSnapTradeBackedAccounts,
   listAccounts,
   testFlexToken,
@@ -191,17 +192,20 @@ const admitAccountRoute = async (
   accountId?: unknown,
 ): Promise<boolean> => {
   const ibkrConfigured = ibkrConfiguredForRealAccounts();
-  // Only pay the (cached) SnapTrade presence lookup when IBKR alone would
-  // reject the route — connected SnapTrade accounts also admit real
-  // account routes under the multi-broker model.
-  const snapTradeAccountsPresent =
+  // Only pay the (cached) provider presence lookups when IBKR alone would
+  // reject the route. Connected SnapTrade OR Robinhood accounts also admit
+  // real account routes under the multi-broker model, so a provider-only
+  // owner is not rejected before scoped resolution (WO-P2-ACCTSCOPE). The
+  // `||` short-circuits, so Robinhood is only probed when SnapTrade is absent.
+  const providerAccountsPresent =
     !shouldAdmitAccountRoute({ accountId, ibkrConfigured }) &&
-    (await hasSnapTradeBackedAccounts());
+    ((await hasSnapTradeBackedAccounts()) ||
+      (await hasRobinhoodBackedAccounts()));
   if (
     shouldAdmitAccountRoute({
       accountId,
       ibkrConfigured,
-      snapTradeAccountsPresent,
+      snapTradeAccountsPresent: providerAccountsPresent,
     })
   ) {
     return true;
@@ -1777,12 +1781,14 @@ router.post("/accounts/flex/test", async (_req, res) => {
 });
 
 router.get("/accounts/:accountId/summary", async (req, res) => {
+  const { user } = await requireUser(req);
   if (!(await admitAccountRoute(res, req.params.accountId))) return;
   const mode = req.query.mode === "live" ? "live" : req.query.mode === "shadow" ? "shadow" : undefined;
   res.json(
     await withCallerShadowScope(req.params.accountId, () =>
       getAccountSummary({
         accountId: req.params.accountId,
+        appUserId: user.id,
         mode,
         source: readOptionalString(req.query.source, 80),
       }),
@@ -1825,6 +1831,7 @@ router.get("/accounts/:accountId/allocation", async (req, res) => {
 });
 
 router.get("/accounts/:accountId/positions", async (req, res) => {
+  const { user } = await requireUser(req);
   if (!(await admitAccountRoute(res, req.params.accountId))) return;
   const mode = req.query.mode === "live" ? "live" : req.query.mode === "shadow" ? "shadow" : undefined;
   const liveQuotes =
@@ -1838,6 +1845,7 @@ router.get("/accounts/:accountId/positions", async (req, res) => {
     await withCallerShadowScope(req.params.accountId, () =>
       getAccountPositions({
         accountId: req.params.accountId,
+        appUserId: user.id,
         assetClass:
           typeof req.query.assetClass === "string" ? req.query.assetClass : null,
         mode,

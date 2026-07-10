@@ -262,6 +262,7 @@ const accountPositionOpenedOnCurrentMarketDay = (
 };
 
 type AccountUniverse = {
+  appUserId?: string | null;
   requestedAccountId: string;
   accountIds: string[];
   isCombined: boolean;
@@ -1303,14 +1304,14 @@ function liveAccountUniverseCacheKey(
 async function getLiveAccountUniverse(
   accountId: string,
   mode: RuntimeMode,
+  appUserId: string | null = getCurrentAppUserId(),
 ): Promise<AccountUniverse> {
-  const appUserId = getCurrentAppUserId();
   return readShortLivedAccountCache(
     liveAccountUniverseReadCache,
     liveAccountUniverseCacheKey(accountId, mode, appUserId),
     () =>
       readLiveAccountUniverseUncached(accountId, mode, {
-        appUserId: appUserId ?? undefined,
+        appUserId,
       }),
   );
 }
@@ -1370,6 +1371,7 @@ async function readLiveAccountUniverseUncached(
       await readProviderBackedAccounts(),
     );
     return {
+      appUserId,
       requestedAccountId,
       accountIds: combinedAccounts.map((account) => account.id),
       isCombined,
@@ -1402,6 +1404,7 @@ async function readLiveAccountUniverseUncached(
             ? "snaptrade"
             : "broker";
       return {
+        appUserId,
         requestedAccountId,
         accountIds: selectedProviderBackedAccounts.map((account) => account.id),
         isCombined,
@@ -1418,6 +1421,7 @@ async function readLiveAccountUniverseUncached(
     const flexAccounts = await getFlexBackedAccounts(requestedAccountId, mode);
     if (flexAccounts.length) {
       return {
+        appUserId,
         requestedAccountId,
         accountIds: flexAccounts.map((account) => account.id),
         isCombined,
@@ -1438,6 +1442,7 @@ async function readLiveAccountUniverseUncached(
   }
 
   return {
+    appUserId,
     requestedAccountId,
     accountIds: selectedAccounts.map((account) => account.id),
     isCombined,
@@ -1519,6 +1524,7 @@ function accountUniverseReadCacheKey(
 ): string {
   return JSON.stringify({
     accountIds: [...universe.accountIds].sort(),
+    appUserId: universe.appUserId ?? null,
     ...Object.fromEntries(
       Object.entries(extra).sort(([left], [right]) =>
         left.localeCompare(right),
@@ -1600,7 +1606,10 @@ function snapTradePortfolioPositionToBrokerPosition(
 function applyLatestSnapTradeBalancesToUniverse(
   universe: AccountUniverse,
 ): AccountUniverse {
-  const appUserId = getCurrentAppUserId();
+  const appUserId =
+    universe.appUserId === undefined
+      ? getCurrentAppUserId()
+      : universe.appUserId;
   let changed = false;
   const accounts = universe.accounts.map((account) => {
     if (account.provider !== "snaptrade") {
@@ -1645,7 +1654,10 @@ async function readPositionsForUniverseUncached(
   const snapTradeAccounts = universe.accounts.filter(
     (account) => account.provider === "snaptrade",
   );
-  const appUserId = getCurrentAppUserId();
+  const appUserId =
+    universe.appUserId === undefined
+      ? getCurrentAppUserId()
+      : universe.appUserId;
   const readSnapTradePortfolio =
     options.readSnapTradePortfolio ??
     ((accountId: string) =>
@@ -4475,7 +4487,7 @@ export async function recordAccountSnapshots(
 }
 
 type ListAccountsOptions = {
-  appUserId?: string;
+  appUserId?: string | null;
   listLiveAccounts?: (mode: RuntimeMode) => Promise<BrokerAccountSnapshot[]>;
   getPersistedAccounts?: (
     requestedAccountId: string,
@@ -4907,6 +4919,75 @@ export async function hasSnapTradeBackedAccounts(input: {
         snapTradePresenceInFlight.delete(cacheKey);
       });
     snapTradePresenceInFlight.set(cacheKey, inFlight);
+  }
+  return inFlight;
+}
+
+const ROBINHOOD_PRESENCE_CACHE_TTL_MS = 30_000;
+const robinhoodPresenceCache = new Map<
+  string,
+  { value: boolean; expiresAtMs: number }
+>();
+const robinhoodPresenceInFlight = new Map<string, Promise<boolean>>();
+
+async function readRobinhoodAccountPresence(
+  appUserId: string | null,
+): Promise<boolean> {
+  try {
+    const conditions = [
+      eq(brokerConnectionsTable.brokerProvider, "robinhood"),
+      eq(brokerConnectionsTable.status, "connected"),
+    ];
+    if (appUserId) {
+      conditions.push(eq(brokerAccountsTable.appUserId, appUserId));
+    }
+    const rows = await db
+      .select({ id: brokerAccountsTable.id })
+      .from(brokerAccountsTable)
+      .innerJoin(
+        brokerConnectionsTable,
+        eq(brokerConnectionsTable.id, brokerAccountsTable.connectionId),
+      )
+      .where(and(...conditions))
+      .limit(1);
+    return rows.length > 0;
+  } catch (error) {
+    logger.warn(
+      { err: error },
+      "robinhood account presence check failed; treating as absent",
+    );
+    return false;
+  }
+}
+
+// Multi-broker admission companion to hasSnapTradeBackedAccounts: a connected
+// Robinhood account also admits real-account routes for its owner, so a
+// Robinhood-only caller is not rejected before scoped resolution
+// (WO-P2-ACCTSCOPE). Cached per app user like the SnapTrade presence probe.
+export async function hasRobinhoodBackedAccounts(input: {
+  appUserId?: string | null;
+} = {}): Promise<boolean> {
+  const appUserId = input.appUserId ?? getCurrentAppUserId();
+  const cacheKey = appUserId ?? SNAPTRADE_GLOBAL_PRESENCE_CACHE_KEY;
+  const nowMs = Date.now();
+  const cached = robinhoodPresenceCache.get(cacheKey);
+  if (cached && cached.expiresAtMs > nowMs) {
+    return cached.value;
+  }
+  let inFlight = robinhoodPresenceInFlight.get(cacheKey);
+  if (!inFlight) {
+    inFlight = readRobinhoodAccountPresence(appUserId)
+      .then((value) => {
+        robinhoodPresenceCache.set(cacheKey, {
+          value,
+          expiresAtMs: Date.now() + ROBINHOOD_PRESENCE_CACHE_TTL_MS,
+        });
+        return value;
+      })
+      .finally(() => {
+        robinhoodPresenceInFlight.delete(cacheKey);
+      });
+    robinhoodPresenceInFlight.set(cacheKey, inFlight);
   }
   return inFlight;
 }
@@ -5395,6 +5476,7 @@ async function listAccountsUncached(
 
 export async function getAccountSummary(input: {
   accountId: string;
+  appUserId?: string | null;
   mode?: RuntimeMode;
   source?: string | null;
 }) {
@@ -5403,25 +5485,33 @@ export async function getAccountSummary(input: {
   }
 
   const mode = input.mode ?? getRuntimeMode();
+  const appUserId =
+    input.appUserId === undefined ? getCurrentAppUserId() : input.appUserId;
   return readAccountRouteResponseCache(
     "summary",
     {
       accountId: input.accountId,
+      appUserId,
       mode,
       source: input.source ?? null,
     },
-    () => getAccountSummaryUncached({ ...input, mode }),
+    () => getAccountSummaryUncached({ ...input, appUserId, mode }),
     ACCOUNT_PAGE_SHARED_LIVE_READ_CACHE_TTL_MS,
   );
 }
 
 async function getAccountSummaryUncached(input: {
   accountId: string;
+  appUserId: string | null;
   mode: RuntimeMode;
   source?: string | null;
 }) {
   const mode = input.mode;
-  const universe = await getLiveAccountUniverse(input.accountId, mode);
+  const universe = await getLiveAccountUniverse(
+    input.accountId,
+    mode,
+    input.appUserId,
+  );
   const positions = await listPositionsForUniverse(universe, mode);
   const marketHydration = await hydratePositionMarkets(positions);
   const updatedAt = accountMetricUpdatedAt(universe.accounts) ?? new Date();
@@ -6209,6 +6299,7 @@ function accountPositionMarketDataSymbol(input: {
 
 export async function getAccountPositions(input: {
   accountId: string;
+  appUserId?: string | null;
   assetClass?: string | null;
   mode?: RuntimeMode;
   source?: string | null;
@@ -6225,8 +6316,15 @@ export async function getAccountPositions(input: {
   }
 
   const mode = input.mode ?? getRuntimeMode();
+  const appUserId =
+    input.appUserId === undefined ? getCurrentAppUserId() : input.appUserId;
   const detail = normalizeAccountPositionsDetail(input.detail);
-  return getAccountPositionsUncached({ ...input, mode, detail });
+  return getAccountPositionsUncached({
+    ...input,
+    appUserId,
+    mode,
+    detail,
+  });
 }
 
 function resolveAccountPositionTypeFilter(input: string | null | undefined) {
@@ -6395,6 +6493,7 @@ function foldRealPositionAttribution(
 
 async function getAccountPositionsUncached(input: {
   accountId: string;
+  appUserId: string | null;
   assetClass?: string | null;
   mode: RuntimeMode;
   source?: string | null;
@@ -6403,7 +6502,7 @@ async function getAccountPositionsUncached(input: {
 }) {
   const mode = input.mode;
   const universe = applyLatestSnapTradeBalancesToUniverse(
-    await getLiveAccountUniverse(input.accountId, mode),
+    await getLiveAccountUniverse(input.accountId, mode, input.appUserId),
   );
   const assetClassFilter = resolveAccountPositionTypeFilter(input.assetClass);
   const allPositions = await listPositionsForUniverse(universe, mode);
