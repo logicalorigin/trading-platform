@@ -108,8 +108,9 @@ export function DenseVirtualTable({
       onColumnOrderChange,
     ],
   );
-  const virtualRows = useMemo(() => {
+  const { layoutKey, virtualRows } = useMemo(() => {
     const nextRows = [];
+    const detailLayout = [];
     rows.forEach((row, rowIndex) => {
       nextRows.push({
         key: row.id,
@@ -125,17 +126,22 @@ export function DenseVirtualTable({
         typeof rowDetailHeight === "function"
           ? rowDetailHeight(row.original, rowIndex, row)
           : rowDetailHeight;
+      const size = Number.isFinite(Number(detailSize))
+        ? Math.max(1, Number(detailSize))
+        : rowHeight;
       nextRows.push({
         key: `${row.id}:detail`,
         row,
         rowIndex,
-        size: Number.isFinite(Number(detailSize))
-          ? Math.max(1, Number(detailSize))
-          : rowHeight,
+        size,
         type: "detail",
       });
+      detailLayout.push(`${rowIndex}:${size}`);
     });
-    return nextRows;
+    return {
+      layoutKey: detailLayout.join("|"),
+      virtualRows: nextRows,
+    };
   }, [
     isRowExpanded,
     renderRowDetail,
@@ -184,6 +190,7 @@ export function DenseVirtualTable({
   } = useDenseVirtualRows({
     count: virtualRows.length,
     estimateSize: estimateItemSize,
+    layoutKey,
     onVisibleRangeChange: handleVisibleRangeChange,
     overscan,
     rowHeight,
@@ -373,6 +380,7 @@ export function DenseVirtualTable({
 export function useDenseVirtualRows({
   count,
   estimateSize,
+  layoutKey,
   onVisibleRangeChange,
   overscan = 12,
   rowHeight = 34,
@@ -402,7 +410,7 @@ export function useDenseVirtualRows({
 
   useEffect(() => {
     rowVirtualizer.measure();
-  }, [count, estimateItemSize, rowVirtualizer]);
+  }, [count, estimateItemSize, layoutKey, rowVirtualizer]);
 
   const virtualItems = rowVirtualizer.getVirtualItems();
   const virtualItemSignature = virtualItems
