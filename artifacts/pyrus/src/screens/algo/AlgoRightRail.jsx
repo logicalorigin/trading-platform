@@ -439,6 +439,7 @@ export const AlgoRightRail = ({
                 patchProfileDraftPath={patchProfileDraftPath}
                 focusedDeployment={focusedDeployment}
                 controlBaselineReady={controlsReady}
+                saveInProgress={pending}
                 updateProfileMutation={updateProfileMutation}
               />
               <div data-testid="algo-settings-container">
