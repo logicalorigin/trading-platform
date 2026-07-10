@@ -118,9 +118,11 @@ export function BootShellLayout({
       <div className="pyrus-boot-brand">
         <div className="pyrus-boot-identity" aria-hidden="true">
           <PyrusWordmark title="" width={200} />
-          <span className="pyrus-boot-tagline">
-            Real-time options flow & signal intelligence.
-          </span>
+          {!loading ? (
+            <span className="pyrus-boot-tagline">
+              Real-time options flow & signal intelligence.
+            </span>
+          ) : null}
         </div>
         {loading && progressPercent != null ? (
           <div className="brand-loader-progress" aria-live="polite">

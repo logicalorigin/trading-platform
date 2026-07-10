@@ -85,9 +85,6 @@ export function BrandLoader({
           className="brand-loader-word"
           width={isPanel ? 148 : 200}
         />
-        <span className="pyrus-boot-tagline">
-          Real-time options flow &amp; signal intelligence.
-        </span>
       </div>
       {progressPercent === null ? null : (
         <div className="brand-loader-progress" aria-live="polite">

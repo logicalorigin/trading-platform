@@ -85,6 +85,15 @@ test("expanded neural atmosphere is present before the animated renderer loads",
   assert.match(indexCss, /\.pyrus-boot-cloud-live/);
 });
 
+test("transient loaders omit the product tagline", () => {
+  assert.doesNotMatch(indexHtml, /Real-time options flow/);
+  assert.doesNotMatch(brandLoader, /Real-time options flow/);
+  assert.match(
+    bootShell,
+    /\{!loading \? \(\s*<span className="pyrus-boot-tagline">/,
+  );
+});
+
 test("loading surfaces animate while the persistent header mark stays static", () => {
   assert.match(appContent, /NeuralLoader/);
   assert.doesNotMatch(appContent, /LogoLoader/);
