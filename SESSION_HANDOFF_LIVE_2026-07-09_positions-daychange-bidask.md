@@ -1,5 +1,71 @@
 # LIVE coordination — positions day-change / bid-ask vs the DB-pool/ELU pressure work
 
+## RESOLVED — the 03:36–04:18 UTC restart cluster was RILEY (confirmed directly, ~22:25 MDT)
+Not crashes, not OOM, not tandem tree-kills — operator Run/Stop presses. No action needed.
+Standing reminder (repo memory `riley-restarts-are-not-incidents`): overnight supervisor-abrupt
+incidents are usually Riley — ask before investigating. Guards re-verified in the live bundle
+after the final bounce; trading-system watch found nothing else.
+
+## LOSS FORENSICS + TRADING FIXES (2026-07-09 ~23:20 MDT, session 8d954547) — read before touching stops/marks
+Jul-9 realized -6,912 fully decomposed (wf_6ee9b5f2): ~$4.1K phantom-fill slippage (fills far below
+stop TRIGGER; CG/BRKR trail-stops triggered at locked-in-GAIN levels — fixed earlier via
+sell-fill degenerate guard + floor-at-stop), ~$2.7K whipsaw stops (the 13:33:23Z six-stop cascade:
+ZERO mark writes from 07-08 close → first refresh 13:33:12 swallowed opening-auction spreads; the
+trigger mark had NO spread gate), ~$1.9K genuine stops. LANDED + LIVE:
+- `867a78fb` quote_spread_degenerate gate in buildShadowOptionPricingPolicy (bid >40% below mid ⇒
+  no mark write, no stop eval, maintenance sweep protected) + live exits now write top-level
+  payload.exitReason. Committed via blob surgery — a tandem session has ~928 uncommitted lines in
+  shadow-account.ts (replay/recompute + cash-activity regions), preserved unstaged.
+- `b8d8efe1` entry gates fail closed + buy-side degenerate guard (earlier tonight).
+- `242ac3a2` hero pill day P&L = positions-table day change (owner definition; `7b47b25f` reverted
+  the realized-in-calendar change). Pill and calendar now share one source.
+- Phantom-fill ledger surgery script READY but blocked on operator run (permissions):
+  scratchpad/phantom-fill-surgery.sql — Riley has the `! psql` command; v2 includes mirror-repair
+  exemption flags for the voided ASTN events (else repair resurrects it in ~60s).
+
+## ACCEPTANCE READBACK (2026-07-09 ~18:45 MDT, session 8d954547 — resumed 71069931's workstream)
+Runtime probe of `/api/accounts/shadow/positions?liveQuotes=true` (authenticated, fresh microVM boot
+18:15 MDT, overnight session — options market closed):
+- **Day-change fix HOLDS**: 14/17 option rows show real non-zero dayChange/dayChangePercent (old bug
+  was $0 across the board). Values from last-session baselines survive the reboot.
+- **Cache warm works**: cold first read 17.8s → warm reads 0.15s/0.09s (45b7828d + e93f50b2 verified).
+- **Cold-cache blanks RECUR on 3/17 rows** (UCTT, SAIL, HON: dayChange=0, valuationReason=
+  quote_unavailable after reboot). This is the exact trigger the deferred WO-POS-3 item D
+  (persist last-known day-change cache to disk) was parked on — item D is now justified.
+- **Underlying Spot day-change % on option rows still blank**: underlyingMarket has price (from the
+  option quote's embedded underlying, source=underlying_quote) but previousClose/changePercent null.
+  The cebd8e72 merge is structurally in place; the bounded Massive underlying snapshot
+  (allowMassiveFallback:false) still supplies no prevClose. Pressure is only "watch" now (ELU 78%,
+  pool 12/12 active but 0 waiting, admission lanes healthy) — re-check during RTH before blaming load.
+- **Bid/Ask cadence vs Spot: NOT assessable tonight** (quotes correctly frozen at 19:59:59Z close —
+  the 17f9a8a8 realtime freeze working as designed). Run the cadence acceptance during RTH ≥07:30 MDT
+  2026-07-10, alongside the morning soak readback (3e0f4d69 runbook).
+- **Item D SUPERSEDED — root cause found and FIXED live (2026-07-09 ~19:55 MDT)**. A 4-agent
+  audit + DB check proved the $0 rows were SAME-DAY positions whose mark never got re-observed
+  after the opening fill (`as_of == opened_at`), making current == entry-baseline == fabricated $0
+  by construction; the baseline itself is already durable in `shadow_position_marks`, so disk
+  persistence fixed nothing. Landed `6247dba5` (`shadowPositionMarkStaleForDayChange`: fill-echo
+  marks are stale → honest null). Reloaded via SIGUSR2, runtime-verified: UCTT/SAIL/HON now
+  `dayChange:null` + `quote_unavailable`, zero fabricated-zero rows. WO doc rewritten as CLOSED.
+  NOTE: `6247dba5` also carries the eqh session's WO-EQH-1 source hunks (commit interleave —
+  their `39c5b6ef` completes it); attribution cosmetic, do not rewrite history.
+- **Pill vs calendar "today" P&L RESOLVED (2026-07-09 ~20:45 MDT)**: pill (-$3.7K) was the honest
+  whole-account NLV move (137,511 − 141,247, DB-verified); calendar today-cell (+$2.0K) counted
+  open-position day change only and dropped -$6,912 realized on 42 exits. FE fix `eeb3a70e`
+  (livePositionsDayPnlMetric adds realized into totalDayPnl). CAVEAT tracked as task #4: part of
+  that -6.9K realized is suspect phantom (degenerate-spread exit fills, all pre-fix; BRKR -$567
+  proven) — per-fill audit + Riley re-price/annotate decision pending.
+- **Pressure-gate retirement doctrine live** (`955efad2` + `docs/plans/pressure-gate-retirement-2026-07-10.md`):
+  every user-visible degrade now counts firings (`api.shadowAccountReads.pressureDegrades`, zeros
+  as of 20:50 MDT reload); gates are guilty-until-proven through Friday's counters.
+- **Emergency-mode audit verdict** (user challenged the pressure fast path): fast path fires ONLY
+  at `resourceLevel==="high"` (shadow-account.ts:9492); tonight's bug went through the FULL path —
+  unrelated. Jul 9 recorder data: pool queue peaked at 137 waiting, 65 API restarts/day; tonight
+  max waiting 1, zero pool-pressure events. Per db-pool-admission-bus doc, high pressure at market
+  open remains EXPECTED (pool max 12 deliberate; bulk lane saturates by design) — fast path stays
+  load-bearing until the 2026-07-10 open acceptance (market-open-acceptance.mjs) passes; retire
+  candidates after that, one gate at a time.
+
 ## DONE (2026-07-09 ~13:08 MDT): WO-RH-ORDERS — Robinhood equity lane built inline + $5 buy FILLED
 The 12:17 MDT microVM rotation killed the codex worker (produced zero on-disk changes; only the
 WO doc + `.codex-watch/rh-order-tools.json` survived). Session f19220d5 rebuilt the lane INLINE from
