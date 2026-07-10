@@ -607,8 +607,11 @@ const accountPositionLotsReadBackoff = createTransientPostgresBackoff();
 const optionalAccountSchemaReadBackoff = createTransientPostgresBackoff();
 const optionGreekChainCache = new Map<string, OptionChainCacheEntry>();
 
-function snapshotAccountCacheKey(account: BrokerAccountSnapshot): string {
-  return `${account.mode}:${account.providerAccountId || account.id}`;
+function snapshotAccountCacheKey(
+  account: BrokerAccountSnapshot,
+  appUserId: string | null,
+): string {
+  return `${appUserId ?? "global"}:${account.mode}:${account.providerAccountId || account.id}`;
 }
 
 const OPTIONAL_ACCOUNT_SCHEMA_TABLES = [
@@ -4401,6 +4404,7 @@ type AccountSnapshotPersistenceLogger = {
 };
 
 type AccountSnapshotPersistenceOptions = {
+  appUserId?: string | null;
   nowMs?: () => number;
   logger?: AccountSnapshotPersistenceLogger;
   persistSnapshots?: (accounts: BrokerAccountSnapshot[]) => Promise<void>;
@@ -4409,11 +4413,13 @@ type AccountSnapshotPersistenceOptions = {
 
 async function persistAccountSnapshotsToDb(
   accounts: BrokerAccountSnapshot[],
+  appUserId: string | null,
 ): Promise<void> {
   const mode = accounts[0]?.mode ?? getRuntimeMode();
   const [connection] = await db
     .insert(brokerConnectionsTable)
     .values({
+      appUserId,
       name: "Interactive Brokers Bridge",
       connectionType: "broker",
       brokerProvider: "ibkr",
@@ -4423,11 +4429,23 @@ async function persistAccountSnapshotsToDb(
       isDefault: true,
     })
     .onConflictDoUpdate({
-      target: [
-        brokerConnectionsTable.connectionType,
-        brokerConnectionsTable.mode,
-        brokerConnectionsTable.name,
-      ],
+      target:
+        appUserId === null
+          ? [
+              brokerConnectionsTable.connectionType,
+              brokerConnectionsTable.mode,
+              brokerConnectionsTable.name,
+            ]
+          : [
+              brokerConnectionsTable.appUserId,
+              brokerConnectionsTable.connectionType,
+              brokerConnectionsTable.mode,
+              brokerConnectionsTable.name,
+            ],
+      targetWhere:
+        appUserId === null
+          ? sql`${brokerConnectionsTable.appUserId} is null`
+          : isNotNull(brokerConnectionsTable.appUserId),
       set: {
         status: "connected",
         updatedAt: new Date(),
@@ -4439,6 +4457,7 @@ async function persistAccountSnapshotsToDb(
     const [brokerAccount] = await db
       .insert(brokerAccountsTable)
       .values({
+        appUserId,
         connectionId: connection.id,
         providerAccountId: account.providerAccountId,
         displayName: account.displayName,
@@ -4447,7 +4466,17 @@ async function persistAccountSnapshotsToDb(
         lastSyncedAt: new Date().toISOString(),
       })
       .onConflictDoUpdate({
-        target: brokerAccountsTable.providerAccountId,
+        target:
+          appUserId === null
+            ? brokerAccountsTable.providerAccountId
+            : [
+                brokerAccountsTable.appUserId,
+                brokerAccountsTable.providerAccountId,
+              ],
+        targetWhere:
+          appUserId === null
+            ? sql`${brokerAccountsTable.appUserId} is null`
+            : isNotNull(brokerAccountsTable.appUserId),
         set: {
           displayName: account.displayName,
           mode: account.mode,
@@ -4460,7 +4489,7 @@ async function persistAccountSnapshotsToDb(
 
     const snapshotAsOf = account.updatedAt ?? new Date();
     const snapshotAsOfMs = snapshotAsOf.getTime();
-    const cacheKey = snapshotAccountCacheKey(account);
+    const cacheKey = snapshotAccountCacheKey(account, appUserId);
     if (snapshotProviderTimestamps.get(cacheKey) === snapshotAsOfMs) {
       continue;
     }
@@ -4486,13 +4515,20 @@ export async function recordAccountSnapshots(
   options: AccountSnapshotPersistenceOptions = {},
 ): Promise<void> {
   const now = options.nowMs?.() ?? Date.now();
+  const appUserId =
+    options.appUserId === undefined ? getCurrentAppUserId() : options.appUserId;
+  const persistSnapshots =
+    options.persistSnapshots ??
+    ((snapshots: BrokerAccountSnapshot[]) =>
+      persistAccountSnapshotsToDb(snapshots, appUserId));
   const backoff = options.backoff ?? accountSnapshotPersistenceBackoff;
   if (backoff.isActive(now)) {
     return;
   }
 
   const dueAccounts = accounts.filter((account) => {
-    const last = snapshotWriteTimestamps.get(snapshotAccountCacheKey(account)) ?? 0;
+    const last =
+      snapshotWriteTimestamps.get(snapshotAccountCacheKey(account, appUserId)) ?? 0;
     return now - last >= SNAPSHOT_WRITE_INTERVAL_MS;
   });
 
@@ -4506,7 +4542,7 @@ export async function recordAccountSnapshots(
   dueAccounts
     .filter((account) => isPlaceholderZeroAccountSnapshot(account))
     .forEach((account) =>
-      snapshotWriteTimestamps.set(snapshotAccountCacheKey(account), now),
+      snapshotWriteTimestamps.set(snapshotAccountCacheKey(account, appUserId), now),
     );
 
   if (!persistableDueAccounts.length) {
@@ -4514,9 +4550,7 @@ export async function recordAccountSnapshots(
   }
 
   try {
-    await (options.persistSnapshots ?? persistAccountSnapshotsToDb)(
-      persistableDueAccounts,
-    );
+    await persistSnapshots(persistableDueAccounts);
     backoff.clear();
   } catch (error) {
     if (isTransientPostgresError(error)) {
@@ -4533,7 +4567,7 @@ export async function recordAccountSnapshots(
   }
 
   for (const account of persistableDueAccounts) {
-    snapshotWriteTimestamps.set(snapshotAccountCacheKey(account), now);
+    snapshotWriteTimestamps.set(snapshotAccountCacheKey(account, appUserId), now);
   }
 }
 
@@ -5430,7 +5464,10 @@ async function listAccountsUncached(
   const getPersistedAccounts =
     options.getPersistedAccounts ?? emptyPersistedBackedAccounts;
   const getFlexAccounts = options.getFlexAccounts ?? getFlexBackedAccounts;
-  const recordSnapshots = options.recordSnapshots ?? recordAccountSnapshots;
+  const recordSnapshots =
+    options.recordSnapshots ??
+    ((accounts: BrokerAccountSnapshot[]) =>
+      recordAccountSnapshots(accounts, { appUserId }));
   const getSnapTradeAccounts =
     options.getSnapTradeAccounts ?? getSnapTradeBackedAccounts;
   const getRobinhoodAccounts =
