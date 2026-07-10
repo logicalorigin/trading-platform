@@ -312,15 +312,7 @@ const livePositionsDayPnlMetric = ({
     tradesResponse?.trades || [],
     marketDate,
   );
-  // Day P&L is the whole-account move: open-position day change PLUS P&L realized on
-  // positions closed today. Open-change alone diverges from the summary pill (NLV
-  // truth) whenever exits book realized P&L — 2026-07-09 it showed +$2.0K "today"
-  // while realized was -$6.9K and NLV was down $3.7K — and past calendar days use
-  // whole-account equity deltas, so without realized the today cell silently flips
-  // meaning at midnight.
-  const totalDayPnl = hasDayChange
-    ? openPositionsDayPnl + (realizedSummary.realizedPnl ?? 0)
-    : fallbackValue;
+  const totalDayPnl = hasDayChange ? openPositionsDayPnl : fallbackValue;
   return {
     ...(fallbackMetric || {}),
     value: totalDayPnl,

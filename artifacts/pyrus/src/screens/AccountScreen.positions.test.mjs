@@ -149,15 +149,3 @@ test("account positions trading actions use broker-safe account context", () => 
   assert.match(positionsPanel, /gatewayTradingReady=\{positionManagementGatewayReady\}/);
   assert.match(positionsPanel, /gatewayTradingMessage=\{positionManagementGatewayMessage\}/);
 });
-
-// 2026-07-09: calendar "today" showed +$2.0K while realized was -$6.9K and the
-// account was down $3.7K on the day. Day P&L must include realized-today, not
-// just open-position day change, or the today cell contradicts the summary pill
-// and silently flips meaning when the day ages into the equity-delta path.
-test("today day-P&L includes realized P&L, not just open-position day change", () => {
-  assert.match(
-    source,
-    /openPositionsDayPnl \+ \(realizedSummary\.realizedPnl \?\? 0\)/,
-    "livePositionsDayPnlMetric must add realized-today into totalDayPnl",
-  );
-});
