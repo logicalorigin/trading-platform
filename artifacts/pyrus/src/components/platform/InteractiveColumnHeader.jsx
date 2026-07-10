@@ -1,7 +1,7 @@
 import { forwardRef } from "react";
 import { ChevronDown } from "lucide-react";
 import { useSortable } from "@dnd-kit/sortable";
-import { CSS } from "@dnd-kit/utilities";
+import { CSS, useCombinedRefs } from "@dnd-kit/utilities";
 import {
   DndContext,
   KeyboardSensor,
@@ -98,10 +98,14 @@ export const ColumnHeaderCell = forwardRef(function ColumnHeaderCell({
   const sortTooltip = sortTitle || title || `Sort by ${labelText}`;
   // Reordering moved off a dedicated grip button onto the whole header: spread the
   // dnd-kit listeners/attributes onto the header element itself (the sortable node
-  // doubles as the drag activator). Strip dnd's role="button" so the element keeps
-  // role="columnheader" / aria-sort. The 4px PointerSensor activation distance keeps
-  // a plain click firing the sort handler while a drag starts a reorder.
-  const { role: _ignoredDragRole, ...dragAttributesRest } = dragAttributes || {};
+  // doubles as the drag activator). Strip dnd's button-only attributes so the
+  // element keeps role="columnheader" / aria-sort. The 4px PointerSensor activation
+  // distance keeps a plain click firing the sort handler while a drag starts a reorder.
+  const {
+    role: _ignoredDragRole,
+    "aria-pressed": _ignoredDragPressed,
+    ...dragAttributesRest
+  } = dragAttributes || {};
   const reorderHandleProps = reorderable
     ? { ...dragAttributesRest, ...dragListeners }
     : null;
@@ -240,10 +244,12 @@ export function SortableColumnHeaderCell({
     attributes,
     isDragging,
     listeners,
+    setActivatorNodeRef,
     setNodeRef,
     transform,
     transition,
   } = useSortable({ id, disabled: !reorderable });
+  const sortableRef = useCombinedRefs(setNodeRef, setActivatorNodeRef);
 
   return (
     <ColumnHeaderCell
@@ -259,7 +265,7 @@ export function SortableColumnHeaderCell({
         zIndex: isDragging ? 4 : undefined,
         ...style,
       }}
-      ref={setNodeRef}
+      ref={sortableRef}
       {...props}
     />
   );
