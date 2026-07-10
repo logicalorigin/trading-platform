@@ -13,6 +13,7 @@ import {
 } from "node:fs";
 import { request as httpRequest } from "node:http";
 import path from "node:path";
+import { z, type ZodType } from "zod";
 
 import { HttpError } from "../lib/errors";
 import { findRepoRoot } from "./runtime-flight-recorder";
@@ -57,18 +58,35 @@ const GATEWAY_JAR = path.join(
 
 export type PortalGateway = {
   appUserId: string;
-  port: number;
   baseUrl: string;
+  hosted: boolean;
   origin: string;
+  paperAccountVerified: boolean;
+  port: number;
+  proxyOrigin: string;
+  proxyPort: number;
   status: "starting" | "ready" | "stopped";
   startedAt: number;
 };
 
-type Entry = PortalGateway & { process: ChildProcess };
+type Entry = PortalGateway & { process?: ChildProcess };
 
 const gateways = new Map<string, Entry>();
 
+function hostedConfig(): { baseUrl: string; token: string } | null {
+  if (process.env["IBKR_SESSION_HOST_ENABLED"] !== "1") return null;
+  const token = process.env["IBKR_SESSION_HOST_CONTROL_TOKEN"]?.trim();
+  if (!token) return null;
+  return {
+    baseUrl:
+      process.env["IBKR_SESSION_HOST_URL"]?.replace(/\/+$/, "") ??
+      "http://127.0.0.1:18748",
+    token,
+  };
+}
+
 export function isPortalRuntimeAvailable(): boolean {
+  if (hostedConfig()) return true;
   return resolveJavaBin() !== null && existsSync(GATEWAY_JAR);
 }
 
@@ -78,7 +96,10 @@ function toPublic(entry: Entry): PortalGateway {
 }
 
 function isAlive(entry: Entry): boolean {
-  return entry.status !== "stopped" && entry.process.exitCode === null;
+  return (
+    entry.status !== "stopped" &&
+    (entry.hosted || entry.process?.exitCode === null)
+  );
 }
 
 function allocatePort(): number {
@@ -219,10 +240,93 @@ async function waitForReady(port: number): Promise<void> {
   );
 }
 
+const HostCapsuleSchema = z.object({
+  name: z.string().min(1).max(128),
+  status: z.enum(["ready", "occupied"]),
+});
+const HostTargetSchema = z.object({
+  host: z.literal("127.0.0.1"),
+  port: z.number().int().min(1).max(65_535),
+});
+const HostEnsureResponseSchema = z.object({
+  capsule: HostCapsuleSchema,
+  targets: z.object({ cpg: HostTargetSchema, console: HostTargetSchema }),
+});
+const HostStatusResponseSchema = z.object({
+  capsule: HostCapsuleSchema.nullable(),
+});
+
+type HostEnsureResponse = z.infer<typeof HostEnsureResponseSchema>;
+type HostStatusResponse = z.infer<typeof HostStatusResponseSchema>;
+
+function parseHostResponse<T>(schema: ZodType<T>, value: unknown): T {
+  const parsed = schema.safeParse(value);
+  if (!parsed.success) {
+    throw new HttpError(502, "The IBKR session host returned an invalid response.", {
+      code: "ibkr_session_host_response_invalid",
+      expose: false,
+    });
+  }
+  return parsed.data;
+}
+
+async function hostRequest<T>(
+  path: string,
+  method: "GET" | "POST",
+): Promise<T> {
+  const config = hostedConfig();
+  if (!config) {
+    throw new HttpError(503, "The IBKR session host is not configured.", {
+      code: "ibkr_session_host_not_configured",
+      expose: true,
+    });
+  }
+  const response = await fetch(`${config.baseUrl}${path}`, {
+    method,
+    headers: { authorization: `Bearer ${config.token}` },
+  });
+  if (!response.ok) {
+    throw new HttpError(
+      response.status,
+      "The IBKR session host control request failed.",
+      { code: "ibkr_session_host_control_failed", expose: true },
+    );
+  }
+  return (await response.json()) as T;
+}
+
+async function ensureHostedGateway(appUserId: string): Promise<PortalGateway> {
+  const result = parseHostResponse(
+    HostEnsureResponseSchema,
+    await hostRequest<unknown>(
+      `/sessions/${encodeURIComponent(appUserId)}/ensure`,
+      "POST",
+    ),
+  );
+  const entry: Entry = {
+    appUserId,
+    baseUrl: `http://${result.targets.cpg.host}:${result.targets.cpg.port}/v1/api`,
+    hosted: true,
+    origin: `http://${result.targets.cpg.host}:${result.targets.cpg.port}`,
+    paperAccountVerified: false,
+    port: result.targets.cpg.port,
+    proxyOrigin: `http://${result.targets.console.host}:${result.targets.console.port}`,
+    proxyPort: result.targets.console.port,
+    status: result.capsule.status === "ready" ? "ready" : "starting",
+    startedAt: Date.now(),
+  };
+  gateways.set(appUserId, entry);
+  return toPublic(entry);
+}
+
 export async function ensureGateway(appUserId: string): Promise<PortalGateway> {
   const existing = gateways.get(appUserId);
   if (existing && isAlive(existing)) {
     return toPublic(existing);
+  }
+
+  if (hostedConfig()) {
+    return ensureHostedGateway(appUserId);
   }
 
   if (!isPortalRuntimeAvailable()) {
@@ -245,7 +349,11 @@ export async function ensureGateway(appUserId: string): Promise<PortalGateway> {
     appUserId,
     port,
     baseUrl: `http://127.0.0.1:${port}/v1/api`,
+    hosted: false,
     origin: `http://127.0.0.1:${port}`,
+    paperAccountVerified: false,
+    proxyOrigin: `http://127.0.0.1:${port}`,
+    proxyPort: port,
     status: "starting",
     startedAt: Date.now(),
     process: child,
@@ -271,13 +379,73 @@ export function getGateway(appUserId: string): PortalGateway | null {
   return toPublic(entry);
 }
 
+export function markGatewayPaperAccountVerified(
+  appUserId: string,
+  verified = true,
+): boolean {
+  const entry = gateways.get(appUserId);
+  if (!entry || !isAlive(entry) || entry.status !== "ready") {
+    return false;
+  }
+  entry.paperAccountVerified = verified;
+  return entry.paperAccountVerified;
+}
+
+export async function refreshGateway(
+  appUserId: string,
+): Promise<PortalGateway | null> {
+  const entry = gateways.get(appUserId);
+  if (!entry || !isAlive(entry) || !entry.hosted) {
+    return entry && isAlive(entry) ? toPublic(entry) : null;
+  }
+
+  let result: HostStatusResponse;
+  try {
+    result = parseHostResponse(
+      HostStatusResponseSchema,
+      await hostRequest<unknown>(
+        `/sessions/${encodeURIComponent(appUserId)}/status`,
+        "GET",
+      ),
+    );
+  } catch (error) {
+    if (!(error instanceof HttpError) || error.statusCode !== 404) {
+      throw error;
+    }
+    entry.status = "stopped";
+    gateways.delete(appUserId);
+    return null;
+  }
+  if (!result.capsule) {
+    entry.status = "stopped";
+    gateways.delete(appUserId);
+    return null;
+  }
+  entry.status = result.capsule.status === "ready" ? "ready" : "starting";
+  if (entry.status !== "ready") {
+    entry.paperAccountVerified = false;
+  }
+  return toPublic(entry);
+}
+
 export async function stopGateway(appUserId: string): Promise<void> {
   const entry = gateways.get(appUserId);
-  if (entry) {
-    entry.status = "stopped";
-    entry.process.kill("SIGTERM");
-    gateways.delete(appUserId);
+  if (!entry) {
+    rmSync(instanceDir(appUserId), { recursive: true, force: true });
+    return;
   }
+
+  entry.status = "stopped";
+  gateways.delete(appUserId);
+  if (entry.hosted) {
+    await hostRequest<void>(
+      `/sessions/${encodeURIComponent(appUserId)}/release`,
+      "POST",
+    );
+    return;
+  }
+
+  entry.process?.kill("SIGTERM");
   rmSync(instanceDir(appUserId), { recursive: true, force: true });
 }
 

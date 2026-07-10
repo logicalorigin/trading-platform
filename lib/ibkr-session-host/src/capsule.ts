@@ -34,6 +34,13 @@ export type CapsuleRecord = {
   status: "ready" | "occupied";
 };
 
+export type CapsuleTargetKind = "cpg" | "console";
+
+export type CapsuleTarget = {
+  host: "127.0.0.1";
+  port: 15000 | 16080;
+};
+
 export type RuntimeReadiness =
   | { ready: true }
   | {
@@ -222,6 +229,10 @@ const CAPSULE_SLOT_NAME = "pyrus-ibkr-slot-1";
 const CAPSULE_READY_MARKER = "PYRUS_IBKR_CAPSULE_READY_V1";
 const CAPSULE_READY_ATTEMPTS = 18;
 const CAPSULE_READY_INTERVAL_MS = 5_000;
+const CAPSULE_TARGETS = {
+  cpg: { host: "127.0.0.1", port: 15000 },
+  console: { host: "127.0.0.1", port: 16080 },
+} as const satisfies Record<CapsuleTargetKind, CapsuleTarget>;
 const DIGEST_IMAGE_PATTERN =
   /^[a-z0-9][a-z0-9._:/-]*@sha256:[a-f0-9]{64}$/;
 const LOCAL_IMAGE_ID_PATTERN = /^sha256:[a-f0-9]{64}$/;
@@ -341,6 +352,10 @@ export function buildCreateCapsuleInvocation(
       // ponytail: capacity is one; use a unique filtered network before raising it.
       "--network",
       "bridge",
+      "--publish",
+      "127.0.0.1:15000:15000/tcp",
+      "--publish",
+      "127.0.0.1:16080:16080/tcp",
       "--memory",
       "2g",
       "--memory-swap",
@@ -450,6 +465,62 @@ export class CapsuleManager {
         this.reconcilePromise = null;
       }
     }
+  }
+
+  async status(sessionId: string): Promise<CapsuleRecord | null> {
+    const sessionHash = sessionHashForSession(sessionId);
+    if (this.poisoned) {
+      throw this.cleanupUnconfirmed();
+    }
+    if (this.pending?.sessionHash === sessionHash) {
+      return this.pending.promise;
+    }
+    if (!this.active) {
+      await this.reconcile();
+    }
+    return this.active?.sessionHash === sessionHash
+      ? this.refreshActive(sessionHash)
+      : null;
+  }
+
+  getTarget(sessionId: string, kind: CapsuleTargetKind): CapsuleTarget {
+    const sessionHash = sessionHashForSession(sessionId);
+    if (this.active?.sessionHash !== sessionHash) {
+      throw new CapsuleError("session_not_found", "IBKR session not found.");
+    }
+    return CAPSULE_TARGETS[kind];
+  }
+
+  async release(sessionId: string): Promise<void> {
+    const sessionHash = sessionHashForSession(sessionId);
+    if (this.poisoned) {
+      throw this.cleanupUnconfirmed();
+    }
+    if (this.pending?.sessionHash === sessionHash) {
+      await this.pending.promise;
+    }
+    if (!this.active) {
+      await this.reconcile();
+    }
+    if (this.active?.sessionHash !== sessionHash) {
+      throw new CapsuleError("session_not_found", "IBKR session not found.");
+    }
+
+    let removed: CommandResult;
+    try {
+      removed = await this.runner(this.config.dockerBinary, [
+        "rm",
+        "--force",
+        this.active.record.name,
+      ]);
+    } catch {
+      throw this.cleanupUnconfirmed();
+    }
+    if (removed.code !== 0) {
+      throw this.cleanupUnconfirmed();
+    }
+    this.active = null;
+    this.reconciled = true;
   }
 
   snapshot(): {

@@ -75,7 +75,10 @@ import {
   isSchwabReauthRequired,
   schwabConnectActionLabel,
 } from "./schwabConnectModel.js";
-import { formatIbkrPortalStatus } from "./ibkrPortalConnectModel.js";
+import {
+  formatIbkrPortalStatus,
+  isTerminalIbkrPortalConnectStatus,
+} from "./ibkrPortalConnectModel.js";
 import {
   BROKER_ERROR_FLASH_MS,
   BROKER_RING_SPECS,
@@ -1732,6 +1735,18 @@ export function SnapTradeConnectPanel({ enabled = true }) {
         void queryClient.invalidateQueries({
           queryKey: getListAccountsQueryKey(),
         });
+      } else if (isTerminalIbkrPortalConnectStatus(status)) {
+        stopIbkrPortalPoll();
+        clearConnectHandoff(IBKR_PORTAL_BROKER_CHOICE.value);
+        setLocalError(
+          status?.message || "IBKR Client Portal connection was closed.",
+        );
+        try {
+          popup.close();
+        } catch {
+          // Some browsers restrict close(); the hosted session is already gone.
+        }
+        void ibkrPortalReadinessQuery.refetch();
       }
     }, 3000);
   };

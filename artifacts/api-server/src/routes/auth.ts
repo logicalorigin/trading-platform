@@ -86,7 +86,9 @@ function readString(record: JsonRecord, key: string): string {
   return typeof value === "string" ? value : "";
 }
 
-function readCookie(req: Request, name: string): string | null {
+type RequestWithHeaders = Pick<Request, "headers">;
+
+function readCookie(req: RequestWithHeaders, name: string): string | null {
   const header = req.headers.cookie;
   if (!header) return null;
   for (const part of header.split(";")) {
@@ -133,17 +135,19 @@ function clearSessionCookie(req: Request, res: Response): void {
   });
 }
 
-export function readSessionToken(req: Request): string | null {
+export function readSessionToken(req: RequestWithHeaders): string | null {
   return readCookie(req, AUTH_SESSION_COOKIE);
 }
 
 export async function readRequestAuthSession(
-  req: Request,
+  req: RequestWithHeaders,
 ): Promise<AuthenticatedSession | null> {
   return readAuthSessionFromToken(readSessionToken(req));
 }
 
-export async function requireAuth(req: Request): Promise<AuthenticatedSession> {
+export async function requireAuth(
+  req: RequestWithHeaders,
+): Promise<AuthenticatedSession> {
   const session = await readRequestAuthSession(req);
   if (!session) {
     throw new HttpError(401, "Authentication required", {
@@ -191,7 +195,9 @@ export async function requireAdminCsrf(
 // already excludes disabled users, so this is requireAuth with an explicit,
 // intent-revealing name that member-scoped routes use (broker connect/trade,
 // account/positions), reserving requireAdmin for platform-ops surfaces.
-export async function requireUser(req: Request): Promise<AuthenticatedSession> {
+export async function requireUser(
+  req: RequestWithHeaders,
+): Promise<AuthenticatedSession> {
   return requireAuth(req);
 }
 

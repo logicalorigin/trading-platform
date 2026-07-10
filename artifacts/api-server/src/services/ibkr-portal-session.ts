@@ -1,10 +1,12 @@
 import type { IbkrRuntimeConfig } from "../lib/runtime";
+import { HttpError } from "../lib/errors";
 import { IbkrClient } from "../providers/ibkr/client";
 
 import {
   ensureGateway,
-  getGateway,
   isPortalRuntimeAvailable,
+  markGatewayPaperAccountVerified,
+  refreshGateway,
   stopGateway,
 } from "./ibkr-portal-gateway-manager";
 
@@ -14,7 +16,10 @@ import {
 // session alive with periodic tickles. Trading + account only (no market-data
 // websocket).
 
-const LOGIN_PATH = "/api/broker-execution/ibkr-portal/gateway/";
+export const IBKR_PORTAL_LOGIN_PATH =
+  "/api/broker-execution/ibkr-portal/gateway/vnc.html" +
+  "?autoconnect=1&resize=scale" +
+  "&path=api%2Fbroker-execution%2Fibkr-portal%2Fgateway%2Fwebsockify";
 const TICKLE_INTERVAL_MS = 55_000;
 
 export type PortalConnectionStatus =
@@ -48,6 +53,7 @@ function clientFor(baseUrl: string): IbkrClient {
     username: null,
     password: null,
     allowInsecureTls: true,
+    paperAccountOnly: true,
   };
   return new IbkrClient(config);
 }
@@ -97,7 +103,7 @@ export async function readPortalReadiness(
     });
   }
 
-  const gateway = getGateway(appUserId);
+  const gateway = await refreshGateway(appUserId);
   if (!gateway) {
     return base({
       status: "disconnected",
@@ -106,10 +112,11 @@ export async function readPortalReadiness(
   }
 
   if (gateway.status === "starting") {
+    markGatewayPaperAccountVerified(appUserId, false);
     return base({
       status: "gateway_starting",
       gatewayRunning: true,
-      loginPath: LOGIN_PATH,
+      loginPath: IBKR_PORTAL_LOGIN_PATH,
       message: "Starting the IBKR gateway…",
     });
   }
@@ -117,15 +124,21 @@ export async function readPortalReadiness(
   try {
     const status = await clientFor(gateway.baseUrl).ensureBrokerageSession();
     if (status.competing) {
+      markGatewayPaperAccountVerified(appUserId, false);
       return base({
         status: "competing",
         gatewayRunning: true,
-        loginPath: LOGIN_PATH,
+        loginPath: IBKR_PORTAL_LOGIN_PATH,
         message:
           "Another live IBKR session is competing. Re-login to take over this session.",
       });
     }
     if (status.authenticated) {
+      if (!markGatewayPaperAccountVerified(appUserId)) {
+        throw new HttpError(503, "The IBKR paper session could not be verified.", {
+          code: "ibkr_paper_session_verification_failed",
+        });
+      }
       startTickle(appUserId, gateway.baseUrl);
       return base({
         status: "connected",
@@ -136,17 +149,39 @@ export async function readPortalReadiness(
         message: "Connected to IBKR.",
       });
     }
+    markGatewayPaperAccountVerified(appUserId, false);
     return base({
       status: "needs_login",
       gatewayRunning: true,
-      loginPath: LOGIN_PATH,
+      loginPath: IBKR_PORTAL_LOGIN_PATH,
       message: "Gateway is running. Log in to IBKR to finish connecting.",
     });
-  } catch {
+  } catch (error) {
+    markGatewayPaperAccountVerified(appUserId, false);
+    if (
+      error instanceof HttpError &&
+      error.code === "ibkr_paper_account_required"
+    ) {
+      stopTickle(appUserId);
+      try {
+        await stopGateway(appUserId);
+      } catch {
+        return base({
+          status: "disconnected",
+          message:
+            "Broker access is blocked, but the hosted IBKR session could not be confirmed stopped. Contact support before reconnecting.",
+        });
+      }
+      return base({
+        status: "disconnected",
+        message:
+          "Only verified IBKR Paper Trading accounts are allowed. This session was closed; sign in with your separate Paper Trading username.",
+      });
+    }
     return base({
       status: "needs_login",
       gatewayRunning: true,
-      loginPath: LOGIN_PATH,
+      loginPath: IBKR_PORTAL_LOGIN_PATH,
       message: "Gateway is running. Log in to IBKR to finish connecting.",
     });
   }
@@ -158,7 +193,7 @@ export async function connectPortal(
   await ensureGateway(appUserId);
   const readiness = await readPortalReadiness(appUserId);
   return {
-    loginPath: readiness.loginPath ?? LOGIN_PATH,
+    loginPath: readiness.loginPath ?? IBKR_PORTAL_LOGIN_PATH,
     status: readiness.status,
   };
 }

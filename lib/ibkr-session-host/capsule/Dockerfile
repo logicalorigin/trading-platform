@@ -15,12 +15,14 @@ RUN printf '%s  %s\n' "${CPG_SHA256}" /tmp/clientportal.gw.zip | sha256sum --che
   && rm -rf /var/lib/apt/lists/* /tmp/clientportal.gw.zip \
   && sed -i \
     -e 's/<root level=.DEBUG.>/<root level="INFO">/' \
+    -e 's/listenSsl:\s*true/listenSsl: false/' \
     -e '/^[[:space:]]*- 192\.\*/d' \
     -e '/^[[:space:]]*- 131\.216\.\*/d' \
     /opt/ibkr/clientportal/root/logback.xml \
     /opt/ibkr/clientportal/root/conf.yaml \
   && grep -Fq '<root level="INFO">' /opt/ibkr/clientportal/root/logback.xml \
   && ! grep -Eq 'level=.DEBUG.' /opt/ibkr/clientportal/root/logback.xml \
+  && grep -Fq 'listenSsl: false' /opt/ibkr/clientportal/root/conf.yaml \
   && test "$(awk '/^[[:space:]]*allow:[[:space:]]*$/ { in_allow=1; next } in_allow && /^[[:space:]]*deny:[[:space:]]*$/ { exit } in_allow && /^[[:space:]]*-/ { sub(/^[[:space:]]*-[[:space:]]*/, ""); print }' /opt/ibkr/clientportal/root/conf.yaml)" = '127.0.0.1'
 
 FROM debian:bookworm-slim@sha256:1def178129dfb5f24db43afbf2fcac04530012e3264ba4ff81c71184e17a9ee4
@@ -50,8 +52,10 @@ RUN apt-get update \
     pyrus
 
 COPY --from=cpg --chown=10001:10001 /opt/ibkr/clientportal /opt/ibkr/clientportal
+COPY --chown=10001:10001 paper-only-extension /opt/pyrus/paper-only-extension
 COPY --chmod=0555 pyrus-capsule-entrypoint /usr/local/bin/pyrus-capsule-entrypoint
 COPY --chmod=0555 pyrus-capsule-health /usr/local/bin/pyrus-capsule-health
+COPY --chmod=0555 pyrus-capsule-relay.py /usr/local/bin/pyrus-capsule-relay
 
 USER 10001:10001
 WORKDIR /run/pyrus

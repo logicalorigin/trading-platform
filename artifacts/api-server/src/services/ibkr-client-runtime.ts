@@ -5,34 +5,40 @@ import { IbkrClient } from "../providers/ibkr/client";
 import { getIbkrPortalUserId } from "./ibkr-portal-context";
 import { getGateway } from "./ibkr-portal-gateway-manager";
 
-// If the current request is acting as an app user who has a hosted Client Portal
-// gateway connected, route IBKR calls to that user's gateway. Otherwise fall
-// back to the global env-configured IBKR runtime (unchanged behaviour, incl.
-// all background work which has no per-user request context).
-function activePortalConfig(): IbkrRuntimeConfig | null {
+// An existing per-user gateway owns routing for that request even before it is
+// verified. Returning null while verification is pending prevents a fallback
+// to a separately configured global IBKR account.
+function resolveClientPortalConfig(): IbkrRuntimeConfig | null {
   const appUserId = getIbkrPortalUserId();
-  if (!appUserId) return null;
-  const gateway = getGateway(appUserId);
-  if (!gateway || gateway.status !== "ready") return null;
-  return {
-    baseUrl: gateway.baseUrl,
-    bearerToken: null,
-    cookie: null,
-    defaultAccountId: null,
-    extOperator: null,
-    extraHeaders: {},
-    username: null,
-    password: null,
-    allowInsecureTls: true,
-  };
+  if (appUserId) {
+    const gateway = getGateway(appUserId);
+    if (gateway) {
+      if (gateway.status !== "ready" || !gateway.paperAccountVerified) {
+        return null;
+      }
+      return {
+        baseUrl: gateway.baseUrl,
+        bearerToken: null,
+        cookie: null,
+        defaultAccountId: null,
+        extOperator: null,
+        extraHeaders: {},
+        username: null,
+        password: null,
+        allowInsecureTls: true,
+        paperAccountOnly: true,
+      };
+    }
+  }
+  return getIbkrRuntimeConfig();
 }
 
 export function isIbkrClientPortalConfigured(): boolean {
-  return Boolean(activePortalConfig() ?? getIbkrRuntimeConfig());
+  return Boolean(resolveClientPortalConfig());
 }
 
 export function getIbkrClientPortalClient(): IbkrClient {
-  const config = activePortalConfig() ?? getIbkrRuntimeConfig();
+  const config = resolveClientPortalConfig();
   if (!config) {
     throw new HttpError(503, "IBKR Client Portal is not configured.", {
       code: "ibkr_client_portal_not_configured",

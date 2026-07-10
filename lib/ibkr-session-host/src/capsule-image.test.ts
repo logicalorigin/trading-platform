@@ -64,6 +64,14 @@ test("capsule restricts CPG clients and exposes only fixed host relays with RAM-
     path.join(capsuleDir, "pyrus-capsule-relay.py"),
     "utf8",
   );
+  const extensionManifest = await readFile(
+    path.join(capsuleDir, "paper-only-extension", "manifest.json"),
+    "utf8",
+  );
+  const extensionScript = await readFile(
+    path.join(capsuleDir, "paper-only-extension", "paper-only.js"),
+    "utf8",
+  );
 
   assert.match(entrypoint, /readonly RUNTIME_DIR=\/run\/pyrus/);
   assert.match(entrypoint, /readonly LOG_DIR=\$\{RUNTIME_DIR\}\/logs/);
@@ -81,7 +89,15 @@ test("capsule restricts CPG clients and exposes only fixed host relays with RAM-
     /start_service cpg-relay \/usr\/local\/bin\/pyrus-capsule-relay[\s\S]*?15000[\s\S]*?5000/,
   );
   assert.match(entrypoint, /chromium/);
-  assert.match(entrypoint, /--incognito/);
+  assert.doesNotMatch(entrypoint, /--incognito/);
+  assert.match(
+    entrypoint,
+    /--disable-extensions-except=\/opt\/pyrus\/paper-only-extension/,
+  );
+  assert.match(
+    entrypoint,
+    /--load-extension=\/opt\/pyrus\/paper-only-extension/,
+  );
   assert.match(entrypoint, /http:\/\/localhost:5000/);
   assert.match(entrypoint, /ibgroup\.web\.core\.clientportal\.gw\.GatewayStart/);
   assert.match(entrypoint, /start_service watchdog watchdog/);
@@ -113,6 +129,12 @@ test("capsule restricts CPG clients and exposes only fixed host relays with RAM-
   assert.match(relay, /127\.0\.0\.1/);
   assert.match(relay, /socket\.create_connection/);
   assert.doesNotMatch(relay, /print\(|logging|sys\.stdout|sys\.stderr/);
+  assert.match(dockerfile, /COPY --chown=10001:10001 paper-only-extension/);
+  assert.match(extensionManifest, /"manifest_version"\s*:\s*3/);
+  assert.match(extensionManifest, /http:\/\/localhost:5000\/\*/);
+  assert.match(extensionScript, /\.xyz-paper-switch/);
+  assert.match(extensionScript, /checked = true/);
+  assert.match(extensionScript, /disabled = true/);
 });
 
 test("capsule forbids browser sandbox bypasses, debug logging, and credentials", async () => {
@@ -122,6 +144,8 @@ test("capsule forbids browser sandbox bypasses, debug logging, and credentials",
       "pyrus-capsule-entrypoint",
       "pyrus-capsule-health",
       "pyrus-capsule-relay.py",
+      "paper-only-extension/manifest.json",
+      "paper-only-extension/paper-only.js",
     ].map(
       (name) => readFile(path.join(capsuleDir, name), "utf8"),
     ),

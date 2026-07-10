@@ -67,18 +67,24 @@ capabilities dropped, no-new-privileges, bounded memory/PIDs/CPU, and tmpfs at
 The host loads the pinned Moby-derived Chromium seccomp profile described
 above. The image declares no `VOLUME` or `EXPOSE` instruction.
 
-CPG admits only `127.0.0.1`; X11 disables TCP; x11vnc and websockify bind only
-to loopback. Docker must not publish CPG, RFB, or noVNC ports. x11vnc has no
-password because it is loopback-only and the current slice has no inbound
-container path. A later authenticated local-agent tunnel must preserve that
-boundary.
+Chromium loads the bundled `paper-only-extension` from the immutable image. It
+selects and locks IBKR's Paper Trading login toggle; the API independently
+rejects and tears down any authenticated session whose account IDs are not
+verified `DU` paper accounts.
+
+CPG admits only `127.0.0.1`; X11 disables TCP; x11vnc binds only to loopback.
+The capsule exposes two fixed relay ports for the session host: `15000` for
+CPG and `16080` for noVNC. Docker publishes only those relays to host loopback.
+x11vnc has no password because the RFB listener is not published. The
+authenticated host tunnel must preserve that boundary.
 
 Replit's current Docker daemon cannot execute container healthchecks, so the
 image intentionally declares none. An internal watchdog runs the retained
 `pyrus-capsule-health` binary every 10 seconds and exits on failure, which
 causes the supervisor and its critical children to exit for host recovery.
-The check covers all six processes, the X11 socket, and the expected listener
-state for CPG `5000`, RFB `5900`, and noVNC `6080`. The entrypoint emits exactly one
+The check covers all critical processes, the X11 socket, and the expected
+listener state for CPG `5000`, the CPG relay `15000`, RFB `5900`, and noVNC
+relay `16080`. The entrypoint emits exactly one
 nonsecret `PYRUS_IBKR_CAPSULE_READY_V1` marker after three consecutive initial
 checks.
 Unauthenticated/login-required CPG is healthy; brokerage authentication and

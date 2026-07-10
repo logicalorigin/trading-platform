@@ -6,8 +6,15 @@ import {
   type Response,
 } from "express";
 import { appendFileSync } from "node:fs";
-import { request as httpRequest } from "node:http";
+import {
+  STATUS_CODES,
+  request as httpRequest,
+  type IncomingHttpHeaders,
+  type IncomingMessage,
+  type Server,
+} from "node:http";
 import path from "node:path";
+import type { Duplex } from "node:stream";
 
 import {
   ConnectIbkrPortalResponse,
@@ -118,7 +125,7 @@ function assertIbkrPortalAccess(session: AuthenticatedSession): void {
 }
 
 async function requireIbkrPortalAccess(
-  req: Request,
+  req: Pick<Request, "headers">,
 ): Promise<AuthenticatedSession> {
   const session = await requireUser(req);
   assertIbkrPortalAccess(session);
@@ -235,7 +242,7 @@ function rewriteBody(body: string, gatewayOrigin: string): string {
 }
 
 export function filterIbkrGatewayRequestHeaders(
-  headers: Request["headers"],
+  headers: IncomingHttpHeaders,
 ): Record<string, string | string[]> {
   const forwardHeaders: Record<string, string | string[]> = {};
   for (const [key, value] of Object.entries(headers)) {
@@ -295,7 +302,7 @@ async function proxyToGateway(req: Request, res: Response): Promise<void> {
   const outBody = encodeRequestBody(req);
 
   const forwardHeaders = filterIbkrGatewayRequestHeaders(req.headers);
-  forwardHeaders["host"] = `127.0.0.1:${gateway.port}`;
+  forwardHeaders["host"] = `127.0.0.1:${gateway.proxyPort}`;
   if (outBody) {
     forwardHeaders["content-length"] = String(outBody.length);
   }
@@ -323,7 +330,7 @@ async function proxyToGateway(req: Request, res: Response): Promise<void> {
     const upstream = httpRequest(
       {
         host: "127.0.0.1",
-        port: gateway.port,
+        port: gateway.proxyPort,
         method: req.method,
         path: rest,
         headers: forwardHeaders,
@@ -346,7 +353,7 @@ async function proxyToGateway(req: Request, res: Response): Promise<void> {
               continue;
             }
             if (lower === "location" && typeof value === "string") {
-              outHeaders[key] = rewriteLocation(value, gateway.origin);
+              outHeaders[key] = rewriteLocation(value, gateway.proxyOrigin);
               continue;
             }
             if (lower === "set-cookie" && Array.isArray(value)) {
@@ -360,7 +367,7 @@ async function proxyToGateway(req: Request, res: Response): Promise<void> {
           const contentType = String(up.headers["content-type"] ?? "");
           if (/text\/html|javascript|json|text\/css/i.test(contentType)) {
             out = Buffer.from(
-              rewriteBody(out.toString("utf8"), gateway.origin),
+              rewriteBody(out.toString("utf8"), gateway.proxyOrigin),
             );
           }
 
@@ -374,7 +381,7 @@ async function proxyToGateway(req: Request, res: Response): Promise<void> {
             // redirect target (path only) so post-login hops are visible
             location:
               typeof up.headers["location"] === "string"
-                ? rewriteLocation(up.headers["location"], gateway.origin).split("?")[0]
+                ? rewriteLocation(up.headers["location"], gateway.proxyOrigin).split("?")[0]
                 : undefined,
           });
 
@@ -424,6 +431,125 @@ async function proxyToGateway(req: Request, res: Response): Promise<void> {
       upstream.write(outBody);
     }
     upstream.end();
+  });
+}
+
+function gatewayUpgradePath(request: IncomingMessage): string | null {
+  const url = new URL(request.url ?? "/", "http://localhost");
+  if (
+    url.pathname !== GW_BASE &&
+    !url.pathname.startsWith(`${GW_BASE}/`)
+  ) {
+    return null;
+  }
+  return `${url.pathname.slice(GW_BASE.length) || "/"}${url.search}`;
+}
+
+function hasSameGatewayOrigin(request: IncomingMessage): boolean {
+  const origin = request.headers.origin;
+  const host = request.headers.host;
+  if (typeof origin !== "string" || !host) return false;
+  try {
+    const parsed = new URL(origin);
+    return (
+      (parsed.protocol === "http:" || parsed.protocol === "https:") &&
+      parsed.host.toLowerCase() === host.toLowerCase()
+    );
+  } catch {
+    return false;
+  }
+}
+
+function writeUpgradeResponse(
+  socket: Duplex,
+  response: IncomingMessage,
+): void {
+  const status = response.statusCode ?? 101;
+  const statusText = response.statusMessage ?? STATUS_CODES[status] ?? "Switching Protocols";
+  let head = `HTTP/${response.httpVersion} ${status} ${statusText}\r\n`;
+  for (let index = 0; index < response.rawHeaders.length; index += 2) {
+    head += `${response.rawHeaders[index]}: ${response.rawHeaders[index + 1]}\r\n`;
+  }
+  socket.write(`${head}\r\n`);
+}
+
+function rejectUpgrade(socket: Duplex, status: number): void {
+  if (socket.destroyed) return;
+  socket.end(
+    `HTTP/1.1 ${status} ${STATUS_CODES[status] ?? "Error"}\r\n` +
+      "Connection: close\r\nContent-Length: 0\r\n\r\n",
+  );
+}
+
+async function proxyGatewayUpgrade(
+  request: IncomingMessage,
+  socket: Duplex,
+  clientHead: Buffer,
+  path: string,
+): Promise<void> {
+  const session = await requireIbkrPortalAccess(request);
+  if (!hasSameGatewayOrigin(request)) {
+    throw new HttpError(403, "WebSocket origin is not allowed.", {
+      code: "ibkr_portal_websocket_origin_denied",
+    });
+  }
+  const gateway = getGateway(session.user.id);
+  if (!gateway) {
+    throw new HttpError(503, "IBKR Client Portal gateway is not running.", {
+      code: "ibkr_portal_gateway_not_running",
+    });
+  }
+
+  const headers = filterIbkrGatewayRequestHeaders(request.headers);
+  headers["host"] = `127.0.0.1:${gateway.proxyPort}`;
+
+  await new Promise<void>((resolve, reject) => {
+    const upstream = httpRequest({
+      host: "127.0.0.1",
+      port: gateway.proxyPort,
+      method: "GET",
+      path,
+      headers,
+    });
+    let upgraded = false;
+    upstream.once("upgrade", (response, upstreamSocket, upstreamHead) => {
+      upgraded = true;
+      writeUpgradeResponse(socket, response);
+      if (upstreamHead.length > 0) socket.write(upstreamHead);
+      if (clientHead.length > 0) upstreamSocket.write(clientHead);
+      socket.on("error", () => upstreamSocket.destroy());
+      upstreamSocket.on("error", () => socket.destroy());
+      socket.on("close", () => upstreamSocket.destroy());
+      upstreamSocket.on("close", () => socket.destroy());
+      socket.pipe(upstreamSocket).pipe(socket);
+      resolve();
+    });
+    upstream.once("response", (response) => {
+      response.resume();
+      reject(new Error("IBKR console refused the WebSocket upgrade."));
+    });
+    upstream.once("error", reject);
+    socket.once("close", () => {
+      if (!upgraded) upstream.destroy();
+    });
+    upstream.end();
+  });
+}
+
+export function attachIbkrPortalWebSocket(server: Server): void {
+  server.on("upgrade", (request, socket, head) => {
+    const path = gatewayUpgradePath(request);
+    if (!path) return;
+    void proxyGatewayUpgrade(request, socket, head, path).catch((error) => {
+      const status = error instanceof HttpError ? error.statusCode : 502;
+      trace({
+        method: "GET",
+        path: path.split("?", 1)[0],
+        outcome: "websocket-denied",
+        status,
+      });
+      rejectUpgrade(socket, status);
+    });
   });
 }
 

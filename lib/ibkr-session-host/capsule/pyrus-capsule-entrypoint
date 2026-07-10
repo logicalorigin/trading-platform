@@ -100,7 +100,8 @@ start_service xvfb Xvfb :99 -screen 0 1364x768x24 -nolisten tcp -noreset
 wait_for_path /tmp/.X11-unix/X99 20
 
 # No VNC password is stored: the RFB listener is reachable only from loopback
-# inside the capsule and Docker publishes no ports.
+# inside the capsule. noVNC is reachable only through the fixed host-loopback
+# Docker relay owned by the session host.
 start_service vnc x11vnc \
   -display :99 \
   -rfbport 5900 \
@@ -110,7 +111,7 @@ start_service vnc x11vnc \
   -nopw
 start_service novnc websockify \
   --web=/usr/share/novnc/ \
-  127.0.0.1:6080 \
+  0.0.0.0:16080 \
   127.0.0.1:5900
 
 start_service cpg java \
@@ -124,15 +125,18 @@ start_service cpg java \
   --conf ../root/conf.yaml
 wait_for_port 5000 60
 
+start_service cpg-relay /usr/local/bin/pyrus-capsule-relay 15000 5000
+
 start_service chromium chromium \
-  --incognito \
   --user-data-dir="${RUNTIME_DIR}/chromium" \
   --no-first-run \
   --no-default-browser-check \
   --disable-background-networking \
   --disable-component-update \
   --disable-sync \
-  --app=https://localhost:5000/
+  --disable-extensions-except=/opt/pyrus/paper-only-extension \
+  --load-extension=/opt/pyrus/paper-only-extension \
+  --app=http://localhost:5000/
 
 wait_until_healthy
 printf 'PYRUS_IBKR_CAPSULE_READY_V1\n'

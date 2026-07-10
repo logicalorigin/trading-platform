@@ -26,3 +26,10 @@ export const IBKR_PORTAL_STATUS_LABELS = Object.freeze({
 export function formatIbkrPortalStatus(status) {
   return IBKR_PORTAL_STATUS_LABELS[status] || status || "unknown";
 }
+
+export function isTerminalIbkrPortalConnectStatus(readiness) {
+  return (
+    readiness?.status === "disconnected" &&
+    readiness?.gatewayRunning === false
+  );
+}

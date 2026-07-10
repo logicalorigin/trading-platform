@@ -50,6 +50,7 @@ import {
   stopPythonComputeRuntime,
 } from "./services/python-compute";
 import { attachOptionQuoteWebSocket } from "./ws/options-quotes";
+import { attachIbkrPortalWebSocket } from "./routes/ibkr-portal";
 import {
   diagnosticsPositionProbeForTarget,
   selectDiagnosticsAccountProbeTarget,
@@ -71,6 +72,7 @@ if (Number.isNaN(port) || port <= 0) {
 
 const server = createServer(app);
 attachOptionQuoteWebSocket(server);
+attachIbkrPortalWebSocket(server);
 installRuntimeFlightRecorderProcessHandlers();
 installRuntimeFlightRecorderDbDiagnostics();
 

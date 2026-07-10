@@ -76,6 +76,7 @@ import {
   toDate,
   toIbkrMonthCode,
 } from "../../lib/values";
+import { areVerifiedIbkrPaperAccounts } from "../../services/ibkr-paper-account-policy";
 import { signHmacRequest, type OAuthParams } from "./oauth-signer";
 
 type HeaderInput = ConstructorParameters<typeof Headers>[0];
@@ -998,6 +999,24 @@ export class IbkrClient {
     private readonly options: IbkrClientOptions = {},
   ) {}
 
+  private assertPaperAccounts(accountIds: readonly string[]): void {
+    if (
+      this.config.paperAccountOnly &&
+      !areVerifiedIbkrPaperAccounts(accountIds)
+    ) {
+      throw new HttpError(
+        403,
+        "Only an authenticated IBKR Paper Trading account is allowed.",
+        {
+          code: "ibkr_paper_account_required",
+          detail:
+            "Sign in with the separate username assigned to your IBKR Paper Trading account.",
+          expose: true,
+        },
+      );
+    }
+  }
+
   private buildHeaders(initHeaders?: HeaderInput): Headers {
     const headers = new Headers({
       Accept: "application/json",
@@ -1177,7 +1196,22 @@ export class IbkrClient {
 
   private async getPortfolioAccounts(): Promise<Record<string, unknown>[]> {
     const payload = await this.request<unknown>("/portfolio/accounts");
-    return compact(asArray(payload).map(asRecord));
+    const accounts = compact(asArray(payload).map(asRecord));
+    if (this.config.paperAccountOnly) {
+      const accountIds = compact(
+        accounts.map((account) =>
+          firstDefined(
+            asString(account["accountId"]),
+            asString(account["id"]),
+          ),
+        ),
+      );
+      if (accountIds.length !== accounts.length) {
+        this.assertPaperAccounts([]);
+      }
+      this.assertPaperAccounts(accountIds);
+    }
+    return accounts;
   }
 
   private async getTradingAccountsInfo(): Promise<{
@@ -1187,10 +1221,12 @@ export class IbkrClient {
     const payload = await this.request<unknown>("/iserver/accounts");
     const record = asRecord(payload);
 
-    return {
+    const result = {
       accounts: compact(asArray(record?.["accounts"]).map(asString)),
       allowCustomerTime: Boolean(record?.["allowCustomerTime"]),
     };
+    this.assertPaperAccounts(result.accounts);
+    return result;
   }
 
   async getSessionStatus(): Promise<SessionStatusSnapshot> {
@@ -1288,6 +1324,11 @@ export class IbkrClient {
       this.config.defaultAccountId ??
       tradingAccounts.accounts[0] ??
       null;
+    this.assertPaperAccounts(
+      selectedAccountId
+        ? [...tradingAccounts.accounts, selectedAccountId]
+        : tradingAccounts.accounts,
+    );
 
     return {
       ...status,
@@ -1300,6 +1341,7 @@ export class IbkrClient {
   }
 
   async setActiveAccount(accountId: string): Promise<string> {
+    this.assertPaperAccounts([accountId]);
     const payload = await this.request<unknown>("/iserver/account", {
       method: "POST",
       body: JSON.stringify({ acctId: accountId }),
@@ -1323,6 +1365,8 @@ export class IbkrClient {
     if (!targetAccountId) {
       return null;
     }
+
+    this.assertPaperAccounts([targetAccountId]);
 
     if (
       session.accounts.length > 1 &&
@@ -1675,6 +1719,7 @@ export class IbkrClient {
   private async listAccountPositions(
     accountId: string,
   ): Promise<BrokerPositionSnapshot[]> {
+    this.assertPaperAccounts([accountId]);
     const positions: BrokerPositionSnapshot[] = [];
     let pageId = 0;
 
@@ -1794,6 +1839,7 @@ export class IbkrClient {
             ) ?? null;
           return accountId ? [accountId] : [];
         });
+    this.assertPaperAccounts(accountIds);
 
     const positions = await Promise.all(
       accountIds.map((accountId) => this.listAccountPositions(accountId)),
@@ -1819,6 +1865,7 @@ export class IbkrClient {
     if (accountIds.length === 0) {
       return [];
     }
+    this.assertPaperAccounts(accountIds);
 
     const orderLists: BrokerOrderSnapshot[][] = [];
 
@@ -3024,6 +3071,8 @@ export class IbkrClient {
         break;
       }
 
+      await this.getTradingAccountsInfo();
+
       currentPayload = await this.request<unknown>(
         `/iserver/reply/${encodeURIComponent(replyId)}`,
         {
@@ -3062,6 +3111,7 @@ export class IbkrClient {
         },
       );
     }
+    this.assertPaperAccounts([accountId]);
 
     const resolvedContract =
       input.assetClass === "option" && input.optionContract
@@ -3217,6 +3267,17 @@ export class IbkrClient {
         },
       );
     }
+    this.assertPaperAccounts([
+      accountId,
+      ...compact(
+        input.orders.map((order) =>
+          firstDefined(
+            asString(order["acctId"]),
+            asString(order["accountId"]),
+          ),
+        ),
+      ),
+    ]);
 
     const payload = await this.request<unknown>(
       `/iserver/account/${encodeURIComponent(accountId)}/orders`,
@@ -3237,6 +3298,16 @@ export class IbkrClient {
     order: Record<string, unknown>;
     mode: RuntimeMode;
   }): Promise<ReplaceOrderSnapshot> {
+    await this.getTradingAccountsInfo();
+    this.assertPaperAccounts(
+      compact([
+        input.accountId,
+        firstDefined(
+          asString(input.order["acctId"]),
+          asString(input.order["accountId"]),
+        ),
+      ]),
+    );
     const payload = await this.request<unknown>(
       `/iserver/account/${encodeURIComponent(input.accountId)}/order/${encodeURIComponent(input.orderId)}`,
       {
@@ -3285,6 +3356,7 @@ export class IbkrClient {
     extOperator?: string | null;
   }): Promise<CancelOrderSnapshot> {
     await this.getTradingAccountsInfo();
+    this.assertPaperAccounts([input.accountId]);
 
     const payload = await this.request<unknown>(
       `/iserver/account/${encodeURIComponent(input.accountId)}/order/${encodeURIComponent(input.orderId)}`,

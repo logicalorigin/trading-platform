@@ -32,6 +32,7 @@ export type IbkrRuntimeConfig = {
   username: string | null;
   password: string | null;
   allowInsecureTls: boolean;
+  paperAccountOnly?: boolean;
 };
 export type IbkrTransport = "client_portal" | "tws";
 export type IbkrMarketDataMode =

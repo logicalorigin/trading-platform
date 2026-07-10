@@ -12,8 +12,13 @@ async function main(): Promise<void> {
   const manager = new CapsuleManager(config, execFileCommandRunner);
   const readiness = await checkCapsuleRuntime(execFileCommandRunner, config);
   const server = createSessionHostServer({
+    controlToken: process.env["IBKR_SESSION_HOST_CONTROL_TOKEN"],
+    ensureSession: (sessionId) => manager.ensure(sessionId),
+    releaseSession: (sessionId) => manager.release(sessionId),
     readiness: () => checkCapsuleRuntime(execFileCommandRunner, config),
     snapshot: () => manager.snapshot(),
+    statusSession: (sessionId) => manager.status(sessionId),
+    target: (sessionId, kind) => manager.getTarget(sessionId, kind),
   });
 
   await new Promise<void>((resolve, reject) => {
