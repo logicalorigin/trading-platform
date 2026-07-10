@@ -20,7 +20,6 @@ const requiredFiles = [
   "src/components/marketing/pyrus-mark.tsx",
   "src/components/marketing/pyrus-mark-shared.tsx",
   "src/components/marketing/use-prefers-reduced-motion.ts",
-  "src/components/marketing/pyrus-logo.standalone.tsx",
   "src/lib/observe-visibility.ts",
   "src/lib/pyrus-mark-geometry.ts",
   "src/styles/brand.css",
@@ -30,6 +29,8 @@ const requiredFiles = [
 ];
 
 const retiredFiles = [
+  "src/components/brand/PyrusLogo.tsx",
+  "src/components/marketing/pyrus-logo.standalone.tsx",
   "src/components/marketing/pyrus-mark-3d.tsx",
   "src/components/marketing/pyrus-mark-3d-scene.tsx",
 ];
