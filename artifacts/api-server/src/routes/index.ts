@@ -48,6 +48,7 @@ const REQUIRE_USER_PATHS = [
   /^\/positions(\/|$)/,
   /^\/orders(\/|$)/,
   /^\/executions(\/|$)/,
+  /^\/flow\/scanner\/benchmark(\/|$)/,
   /^\/watchlists(\/|$)/,
   /^\/shadow\/orders(\/|$)/,
   // Broker and account SSE streams contain user-scoped orders, executions,

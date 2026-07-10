@@ -40,3 +40,19 @@ test("execution and account stream routes reject unauthenticated requests", asyn
     }
   });
 });
+
+test("flow scanner benchmark rejects unauthenticated requests", async () => {
+  await withServer(async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/flow/scanner/benchmark`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{}",
+    });
+
+    assert.equal(response.status, 401);
+    assert.equal(
+      ((await response.json()) as { code?: string }).code,
+      "auth_required",
+    );
+  });
+});
