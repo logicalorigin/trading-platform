@@ -195,6 +195,7 @@ const SHADOW_EQUITY_HISTORY_BUCKET_CANDIDATES = Math.max(
   Number(process.env.SHADOW_EQUITY_HISTORY_BUCKET_CANDIDATES ?? 3),
 );
 const SHADOW_EQUITY_HISTORY_MIN_BUCKET_MS = 60_000;
+const SHADOW_EQUITY_HISTORY_MINUTE_DENSE_SPAN_MS = 24 * 60 * 60_000;
 const SHADOW_DAY_CHANGE_QUOTE_MAX_WAIT_MS = 1_250;
 const SHADOW_DAY_CHANGE_QUOTE_TASK_MAX_WAIT_MS = Math.max(
   250,
@@ -6662,6 +6663,26 @@ async function ensureFreshShadowState(refreshMarks = false) {
   }
 }
 
+// A stored mark carries day-change information only if it was observed after the
+// opening fill. A mark still sitting on the fill (asOf <= openedAt) makes
+// marketValue equal the same-day entry baseline by construction, so
+// "current − baseline" fabricates a $0 day change no matter what the market did
+// (observed live 2026-07-09: same-day options with no post-fill quote served $0
+// instead of unknown). Marks from before the day-change baseline are stale as before.
+export function shadowPositionMarkStaleForDayChange(input: {
+  asOf: Date;
+  openedAt: Date | null;
+  dayStart: Date;
+}): boolean {
+  if (input.asOf.getTime() < input.dayStart.getTime()) {
+    return true;
+  }
+  return (
+    input.openedAt != null &&
+    input.asOf.getTime() <= input.openedAt.getTime()
+  );
+}
+
 function buildShadowPositionDayChange(input: {
   currentMarketValue: number | null;
   baselineMarketValue: number | null;
@@ -7699,7 +7720,11 @@ async function readShadowPositionDayChanges(
       baselineMarketValue,
     });
     const providerContractId = shadowOptionQuoteIdentifier(contract);
-    const currentMarkStale = currentAsOf.getTime() < dayStart.getTime();
+    const currentMarkStale = shadowPositionMarkStaleForDayChange({
+      asOf: currentAsOf,
+      openedAt: position.openedAt ?? null,
+      dayStart,
+    });
     if (
       (baselineDayChange.dayChange == null || currentMarkStale) &&
       providerContractId
@@ -8440,25 +8465,30 @@ function shadowEquityHistoryBucketSizeMs<
   return defaultBucketSizeMs;
 }
 
-// Pure: read span -> how coarsely to sample snapshots. Each bucket yields up to
-// `candidates` newest + 1 oldest row, so bucket count is sized to
-// budget / (candidates + 1): total sampled rows track the point budget for any
-// span (~1200 vs up to 285k for the old full scan). candidates (newest N per
-// bucket, NOT LIMIT 1) keeps rows for live-ledger filtering to validate.
+// Pure: read span -> how coarsely to sample snapshots. Keep 1D minute-dense;
+// longer spans derive their bucket count from the point budget. Each bucket
+// yields up to `candidatesPerBucket` newest + 1 oldest row, so longer-range
+// reads track the budget (~1200 vs up to 285k for the old full scan).
 function shadowEquityHistoryReadPolicy(spanMs: number): {
   bucketMs: number;
-  candidates: number;
+  candidatesPerBucket: number;
 } {
-  const candidates = SHADOW_EQUITY_HISTORY_BUCKET_CANDIDATES;
+  const candidatesPerBucket = SHADOW_EQUITY_HISTORY_BUCKET_CANDIDATES;
+  if (spanMs <= SHADOW_EQUITY_HISTORY_MINUTE_DENSE_SPAN_MS) {
+    return {
+      bucketMs: SHADOW_EQUITY_HISTORY_MIN_BUCKET_MS,
+      candidatesPerBucket,
+    };
+  }
   const buckets = Math.max(
     1,
-    Math.floor(SHADOW_EQUITY_HISTORY_POINT_BUDGET / (candidates + 1)),
+    Math.floor(SHADOW_EQUITY_HISTORY_POINT_BUDGET / (candidatesPerBucket + 1)),
   );
   const bucketMs = Math.max(
     SHADOW_EQUITY_HISTORY_MIN_BUCKET_MS,
     Math.ceil(Math.max(1, spanMs) / buckets),
   );
-  return { bucketMs, candidates };
+  return { bucketMs, candidatesPerBucket };
 }
 
 type ShadowEquityHistoryReadRow = Pick<
@@ -8490,7 +8520,7 @@ function mapShadowSnapshotReadRow(
   };
 }
 
-// Bucket-first bounded read: the newest `candidates` snapshots per time bucket
+// Bucket-first bounded read: the newest `candidatesPerBucket` snapshots per bucket
 // (index-seek per bucket, no full-table sort) PLUS the first snapshot of each
 // day (so deposits/fills/ledger jumps are never sampled away), projecting only
 // the columns the pipeline consumes. Source-agnostic — the returned set feeds
@@ -8498,9 +8528,9 @@ function mapShadowSnapshotReadRow(
 // decides correctness. Replaces `select * ... order by as_of` over the whole
 // table (up to 285k rows / ~30MB per rebuild).
 //
-// Each bucket samples its newest `candidates` rows AND its oldest row, and each
+// Each bucket samples its newest `candidatesPerBucket` rows AND its oldest row, and each
 // day contributes its first row. So the gate-1 adversarial case — an older valid
-// row under more-than-`candidates` newer invalid rows in one bucket — is
+// row under more-than-`candidatesPerBucket` newer invalid rows in one bucket — is
 // preserved: that older row is the bucket's oldest (or the day's first).
 //
 // ponytail: the remaining ceiling is a valid row that is neither newest-N,
@@ -8527,18 +8557,23 @@ async function readShadowEquityHistorySnapshotRowsBucketed(input: {
     }
     start = new Date(first as string | number | Date);
   }
-  const { bucketMs, candidates } = shadowEquityHistoryReadPolicy(
+  if (start.getTime() >= end.getTime()) {
+    return [];
+  }
+  const { bucketMs, candidatesPerBucket } = shadowEquityHistoryReadPolicy(
     end.getTime() - start.getTime(),
   );
   const interval = `${bucketMs / 1000} seconds`;
   const startIso = start.toISOString();
   const endIso = end.toISOString();
+  const lastBucketStartIso = new Date(end.getTime() - 1).toISOString();
 
   const bucketed = (await db.execute(sql`
     select s.as_of, s.source, s.cash, s.realized_pnl, s.fees,
       s.net_liquidation, s.created_at, s.currency, s.id
     from generate_series(
-      ${startIso}::timestamptz, ${endIso}::timestamptz, ${interval}::interval
+      ${startIso}::timestamptz, ${lastBucketStartIso}::timestamptz,
+      ${interval}::interval
     ) as b(bucket_start)
     cross join lateral (
       (
@@ -8548,8 +8583,9 @@ async function readShadowEquityHistorySnapshotRowsBucketed(input: {
         where account_id = ${accountId}
           and as_of >= b.bucket_start
           and as_of < b.bucket_start + ${interval}::interval
+          and as_of < ${endIso}::timestamptz
         order by as_of desc
-        limit ${candidates}
+        limit ${candidatesPerBucket}
       )
       union
       (
@@ -8559,6 +8595,7 @@ async function readShadowEquityHistorySnapshotRowsBucketed(input: {
         where account_id = ${accountId}
           and as_of >= b.bucket_start
           and as_of < b.bucket_start + ${interval}::interval
+          and as_of < ${endIso}::timestamptz
         order by as_of asc
         limit 1
       )
@@ -8566,12 +8603,37 @@ async function readShadowEquityHistorySnapshotRowsBucketed(input: {
   `)) as unknown as { rows: Array<Record<string, unknown>> };
 
   const anchors = (await db.execute(sql`
-    select distinct on (date_trunc('day', as_of))
+    with recursive daily_anchors as (
+      (
+        select as_of, source, cash, realized_pnl, fees,
+          net_liquidation, created_at, currency, id
+        from shadow_balance_snapshots
+        where account_id = ${accountId}
+          and as_of >= ${startIso}::timestamptz
+          and as_of < ${endIso}::timestamptz
+        order by as_of asc
+        limit 1
+      )
+      union all
+      select next.as_of, next.source, next.cash, next.realized_pnl, next.fees,
+        next.net_liquidation, next.created_at, next.currency, next.id
+      from daily_anchors previous
+      cross join lateral (
+        select as_of, source, cash, realized_pnl, fees,
+          net_liquidation, created_at, currency, id
+        from shadow_balance_snapshots
+        where account_id = ${accountId}
+          and as_of >= date_trunc('day', previous.as_of) + interval '1 day'
+          and as_of < ${endIso}::timestamptz
+        order by as_of asc
+        limit 1
+      ) next
+    )
+    select
       as_of, source, cash, realized_pnl, fees,
       net_liquidation, created_at, currency, id
-    from shadow_balance_snapshots
-    where account_id = ${accountId} and as_of >= ${startIso}::timestamptz
-    order by date_trunc('day', as_of), as_of asc
+    from daily_anchors
+    order by as_of asc
   `)) as unknown as { rows: Array<Record<string, unknown>> };
 
   const byId = new Map<string, ShadowEquityHistoryReadRow>();
