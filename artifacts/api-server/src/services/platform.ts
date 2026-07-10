@@ -9140,6 +9140,11 @@ let barsBackgroundPersistCoalesced = 0;
 let barsBackgroundPersistDropped = 0;
 let barsBackgroundPersistDroppedForPressure = 0;
 let barsBackgroundPersistMaxQueueLength = 0;
+// BAR-W0 diagnostics only: count how many currently-persisting (active) windows
+// each key has in flight so we can measure would-be active-key collisions
+// without changing write/coalesce behavior yet.
+const barsBackgroundPersistActiveKeys = new Map<string, number>();
+let barsBackgroundPersistActiveCoalesceCandidates = 0;
 
 function barsBackgroundPersistConcurrency(): number {
   return Math.max(
@@ -9200,8 +9205,12 @@ function drainBarsBackgroundPersistQueue(): void {
     barsBackgroundPersistActive < concurrency &&
     barsBackgroundPersistQueue.length > 0
   ) {
-    const { input } = barsBackgroundPersistQueue.shift()!;
+    const { key, input } = barsBackgroundPersistQueue.shift()!;
     barsBackgroundPersistActive += 1;
+    barsBackgroundPersistActiveKeys.set(
+      key,
+      (barsBackgroundPersistActiveKeys.get(key) ?? 0) + 1,
+    );
     void barsBackgroundPersistWorker(input)
       .then((ok) => {
         if (ok === true) {
@@ -9218,6 +9227,13 @@ function drainBarsBackgroundPersistQueue(): void {
       })
       .finally(() => {
         barsBackgroundPersistActive -= 1;
+        const remainingActiveForKey =
+          (barsBackgroundPersistActiveKeys.get(key) ?? 1) - 1;
+        if (remainingActiveForKey > 0) {
+          barsBackgroundPersistActiveKeys.set(key, remainingActiveForKey);
+        } else {
+          barsBackgroundPersistActiveKeys.delete(key);
+        }
         drainBarsBackgroundPersistQueue();
         resolveBarsBackgroundPersistIdle();
       });
@@ -9248,6 +9264,11 @@ function queueBarsBackgroundPersist(input: BarsBackgroundPersistInput): void {
     return;
   }
   const key = barsBackgroundPersistWindowKey(input);
+  // BAR-W0 diagnostics only: this window's key already has an in-flight persist.
+  // Count it as a would-be active-key collision; do NOT change write behavior.
+  if (barsBackgroundPersistActiveKeys.has(key)) {
+    barsBackgroundPersistActiveCoalesceCandidates += 1;
+  }
   const existingIndex = barsBackgroundPersistQueue.findIndex(
     (entry) => entry.key === key,
   );
@@ -9283,6 +9304,7 @@ function getBarsBackgroundPersistDiagnostics() {
     skipped: barsBackgroundPersistSkipped,
     pressureSkipped: barsBackgroundPersistPressureSkipped,
     coalesced: barsBackgroundPersistCoalesced,
+    activeCoalesceCandidates: barsBackgroundPersistActiveCoalesceCandidates,
     dropped: barsBackgroundPersistDropped,
     droppedForPressure: barsBackgroundPersistDroppedForPressure,
     maxQueueLength: barsBackgroundPersistMaxQueueLength,
@@ -14140,6 +14162,8 @@ export function __resetOptionChainCachesForTests(input?: {
   barsBackgroundPersistSkipped = 0;
   barsBackgroundPersistPressureSkipped = 0;
   barsBackgroundPersistCoalesced = 0;
+  barsBackgroundPersistActiveKeys.clear();
+  barsBackgroundPersistActiveCoalesceCandidates = 0;
   barsBackgroundPersistDropped = 0;
   barsBackgroundPersistDroppedForPressure = 0;
   barsBackgroundPersistMaxQueueLength = 0;

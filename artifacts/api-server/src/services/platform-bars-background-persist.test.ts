@@ -83,6 +83,7 @@ test("background bar-cache persists drain one at a time by default", async () =>
         skipped: 0,
         pressureSkipped: 0,
         coalesced: 0,
+        activeCoalesceCandidates: 0,
         dropped: 0,
         droppedForPressure: 0,
         maxQueueLength: 2,
