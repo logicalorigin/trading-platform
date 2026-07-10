@@ -3761,7 +3761,7 @@ export function getPlatformResourceDiagnostics() {
   };
 }
 
-export async function listBrokerConnections() {
+export async function listBrokerConnections(appUserId: string) {
   const configured = getProviderConfiguration();
   const timestamp = new Date();
   const marketDataName = getMarketDataConnectionName();
@@ -3832,8 +3832,8 @@ export async function listBrokerConnections() {
       ],
       updatedAt: timestamp,
     },
-    ...(await listSnapTradeBrokerConnections()),
-    ...(await listRobinhoodBrokerConnections()),
+    ...(await listSnapTradeBrokerConnections(appUserId)),
+    ...(await listRobinhoodBrokerConnections(appUserId)),
   ];
 
   return { connections };
@@ -3873,7 +3873,7 @@ function extractSnapTradeBrokerageSlug(
  * derive connected state from server truth on initial load (not just after a
  * manual sync). Degrades to an empty list on any DB error — never throws.
  */
-async function listSnapTradeBrokerConnections(): Promise<
+async function listSnapTradeBrokerConnections(appUserId: string): Promise<
   BrokerConnectionListItem[]
 > {
   try {
@@ -3888,6 +3888,7 @@ async function listSnapTradeBrokerConnections(): Promise<
       .from(brokerConnectionsTable)
       .where(
         and(
+          eq(brokerConnectionsTable.appUserId, appUserId),
           eq(brokerConnectionsTable.brokerProvider, "snaptrade"),
           eq(brokerConnectionsTable.connectionType, "broker"),
         ),
@@ -3927,7 +3928,7 @@ async function listSnapTradeBrokerConnections(): Promise<
  * connected state from server truth on initial load. Degrades to an empty
  * list on any DB error — never throws.
  */
-async function listRobinhoodBrokerConnections(): Promise<
+async function listRobinhoodBrokerConnections(appUserId: string): Promise<
   BrokerConnectionListItem[]
 > {
   try {
@@ -3942,6 +3943,7 @@ async function listRobinhoodBrokerConnections(): Promise<
       .from(brokerConnectionsTable)
       .where(
         and(
+          eq(brokerConnectionsTable.appUserId, appUserId),
           eq(brokerConnectionsTable.brokerProvider, "robinhood"),
           eq(brokerConnectionsTable.connectionType, "broker"),
         ),

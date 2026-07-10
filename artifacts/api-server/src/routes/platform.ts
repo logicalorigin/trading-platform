@@ -1824,8 +1824,11 @@ router.get("/diagnostics/runtime", async (req, res) => {
   );
 });
 
-router.get("/broker-connections", async (_req, res) => {
-  const data = ListBrokerConnectionsResponse.parse(await listBrokerConnections());
+router.get("/broker-connections", async (req, res) => {
+  const { user } = await requireUser(req);
+  const data = ListBrokerConnectionsResponse.parse(
+    await listBrokerConnections(user.id),
+  );
 
   res.json(data);
 });
