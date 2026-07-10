@@ -76,7 +76,7 @@ mock.module(new URL("../services/account.ts", import.meta.url).href, {
     hasRobinhoodBackedAccounts: async () => robinhoodBackedAccountsPresent,
     hasSnapTradeBackedAccounts: async () => snapTradeBackedAccountsPresent,
     listAccounts: countedService("listAccounts"),
-    testFlexToken: inertService({ ok: true }),
+    testFlexToken: countedInertService("testFlexToken", { ok: true }),
   },
 });
 
@@ -598,6 +598,34 @@ test("live order mutation routes reject members without broker_connect before br
           `${route.service} should not run before entitlement admission`,
         );
       }
+    }),
+  );
+});
+
+test("Flex test route rejects missing CSRF before refreshing", async () => {
+  await withTestDb(async () =>
+    withServer(async (baseUrl) => {
+      serviceCalls.clear();
+      const auth = await seedMemberAuth({
+        email: "flex-test-missing-csrf@example.com",
+        entitlements: ["broker_connect"],
+      });
+
+      const response = await fetch(`${baseUrl}/accounts/flex/test`, {
+        method: "POST",
+        headers: {
+          cookie: auth.cookie,
+          "content-type": "application/json",
+        },
+        body: "{}",
+      });
+
+      assert.equal(response.status, 403);
+      assert.equal(
+        ((await response.json()) as { code?: string }).code,
+        "invalid_csrf_token",
+      );
+      assert.equal(serviceCalls.get("testFlexToken") ?? 0, 0);
     }),
   );
 });

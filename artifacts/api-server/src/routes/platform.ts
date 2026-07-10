@@ -1848,7 +1848,8 @@ router.get("/accounts/flex/health", async (_req, res) => {
   res.json(GetFlexHealthResponse.parse(await getFlexHealth()));
 });
 
-router.post("/accounts/flex/test", async (_req, res) => {
+router.post("/accounts/flex/test", async (req, res) => {
+  await requireEntitlementCsrf("broker_connect")(req);
   res.json(await testFlexToken());
 });
 
