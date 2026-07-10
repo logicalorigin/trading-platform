@@ -1,6 +1,7 @@
 import { and, eq, isNotNull } from "drizzle-orm";
 
 import { brokerAccountsTable, brokerConnectionsTable, db } from "@workspace/db";
+import * as dbExports from "@workspace/db";
 import { logger } from "../lib/logger";
 import { ingestSnapTradeAccountHistory } from "./snaptrade-account-history";
 import { isApiResourcePressureHardBlock } from "./resource-pressure";
@@ -15,6 +16,10 @@ import { isApiResourcePressureHardBlock } from "./resource-pressure";
 const SNAPTRADE_HISTORY_REFRESH_INTERVAL_MS = 6 * 60 * 60 * 1000; // every 6h
 // Stagger past the connect herd + other DB-touching workers that start at boot.
 const SNAPTRADE_HISTORY_INITIAL_DELAY_MS = 45_000;
+type DbLaneRunner = <T>(lane: "bulk", fn: () => T) => T;
+const runInDbLane = (
+  dbExports as typeof dbExports & { runInDbLane: DbLaneRunner }
+).runInDbLane;
 
 function snapTradeConfigured(
   env: NodeJS.ProcessEnv | Record<string, string | undefined> = process.env,
@@ -177,11 +182,11 @@ export function startSnapTradeHistoryRefreshScheduler(): void {
       );
 
   setTimeout(() => {
-    void runOnce("scheduled-initial");
+    void runInDbLane("bulk", () => runOnce("scheduled-initial"));
   }, SNAPTRADE_HISTORY_INITIAL_DELAY_MS).unref?.();
 
   const timer = setInterval(() => {
-    void runOnce("scheduled");
+    void runInDbLane("bulk", () => runOnce("scheduled"));
   }, SNAPTRADE_HISTORY_REFRESH_INTERVAL_MS);
   timer.unref?.();
 }
