@@ -25,6 +25,9 @@ test("Account order contracts omit retired fallback metadata", () => {
   }
 });
 
-test("Account equity history no longer advertises runtime fallback data", () => {
-  assert.doesNotMatch(schemaBlock("AccountEquityHistoryResponse"), /runtime_fallback/);
+test("Account equity history omits retired stale fallback metadata", () => {
+  const schema = schemaBlock("AccountEquityHistoryResponse");
+  assert.doesNotMatch(schema, /runtime_fallback/);
+  assert.doesNotMatch(schema, /^        isStale:/m);
+  assert.doesNotMatch(schema, /^        staleReason:/m);
 });

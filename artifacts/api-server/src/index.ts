@@ -39,6 +39,7 @@ import {
 import { startOvernightSpotWorker } from "./services/overnight-spot-worker";
 import { startSignalMonitorEvaluationWorker } from "./services/signal-monitor-evaluation-worker";
 import { startSignalUniverseRankingScheduler } from "./services/signal-universe-ranking";
+import { startDbDiskUsageGuard } from "./services/db-disk-usage-guard";
 import { startSnapshotRetentionScheduler } from "./services/snapshot-retention-scheduler";
 import { startSnapTradeHistoryRefreshScheduler } from "./services/snaptrade-history-scheduler";
 import { startRobinhoodHistoryRefreshScheduler } from "./services/robinhood-history-scheduler";
@@ -318,6 +319,7 @@ server.listen(port, () => {
     startSignalMonitorEvaluationWorker,
     () => startDiagnosticsCollector(collectDiagnosticsInput),
     startSnapshotRetentionScheduler,
+    startDbDiskUsageGuard,
     startSignalUniverseRankingScheduler,
     startSnapTradeHistoryRefreshScheduler,
     startRobinhoodHistoryRefreshScheduler,

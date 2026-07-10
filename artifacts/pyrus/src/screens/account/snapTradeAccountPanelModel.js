@@ -410,8 +410,6 @@ const buildSnapTradeEquityHistory = ({
     benchmark: null,
     asOf: timestamp,
     latestSnapshotAt: timestamp,
-    isStale: false,
-    staleReason: null,
     terminalPointSource: "snaptrade_portfolio",
     liveTerminalIncluded: normalizedNav != null,
     sourceScope: "manual",

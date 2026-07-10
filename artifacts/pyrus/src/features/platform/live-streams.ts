@@ -104,8 +104,6 @@ type AccountStreamPayload = {
 type LiveAccountEquityHistoryResponse = AccountEquityHistoryResponse & {
   asOf?: string | null;
   latestSnapshotAt?: string | null;
-  isStale?: boolean;
-  staleReason?: string | null;
   terminalPointSource?: AccountEquityHistoryResponse["terminalPointSource"];
   liveTerminalIncluded?: boolean;
 };
@@ -2850,8 +2848,6 @@ const upsertLiveEquityTerminalPoint = (
     ...current,
     currency,
     asOf: timestamp,
-    isStale: false,
-    staleReason: null,
     terminalPointSource: "live_account_summary",
     liveTerminalIncluded: true,
     points: nextPoints,
@@ -2973,8 +2969,6 @@ const upsertAccountPageLiveEquityTerminalPoint = (
     ...current,
     currency,
     asOf: timestamp,
-    isStale: false,
-    staleReason: null,
     terminalPointSource,
     liveTerminalIncluded: true,
     points: nextPoints,
@@ -3022,8 +3016,6 @@ const mergeDerivedAccountPageEquityHistory = (
     ...incoming,
     currency: incoming.currency || current.currency,
     asOf: current.asOf ?? incoming.asOf,
-    isStale: current.isStale ?? incoming.isStale,
-    staleReason: current.staleReason ?? incoming.staleReason,
     terminalPointSource: current.terminalPointSource,
     liveTerminalIncluded: true,
     points: nextPoints,

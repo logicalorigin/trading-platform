@@ -11753,11 +11753,6 @@ components:
           type: string
           format: date-time
           nullable: true
-        isStale:
-          type: boolean
-        staleReason:
-          type: string
-          nullable: true
         terminalPointSource:
           type: string
           nullable: true
@@ -11800,8 +11795,6 @@ components:
         - benchmark
         - asOf
         - latestSnapshotAt
-        - isStale
-        - staleReason
         - terminalPointSource
         - liveTerminalIncluded
         - points

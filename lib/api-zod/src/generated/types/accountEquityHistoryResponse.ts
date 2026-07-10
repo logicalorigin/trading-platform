@@ -20,8 +20,6 @@ export interface AccountEquityHistoryResponse {
   benchmark: string | null;
   asOf: Date | null;
   latestSnapshotAt: Date | null;
-  isStale: boolean;
-  staleReason: string | null;
   terminalPointSource: AccountEquityHistoryResponseTerminalPointSource;
   liveTerminalIncluded: boolean;
   sourceScope?: AccountEquityHistoryResponseSourceScope;

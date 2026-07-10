@@ -971,8 +971,6 @@ export interface AccountEquityHistoryResponse {
   benchmark: string | null;
   asOf: string | null;
   latestSnapshotAt: string | null;
-  isStale: boolean;
-  staleReason: string | null;
   terminalPointSource: AccountEquityHistoryResponseTerminalPointSource;
   liveTerminalIncluded: boolean;
   sourceScope?: AccountEquityHistoryResponseSourceScope;

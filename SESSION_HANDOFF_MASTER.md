@@ -1,11 +1,14 @@
 # Session Handoff Master
 
-Changelog and table of contents for durable per-session handoff files. Keep details in the linked session handoff; keep this file short and searchable by date, time, session ID, and summary.
+Changelog and table of contents for durable per-session handoff files. Keep details in the linked session handoff; keep this file short and searchable by date, time, native Codex session ID, and summary.
 
 ## Sessions
 
 | Last Updated (MT) | Session ID | Summary | Handoff | Status | Next Step |
 | --- | --- | --- | --- | --- | --- |
+| 2026-07-10 14:40:58 MDT | `019f4dc0-73b6-7760-b181-86d5912b21f1` | 2026-07-10 14:40:58 MDT \| 019f4dc0-73b6-7760-b181-86d5912b21f1 \| please find the session that was doing the line by lin… | `SESSION_HANDOFF_2026-07-10_019f4dc0-73b6-7760-b181-86d5912b21f1.md` | Saved; see handoff | See handoff. |
+| 2026-07-10 14:35:15 MDT | `97b96dfe-fc5e-41d4-b058-330024124c80` | 2026-07-10 14:35:15 MDT \| 97b96dfe-fc5e-41d4-b058-330024124c80 \| Claude Code session | `SESSION_HANDOFF_2026-07-10_97b96dfe-fc5e-41d4-b058-330024124c80.md` | Saved; see handoff | See handoff. |
+| 2026-07-10 14:35:08 MDT | `40a50061-7868-46fc-ba7d-1a700b956d92` | 2026-07-10 14:35:08 MDT \| 40a50061-7868-46fc-ba7d-1a700b956d92 \| Claude Code session | `SESSION_HANDOFF_2026-07-10_40a50061-7868-46fc-ba7d-1a700b956d92.md` | Saved; see handoff | See handoff. |
 | 2026-07-10 14:21:23 MDT | `bfe40791-27f0-4788-8774-e167740f6b67` | 2026-07-10 14:21:23 MDT \| bfe40791-27f0-4788-8774-e167740f6b67 \| please watch our app for 3 minutes and report any issu… | `SESSION_HANDOFF_2026-07-10_bfe40791-27f0-4788-8774-e167740f6b67.md` | Saved; see handoff | See handoff. |
 | 2026-07-10 14:19:19 MDT | `019f4c78-0a96-7060-8057-5fdcf5defaf6` | Ponytail fallback retirement and visual QA | `SESSION_HANDOFF_2026-07-10_019f4c78-0a96-7060-8057-5fdcf5defaf6.md` | STA/header/Algo/Signals green; Account finalizing; DB `ECONNRESET` blocks visual proof | Finish validation; capture after DB recovery; nullable history semantics need approval. |
 | 2026-07-10 13:33:58 MDT | `28509f30-d275-4c83-b131-9af7086200b1` | 2026-07-10 13:33:58 MDT \| 28509f30-d275-4c83-b131-9af7086200b1 \| can you please resume the work codex was doing on the… | `SESSION_HANDOFF_2026-07-10_28509f30-d275-4c83-b131-9af7086200b1.md` | Observed now: API healthz 200; ibkr-session-host running under supervisor (`pnpm --filter @workspace/ibkr-session-host… | Read recon results; fix any issues found in the user's test path (embed grant/iframe load). |

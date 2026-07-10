@@ -272,7 +272,6 @@ type AccountUniverse = {
   primaryCurrency: string;
   source: "live" | "snaptrade" | "robinhood" | "broker";
   latestSnapshotAt: Date | null;
-  staleReason: string | null;
 };
 
 const UUID_V4_OR_COMPATIBLE_PATTERN =
@@ -1299,7 +1298,6 @@ async function readLiveAccountUniverseUncached(
       primaryCurrency: currencyOf(combinedAccounts),
       source: "live",
       latestSnapshotAt: latestTimestampOf(combinedAccounts),
-      staleReason: null,
     };
   }
 
@@ -1332,7 +1330,6 @@ async function readLiveAccountUniverseUncached(
         primaryCurrency: currencyOf(selectedProviderBackedAccounts),
         source,
         latestSnapshotAt: latestTimestampOf(selectedProviderBackedAccounts),
-        staleReason: null,
       };
     }
 
@@ -1355,7 +1352,6 @@ async function readLiveAccountUniverseUncached(
     primaryCurrency: currencyOf(selectedAccounts),
     source: "live",
     latestSnapshotAt: null,
-    staleReason: null,
   };
 }
 
@@ -5963,8 +5959,6 @@ async function getAccountEquityHistoryUncached(input: {
     benchmark: input.benchmark || null,
     asOf: lastPoint?.timestamp ?? null,
     latestSnapshotAt,
-    isStale: false,
-    staleReason: null,
     terminalPointSource,
     liveTerminalIncluded,
     points: pointsWithBenchmark,

@@ -462,7 +462,6 @@ test("account detail resolver treats a healthy provider as independent of IBKR",
   assert.equal(universe.requestedAccountId, "snaptrade-local-account");
   assert.deepEqual(universe.accountIds, ["snaptrade-local-account"]);
   assert.equal(universe.source, "snaptrade");
-  assert.equal(universe.staleReason, null);
 });
 
 test("account universe cache keys include the request app user", () => {
@@ -492,7 +491,6 @@ test("combined account positions include normalized SnapTrade portfolio rows", a
       primaryCurrency: "USD",
       source: "live",
       latestSnapshotAt: null,
-      staleReason: null,
     },
     "live",
     {
@@ -584,7 +582,6 @@ test("SnapTrade-only positions do not call the IBKR position reader", async () =
       primaryCurrency: "USD",
       source: "snaptrade",
       latestSnapshotAt: null,
-      staleReason: null,
     },
     "live",
     {
@@ -645,7 +642,6 @@ test("generic positions consume the latest user-scoped SnapTrade portfolio", asy
     primaryCurrency: "USD",
     source: "snaptrade" as const,
     latestSnapshotAt: null,
-    staleReason: null,
   };
 
   const ownerPositions = await runAsAppUser("user-1", () =>

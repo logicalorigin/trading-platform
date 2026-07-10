@@ -22,6 +22,7 @@ import {
   isPoolContentionError,
 } from "../lib/transient-db-error";
 import { normalizeSymbol } from "../lib/values";
+import { isBarCacheWriteBlockedByDbDiskUsage } from "./db-disk-usage-guard";
 import { isApiResourcePressureHardBlock } from "./resource-pressure";
 import type {
   BrokerBarSnapshot,
@@ -1157,6 +1158,11 @@ export async function persistMarketDataBars(input: {
   if (marketDataStoreBackoff.isActive(Date.now())) {
     return "skipped";
   }
+  // Disk-quota guard: pauses ONLY the bar_cache write path while the DB sits
+  // at/above its hard cap (see db-disk-usage-guard.ts); reads are unaffected.
+  if (isBarCacheWriteBlockedByDbDiskUsage()) {
+    return "skipped";
+  }
   if (!shouldUseDurableMarketDataStore(input.request)) {
     return false;
   }
@@ -1291,6 +1297,11 @@ export async function persistMarketDataBarsForSymbols(input: {
 }): Promise<boolean> {
   const groups = input.bySymbol.filter((group) => group.bars.length);
   if (!groups.length) {
+    return false;
+  }
+  // Disk-quota guard: pauses ONLY the bar_cache write path while the DB sits
+  // at/above its hard cap (see db-disk-usage-guard.ts); reads are unaffected.
+  if (isBarCacheWriteBlockedByDbDiskUsage()) {
     return false;
   }
   // Eligibility is symbol-independent for these batch params (gates on
@@ -1470,6 +1481,11 @@ export async function persistMarketDataBarsMixed(input: {
     .map((entry, index) => ({ entry, index }))
     .filter(({ entry }) => entry.bars.length > 0);
   if (!activeEntries.length) {
+    return { okByIndex, error: null };
+  }
+  // Disk-quota guard: pauses ONLY the bar_cache write path while the DB sits
+  // at/above its hard cap (see db-disk-usage-guard.ts); reads are unaffected.
+  if (isBarCacheWriteBlockedByDbDiskUsage()) {
     return { okByIndex, error: null };
   }
   // Eligibility is symbol-independent for these params (gates on assetClass/source/

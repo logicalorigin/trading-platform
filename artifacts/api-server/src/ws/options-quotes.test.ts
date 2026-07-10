@@ -72,12 +72,10 @@ test("option quote websocket requires a same-origin authenticated session", asyn
   });
 });
 
-test("option quote websocket has a bounded default subscription ceiling", () => {
-  assert.equal(
-    __optionQuoteWsInternalsForTests.maxSubscriptionsPerConnection,
-    1_024,
-  );
-});
+// The fixed default per-connection subscription ceiling (1024) was replaced by
+// the env-configured OPTION_QUOTES_WS_EMERGENCY_MAX_SUBSCRIPTIONS ceiling
+// (default disabled), so the old "bounded default ceiling" assertion no longer
+// has a source-side counterpart.
 
 test("option quote websocket queue normalizes OPRA subscription ids before exact filtering", () => {
   const state = __optionQuoteWsInternalsForTests.createOptionQuoteQueueState();

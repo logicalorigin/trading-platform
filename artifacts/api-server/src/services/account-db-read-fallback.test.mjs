@@ -94,12 +94,11 @@ test("provider portfolio failures never become zero-balance accounts", () => {
   assert.match(balanceHydration, /robinhood_account_balances_unavailable/);
 });
 
-test("healthy provider equity history is never labeled as stale fallback data", () => {
+test("healthy provider equity history omits retired stale fallback metadata", () => {
   const equityHistory = sourceBetween(
     "async function getAccountEquityHistoryUncached",
     "export async function getAccountAllocation",
   );
 
-  assert.match(equityHistory, /isStale:\s*false,\s*staleReason:\s*null,/);
-  assert.doesNotMatch(equityHistory, /isStale:\s*universe\.source/);
+  assert.doesNotMatch(equityHistory, /isStale|staleReason/);
 });
