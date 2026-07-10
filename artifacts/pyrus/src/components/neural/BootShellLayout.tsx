@@ -9,18 +9,18 @@ const NeuralCoreScene = lazy(
   () => import("@/components/marketing/neural-core-scene"),
 );
 
-// One compact, pure cloud for every React loading and signed-out surface.
+// Marketing-derived full-bleed atmosphere for every loading and signed-out surface.
 export const LOADER_CLOUD_PROPS = {
   look: "balanced",
-  particles: 14000,
-  orbitCount: 5400,
-  particleSize: 0.045,
-  coreOpacity: 0.68,
-  orbitOpacity: 0.4,
+  particles: 22000,
+  orbitCount: 9000,
+  particleSize: 0.024,
+  coreOpacity: 0.82,
+  orbitOpacity: 0.6,
   distortion: 0.62,
   noiseSpeed: 0.07,
   rotationSpeed: 0.018,
-  tiltStrength: 0.15,
+  tiltStrength: 0,
   glow: 0,
   warp: 0.16,
   warpScale: 0.9,
@@ -32,16 +32,15 @@ export const LOADER_CLOUD_PROPS = {
   orbitTimeScale: 0.78,
   driftX: 0.05,
   driftY: 0.04,
-  stray: 0.15,
   maxFps: 30,
   antialias: false,
   superSample: 1,
   maxPixelRatio: 1.75,
-  radius: 1.35,
+  radius: 3.1,
 } satisfies Partial<NeuralCoreProps>;
 
 export const CLOUD_MASK =
-  "radial-gradient(circle at 50% 43%, #000 0%, #000 38%, rgba(0,0,0,0.55) 56%, transparent 72%)";
+  "radial-gradient(120% 118% at 50% 50%, #000 0%, #000 34%, rgba(0,0,0,0.35) 66%, transparent 90%)";
 
 export function BootShellLayout({
   children,
@@ -78,7 +77,7 @@ export function BootShellLayout({
       : Math.min(100, Math.max(0, Math.round(progressValue)));
   const progressLabel = progress?.label?.trim() || label;
   const progressDetail = progress?.detail?.trim() || null;
-  const cloudContent =
+  const liveCloud =
     cloud ??
     (showCloud ? (
       <div
@@ -89,9 +88,7 @@ export function BootShellLayout({
           WebkitMaskImage: CLOUD_MASK,
         }}
       >
-        <Suspense fallback={null}>
-          <NeuralCoreScene {...LOADER_CLOUD_PROPS} />
-        </Suspense>
+        <NeuralCoreScene {...LOADER_CLOUD_PROPS} />
       </div>
     ) : null);
 
@@ -104,11 +101,20 @@ export function BootShellLayout({
       role={loading ? "status" : undefined}
       aria-label={loading ? label : undefined}
     >
-      {cloudContent ? (
-        <div className="pyrus-boot-cloud" aria-hidden="true">
-          {cloudContent}
-        </div>
-      ) : null}
+      <div className="pyrus-boot-cloud" aria-hidden="true">
+        <img
+          alt=""
+          className="pyrus-boot-cloud-static"
+          decoding="async"
+          draggable={false}
+          src="/brand/pyrus-neural-cloud.webp"
+        />
+        {liveCloud ? (
+          <Suspense fallback={null}>
+            <div className="pyrus-boot-cloud-live">{liveCloud}</div>
+          </Suspense>
+        ) : null}
+      </div>
       <div className="pyrus-boot-brand">
         <div className="pyrus-boot-identity" aria-hidden="true">
           <PyrusWordmark title="" width={200} />

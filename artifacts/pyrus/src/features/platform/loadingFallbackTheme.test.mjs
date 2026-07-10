@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import test from "node:test";
 
 const read = (relativePath) =>
@@ -7,6 +7,7 @@ const read = (relativePath) =>
 
 const indexHtml = read("index.html");
 const indexCss = read("src/index.css");
+const bootShell = read("src/components/neural/BootShellLayout.tsx");
 const viteConfig = read("vite.config.ts");
 const appContent = read("src/app/AppContent.tsx");
 const brandLoader = read("src/components/BrandLoader.tsx");
@@ -48,6 +49,40 @@ test("static boot loader has a light default and an explicit dark override", () 
   );
   assert.doesNotMatch(indexHtml, /pyrus-boot-neural-root/);
   assert.doesNotMatch(viteConfig, /boot-neural/);
+});
+
+test("expanded neural atmosphere is present before the animated renderer loads", () => {
+  const staticCloudAsset = new URL(
+    "../../../public/brand/pyrus-neural-cloud.webp",
+    import.meta.url,
+  );
+
+  assert.ok(existsSync(staticCloudAsset));
+  assert.ok(statSync(staticCloudAsset).size > 10_000);
+  assert.match(
+    indexHtml,
+    /rel="preload"[^>]+href="\/brand\/pyrus-neural-cloud\.webp"/,
+  );
+  assert.match(indexHtml, /class="pyrus-boot-cloud"/);
+  assert.match(
+    indexHtml,
+    /class="pyrus-boot-cloud-static" src="data:image\/webp;base64,/,
+  );
+  const embeddedCloud = indexHtml.match(
+    /class="pyrus-boot-cloud-static" src="data:image\/webp;base64,([^"]+)"/,
+  );
+  assert.ok(embeddedCloud);
+  assert.deepEqual(
+    Buffer.from(embeddedCloud[1], "base64"),
+    readFileSync(staticCloudAsset),
+  );
+  assert.match(bootShell, /className="pyrus-boot-cloud-static"/);
+  assert.match(bootShell, /\/brand\/pyrus-neural-cloud\.webp/);
+  assert.match(bootShell, /particles:\s*22000/);
+  assert.match(bootShell, /orbitCount:\s*9000/);
+  assert.match(bootShell, /radius:\s*3\.1/);
+  assert.match(bootShell, /tiltStrength:\s*0/);
+  assert.match(indexCss, /\.pyrus-boot-cloud-live/);
 });
 
 test("loading surfaces animate while the persistent header mark stays static", () => {

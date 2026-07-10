@@ -273,13 +273,54 @@ html[data-pyrus-reduced-motion="on"] .pyrus-loading-bar::after {
   width: 100%;
 }
 
-/* Full-screen neural cloud behind the centered loading/auth content. */
+/* The static marketing-scale atmosphere paints immediately; the live renderer
+   fades over it only after its lazy module has resolved. */
 .pyrus-boot-cloud {
   inset: 0;
   opacity: 0.68;
   pointer-events: none;
   position: absolute;
   z-index: 0;
+}
+
+.pyrus-boot-cloud-static,
+.pyrus-boot-cloud-live {
+  height: 100%;
+  inset: 0;
+  position: absolute;
+  width: 100%;
+}
+
+.pyrus-boot-cloud-static {
+  object-fit: cover;
+}
+
+@keyframes pyrus-cloud-live-in {
+  to {
+    opacity: 1;
+  }
+}
+
+.pyrus-boot-cloud-live {
+  animation: pyrus-cloud-live-in 240ms ease-out 80ms forwards;
+  background: #F7FAFF;
+  opacity: 0;
+}
+
+html[data-pyrus-theme="dark"] .pyrus-boot-cloud-live {
+  background: #050914;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pyrus-boot-cloud-live {
+    animation: none;
+    opacity: 1;
+  }
+}
+
+html[data-pyrus-reduced-motion="on"] .pyrus-boot-cloud-live {
+  animation: none;
+  opacity: 1;
 }
 
 .pyrus-boot-loader[data-surface="auth"] {
