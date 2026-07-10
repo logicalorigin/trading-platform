@@ -4,6 +4,7 @@ import { requireAdminCsrf, requireUser } from "./auth";
 import {
   fetchAlgoCockpitPrimaryPayload,
   subscribeAlgoCockpitSnapshots,
+  type AlgoCockpitStreamPayload,
 } from "../services/algo-cockpit-streams";
 import {
   createAlgoDeployment,
@@ -123,20 +124,34 @@ function writeSseEvent(
   res.write(`data: ${serializeSseEventData(payload)}\n\n`);
 }
 
-async function scopeAlgoCockpitPayloadForSession<T extends {
-  deployments: Awaited<ReturnType<typeof listAlgoDeployments>>;
-  events: Awaited<ReturnType<typeof listExecutionEvents>>;
-}>(
+async function scopeAlgoCockpitPayloadForSession(
   session: Awaited<ReturnType<typeof requireUser>>,
-  payload: T,
-): Promise<T> {
+  payload: AlgoCockpitStreamPayload,
+): Promise<AlgoCockpitStreamPayload> {
+  const deployments = await filterAlgoDeploymentListForSession(
+    session,
+    payload.deployments,
+  );
+  const focusedDeployment = payload.deploymentId
+    ? deployments.deployments.find(
+        (deployment) => deployment.id === payload.deploymentId,
+      ) ?? null
+    : null;
+
   return {
     ...payload,
-    deployments: await filterAlgoDeploymentListForSession(
-      session,
-      payload.deployments,
-    ),
-    events: await filterExecutionEventsForSession(session, payload.events),
+    deployments,
+    deploymentId: focusedDeployment ? payload.deploymentId : null,
+    focusedDeployment,
+    events: focusedDeployment
+      ? await filterExecutionEventsForSession(session, payload.events)
+      : { ...payload.events, events: [] },
+    signalOptionsState: focusedDeployment ? payload.signalOptionsState : null,
+    cockpit: focusedDeployment ? payload.cockpit : null,
+    performance: focusedDeployment ? payload.performance : null,
+    signalMonitorProfile: focusedDeployment
+      ? payload.signalMonitorProfile
+      : null,
   };
 }
 
@@ -594,6 +609,7 @@ router.get("/streams/algo/cockpit", async (req, res): Promise<void> => {
 
   try {
     const input = {
+      appUserId: session.user.id,
       deploymentId: readableDeploymentId,
       mode,
       eventLimit: Number.isFinite(eventLimit) ? eventLimit : undefined,
@@ -612,6 +628,9 @@ router.get("/streams/algo/cockpit", async (req, res): Promise<void> => {
       deploymentId: initialPayload.deploymentId,
       source: "algo-cockpit",
     });
+    if (readableDeploymentId === null) {
+      return;
+    }
     unsubscribe = subscribeAlgoCockpitSnapshots(
       input,
       (payload) => {

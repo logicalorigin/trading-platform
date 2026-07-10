@@ -22,6 +22,7 @@ export const ALGO_COCKPIT_STREAM_INTERVAL_MS = 5_000;
 export const ALGO_COCKPIT_STREAM_COALESCE_MS = 1_000;
 
 export type AlgoCockpitStreamInput = {
+  appUserId?: string | null;
   deploymentId?: string | null;
   mode?: RuntimeMode;
   eventLimit?: number;
@@ -92,8 +93,15 @@ const normalizeEventLimit = (limit: number | undefined): number =>
 
 function normalizeAlgoCockpitStreamInputForKey(
   input: AlgoCockpitStreamInput = {},
-): Required<AlgoCockpitStreamInput> & { deploymentId: string | null } {
+): Required<AlgoCockpitStreamInput> & {
+  appUserId: string | null;
+  deploymentId: string | null;
+} {
   return {
+    appUserId:
+      typeof input.appUserId === "string" && input.appUserId.trim()
+        ? input.appUserId.trim()
+        : null,
     deploymentId:
       typeof input.deploymentId === "string" && input.deploymentId.trim()
         ? input.deploymentId.trim()
@@ -114,24 +122,24 @@ export function shouldUsePrimaryOnlyAlgoCockpitPayload(pressure: unknown): boole
 
 async function resolveAlgoCockpitTarget(input: AlgoCockpitStreamInput = {}) {
   const requestedMode = normalizeMode(input.mode);
-  const deployments = await listAlgoDeployments({});
   const requestedDeploymentId =
     typeof input.deploymentId === "string" && input.deploymentId.trim()
       ? input.deploymentId.trim()
       : null;
-  const focusedDeployment =
-    deployments.deployments.find(
-      (deployment) => deployment.id === requestedDeploymentId,
-    ) ??
-    deployments.deployments.find((deployment) => deployment.mode === requestedMode) ??
-    deployments.deployments[0] ??
-    null;
+  const deploymentList = requestedDeploymentId
+    ? await listAlgoDeployments({})
+    : { deployments: [] };
+  const focusedDeployment = requestedDeploymentId
+    ? deploymentList.deployments.find(
+        (deployment) => deployment.id === requestedDeploymentId,
+      ) ?? null
+    : null;
   const deploymentId = focusedDeployment?.id ?? null;
   const mode = focusedDeployment?.mode ?? requestedMode;
   const eventLimit = normalizeEventLimit(input.eventLimit);
 
   return {
-    deployments,
+    deployments: focusedDeployment ? deploymentList : { deployments: [] },
     focusedDeployment,
     deploymentId,
     mode,
@@ -146,11 +154,12 @@ export async function fetchAlgoCockpitPrimaryPayload(
   const target = await resolveAlgoCockpitTarget(input);
   const primaryEventLimit = Math.min(target.eventLimit, 20);
   const [events, signalOptionsState] = await Promise.all([
-    listExecutionEvents(
-      target.deploymentId
-        ? { deploymentId: target.deploymentId, limit: primaryEventLimit }
-        : { limit: primaryEventLimit },
-    ),
+    target.deploymentId
+      ? listExecutionEvents({
+          deploymentId: target.deploymentId,
+          limit: primaryEventLimit,
+        })
+      : Promise.resolve({ events: [] }),
     target.deploymentId
       ? listSignalOptionsAutomationState({
           deploymentId: target.deploymentId,
@@ -188,11 +197,12 @@ export async function fetchAlgoCockpitStreamPayload(
   const target = await resolveAlgoCockpitTarget(input);
   const [events, signalOptionsState, cockpit, performance, signalMonitorProfile] =
     await Promise.all([
-      listExecutionEvents(
       target.deploymentId
-        ? { deploymentId: target.deploymentId, limit: target.eventLimit }
-        : { limit: target.eventLimit },
-      ),
+        ? listExecutionEvents({
+            deploymentId: target.deploymentId,
+            limit: target.eventLimit,
+          })
+        : Promise.resolve({ events: [] }),
       target.deploymentId
         ? listSignalOptionsAutomationState({
             deploymentId: target.deploymentId,
@@ -208,7 +218,9 @@ export async function fetchAlgoCockpitStreamPayload(
       target.deploymentId
         ? getSignalOptionsPerformance({ deploymentId: target.deploymentId })
         : Promise.resolve(null),
-      getSignalMonitorProfile({ environment: target.mode }),
+      target.deploymentId
+        ? getSignalMonitorProfile({ environment: target.mode })
+        : Promise.resolve(null),
     ]);
 
   return {
