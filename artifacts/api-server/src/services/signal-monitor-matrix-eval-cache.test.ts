@@ -31,6 +31,28 @@ const {
   getSignalMonitorIncrementalEvalStats: incrementalStats,
   setSignalMonitorIncrementalEvalCorruptForTests: setIncrementalCorrupt,
 } = __signalMonitorInternalsForTests;
+const resolveSymbolStateUpsert = (
+  __signalMonitorInternalsForTests as unknown as {
+    resolveSignalMonitorSymbolStateUpsert: (
+      input: Record<string, unknown>,
+      prefetched: Record<string, unknown>,
+    ) => Promise<Record<string, unknown>>;
+  }
+).resolveSignalMonitorSymbolStateUpsert;
+
+const emptyMatrixServeMismatchStats = {
+  matrixServeMismatchCount: 0,
+  matrixServeMismatchByField: {
+    direction: 0,
+    at: 0,
+    status: 0,
+    fresh: 0,
+    trend: 0,
+  },
+  latchPreservedCount: 0,
+  lastMatrixServeMismatchAt: null,
+  lastMatrixServeMismatchCellKey: null,
+};
 
 // A single completed bar whose close time is `closeIso` (dataUpdatedAt drives closedAt).
 const barClosingAt = (closeIso: string) =>
@@ -601,6 +623,7 @@ test("incremental eval: flag unset/off leaves the instrumentation dormant (from-
     seeds: 0,
     shadowChecks: 0,
     shadowMismatches: 0,
+    ...emptyMatrixServeMismatchStats,
   });
 });
 
@@ -629,6 +652,7 @@ test("incremental eval ON: multi-append sequence is state-identical to from-scra
       seeds: 1,
       shadowChecks: 0,
       shadowMismatches: 0,
+      ...emptyMatrixServeMismatchStats,
     });
   });
 });
@@ -692,6 +716,7 @@ test("incremental eval SHADOW: legacy always served, parity sampled clean; a cor
         seeds: 1,
         shadowChecks: steps.length - 1,
         shadowMismatches: 0,
+        ...emptyMatrixServeMismatchStats,
       });
 
       // Corrupt the incremental side of the comparison (test seam): the
@@ -761,4 +786,114 @@ test("incremental eval ON: a served evaluation is immutable across later appends
     assert.equal(incrementalStats().seeds, 1);
     assert.equal(incrementalStats().appends, 1);
   });
+});
+
+test("symbol-state persist counts display mismatches and excludes latch/preserve paths", async () => {
+  const storedAt = new Date("2026-06-09T15:00:00.000Z");
+  const evaluatedAt = new Date("2026-06-09T15:05:00.000Z");
+  const existing = {
+    id: "profile:SPY:5m",
+    profileId: "profile",
+    symbol: "SPY",
+    timeframe: "5m",
+    currentSignalDirection: "buy",
+    currentSignalAt: storedAt,
+    currentSignalPrice: "100",
+    currentSignalClose: "100",
+    currentSignalMfePercent: null,
+    currentSignalMaePercent: null,
+    filterState: null,
+    latestBarAt: storedAt,
+    latestBarClose: "100",
+    barsSinceSignal: 1,
+    fresh: false,
+    status: "stale",
+    active: true,
+    lastEvaluatedAt: storedAt,
+    lastError: null,
+    trendDirection: "bullish",
+    updatedAt: storedAt,
+  };
+  const candidate = {
+    profileId: "profile",
+    symbol: "SPY",
+    timeframe: "5m",
+    direction: "sell",
+    signalAt: evaluatedAt,
+    signalPrice: 101,
+    signalClose: 101,
+    latestBarAt: evaluatedAt,
+    latestBarClose: 101,
+    barsSinceSignal: 0,
+    fresh: true,
+    status: "ok",
+    evaluatedAt,
+    trendDirection: "bearish",
+    allowStoredSignalLatch: true,
+  };
+  const prefetched = { existing, eventSignalAtByKey: new Map<string, Date>() };
+
+  await resolveSymbolStateUpsert(candidate, prefetched);
+  assert.deepEqual(incrementalStats(), {
+    mode: "off",
+    appends: 0,
+    seeds: 0,
+    shadowChecks: 0,
+    shadowMismatches: 0,
+    matrixServeMismatchCount: 1,
+    matrixServeMismatchByField: {
+      direction: 1,
+      at: 1,
+      status: 1,
+      fresh: 1,
+      trend: 1,
+    },
+    latchPreservedCount: 0,
+    lastMatrixServeMismatchAt: evaluatedAt.toISOString(),
+    lastMatrixServeMismatchCellKey: "profile|SPY|5m",
+  });
+
+  await resolveSymbolStateUpsert(
+    {
+      ...candidate,
+      direction: null,
+      signalAt: null,
+      evaluatedAt: new Date("2026-06-09T15:10:00.000Z"),
+    },
+    prefetched,
+  );
+  await resolveSymbolStateUpsert(
+    {
+      ...candidate,
+      signalAt: new Date("2026-06-09T14:55:00.000Z"),
+      evaluatedAt: new Date("2026-06-09T15:15:00.000Z"),
+    },
+    prefetched,
+  );
+
+  assert.equal(incrementalStats().matrixServeMismatchCount, 1);
+  assert.deepEqual(incrementalStats().matrixServeMismatchByField, {
+    direction: 1,
+    at: 1,
+    status: 1,
+    fresh: 1,
+    trend: 1,
+  });
+  assert.equal(incrementalStats().latchPreservedCount, 2);
+
+  resetCache();
+  assert.deepEqual(
+    {
+      matrixServeMismatchCount:
+        incrementalStats().matrixServeMismatchCount,
+      matrixServeMismatchByField:
+        incrementalStats().matrixServeMismatchByField,
+      latchPreservedCount: incrementalStats().latchPreservedCount,
+      lastMatrixServeMismatchAt:
+        incrementalStats().lastMatrixServeMismatchAt,
+      lastMatrixServeMismatchCellKey:
+        incrementalStats().lastMatrixServeMismatchCellKey,
+    },
+    emptyMatrixServeMismatchStats,
+  );
 });

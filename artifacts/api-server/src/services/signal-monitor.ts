@@ -7534,6 +7534,62 @@ type SignalMonitorSymbolStateUpsertInput = {
   allowStoredSignalLatch?: boolean;
 };
 
+const signalMonitorMatrixServeMismatchByField = {
+  direction: 0,
+  at: 0,
+  status: 0,
+  fresh: 0,
+  trend: 0,
+};
+let signalMonitorMatrixServeMismatchCount = 0;
+let signalMonitorLatchPreservedCount = 0;
+let signalMonitorLastMatrixServeMismatchAt: string | null = null;
+let signalMonitorLastMatrixServeMismatchCellKey: string | null = null;
+
+function recordSignalMonitorMatrixServeMismatch(
+  existing: Pick<
+    DbSignalMonitorSymbolState,
+    | "currentSignalDirection"
+    | "currentSignalAt"
+    | "status"
+    | "fresh"
+    | "trendDirection"
+  >,
+  candidate: {
+    profileId: string;
+    symbol: string;
+    timeframe: SignalMonitorMatrixTimeframe;
+    currentSignalDirection: SignalMonitorDirection | null;
+    currentSignalAt: Date | null;
+    status: SignalMonitorStatus;
+    fresh: boolean;
+    trendDirection: string | null;
+    lastEvaluatedAt: Date;
+  },
+): void {
+  const direction =
+    existing.currentSignalDirection !== candidate.currentSignalDirection;
+  const at =
+    (dateOrNull(existing.currentSignalAt)?.getTime() ?? null) !==
+    (dateOrNull(candidate.currentSignalAt)?.getTime() ?? null);
+  const status = existing.status !== candidate.status;
+  const fresh = existing.fresh !== candidate.fresh;
+  const trend = existing.trendDirection !== candidate.trendDirection;
+  if (!direction && !at && !status && !fresh && !trend) {
+    return;
+  }
+  signalMonitorMatrixServeMismatchCount += 1;
+  signalMonitorMatrixServeMismatchByField.direction += Number(direction);
+  signalMonitorMatrixServeMismatchByField.at += Number(at);
+  signalMonitorMatrixServeMismatchByField.status += Number(status);
+  signalMonitorMatrixServeMismatchByField.fresh += Number(fresh);
+  signalMonitorMatrixServeMismatchByField.trend += Number(trend);
+  signalMonitorLastMatrixServeMismatchAt =
+    candidate.lastEvaluatedAt.toISOString();
+  signalMonitorLastMatrixServeMismatchCellKey =
+    `${candidate.profileId}|${candidate.symbol}|${candidate.timeframe}`;
+}
+
 // When the preserve rule keeps the stored row's (newer) signal identity, the
 // candidate still carries fresher bar metadata (a newer completed bar). Skipping
 // the whole write froze latestBarAt/lastEvaluatedAt for any cell holding a
@@ -7667,6 +7723,7 @@ async function resolveSignalMonitorSymbolStateUpsert(
     existing &&
     shouldPreserveExistingSignalMonitorSymbolState(existing, effectiveValues)
   ) {
+    signalMonitorLatchPreservedCount += 1;
     // The stored row outranks the candidate on signal identity (a newer real
     // signal must not be displaced by an older one), so its signal columns are
     // preserved. But bar-metadata recency is independent of signal identity:
@@ -7681,6 +7738,13 @@ async function resolveSignalMonitorSymbolStateUpsert(
       effectiveValues,
     );
     return merged ? { effectiveValues: merged } : { preserved: existing };
+  }
+  if (existing) {
+    if (effectiveValues !== values) {
+      signalMonitorLatchPreservedCount += 1;
+    } else {
+      recordSignalMonitorMatrixServeMismatch(existing, values);
+    }
   }
   return { effectiveValues };
 }
@@ -9687,6 +9751,14 @@ export function getSignalMonitorIncrementalEvalStats() {
     seeds: signalMonitorIncrementalEvalSeeds,
     shadowChecks: signalMonitorIncrementalEvalShadowChecks,
     shadowMismatches: signalMonitorIncrementalEvalShadowMismatches,
+    matrixServeMismatchCount: signalMonitorMatrixServeMismatchCount,
+    matrixServeMismatchByField: {
+      ...signalMonitorMatrixServeMismatchByField,
+    },
+    latchPreservedCount: signalMonitorLatchPreservedCount,
+    lastMatrixServeMismatchAt: signalMonitorLastMatrixServeMismatchAt,
+    lastMatrixServeMismatchCellKey:
+      signalMonitorLastMatrixServeMismatchCellKey,
   };
 }
 // --- end WO-S3B-2 incremental signal evaluation ------------------------------
@@ -9794,6 +9866,15 @@ function resetSignalMonitorMatrixHeavyEvaluationCache() {
   signalMonitorIncrementalEvalSeeds = 0;
   signalMonitorIncrementalEvalShadowChecks = 0;
   signalMonitorIncrementalEvalShadowMismatches = 0;
+  signalMonitorMatrixServeMismatchCount = 0;
+  signalMonitorMatrixServeMismatchByField.direction = 0;
+  signalMonitorMatrixServeMismatchByField.at = 0;
+  signalMonitorMatrixServeMismatchByField.status = 0;
+  signalMonitorMatrixServeMismatchByField.fresh = 0;
+  signalMonitorMatrixServeMismatchByField.trend = 0;
+  signalMonitorLatchPreservedCount = 0;
+  signalMonitorLastMatrixServeMismatchAt = null;
+  signalMonitorLastMatrixServeMismatchCellKey = null;
   signalMonitorIncrementalEvalModeMemo = null;
   signalMonitorIncrementalEvalSampleNMemo = null;
 }
@@ -15608,6 +15689,7 @@ export const __signalMonitorInternalsForTests = {
   shouldCacheSignalMonitorMatrixEvaluationValue,
   buildSignalMonitorEventKey,
   resolveSignalMonitorEventLookupKeys,
+  resolveSignalMonitorSymbolStateUpsert,
   // B1 (universe expansion JOIN memo)
   loadSignalMonitorCatalogExpansionSymbols,
   invalidateSignalMonitorCatalogExpansionMemo,
