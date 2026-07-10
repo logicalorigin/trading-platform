@@ -5316,6 +5316,10 @@ async function recordSignalOptionsShadowMarkExit(input: {
       runPhase: "mark_enforcement",
     },
     reason: input.exitReason,
+    // Force/maintenance/expiration exits write BOTH keys; the live mark path only
+    // wrote `reason`, so payload->>'exitReason' read empty for every live stop-out
+    // (2026-07-09 forensics blind spot). Keep the contract symmetric.
+    exitReason: input.exitReason,
     enforcementSource: "shadow_mark",
     exitPrice: input.exitPrice,
     markPrice: input.markPrice,
@@ -6867,7 +6871,20 @@ function shadowOptionQuoteValuationBlockReason(
   return null;
 }
 
-function buildShadowOptionPricingPolicy(input: {
+// Degenerate-spread guard for the MARK/STOP-TRIGGER side, mirroring the fill-side
+// ruling (SIGNAL_OPTIONS_DEGENERATE_SELL_GAP_FRACTION in signal-options-automation):
+// when the bid sits more than 40% below the mid, the mid is fantasy — a quote like
+// bid 2.05 / ask 5.80 (BRKR, 2026-07-09 09:33 ET open) mids at 3.925 and passed every
+// existing gate (two-sided, fresh, live). Six stops fired in the same refresh batch
+// off exactly such quotes; underlyings recovered by close on most (whipsaw, ~$2.7K).
+// Marking the quote ineligible here is the single choke point: the degenerate mark is
+// never persisted (last good mark is kept), the live stop gate skips evaluation
+// (mark_not_actionable), and the maintenance sweep cannot read a degenerate mark.
+// Trade-off accepted (shadow): a genuinely collapsing option whose bid craters may
+// exit later than ideal — the floor-at-stop fill rule bounds that damage.
+const SHADOW_OPTION_MARK_DEGENERATE_GAP_FRACTION = 0.4;
+
+export function buildShadowOptionPricingPolicy(input: {
   quote: Partial<QuoteSnapshot> | Record<string, unknown> | null | undefined;
   fallbackMark: number | null | undefined;
   fallbackSource?: string;
@@ -6888,12 +6905,21 @@ function buildShadowOptionPricingPolicy(input: {
   const blockReason = shadowOptionQuoteValuationBlockReason(input.quote);
   const twoSidedRequired = input.requireTwoSidedQuote !== false;
   const twoSidedQuote = positiveBid != null && positiveAsk != null;
+  const degenerateSpread =
+    twoSidedQuote &&
+    quoteMid != null &&
+    quoteMid > 0 &&
+    positiveBid != null &&
+    (quoteMid - positiveBid) / quoteMid >
+      SHADOW_OPTION_MARK_DEGENERATE_GAP_FRACTION;
   const missingPriceReason =
     quoteMark == null
       ? "quote_mark_unavailable"
       : twoSidedRequired && !twoSidedQuote
         ? "quote_not_two_sided"
-        : null;
+        : degenerateSpread
+          ? "quote_spread_degenerate"
+          : null;
   const valuationEligible = !blockReason && !missingPriceReason;
   const valuationMark = valuationEligible ? quoteMark : fallback;
   const quoteSource = input.quoteSource ?? "option_quote";
