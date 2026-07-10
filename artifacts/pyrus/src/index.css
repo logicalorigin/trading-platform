@@ -3,30 +3,6 @@
 @import "tailwindcss/utilities.css" layer(utilities);
 @import "./styles/brand.css";
 
-.brand-loader-lockup {
-  align-items: center;
-  display: inline-flex;
-  flex-direction: column;
-  gap: 24px;
-  justify-content: center;
-  line-height: 0;
-}
-
-[data-tone="panel"] .brand-loader-lockup {
-  gap: 16px;
-}
-
-.brand-loader-mark,
-.pyrus-loader-mark {
-  align-items: center;
-  display: inline-flex;
-  isolation: isolate;
-  justify-content: center;
-  line-height: 0;
-  position: relative;
-  transform-origin: 50% 50%;
-}
-
 .pyrus-mark {
   display: block;
   flex-shrink: 0;
@@ -49,23 +25,6 @@
     saturate(1.28)
     drop-shadow(0 0 4px rgba(61, 184, 255, 0.42))
     drop-shadow(0 0 7px rgba(255, 61, 42, 0.2));
-}
-
-.pyrus-loader-instrument {
-  display: block;
-  flex-shrink: 0;
-  height: 104px;
-  line-height: 0;
-  object-fit: contain;
-  overflow: visible;
-  pointer-events: none;
-  user-select: none;
-  width: 104px;
-}
-
-[data-tone="panel"] .pyrus-loader-instrument {
-  height: 60px;
-  width: 60px;
 }
 
 .pyrus-wordmark {
@@ -96,70 +55,6 @@
 :root[data-pyrus-theme="light"] .pyrus-wordmark-image--light,
 [data-theme="light"] .pyrus-wordmark-image--light {
   display: block;
-}
-
-.pyrus-loader-wordmark {
-  opacity: 0.96;
-  transform-origin: 50% 50%;
-}
-
-.pyrus-lockup-descriptor {
-  color: var(--ra-text-dim);
-  font-family: var(--ra-font-code);
-  font-size: 10px;
-  font-weight: 500;
-  letter-spacing: 0.32em;
-  line-height: 1;
-  text-transform: uppercase;
-}
-
-@keyframes brand-loader-mark-enter {
-  0% {
-    opacity: 0.86;
-    transform: rotate(-10deg) scale(0.985);
-    filter: brightness(0.82) saturate(0.92);
-  }
-
-  62% {
-    opacity: 1;
-    transform: rotate(2deg) scale(1.018);
-    filter: brightness(1.24) saturate(1.08);
-  }
-
-  100% {
-    opacity: 1;
-    transform: rotate(0deg) scale(1);
-    filter: brightness(1) saturate(1);
-  }
-}
-
-@keyframes brand-loader-mark-live {
-  0%,
-  100% {
-    transform: scale(1);
-    filter: brightness(1) saturate(1);
-  }
-
-  48% {
-    transform: scale(1.014);
-    filter: brightness(1.16) saturate(1.06);
-  }
-}
-
-.brand-loader-mark {
-  --brand-loader-mark-enter-duration: 680ms;
-  --brand-loader-mark-live-delay: 760ms;
-  animation:
-    brand-loader-mark-enter var(--brand-loader-mark-enter-duration) cubic-bezier(0.16, 1, 0.3, 1) calc(0ms - var(--brand-loader-handoff-offset, 0ms)) both,
-    brand-loader-mark-live 1800ms cubic-bezier(0.45, 0, 0.2, 1) calc(var(--brand-loader-mark-live-delay) - var(--brand-loader-handoff-offset, 0ms)) infinite;
-  opacity: 1;
-  transform-origin: 50% 50%;
-  will-change: opacity, transform, filter;
-}
-
-[data-tone="panel"] .brand-loader-mark {
-  --brand-loader-mark-enter-duration: 420ms;
-  --brand-loader-mark-live-delay: 480ms;
 }
 
 .brand-loader-word {
@@ -251,43 +146,27 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .brand-loader-mark,
   .brand-loader-word,
-  .brand-loader-progress-fill,
-  .pyrus-loader-mark,
-  .pyrus-loader-wordmark,
-  .pyrus-lockup-descriptor {
+  .brand-loader-progress-fill {
     animation: none;
     transform: none;
     transition: none;
   }
 
-  .brand-loader-mark,
-  .brand-loader-word,
-  .pyrus-loader-mark,
-  .pyrus-loader-wordmark,
-  .pyrus-lockup-descriptor {
+  .brand-loader-word {
     opacity: 1;
     filter: none;
   }
 }
 
-html[data-pyrus-reduced-motion="on"] .brand-loader-mark,
 html[data-pyrus-reduced-motion="on"] .brand-loader-word,
-html[data-pyrus-reduced-motion="on"] .brand-loader-progress-fill,
-html[data-pyrus-reduced-motion="on"] .pyrus-loader-mark,
-html[data-pyrus-reduced-motion="on"] .pyrus-loader-wordmark,
-html[data-pyrus-reduced-motion="on"] .pyrus-lockup-descriptor {
+html[data-pyrus-reduced-motion="on"] .brand-loader-progress-fill {
   animation: none;
   transform: none;
   transition: none;
 }
 
-html[data-pyrus-reduced-motion="on"] .brand-loader-mark,
-html[data-pyrus-reduced-motion="on"] .brand-loader-word,
-html[data-pyrus-reduced-motion="on"] .pyrus-loader-mark,
-html[data-pyrus-reduced-motion="on"] .pyrus-loader-wordmark,
-html[data-pyrus-reduced-motion="on"] .pyrus-lockup-descriptor {
+html[data-pyrus-reduced-motion="on"] .brand-loader-word {
   opacity: 1;
   filter: none;
 }
@@ -301,48 +180,18 @@ html[data-pyrus-reduced-motion="on"] .pyrus-lockup-descriptor {
   inset: 0;
   z-index: 120;
   background: #F7FAFF;
-  transition: background-color 900ms ease;
+  opacity: 1;
+  transition: opacity 500ms ease;
 }
 
 html[data-pyrus-theme="dark"] .neural-overlay {
   background: #050914;
 }
 
-/* During the disperse, fade the backdrop out so the live app shows through the
-   parting particles. */
+/* Fade the pure cloud and its backdrop together before unmounting. */
 .neural-overlay--revealing {
-  background-color: transparent;
+  opacity: 0;
   pointer-events: none;
-}
-
-/* Tight loader: fills its container (panel, card, page region), not the
-   viewport — the compact mark cloud centers within whatever space it is given. */
-.neural-loader {
-  position: relative;
-  width: 100%;
-  height: 100%;
-  min-height: 160px;
-  background: #F7FAFF;
-}
-
-html[data-pyrus-theme="dark"] .neural-loader {
-  background: #050914;
-}
-
-.neural-loader-caption {
-  position: absolute;
-  bottom: 12%;
-  left: 0;
-  right: 0;
-  text-align: center;
-  font-family: var(--ra-font-sans, 'IBM Plex Sans', system-ui, sans-serif);
-  font-size: 13px;
-  font-weight: 600;
-  color: #2F4058;
-}
-
-html[data-pyrus-theme="dark"] .neural-loader-caption {
-  color: rgba(244, 248, 255, 0.86);
 }
 
 /* The opener is gated off under reduced motion, but if the overlay ever renders
@@ -355,34 +204,6 @@ html[data-pyrus-theme="dark"] .neural-loader-caption {
 
 html[data-pyrus-reduced-motion="on"] .neural-overlay {
   transition: none;
-}
-
-/* Full-page brand atmosphere behind the boot loader + login — a soft neural-toned
-   glow, weighted toward the brand (left) and fading behind the form (right). The
-   CSS gradient reads immersive even with no WebGL; the neural cloud layers on top
-   on capable GPUs. Shared values mirrored in index.html for the pre-React loader. */
-.pyrus-brand-atmosphere {
-  background:
-    radial-gradient(78% 104% at 26% 42%,
-      rgba(22, 139, 255, 0.13) 0%,
-      rgba(120, 46, 156, 0.07) 30%,
-      rgba(255, 61, 42, 0.06) 47%,
-      rgba(247, 250, 255, 0) 72%),
-    radial-gradient(60% 80% at 80% 78%,
-      rgba(255, 61, 42, 0.04) 0%,
-      rgba(247, 250, 255, 0) 70%);
-}
-
-html[data-pyrus-theme="dark"] .pyrus-brand-atmosphere {
-  background:
-    radial-gradient(78% 104% at 26% 42%,
-      rgba(40, 150, 255, 0.24) 0%,
-      rgba(150, 70, 190, 0.13) 30%,
-      rgba(255, 80, 60, 0.11) 47%,
-      rgba(5, 9, 20, 0) 72%),
-    radial-gradient(60% 80% at 80% 78%,
-      rgba(255, 80, 60, 0.07) 0%,
-      rgba(5, 9, 20, 0) 70%);
 }
 
 /* Calm, anchored loading affordance for the form panel (boot + auth-check) — a
@@ -428,10 +249,6 @@ html[data-pyrus-theme="dark"] .pyrus-loading-bar {
   width: 46%;
 }
 
-.pyrus-loading:not([role="status"]) .pyrus-loading-bar::after {
-  animation-play-state: paused;
-}
-
 .pyrus-loading-label {
   color: var(--ra-text-secondary, #64748b);
   font-size: 11px;
@@ -442,20 +259,47 @@ html[data-pyrus-theme="dark"] .pyrus-loading-bar {
 
 @media (prefers-reduced-motion: reduce) {
   .pyrus-loading-bar::after {
-    animation-duration: 2.6s;
+    animation: none;
+    opacity: 0.38;
+    transform: none;
+    width: 100%;
   }
 }
 
-/* Full-bleed neural cloud layer behind the boot/loader brand + content cells. */
+html[data-pyrus-reduced-motion="on"] .pyrus-loading-bar::after {
+  animation: none;
+  opacity: 0.38;
+  transform: none;
+  width: 100%;
+}
+
+/* Full-screen neural cloud behind the centered loading/auth content. */
 .pyrus-boot-cloud {
   inset: 0;
-  opacity: 0.85;
+  opacity: 0.68;
   pointer-events: none;
   position: absolute;
   z-index: 0;
 }
 
-/* Loading affordance sits under the logo lockup, with a little breathing room. */
+.pyrus-boot-loader[data-surface="auth"] {
+  inset: 0;
+  overflow-y: auto;
+  position: fixed;
+  z-index: 110;
+}
+
+.pyrus-boot-loader[data-surface="auth"] .pyrus-boot-cloud {
+  opacity: 0.48;
+}
+
+.pyrus-auth-content {
+  margin-top: 6px;
+  max-width: 380px;
+  width: 100%;
+}
+
+/* Loading affordance sits under the centered wordmark and tagline. */
 .pyrus-boot-loading {
   margin-top: 14px;
 }

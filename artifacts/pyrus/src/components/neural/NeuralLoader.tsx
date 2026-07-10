@@ -11,8 +11,8 @@ export type NeuralLoaderProps = BrandLoaderProps & {
 // The app/container loading state. While the first-load opener owns a WebGL
 // context we degrade to the static BrandLoader (it stays hidden beneath the
 // opener); otherwise we render the shared immersive BootShellLayout so the
-// loading screen matches the boot curtain and the sign-in screen exactly —
-// full-page neural cloud, brand on the left, calm loading affordance beneath it.
+// loading screen matches the boot curtain and the sign-in screen exactly:
+// full-page neural cloud with centered branding and loading affordance.
 export function NeuralLoader({
   caption: _caption,
   label = "PYRUS",
@@ -22,7 +22,6 @@ export function NeuralLoader({
   tone = "app",
   ...brandProps
 }: NeuralLoaderProps) {
-  void _caption;
   if (isNeuralOpenerActive()) {
     return (
       <BrandLoader
@@ -36,7 +35,13 @@ export function NeuralLoader({
     );
   }
 
-  return <BootShellLayout testId={testId} label={label} />;
+  return (
+    <BootShellLayout
+      testId={testId}
+      label={_caption || label}
+      progress={progress}
+    />
+  );
 }
 
 export default NeuralLoader;

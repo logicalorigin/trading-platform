@@ -9,17 +9,9 @@ const bootShellSource = readFileSync(
 );
 const appStyles = readFileSync(new URL("../../index.css", import.meta.url), "utf8");
 
-test("login and loader ambient clouds require a supported WebGL renderer", () => {
-  assert.match(
-    loginGateSource,
-    /isNeuralWebglRendererSupported/,
-    "login ambient cloud should reject software/headless WebGL renderers",
-  );
-  assert.doesNotMatch(
-    loginGateSource,
-    /!isWebglAvailable\(\)/,
-    "login ambient cloud should not use availability-only WebGL gating",
-  );
+test("auth delegates its only neural cloud to the shared boot shell", () => {
+  assert.match(loginGateSource, /BootShellLayout/);
+  assert.doesNotMatch(loginGateSource, /NeuralCoreScene|AmbientCloud/);
   assert.match(
     bootShellSource,
     /isNeuralWebglRendererSupported/,
@@ -27,35 +19,27 @@ test("login and loader ambient clouds require a supported WebGL renderer", () =>
   );
 });
 
-test("login form side uses a calmer ambient cloud policy", () => {
-  assert.match(
-    loginGateSource,
-    /const LOGIN_AMBIENT_CLOUD_OPACITY = 0\.[0-5][0-9]?;/,
-    "login ambient cloud opacity should stay low enough for form readability",
-  );
-  assert.match(
-    loginGateSource,
-    /const LOGIN_CLOUD_MASK =/,
-    "login ambient mask should be explicit and separate from the loader mask",
-  );
+test("auth wall uses the shared single-column shell", () => {
+  assert.match(loginGateSource, /surface="auth"/);
+  assert.doesNotMatch(loginGateSource, /gridTemplateColumns|useViewportBelow/);
+  assert.doesNotMatch(bootShellSource, /pyrus-boot-content/);
 });
 
-test("shared boot brand reacts when the neural opener releases WebGL", () => {
+test("auth suppresses its cloud while the opener owns WebGL", () => {
   assert.match(
-    bootShellSource,
+    loginGateSource,
     /useSyncExternalStore\(\s*subscribeNeuralOpenerActive,\s*isNeuralOpenerActive,\s*\)/,
-    "BootBrandColumn must rerender after the opener releases its WebGL context",
+    "LoginShell must rerender after the opener releases its WebGL context",
   );
+  assert.match(loginGateSource, /cloudSuppressed=\{openerActive\}/);
 });
 
-test("idle sign-in branding stays static", () => {
-  assert.match(bootShellSource, /const resolveActive = loading && !openerActive;/);
-  assert.match(bootShellSource, /resolveActive \? \(\s*<BrandResolve/s);
+test("loading and idle auth branding contain no standalone mark", () => {
+  assert.doesNotMatch(bootShellSource, /BrandResolve|PyrusMark/);
+  assert.match(bootShellSource, /PyrusWordmark/);
 });
 
-test("idle sign-in pauses its reserved loading animation", () => {
-  assert.match(
-    appStyles,
-    /\.pyrus-loading:not\(\[role="status"\]\) \.pyrus-loading-bar::after\s*{[^}]*animation-play-state:\s*paused/s,
-  );
+test("idle sign-in does not render a hidden loading animation", () => {
+  assert.match(bootShellSource, /\{loading \? \(/);
+  assert.doesNotMatch(appStyles, /\.pyrus-loading:not\(\[role="status"\]\)/);
 });

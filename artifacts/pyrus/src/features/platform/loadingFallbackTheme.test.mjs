@@ -14,7 +14,6 @@ const brandResolve = read("src/components/marketing/brand-resolve.tsx");
 const crashDiagnostics = read("src/app/crashDiagnostics.tsx");
 const appHeader = read("src/features/platform/AppHeader.jsx");
 const platformApp = read("src/features/platform/PlatformApp.jsx");
-const pyrusLoaderMark = read("src/components/brand/pyrus-loader-mark.tsx");
 const pyrusMark = read("src/components/brand/pyrus-mark.tsx");
 const pyrusWordmark = read("src/components/brand/pyrus-wordmark.tsx");
 const platformShell = read("src/features/platform/PlatformShell.jsx");
@@ -30,7 +29,7 @@ test("React boot loader uses theme tokens instead of forcing dark mode", () => {
 });
 
 test("static boot loader has a light default and an explicit dark override", () => {
-  // Loader background is a brand-atmosphere gradient over the theme base color.
+  // The pre-React fallback is a calm, single centered composition.
   assert.match(indexHtml, /\.pyrus-boot-loader\s*\{[^}]*#F7FAFF/s);
   assert.match(
     indexHtml,
@@ -41,6 +40,12 @@ test("static boot loader has a light default and an explicit dark override", () 
   assert.match(indexHtml, /class="pyrus-boot-wordmark"/);
   assert.match(indexHtml, /\/brand\/pyrus-wordmark-tight\.png/);
   assert.match(indexHtml, /\/brand\/pyrus-wordmark-tight-light\.png/);
+  assert.doesNotMatch(indexHtml, /class="pyrus-boot-mark"/);
+  assert.doesNotMatch(indexHtml, /class="pyrus-boot-content"/);
+  assert.doesNotMatch(
+    indexHtml,
+    /\.pyrus-boot-loader\s*\{[^}]*grid-template-columns/s,
+  );
   assert.doesNotMatch(indexHtml, /pyrus-boot-neural-root/);
   assert.doesNotMatch(viteConfig, /boot-neural/);
 });
@@ -59,15 +64,15 @@ test("React loaders use the current Pyrus brand kit assets", () => {
   // The static boot loader renders the branded wordmark (favicon + wordmark are
   // the only /brand/ refs allowed in index.html); guard against stale assets.
   assert.match(indexHtml, /\/brand\/pyrus-wordmark-tight\.png/);
+  assert.doesNotMatch(indexHtml, /class="pyrus-boot-mark"/);
   assert.doesNotMatch(indexHtml, /pyrus-mark\.png/);
   assert.doesNotMatch(indexHtml, /pyrus-loader-mark-dark\.svg/);
   assert.doesNotMatch(crashDiagnostics, /\/brand\//);
-  assert.match(pyrusLoaderMark, /PyrusMark/);
   assert.match(pyrusMark, /\/brand\/pyrus-mark\.svg/);
   assert.match(pyrusWordmark, /\/brand\/pyrus-wordmark-tight\.png/);
   assert.match(pyrusWordmark, /\/brand\/pyrus-wordmark-tight-light\.png/);
 
-  for (const source of [pyrusLoaderMark, pyrusMark, pyrusWordmark]) {
+  for (const source of [pyrusMark, pyrusWordmark]) {
     assert.doesNotMatch(source, /pyrus-loader-mark-dark\.svg/);
     assert.doesNotMatch(source, /pyrus-mark\.png/);
   }

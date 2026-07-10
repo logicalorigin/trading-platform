@@ -10,7 +10,7 @@
    ========================================================================== */
 
 /* -----------------------------------------------------------------------------
-   1. BrandLoader wordmark fade-up (the PYRUS PNG under the resolving mark).
+   1. BrandLoader wordmark fade-up.
    -------------------------------------------------------------------------- */
 @keyframes brand-loader-word {
   from { opacity: 0; transform: translateY(9px); }

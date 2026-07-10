@@ -1,5 +1,4 @@
 import type { CSSProperties } from "react";
-import { PyrusLoaderMark } from "./brand/pyrus-loader-mark";
 import { PyrusWordmark } from "./brand/pyrus-wordmark";
 import { FONT_CSS_VAR } from "../lib/typography";
 
@@ -80,17 +79,15 @@ export function BrandLoader({
         ...bootHandoffStyle,
       }}
     >
-      <div aria-hidden="true" className="brand-loader-lockup">
-        <div className="brand-loader-mark">
-          <PyrusLoaderMark
-            className={isPanel ? "h-[60px] w-[60px]" : "h-[104px] w-[104px]"}
-          />
-        </div>
+      <div aria-hidden="true" className="pyrus-boot-identity">
         <PyrusWordmark
           title=""
           className="brand-loader-word"
-          width={isPanel ? 148 : 213}
+          width={isPanel ? 148 : 200}
         />
+        <span className="pyrus-boot-tagline">
+          Real-time options flow &amp; signal intelligence.
+        </span>
       </div>
       {progressPercent === null ? null : (
         <div className="brand-loader-progress" aria-live="polite">

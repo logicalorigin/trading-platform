@@ -1,27 +1,22 @@
-import { Suspense, lazy, useSyncExternalStore } from "react";
-import { BrandResolve } from "@/components/marketing/brand-resolve";
-import { PyrusMark } from "@/components/marketing/pyrus-mark";
+import { Suspense, lazy, type ReactNode } from "react";
 import { usePrefersReducedMotion } from "@/components/marketing/use-prefers-reduced-motion";
 import type { NeuralCoreProps } from "@/components/marketing/neural-core";
 import { isNeuralWebglRendererSupported } from "@/lib/webglCapability";
+import type { BrandLoaderProgress } from "../BrandLoader";
 import { PyrusWordmark } from "../brand/pyrus-wordmark";
-import {
-  isNeuralOpenerActive,
-  subscribeNeuralOpenerActive,
-} from "./neuralOpenerState";
 
 const NeuralCoreScene = lazy(
   () => import("@/components/marketing/neural-core-scene"),
 );
 
-// One tuned neural cloud used for every ambient/loader surface so they read as
-// the same brand atmosphere.
+// One compact, pure cloud for every React loading and signed-out surface.
 export const LOADER_CLOUD_PROPS = {
-  particles: 22000,
-  orbitCount: 9000,
-  particleSize: 0.024,
-  coreOpacity: 0.82,
-  orbitOpacity: 0.6,
+  look: "balanced",
+  particles: 14000,
+  orbitCount: 5400,
+  particleSize: 0.045,
+  coreOpacity: 0.68,
+  orbitOpacity: 0.4,
   distortion: 0.62,
   noiseSpeed: 0.07,
   rotationSpeed: 0.018,
@@ -37,107 +32,128 @@ export const LOADER_CLOUD_PROPS = {
   orbitTimeScale: 0.78,
   driftX: 0.05,
   driftY: 0.04,
+  stray: 0.15,
   maxFps: 30,
   antialias: false,
   superSample: 1,
   maxPixelRatio: 1.75,
-  radius: 3.1,
+  radius: 1.35,
 } satisfies Partial<NeuralCoreProps>;
 
-// Full-bleed cloud, weighted toward the brand (left) and fading behind the form.
 export const CLOUD_MASK =
-  "radial-gradient(120% 118% at 24% 46%, #000 0%, #000 34%, rgba(0,0,0,0.35) 66%, transparent 90%)";
+  "radial-gradient(circle at 50% 43%, #000 0%, #000 38%, rgba(0,0,0,0.55) 56%, transparent 72%)";
 
-// The brand column (mark + wordmark + tagline + loading affordance) shared by the
-// boot curtain, the app/route loaders, AND the sign-in wall so the logo lands in
-// the exact same place across all three — it must never hop when one hands off to
-// the next. The loading affordance always reserves its vertical space (hidden, not
-// removed, when idle) so the mark's centered position does not shift between the
-// loading state and the sign-in form.
-export function BootBrandColumn({
-  loading = true,
-  stacked = false,
-  testId,
-}: {
-  loading?: boolean;
-  stacked?: boolean;
-  testId?: string;
-}) {
-  const openerActive = useSyncExternalStore(
-    subscribeNeuralOpenerActive,
-    isNeuralOpenerActive,
-  );
-  const resolveActive = loading && !openerActive;
-  const markClass = stacked ? "h-[72px] w-[72px]" : "h-[140px] w-[140px]";
-
-  return (
-    <div className="pyrus-boot-brand" aria-hidden="true" data-testid={testId}>
-      {resolveActive ? (
-        <BrandResolve
-          haloBlur={0.45}
-          bloomBlur={1.8}
-          className={markClass}
-        />
-      ) : (
-        <PyrusMark className={markClass} />
-      )}
-      <PyrusWordmark title="" width={stacked ? 150 : 200} />
-      <span className="pyrus-boot-tagline">
-        Real-time options flow & signal intelligence.
-      </span>
-      <div
-        className="pyrus-loading pyrus-boot-loading"
-        role={loading ? "status" : undefined}
-        aria-label={loading ? "Loading" : undefined}
-        style={loading ? undefined : { visibility: "hidden" }}
-      >
-        <div className="pyrus-loading-bar" />
-        <span className="pyrus-loading-label">Loading</span>
-      </div>
-    </div>
-  );
-}
-
-// The canonical immersive loading screen — a full-page neural cloud atmosphere
-// with the brand and a calm loading affordance on the left. Shared by the boot
-// curtain (NeuralBootOverlay) and the workspace/app loaders (NeuralLoader) so
-// loading never "jumps" to a different, centered layout.
 export function BootShellLayout({
-  testId = "neural-stage-fallback",
+  children,
+  cloud,
+  cloudSuppressed = false,
   label = "PYRUS",
+  loading = true,
+  progress = null,
+  surface = "loading",
+  testId = "neural-stage-fallback",
 }: {
-  testId?: string;
+  children?: ReactNode;
+  cloud?: ReactNode;
+  cloudSuppressed?: boolean;
   label?: string;
+  loading?: boolean;
+  progress?: BrandLoaderProgress | null;
+  surface?: "auth" | "loading";
+  testId?: string;
 }) {
   const reducedMotion = usePrefersReducedMotion();
-  const showCloud = !reducedMotion && isNeuralWebglRendererSupported();
+  const showCloud =
+    !cloudSuppressed &&
+    !reducedMotion &&
+    isNeuralWebglRendererSupported();
+  const rawProgress = progress?.percent;
+  const progressValue =
+    typeof rawProgress === "number" && Number.isFinite(rawProgress)
+      ? rawProgress
+      : 0;
+  const progressPercent =
+    progress == null
+      ? null
+      : Math.min(100, Math.max(0, Math.round(progressValue)));
+  const progressLabel = progress?.label?.trim() || label;
+  const progressDetail = progress?.detail?.trim() || null;
+  const cloudContent =
+    cloud ??
+    (showCloud ? (
+      <div
+        style={{
+          height: "100%",
+          width: "100%",
+          maskImage: CLOUD_MASK,
+          WebkitMaskImage: CLOUD_MASK,
+        }}
+      >
+        <Suspense fallback={null}>
+          <NeuralCoreScene {...LOADER_CLOUD_PROPS} />
+        </Suspense>
+      </div>
+    ) : null);
 
   return (
     <div
       className="pyrus-boot-loader"
+      data-surface={surface}
       data-testid={testId}
-      role="status"
-      aria-label={label}
+      data-progress={progressPercent ?? undefined}
+      role={loading ? "status" : undefined}
+      aria-label={loading ? label : undefined}
     >
-      {showCloud ? (
+      {cloudContent ? (
         <div className="pyrus-boot-cloud" aria-hidden="true">
-          <div
-            style={{
-              height: "100%",
-              width: "100%",
-              maskImage: CLOUD_MASK,
-              WebkitMaskImage: CLOUD_MASK,
-            }}
-          >
-            <Suspense fallback={null}>
-              <NeuralCoreScene {...LOADER_CLOUD_PROPS} />
-            </Suspense>
-          </div>
+          {cloudContent}
         </div>
       ) : null}
-      <BootBrandColumn loading />
-      <div className="pyrus-boot-content" />
-      <span className="pyrus-boot-sr">{label}</span>
+      <div className="pyrus-boot-brand">
+        <div className="pyrus-boot-identity" aria-hidden="true">
+          <PyrusWordmark title="" width={200} />
+          <span className="pyrus-boot-tagline">
+            Real-time options flow & signal intelligence.
+          </span>
+        </div>
+        {loading && progressPercent != null ? (
+          <div className="brand-loader-progress" aria-live="polite">
+            <div className="brand-loader-progress-row">
+              <span className="brand-loader-progress-label">{progressLabel}</span>
+              <span className="brand-loader-progress-percent">{progressPercent}%</span>
+            </div>
+            <div
+              className="brand-loader-progress-track"
+              role="progressbar"
+              aria-label={progressLabel}
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={progressPercent}
+            >
+              <div
+                className="brand-loader-progress-fill"
+                style={{ width: `${progressPercent}%` }}
+              />
+            </div>
+            {progressDetail ? (
+              <div className="brand-loader-progress-detail">{progressDetail}</div>
+            ) : null}
+          </div>
+        ) : loading ? (
+          <div className="pyrus-loading pyrus-boot-loading">
+            <div className="pyrus-loading-bar" />
+            <span className="pyrus-loading-label">Loading</span>
+          </div>
+        ) : null}
+        {children ? <div className="pyrus-auth-content">{children}</div> : null}
+      </div>
+      {loading ? (
+        <span className="pyrus-boot-sr">
+          {progressPercent == null
+            ? label
+            : `${progressLabel} ${progressPercent}%`}
+        </span>
+      ) : null}
     </div>
   );
 }

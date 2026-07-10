@@ -71,30 +71,41 @@ test("adapted neural install does not import react-three-fiber", () => {
   }
 });
 
-test("neural cloud is only wired to loader surfaces", () => {
+test("neural cloud is wired once per loading or auth surface", () => {
   const app = read("src/app/App.tsx");
-  // The immersive loader layout (cloud + brand) is shared by the boot curtain
-  // and the app/workspace loaders via BootShellLayout.
+  const loginGate = read("src/features/auth/LoginGate.jsx");
   const bootShell = read("src/components/neural/BootShellLayout.tsx");
   const neuralLoader = read("src/components/neural/NeuralLoader.tsx");
   const brandResolve = read("src/components/marketing/brand-resolve.tsx");
   const neuralCanvas = read("src/components/neural/NeuralCanvas.tsx");
-  const neuralTypes = read("src/components/neural/neural-core/types.ts");
 
   assert.doesNotMatch(app, /NeuralBackdrop|neural-backdrop/);
   assert.doesNotMatch(app, /LogoLoader/);
   assert.match(app, /NeuralLoader/);
   // NeuralLoader delegates its rendered surface to the shared BootShellLayout.
   assert.match(neuralLoader, /BootShellLayout/);
-  assert.match(bootShell, /BrandResolve/);
   assert.match(bootShell, /NeuralCoreScene/);
+  assert.equal((bootShell.match(/<NeuralCoreScene\b/g) || []).length, 1);
+  assert.doesNotMatch(bootShell, /BrandResolve|PyrusMark|lockup|morphDriveRef/);
+  assert.match(loginGate, /BootShellLayout/);
+  assert.doesNotMatch(loginGate, /NeuralCoreScene|AmbientCloud/);
   assert.match(bootShell, /isNeuralWebglRendererSupported/);
   assert.doesNotMatch(bootShell, /canUseWebGL/);
   assert.match(brandResolve, /NeuralCoreScene/);
   assert.match(brandResolve, /isWebglAvailable/);
   assert.match(brandResolve, /morph/);
-  assert.doesNotMatch(neuralCanvas, /ambient/);
-  assert.doesNotMatch(neuralTypes, /ambient/);
+  assert.doesNotMatch(neuralCanvas, /MorphMachine|morphDriveRef|lockup/);
+});
+
+test("boot opener remains a pure cloud and fades without forming the logo", () => {
+  const neuralCanvas = read("src/components/neural/NeuralCanvas.tsx");
+  const neuralOverlay = read("src/components/neural/NeuralBootOverlay.tsx");
+
+  assert.doesNotMatch(neuralCanvas, /MorphMachine|morphDriveRef|lockup/);
+  assert.doesNotMatch(neuralOverlay, /onDisperseStart|onReveal/);
+  assert.match(neuralOverlay, /cloud=\{\s*<NeuralCanvas/);
+  assert.match(neuralOverlay, /progress=\{progress\}/);
+  assert.match(neuralOverlay, /neural-overlay--revealing/);
 });
 
 test("shared loader runs capability hooks before rendering", () => {

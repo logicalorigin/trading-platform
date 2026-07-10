@@ -1,13 +1,10 @@
 import {
-  Suspense,
-  lazy,
   useCallback,
   useEffect,
   useState,
   useSyncExternalStore,
 } from "react";
 import { Button } from "../../components/ui/Button.jsx";
-import { usePrefersReducedMotion } from "../../components/marketing/use-prefers-reduced-motion";
 import {
   Card,
   CardContent,
@@ -17,18 +14,14 @@ import {
 } from "../../components/ui/card.tsx";
 import { Input } from "../../components/ui/input.tsx";
 import { Label } from "../../components/ui/label.tsx";
-import { LOADER_CLOUD_PROPS } from "../../components/neural/NeuralLoader";
-import { BootBrandColumn } from "../../components/neural/BootShellLayout";
+import { BootShellLayout } from "../../components/neural/BootShellLayout";
 import {
   isNeuralOpenerActive,
   subscribeNeuralOpenerActive,
 } from "../../components/neural/neuralOpenerState";
-import { isNeuralWebglRendererSupported } from "../../lib/webglCapability";
-import { useViewportBelow } from "../../lib/responsive";
 import {
   CSS_COLOR,
   cssColorMix,
-  dim,
   FONT_WEIGHTS,
   RADII,
   sp,
@@ -47,13 +40,6 @@ import {
 } from "../../app/bootProgress";
 import { postAuthJson, useAuthSession } from "./authSession.jsx";
 
-const NeuralCoreScene = lazy(
-  () => import("../../components/marketing/neural-core-scene"),
-);
-const LOGIN_AMBIENT_CLOUD_OPACITY = 0.42;
-const LOGIN_CLOUD_MASK =
-  "radial-gradient(105% 108% at 24% 45%, #000 0%, #000 30%, rgba(0,0,0,0.18) 54%, transparent 74%)";
-
 // Slice 8: the SPA login wall. Rendered inside AppProviders but ABOVE
 // <PlatformApp/> so the workspace (and its SSE streams / platform queries) never
 // mounts for an unauthenticated visitor. Members provisioned via the /auth/launch
@@ -68,92 +54,19 @@ function useNeuralOpenerActiveState() {
   );
 }
 
-// The neural cloud bleeds across the whole page (weighted toward the brand on the
-// left, fading behind the form on the right) so the whole surface is one immersive
-// atmosphere rather than two isolated halves.
-function AmbientCloud() {
-  const reducedMotion = usePrefersReducedMotion();
+function LoginShell({ children, loading = false }) {
   const openerActive = useNeuralOpenerActiveState();
 
-  if (reducedMotion || openerActive || !isNeuralWebglRendererSupported()) {
-    return null;
-  }
-
   return (
-    <div
-      aria-hidden="true"
-      style={{
-        position: "absolute",
-        inset: 0,
-        opacity: LOGIN_AMBIENT_CLOUD_OPACITY,
-        pointerEvents: "none",
-      }}
+    <BootShellLayout
+      cloudSuppressed={openerActive}
+      label={loading ? "Loading sign in" : "PYRUS sign in"}
+      loading={loading}
+      surface="auth"
+      testId="login-brand-stage"
     >
-      <div
-        style={{
-          height: "100%",
-          width: "100%",
-          maskImage: LOGIN_CLOUD_MASK,
-          WebkitMaskImage: LOGIN_CLOUD_MASK,
-        }}
-      >
-        <Suspense fallback={null}>
-          <NeuralCoreScene {...LOADER_CLOUD_PROPS} />
-        </Suspense>
-      </div>
-    </div>
-  );
-}
-
-function LoginShell({ children, loading = false }) {
-  const stacked = useViewportBelow(880);
-
-  return (
-    <div
-      style={{
-        position: "fixed",
-        inset: 0,
-        zIndex: 110,
-        background: CSS_COLOR.bg0,
-        overflowY: "auto",
-      }}
-    >
-      <div
-        className="pyrus-brand-atmosphere"
-        aria-hidden="true"
-        style={{ position: "absolute", inset: 0, pointerEvents: "none" }}
-      />
-      <AmbientCloud />
-      <div
-        style={{
-          position: "relative",
-          zIndex: 1,
-          minHeight: "100%",
-          display: "grid",
-          gridTemplateColumns: stacked ? "1fr" : "1fr 1fr",
-          gridTemplateRows: stacked ? "minmax(220px, 34vh) 1fr" : undefined,
-        }}
-      >
-        {/* Shared brand column — identical markup/position to the boot curtain and
-            app loaders so the mark never hops when the loading screen hands off to
-            the sign-in wall. */}
-        <BootBrandColumn
-          loading={loading}
-          stacked={stacked}
-          testId="login-brand-stage"
-        />
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            padding: sp(24),
-          }}
-        >
-          <div style={{ width: "100%", maxWidth: dim(380) }}>{children}</div>
-        </div>
-      </div>
-    </div>
+      {children}
+    </BootShellLayout>
   );
 }
 
@@ -225,7 +138,7 @@ export function LoginGate({ children }) {
 
   // Signed-out visitors never mount PlatformApp, so its blocking boot tasks
   // would never settle and the boot overlay would idle until its backstop.
-  // Skip them so the opener forms, disperses, and reveals the sign-in wall.
+  // Skip them so the opener can fade and reveal the sign-in wall.
   useEffect(() => {
     if (!isLoading && !signedIn) {
       skipBootProgressTasks(
@@ -235,8 +148,8 @@ export function LoginGate({ children }) {
     }
   }, [isLoading, signedIn]);
 
-  // Auth state not yet known — keep the 50/50 layout with a loading indicator on
-  // the right (never a blank right panel) until /api/auth/session resolves.
+  // Auth state not yet known — keep the shared centered shell visible until
+  // /api/auth/session resolves.
   if (isLoading) {
     return <LoginShell loading>{null}</LoginShell>;
   }
