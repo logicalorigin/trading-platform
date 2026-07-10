@@ -428,6 +428,10 @@ html[data-pyrus-theme="dark"] .pyrus-loading-bar {
   width: 46%;
 }
 
+.pyrus-loading:not([role="status"]) .pyrus-loading-bar::after {
+  animation-play-state: paused;
+}
+
 .pyrus-loading-label {
   color: var(--ra-text-secondary, #64748b);
   font-size: 11px;

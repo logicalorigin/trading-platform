@@ -7,6 +7,7 @@ const bootShellSource = readFileSync(
   new URL("../../components/neural/BootShellLayout.tsx", import.meta.url),
   "utf8",
 );
+const appStyles = readFileSync(new URL("../../index.css", import.meta.url), "utf8");
 
 test("login and loader ambient clouds require a supported WebGL renderer", () => {
   assert.match(
@@ -50,4 +51,11 @@ test("shared boot brand reacts when the neural opener releases WebGL", () => {
 test("idle sign-in branding stays static", () => {
   assert.match(bootShellSource, /const resolveActive = loading && !openerActive;/);
   assert.match(bootShellSource, /resolveActive \? \(\s*<BrandResolve/s);
+});
+
+test("idle sign-in pauses its reserved loading animation", () => {
+  assert.match(
+    appStyles,
+    /\.pyrus-loading:not\(\[role="status"\]\) \.pyrus-loading-bar::after\s*{[^}]*animation-play-state:\s*paused/s,
+  );
 });
