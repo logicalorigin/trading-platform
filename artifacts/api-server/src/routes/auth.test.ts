@@ -160,6 +160,75 @@ test("login is rate limited after repeated failed attempts", async () => {
   );
 });
 
+test("password login rejects a cross-site form without replacing the session", async () => {
+  await withBootstrapToken(async () =>
+    withTestDb(async () =>
+      withServer(async (baseUrl) => {
+        const bootstrapResponse = await fetch(`${baseUrl}/auth/bootstrap`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            email: "owner@example.com",
+            password: "correct horse battery staple",
+            bootstrapToken: "setup-token",
+          }),
+        });
+        assert.equal(bootstrapResponse.status, 200);
+
+        const crossSiteLogin = await fetch(`${baseUrl}/auth/login`, {
+          method: "POST",
+          headers: {
+            "content-type": "application/x-www-form-urlencoded",
+            origin: "https://attacker.example",
+          },
+          body: new URLSearchParams({
+            email: "owner@example.com",
+            password: "correct horse battery staple",
+          }),
+        });
+        assert.equal(crossSiteLogin.status, 403);
+        assert.equal(crossSiteLogin.headers.get("set-cookie"), null);
+        const crossSiteBody = (await crossSiteLogin.json()) as {
+          code?: string;
+        };
+        assert.equal(crossSiteBody.code, "invalid_login_origin");
+
+        const crossSiteMetadataLogin = await fetch(`${baseUrl}/auth/login`, {
+          method: "POST",
+          headers: {
+            "content-type": "application/x-www-form-urlencoded",
+            "sec-fetch-site": "cross-site",
+          },
+          body: new URLSearchParams({
+            email: "owner@example.com",
+            password: "correct horse battery staple",
+          }),
+        });
+        assert.equal(crossSiteMetadataLogin.status, 403);
+        assert.equal(crossSiteMetadataLogin.headers.get("set-cookie"), null);
+
+        const sameOriginLogin = await fetch(`${baseUrl}/auth/login`, {
+          method: "POST",
+          headers: {
+            "content-type": "application/x-www-form-urlencoded",
+            origin: new URL(baseUrl).origin,
+            "sec-fetch-site": "same-origin",
+          },
+          body: new URLSearchParams({
+            email: "owner@example.com",
+            password: "correct horse battery staple",
+          }),
+        });
+        assert.equal(sameOriginLogin.status, 200);
+        assert.match(
+          sameOriginLogin.headers.get("set-cookie") ?? "",
+          /pyrus_session=/,
+        );
+      }),
+    ),
+  );
+});
+
 test("session cookie is Secure only when the request is https", async () => {
   await withBootstrapToken(async () =>
     withTestDb(async () =>

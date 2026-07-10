@@ -86,6 +86,66 @@ function readString(record: JsonRecord, key: string): string {
   return typeof value === "string" ? value : "";
 }
 
+function normalizeHttpOrigin(value: string): string | null {
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === "http:" || parsed.protocol === "https:"
+      ? parsed.origin
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function configuredAuthOrigins(): string[] {
+  return ["REPLIT_DEV_DOMAIN", "REPLIT_DOMAINS"].flatMap((name) =>
+    (process.env[name] ?? "")
+      .split(",")
+      .map((value) => value.trim())
+      .filter(Boolean)
+      .flatMap((value) => {
+        const origin = normalizeHttpOrigin(
+          value.includes("://") ? value : `https://${value}`,
+        );
+        return origin ? [origin] : [];
+      }),
+  );
+}
+
+function hasAllowedLoginOrigin(req: Request): boolean {
+  const origin = req.get("origin");
+  if (!origin) {
+    const fetchSite = req.get("sec-fetch-site")?.trim().toLowerCase();
+    // ponytail: keep headerless API clients; use a pre-login CSRF nonce if
+    // legacy browsers without Origin or Fetch Metadata must be covered.
+    return !fetchSite || fetchSite === "same-origin" || fetchSite === "none";
+  }
+
+  const normalizedOrigin = normalizeHttpOrigin(origin);
+  if (!normalizedOrigin) return false;
+  const forwardedHost = req.get("x-forwarded-host")?.split(",", 1)[0]?.trim();
+  const forwardedProto = req
+    .get("x-forwarded-proto")
+    ?.split(",", 1)[0]
+    ?.trim();
+  const protocol = forwardedProto || req.protocol;
+  const requestOrigins = [req.get("host"), forwardedHost]
+    .filter((host): host is string => Boolean(host))
+    .map((host) => normalizeHttpOrigin(`${protocol}://${host}`))
+    .filter((candidate): candidate is string => Boolean(candidate));
+
+  return [...requestOrigins, ...configuredAuthOrigins()].includes(
+    normalizedOrigin,
+  );
+}
+
+function assertAllowedLoginOrigin(req: Request): void {
+  if (hasAllowedLoginOrigin(req)) return;
+  throw new HttpError(403, "Login request origin is not allowed.", {
+    code: "invalid_login_origin",
+  });
+}
+
 type RequestWithHeaders = Pick<Request, "headers">;
 
 function readCookie(req: RequestWithHeaders, name: string): string | null {
@@ -290,6 +350,7 @@ router.post("/auth/bootstrap", async (req, res) => {
 });
 
 router.post("/auth/login", async (req, res) => {
+  assertAllowedLoginOrigin(req);
   const body = asRecord(req.body);
   const email = readString(body, "email");
   enforceRateLimit(`login:ip:${clientIp(req)}`, 20, 5 * 60_000);
