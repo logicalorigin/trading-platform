@@ -10,6 +10,7 @@ import {
   or,
   sql,
 } from "drizzle-orm";
+import type { AnyPgColumn } from "drizzle-orm/pg-core";
 import {
   algoDeploymentsTable,
   balanceSnapshotsTable,
@@ -355,6 +356,24 @@ function brokerAccountSnapshotCondition(universe: AccountUniverse) {
     or(providerAccountCondition, inArray(brokerAccountsTable.id, localAccountIds)) ??
     providerAccountCondition
   );
+}
+
+function flexProviderAccountOwnershipCondition(
+  providerAccountId: AnyPgColumn,
+  appUserId: string | null | undefined,
+  mode: RuntimeMode,
+) {
+  if (!appUserId) {
+    return sql<boolean>`false`;
+  }
+  const ownedProviderAccountIds = db
+    .select({ providerAccountId: brokerAccountsTable.providerAccountId })
+    .from(brokerAccountsTable)
+    .groupBy(brokerAccountsTable.providerAccountId)
+    .having(
+      sql<boolean>`count(*) = 1 and bool_and(${brokerAccountsTable.appUserId} is not distinct from ${appUserId}) and bool_and(${brokerAccountsTable.mode} = ${mode})`,
+    );
+  return inArray(providerAccountId, ownedProviderAccountIds);
 }
 
 type AccountRiskDetail = "fast" | "full";
@@ -1422,7 +1441,11 @@ async function readLiveAccountUniverseUncached(
       };
     }
 
-    const flexAccounts = await getFlexBackedAccounts(requestedAccountId, mode);
+    const flexAccounts = await getFlexBackedAccounts(
+      requestedAccountId,
+      mode,
+      appUserId,
+    );
     if (flexAccounts.length) {
       return {
         appUserId,
@@ -1461,7 +1484,11 @@ async function readLiveAccountUniverseUncached(
 async function getFlexBackedAccounts(
   requestedAccountId: string,
   mode: RuntimeMode,
+  appUserId: string | null,
 ): Promise<BrokerAccountSnapshot[]> {
+  if (!appUserId) {
+    return [];
+  }
   const navRows = await withOptionalAccountSchemaFallback({
     tables: ["flex_nav_history"],
     fallback: () => [],
@@ -1474,6 +1501,13 @@ async function getFlexBackedAccounts(
           netAssetValue: flexNavHistoryTable.netAssetValue,
         })
         .from(flexNavHistoryTable)
+        .where(
+          flexProviderAccountOwnershipCondition(
+            flexNavHistoryTable.providerAccountId,
+            appUserId,
+            mode,
+          ),
+        )
         .orderBy(desc(flexNavHistoryTable.statementDate))
         .limit(250),
   });
@@ -2933,10 +2967,11 @@ function matchFlexOpenPositionCandidate(
 }
 
 async function fetchFlexOpenDatesForPositions(
-  accountIds: string[],
+  universe: AccountUniverse,
+  mode: RuntimeMode,
   positions: BrokerPositionSnapshot[],
 ): Promise<Map<string, PositionOpenDate>> {
-  if (!accountIds.length || !positions.length) {
+  if (!universe.accountIds.length || !positions.length) {
     return new Map();
   }
 
@@ -2947,7 +2982,19 @@ async function fetchFlexOpenDatesForPositions(
       db
         .select()
         .from(flexOpenPositionsTable)
-        .where(inArray(flexOpenPositionsTable.providerAccountId, accountIds))
+        .where(
+          and(
+            inArray(
+              flexOpenPositionsTable.providerAccountId,
+              universe.accountIds,
+            ),
+            flexProviderAccountOwnershipCondition(
+              flexOpenPositionsTable.providerAccountId,
+              universe.appUserId,
+              mode,
+            ),
+          ),
+        )
         .orderBy(desc(flexOpenPositionsTable.asOf))
         .limit(5_000),
   });
@@ -4503,6 +4550,7 @@ type ListAccountsOptions = {
   getFlexAccounts?: (
     requestedAccountId: string,
     mode: RuntimeMode,
+    appUserId: string | null,
   ) => Promise<BrokerAccountSnapshot[]>;
   recordSnapshots?: (accounts: BrokerAccountSnapshot[]) => Promise<void>;
   getSnapTradeAccounts?: (
@@ -5350,7 +5398,8 @@ export async function listAccounts(
   options: ListAccountsOptions = {},
 ) {
   const mode = input.mode ?? getRuntimeMode();
-  const appUserId = options.appUserId ?? getCurrentAppUserId();
+  const appUserId =
+    options.appUserId === undefined ? getCurrentAppUserId() : options.appUserId;
   const hasDependencyOverrides = Boolean(
     options.listLiveAccounts ||
       options.getPersistedAccounts ||
@@ -5363,12 +5412,12 @@ export async function listAccounts(
     return readAccountRouteResponseCache(
       "accounts",
       { appUserId, mode },
-      () => listAccountsUncached({ mode }, options),
+      () => listAccountsUncached({ mode }, { ...options, appUserId }),
       ACCOUNT_LIST_RESPONSE_CACHE_TTL_MS,
       ACCOUNT_LIST_RESPONSE_STALE_TTL_MS,
     );
   }
-  return listAccountsUncached({ mode }, options);
+  return listAccountsUncached({ mode }, { ...options, appUserId });
 }
 
 async function listAccountsUncached(
@@ -5457,7 +5506,11 @@ async function listAccountsUncached(
     };
   }
 
-  const flexAccounts = await getFlexAccounts(COMBINED_ACCOUNT_ID, mode);
+  const flexAccounts = await getFlexAccounts(
+    COMBINED_ACCOUNT_ID,
+    mode,
+    appUserId,
+  );
   if (flexAccounts.length) {
     const accounts = withTradingInclusionDefault(
       mergeAccountsWithDirectIbkrSupersedence(
@@ -5879,7 +5932,14 @@ async function getAccountEquityHistoryUncached(input: {
     input.appUserId,
   );
   const start = accountRangeStart(range);
-  const flexConditions = [inArray(flexNavHistoryTable.providerAccountId, universe.accountIds)];
+  const flexConditions = [
+    inArray(flexNavHistoryTable.providerAccountId, universe.accountIds),
+    flexProviderAccountOwnershipCondition(
+      flexNavHistoryTable.providerAccountId,
+      universe.appUserId,
+      mode,
+    ),
+  ];
   if (start) {
     flexConditions.push(
       gte(flexNavHistoryTable.statementDate, toIsoDateString(start)),
@@ -5898,6 +5958,11 @@ async function getAccountEquityHistoryUncached(input: {
   });
   const flexCashConditions = [
     inArray(flexCashActivityTable.providerAccountId, universe.accountIds),
+    flexProviderAccountOwnershipCondition(
+      flexCashActivityTable.providerAccountId,
+      universe.appUserId,
+      mode,
+    ),
   ];
   if (start) {
     flexCashConditions.push(gte(flexCashActivityTable.activityDate, start));
@@ -6608,7 +6673,7 @@ async function getAccountPositionsUncached(input: {
       input.liveQuotes === false
         ? new Map<string, AccountPositionOptionQuoteDemandState>()
         : fetchOptionQuoteSnapshotsForPositions(positions),
-      fetchFlexOpenDatesForPositions(universe.accountIds, positions),
+      fetchFlexOpenDatesForPositions(universe, mode, positions),
       fetchExecutionOpenDatesForPositions(universe, mode, positions),
     ]);
     ordersResult = fullOrdersResult;
@@ -6991,6 +7056,7 @@ async function getAccountPositionsUncached(input: {
 
 export async function getAccountPositionsAtDate(input: {
   accountId: string;
+  appUserId?: string | null;
   date: string | Date;
   assetClass?: string | null;
   mode?: RuntimeMode;
@@ -7007,9 +7073,20 @@ export async function getAccountPositionsAtDate(input: {
   }
 
   const mode = input.mode ?? getRuntimeMode();
-  const universe = await getLiveAccountUniverse(input.accountId, mode);
+  const appUserId =
+    input.appUserId === undefined ? getCurrentAppUserId() : input.appUserId;
+  const universe = await getLiveAccountUniverse(
+    input.accountId,
+    mode,
+    appUserId,
+  );
   const positionConditions = [
     inArray(flexOpenPositionsTable.providerAccountId, universe.accountIds),
+    flexProviderAccountOwnershipCondition(
+      flexOpenPositionsTable.providerAccountId,
+      universe.appUserId,
+      mode,
+    ),
     gte(flexOpenPositionsTable.asOf, window.start),
     lt(flexOpenPositionsTable.asOf, window.end),
   ];
@@ -7052,6 +7129,11 @@ export async function getAccountPositionsAtDate(input: {
           .where(
             and(
               inArray(flexTradesTable.providerAccountId, universe.accountIds),
+              flexProviderAccountOwnershipCondition(
+                flexTradesTable.providerAccountId,
+                universe.appUserId,
+                mode,
+              ),
               gte(flexTradesTable.tradeDate, window.start),
               lt(flexTradesTable.tradeDate, window.end),
             ),
@@ -7068,6 +7150,11 @@ export async function getAccountPositionsAtDate(input: {
           .where(
             and(
               inArray(flexCashActivityTable.providerAccountId, universe.accountIds),
+              flexProviderAccountOwnershipCondition(
+                flexCashActivityTable.providerAccountId,
+                universe.appUserId,
+                mode,
+              ),
               gte(flexCashActivityTable.activityDate, window.start),
               lt(flexCashActivityTable.activityDate, window.end),
             ),
@@ -7084,6 +7171,11 @@ export async function getAccountPositionsAtDate(input: {
           .where(
             and(
               inArray(flexDividendsTable.providerAccountId, universe.accountIds),
+              flexProviderAccountOwnershipCondition(
+                flexDividendsTable.providerAccountId,
+                universe.appUserId,
+                mode,
+              ),
               gte(flexDividendsTable.paidDate, window.start),
               lt(flexDividendsTable.paidDate, window.end),
             ),
@@ -8687,8 +8779,16 @@ const mergeExecutionHistoryOrderRows = (
 async function listClosedTradesForUniverse(
   universe: AccountUniverse,
   input: AccountClosedTradeFilters,
+  mode: RuntimeMode,
 ): Promise<NormalizedAccountTrade[]> {
-  const conditions = [inArray(flexTradesTable.providerAccountId, universe.accountIds)];
+  const conditions = [
+    inArray(flexTradesTable.providerAccountId, universe.accountIds),
+    flexProviderAccountOwnershipCondition(
+      flexTradesTable.providerAccountId,
+      universe.appUserId,
+      mode,
+    ),
+  ];
   if (input.symbol) {
     conditions.push(eq(flexTradesTable.symbol, normalizeSymbol(input.symbol)));
   }
@@ -8780,7 +8880,7 @@ async function getAccountClosedTradesUncached(input: {
     input.appUserId,
   );
   const [flexTrades, providerTrades, executions, orderResult] = await Promise.all([
-    listClosedTradesForUniverse(universe, input),
+    listClosedTradesForUniverse(universe, input, mode),
     listProviderActivityClosedTradesForUniverse(universe, input),
     listExecutionsForUniverse(universe, mode, input),
     listOrdersForUniverse(universe, mode),
@@ -8949,7 +9049,7 @@ async function getAccountRiskUncached(input: {
   );
   const [positions, closedTrades] = await Promise.all([
     listPositionsForUniverse(universe, mode),
-    listClosedTradesForUniverse(universe, {}),
+    listClosedTradesForUniverse(universe, {}, mode),
   ]);
   const deferGreekRefresh = detail === "fast";
   const [greekEnrichment, marketHydration, underlyingPrices] = await Promise.all([
@@ -9385,6 +9485,7 @@ function buildPendingAccountGreekScenarios(): AccountGreekScenarios {
 
 export async function getAccountCashActivity(input: {
   accountId: string;
+  appUserId?: string | null;
   from?: Date | null;
   to?: Date | null;
   mode?: RuntimeMode;
@@ -9395,20 +9496,32 @@ export async function getAccountCashActivity(input: {
   }
 
   const mode = input.mode ?? getRuntimeMode();
-  return getAccountCashActivityUncached({ ...input, mode });
+  const appUserId =
+    input.appUserId === undefined ? getCurrentAppUserId() : input.appUserId;
+  return getAccountCashActivityUncached({ ...input, appUserId, mode });
 }
 
 async function getAccountCashActivityUncached(input: {
   accountId: string;
+  appUserId: string | null;
   from?: Date | null;
   to?: Date | null;
   mode: RuntimeMode;
   source?: string | null;
 }) {
   const mode = input.mode;
-  const universe = await getLiveAccountUniverse(input.accountId, mode);
+  const universe = await getLiveAccountUniverse(
+    input.accountId,
+    mode,
+    input.appUserId,
+  );
   const conditions = [
     inArray(flexCashActivityTable.providerAccountId, universe.accountIds),
+    flexProviderAccountOwnershipCondition(
+      flexCashActivityTable.providerAccountId,
+      universe.appUserId,
+      mode,
+    ),
   ];
   if (input.from) {
     conditions.push(gte(flexCashActivityTable.activityDate, input.from));
@@ -9436,7 +9549,16 @@ async function getAccountCashActivityUncached(input: {
         db
           .select()
           .from(flexDividendsTable)
-          .where(inArray(flexDividendsTable.providerAccountId, universe.accountIds))
+          .where(
+            and(
+              inArray(flexDividendsTable.providerAccountId, universe.accountIds),
+              flexProviderAccountOwnershipCondition(
+                flexDividendsTable.providerAccountId,
+                universe.appUserId,
+                mode,
+              ),
+            ),
+          )
           .orderBy(desc(flexDividendsTable.paidDate))
           .limit(100),
     }),
