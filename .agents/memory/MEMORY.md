@@ -1,1 +1,2 @@
 - [Replit reconnect/restart diagnosis](replit-reconnect-diagnosis.md) — how to triage PYRUS container-replaced vs same-container bounces; DB-token reissue is a symptom, not a cause.
+- [Dev DB disk-quota incident & guard](db-disk-quota-guard.md) — VACUUM FULL banned on managed dev Postgres; I/O-frozen signature (select 1 works, disk queries hang); TRUNCATE/DELETE-only shrink.
