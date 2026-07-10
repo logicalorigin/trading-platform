@@ -157,6 +157,7 @@ import {
 } from "../services/account";
 import type { AccountRange } from "../services/account-ranges";
 import { isHttpResourceNotModified } from "../lib/http-cache";
+import { isHttpError } from "../lib/errors";
 import { getProviderConfiguration, type RuntimeMode } from "../lib/runtime";
 import {
   buildRealAccountUnavailableProblem,
@@ -1940,16 +1941,25 @@ router.get("/accounts/:accountId/risk", async (req, res) => {
   const mode = req.query.mode === "live" ? "live" : req.query.mode === "shadow" ? "shadow" : undefined;
   const detail =
     req.query.detail === "fast" ? "fast" : req.query.detail === "full" ? "full" : undefined;
-  res.json(
-    await withCallerShadowScope(req.params.accountId, () =>
-      getAccountRisk({
-        accountId: req.params.accountId,
-        mode,
-        source: readOptionalString(req.query.source, 80),
-        detail,
-      }),
-    ),
-  );
+  try {
+    res.json(
+      await withCallerShadowScope(req.params.accountId, () =>
+        getAccountRisk({
+          accountId: req.params.accountId,
+          mode,
+          source: readOptionalString(req.query.source, 80),
+          detail,
+        }),
+      ),
+    );
+  } catch (error) {
+    if (isHttpError(error) && error.code === "degraded_upstream") {
+      res.setHeader("Retry-After", "15");
+      res.setHeader("X-Pyrus-Admission-Action", "shed");
+      res.setHeader("X-Pyrus-Admission-Reason", "degraded_upstream");
+    }
+    throw error;
+  }
 });
 
 router.get("/accounts/:accountId/cash-activity", async (req, res) => {

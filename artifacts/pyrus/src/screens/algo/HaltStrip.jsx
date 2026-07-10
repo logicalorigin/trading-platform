@@ -42,9 +42,10 @@ import {
   isNumericSettingType,
 } from "./algoSettingsFields";
 import { normalizeLegacyAlgoBrandText } from "./algoBranding.js";
+import { StatusPill } from "../../components/platform/primitives.jsx";
 
 const STATUS_TONES = {
-  armed: { color: CSS_COLOR.cyan, border: CSS_COLOR.cyan, background: cssColorMix(CSS_COLOR.cyan, 7) },
+  armed: { color: CSS_COLOR.green, border: CSS_COLOR.green, background: cssColorMix(CSS_COLOR.green, 7) },
   active: { color: CSS_COLOR.red, border: cssColorMix(CSS_COLOR.red, 50), background: cssColorMix(CSS_COLOR.red, 7) },
   off: { color: CSS_COLOR.amber, border: cssColorMix(CSS_COLOR.amber, 50), background: cssColorMix(CSS_COLOR.amber, 7) },
   forced: { color: CSS_COLOR.red, border: CSS_COLOR.red, background: cssColorMix(CSS_COLOR.red, 9) },
@@ -107,7 +108,7 @@ const overallHaltState = (statuses) => {
   if (statuses.length && statuses.every((status) => status.state === "off")) {
     return { state: "off", label: "Off", color: CSS_COLOR.amber };
   }
-  return { state: "armed", label: "Armed", color: CSS_COLOR.cyan };
+  return { state: "armed", label: "Armed", color: CSS_COLOR.green };
 };
 
 const STATE_RANK = { armed: 0, off: 1, active: 2, forced: 3 };
@@ -158,6 +159,14 @@ const CompactSettingInput = ({
   patchProfileDraftPath,
 }) => {
   const unitLabel = compactUnitLabel(field);
+  const rangeHint =
+    field.min != null && field.max != null
+      ? `Enter ${field.min}–${field.max}`
+      : field.min != null
+        ? `Minimum ${field.min}`
+        : field.max != null
+          ? `Maximum ${field.max}`
+          : "Value out of range";
   return (
     <span
       style={{
@@ -169,11 +178,29 @@ const CompactSettingInput = ({
         width: "100%",
       }}
     >
+      {invalid ? (
+        <span
+          aria-hidden="true"
+          title={rangeHint}
+          style={{
+            color: CSS_COLOR.red,
+            fontFamily: T.sans,
+            fontSize: textSize("label"),
+            fontWeight: FONT_WEIGHTS.emphasis,
+            lineHeight: 1,
+            flex: "0 0 auto",
+          }}
+        >
+          !
+        </span>
+      ) : null}
       <input
         className="tnum"
         type="number"
         data-testid={`algo-halt-input-${id}`}
         aria-label={ariaLabel}
+        aria-invalid={invalid || undefined}
+        title={invalid ? rangeHint : undefined}
         min={field.min}
         max={field.max}
         step={field.step}
@@ -565,36 +592,39 @@ export const HaltStrip = ({
         minWidth: 0,
       }}
     >
-      <AppTooltip content={`Halt controls ${overall.label}`}>
-        <div
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: sp(4),
+          minWidth: 0,
+        }}
+      >
+        <span
           style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            gap: sp(4),
+            color: focusedDeployment ? CSS_COLOR.text : CSS_COLOR.textMuted,
+            fontFamily: T.sans,
+            fontSize: textSize("body"),
+            fontWeight: FONT_WEIGHTS.label,
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
             minWidth: 0,
           }}
         >
-          <span
-            style={{
-              color: focusedDeployment ? overall.color : CSS_COLOR.textMuted,
-              fontFamily: T.sans,
-              fontSize: textSize("body"),
-              fontWeight: FONT_WEIGHTS.label,
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-              whiteSpace: "nowrap",
-              minWidth: 0,
-            }}
-          >
-            {focusedDeployment
-              ? focusedDeployment.name
-                ? `Pyrus · ${normalizeLegacyAlgoBrandText(focusedDeployment.name)}`
-                : "Pyrus"
-              : "No deployment selected"}
-          </span>
-        </div>
-      </AppTooltip>
+          {focusedDeployment
+            ? focusedDeployment.name
+              ? `Pyrus · ${normalizeLegacyAlgoBrandText(focusedDeployment.name)}`
+              : "Pyrus"
+            : "No deployment selected"}
+        </span>
+        {focusedDeployment ? (
+          <AppTooltip content={`Halt controls ${overall.label}`}>
+            <StatusPill color={overall.color}>{overall.label}</StatusPill>
+          </AppTooltip>
+        ) : null}
+      </div>
       {dirty ? (
         <div
           style={{
@@ -609,6 +639,7 @@ export const HaltStrip = ({
 
       {statusesByGroup.map(({ group, statuses: groupStatuses }, index) => {
         const rollup = groupRollupState(groupStatuses);
+        const rollupTone = STATUS_TONES[rollup.state] || STATUS_TONES.armed;
         const standaloneFields = getCompactHaltStandaloneFields(group.id);
         return (
         <section
@@ -630,22 +661,54 @@ export const HaltStrip = ({
               minWidth: 0,
             }}
           >
+            <span
+              style={{
+                color: CSS_COLOR.textSec,
+                fontFamily: T.sans,
+                fontSize: textSize("label"),
+                fontWeight: 600,
+                letterSpacing: 0,
+                textTransform: "uppercase",
+                minWidth: 0,
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+              }}
+            >
+              {HALT_GROUP_LABELS[group.id] || group.label}
+            </span>
             <AppTooltip content={`${group.label} halt controls ${rollup.label}`}>
               <span
                 style={{
-                  color: (STATUS_TONES[rollup.state] || STATUS_TONES.armed).color,
-                  fontFamily: T.sans,
-                  fontSize: textSize("label"),
-                  fontWeight: 600,
-                  letterSpacing: 0,
-                  textTransform: "uppercase",
-                  minWidth: 0,
-                  overflow: "hidden",
-                  textOverflow: "ellipsis",
-                  whiteSpace: "nowrap",
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: sp(2),
+                  flex: "0 0 auto",
                 }}
               >
-                {HALT_GROUP_LABELS[group.id] || group.label}
+                <span
+                  aria-hidden="true"
+                  style={{
+                    width: dim(6),
+                    height: dim(6),
+                    borderRadius: dim(RADII.pill),
+                    background: rollupTone.color,
+                    flex: "0 0 auto",
+                  }}
+                />
+                <span
+                  style={{
+                    color: rollupTone.color,
+                    fontFamily: T.sans,
+                    fontSize: textSize("caption"),
+                    fontWeight: FONT_WEIGHTS.medium,
+                    letterSpacing: "0.02em",
+                    textTransform: "uppercase",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {rollup.label}
+                </span>
               </span>
             </AppTooltip>
           </div>

@@ -494,6 +494,8 @@ export const CompactFieldInput = ({
       value={value ?? ""}
       disabled={disabled}
       aria-label={ariaLabel}
+      aria-invalid={invalid || undefined}
+      aria-describedby={invalid ? `${id}-range` : undefined}
       data-testid={testId}
       onChange={(event) =>
         onPatch(
@@ -660,6 +662,7 @@ export const CompactSettingCell = ({
       </span>
       {invalid ? (
         <span
+          id={`${id}-range`}
           style={{
             gridColumn: "1 / -1",
             color: CSS_COLOR.red,
@@ -667,7 +670,7 @@ export const CompactSettingCell = ({
             fontSize: textSize("caption"),
           }}
         >
-          {field.min}-{field.max}
+          Enter {field.min}-{field.max}
         </span>
       ) : null}
       {!invalid && field.path === "riskCaps.tradingAllowance"
@@ -793,7 +796,6 @@ const DteStepper = ({
           border: `1px solid ${dirty ? cssColorMix(CSS_COLOR.accent, 32) : CSS_COLOR.borderLight}`,
           borderRadius: dim(RADII.xs),
           background: dirty ? cssColorMix(CSS_COLOR.accent, 5) : CSS_COLOR.bg1,
-          overflow: "hidden",
         }}
       >
         {[-1, 1].map((delta) => (
@@ -1003,10 +1005,10 @@ const DteTimelineEditor = ({
           onClick={() => patchProfileDraftPath(zeroDteField.path, !zeroDteValue)}
           style={{
             minHeight: dim(34),
-            border: `1px solid ${zeroDteValue ? CSS_COLOR.cyan : CSS_COLOR.border}`,
+            border: `1px solid ${zeroDteValue ? CSS_COLOR.accent : CSS_COLOR.border}`,
             borderRadius: dim(RADII.xs),
-            background: zeroDteValue ? cssColorMix(CSS_COLOR.cyan, 12) : "transparent",
-            color: zeroDteValue ? CSS_COLOR.cyan : CSS_COLOR.textMuted,
+            background: zeroDteValue ? cssColorMix(CSS_COLOR.accent, 12) : "transparent",
+            color: zeroDteValue ? CSS_COLOR.accent : CSS_COLOR.textMuted,
             cursor: disabled ? "not-allowed" : "pointer",
             fontFamily: T.sans,
             fontSize: textSize("caption"),
@@ -2296,14 +2298,6 @@ const formatExitBars = (value) => {
   return Number.isFinite(numericValue) ? `${Math.round(numericValue)}b` : "-";
 };
 
-const wireRungLabel = (rung) =>
-  ({
-    wire3: "W3",
-    wire2: "W2",
-    wire1: "W1",
-    trendLine: "TL",
-  })[rung] || String(rung || "-");
-
 const ExitGroupShell = ({
   testId,
   title,
@@ -2456,7 +2450,7 @@ const ProgressiveTrailPreview = ({ steps }) => {
           fontSize: textSize("caption"),
         }}
       >
-        No progressive steps
+        No progressive steps yet — add one using the Steps field.
       </div>
     );
   }
@@ -2566,79 +2560,190 @@ const ProgressiveTrailCell = ({
   );
 };
 
-const WireTrailPreview = ({ rungs }) => {
-  const visibleRungs = Array.isArray(rungs) ? rungs.slice(0, 5) : [];
-  if (!visibleRungs.length) {
-    return (
+// Loosest -> tightest. Shown as a per-row SegmentedControl so all 4 valid
+// rungs are visible and one-tap selectable (no free-text token to memorize).
+const WIRE_RUNG_OPTIONS = [
+  { value: "wire3", label: "W3" },
+  { value: "wire2", label: "W2" },
+  { value: "wire1", label: "W1" },
+  { value: "trendLine", label: "TL" },
+];
+
+const clampWireActivation = (value) =>
+  Math.min(10000, Math.max(0, Number(value) || 0));
+
+const sortWireRungs = (steps) =>
+  [...steps].sort(
+    (left, right) =>
+      clampWireActivation(left.activationPct) -
+      clampWireActivation(right.activationPct),
+  );
+
+// Structured editor for exitPolicy.wireGreekTrail.rungByProfit. Edits the
+// {activationPct, rung} array directly (no text parse/format round-trip), so
+// partial edits never revert and malformed input is impossible. Rows are kept
+// in place while a % is being typed and only re-sorted on blur.
+const WireRungMapEditor = ({
+  rungs,
+  path,
+  patchProfileDraftPath,
+  disabled,
+}) => {
+  const list = Array.isArray(rungs) ? rungs : [];
+  const commit = (next, { sort = false } = {}) =>
+    patchProfileDraftPath(path, sort ? sortWireRungs(next) : next);
+  const updateRow = (index, patch, opts) =>
+    commit(
+      list.map((step, i) => (i === index ? { ...step, ...patch } : step)),
+      opts,
+    );
+  const removeRow = (index) =>
+    commit(list.filter((_, i) => i !== index));
+  const addRow = () => {
+    const lastPct = list.length
+      ? clampWireActivation(list[list.length - 1].activationPct)
+      : 0;
+    commit([...list, { activationPct: list.length ? lastPct + 25 : 35, rung: "wire1" }], {
+      sort: true,
+    });
+  };
+
+  return (
+    <div
+      data-testid="algo-wire-trail-rung-editor"
+      style={{ display: "grid", gap: sp(3), minWidth: 0 }}
+    >
       <div
-        data-testid="algo-wire-trail-rung-preview"
         style={{
           color: CSS_COLOR.textDim,
           fontFamily: T.sans,
           fontSize: textSize("caption"),
+          lineHeight: 1.4,
         }}
       >
-        No wire rungs
+        Trail tighter as profit grows — at each activation %, ride the chosen
+        wire (W3 loosest → TL tightest).
       </div>
-    );
-  }
-  return (
-    <div
-      data-testid="algo-wire-trail-rung-preview"
-      data-algo-pocket-grid="two"
-      style={{
-        display: "grid",
-        gridTemplateColumns: `repeat(auto-fit, minmax(${dim(72)}px, 1fr))`,
-        gap: sp(3),
-        minWidth: 0,
-      }}
-    >
-      {visibleRungs.map((rung, index) => (
-        <AppTooltip
-          key={`${rung.activationPct}-${rung.rung}-${index}`}
-          content={`${formatExitPct(rung.activationPct)} ${wireRungLabel(rung.rung)}`}
+      {list.length === 0 ? (
+        <div
+          data-testid="algo-wire-trail-rung-empty"
+          style={{
+            color: CSS_COLOR.textDim,
+            fontFamily: T.sans,
+            fontSize: textSize("caption"),
+          }}
         >
-          <span
+          No rungs yet — add one below to start trailing.
+        </div>
+      ) : (
+        list.map((rung, index) => (
+          <div
+            key={index}
+            data-testid={`algo-wire-rung-row-${index}`}
             style={{
+              display: "flex",
+              alignItems: "center",
+              gap: sp(3),
               minWidth: 0,
-              display: "grid",
-              gap: sp(1),
-              padding: sp("4px 5px"),
-              border: `1px solid ${CSS_COLOR.borderLight}`,
-              borderRadius: dim(RADII.xs),
-              background: cssColorMix(CSS_COLOR.cyan, 7),
+              flexWrap: "wrap",
             }}
           >
-            <span
-              className="tnum"
-              style={{
-                color: CSS_COLOR.cyan,
-                fontFamily: T.data,
-                fontSize: textSize("caption"),
-                fontWeight: FONT_WEIGHTS.emphasis,
-                lineHeight: 1,
-              }}
-            >
-              {formatExitPct(rung.activationPct)}
-            </span>
             <span
               style={{
                 color: CSS_COLOR.textMuted,
                 fontFamily: T.sans,
                 fontSize: textSize("caption"),
-                fontWeight: FONT_WEIGHTS.label,
-                lineHeight: 1,
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-                textTransform: "uppercase",
-                whiteSpace: "nowrap",
+                flex: "0 0 auto",
               }}
             >
-              {wireRungLabel(rung.rung)}
+              At
             </span>
-          </span>
-        </AppTooltip>
-      ))}
+            <input
+              type="number"
+              className="tnum"
+              min={0}
+              max={10000}
+              step={5}
+              aria-label={`Rung ${index + 1} activation percent`}
+              data-testid={`algo-wire-rung-activation-${index}`}
+              value={rung.activationPct ?? ""}
+              disabled={disabled}
+              onChange={(event) =>
+                updateRow(index, {
+                  activationPct: numberFrom(
+                    event.target.value,
+                    rung.activationPct ?? 0,
+                  ),
+                })
+              }
+              onBlur={() => commit(list, { sort: true })}
+              style={{
+                ...compactInputStyle({ disabled }),
+                width: dim(56),
+                flex: "0 0 auto",
+                textAlign: "right",
+                fontFamily: T.data,
+              }}
+            />
+            <span
+              style={{
+                color: CSS_COLOR.textMuted,
+                fontFamily: T.sans,
+                fontSize: textSize("caption"),
+                flex: "0 0 auto",
+              }}
+            >
+              % →
+            </span>
+            <span style={{ flex: "1 1 132px", minWidth: dim(132) }}>
+              <SegmentedControl
+                options={WIRE_RUNG_OPTIONS}
+                value={rung.rung}
+                onChange={(next) => updateRow(index, { rung: next }, { sort: true })}
+                ariaLabel={`Rung ${index + 1} wire level`}
+                radioGroup
+                buttonTestId={(option) =>
+                  `algo-wire-rung-${index}-${typeof option === "string" ? option : option.value}`
+                }
+              />
+            </span>
+            <button
+              type="button"
+              aria-label={`Remove rung ${index + 1}`}
+              data-testid={`algo-wire-rung-remove-${index}`}
+              disabled={disabled}
+              onClick={() => removeRow(index)}
+              style={{
+                ...compactButtonStyle({ disabled }),
+                width: dim(28),
+                minWidth: dim(28),
+                height: dim(COMPACT_CONTROL_HEIGHT),
+                padding: 0,
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
+                flex: "0 0 auto",
+              }}
+            >
+              ×
+            </button>
+          </div>
+        ))
+      )}
+      <div>
+        <button
+          type="button"
+          data-testid="algo-wire-rung-add"
+          disabled={disabled}
+          onClick={addRow}
+          style={{
+            ...compactButtonStyle({ disabled }),
+            padding: sp("3px 10px"),
+          }}
+        >
+          + Add rung
+        </button>
+      </div>
     </div>
   );
 };
@@ -2658,13 +2763,18 @@ const WireTrailCell = ({
   const enabled = Boolean(getPathValue(profileDraft, enabledField.path));
   const rungs = getPathValue(profileDraft, rungsField.path);
   const rungCount = Array.isArray(rungs) ? rungs.length : 0;
-  const fields = item.fields.filter((field) => field.path !== enabledField.path);
+  // The rung map is edited by WireRungMapEditor below, so drop it (and the
+  // header-hosted enable toggle) from the generic field grid.
+  const fields = item.fields.filter(
+    (field) =>
+      field.path !== enabledField.path && field.path !== rungsField.path,
+  );
   return (
     <ExitGroupShell
       testId="algo-exit-wire-trail"
       title="Wire Trail"
       status={enabled ? `${rungCount} rung${rungCount === 1 ? "" : "s"}` : "OFF"}
-      statusTone={enabled ? CSS_COLOR.cyan : CSS_COLOR.textMuted}
+      statusTone={enabled ? CSS_COLOR.green : CSS_COLOR.textMuted}
       action={
         <ExitHeaderToggle
           field={enabledField}
@@ -2675,7 +2785,12 @@ const WireTrailCell = ({
         />
       }
     >
-      <WireTrailPreview rungs={rungs} />
+      <WireRungMapEditor
+        rungs={rungs}
+        path={rungsField.path}
+        patchProfileDraftPath={patchProfileDraftPath}
+        disabled={disabled}
+      />
       <ExitFieldGrid
         fields={fields}
         profileDraft={profileDraft}
@@ -3090,7 +3205,7 @@ const ReadOnlyGateBadgeStrip = ({ badges }) => {
         const tone = badge.urgent
           ? CSS_COLOR.amber
           : badge.active
-            ? CSS_COLOR.cyan
+            ? CSS_COLOR.accent
             : CSS_COLOR.textMuted;
         return (
           <AppTooltip key={badge.id} content={`${badge.label}: ${badge.value}`}>

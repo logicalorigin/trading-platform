@@ -3,16 +3,16 @@
 ## Session Metadata
 
 - Session ID: `17ecea92-4e08-4390-acae-7aeecf0193fc`
-- Saved At (MT): `2026-07-08 23:11:19 MDT`
-- Saved At (UTC): `2026-07-09T05:11:19.317Z`
-- Summary: 2026-07-08 23:11:19 MDT | 17ecea92-4e08-4390-acae-7aeecf0193fc | please find the last two claude sessions we had going (recent sessions handoffs/ claude work)
+- Saved At (MT): `2026-07-08 23:35:13 MDT`
+- Saved At (UTC): `2026-07-09T05:35:13.904Z`
+- Summary: 2026-07-08 23:35:13 MDT | 17ecea92-4e08-4390-acae-7aeecf0193fc | please find the last two claude sessions we had going (recent sessions handoffs/ claude work)
 - Runtime: `claude`
 - Repo Root: `/home/runner/workspace`
 - Thread CWD: `/home/runner/workspace`
 - Transcript Path: `/home/runner/.claude/projects/-home-runner-workspace/17ecea92-4e08-4390-acae-7aeecf0193fc.jsonl`
 - Branch: `main`
-- HEAD: `5c90f88e65a883fcc37a8b5c482c142d15bb6480`
-- Latest Commit: `docs(signal-monitor): record P1 gapped-cell emission owner decision = leave as-is (session e65fd323)`
+- HEAD: `fee19f57ee4361cc08b75ff6ac439e7ccd0e86f1`
+- Latest Commit: `Task #51: Restore Replit startup config & harden against recovery clobbers`
 - Latest Commit Session ID: `unknown`
 - Title: please find the last two claude sessions we had going (recent sessions handoffs/ claude work)
 - Model: `claude-opus-4-8`
@@ -667,6 +667,7 @@ please find the last two claude sessions we had going (recent sessions handoffs/
 
 - `2026-07-08 22:46:12 MDT` please find the last two claude sessions we had going (recent sessions handoffs/ claude work)
 - `2026-07-08 22:52:39 MDT` pleae resume fable a here
+- `2026-07-08 23:23:37 MDT` <task-notification> <task-id>wifk596pw</task-id> <tool-use-id>toolu_01WD56nFQvw1G4rdjr3RGrqF</tool-use-id> <output-file>/tmp/claude-1000/-home-runner-workspace/17ecea92-4e08-4390-acae-7aeecf0193fc/tasks/wifk596pw.output</output-file> <status>completed</status> <summary>Dynamic workflow "Trace why bar_cache source=massive-websocket stopped persisting ~2026-07-02 while data still streams" completed</summary> <result>{"findings":[{"thread":"massive-websocket persist path","summary":"test","evidence":[{"claim":"test claim","source":"file.ts:1","verified":true}],"suspectCause":"test cause","confidence":"high"},{"thread":"git archaeology around the 2026-07-02 massive-websocket persistence stop","summary":"No single culprit CODE commit exists in the Jun-28 -&gt; Jul-5 window. Every file on the s…
 
 ## Session Activity Summary
 
@@ -676,40 +677,46 @@ please find the last two claude sessions we had going (recent sessions handoffs/
 - `2026-07-08 22:46:34 MDT` Tool: Bash ls -t --time-style=+'%Y-%m-%d_%H:%M:%S' SESSION_HANDOFF_2026*.md 2>/dev/null | head -8; echo "===CURRENT PTR==="; cat SESSION_HANDOFF_CURRENT.md
 - `2026-07-08 22:46:42 MDT` Agent: The current session (17ecea92) is this one. Let me identify which of the prior handoffs are Claude sessions vs Codex, and read the two most recent Claude ones.
 - `2026-07-08 22:46:44 MDT` Tool: Bash for f in $(ls -t SESSION_HANDOFF_2026*.md | head -8); do s=$(grep -m1 -iE "Claude Code session|Codex" "$f" 2>/dev/null | head -1); echo "$f :: $s"; done
-- … 53 lower-signal transcript events omitted …
-- `2026-07-08 23:04:19 MDT` Tool: Bash cd /home/runner/workspace echo "=== loadStoredMarketBars: source iteration + per-source query ===" rg -n "loadStoredMarketBars|storeSourceNames|for .*source|so…
-- `2026-07-08 23:05:00 MDT` Agent: Now it's precise. The read's source list is: ```js storeSourceNames() => [ isMassiveStocksRealtimeConfigured() ? "massive-websocket" : "massive-delayed-websocket", "massive-histor…
-- `2026-07-08 23:05:05 MDT` Tool: Bash cd /home/runner/workspace echo "=== isMassiveStocksRealtimeConfigured def ===" rg -n "function isMassiveStocksRealtimeConfigured|isMassiveStocksRealtimeConfigu…
-- `2026-07-08 23:05:20 MDT` Tool: Read /home/runner/workspace/artifacts/api-server/src/lib/runtime.ts
-- `2026-07-08 23:05:21 MDT` Tool: Bash cd /home/runner/workspace echo "=== who WRITES bars with source massive-websocket (persist call sites, non-test) ===" rg -n "source:\s*[\"']massive-websocket|p…
-- `2026-07-08 23:06:28 MDT` Agent: I've traced the "because" all the way down. Here's the verified picture before the decision. ## Fable-A resumed — 5m probe run, root cause found (deeper than the handoff knew) **W…
-- `2026-07-08 23:06:36 MDT` Tool: AskUserQuestion {"questions":[{"question":"massive-websocket bar persistence died ~Jul 2 and the durable read of it is the 5m/1m stall…
-- `2026-07-08 23:10:26 MDT` Agent: Riley wants the trace: **why did massive-websocket persistence die on Jul 2 when data is clearly still streaming?** This is a genuine multi-thread root-cause (persist-path code +…
-- `2026-07-08 23:11:06 MDT` Tool: Workflow {"script":"export const meta = {\n name: 'trace-massive-websocket-death',\n description: 'Trace why bar_cache source=ma…
-- `2026-07-08 23:11:18 MDT` Agent: The trace is running across four parallel threads in the background (persist-path, git archaeology, fallback logic, config+DB timeline) → synthesis. I've delegated those searches,…
+- … 89 lower-signal transcript events omitted …
+- `2026-07-08 23:31:02 MDT` Tool: Bash cd /home/runner/workspace curl -s -m 8 "http://127.0.0.1:8080/api/diagnostics/runtime" | python3 - <<'PY' import json,sys d=json.load(sys.stdin) def walk(o,pat…
+- `2026-07-08 23:31:06 MDT` Tool failed: Bash cd /home/runner/workspace curl -s -m 8 "http://127.0.0.1:8080/api/diagnostics/runtime" | python3 - <<'PY' import json,sys d=json.load(sys.stdin) def walk(o,pat…
+- `2026-07-08 23:31:16 MDT` Tool: Bash cd /home/runner/workspace echo "=== raw response for /diagnostics/runtime ===" curl -s -m 8 -w '\nHTTP=%{http_code} bytes=%{size_download} ct=%{content_type}\n…
+- `2026-07-08 23:31:24 MDT` Agent: Route works (the earlier empty read was transient). Let me save the full payload and extract the stock aggregate/websocket status subtree.
+- `2026-07-08 23:31:31 MDT` Tool: Bash cd /home/runner/workspace sp=/tmp/claude-1000/-home-runner-workspace/17ecea92-4e08-4390-acae-7aeecf0193fc/scratchpad mkdir -p "$sp" curl -s -m 8 "http://127.0.…
+- `2026-07-08 23:32:29 MDT` Agent: **Decisive runtime evidence** — the socket itself is healthy, which rules out the simple explanations. Let me pull the channel-subscription arrays (filtered out above) to see whet…
+- `2026-07-08 23:32:35 MDT` Tool: Bash cd /home/runner/workspace sp=/tmp/claude-1000/-home-runner-workspace/17ecea92-4e08-4390-acae-7aeecf0193fc/scratchpad python3 - "$sp/diag-runtime.json" <<'PY' i…
+- `2026-07-08 23:33:17 MDT` Agent: **This is the smoking gun — and it doesn't need RTH to confirm.** The Massive stock websocket only exposes **`availableChannels = ['Q','T']`** (Quotes + Trades). There is **no `AM…
+- `2026-07-08 23:33:19 MDT` Tool: Bash cd /home/runner/workspace echo "=== CHANNELS constant + channelFilter (availableChannels source) ===" rg -n "CHANNELS\b|channelFilter|availableChannels|'AM'|\"…
+- `2026-07-08 23:35:13 MDT` Agent: I have to correct my own near-miss before concluding: `availableChannels=['Q','T']` overnight is **expected** — the aggregate stream deliberately uses the Trade channel outside RT…
 
 ## High-Signal Changed Files
 
+- `.gitignore`
+- `.replit`
+- `SESSION_HANDOFF_2026-07-08_e65fd323-c281-4156-ae2f-152d4b1ddd4a.md`
+- `SESSION_HANDOFF_2026-07-08_f43ca2d9-a6d1-4163-8ead-0cd704851bf1.md`
 - `SESSION_HANDOFF_CURRENT.md`
 - `SESSION_HANDOFF_MASTER.md`
+- `artifacts/pyrus/scripts/runDevApp.mjs`
+- `package.json`
+- `replit.md`
+- `scripts/README.md`
+- `scripts/check-replit-startup-guards.mjs`
+- `scripts/replit-config-clobber.mjs`
+- `scripts/replit-config/dot-replit`
+- `scripts/replit-config/replit.nix`
+- `scripts/restore-replit-config.mjs`
 
 ## Repo State Snapshot
 
 ```text
-## main...origin/main
- M SESSION_HANDOFF_CURRENT.md
- M SESSION_HANDOFF_MASTER.md
-?? SESSION_HANDOFF_2026-07-08_17ecea92-4e08-4390-acae-7aeecf0193fc.md
-?? SESSION_HANDOFF_2026-07-08_e65fd323-c281-4156-ae2f-152d4b1ddd4a.md
-?? SESSION_HANDOFF_2026-07-08_f43ca2d9-a6d1-4163-8ead-0cd704851bf1.md
+## main...origin/main [ahead 2]
 ```
 
 ## Diff Summary
 
 ```text
- ...F_CURRENT.md | 25 ++----
- ...FF_MASTER.md |  5 +-
- 2 files changed, 13 insertions(+), 17 deletions(-)
+No tracked changes relative to HEAD.
 ```
 
 ## Validations Detected In Transcript

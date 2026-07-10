@@ -1087,6 +1087,18 @@ optgroup {
   min-height: 44px;
 }
 
+/* Height-only touch target: bumps the vertical hit area on touch viewports
+   WITHOUT a min-width, which would overflow dense grid columns like the Algo
+   timeframe frame buttons (repeat(N, minmax(0, 1fr))). */
+.ra-touch-target-y {
+  min-height: 24px;
+}
+
+.ra-shell[data-viewport="phone"] .ra-touch-target-y,
+.ra-shell[data-viewport="tablet"] .ra-touch-target-y {
+  min-height: 44px;
+}
+
 table {
   max-width: 100%;
 }

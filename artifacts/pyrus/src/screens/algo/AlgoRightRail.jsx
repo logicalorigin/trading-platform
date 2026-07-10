@@ -23,6 +23,7 @@ import { AlgoTimeframeControlBand } from "./AlgoTimeframeControlBand";
 import { HaltStrip } from "./HaltStrip";
 import {
   deriveWireTrailControlSummary,
+  resolvePositionWireTrailState,
   SIGNAL_OPTIONS_HALT_CONTROL_GROUPS,
   signalOptionsHaltControlValue,
 } from "./algoHelpers";
@@ -32,7 +33,53 @@ const WIRE_TRAIL_TONE_COLOR = {
   active: CSS_COLOR.green,
   armed: CSS_COLOR.cyan,
   degraded: CSS_COLOR.amber,
+  break: CSS_COLOR.amber,
+  flip: CSS_COLOR.amber,
   off: CSS_COLOR.textMuted,
+};
+
+const formatWirePrice = (value) =>
+  typeof value === "number" && Number.isFinite(value) ? value.toFixed(2) : "--";
+
+const formatSignedPct = (value) =>
+  typeof value === "number" && Number.isFinite(value)
+    ? `${value >= 0 ? "+" : ""}${value.toFixed(1)}%`
+    : "--";
+
+const resolveWirePositionSymbol = (position) => {
+  const record = position && typeof position === "object" ? position : {};
+  const contract =
+    record.optionContract && typeof record.optionContract === "object"
+      ? record.optionContract
+      : {};
+  return (
+    contract.underlying || record.underlyingSymbol || record.symbol || "—"
+  );
+};
+
+// Most-urgent ACTIVE wire position for the single-line focus strip: a live
+// structure break / regime flip outranks everything, else the smallest room to
+// break. Deterministic so the strip holds a stable height (it never stacks).
+const resolveActiveWireFocus = (positions) => {
+  const candidates = (Array.isArray(positions) ? positions : [])
+    .map((position) => ({
+      position,
+      state: resolvePositionWireTrailState(position),
+    }))
+    .filter(({ state }) => state.enabled && state.active);
+  if (!candidates.length) return null;
+  candidates.sort((a, b) => {
+    const urgentA =
+      a.state.structureBreak || a.state.regimeFlipAgainstPosition ? 0 : 1;
+    const urgentB =
+      b.state.structureBreak || b.state.regimeFlipAgainstPosition ? 0 : 1;
+    if (urgentA !== urgentB) return urgentA - urgentB;
+    return (
+      (a.state.distanceToBreakPct ?? Number.POSITIVE_INFINITY) -
+      (b.state.distanceToBreakPct ?? Number.POSITIVE_INFINITY)
+    );
+  });
+  return candidates[0];
 };
 
 const WireTrailStatusBand = ({ profile, positions }) => {
@@ -58,6 +105,14 @@ const WireTrailStatusBand = ({ profile, positions }) => {
     { label: "FLOOR", value: floorValue },
     { label: "POLL", value: pollValue },
   ];
+  // Surface (C): the single most-urgent active position, as a one-line
+  // underlying-vs-active-wire focus strip (only while the trail is on).
+  const focus = summary.status === "off" ? null : resolveActiveWireFocus(positions);
+  const focusState = focus?.state ?? null;
+  const focusUrgent = Boolean(
+    focusState?.structureBreak || focusState?.regimeFlipAgainstPosition,
+  );
+  const focusTone = focusUrgent ? CSS_COLOR.amber : CSS_COLOR.green;
 
   return (
     <section
@@ -108,6 +163,58 @@ const WireTrailStatusBand = ({ profile, positions }) => {
           {summary.statusLabel}
         </span>
       </div>
+      {summary.status !== "off" ? (
+        <div
+          data-testid="algo-wire-trail-active-strip"
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: sp(4),
+            minWidth: 0,
+            fontFamily: T.data,
+            fontSize: textSize("label"),
+            lineHeight: 1.1,
+            color: CSS_COLOR.textMuted,
+          }}
+        >
+          {focus ? (
+            <>
+              <span
+                style={{
+                  color: CSS_COLOR.textSec,
+                  fontWeight: FONT_WEIGHTS.label,
+                  flex: "0 0 auto",
+                }}
+              >
+                {resolveWirePositionSymbol(focus.position)}
+              </span>
+              <span style={{ color: CSS_COLOR.text, fontWeight: FONT_WEIGHTS.emphasis }}>
+                {formatWirePrice(focusState?.latestUnderlyingClose)}
+              </span>
+              <span aria-hidden="true" style={{ color: CSS_COLOR.textMuted }}>→</span>
+              <span style={{ color: focusTone, whiteSpace: "nowrap" }}>
+                {focusState?.selectedRungLabel} {formatWirePrice(focusState?.selectedWirePrice)}
+              </span>
+              <span
+                style={{
+                  color: focusTone,
+                  fontWeight: FONT_WEIGHTS.emphasis,
+                  marginLeft: "auto",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {focusUrgent
+                  ? focusState?.structureBreak
+                    ? "BREAK"
+                    : "FLIP"
+                  : `${formatSignedPct(focusState?.distanceToBreakPct)} to break`}
+              </span>
+            </>
+          ) : (
+            <span>No active wire — armed runners ride the floor stop.</span>
+          )}
+        </div>
+      ) : null}
       <div
         style={{
           display: "grid",
@@ -237,6 +344,9 @@ export const AlgoRightRail = ({
     saveAllPending ||
     updateProfileMutation?.isPending ||
     updateStrategySettingsMutation?.isPending;
+  const saveError = Boolean(
+    updateProfileMutation?.isError || updateStrategySettingsMutation?.isError,
+  );
   const controlsReady = Boolean(focusedDeployment && controlBaselineReady);
 
   useEffect(() => {
@@ -392,6 +502,7 @@ export const AlgoRightRail = ({
         dirtyFields={dirtyFields}
         isDirty={isDirty}
         pending={pending}
+        saveError={saveError}
         focusedDeployment={focusedDeployment}
         onDiscard={handleDiscardAllAdjustments}
         onSave={handleSaveAllAdjustments}

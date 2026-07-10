@@ -3158,6 +3158,17 @@ export const resolvePositionWireTrailState = (position) => {
   const wireTrail = asRecord(record.lastWireTrail ?? stop.wireTrail);
   const selectedRung = textMetricOrNull(wireTrail.selectedRung);
   const greekFallbackReason = textMetricOrNull(wireTrail.greekFallbackReason);
+  // Full direction-resolved ladder emitted by the backend telemetry (null when
+  // no wire context is loaded). The three viz surfaces (strip/widget/chart) all
+  // read this one shape.
+  const wireLevelsRecord = asRecord(wireTrail.wireLevels);
+  const wireLevels = {
+    trendLine: finiteMetricOrNull(wireLevelsRecord.trendLine),
+    wire1: finiteMetricOrNull(wireLevelsRecord.wire1),
+    wire2: finiteMetricOrNull(wireLevelsRecord.wire2),
+    wire3: finiteMetricOrNull(wireLevelsRecord.wire3),
+  };
+  const hasWireLevels = Object.values(wireLevels).some((value) => value != null);
 
   return {
     enabled: wireTrail.enabled === true,
@@ -3170,6 +3181,8 @@ export const resolvePositionWireTrailState = (position) => {
       : MISSING_VALUE,
     selectedWirePrice: finiteMetricOrNull(wireTrail.selectedWirePrice),
     latestUnderlyingClose: finiteMetricOrNull(wireTrail.latestUnderlyingClose),
+    wireLevels: hasWireLevels ? wireLevels : null,
+    distanceToBreakPct: finiteMetricOrNull(wireTrail.distanceToBreakPct),
     structureBreak: wireTrail.structureBreak === true,
     regimeFlipAgainstPosition: wireTrail.regimeFlipAgainstPosition === true,
     greekFresh: wireTrail.greekFresh === true,
@@ -3230,22 +3243,33 @@ export const deriveWireTrailControlSummary = ({ profile, positions } = {}) => {
     enabled &&
     openPositions > 0 &&
     (missingWireContextPositions > 0 || greekFallbackPositions > 0);
+  // A live structure break / regime flip is an exit-priority signal, so it
+  // drives the status (and the right-rail pill) rather than staying buried in
+  // the STRUCTURE cell text.
   const status = !enabled
     ? "off"
-    : degraded
-      ? "degraded"
-      : activePositions > 0
-        ? "active"
-        : "armed";
+    : structureBreakPositions > 0
+      ? "break"
+      : regimeFlipPositions > 0
+        ? "flip"
+        : degraded
+          ? "degraded"
+          : activePositions > 0
+            ? "active"
+            : "armed";
   const statusLabel = {
     off: "OFF",
     armed: "ARMED",
     active: "ACTIVE",
     degraded: "DEGRADED",
+    break: "BREAK",
+    flip: "FLIP",
   }[status];
-  const rungSummary = WIRE_TRAIL_DISPLAY_ORDER.map(
-    (rung) => `${WIRE_TRAIL_RUNG_LABELS[rung]} ${rungCounts[rung] ?? 0}`,
-  ).join(" · ");
+  const rungSummary = !enabled
+    ? MISSING_VALUE
+    : WIRE_TRAIL_DISPLAY_ORDER.map(
+        (rung) => `${WIRE_TRAIL_RUNG_LABELS[rung]} ${rungCounts[rung] ?? 0}`,
+      ).join(" · ");
   const greekSummary = !enabled
     ? MISSING_VALUE
     : openPositions === 0

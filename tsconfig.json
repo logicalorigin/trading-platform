@@ -25,6 +25,9 @@
       "path": "./lib/ibkr-contracts"
     },
     {
+      "path": "./lib/ibkr-session-host"
+    },
+    {
       "path": "./lib/pyrus-signals-core"
     }
   ]

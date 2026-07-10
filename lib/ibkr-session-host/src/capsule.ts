@@ -1,0 +1,683 @@
+import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
+import { readFile } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
+
+export type SessionHostConfig = {
+  bindHost: "127.0.0.1";
+  capsuleImage: string;
+  capacity: 1;
+  dockerBinary: "docker";
+  mode: "paper";
+  port: number;
+  readonly seccompProfilePath: string;
+};
+
+export type DockerInvocation = {
+  command: string;
+  args: string[];
+};
+
+export type CommandResult = {
+  code: number | null;
+  stdout: string;
+  stderr: string;
+};
+
+export type CommandRunner = (
+  command: string,
+  args: string[],
+) => Promise<CommandResult>;
+
+export type CapsuleRecord = {
+  name: string;
+  status: "ready" | "occupied";
+};
+
+export type RuntimeReadiness =
+  | { ready: true }
+  | {
+      ready: false;
+      code:
+        | "docker_unavailable"
+        | "docker_capabilities_unavailable"
+        | "seccomp_profile_invalid"
+        | "capsule_image_unavailable"
+        | "capsule_image_invalid";
+    };
+
+export const DEFAULT_SECCOMP_PROFILE_PATH = fileURLToPath(
+  new URL("./chromium-seccomp.json", import.meta.url),
+);
+const SECCOMP_PROFILE_SHA256 =
+  "19f1c5b65ff8280092de391959775201004f2c58eae2983612c028c6256a5b54";
+
+export const execFileCommandRunner: CommandRunner = (command, args) =>
+  new Promise((resolve) => {
+    execFile(
+      command,
+      args,
+      {
+        encoding: "utf8",
+        maxBuffer: 1024 * 1024,
+        shell: false,
+        timeout: 120_000,
+        windowsHide: true,
+      },
+      (error, stdout, stderr) => {
+        resolve({
+          code:
+            error === null
+              ? 0
+              : typeof error.code === "number"
+                ? error.code
+                : 1,
+          stdout,
+          stderr,
+        });
+      },
+    );
+  });
+
+export async function checkDocker(
+  runner: CommandRunner,
+  dockerBinary: string,
+): Promise<boolean> {
+  try {
+    const result = await runner(dockerBinary, [
+      "version",
+      "--format",
+      "{{.Server.Version}}",
+    ]);
+    return result.code === 0 && result.stdout.trim().length > 0;
+  } catch {
+    return false;
+  }
+}
+
+function parseJsonRecord(value: string): Record<string, unknown> | null {
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function checkCapsuleRuntime(
+  runner: CommandRunner,
+  config: SessionHostConfig,
+): Promise<RuntimeReadiness> {
+  try {
+    const profile = await readFile(config.seccompProfilePath);
+    if (
+      createHash("sha256").update(profile).digest("hex") !==
+      SECCOMP_PROFILE_SHA256
+    ) {
+      return { ready: false, code: "seccomp_profile_invalid" };
+    }
+  } catch {
+    return { ready: false, code: "seccomp_profile_invalid" };
+  }
+
+  let daemon: CommandResult;
+  try {
+    daemon = await runner(config.dockerBinary, ["info", "--format", "{{json .}}"]);
+  } catch {
+    return { ready: false, code: "docker_unavailable" };
+  }
+  if (daemon.code !== 0) {
+    return { ready: false, code: "docker_unavailable" };
+  }
+  const info = parseJsonRecord(daemon.stdout);
+  const securityOptions = Array.isArray(info?.["SecurityOptions"])
+    ? info["SecurityOptions"]
+    : [];
+  if (
+    info?.["OSType"] !== "linux" ||
+    !["amd64", "x86_64"].includes(String(info["Architecture"])) ||
+    String(info["CgroupVersion"]) !== "2" ||
+    !securityOptions.includes("name=seccomp,profile=builtin") ||
+    !securityOptions.includes("name=cgroupns") ||
+    info["MemoryLimit"] !== true ||
+    info["SwapLimit"] !== true ||
+    info["PidsLimit"] !== true
+  ) {
+    return { ready: false, code: "docker_capabilities_unavailable" };
+  }
+
+  let inspected: CommandResult;
+  try {
+    inspected = await runner(config.dockerBinary, [
+      "image",
+      "inspect",
+      "--format",
+      "{{json .}}",
+      config.capsuleImage,
+    ]);
+  } catch {
+    return { ready: false, code: "capsule_image_unavailable" };
+  }
+  if (inspected.code !== 0) {
+    return { ready: false, code: "capsule_image_unavailable" };
+  }
+  const image = parseJsonRecord(inspected.stdout);
+  const imageConfig =
+    image?.["Config"] && typeof image["Config"] === "object"
+      ? (image["Config"] as Record<string, unknown>)
+      : null;
+  const entrypoint = Array.isArray(imageConfig?.["Entrypoint"])
+    ? imageConfig["Entrypoint"]
+    : [];
+  const healthcheck = imageConfig?.["Healthcheck"];
+  const imageId = image?.["Id"];
+  const repoDigests = Array.isArray(image?.["RepoDigests"])
+    ? image["RepoDigests"]
+    : [];
+  const imageMatchesRequestedReference = LOCAL_IMAGE_ID_PATTERN.test(
+    config.capsuleImage,
+  )
+    ? imageId === config.capsuleImage
+    : repoDigests.includes(config.capsuleImage);
+  const volumes = imageConfig?.["Volumes"];
+  const volumesAreEmpty =
+    volumes === null ||
+    volumes === undefined ||
+    (typeof volumes === "object" &&
+      !Array.isArray(volumes) &&
+      Object.keys(volumes).length === 0);
+  if (
+    typeof imageId !== "string" ||
+    !LOCAL_IMAGE_ID_PATTERN.test(imageId) ||
+    !imageMatchesRequestedReference ||
+    image?.["Os"] !== "linux" ||
+    image?.["Architecture"] !== "amd64" ||
+    imageConfig?.["User"] !== "10001:10001" ||
+    entrypoint.length !== 1 ||
+    entrypoint[0] !== "/usr/local/bin/pyrus-capsule-entrypoint" ||
+    (healthcheck !== null && healthcheck !== undefined) ||
+    !volumesAreEmpty
+  ) {
+    return { ready: false, code: "capsule_image_invalid" };
+  }
+  return { ready: true };
+}
+
+export class CapsuleError extends Error {
+  constructor(
+    readonly code: string,
+    message: string,
+  ) {
+    super(message);
+    this.name = "CapsuleError";
+  }
+}
+
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+const SESSION_HASH_PATTERN = /^[a-f0-9]{24}$/;
+const CAPSULE_SLOT_NAME = "pyrus-ibkr-slot-1";
+const CAPSULE_READY_MARKER = "PYRUS_IBKR_CAPSULE_READY_V1";
+const CAPSULE_READY_ATTEMPTS = 18;
+const CAPSULE_READY_INTERVAL_MS = 5_000;
+const DIGEST_IMAGE_PATTERN =
+  /^[a-z0-9][a-z0-9._:/-]*@sha256:[a-f0-9]{64}$/;
+const LOCAL_IMAGE_ID_PATTERN = /^sha256:[a-f0-9]{64}$/;
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function parsePort(value: string | undefined): number {
+  if (value === undefined) return 18748;
+  const port = Number(value);
+  if (!Number.isInteger(port) || port < 1 || port > 65_535) {
+    throw new CapsuleError(
+      "invalid_host_port",
+      "IBKR session host port must be an integer from 1 to 65535.",
+    );
+  }
+  return port;
+}
+
+function parseCapsuleImage(value: string | undefined): string {
+  if (
+    !value ||
+    value.length > 512 ||
+    (!DIGEST_IMAGE_PATTERN.test(value) && !LOCAL_IMAGE_ID_PATTERN.test(value)) ||
+    /[\s\x00-\x1f\x7f]/.test(value)
+  ) {
+    throw new CapsuleError(
+      "invalid_capsule_image",
+      "IBKR session capsule image must use an immutable sha256 digest.",
+    );
+  }
+  return value;
+}
+
+export function loadSessionHostConfig(
+  env: Record<string, string | undefined> = process.env,
+): SessionHostConfig {
+  if ((env["IBKR_SESSION_HOST_MODE"] ?? "paper") !== "paper") {
+    throw new CapsuleError(
+      "unsupported_host_mode",
+      "The initial IBKR session host supports paper accounts only.",
+    );
+  }
+  if ((env["IBKR_SESSION_HOST_CAPACITY"] ?? "1") !== "1") {
+    throw new CapsuleError(
+      "unsupported_host_capacity",
+      "The initial IBKR session host capacity is fixed at one.",
+    );
+  }
+  if (
+    env["IBKR_SESSION_HOST_BIND"] !== undefined &&
+    env["IBKR_SESSION_HOST_BIND"] !== "127.0.0.1"
+  ) {
+    throw new CapsuleError(
+      "unsupported_host_bind",
+      "The initial IBKR session host must bind to loopback.",
+    );
+  }
+
+  return {
+    bindHost: "127.0.0.1",
+    capsuleImage: parseCapsuleImage(env["IBKR_SESSION_CAPSULE_IMAGE"]),
+    capacity: 1,
+    dockerBinary: "docker",
+    mode: "paper",
+    port: parsePort(env["IBKR_SESSION_HOST_PORT"]),
+    seccompProfilePath: DEFAULT_SECCOMP_PROFILE_PATH,
+  };
+}
+
+function sessionHashForSession(sessionId: string): string {
+  if (!UUID_PATTERN.test(sessionId)) {
+    throw new CapsuleError(
+      "invalid_session_id",
+      "IBKR session ID must be a canonical UUID.",
+    );
+  }
+  return createHash("sha256").update(sessionId).digest("hex").slice(0, 24);
+}
+
+export function capsuleNameForSession(sessionId: string): string {
+  sessionHashForSession(sessionId);
+  return CAPSULE_SLOT_NAME;
+}
+
+export function buildCreateCapsuleInvocation(
+  config: SessionHostConfig,
+  sessionId: string,
+): DockerInvocation {
+  const name = capsuleNameForSession(sessionId);
+  const sessionHash = sessionHashForSession(sessionId);
+  return {
+    command: config.dockerBinary,
+    args: [
+      "create",
+      "--name",
+      name,
+      "--label",
+      "pyrus.ibkr.capsule=1",
+      "--label",
+      `pyrus.ibkr.session_hash=${sessionHash}`,
+      "--pull",
+      "never",
+      "--restart",
+      "on-failure:3",
+      "--init",
+      "--user",
+      "10001:10001",
+      "--read-only",
+      "--cap-drop",
+      "ALL",
+      "--security-opt",
+      "no-new-privileges=true",
+      "--security-opt",
+      `seccomp=${config.seccompProfilePath}`,
+      // ponytail: capacity is one; use a unique filtered network before raising it.
+      "--network",
+      "bridge",
+      "--memory",
+      "2g",
+      "--memory-swap",
+      "2g",
+      "--cpus",
+      "1",
+      "--pids-limit",
+      "512",
+      "--shm-size",
+      "512m",
+      "--ulimit",
+      "core=0",
+      "--ulimit",
+      "nofile=4096:4096",
+      "--tmpfs",
+      "/tmp:rw,noexec,nosuid,nodev,size=256m,mode=1777",
+      "--tmpfs",
+      "/run/pyrus:rw,noexec,nosuid,nodev,size=512m,mode=0700,uid=10001,gid=10001",
+      "--log-driver",
+      "local",
+      "--log-opt",
+      "max-size=10m",
+      "--log-opt",
+      "max-file=3",
+      "--stop-timeout",
+      "30",
+      config.capsuleImage,
+    ],
+  };
+}
+
+async function runChecked(
+  runner: CommandRunner,
+  invocation: DockerInvocation,
+  failureCode: string,
+): Promise<void> {
+  let result: CommandResult;
+  try {
+    result = await runner(invocation.command, invocation.args);
+  } catch {
+    throw new CapsuleError(failureCode, "IBKR capsule Docker operation failed.");
+  }
+  if (result.code !== 0) {
+    throw new CapsuleError(failureCode, "IBKR capsule Docker operation failed.");
+  }
+}
+
+export class CapsuleManager {
+  private active: { sessionHash: string; record: CapsuleRecord } | null = null;
+  private pending: {
+    sessionHash: string;
+    promise: Promise<CapsuleRecord>;
+  } | null =
+    null;
+  private poisoned = false;
+  private reconciled = false;
+  private reconcilePromise: Promise<CapsuleRecord | null> | null = null;
+
+  constructor(
+    private readonly config: SessionHostConfig,
+    private readonly runner: CommandRunner,
+    private readonly delayFn: (ms: number) => Promise<void> = delay,
+  ) {}
+
+  ensure(sessionId: string): Promise<CapsuleRecord> {
+    const sessionHash = sessionHashForSession(sessionId);
+    if (this.poisoned) {
+      return Promise.reject(this.cleanupUnconfirmed());
+    }
+    if (this.active?.sessionHash === sessionHash) {
+      return this.refreshActive(sessionHash);
+    }
+    if (this.pending?.sessionHash === sessionHash) {
+      return this.pending.promise;
+    }
+    if (this.active || this.pending) {
+      return Promise.reject(
+        new CapsuleError(
+          "capacity_exhausted",
+          "The IBKR session host is already in use.",
+        ),
+      );
+    }
+
+    const promise = this.ensureAfterReconcile(sessionId, sessionHash);
+    this.pending = { sessionHash, promise };
+    return promise;
+  }
+
+  async reconcile(): Promise<CapsuleRecord | null> {
+    if (this.poisoned) {
+      throw this.cleanupUnconfirmed();
+    }
+    if (this.reconciled) {
+      return this.active?.record ?? null;
+    }
+    if (this.reconcilePromise) {
+      return this.reconcilePromise;
+    }
+
+    const promise = this.reconcileFromDocker();
+    this.reconcilePromise = promise;
+    try {
+      return await promise;
+    } finally {
+      if (this.reconcilePromise === promise) {
+        this.reconcilePromise = null;
+      }
+    }
+  }
+
+  snapshot(): {
+    mode: "paper";
+    capacity: { max: 1; active: number };
+  } {
+    return {
+      mode: "paper",
+      capacity: {
+        max: 1,
+        active:
+          this.active || this.pending || this.poisoned || this.reconcilePromise
+            ? 1
+            : 0,
+      },
+    };
+  }
+
+  private cleanupUnconfirmed(): CapsuleError {
+    this.poisoned = true;
+    return new CapsuleError(
+      "cleanup_unconfirmed",
+      "IBKR capsule cleanup could not be confirmed.",
+    );
+  }
+
+  private async refreshActive(sessionHash: string): Promise<CapsuleRecord> {
+    const active = this.active;
+    if (!active || active.sessionHash !== sessionHash) {
+      throw new CapsuleError(
+        "capacity_exhausted",
+        "The IBKR session host is already in use.",
+      );
+    }
+    const record: CapsuleRecord = {
+      name: active.record.name,
+      status: (await this.probeCapsuleReady(active.record.name))
+        ? "ready"
+        : "occupied",
+    };
+    if (this.active === active) {
+      active.record = record;
+    }
+    return record;
+  }
+
+  private async reconcileFromDocker(): Promise<CapsuleRecord | null> {
+    let listed: CommandResult;
+    try {
+      listed = await this.runner(this.config.dockerBinary, [
+        "container",
+        "ls",
+        "--all",
+        "--filter",
+        `name=^/${CAPSULE_SLOT_NAME}$`,
+        "--format",
+        "{{.Names}}",
+      ]);
+    } catch {
+      throw this.cleanupUnconfirmed();
+    }
+    if (listed.code !== 0) {
+      throw this.cleanupUnconfirmed();
+    }
+
+    const names = listed.stdout
+      .split(/\r?\n/)
+      .map((name) => name.trim())
+      .filter(Boolean);
+    if (names.length === 0) {
+      this.reconciled = true;
+      return null;
+    }
+    if (names.length !== 1 || names[0] !== CAPSULE_SLOT_NAME) {
+      throw this.cleanupUnconfirmed();
+    }
+
+    let inspected: CommandResult;
+    try {
+      inspected = await this.runner(this.config.dockerBinary, [
+        "container",
+        "inspect",
+        "--format",
+        "{{json .Config.Labels}}",
+        CAPSULE_SLOT_NAME,
+      ]);
+    } catch {
+      throw this.cleanupUnconfirmed();
+    }
+    const labels = inspected.code === 0 ? parseJsonRecord(inspected.stdout) : null;
+    const sessionHash = labels?.["pyrus.ibkr.session_hash"];
+    if (
+      labels?.["pyrus.ibkr.capsule"] !== "1" ||
+      typeof sessionHash !== "string" ||
+      !SESSION_HASH_PATTERN.test(sessionHash)
+    ) {
+      throw this.cleanupUnconfirmed();
+    }
+
+    const record: CapsuleRecord = {
+      name: CAPSULE_SLOT_NAME,
+      status: (await this.probeCapsuleReady(CAPSULE_SLOT_NAME))
+        ? "ready"
+        : "occupied",
+    };
+    this.active = { sessionHash, record };
+    this.reconciled = true;
+    return record;
+  }
+
+  private async ensureAfterReconcile(
+    sessionId: string,
+    sessionHash: string,
+  ): Promise<CapsuleRecord> {
+    try {
+      await this.reconcile();
+      if (this.active) {
+        if (this.active.sessionHash === sessionHash) {
+          return this.active.record;
+        }
+        throw new CapsuleError(
+          "capacity_exhausted",
+          "The IBKR session host is already in use.",
+        );
+      }
+      return await this.provision(sessionId, sessionHash);
+    } finally {
+      if (this.pending?.sessionHash === sessionHash) {
+        this.pending = null;
+      }
+    }
+  }
+
+  private async probeCapsuleReady(name: string): Promise<boolean> {
+    let inspected: CommandResult;
+    try {
+      inspected = await this.runner(this.config.dockerBinary, [
+        "container",
+        "inspect",
+        "--format",
+        "{{json .State}}",
+        name,
+      ]);
+    } catch {
+      return false;
+    }
+    const state = inspected.code === 0 ? parseJsonRecord(inspected.stdout) : null;
+    const startedAt = state?.["StartedAt"];
+    const startedAtMs =
+      typeof startedAt === "string" ? Date.parse(startedAt) : Number.NaN;
+    if (state?.["Running"] !== true || !Number.isFinite(startedAtMs)) {
+      return false;
+    }
+
+    let logs: CommandResult;
+    try {
+      logs = await this.runner(this.config.dockerBinary, [
+        "logs",
+        "--since",
+        new Date(startedAtMs).toISOString(),
+        "--tail",
+        "100",
+        name,
+      ]);
+    } catch {
+      return false;
+    }
+    return (
+      logs.code === 0 &&
+      logs.stdout.split(/\r?\n/).includes(CAPSULE_READY_MARKER)
+    );
+  }
+
+  private async waitForCapsuleReady(name: string): Promise<void> {
+    for (let attempt = 0; attempt < CAPSULE_READY_ATTEMPTS; attempt += 1) {
+      if (await this.probeCapsuleReady(name)) {
+        return;
+      }
+      if (attempt + 1 < CAPSULE_READY_ATTEMPTS) {
+        await this.delayFn(CAPSULE_READY_INTERVAL_MS);
+      }
+    }
+    throw new CapsuleError(
+      "capsule_readiness_failed",
+      "IBKR capsule process readiness could not be confirmed.",
+    );
+  }
+
+  private async provision(
+    sessionId: string,
+    sessionHash: string,
+  ): Promise<CapsuleRecord> {
+    const name = capsuleNameForSession(sessionId);
+    let created = false;
+    try {
+      await runChecked(
+        this.runner,
+        buildCreateCapsuleInvocation(this.config, sessionId),
+        "docker_create_failed",
+      );
+      created = true;
+      await runChecked(
+        this.runner,
+        { command: this.config.dockerBinary, args: ["start", name] },
+        "docker_start_failed",
+      );
+      await this.waitForCapsuleReady(name);
+      const record: CapsuleRecord = { name, status: "ready" };
+      this.active = { sessionHash, record };
+      return record;
+    } catch (error) {
+      if (created) {
+        let cleaned = false;
+        try {
+          const result = await this.runner(this.config.dockerBinary, [
+            "rm",
+            "--force",
+            name,
+          ]);
+          cleaned = result.code === 0;
+        } catch {
+          cleaned = false;
+        }
+        if (!cleaned) {
+          throw this.cleanupUnconfirmed();
+        }
+      }
+      throw error;
+    }
+  }
+}

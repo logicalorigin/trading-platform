@@ -88,3 +88,83 @@ test("telemetry reports the configured enabled flag honestly (lit-but-inert is e
   assert.equal(onStop.wireTrail.enabled, true);
   assert.equal(onStop.wireTrail.active, false);
 });
+
+// The wireLevels ladder + distanceToBreakPct are passthrough telemetry (no zod
+// schema), so these assertions are the ONLY type-safety net keeping a field-name
+// typo from silently reaching the frontend as undefined.
+test("wireContext present (long): emits the full ladder + positive room to break", () => {
+  const stop = computeSignalOptionsPositionStop({
+    entryPrice: 1.0,
+    peakPrice: 2.0, // +100% peak -> a rung (wire1) is selected
+    markPrice: 1.6,
+    profile: wireEnabledProfile,
+    wireContext: {
+      symbol: "SPY",
+      timeframe: "5m",
+      latestBarAt: new Date(),
+      latestClose: 100,
+      regimeDirection: 1,
+      previousRegimeDirection: 1,
+      trendLine: 90,
+      bullWires: [98, 95, 92],
+      bearWires: [102, 105, 108],
+    },
+  });
+  assert.deepEqual(stop.wireTrail.wireLevels, {
+    trendLine: 90,
+    wire1: 98,
+    wire2: 95,
+    wire3: 92,
+  });
+  // Underlying 100 sits 2% above the active wire (98) -> 2% room before a break.
+  assert.equal(typeof stop.wireTrail.distanceToBreakPct, "number");
+  assert.ok(
+    Math.abs((stop.wireTrail.distanceToBreakPct as number) - 2) < 1e-9,
+    `distanceToBreakPct ${stop.wireTrail.distanceToBreakPct} should be ~2`,
+  );
+});
+
+test("wireContext present (short): ladder uses bearWires and distance sign is direction-correct", () => {
+  const stop = computeSignalOptionsPositionStop({
+    entryPrice: 1.0,
+    peakPrice: 2.0,
+    markPrice: 1.6,
+    direction: "short",
+    profile: wireEnabledProfile,
+    wireContext: {
+      symbol: "SPY",
+      timeframe: "5m",
+      latestBarAt: new Date(),
+      latestClose: 100,
+      regimeDirection: -1,
+      previousRegimeDirection: -1,
+      trendLine: 110,
+      bullWires: [98, 95, 92],
+      bearWires: [102, 105, 108],
+    },
+  });
+  assert.deepEqual(stop.wireTrail.wireLevels, {
+    trendLine: 110,
+    wire1: 102,
+    wire2: 105,
+    wire3: 108,
+  });
+  // Short: underlying 100 sits 2% below the active wire (102) -> 2% room.
+  assert.equal(typeof stop.wireTrail.distanceToBreakPct, "number");
+  assert.ok(
+    Math.abs((stop.wireTrail.distanceToBreakPct as number) - 2) < 1e-9,
+    `short distanceToBreakPct ${stop.wireTrail.distanceToBreakPct} should be ~2`,
+  );
+});
+
+test("no wireContext: wireLevels and distanceToBreakPct are null (not undefined)", () => {
+  const stop = computeSignalOptionsPositionStop({
+    entryPrice: 1.0,
+    peakPrice: 2.0,
+    markPrice: 1.5,
+    profile: wireEnabledProfile,
+    wireContext: null,
+  });
+  assert.equal(stop.wireTrail.wireLevels, null);
+  assert.equal(stop.wireTrail.distanceToBreakPct, null);
+});

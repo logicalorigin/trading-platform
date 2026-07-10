@@ -1,0 +1,146 @@
+#!/bin/bash
+set -Eeuo pipefail
+
+umask 077
+
+readonly RUNTIME_DIR=/run/pyrus
+readonly LOG_DIR=${RUNTIME_DIR}/logs
+readonly PID_DIR=${RUNTIME_DIR}/pids
+readonly CPG_HOME=/opt/ibkr/clientportal
+declare -a children=()
+
+mkdir -p \
+  "${HOME}" \
+  "${XDG_RUNTIME_DIR}" \
+  "${RUNTIME_DIR}/chromium" \
+  "${LOG_DIR}" \
+  "${PID_DIR}"
+chmod 0700 "${HOME}" "${XDG_RUNTIME_DIR}" "${RUNTIME_DIR}/chromium"
+printf '%s\n' "$$" >"${PID_DIR}/supervisor.pid"
+
+start_service() {
+  local name=$1
+  shift
+  "$@" >>"${LOG_DIR}/${name}.log" 2>&1 &
+  local pid=$!
+  children+=("${pid}")
+  printf '%s\n' "${pid}" >"${PID_DIR}/${name}.pid"
+}
+
+cleanup() {
+  trap - EXIT INT TERM
+  if ((${#children[@]} > 0)); then
+    kill -TERM "${children[@]}" 2>/dev/null || true
+    for ((attempt = 0; attempt < 5; attempt += 1)); do
+      local live=0
+      for pid in "${children[@]}"; do
+        kill -0 "${pid}" 2>/dev/null && live=1
+      done
+      ((live == 0)) && break
+      sleep 1
+    done
+    kill -KILL "${children[@]}" 2>/dev/null || true
+    wait "${children[@]}" 2>/dev/null || true
+  fi
+}
+
+stop_cleanly() {
+  exit 0
+}
+
+wait_for_path() {
+  local path=$1
+  local attempts=$2
+  for ((attempt = 0; attempt < attempts; attempt += 1)); do
+    [[ -e "${path}" ]] && return 0
+    sleep 1
+  done
+  return 1
+}
+
+wait_for_port() {
+  local port=$1
+  local attempts=$2
+  for ((attempt = 0; attempt < attempts; attempt += 1)); do
+    if { exec 3<>"/dev/tcp/127.0.0.1/${port}"; } 2>/dev/null; then
+      exec 3>&- 3<&-
+      return 0
+    fi
+    sleep 1
+  done
+  return 1
+}
+
+wait_until_healthy() {
+  local consecutive=0
+  for ((attempt = 0; attempt < 30; attempt += 1)); do
+    if /usr/local/bin/pyrus-capsule-health >/dev/null 2>&1; then
+      ((consecutive += 1))
+      ((consecutive >= 3)) && return 0
+    else
+      consecutive=0
+    fi
+    sleep 1
+  done
+  return 1
+}
+
+watchdog() {
+  while sleep 10; do
+    /usr/local/bin/pyrus-capsule-health >/dev/null 2>&1 || return 1
+  done
+}
+
+trap cleanup EXIT
+trap stop_cleanly INT TERM
+
+# This loopback-only desktop supervisor is the first local-agent slice. A
+# later authenticated control tunnel can consume noVNC without publishing it.
+start_service xvfb Xvfb :99 -screen 0 1364x768x24 -nolisten tcp -noreset
+wait_for_path /tmp/.X11-unix/X99 20
+
+# No VNC password is stored: the RFB listener is reachable only from loopback
+# inside the capsule and Docker publishes no ports.
+start_service vnc x11vnc \
+  -display :99 \
+  -rfbport 5900 \
+  -listen 127.0.0.1 \
+  -forever \
+  -shared \
+  -nopw
+start_service novnc websockify \
+  --web=/usr/share/novnc/ \
+  127.0.0.1:6080 \
+  127.0.0.1:5900
+
+start_service cpg java \
+  -server \
+  -Dvertx.disableDnsResolver=true \
+  -Djava.net.preferIPv4Stack=true \
+  -Dvertx.logger-delegate-factory-class-name=io.vertx.core.logging.SLF4JLogDelegateFactory \
+  -Dnologback.statusListenerClass=ch.qos.logback.core.status.OnConsoleStatusListener \
+  -cp "${CPG_HOME}/root:${CPG_HOME}/dist/ibgroup.web.core.iblink.router.clientportal.gw.jar:${CPG_HOME}/build/lib/runtime/*" \
+  ibgroup.web.core.clientportal.gw.GatewayStart \
+  --conf ../root/conf.yaml
+wait_for_port 5000 60
+
+start_service chromium chromium \
+  --incognito \
+  --user-data-dir="${RUNTIME_DIR}/chromium" \
+  --no-first-run \
+  --no-default-browser-check \
+  --disable-background-networking \
+  --disable-component-update \
+  --disable-sync \
+  --app=https://localhost:5000/
+
+wait_until_healthy
+printf 'PYRUS_IBKR_CAPSULE_READY_V1\n'
+start_service watchdog watchdog
+
+# A critical child exit is a capsule failure. Docker's on-failure policy can
+# then restart the whole coherent stack instead of leaving a partial session.
+set +e
+wait -n "${children[@]}"
+set -e
+exit 1

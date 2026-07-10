@@ -67,18 +67,19 @@ export function BootBrandColumn({
     subscribeNeuralOpenerActive,
     isNeuralOpenerActive,
   );
+  const resolveActive = loading && !openerActive;
   const markClass = stacked ? "h-[72px] w-[72px]" : "h-[140px] w-[140px]";
 
   return (
     <div className="pyrus-boot-brand" aria-hidden="true" data-testid={testId}>
-      {openerActive ? (
-        <PyrusMark className={markClass} />
-      ) : (
+      {resolveActive ? (
         <BrandResolve
           haloBlur={0.45}
           bloomBlur={1.8}
           className={markClass}
         />
+      ) : (
+        <PyrusMark className={markClass} />
       )}
       <PyrusWordmark title="" width={stacked ? 150 : 200} />
       <span className="pyrus-boot-tagline">

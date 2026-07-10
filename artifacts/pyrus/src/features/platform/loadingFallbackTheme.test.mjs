@@ -45,14 +45,13 @@ test("static boot loader has a light default and an explicit dark override", () 
   assert.doesNotMatch(viteConfig, /boot-neural/);
 });
 
-test("launch and header brand surfaces use neural resolve animation", () => {
+test("loading surfaces animate while the persistent header mark stays static", () => {
   assert.match(appContent, /NeuralLoader/);
   assert.doesNotMatch(appContent, /LogoLoader/);
   assert.match(platformApp, /NeuralLoader/);
   assert.doesNotMatch(platformApp, /LogoLoader/);
-  assert.match(appHeader, /BrandResolve/);
-  assert.match(appHeader, /HEADER_MARK_SPHERE_PROPS/);
-  assert.doesNotMatch(appHeader, /webglPolicy=/);
+  assert.match(appHeader, /PyrusMark/);
+  assert.doesNotMatch(appHeader, /BrandResolve|HEADER_MARK_SPHERE_PROPS/);
   assert.match(brandResolve, /isWebglAvailable/);
 });
 

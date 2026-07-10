@@ -489,6 +489,32 @@ export function computeSignalOptionsPositionStop(input: {
     ? resolveWireBarFreshness({ context: wireContext, now: input.now })
     : { stale: false, ageMs: null, intervalMs: null };
   const structureBreak = rawStructureBreak && !wireBarFreshness.stale;
+  // Full direction-resolved underlying ladder (not just the active rung) so the
+  // frontend can draw/point-at every wire. Null when no wire context is loaded
+  // (the *_WIRE_TRAIL_LIVE data-source flag is off).
+  const wireLevels = wireContext
+    ? (Object.fromEntries(
+        WIRE_RUNG_ORDER.map((rung) => [
+          rung,
+          wireValueForRung({
+            context: wireContext,
+            direction: underlyingDirection,
+            rung,
+          }),
+        ]),
+      ) as Record<SignalOptionsWireTrailRung, number | null>)
+    : null;
+  // Signed % of the underlying still separating it from the active wire.
+  // Positive = room before a structure break; <= 0 = at/through the wire. Sign
+  // convention mirrors the rawStructureBreak comparison above.
+  const distanceToBreakPct =
+    selectedWire && latestUnderlyingClose != null && latestUnderlyingClose !== 0
+      ? underlyingDirection === 1
+        ? ((latestUnderlyingClose - selectedWire.price) / latestUnderlyingClose) *
+          100
+        : ((selectedWire.price - latestUnderlyingClose) / latestUnderlyingClose) *
+          100
+      : null;
   const usesProgressiveTrail =
     profile.exitPolicy.progressiveTrailEnabled &&
     profile.exitPolicy.progressiveTrailSteps.length > 0;
@@ -635,6 +661,8 @@ export function computeSignalOptionsPositionStop(input: {
       greekFallbackReason: greekFreshness.reason,
       greekAdjustment,
       deltaSizedGiveback,
+      wireLevels,
+      distanceToBreakPct,
     },
   };
 }

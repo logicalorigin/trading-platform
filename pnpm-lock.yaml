@@ -563,6 +563,18 @@ importers:
 
   lib/ibkr-contracts: {}
 
+  lib/ibkr-session-host:
+    devDependencies:
+      '@types/node':
+        specifier: 'catalog:'
+        version: 25.3.5
+      esbuild:
+        specifier: 0.27.3
+        version: 0.27.3
+      tsx:
+        specifier: 'catalog:'
+        version: 4.21.0
+
   lib/market-calendar:
     devDependencies:
       '@types/node':

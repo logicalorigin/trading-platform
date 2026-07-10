@@ -7,7 +7,7 @@ import { after, mock, test } from "node:test";
 import { db, usersTable } from "@workspace/db";
 import { withTestDb } from "@workspace/db/testing";
 import express from "express";
-import { isHttpError } from "../lib/errors";
+import { HttpError, isHttpError } from "../lib/errors";
 import { createAuthSession } from "../services/auth";
 import { AUTH_CSRF_HEADER } from "./auth";
 
@@ -36,6 +36,9 @@ function inertSubscription() {
   return async () => () => undefined;
 }
 
+let getAccountRiskImpl: (...args: unknown[]) => Promise<unknown> =
+  countedService("getAccountRisk");
+
 mock.module(new URL("../lib/runtime.ts", import.meta.url).href, {
   namedExports: {
     getProviderConfiguration: () => ({
@@ -56,7 +59,7 @@ mock.module(new URL("../services/account.ts", import.meta.url).href, {
     getAccountOrders: countedService("getAccountOrders"),
     getAccountPositions: countedService("getAccountPositions"),
     getAccountPositionsAtDate: countedService("getAccountPositionsAtDate"),
-    getAccountRisk: countedService("getAccountRisk"),
+    getAccountRisk: (...args: unknown[]) => getAccountRiskImpl(...args),
     getAccountSummary: countedService("getAccountSummary"),
     getFlexHealth: inertService({ ok: true }),
     hasSnapTradeBackedAccounts: async () => false,
@@ -466,6 +469,64 @@ test("real account routes and streams short-circuit account services when admiss
           0,
           `${service} should not run after denied account admission`,
         );
+      }
+    }),
+  );
+});
+
+test("account risk route preserves degraded 200s, retryable 503s, and real 500s", async () => {
+  await withTestDb(async () =>
+    withServer(async (baseUrl) => {
+      const auth = await seedMemberAuth({
+        email: "account-risk-degraded@example.com",
+      });
+      const requestRisk = () =>
+        fetch(`${baseUrl}/accounts/shadow-account/risk`, {
+          headers: { cookie: auth.cookie },
+        });
+
+      try {
+        getAccountRiskImpl = async () => ({
+          accountId: "shadow-account",
+          degraded: true,
+          degradedReason: "statement_timeout",
+          asOf: "2026-07-09T20:00:00.000Z",
+        });
+        const staleResponse = await requestRisk();
+        assert.equal(staleResponse.status, 200);
+        assert.equal(
+          ((await staleResponse.json()) as { degraded?: boolean }).degraded,
+          true,
+        );
+
+        getAccountRiskImpl = async () => {
+          throw new HttpError(503, "Account risk is temporarily degraded", {
+            code: "degraded_upstream",
+          });
+        };
+        const degradedResponse = await requestRisk();
+        assert.equal(degradedResponse.status, 503);
+        assert.equal(degradedResponse.headers.get("retry-after"), "15");
+        assert.equal(
+          degradedResponse.headers.get("x-pyrus-admission-action"),
+          "shed",
+        );
+        assert.equal(
+          degradedResponse.headers.get("x-pyrus-admission-reason"),
+          "degraded_upstream",
+        );
+        assert.equal(
+          ((await degradedResponse.json()) as { code?: string }).code,
+          "degraded_upstream",
+        );
+
+        getAccountRiskImpl = async () => {
+          throw new TypeError("risk model invariant failed");
+        };
+        const hardFailureResponse = await requestRisk();
+        assert.equal(hardFailureResponse.status, 500);
+      } finally {
+        getAccountRiskImpl = countedService("getAccountRisk");
       }
     }),
   );

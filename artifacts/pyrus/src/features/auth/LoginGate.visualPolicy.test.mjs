@@ -46,3 +46,8 @@ test("shared boot brand reacts when the neural opener releases WebGL", () => {
     "BootBrandColumn must rerender after the opener releases its WebGL context",
   );
 });
+
+test("idle sign-in branding stays static", () => {
+  assert.match(bootShellSource, /const resolveActive = loading && !openerActive;/);
+  assert.match(bootShellSource, /resolveActive \? \(\s*<BrandResolve/s);
+});

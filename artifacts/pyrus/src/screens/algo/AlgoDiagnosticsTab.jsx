@@ -35,10 +35,10 @@ export const AlgoDiagnosticsTab = ({
     { key: "skip-categories", title: "Skip Categories", rows: cockpitSkipCategoryRows, color: CSS_COLOR.red },
     { key: "skip-reasons", title: "Skip Reasons", rows: cockpitSkipReasonRows, color: CSS_COLOR.red },
     { key: "readiness", title: "Readiness", rows: cockpitReadinessRows, color: CSS_COLOR.amber },
-    { key: "mark-health", title: "Mark Health", rows: cockpitMarkHealthRows, color: CSS_COLOR.cyan },
-    { key: "lifecycle", title: "Lifecycle", rows: cockpitLifecycleRows, color: CSS_COLOR.green },
+    { key: "mark-health", title: "Mark Health", rows: cockpitMarkHealthRows, color: CSS_COLOR.amber },
+    { key: "lifecycle", title: "Lifecycle", rows: cockpitLifecycleRows, color: CSS_COLOR.amber },
     { key: "entry-gate", title: "Entry Gate", rows: cockpitEntryGateRows, color: CSS_COLOR.amber },
-    { key: "option-chain", title: "Option Chain", rows: cockpitOptionChainRows, color: CSS_COLOR.cyan },
+    { key: "option-chain", title: "Option Chain", rows: cockpitOptionChainRows, color: CSS_COLOR.amber },
   ];
   const gateHealthy = isGateSummaryHealthy(cockpitTradePath);
   const resolveExpanded = (panel) => {
@@ -133,11 +133,12 @@ export const AlgoDiagnosticsTab = ({
           ["No-dir", cockpitSignalFreshness.withoutDirection ?? 0, CSS_COLOR.red],
           ["Blocked", cockpitTradePath.blockedCandidates ?? 0, CSS_COLOR.red],
           ["Filled", cockpitTradePath.shadowFilledCandidates ?? 0, CSS_COLOR.green],
-          ["Marks", cockpitTradePath.markEvents ?? 0, CSS_COLOR.cyan],
+          ["Marks", cockpitTradePath.markEvents ?? 0, CSS_COLOR.text],
           ["Gateway", cockpitTradePath.gatewayBlocks ?? 0, CSS_COLOR.amber],
         ].map(([label, value, color]) => {
           // No-dir = directionless/neutral signals: a binary-system violation,
-          // so alarm on any nonzero count (not a benign "aged" state).
+          // so it alarms on any nonzero count. Aged is not an alarm, but it
+          // still carries its amber freshness tone below when nonzero.
           const isAlarm =
             (label === "Blocked" || label === "Gateway" || label === "No-dir") &&
             Number(value) > 0;
@@ -158,7 +159,7 @@ export const AlgoDiagnosticsTab = ({
                 style={{
                   color: isAlarm
                     ? color
-                    : Number(value) > 0 && label !== "Aged"
+                    : Number(value) > 0
                       ? color
                       : CSS_COLOR.text,
                   fontFamily: T.data,

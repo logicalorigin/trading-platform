@@ -1,7 +1,7 @@
 import {
   useNumberTick,
 } from "../../lib/numberTick";
-import { Check, ChevronDown } from "lucide-react";
+import { AlertTriangle, Check, ChevronDown } from "lucide-react";
 import { useState } from "react";
 import { Button } from "../../components/ui/Button.jsx";
 import {
@@ -19,6 +19,7 @@ export const AlgoSaveBar = ({
   dirtyFields,
   isDirty,
   pending,
+  saveError = false,
   focusedDeployment,
   onDiscard,
   onSave,
@@ -28,6 +29,9 @@ export const AlgoSaveBar = ({
   const tickedCount = useNumberTick(dirtyCount, 200);
   const saveDisabled = !focusedDeployment || !isDirty || pending;
   const discardDisabled = !isDirty || pending;
+  // A failed save leaves the draft dirty; surface the failure explicitly
+  // instead of silently reverting to the neutral "unsaved changes" state.
+  const showError = saveError && !pending;
 
   const handleDiscard = () => {
     if (dirtyCount > 5 && !window.confirm(`Discard ${dirtyCount} unsaved changes?`)) {
@@ -76,6 +80,7 @@ export const AlgoSaveBar = ({
         ) : (
           <button
             type="button"
+            data-testid="algo-save-bar-status"
             onClick={() => setOpen((current) => !current)}
             style={{
               display: "inline-flex",
@@ -83,15 +88,24 @@ export const AlgoSaveBar = ({
               gap: sp(2),
               border: "none",
               background: "transparent",
-              color: CSS_COLOR.amber,
+              color: showError ? CSS_COLOR.red : CSS_COLOR.amber,
               fontFamily: T.sans,
               fontSize: textSize("caption"),
               cursor: "pointer",
               padding: 0,
             }}
           >
-            {Math.round(tickedCount)} unsaved{" "}
-            {dirtyCount === 1 ? "change" : "changes"}
+            {showError ? (
+              <>
+                <AlertTriangle size={12} />
+                Couldn&apos;t save — retry
+              </>
+            ) : (
+              <>
+                {Math.round(tickedCount)} unsaved{" "}
+                {dirtyCount === 1 ? "change" : "changes"}
+              </>
+            )}
             <ChevronDown size={12} />
           </button>
         )}

@@ -75,6 +75,16 @@ type TestShadowPositionsResponse = {
   reason?: string;
 };
 
+type TestShadowRiskResponse = {
+  accountId: string;
+  updatedAt: string;
+  degraded?: boolean;
+  degradedReason?: string;
+  stale?: boolean;
+  reason?: string;
+  asOf?: string;
+};
+
 test("fast shadow positions use one source-scoped ledger bundle for rows and totals", () => {
   const start = shadowAccountSource.indexOf(
     "async function buildFastShadowPositionsResponse",
@@ -406,6 +416,137 @@ test("shadow read cache serves stale values immediately while refresh continues"
       staleWaitMs: null,
     });
   }
+});
+
+test("shadow risk read serves warm stale data only for degraded upstream errors", async () => {
+  const key = `test-shadow-risk-degraded-${Date.now()}-${Math.random()}`;
+  const updatedAt = "2026-07-09T20:00:00.000Z";
+
+  assert.match(
+    shadowAccountSource,
+    /const SHADOW_RISK_READ_CACHE_STALE_TTL_MS = 15 \* 60_000;/,
+  );
+
+  try {
+    await internals.withShadowRiskReadCache(
+      key,
+      async (): Promise<TestShadowRiskResponse> => ({
+        accountId: SHADOW_ACCOUNT_ID,
+        updatedAt,
+      }),
+      { ttlMs: 5, staleTtlMs: 1_000 },
+    );
+    await new Promise((resolve) => setTimeout(resolve, 15));
+
+    const timeout = Object.assign(
+      new Error("canceling statement due to statement timeout"),
+      { code: "57014" },
+    );
+    const stale = await internals.withShadowRiskReadCache<TestShadowRiskResponse>(
+      key,
+      async () => {
+        throw timeout;
+      },
+      { ttlMs: 5, staleTtlMs: 1_000 },
+    );
+
+    assert.equal(stale.accountId, SHADOW_ACCOUNT_ID);
+    assert.equal(stale.degraded, true);
+    assert.equal(stale.stale, true);
+    assert.equal(stale.reason, "shadow_read_stale_cache");
+    assert.equal(stale.degradedReason, "statement_timeout");
+    assert.equal(stale.asOf, updatedAt);
+  } finally {
+    internals.invalidateShadowFreshStateCache();
+  }
+});
+
+test("shadow risk read maps a degraded error without stale data to structured 503", async () => {
+  const lockError = Object.assign(new Error("could not obtain lock on relation"), {
+    code: "55P03",
+  });
+
+  await assert.rejects(
+    () =>
+      internals.withShadowRiskReadCache(
+        `test-shadow-risk-empty-${Date.now()}-${Math.random()}`,
+        async () => {
+          throw lockError;
+        },
+        { ttlMs: 5, staleTtlMs: 1_000 },
+      ),
+    (error: unknown) => {
+      assert.equal(
+        error && typeof error === "object" && "statusCode" in error
+          ? error.statusCode
+          : null,
+        503,
+      );
+      assert.equal(
+        error && typeof error === "object" && "code" in error
+          ? error.code
+          : null,
+        "degraded_upstream",
+      );
+      return true;
+    },
+  );
+});
+
+test("shadow risk read never masks non-degraded programming errors with stale data", async () => {
+  const key = `test-shadow-risk-programming-error-${Date.now()}-${Math.random()}`;
+
+  try {
+    await internals.withShadowRiskReadCache(
+      key,
+      async (): Promise<TestShadowRiskResponse> => ({
+        accountId: SHADOW_ACCOUNT_ID,
+        updatedAt: "2026-07-09T20:00:00.000Z",
+      }),
+      { ttlMs: 5, staleTtlMs: 1_000 },
+    );
+    await new Promise((resolve) => setTimeout(resolve, 15));
+
+    await assert.rejects(
+      () =>
+        internals.withShadowRiskReadCache(
+          key,
+          async () => {
+            throw new TypeError("risk model invariant failed");
+          },
+          { ttlMs: 5, staleTtlMs: 1_000 },
+        ),
+      (error: unknown) =>
+        error instanceof TypeError && error.message === "risk model invariant failed",
+    );
+  } finally {
+    internals.invalidateShadowFreshStateCache();
+  }
+});
+
+test("shadow risk degraded classifier stays limited to timeout and lock pressure", () => {
+  const cases: Array<[unknown, string]> = [
+    [Object.assign(new Error("query canceled"), { code: "57014" }), "statement_timeout"],
+    [
+      Object.assign(new Error("could not obtain lock on relation"), { code: "55P03" }),
+      "lock_not_available",
+    ],
+    [new Error("canceling statement due to lock timeout"), "lock_wait_timeout"],
+    [new Error("Lock wait timeout exceeded; try restarting transaction"), "lock_wait_timeout"],
+    [
+      new Error("pool timed out while waiting for an open connection"),
+      "pool_acquire_timeout",
+    ],
+    [new Error("timeout exceeded when trying to connect"), "pool_acquire_timeout"],
+  ];
+
+  for (const [error, expected] of cases) {
+    assert.equal(internals.shadowRiskDegradedErrorReason(error), expected);
+  }
+  assert.equal(
+    internals.shadowRiskDegradedErrorReason(new TypeError("risk model invariant failed")),
+    null,
+  );
 });
 
 test("background mark refresh keeps order and history caches hot", async () => {

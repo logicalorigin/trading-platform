@@ -42,6 +42,8 @@ import { formatEnumLabel, formatRelativeTimeShort } from "../../lib/formatters";
 import { useValueFlash } from "../../lib/motion.jsx";
 import { formatAppDateTime } from "../../lib/timeZone";
 import { normalizeLegacyAlgoBrandText } from "../algo/algoBranding.js";
+import { resolvePositionWireTrailState } from "../algo/algoHelpers";
+import { WireTrailDetail } from "../algo/WireTrailDetail.jsx";
 import {
   EmptyState,
   Panel,
@@ -2333,11 +2335,17 @@ const signedPercent = (value, digits = 2, maskValues = false) => {
 
 const denseDisplayQuote = (row) => positionDisplayForRow(row).quote;
 
+// A wire-trail-configured position is expandable so the drilldown can host the
+// wire ladder chart/widget (and explain a flag-off / no-context empty state),
+// even when it has no lots/orders/attribution of its own.
+const hasWireTrailDetail = (row) => resolvePositionWireTrailState(row).enabled;
+
 const hasExpandablePositionDetails = (row) =>
   (row?.lots?.length || 0) > 0 ||
   (row?.sourceAttribution?.length || 0) > 0 ||
   (row?.openOrders?.length || 0) > 0 ||
-  hasTradeManagementDetail(row);
+  hasTradeManagementDetail(row) ||
+  hasWireTrailDetail(row);
 
 const denseColumnSortValue = (row, id, snapshotsBySymbol = {}) => {
   const quote = denseDisplayQuote(row);
@@ -4273,6 +4281,8 @@ export const PositionsPanel = ({
                               </Pill>
                               ) : null}
                             </div>
+
+                            <WireTrailDetail row={row} />
 
                             {management.stop || management.trail ? (
                               <div

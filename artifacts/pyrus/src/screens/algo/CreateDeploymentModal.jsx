@@ -226,7 +226,9 @@ export const CreateDeploymentModal = ({
                 key={tab.kind}
                 type="button"
                 role="tab"
+                id={`create-deployment-tab-${tab.kind}`}
                 aria-selected={active}
+                aria-controls="create-deployment-tabpanel"
                 data-testid={`create-deployment-kind-${tab.kind}`}
                 onClick={() => setAlgoKind(tab.kind)}
                 className="ra-interactive ra-touch-target"
@@ -250,7 +252,12 @@ export const CreateDeploymentModal = ({
           })}
         </div>
 
-        <div style={{ display: "grid", gap: sp(10) }}>
+        <div
+          role="tabpanel"
+          id="create-deployment-tabpanel"
+          aria-labelledby={`create-deployment-tab-${algoKind}`}
+          style={{ display: "grid", gap: sp(10) }}
+        >
           {!isOvernight ? (
             <Field label="Strategy draft">
               <Select
@@ -259,7 +266,12 @@ export const CreateDeploymentModal = ({
                 onChange={(next) => setSelectedDraftId?.(next)}
                 options={[
                   ...(candidateDrafts.length === 0
-                    ? [{ value: "", label: "No strategy drafts available" }]
+                    ? [
+                        {
+                          value: "",
+                          label: "No strategy drafts — create one in Strategy first",
+                        },
+                      ]
                     : []),
                   ...candidateDrafts.map((draft) => ({
                     value: draft.id,
@@ -384,7 +396,7 @@ export const CreateDeploymentModal = ({
           <Button
             variant="primary"
             loading={createPending}
-            disabled={createPending}
+            disabled={createPending || (!isOvernight && !selectedDraft?.id)}
             onClick={handleSubmit}
             fullWidth
             dataTestId="create-deployment-submit"

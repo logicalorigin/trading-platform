@@ -11,7 +11,12 @@ import {
   toDate,
   toIsoDateString,
 } from "../../lib/values";
-import { fetchJson, withSearchParams } from "../../lib/http";
+import {
+  fetchJson,
+  withSearchParams,
+  type QueryValue,
+} from "../../lib/http";
+import { HttpError, isHttpError } from "../../lib/errors";
 import {
   getMassiveProviderIdentity,
   isMassiveStocksRealtimeConfigured,
@@ -43,6 +48,14 @@ type FlowEventSideBasis = "quote_match" | "tick_test" | "none";
 type FlowEventSideConfidence = "high" | "medium" | "low" | "none";
 const MASSIVE_TICKER_LOGO_CACHE_TTL_MS = 10 * 60 * 1_000;
 const MASSIVE_TICKER_DETAILS_CACHE_TTL_MS = 6 * 60 * 60 * 1_000;
+const MASSIVE_TICKER_LOGO_MAX_BYTES = 250_000;
+const MASSIVE_TICKER_LOGO_CONTENT_TYPES = new Set([
+  "image/avif",
+  "image/gif",
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+]);
 export type UniverseMarket =
   | "stocks"
   | "etf"
@@ -2885,6 +2898,90 @@ function mapUniverseTicker(
   };
 }
 
+export function buildMassiveProviderUrl(
+  config: MassiveRuntimeConfig,
+  pathOrUrl: string,
+  params: Record<string, QueryValue> = {},
+): URL {
+  let baseUrl: URL;
+  let url: URL;
+  try {
+    baseUrl = new URL(`${config.baseUrl.replace(/\/+$/, "")}/`);
+    url = new URL(
+      pathOrUrl.startsWith("/") && !pathOrUrl.startsWith("//")
+        ? `.${pathOrUrl}`
+        : pathOrUrl,
+      baseUrl,
+    );
+  } catch {
+    throw new Error("Massive provider returned an invalid URL.");
+  }
+  if (url.origin !== baseUrl.origin) {
+    throw new Error("Massive provider URL changed origin.");
+  }
+  const basePath = baseUrl.pathname;
+  const baseRoot = basePath === "/" ? "/" : basePath.slice(0, -1);
+  if (
+    basePath !== "/" &&
+    url.pathname !== baseRoot &&
+    !url.pathname.startsWith(basePath)
+  ) {
+    throw new Error("Massive provider URL left configured base path.");
+  }
+  return withSearchParams(url, { ...params, apiKey: config.apiKey });
+}
+
+function sanitizedMassiveRequestError(error: unknown): HttpError {
+  const statusCode = isHttpError(error) ? error.statusCode : 502;
+  return new HttpError(
+    statusCode,
+    `Massive provider request failed with HTTP ${statusCode}.`,
+    {
+      code: isHttpError(error)
+        ? error.code
+        : "massive_provider_request_failed",
+      expose: false,
+    },
+  );
+}
+
+function sanitizedMassiveAbortError(): Error {
+  const error = new Error("Massive provider request was aborted.");
+  error.name = "AbortError";
+  return error;
+}
+
+function isAbortError(error: unknown): boolean {
+  if (error instanceof Error && error.name === "AbortError") return true;
+  const cause = (error as { cause?: unknown } | null)?.cause;
+  return cause instanceof Error && cause.name === "AbortError";
+}
+
+async function readBoundedResponseBody(
+  response: Response,
+  maxBytes: number,
+): Promise<Buffer | null> {
+  if (!response.body) return Buffer.alloc(0);
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let totalBytes = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      totalBytes += value.byteLength;
+      if (totalBytes > maxBytes) {
+        await reader.cancel();
+        return null;
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  return Buffer.concat(chunks, totalBytes);
+}
+
 export class MassiveMarketDataClient {
   private readonly tickerLogoCache = new Map<
     string,
@@ -2921,13 +3018,14 @@ export class MassiveMarketDataClient {
     init: RequestInit = {},
   ): Promise<T> {
     const startedAt = Date.now();
+    const requestInit = { ...init, redirect: "error" as const };
     try {
-      const payload = await fetchJson<T>(input, init);
+      const payload = await fetchJson<T>(input, requestInit);
       recordMassiveRestActivity(
         buildMassiveRestActivity({
           config: this.config,
           url: input,
-          init,
+          init: requestInit,
           startedAt,
           status: "success",
           payload,
@@ -2935,29 +3033,29 @@ export class MassiveMarketDataClient {
       );
       return payload;
     } catch (error) {
+      const safeError =
+        requestInit.signal?.aborted || isAbortError(error)
+          ? sanitizedMassiveAbortError()
+          : sanitizedMassiveRequestError(error);
       recordMassiveRestActivity(
         buildMassiveRestActivity({
           config: this.config,
           url: input,
-          init,
+          init: requestInit,
           startedAt,
           status: "error",
-          error,
+          error: safeError,
         }),
       );
-      throw error;
+      throw safeError;
     }
   }
 
-  private buildUrl(pathOrUrl: string, params: Record<string, unknown> = {}): URL {
-    const baseUrl = pathOrUrl.startsWith("http")
-      ? pathOrUrl
-      : `${this.config.baseUrl}${pathOrUrl}`;
-
-    return withSearchParams(baseUrl, {
-      ...params,
-      apiKey: this.config.apiKey,
-    });
+  private buildUrl(
+    pathOrUrl: string,
+    params: Record<string, QueryValue> = {},
+  ): URL {
+    return buildMassiveProviderUrl(this.config, pathOrUrl, params);
   }
 
   async getQuoteSnapshots(symbols: string[]): Promise<QuoteSnapshot[]> {
@@ -3400,16 +3498,33 @@ export class MassiveMarketDataClient {
       const branding = asRecord(results?.["branding"]);
       const brandingLogoUrl = asString(branding?.["logo_url"]);
       if (brandingLogoUrl) {
-        const logoResponse = await fetch(this.buildUrl(brandingLogoUrl), { signal });
-        const contentType = logoResponse.headers.get("content-type") ?? "";
-        const contentLength = Number(logoResponse.headers.get("content-length") ?? 0);
-        if (
+        const logoResponse = await fetch(this.buildUrl(brandingLogoUrl), {
+          redirect: "error",
+          signal,
+        });
+        const contentType = (logoResponse.headers.get("content-type") ?? "")
+          .split(";", 1)[0]
+          .trim()
+          .toLowerCase();
+        const contentLengthHeader = logoResponse.headers.get("content-length");
+        const contentLength = Number(contentLengthHeader);
+        const acceptableLogo =
           logoResponse.ok &&
-          contentType.startsWith("image/") &&
-          (!Number.isFinite(contentLength) || contentLength <= 250_000)
-        ) {
-          const bytes = Buffer.from(await logoResponse.arrayBuffer());
-          logoUrl = `data:${contentType};base64,${bytes.toString("base64")}`;
+          MASSIVE_TICKER_LOGO_CONTENT_TYPES.has(contentType) &&
+          (contentLengthHeader === null ||
+            (Number.isFinite(contentLength) &&
+              contentLength >= 0 &&
+              contentLength <= MASSIVE_TICKER_LOGO_MAX_BYTES));
+        if (acceptableLogo) {
+          const bytes = await readBoundedResponseBody(
+            logoResponse,
+            MASSIVE_TICKER_LOGO_MAX_BYTES,
+          );
+          if (bytes?.length) {
+            logoUrl = `data:${contentType};base64,${bytes.toString("base64")}`;
+          }
+        } else {
+          await logoResponse.body?.cancel();
         }
       }
     } catch {

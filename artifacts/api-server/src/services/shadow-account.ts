@@ -48,6 +48,7 @@ import { getMassiveRuntimeConfig, type RuntimeMode } from "../lib/runtime";
 import {
   createTransientPostgresBackoff,
   isPoolContentionError,
+  isStatementTimeoutError,
   isTransientPostgresError,
 } from "../lib/transient-db-error";
 import { asRecord as readRecord, normalizeSymbol } from "../lib/values";
@@ -557,6 +558,7 @@ const SHADOW_READ_CACHE_TTL_MS = 2_500;
 const SHADOW_READ_CACHE_STALE_TTL_MS = 60_000;
 const SHADOW_READ_CACHE_STALE_WAIT_MS = 1_500;
 const SHADOW_DERIVED_READ_CACHE_TTL_MS = 30_000;
+const SHADOW_RISK_READ_CACHE_STALE_TTL_MS = 15 * 60_000;
 const SHADOW_LEDGER_DASHBOARD_READ_LIMIT = Math.max(
   1_000,
   Number(process.env["SHADOW_LEDGER_DASHBOARD_READ_LIMIT"]) || 20_000,
@@ -620,6 +622,7 @@ function shadowOptionQuoteCacheStaleTtlMs() {
 }
 type ShadowReadCacheOptions = {
   allowStale?: (value: unknown) => boolean;
+  serveStaleOnError?: (error: unknown) => string | null;
   staleStrategy?: "wait" | "immediate" | "never";
   ttlMs?: number;
   staleTtlMs?: number;
@@ -765,6 +768,43 @@ function shadowReadValueIsMarkedStale(value: unknown): boolean {
       ((value as { stale?: unknown }).stale === true ||
         (value as { reason?: unknown }).reason === "shadow_read_stale_cache"),
   );
+}
+
+function shadowRiskDegradedErrorReason(
+  error: unknown,
+  depth = 0,
+): string | null {
+  if (!error || depth > 6) {
+    return null;
+  }
+  if (isStatementTimeoutError(error)) {
+    return "statement_timeout";
+  }
+
+  const record = readRecord(error) ?? {};
+  const code = record["code"] ?? record["errno"];
+  if (code === "55P03") {
+    return "lock_not_available";
+  }
+
+  const text =
+    error instanceof Error
+      ? `${error.name}\n${error.message}`
+      : typeof error === "string"
+        ? error
+        : "";
+  if (
+    /canceling statement due to lock timeout|lock wait timeout exceeded|could not obtain lock (?:on|for)/i.test(
+      text,
+    )
+  ) {
+    return "lock_wait_timeout";
+  }
+  if (isPoolContentionError(error)) {
+    return "pool_acquire_timeout";
+  }
+
+  return shadowRiskDegradedErrorReason(record["cause"], depth + 1);
 }
 
 function shadowReadPercentile(samples: number[], percentile: number): number {
@@ -1034,7 +1074,7 @@ function shadowReadStaleWaitMs(): number {
 
 function markShadowReadValueStale<T>(
   value: T,
-  input: { cachedAt: number; now: number },
+  input: { cachedAt: number; now: number; degradedReason?: string },
 ): T {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return value;
@@ -1044,6 +1084,16 @@ function markShadowReadValueStale<T>(
   record["degraded"] = true;
   record["stale"] = true;
   record["reason"] = "shadow_read_stale_cache";
+  if (input.degradedReason) {
+    record["degradedReason"] = input.degradedReason;
+    const asOf = record["asOf"] ?? record["updatedAt"];
+    record["asOf"] =
+      asOf instanceof Date
+        ? asOf.toISOString()
+        : typeof asOf === "string" && asOf.trim()
+          ? asOf
+          : new Date(input.cachedAt).toISOString();
+  }
   if ("isStale" in record) {
     record["isStale"] = true;
   }
@@ -1083,6 +1133,21 @@ async function resolveShadowReadRequest<T>(
   if (options.allowStale && !options.allowStale(cached.value)) {
     return request;
   }
+  if (options.serveStaleOnError) {
+    try {
+      return await request;
+    } catch (error) {
+      const degradedReason = options.serveStaleOnError(error);
+      if (!degradedReason) {
+        throw error;
+      }
+      return markShadowReadValueStale(cached.value as T, {
+        cachedAt: cached.cachedAt,
+        now: Date.now(),
+        degradedReason,
+      });
+    }
+  }
   if (options.staleStrategy === "immediate") {
     return markShadowReadValueStale(cached.value as T, {
       cachedAt: cached.cachedAt,
@@ -1107,6 +1172,30 @@ async function resolveShadowReadRequest<T>(
       timeout.unref?.();
     }),
   ]);
+}
+
+async function withShadowRiskReadCache<T>(
+  key: string,
+  factory: () => Promise<T>,
+  options: Pick<ShadowReadCacheOptions, "ttlMs" | "staleTtlMs"> = {},
+): Promise<T> {
+  try {
+    return await withShadowReadCache(key, factory, {
+      serveStaleOnError: shadowRiskDegradedErrorReason,
+      staleStrategy: "never",
+      ttlMs: options.ttlMs ?? SHADOW_DERIVED_READ_CACHE_TTL_MS,
+      staleTtlMs:
+        options.staleTtlMs ?? SHADOW_RISK_READ_CACHE_STALE_TTL_MS,
+    });
+  } catch (error) {
+    if (!shadowRiskDegradedErrorReason(error)) {
+      throw error;
+    }
+    throw new HttpError(503, "Account risk is temporarily degraded", {
+      code: "degraded_upstream",
+      cause: error,
+    });
+  }
 }
 
 function shadowReadCacheValueHasRows(value: unknown): boolean {
@@ -11791,13 +11880,9 @@ export async function getShadowAccountRisk(input: {
   );
   if (!hasInjectedInputs) {
     const cacheKey = `risk:${shadowSourceCacheKey(source)}:${detail}`;
-    return withShadowReadCache(
+    return withShadowRiskReadCache(
       cacheKey,
       () => buildShadowAccountRisk({ source, detail }),
-      {
-        staleStrategy: "immediate",
-        ttlMs: SHADOW_DERIVED_READ_CACHE_TTL_MS,
-      },
     );
   }
   return buildShadowAccountRisk({ ...input, source, detail });
@@ -15243,6 +15328,8 @@ export const __shadowWatchlistBacktestInternalsForTests = {
   readCachedShadowOptionQuotesForTests: readCachedShadowOptionQuotes,
   readShadowDashboardFillsWithOrdersForTests: readShadowDashboardFillsWithOrders,
   withShadowReadCache,
+  withShadowRiskReadCache,
+  shadowRiskDegradedErrorReason,
   getShadowAccountReadDiagnostics,
   resetShadowAccountReadDiagnosticsForTests,
   buildFastShadowPositionsResponseFromRows,

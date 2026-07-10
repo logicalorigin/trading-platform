@@ -2,11 +2,12 @@ import {
   useMemo,
 } from "react";
 import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from "recharts";
-import { RadialStrokeGauge } from "../../components/platform/primitives.jsx";
+import { RadialStrokeGauge, StatusPill } from "../../components/platform/primitives.jsx";
 import { MarketIdentityInline } from "../../features/platform/marketIdentity";
 import { MeasuredChartFrame } from "../../features/charting/MeasuredChartFrame.jsx";
 import { buildAccountRiskDisplayModel } from "../../features/account/accountPositionRows.js";
 import { chartTooltipContentStyle } from "../../lib/tooltipStyles";
+import { formatAppDateTime } from "../../lib/timeZone";
 import { CSS_COLOR, FONT_WEIGHTS, RADII, T, dim, sp, textSize } from "../../lib/uiTokens.jsx";
 import {
   EmptyState,
@@ -101,6 +102,29 @@ const getCompactTextStyle = () => ({
   fontSize: textSize("body"),
   fontFamily: T.sans,
 });
+
+const isDegradedAccountRiskError = (error) =>
+  Number(error?.status ?? error?.response?.status) === 503 &&
+  (error?.data?.code ?? error?.payload?.code ?? error?.code) ===
+    "degraded_upstream";
+
+const RiskDegradedState = () => (
+  <div
+    role="status"
+    aria-live="polite"
+    style={{
+      padding: sp(8),
+      color: CSS_COLOR.amber,
+      background: CSS_COLOR.amberBg,
+      borderRadius: dim(RADII.sm),
+      fontSize: textSize("body"),
+      fontFamily: T.sans,
+      lineHeight: 1.4,
+    }}
+  >
+    Temporarily degraded, retrying…
+  </div>
+);
 
 const DashboardBlock = ({ title, children, compact = false }) => (
   <div style={{ minWidth: 0, display: "grid", gap: sp(compact ? 2 : 3) }}>
@@ -1245,11 +1269,18 @@ export const PortfolioExposurePanel = ({
   const sectorRows = nonZeroBuckets(allocationData.sector || []);
   const hasAllocation = assetRows.length > 0;
   const hasRisk = Boolean(riskModel);
+  const riskError = riskQuery.error ?? riskQuery.failureReason;
+  const riskTemporarilyDegraded = isDegradedAccountRiskError(riskError);
+  const riskAsOf = riskQuery.data?.asOf ?? riskQuery.data?.updatedAt;
+  const riskStaleLabel = riskQuery.data?.degraded
+    ? `stale${riskAsOf ? ` · as of ${formatAppDateTime(riskAsOf)}` : ""}`
+    : null;
   const allocationInitialLoading =
     (allocationQuery.isLoading ||
       (allocationQuery.isPending && allocationQuery.fetchStatus !== "idle")) &&
     !allocationQuery.data;
   const riskInitialLoading =
+    !riskTemporarilyDegraded &&
     (riskQuery.isLoading ||
       (riskQuery.isPending && riskQuery.fetchStatus !== "idle")) &&
     !riskQuery.data;
@@ -1257,7 +1288,7 @@ export const PortfolioExposurePanel = ({
     !allocationInitialLoading &&
     !allocationQuery.error &&
     !riskInitialLoading &&
-    !riskQuery.error &&
+    !riskError &&
     !hasAllocation &&
     !hasRisk;
 
@@ -1282,9 +1313,10 @@ export const PortfolioExposurePanel = ({
   };
 
   const renderRiskStrip = () => {
+    if (riskTemporarilyDegraded) return <RiskDegradedState />;
     if (riskInitialLoading) return <SkeletonRows rows={2} />;
-    if (riskQuery.error)
-      return <InlineError error={riskQuery.error} onRetry={riskQuery.refetch} />;
+    if (riskError)
+      return <InlineError error={riskError} onRetry={riskQuery.refetch} />;
     return (
       <RiskStrip
         data={riskModel}
@@ -1310,6 +1342,11 @@ export const PortfolioExposurePanel = ({
         />
       ) : (
         <div data-testid="portfolio-exposure-dashboard" style={{ display: "grid", gap: sp(isPhone ? 3 : 4) }}>
+          {riskStaleLabel ? (
+            <div data-testid="portfolio-exposure-stale-badge" style={{ justifySelf: "end" }}>
+              <StatusPill color={CSS_COLOR.amber}>{riskStaleLabel}</StatusPill>
+            </div>
+          ) : null}
           <ExposureMetricRail
             exposure={allocationData.exposure}
             riskModel={riskModel}
@@ -1337,10 +1374,12 @@ export const PortfolioExposurePanel = ({
             </div>
             <div>
               <DashboardBlock title="Risk Level" compact={isPhone}>
-                {riskInitialLoading ? (
+                {riskTemporarilyDegraded ? (
+                  <RiskDegradedState />
+                ) : riskInitialLoading ? (
                   <SkeletonRows rows={3} />
-                ) : riskQuery.error ? (
-                  <InlineError error={riskQuery.error} onRetry={riskQuery.refetch} />
+                ) : riskError ? (
+                  <InlineError error={riskError} onRetry={riskQuery.refetch} />
                 ) : (
                   <RiskLevelGauge
                     margin={riskModel?.margin}
@@ -1382,10 +1421,12 @@ export const PortfolioExposurePanel = ({
           {isPhone ? null : (
             <div data-testid="portfolio-exposure-concentration">
               <DashboardBlock title="Concentration">
-                {riskInitialLoading ? (
+                {riskTemporarilyDegraded ? (
+                  <RiskDegradedState />
+                ) : riskInitialLoading ? (
                   <SkeletonRows rows={2} />
-                ) : riskQuery.error ? (
-                  <InlineError error={riskQuery.error} onRetry={riskQuery.refetch} />
+                ) : riskError ? (
+                  <InlineError error={riskError} onRetry={riskQuery.refetch} />
                 ) : (
                   <TopConcentrationList
                     rows={riskModel?.concentration?.topPositions}

@@ -1,0 +1,18 @@
+{
+  "name": "@workspace/ibkr-session-host",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "pnpm run build && pnpm run start",
+    "build": "node ./build.mjs",
+    "start": "node --enable-source-maps ./dist/index.mjs",
+    "test": "node --import tsx --test --test-reporter=spec",
+    "typecheck": "node ../../scripts/run-validation-command.mjs --label typecheck -- tsc -p tsconfig.json --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "esbuild": "catalog:",
+    "tsx": "catalog:"
+  }
+}

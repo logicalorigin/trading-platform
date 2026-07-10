@@ -1,14 +1,4 @@
-import { useId, type CSSProperties } from "react";
-
-export function spin(
-  duration: string,
-  direction: "normal" | "reverse",
-): CSSProperties {
-  return {
-    ["--pyrus-ring-duration" as string]: duration,
-    ["--pyrus-ring-direction" as string]: direction,
-  } as CSSProperties;
-}
+import { useId } from "react";
 
 /** Per-instance IDs so multiple marks on a page don't share `<defs>`. */
 export function useMarkIds() {

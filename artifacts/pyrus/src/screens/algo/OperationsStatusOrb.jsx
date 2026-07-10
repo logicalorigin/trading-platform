@@ -162,7 +162,7 @@ export const OperationsStatusOrb = ({
           <StatusRow
             label="Market data"
             value={marketDataReady ? "ready" : "pending"}
-            tone={marketDataReady ? CSS_COLOR.green : CSS_COLOR.red}
+            tone={marketDataReady ? CSS_COLOR.green : CSS_COLOR.amber}
           />
           <StatusRow
             label="Scan"
@@ -186,7 +186,9 @@ export const OperationsStatusOrb = ({
             tone={
               attentionSeverity === "warning"
                 ? CSS_COLOR.amber
-                : CSS_COLOR.green
+                : attentionSeverity
+                    ? CSS_COLOR.cyan
+                    : CSS_COLOR.green
             }
           />
           {failurePoint?.severity !== "info" ? (

@@ -7,7 +7,6 @@
  */
 import {
   MarkDefs,
-  spin,
   useMarkIds,
 } from "@/components/marketing/pyrus-mark-shared";
 import {
@@ -58,8 +57,6 @@ export function PyrusMark({
       <g filter={`url(#${filterId})`}>
         <g
           id="ring-07-particles"
-          className="pyrus-ring"
-          style={spin(`${RIM_DOTS.durationS}s`, RIM_DOTS.direction)}
           fill={stroke}
         >
           {rimDotPositions().map((d, i) => (
@@ -71,25 +68,20 @@ export function PyrusMark({
             them reads as a different ("wrong") logo. The approved composition is
             the 6 dashed rings + the 72-dot rim, nothing else (matches the
             opener's analytic particle bake, .cap/_genlogopts.mjs). */}
-        {RING_SPECS.map((ring) => {
-          const animated = ring.durationS != null;
-          return (
-            <circle
-              key={ring.id}
-              id={ring.id}
-              className={animated ? "pyrus-ring" : undefined}
-              style={animated ? spin(`${ring.durationS}s`, ring.direction) : undefined}
-              cx={MARK_CENTER}
-              cy={MARK_CENTER}
-              r={ring.r}
-              stroke={stroke}
-              strokeOpacity={ring.opacity}
-              strokeWidth={ring.strokeWidth}
-              strokeDasharray={ring.dash ? `${ring.dash[0]} ${ring.dash[1]}` : undefined}
-              strokeLinecap="round"
-            />
-          );
-        })}
+        {RING_SPECS.map((ring) => (
+          <circle
+            key={ring.id}
+            id={ring.id}
+            cx={MARK_CENTER}
+            cy={MARK_CENTER}
+            r={ring.r}
+            stroke={stroke}
+            strokeOpacity={ring.opacity}
+            strokeWidth={ring.strokeWidth}
+            strokeDasharray={ring.dash ? `${ring.dash[0]} ${ring.dash[1]}` : undefined}
+            strokeLinecap="round"
+          />
+        ))}
 
         {/* No center boundary - reference shows fully empty hub. */}
       </g>

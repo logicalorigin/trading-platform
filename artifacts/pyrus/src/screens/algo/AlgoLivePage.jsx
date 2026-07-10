@@ -178,8 +178,8 @@ const EmptyOperationsState = ({
               placeholder="Deployment name"
               style={{
                 width: "100%",
-                background: CSS_COLOR.bg1,
-                border: "none",
+                background: CSS_COLOR.bg2,
+                border: `1px solid ${CSS_COLOR.border}`,
                 borderRadius: dim(RADII.md),
                 padding: sp("8px 10px"),
                 color: CSS_COLOR.text,
@@ -193,8 +193,8 @@ const EmptyOperationsState = ({
               placeholder="SPY, QQQ, NVDA"
               style={{
                 width: "100%",
-                background: CSS_COLOR.bg1,
-                border: "none",
+                background: CSS_COLOR.bg2,
+                border: `1px solid ${CSS_COLOR.border}`,
                 borderRadius: dim(RADII.md),
                 padding: sp("8px 10px"),
                 color: CSS_COLOR.text,
@@ -778,8 +778,44 @@ export const AlgoLivePage = ({
   );
 
   useEffect(() => {
-    if (!settingsDrawerOpen) return;
-    settingsDrawerRef.current?.focus();
+    if (!settingsDrawerOpen) return undefined;
+    const drawer = settingsDrawerRef.current;
+    const restoreFocus =
+      document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null;
+    const getFocusables = () =>
+      drawer
+        ? Array.from(
+            drawer.querySelectorAll(
+              'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+            ),
+          ).filter((el) => el instanceof HTMLElement && el.offsetParent !== null)
+        : [];
+    const initial = getFocusables();
+    if (initial.length) initial[0].focus();
+    else drawer?.focus();
+    // Trap Tab within the modal drawer; aria-modal asserts modality, so focus
+    // must not escape to the inert page behind the scrim (WCAG).
+    const handleKeyDown = (event) => {
+      if (event.key !== "Tab") return;
+      const items = getFocusables();
+      if (!items.length) return;
+      const first = items[0];
+      const last = items[items.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+      restoreFocus?.focus?.();
+    };
   }, [settingsDrawerOpen]);
   const renderedRightRail = rightRail ?? rightRailFallback;
   const [staTableSnapshot, setStaTableSnapshot] = useState(
@@ -1003,10 +1039,6 @@ export const AlgoLivePage = ({
     strategySettingsDraft?.bosConfirmation || "wicks",
     scanStatusLabel,
   ].filter(Boolean);
-  const hasAttentionItems = attentionStream.length > 0;
-  const hasRecentTransitions = Boolean(transitions?.length);
-  const showCompactStatusRow =
-    hasActivitySummary || hasAttentionItems || hasRecentTransitions;
   const overviewMetrics = [
     {
       label: "P&L",
@@ -1295,7 +1327,9 @@ export const AlgoLivePage = ({
                       disabled={deploymentToggleDisabled}
                       aria-label={deploymentToggleActionLabel}
                       style={headerActionButtonStyle({
-                        color: focusedDeployment.enabled ? CSS_COLOR.amber : CSS_COLOR.green,
+                        // Color tracks operational STATE (running=green,
+                        // paused=amber); the Pause/Play icon carries the action.
+                        color: focusedDeployment.enabled ? CSS_COLOR.green : CSS_COLOR.amber,
                         disabled: deploymentToggleDisabled,
                       })}
                     >
@@ -1355,13 +1389,31 @@ export const AlgoLivePage = ({
               minWidth: 0,
             }}
           >
-            <div data-testid="algo-snapshot-details" style={{ minWidth: 0 }}>
-              <AlgoIndicatorKpiTable
-                metrics={liveIndicatorMetrics}
-                algoIsPhone={algoIsPhone}
-                algoIsPocketWidth={algoIsPocketWidth}
-                dense={denseOperationsLayout}
-              />
+            <div
+              data-testid="algo-overview-metrics"
+              style={{
+                display: "grid",
+                gridTemplateColumns: resolveAlgoOverviewMetricGridTemplate({
+                  algoIsPhone,
+                  algoIsPocketWidth,
+                  denseOperationsLayout,
+                }),
+                gap: sp(algoIsPhone ? 3 : 5),
+                minWidth: 0,
+              }}
+            >
+              {overviewMetrics.map((metric) => (
+                <OverviewMetric
+                  key={metric.label}
+                  label={metric.label}
+                  value={metric.value}
+                  detail={metric.detail}
+                  tone={metric.color}
+                  icon={metric.icon}
+                  severity={metric.severity}
+                  dense={denseOperationsLayout}
+                />
+              ))}
             </div>
 
             <PipelineOverview
@@ -1373,43 +1425,53 @@ export const AlgoLivePage = ({
               grouped
             />
 
-            {showCompactStatusRow ? (
-              <div
-                data-testid="algo-operations-compact-status-row"
-                data-algo-pocket-grid={algoIsPocketWidth ? "two" : undefined}
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: algoIsPocketWidth
-                    ? "minmax(0, 1fr)"
-                    : denseOperationsLayout
-                      ? "repeat(auto-fit, minmax(160px, 1fr))"
-                      : hasActivitySummary
-                        ? "minmax(0, 1.3fr) minmax(0, 1fr) minmax(0, 1fr)"
-                        : "repeat(auto-fit, minmax(180px, 1fr))",
-                  gap: sp(6),
-                  alignItems: "center",
-                  minWidth: 0,
-                  paddingTop: sp(2),
-                  borderTop: `1px solid ${CSS_COLOR.border}`,
-                }}
-              >
-                {hasActivitySummary ? (
-                  <ActivitySummaryInline activitySummary={activitySummary} />
-                ) : null}
-                <OperationsAttentionStrip
-                  items={attentionStream}
-                  maxInline={algoIsPhone ? 2 : 3}
-                  embedded
-                  showClearState={false}
-                />
-                <OperationsTransitionsStrip
-                  transitions={transitions || []}
-                  maxInline={algoIsPhone ? 2 : 3}
-                  embedded
-                  showEmptyState={false}
-                />
-              </div>
-            ) : null}
+            <div
+              data-testid="algo-operations-compact-status-row"
+              data-algo-pocket-grid={algoIsPocketWidth ? "two" : undefined}
+              style={{
+                display: "grid",
+                gridTemplateColumns: algoIsPocketWidth
+                  ? "minmax(0, 1fr)"
+                  : denseOperationsLayout
+                    ? "repeat(auto-fit, minmax(160px, 1fr))"
+                    : hasActivitySummary
+                      ? "minmax(0, 1.3fr) minmax(0, 1fr) minmax(0, 1fr)"
+                      : "repeat(auto-fit, minmax(180px, 1fr))",
+                gap: sp(6),
+                alignItems: "center",
+                minWidth: 0,
+                paddingTop: sp(2),
+                borderTop: `1px solid ${CSS_COLOR.border}`,
+              }}
+            >
+              {hasActivitySummary ? (
+                <ActivitySummaryInline activitySummary={activitySummary} />
+              ) : null}
+              {/* Zero-states rendered (not suppressed) so a newly-arriving
+                  attention/transition item fills reserved space instead of
+                  inserting a row and shifting the layout below. */}
+              <OperationsAttentionStrip
+                items={attentionStream}
+                maxInline={algoIsPhone ? 2 : 3}
+                embedded
+                showClearState
+              />
+              <OperationsTransitionsStrip
+                transitions={transitions || []}
+                maxInline={algoIsPhone ? 2 : 3}
+                embedded
+                showEmptyState
+              />
+            </div>
+
+            <div data-testid="algo-snapshot-details" style={{ minWidth: 0 }}>
+              <AlgoIndicatorKpiTable
+                metrics={liveIndicatorMetrics}
+                algoIsPhone={algoIsPhone}
+                algoIsPocketWidth={algoIsPocketWidth}
+                dense={denseOperationsLayout}
+              />
+            </div>
           </section>
 
           <OperationsSignalTable

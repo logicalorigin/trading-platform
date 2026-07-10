@@ -75,6 +75,7 @@ const TimeframeButton = ({
   <AppTooltip content={ariaLabel}>
     <button
       type="button"
+      className="ra-touch-target-y"
       data-testid={testId}
       aria-label={ariaLabel}
       aria-pressed={selected}

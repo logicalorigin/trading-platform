@@ -10,27 +10,7 @@
    ========================================================================== */
 
 /* -----------------------------------------------------------------------------
-   1. PyrusMark ring spin — the 2D SVG mark's independently rotating rings.
-   Driven by the per-ring CSS vars set in pyrus-mark.tsx via spin().
-   -------------------------------------------------------------------------- */
-.pyrus-ring {
-  transform-box: view-box;
-  transform-origin: 50% 50%;
-  animation: pyrus-ring-spin var(--pyrus-ring-duration, 30s) linear infinite;
-  animation-direction: var(--pyrus-ring-direction, normal);
-}
-@keyframes pyrus-ring-spin {
-  to { transform: rotate(360deg); }
-}
-@media (prefers-reduced-motion: reduce) {
-  .pyrus-ring { animation: none; }
-}
-html[data-pyrus-reduced-motion="on"] .pyrus-ring {
-  animation: none;
-}
-
-/* -----------------------------------------------------------------------------
-   2. BrandLoader wordmark fade-up (the PYRUS PNG under the resolving mark).
+   1. BrandLoader wordmark fade-up (the PYRUS PNG under the resolving mark).
    -------------------------------------------------------------------------- */
 @keyframes brand-loader-word {
   from { opacity: 0; transform: translateY(9px); }
@@ -44,7 +24,7 @@ html[data-pyrus-reduced-motion="on"] .pyrus-ring {
 }
 
 /* =============================================================================
-   3. THEME TOKENS — REQUIRED.
+   2. THEME TOKENS — REQUIRED.
 
    The components use the Tailwind utility classes `bg-background`,
    `text-foreground`, and `text-muted-foreground` (NeuralStage/NeuralLoader/

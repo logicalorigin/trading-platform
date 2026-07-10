@@ -140,11 +140,10 @@ test("brand resolve keeps only the live app rendering contract", () => {
   assert.doesNotMatch(brandCss, /brand-loader-word--resolve|pyrus-splash-pulse/);
 });
 
-test("brand motion honors the app reduced-motion preference", () => {
+test("the canonical SVG mark has no independent looping motion", () => {
   const brandCss = read("src/styles/brand.css");
+  const pyrusMark = read("src/components/marketing/pyrus-mark.tsx");
 
-  assert.match(
-    brandCss,
-    /html\[data-pyrus-reduced-motion="on"\] \.pyrus-ring\s*\{[^}]*animation:\s*none/s,
-  );
+  assert.doesNotMatch(brandCss, /pyrus-ring-spin|\.pyrus-ring/);
+  assert.doesNotMatch(pyrusMark, /\bspin\b|pyrus-ring/);
 });

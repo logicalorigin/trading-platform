@@ -58,6 +58,7 @@ import { PlatformErrorBoundary } from "../components/platform/PlatformErrorBound
 import { LoadingSpinner, StatTile, StatusPill } from "../components/platform/primitives.jsx";
 import { Button } from "../components/ui/Button.jsx";
 import { platformJsonRequest } from "../features/platform/platformJsonRequest";
+import { parseRetryAfterMs } from "../features/platform/queryDefaults";
 import { useUserPreferences } from "../features/preferences/useUserPreferences";
 import { responsiveFlags, useElementSize, useViewport } from "../lib/responsive";
 import { retryDynamicImport } from "../lib/dynamicImport";
@@ -482,6 +483,21 @@ const DeferredPanelSuspense = ({
 const ACCOUNT_LIVE_STALE_MS = 15_000;
 const ACCOUNT_DERIVED_STALE_MS = 120_000;
 const ACCOUNT_ACTIVITY_STALE_MS = ACCOUNT_LIVE_STALE_MS;
+const ACCOUNT_RISK_DEGRADED_RETRY_MS = 15_000;
+
+const isDegradedAccountRiskError = (error) => {
+  const errorStatus = Number(error?.status ?? error?.response?.status);
+  const errorCode = error?.data?.code ?? error?.payload?.code ?? error?.code;
+  return errorStatus === 503 && errorCode === "degraded_upstream";
+};
+
+const retryDegradedAccountRisk = (failureCount, error) =>
+  failureCount < 1 && isDegradedAccountRiskError(error);
+
+const degradedAccountRiskRetryDelay = (_attempt, error) =>
+  (Number.isFinite(error?.retryAfterMs) ? error.retryAfterMs : null) ??
+  parseRetryAfterMs(error?.headers?.get?.("retry-after")) ??
+  ACCOUNT_RISK_DEGRADED_RETRY_MS;
 const ACCOUNT_HISTORY_STALE_MS = 120_000;
 
 const closedTradesResponseIsDegradedEmpty = (data) =>
@@ -1902,6 +1918,8 @@ const AccountScreenInner = ({
         enabled: primaryAccountRestQueriesEnabled,
         placeholderData: retainPreviousData,
         ...getSafeQaInitialQueryOptions(safeQaExposureFixture?.risk),
+        retry: retryDegradedAccountRisk,
+        retryDelay: degradedAccountRiskRetryDelay,
       },
   });
   const sectionSwitching = Boolean(

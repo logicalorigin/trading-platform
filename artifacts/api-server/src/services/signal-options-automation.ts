@@ -8454,6 +8454,40 @@ function signalOptionsRealizedPnl(
   );
 }
 
+// A market-sell fills near the bid, so shadow exits are booked at the mid minus
+// 90% of the mid->bid gap. But a pathologically wide, non-executable quote --
+// where the bid sits far below the mid -- is not a real market: filling near
+// such a bid books a phantom loss that diverges from the mid-based unrealized
+// P&L and can FALSE-TRIP the daily-loss halt (see computeSignalOptionsDailyRealizedPnl).
+// So when the bid is degenerate we value the exit at the mid instead -- the same
+// basis open positions are marked at. Normal spreads are unchanged. The exact
+// paper-fill price is a minor approximation (real broker execution dictates real
+// fills); the point of the guard is only to keep a non-market quote from
+// corrupting realized P&L / the halt.
+export const SIGNAL_OPTIONS_DEGENERATE_SELL_GAP_FRACTION = 0.4;
+
+export function signalOptionsShadowSellFillPrice(
+  mid: number | null | undefined,
+  bid: number | null | undefined,
+  fallbackPrice: number,
+): number {
+  if (
+    typeof mid === "number" &&
+    Number.isFinite(mid) &&
+    mid > 0 &&
+    typeof bid === "number" &&
+    Number.isFinite(bid) &&
+    bid > 0
+  ) {
+    const gapFraction = (mid - bid) / mid;
+    if (gapFraction > SIGNAL_OPTIONS_DEGENERATE_SELL_GAP_FRACTION) {
+      return Number(mid.toFixed(2));
+    }
+    return Number((mid - (mid - bid) * 0.9).toFixed(2));
+  }
+  return Number(fallbackPrice.toFixed(2));
+}
+
 function computeSignalOptionsDailyRealizedPnl(
   events: ExecutionEvent[],
   now = new Date(),
@@ -14167,12 +14201,11 @@ async function refreshActivePosition(input: {
       "Signal-options wire_structure_break held in shadow (enforce flag off); no wire exit placed",
     );
   }
-  let exitPrice =
-    liquidity.bid != null && liquidity.mid != null
-      ? Number(
-          (liquidity.mid - (liquidity.mid - liquidity.bid) * 0.9).toFixed(2),
-        )
-      : Number(markPrice.toFixed(2));
+  let exitPrice = signalOptionsShadowSellFillPrice(
+    liquidity.mid,
+    liquidity.bid,
+    markPrice,
+  );
   // Provenance of the exit fill price. "live" when the live-eligibility gate
   // admits; rewritten to "delayed"/"mark" only when the SHADOW exit fallback
   // (below) supplies the price. Never tagged "live" for a fallback fill.
@@ -14258,15 +14291,15 @@ async function refreshActivePosition(input: {
       // mid->bid gap) — filling at raw mid systematically overstated fallback
       // proceeds vs the live path. Mark/last-only fallbacks have no bid to
       // discount against, so raw mid remains their best estimate.
-      const fallbackBid = shadowExitFallback.bid;
-      exitPrice = Number(
-        (shadowExitFallback.fillQuoteSource === "delayed" &&
-        fallbackBid != null &&
-        fallbackBid > 0
-          ? shadowExitFallback.mid -
-            (shadowExitFallback.mid - fallbackBid) * 0.9
-          : shadowExitFallback.mid
-        ).toFixed(2),
+      // Only a two-sided *delayed* quote has a real bid to discount against;
+      // mark/last-only fallbacks pass a null bid so the helper returns the mid.
+      // The same degenerate-spread guard applies here as on the live path.
+      exitPrice = signalOptionsShadowSellFillPrice(
+        shadowExitFallback.mid,
+        shadowExitFallback.fillQuoteSource === "delayed"
+          ? shadowExitFallback.bid
+          : null,
+        shadowExitFallback.mid,
       );
       exitFillQuoteSource = shadowExitFallback.fillQuoteSource;
     }

@@ -1,0 +1,33 @@
+#!/bin/bash
+set -Eeuo pipefail
+
+readonly PID_DIR=/run/pyrus/pids
+
+for service in supervisor xvfb vnc novnc cpg chromium; do
+  pid=$(<"${PID_DIR}/${service}.pid")
+  [[ "${pid}" =~ ^[1-9][0-9]*$ ]]
+  kill -0 "${pid}" 2>/dev/null
+done
+
+[[ -S /tmp/.X11-unix/X99 ]]
+
+listener_exists() {
+  local address=$1
+  local port=$2
+  local port_hex
+  local slot local_address remote_address state rest
+  printf -v port_hex '%04X' "${port}"
+  # /proc/net/tcp encodes 127.0.0.1 as the little-endian value 0100007F.
+  while read -r slot local_address remote_address state rest; do
+    if [[ "${local_address}" == "${address}:${port_hex}" && "${state}" == "0A" ]]; then
+      return 0
+    fi
+  done </proc/net/tcp
+  return 1
+}
+
+# CPG listens on the container interface but admits only 127.0.0.1 in its
+# application allowlist. Docker publishes no ports from the capsule.
+listener_exists 00000000 5000
+listener_exists 0100007F 5900
+listener_exists 0100007F 6080

@@ -31,7 +31,7 @@ import {
 } from "../../lib/uiTokens.jsx";
 import { joinMotionClasses, motionVars } from "../../lib/motion.jsx";
 import { AppTooltip } from "@/components/ui/tooltip";
-import { BrandResolve } from "@/components/marketing/brand-resolve";
+import { PyrusMark } from "@/components/marketing/pyrus-mark";
 import { PyrusWordmark } from "../../components/brand/pyrus-wordmark";
 import { PortfolioPulseZone } from "./PortfolioPulseZone.jsx";
 import { CommandPalette } from "./CommandPalette.jsx";
@@ -44,21 +44,6 @@ const ICONIZED_SCREEN_IDS = new Set(["settings"]);
 const isLiveMode = (environment) => String(environment || "").toLowerCase() === "live";
 
 const SCROLLERS_COLLAPSED_STORAGE_KEY = "pyrus.header.scrollersCollapsed.v1";
-
-const HEADER_MARK_SPHERE_PROPS = {
-  particles: 5200,
-  orbitCount: 1800,
-  particleSize: 0.2,
-  coreOpacity: 0.44,
-  orbitOpacity: 0.28,
-  distortion: 0.54,
-  morphCycleMs: 8200,
-  ringScale: 0.88,
-  lockup: true,
-  lockupMarkOnly: true,
-  stray: 0.28,
-  maxFps: 30,
-};
 
 function HeaderBrandLockup({
   className,
@@ -78,12 +63,11 @@ function HeaderBrandLockup({
         flexShrink: 0,
       }}
     >
-      <BrandResolve
+      <PyrusMark
         className={markClassName}
         haloBlur={0.45}
         bloomBlur={1.8}
-        sphereInsetClassName="-inset-[72%]"
-        sphereProps={HEADER_MARK_SPHERE_PROPS}
+        title=""
       />
       <PyrusWordmark width={wordmarkWidth ?? (compact ? 116 : 150)} title="PYRUS" />
     </div>

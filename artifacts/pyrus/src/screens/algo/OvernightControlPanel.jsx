@@ -9,6 +9,7 @@ import {
   textSize,
 } from "../../lib/uiTokens.jsx";
 import { ActionButton } from "../../components/ui/ActionButton.jsx";
+import { Badge } from "../../components/platform/primitives.jsx";
 import { AppTooltip } from "@/components/ui/tooltip";
 import { normalizeLegacyAlgoBrandText } from "./algoBranding.js";
 import { useRunOvernightSpotSignalScan } from "@workspace/api-client-react";
@@ -68,6 +69,14 @@ export const OvernightControlPanel = ({ deployment }) => {
 
   const deploymentId = deployment?.id || null;
   const mode = String(overnight.executionMode || "disabled");
+  // Operational readiness is the primary read: live trades real money tonight
+  // (red risk), shadow records only (amber/limited), disabled is neutral standby.
+  const modeTone =
+    mode === "live"
+      ? CSS_COLOR.red
+      : mode === "shadow"
+        ? CSS_COLOR.amber
+        : CSS_COLOR.textMuted;
 
   const runShadowScan = () => {
     if (!deploymentId || scanMutation.isPending) return;
@@ -89,13 +98,22 @@ export const OvernightControlPanel = ({ deployment }) => {
       <div
         data-testid="overnight-control-panel-empty"
         style={{
+          display: "flex",
+          flexDirection: "column",
+          gap: sp("4px"),
           padding: sp("12px"),
           color: CSS_COLOR.textMuted,
           fontFamily: T.sans,
           fontSize: textSize("label"),
         }}
       >
-        No overnight / equity deployment selected.
+        <span style={{ color: CSS_COLOR.textSec }}>
+          No overnight / equity deployment selected.
+        </span>
+        <span>
+          Select an overnight / equity deployment from the list to view its
+          controls.
+        </span>
       </div>
     );
   }
@@ -143,15 +161,10 @@ export const OvernightControlPanel = ({ deployment }) => {
           {normalizeLegacyAlgoBrandText(deployment.name || "Overnight deployment")}
         </span>
         <span
-          style={{
-            marginLeft: "auto",
-            fontFamily: T.mono,
-            fontSize: textSize("label"),
-            color: CSS_COLOR.textMuted,
-            textTransform: "uppercase",
-          }}
+          data-testid="overnight-control-panel-mode"
+          style={{ marginLeft: "auto", flex: "0 0 auto" }}
         >
-          {mode}
+          <Badge color={modeTone}>{mode}</Badge>
         </span>
       </div>
 

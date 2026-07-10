@@ -2322,43 +2322,6 @@ export const HeaderBroadcastScrollerStack = memo(({
     padding: sp(8),
   };
 
-  // Phone-only compact strip: one row of three tappable chips (wave glyph +
-  // label + tone dot) that replace the stacked lane cards. Each chip mirrors the
-  // stacked lane's tone ladder + wave status and opens the same lane surface, so
-  // amber RATE LIMITED / red transport-error states stay visible via the dot.
-  const compactLanes = [
-    {
-      key: "signals",
-      label: "SIGNALS",
-      tone: signalScanTone,
-      waveStatus: signalWaveStatus,
-      waveTestId: "header-signal-scan-wave",
-      testId: "header-signal-strip-chip",
-      statusLabel: signalStatusLabel,
-      onTap: () => setOpenSettingsLane("signals"),
-    },
-    {
-      key: "unusual",
-      label: "FLOW",
-      tone: flowScanTone,
-      waveStatus: flowWaveStatus,
-      waveTestId: "header-unusual-broad-wave",
-      testId: "header-unusual-strip-chip",
-      statusLabel: flowScanStatusLabel,
-      onTap: () => setOpenSettingsLane("unusual"),
-    },
-    {
-      key: "algo",
-      label: "ALGO",
-      tone: algoLaneTone,
-      waveStatus: algoWaveStatus,
-      waveTestId: "header-algo-wave",
-      testId: "header-algo-strip-chip",
-      statusLabel: algoItems.length ? "LIVE" : "IDLE",
-      onTap: () => onAlgoAction?.(),
-    },
-  ];
-
   return (
     <div
       ref={rootRef}
@@ -2375,83 +2338,6 @@ export const HeaderBroadcastScrollerStack = memo(({
         boxShadow: isPhone ? `0 1px 0 ${CSS_COLOR.border}` : undefined,
       }}
     >
-      {isPhone ? (
-        <div
-          data-testid="header-broadcast-compact-strip"
-          role="group"
-          aria-label="Broadcast lanes"
-          style={{
-            display: "flex",
-            alignItems: "stretch",
-            gap: sp(4),
-            minWidth: 0,
-          }}
-        >
-          {compactLanes.map((lane) => {
-            const active = openSettingsLane === lane.key;
-            return (
-              <button
-                key={lane.key}
-                type="button"
-                data-testid={lane.testId}
-                aria-label={`${lane.label} ${lane.statusLabel}`}
-                onClick={lane.onTap}
-                className="ra-interactive"
-                style={{
-                  ...motionVars({ accent: lane.tone }),
-                  flex: "1 1 0",
-                  minWidth: 0,
-                  minHeight: dim(44),
-                  display: "inline-flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  gap: sp(5),
-                  padding: sp("0px 6px"),
-                  border: `1px solid ${active ? lane.tone : CSS_COLOR.border}`,
-                  borderRadius: dim(RADII.sm),
-                  background: active
-                    ? `${cssColorMix(lane.tone, 9)}`
-                    : CSS_COLOR.bg0,
-                  color: CSS_COLOR.textSec,
-                  cursor: "pointer",
-                  fontFamily: T.sans,
-                  fontSize: textSize("caption"),
-                  fontWeight: FONT_WEIGHTS.medium,
-                  whiteSpace: "nowrap",
-                  overflow: "hidden",
-                }}
-              >
-                <HeaderLaneWaveIcon
-                  status={lane.waveStatus}
-                  dataTestId={lane.waveTestId}
-                />
-                <span
-                  style={{
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                    minWidth: 0,
-                  }}
-                >
-                  {lane.label}
-                </span>
-                <span
-                  aria-hidden="true"
-                  data-testid={`${lane.testId}-tone-dot`}
-                  style={{
-                    width: dim(8),
-                    height: dim(8),
-                    flexShrink: 0,
-                    borderRadius: dim(RADII.pill),
-                    background: lane.tone,
-                    boxShadow: `0 0 0 3px ${cssColorMix(lane.tone, 14)}`,
-                  }}
-                />
-              </button>
-            );
-          })}
-        </div>
-      ) : (
-        <>
       <Popover
         open={!isPhone && signalTriggerActive}
         onOpenChange={(next) => setOpenSettingsLane(next ? "signals" : null)}
@@ -2608,8 +2494,6 @@ export const HeaderBroadcastScrollerStack = memo(({
           />
         )}
       </HeaderBroadcastLane>
-        </>
-      )}
 
       <BottomSheet
         open={isPhone && openSettingsLane === "signals"}

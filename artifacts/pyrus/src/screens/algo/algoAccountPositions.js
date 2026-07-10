@@ -480,6 +480,9 @@ export const buildAlgoAccountPositionRows = ({
       optionContract,
       optionQuote,
       underlyingMarket,
+      // Wire-trail telemetry (backend passthrough) for the row drilldown's
+      // wire visualization; null on broker rows with no signal-options context.
+      lastWireTrail: position?.lastWireTrail ?? null,
       automationContext: {
         entryPrice: entry,
         peakPrice: firstPositiveNumber(position?.peakPrice),
@@ -735,6 +738,9 @@ const mergeAccountRowWithRuntimeSupplement = (accountRow, runtimeRow) => {
       runtimeRow.underlyingMarket,
       accountRow.underlyingMarket,
     ),
+    // Prefer whichever side actually carries wire telemetry (the ...accountRow
+    // spread would otherwise let a null account value clobber a runtime one).
+    lastWireTrail: accountRow.lastWireTrail ?? runtimeRow.lastWireTrail ?? null,
     automationContext: {
       ...runtimeAutomation,
       ...accountAutomation,

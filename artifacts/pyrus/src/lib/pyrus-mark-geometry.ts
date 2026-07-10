@@ -15,23 +15,20 @@ export interface RingSpec {
   opacity: number;
   /** SVG strokeDasharray [dash, gap], or null for a solid ring. */
   dash: [number, number] | null;
-  /** Spin period in seconds, or null for a static ring. */
-  durationS: number | null;
-  direction: "normal" | "reverse";
 }
 
 /** Concentric rings, outermost first. Mirrors the `<circle>` stack in PyrusMark. */
 export const RING_SPECS: RingSpec[] = [
-  { id: "ring-06-outer-data-grid", r: 82, strokeWidth: 4, opacity: 0.95, dash: [10, 6], durationS: 26, direction: "reverse" },
-  { id: "ring-05-execution-track", r: 71, strokeWidth: 1.5, opacity: 0.9, dash: [1.5, 3], durationS: 34, direction: "normal" },
-  { id: "boundary-r62", r: 62, strokeWidth: 1.1, opacity: 0.9, dash: [0.8, 3], durationS: null, direction: "normal" },
-  { id: "ring-03-model-transition", r: 50, strokeWidth: 2.5, opacity: 0.95, dash: [6, 4], durationS: 44, direction: "reverse" },
-  { id: "ring-01-inner-ticks-outer", r: 40, strokeWidth: 1, opacity: 0.85, dash: [3, 3], durationS: 56, direction: "normal" },
-  { id: "boundary-r30", r: 30, strokeWidth: 0.9, opacity: 0.85, dash: [0.6, 2.4], durationS: null, direction: "normal" },
+  { id: "ring-06-outer-data-grid", r: 82, strokeWidth: 4, opacity: 0.95, dash: [10, 6] },
+  { id: "ring-05-execution-track", r: 71, strokeWidth: 1.5, opacity: 0.9, dash: [1.5, 3] },
+  { id: "boundary-r62", r: 62, strokeWidth: 1.1, opacity: 0.9, dash: [0.8, 3] },
+  { id: "ring-03-model-transition", r: 50, strokeWidth: 2.5, opacity: 0.95, dash: [6, 4] },
+  { id: "ring-01-inner-ticks-outer", r: 40, strokeWidth: 1, opacity: 0.85, dash: [3, 3] },
+  { id: "boundary-r30", r: 30, strokeWidth: 0.9, opacity: 0.85, dash: [0.6, 2.4] },
 ];
 
 /** Particle rim (72 dots at r=94), the outermost rotating element. */
-export const RIM_DOTS = { count: 72, r: 94, dotR: 1, durationS: 18, direction: "normal" as const };
+export const RIM_DOTS = { count: 72, r: 94, dotR: 1 };
 
 /** Rim-dot positions in viewBox space (used by the SVG mark). */
 export function rimDotPositions() {

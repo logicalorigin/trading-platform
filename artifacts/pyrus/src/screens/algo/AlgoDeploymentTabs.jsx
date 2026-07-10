@@ -19,10 +19,14 @@ const HIDE_SCROLLBAR_STYLE = {
 };
 
 // lastError wins over enabled so a running-but-errored deployment reads red.
+// `shape` is a non-color cue so run status is legible without relying on hue:
+// filled circle = running, hollow ring = paused, filled square = errored.
 const resolveStatusDot = (deployment) => {
-  if (deployment?.lastError) return { color: CSS_COLOR.red, label: "errored" };
-  if (deployment?.enabled) return { color: CSS_COLOR.green, label: "running" };
-  return { color: CSS_COLOR.amber, label: "paused" };
+  if (deployment?.lastError)
+    return { color: CSS_COLOR.red, label: "errored", shape: "square" };
+  if (deployment?.enabled)
+    return { color: CSS_COLOR.green, label: "running", shape: "filled" };
+  return { color: CSS_COLOR.amber, label: "paused", shape: "ring" };
 };
 
 // Shadow/live toggle chip. Nested inside the tab (which is a div, not a button,
@@ -134,13 +138,16 @@ const AlgoDeploymentTab = ({
       }}
     >
       <span
-        aria-label={dot.label}
+        role="img"
+        aria-label={`Status: ${dot.label}`}
         style={{
           flexShrink: 0,
           width: dim(8),
           height: dim(8),
-          borderRadius: dim(RADII.pill),
-          background: dot.color,
+          borderRadius: dot.shape === "square" ? dim(1) : dim(RADII.pill),
+          background: dot.shape === "ring" ? "transparent" : dot.color,
+          border: dot.shape === "ring" ? `1.5px solid ${dot.color}` : "none",
+          boxSizing: "border-box",
         }}
       />
       <span
