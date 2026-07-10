@@ -59,7 +59,7 @@ test("IBKR embed grants are one-time, origin-bound, expiring, and revocable", ()
       embedOrigin,
       now + 4,
     )?.gatewayCookieNames,
-    [],
+    ["XYZAB", "XYZAB_AM.LOGIN"],
   );
   rememberIbkrPortalEmbedCookieNames(
     `pyrus_ibkr_embed=${redeemed.sessionToken}`,
@@ -73,7 +73,7 @@ test("IBKR embed grants are one-time, origin-bound, expiring, and revocable", ()
       embedOrigin,
       now + 4,
     )?.gatewayCookieNames,
-    ["JSESSIONID", "URL_PARAM"],
+    ["JSESSIONID", "URL_PARAM", "XYZAB", "XYZAB_AM.LOGIN"],
   );
   assert.equal(
     readIbkrPortalEmbedSession(

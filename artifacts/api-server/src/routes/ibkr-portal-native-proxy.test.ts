@@ -201,6 +201,7 @@ test("native IBKR proxy uses the CPG target and keeps app credentials out of the
       const embedAuthHeaders = {
         cookie:
           `${embedCookie.split(";", 1)[0]}; gateway_session=kept; ` +
+          "XYZAB=srp-session; XYZAB_AM.LOGIN=service-session; " +
           "replit_session=platform-secret; theme=dark",
       };
       const root = await previousFetch(`${embedOrigin}${CLIENT_MOUNT}/`, {
@@ -266,7 +267,11 @@ test("native IBKR proxy uses the CPG target and keeps app credentials out of the
       assert.equal(submitted.status, 200);
       assert.equal(await submitted.text(), "accepted");
       assert.equal(upstreamBody, formBody);
-      assert.equal(upstreamCookie, "gateway_session=kept");
+      assert.equal(
+        upstreamCookie,
+        "gateway_session=kept; XYZAB=srp-session; " +
+          "XYZAB_AM.LOGIN=service-session",
+      );
       assert.equal(upstreamAuthorization, undefined);
       assert.equal(upstreamCsrf, undefined);
       assert.equal(upstreamOrigin, `http://127.0.0.1:${cpgPort}`);

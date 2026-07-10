@@ -102,7 +102,9 @@ export function redeemIbkrPortalEmbedGrant(
   const session = {
     ...grant,
     expiresAt: now + SESSION_TTL_MS,
-    gatewayCookieNames: new Set<string>(),
+    // IBKR creates these SRP session cookies in browser JavaScript after 2FA,
+    // so they cannot be discovered from an upstream Set-Cookie response.
+    gatewayCookieNames: new Set(["XYZAB", "XYZAB_AM.LOGIN"]),
   };
   sessions.set(tokenDigest(sessionToken), session);
   return { ...grant, expiresAt: session.expiresAt, sessionToken };
