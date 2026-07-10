@@ -79,7 +79,12 @@ const formatLoadingSourceLine = (item) => {
 
 const maskEndpointSegment = (segment) => {
   if (!segment) return segment;
-  const decoded = decodeURIComponent(segment);
+  let decoded;
+  try {
+    decoded = decodeURIComponent(segment);
+  } catch {
+    return ":id";
+  }
   if (ACCOUNT_ID_RE.test(decoded)) return ":account";
   if (UUID_RE.test(decoded) || LONG_NUMERIC_RE.test(decoded)) return ":id";
   return segment;
