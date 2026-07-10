@@ -2,7 +2,7 @@ import type { PineScriptRecord } from "@workspace/api-client-react";
 import {
   aggregatePyrusSignalsBarsForTimeframe,
   computePyrusSignalsVolatilityScore,
-  DEFAULT_PYRUS_SIGNALS_CHART_SIGNAL_SETTINGS,
+  DEFAULT_PYRUS_SIGNALS_SIGNAL_SETTINGS,
   computePyrusSignalsWma,
   evaluatePyrusSignalsSignals,
   resolvePyrusSignalsSessionKey,
@@ -165,10 +165,10 @@ export type PyrusSignalsRuntimeSettings = {
 };
 
 export const DEFAULT_PYRUS_SIGNALS_SETTINGS: PyrusSignalsRuntimeSettings = {
-  ...DEFAULT_PYRUS_SIGNALS_CHART_SIGNAL_SETTINGS,
-  mtf1: DEFAULT_PYRUS_SIGNALS_CHART_SIGNAL_SETTINGS.mtf1 as PyrusSignalsTimeframeOption,
-  mtf2: DEFAULT_PYRUS_SIGNALS_CHART_SIGNAL_SETTINGS.mtf2 as PyrusSignalsTimeframeOption,
-  mtf3: DEFAULT_PYRUS_SIGNALS_CHART_SIGNAL_SETTINGS.mtf3 as PyrusSignalsTimeframeOption,
+  ...DEFAULT_PYRUS_SIGNALS_SIGNAL_SETTINGS,
+  mtf1: DEFAULT_PYRUS_SIGNALS_SIGNAL_SETTINGS.mtf1 as PyrusSignalsTimeframeOption,
+  mtf2: DEFAULT_PYRUS_SIGNALS_SIGNAL_SETTINGS.mtf2 as PyrusSignalsTimeframeOption,
+  mtf3: DEFAULT_PYRUS_SIGNALS_SIGNAL_SETTINGS.mtf3 as PyrusSignalsTimeframeOption,
   structureLineStyle: "solid",
   tp1Rr: 0.5,
   tp2Rr: 1,
