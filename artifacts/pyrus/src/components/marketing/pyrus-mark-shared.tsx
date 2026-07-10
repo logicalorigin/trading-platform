@@ -10,45 +10,6 @@ export function spin(
   } as CSSProperties;
 }
 
-/** Generates a "band" of radial rect chunks distributed at varying radii
- *  within an annulus. Matches the reference's data-scatter aesthetic where
- *  each band is many tall rects at slightly different distances from center,
- *  not a single flat ring. Deterministic via a sin-hash so SSR renders match. */
-export function chunkBand({
-  count,
-  innerR,
-  outerR,
-  width = 1,
-  minHeight = 1.5,
-  maxHeight = 4,
-  seed = 0,
-}: {
-  count: number;
-  innerR: number;
-  outerR: number;
-  width?: number;
-  minHeight?: number;
-  maxHeight?: number;
-  seed?: number;
-}) {
-  return Array.from({ length: count }, (_, i) => {
-    const h1 = Math.abs(Math.sin((i + seed) * 12.9898) * 43758.5453) % 1;
-    const h2 = Math.abs(Math.sin((i + seed) * 78.233 + 1) * 43758.5453) % 1;
-
-    const radius = innerR + h1 * (outerR - innerR);
-    const height = minHeight + h2 * (maxHeight - minHeight);
-    const angle = (i / count) * 360;
-
-    return {
-      angle,
-      x: 100 - width / 2,
-      y: 100 - radius - height / 2,
-      width,
-      height,
-    };
-  });
-}
-
 /** Per-instance IDs so multiple marks on a page don't share `<defs>`. */
 export function useMarkIds() {
   const raw = useId().replace(/:/g, "");

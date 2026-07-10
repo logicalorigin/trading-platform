@@ -1,7 +1,7 @@
 import { Suspense, lazy, useSyncExternalStore } from "react";
 import { BrandResolve } from "@/components/marketing/brand-resolve";
 import { PyrusMark } from "@/components/marketing/pyrus-mark";
-import { usePrefersReducedMotion } from "@/components/marketing/pyrus-mark-3d";
+import { usePrefersReducedMotion } from "@/components/marketing/use-prefers-reduced-motion";
 import type { NeuralCoreProps } from "@/components/marketing/neural-core";
 import { isNeuralWebglRendererSupported } from "@/lib/webglCapability";
 import { PyrusWordmark } from "../brand/pyrus-wordmark";

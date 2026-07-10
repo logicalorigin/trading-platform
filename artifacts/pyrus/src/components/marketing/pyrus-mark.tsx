@@ -1,11 +1,9 @@
 /**
  * The 2D SVG Pyrus mark - the canonical, dependency-free brand mark used across
- * the site (nav, footer, loaders, 404). It is also the fallback rendered by
- * PyrusMark3D whenever the 3D scene can't or shouldn't run.
+ * the site (nav, loaders, and signed-out surfaces).
  *
  * Geometry + gradient come from src/lib/pyrus-mark-geometry.ts so the SVG and 3D
- * marks stay in parity. Lives in its own module (rather than chrome.tsx) so the
- * 3D wrapper can import it without an import cycle.
+ * mark stays aligned with the neural logo target.
  */
 import {
   MarkDefs,
@@ -39,8 +37,8 @@ export function PyrusMark({
   const stroke = `url(#${gradientId})`;
 
   // Geometry comes from the shared source of truth so the 2D and 3D marks stay
-  // in parity. RING_SPECS is outermost-first; the gauge sits visually between
-  // r62 and r50 but stroke order is immaterial (no element overlaps another).
+  // in parity. RING_SPECS is outermost-first; stroke order is immaterial because
+  // no element overlaps another.
   return (
     <svg
       viewBox={`0 0 ${MARK_VIEWBOX} ${MARK_VIEWBOX}`}

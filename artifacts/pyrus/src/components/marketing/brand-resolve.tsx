@@ -13,7 +13,7 @@ import {
 } from "react";
 
 import { PyrusMark } from "@/components/marketing/pyrus-mark";
-import { usePrefersReducedMotion } from "@/components/marketing/pyrus-mark-3d";
+import { usePrefersReducedMotion } from "@/components/marketing/use-prefers-reduced-motion";
 import type { NeuralCoreProps } from "@/components/marketing/neural-core";
 import { isWebglAvailable } from "@/lib/webglCapability";
 import { cn } from "@/lib/utils";

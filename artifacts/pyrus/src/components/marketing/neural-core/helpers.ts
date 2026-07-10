@@ -49,8 +49,8 @@ function hashRand(n: number): number {
 type StrokePt = { x: number; y: number; seg: number; spin: number };
 // Per-element SPIN rate (rad/s) so each ring rotates INDEPENDENTLY like the real
 // mark: a full turn in `durationS` seconds (2pi/durationS), negated for reverse
-// direction; null duration = static (0). Values mirror RING_SPECS / RIM_DOTS /
-// DATA_NODES in lib/pyrus-mark-geometry.ts.
+// direction; null duration = static (0). Values mirror RING_SPECS / RIM_DOTS in
+// lib/pyrus-mark-geometry.ts.
 const TAU = Math.PI * 2;
 const spinRate = (durationS: number | null, reverse: boolean) =>
   durationS ? ((reverse ? -1 : 1) * TAU) / durationS : 0;

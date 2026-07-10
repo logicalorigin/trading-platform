@@ -19,8 +19,7 @@ const requiredFiles = [
   "src/components/marketing/brand-resolve.tsx",
   "src/components/marketing/pyrus-mark.tsx",
   "src/components/marketing/pyrus-mark-shared.tsx",
-  "src/components/marketing/pyrus-mark-3d.tsx",
-  "src/components/marketing/pyrus-mark-3d-scene.tsx",
+  "src/components/marketing/use-prefers-reduced-motion.ts",
   "src/components/marketing/pyrus-logo.standalone.tsx",
   "src/lib/observe-visibility.ts",
   "src/lib/pyrus-mark-geometry.ts",
@@ -30,9 +29,17 @@ const requiredFiles = [
   "public/brand/pyrus-mark-dark.svg",
 ];
 
+const retiredFiles = [
+  "src/components/marketing/pyrus-mark-3d.tsx",
+  "src/components/marketing/pyrus-mark-3d-scene.tsx",
+];
+
 test("brand kit compatibility entry points and assets are installed", () => {
   for (const file of requiredFiles) {
     assert.ok(exists(file), `Expected ${file} to exist`);
+  }
+  for (const file of retiredFiles) {
+    assert.equal(exists(file), false, `Expected ${file} to be removed`);
   }
 
   const indexCss = read("src/index.css");
@@ -49,6 +56,12 @@ test("brand kit compatibility entry points and assets are installed", () => {
     read("src/components/marketing/neural-core/helpers.ts"),
     /pyrus-wordmark-points|PYRUS_WORDMARK_PTS/,
   );
+
+  const reducedMotionHook = read(
+    "src/components/marketing/use-prefers-reduced-motion.ts",
+  );
+  assert.match(reducedMotionHook, /MutationObserver/);
+  assert.match(reducedMotionHook, /data-pyrus-reduced-motion/);
 });
 
 test("adapted neural install does not import react-three-fiber", () => {
@@ -124,4 +137,13 @@ test("brand resolve keeps only the live app rendering contract", () => {
     /brand-resolve-(sphere|logo|guide)/,
   );
   assert.doesNotMatch(brandCss, /brand-loader-word--resolve|pyrus-splash-pulse/);
+});
+
+test("brand motion honors the app reduced-motion preference", () => {
+  const brandCss = read("src/styles/brand.css");
+
+  assert.match(
+    brandCss,
+    /html\[data-pyrus-reduced-motion="on"\] \.pyrus-ring\s*\{[^}]*animation:\s*none/s,
+  );
 });

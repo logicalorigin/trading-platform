@@ -7,7 +7,7 @@ import {
   useSyncExternalStore,
 } from "react";
 import { Button } from "../../components/ui/Button.jsx";
-import { usePrefersReducedMotion } from "../../components/marketing/pyrus-mark-3d";
+import { usePrefersReducedMotion } from "../../components/marketing/use-prefers-reduced-motion";
 import {
   Card,
   CardContent,

@@ -25,6 +25,9 @@
 @media (prefers-reduced-motion: reduce) {
   .pyrus-ring { animation: none; }
 }
+html[data-pyrus-reduced-motion="on"] .pyrus-ring {
+  animation: none;
+}
 
 /* -----------------------------------------------------------------------------
    2. BrandLoader wordmark fade-up (the PYRUS PNG under the resolving mark).
