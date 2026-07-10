@@ -2779,8 +2779,11 @@ function maxFooterPressureLevel(
 function buildResourcePressureMetrics(
   runtime: JsonRecord,
   automationMetrics: JsonRecord = {},
+  readApiProcessMemoryUsage: () => Pick<NodeJS.MemoryUsage, "rss"> = () =>
+    process.memoryUsage(),
 ): JsonRecord {
   const api = buildApiMetrics(runtime);
+  const apiRssMb = mb(readApiProcessMemoryUsage().rss);
   const latest = latestClientMetric();
   const browserMemory = asJsonRecord(latest?.memory);
   const clientPressure = asJsonRecord(latest?.memoryPressure);
@@ -2848,7 +2851,10 @@ function buildResourcePressureMetrics(
     cacheLevel,
   ]);
   const resourcePressure = updateApiResourcePressure({
-    rssMb: numeric(api["rssMb"]),
+    // Sample the API process at the pressure-update point. `runtime` was
+    // captured before the collector's async probes and can be minutes stale
+    // when a loaded collector skips overlapping 15-second ticks.
+    rssMb: apiRssMb,
     apiHeapUsedPercent: heapPressurePercent,
     apiP95LatencyMs: numeric(api["rawP95LatencyMs"]),
     dominantSlowRouteP95Ms: numeric(api["dominantSlowRoutePressureP95Ms"]),
@@ -2904,7 +2910,7 @@ function buildResourcePressureMetrics(
     heap_used_percent: heapUsedPercent,
     heapUsedMb: api["heapUsedMb"],
     heapLimitMb: api["heapLimitMb"],
-    rssMb: api["rssMb"],
+    rssMb: apiRssMb,
     apiRssThresholds,
     eventLoopP95Ms: api["eventLoopP95Ms"],
     dbPoolActive: dbPool.active,
@@ -4930,6 +4936,7 @@ export function getLatestDiagnostics(): DiagnosticsLatestPayload | null {
 export const __diagnosticsInternalsForTests = {
   buildIbkrDiagnosticEvents,
   buildIbkrMetrics,
+  buildResourcePressureMetrics,
   diagnosticsDbPoolIsSaturated,
   shouldPersistDiagnosticEventToDb,
   shouldRunDiagnosticsRetentionCleanup,

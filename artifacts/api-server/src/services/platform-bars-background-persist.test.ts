@@ -84,6 +84,7 @@ test("background bar-cache persists drain one at a time by default", async () =>
         pressureSkipped: 0,
         coalesced: 0,
         dropped: 0,
+        droppedForPressure: 0,
         maxQueueLength: 2,
       },
     );
@@ -160,6 +161,91 @@ test("background bar-cache persist yields to hard DB-pool pressure", async () =>
       delete process.env.BARS_BACKGROUND_PERSIST_CONCURRENCY;
     } else {
       process.env.BARS_BACKGROUND_PERSIST_CONCURRENCY = previousConcurrency;
+    }
+  }
+});
+
+test("background bar-cache persist sheds oldest excess work under pressure", async () => {
+  const previousConcurrency = process.env.BARS_BACKGROUND_PERSIST_CONCURRENCY;
+  const previousShedDepth = process.env.BARS_PERSIST_SHED_QUEUE_DEPTH;
+  process.env.BARS_BACKGROUND_PERSIST_CONCURRENCY = "1";
+  process.env.BARS_PERSIST_SHED_QUEUE_DEPTH = "2";
+  __resetOptionChainCachesForTests({ resetFlowScanner: false });
+  __resetApiResourcePressureForTests();
+
+  const releases: Array<() => void> = [];
+  const started: string[] = [];
+  try {
+    __platformBarsCacheTestInternals.setBarsBackgroundPersistWorkerForTests(
+      async (input) => {
+        started.push(input.request.symbol);
+        if (input.request.symbol === "HOLD") {
+          await new Promise<void>((resolve) => {
+            releases.push(resolve);
+          });
+        }
+        return true;
+      },
+    );
+
+    __platformBarsCacheTestInternals.queueBarsBackgroundPersistForTests(
+      makePersistInput("HOLD"),
+    );
+    updateApiResourcePressure({
+      dbPoolActive: 12,
+      dbPoolWaiting: 1,
+      dbPoolMax: 12,
+    });
+    __platformBarsCacheTestInternals.queueBarsBackgroundPersistForTests(
+      makePersistInput("A"),
+    );
+    __platformBarsCacheTestInternals.queueBarsBackgroundPersistForTests(
+      makePersistInput("B"),
+    );
+
+    const atThreshold =
+      __platformBarsCacheTestInternals.getBarsBackgroundPersistDiagnostics();
+    assert.equal(atThreshold.active, 1);
+    assert.equal(atThreshold.queued, 2);
+    assert.equal(atThreshold.dropped, 0);
+    assert.equal(atThreshold.droppedForPressure, 0);
+
+    __platformBarsCacheTestInternals.queueBarsBackgroundPersistForTests(
+      makePersistInput("C"),
+    );
+    const shed =
+      __platformBarsCacheTestInternals.getBarsBackgroundPersistDiagnostics();
+    assert.equal(shed.active, 1);
+    assert.equal(shed.queued, 2);
+    assert.equal(shed.dropped, 1);
+    assert.equal(shed.droppedForPressure, 1);
+
+    releases.shift()?.();
+    await __platformBarsCacheTestInternals.waitForBarsBackgroundPersistIdleForTests();
+
+    assert.deepEqual(started, ["HOLD", "B", "C"]);
+    assert.equal(
+      __platformBarsCacheTestInternals.getBarsBackgroundPersistDiagnostics()
+        .completed,
+      3,
+    );
+  } finally {
+    while (releases.length) {
+      releases.shift()?.();
+    }
+    await __platformBarsCacheTestInternals.waitForBarsBackgroundPersistIdleForTests();
+    __resetApiResourcePressureForTests();
+    __platformBarsCacheTestInternals.setBarsBackgroundPersistWorkerForTests(null);
+    __resetOptionChainCachesForTests({ resetFlowScanner: false });
+    if (previousConcurrency === undefined) {
+      delete process.env.BARS_BACKGROUND_PERSIST_CONCURRENCY;
+    } else {
+      process.env.BARS_BACKGROUND_PERSIST_CONCURRENCY = previousConcurrency;
+    }
+    if (previousShedDepth === undefined) {
+      delete process.env.BARS_PERSIST_SHED_QUEUE_DEPTH;
+    } else {
+      process.env.BARS_PERSIST_SHED_QUEUE_DEPTH = previousShedDepth;
     }
   }
 });
@@ -289,6 +375,7 @@ test("background bar-cache persist queue drops oldest entry at the cap", async (
       __platformBarsCacheTestInternals.getBarsBackgroundPersistDiagnostics();
     assert.equal(capped.queued, 512);
     assert.equal(capped.dropped, 1);
+    assert.equal(capped.droppedForPressure, 0);
     assert.equal(capped.maxQueueLength, 512);
 
     releases.shift()?.();

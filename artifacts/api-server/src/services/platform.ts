@@ -3364,6 +3364,7 @@ export async function getRuntimeDiagnostics() {
         arrayBuffers: mb(memory.arrayBuffers),
       },
       resourceCaches,
+      resourcePressure: getApiResourcePressureSnapshot(),
       accountPage: getAccountPageStreamDiagnostics(),
       shadowAccountReads: getShadowAccountReadDiagnostics(),
       pythonCompute: getPythonComputeDiagnostics(),
@@ -9133,6 +9134,7 @@ let barsBackgroundPersistSkipped = 0;
 let barsBackgroundPersistPressureSkipped = 0;
 let barsBackgroundPersistCoalesced = 0;
 let barsBackgroundPersistDropped = 0;
+let barsBackgroundPersistDroppedForPressure = 0;
 let barsBackgroundPersistMaxQueueLength = 0;
 
 function barsBackgroundPersistConcurrency(): number {
@@ -9160,8 +9162,26 @@ function resolveBarsBackgroundPersistIdle(): void {
   barsBackgroundPersistIdleResolvers.clear();
 }
 
+function barsBackgroundPersistShedQueueDepth(): number {
+  return readPositiveIntegerEnv("BARS_PERSIST_SHED_QUEUE_DEPTH", 128);
+}
+
+function shedBarsBackgroundPersistQueueForPressure(
+  snapshot: ApiResourcePressureSnapshot,
+): void {
+  if (snapshot.resourceLevel === "normal") return;
+  const queueDepth = barsBackgroundPersistShedQueueDepth();
+  while (barsBackgroundPersistQueue.length > queueDepth) {
+    barsBackgroundPersistQueue.shift();
+    barsBackgroundPersistDropped += 1;
+    barsBackgroundPersistDroppedForPressure += 1;
+  }
+}
+
 function drainBarsBackgroundPersistQueue(): void {
-  if (isApiResourcePressureHardBlock()) {
+  const pressure = getApiResourcePressureSnapshot();
+  shedBarsBackgroundPersistQueueForPressure(pressure);
+  if (isApiResourcePressureHardBlock(pressure)) {
     const skipped = barsBackgroundPersistQueue.length;
     if (skipped > 0) {
       barsBackgroundPersistQueue.length = 0;
@@ -9215,7 +9235,9 @@ function barsBackgroundPersistWindowKey(input: BarsBackgroundPersistInput): stri
 
 function queueBarsBackgroundPersist(input: BarsBackgroundPersistInput): void {
   barsBackgroundPersistEnqueued += 1;
-  if (isApiResourcePressureHardBlock()) {
+  const pressure = getApiResourcePressureSnapshot();
+  shedBarsBackgroundPersistQueueForPressure(pressure);
+  if (isApiResourcePressureHardBlock(pressure)) {
     barsBackgroundPersistSkipped += 1;
     barsBackgroundPersistPressureSkipped += 1;
     resolveBarsBackgroundPersistIdle();
@@ -9258,6 +9280,7 @@ function getBarsBackgroundPersistDiagnostics() {
     pressureSkipped: barsBackgroundPersistPressureSkipped,
     coalesced: barsBackgroundPersistCoalesced,
     dropped: barsBackgroundPersistDropped,
+    droppedForPressure: barsBackgroundPersistDroppedForPressure,
     maxQueueLength: barsBackgroundPersistMaxQueueLength,
   };
 }
@@ -14114,6 +14137,7 @@ export function __resetOptionChainCachesForTests(input?: {
   barsBackgroundPersistPressureSkipped = 0;
   barsBackgroundPersistCoalesced = 0;
   barsBackgroundPersistDropped = 0;
+  barsBackgroundPersistDroppedForPressure = 0;
   barsBackgroundPersistMaxQueueLength = 0;
   barsCacheInvalidationVersion = 0;
   chartHistoryCursors.clear();
