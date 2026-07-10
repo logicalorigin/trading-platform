@@ -1,13 +1,13 @@
 import {
   aggregatePyrusSignalsBarsForTimeframe,
   buildPyrusSignalsDirectionalFeatures,
+  isPyrusSignalsBarInSession,
   resolvePyrusSignalsSessionKey,
   resolvePyrusSignalsTrendDirection,
   type PyrusSignalsBar,
   type PyrusSignalsDirection,
   type PyrusSignalsEvaluation,
   type PyrusSignalsFilterState,
-  type PyrusSignalsSessionOption,
   type PyrusSignalsSignalEvent,
   type PyrusSignalsSignalSettings,
   type PyrusSignalsStructureEvent,
@@ -316,25 +316,6 @@ class MedianPositiveIntervalTracker {
   }
 }
 
-const sessionSelectionMatches = (
-  selected: PyrusSignalsSessionOption,
-  current: PyrusSignalsSessionOption | null,
-): boolean => {
-  if (!current) {
-    return false;
-  }
-  if (selected === current) {
-    return true;
-  }
-  if (selected === "asia") {
-    return current === "tokyo" || current === "sydney";
-  }
-  if (selected === "new_york_am" || selected === "new_york_pm") {
-    return current === "new_york";
-  }
-  return false;
-};
-
 const resolvePivotHigh = (
   chartBars: PyrusSignalsBar[],
   pivotIndex: number,
@@ -450,7 +431,7 @@ const buildFilterState = (
   const sessionPass =
     !settings.restrictToSelectedSessions ||
     settings.sessions.some((session) =>
-      sessionSelectionMatches(session, currentSessionKey),
+      isPyrusSignalsBarInSession(chartBars[index], session),
     );
   const gatedPass =
     mtfPass.every(Boolean) && adxPass && volatilityPass && sessionPass;

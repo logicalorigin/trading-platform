@@ -824,22 +824,38 @@ export const resolvePyrusSignalsTrendDirection = (
   return basisComputable ? trendDirection : 0;
 };
 
+export const isPyrusSignalsBarInSession = (
+  bar: PyrusSignalsBar,
+  session: PyrusSignalsSessionOption,
+): boolean => {
+  const value = new Date(bar.time * 1000);
+  const minutes = value.getUTCHours() * 60 + value.getUTCMinutes();
+  if (session === "london") {
+    return minutes >= 8 * 60 && minutes < 17 * 60;
+  }
+  if (
+    session === "new_york" ||
+    session === "new_york_am" ||
+    session === "new_york_pm"
+  ) {
+    return minutes >= 13 * 60 && minutes < 22 * 60;
+  }
+  if (session === "tokyo") {
+    return minutes >= 0 && minutes < 9 * 60;
+  }
+  if (session === "sydney") {
+    return minutes >= 22 * 60 || minutes < 7 * 60;
+  }
+  return session === "asia" && (minutes >= 22 * 60 || minutes < 9 * 60);
+};
+
 export const resolvePyrusSignalsSessionKey = (
   bar: PyrusSignalsBar,
 ): PyrusSignalsSessionOption | null => {
-  const value = new Date(bar.time * 1000);
-  const minutes = value.getUTCHours() * 60 + value.getUTCMinutes();
-  if (minutes >= 8 * 60 && minutes < 17 * 60) {
-    return "london";
-  }
-  if (minutes >= 13 * 60 && minutes < 22 * 60) {
-    return "new_york";
-  }
-  if (minutes >= 0 && minutes < 9 * 60) {
-    return "tokyo";
-  }
-  if (minutes >= 22 * 60 || minutes < 7 * 60) {
-    return "sydney";
+  for (const session of ["london", "new_york", "tokyo", "sydney"] as const) {
+    if (isPyrusSignalsBarInSession(bar, session)) {
+      return session;
+    }
   }
   return null;
 };
@@ -855,25 +871,6 @@ export const resolvePyrusSignalsSessionLabel = (bar: PyrusSignalsBar): string =>
         : key === "sydney"
           ? "Sydney"
           : "Closed";
-};
-
-const sessionSelectionMatches = (
-  selected: PyrusSignalsSessionOption,
-  current: PyrusSignalsSessionOption | null,
-): boolean => {
-  if (!current) {
-    return false;
-  }
-  if (selected === current) {
-    return true;
-  }
-  if (selected === "asia") {
-    return current === "tokyo" || current === "sydney";
-  }
-  if (selected === "new_york_am" || selected === "new_york_pm") {
-    return current === "new_york";
-  }
-  return false;
 };
 
 const resolvePivotHigh = (
@@ -1126,7 +1123,7 @@ const buildFilterState = (
   const sessionPass =
     !settings.restrictToSelectedSessions ||
     settings.sessions.some((session) =>
-      sessionSelectionMatches(session, currentSessionKey),
+      isPyrusSignalsBarInSession(chartBars[index], session),
     );
   const gatedPass =
     mtfPass.every(Boolean) && adxPass && volatilityPass && sessionPass;

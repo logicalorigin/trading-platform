@@ -170,3 +170,64 @@ test("incremental evaluator matches mixed production lastBarClosed identities", 
     );
   }
 });
+
+test("London/New York overlap uses membership with batch/incremental parity", () => {
+  const breakoutIndex = 119;
+  const settings = resolvePyrusSignalsSignalSettings({
+    signalFiltersEnabled: true,
+    restrictToSelectedSessions: true,
+    sessions: ["new_york"],
+    waitForBarClose: true,
+  });
+  const options = {
+    includeProvisionalSignals: false,
+    lastBarClosed: true,
+  } satisfies IncrementalPyrusSignalsEvaluationOptions;
+
+  for (const breakoutIso of [
+    "2026-07-10T14:00:00.000Z",
+    "2026-07-10T14:30:00.000Z",
+  ]) {
+    const breakoutTime = Date.parse(breakoutIso) / 1000;
+    const series = buildBreakoutWithFollowingBar().map((bar, index) => ({
+      ...bar,
+      time: breakoutTime + (index - breakoutIndex) * 300,
+    }));
+    const batch = evaluateFresh(series, settings, options);
+    const evaluator = createIncrementalPyrusSignalsEvaluator(settings, options);
+    let incremental = evaluator.result();
+    for (const bar of series) {
+      incremental = evaluator.append(bar);
+    }
+    const batchEvent = batch.structureEvents.find(
+      (event) =>
+        event.barIndex === breakoutIndex &&
+        event.eventType === "bullish_choch",
+    );
+    const incrementalEvent = incremental.structureEvents.find(
+      (event) =>
+        event.barIndex === breakoutIndex &&
+        event.eventType === "bullish_choch",
+    );
+
+    assert.equal(
+      new Date(series[breakoutIndex].time * 1000).toISOString(),
+      breakoutIso,
+    );
+    assert.ok(batchEvent?.filterState);
+    assert.ok(incrementalEvent?.filterState);
+    assert.equal(batchEvent.filterState.sessionKey, "london");
+    assert.equal(incrementalEvent.filterState.sessionKey, "london");
+    assert.equal(batchEvent.filterState.sessionPass, true);
+    assert.equal(incrementalEvent.filterState.sessionPass, true);
+    assert.equal(batchEvent.filterState.passes, true);
+    assert.equal(incrementalEvent.filterState.passes, true);
+    assert.deepEqual(incrementalEvent.filterState, batchEvent.filterState);
+    assert.ok(
+      batch.signalEvents.some((event) => event.barIndex === breakoutIndex),
+    );
+    assert.ok(
+      incremental.signalEvents.some((event) => event.barIndex === breakoutIndex),
+    );
+  }
+});

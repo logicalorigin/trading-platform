@@ -18,9 +18,14 @@ on the SOT-outcome score model instead of the setup-quality fallback:
 
 import json
 import math
+from datetime import UTC, datetime
 from pathlib import Path
 
-from pyrus_compute.jobs import _signal_directional_features, run_signal_matrix
+from pyrus_compute.jobs import (
+    _build_signal_filter_state,
+    _signal_directional_features,
+    run_signal_matrix,
+)
 from pyrus_compute.models import (
     SignalMatrixBarInput,
     SignalMatrixCellInput,
@@ -61,6 +66,36 @@ def _flat_then_pop_series() -> list[SignalMatrixBarInput]:
     bars = [_bar(i, 100.0, 100.5, 99.5, 100.0) for i in range(6)]
     bars.append(_bar(6, 100.0, 103.5, 99.5, 103.0))
     return bars
+
+
+def test_london_new_york_overlap_uses_membership_not_display_label() -> None:
+    settings = SignalMatrixSettingsInput(
+        signalFiltersEnabled=True,
+        restrictToSelectedSessions=True,
+        sessions=["new_york"],
+    )
+    for minute in (0, 30):
+        bar = SignalMatrixBarInput(
+            time=int(datetime(2026, 7, 10, 14, minute, tzinfo=UTC).timestamp()),
+            o=100,
+            h=101,
+            l=99,
+            c=100,
+            v=1000,
+        )
+        state = _build_signal_filter_state(
+            [bar],
+            index=0,
+            direction=1,
+            settings=settings,
+            adx=[math.nan],
+            volatility_score=[math.nan],
+            atr_smoothed=[math.nan],
+        )
+
+        assert state["sessionKey"] == "london"
+        assert state["sessionPass"] is True
+        assert state["passes"] is True
 
 
 def test_long_direction_hand_computed_features() -> None:

@@ -463,30 +463,31 @@ def _signal_trend_direction(bars: list[SignalMatrixBarInput], basis_length: int)
     return trend_direction if basis_computable else 0
 
 
-def _signal_session_key(bar: SignalMatrixBarInput) -> str | None:
+def _signal_bar_in_session(bar: SignalMatrixBarInput, session: str) -> bool:
     value = datetime.fromtimestamp(bar.time, tz=timezone.utc)
     minutes = value.hour * 60 + value.minute
-    if 8 * 60 <= minutes < 17 * 60:
-        return "london"
-    if 13 * 60 <= minutes < 22 * 60:
-        return "new_york"
-    if 0 <= minutes < 9 * 60:
-        return "tokyo"
-    if minutes >= 22 * 60 or minutes < 7 * 60:
-        return "sydney"
-    return None
-
-
-def _signal_session_matches(selected: str, current: str | None) -> bool:
-    if not current:
-        return False
-    if selected == current:
-        return True
-    if selected == "asia":
-        return current in {"tokyo", "sydney"}
-    if selected in {"new_york_am", "new_york_pm"}:
-        return current == "new_york"
+    if session == "london":
+        return 8 * 60 <= minutes < 17 * 60
+    if session in {"new_york", "new_york_am", "new_york_pm"}:
+        return 13 * 60 <= minutes < 22 * 60
+    if session == "tokyo":
+        return 0 <= minutes < 9 * 60
+    if session == "sydney":
+        return minutes >= 22 * 60 or minutes < 7 * 60
+    if session == "asia":
+        return minutes >= 22 * 60 or minutes < 9 * 60
     return False
+
+
+def _signal_session_key(bar: SignalMatrixBarInput) -> str | None:
+    return next(
+        (
+            session
+            for session in ("london", "new_york", "tokyo", "sydney")
+            if _signal_bar_in_session(bar, session)
+        ),
+        None,
+    )
 
 
 def _pivot_high(bars: list[SignalMatrixBarInput], pivot_index: int, strength: int) -> float | None:
@@ -680,7 +681,7 @@ def _build_signal_filter_state(
         and settings.volScoreMin <= current_volatility_score <= settings.volScoreMax
     )
     session_pass = (not settings.restrictToSelectedSessions) or any(
-        _signal_session_matches(session, current_session_key) for session in settings.sessions
+        _signal_bar_in_session(bars[index], session) for session in settings.sessions
     )
     gated_pass = all(mtf_pass) and adx_pass and volatility_pass and session_pass
     return {
