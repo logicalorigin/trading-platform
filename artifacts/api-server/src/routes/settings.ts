@@ -8,6 +8,7 @@ import {
   getUserPreferencesSnapshot,
   updateUserPreferencesSnapshot,
 } from "../services/user-preferences";
+import { requireAdminCsrf } from "./auth";
 
 const router: IRouter = Router();
 type JsonRecord = Record<string, unknown>;
@@ -137,10 +138,12 @@ router.get("/settings/backend", async (_req, res) => {
 });
 
 router.post("/settings/backend/apply", async (req, res) => {
+  await requireAdminCsrf(req);
   res.json(await applyBackendSettings(req.body ?? {}));
 });
 
 router.post("/settings/backend/actions/:actionId", async (req, res) => {
+  await requireAdminCsrf(req);
   res.json(await runBackendSettingsAction(req.params.actionId, req.body ?? {}));
 });
 
