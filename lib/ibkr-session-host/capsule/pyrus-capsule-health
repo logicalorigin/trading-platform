@@ -3,7 +3,7 @@ set -Eeuo pipefail
 
 readonly PID_DIR=/run/pyrus/pids
 
-for service in supervisor xvfb vnc novnc cpg cpg-relay chromium; do
+for service in supervisor xvfb vnc novnc cpg cpg-relay; do
   pid=$(<"${PID_DIR}/${service}.pid")
   [[ "${pid}" =~ ^[1-9][0-9]*$ ]]
   kill -0 "${pid}" 2>/dev/null

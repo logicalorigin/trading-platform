@@ -55,8 +55,25 @@ test("warm-start runtime cache hydrate call sites opt out of duplicate invalidat
     readLocalSource("../charting/useOptionChartBars.js"),
     "useOptionChartBars",
   );
-  assertHydrateCallOptsOutOfImmediateInvalidation(
-    readLocalSource("../../screens/AccountScreen.jsx"),
-    "AccountScreen",
+});
+
+test("Account never hydrates financial history from the browser runtime cache", () => {
+  const source = readLocalSource("../../screens/AccountScreen.jsx");
+  assert.doesNotMatch(
+    source,
+    /buildAccountHistoryCacheKey|hydrateQueryFromRuntimeCache|readCachedAccountHistory|writeCachedAccountHistory|useRuntimeAccountHistoryCache/,
+  );
+});
+
+test("runtime cache migration drops the retired Account history store", () => {
+  const source = readLocalSource("./runtimeCache.js");
+  assert.match(source, /RUNTIME_CACHE_DB_VERSION\s*=\s*3/);
+  assert.match(
+    source,
+    /version\(RUNTIME_CACHE_DB_VERSION\)\.stores\(\{\s*accountHistory:\s*null,?\s*\}\)/,
+  );
+  assert.doesNotMatch(
+    source,
+    /export const (?:buildAccountHistoryCacheKey|readCachedAccountHistory|writeCachedAccountHistory)/,
   );
 });

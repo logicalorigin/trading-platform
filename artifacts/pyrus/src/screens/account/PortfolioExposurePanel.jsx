@@ -2,12 +2,11 @@ import {
   useMemo,
 } from "react";
 import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from "recharts";
-import { RadialStrokeGauge, StatusPill } from "../../components/platform/primitives.jsx";
+import { RadialStrokeGauge } from "../../components/platform/primitives.jsx";
 import { MarketIdentityInline } from "../../features/platform/marketIdentity";
 import { MeasuredChartFrame } from "../../features/charting/MeasuredChartFrame.jsx";
 import { buildAccountRiskDisplayModel } from "../../features/account/accountPositionRows.js";
 import { chartTooltipContentStyle } from "../../lib/tooltipStyles";
-import { formatAppDateTime } from "../../lib/timeZone";
 import { CSS_COLOR, FONT_WEIGHTS, RADII, T, dim, sp, textSize } from "../../lib/uiTokens.jsx";
 import {
   EmptyState,
@@ -1260,9 +1259,13 @@ export const PortfolioExposurePanel = ({
   rightRail,
   isPhone = false,
 }) => {
+  const riskPayloadDegraded = riskQuery.data?.degraded === true;
   const riskModel = useMemo(
-    () => buildAccountRiskDisplayModel(riskQuery.data, positionsResponse),
-    [riskQuery.data, positionsResponse],
+    () =>
+      riskPayloadDegraded
+        ? null
+        : buildAccountRiskDisplayModel(riskQuery.data, positionsResponse),
+    [positionsResponse, riskPayloadDegraded, riskQuery.data],
   );
   const allocationData = allocationQuery.data || {};
   const assetRows = nonZeroBuckets(allocationData.assetClass || []);
@@ -1271,16 +1274,13 @@ export const PortfolioExposurePanel = ({
   const hasRisk = Boolean(riskModel);
   const riskError = riskQuery.error ?? riskQuery.failureReason;
   const riskTemporarilyDegraded = isDegradedAccountRiskError(riskError);
-  const riskAsOf = riskQuery.data?.asOf ?? riskQuery.data?.updatedAt;
-  const riskStaleLabel = riskQuery.data?.degraded
-    ? `stale${riskAsOf ? ` · as of ${formatAppDateTime(riskAsOf)}` : ""}`
-    : null;
+  const riskUnavailable = riskTemporarilyDegraded || riskPayloadDegraded;
   const allocationInitialLoading =
     (allocationQuery.isLoading ||
       (allocationQuery.isPending && allocationQuery.fetchStatus !== "idle")) &&
     !allocationQuery.data;
   const riskInitialLoading =
-    !riskTemporarilyDegraded &&
+    !riskUnavailable &&
     (riskQuery.isLoading ||
       (riskQuery.isPending && riskQuery.fetchStatus !== "idle")) &&
     !riskQuery.data;
@@ -1289,6 +1289,7 @@ export const PortfolioExposurePanel = ({
     !allocationQuery.error &&
     !riskInitialLoading &&
     !riskError &&
+    !riskUnavailable &&
     !hasAllocation &&
     !hasRisk;
 
@@ -1313,7 +1314,7 @@ export const PortfolioExposurePanel = ({
   };
 
   const renderRiskStrip = () => {
-    if (riskTemporarilyDegraded) return <RiskDegradedState />;
+    if (riskUnavailable) return <RiskDegradedState />;
     if (riskInitialLoading) return <SkeletonRows rows={2} />;
     if (riskError)
       return <InlineError error={riskError} onRetry={riskQuery.refetch} />;
@@ -1342,11 +1343,6 @@ export const PortfolioExposurePanel = ({
         />
       ) : (
         <div data-testid="portfolio-exposure-dashboard" style={{ display: "grid", gap: sp(isPhone ? 3 : 4) }}>
-          {riskStaleLabel ? (
-            <div data-testid="portfolio-exposure-stale-badge" style={{ justifySelf: "end" }}>
-              <StatusPill color={CSS_COLOR.amber}>{riskStaleLabel}</StatusPill>
-            </div>
-          ) : null}
           <ExposureMetricRail
             exposure={allocationData.exposure}
             riskModel={riskModel}
@@ -1374,7 +1370,7 @@ export const PortfolioExposurePanel = ({
             </div>
             <div>
               <DashboardBlock title="Risk Level" compact={isPhone}>
-                {riskTemporarilyDegraded ? (
+                {riskUnavailable ? (
                   <RiskDegradedState />
                 ) : riskInitialLoading ? (
                   <SkeletonRows rows={3} />
@@ -1421,7 +1417,7 @@ export const PortfolioExposurePanel = ({
           {isPhone ? null : (
             <div data-testid="portfolio-exposure-concentration">
               <DashboardBlock title="Concentration">
-                {riskTemporarilyDegraded ? (
+                {riskUnavailable ? (
                   <RiskDegradedState />
                 ) : riskInitialLoading ? (
                   <SkeletonRows rows={2} />

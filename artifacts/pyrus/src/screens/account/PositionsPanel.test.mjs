@@ -4,8 +4,14 @@ import test from "node:test";
 
 import { __positionsPanelInternalsForTests } from "./PositionsPanel.jsx";
 
-const { applyLiveEquityQuoteToRow, applyLiveOptionQuoteToRow, buildDisplayTotals } =
-  __positionsPanelInternalsForTests;
+const {
+  applyLiveEquityQuoteToRow,
+  applyLiveOptionQuoteToRow,
+  buildDisplayTotals,
+  displayTotalsDayChangePercent,
+  displayTotalsUnrealizedPnlPercent,
+  scaledPositionGreek,
+} = __positionsPanelInternalsForTests;
 
 const optionRow = (overrides = {}) => ({
   id: "U1:AAPL-C",
@@ -58,17 +64,18 @@ test("prior-day SHORT option day $ and day % carry the same sign", () => {
     optionRow({
       quantity: -2,
       averageCost: 5,
-      mark: 4,
-      marketValue: -800,
-      unrealizedPnl: 200,
-      unrealizedPnlPercent: 20,
+      mark: 4.2,
+      marketValue: -840,
+      unrealizedPnl: 160,
+      unrealizedPnlPercent: 16,
       openedAt: "2026-06-05T14:30:00.000Z",
-      optionQuote: { mark: 4, bid: 3.95, ask: 4.05, dayChange: 0.1, dayChangePercent: 2.5, source: "ibkr" },
+      optionQuote: { mark: 4.2, bid: 4.15, ask: 4.25, prevClose: 4, dayChange: 0.1, dayChangePercent: 2.5, source: "ibkr" },
     }),
     {
-      mark: 4,
-      bid: 3.95,
-      ask: 4.05,
+      mark: 4.2,
+      bid: 4.15,
+      ask: 4.25,
+      prevClose: 4,
       dayChange: 0.1,
       dayChangePercent: 2.5,
       freshness: "live",
@@ -76,9 +83,10 @@ test("prior-day SHORT option day $ and day % carry the same sign", () => {
       source: "ibkr",
     },
   );
-  // Contract rose +2.5% intraday, so a SHORT loses: both $ and % must be negative.
-  assert.ok(patched.dayChange < 0);
-  assert.ok(patched.dayChangePercent < 0);
+  // Mark rose from 4.00 to 4.20. The raw +0.10/+2.5% fields intentionally
+  // disagree; mark-versus-prior-close is authoritative.
+  assert.ok(Math.abs(patched.dayChange - -40) < 1e-9);
+  assert.ok(Math.abs(patched.dayChangePercent - -5) < 1e-9);
   assert.equal(Math.sign(patched.dayChange), Math.sign(patched.dayChangePercent));
 });
 
@@ -310,6 +318,48 @@ test("display totals sum broker money, not live Massive money", () => {
   assert.equal(totals.grossShort, -500);
   // Broker unrealized (100 + -50) = 50, NOT the live sum (200 + -80) = 120.
   assert.equal(totals.unrealizedPnl, 50);
+});
+
+test("display summary percentages use prior-close and cost bases, not net exposure", () => {
+  const totals = buildDisplayTotals([
+    {
+      marketValue: 1_200,
+      unrealizedPnl: 200,
+      dayChange: 200,
+      dayChangePercent: 20,
+    },
+    {
+      marketValue: -800,
+      unrealizedPnl: 200,
+      dayChange: -100,
+      dayChangePercent: -10,
+    },
+  ]);
+
+  assert.equal(totals.netExposure, 400);
+  assert.equal(totals.dayChangeBasis, 2_000);
+  assert.equal(totals.unrealizedCostBasis, 2_000);
+  assert.equal(displayTotalsDayChangePercent(totals), 5);
+  assert.equal(displayTotalsUnrealizedPnlPercent(totals), 20);
+});
+
+test("position Greek aggregation applies quantity sign and option multiplier", () => {
+  assert.equal(
+    scaledPositionGreek(optionRow({ quantity: 2, optionQuote: { theta: -0.05 } }), "theta"),
+    -10,
+  );
+  assert.equal(
+    scaledPositionGreek(optionRow({ quantity: -2, optionQuote: { theta: -0.05 } }), "theta"),
+    10,
+  );
+});
+
+test("live option delta does not overwrite backend beta-weighted delta", () => {
+  const patched = applyLiveOptionQuoteToRow(
+    optionRow({ betaWeightedDelta: 130 }),
+    { mark: 60, delta: 0.5 },
+  );
+  assert.equal(patched.betaWeightedDelta, 130);
 });
 
 test("real rows follow broker marks; shadow rows stay on live Massive valuation", () => {

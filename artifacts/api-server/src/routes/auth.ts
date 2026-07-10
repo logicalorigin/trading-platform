@@ -1,5 +1,6 @@
 import { Router, type IRouter, type Request, type Response } from "express";
 import { HttpError } from "../lib/errors";
+import { logger } from "../lib/logger";
 import {
   bootstrapInitialUser,
   loginUser,
@@ -11,6 +12,8 @@ import {
 } from "../services/auth";
 import { isLaunchAuthConfigured, launchSession } from "../services/auth-launch";
 import { recordAuditEvent } from "../services/audit-events";
+import { revokeIbkrPortalEmbedSessions } from "../services/ibkr-portal-embed-session";
+import { disconnectPortal } from "../services/ibkr-portal-session";
 import {
   sessionHasEntitlement,
   type Entitlement,
@@ -444,11 +447,18 @@ router.get("/auth/launch", async (req, res) => {
 });
 
 router.post("/auth/logout", async (req, res) => {
-  await requireAuthCsrf(req);
+  const session = await requireAuthCsrf(req);
   const sessionToken = readSessionToken(req);
   if (sessionToken) {
     await revokeAuthSession(sessionToken);
   }
+  revokeIbkrPortalEmbedSessions(session.user.id);
+  void disconnectPortal(session.user.id).catch((error) => {
+    logger.warn(
+      { err: error, appUserId: session.user.id },
+      "IBKR portal cleanup failed after logout",
+    );
+  });
   clearSessionCookie(req, res);
   res.json({ ok: true });
 });

@@ -49,7 +49,6 @@ import { HttpError } from "../lib/errors";
 import { logger } from "../lib/logger";
 import { getRuntimeMode, type RuntimeMode } from "../lib/runtime";
 import {
-  createTransientPostgresBackoff,
   isStatementTimeoutError,
   isTransientPostgresError,
 } from "../lib/transient-db-error";
@@ -60,7 +59,6 @@ import {
   getBarsWithDebug,
   getOptionsFlowUniverse,
   listWatchlists,
-  listWatchlistsRuntimeFallback,
 } from "./platform";
 import {
   getHighBetaUniverseAvailabilityStatus,
@@ -123,7 +121,6 @@ type SignalMonitorStatus =
   | "error"
   | "unknown";
 type SignalMonitorMatrixCacheStatus = "hit" | "stale" | "inflight" | "miss";
-type SignalMonitorEventsSourceStatus = "database" | "runtime-fallback";
 type SignalMonitorMatrixClientRole =
   | "leader"
   | "follower"
@@ -442,20 +439,11 @@ const SIGNAL_MONITOR_MATRIX_TIMEFRAMES: readonly SignalMonitorMatrixTimeframe[] 
   SIGNAL_MONITOR_TIMEFRAMES;
 const DEFAULT_SIGNAL_MONITOR_TIMEFRAME: SignalMonitorTimeframe = "15m";
 const SIGNAL_MONITOR_DB_UNAVAILABLE_MESSAGE =
-  "Postgres is unavailable; signal monitor data is temporarily degraded.";
-const SIGNAL_MONITOR_RUNTIME_FALLBACK_MESSAGE =
-  "Postgres is unavailable; using runtime-only signal monitor evaluation.";
+  "Signal monitor data is temporarily unavailable.";
 const SIGNAL_MONITOR_PASSIVE_SIGNAL_SOURCE_MESSAGE =
   "Signal monitor is passive; signals must be received as ticker-emitted events before Signal Monitor/STA consume them.";
 const SIGNAL_MONITOR_DB_UNAVAILABLE_CODE = "signal_monitor_db_unavailable";
-const SIGNAL_MONITOR_RUNTIME_EVALUATION_CACHE_TTL_MS = 0;
-const SIGNAL_MONITOR_RUNTIME_EVALUATION_CACHE_MAX_ENTRIES = 64;
-const SIGNAL_MONITOR_MATRIX_CACHE_TTL_MS = 0;
-const SIGNAL_MONITOR_MATRIX_STALE_TTL_MS = 0;
-const SIGNAL_MONITOR_MATRIX_EVALUATION_CACHE_MAX_ENTRIES = 64;
 const SIGNAL_MONITOR_MATRIX_AUTOMATIC_DEBOUNCE_MS = 0;
-const SIGNAL_MONITOR_STATE_UNAVAILABLE_MESSAGE =
-  "Signal monitor state is temporarily unavailable; returning fallback unavailable coverage.";
 // Re-enabled (was 30s before 2026-06-12; zeroed as collateral during the state-model
 // repair, which is orthogonal to raw bar data — signal STATE is still recomputed fresh
 // every eval). Freshness is guaranteed NOT by this TTL but by the serve-side bar-behind
@@ -529,10 +517,6 @@ const DEFAULT_SIGNAL_MONITOR_MAX_SYMBOLS = SIGNAL_MONITOR_MAX_SYMBOLS_LIMIT;
 const DEFAULT_SIGNAL_MONITOR_EVALUATION_CONCURRENCY = 6;
 const DEFAULT_SIGNAL_MONITOR_POLL_SECONDS = 60;
 const SIGNAL_MONITOR_MATRIX_SOFT_BYPASS_MAX_SYMBOLS = 12;
-const runtimeSignalMonitorProfiles = new Map<
-  RuntimeMode,
-  DbSignalMonitorProfile
->();
 const TIMEFRAME_MS: Record<SignalMonitorMatrixTimeframe, number> = {
   "1m": 60_000,
   "2m": 2 * 60_000,
@@ -1535,12 +1519,8 @@ function eventToResponse(
   };
 }
 
-type SignalMonitorEventResponse = ReturnType<typeof eventToResponse>;
-
 const SIGNAL_MONITOR_EVENTS_DEFAULT_PAGE_SIZE = 100;
 const SIGNAL_MONITOR_EVENTS_MAX_PAGE_SIZE = 1_000;
-const SIGNAL_MONITOR_EVENTS_DB_FALLBACK_BACKOFF_MS = 15_000;
-const SIGNAL_MONITOR_EVENTS_DB_FALLBACK_WARNING_COOLDOWN_MS = 60_000;
 const SIGNAL_MONITOR_BREADTH_HISTORY_RANGES: readonly SignalMonitorBreadthHistoryRange[] =
   ["hour", "day", "week", "month"];
 const SIGNAL_MONITOR_BREADTH_HISTORY_BUCKET_MINUTES: Record<
@@ -2837,103 +2817,6 @@ function decodeSignalMonitorEventsCursor(
   });
 }
 
-function compareSignalMonitorEventsDesc(
-  left: { signalAt: Date | string; id: string },
-  right: { signalAt: Date | string; id: string },
-): number {
-  const leftMs = new Date(left.signalAt).getTime();
-  const rightMs = new Date(right.signalAt).getTime();
-  return rightMs - leftMs || String(right.id).localeCompare(String(left.id));
-}
-
-function signalMonitorEventIsAfterCursor(
-  event: { signalAt: Date | string; id: string },
-  cursor: SignalMonitorEventsCursor,
-): boolean {
-  const eventMs = new Date(event.signalAt).getTime();
-  const cursorMs = cursor.signalAt.getTime();
-  if (eventMs < cursorMs) {
-    return true;
-  }
-  return eventMs === cursorMs && String(event.id) < cursor.id;
-}
-
-function paginateSignalMonitorEventResponses(
-  events: SignalMonitorEventResponse[],
-  limit: number,
-  sourceStatus: SignalMonitorEventsSourceStatus = "database",
-) {
-  const page = events.slice(0, limit);
-  const hasMore = events.length > limit;
-  return {
-    events: page,
-    nextCursor:
-      hasMore && page.length
-        ? encodeSignalMonitorEventsCursor(page[page.length - 1])
-        : null,
-    hasMore,
-    sourceStatus,
-  };
-}
-
-function filterSignalMonitorEventResponses(
-  events: SignalMonitorEventResponse[],
-  input: {
-    symbol?: string;
-    from?: Date | string;
-    to?: Date | string;
-    cursor?: string;
-    limit?: number;
-    sourceStatus?: SignalMonitorEventsSourceStatus;
-  } = {},
-) {
-  const symbol = normalizeSymbol(input.symbol ?? "").toUpperCase();
-  const from = parseSignalMonitorEventsDate(input.from, "from");
-  const to = parseSignalMonitorEventsDate(input.to, "to");
-  const cursor = decodeSignalMonitorEventsCursor(input.cursor);
-  const limit = resolveSignalMonitorEventsPageSize(input.limit);
-  const filtered = events
-    .filter((event) => {
-      if (symbol && event.symbol !== symbol) {
-        return false;
-      }
-      const signalAtMs = event.signalAt.getTime();
-      if (from && signalAtMs < from.getTime()) {
-        return false;
-      }
-      if (to && signalAtMs > to.getTime()) {
-        return false;
-      }
-      return !cursor || signalMonitorEventIsAfterCursor(event, cursor);
-    })
-    .sort(compareSignalMonitorEventsDesc);
-  return paginateSignalMonitorEventResponses(
-    filtered,
-    limit,
-    input.sourceStatus ?? "database",
-  );
-}
-
-const runtimeSignalMonitorEvents = new Map<
-  RuntimeMode,
-  SignalMonitorEventResponse[]
->();
-const signalMonitorEventsReadDbBackoff = createTransientPostgresBackoff({
-  backoffMs: SIGNAL_MONITOR_EVENTS_DB_FALLBACK_BACKOFF_MS,
-  warningCooldownMs: SIGNAL_MONITOR_EVENTS_DB_FALLBACK_WARNING_COOLDOWN_MS,
-});
-const runtimeSignalMonitorEvaluationCache = new Map<
-  string,
-  { expiresAt: number; value: unknown }
->();
-const runtimeSignalMonitorEvaluationInFlight = new Map<
-  string,
-  Promise<unknown>
->();
-const signalMonitorMatrixEvaluationCache = new Map<
-  string,
-  { freshUntil: number; staleUntil: number; value: unknown }
->();
 const signalMonitorMatrixEvaluationInFlight = new Map<
   string,
   Promise<unknown>
@@ -2983,126 +2866,6 @@ const signalMonitorCompletedBarsCounters = {
   inFlightJoin: 0,
 };
 
-function trimRuntimeSignalMonitorEvaluationCache(nowMs = Date.now()): void {
-  for (const [key, entry] of runtimeSignalMonitorEvaluationCache.entries()) {
-    if (entry.expiresAt <= nowMs) {
-      runtimeSignalMonitorEvaluationCache.delete(key);
-    }
-  }
-  if (
-    runtimeSignalMonitorEvaluationCache.size <=
-    SIGNAL_MONITOR_RUNTIME_EVALUATION_CACHE_MAX_ENTRIES
-  ) {
-    return;
-  }
-  const oldest = [...runtimeSignalMonitorEvaluationCache.entries()].sort(
-    (left, right) => left[1].expiresAt - right[1].expiresAt,
-  );
-  for (
-    let index = 0;
-    runtimeSignalMonitorEvaluationCache.size >
-      SIGNAL_MONITOR_RUNTIME_EVALUATION_CACHE_MAX_ENTRIES &&
-    index < oldest.length;
-    index += 1
-  ) {
-    runtimeSignalMonitorEvaluationCache.delete(oldest[index][0]);
-  }
-}
-
-function trimSignalMonitorMatrixEvaluationCache(nowMs = Date.now()): void {
-  for (const [key, entry] of signalMonitorMatrixEvaluationCache.entries()) {
-    if (entry.staleUntil <= nowMs) {
-      signalMonitorMatrixEvaluationCache.delete(key);
-    }
-  }
-  if (
-    signalMonitorMatrixEvaluationCache.size <=
-    SIGNAL_MONITOR_MATRIX_EVALUATION_CACHE_MAX_ENTRIES
-  ) {
-    return;
-  }
-  const oldest = [...signalMonitorMatrixEvaluationCache.entries()].sort(
-    (left, right) => left[1].staleUntil - right[1].staleUntil,
-  );
-  for (
-    let index = 0;
-    signalMonitorMatrixEvaluationCache.size >
-      SIGNAL_MONITOR_MATRIX_EVALUATION_CACHE_MAX_ENTRIES &&
-    index < oldest.length;
-    index += 1
-  ) {
-    signalMonitorMatrixEvaluationCache.delete(oldest[index][0]);
-  }
-}
-
-function getRuntimeSignalMonitorEvaluationCacheValue<T>(
-  key: string,
-  nowMs = Date.now(),
-): { value: T; cacheStatus: SignalMonitorMatrixCacheStatus } | null {
-  trimRuntimeSignalMonitorEvaluationCache(nowMs);
-  const cached = runtimeSignalMonitorEvaluationCache.get(key);
-  if (!cached || cached.expiresAt <= nowMs) {
-    return null;
-  }
-  return { value: cached.value as T, cacheStatus: "hit" };
-}
-
-async function withRuntimeSignalMonitorEvaluationCache<T>(
-  key: string,
-  factory: () => Promise<T>,
-  options: {
-    onCacheStatus?: (status: SignalMonitorMatrixCacheStatus) => void;
-  } = {},
-): Promise<T> {
-  const nowMs = Date.now();
-  trimRuntimeSignalMonitorEvaluationCache(nowMs);
-  const cached = runtimeSignalMonitorEvaluationCache.get(key);
-  if (cached && cached.expiresAt > nowMs) {
-    options.onCacheStatus?.("hit");
-    return cached.value as T;
-  }
-
-  const inFlight = runtimeSignalMonitorEvaluationInFlight.get(key);
-  if (inFlight) {
-    options.onCacheStatus?.("inflight");
-    return inFlight as Promise<T>;
-  }
-
-  const request = factory().then((value) => {
-    runtimeSignalMonitorEvaluationCache.set(key, {
-      value,
-      expiresAt: Date.now() + SIGNAL_MONITOR_RUNTIME_EVALUATION_CACHE_TTL_MS,
-    });
-    trimRuntimeSignalMonitorEvaluationCache();
-    return value;
-  });
-  runtimeSignalMonitorEvaluationInFlight.set(key, request);
-  options.onCacheStatus?.("miss");
-  try {
-    return await request;
-  } finally {
-    if (runtimeSignalMonitorEvaluationInFlight.get(key) === request) {
-      runtimeSignalMonitorEvaluationInFlight.delete(key);
-    }
-  }
-}
-
-function clearRuntimeSignalMonitorEvaluationCache(
-  environment: RuntimeMode,
-): void {
-  const prefix = `runtime-signal:${environment}:`;
-  for (const key of runtimeSignalMonitorEvaluationCache.keys()) {
-    if (key.startsWith(prefix)) {
-      runtimeSignalMonitorEvaluationCache.delete(key);
-    }
-  }
-  for (const key of runtimeSignalMonitorEvaluationInFlight.keys()) {
-    if (key.startsWith(prefix)) {
-      runtimeSignalMonitorEvaluationInFlight.delete(key);
-    }
-  }
-}
-
 function clearSignalMonitorMatrixEvaluationCache(
   environment?: RuntimeMode,
 ): void {
@@ -3114,11 +2877,6 @@ function clearSignalMonitorMatrixEvaluationCache(
     : null;
   const shouldClearKey = (key: string) =>
     !prefixes || prefixes.some((prefix) => key.startsWith(prefix));
-  for (const key of signalMonitorMatrixEvaluationCache.keys()) {
-    if (shouldClearKey(key)) {
-      signalMonitorMatrixEvaluationCache.delete(key);
-    }
-  }
   for (const key of signalMonitorMatrixEvaluationInFlight.keys()) {
     if (shouldClearKey(key)) {
       signalMonitorMatrixEvaluationInFlight.delete(key);
@@ -3165,85 +2923,27 @@ function markAutomaticSignalMonitorMatrixRequest(
   return { automatic: true, debounced };
 }
 
-function getDebouncedSignalMonitorMatrixCacheValue<T>(
-  key: string,
-  nowMs = Date.now(),
-): { value: T; cacheStatus: SignalMonitorMatrixCacheStatus } | null {
-  trimSignalMonitorMatrixEvaluationCache(nowMs);
-  const cached = signalMonitorMatrixEvaluationCache.get(key);
-  if (!cached || cached.staleUntil <= nowMs) {
-    return null;
-  }
-  return {
-    value: cached.value as T,
-    cacheStatus: cached.freshUntil > nowMs ? "hit" : "stale",
-  };
-}
-
-function shouldCacheSignalMonitorMatrixEvaluationValue(
-  value: unknown,
-): boolean {
-  const states = Array.isArray((value as { states?: unknown })?.states)
-    ? (value as { states: unknown[] }).states
-    : [];
-  return !states.some((state) => {
-    if (!state || typeof state !== "object") {
-      return false;
-    }
-    const record = state as { status?: unknown; lastError?: unknown };
-    const status = String(record.status || "ok").trim().toLowerCase();
-    return (
-      status === "error" ||
-      (typeof record.lastError === "string" && status !== "unavailable")
-    );
-  });
-}
-
-async function withSignalMonitorMatrixEvaluationCache<T>(
+async function withSignalMonitorMatrixEvaluationSingleFlight<T>(
   key: string,
   factory: () => Promise<T>,
   options: {
-    nowMs?: number;
     onCacheStatus?: (status: SignalMonitorMatrixCacheStatus) => void;
   } = {},
 ): Promise<T> {
-  const nowMs = options.nowMs ?? Date.now();
-  trimSignalMonitorMatrixEvaluationCache(nowMs);
-  const cached = signalMonitorMatrixEvaluationCache.get(key);
-  if (cached && cached.freshUntil > nowMs) {
-    options.onCacheStatus?.("hit");
-    return cached.value as T;
-  }
-
   const inFlight = signalMonitorMatrixEvaluationInFlight.get(key);
   if (inFlight) {
     options.onCacheStatus?.("inflight");
     return inFlight as Promise<T>;
   }
 
-  const request = factory()
-    .then((value) => {
-      const completedAt = Date.now();
-      if (shouldCacheSignalMonitorMatrixEvaluationValue(value)) {
-        signalMonitorMatrixEvaluationCache.set(key, {
-          value,
-          freshUntil: completedAt + SIGNAL_MONITOR_MATRIX_CACHE_TTL_MS,
-          staleUntil: completedAt + SIGNAL_MONITOR_MATRIX_STALE_TTL_MS,
-        });
-        trimSignalMonitorMatrixEvaluationCache(completedAt);
-      }
-      return value;
-    })
-    .finally(() => {
-      if (signalMonitorMatrixEvaluationInFlight.get(key) === request) {
-        signalMonitorMatrixEvaluationInFlight.delete(key);
-      }
-    });
+  const request = factory().finally(() => {
+    if (signalMonitorMatrixEvaluationInFlight.get(key) === request) {
+      signalMonitorMatrixEvaluationInFlight.delete(key);
+    }
+  });
   signalMonitorMatrixEvaluationInFlight.set(key, request);
 
-  options.onCacheStatus?.(
-    cached && cached.staleUntil > nowMs ? "inflight" : "miss",
-  );
+  options.onCacheStatus?.("miss");
   return request;
 }
 
@@ -3266,146 +2966,8 @@ function warnSignalMonitorDbUnavailable(
       transient: diagnostic.transient,
       poolContention: diagnostic.poolContention,
     },
-    "Signal monitor database unavailable; serving degraded response",
+    "Signal monitor database unavailable",
   );
-}
-
-export function buildSignalMonitorDbUnavailableProfile(
-  environment: RuntimeMode,
-  now = new Date(),
-) {
-  return {
-    id: `db-unavailable-${environment}`,
-    environment,
-    enabled: false,
-    watchlistId: null,
-    timeframe: DEFAULT_SIGNAL_MONITOR_TIMEFRAME,
-    pyrusSignalsSettings: {},
-    freshWindowBars: 3,
-    pollIntervalSeconds: DEFAULT_SIGNAL_MONITOR_POLL_SECONDS,
-    maxSymbols: DEFAULT_SIGNAL_MONITOR_MAX_SYMBOLS,
-    evaluationConcurrency: DEFAULT_SIGNAL_MONITOR_EVALUATION_CONCURRENCY,
-    lastEvaluatedAt: null,
-    lastError: SIGNAL_MONITOR_DB_UNAVAILABLE_MESSAGE,
-    createdAt: now,
-    updatedAt: now,
-  };
-}
-
-function buildSignalMonitorRuntimeFallbackProfile(
-  environment: RuntimeMode,
-  now = new Date(),
-): DbSignalMonitorProfile {
-  return {
-    id: `runtime-fallback-${environment}`,
-    environment,
-    enabled: true,
-    watchlistId: null,
-    timeframe: DEFAULT_SIGNAL_MONITOR_TIMEFRAME,
-    pyrusSignalsSettings: {},
-    freshWindowBars: 3,
-    pollIntervalSeconds: DEFAULT_SIGNAL_MONITOR_POLL_SECONDS,
-    maxSymbols: DEFAULT_SIGNAL_MONITOR_MAX_SYMBOLS,
-    evaluationConcurrency: DEFAULT_SIGNAL_MONITOR_EVALUATION_CONCURRENCY,
-    lastEvaluatedAt: null,
-    lastError: SIGNAL_MONITOR_RUNTIME_FALLBACK_MESSAGE,
-    createdAt: now,
-    updatedAt: now,
-  } as DbSignalMonitorProfile;
-}
-
-function getRuntimeSignalMonitorProfile(environment: RuntimeMode) {
-  const existing = runtimeSignalMonitorProfiles.get(environment);
-  if (existing) {
-    return existing;
-  }
-
-  const profile = buildSignalMonitorRuntimeFallbackProfile(environment);
-  runtimeSignalMonitorProfiles.set(environment, profile);
-  return profile;
-}
-
-async function updateRuntimeSignalMonitorProfile(input: {
-  environment: RuntimeMode;
-  enabled?: boolean;
-  watchlistId?: string | null;
-  timeframe?: string;
-  pyrusSignalsSettings?: Record<string, unknown>;
-  freshWindowBars?: number;
-  pollIntervalSeconds?: number;
-  maxSymbols?: number;
-  evaluationConcurrency?: number;
-}) {
-  const profile = getRuntimeSignalMonitorProfile(input.environment);
-  const updated: DbSignalMonitorProfile = {
-    ...profile,
-    updatedAt: new Date(),
-    lastError: SIGNAL_MONITOR_RUNTIME_FALLBACK_MESSAGE,
-  };
-  const profileUpdateDefaults = resolveSignalMonitorProfileUpdateDefaults({
-    currentMaxSymbols: Math.min(
-      profile.maxSymbols,
-      SIGNAL_MONITOR_MAX_SYMBOLS_LIMIT,
-    ),
-    currentPyrusSignalsSettings: asRecord(profile.pyrusSignalsSettings),
-    inputMaxSymbols: input.maxSymbols,
-    inputPyrusSignalsSettings: input.pyrusSignalsSettings,
-  });
-  const nextEnabled =
-    typeof input.enabled === "boolean" ? input.enabled : profile.enabled;
-  if (nextEnabled) {
-    await assertHighBetaSignalMonitorUniverseAvailable({
-      universeScope: profileUpdateDefaults.universeScope,
-    });
-  }
-
-  if (typeof input.enabled === "boolean") {
-    updated.enabled = input.enabled;
-  }
-  if (Object.hasOwn(input, "watchlistId")) {
-    if (input.watchlistId) {
-      const { watchlists } = listWatchlistsRuntimeFallback();
-      if (!watchlists.some((watchlist) => watchlist.id === input.watchlistId)) {
-        throw new HttpError(404, "Watchlist not found.", {
-          code: "watchlist_not_found",
-        });
-      }
-    }
-    updated.watchlistId = input.watchlistId ?? null;
-  }
-  if (input.timeframe !== undefined) {
-    updated.timeframe = parseSignalTimeframe(input.timeframe);
-  }
-  if (input.pyrusSignalsSettings !== undefined) {
-    updated.pyrusSignalsSettings = profileUpdateDefaults.pyrusSignalsSettings;
-  }
-  if (input.freshWindowBars !== undefined) {
-    updated.freshWindowBars = positiveInteger(input.freshWindowBars, 3, 1, 20);
-  }
-  if (input.pollIntervalSeconds !== undefined) {
-    updated.pollIntervalSeconds = positiveInteger(
-      input.pollIntervalSeconds,
-      60,
-      15,
-      3600,
-    );
-  }
-  if (input.maxSymbols !== undefined || profileUpdateDefaults.highBetaRequested) {
-    updated.maxSymbols = profileUpdateDefaults.maxSymbols;
-  }
-  if (input.evaluationConcurrency !== undefined) {
-    updated.evaluationConcurrency = positiveInteger(
-      input.evaluationConcurrency,
-      DEFAULT_SIGNAL_MONITOR_EVALUATION_CONCURRENCY,
-      1,
-      10,
-    );
-  }
-
-  runtimeSignalMonitorProfiles.set(input.environment, updated);
-  clearRuntimeSignalMonitorEvaluationCache(input.environment);
-  clearSignalMonitorMatrixEvaluationCache(input.environment);
-  return updated;
 }
 
 export function createSignalMonitorDbUnavailableError(
@@ -3538,7 +3100,6 @@ type ResolvedSignalMonitorUniverse = {
   watchlistSymbols: string[];
   skippedSymbols: string[];
   truncated: boolean;
-  fallbackWatchlists?: boolean;
   fallbackUsed?: boolean;
   universe: SignalMonitorUniverseSummary;
 };
@@ -3789,9 +3350,6 @@ function resolveSignalMonitorUniverseFromWatchlists(input: {
 }): ResolvedSignalMonitorUniverse {
   const settings = asRecord(input.profile.pyrusSignalsSettings);
   const universeScope = resolveSignalMonitorUniverseScope(settings);
-  const fallbackWatchlists = input.watchlists.some((watchlist) =>
-    String(watchlist.id || "").startsWith("built-in-"),
-  );
   const allWatchlistSymbols = input.watchlists.flatMap((watchlist) =>
     watchlist.items.map((item) => item.symbol),
   );
@@ -3833,15 +3391,12 @@ function resolveSignalMonitorUniverseFromWatchlists(input: {
   const expansionSymbols = resolved.symbols.filter(
     (symbol) => !pinnedSet.has(symbol),
   ).length;
-  const fallbackUsed = Boolean(
-    fallbackWatchlists || input.expansionUniverse?.fallbackUsed,
-  );
+  const fallbackUsed = Boolean(input.expansionUniverse?.fallbackUsed);
   const source = signalMonitorUniverseSourceForMode(universeScope);
 
   return {
     ...resolved,
     watchlistSymbols: resolvedWatchlistSymbols,
-    ...(fallbackWatchlists ? { fallbackWatchlists } : {}),
     fallbackUsed,
     universe: {
       mode: universeScope,
@@ -3856,10 +3411,7 @@ function resolveSignalMonitorUniverseFromWatchlists(input: {
       source,
       fallbackUsed,
       degradedReason:
-        input.expansionUniverse?.degradedReason ??
-        (fallbackWatchlists
-          ? "Signal monitor watchlists are using runtime fallback data."
-          : null),
+        input.expansionUniverse?.degradedReason ?? null,
       rankedAt: input.expansionUniverse?.rankedAt ?? null,
     },
   };
@@ -3975,10 +3527,6 @@ async function loadSignalMonitorCatalogExpansionSymbols(input: {
   if (seedSymbols.length >= maxSymbols) {
     return { symbols: seedSymbols, rankedAt: null };
   }
-  if (isSignalMonitorHardResourcePressure()) {
-    return { symbols: seedSymbols, rankedAt: null };
-  }
-
   const rows = await loadSignalMonitorCatalogExpansionRows(
     maxSymbols + seedSymbols.length,
   );
@@ -4026,6 +3574,9 @@ async function loadSignalMonitorExpansionUniverse(
         dateOrNull(coverage.rankedAt ?? coverage.lastGoodAt ?? null),
     };
   } catch (error) {
+    if (isTransientPostgresError(error) || isStatementTimeoutError(error)) {
+      throw createSignalMonitorDbUnavailableError(error);
+    }
     logger.warn(
       { err: error },
       "Signal monitor ranked universe expansion unavailable",
@@ -4060,6 +3611,9 @@ async function loadSignalMonitorHighBetaUniverse(
       rankedAt: preview.generatedAt,
     };
   } catch (error) {
+    if (isTransientPostgresError(error) || isStatementTimeoutError(error)) {
+      throw createSignalMonitorDbUnavailableError(error);
+    }
     logger.warn(
       { err: error },
       "Signal monitor high-beta universe expansion unavailable",
@@ -4399,7 +3953,7 @@ function mergeCompletedBars(
   limit: number,
 ) {
   const byTimestamp = new Map<number, SignalMonitorBarSnapshot>();
-  [...baseBars, ...liveEdgeBars].forEach((bar) => {
+  const addBar = (bar: SignalMonitorBarSnapshot) => {
     const timestamp = dateOrNull(bar.timestamp);
     if (!timestamp) {
       return;
@@ -4413,7 +3967,9 @@ function mergeCompletedBars(
       return;
     }
     byTimestamp.set(key, bar);
-  });
+  };
+  baseBars.forEach(addBar);
+  liveEdgeBars.forEach(addBar);
   return Array.from(byTimestamp.entries())
     .sort(([left], [right]) => left - right)
     .map(([, bar]) => bar)
@@ -4437,11 +3993,31 @@ function signalMonitorBarTimestampMs(
     : null;
 }
 
+const SIGNAL_MONITOR_TIMESTAMP_ISO_CACHE_LIMIT = 8_192;
+const signalMonitorTimestampIsoCache = new Map<number, string>();
+
+function signalMonitorTimestampIso(timestampMs: number): string {
+  const cached = signalMonitorTimestampIsoCache.get(timestampMs);
+  if (cached !== undefined) {
+    return cached;
+  }
+
+  const iso = new Date(timestampMs).toISOString();
+  if (
+    signalMonitorTimestampIsoCache.size >=
+    SIGNAL_MONITOR_TIMESTAMP_ISO_CACHE_LIMIT
+  ) {
+    signalMonitorTimestampIsoCache.clear();
+  }
+  signalMonitorTimestampIsoCache.set(timestampMs, iso);
+  return iso;
+}
+
 function signalMonitorBarTimestampIso(
   bar: SignalMonitorBarSnapshot | undefined,
 ): string | null {
   const timestamp = dateOrNull(bar?.timestamp);
-  return timestamp ? timestamp.toISOString() : null;
+  return timestamp ? signalMonitorTimestampIso(timestamp.getTime()) : null;
 }
 
 function signalMonitorBarSource(
@@ -4774,14 +4350,10 @@ function aggregateStockMinuteBarsForTimeframe(input: {
     grouped.set(bucket, existing);
   });
 
-  return Array.from(grouped.entries())
-    .sort(([left], [right]) => left - right)
-    .map(([bucket, bars]): SignalMonitorBarSnapshot | null => {
-      const sorted = [...bars].sort((left, right) => {
-        const leftTime = dateOrNull(left.timestamp)?.getTime() ?? 0;
-        const rightTime = dateOrNull(right.timestamp)?.getTime() ?? 0;
-        return leftTime - rightTime;
-      });
+  // minuteBars is ascending, so Map insertion order and each bucket's push order are too.
+  return Array.from(grouped.entries()).map(
+    ([bucket, bars]): SignalMonitorBarSnapshot | null => {
+      const sorted = bars;
       const childBuckets = new Set(
         sorted
           .map((bar) => dateOrNull(bar.timestamp)?.getTime())
@@ -4855,7 +4427,8 @@ function aggregateStockMinuteBarsForTimeframe(input: {
           ? Math.max(0, input.evaluatedAt.getTime() - dataUpdatedAt.getTime())
           : null,
       };
-    })
+    },
+  )
     .filter((bar): bar is SignalMonitorBarSnapshot => {
       if (!bar) return false;
       if (bar.partial === true && input.includeProvisional) {
@@ -5439,7 +5012,7 @@ async function refreshSignalMonitorLocalBarCacheWarmup(): Promise<void> {
   signalMonitorLocalBarCacheWarmupInFlight = true;
   try {
     const environment = getRuntimeMode();
-    const profile = getRuntimeSignalMonitorProfile(environment);
+    const profile = await getOrCreateProfile(environment);
     const resolved = await resolveSignalMonitorProfileUniverse(profile, {
       ensureWatchlist: false,
     });
@@ -6583,7 +6156,7 @@ function barsToPyrusSignalsBarEntries(
       return {
         chartBar: {
           time: Math.floor(anchorAt.getTime() / 1000),
-          ts: anchorAt.toISOString(),
+          ts: signalMonitorTimestampIso(anchorAt.getTime()),
           o: open,
           h: high,
           l: low,
@@ -9472,6 +9045,7 @@ function signalMonitorIncrementalEvalSampleN(mode: "shadow" | "on"): number {
 let signalMonitorIncrementalEvalEvaluationCount = 0;
 let signalMonitorIncrementalEvalAppends = 0;
 let signalMonitorIncrementalEvalSeeds = 0;
+let signalMonitorIncrementalEvalFormingReplays = 0;
 let signalMonitorIncrementalEvalShadowChecks = 0;
 let signalMonitorIncrementalEvalShadowMismatches = 0;
 // Test seam: lets a test corrupt the incremental side of a parity comparison
@@ -9493,6 +9067,15 @@ type SignalMonitorIncrementalEvaluatorCell = {
   appendedCount: number;
   appendedHash: number;
   lastBarTime: number;
+  // OPT-1 checkpoint: the evaluator state as of the last CLOSED prefix
+  // (forming-tail cells only; always null on lastBarClosed=true cells). A
+  // mutated forming bar is served by cloning this checkpoint and appending the
+  // mutated bar — the checkpoint itself only ever advances past bars that
+  // actually closed, so it never has to be rolled back.
+  closedEvaluator: IncrementalPyrusSignalsEvaluator | null;
+  closedCount: number;
+  closedHash: number;
+  closedLastBarTime: number;
 };
 const signalMonitorIncrementalEvaluatorCells = new Map<
   string,
@@ -9662,17 +9245,78 @@ function evaluateSignalMonitorMatrixIncrementalEvaluation(input: {
         );
       }
     }
+    // OPT-1 forming-bar replay: the live (forming) tail bar mutates in place
+    // (same timestamp, changing OHLCV), so the pure-extension path above fails
+    // on nearly every tick. If the CLOSED prefix still matches the cell's
+    // checkpoint, serve the tick by cloning the checkpoint and appending the
+    // mutated forming bar — O(series copy + 1 append) instead of a full
+    // indicator re-seed. The checkpoint only advances past bars that closed.
+    if (
+      cell &&
+      !input.lastBarClosed &&
+      cell.closedEvaluator &&
+      bars.length > cell.closedCount &&
+      (cell.closedCount === 0 ||
+        bars[cell.closedCount - 1]?.time === cell.closedLastBarTime)
+    ) {
+      // Fold the checkpoint's running hash over every bar beyond the closed
+      // prefix; reproducing the caller's full-series fingerprint verifies the
+      // checkpointed prefix AND the tail content in one O(tail) pass. The hash
+      // just before the final (forming) bar is the next closed-prefix hash.
+      let hash = cell.closedHash;
+      let nextClosedHash = cell.closedHash;
+      for (let index = cell.closedCount; index < bars.length; index += 1) {
+        if (index === bars.length - 1) {
+          nextClosedHash = hash;
+        }
+        hash = mixSignalMonitorCompletedBarFingerprint(hash, bars[index]);
+      }
+      if (
+        signalMonitorIncrementalSeriesFingerprint(bars.length, hash) ===
+        input.barsFingerprint
+      ) {
+        for (let index = cell.closedCount; index < bars.length - 1; index += 1) {
+          cell.closedEvaluator.append(bars[index]);
+        }
+        cell.closedCount = bars.length - 1;
+        cell.closedHash = nextClosedHash;
+        cell.closedLastBarTime =
+          bars.length > 1 ? bars[bars.length - 2].time : Number.NaN;
+        const replay = cell.closedEvaluator.clone();
+        replay.append(bars[bars.length - 1]);
+        // The clone becomes the serving evaluator so a genuinely-new closed
+        // bar can still take the pure-extension path; the checkpoint itself
+        // never advances past the closed prefix.
+        cell.evaluator = replay;
+        cell.appendedCount = bars.length;
+        cell.appendedHash = hash;
+        cell.lastBarTime = bars[bars.length - 1].time;
+        signalMonitorIncrementalEvalFormingReplays += 1;
+        return snapshotSignalMonitorIncrementalEvaluation(replay.result());
+      }
+    }
     // Non-extension (gap, correction, shrink, settings/closure change,
     // eviction): seed a FRESH evaluator by appending the full series (the
     // parity harness proved this equals from-scratch) and replace the cell.
+    // Forming-tail cells checkpoint the closed prefix (a clone taken before
+    // the forming bar is appended) so later forming-bar mutations replay from
+    // it instead of re-seeding.
     const evaluator = createIncrementalPyrusSignalsEvaluator(input.settings, {
       includeProvisionalSignals: !input.settings.waitForBarClose,
       lastBarClosed: input.lastBarClosed,
     });
+    const closedCount =
+      input.lastBarClosed || bars.length === 0 ? bars.length : bars.length - 1;
     let hash = SIGNAL_MONITOR_COMPLETED_BARS_FINGERPRINT_SEED;
-    for (const chartBar of bars) {
-      evaluator.append(chartBar);
-      hash = mixSignalMonitorCompletedBarFingerprint(hash, chartBar);
+    for (let index = 0; index < closedCount; index += 1) {
+      evaluator.append(bars[index]);
+      hash = mixSignalMonitorCompletedBarFingerprint(hash, bars[index]);
+    }
+    const closedEvaluator = input.lastBarClosed ? null : evaluator.clone();
+    const closedHash = hash;
+    for (let index = closedCount; index < bars.length; index += 1) {
+      evaluator.append(bars[index]);
+      hash = mixSignalMonitorCompletedBarFingerprint(hash, bars[index]);
     }
     lruCacheSet(
       signalMonitorIncrementalEvaluatorCells,
@@ -9682,6 +9326,10 @@ function evaluateSignalMonitorMatrixIncrementalEvaluation(input: {
         appendedCount: bars.length,
         appendedHash: hash,
         lastBarTime: bars.length ? bars[bars.length - 1].time : Number.NaN,
+        closedEvaluator,
+        closedCount,
+        closedHash,
+        closedLastBarTime: closedCount ? bars[closedCount - 1].time : Number.NaN,
       },
       SIGNAL_MONITOR_MATRIX_EVAL_CACHE_MAX,
     );
@@ -9749,6 +9397,7 @@ export function getSignalMonitorIncrementalEvalStats() {
     mode: signalMonitorIncrementalEvalMode(),
     appends: signalMonitorIncrementalEvalAppends,
     seeds: signalMonitorIncrementalEvalSeeds,
+    formingReplays: signalMonitorIncrementalEvalFormingReplays,
     shadowChecks: signalMonitorIncrementalEvalShadowChecks,
     shadowMismatches: signalMonitorIncrementalEvalShadowMismatches,
     matrixServeMismatchCount: signalMonitorMatrixServeMismatchCount,
@@ -9864,6 +9513,7 @@ function resetSignalMonitorMatrixHeavyEvaluationCache() {
   signalMonitorIncrementalEvalEvaluationCount = 0;
   signalMonitorIncrementalEvalAppends = 0;
   signalMonitorIncrementalEvalSeeds = 0;
+  signalMonitorIncrementalEvalFormingReplays = 0;
   signalMonitorIncrementalEvalShadowChecks = 0;
   signalMonitorIncrementalEvalShadowMismatches = 0;
   signalMonitorMatrixServeMismatchCount = 0;
@@ -11657,18 +11307,6 @@ export function buildSignalMonitorMatrixStreamBootstrapEventFromStoredState(
   },
   scope: SignalMonitorMatrixStreamScope,
 ): SignalMonitorMatrixStreamBootstrapEvent {
-  if (snapshot.stateSource === "runtime-fallback") {
-    return buildSignalMonitorMatrixStreamBootstrapEvent(
-      {
-        profile: snapshot.profile,
-        states: [],
-        evaluatedAt: dateOrNull(snapshot.evaluatedAt) ?? new Date(),
-        timeframes: scope.timeframes,
-      },
-      scope,
-    );
-  }
-
   const hydrated = hydrateSignalMonitorMatrixStatesFromStoredStates(
     {
       states: [] as SignalMonitorMatrixStateResult[],
@@ -11702,9 +11340,9 @@ export function buildSignalMonitorMatrixStreamBootstrapEventFromStoredState(
 // connect plus the timeframe-widen re-key, multiplied by tabs — so duplicate
 // reads queued on the saturated 12-connection pool and could trip the 15s DB
 // statement timeout (observed as a 500 on the stream). Sharing one read per
-// environment for a short TTL collapses that. Staleness is safe: the client
-// merges per cell by authority/freshness (preferSignalMatrixCellState), so a
-// snapshot up to TTL old can never displace fresher stream deltas.
+// environment for a short TTL collapses that. Expired snapshots are never
+// replayed: reconnects await the shared refresh so a database outage surfaces
+// instead of leaving an old matrix on screen indefinitely.
 //
 // 30s, not 15s: the widen re-key fires 1.5s after the client finishes
 // receiving bootstrap frames, and under boot congestion frame delivery alone
@@ -11739,11 +11377,7 @@ export const createSignalMonitorStreamBootstrapSnapshotReader = ({
   const startRead = (environment: RuntimeMode | undefined, key: string) => {
     const compute = read(environment)
       .then((snapshot) => {
-        // Never cache degraded fallback snapshots: a transient DB blip must
-        // not pin empty bootstraps on every reconnect for a full TTL.
-        if (snapshot.stateSource !== "runtime-fallback") {
-          cache.set(key, { snapshot, expiresAtMs: now() + ttlMs });
-        }
+        cache.set(key, { snapshot, expiresAtMs: now() + ttlMs });
         return snapshot;
       })
       .finally(() => {
@@ -11762,12 +11396,6 @@ export const createSignalMonitorStreamBootstrapSnapshotReader = ({
       return cached.snapshot;
     }
     const pending = inFlight.get(key);
-    if (cached) {
-      if (!pending) {
-        void startRead(environment, key).catch(() => {});
-      }
-      return cached.snapshot;
-    }
     if (pending) {
       return pending;
     }
@@ -12145,12 +11773,12 @@ async function resolveSignalMonitorMatrixStreamProfile(
   try {
     return await getOrCreateProfile(environment);
   } catch (error) {
-    if (isTransientPostgresError(error)) {
+    if (isTransientPostgresError(error) || isStatementTimeoutError(error)) {
       warnSignalMonitorDbUnavailable(error, {
         operation: "resolve_signal_monitor_matrix_stream_profile",
         environment,
       });
-      return getRuntimeSignalMonitorProfile(environment);
+      throw createSignalMonitorDbUnavailableError(error);
     }
     throw error;
   }
@@ -12618,9 +12246,6 @@ export async function listLatestTrustedSignalMonitorEventsForProfile(input: {
   symbols?: string[];
   timeframes?: SignalMonitorMatrixTimeframe[];
 }): Promise<SignalMonitorLatestTrustedSignalEvent[]> {
-  if (isSignalMonitorHardResourcePressure()) {
-    return [];
-  }
   const symbols = normalizeSignalMonitorMatrixSymbols(input.symbols);
   const timeframes = parseSignalMatrixTimeframes(input.timeframes);
   const trustedEvents = trustedSignalMonitorCanonicalEventsSql(input.profile.id, {
@@ -12702,9 +12327,6 @@ async function listLatestTrustedSignalMonitorBarsForCells(
     timeframe: SignalMonitorMatrixTimeframe;
   }>,
 ): Promise<Map<string, SignalMonitorLatestTrustedBar>> {
-  if (isSignalMonitorHardResourcePressure()) {
-    return new Map();
-  }
   if (!cells.length) {
     return new Map();
   }
@@ -12893,9 +12515,6 @@ export async function buildSignalMonitorCurrentCellParityReport(input: {
   includeInactive?: boolean;
 }): Promise<SignalMonitorCurrentCellParityReport> {
   const report = buildEmptySignalMonitorCurrentCellParityReport(input);
-  if (isSignalMonitorHardResourcePressure()) {
-    return report;
-  }
   const symbols = report.requested.symbols;
   const timeframes = report.requested.timeframes;
   const conditions = [
@@ -13882,7 +13501,6 @@ export async function evaluateSignalMonitorProfileUniverse(input: {
     input.deactivateMissing !== false &&
     !evaluationSettings.capped &&
     !resolvedBatch.truncated &&
-    !universe.fallbackWatchlists &&
     !universe.fallbackUsed &&
     !requestedSymbols;
 
@@ -14828,233 +14446,15 @@ async function hydrateSignalMonitorMatrixResponseFromStoredStates<
       requestedCells: input.requestedCells,
     });
   } catch (error) {
-    if (isTransientPostgresError(error)) {
+    if (isTransientPostgresError(error) || isStatementTimeoutError(error)) {
       warnSignalMonitorDbUnavailable(error, {
         operation: "hydrate_signal_monitor_matrix_from_stored_states",
         environment: input.profile.environment,
       });
-      return value;
+      throw createSignalMonitorDbUnavailableError(error);
     }
     throw error;
   }
-}
-
-function filterRuntimeSignalMonitorEvents(input: {
-  environment: RuntimeMode;
-  symbol?: string;
-  from?: Date | string;
-  to?: Date | string;
-  cursor?: string;
-  limit?: number;
-}) {
-  return filterSignalMonitorEventResponses(
-    runtimeSignalMonitorEvents.get(input.environment) ?? [],
-    { ...input, sourceStatus: "runtime-fallback" },
-  );
-}
-
-async function evaluateSignalMonitorMatrixRuntime(input: {
-  environment: RuntimeMode;
-  watchlistId?: string | null;
-  cells?: SignalMonitorMatrixCellRequest[];
-  symbols?: string[];
-  timeframes?: string[];
-  clientRole?: SignalMonitorMatrixClientRole;
-  requestOrigin?: SignalMonitorMatrixRequestOrigin;
-}) {
-  const profile = getRuntimeSignalMonitorProfile(input.environment);
-  const { watchlists } = listWatchlistsRuntimeFallback();
-  if (
-    input.watchlistId &&
-    !watchlists.some((watchlist) => watchlist.id === input.watchlistId)
-  ) {
-    throw new HttpError(404, "Watchlist not found.", {
-      code: "watchlist_not_found",
-    });
-  }
-
-  const automaticMatrixRequest = isAutomaticSignalMonitorMatrixRequest(input);
-  const matrixSettings = cappedSignalMatrixSettings(profile, undefined, {
-    automatic: automaticMatrixRequest,
-    request: input,
-  });
-  const requestedExactCells = normalizeSignalMonitorMatrixCells(input.cells);
-  const { symbols, skippedSymbols, truncated } =
-    resolveSignalMonitorMatrixSymbols({
-      watchlists,
-      watchlistId: input.watchlistId ?? null,
-      symbols: requestedExactCells.length
-        ? requestedExactCells.map((cell) => cell.symbol)
-        : input.symbols,
-      maxSymbols: matrixSettings.maxSymbols,
-    });
-  const exactCells = resolveSignalMonitorMatrixExactCells({
-    cells: requestedExactCells,
-    allowedSymbols: symbols,
-    pressure: matrixSettings.pressure,
-    clientRole: input.clientRole,
-    requestOrigin: input.requestOrigin,
-  });
-  const timeframes = exactCells.exact
-    ? exactCells.timeframes ?? []
-    : parseSignalMatrixTimeframes(input.timeframes);
-  const cellsBySymbol = exactCells.exact
-    ? signalMonitorMatrixCellsBySymbol(exactCells.cells)
-    : null;
-  const allowHistoricalFallback =
-    shouldAllowSignalMonitorMatrixHistoricalFallback({
-      exactCells: exactCells.exact,
-    });
-  const startedAt = Date.now();
-  const concurrency = resolveSignalMonitorMatrixConcurrency({
-    matrixSettings,
-    request: input,
-    symbolCount: symbols.length,
-  });
-  let cacheStatus: SignalMonitorMatrixCacheStatus = "miss";
-  const cacheKey = [
-    "runtime-signal",
-    input.environment,
-    "matrix",
-    SIGNAL_MONITOR_MATRIX_SOURCE_STRATEGY,
-    profile.id,
-    input.watchlistId ?? "default",
-    exactCells.cacheKeyPart ?? [...symbols].sort().join(","),
-    exactCells.cacheKeyPart ? "cells" : timeframes.join(","),
-    concurrency,
-    matrixSettings.pressure,
-    profile.freshWindowBars,
-    JSON.stringify(asRecord(profile.pyrusSignalsSettings)),
-  ].join(":");
-  const automaticRequest = markAutomaticSignalMonitorMatrixRequest(
-    cacheKey,
-    input,
-  );
-  const disabledResponse = signalMonitorMatrixDisabled({
-    profile,
-    timeframes,
-    startedAt,
-  });
-  if (disabledResponse) {
-    return disabledResponse;
-  }
-  if (!isSignalMonitorBarEvaluationEnabled()) {
-    return withSignalMonitorMatrixMetadata(
-      {
-        profile: profileToResponse(profile),
-        states: [],
-        evaluatedAt: new Date(),
-        timeframes,
-        truncated,
-        skippedSymbols,
-        sourceRequestCount: 0,
-      },
-      {
-        cacheStatus: "miss",
-        requestedSymbols: symbols,
-        requestedCells: exactCells.exact ? exactCells.cells : undefined,
-        totalSymbols: symbols.length + skippedSymbols.length,
-        taskCount: exactCells.exact
-          ? exactCells.cells.length
-          : symbols.length * timeframes.length,
-        startedAt,
-        automaticRequest,
-      },
-    );
-  }
-  primeSignalMonitorMatrixStockAggregateStream(symbols);
-  type MatrixRuntimeResponse = {
-    profile: ReturnType<typeof profileToResponse>;
-    states: SignalMonitorMatrixStateResult[];
-    evaluatedAt: Date;
-    timeframes: SignalMonitorMatrixTimeframe[];
-    truncated: boolean;
-    skippedSymbols: string[];
-    sourceRequestCount: number;
-  };
-  const buildFreshRuntimeMatrixResponse =
-    async (): Promise<MatrixRuntimeResponse> => {
-      const evaluatedAt = new Date();
-      const states: SignalMonitorMatrixStateResult[] = [];
-      let sourceRequestCount = 0;
-
-      const step = Math.min(
-        Math.max(1, concurrency),
-        SIGNAL_MONITOR_EVAL_YIELD_EVERY,
-      );
-      for (let index = 0; index < symbols.length; index += step) {
-        const batch = symbols.slice(index, index + step);
-        // Batch-prefetch this batch's stored bars (symbols × timeframes × sources)
-        // in a few set-based queries so the per-symbol readStoredBars calls inside
-        // serve from the prefetch instead of issuing one pooled connection each.
-        // Behavior-equal to the un-prefetched evaluation (the prefetch falls back
-        // per-symbol on any miss); see runWithSignalMonitorStoredBarsPrefetch.
-        const batchResults = await runWithSignalMonitorStoredBarsPrefetch(
-          {
-            symbols: batch,
-            timeframes,
-            evaluatedAt,
-            limit: SIGNAL_MONITOR_MATRIX_BARS_LIMIT,
-          },
-          () =>
-            Promise.all(
-              batch.map((symbol) => {
-                const requestedTimeframes =
-                  cellsBySymbol?.get(symbol) ?? timeframes;
-                if (!requestedTimeframes.length) {
-                  return Promise.resolve({
-                    states: [] as SignalMonitorMatrixStateResult[],
-                    sourceRequestCount: 0,
-                  });
-                }
-                return evaluateSignalMonitorMatrixSymbol({
-                  profile,
-                  symbol,
-                  timeframes: requestedTimeframes,
-                  evaluatedAt,
-                  includeProvisionalLiveEdge: true,
-                  allowHistoricalFallback,
-                });
-              }),
-            ),
-        );
-        batchResults.forEach((result) => {
-          states.push(...result.states);
-          sourceRequestCount += result.sourceRequestCount;
-        });
-        if (index + step < symbols.length) {
-          await yieldSignalMonitorEventLoop();
-        }
-      }
-
-      return {
-        profile: profileToResponse(profile),
-        states,
-        evaluatedAt,
-        timeframes,
-        truncated,
-        skippedSymbols,
-        sourceRequestCount,
-      };
-    };
-  const response = await withRuntimeSignalMonitorEvaluationCache(
-    cacheKey,
-    buildFreshRuntimeMatrixResponse,
-    {
-      onCacheStatus: (status) => {
-        cacheStatus = status;
-      },
-    },
-  );
-  return withSignalMonitorMatrixMetadata(response, {
-    cacheStatus,
-    requestedSymbols: symbols,
-    requestedCells: exactCells.exact ? exactCells.cells : undefined,
-    totalSymbols: symbols.length + skippedSymbols.length,
-    taskCount: exactCells.exact ? exactCells.cells.length : symbols.length * timeframes.length,
-    startedAt,
-    automaticRequest,
-  });
 }
 
 export async function evaluateSignalMonitorMatrix(input: {
@@ -15081,12 +14481,12 @@ export async function evaluateSignalMonitorMatrix(input: {
       });
     }
   } catch (error) {
-    if (isTransientPostgresError(error)) {
+    if (isTransientPostgresError(error) || isStatementTimeoutError(error)) {
       warnSignalMonitorDbUnavailable(error, {
         operation: "evaluate_signal_monitor_matrix",
         environment,
       });
-      return evaluateSignalMonitorMatrixRuntime({ ...input, environment });
+      throw createSignalMonitorDbUnavailableError(error);
     }
     throw error;
   }
@@ -15168,8 +14568,8 @@ export async function evaluateSignalMonitorMatrix(input: {
     const step = Math.min(Math.max(1, concurrency), SIGNAL_MONITOR_EVAL_YIELD_EVERY);
     for (let index = 0; index < symbols.length; index += step) {
       const batch = symbols.slice(index, index + step);
-      // Keep the normal database-backed matrix path on the same stored-bars
-      // prefetch as runtime fallback. This is the hot universe path; without the
+      // Keep the database-backed matrix path on the set-based stored-bars
+      // prefetch. This is the hot universe path; without the
       // wrapper each symbol/timeframe falls back to its own bar_cache read.
       const batchResults = await runWithSignalMonitorStoredBarsPrefetch(
         {
@@ -15242,7 +14642,9 @@ export async function evaluateSignalMonitorMatrix(input: {
     });
 
   if (!profile.enabled) {
-    const storedResponse = await hydrateFromStoredStates(buildEmptyMatrixResponse());
+    const storedResponse = await hydrateFromStoredStates(
+      buildEmptyMatrixResponse(),
+    );
     return withSignalMonitorMatrixMetadata(storedResponse, {
       cacheStatus: storedResponse.states.length ? "stale" : "miss",
       requestedSymbols: symbols,
@@ -15256,7 +14658,9 @@ export async function evaluateSignalMonitorMatrix(input: {
     });
   }
   if (!isSignalMonitorBarEvaluationEnabled()) {
-    const storedResponse = await hydrateFromStoredStates(buildEmptyMatrixResponse());
+    const storedResponse = await hydrateFromStoredStates(
+      buildEmptyMatrixResponse(),
+    );
     return withSignalMonitorMatrixMetadata(storedResponse, {
       cacheStatus: storedResponse.states.length ? "stale" : "miss",
       requestedSymbols: symbols,
@@ -15270,34 +14674,14 @@ export async function evaluateSignalMonitorMatrix(input: {
     });
   }
 
-  const cachedMatrix =
-    getDebouncedSignalMonitorMatrixCacheValue<MatrixResponse>(cacheKey);
-  if (
-    cachedMatrix &&
-    cachedMatrix.cacheStatus === "hit"
-  ) {
-    const hydratedResponse = await hydrateFromStoredStates(cachedMatrix.value);
-    return withSignalMonitorMatrixMetadata(hydratedResponse, {
-      cacheStatus: cachedMatrix.cacheStatus,
-      requestedSymbols: symbols,
-      requestedCells: exactCells.exact ? exactCells.cells : undefined,
-      totalSymbols: symbols.length + skippedSymbols.length,
-      taskCount: exactCells.exact
-        ? exactCells.cells.length
-        : symbols.length * timeframes.length,
-      startedAt,
-      automaticRequest,
-    });
-  }
-
-  const response = await withSignalMonitorMatrixEvaluationCache(
+  const response = await withSignalMonitorMatrixEvaluationSingleFlight(
     cacheKey,
     buildFreshMatrixResponse,
-        {
-          onCacheStatus: (status) => {
-            cacheStatus = status;
-          },
-        },
+    {
+      onCacheStatus: (status) => {
+        cacheStatus = status;
+      },
+    },
   );
   const hydratedResponse = await hydrateFromStoredStates(response);
   return withSignalMonitorMatrixMetadata(hydratedResponse, {
@@ -15316,8 +14700,8 @@ export async function evaluateSignalMonitorMatrix(input: {
 // The cockpit stream tick re-reads the profile every ~5s (getOrCreateProfile +
 // ensureProfileWatchlist against a 2-row table), so cache the response with a
 // short TTL and single-flight the load. Every in-file profile mutator
-// (updateSignalMonitorProfile — both DB and runtime-fallback branches — and
-// updateSignalMonitorProfileEvaluationMetadata) invalidates synchronously, so
+// (updateSignalMonitorProfile and updateSignalMonitorProfileEvaluationMetadata)
+// invalidates synchronously, so
 // the TTL only bounds staleness from a load racing a concurrent write. The
 // read path's own self-healing writes (profile defaults/watchlist backfill)
 // need no invalidation: their results flow into the cached response.
@@ -15336,12 +14720,12 @@ async function loadSignalMonitorProfileFresh(environment: RuntimeMode) {
     const profile = await getOrCreateProfile(environment);
     return profileToResponse(await ensureProfileWatchlist(profile));
   } catch (error) {
-    if (isTransientPostgresError(error)) {
+    if (isTransientPostgresError(error) || isStatementTimeoutError(error)) {
       warnSignalMonitorDbUnavailable(error, {
         operation: "get_signal_monitor_profile",
         environment,
       });
-      return profileToResponse(getRuntimeSignalMonitorProfile(environment));
+      throw createSignalMonitorDbUnavailableError(error);
     }
     throw error;
   }
@@ -15355,9 +14739,6 @@ export async function getSignalMonitorProfile(input: {
   const cached = signalMonitorProfileCache.get(environment);
   if (cached && cached.expiresAt > nowMs) {
     return cached.promise;
-  }
-  if (isSignalMonitorHardResourcePressure()) {
-    return profileToResponse(getRuntimeSignalMonitorProfile(environment));
   }
   const promise = loadSignalMonitorProfileFresh(environment);
   signalMonitorProfileCache.set(environment, {
@@ -15463,23 +14844,12 @@ export async function updateSignalMonitorProfile(input: {
     });
     return response;
   } catch (error) {
-    if (isTransientPostgresError(error)) {
+    if (isTransientPostgresError(error) || isStatementTimeoutError(error)) {
       warnSignalMonitorDbUnavailable(error, {
         operation: "update_signal_monitor_profile",
         environment,
       });
-      const response = profileToResponse(
-        await updateRuntimeSignalMonitorProfile({
-          ...input,
-          environment,
-        }),
-      );
-      invalidateSignalMonitorProfileCache();
-      notifyAlgoCockpitChanged({
-        mode: environment,
-        reason: "signal_monitor_profile_updated",
-      });
-      return response;
+      throw createSignalMonitorDbUnavailableError(error);
     }
     throw error;
   }
@@ -15521,7 +14891,6 @@ export const __signalMonitorInternalsForTests = {
   hasCompleteSignalMonitorMatrixCoverage,
   buildSignalMonitorMatrixPendingCells,
   completeSignalMonitorStateSnapshotCoverage,
-  buildSignalMonitorStateUnavailableResult,
   shouldPersistSignalMonitorMatrixState,
   shouldPersistCanonicalSignalMonitorEvent,
   shouldPersistSignalMonitorStateEvent,
@@ -15680,13 +15049,11 @@ export const __signalMonitorInternalsForTests = {
   pythonComputeEnabledForSignalMatrix,
   normalizePythonSignalMatrixState,
   resolveSignalMonitorMatrixPythonStates,
-  withSignalMonitorMatrixEvaluationCache,
+  withSignalMonitorMatrixEvaluationSingleFlight,
   withSignalMonitorMatrixMetadata,
   markAutomaticSignalMonitorMatrixRequest,
   isSignalMonitorBarEvaluationEnabled,
   SIGNAL_MONITOR_PASSIVE_SIGNAL_SOURCE_MESSAGE,
-  getDebouncedSignalMonitorMatrixCacheValue,
-  shouldCacheSignalMonitorMatrixEvaluationValue,
   buildSignalMonitorEventKey,
   resolveSignalMonitorEventLookupKeys,
   resolveSignalMonitorSymbolStateUpsert,
@@ -15715,22 +15082,6 @@ export const __signalMonitorInternalsForTests = {
   listLatestTrustedSignalMonitorEventsForProfile,
   encodeSignalMonitorEventsCursor,
   decodeSignalMonitorEventsCursor,
-  filterSignalMonitorEventResponses,
-  filterRuntimeSignalMonitorEvents,
-  paginateSignalMonitorEventResponses,
-  buildSignalMonitorEventsRuntimeFallbackResponse,
-  shouldServeSignalMonitorEventsRuntimeFallback,
-  markSignalMonitorEventsReadFallbackForTests(input: {
-    error: unknown;
-    environment: RuntimeMode;
-    nowMs?: number;
-  }) {
-    return markSignalMonitorEventsReadFallback({ ...input, suppressLog: true });
-  },
-  resetSignalMonitorEventsReadFallbackBackoffForTests() {
-    signalMonitorEventsReadDbBackoff.resetForTest();
-  },
-  getRuntimeSignalMonitorEvaluationCacheValue,
   disabledSignalMonitorMatrixResponse,
   getSignalMonitorCompletedBarsCacheDiagnostics() {
     return {
@@ -15739,23 +15090,9 @@ export const __signalMonitorInternalsForTests = {
       counters: { ...signalMonitorCompletedBarsCounters },
     };
   },
-  seedSignalMonitorMatrixCache(
-    key: string,
-    value: unknown,
-    bounds: { freshUntil: number; staleUntil: number },
-  ) {
-    signalMonitorMatrixEvaluationCache.set(key, {
-      value,
-      freshUntil: bounds.freshUntil,
-      staleUntil: bounds.staleUntil,
-    });
-  },
 };
 
-type SignalMonitorStateSource =
-  | "database"
-  | "runtime-fallback"
-  | "memory-cache";
+type SignalMonitorStateSource = "database";
 type SignalMonitorStateValue = {
   profile: ReturnType<typeof profileToResponse>;
   states: SignalMonitorStateSnapshotState[];
@@ -16217,7 +15554,7 @@ async function readSignalMonitorStateFresh(input: {
         operation: "read_signal_monitor_state",
         environment,
       });
-      return buildSignalMonitorStateUnavailableResult(environment);
+      throw createSignalMonitorDbUnavailableError(error);
     }
     throw error;
   }
@@ -16236,54 +15573,6 @@ export async function getSignalMonitorStoredState(input: {
   return {
     ...snapshot.value,
     stateSource: snapshot.stateSource,
-  };
-}
-
-function buildSignalMonitorStateUnavailableResult(
-  environment: RuntimeMode,
-  evaluatedAt = new Date(),
-): SignalMonitorStateReadResult {
-  const profile: DbSignalMonitorProfile = {
-    ...getRuntimeSignalMonitorProfile(environment),
-    id: `state-unavailable-${environment}`,
-    lastError: SIGNAL_MONITOR_STATE_UNAVAILABLE_MESSAGE,
-    updatedAt: evaluatedAt,
-  };
-  const maxSymbols = positiveInteger(
-    profile.maxSymbols,
-    DEFAULT_SIGNAL_MONITOR_MAX_SYMBOLS,
-    1,
-    SIGNAL_MONITOR_MAX_SYMBOLS_LIMIT,
-  );
-  const fallbackUniverse = resolveSignalMonitorUniverseFromWatchlists({
-    profile,
-    watchlists: listWatchlistsRuntimeFallback().watchlists,
-    expansionUniverse: {
-      symbols: [],
-      fallbackUsed: true,
-      degradedReason: SIGNAL_MONITOR_STATE_UNAVAILABLE_MESSAGE,
-      rankedAt: null,
-    },
-  });
-  const universeSymbols = resolveSignalMonitorActiveUniverseSymbols(fallbackUniverse);
-  const value = completeSignalMonitorStateSnapshotCoverage({
-    profile: profileToResponse(profile),
-    states: [],
-    evaluatedAt,
-    truncated: true,
-    skippedSymbols: fallbackUniverse.skippedSymbols,
-    universeSymbols,
-    universe: {
-      ...fallbackUniverse.universe,
-      configuredMaxSymbols: maxSymbols,
-      fallbackUsed: true,
-      degradedReason: SIGNAL_MONITOR_STATE_UNAVAILABLE_MESSAGE,
-    },
-  });
-
-  return {
-    value,
-    stateSource: "runtime-fallback" as const,
   };
 }
 
@@ -16716,16 +16005,12 @@ export async function evaluateSignalMonitor(input: {
       stateSource: "database" as const,
     };
   } catch (error) {
-    if (isTransientPostgresError(error)) {
+    if (isTransientPostgresError(error) || isStatementTimeoutError(error)) {
       warnSignalMonitorDbUnavailable(error, {
         operation: "evaluate_signal_monitor",
         environment,
       });
-      const fallback = buildSignalMonitorStateUnavailableResult(environment);
-      return {
-        ...fallback.value,
-        stateSource: fallback.stateSource,
-      };
+      throw createSignalMonitorDbUnavailableError(error);
     }
     throw error;
   }
@@ -16744,8 +16029,8 @@ export async function listSignalMonitorBreadthHistory(input: {
 
   try {
     // Prefer recorded standing-breadth snapshots when the window has them; they
-    // are exact and universe-bounded. Wrapped so a missing table (pre-migration)
-    // or transient error degrades to event-log reconstruction instead of 500ing.
+    // are exact and universe-bounded. A missing pre-migration table can still be
+    // reconstructed from canonical events, but an unavailable DB is explicit.
     let snapshotRows: Array<{
       timeframe: string;
       capturedAt: Date;
@@ -16781,12 +16066,16 @@ export async function listSignalMonitorBreadthHistory(input: {
           dateOrNull(right.capturedAt)!.getTime(),
       );
     } catch (snapshotError) {
-      if (!isTransientPostgresError(snapshotError)) {
-        logger.warn(
-          { err: snapshotError, environment },
-          "Signal monitor breadth snapshot read failed; falling back to reconstruction",
-        );
+      if (
+        isTransientPostgresError(snapshotError) ||
+        isStatementTimeoutError(snapshotError)
+      ) {
+        throw createSignalMonitorDbUnavailableError(snapshotError);
       }
+      logger.warn(
+        { err: snapshotError, environment },
+        "Signal monitor breadth snapshot read failed; reconstructing from canonical events",
+      );
       snapshotRows = [];
     }
     // Prefer exact standing-breadth snapshots whenever present. The event log is
@@ -16831,16 +16120,8 @@ export async function listSignalMonitorBreadthHistory(input: {
 
     return buildSignalMonitorBreadthHistoryResponse(windowEvents, seedRows, window);
   } catch (error) {
-    if (isTransientPostgresError(error)) {
-      warnSignalMonitorDbUnavailable(error, {
-        operation: "list_signal_monitor_breadth_history",
-        environment,
-      });
-      return buildSignalMonitorBreadthHistoryResponse(
-        runtimeSignalMonitorEvents.get(environment) ?? [],
-        [],
-        window,
-      );
+    if (isTransientPostgresError(error) || isStatementTimeoutError(error)) {
+      throw createSignalMonitorDbUnavailableError(error);
     }
     throw error;
   }
@@ -16884,19 +16165,6 @@ export async function listSignalMonitorEvents(input: {
     }
   }
   const limit = resolveSignalMonitorEventsPageSize(input.limit);
-  const fallbackInput = {
-    environment,
-    symbol: input.symbol,
-    from: input.from,
-    to: input.to,
-    cursor: input.cursor,
-    limit: input.limit,
-  };
-  const nowMs = Date.now();
-
-  if (shouldServeSignalMonitorEventsRuntimeFallback(nowMs)) {
-    return buildSignalMonitorEventsRuntimeFallbackResponse(fallbackInput);
-  }
 
   try {
     const cacheKey = [
@@ -16928,76 +16196,11 @@ export async function listSignalMonitorEvents(input: {
       hasMore,
       sourceStatus: "database" as const,
     };
-    signalMonitorEventsReadDbBackoff.clear();
     return response;
   } catch (error) {
     if (!isTransientPostgresError(error) && !isStatementTimeoutError(error)) {
       throw error;
     }
-    markSignalMonitorEventsReadFallback({
-      error,
-      environment,
-      nowMs,
-    });
-    return buildSignalMonitorEventsRuntimeFallbackResponse(fallbackInput);
+    throw createSignalMonitorDbUnavailableError(error);
   }
-}
-
-function shouldServeSignalMonitorEventsRuntimeFallback(
-  nowMs = Date.now(),
-): boolean {
-  return (
-    signalMonitorEventsReadDbBackoff.isActive(nowMs) ||
-    isSignalMonitorHardResourcePressure()
-  );
-}
-
-function markSignalMonitorEventsReadFallback(input: {
-  error: unknown;
-  environment: RuntimeMode;
-  nowMs?: number;
-  suppressLog?: boolean;
-}) {
-  const sourceStatus = "runtime-fallback" as const;
-  const diagnostic = recordSignalMonitorDbFallback(input.error, {
-    operation: "list_signal_monitor_events",
-    environment: input.environment,
-    sourceStatus,
-  });
-  signalMonitorEventsReadDbBackoff.markFailure({
-    error: input.error,
-    logger:
-      input.suppressLog === true
-        ? { warn() {} }
-        : {
-            warn(payload, message) {
-              logger.warn(
-                {
-                  ...asRecord(payload),
-                  operation: diagnostic.operation,
-                  environment: diagnostic.environment,
-                  sourceStatus: diagnostic.sourceStatus,
-                  transient: diagnostic.transient,
-                  poolContention: diagnostic.poolContention,
-                },
-                message,
-              );
-            },
-          },
-    message:
-      "Signal monitor events database unavailable; latching runtime fallback",
-    nowMs: input.nowMs ?? Date.now(),
-  });
-  return diagnostic;
-}
-
-function buildSignalMonitorEventsRuntimeFallbackResponse(input: {
-  environment: RuntimeMode;
-  symbol?: string;
-  from?: Date | string;
-  to?: Date | string;
-  cursor?: string;
-  limit?: number;
-}) {
-  return filterRuntimeSignalMonitorEvents(input);
 }

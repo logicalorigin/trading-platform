@@ -5,6 +5,11 @@ import type { AddressInfo } from "node:net";
 
 import { withTestDb } from "@workspace/db/testing";
 import app from "../app";
+import {
+  issueIbkrPortalEmbedGrant,
+  readIbkrPortalEmbedSession,
+  redeemIbkrPortalEmbedGrant,
+} from "../services/ibkr-portal-embed-session";
 import { __resetAuthRateLimitsForTests } from "./auth";
 
 beforeEach(() => {
@@ -13,6 +18,7 @@ beforeEach(() => {
 
 type AuthRouteBody = {
   user: {
+    id: string;
     email: string;
     role?: string;
   };
@@ -80,6 +86,18 @@ test("auth routes bootstrap, read session, and require CSRF for logout", async (
         assert.equal(sessionBody.user.email, "owner@example.com");
         assert.equal(typeof sessionBody.csrfToken, "string");
 
+        const embedOrigin = "https://ibkr.example.test";
+        const embedGrant = issueIbkrPortalEmbedGrant({
+          appUserId: sessionBody.user.id,
+          parentOrigin: "https://pyrus.example.test",
+          embedOrigin,
+        });
+        const embedSession = redeemIbkrPortalEmbedGrant(
+          embedGrant.code,
+          embedOrigin,
+        );
+        assert.ok(embedSession);
+
         const blockedLogout = await fetch(`${baseUrl}/auth/logout`, {
           method: "POST",
           headers: { cookie },
@@ -95,6 +113,13 @@ test("auth routes bootstrap, read session, and require CSRF for logout", async (
         });
         assert.equal(logoutResponse.status, 200);
         assert.match(logoutResponse.headers.get("set-cookie") ?? "", /Max-Age=0/);
+        assert.equal(
+          readIbkrPortalEmbedSession(
+            `pyrus_ibkr_embed=${embedSession.sessionToken}`,
+            embedOrigin,
+          ),
+          null,
+        );
       }),
     ),
   );

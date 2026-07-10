@@ -15,14 +15,11 @@ const createPreloadableScreen = (screenId, label) => {
       () => getPreloadedScreenComponent(screenId),
     );
     const [loadError, setLoadError] = useState(null);
+    const ResolvedScreenComponent =
+      ScreenComponent || getPreloadedScreenComponent(screenId);
 
     useEffect(() => {
-      if (ScreenComponent || loadError || props?.isVisible === false) {
-        return undefined;
-      }
-      const cachedScreenComponent = getPreloadedScreenComponent(screenId);
-      if (cachedScreenComponent) {
-        setScreenComponent(() => cachedScreenComponent);
+      if (ResolvedScreenComponent || loadError || props?.isVisible === false) {
         return undefined;
       }
       let cancelled = false;
@@ -41,15 +38,15 @@ const createPreloadableScreen = (screenId, label) => {
       return () => {
         cancelled = true;
       };
-    }, [ScreenComponent, loadError, props?.isVisible]);
+    }, [ResolvedScreenComponent, loadError, props?.isVisible]);
 
     useEffect(() => {
-      if (!ScreenComponent || props?.isVisible === false) {
+      if (!ResolvedScreenComponent || props?.isVisible === false) {
         return;
       }
       markScreenReady(screenId);
       props?.onReadinessChange?.({ frameReady: true, error: null });
-    }, [ScreenComponent, props?.isVisible, props?.onReadinessChange]);
+    }, [ResolvedScreenComponent, props?.isVisible, props?.onReadinessChange]);
 
     useEffect(() => {
       if (!loadError || props?.isVisible === false) {
@@ -71,8 +68,8 @@ const createPreloadableScreen = (screenId, label) => {
     }, []);
     const loadingLabel = label.replace(/Screen$/, "");
 
-    return ScreenComponent ? (
-      <ScreenComponent {...props} />
+    return ResolvedScreenComponent ? (
+      <ResolvedScreenComponent {...props} />
     ) : loadError && props?.isVisible !== false ? (
       <div
         role="alert"

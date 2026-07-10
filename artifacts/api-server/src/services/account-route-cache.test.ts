@@ -21,7 +21,6 @@ test("account route cache collapses identical in-flight reads", async () => {
       });
     },
     5_000,
-    60_000,
   );
   const second = internals.readAccountRouteResponseCache(
     "accounts",
@@ -31,7 +30,6 @@ test("account route cache collapses identical in-flight reads", async () => {
       return { version: 2 };
     },
     5_000,
-    60_000,
   );
 
   // readAccountRouteResponseCache invokes the factory on a microtask
@@ -48,7 +46,7 @@ test("account route cache collapses identical in-flight reads", async () => {
   assert.deepEqual(await second, { version: 1 });
 });
 
-test("account route cache serves stale response while refresh continues", async () => {
+test("account route cache waits for one fresh response after the TTL expires", async () => {
   internals.clearAccountRouteResponseCache();
 
   const first = await internals.readAccountRouteResponseCache(
@@ -56,7 +54,6 @@ test("account route cache serves stale response while refresh continues", async 
     { accountId: "U1", range: "1D" },
     async () => ({ version: 1 }),
     5,
-    1_000,
   );
   assert.deepEqual(first, { version: 1 });
 
@@ -65,8 +62,7 @@ test("account route cache serves stale response while refresh continues", async 
     resolve?: (value: { version: number }) => void;
   } = {};
   const refreshStarted = { value: false };
-  const secondStartedAt = Date.now();
-  const second = await internals.readAccountRouteResponseCache(
+  const second = internals.readAccountRouteResponseCache(
     "equity-history",
     { accountId: "U1", range: "1D" },
     async () => {
@@ -76,22 +72,50 @@ test("account route cache serves stale response while refresh continues", async 
       });
     },
     5,
-    1_000,
   );
 
-  assert.deepEqual(second, { version: 1 });
+  await Promise.resolve();
   assert.equal(refreshStarted.value, true);
-  assert.ok(Date.now() - secondStartedAt < 50);
   assert.ok(refreshControl.resolve);
+  const joined = internals.readAccountRouteResponseCache(
+    "equity-history",
+    { accountId: "U1", range: "1D" },
+    async () => ({ version: 3 }),
+    5,
+  );
+  assert.equal(joined, second);
   refreshControl.resolve({ version: 2 });
-  await delay(0);
+  assert.deepEqual(await second, { version: 2 });
+  assert.deepEqual(await joined, { version: 2 });
 
   const third = await internals.readAccountRouteResponseCache(
     "equity-history",
     { accountId: "U1", range: "1D" },
     async () => ({ version: 3 }),
     5,
-    1_000,
   );
   assert.deepEqual(third, { version: 2 });
+});
+
+test("account route cache propagates a failed refresh after the TTL expires", async () => {
+  internals.clearAccountRouteResponseCache();
+  await internals.readAccountRouteResponseCache(
+    "summary",
+    { accountId: "U1" },
+    async () => ({ version: 1 }),
+    5,
+  );
+
+  await delay(15);
+  await assert.rejects(
+    internals.readAccountRouteResponseCache(
+      "summary",
+      { accountId: "U1" },
+      async () => {
+        throw new Error("fresh read failed");
+      },
+      5,
+    ),
+    /fresh read failed/,
+  );
 });

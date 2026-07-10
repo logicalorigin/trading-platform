@@ -4,6 +4,7 @@ import test from "node:test";
 
 import {
   __liveStreamsInternalsForTests,
+  applyAccountPageDerivedPayloadToCache,
   applyAccountPageLivePayloadToCache,
   getSignalMonitorMatrixStreamUrl,
   getStoredOptionQuoteSnapshot,
@@ -12,15 +13,51 @@ import {
 
 const queryKeyText = (key) => JSON.stringify(key);
 
+const createAccountPageQueryClient = () => {
+  const queries = [];
+  return {
+    queries,
+    getQueryCache: () => ({
+      findAll: ({ predicate }) => queries.filter(predicate),
+    }),
+    setQueryData: (queryKey, updater) => {
+      const current = queries.find(
+        (query) => queryKeyText(query.queryKey) === queryKeyText(queryKey),
+      );
+      const data =
+        typeof updater === "function" ? updater(current?.data) : updater;
+      if (current) {
+        current.data = data;
+      } else {
+        queries.push({ queryKey, data });
+      }
+    },
+  };
+};
+
 test("broker stream freshness tolerates normal SSE jitter under load", () => {
-  const source = readFileSync(new URL("./live-streams.ts", import.meta.url), "utf8");
+  const source = readFileSync(
+    new URL("./live-streams.ts", import.meta.url),
+    "utf8",
+  );
 
   assert.match(source, /const ACCOUNT_STREAM_FRESH_MS = 20_000;/);
   assert.doesNotMatch(source, /const ACCOUNT_STREAM_FRESH_MS = 7_000;/);
 });
 
+test("account position cache merge rejects retired activity degradation metadata", () => {
+  const source = readFileSync(
+    new URL("./live-streams.ts", import.meta.url),
+    "utf8",
+  );
+
+  assert.doesNotMatch(source, /activityDegraded/);
+  assert.match(source, /isDegradedAccountResponse/);
+});
+
 test("option quote patch preserves a shadow prior-day position's backend day change", () => {
-  const { patchAccountPositionRowFromOptionQuote } = __liveStreamsInternalsForTests;
+  const { patchAccountPositionRowFromOptionQuote } =
+    __liveStreamsInternalsForTests;
   const priorDay = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString();
   const baseRow = {
     id: "shadow:RH",
@@ -292,7 +329,7 @@ test("quote stream recovers from a future-dated cached snapshot", () => {
   }
 });
 
-test("algo cockpit stream keeps known deployments when fallback is unavailable", () => {
+test("algo cockpit stream replaces known deployments with the canonical empty state", () => {
   const current = {
     deployments: [
       {
@@ -304,23 +341,26 @@ test("algo cockpit stream keeps known deployments when fallback is unavailable",
   };
   const incoming = {
     deployments: [],
-    cacheStatus: "unavailable",
   };
 
-  assert.equal(
-    __liveStreamsInternalsForTests.resolveAlgoDeploymentsStreamCacheUpdate(
-      current,
-      incoming,
-    ),
-    current,
-  );
-  assert.equal(
-    __liveStreamsInternalsForTests.resolveAlgoDeploymentsStreamCacheUpdate(
-      undefined,
-      incoming,
-    ),
-    incoming,
-  );
+  let deploymentUpdate = null;
+  const queryClient = {
+    setQueryData: (key, value) => {
+      if (queryKeyText(key).includes("/algo/deployments")) {
+        deploymentUpdate = typeof value === "function" ? value(current) : value;
+      }
+    },
+  };
+
+  __liveStreamsInternalsForTests.applyAlgoCockpitPayloadToCache(queryClient, {
+    phase: "primary",
+    mode: "shadow",
+    deploymentId: null,
+    deployments: incoming,
+    events: { events: [] },
+  });
+
+  assert.equal(deploymentUpdate, incoming);
 });
 
 test("primary algo cockpit stream payload does not hydrate canonical STA caches", () => {
@@ -350,10 +390,16 @@ test("primary algo cockpit stream payload does not hydrate canonical STA caches"
     primaryPayload,
   );
 
-  assert.ok(calls.some((call) => queryKeyText(call.key).includes("/algo/deployments")));
-  assert.ok(calls.some((call) => queryKeyText(call.key).includes("/algo/events")));
+  assert.ok(
+    calls.some((call) => queryKeyText(call.key).includes("/algo/deployments")),
+  );
+  assert.ok(
+    calls.some((call) => queryKeyText(call.key).includes("/algo/events")),
+  );
   assert.equal(
-    calls.some((call) => queryKeyText(call.key).includes("/signal-options/state")),
+    calls.some((call) =>
+      queryKeyText(call.key).includes("/signal-options/state"),
+    ),
     false,
   );
   assert.equal(
@@ -361,11 +407,15 @@ test("primary algo cockpit stream payload does not hydrate canonical STA caches"
     false,
   );
   assert.equal(
-    calls.some((call) => queryKeyText(call.key).includes("/signal-options/performance")),
+    calls.some((call) =>
+      queryKeyText(call.key).includes("/signal-options/performance"),
+    ),
     false,
   );
   assert.equal(
-    calls.some((call) => queryKeyText(call.key).includes("/signal-monitor/profile")),
+    calls.some((call) =>
+      queryKeyText(call.key).includes("/signal-monitor/profile"),
+    ),
     false,
   );
 });
@@ -398,7 +448,9 @@ test("full algo cockpit stream payload hydrates canonical STA caches", () => {
   );
 
   assert.ok(
-    calls.some((call) => queryKeyText(call.key).includes("/signal-options/state")),
+    calls.some((call) =>
+      queryKeyText(call.key).includes("/signal-options/state"),
+    ),
   );
   assert.ok(calls.some((call) => queryKeyText(call.key).includes("/cockpit")));
   assert.ok(
@@ -407,7 +459,9 @@ test("full algo cockpit stream payload hydrates canonical STA caches", () => {
     ),
   );
   assert.ok(
-    calls.some((call) => queryKeyText(call.key).includes("/signal-monitor/profile")),
+    calls.some((call) =>
+      queryKeyText(call.key).includes("/signal-monitor/profile"),
+    ),
   );
 });
 
@@ -454,6 +508,55 @@ test("account option quote cache patch updates same-day day PnL from mark", () =
   assert.ok(Math.abs(patched.unrealizedPnl - 45) < 1e-9);
   assert.equal(patched.dayChange, patched.unrealizedPnl);
   assert.equal(patched.dayChangePercent, patched.unrealizedPnlPercent);
+});
+
+test("account option quote cache patch signs prior-day short Day percent and uses prior close", () => {
+  const row = {
+    id: "U123:12345",
+    accountId: "U123",
+    accounts: ["U123"],
+    symbol: "NVDA",
+    assetClass: "Options",
+    quantity: -2,
+    averageCost: 5,
+    mark: 4,
+    dayChange: 0,
+    dayChangePercent: 0,
+    unrealizedPnl: 200,
+    unrealizedPnlPercent: 20,
+    marketValue: -800,
+    openedAt: "2026-06-05T14:30:00.000Z",
+    optionContract: {
+      ticker: "NVDA260612C00145000",
+      underlying: "NVDA",
+      expirationDate: "2026-06-12T00:00:00.000Z",
+      strike: 145,
+      right: "call",
+      multiplier: 100,
+      sharesPerContract: 100,
+      providerContractId: "12345",
+    },
+    optionQuote: null,
+    quote: null,
+  };
+
+  const patched =
+    __liveStreamsInternalsForTests.patchAccountPositionRowFromOptionQuote(row, {
+      symbol: "NVDA",
+      providerContractId: "12345",
+      price: 4.2,
+      mark: 4.2,
+      bid: 4.15,
+      ask: 4.25,
+      prevClose: 4,
+      dayChange: 0.1,
+      dayChangePercent: 2.5,
+      updatedAt: new Date().toISOString(),
+    });
+
+  assert.ok(Math.abs(patched.dayChange - -40) < 1e-9);
+  assert.ok(Math.abs(patched.dayChangePercent - -5) < 1e-9);
+  assert.ok(Math.abs(patched.optionQuote.dayChangePercent - 5) < 1e-9);
 });
 
 test("account option quote cache patch matches structured quote aliases for numeric rows", () => {
@@ -614,15 +717,199 @@ test("account snapshot stream patch updates cached same-day position day PnL", (
 
   assert.equal(patched.positions.length, 1);
   assert.ok(Math.abs(patched.positions[0].unrealizedPnl - 45) < 1e-9);
-  assert.equal(patched.positions[0].dayChange, patched.positions[0].unrealizedPnl);
+  assert.equal(
+    patched.positions[0].dayChange,
+    patched.positions[0].unrealizedPnl,
+  );
   assert.equal(
     patched.positions[0].dayChangePercent,
     patched.positions[0].unrealizedPnlPercent,
   );
-  assert.equal(patched.totals.unrealizedPnl, patched.positions[0].unrealizedPnl);
+  assert.equal(
+    patched.totals.unrealizedPnl,
+    patched.positions[0].unrealizedPnl,
+  );
 });
 
-test("account page payload merge preserves cached execution open date", () => {
+test("account snapshot stream signs prior-day short option Day percent", () => {
+  const priorDay = "2026-06-05T14:30:00.000Z";
+  const optionContract = {
+    ticker: "NVDA260612C00145000",
+    underlying: "NVDA",
+    expirationDate: "2026-06-12T00:00:00.000Z",
+    strike: 145,
+    right: "call",
+    multiplier: 100,
+    sharesPerContract: 100,
+    providerContractId: "12345",
+  };
+  const currentRow = {
+    id: "U123:12345",
+    accountId: "U123",
+    accounts: ["U123"],
+    symbol: "NVDA",
+    assetClass: "Options",
+    quantity: -2,
+    averageCost: 5,
+    mark: 4,
+    dayChange: 0,
+    dayChangePercent: 0,
+    unrealizedPnl: 200,
+    unrealizedPnlPercent: 20,
+    marketValue: -800,
+    weightPercent: -8,
+    openedAt: priorDay,
+    optionContract,
+  };
+  const patched =
+    __liveStreamsInternalsForTests.patchAccountPositionsFromStream(
+      {
+        accountId: "U123",
+        currency: "USD",
+        updatedAt: priorDay,
+        totals: {
+          weightPercent: -8,
+          unrealizedPnl: 200,
+          grossLong: 0,
+          grossShort: 800,
+          netExposure: -800,
+          cash: 2_000,
+          totalCash: 2_000,
+          buyingPower: 2_000,
+          netLiquidation: 1_200,
+        },
+        positions: [currentRow],
+      },
+      {
+        accounts: [
+          {
+            id: "U123",
+            providerAccountId: "U123",
+            currency: "USD",
+            cash: 2_000,
+            buyingPower: 2_000,
+            netLiquidation: 1_160,
+            updatedAt: new Date().toISOString(),
+          },
+        ],
+        positions: [
+          {
+            id: "U123:12345",
+            accountId: "U123",
+            symbol: "NVDA",
+            assetClass: "option",
+            quantity: -2,
+            averagePrice: 5,
+            marketPrice: 4.2,
+            marketValue: -840,
+            unrealizedPnl: 160,
+            unrealizedPnlPercent: 16,
+            openedAt: priorDay,
+            optionContract,
+            quote: {
+              dayChange: 0.1,
+              dayChangePercent: 2.5,
+              prevClose: 4,
+            },
+          },
+        ],
+      },
+      "U123",
+      ["/api/accounts/U123/positions", { mode: "shadow", assetClass: "all" }],
+    );
+
+  assert.ok(Math.abs(patched.positions[0].dayChange - -40) < 1e-9);
+  assert.ok(Math.abs(patched.positions[0].dayChangePercent - -5) < 1e-9);
+});
+
+test("combined stream rows divide summed PnL by summed cost basis", () => {
+  const openedAt = new Date().toISOString();
+  const optionContract = {
+    ticker: "NVDA260612C00145000",
+    underlying: "NVDA",
+    expirationDate: "2026-06-12T00:00:00.000Z",
+    strike: 145,
+    right: "call",
+    multiplier: 100,
+    sharesPerContract: 100,
+    providerContractId: "12345",
+  };
+  const patched =
+    __liveStreamsInternalsForTests.patchAccountPositionsFromStream(
+      undefined,
+      {
+        accounts: [
+          {
+            id: "U1",
+            providerAccountId: "U1",
+            currency: "USD",
+            cash: 1_000,
+            buyingPower: 1_000,
+            netLiquidation: 5_000,
+            updatedAt: openedAt,
+          },
+          {
+            id: "U2",
+            providerAccountId: "U2",
+            currency: "USD",
+            cash: 1_000,
+            buyingPower: 1_000,
+            netLiquidation: 5_000,
+            updatedAt: openedAt,
+          },
+        ],
+        positions: [
+          {
+            id: "U1:12345",
+            accountId: "U1",
+            symbol: "NVDA",
+            assetClass: "option",
+            quantity: 1,
+            averagePrice: 10,
+            marketPrice: 12,
+            marketValue: 1_200,
+            unrealizedPnl: 200,
+            unrealizedPnlPercent: 20,
+            openedAt,
+            optionContract,
+            quote: null,
+          },
+          {
+            id: "U2:12345",
+            accountId: "U2",
+            symbol: "NVDA",
+            assetClass: "option",
+            quantity: 1,
+            averagePrice: 11,
+            marketPrice: 12,
+            marketValue: 1_200,
+            unrealizedPnl: 100,
+            unrealizedPnlPercent: 100 / 11,
+            openedAt,
+            optionContract,
+            quote: null,
+          },
+        ],
+      },
+      "combined",
+      [
+        "/api/accounts/combined/positions",
+        { mode: "shadow", assetClass: "all" },
+      ],
+    );
+
+  assert.equal(patched.positions.length, 1);
+  assert.ok(
+    Math.abs(patched.positions[0].unrealizedPnlPercent - (300 / 2_100) * 100) <
+      1e-9,
+  );
+  assert.ok(
+    Math.abs(patched.positions[0].dayChangePercent - (300 / 2_100) * 100) <
+      1e-9,
+  );
+});
+
+test("account page payload merge preserves only cached execution metadata", () => {
   const openedAt = new Date().toISOString();
   const structuredProviderContractId =
     __liveStreamsInternalsForTests.optionPositionProviderContractIds({
@@ -703,10 +990,115 @@ test("account page payload merge preserves cached execution open date", () => {
 
   assert.equal(merged.openedAt, openedAt);
   assert.equal(merged.openedAtSource, "execution");
-  assert.equal(merged.optionQuote.providerContractId, structuredProviderContractId);
-  assert.ok(Math.abs(merged.unrealizedPnl - 45) < 1e-9);
-  assert.equal(merged.dayChange, merged.unrealizedPnl);
-  assert.equal(merged.dayChangePercent, merged.unrealizedPnlPercent);
+  assert.equal(merged.optionQuote, null);
+  assert.equal(merged.mark, 2);
+  assert.equal(merged.marketValue, 200);
+  assert.equal(merged.unrealizedPnl, 0);
+  assert.equal(merged.dayChange, null);
+  assert.equal(merged.dayChangePercent, null);
+});
+
+test("broker position stream refuses to replay cached valuation for an unmarked snapshot", () => {
+  const current = {
+    accountId: "U123",
+    currency: "USD",
+    updatedAt: "2026-07-10T12:00:00.000Z",
+    totals: { netLiquidation: 10_000 },
+    positions: [
+      {
+        id: "U123:AAPL",
+        accountId: "U123",
+        accounts: ["U123"],
+        symbol: "AAPL",
+        assetClass: "stock",
+        quantity: 10,
+        averageCost: 100,
+        mark: 150,
+        marketValue: 1_500,
+        unrealizedPnl: 500,
+        unrealizedPnlPercent: 50,
+      },
+    ],
+  };
+  const payload = {
+    accounts: [
+      {
+        id: "U123",
+        currency: "USD",
+        cash: null,
+        buyingPower: null,
+        netLiquidation: null,
+        updatedAt: "2026-07-10T12:01:00.000Z",
+      },
+    ],
+    positions: [
+      {
+        id: "U123:AAPL",
+        accountId: "U123",
+        symbol: "AAPL",
+        assetClass: "stock",
+        quantity: 10,
+        averagePrice: 100,
+        marketPrice: 100,
+        marketValue: 1_000,
+        unrealizedPnl: 0,
+        unrealizedPnlPercent: 0,
+      },
+    ],
+  };
+
+  assert.equal(
+    __liveStreamsInternalsForTests.patchAccountPositionsFromStream(
+      current,
+      payload,
+      "U123",
+      ["/api/accounts/U123/positions", { mode: "live" }],
+    ),
+    undefined,
+  );
+});
+
+test("fresh broker stream removal evicts scoped Account data instead of retaining it", () => {
+  const queries = [
+    {
+      queryKey: ["/api/accounts/U123/summary", { mode: "live" }],
+      data: {
+        accountId: "U123",
+        metrics: { netLiquidation: { value: 10_000 } },
+      },
+    },
+    {
+      queryKey: ["/api/accounts/U123/positions", { mode: "live" }],
+      data: { accountId: "U123", positions: [{ id: "old" }] },
+    },
+  ];
+  const queryClient = {
+    getQueryCache: () => ({
+      findAll: ({ queryKey, predicate }) =>
+        queries.filter((query) =>
+          predicate
+            ? predicate(query)
+            : queryKeyText(query.queryKey.slice(0, queryKey.length)) ===
+              queryKeyText(queryKey),
+        ),
+    }),
+    setQueryData: () => {},
+    removeQueries: ({ queryKey }) => {
+      const index = queries.findIndex(
+        (query) => queryKeyText(query.queryKey) === queryKeyText(queryKey),
+      );
+      if (index >= 0) queries.splice(index, 1);
+    },
+    invalidateQueries: () => Promise.resolve(),
+  };
+
+  __liveStreamsInternalsForTests.applyIbkrAccountPayloadToCache(
+    queryClient,
+    { accounts: [], positions: [] },
+    { mode: "live" },
+  );
+
+  assert.deepEqual(queries, []);
 });
 
 test("account page positions query keys request fast real-account positions first", () => {
@@ -816,7 +1208,8 @@ test("real account-page live payload patches the visible fast positions query", 
     }),
     setQueryData: (queryKey, updater) => {
       const query = queries.find(
-        (candidate) => queryKeyText(candidate.queryKey) === queryKeyText(queryKey),
+        (candidate) =>
+          queryKeyText(candidate.queryKey) === queryKeyText(queryKey),
       );
       if (!query) {
         queries.push({
@@ -825,7 +1218,8 @@ test("real account-page live payload patches the visible fast positions query", 
         });
         return;
       }
-      query.data = typeof updater === "function" ? updater(query.data) : updater;
+      query.data =
+        typeof updater === "function" ? updater(query.data) : updater;
     },
   };
   const livePosition = {
@@ -874,6 +1268,76 @@ test("real account-page live payload patches the visible fast positions query", 
   assert.equal(queries[0].data.positions[0].optionQuote.bid, 2.4);
 });
 
+test("fresh degraded or empty account-page payloads replace older cache content", () => {
+  const queryClient = createAccountPageQueryClient();
+  const livePayload = (version, degraded, positions) => ({
+    stream: "account-page-live",
+    accountId: "U123",
+    mode: "live",
+    orderTab: "working",
+    assetClass: "all",
+    updatedAt: `2026-07-10T00:00:0${version}.000Z`,
+    summary: { accountId: "U123", version, degraded },
+    intradayEquity: { accountId: "U123", points: [] },
+    allocation: { accountId: "U123", version, degraded },
+    positions: {
+      accountId: "U123",
+      version,
+      degraded,
+      positions,
+      totals: {},
+    },
+    orders: { accountId: "U123", orders: [] },
+    risk: { accountId: "U123", version, degraded },
+  });
+
+  applyAccountPageLivePayloadToCache(
+    queryClient,
+    livePayload(1, false, [{ id: "old-position", symbol: "OLD" }]),
+  );
+  applyAccountPageLivePayloadToCache(queryClient, livePayload(2, true, []));
+
+  const dataFor = (path) =>
+    queryClient.queries.find((query) => query.queryKey[0] === path)?.data;
+  assert.equal(dataFor("/api/accounts/U123/summary")?.version, 2);
+  assert.equal(dataFor("/api/accounts/U123/summary")?.degraded, true);
+  assert.deepEqual(dataFor("/api/accounts/U123/positions")?.positions, []);
+
+  const derivedPayload = (version, degraded, trades) => ({
+    stream: "account-page-derived",
+    accountId: "U123",
+    mode: "live",
+    range: "ALL",
+    tradeFilters: {
+      from: null,
+      to: null,
+      symbol: null,
+      assetClass: null,
+      pnlSign: null,
+      holdDuration: null,
+    },
+    performanceCalendarFrom: null,
+    updatedAt: `2026-07-10T00:00:0${version}.000Z`,
+    equityHistory: { accountId: "U123", points: [] },
+    benchmarkEquityHistory: {},
+    performanceCalendarEquity: { accountId: "U123", points: [] },
+    performanceCalendarTrades: { accountId: "U123", trades: [] },
+    closedTrades: { accountId: "U123", version, degraded, trades },
+    cashActivity: { accountId: "U123", activities: [] },
+    flexHealth: null,
+  });
+  applyAccountPageDerivedPayloadToCache(
+    queryClient,
+    derivedPayload(1, false, [{ id: "old-trade" }]),
+  );
+  applyAccountPageDerivedPayloadToCache(
+    queryClient,
+    derivedPayload(2, true, []),
+  );
+  assert.equal(dataFor("/api/accounts/U123/closed-trades")?.version, 2);
+  assert.deepEqual(dataFor("/api/accounts/U123/closed-trades")?.trades, []);
+});
+
 test("shared option quote stream demand unions visible hook subscriptions", () => {
   const demand =
     __liveStreamsInternalsForTests.resolveSharedOptionQuoteStreamDemand([
@@ -902,11 +1366,15 @@ test("shared option quote stream demand unions visible hook subscriptions", () =
 
 test("shared option quote sockets are limited to visible chain demand", () => {
   assert.equal(
-    __liveStreamsInternalsForTests.shouldUseSharedOptionQuoteStream("visible-live"),
+    __liveStreamsInternalsForTests.shouldUseSharedOptionQuoteStream(
+      "visible-live",
+    ),
     true,
   );
   assert.equal(
-    __liveStreamsInternalsForTests.shouldUseSharedOptionQuoteStream("execution-live"),
+    __liveStreamsInternalsForTests.shouldUseSharedOptionQuoteStream(
+      "execution-live",
+    ),
     false,
   );
   assert.equal(
@@ -916,13 +1384,18 @@ test("shared option quote sockets are limited to visible chain demand", () => {
     false,
   );
   assert.equal(
-    __liveStreamsInternalsForTests.shouldUseSharedOptionQuoteStream("automation-live"),
+    __liveStreamsInternalsForTests.shouldUseSharedOptionQuoteStream(
+      "automation-live",
+    ),
     false,
   );
 });
 
 test("account option quote REST fallback retries and re-upgrades to WebSocket", () => {
-  const source = readFileSync(new URL("./live-streams.ts", import.meta.url), "utf8");
+  const source = readFileSync(
+    new URL("./live-streams.ts", import.meta.url),
+    "utf8",
+  );
   const hook = source.match(
     /export const useIbkrOptionQuoteStream = \([\s\S]*?\n};\n\nexport const __liveStreamsInternalsForTests/,
   )?.[0];
@@ -979,7 +1452,10 @@ test("signal matrix stream url can request the server profile universe", () => {
 });
 
 test("signal matrix stream forwards payload metadata with states", () => {
-  const source = readFileSync(new URL("./live-streams.ts", import.meta.url), "utf8");
+  const source = readFileSync(
+    new URL("./live-streams.ts", import.meta.url),
+    "utf8",
+  );
 
   assert.match(
     source,
@@ -988,11 +1464,17 @@ test("signal matrix stream forwards payload metadata with states", () => {
 });
 
 test("signal matrix stream terminal reconnect creates a fresh EventSource bootstrap", () => {
-  const source = readFileSync(new URL("./live-streams.ts", import.meta.url), "utf8");
+  const source = readFileSync(
+    new URL("./live-streams.ts", import.meta.url),
+    "utf8",
+  );
 
   assert.match(source, /const connect = \(\) => \{/);
   assert.match(source, /const next = new EventSource\(streamUrl\)/);
-  assert.match(source, /next\.addEventListener\("bootstrap", handleBootstrap as EventListener\)/);
+  assert.match(
+    source,
+    /next\.addEventListener\("bootstrap", handleBootstrap as EventListener\)/,
+  );
   assert.match(source, /nextQuoteStreamReconnectDelayMs\(reconnectAttempt\)/);
   assert.match(source, /connect\(\);/);
 });

@@ -12,10 +12,9 @@ declare -a children=()
 mkdir -p \
   "${HOME}" \
   "${XDG_RUNTIME_DIR}" \
-  "${RUNTIME_DIR}/chromium" \
   "${LOG_DIR}" \
   "${PID_DIR}"
-chmod 0700 "${HOME}" "${XDG_RUNTIME_DIR}" "${RUNTIME_DIR}/chromium"
+chmod 0700 "${HOME}" "${XDG_RUNTIME_DIR}"
 printf '%s\n' "$$" >"${PID_DIR}/supervisor.pid"
 
 start_service() {
@@ -65,6 +64,24 @@ wait_for_port() {
     if { exec 3<>"/dev/tcp/127.0.0.1/${port}"; } 2>/dev/null; then
       exec 3>&- 3<&-
       return 0
+    fi
+    sleep 1
+  done
+  return 1
+}
+
+wait_for_cpg_login() {
+  local attempts=$1
+  local status
+  for ((attempt = 0; attempt < attempts; attempt += 1)); do
+    status=""
+    if { exec 3<>/dev/tcp/127.0.0.1/5000; } 2>/dev/null; then
+      printf 'GET /sso/Login HTTP/1.0\r\nHost: localhost\r\nConnection: close\r\n\r\n' >&3
+      IFS= read -r -t 2 status <&3 || true
+      exec 3>&- 3<&-
+      if [[ "${status}" =~ ^HTTP/[0-9.]+[[:space:]]+(200|302|303)[[:space:]] ]]; then
+        return 0
+      fi
     fi
     sleep 1
   done
@@ -124,19 +141,15 @@ start_service cpg java \
   ibgroup.web.core.clientportal.gw.GatewayStart \
   --conf ../root/conf.yaml
 wait_for_port 5000 60
+wait_for_cpg_login 60
 
 start_service cpg-relay /usr/local/bin/pyrus-capsule-relay 15000 5000
 
-start_service chromium chromium \
-  --user-data-dir="${RUNTIME_DIR}/chromium" \
-  --no-first-run \
-  --no-default-browser-check \
-  --disable-background-networking \
-  --disable-component-update \
-  --disable-sync \
-  --disable-extensions-except=/opt/pyrus/paper-only-extension \
-  --load-extension=/opt/pyrus/paper-only-extension \
-  --app=http://localhost:5000/
+# The user-facing native iframe is the only browser for this path. Starting a
+# hidden Chromium here duplicates the same CPG login load and can delay the
+# real form by more than a minute. Paper is enforced by the proxy guard plus
+# DU-account attestation; the legacy noVNC transport remains available for
+# diagnostics but displays an otherwise idle X session.
 
 wait_until_healthy
 printf 'PYRUS_IBKR_CAPSULE_READY_V1\n'

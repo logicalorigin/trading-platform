@@ -36,6 +36,42 @@ test("saveAllAlgoAdjustments returns successful profile and strategy payloads", 
   assert.equal(result.strategyResult, strategyPayload);
 });
 
+test("saveAllAlgoAdjustments passes riskHaltControls.dailyLossHaltEnabled through to the profile PATCH payload", async () => {
+  // The daily-loss halt toggle (HaltStrip "Risk · Daily") patches
+  // riskHaltControls.dailyLossHaltEnabled on the draft; the save must forward it
+  // verbatim — any payload sanitization that drops the section silently strands
+  // the toggle. Fails if the flag no longer round-trips into the PATCH body.
+  const captured = [];
+
+  const result = await saveAllAlgoAdjustments({
+    deploymentId: "deployment-1",
+    profileDraft: {
+      riskCaps: { maxDailyLoss: 200 },
+      riskHaltControls: { dailyLossHaltEnabled: true },
+    },
+    strategySettingsDraft: {},
+    profileDirty: true,
+    strategyDirty: false,
+    updateProfileMutation: {
+      mutateAsync: async (variables) => {
+        captured.push(variables);
+        return { profile: variables.data };
+      },
+    },
+    updateStrategySettingsMutation: {
+      mutateAsync: async () => {
+        throw new Error("unexpected strategy save");
+      },
+    },
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(captured.length, 1);
+  assert.equal(captured[0].deploymentId, "deployment-1");
+  assert.equal(captured[0].data.riskHaltControls.dailyLossHaltEnabled, true);
+  assert.equal(captured[0].data.riskCaps.maxDailyLoss, 200);
+});
+
 test("saveAllAlgoAdjustments does not report payloads when a save fails", async () => {
   const failures = [];
 

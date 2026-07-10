@@ -122,8 +122,6 @@ type AdmissionDiagnostics = {
     targetFillLines?: number;
     usableLines?: number;
     flowScannerLineCap?: number;
-    bridgeLineBudget?: number | null;
-    budgetSource?: string;
   };
   pressure?: {
     utilizationLevel?: string | null;
@@ -236,8 +234,6 @@ export type MarketDataWorkPlan = {
     scannerPlannedHorizonCount: number;
     scannerEffectiveConcurrency: number | null;
     scannerMaxDeepScanLines: number | null;
-    bridgeLineBudget: number | null;
-    bridgeActiveLineCount: number | null;
     memoryAction: string;
   };
   ibkrEquityLive: MarketDataWorkPlanLine[];
@@ -915,11 +911,6 @@ export function buildMarketDataWorkPlan(
       scannerPlannedHorizonCount: scanner.plannedHorizonCount,
       scannerEffectiveConcurrency: scanner.effectiveConcurrency,
       scannerMaxDeepScanLines: scanner.maxDeepScanLines,
-      bridgeLineBudget:
-        input.bridge?.lineBudget ??
-        input.admission.budget?.bridgeLineBudget ??
-        null,
-      bridgeActiveLineCount: input.bridge?.activeLineCount ?? null,
       memoryAction: memoryAction.action,
     },
     ibkrEquityLive,

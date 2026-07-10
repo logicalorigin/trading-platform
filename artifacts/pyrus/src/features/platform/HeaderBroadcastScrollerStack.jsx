@@ -74,10 +74,7 @@ import {
   providerSummaryHasMarketSessionQuiet,
   providerSummaryHasVisibleFlowDegradation,
 } from "./flowSourceState.js";
-import {
-  buildSignalMonitorStatusSnapshot,
-  isSignalMonitorRuntimeFallbackProfile,
-} from "./signalMonitorStatusModel";
+import { buildSignalMonitorStatusSnapshot } from "./signalMonitorStatusModel";
 import { WATCHLIST_SIGNAL_TIMEFRAMES } from "./watchlistModel.js";
 import {
   FLOW_SCANNER_CONFIG_LIMITS,
@@ -1697,15 +1694,12 @@ export const HeaderBroadcastScrollerStack = memo(({
   const signalBusy = Boolean(
     signalScanPending || signalEvaluationPending || signalSnapshot?.pending,
   );
-  const signalRuntimeFallback = Boolean(
-    isSignalMonitorRuntimeFallbackProfile(signalSnapshot?.profile),
-  );
   const signalHasError = Boolean(
     !signalBusy &&
       (signalScanErrored ||
         // Matrix SSE repeatedly dead → hard transport failure (red).
         signalSnapshot?.transportError ||
-        (signalSnapshot?.degraded && !signalRuntimeFallback)),
+        signalSnapshot?.degraded),
   );
   // Softer transport surfaces (amber): request pacing / 429 is retrying, and a
   // failed profile fetch means we cannot confirm the real state (never OFF).
@@ -1718,14 +1712,10 @@ export const HeaderBroadcastScrollerStack = memo(({
       !signalRateLimited &&
       signalSnapshot?.streamErrored,
   );
-  const signalDegraded = Boolean(
-    !signalBusy && !signalHasError && signalSnapshot?.degraded,
-  );
   const signalLastEvaluatedAt = signalStatusSnapshot.lastEvaluatedAt;
   const signalNoTrackedSymbols = Boolean(
     !signalBusy &&
       !signalHasError &&
-      !signalDegraded &&
       signalScanEnabled &&
       signalLastEvaluatedAt &&
       signalStateSummary.total === 0,
@@ -1733,7 +1723,6 @@ export const HeaderBroadcastScrollerStack = memo(({
   const signalNoFreshSignals = Boolean(
     !signalBusy &&
       !signalHasError &&
-      !signalDegraded &&
       signalScanEnabled &&
       signalStateSummary.total > 0 &&
       signalStateSummary.fresh === 0,
@@ -1744,8 +1733,6 @@ export const HeaderBroadcastScrollerStack = memo(({
       ? "SIGNALS RATE LIMITED"
     : signalStreamUncertain
       ? "SIGNALS UNAVAILABLE"
-    : signalDegraded
-      ? "SIGNALS DEGRADED"
     : signalNoTrackedSymbols
       ? "NO SIGNAL DATA"
     : signalNoFreshSignals
@@ -1882,8 +1869,6 @@ export const HeaderBroadcastScrollerStack = memo(({
       ? requestHealthTone(classifyRequestHealth({ rateLimited: true }))
     : signalStreamUncertain
       ? requestHealthTone(classifyRequestHealth({ degraded: true }))
-    : signalDegraded
-      ? CSS_COLOR.amber
     : signalNoTrackedSymbols || signalNoFreshSignals
       ? CSS_COLOR.amber
     : signalBusy
@@ -1895,7 +1880,6 @@ export const HeaderBroadcastScrollerStack = memo(({
     ? "offline"
     : signalRateLimited ||
         signalStreamUncertain ||
-        signalDegraded ||
         signalNoTrackedSymbols ||
         signalNoFreshSignals
       ? "stale"
@@ -1910,10 +1894,6 @@ export const HeaderBroadcastScrollerStack = memo(({
       ? `${requestHealthLabel("rateLimited")} — RETRYING`
     : signalStreamUncertain
       ? "STREAM UNCERTAIN"
-    : signalDegraded
-      ? signalRuntimeFallback
-        ? "RUNTIME"
-        : "DEGRADED"
     : signalNoTrackedSymbols
       ? "NO DATA"
     : signalNoFreshSignals

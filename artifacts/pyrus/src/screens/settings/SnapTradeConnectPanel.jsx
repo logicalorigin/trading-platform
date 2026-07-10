@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { Dialog } from "radix-ui";
 import {
   getGetRobinhoodReadinessQueryKey,
   getGetSchwabReadinessQueryKey,
@@ -38,12 +39,12 @@ import {
   ShieldCheck,
   Unplug,
   WalletCards,
+  X,
 } from "lucide-react";
 import { Button } from "../../components/ui/Button.jsx";
 import { SurfacePanel } from "../../components/platform/primitives.jsx";
 import { useAuthSession } from "../../features/auth/authSession.jsx";
 import { writeSnapTradeExecutionAccountState } from "../../features/broker/snapTradeExecutionAccountStore.js";
-import { isMobileIbkrLaunchBrowser } from "../../features/platform/ibkrBridgeSession.js";
 import {
   CSS_COLOR,
   FONT_WEIGHTS,
@@ -149,7 +150,7 @@ const IBKR_LOGO_DATA_URI =
 // IBKR Client Portal (hosted gateway) is a DIRECT browser-login broker (not a
 // SnapTrade-aggregated brokerage, and not an OAuth redirect like
 // Robinhood/Schwab): Connect opens the proxied IBKR Client Portal Gateway
-// login page in a popup and the panel polls status until it reports
+// login page inside PYRUS and the panel polls status until it reports
 // "connected". Sessions expire roughly every 24h, requiring re-login.
 const IBKR_PORTAL_BROKER_CHOICE = Object.freeze({
   value: "IBKR_PORTAL",
@@ -159,10 +160,8 @@ const IBKR_PORTAL_BROKER_CHOICE = Object.freeze({
   direct: true,
 });
 
-// Broker auth pages block iframe embedding (Robinhood sends
-// X-Frame-Options: SAMEORIGIN; SnapTrade's Connection Portal is likewise a
-// top-level page), so broker connect flows run in a popup WINDOW — a top-level
-// browsing context — rather than an in-app iframe modal.
+// The OAuth and SnapTrade auth pages block iframe embedding, so those broker
+// flows still use a top-level popup. IBKR uses its dedicated in-app surface.
 function openBrokerPopup(url, name) {
   const width = 480;
   const height = 760;
@@ -176,6 +175,163 @@ function openBrokerPopup(url, name) {
     url,
     name,
     `popup=yes,width=${width},height=${height},left=${left},top=${top}`,
+  );
+}
+
+function IbkrPortalLoginDialog({ url, connecting, onClose }) {
+  return (
+    <Dialog.Root
+      open={Boolean(url || connecting)}
+      onOpenChange={(open) => {
+        if (!open) onClose();
+      }}
+    >
+      <Dialog.Portal>
+        <Dialog.Overlay
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 10020,
+            background: CSS_COLOR.bg0,
+          }}
+        />
+        <Dialog.Content
+          aria-describedby={undefined}
+          onPointerDownOutside={(event) => event.preventDefault()}
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 10021,
+            display: "grid",
+            gridTemplateRows: "auto minmax(0, 1fr)",
+            width: "100dvw",
+            height: "100dvh",
+            maxWidth: "none",
+            margin: 0,
+            padding: 0,
+            overflow: "hidden",
+            background: CSS_COLOR.bg0,
+            color: CSS_COLOR.text,
+          }}
+        >
+          <div
+            style={{
+              minHeight: dim(52),
+              padding: `calc(env(safe-area-inset-top, 0px) + ${sp(6)}) ${sp(8)} ${sp(6)}`,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: sp(8),
+              borderBottom: `1px solid ${CSS_COLOR.border}`,
+              background: CSS_COLOR.bg1,
+            }}
+          >
+            <div style={{ minWidth: 0 }}>
+              <Dialog.Title
+                style={{
+                  margin: 0,
+                  fontFamily: T.sans,
+                  fontSize: textSize("paragraph"),
+                  fontWeight: FONT_WEIGHTS.semibold,
+                  letterSpacing: 0,
+                }}
+              >
+                Interactive Brokers
+              </Dialog.Title>
+              <div
+                style={{
+                  color: CSS_COLOR.textDim,
+                  fontFamily: T.sans,
+                  fontSize: textSize("caption"),
+                  letterSpacing: 0,
+                }}
+              >
+                Client Portal
+              </div>
+            </div>
+            <Dialog.Close asChild>
+              <Button
+                variant="ghost"
+                size="sm"
+                aria-label="Close IBKR Client Portal login"
+                title="Close"
+                style={{
+                  width: dim(40),
+                  height: dim(40),
+                  padding: 0,
+                  borderRadius: dim(RADII.xs),
+                  flexShrink: 0,
+                }}
+              >
+                <X size={18} strokeWidth={2} aria-hidden="true" />
+              </Button>
+            </Dialog.Close>
+          </div>
+          {url ? (
+            <iframe
+              title="Interactive Brokers Client Portal login"
+              src={url}
+              sandbox="allow-forms allow-modals allow-same-origin allow-scripts"
+              referrerPolicy="same-origin"
+              style={{
+                width: "100%",
+                height: "100%",
+                border: 0,
+                background: "#fff",
+              }}
+            />
+          ) : (
+            <div
+              role="status"
+              aria-live="polite"
+              style={{
+                display: "grid",
+                placeItems: "center",
+                padding: sp(12),
+                background: CSS_COLOR.bg0,
+              }}
+            >
+              <div
+                style={{
+                  display: "grid",
+                  justifyItems: "center",
+                  gap: sp(8),
+                  maxWidth: dim(420),
+                  textAlign: "center",
+                }}
+              >
+                <RefreshCw
+                  size={28}
+                  strokeWidth={1.8}
+                  aria-hidden="true"
+                  style={{ color: CSS_COLOR.textDim }}
+                />
+                <div
+                  style={{
+                    fontFamily: T.sans,
+                    fontSize: textSize("paragraph"),
+                    fontWeight: FONT_WEIGHTS.semibold,
+                  }}
+                >
+                  Starting secure IBKR Client Portal session…
+                </div>
+                <div
+                  style={{
+                    color: CSS_COLOR.textDim,
+                    fontFamily: T.sans,
+                    fontSize: textSize("caption"),
+                    lineHeight: 1.5,
+                  }}
+                >
+                  The isolated gateway can take up to about a minute on its first
+                  launch. This window will switch to the IBKR login automatically.
+                </div>
+              </div>
+            </div>
+          )}
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
   );
 }
 
@@ -879,10 +1035,12 @@ export function SnapTradeConnectPanel({ enabled = true }) {
     },
   });
 
-  const [ibkrPopupBlocked, setIbkrPopupBlocked] = useState(false);
+  const [ibkrLoginUrl, setIbkrLoginUrl] = useState("");
   const [ibkrConnecting, setIbkrConnecting] = useState(false);
   const [ibkrDisconnecting, setIbkrDisconnecting] = useState(false);
   const ibkrPollRef = useRef(null);
+  const ibkrAttemptRef = useRef(0);
+  const ibkrConnectBusyRef = useRef(false);
   const ibkrPortalReadinessQuery = useGetIbkrPortalReadiness({
     query: {
       enabled: Boolean(enabled && canManage),
@@ -1098,6 +1256,7 @@ export function SnapTradeConnectPanel({ enabled = true }) {
       !csrfToken ||
       ibkrPortalUnavailable ||
       ibkrConnecting ||
+      ibkrPortalConnectMutation.isPending ||
       ibkrDisconnecting,
   );
   const ibkrDisconnectDisabled = Boolean(
@@ -1339,8 +1498,10 @@ export function SnapTradeConnectPanel({ enabled = true }) {
         window.clearInterval(oauthPollRef.current);
       }
       if (ibkrPollRef.current) {
-        window.clearInterval(ibkrPollRef.current);
+        window.clearTimeout(ibkrPollRef.current);
       }
+      ibkrAttemptRef.current += 1;
+      ibkrConnectBusyRef.current = false;
     },
     [],
   );
@@ -1649,21 +1810,50 @@ export function SnapTradeConnectPanel({ enabled = true }) {
 
   const stopIbkrPortalPoll = () => {
     if (ibkrPollRef.current) {
-      window.clearInterval(ibkrPollRef.current);
+      window.clearTimeout(ibkrPollRef.current);
       ibkrPollRef.current = null;
     }
+    ibkrConnectBusyRef.current = false;
     setIbkrConnecting(false);
     setPopupBrokerKey((current) =>
       current === IBKR_PORTAL_BROKER_CHOICE.value ? "" : current,
     );
   };
 
+  const closeIbkrPortalLogin = () => {
+    ++ibkrAttemptRef.current;
+    setIbkrLoginUrl("");
+    stopIbkrPortalPoll();
+    clearConnectHandoff(IBKR_PORTAL_BROKER_CHOICE.value);
+    setIbkrDisconnecting(true);
+    void ibkrPortalDisconnectMutation
+      .mutateAsync()
+      .catch((error) => {
+        setLocalError(
+          readErrorMessage(
+            error,
+            "IBKR Client Portal login could not be cancelled safely.",
+          ),
+        );
+      })
+      .finally(() => {
+        setIbkrDisconnecting(false);
+        void ibkrPortalReadinessQuery.refetch();
+      });
+  };
+
   // IBKR Client Portal login happens on the proxied gateway page (not an
   // OAuth redirect back to our origin), so we cannot rely on a same-origin
-  // callback flag like Robinhood/Schwab. Instead, poll GET status every ~3s
-  // while the popup is open until it reports "connected" or the popup closes.
+  // callback flag like Robinhood/Schwab. Poll GET status every ~3s while the
+  // in-app login is open until the server verifies the authenticated session.
   const connectIbkrPortal = async () => {
     if (!canManage) return;
+    if (
+      ibkrConnectBusyRef.current ||
+      ibkrPortalConnectMutation.isPending
+    ) {
+      return;
+    }
     if (!csrfToken) {
       setLocalError("Auth session is missing a CSRF token.");
       return;
@@ -1672,90 +1862,74 @@ export function SnapTradeConnectPanel({ enabled = true }) {
       setLocalError("IBKR Client Portal runtime is not installed.");
       return;
     }
+    const attempt = ++ibkrAttemptRef.current;
+    ibkrConnectBusyRef.current = true;
+    setIbkrConnecting(true);
+    setPopupBrokerKey(IBKR_PORTAL_BROKER_CHOICE.value);
+    if (ibkrPollRef.current) {
+      window.clearTimeout(ibkrPollRef.current);
+      ibkrPollRef.current = null;
+    }
     setLocalError("");
-    setIbkrPopupBlocked(false);
-    // Mobile browsers foreground a newly opened blank tab and can suspend the
-    // opener before its async provisioning request starts. Keep provisioning
-    // in the active tab on mobile, then navigate that tab to the hosted login.
-    const mobileLaunch = isMobileIbkrLaunchBrowser();
-    const popup = mobileLaunch
-      ? null
-      : openBrokerPopup("about:blank", "ibkr-portal-login");
     let started;
     try {
       started = await ibkrPortalConnectMutation.mutateAsync();
     } catch (error) {
-      try {
-        popup?.close();
-      } catch {
-        // The connect error is already surfaced in PYRUS.
-      }
+      if (attempt !== ibkrAttemptRef.current) return;
+      stopIbkrPortalPoll();
       setLocalError(
         readErrorMessage(error, "IBKR Client Portal connection could not be started."),
       );
       return;
     }
-    const loginPath = started?.loginPath || ibkrPortalReadiness?.loginPath;
+    if (attempt !== ibkrAttemptRef.current) {
+      void ibkrPortalDisconnectMutation.mutateAsync().catch(() => undefined);
+      return;
+    }
+    const loginPath = started?.loginPath;
     if (!loginPath) {
-      try {
-        popup?.close();
-      } catch {
-        // The missing login URL is already surfaced in PYRUS.
-      }
+      stopIbkrPortalPoll();
       setLocalError("IBKR Client Portal login URL was not returned.");
       return;
     }
-    const loginUrl = new URL(loginPath, window.location.origin).href;
-    showConnectHandoff({
-      brokerKey: IBKR_PORTAL_BROKER_CHOICE.value,
-      label: IBKR_PORTAL_BROKER_CHOICE.label,
-      url: loginPath,
-      expiresAt: null,
-    });
-    if (mobileLaunch) {
-      window.location.assign(loginUrl);
-      return;
-    }
-    if (!popup) {
-      setIbkrPopupBlocked(true);
-      void ibkrPortalReadinessQuery.refetch();
-      return;
-    }
+    let loginUrl;
     try {
-      popup.location.replace(loginUrl);
+      loginUrl = new URL(loginPath, window.location.origin).href;
     } catch {
-      setIbkrPopupBlocked(true);
-      void ibkrPortalReadinessQuery.refetch();
+      stopIbkrPortalPoll();
+      setLocalError("IBKR Client Portal login URL was invalid.");
       return;
     }
-    setIbkrConnecting(true);
-    setPopupBrokerKey(IBKR_PORTAL_BROKER_CHOICE.value);
-    if (ibkrPollRef.current) {
-      window.clearInterval(ibkrPollRef.current);
+    if (new URL(loginUrl).origin === window.location.origin) {
+      stopIbkrPortalPoll();
+      setLocalError("The isolated IBKR login service is not available.");
+      return;
     }
+    setIbkrLoginUrl(loginUrl);
     const startedAt = Date.now();
     const timeoutMs = 5 * 60_000;
-    ibkrPollRef.current = window.setInterval(async () => {
-      if (Date.now() - startedAt > timeoutMs || popup.closed) {
-        stopIbkrPortalPoll();
-        clearConnectHandoff(IBKR_PORTAL_BROKER_CHOICE.value);
-        void ibkrPortalReadinessQuery.refetch();
+    const poll = async () => {
+      if (attempt !== ibkrAttemptRef.current) return;
+      if (Date.now() - startedAt > timeoutMs) {
+        closeIbkrPortalLogin();
+        setLocalError("IBKR Client Portal login timed out.");
         return;
       }
       let status;
       try {
         status = await getIbkrPortalStatus();
       } catch {
-        return; // transient — keep polling until the popup closes or times out
+        if (attempt === ibkrAttemptRef.current) {
+          ibkrPollRef.current = window.setTimeout(poll, 3000);
+        }
+        return;
       }
+      if (attempt !== ibkrAttemptRef.current) return;
       if (status?.status === "connected") {
+        ++ibkrAttemptRef.current;
+        setIbkrLoginUrl("");
         stopIbkrPortalPoll();
         clearConnectHandoff(IBKR_PORTAL_BROKER_CHOICE.value);
-        try {
-          popup.close();
-        } catch {
-          // Some browsers restrict close(); the connection is already captured.
-        }
         void ibkrPortalReadinessQuery.refetch();
         void queryClient.invalidateQueries({
           queryKey: getListBrokerConnectionsQueryKey(),
@@ -1764,19 +1938,19 @@ export function SnapTradeConnectPanel({ enabled = true }) {
           queryKey: getListAccountsQueryKey(),
         });
       } else if (isTerminalIbkrPortalConnectStatus(status)) {
+        ++ibkrAttemptRef.current;
+        setIbkrLoginUrl("");
         stopIbkrPortalPoll();
         clearConnectHandoff(IBKR_PORTAL_BROKER_CHOICE.value);
         setLocalError(
           status?.message || "IBKR Client Portal connection was closed.",
         );
-        try {
-          popup.close();
-        } catch {
-          // Some browsers restrict close(); the hosted session is already gone.
-        }
         void ibkrPortalReadinessQuery.refetch();
+      } else {
+        ibkrPollRef.current = window.setTimeout(poll, 3000);
       }
-    }, 3000);
+    };
+    ibkrPollRef.current = window.setTimeout(poll, 3000);
   };
 
   const disconnectIbkrPortal = async () => {
@@ -2499,25 +2673,6 @@ export function SnapTradeConnectPanel({ enabled = true }) {
           </div>
         ) : null}
 
-        {isIbkrPortal && ibkrPopupBlocked ? (
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: sp(8),
-              flexWrap: "wrap",
-              color: CSS_COLOR.textSec,
-              fontFamily: T.sans,
-              fontSize: textSize("caption"),
-            }}
-          >
-            <span>
-              Popup blocked. Use the handoff link below or allow popups for
-              this site, then retry Connect.
-            </span>
-          </div>
-        ) : null}
-
         {isSchwab && schwabLimitations.length ? (
           <ul
             style={{
@@ -3120,6 +3275,11 @@ export function SnapTradeConnectPanel({ enabled = true }) {
         ) : null}
 
       </div>
+      <IbkrPortalLoginDialog
+        url={ibkrLoginUrl}
+        connecting={ibkrConnecting}
+        onClose={closeIbkrPortalLogin}
+      />
     </SurfacePanel>
   );
 }

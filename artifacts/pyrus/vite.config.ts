@@ -196,27 +196,47 @@ export default defineConfig({
     __PYRUS_BUILD_FINGERPRINT__: JSON.stringify(runtimeBuildFingerprint),
   },
   plugins: [
-    // The IBKR Client Portal gateway popup (served through the API's reverse
-    // proxy at this mount) runs IBKR's SPA, which computes root-absolute URLs
+    // The IBKR Client Portal login (served through the API's reverse proxy)
+    // runs IBKR's SPA, which computes root-absolute URLs
     // at runtime (e.g. /en/includes/general/gdpr-am.php). Those escape the
     // subpath mount, land on the dev server, and would otherwise receive the
     // PYRUS index.html shell — which the gateway page then INJECTS into the
     // login popup (PYRUS boots inside the popup and hides the login form).
-    // Re-anchor any request whose Referer is inside the gateway mount back
-    // into the mount so it resolves against the gateway instead.
+    // Re-anchor any request whose Referer is inside either authenticated IBKR
+    // mount so it resolves against the same target instead.
     {
       name: "ibkr-gateway-mount-reanchor",
       configureServer(server) {
-        const MOUNT = "/api/broker-execution/ibkr-portal/gateway";
+        const MOUNTS = [
+          "/api/broker-execution/ibkr-portal/client",
+          "/api/broker-execution/ibkr-portal/gateway",
+        ];
+        const within = (pathname: string, mount: string) =>
+          pathname === mount || pathname.startsWith(`${mount}/`);
         server.middlewares.use((req, res, next) => {
           const referer = req.headers.referer;
           const url = req.url || "";
-          if (!referer || url.startsWith(MOUNT)) {
+          const pathname = url.split("?", 1)[0] || url;
+          if (within(pathname, "/api")) {
+            // Vite's xfwd proxy preserves an incoming X-Forwarded-Host. Replace
+            // it at this trusted boundary so a browser cannot forge the public
+            // origin used by the one-time IBKR embed grant.
+            if (req.headers.host) {
+              req.headers["x-forwarded-host"] = req.headers.host;
+            } else {
+              delete req.headers["x-forwarded-host"];
+            }
+          }
+          if (!referer || MOUNTS.some((mount) => within(pathname, mount))) {
             next();
             return;
           }
           try {
-            if (new URL(referer).pathname.startsWith(MOUNT)) {
+            const refererPath = new URL(referer).pathname;
+            const mount = MOUNTS.find((candidate) =>
+              within(refererPath, candidate),
+            );
+            if (mount) {
               // The SPA derives its API base from the page URL's FIRST path
               // segment (host + "/" + pathname.split("/")[1] + "/"). Under
               // this mount that segment is "api", so its auth calls come in as
@@ -228,7 +248,7 @@ export default defineConfig({
                 ? "/sso/" + url.slice("/api/".length)
                 : url;
               res.statusCode = 307;
-              res.setHeader("Location", MOUNT + fixed);
+              res.setHeader("Location", mount + fixed);
               res.end();
               return;
             }

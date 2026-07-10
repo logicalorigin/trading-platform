@@ -7,7 +7,9 @@ import { getGateway } from "./ibkr-portal-gateway-manager";
 
 // An existing per-user gateway owns routing for that request even before it is
 // verified. Returning null while verification is pending prevents a fallback
-// to a separately configured global IBKR account.
+// to a separately configured global IBKR account. "Verified" now means the
+// gateway reported an authenticated session (any account type — user decision
+// 2026-07-10: the Client Portal connection is not paper-only).
 function resolveClientPortalConfig(): IbkrRuntimeConfig | null {
   const appUserId = getIbkrPortalUserId();
   if (appUserId) {
@@ -26,7 +28,7 @@ function resolveClientPortalConfig(): IbkrRuntimeConfig | null {
         username: null,
         password: null,
         allowInsecureTls: true,
-        paperAccountOnly: true,
+        paperAccountOnly: false,
       };
     }
   }

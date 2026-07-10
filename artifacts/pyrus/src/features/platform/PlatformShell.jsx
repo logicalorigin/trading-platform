@@ -1090,7 +1090,7 @@ export const PlatformShell = ({
       : resolvedWatchlistSidebarWidth;
   const headerGridTemplate = isPhone
     ? "minmax(0, 1fr)"
-    : "minmax(0, max-content) minmax(0, max-content) minmax(0, 1fr) minmax(0, max-content)";
+    : "max-content minmax(0, 1fr) max-content";
   return (
     <div
       className="ra-shell"

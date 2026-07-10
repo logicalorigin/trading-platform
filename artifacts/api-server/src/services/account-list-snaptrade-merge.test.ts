@@ -9,6 +9,7 @@ import {
 } from "@workspace/db";
 import { withTestDb } from "@workspace/db/testing";
 import type { BrokerAccountSnapshot } from "../providers/ibkr/client";
+import { HttpError } from "../lib/errors";
 
 import {
   __accountPositionInternalsForTests,
@@ -91,16 +92,14 @@ function robinhoodBalanceRecord(id: string, providerAccountId = id) {
 }
 
 const noopRecordSnapshots = async () => {};
-const emptyPersisted = async () => ({ accounts: [], latestSnapshotAt: null });
-const emptyFlex = async () => [] as BrokerAccountSnapshot[];
+const passthroughDayPnl = async (accounts: BrokerAccountSnapshot[]) => accounts;
 
 test("listAccounts merges SnapTrade accounts onto the live IBKR branch", async () => {
   const result = await listAccounts(
     { mode: "live" },
     {
       listLiveAccounts: async () => [snapshot("U1", "ibkr")],
-      getPersistedAccounts: emptyPersisted,
-      getFlexAccounts: emptyFlex,
+      hydrateDayPnl: passthroughDayPnl,
       recordSnapshots: noopRecordSnapshots,
       getSnapTradeAccounts: async () => [
         snapshot("etrade-a", "snaptrade"),
@@ -125,8 +124,7 @@ test("listAccounts lets direct IBKR supersede SnapTrade-linked IBKR accounts", a
     { mode: "live" },
     {
       listLiveAccounts: async () => [snapshot("U1", "ibkr")],
-      getPersistedAccounts: emptyPersisted,
-      getFlexAccounts: emptyFlex,
+      hydrateDayPnl: passthroughDayPnl,
       recordSnapshots: noopRecordSnapshots,
       getSnapTradeAccounts: async () => [
         {
@@ -199,8 +197,6 @@ test("listAccounts hydrates account day P&L from persisted balance snapshots", a
             updatedAt: new Date("2026-07-08T16:00:00.000Z"),
           },
         ],
-        getPersistedAccounts: emptyPersisted,
-        getFlexAccounts: emptyFlex,
         recordSnapshots: noopRecordSnapshots,
         getSnapTradeAccounts: async () => [],
         getRobinhoodAccounts: async () => [],
@@ -217,8 +213,7 @@ test("listAccounts leaves IBKR list unchanged when SnapTrade is empty", async ()
     { mode: "live" },
     {
       listLiveAccounts: async () => [snapshot("U1", "ibkr")],
-      getPersistedAccounts: emptyPersisted,
-      getFlexAccounts: emptyFlex,
+      hydrateDayPnl: passthroughDayPnl,
       recordSnapshots: noopRecordSnapshots,
       getSnapTradeAccounts: async () => [],
       getRobinhoodAccounts: async () => [],
@@ -237,8 +232,7 @@ test("listAccounts degrades to IBKR-only when SnapTrade read throws", async () =
     { mode: "live" },
     {
       listLiveAccounts: async () => [snapshot("U1", "ibkr")],
-      getPersistedAccounts: emptyPersisted,
-      getFlexAccounts: emptyFlex,
+      hydrateDayPnl: passthroughDayPnl,
       recordSnapshots: noopRecordSnapshots,
       getSnapTradeAccounts: async () => {
         throw new Error("snaptrade outage");
@@ -253,35 +247,12 @@ test("listAccounts degrades to IBKR-only when SnapTrade read throws", async () =
   );
 });
 
-test("listAccounts merges SnapTrade onto the persisted branch when IBKR is empty", async () => {
-  const result = await listAccounts(
-    { mode: "live" },
-    {
-      listLiveAccounts: async () => [],
-      getPersistedAccounts: async () => ({
-        accounts: [snapshot("U-persisted", "ibkr")],
-        latestSnapshotAt: null,
-      }),
-      getFlexAccounts: emptyFlex,
-      recordSnapshots: noopRecordSnapshots,
-      getSnapTradeAccounts: async () => [snapshot("etrade-a", "snaptrade")],
-      getRobinhoodAccounts: async () => [],
-    },
-  );
-
-  assert.deepEqual(
-    result.accounts.map((a) => `${a.provider}:${a.id}`),
-    ["ibkr:U-persisted", "snaptrade:etrade-a"],
-  );
-});
-
 test("listAccounts returns SnapTrade-only when no IBKR source has accounts", async () => {
   const result = await listAccounts(
     { mode: "live" },
     {
       listLiveAccounts: async () => [],
-      getPersistedAccounts: emptyPersisted,
-      getFlexAccounts: emptyFlex,
+      hydrateDayPnl: passthroughDayPnl,
       recordSnapshots: noopRecordSnapshots,
       getSnapTradeAccounts: async () => [
         snapshot("etrade-a", "snaptrade"),
@@ -304,8 +275,7 @@ test("listAccounts merges Robinhood accounts with provider preserved", async () 
     { mode: "live" },
     {
       listLiveAccounts: async () => [snapshot("U1", "ibkr")],
-      getPersistedAccounts: emptyPersisted,
-      getFlexAccounts: emptyFlex,
+      hydrateDayPnl: passthroughDayPnl,
       recordSnapshots: noopRecordSnapshots,
       getSnapTradeAccounts: async () => [],
       getRobinhoodAccounts: async () => [
@@ -326,8 +296,7 @@ test("listAccounts returns Robinhood-only when no IBKR source has accounts", asy
     { mode: "live" },
     {
       listLiveAccounts: async () => [],
-      getPersistedAccounts: emptyPersisted,
-      getFlexAccounts: emptyFlex,
+      hydrateDayPnl: passthroughDayPnl,
       recordSnapshots: noopRecordSnapshots,
       getSnapTradeAccounts: async () => [],
       getRobinhoodAccounts: async () => [
@@ -406,22 +375,35 @@ test("applyRobinhoodAccountBalances serves cached balances without a second MCP 
   assert.equal(second[0].netLiquidation, 100);
 });
 
-test("applyRobinhoodAccountBalances degrades to zero balances when portfolio fetch fails", async () => {
-  const accounts = await applyRobinhoodAccountBalances(
-    [robinhoodBalanceRecord("rh-fail", "727958282")],
-    {
-      fetchPortfolio: async () => {
-        throw new Error("robinhood portfolio outage");
+test("applyRobinhoodAccountBalances propagates portfolio fetch failures", async () => {
+  const failure = new Error("robinhood portfolio outage");
+  await assert.rejects(
+    applyRobinhoodAccountBalances(
+      [robinhoodBalanceRecord("rh-fail", "727958282")],
+      {
+        fetchPortfolio: async () => {
+          throw failure;
+        },
+        now: () => 1_000,
       },
-      now: () => 1_000,
-    },
+    ),
+    (error: unknown) => error === failure,
   );
+});
 
-  assert.equal(accounts.length, 1);
-  assert.equal(accounts[0].id, "rh-fail");
-  assert.equal(accounts[0].cash, 0);
-  assert.equal(accounts[0].buyingPower, 0);
-  assert.equal(accounts[0].netLiquidation, 0);
+test("applyRobinhoodAccountBalances rejects incomplete balance payloads", async () => {
+  await assert.rejects(
+    applyRobinhoodAccountBalances(
+      [robinhoodBalanceRecord("rh-incomplete", "727958282")],
+      {
+        fetchPortfolio: async () => ({ data: { total_value: "40" } }),
+        now: () => 1_000,
+      },
+    ),
+    (error: unknown) =>
+      error instanceof HttpError &&
+      error.code === "robinhood_account_balances_unavailable",
+  );
 });
 
 test("account detail resolver resolves Robinhood accounts by local broker account id", async () => {
@@ -450,7 +432,7 @@ test("account detail resolver resolves Robinhood accounts by local broker accoun
   assert.equal(universe.accounts[0].netLiquidation, 40);
 });
 
-test("account detail resolver uses request app user for provider fallback", async () => {
+test("account detail resolver treats a healthy provider as independent of IBKR", async () => {
   const snapTrade = {
     ...snapshot("snaptrade-local-account", "snaptrade"),
     cash: 50,
@@ -480,7 +462,7 @@ test("account detail resolver uses request app user for provider fallback", asyn
   assert.equal(universe.requestedAccountId, "snaptrade-local-account");
   assert.deepEqual(universe.accountIds, ["snaptrade-local-account"]);
   assert.equal(universe.source, "snaptrade");
-  assert.equal(universe.staleReason, "ibkr_unavailable_using_provider_accounts");
+  assert.equal(universe.staleReason, null);
 });
 
 test("account universe cache keys include the request app user", () => {
@@ -836,19 +818,30 @@ test("applySnapTradeAccountBalances serves cached balances without a second upst
   assert.equal(second[0].netLiquidation, 300);
 });
 
-test("applySnapTradeAccountBalances degrades to zero balances when the fetch fails", async () => {
-  const accounts = await applySnapTradeAccountBalances([balanceRecord("bal-fail")], {
-    fetchPortfolio: async () => {
-      throw new Error("snaptrade portfolio outage");
-    },
-    now: () => 1_000,
-  });
+test("applySnapTradeAccountBalances propagates portfolio fetch failures", async () => {
+  const failure = new Error("snaptrade portfolio outage");
+  await assert.rejects(
+    applySnapTradeAccountBalances([balanceRecord("bal-fail")], {
+      fetchPortfolio: async () => {
+        throw failure;
+      },
+      now: () => 1_000,
+    }),
+    (error: unknown) => error === failure,
+  );
+});
 
-  assert.equal(accounts.length, 1);
-  assert.equal(accounts[0].id, "bal-fail");
-  assert.equal(accounts[0].cash, 0);
-  assert.equal(accounts[0].buyingPower, 0);
-  assert.equal(accounts[0].netLiquidation, 0);
+test("applySnapTradeAccountBalances rejects incomplete balance payloads", async () => {
+  await assert.rejects(
+    applySnapTradeAccountBalances([balanceRecord("bal-incomplete")], {
+      fetchPortfolio: async () =>
+        portfolio({ cash: null, buyingPower: null, netLiquidation: null }),
+      now: () => 1_000,
+    }),
+    (error: unknown) =>
+      error instanceof HttpError &&
+      error.code === "snaptrade_account_balances_unavailable",
+  );
 });
 
 test("applySnapTradeAccountBalances refetches after the cache TTL expires", async () => {

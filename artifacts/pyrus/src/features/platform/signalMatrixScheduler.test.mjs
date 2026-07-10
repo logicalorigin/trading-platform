@@ -379,7 +379,7 @@ test("signal matrix stream bootstrap merges instead of replacing live cells", ()
   assert.equal(snapshot.coverage.activeScopeSymbols, 500);
 });
 
-test("empty signal matrix stream bootstrap keeps live cells on reconnect", () => {
+test("empty signal matrix stream bootstrap clears prior cells on reconnect", () => {
   const liveState = {
     symbol: "SPY",
     timeframe: "1m",
@@ -399,8 +399,7 @@ test("empty signal matrix stream bootstrap keeps live cells on reconnect", () =>
     coverage: { activeScopeSymbols: 500, stateCount: 0 },
   });
 
-  assert.equal(snapshot.states.length, 1);
-  assert.equal(snapshot.states[0], liveState);
+  assert.deepEqual(snapshot.states, []);
   assert.equal(snapshot.coverage.stateCount, 0);
 });
 

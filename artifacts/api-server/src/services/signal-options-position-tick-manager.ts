@@ -3,7 +3,7 @@ import { resolveSignalOptionsExecutionProfile } from "@workspace/backtest-core";
 import type { AlgoDeployment, ExecutionEvent } from "@workspace/db";
 import type { QuoteSnapshot } from "../providers/ibkr/client";
 import { logger as defaultLogger } from "../lib/logger";
-import type { OptionQuoteSnapshotPayload } from "./bridge-option-quote-stream";
+import type { OptionQuoteSnapshotPayload } from "./massive-option-quote-stream";
 import {
   subscribeOptionQuoteDemand,
   type OptionQuoteDemandDeclaration,

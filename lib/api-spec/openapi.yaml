@@ -11780,7 +11780,6 @@ components:
             - automation
             - watchlist_backtest
             - signal_options_replay
-            - runtime_fallback
         selectedSnapshotSource:
           type: string
           nullable: true
@@ -12508,24 +12507,6 @@ components:
           enum: [working, history]
         currency:
           type: string
-        degraded:
-          type: boolean
-        reason:
-          type: [string, "null"]
-        stale:
-          type: boolean
-        debug:
-          type: object
-          properties:
-            message:
-              type: string
-            code:
-              type: string
-            timeoutMs:
-              type: number
-          required:
-            - message
-            - code
         orders:
           type: array
           items:
@@ -12877,24 +12858,6 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/Order"
-        degraded:
-          type: boolean
-        reason:
-          type: string
-        stale:
-          type: boolean
-        debug:
-          type: object
-          properties:
-            message:
-              type: string
-            code:
-              type: string
-            timeoutMs:
-              type: number
-          required:
-            - message
-            - code
       required:
         - orders
 
@@ -15905,7 +15868,7 @@ components:
           format: date-time
         stateSource:
           type: string
-          enum: [database, runtime-fallback, memory-cache]
+          enum: [database]
       required:
         - profile
         - states
@@ -16218,7 +16181,7 @@ components:
           description: True when another page is available for the same filter set.
         sourceStatus:
           type: string
-          enum: [database, runtime-fallback]
+          enum: [database]
           description: Source used for this event page.
       required:
         - events

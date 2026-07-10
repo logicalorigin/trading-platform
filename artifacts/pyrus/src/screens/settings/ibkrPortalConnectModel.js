@@ -2,9 +2,9 @@
 // helpers. Backend surface: GET /api/broker-execution/ibkr-portal/readiness,
 // POST /api/broker-execution/ibkr-portal/connect, GET
 // /api/broker-execution/ibkr-portal/status, POST
-// /api/broker-execution/ibkr-portal/disconnect. Connect opens loginPath (the
-// proxied IBKR Client Portal Gateway login page) in a popup; the frontend
-// polls status until it reports "connected" or the popup closes.
+// /api/broker-execution/ibkr-portal/disconnect. Connect opens its one-time
+// loginPath inside the isolated in-app dialog; the frontend polls status until
+// the server verifies the authenticated session or the dialog closes.
 
 export function canManageIbkrPortalConnections(user) {
   return user?.role === "admin";

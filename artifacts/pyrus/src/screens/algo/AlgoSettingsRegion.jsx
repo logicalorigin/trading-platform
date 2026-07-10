@@ -20,7 +20,6 @@ import {
 import { toneForDirectionalIntent } from "../../features/platform/semanticToneModel.js";
 import { Select, SegmentedControl } from "../../components/platform/primitives.jsx";
 import {
-  SIGNAL_OPTIONS_EXPANDED_CAPACITY,
   MAX_SIGNAL_OPTIONS_STRIKE_SLOTS,
   SIGNAL_OPTIONS_STRIKE_SLOT_OPTIONS,
   compactButtonStyle,
@@ -2232,59 +2231,6 @@ export const ExitLadderTrack = ({
   );
 };
 
-const ExpandedLimitsSection = ({
-  disabled,
-  handleApplyExpandedCapacity,
-  updateProfileMutation,
-}) => (
-  <section style={{ minWidth: 0 }}>
-    <SettingsSectionHeader label="Expanded Limits" />
-    <div
-      data-testid="algo-profile-capacity-banner"
-      style={{
-        border: `1px solid ${cssColorMix(CSS_COLOR.amber, 21)}`,
-        borderRadius: dim(RADII.sm),
-        background: cssColorMix(CSS_COLOR.amber, 5),
-        padding: sp("8px 10px"),
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "space-between",
-        gap: sp(8),
-        flexWrap: "wrap",
-        minWidth: 0,
-      }}
-    >
-      <span
-        className="tnum"
-        style={{
-          color: CSS_COLOR.textDim,
-          fontFamily: T.data,
-          fontSize: textSize("body"),
-        }}
-      >
-        {SIGNAL_OPTIONS_EXPANDED_CAPACITY.maxOpenSymbols} symbols ·{" "}
-        {formatMoney(SIGNAL_OPTIONS_EXPANDED_CAPACITY.maxDailyLoss)} halt
-      </span>
-      <button
-        type="button"
-        data-testid="signal-options-expanded-capacity"
-        onClick={handleApplyExpandedCapacity}
-        disabled={disabled || updateProfileMutation?.isPending}
-        style={{
-          ...compactButtonStyle({
-            disabled: disabled || updateProfileMutation?.isPending,
-          }),
-          border: `1px solid ${CSS_COLOR.amber}`,
-          background: CSS_COLOR.amber,
-          color: CSS_COLOR.onAccent,
-        }}
-      >
-        APPLY
-      </button>
-    </div>
-  </section>
-);
-
 const fieldMapForItem = (item) =>
   Object.fromEntries((item.fields || []).map((field) => [field.path, field]));
 
@@ -3277,7 +3223,6 @@ export const AlgoSettingsRegion = ({
   dirtyFields,
   focusedDeployment,
   controlBaselineReady = true,
-  handleApplyExpandedCapacity,
   saveInProgress = false,
   updateProfileMutation,
   updateStrategySettingsMutation,
@@ -3379,12 +3324,6 @@ export const AlgoSettingsRegion = ({
           </section>
         );
       })}
-
-      <ExpandedLimitsSection
-        disabled={disabled}
-        handleApplyExpandedCapacity={handleApplyExpandedCapacity}
-        updateProfileMutation={updateProfileMutation}
-      />
     </div>
   );
 };

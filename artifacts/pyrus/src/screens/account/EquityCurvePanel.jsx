@@ -1,16 +1,21 @@
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
-import { CSS_COLOR, FONT_WEIGHTS, RADII, T, cssColorAlpha, dim, fs, sp, textSize } from "../../lib/uiTokens.jsx";
+  CSS_COLOR,
+  FONT_WEIGHTS,
+  RADII,
+  T,
+  cssColorAlpha,
+  dim,
+  fs,
+  sp,
+  textSize,
+} from "../../lib/uiTokens.jsx";
 import { formatAppDateTime } from "../../lib/timeZone";
-import { ChartSkeleton, SegmentedControl } from "../../components/platform/primitives.jsx";
+import {
+  ChartSkeleton,
+  SegmentedControl,
+} from "../../components/platform/primitives.jsx";
 import { AppTooltip } from "@/components/ui/tooltip";
-import { ResilienceMarker } from "../../components/platform/ResilienceMarker.jsx";
-import { collectWidgetIssues } from "../../features/platform/resilienceIssues.js";
 import { ACCOUNT_RANGES } from "./accountRanges";
 import {
   EmptyState,
@@ -28,7 +33,6 @@ import {
   joinBenchmarkPercentSeries,
   mapEquityEventsToPoints,
   normalizeEquityPointSeries,
-  resolveStableEquityRangeResponse,
 } from "./equityCurveData";
 import EquityCurveChart from "./EquityCurveChart";
 import EquityCurveEventRibbon, {
@@ -64,32 +68,11 @@ const toneColor = (value) =>
       ? CSS_COLOR.green
       : CSS_COLOR.red;
 
-const useStableEquityRangeResponse = (
-  response,
-  range,
-  { allowMismatchedFallback = false, acceptResponse = true, resetKey = "" } = {},
-) => {
-  const fallbackRef = useRef(null);
-  const resetKeyRef = useRef(resetKey);
-  if (resetKeyRef.current !== resetKey) {
-    resetKeyRef.current = resetKey;
-    fallbackRef.current = null;
-  }
-  const matchesRange = equityRangeResponseMatches(response, range);
-  if (matchesRange && acceptResponse) {
-    fallbackRef.current = response;
-  }
-  const fallback =
-    allowMismatchedFallback || equityRangeResponseMatches(fallbackRef.current, range)
-      ? fallbackRef.current
-      : null;
-  return resolveStableEquityRangeResponse({
-    response,
-    fallback,
-    range,
-    acceptResponse,
-  });
-};
+const currentRangeResponse = (candidateQuery, selectedRange) =>
+  !candidateQuery?.isError &&
+  equityRangeResponseMatches(candidateQuery?.data, selectedRange)
+    ? candidateQuery.data
+    : null;
 
 const inspectionDateFromPoint = (point) => {
   const timestampMs = finiteNumber(point?.timestampMs);
@@ -97,7 +80,13 @@ const inspectionDateFromPoint = (point) => {
   return new Date(timestampMs).toISOString().slice(0, 10);
 };
 
-const ToggleChip = ({ active, color = CSS_COLOR.accent, onClick, children, title }) => (
+const ToggleChip = ({
+  active,
+  color = CSS_COLOR.accent,
+  onClick,
+  children,
+  title,
+}) => (
   <AppTooltip content={title}>
     <button
       type="button"
@@ -215,7 +204,6 @@ export const EquityCurvePanel = ({
   pinnedInspectionDate = null,
   onHoverInspectionDate,
   onPinInspectionDate,
-  dataScopeKey = "",
   compact = false,
 }) => {
   const [showEvents, setShowEvents] = useState(true);
@@ -223,8 +211,10 @@ export const EquityCurvePanel = ({
   const [activeEvent, setActiveEvent] = useState(null);
   const [scrubPoint, setScrubPoint] = useState(null);
   const [chartApi, setChartApi] = useState(null);
-  const [fadingPinnedInspectionTimestampMs, setFadingPinnedInspectionTimestampMs] =
-    useState(null);
+  const [
+    fadingPinnedInspectionTimestampMs,
+    setFadingPinnedInspectionTimestampMs,
+  ] = useState(null);
   const hoverRafRef = useRef(null);
   const lastHoverDateRef = useRef(null);
   const previousPinnedInspectionTimestampMsRef = useRef(null);
@@ -232,10 +222,12 @@ export const EquityCurvePanel = ({
   const [internalVisibleBenchmarks, setInternalVisibleBenchmarks] = useState(
     DEFAULT_VISIBLE_BENCHMARKS,
   );
-  const visibleBenchmarks = controlledVisibleBenchmarks || internalVisibleBenchmarks;
+  const visibleBenchmarks =
+    controlledVisibleBenchmarks || internalVisibleBenchmarks;
   const updateVisibleBenchmarks = useCallback(
     (updater) => {
-      const next = typeof updater === "function" ? updater(visibleBenchmarks) : updater;
+      const next =
+        typeof updater === "function" ? updater(visibleBenchmarks) : updater;
       if (onVisibleBenchmarksChange) {
         onVisibleBenchmarksChange(next);
       } else {
@@ -245,27 +237,21 @@ export const EquityCurvePanel = ({
     [onVisibleBenchmarksChange, visibleBenchmarks],
   );
 
-  const selectedRangeReady = equityRangeResponseMatches(query.data, range);
-  const chartData = useStableEquityRangeResponse(query.data, range, {
-    allowMismatchedFallback: true,
-    acceptResponse: selectedRangeReady,
-    resetKey: dataScopeKey,
-  });
+  const selectedRangeReady =
+    !query.isError && equityRangeResponseMatches(query.data, range);
+  const chartData = selectedRangeReady ? query.data : null;
   const displayRange = chartData?.range || range;
-  const spyBenchmarkData = useStableEquityRangeResponse(
-    benchmarkQueries?.SPY?.data,
+  const spyBenchmarkData = currentRangeResponse(
+    benchmarkQueries?.SPY,
     displayRange,
-    { resetKey: dataScopeKey },
   );
-  const qqqBenchmarkData = useStableEquityRangeResponse(
-    benchmarkQueries?.QQQ?.data,
+  const qqqBenchmarkData = currentRangeResponse(
+    benchmarkQueries?.QQQ,
     displayRange,
-    { resetKey: dataScopeKey },
   );
-  const djiaBenchmarkData = useStableEquityRangeResponse(
-    benchmarkQueries?.DJIA?.data,
+  const djiaBenchmarkData = currentRangeResponse(
+    benchmarkQueries?.DJIA,
     displayRange,
-    { resetKey: dataScopeKey },
   );
   const benchmarks = useMemo(
     () => [
@@ -294,38 +280,38 @@ export const EquityCurvePanel = ({
     [djiaBenchmarkData, qqqBenchmarkData, spyBenchmarkData],
   );
 
-  const data = useMemo(
-    () => {
-      const equityPoints = normalizeEquityPointSeries(chartData?.points || []);
-      const pnlValues = buildTransferAdjustedPnlSeries(equityPoints);
-      const benchmarkValues = benchmarks
-        .filter((benchmark) => visibleBenchmarks[benchmark.key])
-        .reduce((accumulator, benchmark) => {
-          accumulator[benchmark.key] = joinBenchmarkPercentSeries(
-            equityPoints,
-            equityRangeResponseMatches(benchmark.data, displayRange)
-              ? benchmark.data?.points || []
-              : [],
-            displayRange,
-          );
-          return accumulator;
-        }, {});
-      return equityPoints.map((point, index) => ({
-        ...point,
-        cumulativePnl: pnlValues[index] ?? null,
-        benchmarkSpyPercent: benchmarkValues.SPY?.[index] ?? null,
-        benchmarkQqqPercent: benchmarkValues.QQQ?.[index] ?? null,
-        benchmarkDjiaPercent: benchmarkValues.DJIA?.[index] ?? null,
-      }));
-    },
-    [benchmarks, chartData?.points, displayRange, visibleBenchmarks],
-  );
+  const data = useMemo(() => {
+    const equityPoints = normalizeEquityPointSeries(chartData?.points || []);
+    const pnlValues = buildTransferAdjustedPnlSeries(equityPoints);
+    const benchmarkValues = benchmarks
+      .filter((benchmark) => visibleBenchmarks[benchmark.key])
+      .reduce((accumulator, benchmark) => {
+        accumulator[benchmark.key] = joinBenchmarkPercentSeries(
+          equityPoints,
+          equityRangeResponseMatches(benchmark.data, displayRange)
+            ? benchmark.data?.points || []
+            : [],
+          displayRange,
+        );
+        return accumulator;
+      }, {});
+    return equityPoints.map((point, index) => ({
+      ...point,
+      cumulativePnl: pnlValues[index] ?? null,
+      benchmarkSpyPercent: benchmarkValues.SPY?.[index] ?? null,
+      benchmarkQqqPercent: benchmarkValues.QQQ?.[index] ?? null,
+      benchmarkDjiaPercent: benchmarkValues.DJIA?.[index] ?? null,
+    }));
+  }, [benchmarks, chartData?.points, displayRange, visibleBenchmarks]);
 
   const events = useMemo(
     () => mapEquityEventsToPoints(chartData?.events || [], data, displayRange),
     [chartData?.events, data, displayRange],
   );
-  const chartSummary = useMemo(() => buildEquityCurvePointSummary(data), [data]);
+  const chartSummary = useMemo(
+    () => buildEquityCurvePointSummary(data),
+    [data],
+  );
   const {
     lastPoint,
     minNav,
@@ -336,12 +322,17 @@ export const EquityCurvePanel = ({
   } = chartSummary;
 
   const latestChartTimestamp =
-    chartData?.asOf ?? chartData?.latestSnapshotAt ?? lastPoint?.timestamp ?? null;
-  const latestSnapshotTimestamp = chartData?.latestSnapshotAt ?? latestChartTimestamp;
+    chartData?.asOf ??
+    chartData?.latestSnapshotAt ??
+    lastPoint?.timestamp ??
+    null;
+  const latestSnapshotTimestamp =
+    chartData?.latestSnapshotAt ?? latestChartTimestamp;
   const chartPointCountLabel = `${data.length.toLocaleString()} pts`;
   const deltaPercent = finiteNumber(lastPoint?.returnPercent);
   const headlineNetLiquidation =
-    currentNetLiquidation != null && Number.isFinite(Number(currentNetLiquidation))
+    currentNetLiquidation != null &&
+    Number.isFinite(Number(currentNetLiquidation))
       ? Number(currentNetLiquidation)
       : lastPoint?.netLiquidation;
 
@@ -359,7 +350,10 @@ export const EquityCurvePanel = ({
     [availableBenchmarks],
   );
   const visibleAvailableBenchmarks = useMemo(
-    () => availableBenchmarks.filter((benchmark) => visibleBenchmarks[benchmark.key]),
+    () =>
+      availableBenchmarks.filter(
+        (benchmark) => visibleBenchmarks[benchmark.key],
+      ),
     [availableBenchmarks, visibleBenchmarks],
   );
 
@@ -402,14 +396,16 @@ export const EquityCurvePanel = ({
   const displayedPoint = scrubPoint || lastPoint;
   const headlineValue =
     chartMode === "pnl"
-      ? displayedPoint?.cumulativePnl ?? delta
+      ? (displayedPoint?.cumulativePnl ?? delta)
       : scrubPoint
         ? displayedPoint?.netLiquidation
         : headlineNetLiquidation;
-  const displayedDeltaPercent =
-    scrubPoint ? finiteNumber(displayedPoint?.returnPercent) : deltaPercent;
-  const displayedDelta =
-    scrubPoint ? finiteNumber(displayedPoint?.cumulativePnl) : delta;
+  const displayedDeltaPercent = scrubPoint
+    ? finiteNumber(displayedPoint?.returnPercent)
+    : deltaPercent;
+  const displayedDelta = scrubPoint
+    ? finiteNumber(displayedPoint?.cumulativePnl)
+    : delta;
 
   const activeInspectionTimestampMs = useMemo(() => {
     if (!activeInspectionDate || !data.length) return null;
@@ -427,7 +423,8 @@ export const EquityCurvePanel = ({
   }, [pinnedInspectionDate, data]);
   useEffect(() => {
     if (pinnedInspectionTimestampMs != null) {
-      previousPinnedInspectionTimestampMsRef.current = pinnedInspectionTimestampMs;
+      previousPinnedInspectionTimestampMsRef.current =
+        pinnedInspectionTimestampMs;
       setFadingPinnedInspectionTimestampMs(null);
       return undefined;
     }
@@ -437,7 +434,9 @@ export const EquityCurvePanel = ({
     }
     setFadingPinnedInspectionTimestampMs(previousTimestampMs);
     const timer = window.setTimeout(() => {
-      if (previousPinnedInspectionTimestampMsRef.current === previousTimestampMs) {
+      if (
+        previousPinnedInspectionTimestampMsRef.current === previousTimestampMs
+      ) {
         previousPinnedInspectionTimestampMsRef.current = null;
       }
       setFadingPinnedInspectionTimestampMs(null);
@@ -456,17 +455,6 @@ export const EquityCurvePanel = ({
         (query?.isPending && query?.fetchStatus !== "idle")),
   );
   const chartHeight = compact ? CHART_HEIGHT_COMPACT : CHART_HEIGHT;
-
-  // Equity history is served stale (isStale/staleReason) when the snapshot/Flex
-  // read is degraded. Map onto the shared collector's stale/reason shape.
-  const equityIssues = useMemo(
-    () =>
-      collectWidgetIssues(
-        { stale: query.data?.isStale === true, reason: query.data?.staleReason },
-        { valueLabel: "Equity history", source: "account" },
-      ),
-    [query.data?.isStale, query.data?.staleReason],
-  );
 
   const headerControls = (
     <div
@@ -495,16 +483,7 @@ export const EquityCurvePanel = ({
 
   return (
     <Panel
-      title={
-        equityIssues.length ? (
-          <span style={{ display: "inline-flex", alignItems: "center", gap: sp(3) }}>
-            Equity Curve
-            <ResilienceMarker issues={equityIssues} />
-          </span>
-        ) : (
-          "Equity Curve"
-        )
-      }
+      title="Equity Curve"
       rightRail={baseRightRail}
       error={blockingError}
       onRetry={query.refetch}
@@ -556,8 +535,18 @@ export const EquityCurvePanel = ({
                 }}
               >
                 {chartMode === "pnl"
-                  ? formatAccountSignedMoney(headlineValue, currency, false, maskValues)
-                  : formatAccountMoney(headlineValue, currency, false, maskValues)}
+                  ? formatAccountSignedMoney(
+                      headlineValue,
+                      currency,
+                      false,
+                      maskValues,
+                    )
+                  : formatAccountMoney(
+                      headlineValue,
+                      currency,
+                      false,
+                      maskValues,
+                    )}
               </div>
               <div
                 style={{
@@ -573,7 +562,12 @@ export const EquityCurvePanel = ({
                 }}
               >
                 <span style={{ fontVariantNumeric: "tabular-nums" }}>
-                  {formatAccountSignedMoney(displayedDelta, currency, true, maskValues)}
+                  {formatAccountSignedMoney(
+                    displayedDelta,
+                    currency,
+                    true,
+                    maskValues,
+                  )}
                 </span>
                 <span style={{ color: CSS_COLOR.textMuted }}>·</span>
                 <span style={{ fontVariantNumeric: "tabular-nums" }}>
@@ -642,7 +636,8 @@ export const EquityCurvePanel = ({
             ) : null}
             {chartApi &&
             activeInspectionTimestampMs != null &&
-            activeInspectionTimestampMs !== visiblePinnedInspectionTimestampMs ? (
+            activeInspectionTimestampMs !==
+              visiblePinnedInspectionTimestampMs ? (
               <PinOverlay
                 chart={chartApi}
                 timestampMs={activeInspectionTimestampMs}
@@ -676,24 +671,53 @@ export const EquityCurvePanel = ({
           >
             {activeEvent ? (
               <>
-                <span style={{ color: equityEventColor(activeEvent), fontWeight: FONT_WEIGHTS.medium }}>
+                <span
+                  style={{
+                    color: equityEventColor(activeEvent),
+                    fontWeight: FONT_WEIGHTS.medium,
+                  }}
+                >
                   {equityEventTitle(activeEvent)}
                 </span>
                 <span>{formatAppDateTime(activeEvent.timestamp)}</span>
                 {activeEvent.quantity != null ? (
-                  <span>{Number(activeEvent.quantity).toLocaleString()} sh</span>
+                  <span>
+                    {Number(activeEvent.quantity).toLocaleString()} sh
+                  </span>
                 ) : null}
                 {activeEvent.price != null ? (
-                  <span>@ {formatAccountPrice(activeEvent.price, 2, maskValues)}</span>
+                  <span>
+                    @ {formatAccountPrice(activeEvent.price, 2, maskValues)}
+                  </span>
                 ) : null}
                 {activeEvent.realizedPnl != null ? (
-                  <span style={{ color: toneColor(activeEvent.realizedPnl), fontWeight: FONT_WEIGHTS.medium }}>
+                  <span
+                    style={{
+                      color: toneColor(activeEvent.realizedPnl),
+                      fontWeight: FONT_WEIGHTS.medium,
+                    }}
+                  >
                     P&L{" "}
-                    {formatAccountSignedMoney(activeEvent.realizedPnl, currency, true, maskValues)}
+                    {formatAccountSignedMoney(
+                      activeEvent.realizedPnl,
+                      currency,
+                      true,
+                      maskValues,
+                    )}
                   </span>
                 ) : activeEvent.amount != null ? (
-                  <span style={{ color: toneColor(activeEvent.amount), fontWeight: FONT_WEIGHTS.medium }}>
-                    {formatAccountSignedMoney(activeEvent.amount, currency, true, maskValues)}
+                  <span
+                    style={{
+                      color: toneColor(activeEvent.amount),
+                      fontWeight: FONT_WEIGHTS.medium,
+                    }}
+                  >
+                    {formatAccountSignedMoney(
+                      activeEvent.amount,
+                      currency,
+                      true,
+                      maskValues,
+                    )}
                   </span>
                 ) : null}
                 {activeEvent.source ? <span>{activeEvent.source}</span> : null}
@@ -712,7 +736,14 @@ export const EquityCurvePanel = ({
               paddingTop: sp(4),
             }}
           >
-            <div style={{ display: "flex", gap: sp(3), flexWrap: "wrap", alignItems: "center" }}>
+            <div
+              style={{
+                display: "flex",
+                gap: sp(3),
+                flexWrap: "wrap",
+                alignItems: "center",
+              }}
+            >
               <ToggleChip
                 active={showEvents}
                 color={CSS_COLOR.green}
@@ -753,13 +784,25 @@ export const EquityCurvePanel = ({
               <span>
                 {chartMode === "pnl" ? (
                   <>
-                    H {formatAccountSignedMoney(maxPnl, currency, true, maskValues)} · L{" "}
-                    {formatAccountSignedMoney(minPnl, currency, true, maskValues)}
+                    H{" "}
+                    {formatAccountSignedMoney(
+                      maxPnl,
+                      currency,
+                      true,
+                      maskValues,
+                    )}{" "}
+                    · L{" "}
+                    {formatAccountSignedMoney(
+                      minPnl,
+                      currency,
+                      true,
+                      maskValues,
+                    )}
                   </>
                 ) : (
                   <>
-                    H {formatAccountMoney(maxNav, currency, true, maskValues)} · L{" "}
-                    {formatAccountMoney(minNav, currency, true, maskValues)}
+                    H {formatAccountMoney(maxNav, currency, true, maskValues)} ·
+                    L {formatAccountMoney(minNav, currency, true, maskValues)}
                   </>
                 )}
               </span>

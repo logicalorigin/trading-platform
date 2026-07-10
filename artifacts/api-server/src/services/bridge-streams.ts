@@ -1,23 +1,12 @@
 import { isMassiveStocksRealtimeConfigured } from "../lib/runtime";
 import { normalizeSymbol } from "../lib/values";
 import { logger } from "../lib/logger";
-import { HttpError, isHttpError } from "../lib/errors";
-import {
-  isTransientWorkError,
-  isWorkBackedOff,
-} from "./work-governor";
 import {
   listIbkrExecutions,
   listIbkrAccounts,
   listIbkrOrders,
   listIbkrPositions,
 } from "./ibkr-account-bridge";
-import {
-  clearOrderReadSuppression,
-  getOrderReadSuppression,
-  markOrderReadsSuppressed,
-  shouldProbeOrderReadSuppression,
-} from "./order-read-suppression";
 import type {
   BrokerAccountSnapshot,
   BrokerExecutionSnapshot,
@@ -28,9 +17,9 @@ import type {
 } from "../providers/ibkr/client";
 import { subscribeMassiveStockQuoteSnapshots } from "./massive-stock-quote-stream";
 import {
-  fetchBridgeOptionQuoteSnapshots,
+  fetchMassiveOptionQuoteSnapshots,
   type OptionQuoteSnapshotPayload,
-} from "./bridge-option-quote-stream";
+} from "./massive-option-quote-stream";
 import {
   readOptionQuoteDemandState,
   subscribeOptionQuoteDemand,
@@ -52,7 +41,6 @@ import {
 } from "./platform";
 import { readPositiveIntegerEnv } from "../lib/env";
 
-const ORDER_SNAPSHOT_STALE_MS = 120_000;
 const ACCOUNT_MONITOR_LEASE_TTL_MS = 15_000;
 let nextOptionQuoteDemandStreamId = 1;
 
@@ -60,10 +48,6 @@ type Unsubscribe = () => void;
 type OrderSnapshotPayload = {
   orders: BrokerOrderSnapshot[];
 };
-const orderSnapshotCache = new Map<
-  string,
-  { payload: OrderSnapshotPayload; cachedAt: number }
->();
 const accountMonitorSnapshots = new Map<
   string,
   {
@@ -89,24 +73,6 @@ export function orderStreamIntervalMs(): number {
   return Math.max(
     1_000,
     readPositiveIntegerEnv("IBKR_ORDER_STREAM_INTERVAL_MS", 2_000),
-  );
-}
-
-function orderSnapshotTimeoutMs(): number {
-  return readPositiveIntegerEnv(
-    "IBKR_ORDER_STREAM_TIMEOUT_MS",
-    readPositiveIntegerEnv("IBKR_ORDER_READ_TIMEOUT_MS", 5_000),
-  );
-}
-
-function isOrderSnapshotTimeoutError(error: unknown): boolean {
-  if (!isHttpError(error)) {
-    return false;
-  }
-  const cause = error.cause;
-  return (
-    error.code === "orders_timeout" ||
-    (cause instanceof HttpError && cause.code === "orders_timeout")
   );
 }
 
@@ -465,7 +431,7 @@ export async function fetchOptionQuoteSnapshotPayload(input: {
   requiresGreeks?: boolean;
   signal?: AbortSignal;
 }): Promise<OptionQuoteSnapshotPayload> {
-  return fetchBridgeOptionQuoteSnapshots(input);
+  return fetchMassiveOptionQuoteSnapshots(input);
 }
 
 export function readOptionQuoteDemandSnapshotPayload(input: {
@@ -524,86 +490,13 @@ export async function fetchOrderSnapshotPayload(input: {
     | "rejected"
     | "expired";
 }): Promise<OrderSnapshotPayload> {
-  const cacheKey = stableStringify({
-    accountId: input.accountId ?? null,
+  const payload = { orders: await listIbkrOrders(input) };
+  updateAccountMonitorOrders({
     mode: input.mode,
-    status: input.status ?? null,
+    accountId: input.accountId,
+    orders: payload.orders,
   });
-  const cached = orderSnapshotCache.get(cacheKey);
-  const suppression = getOrderReadSuppression();
-
-  if (suppression && !shouldProbeOrderReadSuppression(suppression)) {
-    return cached && Date.now() - cached.cachedAt <= ORDER_SNAPSHOT_STALE_MS
-      ? cached.payload
-      : { orders: [] };
-  }
-
-  if (isWorkBackedOff("orders")) {
-    if (cached && Date.now() - cached.cachedAt <= ORDER_SNAPSHOT_STALE_MS) {
-      return cached.payload;
-    }
-    return { orders: [] };
-  }
-
-  const timeoutMs = orderSnapshotTimeoutMs();
-  let timeout: ReturnType<typeof setTimeout> | null = null;
-  const timeoutPromise = new Promise<BrokerOrderSnapshot[]>((_, reject) => {
-    timeout = setTimeout(() => {
-      reject(
-        new HttpError(504, "IBKR order stream snapshot timed out.", {
-          code: "orders_timeout",
-          detail: `Order stream snapshot did not respond within ${timeoutMs}ms.`,
-        }),
-      );
-    }, timeoutMs);
-    timeout.unref?.();
-  });
-
-  try {
-    const payload = {
-      orders: await Promise.race([listIbkrOrders(input), timeoutPromise]),
-    };
-    orderSnapshotCache.set(cacheKey, { payload, cachedAt: Date.now() });
-    clearOrderReadSuppression("orders_timeout");
-    updateAccountMonitorOrders({
-      mode: input.mode,
-      accountId: input.accountId,
-      orders: payload.orders,
-    });
-    return payload;
-  } catch (error) {
-    if (isOrderSnapshotTimeoutError(error)) {
-      markOrderReadsSuppressed({
-        reason: "orders_timeout",
-        message:
-          "Open-orders snapshots are paused after the bridge order endpoint did not respond.",
-        ttlMs: 60_000,
-      });
-      logger.warn(
-        { timeoutMs },
-        "Returning empty order snapshot after order stream timeout",
-      );
-      return cached && Date.now() - cached.cachedAt <= ORDER_SNAPSHOT_STALE_MS
-        ? cached.payload
-        : { orders: [] };
-    }
-    if (
-      isTransientWorkError(error) &&
-      cached &&
-      Date.now() - cached.cachedAt <= ORDER_SNAPSHOT_STALE_MS
-    ) {
-      return cached.payload;
-    }
-    if (isTransientWorkError(error)) {
-      logger.warn({ err: error }, "Returning empty order snapshot after transient bridge failure");
-      return { orders: [] };
-    }
-    throw error;
-  } finally {
-    if (timeout) {
-      clearTimeout(timeout);
-    }
-  }
+  return payload;
 }
 
 export async function fetchAccountSnapshotPayload(input: {

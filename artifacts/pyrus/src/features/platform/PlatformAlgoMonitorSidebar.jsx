@@ -1094,7 +1094,9 @@ export const PlatformAlgoMonitorSidebar = memo(function PlatformAlgoMonitorSideb
       },
     },
   );
-  const deployments = deploymentsQuery.data?.deployments || [];
+  const deployments = deploymentsQuery.isError
+    ? []
+    : deploymentsQuery.data?.deployments || [];
   // Sidebar deployment selection: follow the Algo screen's focused tab by
   // default; the user can pin their own (diverge) and re-follow. Falls back to
   // the mode-based auto-pick when nothing is published/pinned (e.g. off the algo
@@ -1178,7 +1180,6 @@ export const PlatformAlgoMonitorSidebar = memo(function PlatformAlgoMonitorSideb
       ...QUERY_DEFAULTS,
       enabled: restQueriesActive,
       refetchInterval: false,
-      placeholderData: (previousData) => previousData,
     },
   });
   const eventsQuery = useListExecutionEvents(
@@ -1188,12 +1189,13 @@ export const PlatformAlgoMonitorSidebar = memo(function PlatformAlgoMonitorSideb
         ...QUERY_DEFAULTS,
         enabled: restQueriesActive,
         refetchInterval: primaryPollInterval,
-        placeholderData: (previousData) => previousData,
       },
     },
   );
-  const cockpit = cockpitQuery.data || null;
-  const automationState = automationStateQuery.data || null;
+  const cockpit = cockpitQuery.isError ? null : cockpitQuery.data || null;
+  const automationState = automationStateQuery.isError
+    ? null
+    : automationStateQuery.data || null;
   const staActionSnapshot = useMemo(
     () =>
       resolveStableStaActionSnapshot({
@@ -1204,7 +1206,30 @@ export const PlatformAlgoMonitorSidebar = memo(function PlatformAlgoMonitorSideb
       }),
     [automationState, cockpit, cockpitQuery.isError, automationStateQuery.isError],
   );
-  const performance = performanceQuery.data || null;
+  const performance = performanceQuery.isError
+    ? null
+    : performanceQuery.data || null;
+  const primaryDetailUnavailable = Boolean(
+    restQueriesActive &&
+      !cockpit &&
+      !automationState &&
+      (cockpitQuery.isError ||
+        automationStateQuery.isError ||
+        (cockpitQuery.isFetched && automationStateQuery.isFetched)),
+  );
+  const primaryDetailLoading = Boolean(
+    restQueriesActive &&
+      !cockpit &&
+      !automationState &&
+      !primaryDetailUnavailable &&
+      (cockpitQuery.isLoading || automationStateQuery.isLoading),
+  );
+  const detailQueryErrors = [
+    cockpitQuery.isError ? "Cockpit" : null,
+    automationStateQuery.isError ? "Automation" : null,
+    performanceQuery.isError ? "Performance" : null,
+    eventsQuery.isError ? "Events" : null,
+  ].filter(Boolean);
   const performanceSummary = asRecord(performance?.summary);
   const openExposure = asRecord(performance?.openExposure);
   const cockpitKpis = asRecord(cockpit?.kpis);
@@ -1213,7 +1238,11 @@ export const PlatformAlgoMonitorSidebar = memo(function PlatformAlgoMonitorSideb
     ? staActionSnapshot.activePositions
     : [];
   const displayedPositions = activePositions;
-  const events = eventsQuery.data?.events || cockpit?.events || automationState?.events || [];
+  const events =
+    (eventsQuery.isError ? null : eventsQuery.data?.events) ||
+    cockpit?.events ||
+    automationState?.events ||
+    [];
   const signalOptionsCandidates = Array.isArray(staActionSnapshot.candidates)
     ? staActionSnapshot.candidates
     : [];
@@ -1386,7 +1415,7 @@ export const PlatformAlgoMonitorSidebar = memo(function PlatformAlgoMonitorSideb
   const combinedPnl =
     totalPnl ?? ((realizedPnl ?? 0) + (openPnl ?? 0));
   const monitorReadinessStatus = resolveAlgoMonitorReadinessStatus({
-    readinessReady: cockpit?.readiness?.ready !== false,
+    readinessReady: cockpit ? cockpit?.readiness?.ready !== false : false,
     attentionItems,
     deploymentEnabled: focusedDeployment?.enabled,
   });
@@ -1508,8 +1537,9 @@ export const PlatformAlgoMonitorSidebar = memo(function PlatformAlgoMonitorSideb
   ];
   const hasSignalActionRows = signalActionRows.length > 0;
   const canRenderSignalSurface = Boolean(focusedDeployment || hasSignalActionRows);
-  const loading =
-    queryEnabled && deploymentsQuery.isLoading && !deployments.length && !hasSignalActionRows;
+  const loading = Boolean(
+    queryEnabled && deploymentsQuery.isLoading && !hasSignalActionRows,
+  );
 
   return (
     <Card
@@ -1542,6 +1572,12 @@ export const PlatformAlgoMonitorSidebar = memo(function PlatformAlgoMonitorSideb
           detail="Open Algo Monitor when you need deployment, signal, or position context."
           minHeight={96}
         />
+      ) : deploymentsQuery.isError && !hasSignalActionRows ? (
+        <DataUnavailableState
+          title="Algo monitor unavailable"
+          detail="Current deployment data could not be loaded."
+          minHeight={180}
+        />
       ) : loading ? (
         <DataUnavailableState
           title="Loading algo monitor"
@@ -1556,9 +1592,36 @@ export const PlatformAlgoMonitorSidebar = memo(function PlatformAlgoMonitorSideb
           detail="Open Algo to create or enable a shadow deployment."
           minHeight={180}
         />
+      ) : primaryDetailUnavailable && !hasSignalActionRows ? (
+        <DataUnavailableState
+          title="Algo monitor data unavailable"
+          detail="Current cockpit and automation data could not be loaded."
+          minHeight={180}
+        />
+      ) : primaryDetailLoading && !hasSignalActionRows ? (
+        <DataUnavailableState
+          title="Loading algo monitor"
+          detail="Pulling current deployment data."
+          loading
+          loadingEndpoint="/api/algo/deployments"
+          minHeight={160}
+        />
       ) : (
         <>
-          <Section title="Signals → Actions" meta={`${displaySignalActionRows.length}/${signalActionRows.length}`}>
+          {detailQueryErrors.length ? (
+            <div
+              data-testid="algo-monitor-source-errors"
+              style={{ display: "flex", justifyContent: "flex-end" }}
+            >
+              <StatusPill color={CSS_COLOR.red} variant="outline">
+                {detailQueryErrors.join(", ")} unavailable
+              </StatusPill>
+            </div>
+          ) : null}
+          <Section
+            title={focusedDeployment ? "Signals → Actions" : "Signal Matrix"}
+            meta={`${displaySignalActionRows.length}/${signalActionRows.length}`}
+          >
             <div style={{ display: "grid", gap: sp(3), minWidth: 0 }}>
               {displaySignalActionRows.length ? (
                 displaySignalActionRows.map((row) => (
@@ -1592,6 +1655,36 @@ export const PlatformAlgoMonitorSidebar = memo(function PlatformAlgoMonitorSideb
             </div>
           </Section>
 
+          {primaryDetailUnavailable ? (
+            <DataUnavailableState
+              title="Algo monitor data unavailable"
+              detail="Current cockpit and automation data could not be loaded."
+              minHeight={96}
+            />
+          ) : primaryDetailLoading ? (
+            <DataUnavailableState
+              title="Loading algo monitor"
+              detail="Pulling current deployment data."
+              loading
+              loadingEndpoint="/api/algo/deployments"
+              minHeight={96}
+            />
+          ) : !focusedDeployment ? (
+            <DataUnavailableState
+              title={
+                deploymentsQuery.isError
+                  ? "Deployment data unavailable"
+                  : deploymentsQuery.isLoading
+                    ? "Loading deployment data"
+                    : "No algo deployment"
+              }
+              detail="Current Signal Matrix rows remain available without deployment metrics."
+              loading={deploymentsQuery.isLoading}
+              loadingEndpoint="/api/algo/deployments"
+              minHeight={96}
+            />
+          ) : (
+            <>
           <div
             data-testid="algo-monitor-deployment"
             style={{
@@ -1709,6 +1802,8 @@ export const PlatformAlgoMonitorSidebar = memo(function PlatformAlgoMonitorSideb
               ))}
             </div>
           </Section>
+            </>
+          )}
         </>
       )}
     </Card>

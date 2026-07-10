@@ -3,7 +3,6 @@ import { logger } from "../lib/logger";
 import {
   getMassiveRuntimeConfig,
   isMassiveOptionsRealtimeConfigured,
-  onIbkrBridgeRuntimeChanged,
 } from "../lib/runtime";
 import type { QuoteSnapshot } from "../providers/ibkr/client";
 import {
@@ -50,6 +49,8 @@ export type OptionQuoteSnapshotPayload = {
     acceptedCount: number;
     rejectedCount: number;
     returnedCount: number;
+    // Wire-locked legacy key (lib/api-spec/openapi.yaml `bridgeChunks`): counts
+    // Massive request chunks; renaming it would break the client contract.
     bridgeChunks: number;
     providerMode: string | null;
     liveMarketDataAvailable: boolean | null;
@@ -61,7 +62,7 @@ export type OptionQuoteSnapshotPayload = {
   };
 };
 
-export type BridgeOptionQuoteStreamDiagnostics = {
+export type MassiveOptionQuoteStreamDiagnostics = {
   activeConsumerCount: number;
   unionProviderContractIdCount: number;
   requestedProviderContractIdCount: number;
@@ -69,8 +70,8 @@ export type BridgeOptionQuoteStreamDiagnostics = {
   cachedQuoteCount: number;
   eventCount: number;
   reconnectCount: number;
-  activeBridgeStreamCount: number;
-  activeBridgeChunkCount: number;
+  activeMassiveStreamCount: number;
+  activeMassiveChunkCount: number;
   lastEventAt: string | null;
   lastEventAgeMs: number | null;
   lastSignalAt: string | null;
@@ -81,7 +82,7 @@ export type BridgeOptionQuoteStreamDiagnostics = {
   lastError: string | null;
   lastErrorAt: string | null;
   lastStreamStatus: unknown | null;
-  pressure: "normal" | "reconnecting" | "capacity_limited" | "backpressure";
+  pressure: "normal" | "reconnecting";
 };
 
 type Subscriber = {
@@ -104,7 +105,7 @@ type RetainedSnapshotDemand = {
   providerContractExpirations: Map<string, number>;
 };
 
-type BridgeOptionQuoteClient = {
+type MassiveOptionQuoteClient = {
   getHealth(): Promise<{
     transport?: string | null;
     marketDataMode?: string | null;
@@ -127,7 +128,7 @@ type BridgeOptionQuoteClient = {
   ): () => void;
 };
 
-export type BridgeOptionQuoteSnapshotAdmissionOptions = {
+export type MassiveOptionQuoteSnapshotAdmissionOptions = {
   owner?: string;
   intent?: MarketDataIntent;
   ttlMs?: number;
@@ -165,7 +166,17 @@ const UNCONFIGURED_OPTION_STREAM_RETRY_MS = Math.max(
   ) || 60_000,
 );
 const LIVE_OPTION_QUOTE_STALE_MS = 2_000;
-const OPTION_QUOTE_BRIDGE_CHUNK_SIZE = Math.max(
+// Freshness of a REST snapshot is about whether WE re-fetched recently, not
+// whether the NBBO last CHANGED recently. Massive option snapshots are real-time
+// (verified 2026-07-10: liquid SPY contracts return NBBO 2-6s old), so a thinly
+// quoted option whose NBBO simply hasn't moved for minutes is still the current
+// live market — not stale data. A mark is only stale if our poll has failed to
+// refresh it for several cadence cycles (feed/poll stuck), so freshness keys on
+// receive-age, not on the NBBO sip_timestamp age. Kept generous relative to the
+// ~2s poll so normal poll jitter never flickers a valid mark to "stale".
+const OPTION_QUOTE_FETCH_STALE_MS = LIVE_OPTION_QUOTE_STALE_MS * 3;
+// Env key predates the Massive migration; kept for deployment compatibility.
+const OPTION_QUOTE_CHUNK_SIZE = Math.max(
   1,
   Number.parseInt(process.env["OPTION_QUOTE_BRIDGE_CHUNK_SIZE"] ?? "100", 10) ||
     100,
@@ -193,7 +204,7 @@ let lastError: string | null = null;
 let lastErrorAt: Date | null = null;
 let lastStreamStatus: NonNullable<QuoteStreamSignal["status"]> | null = null;
 let nowProvider = () => new Date();
-let bridgeRuntimeConfiguredForTests: boolean | null = null;
+let massiveRuntimeConfiguredForTests: boolean | null = null;
 
 function normalizeProviderContractIds(providerContractIds: string[]): string[] {
   return Array.from(
@@ -227,6 +238,18 @@ function opraUnderlying(ticker: string): string | null {
   return match?.[1] ? normalizeSymbol(match[1]) || null : null;
 }
 
+// OCC "adjusted" option roots append a numeric suffix to the base underlying after
+// a corporate action (e.g. HON -> HON2). Massive's per-contract snapshot keys on
+// the base underlying ASSET, not the adjusted root, and returns 404 "contract and
+// underlying don't match" for the adjusted root (verified 2026-07-10: /HON2/ 404s,
+// /HON/ 200s). When the derived root ends in digits, offer the digit-stripped base
+// symbol as a fallback underlying to retry against.
+function opraUnderlyingBaseFallback(underlying: string): string | null {
+  const match = underlying.match(/^([A-Za-z]+)\d+$/);
+  const base = match?.[1] ? normalizeSymbol(match[1]) : null;
+  return base && base !== underlying ? base : null;
+}
+
 function normalizeResolvableProviderContractIds(
   providerContractIds: string[],
 ): string[] {
@@ -248,8 +271,8 @@ function normalizeUnderlying(value: string | null | undefined): string | null {
   return normalized || null;
 }
 
-function isBridgeRuntimeConfigured(): boolean {
-  return bridgeRuntimeConfiguredForTests ?? Boolean(getMassiveRuntimeConfig());
+function isMassiveRuntimeConfigured(): boolean {
+  return massiveRuntimeConfiguredForTests ?? Boolean(getMassiveRuntimeConfig());
 }
 
 function describeOptionQuoteRuntimeUnavailable(): {
@@ -300,32 +323,6 @@ function readErrorMessage(error: unknown): string {
     : String(error || "Unknown Massive option quote stream error.");
 }
 
-function isCapacityPressureState(
-  value: unknown,
-): value is "capacity_limited" | "backpressure" {
-  return value === "capacity_limited" || value === "backpressure";
-}
-
-function isIbkrBackpressureMessage(message: string): boolean {
-  return (
-    message.includes("ibkr_bridge_lane_queue_full") ||
-    message.includes("lane queue is full") ||
-    message.includes("paced") ||
-    message.includes("pacing violation")
-  );
-}
-
-function isCapacityPressureError(error: unknown): boolean {
-  const message = readErrorMessage(error).toLowerCase();
-  return (
-    isIbkrBackpressureMessage(message) ||
-    message.includes("market data line") ||
-    message.includes("max number of tickers") ||
-    message.includes("ticker limit") ||
-    message.includes("subscription limit")
-  );
-}
-
 // A generic upstream-unavailable result can happen during provider maintenance
 // or transient market-data outages. Keep retrying without turning it into a
 // hard option-stream `lastError`; real transport, auth, and capacity problems
@@ -340,19 +337,10 @@ function isUpstreamUnavailableError(error: unknown): boolean {
   return readErrorMessage(error).toLowerCase().includes("upstream request failed");
 }
 
-function capacityPressureFromError(
-  error: unknown,
-): "backpressure" | "capacity_limited" {
-  const message = readErrorMessage(error).toLowerCase();
-  return isIbkrBackpressureMessage(message)
-    ? "backpressure"
-    : "capacity_limited";
-}
-
 // A transient per-request fault (a 30s `/options/quotes` request timeout or a
 // stream stall under load) — recoverable by re-establishing the affected chunk,
 // not a reason to tear down every option subscription. Distinguished from
-// capacity pressure (real line-limit) and upstream-unavailable (market closed).
+// upstream-unavailable (market closed).
 function isTransientStreamError(error: unknown): boolean {
   const message = readErrorMessage(error).toLowerCase();
   return (
@@ -457,7 +445,7 @@ function scheduleRetainedSnapshotDemandExpiryTimer(): void {
     retainedSnapshotDemandExpiryTimer = null;
     pruneRetainedSnapshotDemands();
     pruneQuoteCacheToLiveDemand();
-    scheduleRefreshBridgeOptionQuoteStream(0);
+    scheduleRefreshMassiveOptionQuoteStream(0);
     scheduleRetainedSnapshotDemandExpiryTimer();
   }, Math.max(0, nextExpiresAt - now + 1));
   retainedSnapshotDemandExpiryTimer.unref?.();
@@ -515,7 +503,7 @@ function registerRetainedSnapshotDemand(input: {
     input.intent === "flow-scanner-live" && streamSignature
       ? FLOW_SCANNER_STREAM_RECONFIGURE_DEBOUNCE_MS
       : 0;
-  scheduleRefreshBridgeOptionQuoteStream(refreshDelayMs);
+  scheduleRefreshMassiveOptionQuoteStream(refreshDelayMs);
   scheduleRetainedSnapshotDemandExpiryTimer();
 }
 
@@ -542,7 +530,7 @@ function removeRetainedSnapshotDemandLeases(input: {
   }
   pruneRetainedSnapshotDemands();
   pruneQuoteCacheToLiveDemand();
-  scheduleRefreshBridgeOptionQuoteStream(0);
+  scheduleRefreshMassiveOptionQuoteStream(0);
   scheduleRetainedSnapshotDemandExpiryTimer();
 }
 
@@ -559,7 +547,7 @@ function getRetainedSnapshotDemandValues(): RetainedSnapshotDemand[] {
   return Array.from(retainedSnapshotDemands.values());
 }
 
-function hasBridgeOptionQuoteDemand(): boolean {
+function hasMassiveOptionQuoteDemand(): boolean {
   return subscribers.size > 0 || getRetainedSnapshotDemandValues().length > 0;
 }
 
@@ -659,7 +647,7 @@ function pruneQuoteCacheToRetainedLimit(): void {
   }
 }
 
-function admitBridgeOptionSubscriberLeases(subscriber: Subscriber): void {
+function admitMassiveOptionSubscriberLeases(subscriber: Subscriber): void {
   const policy = resolveLiveOptionQuotePolicy({
     owner: subscriber.owner,
     intent: subscriber.intent,
@@ -694,14 +682,14 @@ function admitBridgeOptionSubscriberLeases(subscriber: Subscriber): void {
   });
 }
 
-function admitBridgeOptionSubscriberLeasesForRuntime(): void {
-  if (!isBridgeRuntimeConfigured()) {
+function admitMassiveOptionSubscriberLeasesForRuntime(): void {
+  if (!isMassiveRuntimeConfigured()) {
     return;
   }
-  subscribers.forEach(admitBridgeOptionSubscriberLeases);
+  subscribers.forEach(admitMassiveOptionSubscriberLeases);
 }
 
-function releaseBridgeOptionSubscriberLeases(reason: string): void {
+function releaseMassiveOptionSubscriberLeases(reason: string): void {
   subscribers.forEach((subscriber) => {
     releaseMarketDataLeases(subscriber.owner, reason);
   });
@@ -737,8 +725,7 @@ function toPayloadQuote(quote: QuoteSnapshot): OptionQuoteWithSource {
       ? finiteNumber(quote.ageMs)
       : Math.max(0, emittedAt.getTime() - marketDataUpdatedAt);
   const freshness =
-    (ageMs !== null && ageMs > LIVE_OPTION_QUOTE_STALE_MS) ||
-    (marketDataAgeMs !== null && marketDataAgeMs > LIVE_OPTION_QUOTE_STALE_MS)
+    ageMs !== null && ageMs > OPTION_QUOTE_FETCH_STALE_MS
       ? "stale"
       : quote.freshness === "delayed" ||
           quote.freshness === "frozen" ||
@@ -1022,7 +1009,7 @@ function subscribeOptionChunk(
     if (stopped || streamSignature !== signature) {
       return;
     }
-    fetchMassiveOptionQuoteSnapshots({
+    fetchMassiveOptionQuoteSnapshotsUpstream({
       underlying: null,
       providerContractIds: contracts,
     })
@@ -1108,8 +1095,8 @@ function handleChunkStreamError(
 }
 
 function scheduleReconnect() {
-  if (reconnectTimer || !hasBridgeOptionQuoteDemand()) {
-    if (!hasBridgeOptionQuoteDemand()) {
+  if (reconnectTimer || !hasMassiveOptionQuoteDemand()) {
+    if (!hasMassiveOptionQuoteDemand()) {
       reconnectAttempt = 0;
     }
     return;
@@ -1123,7 +1110,7 @@ function scheduleReconnect() {
   reconnectAttempt += 1;
   reconnectTimer = setTimeout(() => {
     reconnectTimer = null;
-    refreshBridgeOptionQuoteStream();
+    refreshMassiveOptionQuoteStream();
   }, delayMs);
   reconnectTimer.unref?.();
 }
@@ -1134,22 +1121,6 @@ function handleStreamError(expectedSignature: string, error: unknown) {
   }
 
   const now = nowProvider();
-  if (isCapacityPressureError(error)) {
-    const state = capacityPressureFromError(error);
-    const message = readErrorMessage(error);
-    lastStreamStatus = {
-      state,
-      reason: "massive_option_stream_capacity_limited",
-      message,
-    };
-    lastSignalAt = now;
-    lastError = null;
-    lastErrorAt = null;
-    stopStream();
-    scheduleRefreshBridgeOptionQuoteStream(RECONNECT_DELAY_MIN_MS);
-    return;
-  }
-
   if (isUpstreamUnavailableError(error)) {
     // Options upstream unavailable (e.g. market closed off-hours). Keep reconnecting
     // 24/7, but do not record a hard connection error — this is data availability, not
@@ -1176,15 +1147,15 @@ function handleStreamError(expectedSignature: string, error: unknown) {
   scheduleReconnect();
 }
 
-function refreshBridgeOptionQuoteStream() {
+function refreshMassiveOptionQuoteStream() {
   clearReconnectTimer();
   clearRefreshTimer();
 
-  if (!isBridgeRuntimeConfigured()) {
+  if (!isMassiveRuntimeConfigured()) {
     const unavailable = describeOptionQuoteRuntimeUnavailable();
     const requestedProviderContractIds = getRequestedProviderContractIds();
     stopStream();
-    releaseBridgeOptionSubscriberLeases("runtime_unconfigured");
+    releaseMassiveOptionSubscriberLeases("runtime_unconfigured");
     releaseRetainedSnapshotDemandLeases("runtime_unconfigured");
     reconnectAttempt = 0;
     if (!requestedProviderContractIds.length) {
@@ -1206,11 +1177,11 @@ function refreshBridgeOptionQuoteStream() {
       rejectedCount: requestedProviderContractIds.length,
       retryDelayMs: UNCONFIGURED_OPTION_STREAM_RETRY_MS,
     };
-    scheduleRefreshBridgeOptionQuoteStream(UNCONFIGURED_OPTION_STREAM_RETRY_MS);
+    scheduleRefreshMassiveOptionQuoteStream(UNCONFIGURED_OPTION_STREAM_RETRY_MS);
     return;
   }
 
-  admitBridgeOptionSubscriberLeasesForRuntime();
+  admitMassiveOptionSubscriberLeasesForRuntime();
 
   const providerContractIds = getDesiredProviderContractIds();
   const nextSignature = providerContractIds.join(",");
@@ -1228,7 +1199,7 @@ function refreshBridgeOptionQuoteStream() {
   }
 
   streamSignature = nextSignature;
-  const chunks = chunkValues(providerContractIds, OPTION_QUOTE_BRIDGE_CHUNK_SIZE);
+  const chunks = chunkValues(providerContractIds, OPTION_QUOTE_CHUNK_SIZE);
 
   try {
     streamChunks = [];
@@ -1240,13 +1211,13 @@ function refreshBridgeOptionQuoteStream() {
   }
 }
 
-function scheduleRefreshBridgeOptionQuoteStream(
+function scheduleRefreshMassiveOptionQuoteStream(
   delayMs = STREAM_RECONFIGURE_DEBOUNCE_MS,
 ) {
   clearRefreshTimer();
   refreshTimer = setTimeout(() => {
     refreshTimer = null;
-    refreshBridgeOptionQuoteStream();
+    refreshMassiveOptionQuoteStream();
   }, Math.max(0, delayMs));
   refreshTimer.unref?.();
 }
@@ -1263,12 +1234,12 @@ subscribeMarketDataLeaseChanges((event) => {
   ) {
     return;
   }
-  scheduleRefreshBridgeOptionQuoteStream(0);
+  scheduleRefreshMassiveOptionQuoteStream(0);
 });
 
 subscribeApiResourcePressureChanges(() => {
-  if (hasBridgeOptionQuoteDemand()) {
-    scheduleRefreshBridgeOptionQuoteStream(0);
+  if (hasMassiveOptionQuoteDemand()) {
+    scheduleRefreshMassiveOptionQuoteStream(0);
   }
 });
 
@@ -1374,7 +1345,7 @@ function massiveOptionSnapshotToQuoteSnapshot(
   };
 }
 
-async function fetchMassiveOptionQuoteSnapshots(input: {
+async function fetchMassiveOptionQuoteSnapshotsUpstream(input: {
   underlying: string | null;
   providerContractIds: string[];
   signal?: AbortSignal;
@@ -1407,18 +1378,61 @@ async function fetchMassiveOptionQuoteSnapshots(input: {
       if (!underlying) {
         return null;
       }
-      const snapshot = await client.getOptionContractSnapshot({
-        underlying,
-        optionTicker: providerContractId,
-        signal: input.signal,
-      });
-      return snapshot
-        ? massiveOptionSnapshotToQuoteSnapshot(
-            snapshot,
-            providerContractId,
-            delayed,
-          )
-        : null;
+      try {
+        const snapshot = await client.getOptionContractSnapshot({
+          underlying,
+          optionTicker: providerContractId,
+          signal: input.signal,
+        });
+        return snapshot
+          ? massiveOptionSnapshotToQuoteSnapshot(
+              snapshot,
+              providerContractId,
+              delayed,
+            )
+          : null;
+      } catch (error) {
+        // A single contract's failure must NOT reject the whole chunk. One bad
+        // contract — a delisted/expired contract, or an adjusted root that fails
+        // even the fallback below — would otherwise reject Promise.all, trip the
+        // stream-level upstream-unavailable handler, and wedge the ENTIRE option
+        // quote poll into a reconnect loop that starves every held mark. Skip the
+        // one bad contract; keep every other contract's quote flowing. Real aborts
+        // still propagate so cancellation isn't swallowed.
+        if (input.signal?.aborted) {
+          throw error;
+        }
+        // Adjusted-root recovery: an OCC-adjusted contract (e.g. HON2) derives an
+        // underlying that 404s "contract and underlying don't match"; retry once
+        // against the base underlying asset (HON) before giving up on it.
+        const fallbackUnderlying = opraUnderlyingBaseFallback(underlying);
+        if (fallbackUnderlying) {
+          try {
+            const fallbackSnapshot = await client.getOptionContractSnapshot({
+              underlying: fallbackUnderlying,
+              optionTicker: providerContractId,
+              signal: input.signal,
+            });
+            return fallbackSnapshot
+              ? massiveOptionSnapshotToQuoteSnapshot(
+                  fallbackSnapshot,
+                  providerContractId,
+                  delayed,
+                )
+              : null;
+          } catch (fallbackError) {
+            if (input.signal?.aborted) {
+              throw fallbackError;
+            }
+            // fall through to skip
+          }
+        }
+        logger.warn(
+          { err: error, providerContractId, underlying },
+          "Massive option contract snapshot failed; skipping this contract",
+        );
+        return null;
+      }
     }),
   );
 
@@ -1456,7 +1470,7 @@ function buildUnconfiguredOptionQuoteSnapshotPayload(input: {
   };
 }
 
-export function getCurrentBridgeOptionQuoteSnapshots(input: {
+export function getCurrentMassiveOptionQuoteSnapshots(input: {
   underlying?: string | null;
   providerContractIds: string[];
 }): OptionQuoteWithSource[] {
@@ -1466,7 +1480,7 @@ export function getCurrentBridgeOptionQuoteSnapshots(input: {
   ).quotes;
 }
 
-export async function fetchBridgeOptionQuoteSnapshots(input: {
+export async function fetchMassiveOptionQuoteSnapshots(input: {
   underlying?: string | null;
   providerContractIds: string[];
   owner?: string;
@@ -1490,7 +1504,7 @@ export async function fetchBridgeOptionQuoteSnapshots(input: {
     requestedProviderContractIds,
   );
   const owner =
-    input.owner?.trim() || `bridge-option-quote-snapshot:${nextSnapshotOwnerId++}`;
+    input.owner?.trim() || `massive-option-quote-snapshot:${nextSnapshotOwnerId++}`;
   const intent = input.intent ?? "visible-live";
   const hydrateCached = input.hydrateCached === true;
   const ttlMs = Math.max(1, Math.floor(input.ttlMs ?? 10_000));
@@ -1523,9 +1537,9 @@ export async function fetchBridgeOptionQuoteSnapshots(input: {
       },
     };
   }
-  if (!isBridgeRuntimeConfigured()) {
+  if (!isMassiveRuntimeConfigured()) {
     stopStream();
-    releaseBridgeOptionSubscriberLeases("runtime_unconfigured");
+    releaseMassiveOptionSubscriberLeases("runtime_unconfigured");
     releaseRetainedSnapshotDemandLeases("runtime_unconfigured");
     return buildUnconfiguredOptionQuoteSnapshotPayload({
       underlying,
@@ -1641,7 +1655,7 @@ export async function fetchBridgeOptionQuoteSnapshots(input: {
   }
   const bridgeChunks = chunkValues(
     admittedProviderContractIds,
-    OPTION_QUOTE_BRIDGE_CHUNK_SIZE,
+    OPTION_QUOTE_CHUNK_SIZE,
   );
   const providerDebug = await getOptionQuoteProviderDebug();
   const cachedQuotes = getPayloadForProviderContractIds(
@@ -1678,7 +1692,7 @@ export async function fetchBridgeOptionQuoteSnapshots(input: {
   let upstreamErrorMessage: string | null = null;
   try {
     if (hydrateProviderContractIds.length > 0) {
-      const freshQuotes = await fetchMassiveOptionQuoteSnapshots({
+      const freshQuotes = await fetchMassiveOptionQuoteSnapshotsUpstream({
         underlying,
         providerContractIds: hydrateProviderContractIds,
         signal: input.signal,
@@ -1752,7 +1766,7 @@ export async function fetchBridgeOptionQuoteSnapshots(input: {
   };
 }
 
-export function subscribeBridgeOptionQuoteSnapshots(
+export function subscribeMassiveOptionQuoteSnapshots(
   input: {
     underlying?: string | null;
     providerContractIds: string[];
@@ -1774,7 +1788,7 @@ export function subscribeBridgeOptionQuoteSnapshots(
   const subscriberId = nextSubscriberId;
   nextSubscriberId += 1;
   const owner =
-    input.owner?.trim() || `bridge-option-quote-stream:${subscriberId}`;
+    input.owner?.trim() || `massive-option-quote-stream:${subscriberId}`;
   const subscriber: Subscriber = {
     id: subscriberId,
     owner,
@@ -1786,8 +1800,8 @@ export function subscribeBridgeOptionQuoteSnapshots(
     onSnapshot,
   };
   subscribers.set(subscriberId, subscriber);
-  if (isBridgeRuntimeConfigured()) {
-    admitBridgeOptionSubscriberLeases(subscriber);
+  if (isMassiveRuntimeConfigured()) {
+    admitMassiveOptionSubscriberLeases(subscriber);
   } else {
     onSnapshot(
       buildUnconfiguredOptionQuoteSnapshotPayload({
@@ -1809,17 +1823,17 @@ export function subscribeBridgeOptionQuoteSnapshots(
     onSnapshot(cachedPayload);
   }
 
-  scheduleRefreshBridgeOptionQuoteStream();
+  scheduleRefreshMassiveOptionQuoteStream();
 
   return () => {
     subscribers.delete(subscriberId);
     releaseMarketDataLeases(owner, "unsubscribe");
     pruneQuoteCacheToLiveDemand();
-    scheduleRefreshBridgeOptionQuoteStream(0);
+    scheduleRefreshMassiveOptionQuoteStream(0);
   };
 }
 
-export function getBridgeOptionQuoteStreamDiagnostics(): BridgeOptionQuoteStreamDiagnostics {
+export function getMassiveOptionQuoteStreamDiagnostics(): MassiveOptionQuoteStreamDiagnostics {
   const desiredProviderContractIds = getDesiredProviderContractIds();
   const requestedProviderContractIds = getRequestedProviderContractIds();
   const hasOptionDemand =
@@ -1827,9 +1841,6 @@ export function getBridgeOptionQuoteStreamDiagnostics(): BridgeOptionQuoteStream
   const now = nowProvider().getTime();
   const lastEventMs = lastEventAt?.getTime() ?? null;
   const lastSignalMs = lastSignalAt?.getTime() ?? null;
-  const capacityPressure = isCapacityPressureState(lastStreamStatus?.state)
-    ? lastStreamStatus.state
-    : null;
 
   return {
     activeConsumerCount: subscribers.size,
@@ -1842,8 +1853,8 @@ export function getBridgeOptionQuoteStreamDiagnostics(): BridgeOptionQuoteStream
     cachedQuoteCount: quoteCacheByProviderContractId.size,
     eventCount,
     reconnectCount,
-    activeBridgeStreamCount: streamChunks.length,
-    activeBridgeChunkCount: streamChunks.length,
+    activeMassiveStreamCount: streamChunks.length,
+    activeMassiveChunkCount: streamChunks.length,
     lastEventAt: lastEventAt?.toISOString() ?? null,
     lastEventAgeMs:
       lastEventMs === null ? null : Math.max(0, now - lastEventMs),
@@ -1864,21 +1875,19 @@ export function getBridgeOptionQuoteStreamDiagnostics(): BridgeOptionQuoteStream
       : null,
     pressure: !hasOptionDemand
       ? "normal"
-      : capacityPressure
-        ? capacityPressure
-        : reconnectTimer
-          ? "reconnecting"
-          : "normal",
+      : reconnectTimer
+        ? "reconnecting"
+        : "normal",
   };
 }
 
-export function __setBridgeOptionQuoteClientForTests(
-  client: BridgeOptionQuoteClient | null,
+export function __setMassiveOptionQuoteClientForTests(
+  client: MassiveOptionQuoteClient | null,
 ): void {
   optionQuoteSnapshotFetcherForTests = client
     ? (input) => client.getOptionQuoteSnapshots(input)
     : null;
-  bridgeRuntimeConfiguredForTests = client ? true : null;
+  massiveRuntimeConfiguredForTests = client ? true : null;
 }
 
 export function __setMassiveOptionQuoteClientFactoryForTests(
@@ -1887,17 +1896,17 @@ export function __setMassiveOptionQuoteClientFactoryForTests(
   massiveOptionQuoteClientFactory = factory;
 }
 
-export function __setBridgeOptionQuoteRuntimeConfiguredForTests(
+export function __setMassiveOptionQuoteRuntimeConfiguredForTests(
   configured: boolean | null,
 ): void {
-  bridgeRuntimeConfiguredForTests = configured;
+  massiveRuntimeConfiguredForTests = configured;
 }
 
-export function __setBridgeOptionQuoteStreamNowForTests(now: Date | null): void {
+export function __setMassiveOptionQuoteStreamNowForTests(now: Date | null): void {
   nowProvider = now ? () => new Date(now) : () => new Date();
 }
 
-export function __cacheBridgeOptionQuoteForTests(
+export function __cacheMassiveOptionQuoteForTests(
   quote: QuoteSnapshot,
 ): QuoteSnapshot | null {
   return cacheQuote(quote);
@@ -1906,11 +1915,11 @@ export function __cacheBridgeOptionQuoteForTests(
 export const __massiveOptionSnapshotToQuoteSnapshotForTests =
   massiveOptionSnapshotToQuoteSnapshot;
 
-export function __getBridgeOptionQuoteLastErrorForTests(): string | null {
+export function __getMassiveOptionQuoteLastErrorForTests(): string | null {
   return lastError;
 }
 
-export function __resetBridgeOptionQuoteStreamForTests(): void {
+export function __resetMassiveOptionQuoteStreamForTests(): void {
   stopStream();
   clearRefreshTimer();
   clearReconnectTimer();
@@ -1934,7 +1943,7 @@ export function __resetBridgeOptionQuoteStreamForTests(): void {
   lastError = null;
   lastErrorAt = null;
   lastStreamStatus = null;
-  bridgeRuntimeConfiguredForTests = null;
+  massiveRuntimeConfiguredForTests = null;
   massiveOptionQuoteClientFactory = null;
   optionQuoteSnapshotFetcherForTests = null;
   nowProvider = () => new Date();

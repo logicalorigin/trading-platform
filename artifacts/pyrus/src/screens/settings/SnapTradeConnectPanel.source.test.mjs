@@ -61,26 +61,63 @@ test("SnapTrade connect panel exposes copy-link and QR handoff for broker launch
   assert.match(source, /url: start\.authorizationUrl,[\s\S]*expiresAt: start\.expiresAt,/);
   assert.match(source, /brokerKey: ROBINHOOD_BROKER_CHOICE\.value,[\s\S]*url: start\.authorizationUrl,/);
   assert.match(source, /brokerKey: SCHWAB_BROKER_CHOICE\.value,[\s\S]*url: start\.authorizationUrl,/);
-  assert.match(source, /brokerKey: IBKR_PORTAL_BROKER_CHOICE\.value,[\s\S]*url: loginPath,/);
+  assert.doesNotMatch(source, /brokerKey: IBKR_PORTAL_BROKER_CHOICE\.value,[\s\S]*url: loginPath,/);
   assert.match(source, /clearConnectHandoff\(ROBINHOOD_BROKER_CHOICE\.value\)/);
   assert.match(source, /clearConnectHandoff\(SCHWAB_BROKER_CHOICE\.value\)/);
   assert.match(source, /clearConnectHandoff\(IBKR_PORTAL_BROKER_CHOICE\.value\)/);
 });
 
-test("IBKR keeps mobile provisioning in the active tab and reserves popups only on desktop", () => {
+test("IBKR keeps native login inside a sandboxed full-screen dialog", () => {
   const source = readLocalSource("./SnapTradeConnectPanel.jsx");
+  const viteSource = readLocalSource("../../../vite.config.ts");
   const connectBlock =
     /const connectIbkrPortal = async \(\) => \{[\s\S]*?\n  \};/.exec(source)?.[0] ?? "";
 
-  assert.match(source, /isMobileIbkrLaunchBrowser/);
-  assert.match(connectBlock, /const mobileLaunch = isMobileIbkrLaunchBrowser\(\)/);
+  assert.match(source, /function IbkrPortalLoginDialog\(\{ url, connecting, onClose \}\)/);
+  assert.match(source, /<Dialog\.Content/);
+  assert.match(source, /<iframe/);
+  assert.match(
+    source,
+    /sandbox="allow-forms allow-modals allow-same-origin allow-scripts"/,
+  );
+  assert.doesNotMatch(source, /sandbox="[^"]*allow-popups/);
+  assert.match(source, /const ibkrAttemptRef = useRef\(0\)/);
+  assert.match(source, /const ibkrConnectBusyRef = useRef\(false\)/);
+  assert.match(source, /open=\{Boolean\(url \|\| connecting\)\}/);
+  assert.match(source, /Starting secure IBKR Client Portal session/);
+  assert.match(source, /onPointerDownOutside=\{\(event\) => event\.preventDefault\(\)\}/);
+  assert.match(source, /ibkrPortalConnectMutation\.isPending/);
+  assert.match(connectBlock, /loginUrl = new URL\(loginPath, window\.location\.origin\)\.href/);
+  assert.match(connectBlock, /new URL\(loginUrl\)\.origin === window\.location\.origin/);
+  assert.match(connectBlock, /setIbkrLoginUrl\(loginUrl\)/);
+  assert.match(connectBlock, /const attempt = \+\+ibkrAttemptRef\.current/);
+  assert.match(connectBlock, /attempt !== ibkrAttemptRef\.current/);
   assert.match(
     connectBlock,
-    /mobileLaunch\s*\?\s*null\s*:\s*openBrokerPopup\("about:blank", "ibkr-portal-login"\)/,
+    /attempt !== ibkrAttemptRef\.current[\s\S]*?ibkrPortalDisconnectMutation[\s\S]*?\.mutateAsync\(\)/,
   );
-  assert.match(connectBlock, /const loginUrl = new URL\(loginPath, window\.location\.origin\)\.href/);
-  assert.match(connectBlock, /if \(mobileLaunch\) \{\s*window\.location\.assign\(loginUrl\);\s*return;/);
-  assert.match(connectBlock, /popup\.location\.replace\(loginUrl\)/);
+  assert.match(connectBlock, /window\.setTimeout/);
+  assert.doesNotMatch(connectBlock, /window\.location\.assign|openBrokerPopup|popup\./);
+  const closeBlock =
+    /const closeIbkrPortalLogin = \(\) => \{[\s\S]*?\n  \};/.exec(source)?.[0] ?? "";
+  assert.match(closeBlock, /\+\+ibkrAttemptRef\.current/);
+  assert.match(
+    closeBlock,
+    /ibkrPortalDisconnectMutation[\s\S]*?\.mutateAsync\(\)/,
+  );
+  assert.match(
+    viteSource,
+    /"\/api\/broker-execution\/ibkr-portal\/client"/,
+  );
+  assert.match(viteSource, /const pathname = url\.split\("\?", 1\)\[0\] \|\| url/);
+  assert.match(
+    viteSource,
+    /req\.headers\["x-forwarded-host"\] = req\.headers\.host/,
+  );
+  assert.match(
+    source,
+    /<IbkrPortalLoginDialog[\s\S]*?connecting=\{ibkrConnecting\}/,
+  );
 });
 
 test("broker picker hydrates connected edges from server truth on load, unioned with sync freshness", () => {

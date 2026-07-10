@@ -106,7 +106,7 @@ import {
   subscribeOrderSnapshots,
   subscribeQuoteSnapshots,
 } from "../services/bridge-streams";
-import type { OptionQuoteSnapshotPayload } from "../services/bridge-option-quote-stream";
+import type { OptionQuoteSnapshotPayload } from "../services/massive-option-quote-stream";
 import {
   fetchShadowAccountSnapshotPayload,
   subscribeShadowAccountSnapshots,

@@ -12,7 +12,6 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { calculateTransferAdjustedReturnSeries } from "@workspace/account-math";
 import {
   getGetAccountAllocationQueryOptions,
-  getGetAccountClosedTradesQueryOptions,
   getGetAccountEquityHistoryQueryOptions,
   getGetAccountOrdersQueryOptions,
   getGetAccountPositionsQueryOptions,
@@ -40,27 +39,20 @@ import {
   useAccountPageSnapshotStream,
   useBrokerStreamFreshnessSnapshot,
 } from "../features/platform/live-streams";
-import { useRuntimeControlSnapshot } from "../features/platform/useRuntimeControlSnapshot";
 import { markRouteDataTiming } from "../features/platform/performanceMetrics";
-import {
-  buildAccountHistoryCacheKey,
-  hydrateQueryFromRuntimeCache,
-  readCachedAccountHistory,
-  writeCachedAccountHistory,
-} from "../features/platform/runtimeCache";
-import {
-  setAccountSectionTransitionSnapshot,
-  useAccountSectionTransitionSnapshot,
-} from "../features/platform/accountSectionTransitionStore.js";
 import { useToast } from "../features/platform/platformContexts.jsx";
 import DeferredRender from "../components/platform/DeferredRender";
 import { PlatformErrorBoundary } from "../components/platform/PlatformErrorBoundary";
-import { LoadingSpinner, StatTile, StatusPill } from "../components/platform/primitives.jsx";
+import { StatTile } from "../components/platform/primitives.jsx";
 import { Button } from "../components/ui/Button.jsx";
 import { platformJsonRequest } from "../features/platform/platformJsonRequest";
 import { parseRetryAfterMs } from "../features/platform/queryDefaults";
 import { useUserPreferences } from "../features/preferences/useUserPreferences";
-import { responsiveFlags, useElementSize, useViewport } from "../lib/responsive";
+import {
+  responsiveFlags,
+  useElementSize,
+  useViewport,
+} from "../lib/responsive";
 import { retryDynamicImport } from "../lib/dynamicImport";
 import {
   CSS_COLOR,
@@ -84,10 +76,7 @@ import {
   accountPositionTypeParam,
   normalizeAccountPositionTypeFilter,
 } from "../features/account/accountPositionTypes";
-import {
-  ACCOUNT_RANGES,
-  normalizeAccountRange,
-} from "./account/accountRanges";
+import { ACCOUNT_RANGES, normalizeAccountRange } from "./account/accountRanges";
 import {
   EmptyState,
   Panel,
@@ -214,13 +203,23 @@ const LazyEquityCurvePanel = lazy(() =>
   loadEquityCurvePanel().then((mod) => ({ default: mod.EquityCurvePanel })),
 );
 const LazyTradingAnalysisWorkbench = lazy(loadTradingAnalysisWorkbench);
-export const preloadScreenModules = () => Promise.resolve();
+export const preloadScreenModules = () =>
+  Promise.all([
+    loadCashFundingPanel(),
+    loadSetupHealthPanel(),
+    loadPortfolioExposurePanel(),
+    loadEquityCurvePanel(),
+    loadTradingAnalysisWorkbench(),
+  ]).then(() => undefined);
 
 const finiteAccountNumber = (value) => {
   if (value == null || value === "") return null;
   const numeric = Number(value);
   return Number.isFinite(numeric) ? numeric : null;
 };
+
+const withoutFailedQueryData = (query) =>
+  query?.isError ? { ...query, data: undefined } : query;
 
 const ACCOUNT_MARKET_DATE_FORMATTER = new Intl.DateTimeFormat("en-CA", {
   timeZone: "America/New_York",
@@ -238,7 +237,8 @@ const accountMarketDateKey = (value) => {
 
 const accountMetricMarketDate = (metric) => {
   const explicit =
-    typeof metric?.marketDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(metric.marketDate)
+    typeof metric?.marketDate === "string" &&
+    /^\d{4}-\d{2}-\d{2}$/.test(metric.marketDate)
       ? metric.marketDate
       : null;
   if (explicit) return explicit;
@@ -287,7 +287,7 @@ const realizedTradeSummaryForMarketDate = (trades = [], marketDate = null) => {
   };
 };
 
-const livePositionsDayPnlMetric = ({
+export const livePositionsDayPnlMetric = ({
   positionsResponse,
   fallbackMetric,
   tradesResponse,
@@ -295,10 +295,25 @@ const livePositionsDayPnlMetric = ({
 }) => {
   const rows = getOpenPositionRows(positionsResponse?.positions || []);
   let hasDayChange = false;
+  let dayChangeBasis = 0;
+  let dayChangeBasisComplete = true;
   const openPositionsDayPnl = rows.reduce((sum, row) => {
     const dayChange = finiteAccountNumber(row?.dayChange);
     if (dayChange == null) return sum;
     hasDayChange = true;
+    const dayChangePercent = finiteAccountNumber(row?.dayChangePercent);
+    const marketValue = finiteAccountNumber(row?.marketValue);
+    const rowBasis =
+      dayChangePercent != null && dayChangePercent !== 0
+        ? Math.abs((dayChange * 100) / dayChangePercent)
+        : dayChange === 0 && marketValue != null
+          ? Math.abs(marketValue)
+          : null;
+    if (rowBasis != null && rowBasis > 0) {
+      dayChangeBasis += rowBasis;
+    } else {
+      dayChangeBasisComplete = false;
+    }
     return sum + dayChange;
   }, 0);
   const fallbackValue =
@@ -318,10 +333,20 @@ const livePositionsDayPnlMetric = ({
     value: totalDayPnl,
     totalDayPnl,
     marketDate: marketDate || fallbackMetric?.marketDate,
-    realizedDayPnl: realizedSummary.realizedPnl ?? fallbackMetric?.realizedDayPnl,
-    realizedTradeCount: realizedSummary.trades ?? fallbackMetric?.realizedTradeCount,
+    realizedDayPnl:
+      realizedSummary.realizedPnl ?? fallbackMetric?.realizedDayPnl,
+    realizedTradeCount:
+      realizedSummary.trades ?? fallbackMetric?.realizedTradeCount,
     openPositionsDayPnl: hasDayChange ? openPositionsDayPnl : null,
-    currency: currency || fallbackMetric?.currency || positionsResponse?.currency || "USD",
+    openPositionsDayPnlPercent:
+      hasDayChange && dayChangeBasisComplete && dayChangeBasis > 0
+        ? (openPositionsDayPnl / dayChangeBasis) * 100
+        : null,
+    currency:
+      currency ||
+      fallbackMetric?.currency ||
+      positionsResponse?.currency ||
+      "USD",
     source: fallbackMetric?.source || "IBKR_POSITIONS",
     field: fallbackMetric?.field || "OpenPositionsDayChange",
     updatedAt:
@@ -331,7 +356,10 @@ const livePositionsDayPnlMetric = ({
   };
 };
 
-const livePositionsNetLiquidation = (positionsResponse, fallbackValue = null) => {
+const livePositionsNetLiquidation = (
+  positionsResponse,
+  fallbackValue = null,
+) => {
   const totals = positionsResponse?.totals || {};
   const netLiquidation = finiteAccountNumber(totals.netLiquidation);
   if (netLiquidation != null) {
@@ -377,16 +405,23 @@ const equityQueryWithLivePositionsTerminal = ({
   const terminalMs = new Date(timestamp).getTime();
   const withoutPriorTerminal = existingPoints.filter((point, index) => {
     const pointMs = new Date(point?.timestamp).getTime();
-    if (Number.isFinite(pointMs) && Number.isFinite(terminalMs) && pointMs === terminalMs) {
+    if (
+      Number.isFinite(pointMs) &&
+      Number.isFinite(terminalMs) &&
+      pointMs === terminalMs
+    ) {
       return false;
     }
-    return !(index === existingPoints.length - 1 && point?.source === "IBKR_POSITIONS");
+    return !(
+      index === existingPoints.length - 1 && point?.source === "IBKR_POSITIONS"
+    );
   });
   const points = [...withoutPriorTerminal, terminalPoint]
     .filter((point) => Number.isFinite(new Date(point?.timestamp).getTime()))
     .sort(
       (left, right) =>
-        new Date(left.timestamp).getTime() - new Date(right.timestamp).getTime(),
+        new Date(left.timestamp).getTime() -
+        new Date(right.timestamp).getTime(),
     );
   const adjusted = calculateTransferAdjustedReturnSeries(points);
   return {
@@ -399,7 +434,8 @@ const equityQueryWithLivePositionsTerminal = ({
       liveTerminalIncluded: true,
       points: points.map((point, index) => ({
         ...point,
-        returnPercent: adjusted[index]?.returnPercent ?? point.returnPercent ?? 0,
+        returnPercent:
+          adjusted[index]?.returnPercent ?? point.returnPercent ?? 0,
       })),
     },
   };
@@ -482,7 +518,6 @@ const DeferredPanelSuspense = ({
 
 const ACCOUNT_LIVE_STALE_MS = 15_000;
 const ACCOUNT_DERIVED_STALE_MS = 120_000;
-const ACCOUNT_ACTIVITY_STALE_MS = ACCOUNT_LIVE_STALE_MS;
 const ACCOUNT_RISK_DEGRADED_RETRY_MS = 15_000;
 
 const isDegradedAccountRiskError = (error) => {
@@ -499,38 +534,6 @@ const degradedAccountRiskRetryDelay = (_attempt, error) =>
   parseRetryAfterMs(error?.headers?.get?.("retry-after")) ??
   ACCOUNT_RISK_DEGRADED_RETRY_MS;
 const ACCOUNT_HISTORY_STALE_MS = 120_000;
-
-const closedTradesResponseIsDegradedEmpty = (data) =>
-  Boolean(
-    data?.activityDegraded === true &&
-      (!Array.isArray(data?.trades) || data.trades.length === 0),
-  );
-
-const accountActivityRefetchInterval = (fallbackInterval) => (query) =>
-  closedTradesResponseIsDegradedEmpty(query?.state?.data)
-    ? ACCOUNT_ACTIVITY_STALE_MS
-    : fallbackInterval;
-
-const accountIdMatches = (data, accountId) =>
-  Boolean(
-    data &&
-      accountId &&
-      String(data.accountId || "").trim() === String(accountId || "").trim(),
-  );
-const retainPreviousAccountData = (accountId) => (previousData) =>
-  accountIdMatches(previousData, accountId) ? previousData : undefined;
-const retainPreviousAccountRangeData =
-  (accountId, range, benchmark = null) =>
-  (previousData) =>
-    accountIdMatches(previousData, accountId) &&
-    previousData?.range === range &&
-    (benchmark == null || previousData?.benchmark === benchmark)
-      ? previousData
-      : undefined;
-const retainPreviousAccountDateData = (accountId, date) => (previousData) =>
-  accountIdMatches(previousData, accountId) && previousData?.date === date
-    ? previousData
-    : undefined;
 
 const QUERY_OPTIONS = {
   query: {
@@ -559,67 +562,12 @@ const DEFAULT_EQUITY_BENCHMARK_VISIBILITY = {
   DJIA: false,
 };
 
-const useRuntimeAccountHistoryCache = ({
-  enabled,
-  queryClient,
-  queryKey,
-  cacheKey,
-  data,
-  writeOptions,
-}) => {
-  useEffect(() => {
-    if (!enabled || !cacheKey || !queryKey) {
-      return;
-    }
-    void hydrateQueryFromRuntimeCache({
-      queryClient,
-      queryKey,
-      read: () => readCachedAccountHistory(cacheKey),
-      invalidate: false,
-    });
-  }, [cacheKey, enabled, queryClient, queryKey]);
-
-  useEffect(() => {
-    if (!enabled || !cacheKey || !data) {
-      return;
-    }
-    void writeCachedAccountHistory(cacheKey, data, writeOptions);
-  }, [cacheKey, data, enabled, writeOptions]);
-};
-
 const SHADOW_ACCOUNT_ID = "shadow";
 const resolveAccountMode = ({ shadowMode = false, environment } = {}) => {
   if (shadowMode) {
     return "shadow";
   }
   return "live";
-};
-
-const AccountSectionTransitionStatus = ({ compact = false }) => {
-  const { transitioning, targetSection } = useAccountSectionTransitionSnapshot();
-  if (!transitioning || !targetSection) {
-    return null;
-  }
-
-  const label = `Loading ${targetSection}...`;
-  const tone = targetSection === "shadow" ? CSS_COLOR.pink : CSS_COLOR.green;
-  return (
-    <StatusPill color={tone} dot={false}>
-      <span
-        data-testid="account-section-transition"
-        aria-live="polite"
-        style={{
-          display: "inline-flex",
-          alignItems: "center",
-          gap: sp(5),
-          minHeight: dim(compact ? 22 : 24),
-        }}
-      >
-        <LoadingSpinner size={14} color={tone} />
-        {label}
-      </span>
-    </StatusPill>
-  );
 };
 
 const readAccountWorkspaceDefault = (key, fallback) => {
@@ -655,7 +603,9 @@ const ShadowWatchlistBacktestPanel = ({
   const error = mutation.error;
   const pnl = Number(summary.realizedPnl || 0);
   const runLabel =
-    run?.marketDateFrom && run?.marketDateTo && run.marketDateFrom !== run.marketDateTo
+    run?.marketDateFrom &&
+    run?.marketDateTo &&
+    run.marketDateFrom !== run.marketDateTo
       ? `${run.marketDateFrom} -> ${run.marketDateTo}`
       : run?.marketDate || "One-off ledger run";
   return (
@@ -680,7 +630,9 @@ const ShadowWatchlistBacktestPanel = ({
             variant="primary"
             color={CSS_COLOR.pink}
             size="sm"
-            onClick={() => mutation.mutate({ timeframe: "15m", range: "past_week" })}
+            onClick={() =>
+              mutation.mutate({ timeframe: "15m", range: "past_week" })
+            }
             disabled={running}
             dataTestId="shadow-watchlist-backtest-run-week"
           >
@@ -690,7 +642,9 @@ const ShadowWatchlistBacktestPanel = ({
             variant="primary"
             color={CSS_COLOR.pink}
             size="sm"
-            onClick={() => mutation.mutate({ timeframe: "15m", range: "last_month" })}
+            onClick={() =>
+              mutation.mutate({ timeframe: "15m", range: "last_month" })
+            }
             disabled={running}
             dataTestId="shadow-watchlist-backtest-run-month"
           >
@@ -710,7 +664,9 @@ const ShadowWatchlistBacktestPanel = ({
             variant="primary"
             color={CSS_COLOR.cyan}
             size="sm"
-            onClick={() => mutation.mutate({ timeframe: "5m", range: "ytd", sweep: true })}
+            onClick={() =>
+              mutation.mutate({ timeframe: "5m", range: "ytd", sweep: true })
+            }
             disabled={running}
             dataTestId="shadow-watchlist-backtest-run-ytd-5m-sweep"
           >
@@ -727,10 +683,17 @@ const ShadowWatchlistBacktestPanel = ({
           {run?.sweep ? <Pill tone="purple">Regime Sweep</Pill> : null}
           <Pill tone="purple">Ledger Synthetic</Pill>
         </div>
-        <div style={{ color: CSS_COLOR.textSec, fontSize: textSize("caption"), lineHeight: 1.35 }}>
-          Runs all saved watchlists from the New York regular-session open through
-          the latest completed bar in the selected window. Rows are written as synthetic Shadow ledger
-          activity, isolated from prior backtest rows, and sized around current Shadow exposure.
+        <div
+          style={{
+            color: CSS_COLOR.textSec,
+            fontSize: textSize("caption"),
+            lineHeight: 1.35,
+          }}
+        >
+          Runs all saved watchlists from the New York regular-session open
+          through the latest completed bar in the selected window. Rows are
+          written as synthetic Shadow ledger activity, isolated from prior
+          backtest rows, and sized around current Shadow exposure.
         </div>
         {run ? (
           <>
@@ -776,47 +739,100 @@ const ShadowWatchlistBacktestPanel = ({
             >
               <span style={{ flexShrink: 0 }}>
                 P&L{" "}
-                <span style={{ color: pnl >= 0 ? CSS_COLOR.green : CSS_COLOR.red, fontWeight: FONT_WEIGHTS.regular }}>
-                  {formatAccountMoney(summary.realizedPnl, currency, true, maskValues)}
+                <span
+                  style={{
+                    color: pnl >= 0 ? CSS_COLOR.green : CSS_COLOR.red,
+                    fontWeight: FONT_WEIGHTS.regular,
+                  }}
+                >
+                  {formatAccountMoney(
+                    summary.realizedPnl,
+                    currency,
+                    true,
+                    maskValues,
+                  )}
                 </span>
               </span>
               <span style={{ flexShrink: 0 }}>·</span>
               <span style={{ flexShrink: 0 }}>
-                Fees {formatAccountMoney(summary.fees, currency, true, maskValues)}
+                Fees{" "}
+                {formatAccountMoney(summary.fees, currency, true, maskValues)}
               </span>
               <span style={{ flexShrink: 0 }}>·</span>
               <span style={{ flexShrink: 0 }}>
-                Cap {formatAccountPercent((sizing.maxPositionFraction || 0) * 100, 0, maskValues)}
+                Cap{" "}
+                {formatAccountPercent(
+                  (sizing.maxPositionFraction || 0) * 100,
+                  0,
+                  maskValues,
+                )}
               </span>
               <span style={{ flexShrink: 0 }}>·</span>
               <span style={{ flexShrink: 0 }}>
-                Win {formatAccountPercent(summary.winRatePercent, 0, maskValues)}
+                Win{" "}
+                {formatAccountPercent(summary.winRatePercent, 0, maskValues)}
               </span>
               <span style={{ flexShrink: 0 }}>·</span>
               <span style={{ flexShrink: 0 }}>
                 Exp{" "}
-                <span style={{ color: Number(summary.expectancy || 0) >= 0 ? CSS_COLOR.green : CSS_COLOR.red, fontWeight: FONT_WEIGHTS.regular }}>
-                  {formatAccountMoney(summary.expectancy, currency, true, maskValues)}
+                <span
+                  style={{
+                    color:
+                      Number(summary.expectancy || 0) >= 0
+                        ? CSS_COLOR.green
+                        : CSS_COLOR.red,
+                    fontWeight: FONT_WEIGHTS.regular,
+                  }}
+                >
+                  {formatAccountMoney(
+                    summary.expectancy,
+                    currency,
+                    true,
+                    maskValues,
+                  )}
                 </span>
               </span>
               <span style={{ flexShrink: 0 }}>·</span>
-              <span style={{ flexShrink: 0 }}>Closed {formatNumber(summary.closedTrades || 0, 0)}</span>
+              <span style={{ flexShrink: 0 }}>
+                Closed {formatNumber(summary.closedTrades || 0, 0)}
+              </span>
               <span style={{ flexShrink: 0 }}>·</span>
               <span style={{ flexShrink: 0 }}>
                 NAV{" "}
-                <span style={{ color: CSS_COLOR.green, fontWeight: FONT_WEIGHTS.regular }}>
-                  {formatAccountMoney(summary.endingNetLiquidation, currency, true, maskValues)}
+                <span
+                  style={{
+                    color: CSS_COLOR.green,
+                    fontWeight: FONT_WEIGHTS.regular,
+                  }}
+                >
+                  {formatAccountMoney(
+                    summary.endingNetLiquidation,
+                    currency,
+                    true,
+                    maskValues,
+                  )}
                 </span>
               </span>
               <span style={{ flexShrink: 0 }}>·</span>
               <span style={{ flexShrink: 0 }}>
                 Max DD{" "}
-                <span style={{ color: CSS_COLOR.red, fontWeight: FONT_WEIGHTS.regular }}>
-                  {formatAccountPercent(summary.maxDrawdownPercent, 1, maskValues)}
+                <span
+                  style={{
+                    color: CSS_COLOR.red,
+                    fontWeight: FONT_WEIGHTS.regular,
+                  }}
+                >
+                  {formatAccountPercent(
+                    summary.maxDrawdownPercent,
+                    1,
+                    maskValues,
+                  )}
                 </span>
               </span>
               <span style={{ flexShrink: 0 }}>·</span>
-              <span style={{ flexShrink: 0 }}>Proxy fills {formatNumber(summary.proxyFills || 0, 0)}</span>
+              <span style={{ flexShrink: 0 }}>
+                Proxy fills {formatNumber(summary.proxyFills || 0, 0)}
+              </span>
             </div>
             {run.sweep ? (
               <div
@@ -829,33 +845,82 @@ const ShadowWatchlistBacktestPanel = ({
                   gap: sp(4),
                 }}
               >
-                <div style={{ color: CSS_COLOR.text, fontSize: textSize("caption"), fontFamily: T.sans, fontWeight: FONT_WEIGHTS.regular }}>
-                  Winner {run.sweep.winnerId || "n/a"} · {formatNumber(run.sweep.variantCount || 0, 0)} variants · highest NAV
+                <div
+                  style={{
+                    color: CSS_COLOR.text,
+                    fontSize: textSize("caption"),
+                    fontFamily: T.sans,
+                    fontWeight: FONT_WEIGHTS.regular,
+                  }}
+                >
+                  Winner {run.sweep.winnerId || "n/a"} ·{" "}
+                  {formatNumber(run.sweep.variantCount || 0, 0)} variants ·
+                  highest NAV
                 </div>
                 {(run.sweep.variants || []).slice(0, 3).map((variant) => (
                   <div
                     key={variant.id}
                     style={{
                       display: "grid",
-                      gridTemplateColumns: "minmax(0, 1.5fr) repeat(4, minmax(0, 0.7fr))",
+                      gridTemplateColumns:
+                        "minmax(0, 1.5fr) repeat(4, minmax(0, 0.7fr))",
                       gap: sp(4),
-                      color: variant.rank === 1 ? CSS_COLOR.green : CSS_COLOR.textSec,
+                      color:
+                        variant.rank === 1
+                          ? CSS_COLOR.green
+                          : CSS_COLOR.textSec,
                       fontSize: textSize("body"),
                       fontFamily: T.sans,
                     }}
                   >
-                    <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    <span
+                      style={{
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
                       #{variant.rank} {variant.id}
                     </span>
-                    <span>{formatAccountMoney(variant.summary?.endingNetLiquidation, currency, true, maskValues)}</span>
-                    <span>DD {formatAccountPercent(variant.summary?.maxDrawdownPercent, 1, maskValues)}</span>
-                    <span>Win {formatAccountPercent(variant.summary?.winRatePercent, 0, maskValues)}</span>
-                    <span>{formatNumber(variant.summary?.ordersCreated || 0, 0)} fills</span>
+                    <span>
+                      {formatAccountMoney(
+                        variant.summary?.endingNetLiquidation,
+                        currency,
+                        true,
+                        maskValues,
+                      )}
+                    </span>
+                    <span>
+                      DD{" "}
+                      {formatAccountPercent(
+                        variant.summary?.maxDrawdownPercent,
+                        1,
+                        maskValues,
+                      )}
+                    </span>
+                    <span>
+                      Win{" "}
+                      {formatAccountPercent(
+                        variant.summary?.winRatePercent,
+                        0,
+                        maskValues,
+                      )}
+                    </span>
+                    <span>
+                      {formatNumber(variant.summary?.ordersCreated || 0, 0)}{" "}
+                      fills
+                    </span>
                   </div>
                 ))}
               </div>
             ) : null}
-            <div style={{ color: CSS_COLOR.textDim, fontSize: textSize("body"), fontFamily: T.sans }}>
+            <div
+              style={{
+                color: CSS_COLOR.textDim,
+                fontSize: textSize("body"),
+                fontFamily: T.sans,
+              }}
+            >
               {formatAppDateTime(run.window?.start)}
               {" -> "}
               {formatAppDateTime(run.window?.end)}
@@ -865,7 +930,13 @@ const ShadowWatchlistBacktestPanel = ({
             </div>
           </>
         ) : (
-          <div style={{ color: CSS_COLOR.textDim, fontSize: textSize("caption"), fontFamily: T.sans }}>
+          <div
+            style={{
+              color: CSS_COLOR.textDim,
+              fontSize: textSize("caption"),
+              fontFamily: T.sans,
+            }}
+          >
             No run has been executed in this browser session.
           </div>
         )}
@@ -914,7 +985,9 @@ const AccountScreenInner = ({
     defaultTradingAnalysisFilters,
   );
   const [selectedAccountTradeId, setSelectedAccountTradeId] = useState("");
-  const [accountAnalysisNowMs, setAccountAnalysisNowMs] = useState(() => Date.now());
+  const [accountAnalysisNowMs, setAccountAnalysisNowMs] = useState(() =>
+    Date.now(),
+  );
   const [hoveredEquityDate, setHoveredEquityDate] = useState(null);
   const [pinnedEquityDate, setPinnedEquityDate] = useState(null);
   const [activatedAccountPanels, setActivatedAccountPanels] = useState({});
@@ -925,7 +998,8 @@ const AccountScreenInner = ({
   const accountElementFlags = responsiveFlags(accountLayoutSize.width);
   const viewport = useViewport();
   const accountIsPhone = viewport.flags.isPhone || accountElementFlags.isPhone;
-  const accountIsNarrow = viewport.flags.isNarrow || accountElementFlags.isNarrow;
+  const accountIsNarrow =
+    viewport.flags.isNarrow || accountElementFlags.isNarrow;
   // The account tab strip subsumes the old real/shadow SegmentedControl AND
   // account selection: tab id is "all" (cross-account aggregate) | <account.id>
   // | "shadow". It owns this state locally rather than reading the header's
@@ -949,14 +1023,13 @@ const AccountScreenInner = ({
     () => resolveAccountProviderScope({ accountTab, accounts }),
     [accountTab, accounts],
   );
-  const [settledAccountTab, setSettledAccountTab] = useState(accountTab);
-
   useEffect(() => {
     writeAccountWorkspaceDefault("accountRange", range);
   }, [range]);
 
   useEffect(() => {
-    const normalizedAssetFilter = normalizeAccountPositionTypeFilter(assetFilter);
+    const normalizedAssetFilter =
+      normalizeAccountPositionTypeFilter(assetFilter);
     if (normalizedAssetFilter !== assetFilter) {
       setAssetFilter(normalizedAssetFilter);
       return;
@@ -980,13 +1053,19 @@ const AccountScreenInner = ({
 
   useEffect(() => {
     const listener = () => {
-      setRange(normalizeAccountRange(readAccountWorkspaceDefault("accountRange", "ALL")));
+      setRange(
+        normalizeAccountRange(
+          readAccountWorkspaceDefault("accountRange", "ALL"),
+        ),
+      );
       setAssetFilter(
         normalizeAccountPositionTypeFilter(
           readAccountWorkspaceDefault("accountAssetFilter", "all"),
         ),
       );
-      setSourceFilter(readAccountWorkspaceDefault("accountSourceFilter", "all"));
+      setSourceFilter(
+        readAccountWorkspaceDefault("accountSourceFilter", "all"),
+      );
       setOrderTab(readAccountWorkspaceDefault("accountOrderTab", "working"));
     };
     window.addEventListener(PYRUS_WORKSPACE_SETTINGS_EVENT, listener);
@@ -1008,7 +1087,9 @@ const AccountScreenInner = ({
     accountTab === "all" || accountTab === "shadow" ? "combined" : accountTab;
   const shadowMode = accountTab === "shadow";
   const selectedSnapTradeAccount =
-    !shadowMode && accountProviderScope === "snaptrade" && activeAccountId !== "combined"
+    !shadowMode &&
+    accountProviderScope === "snaptrade" &&
+    activeAccountId !== "combined"
       ? activeAccount
       : null;
   const snapTradeAccountPanelsEnabled = Boolean(
@@ -1017,19 +1098,6 @@ const AccountScreenInner = ({
   const effectiveOrderTab =
     shadowMode && orderTab === "working" ? "history" : orderTab;
   const accountRequestId = shadowMode ? SHADOW_ACCOUNT_ID : activeAccountId;
-  const retainPreviousData = useMemo(
-    () => retainPreviousAccountData(accountRequestId),
-    [accountRequestId],
-  );
-  const retainPreviousRangeData = useCallback(
-    (targetRange, benchmark = null) =>
-      retainPreviousAccountRangeData(accountRequestId, targetRange, benchmark),
-    [accountRequestId],
-  );
-  const retainPreviousDateData = useCallback(
-    (date) => retainPreviousAccountDateData(accountRequestId, date),
-    [accountRequestId],
-  );
   const ibkrAccountRoutesAvailable = Boolean(
     !safeQaMode &&
       brokerConfigured &&
@@ -1080,7 +1148,9 @@ const AccountScreenInner = ({
   // aggregate ("combined") and shadow tabs have no manageable broker account.
   const positionManagementAccountId =
     shadowMode || activeAccountId === "combined" ? null : activeAccountId;
-  const positionManagementGatewayReady = Boolean(!shadowMode && gatewayTradingReady);
+  const positionManagementGatewayReady = Boolean(
+    !shadowMode && gatewayTradingReady,
+  );
   const positionManagementGatewayMessage = shadowMode
     ? "Shadow positions cannot be managed with live broker orders."
     : gatewayTradingMessage;
@@ -1100,10 +1170,7 @@ const AccountScreenInner = ({
     : shadowMode
       ? "Shadow Ledger"
       : (providerAccountSourceLabel ?? "Flex");
-  const accountDataParams = useMemo(
-    () => ({ ...modeParams }),
-    [modeParams],
-  );
+  const accountDataParams = useMemo(() => ({ ...modeParams }), [modeParams]);
   const safeQaExposureFixture = useMemo(
     () =>
       safeQaMode
@@ -1135,110 +1202,6 @@ const AccountScreenInner = ({
     () => buildPerformanceCalendarParams(accountDataParams),
     [accountDataParams],
   );
-  const accountHistoryCacheBase = useMemo(
-    () => ({
-      accountId: accountRequestId,
-      mode: modeParams.mode,
-      environment: modeParams.mode,
-    }),
-    [accountRequestId, modeParams.mode],
-  );
-  const equityHistoryRuntimeCacheKey = useMemo(
-    () =>
-      buildAccountHistoryCacheKey({
-        ...accountHistoryCacheBase,
-        range,
-        source: "equity-history",
-      }),
-    [accountHistoryCacheBase, range],
-  );
-  const equityHistoryCacheWriteOptions = useMemo(
-    () => ({
-      ...accountHistoryCacheBase,
-      range,
-      source: "equity-history",
-    }),
-    [accountHistoryCacheBase, range],
-  );
-  const equityHistoryRuntimeQueryKey = useMemo(
-    () =>
-      getGetAccountEquityHistoryQueryOptions(accountRequestId, {
-        ...accountDataParams,
-        range,
-      }).queryKey,
-    [accountDataParams, accountRequestId, range],
-  );
-  const performanceCalendarEquityRuntimeCacheKey = useMemo(
-    () =>
-      buildAccountHistoryCacheKey({
-        ...accountHistoryCacheBase,
-        range: "1Y",
-        source: "performance-calendar-equity",
-      }),
-    [accountHistoryCacheBase],
-  );
-  const performanceCalendarEquityCacheWriteOptions = useMemo(
-    () => ({
-      ...accountHistoryCacheBase,
-      range: "1Y",
-      source: "performance-calendar-equity",
-    }),
-    [accountHistoryCacheBase],
-  );
-  const tradesRuntimeCacheKey = useMemo(
-    () =>
-      buildAccountHistoryCacheKey({
-        ...accountHistoryCacheBase,
-        range,
-        source: "closed-trades",
-        filters: closedTradeParams,
-      }),
-    [accountHistoryCacheBase, closedTradeParams, range],
-  );
-  const tradesCacheWriteOptions = useMemo(
-    () => ({
-      ...accountHistoryCacheBase,
-      range,
-      source: "closed-trades",
-      filters: closedTradeParams,
-    }),
-    [accountHistoryCacheBase, closedTradeParams, range],
-  );
-  const tradesRuntimeQueryKey = useMemo(
-    () =>
-      getGetAccountClosedTradesQueryOptions(
-        accountRequestId,
-        closedTradeParams,
-      ).queryKey,
-    [accountRequestId, closedTradeParams],
-  );
-  const performanceCalendarTradesRuntimeCacheKey = useMemo(
-    () =>
-      buildAccountHistoryCacheKey({
-        ...accountHistoryCacheBase,
-        range: "1Y",
-        source: "performance-calendar-trades",
-        filters: performanceCalendarParams,
-      }),
-    [accountHistoryCacheBase, performanceCalendarParams],
-  );
-  const performanceCalendarTradesCacheWriteOptions = useMemo(
-    () => ({
-      ...accountHistoryCacheBase,
-      range: "1Y",
-      source: "performance-calendar-trades",
-      filters: performanceCalendarParams,
-    }),
-    [accountHistoryCacheBase, performanceCalendarParams],
-  );
-  const performanceCalendarTradesRuntimeQueryKey = useMemo(
-    () =>
-      getGetAccountClosedTradesQueryOptions(
-        accountRequestId,
-        performanceCalendarParams,
-      ).queryKey,
-    [accountRequestId, performanceCalendarParams],
-  );
   const getAccountTabRequest = useCallback(
     (tab) => {
       const nextShadowMode = tab === "shadow";
@@ -1256,7 +1219,8 @@ const AccountScreenInner = ({
           shadowMode: nextShadowMode,
           environment,
         }),
-        orderTab: nextShadowMode && orderTab === "working" ? "history" : orderTab,
+        orderTab:
+          nextShadowMode && orderTab === "working" ? "history" : orderTab,
         assetClass: accountPositionTypeParam(assetFilter),
       };
     },
@@ -1264,9 +1228,7 @@ const AccountScreenInner = ({
   );
   const inactiveAccountPageRequest = useMemo(
     () =>
-      inactiveAccountTab
-        ? getAccountTabRequest(inactiveAccountTab)
-        : null,
+      inactiveAccountTab ? getAccountTabRequest(inactiveAccountTab) : null,
     [getAccountTabRequest, inactiveAccountTab],
   );
   const prefetchAccountTabLiveQueries = useCallback(
@@ -1370,37 +1332,12 @@ const AccountScreenInner = ({
     performanceCalendarFrom: performanceCalendarParams.from,
     enabled: accountPageStreamEnabled,
   });
-  const accountTabPending = Boolean(
-    isVisible && accountTab !== settledAccountTab,
-  );
   const accountTimingStagesRef = useRef(new Set());
   useEffect(() => {
     if (!isVisible) {
       accountTimingStagesRef.current = new Set();
     }
   }, [isVisible]);
-  const accountPrimaryFallbackReady = Boolean(
-    accountPageStreamEnabled &&
-      !accountPageStreamFreshness.accountPrimaryFresh,
-  );
-  const accountLiveFallbackReady = Boolean(
-    accountPageStreamEnabled &&
-      !accountPageStreamFreshness.accountLiveFresh,
-  );
-  const accountDerivedFallbackReady = Boolean(
-    accountPageStreamEnabled &&
-      !accountPageStreamFreshness.accountDerivedFresh,
-  );
-  const accountPrimaryReady = Boolean(
-    !accountPageStreamEnabled ||
-      accountPageStreamFreshness.accountPrimaryFresh ||
-      accountPrimaryFallbackReady,
-  );
-  const accountDerivedReady = Boolean(
-    !accountPageStreamEnabled ||
-      accountPageStreamFreshness.accountDerivedFresh ||
-      accountDerivedFallbackReady,
-  );
   const inactiveAccountPageStreamEnabled = Boolean(
     accountPageStreamEnabled &&
       accountPageStreamFreshness.accountPrimaryFresh &&
@@ -1423,32 +1360,20 @@ const AccountScreenInner = ({
     performanceCalendarFrom: performanceCalendarParams.from,
     enabled: inactiveAccountPageStreamEnabled,
   });
-  const inactiveAccountPrewarmFallbackReady = Boolean(
-    inactiveAccountPageStreamEnabled &&
-      !inactiveAccountPageStreamFreshness.accountPrimaryFresh,
-  );
   const inactiveAccountPrewarmEnabled = Boolean(
     isVisible &&
       accountQueriesEnabled &&
       inactiveAccountTab &&
-      accountPrimaryReady &&
-      (!inactiveAccountPageStreamEnabled || inactiveAccountPrewarmFallbackReady) &&
       !inactiveAccountPageStreamFreshness.accountPrimaryFresh,
   );
   useEffect(() => {
     onReadinessChange?.({
       contentReady: Boolean(isVisible),
       primaryReady: Boolean(isVisible),
-      derivedReady: Boolean(isVisible && accountDerivedReady),
-      backgroundAllowed: Boolean(isVisible && !safeQaMode && accountDerivedReady),
+      derivedReady: Boolean(isVisible),
+      backgroundAllowed: Boolean(isVisible && !safeQaMode),
     });
-  }, [
-    accountDerivedReady,
-    accountPrimaryReady,
-    isVisible,
-    onReadinessChange,
-    safeQaMode,
-  ]);
+  }, [isVisible, onReadinessChange, safeQaMode]);
   useEffect(() => {
     if (!inactiveAccountPrewarmEnabled) {
       return undefined;
@@ -1475,15 +1400,6 @@ const AccountScreenInner = ({
     inactiveAccountTab,
     prefetchAccountTabLiveQueries,
   ]);
-  const accountRuntimeControl = useRuntimeControlSnapshot({
-    enabled: Boolean(
-      isVisible &&
-        accountPageStreamEnabled &&
-        !shadowMode &&
-        accountPrimaryReady,
-    ),
-    runtimeDiagnosticsEnabled: false,
-  });
   const markAccountTiming = useCallback((stage, detail) => {
     if (accountTimingStagesRef.current.has(stage)) {
       return;
@@ -1498,31 +1414,29 @@ const AccountScreenInner = ({
     markAccountTiming("route-module-loaded");
   }, [isVisible, markAccountTiming]);
   useEffect(() => {
-    if (!isVisible || !accountPrimaryReady) {
+    if (!isVisible) {
       return;
     }
     markAccountTiming("primary-data-ready", {
       source: accountPageStreamFreshness.accountPrimaryFresh
         ? "stream"
-        : "rest-fallback",
+        : "rest",
     });
   }, [
-    accountPrimaryReady,
     accountPageStreamFreshness.accountPrimaryFresh,
     isVisible,
     markAccountTiming,
   ]);
   useEffect(() => {
-    if (!isVisible || !accountDerivedReady) {
+    if (!isVisible) {
       return;
     }
     markAccountTiming("derived-data-ready", {
       source: accountPageStreamFreshness.accountDerivedFresh
         ? "stream"
-        : "rest-fallback",
+        : "rest",
     });
   }, [
-    accountDerivedReady,
     accountPageStreamFreshness.accountDerivedFresh,
     isVisible,
     markAccountTiming,
@@ -1567,7 +1481,8 @@ const AccountScreenInner = ({
         refetchInterval: liveRefreshInterval,
         enabled: Boolean(
           snapTradeAccountPanelsEnabled &&
-            (activatedAccountPanels.orders || activatedAccountPanels.tradingAnalysis),
+            (activatedAccountPanels.orders ||
+              activatedAccountPanels.tradingAnalysis),
         ),
       },
     },
@@ -1595,34 +1510,28 @@ const AccountScreenInner = ({
   const primaryAccountRestQueriesEnabled = Boolean(
     genericAccountQueriesEnabled &&
       (!accountPageStreamEnabled ||
-        (accountPrimaryFallbackReady &&
-          !accountPageStreamFreshness.accountPrimaryFresh)),
+        !accountPageStreamFreshness.accountPrimaryFresh),
   );
   const liveAccountQueriesEnabled = Boolean(
     genericAccountQueriesEnabled &&
       (!accountPageStreamEnabled ||
-        (accountLiveFallbackReady && !accountPageStreamFreshness.accountLiveFresh)),
+        !accountPageStreamFreshness.accountLiveFresh),
   );
   const derivedAccountQueriesEnabled = Boolean(
     genericAccountQueriesEnabled &&
       (!accountPageStreamEnabled ||
-        (accountDerivedFallbackReady && !accountPageStreamFreshness.accountDerivedFresh)),
+        !accountPageStreamFreshness.accountDerivedFresh),
   );
   const equityHistoryQueriesEnabled = Boolean(derivedAccountQueriesEnabled);
   const secondaryAccountQueriesEnabled = Boolean(derivedAccountQueriesEnabled);
   const benchmarkQueriesEnabled = Boolean(equityHistoryQueriesEnabled);
-  const performanceCalendarQueriesEnabled = resolvePerformanceCalendarQueriesEnabled(
-    genericAccountQueriesEnabled && accountDerivedReady,
-  );
+  const performanceCalendarQueriesEnabled =
+    resolvePerformanceCalendarQueriesEnabled(genericAccountQueriesEnabled);
   const todayPanelQueriesEnabled = Boolean(
     liveAccountQueriesEnabled && activatedAccountPanels.today,
   );
-  const tradingAnalysisQueriesEnabled = Boolean(
-    genericAccountQueriesEnabled && accountDerivedReady,
-  );
-  const ordersPanelQueriesEnabled = Boolean(
-    primaryAccountRestQueriesEnabled,
-  );
+  const tradingAnalysisQueriesEnabled = Boolean(genericAccountQueriesEnabled);
+  const ordersPanelQueriesEnabled = Boolean(primaryAccountRestQueriesEnabled);
   const positionsRestQueriesEnabled = Boolean(liveAccountQueriesEnabled);
   useRuntimeWorkloadFlag("account:live", Boolean(liveRefreshInterval), {
     kind: "poll",
@@ -1630,8 +1539,8 @@ const AccountScreenInner = ({
     detail: refreshPolicy.streamBacked
       ? "1s stream"
       : shadowMode
-        ? "30s fallback"
-        : "15s fallback",
+        ? "30s REST"
+        : "15s REST",
     priority: 4,
   });
   useRuntimeWorkloadFlag("account:equity", Boolean(chartRefreshInterval), {
@@ -1660,15 +1569,18 @@ const AccountScreenInner = ({
       retry: false,
     },
   });
-  const summaryQuery = useGetAccountSummary(accountRequestId, accountDataParams, {
+  const summaryQuery = useGetAccountSummary(
+    accountRequestId,
+    accountDataParams,
+    {
       query: {
         ...QUERY_OPTIONS.query,
         refetchInterval: liveRefreshInterval,
         enabled: primaryAccountRestQueriesEnabled,
-        placeholderData: retainPreviousData,
         ...getSafeQaInitialQueryOptions(safeQaExposureFixture?.summary),
       },
-  });
+    },
+  );
   const equityQuery = useGetAccountEquityHistory(
     accountRequestId,
     {
@@ -1680,7 +1592,6 @@ const AccountScreenInner = ({
         ...equityHistoryQuerySettings,
         refetchInterval: chartRefreshInterval,
         enabled: equityHistoryQueriesEnabled,
-        placeholderData: retainPreviousRangeData(range),
       },
     },
   );
@@ -1695,7 +1606,6 @@ const AccountScreenInner = ({
         ...equityHistoryQuerySettings,
         refetchInterval: chartRefreshInterval,
         enabled: todayPanelQueriesEnabled,
-        placeholderData: retainPreviousRangeData("1D"),
       },
     },
   );
@@ -1710,8 +1620,9 @@ const AccountScreenInner = ({
       query: {
         ...equityHistoryQuerySettings,
         refetchInterval: false,
-        enabled: Boolean(benchmarkQueriesEnabled && visibleEquityBenchmarks.SPY),
-        placeholderData: retainPreviousRangeData(range),
+        enabled: Boolean(
+          benchmarkQueriesEnabled && visibleEquityBenchmarks.SPY,
+        ),
       },
     },
   );
@@ -1726,8 +1637,9 @@ const AccountScreenInner = ({
       query: {
         ...equityHistoryQuerySettings,
         refetchInterval: false,
-        enabled: Boolean(benchmarkQueriesEnabled && visibleEquityBenchmarks.QQQ),
-        placeholderData: retainPreviousRangeData(range),
+        enabled: Boolean(
+          benchmarkQueriesEnabled && visibleEquityBenchmarks.QQQ,
+        ),
       },
     },
   );
@@ -1742,20 +1654,24 @@ const AccountScreenInner = ({
       query: {
         ...equityHistoryQuerySettings,
         refetchInterval: false,
-        enabled: Boolean(benchmarkQueriesEnabled && visibleEquityBenchmarks.DJIA),
-        placeholderData: retainPreviousRangeData(range),
+        enabled: Boolean(
+          benchmarkQueriesEnabled && visibleEquityBenchmarks.DJIA,
+        ),
       },
     },
   );
-  const allocationQuery = useGetAccountAllocation(accountRequestId, modeParams, {
+  const allocationQuery = useGetAccountAllocation(
+    accountRequestId,
+    modeParams,
+    {
       query: {
         ...QUERY_OPTIONS.query,
         refetchInterval: secondaryRefreshInterval,
         enabled: primaryAccountRestQueriesEnabled,
-        placeholderData: retainPreviousData,
         ...getSafeQaInitialQueryOptions(safeQaExposureFixture?.allocation),
       },
-  });
+    },
+  );
   const positionsQuery = useGetAccountPositions(
     accountRequestId,
     {
@@ -1769,7 +1685,6 @@ const AccountScreenInner = ({
         ...QUERY_OPTIONS.query,
         refetchInterval: liveRefreshInterval,
         enabled: positionsRestQueriesEnabled,
-        placeholderData: retainPreviousData,
         ...getSafeQaInitialQueryOptions(safeQaExposureFixture?.positions),
       },
     },
@@ -1786,8 +1701,9 @@ const AccountScreenInner = ({
       query: {
         staleTime: ACCOUNT_HISTORY_STALE_MS,
         retry: false,
-        enabled: Boolean(genericAccountQueriesEnabled && activeEquityInspectionDate),
-        placeholderData: retainPreviousDateData(activeEquityInspectionDate),
+        enabled: Boolean(
+          genericAccountQueriesEnabled && activeEquityInspectionDate,
+        ),
       },
     },
   );
@@ -1811,90 +1727,34 @@ const AccountScreenInner = ({
           ...equityHistoryQuerySettings,
           refetchInterval: false,
           enabled: performanceCalendarQueriesEnabled,
-          placeholderData: retainPreviousRangeData("1Y"),
         },
       },
     ),
     queryKey: performanceCalendarEquityRuntimeQueryKey,
   });
-  useEffect(() => {
-    const selectedPoints = equityQuery.data?.points || [];
-    const fallbackPoints = performanceCalendarEquityQuery.data?.points || [];
-    if (
-      shadowMode &&
-      (range === "1D" || range === "1W") &&
-      equityQuery.data?.range === range &&
-      selectedPoints.length === 0 &&
-      performanceCalendarEquityQuery.data?.range === "1Y" &&
-      fallbackPoints.length > 0
-    ) {
-      setRange("1Y");
-    }
-  }, [
-    equityQuery.data,
-    performanceCalendarEquityQuery.data,
-    range,
-    shadowMode,
-  ]);
   const performanceCalendarTradesQuery = useGetAccountClosedTrades(
     accountRequestId,
     performanceCalendarParams,
     {
       query: {
         ...ACCOUNT_DERIVED_QUERY_OPTIONS.query,
-        staleTime: ACCOUNT_ACTIVITY_STALE_MS,
-        refetchInterval: accountActivityRefetchInterval(chartRefreshInterval),
+        staleTime: ACCOUNT_LIVE_STALE_MS,
+        refetchInterval: chartRefreshInterval,
         enabled: performanceCalendarQueriesEnabled,
-        placeholderData: retainPreviousData,
       },
     },
   );
-  const tradesQuery = useGetAccountClosedTrades(accountRequestId, closedTradeParams, {
-    query: {
-      ...ACCOUNT_DERIVED_QUERY_OPTIONS.query,
-      staleTime: ACCOUNT_ACTIVITY_STALE_MS,
-      refetchInterval: accountActivityRefetchInterval(tradesRefreshInterval),
-      enabled: tradingAnalysisQueriesEnabled,
-      placeholderData: retainPreviousData,
-    },
-  });
-  const accountAnalysisTrades = useMemo(() => {
-    const calendarTrades = performanceCalendarTradesQuery.data?.trades;
-    const visibleTrades = tradesQuery.data?.trades;
-    if (Array.isArray(calendarTrades) && calendarTrades.length > 0) {
-      return calendarTrades;
-    }
-    if (Array.isArray(visibleTrades)) {
-      return visibleTrades;
-    }
-    return Array.isArray(calendarTrades) ? calendarTrades : [];
-  }, [performanceCalendarTradesQuery.data, tradesQuery.data]);
-  const accountAnalysisQuery = useMemo(
-    () => ({
-      ...tradesQuery,
-      data: tradesQuery.data ?? performanceCalendarTradesQuery.data,
-      error: tradesQuery.error ?? performanceCalendarTradesQuery.error,
-      fetchStatus:
-        tradesQuery.fetchStatus === "idle" &&
-        performanceCalendarTradesQuery.fetchStatus !== "idle"
-          ? performanceCalendarTradesQuery.fetchStatus
-          : tradesQuery.fetchStatus,
-      isFetching: Boolean(
-        tradesQuery.isFetching || performanceCalendarTradesQuery.isFetching,
-      ),
-      isLoading: Boolean(
-        !tradesQuery.data &&
-          !performanceCalendarTradesQuery.data &&
-          (tradesQuery.isLoading || performanceCalendarTradesQuery.isLoading),
-      ),
-      isPending: Boolean(tradesQuery.isPending || performanceCalendarTradesQuery.isPending),
-      refetch: (...args) => {
-        const visibleRefetch = tradesQuery.refetch?.(...args);
-        const calendarRefetch = performanceCalendarTradesQuery.refetch?.(...args);
-        return visibleRefetch ?? calendarRefetch;
+  const tradesQuery = useGetAccountClosedTrades(
+    accountRequestId,
+    closedTradeParams,
+    {
+      query: {
+        ...ACCOUNT_DERIVED_QUERY_OPTIONS.query,
+        staleTime: ACCOUNT_LIVE_STALE_MS,
+        refetchInterval: tradesRefreshInterval,
+        enabled: tradingAnalysisQueriesEnabled,
       },
-    }),
-    [performanceCalendarTradesQuery, tradesQuery],
+    },
   );
   const ordersQuery = useGetAccountOrders(
     accountRequestId,
@@ -1907,79 +1767,47 @@ const AccountScreenInner = ({
         ...QUERY_OPTIONS.query,
         refetchInterval: liveRefreshInterval,
         enabled: ordersPanelQueriesEnabled,
-        placeholderData: retainPreviousData,
       },
     },
   );
   const riskQuery = useGetAccountRisk(accountRequestId, riskParams, {
-      query: {
-        ...QUERY_OPTIONS.query,
-        refetchInterval: secondaryRefreshInterval,
-        enabled: primaryAccountRestQueriesEnabled,
-        placeholderData: retainPreviousData,
-        ...getSafeQaInitialQueryOptions(safeQaExposureFixture?.risk),
-        retry: retryDegradedAccountRisk,
-        retryDelay: degradedAccountRiskRetryDelay,
-      },
-  });
-  const sectionSwitching = Boolean(
-    accountTabPending &&
-      !snapTradeAccountPanelsEnabled &&
-      summaryQuery.isPlaceholderData,
-  );
-  useEffect(() => {
-    if (!isVisible) {
-      setSettledAccountTab(accountTab);
-      return;
-    }
-    if (snapTradeAccountPanelsEnabled) {
-      setSettledAccountTab(accountTab);
-      return;
-    }
-    if (summaryQuery.data && !summaryQuery.isPlaceholderData) {
-      setSettledAccountTab(accountTab);
-    }
-  }, [
-    accountTab,
-    isVisible,
-    snapTradeAccountPanelsEnabled,
-    summaryQuery.data,
-    summaryQuery.isPlaceholderData,
-  ]);
-  useEffect(() => {
-    // The shared transition store colors the loading pill by "shadow" vs a live
-    // word; collapse any live tab id (all/<account>) to "live" so the pill never
-    // renders a raw account id.
-    setAccountSectionTransitionSnapshot({
-      transitioning: sectionSwitching,
-      targetSection: sectionSwitching ? (shadowMode ? "shadow" : "live") : null,
-    });
-  }, [shadowMode, sectionSwitching]);
-  useEffect(
-    () => () => {
-      setAccountSectionTransitionSnapshot({
-        transitioning: false,
-        targetSection: null,
-      });
-    },
-    [],
-  );
-  const cashQuery = useGetAccountCashActivity(accountRequestId, accountDataParams, {
     query: {
-      ...ACCOUNT_DERIVED_QUERY_OPTIONS.query,
+      ...QUERY_OPTIONS.query,
       refetchInterval: secondaryRefreshInterval,
-      enabled: secondaryAccountQueriesEnabled,
-      placeholderData: retainPreviousData,
+      enabled: primaryAccountRestQueriesEnabled,
+      ...getSafeQaInitialQueryOptions(safeQaExposureFixture?.risk),
+      retry: retryDegradedAccountRisk,
+      retryDelay: degradedAccountRiskRetryDelay,
     },
   });
+  const cashQuery = useGetAccountCashActivity(
+    accountRequestId,
+    accountDataParams,
+    {
+      query: {
+        ...ACCOUNT_DERIVED_QUERY_OPTIONS.query,
+        refetchInterval: secondaryRefreshInterval,
+        enabled: secondaryAccountQueriesEnabled,
+      },
+    },
+  );
+  const snapTradePortfolioQueryForDisplay = withoutFailedQueryData(
+    snapTradePortfolioQuery,
+  );
+  const snapTradeRecentOrdersQueryForDisplay = withoutFailedQueryData(
+    snapTradeRecentOrdersQuery,
+  );
+  const snapTradeHistoryQueryForDisplay = withoutFailedQueryData(
+    snapTradeHistoryQuery,
+  );
   const snapTradePanelData = useMemo(
     () =>
-      selectedSnapTradeAccount && snapTradePortfolioQuery.data
+      selectedSnapTradeAccount && snapTradePortfolioQueryForDisplay.data
         ? buildSnapTradeAccountPanelData({
             account: selectedSnapTradeAccount,
-            portfolio: snapTradePortfolioQuery.data,
-            recentOrders: snapTradeRecentOrdersQuery.data,
-            history: snapTradeHistoryQuery.data,
+            portfolio: snapTradePortfolioQueryForDisplay.data,
+            recentOrders: snapTradeRecentOrdersQueryForDisplay.data,
+            history: snapTradeHistoryQueryForDisplay.data,
             orderTab: effectiveOrderTab,
             range,
           })
@@ -1988,71 +1816,57 @@ const AccountScreenInner = ({
       effectiveOrderTab,
       range,
       selectedSnapTradeAccount,
-      snapTradeHistoryQuery.data,
-      snapTradePortfolioQuery.data,
-      snapTradeRecentOrdersQuery.data,
+      snapTradeHistoryQueryForDisplay.data,
+      snapTradePortfolioQueryForDisplay.data,
+      snapTradeRecentOrdersQueryForDisplay.data,
     ],
   );
+  const healthQueryForDisplay = withoutFailedQueryData(healthQuery);
   const summaryQueryForDisplay = snapTradeAccountPanelsEnabled
-    ? buildProviderAccountQuery(snapTradePortfolioQuery, snapTradePanelData?.summary)
-    : summaryQuery;
-  const equityQueryForPanel = equityQuery;
-  const intradayPnlQueryForDisplay = intradayPnlQuery;
+    ? buildProviderAccountQuery(
+        snapTradePortfolioQueryForDisplay,
+        snapTradePanelData?.summary,
+      )
+    : withoutFailedQueryData(summaryQuery);
+  const equityQueryForPanel = withoutFailedQueryData(equityQuery);
+  const intradayPnlQueryForDisplay = withoutFailedQueryData(intradayPnlQuery);
+  const spyBenchmarkQueryForDisplay = withoutFailedQueryData(spyBenchmarkQuery);
+  const qqqBenchmarkQueryForDisplay = withoutFailedQueryData(qqqBenchmarkQuery);
+  const djiaBenchmarkQueryForDisplay =
+    withoutFailedQueryData(djiaBenchmarkQuery);
   const allocationQueryForDisplay = snapTradeAccountPanelsEnabled
-    ? buildProviderAccountQuery(snapTradePortfolioQuery, snapTradePanelData?.allocation)
-    : allocationQuery;
-  const positionsQueryForDisplay = positionsQuery;
+    ? buildProviderAccountQuery(
+        snapTradePortfolioQueryForDisplay,
+        snapTradePanelData?.allocation,
+      )
+    : withoutFailedQueryData(allocationQuery);
+  const positionsQueryForDisplay = withoutFailedQueryData(positionsQuery);
   const positionsAtDateQueryForDisplay = snapTradeAccountPanelsEnabled
     ? buildIdleAccountQuery(snapTradePanelData?.positionsAtDate)
-    : positionsAtDateQuery;
-  const tradesQueryForDisplay = tradesQuery;
-  const performanceCalendarTradesQueryForDisplay = performanceCalendarTradesQuery;
-  const performanceCalendarEquityQueryForDisplay = performanceCalendarEquityQuery;
+    : withoutFailedQueryData(positionsAtDateQuery);
+  const tradesQueryForDisplay = withoutFailedQueryData(tradesQuery);
+  const performanceCalendarTradesQueryForDisplay = withoutFailedQueryData(
+    performanceCalendarTradesQuery,
+  );
+  const performanceCalendarEquityQueryForDisplay = withoutFailedQueryData(
+    performanceCalendarEquityQuery,
+  );
   const snapTradeOrdersPanelData =
-    snapTradeAccountPanelsEnabled && snapTradeRecentOrdersQuery.data
+    snapTradeAccountPanelsEnabled && snapTradeRecentOrdersQueryForDisplay.data
       ? snapTradePanelData?.orders
       : undefined;
   const ordersQueryForDisplay = snapTradeAccountPanelsEnabled
-    ? buildProviderAccountQuery(snapTradeRecentOrdersQuery, snapTradeOrdersPanelData)
-    : ordersQuery;
+    ? buildProviderAccountQuery(
+        snapTradeRecentOrdersQueryForDisplay,
+        snapTradeOrdersPanelData,
+      )
+    : withoutFailedQueryData(ordersQuery);
   const riskQueryForDisplay = snapTradeAccountPanelsEnabled
     ? buildIdleAccountQuery(null)
-    : riskQuery;
+    : withoutFailedQueryData(riskQuery);
   const cashQueryForDisplay = snapTradeAccountPanelsEnabled
     ? buildIdleAccountQuery(snapTradePanelData?.cash)
-    : cashQuery;
-  useRuntimeAccountHistoryCache({
-    enabled: Boolean(equityHistoryQueriesEnabled && range !== "1D"),
-    queryClient,
-    queryKey: equityHistoryRuntimeQueryKey,
-    cacheKey: equityHistoryRuntimeCacheKey,
-    data: equityQuery.data,
-    writeOptions: equityHistoryCacheWriteOptions,
-  });
-  useRuntimeAccountHistoryCache({
-    enabled: Boolean(performanceCalendarQueriesEnabled),
-    queryClient,
-    queryKey: performanceCalendarEquityRuntimeQueryKey,
-    cacheKey: performanceCalendarEquityRuntimeCacheKey,
-    data: performanceCalendarEquityQuery.data,
-    writeOptions: performanceCalendarEquityCacheWriteOptions,
-  });
-  useRuntimeAccountHistoryCache({
-    enabled: Boolean(tradingAnalysisQueriesEnabled),
-    queryClient,
-    queryKey: tradesRuntimeQueryKey,
-    cacheKey: tradesRuntimeCacheKey,
-    data: tradesQuery.data,
-    writeOptions: tradesCacheWriteOptions,
-  });
-  useRuntimeAccountHistoryCache({
-    enabled: Boolean(performanceCalendarQueriesEnabled),
-    queryClient,
-    queryKey: performanceCalendarTradesRuntimeQueryKey,
-    cacheKey: performanceCalendarTradesRuntimeCacheKey,
-    data: performanceCalendarTradesQuery.data,
-    writeOptions: performanceCalendarTradesCacheWriteOptions,
-  });
+    : withoutFailedQueryData(cashQuery);
   const shadowWatchlistBacktestMutation = useMutation({
     mutationFn: (payload = { timeframe: "15m" }) =>
       platformJsonRequest("/api/accounts/shadow/watchlist-backtest/runs", {
@@ -2076,7 +1890,8 @@ const AccountScreenInner = ({
       toast.push({
         kind: "error",
         title: "Shadow backtest failed",
-        body: error?.message || "The Shadow watchlist backtest could not finish.",
+        body:
+          error?.message || "The Shadow watchlist backtest could not finish.",
       });
     },
   });
@@ -2099,7 +1914,9 @@ const AccountScreenInner = ({
         toast.push({
           kind: "error",
           title: "Order cancel failed",
-          body: error?.message || "The broker did not accept the account order cancel.",
+          body:
+            error?.message ||
+            "The broker did not accept the account order cancel.",
         });
       },
     },
@@ -2110,13 +1927,16 @@ const AccountScreenInner = ({
       setHoveredEquityDate(null);
       setPinnedEquityDate(null);
     };
-    const useAnimationFrame = typeof window.requestAnimationFrame === "function";
-    const frameId =
-      useAnimationFrame
-        ? window.requestAnimationFrame(clearInspection)
-        : window.setTimeout(clearInspection, 0);
+    const useAnimationFrame =
+      typeof window.requestAnimationFrame === "function";
+    const frameId = useAnimationFrame
+      ? window.requestAnimationFrame(clearInspection)
+      : window.setTimeout(clearInspection, 0);
     return () => {
-      if (useAnimationFrame && typeof window.cancelAnimationFrame === "function") {
+      if (
+        useAnimationFrame &&
+        typeof window.cancelAnimationFrame === "function"
+      ) {
         window.cancelAnimationFrame(frameId);
       } else {
         window.clearTimeout(frameId);
@@ -2304,17 +2124,15 @@ const AccountScreenInner = ({
   // positions; the two read +$2.0K vs -$3.7K on 2026-07-09). The hero pill must read
   // the same source as the P&L calendar so the two surfaces can never disagree.
   const heroSummaryData = useMemo(() => {
-    const openDayPnl = Number(livePositionsDayPnl?.openPositionsDayPnl);
-    if (!displaySummaryData || !Number.isFinite(openDayPnl)) {
+    const openDayPnl = finiteAccountNumber(
+      livePositionsDayPnl?.openPositionsDayPnl,
+    );
+    if (!displaySummaryData || openDayPnl == null) {
       return displaySummaryData;
     }
-    const netLiquidation = Number(
-      displaySummaryData?.metrics?.netLiquidation?.value,
+    const openDayPnlPercent = finiteAccountNumber(
+      livePositionsDayPnl?.openPositionsDayPnlPercent,
     );
-    const base =
-      Number.isFinite(netLiquidation) && netLiquidation - openDayPnl !== 0
-        ? Math.abs(netLiquidation - openDayPnl)
-        : null;
     return {
       ...displaySummaryData,
       metrics: {
@@ -2327,7 +2145,7 @@ const AccountScreenInner = ({
         },
         dayPnlPercent: {
           ...(displaySummaryData.metrics?.dayPnlPercent || {}),
-          value: base ? (openDayPnl / base) * 100 : null,
+          value: openDayPnlPercent,
           source: "positions_table",
           field: "OpenPositionsDayChangePercent",
         },
@@ -2341,7 +2159,8 @@ const AccountScreenInner = ({
         netLiquidation: livePositionNetLiquidation,
         currency,
         updatedAt:
-          positionsQueryForDisplay.data?.updatedAt || displaySummaryData?.updatedAt,
+          positionsQueryForDisplay.data?.updatedAt ||
+          displaySummaryData?.updatedAt,
       }),
     [
       currency,
@@ -2351,19 +2170,20 @@ const AccountScreenInner = ({
       positionsQueryForDisplay.data?.updatedAt,
     ],
   );
-  const accountAnalysisQueryForDisplay = accountAnalysisQuery;
-  const accountAnalysisTradesForDisplay = accountAnalysisTrades;
+  const accountAnalysisQueryForDisplay = tradesQueryForDisplay;
+  const accountAnalysisTradesForDisplay =
+    tradesQueryForDisplay.data?.trades || [];
   const accountOptionQuoteGroups = useMemo(
     () => buildPositionOptionQuoteGroups(openAccountPositions),
     [openAccountPositions],
   );
   const accountOptionQuoteOwner = useMemo(
-    () => `account-position-option-quotes:${accountRequestId || SHADOW_ACCOUNT_ID}`,
+    () =>
+      `account-position-option-quotes:${accountRequestId || SHADOW_ACCOUNT_ID}`,
     [accountRequestId],
   );
   const accountLiveOptionQuotesEnabled = Boolean(
-    (genericAccountQueriesEnabled || snapTradeAccountPanelsEnabled) &&
-      accountPrimaryReady,
+    genericAccountQueriesEnabled || snapTradeAccountPanelsEnabled,
   );
   const shadowAutomationAudit = useMemo(() => {
     const orders = ordersQueryForDisplay.data?.orders || [];
@@ -2377,30 +2197,41 @@ const AccountScreenInner = ({
       mixedPositions: openAccountPositions.filter(
         (position) => position.sourceType === "mixed",
       ).length,
-      automationOrders: orders.filter((order) => order.sourceType === "automation").length,
-      backtestOrders: orders.filter((order) => order.sourceType === "watchlist_backtest").length,
-      manualOrders: orders.filter((order) => order.sourceType === "manual").length,
+      automationOrders: orders.filter(
+        (order) => order.sourceType === "automation",
+      ).length,
+      backtestOrders: orders.filter(
+        (order) => order.sourceType === "watchlist_backtest",
+      ).length,
+      manualOrders: orders.filter((order) => order.sourceType === "manual")
+        .length,
     };
   }, [openAccountPositions, ordersQueryForDisplay.data]);
-  const { tradesData: returnsCalendarTradesData, equityPoints: returnsCalendarEquityPoints } =
-    useMemo(
-      () =>
-        resolveReturnsCalendarData({
-          performanceCalendarTradesData: performanceCalendarTradesQueryForDisplay.data,
-          performanceCalendarEquityData: performanceCalendarEquityQueryForDisplay.data,
-        }),
-      [
-        performanceCalendarEquityQueryForDisplay.data,
-        performanceCalendarTradesQueryForDisplay.data,
-      ],
-    );
+  const {
+    tradesData: returnsCalendarTradesData,
+    equityPoints: returnsCalendarEquityPoints,
+  } = useMemo(
+    () =>
+      resolveReturnsCalendarData({
+        performanceCalendarTradesData:
+          performanceCalendarTradesQueryForDisplay.data,
+        performanceCalendarEquityData:
+          performanceCalendarEquityQueryForDisplay.data,
+      }),
+    [
+      performanceCalendarEquityQueryForDisplay.data,
+      performanceCalendarTradesQueryForDisplay.data,
+    ],
+  );
   const handleCancelOrder = async (order) => {
     if (!gatewayTradingReady) {
       window.alert(gatewayTradingMessage);
       return;
     }
 
-    if (!window.confirm(`Cancel ${order.symbol} ${order.side} order ${order.id}?`)) {
+    if (
+      !window.confirm(`Cancel ${order.symbol} ${order.side} order ${order.id}?`)
+    ) {
       return;
     }
     try {
@@ -2418,25 +2249,22 @@ const AccountScreenInner = ({
   const accountActivePrefetchEnabled = Boolean(
     accountQueriesEnabled &&
       (!accountPageStreamEnabled ||
-        (accountPrimaryFallbackReady &&
-          !accountPageStreamFreshness.accountPrimaryFresh)),
+        !accountPageStreamFreshness.accountPrimaryFresh),
   );
   useEffect(() => {
     if (!accountActivePrefetchEnabled) {
       return;
     }
     prefetchAccountTabLiveQueries(accountTab);
-  }, [
-    accountActivePrefetchEnabled,
-    accountTab,
-    prefetchAccountTabLiveQueries,
-  ]);
+  }, [accountActivePrefetchEnabled, accountTab, prefetchAccountTabLiveQueries]);
 
   return (
     <div
       ref={accountLayoutRef}
       data-testid="account-screen"
-      data-layout={accountIsPhone ? "phone" : accountIsNarrow ? "tablet" : "desktop"}
+      data-layout={
+        accountIsPhone ? "phone" : accountIsNarrow ? "tablet" : "desktop"
+      }
       className="ra-panel-enter"
       style={{
         flex: 1,
@@ -2450,7 +2278,6 @@ const AccountScreenInner = ({
       }}
     >
       <div
-        data-account-transitioning={String(sectionSwitching)}
         style={{
           width: "100%",
           padding: sp(accountIsPhone ? "8px 8px 18px" : "16px 24px"),
@@ -2481,7 +2308,6 @@ const AccountScreenInner = ({
             accountIsPhone={accountIsPhone}
             maskValues={maskAccountValues}
           />
-          <AccountSectionTransitionStatus compact={accountIsPhone} />
         </div>
 
         <DeferredPanelSuspense
@@ -2493,9 +2319,9 @@ const AccountScreenInner = ({
             summary={heroSummaryData}
             equityHistory={equityQueryForPanel.data}
             benchmarkHistories={{
-              SPY: spyBenchmarkQuery.data,
-              QQQ: qqqBenchmarkQuery.data,
-              DJIA: djiaBenchmarkQuery.data,
+              SPY: spyBenchmarkQueryForDisplay.data,
+              QQQ: qqqBenchmarkQueryForDisplay.data,
+              DJIA: djiaBenchmarkQueryForDisplay.data,
             }}
             positionsResponse={positionsQueryForDisplay.data}
             tradesResponse={tradesQueryForDisplay.data}
@@ -2508,9 +2334,7 @@ const AccountScreenInner = ({
           />
         </DeferredPanelSuspense>
 
-        <div
-          className="ra-panel-enter ra-account-overview-grid"
-        >
+        <div className="ra-panel-enter ra-account-overview-grid">
           <div className="ra-account-overview-cell ra-account-overview-returns">
             <DeferredPanelSuspense
               minHeight={accountIsPhone ? 310 : 350}
@@ -2543,7 +2367,7 @@ const AccountScreenInner = ({
                     ? `${accountSourceLabel} holdings, risk, and concentration`
                     : snapTradeAccountPanelsEnabled
                       ? "SnapTrade holdings, risk, and concentration"
-                    : undefined
+                      : undefined
                 }
                 rightRail={
                   shadowMode || snapTradeAccountPanelsEnabled
@@ -2567,9 +2391,9 @@ const AccountScreenInner = ({
               <LazyEquityCurvePanel
                 query={equityQueryForDisplay}
                 benchmarkQueries={{
-                  SPY: spyBenchmarkQuery,
-                  QQQ: qqqBenchmarkQuery,
-                  DJIA: djiaBenchmarkQuery,
+                  SPY: spyBenchmarkQueryForDisplay,
+                  QQQ: qqqBenchmarkQueryForDisplay,
+                  DJIA: djiaBenchmarkQueryForDisplay,
                 }}
                 visibleBenchmarks={visibleEquityBenchmarks}
                 onVisibleBenchmarksChange={setVisibleEquityBenchmarks}
@@ -2589,7 +2413,6 @@ const AccountScreenInner = ({
                 pinnedInspectionDate={pinnedEquityDate}
                 onHoverInspectionDate={setHoveredEquityDate}
                 onPinInspectionDate={setPinnedEquityDate}
-                dataScopeKey={`${accountRequestId}:${accountDataParams.mode || ""}:${accountTab}`}
                 compact
               />
               <PositionsAtDateInspector
@@ -2730,7 +2553,9 @@ const AccountScreenInner = ({
               currency={currency}
               onCancelOrder={handleCancelOrder}
               cancelPending={cancelOrderMutation.isPending}
-              cancelDisabled={snapTradeAccountPanelsEnabled || !gatewayTradingReady}
+              cancelDisabled={
+                snapTradeAccountPanelsEnabled || !gatewayTradingReady
+              }
               cancelDisabledReason={
                 snapTradeAccountPanelsEnabled
                   ? "SnapTrade order cancellation is handled outside this panel."
@@ -2753,9 +2578,7 @@ const AccountScreenInner = ({
           onActivate={() => markAccountPanelActivated("support")}
           testId="account-deferred-support"
         >
-          <div
-            className="ra-panel-enter ra-account-support-grid"
-          >
+          <div className="ra-panel-enter ra-account-support-grid">
             <DeferredPanelSuspense
               minHeight={168}
               title="Loading cash activity"
@@ -2775,86 +2598,112 @@ const AccountScreenInner = ({
               />
             ) : null}
             {shadowMode ? (
-              <Panel title="Shadow Account" rightRail="Internal shadow" minHeight={130}>
-              <div style={{ display: "grid", gap: sp(5) }}>
-                <div style={{ display: "flex", flexWrap: "wrap", gap: sp(3) }}>
-                  <Pill tone="pink">Shadow</Pill>
-                  <Pill tone="green">Cash only</Pill>
-                  <Pill tone="cyan">Fixed fees</Pill>
+              <Panel
+                title="Shadow Account"
+                rightRail="Internal shadow"
+                minHeight={130}
+              >
+                <div style={{ display: "grid", gap: sp(5) }}>
+                  <div
+                    style={{ display: "flex", flexWrap: "wrap", gap: sp(3) }}
+                  >
+                    <Pill tone="pink">Shadow</Pill>
+                    <Pill tone="green">Cash only</Pill>
+                    <Pill tone="cyan">Fixed fees</Pill>
+                  </div>
+                  <div
+                    style={{
+                      color: CSS_COLOR.textSec,
+                      fontSize: textSize("caption"),
+                      lineHeight: 1.35,
+                    }}
+                  >
+                    Starting balance is{" "}
+                    {shadowStartingBalance == null
+                      ? "tracked in the shadow ledger"
+                      : `tracked at ${formatAccountMoney(
+                          shadowStartingBalance,
+                          currency,
+                          true,
+                          maskAccountValues,
+                        )}`}
+                    {". "}Manual tickets and signal-options automation write to
+                    this account without touching your live broker account.
+                  </div>
+                  <div
+                    className="ra-hide-scrollbar"
+                    style={{
+                      display: "flex",
+                      flexWrap: "nowrap",
+                      overflowX: "auto",
+                      background: CSS_COLOR.bg0,
+                      borderRadius: dim(RADII.xs),
+                      marginTop: sp(2),
+                      minWidth: 0,
+                    }}
+                  >
+                    {[
+                      [
+                        "Auto Pos",
+                        shadowAutomationAudit.automationPositions,
+                        CSS_COLOR.pink,
+                      ],
+                      [
+                        "Backtest Pos",
+                        shadowAutomationAudit.backtestPositions,
+                        CSS_COLOR.purple,
+                      ],
+                      [
+                        "Auto Orders",
+                        shadowAutomationAudit.automationOrders,
+                        CSS_COLOR.cyan,
+                      ],
+                      [
+                        "Backtest Orders",
+                        shadowAutomationAudit.backtestOrders,
+                        CSS_COLOR.pink,
+                      ],
+                    ].map(([label, value, tone], index, arr) => (
+                      <StatTile
+                        key={label}
+                        label={label}
+                        value={value}
+                        tone={tone}
+                        minWidth={80}
+                        divider={index < arr.length - 1}
+                      />
+                    ))}
+                  </div>
                 </div>
-                <div
-                  style={{
-                    color: CSS_COLOR.textSec,
-                    fontSize: textSize("caption"),
-                    lineHeight: 1.35,
-                  }}
-                >
-                  Starting balance is{" "}
-                  {shadowStartingBalance == null
-                    ? "tracked in the shadow ledger"
-                    : `tracked at ${formatAccountMoney(
-                        shadowStartingBalance,
-                        currency,
-                        true,
-                        maskAccountValues,
-                      )}`}
-                  {". "}Manual tickets and signal-options automation write to this account without touching your live broker account.
-                </div>
-                <div
-                  className="ra-hide-scrollbar"
-                  style={{
-                    display: "flex",
-                    flexWrap: "nowrap",
-                    overflowX: "auto",
-                    background: CSS_COLOR.bg0,
-                    borderRadius: dim(RADII.xs),
-                    marginTop: sp(2),
-                    minWidth: 0,
-                  }}
-                >
-                  {[
-                    ["Auto Pos", shadowAutomationAudit.automationPositions, CSS_COLOR.pink],
-                    ["Backtest Pos", shadowAutomationAudit.backtestPositions, CSS_COLOR.purple],
-                    ["Auto Orders", shadowAutomationAudit.automationOrders, CSS_COLOR.cyan],
-                    ["Backtest Orders", shadowAutomationAudit.backtestOrders, CSS_COLOR.pink],
-                  ].map(([label, value, tone], index, arr) => (
-                    <StatTile
-                      key={label}
-                      label={label}
-                      value={value}
-                      tone={tone}
-                      minWidth={80}
-                      divider={index < arr.length - 1}
-                    />
-                  ))}
-                </div>
-              </div>
-            </Panel>
-          ) : snapTradeAccountPanelsEnabled ? (
-            <Panel title="SnapTrade Account" rightRail="Provider scoped" minHeight={130}>
-              <EmptyState
-                title="SnapTrade account connected"
-                body="Portfolio balances, positions, and recent orders are loaded through SnapTrade for this selected account."
-              />
-            </Panel>
-          ) : (
-            <DeferredPanelSuspense
-              minHeight={130}
-              title="Loading setup health"
-              detail="Preparing broker and Flex health checks."
-            >
-              <LazySetupHealthPanel
-                session={session}
-                healthQuery={healthQuery}
-                testMutation={testFlexMutation}
-                brokerConfigured={brokerConfigured}
-                brokerAuthenticated={brokerAuthenticated}
-              />
-            </DeferredPanelSuspense>
-          )}
-        </div>
+              </Panel>
+            ) : snapTradeAccountPanelsEnabled ? (
+              <Panel
+                title="SnapTrade Account"
+                rightRail="Provider scoped"
+                minHeight={130}
+              >
+                <EmptyState
+                  title="SnapTrade account connected"
+                  body="Portfolio balances, positions, and recent orders are loaded through SnapTrade for this selected account."
+                />
+              </Panel>
+            ) : (
+              <DeferredPanelSuspense
+                minHeight={130}
+                title="Loading setup health"
+                detail="Preparing broker and Flex health checks."
+              >
+                <LazySetupHealthPanel
+                  session={session}
+                  healthQuery={healthQueryForDisplay}
+                  testMutation={testFlexMutation}
+                  brokerConfigured={brokerConfigured}
+                  brokerAuthenticated={brokerAuthenticated}
+                />
+              </DeferredPanelSuspense>
+            )}
+          </div>
         </DeferredRender>
-
       </div>
     </div>
   );

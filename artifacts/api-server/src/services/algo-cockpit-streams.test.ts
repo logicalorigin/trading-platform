@@ -13,7 +13,10 @@ import {
   serializeSseEventData,
 } from "./sse-stream-diagnostics";
 
-const source = readFileSync(new URL("./algo-cockpit-streams.ts", import.meta.url), "utf8");
+const source = readFileSync(
+  new URL("./algo-cockpit-streams.ts", import.meta.url),
+  "utf8",
+);
 
 type TimerHandle = {
   callback: () => void;
@@ -61,7 +64,10 @@ async function flushAsyncWork() {
   });
 }
 
-function streamPayload(marker: string, input: AlgoCockpitStreamInput): AlgoCockpitStreamPayload {
+function streamPayload(
+  marker: string,
+  input: AlgoCockpitStreamInput,
+): AlgoCockpitStreamPayload {
   return {
     stream: "algo-cockpit-live",
     phase: "full",
@@ -104,7 +110,9 @@ function streamTestOptions(
 }
 
 test("algo cockpit stream stays full-fidelity under high pressure", () => {
-  const start = source.indexOf("export function shouldUsePrimaryOnlyAlgoCockpitPayload");
+  const start = source.indexOf(
+    "export function shouldUsePrimaryOnlyAlgoCockpitPayload",
+  );
   assert.notEqual(start, -1, "Missing pressure gate");
   const end = source.indexOf("\nasync function", start + 1);
   const body = source.slice(start, end === -1 ? undefined : end);
@@ -114,16 +122,27 @@ test("algo cockpit stream stays full-fidelity under high pressure", () => {
 });
 
 test("algo cockpit stream does not use pressure to serve primary-only payloads", () => {
-  const start = source.indexOf("export async function fetchAlgoCockpitStreamPayload");
+  const start = source.indexOf(
+    "export async function fetchAlgoCockpitStreamPayload",
+  );
   assert.notEqual(start, -1, "Missing cockpit stream payload builder");
-  const end = source.indexOf("\nexport function subscribeAlgoCockpitSnapshots", start + 1);
+  const end = source.indexOf(
+    "\nexport function subscribeAlgoCockpitSnapshots",
+    start + 1,
+  );
   assert.notEqual(end, -1, "Missing cockpit subscription builder");
-  const fallbackEnd = source.indexOf("const target = await resolveAlgoCockpitTarget", start);
+  const fallbackEnd = source.indexOf(
+    "const target = await resolveAlgoCockpitTarget",
+    start,
+  );
   const fallback = source.slice(start, fallbackEnd === -1 ? end : fallbackEnd);
 
   assert.doesNotMatch(fallback, /getApiResourcePressureSnapshot/);
   assert.doesNotMatch(fallback, /shouldUsePrimaryOnlyAlgoCockpitPayload/);
-  assert.doesNotMatch(fallback, /return fetchAlgoCockpitPrimaryPayload\(input, stream\)/);
+  assert.doesNotMatch(
+    fallback,
+    /return fetchAlgoCockpitPrimaryPayload\(input, stream\)/,
+  );
   assert.doesNotMatch(fallback, /phase: "full"/);
 });
 
@@ -172,6 +191,46 @@ test("algo cockpit subscribers with the same key share one poll per cadence tick
   }
 });
 
+test("a late algo cockpit subscriber waits for a fresh shared poll", async () => {
+  const timers = createFakeTimers();
+  const input = {
+    deploymentId: "deployment-fresh-join",
+    mode: "shadow" as const,
+    eventLimit: 25,
+  };
+  const receivedA: string[] = [];
+  const receivedB: string[] = [];
+  let fetchCount = 0;
+  const options = streamTestOptions(timers, async () => {
+    fetchCount += 1;
+    return streamPayload(String(fetchCount), input);
+  });
+  const unsubscribeA = subscribeAlgoCockpitSnapshots(
+    input,
+    (payload) => receivedA.push(eventMarker(payload)),
+    options,
+  );
+
+  await flushAsyncWork();
+  assert.deepEqual(receivedA, ["event-1"]);
+
+  const unsubscribeB = subscribeAlgoCockpitSnapshots(
+    input,
+    (payload) => receivedB.push(eventMarker(payload)),
+    options,
+  );
+  try {
+    await flushAsyncWork();
+
+    assert.equal(fetchCount, 2);
+    assert.deepEqual(receivedA, ["event-1", "event-2"]);
+    assert.deepEqual(receivedB, ["event-2"]);
+  } finally {
+    unsubscribeA();
+    unsubscribeB();
+  }
+});
+
 test("algo cockpit subscribers with different keys use separate pollers", async () => {
   const timers = createFakeTimers();
   const receivedA: string[] = [];
@@ -179,7 +238,10 @@ test("algo cockpit subscribers with different keys use separate pollers", async 
   let fetchCount = 0;
   const fetchPayload = async (input: AlgoCockpitStreamInput) => {
     fetchCount += 1;
-    return streamPayload(`${input.deploymentId ?? "none"}-${fetchCount}`, input);
+    return streamPayload(
+      `${input.deploymentId ?? "none"}-${fetchCount}`,
+      input,
+    );
   };
   const options = streamTestOptions(timers, fetchPayload);
   const unsubscribeA = subscribeAlgoCockpitSnapshots(
@@ -209,8 +271,14 @@ test("algo cockpit subscribers with different keys use separate pollers", async 
     await flushAsyncWork();
 
     assert.equal(fetchCount, 4);
-    assert.deepEqual(receivedA, ["event-deployment-a-1", "event-deployment-a-3"]);
-    assert.deepEqual(receivedB, ["event-deployment-b-2", "event-deployment-b-4"]);
+    assert.deepEqual(receivedA, [
+      "event-deployment-a-1",
+      "event-deployment-a-3",
+    ]);
+    assert.deepEqual(receivedB, [
+      "event-deployment-b-2",
+      "event-deployment-b-4",
+    ]);
   } finally {
     unsubscribeA();
     unsubscribeB();

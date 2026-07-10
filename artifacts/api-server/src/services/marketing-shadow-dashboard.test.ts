@@ -16,8 +16,8 @@ import {
 const { readGenuineDegraded, readGenuineStale, buildWarnings } =
   __marketingShadowDashboardInternalsForTests;
 
-const DB_FALLBACK_REASON =
-  "Shadow account database is unavailable; using runtime-only shadow account fallback.";
+const DB_UNAVAILABLE_REASON =
+  "Shadow account database is temporarily unavailable.";
 
 type TimerHandle = {
   callback: () => void;
@@ -110,7 +110,11 @@ function marketingPayload(cash: number): MarketingShadowDashboardPayload {
 }
 
 test("pool-contention markers do not count as degraded or stale", () => {
-  const stalecache = { degraded: true, stale: true, reason: "shadow_read_stale_cache" };
+  const stalecache = {
+    degraded: true,
+    stale: true,
+    reason: "shadow_read_stale_cache",
+  };
   const pressure = {
     degraded: true,
     stale: true,
@@ -122,8 +126,12 @@ test("pool-contention markers do not count as degraded or stale", () => {
   }
 });
 
-test("genuine DB-unavailable fallback still counts as degraded", () => {
-  const subRead = { degraded: true, stale: true, reason: DB_FALLBACK_REASON };
+test("genuine DB-unavailable state still counts as degraded", () => {
+  const subRead = {
+    degraded: true,
+    stale: true,
+    reason: DB_UNAVAILABLE_REASON,
+  };
   assert.equal(readGenuineDegraded(subRead), true);
   assert.equal(readGenuineStale(subRead), true);
 });
@@ -142,9 +150,9 @@ test("buildWarnings filters out contention markers but keeps real warnings", () 
   const warnings = buildWarnings([
     { reason: "shadow_read_stale_cache" },
     { reason: "shadow_positions_pressure_fallback" },
-    { reason: DB_FALLBACK_REASON },
+    { reason: DB_UNAVAILABLE_REASON },
   ]);
-  assert.deepEqual(warnings, [DB_FALLBACK_REASON]);
+  assert.deepEqual(warnings, [DB_UNAVAILABLE_REASON]);
 });
 
 test("marketing dashboard defaults to a bounded equity range unless ALL is explicit", () => {
@@ -192,10 +200,7 @@ test("marketing dashboard default snapshots share cache and in-flight work", () 
   assert.match(block, /marketingSnapshotInFlight\.get\(cacheKey\)/);
   assert.match(block, /marketingSnapshotInFlight\.set\(cacheKey, inFlight\)/);
   assert.match(block, /marketingSnapshotInFlight\.delete\(cacheKey\)/);
-  assert.match(
-    block,
-    /MARKETING_SHADOW_DASHBOARD_SNAPSHOT_CACHE_MS/,
-  );
+  assert.match(block, /MARKETING_SHADOW_DASHBOARD_SNAPSHOT_CACHE_MS/);
 });
 
 test("marketing dashboard skips identical payload serialization and emits one change", async () => {
@@ -251,27 +256,25 @@ test("marketing dashboard ignores shadow mark_refresh notifications", async () =
   let fetchCount = 0;
   let shadowSubscribed = false;
   let onShadowChange = (_change: { reason: string }) => {};
-  const unsubscribe = subscribeMarketingShadowDashboardSnapshots(
-    {},
-    () => {},
-    {
-      initialPayload,
-      fetchSnapshot: async () => {
-        fetchCount += 1;
-        return initialPayload;
-      },
-      subscribeShadowChanges: ((listener: (change: { reason: string }) => void) => {
-        shadowSubscribed = true;
-        onShadowChange = listener;
-        return () => {};
-      }) as never,
-      subscribeAlgoChanges: () => () => {},
-      setInterval: timers.setInterval,
-      clearInterval: timers.clearInterval,
-      setTimeout: timers.setTimeout,
-      clearTimeout: timers.clearTimeout,
+  const unsubscribe = subscribeMarketingShadowDashboardSnapshots({}, () => {}, {
+    initialPayload,
+    fetchSnapshot: async () => {
+      fetchCount += 1;
+      return initialPayload;
     },
-  );
+    subscribeShadowChanges: ((
+      listener: (change: { reason: string }) => void,
+    ) => {
+      shadowSubscribed = true;
+      onShadowChange = listener;
+      return () => {};
+    }) as never,
+    subscribeAlgoChanges: () => () => {},
+    setInterval: timers.setInterval,
+    clearInterval: timers.clearInterval,
+    setTimeout: timers.setTimeout,
+    clearTimeout: timers.clearTimeout,
+  });
 
   try {
     assert.equal(shadowSubscribed, true);

@@ -1,11 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   getGetAlgoDeploymentCockpitQueryKey,
   getGetAccountPositionsQueryKey,
@@ -35,7 +29,6 @@ import {
   PROFILE_BOOLEAN_FIELDS,
   PROFILE_NUMBER_FIELDS,
   SIGNAL_OPTIONS_DEFAULT_PROFILE,
-  SIGNAL_OPTIONS_EXPANDED_CAPACITY,
   SIGNAL_OPTIONS_LIQUIDITY_REASON_LABELS,
   SIGNAL_OPTIONS_STRIKE_SLOT_OPTIONS,
   PYRUS_SIGNALS_BOS_CONFIRMATION_OPTIONS,
@@ -43,7 +36,6 @@ import {
   asRecord,
   boundedNumberFrom,
   buildVisibleSignalRows,
-  buildExpandedSignalOptionsProfile,
   candidateMatchesReasonCategory,
   candidateReasonCategory,
   cloneProfile,
@@ -54,9 +46,6 @@ import {
   formatContractLabel,
   formatLiquidityFreshness,
   formatLiquidityReason,
-  formatMoney,
-  formatPct,
-  formatPlainPrice,
   mergeStaSignalPipelineStages,
   mergeSignalOptionsProfile,
   numberFrom,
@@ -73,10 +62,7 @@ import {
   signalOptionsActionLabel,
 } from "./algo/algoHelpers";
 import { normalizeAlgoAlignedMtfTimeframes } from "./algo/algoTimeframeControls";
-import {
-  AlgoLivePage,
-  preloadAlgoLivePageModules,
-} from "./algo/AlgoLivePage";
+import { AlgoLivePage, preloadAlgoLivePageModules } from "./algo/AlgoLivePage";
 import { CreateDeploymentModal } from "./algo/CreateDeploymentModal.jsx";
 import {
   planAlgoAdjustmentsSaveReconciliation,
@@ -92,9 +78,7 @@ import {
   useAlgoCockpitStream,
   useShadowAccountSnapshotStream,
 } from "../features/platform/live-streams";
-import {
-  useAuthSession,
-} from "../features/auth/authSession.jsx";
+import { useAuthSession } from "../features/auth/authSession.jsx";
 import { useAccountTab } from "../features/platform/useAccountTab.js";
 import {
   clearAlgoStaExecutionTimeframe,
@@ -114,19 +98,13 @@ import {
   waitForCriticalApiMutationPauseSettle,
 } from "../features/platform/criticalApiMutationPause.js";
 import {
-  formatEnumLabel,
   formatOptionContractLabel,
-  formatRelativeTimeShort,
   parseSymbolUniverseInput,
 } from "../lib/formatters";
 import { useUserPreferences } from "../features/preferences/useUserPreferences";
 import { markRouteDataTiming } from "../features/platform/performanceMetrics";
 import { formatAppTimeForPreferences } from "../lib/timeZone";
-import {
-  CSS_COLOR,
-  MISSING_VALUE,
-  sp,
-} from "../lib/uiTokens.jsx";
+import { CSS_COLOR, MISSING_VALUE, sp } from "../lib/uiTokens.jsx";
 import { responsiveFlags, useElementSize } from "../lib/responsive";
 import { retryDynamicImport } from "../lib/dynamicImport";
 
@@ -139,7 +117,6 @@ export const preloadScreenModules = () =>
     () => undefined,
   );
 
-const ALGO_PRIMARY_FALLBACK_DELAY_MS = 0;
 // 25s, not 8s: a save round-trip is ~0.8s when the API event loop is healthy,
 // but under the heavy-DB-fan-out freeze the loop stalls 12-90s and the PATCH
 // queues behind it. An 8s budget timed out mid-freeze -> the Signal/Profile task
@@ -162,59 +139,19 @@ const EMPTY_ALGO_EVENTS = Object.freeze([]);
 const EMPTY_SIGNAL_OPTIONS_CANDIDATES = Object.freeze([]);
 const EMPTY_SIGNAL_OPTIONS_SIGNALS = Object.freeze([]);
 const EMPTY_SIGNAL_OPTIONS_POSITIONS = Object.freeze([]);
-const retainPreviousData = (previousData) => previousData;
-const retainPreviousAccountData = (accountId) => (previousData) =>
-  String(previousData?.accountId || "") === String(accountId || "")
-    ? previousData
-    : undefined;
-
-const sourceArrayTimestampMs = (item) => {
-  const record = asRecord(item);
-  return Math.max(
-    Date.parse(record.updatedAt || "") || 0,
-    Date.parse(record.createdAt || "") || 0,
-    Date.parse(record.signalAt || "") || 0,
-    Date.parse(record.currentSignalAt || "") || 0,
-    Date.parse(record.lastEvaluatedAt || "") || 0,
-    Date.parse(record.latestBarAt || "") || 0,
-  );
-};
-
-const sourceArrayLatestTimestampMs = (items) =>
-  (Array.isArray(items) ? items : []).reduce(
-    (latest, item) => Math.max(latest, sourceArrayTimestampMs(item)),
-    0,
-  );
 
 const latestIsoFromRows = (items, fields) => {
-  const latestMs = (Array.isArray(items) ? items : []).reduce((latest, item) => {
-    const record = asRecord(item);
-    return Math.max(
-      latest,
-      ...fields.map((field) => Date.parse(record[field] || "") || 0),
-    );
-  }, 0);
+  const latestMs = (Array.isArray(items) ? items : []).reduce(
+    (latest, item) => {
+      const record = asRecord(item);
+      return Math.max(
+        latest,
+        ...fields.map((field) => Date.parse(record[field] || "") || 0),
+      );
+    },
+    0,
+  );
   return latestMs ? new Date(latestMs).toISOString() : null;
-};
-
-const preferNonEmptySourceArray = (primary, fallback, emptyValue) => {
-  const primaryArray = Array.isArray(primary) ? primary : null;
-  const fallbackArray = Array.isArray(fallback) ? fallback : null;
-  if (primaryArray?.length && fallbackArray?.length) {
-    const primaryLatestMs = sourceArrayLatestTimestampMs(primaryArray);
-    const fallbackLatestMs = sourceArrayLatestTimestampMs(fallbackArray);
-    if (fallbackLatestMs > primaryLatestMs) return fallbackArray;
-    if (
-      fallbackLatestMs === primaryLatestMs &&
-      fallbackArray.length > primaryArray.length
-    ) {
-      return fallbackArray;
-    }
-    return primaryArray;
-  }
-  if (primaryArray?.length) return primaryArray;
-  if (fallbackArray?.length) return fallbackArray;
-  return primaryArray || fallbackArray || emptyValue;
 };
 
 const isAlgoExecutionScanStageRunning = (stage) => {
@@ -223,7 +160,9 @@ const isAlgoExecutionScanStageRunning = (stage) => {
   return (
     String(record.status || "").toLowerCase() === "running" ||
     record.running === true ||
-    Boolean(record.scanStartedAt && Number.isFinite(scanAgeMs) && scanAgeMs >= 0)
+    Boolean(
+      record.scanStartedAt && Number.isFinite(scanAgeMs) && scanAgeMs >= 0,
+    )
   );
 };
 
@@ -232,11 +171,6 @@ const signalOptionsRuleColor = (status) => {
   if (status === "warning") return CSS_COLOR.amber;
   return CSS_COLOR.green;
 };
-
-const formatCockpitMetric = (metrics, key, formatter = (value) => value) =>
-  Object.prototype.hasOwnProperty.call(asRecord(metrics), key)
-    ? formatter(asRecord(metrics)[key])
-    : MISSING_VALUE;
 
 const cloneStrategySettings = (settings) => ({
   ...DEFAULT_STRATEGY_SIGNAL_SETTINGS,
@@ -296,7 +230,8 @@ const loadAlgoRuntimeHelpers = () => {
           transitions.diffSignalSnapshots ||
           DEFAULT_ALGO_RUNTIME_HELPERS.diffSignalSnapshots,
         limitToWindow:
-          transitions.limitToWindow || DEFAULT_ALGO_RUNTIME_HELPERS.limitToWindow,
+          transitions.limitToWindow ||
+          DEFAULT_ALGO_RUNTIME_HELPERS.limitToWindow,
         summarizeCockpitDelta:
           activity.summarizeCockpitDelta ||
           DEFAULT_ALGO_RUNTIME_HELPERS.summarizeCockpitDelta,
@@ -306,7 +241,8 @@ const loadAlgoRuntimeHelpers = () => {
           kpi.pruneAlgoKpiHistory ||
           DEFAULT_ALGO_RUNTIME_HELPERS.pruneAlgoKpiHistory,
         pushAlgoKpiSample:
-          kpi.pushAlgoKpiSample || DEFAULT_ALGO_RUNTIME_HELPERS.pushAlgoKpiSample,
+          kpi.pushAlgoKpiSample ||
+          DEFAULT_ALGO_RUNTIME_HELPERS.pushAlgoKpiSample,
         buildCockpitGateSummary: buildCockpitGateSummaryImpl,
       }))
       .catch((error) => {
@@ -317,11 +253,11 @@ const loadAlgoRuntimeHelpers = () => {
   return algoRuntimeHelpersImport;
 };
 
-
 // Market data now comes from Massive; the IBKR bridge is retired and the signal-options
 // algo pipeline is shadow-first, so "ready" here means market data is configured/available,
 // not that an IBKR gateway is connected.
-const isMarketDataReadyForAlgo = (session) => Boolean(session?.configured?.massive);
+const isMarketDataReadyForAlgo = (session) =>
+  Boolean(session?.configured?.massive);
 
 export const AlgoScreen = ({
   session,
@@ -329,7 +265,6 @@ export const AlgoScreen = ({
   accounts = [],
   accountTabsAccounts = accounts,
   selectedAccountId = null,
-  signalMonitorEventsSourceStatus = "database",
   signalMonitorEventsLoaded = false,
   signalMonitorState = null,
   signalMatrixStates = [],
@@ -341,8 +276,9 @@ export const AlgoScreen = ({
   onReadinessChange,
 }) => {
   const [algoRootRef, algoRootSize] = useElementSize();
-  const { isPhone: algoIsPhone, isNarrow: algoIsNarrow } =
-    responsiveFlags(algoRootSize.width);
+  const { isPhone: algoIsPhone, isNarrow: algoIsNarrow } = responsiveFlags(
+    algoRootSize.width,
+  );
   const algoMetricsGridTemplate = algoIsPhone
     ? "minmax(0, 1fr)"
     : algoIsNarrow
@@ -419,7 +355,9 @@ export const AlgoScreen = ({
     session?.ibkrBridge?.selectedAccountId ||
     null;
   const [algoAccountTabRaw, setAlgoAccountTab] = useAccountTab("shadow");
-  const positionAccounts = accountTabsAccounts.length ? accountTabsAccounts : accounts;
+  const positionAccounts = accountTabsAccounts.length
+    ? accountTabsAccounts
+    : accounts;
   const algoAccountTab = useMemo(() => {
     if (algoAccountTabRaw === "all" || algoAccountTabRaw === "shadow") {
       return algoAccountTabRaw;
@@ -465,32 +403,12 @@ export const AlgoScreen = ({
   const shadowAccountStreamFreshness = useShadowAccountSnapshotStream({
     enabled: algoRealtimeStreamsEnabled,
   });
-  const [algoPrimaryFallbackReady, setAlgoPrimaryFallbackReady] = useState(false);
   const algoTimingStagesRef = useRef(new Set());
   useEffect(() => {
     if (!isVisible) {
       algoTimingStagesRef.current = new Set();
     }
   }, [isVisible]);
-  useEffect(() => {
-    if (!isVisible || algoCockpitStreamFreshness.algoPrimaryFresh) {
-      setAlgoPrimaryFallbackReady(false);
-      return undefined;
-    }
-    if (ALGO_PRIMARY_FALLBACK_DELAY_MS <= 0) {
-      setAlgoPrimaryFallbackReady(true);
-      return undefined;
-    }
-    const timer = window.setTimeout(() => {
-      setAlgoPrimaryFallbackReady(true);
-    }, ALGO_PRIMARY_FALLBACK_DELAY_MS);
-    return () => window.clearTimeout(timer);
-  }, [algoCockpitStreamFreshness.algoPrimaryFresh, isVisible]);
-  const algoPrimaryDataReady = Boolean(
-    isVisible &&
-      (algoCockpitStreamFreshness.algoPrimaryFresh ||
-        algoPrimaryFallbackReady),
-  );
   const markAlgoTiming = useCallback((stage, detail) => {
     if (algoTimingStagesRef.current.has(stage)) {
       return;
@@ -505,7 +423,7 @@ export const AlgoScreen = ({
     markAlgoTiming("route-module-loaded");
   }, [isVisible, markAlgoTiming]);
   useEffect(() => {
-    if (!algoPrimaryDataReady) {
+    if (!isVisible) {
       return;
     }
     markAlgoTiming("primary-data-ready", {
@@ -513,11 +431,7 @@ export const AlgoScreen = ({
         ? "stream"
         : "rest-catchup",
     });
-  }, [
-    algoCockpitStreamFreshness.algoPrimaryFresh,
-    algoPrimaryDataReady,
-    markAlgoTiming,
-  ]);
+  }, [algoCockpitStreamFreshness.algoPrimaryFresh, isVisible, markAlgoTiming]);
   const algoSetupQueriesEnabled = Boolean(isVisible);
   const algoPrimaryQueriesEnabled = Boolean(algoLiveDataQueriesEnabled);
   const algoDerivedRestQueriesEnabled = Boolean(algoLiveDataQueriesEnabled);
@@ -526,9 +440,8 @@ export const AlgoScreen = ({
   );
   const algoPostPrimaryQueriesEnabled = Boolean(
     algoLiveDataQueriesEnabled &&
-      // Shadow positions arrive over SSE, so the REST query only backfills a
-      // stale stream. Broker/combined tabs have no stream — their query must
-      // stay enabled or retainPreviousData pins the previous tab's rows.
+      // Shadow positions arrive over SSE, so REST only catches up when the stream
+      // is not fresh. Broker/combined tabs have no stream and always use REST.
       (algoPositionsUseShadowOverlay
         ? !shadowAccountStreamFreshness.accountFresh
         : true),
@@ -546,7 +459,9 @@ export const AlgoScreen = ({
   useRuntimeWorkloadFlag("algo:cockpit", isVisible, {
     kind: algoCockpitStreamFreshness.algoPrimaryFresh ? "stream" : "poll",
     label: "Algo cockpit",
-    detail: algoCockpitStreamFreshness.algoPrimaryFresh ? "SSE" : "REST catch-up",
+    detail: algoCockpitStreamFreshness.algoPrimaryFresh
+      ? "SSE"
+      : "REST catch-up",
     priority: 7,
   });
   const draftsQuery = useListBacktestDraftStrategies({
@@ -557,40 +472,29 @@ export const AlgoScreen = ({
       retry: false,
     },
   });
-  const deploymentsQuery = useListAlgoDeployments(
-    undefined,
-    {
-      query: {
-        ...QUERY_DEFAULTS,
-        enabled: algoSetupQueriesEnabled,
-        refetchInterval: algoRoutineRefetchInterval,
-        placeholderData: retainPreviousData,
-        retry: false,
-      },
+  const deploymentsQuery = useListAlgoDeployments(undefined, {
+    query: {
+      ...QUERY_DEFAULTS,
+      enabled: algoSetupQueriesEnabled,
+      refetchInterval: algoRoutineRefetchInterval,
+      retry: false,
     },
-  );
-  const deployments = deploymentsQuery.data?.deployments || EMPTY_ALGO_DEPLOYMENTS;
-  const deploymentPnlById = deploymentsQuery.data?.pnlByDeployment || null;
-  // "Unavailable" must cover BOTH the backend's explicit marker AND a failed
-  // request with no data at all (pool-saturation 500s/timeouts leave
-  // deploymentsQuery.isError set with data undefined). Without the isError arm
-  // a failed fetch rendered as a successful empty list, and the page showed the
-  // misleading "should be seeded at startup" state instead of "temporarily
-  // unavailable, refresh".
-  const deploymentListEmptyUnavailable = Boolean(
-    deploymentsQuery.data?.cacheStatus === "unavailable" && !deployments.length,
-  );
+  });
+  const deploymentsResponse = deploymentsQuery.isError
+    ? null
+    : deploymentsQuery.data;
+  const deployments =
+    deploymentsResponse?.deployments || EMPTY_ALGO_DEPLOYMENTS;
+  const deploymentPnlById = deploymentsResponse?.pnlByDeployment || null;
   const deploymentListUnavailable = Boolean(
-    !deploymentsQuery.isFetching &&
-      !deployments.length &&
-      (deploymentListEmptyUnavailable ||
-        (deploymentsQuery.isError && !deploymentsQuery.data)),
+    !deploymentsQuery.isFetching && deploymentsQuery.isError,
   );
+  const draftsResponse = draftsQuery.isError ? null : draftsQuery.data;
   const candidateDrafts = useMemo(() => {
-    const drafts = draftsQuery.data?.drafts || EMPTY_ALGO_DRAFTS;
+    const drafts = draftsResponse?.drafts || EMPTY_ALGO_DRAFTS;
     const matchingMode = drafts.filter((draft) => draft.mode === environment);
     return matchingMode.length ? matchingMode : drafts;
-  }, [draftsQuery.data, environment]);
+  }, [draftsResponse, environment]);
   const selectedDraft =
     candidateDrafts.find((draft) => draft.id === selectedDraftId) ||
     candidateDrafts[0] ||
@@ -612,7 +516,8 @@ export const AlgoScreen = ({
       },
     },
   );
-  const events = eventsQuery.data?.events || EMPTY_ALGO_EVENTS;
+  const eventsResponse = eventsQuery.isError ? null : eventsQuery.data;
+  const events = eventsResponse?.events || EMPTY_ALGO_EVENTS;
   const signalOptionsStateQuery = useGetSignalOptionsAutomationState(
     focusedDeployment?.id || "",
     {
@@ -624,22 +529,25 @@ export const AlgoScreen = ({
       },
     },
   );
-  const cockpitQuery = useGetAlgoDeploymentCockpit(focusedDeployment?.id || "", {
-    query: {
-      ...QUERY_DEFAULTS,
-      enabled: Boolean(algoDerivedRestQueriesEnabled && focusedDeployment?.id),
-      refetchInterval: algoDerivedRefetchInterval,
-      retry: false,
-    },
-  });
-  const signalOptionsPerformanceQuery = useGetSignalOptionsPerformance(
+  const cockpitQuery = useGetAlgoDeploymentCockpit(
     focusedDeployment?.id || "",
     {
       query: {
         ...QUERY_DEFAULTS,
         enabled: Boolean(
-          algoBackgroundQueriesEnabled && focusedDeployment?.id,
+          algoDerivedRestQueriesEnabled && focusedDeployment?.id,
         ),
+        refetchInterval: algoDerivedRefetchInterval,
+        retry: false,
+      },
+    },
+  );
+  const signalOptionsPerformanceQuery = useGetSignalOptionsPerformance(
+    focusedDeployment?.id || "",
+    {
+      query: {
+        ...QUERY_DEFAULTS,
+        enabled: Boolean(algoBackgroundQueriesEnabled && focusedDeployment?.id),
         refetchInterval: algoDerivedRefetchInterval,
         retry: false,
       },
@@ -669,29 +577,25 @@ export const AlgoScreen = ({
           ? 30_000
           : QUERY_DEFAULTS.staleTime,
         refetchInterval: signalOptionsLedgerPositionsRefetchInterval,
-        placeholderData: retainPreviousAccountData(algoPositionsAccountId),
         retry: false,
       },
     },
   );
+  const signalOptionsLedgerPositionsQueryForDisplay =
+    signalOptionsLedgerPositionsQuery.isError
+      ? { ...signalOptionsLedgerPositionsQuery, data: undefined }
+      : signalOptionsLedgerPositionsQuery;
   const deploymentsSettled = Boolean(
     deploymentListUnavailable ||
-      (!deploymentListEmptyUnavailable &&
-        (deploymentsQuery.data || deploymentsQuery.isFetched)) ||
+      deploymentsQuery.data ||
+      deploymentsQuery.isFetched ||
       deploymentsQuery.isError,
   );
   const draftsSettled = Boolean(
     draftsQuery.data || draftsQuery.isFetched || draftsQuery.isError,
   );
-  const signalOptionsStateSettled = Boolean(
-    (!signalOptionsStateQuery.isPlaceholderData &&
-      (signalOptionsStateQuery.data || signalOptionsStateQuery.isFetched)) ||
-      signalOptionsStateQuery.isError,
-  );
   const cockpitSettled = Boolean(
-    (!cockpitQuery.isPlaceholderData &&
-      (cockpitQuery.data || cockpitQuery.isFetched)) ||
-      cockpitQuery.isError,
+    cockpitQuery.data || cockpitQuery.isFetched || cockpitQuery.isError,
   );
   const algoSetupDataSettled = Boolean(deploymentsSettled && draftsSettled);
   const algoDerivedRestSettled = Boolean(
@@ -708,19 +612,15 @@ export const AlgoScreen = ({
       derivedReady: algoDerivedReady,
       backgroundAllowed: Boolean(isVisible && !safeQaMode && algoDerivedReady),
     });
-  }, [
-    algoDerivedReady,
-    algoPrimaryDataReady,
-    isVisible,
-    onReadinessChange,
-    safeQaMode,
-  ]);
+  }, [algoDerivedReady, isVisible, onReadinessChange, safeQaMode]);
   useEffect(() => {
     if (!isVisible || !algoDerivedReady) {
       return;
     }
     markAlgoTiming("derived-data-ready", {
-      source: algoCockpitStreamFreshness.algoFullFresh ? "stream" : "rest-catchup",
+      source: algoCockpitStreamFreshness.algoFullFresh
+        ? "stream"
+        : "rest-catchup",
     });
   }, [
     algoCockpitStreamFreshness.algoFullFresh,
@@ -728,7 +628,9 @@ export const AlgoScreen = ({
     isVisible,
     markAlgoTiming,
   ]);
-  const cockpit = cockpitQuery.data || null;
+  const cockpit = cockpitQuery.isError ? null : cockpitQuery.data || null;
+  const cockpitKpis = asRecord(cockpit?.kpis);
+  const cockpitRisk = asRecord(cockpit?.risk);
   const {
     buildTransitionsBufferStore,
     collectEventTransitions,
@@ -750,8 +652,63 @@ export const AlgoScreen = ({
   const prevActivitySnapshotRef = useRef(null);
   const prevActivityPerformanceRef = useRef(null);
   const [activitySummary, setActivitySummary] = useState(null);
-  const signalOptionsPerformance = signalOptionsPerformanceQuery.data || null;
-  const signalOptionsState = signalOptionsStateQuery.data || null;
+  const signalOptionsPerformance = signalOptionsPerformanceQuery.isError
+    ? null
+    : signalOptionsPerformanceQuery.data || null;
+  const signalOptionsState = signalOptionsStateQuery.isError
+    ? null
+    : signalOptionsStateQuery.data || null;
+  const cockpitDataAvailable = Boolean(
+    cockpit &&
+      !cockpitQuery.isError &&
+      cockpit.stale !== true &&
+      cockpit.degraded !== true &&
+      cockpit.cacheStatus !== "stale" &&
+      cockpit.cacheStatus !== "unavailable",
+  );
+  const performanceDataAvailable = Boolean(
+    signalOptionsPerformance &&
+      !signalOptionsPerformanceQuery.isError &&
+      signalOptionsPerformance.stale !== true &&
+      signalOptionsPerformance.degraded !== true &&
+      signalOptionsPerformance.cacheStatus !== "stale" &&
+      signalOptionsPerformance.cacheStatus !== "unavailable",
+  );
+  const signalOptionsStateDataAvailable = Boolean(
+    signalOptionsState &&
+      !signalOptionsStateQuery.isError &&
+      signalOptionsState.stale !== true &&
+      signalOptionsState.degraded !== true &&
+      signalOptionsState.cacheStatus !== "stale" &&
+      signalOptionsState.cacheStatus !== "unavailable",
+  );
+  const cockpitPnlDataAvailable = Boolean(
+    cockpitDataAvailable &&
+      cockpitKpis.dailyRealizedPnl != null &&
+      Number.isFinite(Number(cockpitKpis.dailyRealizedPnl)) &&
+      cockpitKpis.openUnrealizedPnl != null &&
+      Number.isFinite(Number(cockpitKpis.openUnrealizedPnl)),
+  );
+  const cockpitRiskDataAvailable = Boolean(
+    cockpitDataAvailable &&
+      typeof cockpitRisk.dailyHaltActive === "boolean" &&
+      cockpitRisk.maxDailyLoss != null &&
+      Number.isFinite(Number(cockpitRisk.maxDailyLoss)) &&
+      cockpitRisk.dailyPnl != null &&
+      Number.isFinite(Number(cockpitRisk.dailyPnl)) &&
+      cockpitRisk.openSymbols != null &&
+      Number.isFinite(Number(cockpitRisk.openSymbols)) &&
+      cockpitRisk.maxOpenSymbols != null &&
+      Number.isFinite(Number(cockpitRisk.maxOpenSymbols)),
+  );
+  const cockpitPositionDataAvailable = Boolean(
+    cockpitDataAvailable &&
+      cockpitKpis.openPositions != null &&
+      Number.isFinite(Number(cockpitKpis.openPositions)),
+  );
+  const positionDataAvailable = Boolean(
+    cockpitPositionDataAvailable || signalOptionsStateDataAvailable,
+  );
   const signalMonitorProfile = signalMonitorState?.profile || null;
   const signalMonitorUniverseSymbols = Array.isArray(
     signalMonitorState?.universeSymbols,
@@ -764,7 +721,9 @@ export const AlgoScreen = ({
         new Set(
           (Array.isArray(signalMatrixStates) ? signalMatrixStates : [])
             .map((state) =>
-              String(asRecord(state).symbol || "").trim().toUpperCase(),
+              String(asRecord(state).symbol || "")
+                .trim()
+                .toUpperCase(),
             )
             .filter(Boolean),
         ),
@@ -775,7 +734,7 @@ export const AlgoScreen = ({
     ? signalMonitorUniverseSymbols
     : signalMatrixStateUniverseSymbols.length
       ? signalMatrixStateUniverseSymbols
-    : focusedDeployment?.symbolUniverse || [];
+      : focusedDeployment?.symbolUniverse || [];
   const signalScanReady = true;
   const signalMatrixRowsAvailable = Boolean(
     Array.isArray(signalMatrixStates) && signalMatrixStates.length,
@@ -831,12 +790,8 @@ export const AlgoScreen = ({
     staActionSnapshot.signals || EMPTY_SIGNAL_OPTIONS_SIGNALS;
   const signalOptionsPositions =
     staActionSnapshot.activePositions || EMPTY_SIGNAL_OPTIONS_POSITIONS;
-  const cockpitFleet = cockpit?.fleet || null;
-  const cockpitReadiness = cockpit?.readiness || null;
-  const cockpitKpis = asRecord(cockpit?.kpis);
   const cockpitPipelineStages = cockpit?.pipelineStages || [];
   const cockpitAttentionItems = cockpit?.attentionItems || [];
-  const cockpitSourceBacktest = cockpit?.sourceBacktest || null;
   const cockpitGateSummary = buildCockpitGateSummary(cockpit);
   const cockpitSignalFreshness = cockpitGateSummary.signalFreshness;
   const cockpitTradePath = cockpitGateSummary.tradePath;
@@ -849,9 +804,6 @@ export const AlgoScreen = ({
   const cockpitMarkHealthRows = cockpitGateSummary.markHealthRows;
   const signalOptionsPerformanceSummary = asRecord(
     signalOptionsPerformance?.summary,
-  );
-  const signalOptionsOpenExposure = asRecord(
-    signalOptionsPerformance?.openExposure,
   );
   const signalOptionsRuleAdherence = Array.isArray(
     signalOptionsPerformance?.ruleAdherence,
@@ -875,9 +827,14 @@ export const AlgoScreen = ({
     }
 
     return signalOptionsCandidates.filter((candidate) => {
-      const actionStatus = String(candidate.actionStatus || candidate.status || "");
-      const hasContract = Object.keys(asRecord(candidate.selectedContract)).length > 0;
-      const timeline = Array.isArray(candidate.timeline) ? candidate.timeline : [];
+      const actionStatus = String(
+        candidate.actionStatus || candidate.status || "",
+      );
+      const hasContract =
+        Object.keys(asRecord(candidate.selectedContract)).length > 0;
+      const timeline = Array.isArray(candidate.timeline)
+        ? candidate.timeline
+        : [];
       if (selectedPipelineStageId === "signal_detected") return true;
       if (selectedPipelineStageId === "action_mapped") {
         return (
@@ -915,11 +872,6 @@ export const AlgoScreen = ({
       return true;
     });
   }, [selectedPipelineStageId, signalOptionsCandidates]);
-  const enabledDeployments = deployments.filter(
-    (deployment) => deployment.enabled,
-  );
-  const latestEvent = events[0] || null;
-
   const symbolIndex = useMemo(() => {
     const index = {};
     for (const signal of signalOptionsSignals || []) {
@@ -980,10 +932,7 @@ export const AlgoScreen = ({
     // cockpit settle / deployment switch. `events` and `signalOptionsSignals`
     // mint new refs every render before queries resolve and would loop the
     // effect; we capture them via closure instead.
-  }, [
-    cockpit?.evaluatedAt,
-    focusedDeployment?.id,
-  ]);
+  }, [cockpit?.evaluatedAt, focusedDeployment?.id]);
 
   useEffect(() => {
     const interval = window.setInterval(() => {
@@ -1050,7 +999,6 @@ export const AlgoScreen = ({
     // asRecord() wrappers, which mint a new reference every render.
   }, [cockpit?.evaluatedAt, focusedDeployment?.id]);
 
-
   const visibleTransitions = useMemo(
     () =>
       limitToWindow(recentTransitions, {
@@ -1097,7 +1045,8 @@ export const AlgoScreen = ({
   }, [deployments, focusedDeploymentId]);
 
   const resolvedStrategySignalSettings = useMemo(
-    () => resolveStrategySignalSettings(focusedDeployment, signalMonitorProfile),
+    () =>
+      resolveStrategySignalSettings(focusedDeployment, signalMonitorProfile),
     [focusedDeployment, signalMonitorProfile],
   );
 
@@ -1113,12 +1062,12 @@ export const AlgoScreen = ({
     },
   );
   const profileDraft = profileDraftState.draft;
-  const setProfileDraft = profileDraftState.replace;
   const profileDirty = profileDraftState.isDirty;
   const strategySettingsDraft = strategySettingsDraftState.draft;
   const strategyDirty = strategySettingsDraftState.isDirty;
   const staActionSignalTimeframes = useMemo(
-    () => normalizeStrategySignalTimeframes(strategySettingsDraft?.signalTimeframe),
+    () =>
+      normalizeStrategySignalTimeframes(strategySettingsDraft?.signalTimeframe),
     [strategySettingsDraft?.signalTimeframe],
   );
   const staSignalTimeframes = useMemo(
@@ -1138,7 +1087,9 @@ export const AlgoScreen = ({
     // table (which reads profileDraft directly). Cleared on unmount below.
     publishAlgoStaExecutionTimeframe(staActionSignalTimeframes[0] || "");
     publishAlgoStaMtfTimeframes(staSignalTimeframes);
-    publishAlgoStaMtfAlignmentConfig(profileDraft?.entryGate?.mtfAlignment || null);
+    publishAlgoStaMtfAlignmentConfig(
+      profileDraft?.entryGate?.mtfAlignment || null,
+    );
   }, [
     profileDraft?.entryGate?.mtfAlignment,
     staActionSignalTimeframes,
@@ -1220,7 +1171,9 @@ export const AlgoScreen = ({
       });
       if (includeSignalOptionsPerformance) {
         queryClient.invalidateQueries({
-          queryKey: getGetSignalOptionsPerformanceQueryKey(focusedDeployment.id),
+          queryKey: getGetSignalOptionsPerformanceQueryKey(
+            focusedDeployment.id,
+          ),
         });
       }
     }
@@ -1280,63 +1233,67 @@ export const AlgoScreen = ({
         toast.push({
           kind: "error",
           title: "Profile save failed",
-          body: error?.message || "The signal-options profile could not be saved.",
+          body:
+            error?.message || "The signal-options profile could not be saved.",
         });
       },
     },
   });
 
-  const updateStrategySettingsMutation = useUpdateAlgoDeploymentStrategySettings({
-    request: { ...ALGO_SETTINGS_SAVE_REQUEST_OPTIONS, headers: csrfHeaders },
-    mutation: {
-      onMutate: () => {
-        void queryClient.cancelQueries({
-          queryKey: getGetSignalMonitorProfileQueryKey({
-            environment: focusedDeployment?.mode || environment,
-          }),
-        });
-      },
-      onSuccess: (payload, variables) => {
-        if (payload?.signalMonitorProfile?.environment) {
-          queryClient.setQueryData(
-            getGetSignalMonitorProfileQueryKey({
-              environment: payload.signalMonitorProfile.environment,
+  const updateStrategySettingsMutation =
+    useUpdateAlgoDeploymentStrategySettings({
+      request: { ...ALGO_SETTINGS_SAVE_REQUEST_OPTIONS, headers: csrfHeaders },
+      mutation: {
+        onMutate: () => {
+          void queryClient.cancelQueries({
+            queryKey: getGetSignalMonitorProfileQueryKey({
+              environment: focusedDeployment?.mode || environment,
             }),
-            payload.signalMonitorProfile,
-          );
-        }
-        if (payload?.deployment) {
-          setDeploymentCache(payload.deployment);
-        }
-        refreshAlgoQueries({
-          includeDeployments: !payload?.deployment,
-          includeSignalMonitorProfile: !payload?.signalMonitorProfile,
-          includeSignalOptionsPerformance: false,
-        });
-        strategySettingsDraftState.markClean(
-          resolveStrategySignalSettings(
-            payload?.deployment || focusedDeployment,
-            payload?.signalMonitorProfile || signalMonitorProfile,
-          ),
-        );
-        if (!variables?.silent) {
-          toast.push({
-            kind: "success",
-            title: "Signal settings saved",
-            body: "PYRUS signal timeframe and Pyrus Signals settings were updated.",
           });
-        }
+        },
+        onSuccess: (payload, variables) => {
+          if (payload?.signalMonitorProfile?.environment) {
+            queryClient.setQueryData(
+              getGetSignalMonitorProfileQueryKey({
+                environment: payload.signalMonitorProfile.environment,
+              }),
+              payload.signalMonitorProfile,
+            );
+          }
+          if (payload?.deployment) {
+            setDeploymentCache(payload.deployment);
+          }
+          refreshAlgoQueries({
+            includeDeployments: !payload?.deployment,
+            includeSignalMonitorProfile: !payload?.signalMonitorProfile,
+            includeSignalOptionsPerformance: false,
+          });
+          strategySettingsDraftState.markClean(
+            resolveStrategySignalSettings(
+              payload?.deployment || focusedDeployment,
+              payload?.signalMonitorProfile || signalMonitorProfile,
+            ),
+          );
+          if (!variables?.silent) {
+            toast.push({
+              kind: "success",
+              title: "Signal settings saved",
+              body: "PYRUS signal timeframe and Pyrus Signals settings were updated.",
+            });
+          }
+        },
+        onError: (error, variables) => {
+          if (variables?.silent) return;
+          toast.push({
+            kind: "error",
+            title: "Signal settings failed",
+            body:
+              error?.message ||
+              "The strategy signal settings could not be saved.",
+          });
+        },
       },
-      onError: (error, variables) => {
-        if (variables?.silent) return;
-        toast.push({
-          kind: "error",
-          title: "Signal settings failed",
-          body: error?.message || "The strategy signal settings could not be saved.",
-        });
-      },
-    },
-  });
+    });
 
   const createDeploymentMutation = useCreateAlgoDeployment({
     request: { headers: csrfHeaders },
@@ -1591,14 +1548,6 @@ export const AlgoScreen = ({
     strategySettingsDraftState.patch(path, value);
   };
 
-  const handleApplyExpandedCapacity = () => {
-    if (!focusedDeployment?.id) {
-      return;
-    }
-    const nextProfile = buildExpandedSignalOptionsProfile(profileDraft);
-    setProfileDraft(nextProfile);
-  };
-
   const handleDiscardAllAdjustments = () => {
     profileDraftState.reset();
     strategySettingsDraftState.reset();
@@ -1737,159 +1686,6 @@ export const AlgoScreen = ({
   const profileNumberFields = PROFILE_NUMBER_FIELDS;
   const profileBooleanFields = PROFILE_BOOLEAN_FIELDS;
 
-  const cockpitMetricCards = [
-    {
-      label: "Drafts",
-      value: `${draftsQuery.data?.drafts?.length || 0}`,
-      detail: selectedDraft
-        ? `${selectedDraft.name} · ${selectedDraft.mode}`
-        : "awaiting promotion",
-      color: CSS_COLOR.accent,
-    },
-    {
-      label: "Deployments",
-      value: `${cockpitFleet?.totalDeployments ?? deployments.length}`,
-      detail: deployments.length
-        ? `${cockpitFleet?.enabledDeployments ?? enabledDeployments.length} enabled · ${cockpitTradePath.blockedCandidates ?? 0} blocked`
-        : "none created",
-      color:
-        Number(cockpitTradePath.blockedCandidates) > 0
-          ? CSS_COLOR.red
-          : deployments.length
-            ? CSS_COLOR.green
-            : CSS_COLOR.textDim,
-    },
-    {
-      label: "Market Data",
-      value: cockpitReadiness?.ready ? "READY" : marketDataReady ? "LIVE" : "OFFLINE",
-      detail:
-        cockpitReadiness?.message ||
-        (session?.configured?.massive
-          ? "Massive stock + option stream"
-          : "Market data not configured"),
-      color: cockpitReadiness?.ready || marketDataReady ? CSS_COLOR.green : CSS_COLOR.amber,
-    },
-    {
-      label: "Today P&L",
-      value: formatMoney(cockpitKpis.todayPnl, 2),
-      detail: `R ${formatMoney(cockpitKpis.dailyRealizedPnl, 2)} / U ${formatMoney(cockpitKpis.openUnrealizedPnl, 2)}`,
-      color:
-        Number(cockpitKpis.todayPnl) < 0
-          ? CSS_COLOR.red
-          : Number(cockpitKpis.todayPnl) > 0
-            ? CSS_COLOR.green
-            : CSS_COLOR.textDim,
-    },
-    {
-      label: "Latest Event",
-      value: latestEvent ? formatEnumLabel(latestEvent.eventType) : "NONE",
-      detail: latestEvent
-        ? formatRelativeTimeShort(latestEvent.occurredAt)
-        : "no execution events",
-      color: latestEvent ? CSS_COLOR.cyan : CSS_COLOR.textDim,
-    },
-  ];
-
-  const cockpitRiskCards = [
-    ["Today P&L", formatMoney(cockpitKpis.todayPnl, 2), CSS_COLOR.text],
-    ["Loss left", formatMoney(cockpitKpis.dailyLossRemaining, 2), CSS_COLOR.text],
-    ["Premium", formatMoney(cockpitKpis.openPremium, 2), CSS_COLOR.amber],
-    [
-      "Open symbols",
-      `${cockpitKpis.openSymbols ?? 0}/${cockpitKpis.maxOpenSymbols ?? signalOptionsProfile.riskCaps.maxOpenSymbols}`,
-      CSS_COLOR.cyan,
-    ],
-    ["Candidates", cockpitKpis.candidates ?? signalOptionsCandidates.length, CSS_COLOR.cyan],
-    ["Blocked", cockpitKpis.blockedCandidates ?? 0, CSS_COLOR.red],
-    ["Filled", cockpitKpis.shadowFilledCandidates ?? 0, CSS_COLOR.green],
-    ["Positions", cockpitKpis.openPositions ?? signalOptionsPositions.length, CSS_COLOR.green],
-  ];
-
-  const signalOptionsPerformanceCards = [
-    [
-      "Closed",
-      Number(signalOptionsPerformanceSummary.closedTrades ?? 0).toLocaleString(),
-      CSS_COLOR.text,
-    ],
-    [
-      "Realized",
-      formatMoney(signalOptionsPerformanceSummary.realizedPnl, 2),
-      Number(signalOptionsPerformanceSummary.realizedPnl) < 0
-        ? CSS_COLOR.red
-        : Number(signalOptionsPerformanceSummary.realizedPnl) > 0
-          ? CSS_COLOR.green
-          : CSS_COLOR.text,
-    ],
-    [
-      "Win rate",
-      formatPct(signalOptionsPerformanceSummary.winRatePercent, 1),
-      CSS_COLOR.cyan,
-    ],
-    [
-      "Profit factor",
-      formatPlainPrice(signalOptionsPerformanceSummary.profitFactor, 2),
-      CSS_COLOR.amber,
-    ],
-    [
-      "Expectancy",
-      formatMoney(signalOptionsPerformanceSummary.expectancy, 2),
-      CSS_COLOR.text,
-    ],
-    [
-      "Open premium",
-      formatMoney(signalOptionsOpenExposure.openPremium, 2),
-      CSS_COLOR.amber,
-    ],
-    [
-      "Symbol slots",
-      `${signalOptionsOpenExposure.openSymbols ?? cockpitKpis.openSymbols ?? 0}/${signalOptionsOpenExposure.maxOpenSymbols ?? signalOptionsProfile.riskCaps.maxOpenSymbols}`,
-      signalOptionsOpenExposure.atOpenSymbolCapacity ? CSS_COLOR.amber : CSS_COLOR.cyan,
-    ],
-    [
-      "Unmarked",
-      Number(signalOptionsOpenExposure.unmarkedPositions ?? 0).toLocaleString(),
-      Number(signalOptionsOpenExposure.unmarkedPositions) ? CSS_COLOR.amber : CSS_COLOR.green,
-    ],
-  ];
-
-  const cockpitBacktestCards = [
-    ["Strategy", cockpitSourceBacktest?.strategyName || MISSING_VALUE],
-    [
-      "Run",
-      cockpitSourceBacktest?.runName ||
-        cockpitSourceBacktest?.sourceRunId?.slice(0, 8) ||
-        MISSING_VALUE,
-    ],
-    [
-      "Net P&L",
-      formatCockpitMetric(cockpitSourceBacktest?.metrics, "netPnl", (value) =>
-        formatMoney(value, 2),
-      ),
-    ],
-    [
-      "Win rate",
-      formatCockpitMetric(
-        cockpitSourceBacktest?.metrics,
-        "winRatePercent",
-        (value) => formatPct(value, 1),
-      ),
-    ],
-    [
-      "Max DD",
-      formatCockpitMetric(
-        cockpitSourceBacktest?.metrics,
-        "maxDrawdownPercent",
-        (value) => formatPct(value, 1),
-      ),
-    ],
-    [
-      "Trades",
-      formatCockpitMetric(cockpitSourceBacktest?.metrics, "tradeCount", (value) =>
-        Number(value).toLocaleString(),
-      ),
-    ],
-  ];
-
   const visibleSignalRows = useMemo(
     () =>
       buildVisibleSignalRows({
@@ -1906,7 +1702,9 @@ export const AlgoScreen = ({
     ],
   );
   const signalTableScanFallback = useMemo(() => {
-    const pollIntervalSeconds = Number(signalMonitorProfile?.pollIntervalSeconds);
+    const pollIntervalSeconds = Number(
+      signalMonitorProfile?.pollIntervalSeconds,
+    );
     return {
       lastSignalScanAt: latestIsoFromRows(visibleSignalRows, [
         "lastEvaluatedAt",
@@ -1933,7 +1731,9 @@ export const AlgoScreen = ({
       {
         id: "scan_universe",
         label: "Signal Symbols",
-        status: signalTableScanFallback.lastSignalScanAt ? "healthy" : "waiting",
+        status: signalTableScanFallback.lastSignalScanAt
+          ? "healthy"
+          : "waiting",
         count: visibleSignalRows.length || staSignalUniverseSymbols.length || 0,
         latestAt:
           signalTableScanFallback.lastSignalScanAt ||
@@ -1948,7 +1748,9 @@ export const AlgoScreen = ({
       },
     ];
     return mergeStaSignalPipelineStages({
-      stages: cockpitPipelineStages.length ? cockpitPipelineStages : fallbackStages,
+      stages: cockpitPipelineStages.length
+        ? cockpitPipelineStages
+        : fallbackStages,
       signalRows: visibleSignalRows,
       deploymentSymbolUniverse: staSignalUniverseSymbols,
       candidates: signalOptionsCandidates,
@@ -1991,27 +1793,27 @@ export const AlgoScreen = ({
         WebkitOverflowScrolling: algoIsPhone ? "touch" : undefined,
       }}
     >
-    <div
-      style={{
-        width: "100%",
-        padding: sp(algoIsPhone ? "6px 6px 14px" : "16px 24px 20px"),
-        display: "flex",
-        flexDirection: "column",
-        gap: sp(algoIsPhone ? 5 : 10),
-        minWidth: 0,
-      }}
-    >
       <div
-        data-testid="algo-live-content"
-        className="ra-panel-enter"
         style={{
+          width: "100%",
+          padding: sp(algoIsPhone ? "6px 6px 14px" : "16px 24px 20px"),
           display: "flex",
           flexDirection: "column",
-          gap: sp(10),
+          gap: sp(algoIsPhone ? 5 : 10),
           minWidth: 0,
         }}
       >
-        <AlgoLivePage
+        <div
+          data-testid="algo-live-content"
+          className="ra-panel-enter"
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            gap: sp(10),
+            minWidth: 0,
+          }}
+        >
+          <AlgoLivePage
             deployments={deployments}
             pnlByDeploymentId={deploymentPnlById}
             candidateDrafts={candidateDrafts}
@@ -2026,9 +1828,16 @@ export const AlgoScreen = ({
             handleCreateDeployment={handleCreateDeployment}
             createDeploymentMutation={createDeploymentMutation}
             cockpitKpis={cockpitKpis}
-            cockpitRisk={cockpit?.risk}
+            cockpitRisk={cockpitRisk}
             cockpitGeneratedAt={cockpit?.generatedAt}
-            refreshPending={deploymentsQuery.isFetching || cockpitQuery.isFetching}
+            cockpitPnlDataAvailable={cockpitPnlDataAvailable}
+            cockpitRiskDataAvailable={cockpitRiskDataAvailable}
+            cockpitPositionDataAvailable={cockpitPositionDataAvailable}
+            performanceDataAvailable={performanceDataAvailable}
+            positionDataAvailable={positionDataAvailable}
+            refreshPending={
+              deploymentsQuery.isFetching || cockpitQuery.isFetching
+            }
             cockpitSignalFreshness={cockpitSignalFreshness}
             cockpitTradePath={cockpitTradePath}
             signalOptionsPerformanceSummary={signalOptionsPerformanceSummary}
@@ -2042,7 +1851,6 @@ export const AlgoScreen = ({
             signalScanBlockedReason={null}
             transitions={visibleTransitions}
             visibleSignalRows={visibleSignalRows}
-            signalMonitorEventsSourceStatus={signalMonitorEventsSourceStatus}
             signalOptionsCandidates={signalOptionsCandidates}
             signalMatrixStates={signalMatrixStates}
             selectedCandidate={selectedCandidate}
@@ -2052,7 +1860,9 @@ export const AlgoScreen = ({
             onOpenCandidateInTrade={handleOpenCandidateInTrade}
             safeQaMode={safeQaMode}
             signalOptionsPositions={signalOptionsPositions}
-            signalOptionsLedgerPositionsQuery={signalOptionsLedgerPositionsQuery}
+            signalOptionsLedgerPositionsQuery={
+              signalOptionsLedgerPositionsQueryForDisplay
+            }
             positionAccountTabId={algoAccountTab}
             positionAccounts={positionAccounts}
             onSelectPositionAccountTab={setAlgoAccountTab}
@@ -2093,7 +1903,6 @@ export const AlgoScreen = ({
                 focusedDeployment={focusedDeployment}
                 controlBaselineReady={controlBaselineReady}
                 saveAllPending={saveAllPending}
-                handleApplyExpandedCapacity={handleApplyExpandedCapacity}
                 handleSaveAllAdjustments={handleSaveAllAdjustments}
                 handleDiscardAllAdjustments={handleDiscardAllAdjustments}
                 updateProfileMutation={updateProfileMutation}
@@ -2143,8 +1952,8 @@ export const AlgoScreen = ({
             onCancel={() => setPendingLiveSwitch(null)}
             dialogTestId="algo-live-switch-confirm"
           />
+        </div>
       </div>
-    </div>
     </div>
   );
 };

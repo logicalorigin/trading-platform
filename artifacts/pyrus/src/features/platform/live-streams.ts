@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   getGetAccountAllocationQueryKey,
@@ -79,7 +86,9 @@ type QuoteStreamPayload = {
 
 const QUOTE_STREAM_CACHE_FLUSH_MS = 100;
 
-const scheduleRealtimeFlush = (callback: () => void): ReturnType<typeof setTimeout> | null => {
+const scheduleRealtimeFlush = (
+  callback: () => void,
+): ReturnType<typeof setTimeout> | null => {
   if (typeof queueMicrotask === "function") {
     queueMicrotask(callback);
     return null;
@@ -124,7 +133,9 @@ type AccountPageBootstrapPayload = {
   summary: AccountSummaryResponse;
   equityHistory: AccountEquityHistoryResponse;
   intradayEquity: AccountEquityHistoryResponse;
-  benchmarkEquityHistory: Partial<Record<"SPY" | "QQQ" | "DIA", AccountEquityHistoryResponse>>;
+  benchmarkEquityHistory: Partial<
+    Record<"SPY" | "QQQ" | "DIA", AccountEquityHistoryResponse>
+  >;
   performanceCalendarEquity: AccountEquityHistoryResponse;
   performanceCalendarTrades: AccountClosedTradesResponse;
   allocation: AccountAllocationResponse;
@@ -174,7 +185,9 @@ type AccountPageDerivedPayload = {
   performanceCalendarFrom: string | null;
   updatedAt: string;
   equityHistory: AccountEquityHistoryResponse;
-  benchmarkEquityHistory: Partial<Record<"SPY" | "QQQ" | "DIA", AccountEquityHistoryResponse>>;
+  benchmarkEquityHistory: Partial<
+    Record<"SPY" | "QQQ" | "DIA", AccountEquityHistoryResponse>
+  >;
   performanceCalendarEquity: AccountEquityHistoryResponse;
   performanceCalendarTrades: AccountClosedTradesResponse;
   closedTrades: AccountClosedTradesResponse;
@@ -195,39 +208,6 @@ type AlgoCockpitStreamPayload = {
   cockpit: AlgoCockpitSnapshotResponse | null;
   performance: SignalOptionsPerformanceResponse | null;
   signalMonitorProfile: SignalMonitorProfile | null;
-};
-
-type AlgoDeploymentsResponseWithCacheStatus = AlgoDeploymentsResponse & {
-  cacheStatus?: "hit" | "stale" | "unavailable" | string;
-};
-
-const hasAlgoDeployments = (
-  value: AlgoDeploymentsResponse | undefined,
-): value is AlgoDeploymentsResponse =>
-  Boolean(value && Array.isArray(value.deployments) && value.deployments.length);
-
-const isUnavailableEmptyAlgoDeploymentsResponse = (
-  value: AlgoDeploymentsResponse | undefined,
-) => {
-  const cacheStatus = (value as AlgoDeploymentsResponseWithCacheStatus | undefined)
-    ?.cacheStatus;
-  return (
-    cacheStatus === "unavailable" &&
-    (!Array.isArray(value?.deployments) || value.deployments.length === 0)
-  );
-};
-
-export const resolveAlgoDeploymentsStreamCacheUpdate = (
-  current: AlgoDeploymentsResponse | undefined,
-  incoming: AlgoDeploymentsResponse,
-) => {
-  if (
-    hasAlgoDeployments(current) &&
-    isUnavailableEmptyAlgoDeploymentsResponse(incoming)
-  ) {
-    return current;
-  }
-  return incoming;
 };
 
 type OrderStreamPayload = {
@@ -382,7 +362,8 @@ const OPTION_QUOTE_INTENT_PRIORITY: Record<OptionQuoteStreamIntent, number> = {
 
 const shouldUseSharedOptionQuoteStream = (
   intent: OptionQuoteStreamIntent,
-): boolean => OPTION_QUOTE_SHARED_CLIENT_SOCKET_ENABLED && intent === "visible-live";
+): boolean =>
+  OPTION_QUOTE_SHARED_CLIENT_SOCKET_ENABLED && intent === "visible-live";
 
 let sharedOptionQuoteSubscriberId = 1;
 const sharedOptionQuoteSubscribers = new Map<
@@ -391,8 +372,10 @@ const sharedOptionQuoteSubscribers = new Map<
 >();
 let sharedOptionQuoteSocket: WebSocket | null = null;
 let sharedOptionQuoteSocketGeneration = 0;
-let sharedOptionQuoteReconnectTimer: ReturnType<typeof setTimeout> | null = null;
-let sharedOptionQuoteRestFallbackTimer: ReturnType<typeof setInterval> | null = null;
+let sharedOptionQuoteReconnectTimer: ReturnType<typeof setTimeout> | null =
+  null;
+let sharedOptionQuoteRestFallbackTimer: ReturnType<typeof setInterval> | null =
+  null;
 let sharedOptionQuoteStallTimer: ReturnType<typeof setInterval> | null = null;
 let sharedOptionQuoteFlushTimer: ReturnType<typeof setTimeout> | null = null;
 let sharedOptionQuoteFlushScheduled = false;
@@ -540,7 +523,9 @@ const scheduleSharedQueuedOptionQuoteFlush = () => {
     return;
   }
   sharedOptionQuoteFlushScheduled = true;
-  sharedOptionQuoteFlushTimer = scheduleRealtimeFlush(flushSharedQueuedOptionQuotes);
+  sharedOptionQuoteFlushTimer = scheduleRealtimeFlush(
+    flushSharedQueuedOptionQuotes,
+  );
 };
 
 const queueSharedOptionQuotes = (quotes: LiveOptionQuoteSnapshot[]) => {
@@ -695,7 +680,11 @@ const startSharedOptionQuoteWebSocket = (
   sharedOptionQuoteFirstQuoteRecorded = false;
   sharedOptionQuoteLastWebSocketMessageAt = Date.now();
 
-  if (!webSocketUrl || typeof window === "undefined" || typeof window.WebSocket === "undefined") {
+  if (
+    !webSocketUrl ||
+    typeof window === "undefined" ||
+    typeof window.WebSocket === "undefined"
+  ) {
     startSharedOptionQuoteRestFallback(demand);
     return;
   }
@@ -711,24 +700,24 @@ const startSharedOptionQuoteWebSocket = (
 
   const socket = new WebSocket(webSocketUrl);
   sharedOptionQuoteSocket = socket;
-  sharedOptionQuoteStallTimer = setInterval(() => {
-    if (
-      generation !== sharedOptionQuoteSocketGeneration ||
-      !ready
-    ) {
-      return;
-    }
-    const ageMs = Date.now() - sharedOptionQuoteLastWebSocketMessageAt;
-    if (ageMs < OPTION_QUOTE_WEBSOCKET_STALL_MS) {
-      return;
-    }
-    setOptionHydrationDiagnostics({
-      wsState: "stalled",
-      quoteMode: "websocket-stalled",
-      degraded: true,
-    });
-    socket.close();
-  }, Math.max(1_000, Math.floor(OPTION_QUOTE_WEBSOCKET_STALL_MS / 2)));
+  sharedOptionQuoteStallTimer = setInterval(
+    () => {
+      if (generation !== sharedOptionQuoteSocketGeneration || !ready) {
+        return;
+      }
+      const ageMs = Date.now() - sharedOptionQuoteLastWebSocketMessageAt;
+      if (ageMs < OPTION_QUOTE_WEBSOCKET_STALL_MS) {
+        return;
+      }
+      setOptionHydrationDiagnostics({
+        wsState: "stalled",
+        quoteMode: "websocket-stalled",
+        degraded: true,
+      });
+      socket.close();
+    },
+    Math.max(1_000, Math.floor(OPTION_QUOTE_WEBSOCKET_STALL_MS / 2)),
+  );
 
   socket.addEventListener("open", () => {
     if (generation !== sharedOptionQuoteSocketGeneration) {
@@ -937,9 +926,11 @@ export const getBrokerStreamFreshnessSnapshot =
       accountLastEventAt,
       orderLastEventAt,
       accountFresh:
-        accountLastEventAt != null && now - accountLastEventAt <= ACCOUNT_STREAM_FRESH_MS,
+        accountLastEventAt != null &&
+        now - accountLastEventAt <= ACCOUNT_STREAM_FRESH_MS,
       orderFresh:
-        orderLastEventAt != null && now - orderLastEventAt <= ACCOUNT_STREAM_FRESH_MS,
+        orderLastEventAt != null &&
+        now - orderLastEventAt <= ACCOUNT_STREAM_FRESH_MS,
     };
   };
 
@@ -956,22 +947,23 @@ const getBrokerStreamFreshnessStatusToken = () => {
   return `${status.accountFresh ? 1 : 0}:${status.orderFresh ? 1 : 0}`;
 };
 
-export const useBrokerStreamFreshnessSnapshot =
-  (enabled = true): BrokerStreamFreshnessSnapshot => {
-    useSyncExternalStore(
-      enabled ? subscribeBrokerStreamFreshness : () => () => {},
-      enabled ? getBrokerStreamFreshnessVersion : () => 0,
-      () => 0,
-    );
-    useEffect(() => {
-      if (!enabled) {
-        return undefined;
-      }
-      const interval = setInterval(emitBrokerStreamFreshness, 1_000);
-      return () => clearInterval(interval);
-    }, [enabled]);
-    return getBrokerStreamFreshnessSnapshot();
-  };
+export const useBrokerStreamFreshnessSnapshot = (
+  enabled = true,
+): BrokerStreamFreshnessSnapshot => {
+  useSyncExternalStore(
+    enabled ? subscribeBrokerStreamFreshness : () => () => {},
+    enabled ? getBrokerStreamFreshnessVersion : () => 0,
+    () => 0,
+  );
+  useEffect(() => {
+    if (!enabled) {
+      return undefined;
+    }
+    const interval = setInterval(emitBrokerStreamFreshness, 1_000);
+    return () => clearInterval(interval);
+  }, [enabled]);
+  return getBrokerStreamFreshnessSnapshot();
+};
 
 export const useBrokerStreamFreshnessStatus = (enabled = true) => {
   const statusToken = useSyncExternalStore(
@@ -1006,22 +998,23 @@ export const getShadowAccountStreamFreshnessSnapshot =
     };
   };
 
-export const useShadowAccountStreamFreshnessSnapshot =
-  (enabled = true): ShadowAccountStreamFreshnessSnapshot => {
-    useSyncExternalStore(
-      enabled ? subscribeShadowAccountStreamFreshness : () => () => {},
-      enabled ? getShadowAccountStreamFreshnessVersion : () => 0,
-      () => 0,
-    );
-    useEffect(() => {
-      if (!enabled) {
-        return undefined;
-      }
-      const interval = setInterval(emitShadowAccountStreamFreshness, 1_000);
-      return () => clearInterval(interval);
-    }, [enabled]);
-    return getShadowAccountStreamFreshnessSnapshot();
-  };
+export const useShadowAccountStreamFreshnessSnapshot = (
+  enabled = true,
+): ShadowAccountStreamFreshnessSnapshot => {
+  useSyncExternalStore(
+    enabled ? subscribeShadowAccountStreamFreshness : () => () => {},
+    enabled ? getShadowAccountStreamFreshnessVersion : () => 0,
+    () => 0,
+  );
+  useEffect(() => {
+    if (!enabled) {
+      return undefined;
+    }
+    const interval = setInterval(emitShadowAccountStreamFreshness, 1_000);
+    return () => clearInterval(interval);
+  }, [enabled]);
+  return getShadowAccountStreamFreshnessSnapshot();
+};
 
 export const getOptionQuoteSnapshotCacheSize = (): number =>
   optionQuoteSnapshotsByProviderContractId.size;
@@ -1124,7 +1117,7 @@ const buildWebSocketUrl = (path: string): string | null => {
   return url.toString();
 };
 
-const parseJsonPayload = <T,>(value: string): T | null => {
+const parseJsonPayload = <T>(value: string): T | null => {
   try {
     return JSON.parse(value) as T;
   } catch {
@@ -1147,10 +1140,7 @@ const positiveOptionQuotePrice = (...values: unknown[]): number | null => {
   return null;
 };
 
-const optionQuoteMidpoint = (
-  bid: unknown,
-  ask: unknown,
-): number | null => {
+const optionQuoteMidpoint = (bid: unknown, ask: unknown): number | null => {
   if (!isPositiveFiniteNumber(bid) || !isPositiveFiniteNumber(ask)) {
     return null;
   }
@@ -1228,8 +1218,9 @@ const normalizeOpraOptionTicker = (
   return /^O:[A-Z0-9.-]+\d{6}[CP]\d{8}$/.test(ticker) ? ticker : "";
 };
 
-const isOpraOptionTicker = (providerContractId: string | null | undefined): boolean =>
-  Boolean(normalizeOpraOptionTicker(providerContractId));
+const isOpraOptionTicker = (
+  providerContractId: string | null | undefined,
+): boolean => Boolean(normalizeOpraOptionTicker(providerContractId));
 
 const normalizeIbkrProviderContractId = (
   providerContractId: string | number | null | undefined,
@@ -1255,14 +1246,16 @@ const subscribeToOptionQuoteSnapshot = (
   providerContractId: string,
   listener: () => void,
 ): (() => void) => {
-  const normalizedProviderContractId = normalizeProviderContractId(providerContractId);
+  const normalizedProviderContractId =
+    normalizeProviderContractId(providerContractId);
   if (!normalizedProviderContractId) {
     return () => {};
   }
 
   const listeners =
-    optionQuoteStoreListenersByProviderContractId.get(normalizedProviderContractId) ||
-    new Set();
+    optionQuoteStoreListenersByProviderContractId.get(
+      normalizedProviderContractId,
+    ) || new Set();
   listeners.add(listener);
   optionQuoteStoreListenersByProviderContractId.set(
     normalizedProviderContractId,
@@ -1270,8 +1263,9 @@ const subscribeToOptionQuoteSnapshot = (
   );
 
   return () => {
-    const currentListeners =
-      optionQuoteStoreListenersByProviderContractId.get(normalizedProviderContractId);
+    const currentListeners = optionQuoteStoreListenersByProviderContractId.get(
+      normalizedProviderContractId,
+    );
     currentListeners?.delete(listener);
     if (currentListeners && currentListeners.size === 0) {
       optionQuoteStoreListenersByProviderContractId.delete(
@@ -1282,7 +1276,9 @@ const subscribeToOptionQuoteSnapshot = (
 };
 
 const getOptionQuoteSnapshotVersion = (providerContractId: string): number =>
-  optionQuoteStoreVersions.get(normalizeProviderContractId(providerContractId)) ?? 0;
+  optionQuoteStoreVersions.get(
+    normalizeProviderContractId(providerContractId),
+  ) ?? 0;
 
 const flushOptionQuoteNotifications = () => {
   optionQuoteNotifyScheduled = false;
@@ -1336,7 +1332,9 @@ const cacheOptionQuoteSnapshot = (
   }
 
   const currentQuote =
-    optionQuoteSnapshotsByProviderContractId.get(normalizedProviderContractId) || null;
+    optionQuoteSnapshotsByProviderContractId.get(
+      normalizedProviderContractId,
+    ) || null;
   const currentUpdatedAt = getUpdatedAtTime(currentQuote?.updatedAt);
   const nextUpdatedAt = getUpdatedAtTime(quote.updatedAt);
   const nowMs = Date.now();
@@ -1388,8 +1386,8 @@ const cacheOptionQuoteSnapshot = (
     let evicted = false;
     for (const evictKey of optionQuoteSnapshotsByProviderContractId.keys()) {
       const stillSubscribed =
-        (optionQuoteStoreListenersByProviderContractId.get(evictKey)?.size ?? 0) >
-        0;
+        (optionQuoteStoreListenersByProviderContractId.get(evictKey)?.size ??
+          0) > 0;
       if (stillSubscribed) {
         continue;
       }
@@ -1421,7 +1419,9 @@ const finiteOptionNumber = (...values: unknown[]): number | null => {
 };
 
 const optionRightCode = (value: unknown): "C" | "P" | null => {
-  const normalized = String(value ?? "").trim().toLowerCase();
+  const normalized = String(value ?? "")
+    .trim()
+    .toLowerCase();
   if (normalized === "call" || normalized === "c") {
     return "C";
   }
@@ -1452,7 +1452,9 @@ const structuredOptionProviderContractId = (
   if (explicitTicker) {
     return explicitTicker;
   }
-  const underlying = String(contract?.underlying ?? "").trim().toUpperCase();
+  const underlying = String(contract?.underlying ?? "")
+    .trim()
+    .toUpperCase();
   const expiration = optionExpirationKey(contract?.expirationDate);
   const strike = finiteOptionNumber(contract?.strike);
   const right = optionRightCode(contract?.right);
@@ -1460,16 +1462,16 @@ const structuredOptionProviderContractId = (
     return null;
   }
   const opraUnderlying = underlying.replace(/[^A-Z0-9]/g, "");
-  const opraExpiration = expiration.length === 8 ? expiration.slice(2) : expiration;
+  const opraExpiration =
+    expiration.length === 8 ? expiration.slice(2) : expiration;
   const strikeKey = String(Math.round(strike * 1000)).padStart(8, "0");
   return opraUnderlying
     ? `O:${opraUnderlying}${opraExpiration}${right}${strikeKey}`
     : null;
 };
 
-const optionPositionProviderContractId = (
-  row: AccountPositionRow,
-): string => optionPositionProviderContractIds(row)[0] || "";
+const optionPositionProviderContractId = (row: AccountPositionRow): string =>
+  optionPositionProviderContractIds(row)[0] || "";
 
 const optionPositionProviderContractIds = (
   row: AccountPositionRow,
@@ -1481,7 +1483,9 @@ const optionPositionProviderContractIds = (
     | undefined;
   const primaryProviderContractId =
     normalizeIbkrProviderContractId(row.optionContract?.providerContractId) ||
-    normalizeIbkrProviderContractId(rowWithOptionQuote.optionQuote?.providerContractId) ||
+    normalizeIbkrProviderContractId(
+      rowWithOptionQuote.optionQuote?.providerContractId,
+    ) ||
     normalizeIbkrProviderContractId(
       typeof contract?.conid === "string" || typeof contract?.conid === "number"
         ? contract.conid
@@ -1494,7 +1498,11 @@ const optionPositionProviderContractIds = (
 };
 
 const optionQuoteStatusRank = (status: unknown): number => {
-  switch (String(status ?? "").trim().toLowerCase()) {
+  switch (
+    String(status ?? "")
+      .trim()
+      .toLowerCase()
+  ) {
     case "live":
       return 5;
     case "stale":
@@ -1551,7 +1559,11 @@ const compareLiveOptionQuoteSnapshots = (
 
   const leftTimestamp = optionQuoteSnapshotTimestampMs(left);
   const rightTimestamp = optionQuoteSnapshotTimestampMs(right);
-  if (leftTimestamp !== null && rightTimestamp !== null && leftTimestamp !== rightTimestamp) {
+  if (
+    leftTimestamp !== null &&
+    rightTimestamp !== null &&
+    leftTimestamp !== rightTimestamp
+  ) {
     return leftTimestamp - rightTimestamp;
   }
   if (leftTimestamp !== null && rightTimestamp === null) return 1;
@@ -1559,7 +1571,11 @@ const compareLiveOptionQuoteSnapshots = (
 
   const leftCacheAge = finiteOptionNumber(left?.cacheAgeMs, left?.ageMs);
   const rightCacheAge = finiteOptionNumber(right?.cacheAgeMs, right?.ageMs);
-  if (leftCacheAge !== null && rightCacheAge !== null && leftCacheAge !== rightCacheAge) {
+  if (
+    leftCacheAge !== null &&
+    rightCacheAge !== null &&
+    leftCacheAge !== rightCacheAge
+  ) {
     return rightCacheAge - leftCacheAge;
   }
   if (leftCacheAge !== null && rightCacheAge === null) return 1;
@@ -1572,10 +1588,13 @@ const freshestOptionQuoteSnapshotForProviderContractIds = (
   providerContractIds: string[],
   quoteByProviderContractId: Map<string, LiveOptionQuoteSnapshot>,
 ): LiveOptionQuoteSnapshot | null =>
-  providerContractIds.reduce<LiveOptionQuoteSnapshot | null>((best, providerContractId) => {
-    const quote = quoteByProviderContractId.get(providerContractId) ?? null;
-    return compareLiveOptionQuoteSnapshots(quote, best) > 0 ? quote : best;
-  }, null);
+  providerContractIds.reduce<LiveOptionQuoteSnapshot | null>(
+    (best, providerContractId) => {
+      const quote = quoteByProviderContractId.get(providerContractId) ?? null;
+      return compareLiveOptionQuoteSnapshots(quote, best) > 0 ? quote : best;
+    },
+    null,
+  );
 
 const optionQuotePositionSource = (
   source: LiveOptionQuoteSnapshot["source"] | undefined,
@@ -1614,7 +1633,9 @@ type OptionPricedPosition = {
 const isOptionPricedPosition = (position: OptionPricedPosition): boolean =>
   Boolean(position.optionContract) ||
   normalizeAccountAssetClass(position.positionType) === "option" ||
-  ["option", "options"].includes(String(position.assetClass || "").toLowerCase());
+  ["option", "options"].includes(
+    String(position.assetClass || "").toLowerCase(),
+  );
 
 const optionPositionMultiplier = (position: OptionPricedPosition): number => {
   if (!isOptionPricedPosition(position)) {
@@ -1644,7 +1665,10 @@ const optionPriceLooksContractScaled = (
     position.averagePrice,
     position.averageCost,
   );
-  const rawMarketPrice = finiteOptionNumber(position.marketPrice, position.mark);
+  const rawMarketPrice = finiteOptionNumber(
+    position.marketPrice,
+    position.mark,
+  );
   const rawPriceIsFlatFallback =
     rawAveragePrice !== null &&
     rawMarketPrice !== null &&
@@ -1681,12 +1705,15 @@ const optionPriceLooksContractScaled = (
   return price >= multiplier * 0.5;
 };
 
-const ACCOUNT_POSITION_MARKET_DATE_FORMATTER = new Intl.DateTimeFormat("en-CA", {
-  timeZone: "America/New_York",
-  year: "numeric",
-  month: "2-digit",
-  day: "2-digit",
-});
+const ACCOUNT_POSITION_MARKET_DATE_FORMATTER = new Intl.DateTimeFormat(
+  "en-CA",
+  {
+    timeZone: "America/New_York",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  },
+);
 
 const accountPositionDateOrNull = (value: unknown): Date | null => {
   if (value instanceof Date) {
@@ -1699,7 +1726,12 @@ const accountPositionDateOrNull = (value: unknown): Date | null => {
   const compact = raw.match(/^(\d{4})(\d{2})(\d{2})$/);
   if (compact) {
     return new Date(
-      Date.UTC(Number(compact[1]), Number(compact[2]) - 1, Number(compact[3]), 12),
+      Date.UTC(
+        Number(compact[1]),
+        Number(compact[2]) - 1,
+        Number(compact[3]),
+        12,
+      ),
     );
   }
   const dashed = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
@@ -1712,7 +1744,9 @@ const accountPositionDateOrNull = (value: unknown): Date | null => {
   return Number.isNaN(parsed.getTime()) ? null : parsed;
 };
 
-const accountPositionDateOnlyMarketDateKey = (value: unknown): string | null => {
+const accountPositionDateOnlyMarketDateKey = (
+  value: unknown,
+): string | null => {
   if (typeof value === "string") {
     const raw = value.trim();
     const compact = raw.match(/^(\d{4})(\d{2})(\d{2})$/);
@@ -1779,7 +1813,9 @@ const patchAccountPositionRowFromOptionQuote = (
   const rowWithOptionQuote = row as AccountPositionRowWithOptionQuote;
   const providerContractIds = optionPositionProviderContractIds(row);
   const providerContractId = providerContractIds[0] || "";
-  const quoteProviderContractId = normalizeProviderContractId(quote.providerContractId);
+  const quoteProviderContractId = normalizeProviderContractId(
+    quote.providerContractId,
+  );
   if (
     !providerContractId ||
     !quoteProviderContractId ||
@@ -1793,7 +1829,9 @@ const patchAccountPositionRowFromOptionQuote = (
   const averageCost = normalizeOptionPremiumPrice(row, row.averageCost);
   const multiplier = optionPositionMultiplier(row);
   const marketValue =
-    mark !== null && quantity !== null ? mark * quantity * multiplier : row.marketValue;
+    mark !== null && quantity !== null
+      ? mark * quantity * multiplier
+      : row.marketValue;
   const unrealizedPnl =
     mark !== null && averageCost !== null && quantity !== null
       ? (mark - averageCost) * quantity * multiplier
@@ -1806,10 +1844,28 @@ const patchAccountPositionRowFromOptionQuote = (
     unrealizedPnl !== null && costBasis && costBasis > 0
       ? (unrealizedPnl / costBasis) * 100
       : row.unrealizedPnlPercent;
-  const perContractDayChange = finiteOptionNumber(
+  const quoteDayChange = finiteOptionNumber(
     (quote as LiveOptionQuoteSnapshot & { dayChange?: unknown }).dayChange,
     quote.change,
   );
+  const previousClose = finiteOptionNumber(
+    (quote as LiveOptionQuoteSnapshot & { prevClose?: unknown }).prevClose,
+  );
+  const markDayChange =
+    mark !== null && previousClose !== null && previousClose > 0
+      ? mark - previousClose
+      : null;
+  const perContractDayChange = markDayChange ?? quoteDayChange;
+  const quoteDayChangePercent = finiteOptionNumber(
+    (quote as LiveOptionQuoteSnapshot & { dayChangePercent?: unknown })
+      .dayChangePercent,
+    quote.changePercent,
+    row.dayChangePercent,
+  );
+  const perContractDayChangePercent =
+    markDayChange !== null && previousClose !== null && previousClose > 0
+      ? (markDayChange / previousClose) * 100
+      : quoteDayChangePercent;
   const sameDayPosition = accountPositionOpenedOnCurrentMarketDay(row.openedAt);
   const sameDayUnrealizedPnl = finiteOptionNumber(unrealizedPnl);
   const sameDayUnrealizedPnlPercent = finiteOptionNumber(unrealizedPnlPercent);
@@ -1838,22 +1894,25 @@ const patchAccountPositionRowFromOptionQuote = (
     ? row.dayChangePercent
     : sameDayPosition && sameDayUnrealizedPnlPercent !== null
       ? sameDayUnrealizedPnlPercent
-      : finiteOptionNumber(
-          (quote as LiveOptionQuoteSnapshot & { dayChangePercent?: unknown }).dayChangePercent,
-          quote.changePercent,
-          row.dayChangePercent,
-        );
+      : perContractDayChangePercent !== null &&
+          quantity !== null &&
+          quantity !== 0
+        ? perContractDayChangePercent * Math.sign(quantity)
+        : perContractDayChangePercent;
   const bid = finiteOptionNumber(quote.bid);
   const ask = finiteOptionNumber(quote.ask);
   const mid = optionQuoteMidpoint(bid, ask);
   const spread =
-    bid !== null && ask !== null ? ask - bid : finiteOptionNumber(row.quote?.spread);
+    bid !== null && ask !== null
+      ? ask - bid
+      : finiteOptionNumber(row.quote?.spread);
   const spreadPercent =
     spread !== null && mark !== null && mark > 0
       ? (spread / mark) * 100
       : finiteOptionNumber(row.quote?.spreadPercent);
   const source = optionQuotePositionSource(quote.source);
-  const updatedAt = quote.dataUpdatedAt ?? quote.updatedAt ?? row.quote?.updatedAt ?? null;
+  const updatedAt =
+    quote.dataUpdatedAt ?? quote.updatedAt ?? row.quote?.updatedAt ?? null;
   const last = finiteOptionNumber(
     (quote as LiveOptionQuoteSnapshot & { last?: unknown }).last,
     quote.price,
@@ -1861,7 +1920,10 @@ const patchAccountPositionRowFromOptionQuote = (
   );
   const currentOptionQuote: AccountOptionQuotePatch =
     rowWithOptionQuote.optionQuote || {};
-  const currentPositionQuote = row.quote as AccountOptionQuotePatch | null | undefined;
+  const currentPositionQuote = row.quote as
+    | AccountOptionQuotePatch
+    | null
+    | undefined;
   const optionQuote = {
     ...currentOptionQuote,
     ...quote,
@@ -1879,12 +1941,17 @@ const patchAccountPositionRowFromOptionQuote = (
       finiteOptionNumber(currentOptionQuote.dayChange) ??
       null,
     dayChangePercent:
-      dayChangePercent ?? finiteOptionNumber(currentOptionQuote.dayChangePercent) ?? null,
-    bidSize: finiteOptionNumber(quote.bidSize, currentOptionQuote.bidSize) ?? null,
-    askSize: finiteOptionNumber(quote.askSize, currentOptionQuote.askSize) ?? null,
+      perContractDayChangePercent ??
+      finiteOptionNumber(currentOptionQuote.dayChangePercent) ??
+      null,
+    bidSize:
+      finiteOptionNumber(quote.bidSize, currentOptionQuote.bidSize) ?? null,
+    askSize:
+      finiteOptionNumber(quote.askSize, currentOptionQuote.askSize) ?? null,
     volume: finiteOptionNumber(quote.volume, currentOptionQuote.volume) ?? null,
     openInterest:
-      finiteOptionNumber(quote.openInterest, currentOptionQuote.openInterest) ?? null,
+      finiteOptionNumber(quote.openInterest, currentOptionQuote.openInterest) ??
+      null,
     impliedVolatility:
       finiteOptionNumber(
         quote.impliedVolatility,
@@ -1895,12 +1962,20 @@ const patchAccountPositionRowFromOptionQuote = (
     theta: finiteOptionNumber(quote.theta, currentOptionQuote.theta) ?? null,
     vega: finiteOptionNumber(quote.vega, currentOptionQuote.vega) ?? null,
     underlyingPrice:
-      finiteOptionNumber(quote.underlyingPrice, currentOptionQuote.underlyingPrice) ??
-      null,
+      finiteOptionNumber(
+        quote.underlyingPrice,
+        currentOptionQuote.underlyingPrice,
+      ) ?? null,
     freshness: quote.freshness ?? currentOptionQuote.freshness ?? null,
-    status: quote.status ?? quote.quoteStatus ?? currentOptionQuote.status ?? null,
-    reason: quote.reason ?? quote.quoteReason ?? currentOptionQuote.reason ?? null,
-    quoteStatus: quote.quoteStatus ?? quote.status ?? currentOptionQuote.quoteStatus ?? null,
+    status:
+      quote.status ?? quote.quoteStatus ?? currentOptionQuote.status ?? null,
+    reason:
+      quote.reason ?? quote.quoteReason ?? currentOptionQuote.reason ?? null,
+    quoteStatus:
+      quote.quoteStatus ??
+      quote.status ??
+      currentOptionQuote.quoteStatus ??
+      null,
     quoteReason: quote.quoteReason ?? currentOptionQuote.quoteReason ?? null,
     greeksStatus: quote.greeksStatus ?? currentOptionQuote.greeksStatus ?? null,
     greeksReason: quote.greeksReason ?? currentOptionQuote.greeksReason ?? null,
@@ -1912,18 +1987,23 @@ const patchAccountPositionRowFromOptionQuote = (
       currentOptionQuote.quoteFreshness ??
       currentOptionQuote.freshness ??
       null,
-    greeksFreshness: quote.greeksFreshness ?? currentOptionQuote.greeksFreshness ?? null,
+    greeksFreshness:
+      quote.greeksFreshness ?? currentOptionQuote.greeksFreshness ?? null,
     unavailableDetail:
       quote.unavailableDetail ??
       quote.quoteReason ??
       quote.reason ??
       currentOptionQuote.unavailableDetail ??
       null,
-    marketDataMode: quote.marketDataMode ?? currentOptionQuote.marketDataMode ?? null,
+    marketDataMode:
+      quote.marketDataMode ?? currentOptionQuote.marketDataMode ?? null,
     updatedAt,
-    dataUpdatedAt: quote.dataUpdatedAt ?? currentOptionQuote.dataUpdatedAt ?? null,
+    dataUpdatedAt:
+      quote.dataUpdatedAt ?? currentOptionQuote.dataUpdatedAt ?? null,
     ageMs: finiteOptionNumber(quote.ageMs, currentOptionQuote.ageMs) ?? null,
-    cacheAgeMs: finiteOptionNumber(quote.cacheAgeMs, currentOptionQuote.cacheAgeMs) ?? null,
+    cacheAgeMs:
+      finiteOptionNumber(quote.cacheAgeMs, currentOptionQuote.cacheAgeMs) ??
+      null,
     source,
     transport: quote.transport ?? currentOptionQuote.transport ?? null,
     delayed: quote.delayed ?? currentOptionQuote.delayed ?? null,
@@ -1953,15 +2033,20 @@ const patchAccountPositionRowFromOptionQuote = (
       freshness: quote.freshness ?? row.quote?.freshness ?? null,
       status: quote.status ?? quote.quoteStatus ?? row.quote?.status ?? null,
       reason: quote.reason ?? quote.quoteReason ?? row.quote?.reason ?? null,
-      quoteStatus: quote.quoteStatus ?? quote.status ?? row.quote?.quoteStatus ?? null,
+      quoteStatus:
+        quote.quoteStatus ?? quote.status ?? row.quote?.quoteStatus ?? null,
       quoteReason: quote.quoteReason ?? row.quote?.quoteReason ?? null,
       greeksStatus: quote.greeksStatus ?? row.quote?.greeksStatus ?? null,
       greeksReason: quote.greeksReason ?? row.quote?.greeksReason ?? null,
       demandStatus: quote.demandStatus ?? row.quote?.demandStatus ?? null,
       demandReason: quote.demandReason ?? row.quote?.demandReason ?? null,
       quoteFreshness:
-        quote.quoteFreshness ?? quote.freshness ?? row.quote?.quoteFreshness ?? null,
-      greeksFreshness: quote.greeksFreshness ?? row.quote?.greeksFreshness ?? null,
+        quote.quoteFreshness ??
+        quote.freshness ??
+        row.quote?.quoteFreshness ??
+        null,
+      greeksFreshness:
+        quote.greeksFreshness ?? row.quote?.greeksFreshness ?? null,
       unavailableDetail:
         quote.unavailableDetail ??
         quote.quoteReason ??
@@ -1974,7 +2059,9 @@ const patchAccountPositionRowFromOptionQuote = (
       ageMs: finiteOptionNumber(quote.ageMs, row.quote?.ageMs),
       cacheAgeMs: finiteOptionNumber(quote.cacheAgeMs, row.quote?.cacheAgeMs),
       underlyingPrice:
-        optionQuote.underlyingPrice ?? currentPositionQuote?.underlyingPrice ?? null,
+        optionQuote.underlyingPrice ??
+        currentPositionQuote?.underlyingPrice ??
+        null,
       source,
     },
   } as AccountPositionRow;
@@ -2007,7 +2094,9 @@ export const patchAccountPositionsFromOptionQuotes = (
   }
   const quoteByProviderContractId = new Map(
     quotes.flatMap((quote) => {
-      const providerContractId = normalizeProviderContractId(quote.providerContractId);
+      const providerContractId = normalizeProviderContractId(
+        quote.providerContractId,
+      );
       return providerContractId ? [[providerContractId, quote] as const] : [];
     }),
   );
@@ -2053,7 +2142,9 @@ export const mergeOptionQuoteSnapshotForCache = (
   const currentAsk = positiveOptionQuotePrice(currentQuote?.ask);
   const incomingBid = positiveOptionQuotePrice(quote.bid);
   const incomingAsk = positiveOptionQuotePrice(quote.ask);
-  const incomingUnderlyingPrice = positiveOptionQuotePrice(quote.underlyingPrice);
+  const incomingUnderlyingPrice = positiveOptionQuotePrice(
+    quote.underlyingPrice,
+  );
   const currentUnderlyingPrice = positiveOptionQuotePrice(
     currentQuote?.underlyingPrice,
   );
@@ -2071,10 +2162,12 @@ export const mergeOptionQuoteSnapshotForCache = (
       positiveOptionQuotePrice(currentQuote?.price) ??
       optionQuoteMidpoint(currentBid, currentAsk) ??
       quote.price,
-    change: incomingHasUsablePrice ? quote.change : currentQuote?.change ?? quote.change,
+    change: incomingHasUsablePrice
+      ? quote.change
+      : (currentQuote?.change ?? quote.change),
     changePercent: incomingHasUsablePrice
       ? quote.changePercent
-      : currentQuote?.changePercent ?? quote.changePercent,
+      : (currentQuote?.changePercent ?? quote.changePercent),
     underlyingPrice:
       incomingUnderlyingPrice ??
       currentUnderlyingPrice ??
@@ -2148,24 +2241,24 @@ const seedOptionQuoteSnapshotsFromContracts = (
 export const getStoredOptionQuoteSnapshot = (
   providerContractId?: string | null,
 ): LiveOptionQuoteSnapshot | null => {
-  const normalizedProviderContractId = normalizeProviderContractId(
-    providerContractId,
-  );
+  const normalizedProviderContractId =
+    normalizeProviderContractId(providerContractId);
   if (!normalizedProviderContractId) {
     return null;
   }
 
   return (
-    optionQuoteSnapshotsByProviderContractId.get(normalizedProviderContractId) || null
+    optionQuoteSnapshotsByProviderContractId.get(
+      normalizedProviderContractId,
+    ) || null
   );
 };
 
 export const useStoredOptionQuoteSnapshot = (
   providerContractId?: string | null,
 ): LiveOptionQuoteSnapshot | null => {
-  const normalizedProviderContractId = normalizeProviderContractId(
-    providerContractId,
-  );
+  const normalizedProviderContractId =
+    normalizeProviderContractId(providerContractId);
   useSyncExternalStore(
     (listener) =>
       subscribeToOptionQuoteSnapshot(normalizedProviderContractId, listener),
@@ -2180,7 +2273,9 @@ export const useStoredOptionQuoteSnapshotVersion = (
   providerContractIds: string[] = [],
 ): number => {
   const providerContractIdSignature = Array.from(
-    new Set(providerContractIds.map(normalizeProviderContractId).filter(Boolean)),
+    new Set(
+      providerContractIds.map(normalizeProviderContractId).filter(Boolean),
+    ),
   )
     .sort()
     .join("\u001f");
@@ -2237,7 +2332,9 @@ const readSymbolsParam = (queryKey: unknown): string[] => {
 
 const QUOTE_STREAM_FUTURE_TOLERANCE_MS = 2 * 60 * 1000;
 
-const maxFiniteTimestampMs = (...values: Array<number | null>): number | null => {
+const maxFiniteTimestampMs = (
+  ...values: Array<number | null>
+): number | null => {
   let max: number | null = null;
   values.forEach((value) => {
     if (typeof value !== "number" || !Number.isFinite(value)) {
@@ -2280,11 +2377,13 @@ const readQuoteTimestampMs = (value: unknown): number | null => {
   return null;
 };
 
-const readQuoteReceivedAtMs = (quote: QuoteSnapshot | undefined): number | null => {
+const readQuoteReceivedAtMs = (
+  quote: QuoteSnapshot | undefined,
+): number | null => {
   const latency = quote?.latency;
   return readQuoteTimestampMs(
     latency && typeof latency === "object"
-      ? latency.apiServerReceivedAt ?? latency.apiServerEmittedAt
+      ? (latency.apiServerReceivedAt ?? latency.apiServerEmittedAt)
       : null,
   );
 };
@@ -2405,15 +2504,14 @@ const collectLatestCachedQuotesBySymbol = (
 const filterAcceptedQuoteSnapshots = (
   incomingQuotes: QuoteSnapshot[],
   latestBySymbol: Map<string, QuoteSnapshot>,
-): QuoteSnapshot[] => (
+): QuoteSnapshot[] =>
   incomingQuotes.filter((quote) => {
     const symbol = quote.symbol?.toUpperCase?.();
     if (!symbol) {
       return false;
     }
     return isQuoteSnapshotAtLeastAsFresh(quote, latestBySymbol.get(symbol));
-  })
-);
+  });
 
 const matchesMode = (
   params: Record<string, unknown> | null,
@@ -2433,10 +2531,16 @@ const accountScopedPrefix = (accountId: string): string =>
   `/api/accounts/${accountId}`;
 
 const normalizeAccountAssetClass = (value: unknown): string | null => {
-  const normalized = String(value ?? "").trim().toLowerCase();
+  const normalized = String(value ?? "")
+    .trim()
+    .toLowerCase();
   if (!normalized) return null;
   if (normalized === "all") return "all";
-  if (normalized === "option" || normalized === "options" || normalized === "opt") {
+  if (
+    normalized === "option" ||
+    normalized === "options" ||
+    normalized === "opt"
+  ) {
     return "option";
   }
   if (normalized === "etf" || normalized === "etfs" || normalized === "fund") {
@@ -2449,10 +2553,7 @@ const normalizeAccountAssetClass = (value: unknown): string | null => {
   ) {
     return "stock";
   }
-  if (
-    normalized === "equity" ||
-    normalized === "equities"
-  ) {
+  if (normalized === "equity" || normalized === "equities") {
     return "equity";
   }
   return normalized;
@@ -2609,6 +2710,12 @@ const accountsForScopedAccountId = (
           account.id === accountId || account.providerAccountId === accountId,
       );
 
+const accountStreamHasScopedAccount = (
+  payload: AccountStreamPayload,
+  accountId: string,
+): boolean =>
+  accountsForScopedAccountId(payload.accounts, accountId).length > 0;
+
 const sumAccountField = (
   accounts: AccountsResponse["accounts"],
   field: keyof BrokerAccount,
@@ -2635,11 +2742,14 @@ const accountIdFromScopedPath = (
   resourceName: string,
 ): string | null => {
   const match = path?.match(/^\/api\/accounts\/([^/]+)\/([^/]+)$/);
-  return match?.[2] === resourceName ? decodeURIComponent(match[1] || "") : null;
+  return match?.[2] === resourceName
+    ? decodeURIComponent(match[1] || "")
+    : null;
 };
 
-const pointTimestampMs = (point: Pick<AccountEquityPoint, "timestamp">): number | null =>
-  parseAccountTimestampMs(point.timestamp);
+const pointTimestampMs = (
+  point: Pick<AccountEquityPoint, "timestamp">,
+): number | null => parseAccountTimestampMs(point.timestamp);
 
 const recomputeEquityReturns = (
   points: AccountEquityPoint[],
@@ -2661,7 +2771,10 @@ const upsertLiveEquityTerminalPoint = (
     return current;
   }
 
-  const scopedAccounts = accountsForScopedAccountId(payload.accounts, accountId);
+  const scopedAccounts = accountsForScopedAccountId(
+    payload.accounts,
+    accountId,
+  );
   if (!scopedAccounts.length) {
     return current;
   }
@@ -2723,8 +2836,7 @@ const upsertLiveEquityTerminalPoint = (
       .filter((point) => {
         const pointMs = pointTimestampMs(point);
         return (
-          pointMs !== null &&
-          (rangeStartMs === null || pointMs >= rangeStartMs)
+          pointMs !== null && (rangeStartMs === null || pointMs >= rangeStartMs)
         );
       })
       .sort((left, right) => {
@@ -2819,7 +2931,10 @@ const upsertAccountPageLiveEquityTerminalPoint = (
   const source = accountPageEquityPointSource(netLiquidationMetric?.source);
   const terminalPointSource = accountPageTerminalPointSource(source);
   const currency =
-    netLiquidationMetric?.currency || payload.summary?.currency || current.currency || "USD";
+    netLiquidationMetric?.currency ||
+    payload.summary?.currency ||
+    current.currency ||
+    "USD";
   const livePoint: AccountEquityPoint = {
     timestamp,
     netLiquidation,
@@ -2844,8 +2959,7 @@ const upsertAccountPageLiveEquityTerminalPoint = (
       .filter((point) => {
         const pointMs = pointTimestampMs(point);
         return (
-          pointMs !== null &&
-          (rangeStartMs === null || pointMs >= rangeStartMs)
+          pointMs !== null && (rangeStartMs === null || pointMs >= rangeStartMs)
         );
       })
       .sort((left, right) => {
@@ -2925,13 +3039,18 @@ const patchAccountSummaryFromStream = (
     return current;
   }
 
-  const scopedAccounts = accountsForScopedAccountId(payload.accounts, accountId);
+  const scopedAccounts = accountsForScopedAccountId(
+    payload.accounts,
+    accountId,
+  );
   if (!scopedAccounts.length) {
     return current;
   }
 
   const timestampMs = latestAccountUpdatedAtMs(scopedAccounts);
-  const updatedAt = timestampMs ? new Date(timestampMs).toISOString() : current.updatedAt;
+  const updatedAt = timestampMs
+    ? new Date(timestampMs).toISOString()
+    : current.updatedAt;
   const currency = scopedAccounts[0]?.currency || current.currency;
   const netLiquidation = sumAccountField(scopedAccounts, "netLiquidation");
   const totalCash = sumAccountField(scopedAccounts, "cash");
@@ -2990,15 +3109,13 @@ const filterPositionsForQuery = (
   const params = readQueryParams(queryKey);
   const requestedAccountId =
     typeof params?.accountId === "string" ? params.accountId : null;
-  return positions.filter(
-    (position) => {
-      const quantity = Number(position.quantity);
-      return (
-        (!Number.isFinite(quantity) || Math.abs(quantity) > 1e-9) &&
-        (!requestedAccountId || position.accountId === requestedAccountId)
-      );
-    },
-  );
+  return positions.filter((position) => {
+    const quantity = Number(position.quantity);
+    return (
+      (!Number.isFinite(quantity) || Math.abs(quantity) > 1e-9) &&
+      (!requestedAccountId || position.accountId === requestedAccountId)
+    );
+  });
 };
 
 const filterOrdersForQuery = (
@@ -3065,7 +3182,9 @@ type BrokerFreshnessForSnapshot = {
 const INTERNAL_SHADOW_ACCOUNT_ID = "shadow";
 
 const isInternalShadowAccountId = (accountId?: string | null): boolean =>
-  String(accountId ?? "").trim().toLowerCase() === INTERNAL_SHADOW_ACCOUNT_ID;
+  String(accountId ?? "")
+    .trim()
+    .toLowerCase() === INTERNAL_SHADOW_ACCOUNT_ID;
 
 const accountLiveSlices = new Map<string, AccountLiveSlice>();
 const accountLiveSliceListeners = new Set<() => void>();
@@ -3102,33 +3221,8 @@ const isDegradedAccountResponse = (value: unknown): boolean =>
   Boolean(
     value &&
       typeof value === "object" &&
-      ((value as { degraded?: unknown }).degraded === true ||
-        (value as { activityDegraded?: unknown }).activityDegraded === true),
+      (value as { degraded?: unknown }).degraded === true,
   );
-
-const preferNonDegradedAccountResponse = <T>(current: T | undefined, next: T): T => {
-  if (
-    isDegradedAccountResponse(next) &&
-    current &&
-    !isDegradedAccountResponse(current)
-  ) {
-    return current;
-  }
-  return reuseEqualJson(current, next);
-};
-
-const preferUsableClosedTradesResponse = (
-  current: AccountClosedTradesResponse | undefined,
-  next: AccountClosedTradesResponse,
-): AccountClosedTradesResponse | undefined => {
-  if (
-    isDegradedAccountResponse(next) &&
-    (!Array.isArray(next.trades) || next.trades.length === 0)
-  ) {
-    return current;
-  }
-  return reuseEqualJson(current, next);
-};
 
 const rowIdOf = (row: { id?: unknown }): string | null => {
   const id = row?.id;
@@ -3157,7 +3251,8 @@ const mergeStableRowsById = <T extends { id?: unknown }>(
   const merged = next.map((row, index) => {
     const id = rowIdOf(row);
     const previous = id ? currentById.get(id) : undefined;
-    const resolved = previous && valuesEqualJson(previous, row) ? previous : row;
+    const resolved =
+      previous && valuesEqualJson(previous, row) ? previous : row;
     if (resolved !== current[index]) {
       allRowsUnchangedInPlace = false;
     }
@@ -3165,172 +3260,6 @@ const mergeStableRowsById = <T extends { id?: unknown }>(
   });
 
   return allRowsUnchangedInPlace ? current : merged;
-};
-
-const quotePatchTimestampMs = (
-  quote: AccountOptionQuotePatch | null | undefined,
-): number | null =>
-  getUpdatedAtTime(
-    typeof quote?.dataUpdatedAt === "string" && quote.dataUpdatedAt
-      ? quote.dataUpdatedAt
-      : typeof quote?.updatedAt === "string"
-        ? quote.updatedAt
-        : null,
-  );
-
-const quotePatchHasUsableOptionData = (
-  quote: AccountOptionQuotePatch | null | undefined,
-): boolean =>
-  Boolean(
-    quote &&
-      [
-        quote.bid,
-        quote.ask,
-        quote.mid,
-        quote.mark,
-        quote.last,
-        quote.price,
-        quote.dayChange,
-        quote.dayChangePercent,
-        quote.openInterest,
-        quote.underlyingPrice,
-        quote.volume,
-        quote.impliedVolatility,
-        quote.delta,
-        quote.gamma,
-        quote.theta,
-        quote.vega,
-      ].some((value) => finiteOptionNumber(value) !== null),
-  );
-
-const quotePatchHasMarketQuote = (
-  quote: AccountOptionQuotePatch | null | undefined,
-): boolean =>
-  Boolean(
-    quote &&
-      [quote.bid, quote.ask, quote.mid].some(
-        (value) => finiteOptionNumber(value) !== null,
-      ),
-  );
-
-const quotePatchForPositionRow = (
-  row: AccountPositionRow | undefined,
-): AccountOptionQuotePatch | null => {
-  if (!row) {
-    return null;
-  }
-  const rowWithOptionQuote = row as AccountPositionRowWithOptionQuote;
-  const quote = row.quote as AccountOptionQuotePatch | null | undefined;
-  const optionQuote = rowWithOptionQuote.optionQuote;
-  if (!quote && !optionQuote) {
-    return null;
-  }
-  return {
-    ...(quote || {}),
-    ...(optionQuote || {}),
-  };
-};
-
-const pickOptionQuoteNumber = (
-  primary: AccountOptionQuotePatch | null | undefined,
-  secondary: AccountOptionQuotePatch | null | undefined,
-  field: string,
-): number | null =>
-  finiteOptionNumber(
-    primary?.[field as keyof AccountOptionQuotePatch],
-    secondary?.[field as keyof AccountOptionQuotePatch],
-  );
-
-const pickOptionQuoteValue = (
-  primary: AccountOptionQuotePatch | null | undefined,
-  secondary: AccountOptionQuotePatch | null | undefined,
-  field: string,
-): unknown =>
-  primary?.[field as keyof AccountOptionQuotePatch] ??
-  secondary?.[field as keyof AccountOptionQuotePatch] ??
-  null;
-
-const preserveHydratedOptionDayChangeFields = (
-  current: AccountPositionRow,
-  next: AccountPositionRow,
-  candidate: AccountPositionRow,
-): AccountPositionRow => {
-  const currentDayChange = finiteOptionNumber(current.dayChange);
-  const currentDayChangePercent = finiteOptionNumber(current.dayChangePercent);
-  if (currentDayChange === null && currentDayChangePercent === null) {
-    return candidate;
-  }
-
-  const nextDayChange = finiteOptionNumber(next.dayChange);
-  const nextDayChangePercent = finiteOptionNumber(next.dayChangePercent);
-  const candidateDayChange = finiteOptionNumber(candidate.dayChange);
-  const candidateDayChangePercent = finiteOptionNumber(candidate.dayChangePercent);
-  const shouldPreserveDayChange =
-    candidateDayChange === null &&
-    nextDayChange === null &&
-    currentDayChange !== null;
-  const shouldPreserveDayChangePercent =
-    candidateDayChangePercent === null &&
-    nextDayChangePercent === null &&
-    currentDayChangePercent !== null;
-
-  const currentOptionQuote =
-    (current as AccountPositionRowWithOptionQuote).optionQuote ?? null;
-  const candidateOptionQuote =
-    (candidate as AccountPositionRowWithOptionQuote).optionQuote ?? null;
-  const currentOptionDayChange = finiteOptionNumber(currentOptionQuote?.dayChange);
-  const currentOptionDayChangePercent = finiteOptionNumber(
-    currentOptionQuote?.dayChangePercent,
-  );
-  const candidateOptionDayChange = finiteOptionNumber(
-    candidateOptionQuote?.dayChange,
-  );
-  const candidateOptionDayChangePercent = finiteOptionNumber(
-    candidateOptionQuote?.dayChangePercent,
-  );
-  const shouldPreserveOptionDayChange =
-    candidateOptionDayChange === null && currentOptionDayChange !== null;
-  const shouldPreserveOptionDayChangePercent =
-    candidateOptionDayChangePercent === null &&
-    currentOptionDayChangePercent !== null;
-
-  if (
-    !shouldPreserveDayChange &&
-    !shouldPreserveDayChangePercent &&
-    !shouldPreserveOptionDayChange &&
-    !shouldPreserveOptionDayChangePercent
-  ) {
-    return candidate;
-  }
-
-  const optionQuote =
-    shouldPreserveOptionDayChange || shouldPreserveOptionDayChangePercent
-      ? {
-          ...(candidateOptionQuote || {}),
-          providerContractId:
-            candidateOptionQuote?.providerContractId ??
-            currentOptionQuote?.providerContractId ??
-            optionPositionProviderContractId(candidate),
-          dayChange: shouldPreserveOptionDayChange
-            ? currentOptionQuote?.dayChange
-            : candidateOptionQuote?.dayChange,
-          dayChangePercent: shouldPreserveOptionDayChangePercent
-            ? currentOptionQuote?.dayChangePercent
-            : candidateOptionQuote?.dayChangePercent,
-        }
-      : candidateOptionQuote;
-
-  return {
-    ...candidate,
-    dayChange: shouldPreserveDayChange ? current.dayChange : candidate.dayChange,
-    dayChangePercent: shouldPreserveDayChangePercent
-      ? current.dayChangePercent
-      : candidate.dayChangePercent,
-    ...((shouldPreserveOptionDayChange || shouldPreserveOptionDayChangePercent) &&
-    optionQuote
-      ? { optionQuote }
-      : {}),
-  } as AccountPositionRow;
 };
 
 const preserveAccountPositionOpenDateFields = (
@@ -3342,7 +3271,7 @@ const preserveAccountPositionOpenDateFields = (
   const openedAt = nextOpenedAt ?? currentOpenedAt;
   const openedAtSource =
     next.openedAtSource ??
-    (openedAt === currentOpenedAt ? current.openedAtSource ?? null : null);
+    (openedAt === currentOpenedAt ? (current.openedAtSource ?? null) : null);
 
   if (openedAt === nextOpenedAt && openedAtSource === next.openedAtSource) {
     return next;
@@ -3354,231 +3283,6 @@ const preserveAccountPositionOpenDateFields = (
     openedAtSource,
   };
 };
-
-const mergeLiveOptionQuoteFields = (
-  current: AccountPositionRow,
-  next: AccountPositionRow,
-): AccountPositionRow => {
-  const nextWithOpenDate = preserveAccountPositionOpenDateFields(current, next);
-  const currentProviderContractId = optionPositionProviderContractId(current);
-  const nextProviderContractId = optionPositionProviderContractId(nextWithOpenDate);
-  const providerContractId = nextProviderContractId || currentProviderContractId;
-  if (
-    !providerContractId ||
-    (currentProviderContractId &&
-      nextProviderContractId &&
-      currentProviderContractId !== nextProviderContractId)
-  ) {
-    return nextWithOpenDate;
-  }
-
-  const currentQuote = quotePatchForPositionRow(current);
-  if (!quotePatchHasUsableOptionData(currentQuote)) {
-    return preserveHydratedOptionDayChangeFields(
-      current,
-      nextWithOpenDate,
-      nextWithOpenDate,
-    );
-  }
-
-  const nextQuote = quotePatchForPositionRow(nextWithOpenDate);
-  const currentTimestamp = quotePatchTimestampMs(currentQuote);
-  const nextTimestamp = quotePatchTimestampMs(nextQuote);
-  const currentIsNewer =
-    currentTimestamp !== null &&
-    nextTimestamp !== null &&
-    currentTimestamp > nextTimestamp;
-  const preferCurrent =
-    !quotePatchHasUsableOptionData(nextQuote) || currentIsNewer;
-  const primary = preferCurrent ? currentQuote : nextQuote;
-  const secondary = preferCurrent ? nextQuote : currentQuote;
-  const providerQuote = quotePatchHasMarketQuote(primary)
-    ? primary
-    : quotePatchHasMarketQuote(secondary)
-      ? secondary
-      : primary ?? secondary;
-  const supportedProviderContractIds = new Set([
-    ...optionPositionProviderContractIds(current),
-    ...optionPositionProviderContractIds(nextWithOpenDate),
-  ]);
-  const mergedProviderContractId =
-    [
-      normalizeProviderContractId(providerQuote?.providerContractId),
-      normalizeProviderContractId(primary?.providerContractId),
-      normalizeProviderContractId(secondary?.providerContractId),
-      nextProviderContractId,
-      currentProviderContractId,
-    ].find((candidate) => candidate && supportedProviderContractIds.has(candidate)) ||
-    providerContractId;
-  const updatedAt =
-    currentIsNewer || !nextTimestamp
-      ? currentQuote?.updatedAt ?? nextQuote?.updatedAt ?? null
-      : nextQuote?.updatedAt ?? currentQuote?.updatedAt ?? null;
-  const dataUpdatedAt =
-    currentIsNewer || !nextTimestamp
-      ? currentQuote?.dataUpdatedAt ?? nextQuote?.dataUpdatedAt ?? null
-      : nextQuote?.dataUpdatedAt ?? currentQuote?.dataUpdatedAt ?? null;
-  const quoteSource = pickOptionQuoteValue(primary, secondary, "source");
-  const mergedQuote = {
-    ...(secondary || {}),
-    ...(primary || {}),
-    providerContractId: mergedProviderContractId,
-    bid: pickOptionQuoteNumber(primary, secondary, "bid"),
-    ask: pickOptionQuoteNumber(primary, secondary, "ask"),
-    mid:
-      pickOptionQuoteNumber(primary, secondary, "mid") ??
-      optionQuoteMidpoint(
-        pickOptionQuoteNumber(primary, secondary, "bid"),
-        pickOptionQuoteNumber(primary, secondary, "ask"),
-      ),
-    last: pickOptionQuoteNumber(primary, secondary, "last"),
-    price: pickOptionQuoteNumber(primary, secondary, "price"),
-    mark: pickOptionQuoteNumber(primary, secondary, "mark"),
-    spread: pickOptionQuoteNumber(primary, secondary, "spread"),
-    spreadPercent: pickOptionQuoteNumber(primary, secondary, "spreadPercent"),
-    dayChange: pickOptionQuoteNumber(primary, secondary, "dayChange"),
-    dayChangePercent: pickOptionQuoteNumber(
-      primary,
-      secondary,
-      "dayChangePercent",
-    ),
-    bidSize: pickOptionQuoteNumber(primary, secondary, "bidSize"),
-    askSize: pickOptionQuoteNumber(primary, secondary, "askSize"),
-    volume: pickOptionQuoteNumber(primary, secondary, "volume"),
-    openInterest: pickOptionQuoteNumber(primary, secondary, "openInterest"),
-    impliedVolatility: pickOptionQuoteNumber(
-      primary,
-      secondary,
-      "impliedVolatility",
-    ),
-    delta: pickOptionQuoteNumber(primary, secondary, "delta"),
-    gamma: pickOptionQuoteNumber(primary, secondary, "gamma"),
-    theta: pickOptionQuoteNumber(primary, secondary, "theta"),
-    vega: pickOptionQuoteNumber(primary, secondary, "vega"),
-    underlyingPrice: pickOptionQuoteNumber(primary, secondary, "underlyingPrice"),
-    freshness: pickOptionQuoteValue(primary, secondary, "freshness"),
-    status:
-      pickOptionQuoteValue(primary, secondary, "status") ??
-      pickOptionQuoteValue(primary, secondary, "quoteStatus"),
-    reason:
-      pickOptionQuoteValue(primary, secondary, "reason") ??
-      pickOptionQuoteValue(primary, secondary, "quoteReason"),
-    quoteStatus:
-      pickOptionQuoteValue(primary, secondary, "quoteStatus") ??
-      pickOptionQuoteValue(primary, secondary, "status"),
-    quoteReason: pickOptionQuoteValue(primary, secondary, "quoteReason"),
-    greeksStatus: pickOptionQuoteValue(primary, secondary, "greeksStatus"),
-    greeksReason: pickOptionQuoteValue(primary, secondary, "greeksReason"),
-    demandStatus: pickOptionQuoteValue(primary, secondary, "demandStatus"),
-    demandReason: pickOptionQuoteValue(primary, secondary, "demandReason"),
-    quoteFreshness:
-      pickOptionQuoteValue(primary, secondary, "quoteFreshness") ??
-      pickOptionQuoteValue(primary, secondary, "freshness"),
-    greeksFreshness: pickOptionQuoteValue(primary, secondary, "greeksFreshness"),
-    unavailableDetail:
-      pickOptionQuoteValue(primary, secondary, "unavailableDetail") ??
-      pickOptionQuoteValue(primary, secondary, "quoteReason") ??
-      pickOptionQuoteValue(primary, secondary, "reason"),
-    marketDataMode: pickOptionQuoteValue(primary, secondary, "marketDataMode"),
-    source: quoteSource === "massive" ? "massive" : "ibkr",
-    transport: pickOptionQuoteValue(primary, secondary, "transport"),
-    delayed: pickOptionQuoteValue(primary, secondary, "delayed"),
-    ageMs: pickOptionQuoteNumber(primary, secondary, "ageMs"),
-    cacheAgeMs: pickOptionQuoteNumber(primary, secondary, "cacheAgeMs"),
-    updatedAt,
-    dataUpdatedAt,
-  } as unknown as LiveOptionQuotePatchSnapshot;
-
-  const patched = patchAccountPositionRowFromOptionQuote(
-    nextWithOpenDate,
-    mergedQuote,
-  );
-  if (patched !== nextWithOpenDate || !valuesEqualJson(patched, nextWithOpenDate)) {
-    return preserveHydratedOptionDayChangeFields(
-      current,
-      nextWithOpenDate,
-      patched,
-    );
-  }
-
-  const nextPositionQuote =
-    nextWithOpenDate.quote as AccountOptionQuotePatch | null | undefined;
-  const fallbackRow = {
-    ...nextWithOpenDate,
-    optionQuote: mergedQuote,
-    quote: {
-      ...(nextWithOpenDate.quote || {}),
-      bid: mergedQuote.bid ?? nextWithOpenDate.quote?.bid ?? null,
-      ask: mergedQuote.ask ?? nextWithOpenDate.quote?.ask ?? null,
-      mid: mergedQuote.mid ?? nextWithOpenDate.quote?.mid ?? null,
-      mark: mergedQuote.mark ?? nextWithOpenDate.quote?.mark ?? null,
-      last: mergedQuote.last ?? nextWithOpenDate.quote?.last ?? null,
-      spread: mergedQuote.spread ?? nextWithOpenDate.quote?.spread ?? null,
-      spreadPercent:
-        mergedQuote.spreadPercent ?? nextWithOpenDate.quote?.spreadPercent ?? null,
-      bidSize: mergedQuote.bidSize ?? nextWithOpenDate.quote?.bidSize ?? null,
-      askSize: mergedQuote.askSize ?? nextWithOpenDate.quote?.askSize ?? null,
-      freshness: mergedQuote.freshness ?? nextWithOpenDate.quote?.freshness ?? null,
-      status:
-        mergedQuote.status ??
-        mergedQuote.quoteStatus ??
-        nextWithOpenDate.quote?.status ??
-        null,
-      reason:
-        mergedQuote.reason ??
-        mergedQuote.quoteReason ??
-        nextWithOpenDate.quote?.reason ??
-        null,
-      quoteStatus:
-        mergedQuote.quoteStatus ??
-        mergedQuote.status ??
-        nextWithOpenDate.quote?.quoteStatus ??
-        null,
-      quoteReason:
-        mergedQuote.quoteReason ?? nextWithOpenDate.quote?.quoteReason ?? null,
-      greeksStatus:
-        mergedQuote.greeksStatus ?? nextWithOpenDate.quote?.greeksStatus ?? null,
-      greeksReason:
-        mergedQuote.greeksReason ?? nextWithOpenDate.quote?.greeksReason ?? null,
-      demandStatus:
-        mergedQuote.demandStatus ?? nextWithOpenDate.quote?.demandStatus ?? null,
-      demandReason:
-        mergedQuote.demandReason ?? nextWithOpenDate.quote?.demandReason ?? null,
-      quoteFreshness:
-        mergedQuote.quoteFreshness ??
-        mergedQuote.freshness ??
-        nextWithOpenDate.quote?.quoteFreshness ??
-        null,
-      greeksFreshness:
-        mergedQuote.greeksFreshness ??
-        nextWithOpenDate.quote?.greeksFreshness ??
-        null,
-      unavailableDetail:
-        mergedQuote.unavailableDetail ??
-        mergedQuote.quoteReason ??
-        mergedQuote.reason ??
-        nextWithOpenDate.quote?.unavailableDetail ??
-        null,
-      marketDataMode:
-        mergedQuote.marketDataMode ?? nextWithOpenDate.quote?.marketDataMode ?? null,
-      source: optionQuotePositionSource(mergedQuote.source),
-      updatedAt: mergedQuote.updatedAt ?? nextWithOpenDate.quote?.updatedAt ?? null,
-      dataUpdatedAt:
-        mergedQuote.dataUpdatedAt ?? nextWithOpenDate.quote?.dataUpdatedAt ?? null,
-      ageMs: mergedQuote.ageMs ?? nextWithOpenDate.quote?.ageMs ?? null,
-      cacheAgeMs:
-        mergedQuote.cacheAgeMs ?? nextWithOpenDate.quote?.cacheAgeMs ?? null,
-      underlyingPrice:
-        mergedQuote.underlyingPrice ?? nextPositionQuote?.underlyingPrice ?? null,
-    },
-  };
-  return preserveHydratedOptionDayChangeFields(
-    current,
-    nextWithOpenDate,
-    fallbackRow as AccountPositionRow,
-  );
-};
-
 const mergeAccountPositionRowsById = (
   currentRows: AccountPositionRow[] | undefined,
   nextRows: AccountPositionRow[] | undefined,
@@ -3601,7 +3305,9 @@ const mergeAccountPositionRowsById = (
   const merged = next.map((row, index) => {
     const id = rowIdOf(row);
     const previous = id ? currentById.get(id) : undefined;
-    const candidate = previous ? mergeLiveOptionQuoteFields(previous, row) : row;
+    const candidate = previous
+      ? preserveAccountPositionOpenDateFields(previous, row)
+      : row;
     const resolved =
       previous && valuesEqualJson(previous, candidate) ? previous : candidate;
     if (resolved !== current[index]) {
@@ -3617,8 +3323,8 @@ const maybeReuseAccountPositionsResponse = (
   current: AccountPositionsResponse | undefined,
   next: AccountPositionsResponse,
 ): AccountPositionsResponse => {
-  if (!current) {
-    return next;
+  if (!current || isDegradedAccountResponse(next)) {
+    return reuseEqualJson(current, next);
   }
   const positions = mergeAccountPositionRowsById(
     current.positions,
@@ -3670,7 +3376,9 @@ const indexPositionRowsBySymbol = (
 ): Map<string, AccountPositionRow> => {
   const indexed = new Map<string, AccountPositionRow>();
   (rows || []).forEach((row) => {
-    const symbol = String(row?.symbol || "").trim().toUpperCase();
+    const symbol = String(row?.symbol || "")
+      .trim()
+      .toUpperCase();
     if (symbol && !indexed.has(symbol)) {
       indexed.set(symbol, row);
     }
@@ -3709,7 +3417,10 @@ const applyAccountLivePayloadToSelectorStore = (
   }
 
   const current = accountLiveSlices.get(key);
-  const summary = reuseEqualJson(current?.summary ?? undefined, payload.summary);
+  const summary = reuseEqualJson(
+    current?.summary ?? undefined,
+    payload.summary,
+  );
   const positions = maybeReuseAccountPositionsResponse(
     current?.positions ?? undefined,
     payload.positions,
@@ -3761,9 +3472,11 @@ export const getAccountPositionRowSnapshot = ({
     return slice.positionRowsById.get(String(rowId)) ?? null;
   }
 
-  const normalizedSymbol = String(symbol || "").trim().toUpperCase();
+  const normalizedSymbol = String(symbol || "")
+    .trim()
+    .toUpperCase();
   return normalizedSymbol
-    ? slice.positionRowsBySymbol.get(normalizedSymbol) ?? null
+    ? (slice.positionRowsBySymbol.get(normalizedSymbol) ?? null)
     : null;
 };
 
@@ -3806,7 +3519,9 @@ export const useAccountPositionRow = ({
   symbol,
   enabled = true,
 }: AccountPositionRowSelectorInput): AccountPositionRow | null => {
-  const subscribed = Boolean(enabled && accountLiveScopeKey({ accountId, mode }) && (rowId || symbol));
+  const subscribed = Boolean(
+    enabled && accountLiveScopeKey({ accountId, mode }) && (rowId || symbol),
+  );
   const getSnapshot = useCallback(
     () => getAccountPositionRowSnapshot({ accountId, mode, rowId, symbol }),
     [accountId, mode, rowId, symbol],
@@ -3824,7 +3539,9 @@ export const useAccountOrderRow = ({
   rowId,
   enabled = true,
 }: AccountOrderRowSelectorInput): AccountOrderRow | null => {
-  const subscribed = Boolean(enabled && accountLiveScopeKey({ accountId, mode }) && rowId);
+  const subscribed = Boolean(
+    enabled && accountLiveScopeKey({ accountId, mode }) && rowId,
+  );
   const getSnapshot = useCallback(
     () => getAccountOrderRowSnapshot({ accountId, mode, rowId }),
     [accountId, mode, rowId],
@@ -3842,7 +3559,9 @@ export const useAccountSummaryField = ({
   fieldName,
   enabled = true,
 }: AccountSummaryFieldSelectorInput): unknown => {
-  const subscribed = Boolean(enabled && accountLiveScopeKey({ accountId, mode }) && fieldName);
+  const subscribed = Boolean(
+    enabled && accountLiveScopeKey({ accountId, mode }) && fieldName,
+  );
   const getSnapshot = useCallback(
     () => getAccountSummaryFieldSnapshot({ accountId, mode, fieldName }),
     [accountId, mode, fieldName],
@@ -3868,11 +3587,7 @@ const getBrokerFreshnessForSnapshot = (
       ? snapshot.orderFresh
       : snapshot.accountFresh;
   const cached = brokerFreshnessForCache.get(normalizedStreamId);
-  if (
-    cached &&
-    cached.lastEventAt === lastEventAt &&
-    cached.fresh === fresh
-  ) {
+  if (cached && cached.lastEventAt === lastEventAt && cached.fresh === fresh) {
     return cached;
   }
   const next = { lastEventAt, fresh };
@@ -3967,7 +3682,9 @@ const streamAccountPositionType = (
   if (assetClass === "option" || assetClass === "etf") {
     return assetClass;
   }
-  const symbol = String(position.symbol ?? "").trim().toUpperCase();
+  const symbol = String(position.symbol ?? "")
+    .trim()
+    .toUpperCase();
   if (symbol && ETF_SYMBOLS.has(symbol)) {
     return "etf";
   }
@@ -4039,7 +3756,10 @@ const weightPercentFromNav = (
   payload: AccountStreamPayload,
   accountId: string,
 ): number | null => {
-  const scopedAccounts = accountsForScopedAccountId(payload.accounts, accountId);
+  const scopedAccounts = accountsForScopedAccountId(
+    payload.accounts,
+    accountId,
+  );
   const netLiquidation = sumAccountField(scopedAccounts, "netLiquidation");
   return netLiquidation && Math.abs(netLiquidation) > 1e-9
     ? (marketValue / netLiquidation) * 100
@@ -4048,8 +3768,8 @@ const weightPercentFromNav = (
 
 const streamPositionMark = (position: StreamPosition): number =>
   Number.isFinite(position.marketPrice) && Math.abs(position.marketPrice) > 1e-9
-    ? normalizeOptionPremiumPrice(position, position.marketPrice) ?? 0
-    : normalizeOptionPremiumPrice(position, position.averagePrice) ?? 0;
+    ? (normalizeOptionPremiumPrice(position, position.marketPrice) ?? 0)
+    : (normalizeOptionPremiumPrice(position, position.averagePrice) ?? 0);
 
 const streamPositionAveragePrice = (position: StreamPosition): number =>
   normalizeOptionPremiumPrice(position, position.averagePrice) ?? 0;
@@ -4103,8 +3823,18 @@ const streamPositionOpenedAtSource = (
 ): AccountPositionRow["openedAtSource"] | null =>
   position.openedAtSource ?? current?.openedAtSource ?? null;
 
-const streamPositionQuoteDayChange = (position: StreamPosition): number | null => {
-  const perUnitDayChange = finiteOptionNumber(position.quote?.dayChange);
+const streamPositionQuoteDayChange = (
+  position: StreamPosition,
+): number | null => {
+  const quotedDayChange = finiteOptionNumber(position.quote?.dayChange);
+  const previousClose = finiteOptionNumber(
+    (position.quote as { prevClose?: unknown } | null | undefined)?.prevClose,
+  );
+  const mark = streamPositionMark(position);
+  const perUnitDayChange =
+    previousClose !== null && previousClose > 0
+      ? mark - previousClose
+      : quotedDayChange;
   const quantity = finiteOptionNumber(position.quantity);
   const multiplier = optionPositionMultiplier(position);
   return perUnitDayChange !== null && quantity !== null
@@ -4123,7 +3853,7 @@ const streamPositionDayChange = (
   if (sameDayPosition && sameDayUnrealizedPnl !== null) {
     return sameDayUnrealizedPnl;
   }
-  return streamPositionQuoteDayChange(position) ?? current?.dayChange ?? null;
+  return streamPositionQuoteDayChange(position);
 };
 
 const streamPositionDayChangePercent = (
@@ -4137,7 +3867,19 @@ const streamPositionDayChangePercent = (
   if (sameDayPosition && sameDayUnrealizedPnlPercent !== null) {
     return sameDayUnrealizedPnlPercent;
   }
-  return finiteOptionNumber(position.quote?.dayChangePercent, current?.dayChangePercent);
+  const previousClose = finiteOptionNumber(
+    (position.quote as { prevClose?: unknown } | null | undefined)?.prevClose,
+  );
+  const mark = streamPositionMark(position);
+  const perUnitPercent =
+    previousClose !== null && previousClose > 0
+      ? ((mark - previousClose) / previousClose) * 100
+      : finiteOptionNumber(position.quote?.dayChangePercent);
+  const quantity = finiteOptionNumber(position.quantity);
+  if (perUnitPercent !== null && quantity !== null && quantity !== 0) {
+    return perUnitPercent * Math.sign(quantity);
+  }
+  return null;
 };
 
 const addNullableStreamTotal = (
@@ -4200,7 +3942,8 @@ const streamPositionHasMarketMark = (position: StreamPosition): boolean => {
   const hasNonZeroMarketPrice =
     reportedMarketPrice !== null && Math.abs(reportedMarketPrice) > 1e-9;
   const hasNonZeroMarketValue =
-    Number.isFinite(position.marketValue) && Math.abs(position.marketValue) > 0.01;
+    Number.isFinite(position.marketValue) &&
+    Math.abs(position.marketValue) > 0.01;
   const costBasisValue = averagePrice * position.quantity * multiplier;
   const marketPriceDiffersFromAverage =
     hasNonZeroMarketPrice &&
@@ -4214,6 +3957,22 @@ const streamPositionHasMarketMark = (position: StreamPosition): boolean => {
   );
 };
 
+const streamPositionsForScopedAccount = (
+  payload: AccountStreamPayload,
+  accountId: string,
+): StreamPosition[] =>
+  accountId === "combined"
+    ? payload.positions
+    : payload.positions.filter((position) => position.accountId === accountId);
+
+const accountStreamScopeHasUsableMarks = (
+  payload: AccountStreamPayload,
+  accountId: string,
+): boolean => {
+  const positions = streamPositionsForScopedAccount(payload, accountId);
+  return !positions.length || positions.every(streamPositionHasMarketMark);
+};
+
 const accountPositionsBaseFromStream = (
   current: AccountPositionsResponse | undefined,
   payload: AccountStreamPayload,
@@ -4223,7 +3982,10 @@ const accountPositionsBaseFromStream = (
     return current;
   }
 
-  const scopedAccounts = accountsForScopedAccountId(payload.accounts, accountId);
+  const scopedAccounts = accountsForScopedAccountId(
+    payload.accounts,
+    accountId,
+  );
   const timestampMs = latestAccountUpdatedAtMs(scopedAccounts);
   const cash = sumAccountField(scopedAccounts, "cash");
 
@@ -4249,18 +4011,19 @@ const accountPositionsBaseFromStream = (
 };
 
 const accountPositionTotalsFromStreamRows = (
-  currentTotals: AccountPositionsResponse["totals"] | undefined,
   rows: AccountPositionRow[],
   payload: AccountStreamPayload,
   accountId: string,
 ): AccountPositionsResponse["totals"] => {
-  const scopedAccounts = accountsForScopedAccountId(payload.accounts, accountId);
+  const scopedAccounts = accountsForScopedAccountId(
+    payload.accounts,
+    accountId,
+  );
   const cash = sumAccountField(scopedAccounts, "cash");
   const buyingPower = sumAccountField(scopedAccounts, "buyingPower");
   const netLiquidation = sumAccountField(scopedAccounts, "netLiquidation");
 
   return {
-    ...(currentTotals || {}),
     weightPercent: rows.reduce((sum, row) => sum + (row.weightPercent ?? 0), 0),
     unrealizedPnl: rows.reduce((sum, row) => sum + (row.unrealizedPnl ?? 0), 0),
     grossLong: rows
@@ -4272,15 +4035,18 @@ const accountPositionTotalsFromStreamRows = (
         .reduce((sum, row) => sum + row.marketValue, 0),
     ),
     netExposure: rows.reduce((sum, row) => sum + row.marketValue, 0),
-    cash: cash ?? currentTotals?.cash ?? null,
-    totalCash: cash ?? currentTotals?.totalCash ?? null,
-    buyingPower: buyingPower ?? currentTotals?.buyingPower ?? null,
-    netLiquidation: netLiquidation ?? currentTotals?.netLiquidation ?? null,
+    cash,
+    totalCash: cash,
+    buyingPower,
+    netLiquidation,
   };
 };
 
 const accountPositionMatchesAssetClass = (
-  position: Pick<AccountPositionRow, "assetClass" | "positionType" | "symbol" | "optionContract">,
+  position: Pick<
+    AccountPositionRow,
+    "assetClass" | "positionType" | "symbol" | "optionContract"
+  >,
   queryKey: unknown,
 ): boolean => {
   const params = readQueryParams(queryKey);
@@ -4300,8 +4066,10 @@ const sortPatchedAccountPositions = (
     const leftIndex = currentOrder.get(left.id);
     const rightIndex = currentOrder.get(right.id);
     if (leftIndex !== undefined || rightIndex !== undefined) {
-      return (leftIndex ?? Number.MAX_SAFE_INTEGER) -
-        (rightIndex ?? Number.MAX_SAFE_INTEGER);
+      return (
+        (leftIndex ?? Number.MAX_SAFE_INTEGER) -
+        (rightIndex ?? Number.MAX_SAFE_INTEGER)
+      );
     }
     return Math.abs(right.marketValue) - Math.abs(left.marketValue);
   });
@@ -4313,14 +4081,9 @@ const accountPositionRowFromStream = (
   payload: AccountStreamPayload,
   accountId: string,
 ): AccountPositionRow => {
-  const hasMarketMark = streamPositionHasMarketMark(position);
   const averageCost = streamPositionAveragePrice(position);
-  const mark = hasMarketMark
-    ? streamPositionMark(position)
-    : current?.mark ?? streamPositionMark(position);
-  const marketValue = hasMarketMark
-    ? streamPositionMarketValue(position)
-    : current?.marketValue ?? position.marketValue;
+  const mark = streamPositionMark(position);
+  const marketValue = streamPositionMarketValue(position);
   const unrealizedPnl = streamPositionUnrealizedPnl(position);
   const unrealizedPnlPercent = streamPositionUnrealizedPnlPercent(position);
   const dayChange = streamPositionDayChange(position, current, unrealizedPnl);
@@ -4346,16 +4109,10 @@ const accountPositionRowFromStream = (
     mark,
     dayChange,
     dayChangePercent,
-    unrealizedPnl: hasMarketMark
-      ? unrealizedPnl
-      : current?.unrealizedPnl ?? position.unrealizedPnl,
-    unrealizedPnlPercent: hasMarketMark
-      ? unrealizedPnlPercent
-      : current?.unrealizedPnlPercent ?? position.unrealizedPnlPercent,
+    unrealizedPnl,
+    unrealizedPnlPercent,
     marketValue,
-    weightPercent: hasMarketMark
-      ? weightPercentFromNav(marketValue, payload, accountId)
-      : current?.weightPercent ?? weightPercentFromNav(marketValue, payload, accountId),
+    weightPercent: weightPercentFromNav(marketValue, payload, accountId),
     betaWeightedDelta: current?.betaWeightedDelta ?? null,
     lots: current?.lots ?? [],
     openOrders: current?.openOrders ?? [],
@@ -4375,7 +4132,9 @@ const patchCombinedAccountPositions = (
   accountId: string,
   queryKey: unknown,
 ): AccountPositionRow[] => {
-  const currentById = new Map(current.positions.map((position) => [position.id, position]));
+  const currentById = new Map(
+    current.positions.map((position) => [position.id, position]),
+  );
   const groups = new Map<
     string,
     {
@@ -4386,14 +4145,11 @@ const patchCombinedAccountPositions = (
       averageCostAccumulator: number;
       markAccumulator: number;
       averageWeight: number;
-      hasMarketMark: boolean;
       marketValue: number;
       unrealizedPnl: number;
-      unrealizedPnlPercentAccumulator: number;
-      unrealizedWeight: number;
+      unrealizedCostBasis: number;
       dayChange: number | null;
-      dayChangePercentAccumulator: number;
-      dayChangeWeight: number;
+      dayChangeBasis: number;
     }
   >();
 
@@ -4401,22 +4157,15 @@ const patchCombinedAccountPositions = (
     const key = streamPositionGroupKey(position);
     const averagePrice = streamPositionAveragePrice(position);
     const mark = streamPositionMark(position);
-    const hasMarketMark = streamPositionHasMarketMark(position);
     const currentRow = currentById.get(key);
-    if (!hasMarketMark && !currentRow) {
-      return;
-    }
     const marketValue = streamPositionMarketValue(position);
     const unrealizedPnl = streamPositionUnrealizedPnl(position);
-    const unrealizedPnlPercent = streamPositionUnrealizedPnlPercent(position);
-    const dayChange = streamPositionDayChange(position, currentRow, unrealizedPnl);
-    const dayChangePercent = streamPositionDayChangePercent(
+    const dayChange = streamPositionDayChange(
       position,
       currentRow,
-      unrealizedPnlPercent,
+      unrealizedPnl,
     );
     const quantityWeight = Math.abs(position.quantity);
-    const valueWeight = Math.abs(marketValue);
     const currentGroup = groups.get(key) ?? {
       first: position,
       current: currentRow,
@@ -4425,14 +4174,11 @@ const patchCombinedAccountPositions = (
       averageCostAccumulator: 0,
       markAccumulator: 0,
       averageWeight: 0,
-      hasMarketMark: false,
       marketValue: 0,
       unrealizedPnl: 0,
-      unrealizedPnlPercentAccumulator: 0,
-      unrealizedWeight: 0,
+      unrealizedCostBasis: 0,
       dayChange: null,
-      dayChangePercentAccumulator: 0,
-      dayChangeWeight: 0,
+      dayChangeBasis: 0,
     };
 
     currentGroup.accounts.add(position.accountId);
@@ -4440,19 +4186,15 @@ const patchCombinedAccountPositions = (
     currentGroup.averageCostAccumulator += averagePrice * quantityWeight;
     currentGroup.markAccumulator += mark * quantityWeight;
     currentGroup.averageWeight += quantityWeight;
-    currentGroup.hasMarketMark ||= hasMarketMark;
     currentGroup.marketValue += marketValue;
     currentGroup.unrealizedPnl += unrealizedPnl;
-    currentGroup.unrealizedPnlPercentAccumulator +=
-      (unrealizedPnlPercent ?? 0) * valueWeight;
-    currentGroup.unrealizedWeight += valueWeight;
+    currentGroup.unrealizedCostBasis += Math.abs(marketValue - unrealizedPnl);
     currentGroup.dayChange = addNullableStreamTotal(
       currentGroup.dayChange,
       dayChange,
     );
-    if (dayChangePercent !== null && valueWeight > 0) {
-      currentGroup.dayChangePercentAccumulator += dayChangePercent * valueWeight;
-      currentGroup.dayChangeWeight += valueWeight;
+    if (dayChange !== null) {
+      currentGroup.dayChangeBasis += Math.abs(marketValue - dayChange);
     }
     groups.set(key, currentGroup);
   });
@@ -4463,15 +4205,10 @@ const patchCombinedAccountPositions = (
       .map(([id, group]) => {
         const currentRow = group.current;
         const resolvedMark =
-          group.hasMarketMark || !currentRow
-            ? group.averageWeight > 0
-              ? group.markAccumulator / group.averageWeight
-              : 0
-            : currentRow.mark;
-        const resolvedMarketValue =
-          group.hasMarketMark || !currentRow
-            ? group.marketValue
-            : currentRow.marketValue;
+          group.averageWeight > 0
+            ? group.markAccumulator / group.averageWeight
+            : 0;
+        const resolvedMarketValue = group.marketValue;
         const row: AccountPositionRow = {
           ...(currentRow || {}),
           id,
@@ -4481,7 +4218,8 @@ const patchCombinedAccountPositions = (
           description:
             currentRow?.description ?? streamPositionDescription(group.first),
           assetClass:
-            currentRow?.assetClass ?? streamPositionAssetClassLabel(group.first),
+            currentRow?.assetClass ??
+            streamPositionAssetClassLabel(group.first),
           positionType:
             currentRow?.positionType ?? streamAccountPositionType(group.first),
           optionContract: group.first.optionContract ?? null,
@@ -4494,22 +4232,20 @@ const patchCombinedAccountPositions = (
           mark: resolvedMark,
           dayChange: group.dayChange,
           dayChangePercent:
-            group.dayChangeWeight > 0
-              ? group.dayChangePercentAccumulator / group.dayChangeWeight
-              : currentRow?.dayChangePercent ?? null,
-          unrealizedPnl: group.hasMarketMark || !currentRow
-            ? group.unrealizedPnl
-            : currentRow.unrealizedPnl,
+            group.dayChange !== null && group.dayChangeBasis > 0
+              ? (group.dayChange / group.dayChangeBasis) * 100
+              : null,
+          unrealizedPnl: group.unrealizedPnl,
           unrealizedPnlPercent:
-            !group.hasMarketMark && currentRow
-              ? currentRow.unrealizedPnlPercent
-              : group.unrealizedWeight > 0
-              ? group.unrealizedPnlPercentAccumulator / group.unrealizedWeight
+            group.unrealizedCostBasis > 0
+              ? (group.unrealizedPnl / group.unrealizedCostBasis) * 100
               : 0,
           marketValue: resolvedMarketValue,
-          weightPercent: group.hasMarketMark || !currentRow
-            ? weightPercentFromNav(resolvedMarketValue, payload, accountId)
-            : currentRow.weightPercent,
+          weightPercent: weightPercentFromNav(
+            resolvedMarketValue,
+            payload,
+            accountId,
+          ),
           betaWeightedDelta: currentRow?.betaWeightedDelta ?? null,
           lots: currentRow?.lots ?? [],
           openOrders: currentRow?.openOrders ?? [],
@@ -4523,7 +4259,9 @@ const patchCombinedAccountPositions = (
         };
         return row;
       })
-      .filter((position) => accountPositionMatchesAssetClass(position, queryKey)),
+      .filter((position) =>
+        accountPositionMatchesAssetClass(position, queryKey),
+      ),
   );
 };
 
@@ -4533,12 +4271,9 @@ const patchAccountPositionsFromStream = (
   accountId: string,
   queryKey: unknown,
 ): AccountPositionsResponse | undefined => {
-  const scopedPositions =
-    accountId === "combined"
-      ? payload.positions
-      : payload.positions.filter((position) => position.accountId === accountId);
-  if (!current && !scopedPositions.some(streamPositionHasMarketMark)) {
-    return current;
+  const scopedPositions = streamPositionsForScopedAccount(payload, accountId);
+  if (!accountStreamScopeHasUsableMarks(payload, accountId)) {
+    return undefined;
   }
 
   const base = accountPositionsBaseFromStream(current, payload, accountId);
@@ -4562,23 +4297,25 @@ const patchAccountPositionsFromStream = (
                 accountId,
               ),
             )
-            .filter((position) => accountPositionMatchesAssetClass(position, queryKey)),
+            .filter((position) =>
+              accountPositionMatchesAssetClass(position, queryKey),
+            ),
         );
 
   return {
     ...base,
     positions,
-    totals: accountPositionTotalsFromStreamRows(
-      base.totals,
-      positions,
-      payload,
-      accountId,
-    ),
+    totals: accountPositionTotalsFromStreamRows(positions, payload, accountId),
     updatedAt: new Date().toISOString(),
   };
 };
 
-const TERMINAL_ORDER_STATUSES = new Set(["filled", "canceled", "rejected", "expired"]);
+const TERMINAL_ORDER_STATUSES = new Set([
+  "filled",
+  "canceled",
+  "rejected",
+  "expired",
+]);
 
 const orderMatchesAccountTab = (
   order: StreamOrder,
@@ -4670,7 +4407,9 @@ const shadowOrdersForQuery = (
   queryKey: unknown,
 ): AccountOrdersResponse => {
   const params = readQueryParams(queryKey);
-  return params?.tab === "history" ? payload.historyOrders : payload.workingOrders;
+  return params?.tab === "history"
+    ? payload.historyOrders
+    : payload.workingOrders;
 };
 
 export const applyShadowAccountPayloadToCache = (
@@ -4687,7 +4426,10 @@ export const applyShadowAccountPayloadToCache = (
     })
     .forEach((query) => {
       const params = readQueryParams(query.queryKey);
-      if (!matchesMode(params, "shadow") || typeof params?.source === "string") {
+      if (
+        !matchesMode(params, "shadow") ||
+        typeof params?.source === "string"
+      ) {
         return;
       }
 
@@ -4696,18 +4438,15 @@ export const applyShadowAccountPayloadToCache = (
         queryClient.setQueryData(
           query.queryKey,
           (current: AccountSummaryResponse | undefined) =>
-            preferNonDegradedAccountResponse(current, payload.summary),
+            reuseEqualJson(current, payload.summary),
         );
       } else if (path === "/api/accounts/shadow/positions") {
         queryClient.setQueryData(
           query.queryKey,
           (current: AccountPositionsResponse | undefined) =>
-            preferNonDegradedAccountResponse(
+            maybeReuseAccountPositionsResponse(
               current,
-              maybeReuseAccountPositionsResponse(
-                current,
-                shadowPositionsForQuery(payload.positions, query.queryKey),
-              ),
+              shadowPositionsForQuery(payload.positions, query.queryKey),
             ),
         );
       } else if (path === "/api/accounts/shadow/orders") {
@@ -4719,7 +4458,7 @@ export const applyShadowAccountPayloadToCache = (
         queryClient.setQueryData(
           query.queryKey,
           (current: AccountAllocationResponse | undefined) =>
-            preferNonDegradedAccountResponse(current, payload.allocation),
+            reuseEqualJson(current, payload.allocation),
         );
       } else if (
         path === "/api/accounts/shadow/risk" &&
@@ -4728,11 +4467,10 @@ export const applyShadowAccountPayloadToCache = (
         queryClient.setQueryData(
           query.queryKey,
           (current: AccountRiskResponse | undefined) =>
-            preferNonDegradedAccountResponse(current, payload.risk),
+            reuseEqualJson(current, payload.risk),
         );
       }
     });
-
 };
 
 const optionalParamMatches = (
@@ -4765,11 +4503,18 @@ const accountPositionsQueryMatchesDetail = (
 
 const accountPositionsQueryMatchesPayload = (
   params: Record<string, unknown> | null,
-  payload: Pick<AccountPagePrimaryPayload | AccountPageLivePayload, "accountId" | "assetClass">,
-  options: Pick<SeedAccountPagePrimaryQueryKeysOptions, "positionsLiveQuotes"> = {},
+  payload: Pick<
+    AccountPagePrimaryPayload | AccountPageLivePayload,
+    "accountId" | "assetClass"
+  >,
+  options: Pick<
+    SeedAccountPagePrimaryQueryKeysOptions,
+    "positionsLiveQuotes"
+  > = {},
 ): boolean => {
   const positionsLiveQuotes =
-    options.positionsLiveQuotes ?? primaryAccountPositionsUseLiveQuotes(payload);
+    options.positionsLiveQuotes ??
+    primaryAccountPositionsUseLiveQuotes(payload);
   return (
     assetClassParamMatches(params, payload.assetClass) &&
     accountPositionsQueryRequestsLiveQuotes(params) === positionsLiveQuotes &&
@@ -4782,7 +4527,10 @@ const shouldApplyPrimaryAccountPositions = (
 ): boolean => Boolean(payload.accountId);
 
 const primaryAccountPositionsUseLiveQuotes = (
-  payload: Pick<AccountPagePrimaryPayload | AccountPageLivePayload, "accountId">,
+  payload: Pick<
+    AccountPagePrimaryPayload | AccountPageLivePayload,
+    "accountId"
+  >,
 ): boolean => isInternalShadowAccountId(payload.accountId);
 
 const orderTabParamMatches = (
@@ -4894,19 +4642,22 @@ const seedAccountPagePrimaryQueryKeys = (
     queryClient,
     getGetAccountSummaryQueryKey(payload.accountId, modeParams),
     (current: AccountSummaryResponse | undefined) =>
-      preferNonDegradedAccountResponse(current, payload.summary),
+      reuseEqualJson(current, payload.summary),
   );
   setAccountPageQueryData(
     queryClient,
     getGetAccountAllocationQueryKey(payload.accountId, modeParams),
     (current: AccountAllocationResponse | undefined) =>
-      preferNonDegradedAccountResponse(current, payload.allocation),
+      reuseEqualJson(current, payload.allocation),
   );
   setAccountPageQueryData(
     queryClient,
-    getGetAccountRiskQueryKey(payload.accountId, accountRiskParams(payload.mode)),
+    getGetAccountRiskQueryKey(
+      payload.accountId,
+      accountRiskParams(payload.mode),
+    ),
     (current: AccountRiskResponse | undefined) =>
-      preferNonDegradedAccountResponse(current, payload.risk),
+      reuseEqualJson(current, payload.risk),
   );
   if (options.seedPositions !== false) {
     setAccountPageQueryData(
@@ -4916,10 +4667,7 @@ const seedAccountPagePrimaryQueryKeys = (
         accountPositionsParams(payload, options),
       ),
       (current: AccountPositionsResponse | undefined) =>
-        preferNonDegradedAccountResponse(
-          current,
-          maybeReuseAccountPositionsResponse(current, payload.positions),
-        ),
+        maybeReuseAccountPositionsResponse(current, payload.positions),
     );
   }
   setAccountPageQueryData(
@@ -5002,7 +4750,7 @@ const seedAccountPageDerivedQueryKeys = (
       accountClosedTradeParams(payload),
     ),
     (current: AccountClosedTradesResponse | undefined) =>
-      preferUsableClosedTradesResponse(current, payload.closedTrades),
+      reuseEqualJson(current, payload.closedTrades),
   );
   if (payload.performanceCalendarFrom) {
     setAccountPageQueryData(
@@ -5012,10 +4760,7 @@ const seedAccountPageDerivedQueryKeys = (
         from: payload.performanceCalendarFrom,
       }),
       (current: AccountClosedTradesResponse | undefined) =>
-        preferUsableClosedTradesResponse(
-          current,
-          payload.performanceCalendarTrades,
-        ),
+        reuseEqualJson(current, payload.performanceCalendarTrades),
     );
   }
   setAccountPageQueryData(
@@ -5063,13 +4808,13 @@ export const applyAccountPagePrimaryPayloadToCache = (
         queryClient.setQueryData(
           query.queryKey,
           (current: AccountSummaryResponse | undefined) =>
-            preferNonDegradedAccountResponse(current, payload.summary),
+            reuseEqualJson(current, payload.summary),
         );
       } else if (path === `/api/accounts/${payload.accountId}/allocation`) {
         queryClient.setQueryData(
           query.queryKey,
           (current: AccountAllocationResponse | undefined) =>
-            preferNonDegradedAccountResponse(current, payload.allocation),
+            reuseEqualJson(current, payload.allocation),
         );
       } else if (
         path === `/api/accounts/${payload.accountId}/risk` &&
@@ -5078,7 +4823,7 @@ export const applyAccountPagePrimaryPayloadToCache = (
         queryClient.setQueryData(
           query.queryKey,
           (current: AccountRiskResponse | undefined) =>
-            preferNonDegradedAccountResponse(current, payload.risk),
+            reuseEqualJson(current, payload.risk),
         );
       } else if (
         path === `/api/accounts/${payload.accountId}/positions` &&
@@ -5088,10 +4833,7 @@ export const applyAccountPagePrimaryPayloadToCache = (
         queryClient.setQueryData(
           query.queryKey,
           (current: AccountPositionsResponse | undefined) =>
-            preferNonDegradedAccountResponse(
-              current,
-              maybeReuseAccountPositionsResponse(current, payload.positions),
-            ),
+            maybeReuseAccountPositionsResponse(current, payload.positions),
         );
       } else if (
         path === `/api/accounts/${payload.accountId}/orders` &&
@@ -5137,13 +4879,13 @@ export const applyAccountPageLivePayloadToCache = (
         queryClient.setQueryData(
           query.queryKey,
           (current: AccountSummaryResponse | undefined) =>
-            preferNonDegradedAccountResponse(current, payload.summary),
+            reuseEqualJson(current, payload.summary),
         );
       } else if (path === `/api/accounts/${payload.accountId}/allocation`) {
         queryClient.setQueryData(
           query.queryKey,
           (current: AccountAllocationResponse | undefined) =>
-            preferNonDegradedAccountResponse(current, payload.allocation),
+            reuseEqualJson(current, payload.allocation),
         );
       } else if (
         path === `/api/accounts/${payload.accountId}/risk` &&
@@ -5152,7 +4894,7 @@ export const applyAccountPageLivePayloadToCache = (
         queryClient.setQueryData(
           query.queryKey,
           (current: AccountRiskResponse | undefined) =>
-            preferNonDegradedAccountResponse(current, payload.risk),
+            reuseEqualJson(current, payload.risk),
         );
       } else if (
         path === `/api/accounts/${payload.accountId}/positions` &&
@@ -5163,10 +4905,7 @@ export const applyAccountPageLivePayloadToCache = (
         queryClient.setQueryData(
           query.queryKey,
           (current: AccountPositionsResponse | undefined) =>
-            preferNonDegradedAccountResponse(
-              current,
-              maybeReuseAccountPositionsResponse(current, payload.positions),
-            ),
+            maybeReuseAccountPositionsResponse(current, payload.positions),
         );
       } else if (
         path === `/api/accounts/${payload.accountId}/orders` &&
@@ -5245,18 +4984,18 @@ export const applyAccountPageDerivedPayloadToCache = (
           queryClient.setQueryData(
             query.queryKey,
             (current: AccountClosedTradesResponse | undefined) =>
-              preferUsableClosedTradesResponse(current, payload.closedTrades),
+              reuseEqualJson(current, payload.closedTrades),
           );
         } else if (
-          performanceCalendarParamsMatch(params, payload.performanceCalendarFrom)
+          performanceCalendarParamsMatch(
+            params,
+            payload.performanceCalendarFrom,
+          )
         ) {
           queryClient.setQueryData(
             query.queryKey,
             (current: AccountClosedTradesResponse | undefined) =>
-              preferUsableClosedTradesResponse(
-                current,
-                payload.performanceCalendarTrades,
-              ),
+              reuseEqualJson(current, payload.performanceCalendarTrades),
           );
         }
       } else if (path === `/api/accounts/${payload.accountId}/equity-history`) {
@@ -5264,10 +5003,15 @@ export const applyAccountPageDerivedPayloadToCache = (
         const performanceCalendarQuery =
           isPerformanceCalendarEquityQuery(params);
         const benchmark =
-          typeof params?.benchmark === "string" ? params.benchmark.toUpperCase() : null;
+          typeof params?.benchmark === "string"
+            ? params.benchmark.toUpperCase()
+            : null;
 
         if (benchmark === "SPY" || benchmark === "QQQ" || benchmark === "DIA") {
-          if (range === payload.range && payload.benchmarkEquityHistory[benchmark]) {
+          if (
+            range === payload.range &&
+            payload.benchmarkEquityHistory[benchmark]
+          ) {
             queryClient.setQueryData(
               query.queryKey,
               payload.benchmarkEquityHistory[benchmark],
@@ -5375,7 +5119,9 @@ const accountPagePayloadQueueKey = (
     | AccountPageDerivedPayload,
 ): string => {
   if (kind === "primary" || kind === "live") {
-    const livePayload = payload as AccountPagePrimaryPayload | AccountPageLivePayload;
+    const livePayload = payload as
+      | AccountPagePrimaryPayload
+      | AccountPageLivePayload;
     return [
       kind,
       livePayload.accountId,
@@ -5474,7 +5220,12 @@ export function queueAccountPagePayloadToCache(
     | AccountPageDerivedPayload,
 ) {
   const queueKey = accountPagePayloadQueueKey(kind, payload);
-  const item = { kind, queryClient, payload, queueKey } as QueuedAccountPagePayload;
+  const item = {
+    kind,
+    queryClient,
+    payload,
+    queueKey,
+  } as QueuedAccountPagePayload;
   const existingIndex = pendingAccountPagePayloads.findIndex(
     (pending) =>
       pending.queryClient === queryClient && pending.queueKey === queueKey,
@@ -5514,7 +5265,11 @@ export const applyIbkrAccountPayloadToCache = (
       if (!matchesMode(params, input.mode)) {
         return;
       }
-      if (isInternalShadowAccountId(params?.accountId as string | null | undefined)) {
+      if (
+        isInternalShadowAccountId(
+          params?.accountId as string | null | undefined,
+        )
+      ) {
         return;
       }
 
@@ -5543,6 +5298,10 @@ export const applyIbkrAccountPayloadToCache = (
         if (isInternalShadowAccountId(summaryAccountId)) {
           return;
         }
+        if (!accountStreamHasScopedAccount(payload, summaryAccountId)) {
+          queryClient.removeQueries({ queryKey: query.queryKey, exact: true });
+          return;
+        }
         queryClient.setQueryData(
           query.queryKey,
           (current: AccountSummaryResponse | undefined) =>
@@ -5554,6 +5313,13 @@ export const applyIbkrAccountPayloadToCache = (
       const positionsAccountId = accountIdFromScopedPath(path, "positions");
       if (positionsAccountId) {
         if (isInternalShadowAccountId(positionsAccountId)) {
+          return;
+        }
+        if (
+          !accountStreamHasScopedAccount(payload, positionsAccountId) ||
+          !accountStreamScopeHasUsableMarks(payload, positionsAccountId)
+        ) {
+          queryClient.removeQueries({ queryKey: query.queryKey, exact: true });
           return;
         }
         queryClient.setQueryData(
@@ -5576,6 +5342,10 @@ export const applyIbkrAccountPayloadToCache = (
       if (isInternalShadowAccountId(equityAccountId)) {
         return;
       }
+      if (!accountStreamHasScopedAccount(payload, equityAccountId)) {
+        queryClient.removeQueries({ queryKey: query.queryKey, exact: true });
+        return;
+      }
 
       const range = normalizeAccountHistoryRange(params?.range);
       if (!range) {
@@ -5595,7 +5365,10 @@ export const applyIbkrAccountPayloadToCache = (
     });
 
   const now = Date.now();
-  if (now - lastAccountDerivedInvalidationAt >= ACCOUNT_DERIVED_INVALIDATION_THROTTLE_MS) {
+  if (
+    now - lastAccountDerivedInvalidationAt >=
+    ACCOUNT_DERIVED_INVALIDATION_THROTTLE_MS
+  ) {
     lastAccountDerivedInvalidationAt = now;
     invalidateAccountScopedQueries(
       queryClient,
@@ -5684,7 +5457,10 @@ export const mergeOptionChainContracts = (
   const currentByProviderContractId = new Map(
     (currentContracts || [])
       .filter((contract) => contract.contract?.providerContractId)
-      .map((contract) => [contract.contract.providerContractId || "", contract]),
+      .map((contract) => [
+        contract.contract.providerContractId || "",
+        contract,
+      ]),
   );
 
   const nextProviderContractIds = new Set(
@@ -5731,7 +5507,10 @@ export const mergeOptionChainContracts = (
 
   (currentContracts || []).forEach((currentContract) => {
     const providerContractId = currentContract.contract?.providerContractId;
-    if (!providerContractId || nextProviderContractIds.has(providerContractId)) {
+    if (
+      !providerContractId ||
+      nextProviderContractIds.has(providerContractId)
+    ) {
       return;
     }
     mergedContracts.push(currentContract);
@@ -5779,7 +5558,9 @@ export const patchOptionQuotesIntoContracts = (
 
     const incomingBid = isPositiveFiniteNumber(quote.bid) ? quote.bid : null;
     const incomingAsk = isPositiveFiniteNumber(quote.ask) ? quote.ask : null;
-    const incomingPrice = isPositiveFiniteNumber(quote.price) ? quote.price : null;
+    const incomingPrice = isPositiveFiniteNumber(quote.price)
+      ? quote.price
+      : null;
     const bid = incomingBid ?? contract.bid;
     const ask = incomingAsk ?? contract.ask;
     const last = incomingPrice ?? contract.last;
@@ -5787,14 +5568,15 @@ export const patchOptionQuotesIntoContracts = (
       incomingBid != null && incomingAsk != null
         ? (incomingBid + incomingAsk) / 2
         : incomingPrice != null
-        ? incomingPrice
-        : contract.mark;
+          ? incomingPrice
+          : contract.mark;
     const updatedAt = quote.updatedAt ?? contract.updatedAt;
     const quoteHasUsableData = hasUsableOptionQuoteData(quote);
     const quoteFreshness =
       quote.freshness ??
       (quoteHasUsableData ? "live" : contract.quoteFreshness);
-    const marketDataMode = quote.marketDataMode ?? contract.marketDataMode ?? null;
+    const marketDataMode =
+      quote.marketDataMode ?? contract.marketDataMode ?? null;
     const quoteUpdatedAt =
       quote.dataUpdatedAt ?? quote.updatedAt ?? contract.quoteUpdatedAt ?? null;
     const dataUpdatedAt =
@@ -5877,7 +5659,10 @@ export const getOptionChainContractExpirationKey = (
 export const groupOptionChainContractsByExpiration = (
   contracts: OptionChainResponse["contracts"],
 ): Map<string, OptionChainResponse["contracts"]> => {
-  const contractsByExpiration = new Map<string, OptionChainResponse["contracts"]>();
+  const contractsByExpiration = new Map<
+    string,
+    OptionChainResponse["contracts"]
+  >();
 
   (contracts || []).forEach((contract) => {
     const expirationKey = getOptionChainContractExpirationKey(contract);
@@ -5906,7 +5691,9 @@ const useQuoteSnapshotStream = ({
 }) => {
   const queryClient = useQueryClient();
   const onQuotesRef = useRef(onQuotes);
-  const pendingQuoteStreamSnapshotsRef = useRef(new Map<string, QuoteSnapshot>());
+  const pendingQuoteStreamSnapshotsRef = useRef(
+    new Map<string, QuoteSnapshot>(),
+  );
   const quoteStreamFlushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
     null,
   );
@@ -6029,7 +5816,10 @@ const useQuoteSnapshotStream = ({
     const closeSource = () => {
       if (source) {
         source.removeEventListener("quotes", handleQuotes as EventListener);
-        source.removeEventListener("heartbeat", handleHeartbeat as EventListener);
+        source.removeEventListener(
+          "heartbeat",
+          handleHeartbeat as EventListener,
+        );
         source.onerror = null;
         source.close();
         source = null;
@@ -6298,7 +6088,11 @@ export const useAccountPageSnapshotStream = ({
     const lastDerivedEventAt = lastDerivedEventAtRef.current;
     const next = {
       accountLastEventAt: lastEventAt,
-      accountFresh: isStreamFresh(lastEventAt, nowMs, ACCOUNT_PAGE_STREAM_FRESH_MS),
+      accountFresh: isStreamFresh(
+        lastEventAt,
+        nowMs,
+        ACCOUNT_PAGE_STREAM_FRESH_MS,
+      ),
       accountPrimaryFresh: isStreamFresh(
         lastPrimaryEventAt,
         nowMs,
@@ -6373,7 +6167,9 @@ export const useAccountPageSnapshotStream = ({
     lastDerivedEventAtRef.current = null;
     recomputeFreshness();
 
-    const markFresh = (kind: "primary" | "live" | "derived" | "both" = "both") => {
+    const markFresh = (
+      kind: "primary" | "live" | "derived" | "both" = "both",
+    ) => {
       const timestamp = Date.now();
       lastEventAtRef.current = timestamp;
       if (kind === "primary" || kind === "live" || kind === "both") {
@@ -6566,7 +6362,13 @@ export const useSignalMonitorMatrixStream = ({
       }),
     // symbols/timeframes are arrays; the joined keys are the stable identity.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [environment, profileUniverse, profileUniverseKey, symbolsKey, timeframesKey],
+    [
+      environment,
+      profileUniverse,
+      profileUniverseKey,
+      symbolsKey,
+      timeframesKey,
+    ],
   );
 
   useEffect(() => {
@@ -6596,8 +6398,7 @@ export const useSignalMonitorMatrixStream = ({
     };
 
     const handleStates =
-      (kind: "bootstrap" | "state-delta") =>
-      (event: MessageEvent<string>) => {
+      (kind: "bootstrap" | "state-delta") => (event: MessageEvent<string>) => {
         const payload = parseJsonPayload<SignalMatrixStreamPayload>(event.data);
         if (
           !payload ||
@@ -6619,10 +6420,7 @@ export const useSignalMonitorMatrixStream = ({
           "bootstrap",
           handleBootstrap as EventListener,
         );
-        source.removeEventListener(
-          "state-delta",
-          handleDelta as EventListener,
-        );
+        source.removeEventListener("state-delta", handleDelta as EventListener);
         source.onerror = null;
         source.close();
         source = null;
@@ -6704,8 +6502,7 @@ export const applyAlgoCockpitPayloadToCache = (
 ) => {
   queryClient.setQueryData(
     getListAlgoDeploymentsQueryKey(),
-    (current: AlgoDeploymentsResponse | undefined) =>
-      resolveAlgoDeploymentsStreamCacheUpdate(current, payload.deployments),
+    payload.deployments,
   );
 
   const deploymentId = payload.deploymentId;
@@ -6781,7 +6578,11 @@ export const useAlgoCockpitStream = ({
     const lastFullEventAt = lastFullEventAtRef.current;
     const next = {
       algoLastEventAt: lastEventAt,
-      algoFresh: isStreamFresh(lastEventAt, nowMs, ALGO_COCKPIT_STREAM_FRESH_MS),
+      algoFresh: isStreamFresh(
+        lastEventAt,
+        nowMs,
+        ALGO_COCKPIT_STREAM_FRESH_MS,
+      ),
       algoPrimaryFresh: isStreamFresh(
         lastPrimaryEventAt,
         nowMs,
@@ -6832,7 +6633,9 @@ export const useAlgoCockpitStream = ({
     lastFullEventAtRef.current = null;
     recomputeFreshness();
 
-    const markFresh = (kind: "primary" | "full" | "heartbeat" = "heartbeat") => {
+    const markFresh = (
+      kind: "primary" | "full" | "heartbeat" = "heartbeat",
+    ) => {
       const timestamp = Date.now();
       lastEventAtRef.current = timestamp;
       if (kind === "primary" || kind === "full") {
@@ -7385,11 +7188,7 @@ export const useIbkrOptionQuoteStream = ({
     };
 
     const startWebSocket = () => {
-      if (
-        closed ||
-        !webSocketUrl ||
-        typeof window.WebSocket === "undefined"
-      ) {
+      if (closed || !webSocketUrl || typeof window.WebSocket === "undefined") {
         startRestFallback();
         return;
       }
@@ -7407,21 +7206,24 @@ export const useIbkrOptionQuoteStream = ({
       });
       socket = new WebSocket(webSocketUrl);
       stopStallWatchdog();
-      stallTimer = setInterval(() => {
-        if (closed || !ready || fallbackStarted) {
-          return;
-        }
-        const ageMs = Date.now() - lastWebSocketMessageAt;
-        if (ageMs < OPTION_QUOTE_WEBSOCKET_STALL_MS) {
-          return;
-        }
-        setOptionHydrationDiagnostics({
-          wsState: "stalled",
-          quoteMode: "websocket-stalled",
-          degraded: true,
-        });
-        socket?.close();
-      }, Math.max(1_000, Math.floor(OPTION_QUOTE_WEBSOCKET_STALL_MS / 2)));
+      stallTimer = setInterval(
+        () => {
+          if (closed || !ready || fallbackStarted) {
+            return;
+          }
+          const ageMs = Date.now() - lastWebSocketMessageAt;
+          if (ageMs < OPTION_QUOTE_WEBSOCKET_STALL_MS) {
+            return;
+          }
+          setOptionHydrationDiagnostics({
+            wsState: "stalled",
+            quoteMode: "websocket-stalled",
+            degraded: true,
+          });
+          socket?.close();
+        },
+        Math.max(1_000, Math.floor(OPTION_QUOTE_WEBSOCKET_STALL_MS / 2)),
+      );
 
       const fallbackToRest = () => {
         if (closed || fallbackStarted) {
@@ -7461,7 +7263,9 @@ export const useIbkrOptionQuoteStream = ({
           return;
         }
         lastWebSocketMessageAt = Date.now();
-        const payload = parseJsonPayload<OptionQuoteWebSocketPayload>(event.data);
+        const payload = parseJsonPayload<OptionQuoteWebSocketPayload>(
+          event.data,
+        );
         if (!payload) {
           return;
         }
@@ -7569,6 +7373,7 @@ export const useIbkrOptionQuoteStream = ({
 };
 
 export const __liveStreamsInternalsForTests = {
+  applyIbkrAccountPayloadToCache,
   accountPositionsParams,
   applyAlgoCockpitPayloadToCache,
   cacheOptionQuoteSnapshot,
@@ -7577,7 +7382,6 @@ export const __liveStreamsInternalsForTests = {
   patchAccountPositionsFromStream,
   patchAccountPositionRowFromOptionQuote,
   primaryAccountPositionsUseLiveQuotes,
-  resolveAlgoDeploymentsStreamCacheUpdate,
   resolveSharedOptionQuoteStreamDemand,
   shouldUseSharedOptionQuoteStream,
 };

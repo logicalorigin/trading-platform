@@ -5,14 +5,14 @@ import type { QuoteSnapshot } from "../providers/ibkr/client";
 import type { OptionChainContract as MassiveOptionChainContract } from "../providers/massive/market-data";
 import { __accountPositionInternalsForTests } from "./account";
 import {
-  __cacheBridgeOptionQuoteForTests,
+  __cacheMassiveOptionQuoteForTests,
   __massiveOptionSnapshotToQuoteSnapshotForTests,
-  __resetBridgeOptionQuoteStreamForTests,
-  fetchBridgeOptionQuoteSnapshots,
-} from "./bridge-option-quote-stream";
+  __resetMassiveOptionQuoteStreamForTests,
+  fetchMassiveOptionQuoteSnapshots,
+} from "./massive-option-quote-stream";
 
 afterEach(() => {
-  __resetBridgeOptionQuoteStreamForTests();
+  __resetMassiveOptionQuoteStreamForTests();
 });
 
 const providerContractId = "O:AAPL260612C00290000";
@@ -112,7 +112,7 @@ test("REST option quote keeps a real flat day change when prior close is present
   assert.equal(result?.dayChangePercent, 0);
 });
 
-test("bridge option quote treats change=0 without prior close as unknown", async () => {
+test("massive option quote treats change=0 without prior close as unknown", async () => {
   const quote = __massiveOptionSnapshotToQuoteSnapshotForTests(
     massiveSnapshotWith({ prevClose: null, change: 0, changePercent: 0 }),
     providerContractId,
@@ -123,8 +123,8 @@ test("bridge option quote treats change=0 without prior close as unknown", async
   assert.equal(quote.change, null);
   assert.equal(quote.changePercent, null);
 
-  __cacheBridgeOptionQuoteForTests(quote);
-  const payload = await fetchBridgeOptionQuoteSnapshots({
+  __cacheMassiveOptionQuoteForTests(quote);
+  const payload = await fetchMassiveOptionQuoteSnapshots({
     underlying: "AAPL",
     providerContractIds: [providerContractId],
     owner: "option-quote-day-change-guard:test",
@@ -136,7 +136,7 @@ test("bridge option quote treats change=0 without prior close as unknown", async
   assert.equal(payload.quotes[0]?.changePercent, null);
 });
 
-test("bridge option quote keeps a real flat day change when prior close is present", () => {
+test("massive option quote keeps a real flat day change when prior close is present", () => {
   const quote = __massiveOptionSnapshotToQuoteSnapshotForTests(
     massiveSnapshotWith({ mark: 5, prevClose: 5, change: 0, changePercent: 0 }),
     providerContractId,

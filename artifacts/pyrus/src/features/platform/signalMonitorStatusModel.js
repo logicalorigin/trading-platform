@@ -1,9 +1,3 @@
-const DB_UNAVAILABLE_PROFILE_PREFIX = "db-unavailable-";
-const RUNTIME_FALLBACK_PROFILE_PREFIX = "runtime-fallback-";
-const RUNTIME_FALLBACK_ERROR_PATTERN =
-  /runtime-only signal monitor evaluation/i;
-const DB_UNAVAILABLE_ERROR_PATTERN =
-  /postgres is unavailable|signal monitor data is temporarily degraded|database unavailable/i;
 const PROBLEM_STATE_STATUSES = new Set(["stale", "unavailable", "error"]);
 
 const parseTimeMs = (value) => {
@@ -14,31 +8,6 @@ const parseTimeMs = (value) => {
   }
   const time = Date.parse(value);
   return Number.isFinite(time) ? time : 0;
-};
-
-export const isSignalMonitorRuntimeFallbackProfile = (profile) => {
-  if (!profile) {
-    return false;
-  }
-  const id = String(profile.id || "");
-  const lastError = String(profile.lastError || "");
-  return (
-    id.startsWith(RUNTIME_FALLBACK_PROFILE_PREFIX) ||
-    RUNTIME_FALLBACK_ERROR_PATTERN.test(lastError)
-  );
-};
-
-export const isSignalMonitorDegradedProfile = (profile) => {
-  if (!profile) {
-    return false;
-  }
-  const id = String(profile.id || "");
-  const lastError = String(profile.lastError || "");
-  return (
-    isSignalMonitorRuntimeFallbackProfile(profile) ||
-    id.startsWith(DB_UNAVAILABLE_PROFILE_PREFIX) ||
-    DB_UNAVAILABLE_ERROR_PATTERN.test(lastError)
-  );
 };
 
 export const summarizeSignalMonitorStates = (states) => {

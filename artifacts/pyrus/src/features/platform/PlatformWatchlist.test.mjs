@@ -7,6 +7,46 @@ import { resolveWatchlistSparklineData } from "./PlatformWatchlist.jsx";
 const readLocalSource = (filename) =>
   readFileSync(new URL(filename, import.meta.url), "utf8");
 
+test("STA and watchlist reads do not launder stale or built-in fallback data", () => {
+  const source = readLocalSource("./PlatformApp.jsx");
+  const freshnessSource = readLocalSource("./platformFreshnessBus.ts");
+  const watchlistStart = source.indexOf("const watchlistsQuery = useListWatchlists");
+  const watchlistEnd = source.indexOf("const marketScreenActive", watchlistStart);
+  const profileStart = source.indexOf(
+    "const signalMonitorProfileQuery = useGetSignalMonitorProfile",
+  );
+  const profileEnd = source.indexOf("const ibkrWorkPressure", profileStart);
+  const eventsStart = source.indexOf("const signalMonitorEventsQuery = useQuery");
+  const eventsEnd = source.indexOf(
+    "completeBootProgressTask(\"signal-profile\"",
+    eventsStart,
+  );
+
+  for (const offset of [watchlistStart, watchlistEnd, profileStart, profileEnd, eventsStart, eventsEnd]) {
+    assert.notEqual(offset, -1);
+  }
+
+  const watchlistBlock = source.slice(watchlistStart, watchlistEnd);
+  assert.doesNotMatch(watchlistBlock, /WATCHLIST\.map|\["SPY"\]/);
+  assert.match(
+    watchlistBlock,
+    /const watchlists = useMemo\([\s\S]*watchlistsQuery\.isError\s*\? \[\]/s,
+  );
+
+  const profileBlock = source.slice(profileStart, profileEnd);
+  assert.doesNotMatch(profileBlock, /placeholderData/);
+  assert.match(profileBlock, /fetchedAt: signalMonitorProfileQuery\.dataUpdatedAt/);
+  assert.match(profileBlock, /!signalMonitorProfileQuery\.isError/);
+
+  const eventsBlock = source.slice(eventsStart, eventsEnd);
+  assert.match(eventsBlock, /fetchedAt: signalMonitorEventsQuery\.dataUpdatedAt/);
+  assert.match(eventsBlock, /!signalMonitorEventsQuery\.isError/);
+
+  assert.match(freshnessSource, /fetchedAt\?: number/);
+  assert.match(freshnessSource, /resolvedExpiresAt <= Date\.now\(\)/);
+  assert.match(freshnessSource, /expiresAt: resolvedExpiresAt/);
+});
+
 test("watchlist renders the visible extended-hours badge (not hover-only)", () => {
   // Regression guard: 5b68e05 moved the after-hours session line to a hover-only
   // title; it must render as a VISIBLE badge in the row (session label + price +
@@ -304,7 +344,13 @@ test("signal matrix surfaces seed sparklines without the market history bars pat
   assert.equal(signalWorkFastScreenBlock.includes('screen === "trade"'), false);
   assert.match(
     source,
-    /const signalMonitorEventsReady = Boolean\([\s\S]*screen !== "algo"[\s\S]*screen !== "trade"[\s\S]*!criticalApiMutationPaused/s,
+    /const signalMonitorEventsReady = Boolean\([\s\S]*screen !== "trade"[\s\S]*!criticalApiMutationPaused/s,
+  );
+  assert.doesNotMatch(
+    source.match(
+      /const signalMonitorEventsReady = Boolean\([\s\S]*?\);/,
+    )?.[0] || "",
+    /screen !== "algo"/,
   );
   assert.match(
     source,

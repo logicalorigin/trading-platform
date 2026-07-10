@@ -59,14 +59,13 @@ test("preferred symbol state uses backend actionability, not the fresh flag", ()
   );
 });
 
-test("degraded snapshots retain the last non-empty states and events", () => {
+test("degraded snapshots replace prior states and events", () => {
   resetSignalMonitorStoreForTests();
   try {
     publishStates([makeSignalState("AAPL")]);
     assert.equal(getSignalMonitorSnapshotForTests().states.length, 1);
 
-    // A degraded publish with empty payloads keeps the prior snapshot data
-    // instead of blanking the UI during stream backpressure.
+    // Outages stay explicit; prior data must not remain as a fallback screen.
     publishSignalMonitorSnapshot({
       profile: { timeframe: "5m" },
       states: [],
@@ -75,12 +74,12 @@ test("degraded snapshots retain the last non-empty states and events", () => {
       pending: false,
       degraded: true,
     });
-    const retained = getSignalMonitorSnapshotForTests();
-    assert.equal(retained.degraded, true);
-    assert.equal(retained.states.length, 1);
-    assert.equal(retained.states[0].symbol, "AAPL");
+    const degraded = getSignalMonitorSnapshotForTests();
+    assert.equal(degraded.degraded, true);
+    assert.deepEqual(degraded.states, []);
+    assert.deepEqual(degraded.events, []);
 
-    // Recovery with real data replaces the retained snapshot.
+    // Recovery with real data replaces the outage snapshot.
     publishStates([makeSignalState("MSFT")]);
     const recovered = getSignalMonitorSnapshotForTests();
     assert.equal(recovered.degraded, false);

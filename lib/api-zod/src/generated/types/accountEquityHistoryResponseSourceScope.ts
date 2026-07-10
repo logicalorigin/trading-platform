@@ -15,5 +15,4 @@ export const AccountEquityHistoryResponseSourceScope = {
   automation: 'automation',
   watchlist_backtest: 'watchlist_backtest',
   signal_options_replay: 'signal_options_replay',
-  runtime_fallback: 'runtime_fallback',
 } as const;

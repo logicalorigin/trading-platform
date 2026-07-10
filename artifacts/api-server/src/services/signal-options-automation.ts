@@ -119,7 +119,7 @@ import {
 import { stripOvernightSpotFromSignalOptionsConfig } from "./algo-deployment-profile-shape";
 import { getSignalOptionsWorkerSnapshot } from "./signal-options-worker-state";
 import { isStockAggregateStreamingAvailable } from "./stock-aggregate-stream";
-import { fetchBridgeOptionQuoteSnapshots } from "./bridge-option-quote-stream";
+import { fetchMassiveOptionQuoteSnapshots } from "./massive-option-quote-stream";
 import {
   declareIbkrLiveDemand,
   readIbkrLiveDemandState,
@@ -131,7 +131,6 @@ import {
   releaseMarketDataLeases,
   type MarketDataAdmissionResult,
 } from "./market-data-admission";
-import { getApiResourcePressureSnapshot } from "./resource-pressure";
 import {
   SIGNAL_OPTIONS_REPLAY_MARK_SOURCE,
   SIGNAL_OPTIONS_REPLAY_SOURCE,
@@ -335,11 +334,8 @@ const SIGNAL_OPTIONS_SUMMARY_EVENT_LIMIT = 100;
 const SIGNAL_OPTIONS_DASHBOARD_DAY_EVENT_LIMIT = 10_000;
 const SIGNAL_OPTIONS_SUMMARY_RESPONSE_EVENT_LIMIT = 20;
 const SIGNAL_OPTIONS_DASHBOARD_CACHE_TTL_MS = 2_000;
-const SIGNAL_OPTIONS_DASHBOARD_CACHE_STALE_TTL_MS = 60_000;
 const SIGNAL_OPTIONS_SUMMARY_CACHE_TTL_MS = 15_000;
-const SIGNAL_OPTIONS_SUMMARY_CACHE_STALE_TTL_MS = 120_000;
 const SIGNAL_OPTIONS_PERFORMANCE_CACHE_TTL_MS = 30_000;
-const SIGNAL_OPTIONS_PERFORMANCE_CACHE_STALE_TTL_MS = 300_000;
 const SIGNAL_OPTIONS_DASHBOARD_IN_FLIGHT_MAX_AGE_MS = 120_000;
 const SIGNAL_OPTIONS_PERFORMANCE_IN_FLIGHT_MAX_AGE_MS = 120_000;
 const SIGNAL_OPTIONS_CONTRACT_PREVIEW_LIMIT = 12;
@@ -12409,120 +12405,8 @@ export function buildSignalOptionsPerformanceFromInputs(input: {
   };
 }
 
-function buildSignalOptionsPerformanceFallbackFromSnapshot(input: {
-  deploymentId: string;
-  snapshot: SignalOptionsDashboardSnapshot;
-  reason?: string;
-}) {
-  const payload = buildSignalOptionsPerformanceFromInputs({
-    deploymentId: input.deploymentId,
-    profile: input.snapshot.profile,
-    state: input.snapshot.state,
-    events: stateSignalOptionsEvents(input.snapshot.events).signalEvents,
-    shadowTradeDiagnostics: {
-      context: { range: "1M" },
-      roundTrips: [],
-      openLots: [],
-      tradeEvents: [],
-    },
-  });
-  return withSignalOptionsCacheMetadata(payload, {
-    cachedAt: input.snapshot.cachedAt,
-    cacheStatus: "stale",
-    reason:
-      input.reason ?? "signal_options_performance_dashboard_cache_fallback",
-  });
-}
-
-function buildSignalOptionsPerformanceColdPressureFallback(input: {
-  deploymentId: string;
-  reason?: string;
-}) {
-  const generatedAt = new Date().toISOString();
-  const payload = {
-    deploymentId: input.deploymentId,
-    range: "1M",
-    summary: {
-      ...summarizeSignalOptionsRoundTrips([]),
-      openLots: 0,
-      tradeEvents: null,
-    },
-    openExposure: {
-      openPositions: 0,
-      openSymbols: 0,
-      maxOpenSymbols: null,
-      atOpenSymbolCapacity: false,
-      openPremium: 0,
-      maxPremiumPerEntry: null,
-      openUnrealizedPnl: 0,
-      dailyRealizedPnl: 0,
-      dailyPnl: 0,
-      maxDailyLoss: null,
-      dailyLossRemaining: null,
-      dailyHaltActive: false,
-      tradingAllowanceEnabled: false,
-      tradingAllowance: null,
-      allowanceBasis: "cost",
-      allowanceCommitted: 0,
-      allowanceAvailable: null,
-      allowanceUnrealizedPnl: 0,
-      markedPositions: 0,
-      unmarkedPositions: 0,
-    },
-    allowance: {
-      enabled: false,
-      cap: null,
-      basis: "cost",
-      available: null,
-      committed: 0,
-      skippedCount: 0,
-      sizedDownCount: 0,
-    },
-    ruleAdherence: [],
-    topBlockers: [],
-    recentClosedTrades: [],
-    generatedAt,
-  };
-  return withSignalOptionsCacheMetadata(payload, {
-    cachedAt: generatedAt,
-    cacheStatus: "stale",
-    reason:
-      input.reason ?? "signal_options_performance_cold_cache_only_fallback",
-  });
-}
-
-function shouldServeSignalOptionsPerformancePressureFallback(): boolean {
-  return getApiResourcePressureSnapshot().level !== "normal";
-}
-
-async function buildSignalOptionsPerformancePressureFallback(input: {
-  deploymentId: string;
-}) {
-  try {
-    const snapshot = await getSignalOptionsDashboardSnapshot({
-      deploymentId: input.deploymentId,
-      cacheMode: "cache-only",
-      view: "summary",
-    });
-    return buildSignalOptionsPerformanceFallbackFromSnapshot({
-      deploymentId: input.deploymentId,
-      snapshot,
-      reason: "signal_options_performance_pressure_cache_fallback",
-    });
-  } catch (error) {
-    if (!(error instanceof HttpError)) {
-      throw error;
-    }
-  }
-  return buildSignalOptionsPerformanceColdPressureFallback({
-    deploymentId: input.deploymentId,
-    reason: "signal_options_performance_pressure_cold_fallback",
-  });
-}
-
 function startSignalOptionsPerformanceRefresh(input: {
   deploymentId: string;
-  cacheMode: SignalOptionsDashboardCacheMode;
 }) {
   const inFlight = readSignalOptionsDashboardInFlight(
     signalOptionsPerformanceInFlight,
@@ -12567,7 +12451,6 @@ function startSignalOptionsPerformanceRefresh(input: {
       payload,
       {
         ttlMs: SIGNAL_OPTIONS_PERFORMANCE_CACHE_TTL_MS,
-        staleTtlMs: SIGNAL_OPTIONS_PERFORMANCE_CACHE_STALE_TTL_MS,
       },
     );
     if (deployment.id !== input.deploymentId) {
@@ -12577,7 +12460,6 @@ function startSignalOptionsPerformanceRefresh(input: {
         payload,
         {
           ttlMs: SIGNAL_OPTIONS_PERFORMANCE_CACHE_TTL_MS,
-          staleTtlMs: SIGNAL_OPTIONS_PERFORMANCE_CACHE_STALE_TTL_MS,
         },
       );
     }
@@ -12601,43 +12483,18 @@ export async function getSignalOptionsPerformance(input: {
   const cached = readSignalOptionsCachedPayload(
     signalOptionsPerformanceCache,
     input.deploymentId,
-    cacheMode,
   );
   if (cached) {
     return cached;
   }
   if (cacheMode === "cache-only") {
-    try {
-      const snapshot = await getSignalOptionsDashboardSnapshot({
-        deploymentId: input.deploymentId,
-        cacheMode: "cache-only",
-        view: "summary",
-      });
-      return buildSignalOptionsPerformanceFallbackFromSnapshot({
-        deploymentId: input.deploymentId,
-        snapshot,
-      });
-    } catch (error) {
-      if (!(error instanceof HttpError)) {
-        throw error;
-      }
-    }
-    return buildSignalOptionsPerformanceColdPressureFallback({
-      deploymentId: input.deploymentId,
-    });
-  }
-  if (shouldServeSignalOptionsPerformancePressureFallback()) {
-    void startSignalOptionsPerformanceRefresh({
-      deploymentId: input.deploymentId,
-      cacheMode,
-    }).catch(() => {});
-    return buildSignalOptionsPerformancePressureFallback({
-      deploymentId: input.deploymentId,
+    throw new HttpError(503, "Signal-options performance cache unavailable.", {
+      code: "signal_options_performance_cache_unavailable",
+      detail: "No fresh cached signal-options performance payload is available.",
     });
   }
   return startSignalOptionsPerformanceRefresh({
     deploymentId: input.deploymentId,
-    cacheMode,
   });
 }
 
@@ -12914,7 +12771,6 @@ type SignalOptionsDashboardSnapshot = {
   state: Awaited<ReturnType<typeof buildStatePayload>>;
   cachedAt: string;
   expiresAt: number;
-  staleExpiresAt: number;
   eventRead?: {
     dayOverflow: boolean;
     dayEventLimit: number;
@@ -12955,7 +12811,6 @@ type SignalOptionsCachedPayload<T> = {
   value: T;
   cachedAt: string;
   expiresAt: number;
-  staleExpiresAt: number;
 };
 
 type SignalOptionsDashboardInFlight<T> = {
@@ -13047,8 +12902,6 @@ function withSignalOptionsCacheMetadata<T>(
   value: T,
   input: {
     cachedAt: string;
-    cacheStatus: "hit" | "stale";
-    reason?: string;
   },
 ): T {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -13058,27 +12911,13 @@ function withSignalOptionsCacheMetadata<T>(
   return {
     ...record,
     cachedAt: input.cachedAt,
-    cacheStatus: input.cacheStatus,
-    // Cache-staleness (served from stored monitor state) is the SSE-era default,
-    // not a health problem — do NOT conflate it with degraded/stale. Preserve any
-    // genuine degraded/stale already on the payload so real failures still surface;
-    // cacheStatus above carries the freshness signal for observability.
-    degraded: record["degraded"],
-    stale: record["stale"],
-    reason:
-      input.cacheStatus === "stale"
-        ? (input.reason ?? "signal_options_dashboard_stale_cache")
-        : record["reason"],
+    cacheStatus: "hit",
   } as T;
 }
 
 function readSignalOptionsCachedPayload<T>(
   cache: Map<string, SignalOptionsCachedPayload<T>>,
   deploymentId: string,
-  cacheMode: SignalOptionsDashboardCacheMode,
-  options: {
-    allowStale?: boolean;
-  } = {},
 ): T | null {
   const now = Date.now();
   const cached = cache.get(deploymentId);
@@ -13088,20 +12927,10 @@ function readSignalOptionsCachedPayload<T>(
   if (cached.expiresAt > now) {
     return withSignalOptionsCacheMetadata(cached.value, {
       cachedAt: cached.cachedAt,
-      cacheStatus: "hit",
-    });
-  }
-  if (cached.staleExpiresAt > now) {
-    if (options.allowStale === false && cacheMode !== "cache-only") {
-      return null;
-    }
-    return withSignalOptionsCacheMetadata(cached.value, {
-      cachedAt: cached.cachedAt,
-      cacheStatus: "stale",
     });
   }
   cache.delete(deploymentId);
-  return cacheMode === "cache-only" ? null : null;
+  return null;
 }
 
 function writeSignalOptionsCachedPayload<T>(
@@ -13110,7 +12939,6 @@ function writeSignalOptionsCachedPayload<T>(
   value: T,
   input: {
     ttlMs?: number;
-    staleTtlMs?: number;
   } = {},
 ) {
   const now = Date.now();
@@ -13118,8 +12946,6 @@ function writeSignalOptionsCachedPayload<T>(
     value,
     cachedAt: new Date(now).toISOString(),
     expiresAt: now + (input.ttlMs ?? SIGNAL_OPTIONS_DASHBOARD_CACHE_TTL_MS),
-    staleExpiresAt:
-      now + (input.staleTtlMs ?? SIGNAL_OPTIONS_DASHBOARD_CACHE_STALE_TTL_MS),
   });
 }
 
@@ -13137,48 +12963,6 @@ function readSignalOptionsDashboardInFlight<T>(
   }
   cache.delete(deploymentId);
   return null;
-}
-
-async function buildSignalOptionsColdDashboardSnapshot(input: {
-  deploymentId: string;
-  view: SignalOptionsDashboardView;
-  reason: string;
-}): Promise<SignalOptionsDashboardSnapshot> {
-  const deployment = await getDeploymentOrThrow(input.deploymentId);
-  const profile = resolveDeploymentProfile(deployment);
-  const now = Date.now();
-  const cachedAt = new Date(now).toISOString();
-  const state = withSignalOptionsCacheMetadata(
-    {
-      deployment: deploymentToResponse(deployment),
-      profile,
-      mode: "shadow" as const,
-      signals: [],
-      candidates: [],
-      dataQuality: buildSignalOptionsDataQualityReport({
-        candidates: [],
-        events: [],
-      }),
-      activePositions: [],
-      risk: buildSignalOptionsEmptyRisk(profile),
-      events: [],
-    },
-    {
-      cachedAt,
-      cacheStatus: "stale",
-      reason: input.reason,
-    },
-  );
-
-  return {
-    deployment,
-    profile,
-    events: [],
-    state,
-    cachedAt,
-    expiresAt: now,
-    staleExpiresAt: now + SIGNAL_OPTIONS_SUMMARY_CACHE_STALE_TTL_MS,
-  };
 }
 
 function compactSignalOptionsEventResponse(
@@ -13221,7 +13005,6 @@ function writeSignalOptionsSummarySnapshotFromFullSnapshot(
     state: compactSignalOptionsStatePayload(fullSnapshot.state),
     cachedAt: new Date(now).toISOString(),
     expiresAt: now + SIGNAL_OPTIONS_SUMMARY_CACHE_TTL_MS,
-    staleExpiresAt: now + SIGNAL_OPTIONS_SUMMARY_CACHE_STALE_TTL_MS,
     eventRead: fullSnapshot.eventRead,
   };
   writeSignalOptionsDashboardSnapshot(
@@ -13239,31 +13022,6 @@ function writeSignalOptionsSummarySnapshotFromFullSnapshot(
   return summarySnapshot;
 }
 
-function buildSignalOptionsEmptyRisk(profile: SignalOptionsExecutionProfile) {
-  return {
-    openSymbols: 0,
-    maxOpenSymbols: profile.riskCaps.maxOpenSymbols,
-    openPremium: 0,
-    maxPremiumPerEntry: profile.riskCaps.maxPremiumPerEntry,
-    maxContracts: profile.riskCaps.maxContracts,
-    maxDailyLoss: profile.riskCaps.maxDailyLoss,
-    dailyRealizedPnl: 0,
-    openUnrealizedPnl: 0,
-    dailyPnl: 0,
-    dailyLossBreached: false,
-    dailyHaltActive: false,
-    tradingAllowanceEnabled:
-      profile.riskHaltControls.tradingAllowanceEnabled === true,
-    tradingAllowance: profile.riskCaps.tradingAllowance,
-    allowanceBasis: profile.riskCaps.allowanceBasis,
-    allowanceCommitted: 0,
-    allowanceAvailable:
-      profile.riskHaltControls.tradingAllowanceEnabled === true
-        ? profile.riskCaps.tradingAllowance
-        : null,
-  };
-}
-
 async function getSignalOptionsFullDashboardSnapshot(input: {
   deploymentId: string;
   cacheMode?: SignalOptionsDashboardCacheMode;
@@ -13275,19 +13033,12 @@ async function getSignalOptionsFullDashboardSnapshot(input: {
     if (cached && cached.expiresAt > now) {
       return cached;
     }
-    if (cached && cached.staleExpiresAt > now) {
-      return {
-        ...cached,
-        state: withSignalOptionsCacheMetadata(cached.state, {
-          cachedAt: cached.cachedAt,
-          cacheStatus: "stale",
-        }),
-      };
+    if (cached) {
+      signalOptionsDashboardCache.delete(input.deploymentId);
     }
-    return buildSignalOptionsColdDashboardSnapshot({
-      deploymentId: input.deploymentId,
-      view: "full",
-      reason: "signal_options_dashboard_cold_cache_only_fallback",
+    throw new HttpError(503, "Signal-options dashboard cache unavailable.", {
+      code: "signal_options_dashboard_cache_unavailable",
+      detail: "No fresh cached signal-options dashboard payload is available.",
     });
   }
 
@@ -13321,7 +13072,6 @@ async function getSignalOptionsFullDashboardSnapshot(input: {
       state,
       cachedAt,
       expiresAt: Date.now() + SIGNAL_OPTIONS_DASHBOARD_CACHE_TTL_MS,
-      staleExpiresAt: Date.now() + SIGNAL_OPTIONS_DASHBOARD_CACHE_STALE_TTL_MS,
       eventRead: {
         dayOverflow: eventRead.dayOverflow,
         dayEventLimit: eventRead.dayEventLimit,
@@ -13360,37 +13110,18 @@ async function getSignalOptionsSummaryDashboardSnapshot(input: {
     if (cached && cached.expiresAt > now) {
       return cached;
     }
-    if (cached && cached.staleExpiresAt > now) {
-      return {
-        ...cached,
-        state: withSignalOptionsCacheMetadata(cached.state, {
-          cachedAt: cached.cachedAt,
-          cacheStatus: "stale",
-        }),
-      };
+    if (cached) {
+      signalOptionsSummaryDashboardCache.delete(input.deploymentId);
     }
-
-    const fullCached = signalOptionsDashboardCache.get(input.deploymentId);
-    if (fullCached && fullCached.staleExpiresAt > now) {
-      return writeSignalOptionsSummarySnapshotFromFullSnapshot(
-        fullCached,
-        input.deploymentId,
-        now,
-      );
-    }
-
-    return buildSignalOptionsColdDashboardSnapshot({
-      deploymentId: input.deploymentId,
-      view: "summary",
-      reason: "signal_options_summary_cold_cache_only_fallback",
+    throw new HttpError(503, "Signal-options summary cache unavailable.", {
+      code: "signal_options_summary_cache_unavailable",
+      detail: "No fresh cached signal-options summary payload is available.",
     });
   }
 
-  // Normal-mode polls also serve a non-expired cached snapshot (fix C) — same
-  // 15s freshness check the cache-only branch uses. Positions/risk may be up to
-  // 15s stale (the same staleness the pressure path already serves), but the
-  // state path still runs the live-signal refresh on top of this cache hit
-  // (freshlyBuilt is unset here), so signals stay live.
+  // Normal-mode polls share the same 15s fresh-cache window as cache-only reads.
+  // The state path still refreshes live signals on top of a cache hit
+  // (freshlyBuilt is unset here).
   const cached = signalOptionsSummaryDashboardCache.get(input.deploymentId);
   if (cached && cached.expiresAt > now) {
     return cached;
@@ -13442,7 +13173,6 @@ async function getSignalOptionsSummaryDashboardSnapshot(input: {
       state,
       cachedAt,
       expiresAt: Date.now() + SIGNAL_OPTIONS_SUMMARY_CACHE_TTL_MS,
-      staleExpiresAt: Date.now() + SIGNAL_OPTIONS_SUMMARY_CACHE_STALE_TTL_MS,
       eventRead: {
         dayOverflow: eventRead.dayOverflow,
         dayEventLimit: eventRead.dayEventLimit,
@@ -13557,10 +13287,7 @@ async function withFreshSignalOptionsStateSignals(
       { err: error, deploymentId: snapshot.deployment.id },
       "Failed to refresh Signal Options signal list from signal monitor state",
     );
-    if (input.refreshSignalsFromMonitorState === true) {
-      throw error;
-    }
-    return snapshot.state;
+    throw error;
   }
 }
 
@@ -13725,18 +13452,13 @@ export async function getAlgoDeploymentCockpit(input: {
     const cached = readSignalOptionsCachedPayload(
       cockpitCache,
       input.deploymentId,
-      cacheMode,
-      {
-        allowStale: true,
-      },
     );
     if (cached) {
       return cached;
     }
     throw new HttpError(503, "Signal-options cockpit cache unavailable.", {
       code: "signal_options_cockpit_cache_unavailable",
-      detail:
-        "API pressure requires a cached signal-options cockpit payload, but no usable payload is available yet.",
+      detail: "No fresh cached signal-options cockpit payload is available.",
     });
   }
   const inFlight = readSignalOptionsDashboardInFlight(
@@ -13759,7 +13481,6 @@ export async function getAlgoDeploymentCockpit(input: {
       view === "summary"
         ? {
             ttlMs: SIGNAL_OPTIONS_SUMMARY_CACHE_TTL_MS,
-            staleTtlMs: SIGNAL_OPTIONS_SUMMARY_CACHE_STALE_TTL_MS,
           }
         : {},
     );
@@ -13775,7 +13496,6 @@ export async function getAlgoDeploymentCockpit(input: {
         view === "summary"
           ? {
               ttlMs: SIGNAL_OPTIONS_SUMMARY_CACHE_TTL_MS,
-              staleTtlMs: SIGNAL_OPTIONS_SUMMARY_CACHE_STALE_TTL_MS,
             }
           : {},
       );
@@ -15073,7 +14793,7 @@ async function hydrateSignalOptionsGreekSelectorCandidateQuotes(input: {
     fallbackProvider: input.liveQuoteDemand.fallbackProvider ?? "cache",
     requiresGreeks,
   });
-  const snapshotPayload = await fetchBridgeOptionQuoteSnapshots({
+  const snapshotPayload = await fetchMassiveOptionQuoteSnapshots({
     underlying: input.candidate.symbol,
     providerContractIds,
     owner: input.liveQuoteDemand.owner,
@@ -15498,7 +15218,7 @@ async function resolveSignalOptionsCandidateContract(input: {
         SIGNAL_OPTIONS_SELECTED_LIVE_QUOTE_SETTLE_MS -
           (Date.now() - hydrationStartedAt),
       );
-      const snapshotPayload = await fetchBridgeOptionQuoteSnapshots({
+      const snapshotPayload = await fetchMassiveOptionQuoteSnapshots({
         underlying: input.candidate.symbol,
         providerContractIds: [providerContractId],
         owner: input.liveQuoteDemand.owner,
@@ -22240,5 +21960,4 @@ export const __signalOptionsAutomationInternalsForTests = {
   isHistoricalOptionEntryBarTimely,
   readGreekSmokeInteger,
   shouldCloseBackfillPositionAtExpiration,
-  shouldServeSignalOptionsPerformancePressureFallback,
 };

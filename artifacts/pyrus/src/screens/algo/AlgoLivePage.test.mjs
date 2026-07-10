@@ -11,14 +11,22 @@ import {
   resolveHeaderScanWave,
 } from "./AlgoLivePage.jsx";
 
-const source = readFileSync(new URL("./AlgoLivePage.jsx", import.meta.url), "utf8");
+const source = readFileSync(
+  new URL("./AlgoLivePage.jsx", import.meta.url),
+  "utf8",
+);
+const algoScreenSource = readFileSync(
+  new URL("../AlgoScreen.jsx", import.meta.url),
+  "utf8",
+);
 
 test("algo header does not show warning for info-only options session pause", () => {
   const attentionSeverity = resolveAttentionSeverity([
     {
       severity: "info",
       summary: "Options session is closed.",
-      detail: "Options strategy execution is outside the regular options session.",
+      detail:
+        "Options strategy execution is outside the regular options session.",
     },
   ]);
 
@@ -152,27 +160,127 @@ test("AlgoLivePage keeps hooks before the empty-state return", () => {
   const beforeEmptyReturn = source.slice(0, emptyStateReturnIndex);
   const afterEmptyReturn = source.slice(emptyStateReturnIndex);
 
-  assert.match(beforeEmptyReturn, /const effectiveMtfAlignmentConfig = useMemo/);
-  assert.match(beforeEmptyReturn, /const cockpitStageItemsForDisplay = useMemo/);
+  assert.match(
+    beforeEmptyReturn,
+    /const effectiveMtfAlignmentConfig = useMemo/,
+  );
+  assert.match(
+    beforeEmptyReturn,
+    /const cockpitStageItemsForDisplay = useMemo/,
+  );
   assert.match(beforeEmptyReturn, /const liveIndicatorMetrics = useMemo/);
-  assert.doesNotMatch(afterEmptyReturn, /const effectiveMtfAlignmentConfig = useMemo/);
-  assert.doesNotMatch(afterEmptyReturn, /const cockpitStageItemsForDisplay = useMemo/);
+  assert.doesNotMatch(
+    afterEmptyReturn,
+    /const effectiveMtfAlignmentConfig = useMemo/,
+  );
+  assert.doesNotMatch(
+    afterEmptyReturn,
+    /const cockpitStageItemsForDisplay = useMemo/,
+  );
   assert.doesNotMatch(afterEmptyReturn, /const liveIndicatorMetrics = useMemo/);
 });
 
-test("AlgoLivePage treats deployment refetch gaps as loading, not no-deployment", () => {
+test("AlgoLivePage keeps normal chrome during deployment fetches and only shows a settled empty state", () => {
   assert.match(
     source,
-    /const emptyOperationsSetupSettled = Boolean\(\s*setupDataSettled && !refreshPending,\s*\);/,
+    /const emptyOperationsSetupSettled = Boolean\(setupDataSettled\);/,
   );
-  assert.match(source, /const showEmptyOperationsState = Boolean\(!deployments\.length\);/);
   assert.match(
     source,
-    /setupDataSettled=\{emptyOperationsSetupSettled\}/,
+    /const showEmptyOperationsState = Boolean\(\s*emptyOperationsSetupSettled && !deployments\.length,\s*\);/,
   );
   assert.doesNotMatch(
     source,
-    /const showEmptyOperationsState = Boolean\(setupDataSettled && !deployments\.length\);/,
+    /setupDataSettled=\{emptyOperationsSetupSettled\}/,
+  );
+  assert.doesNotMatch(source, /algo-setup-loading/);
+  assert.doesNotMatch(source, /Loading Signal Operations/);
+  assert.doesNotMatch(
+    source,
+    /const showEmptyOperationsState = Boolean\(!deployments\.length\);/,
+  );
+  assert.match(
+    source,
+    /deploymentListUnavailable=\{deploymentListUnavailable\}/,
+  );
+  assert.doesNotMatch(source, /setupDataSettled && !refreshPending/);
+});
+
+test("Algo overview keeps missing cockpit and performance values neutral", () => {
+  const pnlStart = source.indexOf('label: "P&L"');
+  const riskStart = source.indexOf('label: "Risk"');
+  const recordStart = source.indexOf('label: "Record"', riskStart);
+  const pnlMetric = source.slice(
+    pnlStart,
+    source.indexOf('label: "Exposure"', pnlStart),
+  );
+  const riskMetric = source.slice(riskStart, recordStart);
+  const recordMetric = source.slice(
+    recordStart,
+    source.indexOf("  ];", recordStart),
+  );
+  assert.match(source, /cockpitPnlDataAvailable = false/);
+  assert.match(source, /cockpitRiskDataAvailable = false/);
+  assert.match(source, /cockpitPositionDataAvailable = false/);
+  assert.match(source, /performanceDataAvailable = false/);
+  assert.match(source, /positionDataAvailable = false/);
+  assert.match(pnlMetric, /value: cockpitPnlDataAvailable/);
+  assert.match(pnlMetric, /: MISSING_VALUE/);
+  assert.match(pnlMetric, /: CSS_COLOR\.textMuted/);
+  assert.match(riskMetric, /value: cockpitRiskDataAvailable/);
+  assert.match(riskMetric, /: MISSING_VALUE/);
+  assert.match(riskMetric, /: CSS_COLOR\.textMuted/);
+  assert.match(riskMetric, /: Shield,/);
+  assert.match(recordMetric, /value: performanceDataAvailable/);
+  assert.match(recordMetric, /: "No exits"/);
+  assert.match(recordMetric, /: MISSING_VALUE/);
+  assert.match(recordMetric, /: CSS_COLOR\.textMuted/);
+  assert.match(
+    recordMetric,
+    /icon: performanceDataAvailable \? ShieldCheck : Shield/,
+  );
+  assert.match(
+    algoScreenSource,
+    /cockpitPnlDataAvailable=\{cockpitPnlDataAvailable\}/,
+  );
+  assert.match(
+    algoScreenSource,
+    /cockpitRiskDataAvailable=\{cockpitRiskDataAvailable\}/,
+  );
+  assert.match(
+    algoScreenSource,
+    /cockpitPositionDataAvailable=\{cockpitPositionDataAvailable\}/,
+  );
+  assert.match(
+    algoScreenSource,
+    /performanceDataAvailable=\{performanceDataAvailable\}/,
+  );
+  assert.match(
+    algoScreenSource,
+    /positionDataAvailable=\{positionDataAvailable\}/,
+  );
+  assert.match(
+    algoScreenSource,
+    /typeof cockpitRisk\.dailyHaltActive === "boolean"/,
+  );
+  assert.match(
+    algoScreenSource,
+    /cockpitKpis\.dailyRealizedPnl != null[\s\S]*?cockpitKpis\.openUnrealizedPnl != null/,
+  );
+});
+
+test("Algo deployment list query does not retain placeholder data", () => {
+  const start = algoScreenSource.indexOf(
+    "const deploymentsQuery = useListAlgoDeployments",
+  );
+  const end = algoScreenSource.indexOf("const deployments =", start);
+  assert.notEqual(start, -1);
+  assert.notEqual(end, -1);
+  assert.doesNotMatch(algoScreenSource.slice(start, end), /placeholderData/);
+  assert.doesNotMatch(algoScreenSource, /deploymentListEmptyUnavailable/);
+  assert.doesNotMatch(
+    algoScreenSource,
+    /deploymentsQuery\.data\?\.cacheStatus/,
   );
 });
 
@@ -229,10 +337,8 @@ test("algo account tabs route shadow to automation overlay and live tabs to brok
     /<OperationsPositionsTable[\s\S]*?algoIsPhone=\{algoIsPhone\}[\s\S]*?\/>/,
   )?.[0];
   assert.ok(positionsUsage, "Missing operations positions table usage");
-  assert.match(
-    positionsUsage,
-    /positions=\{\s*positionAccountUsesShadowOverlay \? signalOptionsPositions : \[\]\s*\}/,
-  );
+  assert.doesNotMatch(positionsUsage, /\bpositions=/);
+  assert.doesNotMatch(positionsUsage, /\bsymbolIndex=/);
   assert.match(
     positionsUsage,
     /deploymentId=\{\s*positionAccountUsesShadowOverlay \? focusedDeploymentId : null\s*\}/,

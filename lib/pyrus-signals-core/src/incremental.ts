@@ -16,6 +16,7 @@ import {
 
 export type IncrementalPyrusSignalsEvaluator = {
   append(bar: PyrusSignalsBar): PyrusSignalsEvaluation;
+  clone(): IncrementalPyrusSignalsEvaluator;
   result(): PyrusSignalsEvaluation;
 };
 
@@ -33,13 +34,25 @@ const clamp = (value: number, min: number, max: number): number =>
 const roundSix = (value: number): number => Number(value.toFixed(6));
 
 class IncrementalFiniteSma {
-  readonly values: number[] = [];
-  readonly result: number[] = [];
+  readonly values: number[];
+  readonly result: number[];
 
-  private rollingSum = 0;
-  private validCount = 0;
+  private rollingSum: number;
+  private validCount: number;
 
-  constructor(private readonly period: number) {}
+  constructor(
+    private readonly period: number,
+    source?: IncrementalFiniteSma,
+  ) {
+    this.values = source ? source.values.slice() : [];
+    this.result = source ? source.result.slice() : [];
+    this.rollingSum = source?.rollingSum ?? 0;
+    this.validCount = source?.validCount ?? 0;
+  }
+
+  clone(): IncrementalFiniteSma {
+    return new IncrementalFiniteSma(this.period, this);
+  }
 
   append(value: number): number {
     this.values.push(value);
@@ -153,25 +166,46 @@ const appendPercentRank = (
 };
 
 class IncrementalAdx {
-  readonly result: number[] = [];
+  readonly result: number[];
 
-  private readonly trueRanges: number[] = [];
-  private readonly plusDm: number[] = [];
-  private readonly minusDm: number[] = [];
-  private readonly dx: number[] = [];
-  private initialSmoothedTr = 0;
-  private initialSmoothedPlusDm = 0;
-  private initialSmoothedMinusDm = 0;
-  private smoothedTr = 0;
-  private smoothedPlusDm = 0;
-  private smoothedMinusDm = 0;
-  private initialDxSum = 0;
-  private initialDxCount = 0;
-  private initialAdxIndex: number | null = null;
-  private initialAdxValue = Number.NaN;
-  private changedIndexes: number[] = [];
+  private readonly trueRanges: number[];
+  private readonly plusDm: number[];
+  private readonly minusDm: number[];
+  private readonly dx: number[];
+  private initialSmoothedTr: number;
+  private initialSmoothedPlusDm: number;
+  private initialSmoothedMinusDm: number;
+  private smoothedTr: number;
+  private smoothedPlusDm: number;
+  private smoothedMinusDm: number;
+  private initialDxSum: number;
+  private initialDxCount: number;
+  private initialAdxIndex: number | null;
+  private initialAdxValue: number;
+  private changedIndexes: number[];
 
-  constructor(private readonly period: number) {}
+  constructor(private readonly period: number, source?: IncrementalAdx) {
+    this.result = source ? source.result.slice() : [];
+    this.trueRanges = source ? source.trueRanges.slice() : [];
+    this.plusDm = source ? source.plusDm.slice() : [];
+    this.minusDm = source ? source.minusDm.slice() : [];
+    this.dx = source ? source.dx.slice() : [];
+    this.initialSmoothedTr = source?.initialSmoothedTr ?? 0;
+    this.initialSmoothedPlusDm = source?.initialSmoothedPlusDm ?? 0;
+    this.initialSmoothedMinusDm = source?.initialSmoothedMinusDm ?? 0;
+    this.smoothedTr = source?.smoothedTr ?? 0;
+    this.smoothedPlusDm = source?.smoothedPlusDm ?? 0;
+    this.smoothedMinusDm = source?.smoothedMinusDm ?? 0;
+    this.initialDxSum = source?.initialDxSum ?? 0;
+    this.initialDxCount = source?.initialDxCount ?? 0;
+    this.initialAdxIndex = source?.initialAdxIndex ?? null;
+    this.initialAdxValue = source?.initialAdxValue ?? Number.NaN;
+    this.changedIndexes = source ? source.changedIndexes.slice() : [];
+  }
+
+  clone(): IncrementalAdx {
+    return new IncrementalAdx(this.period, this);
+  }
 
   append(chartBars: PyrusSignalsBar[]): number {
     const index = chartBars.length - 1;
@@ -289,8 +323,17 @@ class IncrementalAdx {
 }
 
 class MedianPositiveIntervalTracker {
-  private readonly intervals: number[] = [];
-  private median = 0;
+  private readonly intervals: number[];
+  private median: number;
+
+  constructor(source?: MedianPositiveIntervalTracker) {
+    this.intervals = source ? source.intervals.slice() : [];
+    this.median = source?.median ?? 0;
+  }
+
+  clone(): MedianPositiveIntervalTracker {
+    return new MedianPositiveIntervalTracker(this);
+  }
 
   append(interval: number): boolean {
     const previousMedian = this.median;
@@ -454,33 +497,34 @@ const buildFilterState = (
 class IncrementalPyrusSignalsEvaluatorImpl
   implements IncrementalPyrusSignalsEvaluator
 {
-  private readonly chartBars: PyrusSignalsBar[] = [];
-  private readonly closes: number[] = [];
-  private readonly basis: number[] = [];
-  private readonly atrRaw: number[] = [];
-  private readonly atrTrueRanges: number[] = [];
+  private readonly settings: PyrusSignalsSignalSettings;
+  private readonly chartBars: PyrusSignalsBar[];
+  private readonly closes: number[];
+  private readonly basis: number[];
+  private readonly atrRaw: number[];
+  private readonly atrTrueRanges: number[];
   private readonly atrSmoothedSma: IncrementalFiniteSma;
   private readonly atrSmoothed: number[];
-  private readonly upperBand: number[] = [];
-  private readonly lowerBand: number[] = [];
-  private readonly trendLine: number[] = [];
-  private readonly bullWires: [number[], number[], number[]] = [[], [], []];
-  private readonly bearWires: [number[], number[], number[]] = [[], [], []];
+  private readonly upperBand: number[];
+  private readonly lowerBand: number[];
+  private readonly trendLine: number[];
+  private readonly bullWires: [number[], number[], number[]];
+  private readonly bearWires: [number[], number[], number[]];
   private readonly adxState: IncrementalAdx;
   private readonly volumeSmaState: IncrementalFiniteSma;
   private readonly volumeSma: number[];
   private readonly bbMidState: IncrementalFiniteSma;
-  private readonly bbStdDev: number[] = [];
-  private readonly bbDev: number[] = [];
-  private readonly bbWidthPct: number[] = [];
-  private readonly bbPercentRank: number[] = [];
-  private readonly volatilityScore: number[] = [];
-  private readonly trendDirectionSeries: number[] = [];
-  private readonly regimeDirection: number[] = [];
-  private readonly regimeDirectionAge: number[] = [];
-  private readonly structureEvents: PyrusSignalsStructureEvent[] = [];
-  private readonly signalEvents: PyrusSignalsSignalEvent[] = [];
-  private readonly intervals = new MedianPositiveIntervalTracker();
+  private readonly bbStdDev: number[];
+  private readonly bbDev: number[];
+  private readonly bbWidthPct: number[];
+  private readonly bbPercentRank: number[];
+  private readonly volatilityScore: number[];
+  private readonly trendDirectionSeries: number[];
+  private readonly regimeDirection: number[];
+  private readonly regimeDirectionAge: number[];
+  private readonly structureEvents: PyrusSignalsStructureEvent[];
+  private readonly signalEvents: PyrusSignalsSignalEvent[];
+  private readonly intervals: MedianPositiveIntervalTracker;
   private readonly includeProvisionalSignals: boolean;
   private readonly lastBarClosed: boolean;
 
@@ -498,17 +542,119 @@ class IncrementalPyrusSignalsEvaluatorImpl
   private previousRegimeDirection: number | null = null;
 
   constructor(
-    private readonly settings: PyrusSignalsSignalSettings,
+    settings: PyrusSignalsSignalSettings,
     options: IncrementalPyrusSignalsEvaluationOptions = {},
+    source?: IncrementalPyrusSignalsEvaluatorImpl,
   ) {
-    this.atrSmoothedSma = new IncrementalFiniteSma(settings.atrSmoothing);
+    this.settings = source
+      ? { ...source.settings, sessions: source.settings.sessions.slice() }
+      : settings;
+    this.chartBars = source ? source.chartBars.slice() : [];
+    this.closes = source ? source.closes.slice() : [];
+    this.basis = source ? source.basis.slice() : [];
+    this.atrRaw = source ? source.atrRaw.slice() : [];
+    this.atrTrueRanges = source ? source.atrTrueRanges.slice() : [];
+    this.atrSmoothedSma = source
+      ? source.atrSmoothedSma.clone()
+      : new IncrementalFiniteSma(settings.atrSmoothing);
     this.atrSmoothed = this.atrSmoothedSma.result;
-    this.adxState = new IncrementalAdx(settings.adxLength);
-    this.volumeSmaState = new IncrementalFiniteSma(settings.volumeMaLength);
+    this.upperBand = source ? source.upperBand.slice() : [];
+    this.lowerBand = source ? source.lowerBand.slice() : [];
+    this.trendLine = source ? source.trendLine.slice() : [];
+    this.bullWires = source
+      ? [
+          source.bullWires[0].slice(),
+          source.bullWires[1].slice(),
+          source.bullWires[2].slice(),
+        ]
+      : [[], [], []];
+    this.bearWires = source
+      ? [
+          source.bearWires[0].slice(),
+          source.bearWires[1].slice(),
+          source.bearWires[2].slice(),
+        ]
+      : [[], [], []];
+    this.adxState = source
+      ? source.adxState.clone()
+      : new IncrementalAdx(settings.adxLength);
+    this.volumeSmaState = source
+      ? source.volumeSmaState.clone()
+      : new IncrementalFiniteSma(settings.volumeMaLength);
     this.volumeSma = this.volumeSmaState.result;
-    this.bbMidState = new IncrementalFiniteSma(settings.shadowLength);
-    this.includeProvisionalSignals = options.includeProvisionalSignals !== false;
-    this.lastBarClosed = options.lastBarClosed === true;
+    this.bbMidState = source
+      ? source.bbMidState.clone()
+      : new IncrementalFiniteSma(settings.shadowLength);
+    this.bbStdDev = source ? source.bbStdDev.slice() : [];
+    this.bbDev = source ? source.bbDev.slice() : [];
+    this.bbWidthPct = source ? source.bbWidthPct.slice() : [];
+    this.bbPercentRank = source ? source.bbPercentRank.slice() : [];
+    this.volatilityScore = source ? source.volatilityScore.slice() : [];
+    this.trendDirectionSeries = source
+      ? source.trendDirectionSeries.slice()
+      : [];
+    this.regimeDirection = source ? source.regimeDirection.slice() : [];
+    this.regimeDirectionAge = source ? source.regimeDirectionAge.slice() : [];
+
+    const filterStateClones = new Map<
+      PyrusSignalsFilterState,
+      PyrusSignalsFilterState
+    >();
+    const cloneFilterState = (
+      filterState: PyrusSignalsFilterState | null,
+    ): PyrusSignalsFilterState | null => {
+      if (!filterState) {
+        return null;
+      }
+      const existing = filterStateClones.get(filterState);
+      if (existing) {
+        return existing;
+      }
+      const clone: PyrusSignalsFilterState = {
+        ...filterState,
+        mtfDirections: [...filterState.mtfDirections],
+        directionalFeatures: { ...filterState.directionalFeatures },
+        mtfPass: [...filterState.mtfPass],
+      };
+      filterStateClones.set(filterState, clone);
+      return clone;
+    };
+    this.structureEvents = source
+      ? source.structureEvents.map((event) => ({
+          ...event,
+          filterState: cloneFilterState(event.filterState),
+        }))
+      : [];
+    this.signalEvents = source
+      ? source.signalEvents.map((event) => ({
+          ...event,
+          filterState: cloneFilterState(event.filterState)!,
+        }))
+      : [];
+    this.intervals = source
+      ? source.intervals.clone()
+      : new MedianPositiveIntervalTracker();
+    this.includeProvisionalSignals = source
+      ? source.includeProvisionalSignals
+      : options.includeProvisionalSignals !== false;
+    this.lastBarClosed = source
+      ? source.lastBarClosed
+      : options.lastBarClosed === true;
+
+    if (source) {
+      this.atrInitialRolling = source.atrInitialRolling;
+      this.atrValue = source.atrValue;
+      this.trendDirection = source.trendDirection;
+      this.trendBasisComputable = source.trendBasisComputable;
+      this.marketStructureDirection = source.marketStructureDirection;
+      this.lastSwingHigh = source.lastSwingHigh;
+      this.previousSwingHigh = source.previousSwingHigh;
+      this.lastSwingLow = source.lastSwingLow;
+      this.previousSwingLow = source.previousSwingLow;
+      this.breakableHigh = source.breakableHigh;
+      this.breakableLow = source.breakableLow;
+      this.previousRegimeDirection = source.previousRegimeDirection;
+    }
   }
 
   append(bar: PyrusSignalsBar): PyrusSignalsEvaluation {
@@ -537,6 +683,10 @@ class IncrementalPyrusSignalsEvaluatorImpl
     }
 
     return this.result();
+  }
+
+  clone(): IncrementalPyrusSignalsEvaluatorImpl {
+    return new IncrementalPyrusSignalsEvaluatorImpl(this.settings, {}, this);
   }
 
   result(): PyrusSignalsEvaluation {

@@ -528,13 +528,14 @@ const AppHeaderInner = ({
                 display: "flex",
                 alignItems: "center",
                 gap: sp(1),
-                width: "auto",
+                width: "100%",
                 maxWidth: "100%",
                 minWidth: 0,
                 flex: "0 1 auto",
                 flexWrap: "nowrap",
-                overflow: "hidden",
-                justifySelf: "start",
+                overflowX: "auto",
+                overflowY: "hidden",
+                justifySelf: "stretch",
               }}
             >
               {SCREENS.filter((screen) => !screen.hidden).map((screen) => {
@@ -573,6 +574,7 @@ const AppHeaderInner = ({
                       position: "relative",
                       whiteSpace: "nowrap",
                       display: "inline-flex",
+                      flexShrink: 0,
                       alignItems: "center",
                       gap: sp(2),
                     }}
@@ -586,8 +588,6 @@ const AppHeaderInner = ({
                 );
               })}
             </div>
-
-            <div aria-hidden="true" style={{ minWidth: 0 }} />
 
             <div
               data-testid="platform-header-controls"

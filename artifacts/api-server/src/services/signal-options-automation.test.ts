@@ -21,10 +21,6 @@ import {
   SIGNAL_OPTIONS_SKIPPED_EVENT,
   type SignalOptionsPosition,
 } from "./signal-options-automation";
-import {
-  __resetApiResourcePressureForTests,
-  updateApiResourcePressure,
-} from "./resource-pressure";
 import { __signalQualityKpisInternalsForTests } from "./signal-quality-kpis";
 import { __signalMonitorInternalsForTests } from "./signal-monitor";
 
@@ -280,45 +276,74 @@ test("Signal Options default cockpit summary bypasses cached fast-summary state"
   assert.match(cockpitFunction, /withFreshSignalOptionsStateSignals\(snapshot, \{/);
 });
 
-test("Signal Options performance pressure predicate follows API headline pressure", () => {
-  const { shouldServeSignalOptionsPerformancePressureFallback } =
-    __signalOptionsAutomationInternalsForTests;
-  __resetApiResourcePressureForTests();
-  try {
-    assert.equal(shouldServeSignalOptionsPerformancePressureFallback(), false);
-    updateApiResourcePressure({ eventLoopUtilization: 0.8 });
-    assert.equal(shouldServeSignalOptionsPerformancePressureFallback(), true);
-  } finally {
-    __resetApiResourcePressureForTests();
-  }
-});
-
-test("Signal Options performance serves fallback and refreshes in background under pressure", () => {
+test("Signal Options performance ignores pressure and only serves fresh cached data", () => {
   const start = source.indexOf("export async function getSignalOptionsPerformance");
   const end = source.indexOf("\nfunction formatEnumReason", start + 1);
   assert.notEqual(start, -1, "Missing Signal Options performance function");
   assert.notEqual(end, -1, "Missing function boundary after performance function");
   const body = source.slice(start, end);
-  const pressureFallbackIndex = body.indexOf(
-    "shouldServeSignalOptionsPerformancePressureFallback()",
+  assert.match(
+    body,
+    /readSignalOptionsCachedPayload\(\s*signalOptionsPerformanceCache,\s*input\.deploymentId,\s*\);/,
+    "normal and cache-only reads must reject stale performance payloads",
   );
-  const refreshIndex = body.indexOf("void startSignalOptionsPerformanceRefresh");
-  const returnFallbackIndex = body.indexOf(
-    "return buildSignalOptionsPerformancePressureFallback",
+  assert.match(
+    body,
+    /if \(cacheMode === "cache-only"\) \{\s*throw new HttpError\(503,/,
+    "a cache-only miss must be an explicit error, not fabricated zero performance",
   );
-  const blockingRefreshIndex = body.indexOf(
-    "return startSignalOptionsPerformanceRefresh",
-  );
+  assert.match(body, /return startSignalOptionsPerformanceRefresh\(\{/);
+  assert.doesNotMatch(body, /shouldServeSignalOptionsPerformancePressureFallback/);
+  assert.doesNotMatch(body, /buildSignalOptionsPerformancePressureFallback/);
+  assert.doesNotMatch(body, /buildSignalOptionsPerformanceColdPressureFallback/);
+  assert.doesNotMatch(source, /function buildSignalOptionsPerformanceFallbackFromSnapshot/);
+  assert.doesNotMatch(source, /function buildSignalOptionsPerformanceColdPressureFallback/);
+  assert.doesNotMatch(source, /allowStale/);
+  assert.doesNotMatch(source, /staleExpiresAt/);
+});
 
-  assert.ok(pressureFallbackIndex > -1, "Missing pressure fallback branch");
-  assert.ok(refreshIndex > pressureFallbackIndex, "Missing background refresh");
-  assert.ok(
-    returnFallbackIndex > refreshIndex,
-    "Pressure branch must return fallback after starting refresh",
+test("Signal Options state and cockpit never fabricate or serve stale cache fallbacks", () => {
+  const fullStart = source.indexOf(
+    "async function getSignalOptionsFullDashboardSnapshot",
   );
-  assert.ok(
-    blockingRefreshIndex > returnFallbackIndex,
-    "Blocking refresh should only run after the pressure fallback branch",
+  const summaryStart = source.indexOf(
+    "async function getSignalOptionsSummaryDashboardSnapshot",
+  );
+  const dashboardStart = source.indexOf(
+    "async function getSignalOptionsDashboardSnapshot",
+  );
+  const refreshStart = source.indexOf(
+    "async function withFreshSignalOptionsStateSignals",
+  );
+  const stateStart = source.indexOf(
+    "export async function listSignalOptionsAutomationState",
+  );
+  const cockpitStart = source.indexOf(
+    "export async function getAlgoDeploymentCockpit",
+  );
+  const pnlStart = source.indexOf(
+    "export type SignalOptionsTodayPnl",
+    cockpitStart,
+  );
+  assert.ok([fullStart, summaryStart, dashboardStart, refreshStart, stateStart, cockpitStart, pnlStart].every((index) => index >= 0));
+
+  const fullBody = source.slice(fullStart, summaryStart);
+  const summaryBody = source.slice(summaryStart, dashboardStart);
+  const refreshBody = source.slice(refreshStart, stateStart);
+  const cockpitBody = source.slice(cockpitStart, pnlStart);
+
+  assert.match(fullBody, /signal_options_dashboard_cache_unavailable/);
+  assert.match(summaryBody, /signal_options_summary_cache_unavailable/);
+  assert.match(cockpitBody, /signal_options_cockpit_cache_unavailable/);
+  assert.doesNotMatch(source, /buildSignalOptionsColdDashboardSnapshot/);
+  assert.doesNotMatch(source, /cold_cache_only_fallback/);
+  assert.doesNotMatch(source, /cacheStatus:\s*"stale"/);
+  assert.doesNotMatch(source, /allowStale/);
+  assert.doesNotMatch(source, /staleExpiresAt/);
+  assert.match(refreshBody, /catch \(error\) \{[\s\S]*?throw error;\s*\}/);
+  assert.doesNotMatch(
+    refreshBody,
+    /catch \(error\) \{[\s\S]*?return snapshot\.state;/,
   );
 });
 
@@ -1514,10 +1539,10 @@ test("Signal Options summary snapshot serves a fresh cache in normal mode before
   assert.notEqual(end, -1);
   const body = source.slice(start, end);
 
-  // Anchor after the cache-ONLY branch (its cold fallback string) so we inspect
+  // Anchor after the cache-ONLY branch (its explicit error code) so we inspect
   // the new normal-mode read, not the pre-existing cache-only read.
   const afterCacheOnly = body.indexOf(
-    "signal_options_summary_cold_cache_only_fallback",
+    "signal_options_summary_cache_unavailable",
   );
   assert.notEqual(afterCacheOnly, -1);
   const normalCacheIdx = body.indexOf(
@@ -1596,7 +1621,7 @@ test("Signal Options flags cold rebuilds freshlyBuilt and skips the refresh only
   // ...but the normal-mode cache hit returns the clean cached snapshot (no
   // freshlyBuilt), so its stale signals still fall through to the refresh.
   const cacheHit = summaryBody.slice(
-    summaryBody.indexOf("signal_options_summary_cold_cache_only_fallback"),
+    summaryBody.indexOf("signal_options_summary_cache_unavailable"),
   );
   assert.match(
     cacheHit,

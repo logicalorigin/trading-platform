@@ -7,11 +7,6 @@ import {
   shadowPositionsTable,
 } from "@workspace/db";
 import { and, desc, eq, gte, or, sql } from "drizzle-orm";
-import {
-  createTransientPostgresBackoff,
-  isPoolContentionError,
-  isTransientPostgresError,
-} from "../lib/transient-db-error";
 import { HttpError } from "../lib/errors";
 import { logger } from "../lib/logger";
 import { assertAlgoGatewayReady } from "./algo-gateway";
@@ -61,34 +56,28 @@ type NormalizedListExecutionEventsInput = {
   includePayload: boolean;
 };
 
-const STRATEGY_SIGNAL_TIMEFRAMES = ["1m", "2m", "5m", "15m", "1h", "1d"] as const;
+const STRATEGY_SIGNAL_TIMEFRAMES = [
+  "1m",
+  "2m",
+  "5m",
+  "15m",
+  "1h",
+  "1d",
+] as const;
 const PYRUS_SIGNALS_BOS_CONFIRMATIONS = ["close", "wicks"] as const;
 const RETIRED_SHADOW_EQUITY_FORWARD_EXECUTION_MODE = "signal_equity_shadow";
-const DEFAULT_SIGNAL_OPTIONS_DEPLOYMENT_NAME =
-  "Pyrus Signals Options Shadow";
+const DEFAULT_SIGNAL_OPTIONS_DEPLOYMENT_NAME = "Pyrus Signals Options Shadow";
 const LEGACY_SIGNAL_OPTIONS_DEPLOYMENT_NAME = "Pyrus Signals Shadow Paper";
-const deploymentListDbBackoff = createTransientPostgresBackoff({
-  backoffMs: 15_000,
-  warningCooldownMs: 60_000,
-});
 
 type AlgoDeploymentRow = typeof algoDeploymentsTable.$inferSelect;
 type AlgoDeploymentListResponse = {
   deployments: ReturnType<typeof deploymentToResponse>[];
-  cacheStatus?: "hit" | "stale" | "unavailable";
   // Sidecar map (deployment id -> today's net P&L) for the deployment tabs.
-  // Kept off the deployment entity (and the entity cache) so create/enable/pause
-  // responses stay P&L-free; attached per-request in listAlgoDeployments.
+  // Kept off the deployment entity so create/enable/pause responses stay P&L-free;
+  // attached per-request in listAlgoDeployments.
   pnlByDeployment?: Record<string, SignalOptionsTodayPnl>;
 };
 
-type DeploymentListCacheEntry = {
-  response: AlgoDeploymentListResponse;
-  mode?: "shadow" | "live";
-  updatedAtMs: number;
-};
-
-const deploymentListCache = new Map<string, DeploymentListCacheEntry>();
 const deploymentListInFlight = new Map<
   string,
   Promise<AlgoDeploymentListResponse>
@@ -152,10 +141,14 @@ async function getDeploymentOrThrow(deploymentId: string) {
   }
 
   if (isRetiredShadowEquityForwardDeployment(deployment)) {
-    throw new HttpError(410, "Retired shadow equity forward deployments are disabled.", {
-      code: "retired_algo_deployment_disabled",
-      expose: true,
-    });
+    throw new HttpError(
+      410,
+      "Retired shadow equity forward deployments are disabled.",
+      {
+        code: "retired_algo_deployment_disabled",
+        expose: true,
+      },
+    );
   }
 
   return deployment;
@@ -261,7 +254,9 @@ function isRetiredShadowEquityForwardDeployment(
 function isRetiredShadowEquityForwardConfig(configValue: unknown) {
   const config = asRecord(configValue);
   const parameters = asRecord(config.parameters);
-  return parameters.executionMode === RETIRED_SHADOW_EQUITY_FORWARD_EXECUTION_MODE;
+  return (
+    parameters.executionMode === RETIRED_SHADOW_EQUITY_FORWARD_EXECUTION_MODE
+  );
 }
 
 function deploymentHasSignalOptionsProfile(
@@ -361,18 +356,16 @@ async function selectAlgoDeploymentRows(
   return db
     .select()
     .from(algoDeploymentsTable)
-    .where(
-      input.mode
-        ? eq(algoDeploymentsTable.mode, input.mode)
-        : undefined,
-    )
+    .where(input.mode ? eq(algoDeploymentsTable.mode, input.mode) : undefined)
     .orderBy(desc(algoDeploymentsTable.updatedAt));
 }
 
 async function repairMixedSignalOptionsOvernightDeploymentRows(
   rows: AlgoDeploymentRow[],
 ) {
-  const mixedRows = rows.filter(deploymentHasMixedSignalOptionsAndOvernightProfile);
+  const mixedRows = rows.filter(
+    deploymentHasMixedSignalOptionsAndOvernightProfile,
+  );
   if (!mixedRows.length) {
     return;
   }
@@ -442,7 +435,6 @@ async function repairMixedSignalOptionsOvernightDeploymentRows(
               providerAccountId !== source.providerAccountId,
           },
         });
-        applyDeploymentToListCache(created);
       }
     }
 
@@ -466,7 +458,10 @@ async function repairMixedSignalOptionsOvernightDeploymentRows(
       })
       .where(eq(algoDeploymentsTable.id, source.id))
       .returning();
-    const signalOptionsDeployment = updated ?? { ...source, config: nextConfig };
+    const signalOptionsDeployment = updated ?? {
+      ...source,
+      config: nextConfig,
+    };
     await db.insert(automationDiagnosticsTable).values({
       deploymentId: signalOptionsDeployment.id,
       providerAccountId: signalOptionsDeployment.providerAccountId,
@@ -481,7 +476,6 @@ async function repairMixedSignalOptionsOvernightDeploymentRows(
         ],
       },
     });
-    applyDeploymentToListCache(signalOptionsDeployment as AlgoDeploymentRow);
     if (overnightDeployment) {
       notifyAlgoCockpitChanged({
         deploymentId: overnightDeployment.id,
@@ -615,81 +609,6 @@ async function repairMixedSignalOptionsOvernightDeployments(
   return selectAlgoDeploymentRows(input);
 }
 
-function readDeploymentListCache(
-  input: ListAlgoDeploymentsInput,
-): AlgoDeploymentListResponse | null {
-  const exact = deploymentListCache.get(deploymentListKey(input));
-  if (exact) {
-    return {
-      ...exact.response,
-      cacheStatus: "stale",
-    };
-  }
-
-  if (input.mode) {
-    const allDeployments = deploymentListCache.get(deploymentListKey({}));
-    if (allDeployments) {
-      return {
-        ...allDeployments.response,
-        deployments: allDeployments.response.deployments.filter(
-          (deployment) => deployment.mode === input.mode,
-        ),
-        cacheStatus: "stale",
-      };
-    }
-  }
-
-  return null;
-}
-
-function rememberDeploymentListCache(
-  input: ListAlgoDeploymentsInput,
-  response: AlgoDeploymentListResponse,
-) {
-  deploymentListCache.set(deploymentListKey(input), {
-    mode: input.mode,
-    response,
-    updatedAtMs: Date.now(),
-  });
-}
-
-// Keep the in-memory deployment-list cache coherent with a single mutated
-// deployment. The cache is served as the pool-contention fallback (see
-// listAlgoDeployments / deploymentListFallback); without this, a save updates
-// the DB but the fallback keeps returning the pre-save deployment, so the algo
-// controls render stale "old" inputs (and a "deployment unavailable" window
-// never reflects the new value) until a later uncontended read overwrites the
-// cache. Write-through (not invalidate) so the fallback stays both useful and
-// fresh under contention. Patches the "all" entry and the deployment's
-// mode-keyed entry; a retired deployment is removed instead of inserted.
-export function applyDeploymentToListCache(deployment: AlgoDeploymentRow) {
-  const response =
-    visibleDeploymentRows([deployment]).length > 0
-      ? deploymentToResponse(deployment)
-      : null;
-  for (const key of ["all", deployment.mode]) {
-    const entry = deploymentListCache.get(key);
-    if (!entry) {
-      continue;
-    }
-    const deployments = entry.response.deployments.filter(
-      (existing) => existing.id !== deployment.id,
-    );
-    if (response) {
-      deployments.unshift(response);
-    }
-    deploymentListCache.set(key, {
-      ...entry,
-      response: { ...entry.response, deployments },
-      updatedAtMs: Date.now(),
-    });
-  }
-}
-
-function clearDeploymentListCacheForTests() {
-  deploymentListCache.clear();
-}
-
 function shouldEnsureDefaultSignalOptionsDeployment(
   input: ListAlgoDeploymentsInput,
   rows: AlgoDeploymentRow[],
@@ -703,9 +622,6 @@ function shouldEnsureDefaultSignalOptionsDeployment(
 function deploymentListKey(input: ListAlgoDeploymentsInput) {
   return input.mode ?? "all";
 }
-
-const deploymentListFallback = (input: ListAlgoDeploymentsInput) =>
-  readDeploymentListCache(input);
 
 async function loadAlgoDeploymentList(
   input: ListAlgoDeploymentsInput,
@@ -721,32 +637,7 @@ async function loadAlgoDeploymentList(
   }
   rows = await repairMixedSignalOptionsOvernightDeployments(input, rows);
 
-  const response = buildDeploymentListResponse(rows);
-  rememberDeploymentListCache(input, response);
-  deploymentListDbBackoff.clear();
-  return response;
-}
-
-function markDeploymentListError(error: unknown, nowMs: number) {
-  if (!isTransientPostgresError(error)) {
-    return false;
-  }
-  // A pool-acquire timeout means "all pooled connections are busy right now"
-  // (the startup read burst briefly saturating the pool), NOT "the database is
-  // down". Opening the 15s lockout for it blocks the deployment read during the
-  // exact window the pool is saturated, so the algo screen shows "deployment
-  // unavailable" for 15s even though the deployment exists and the DB is healthy.
-  // Serve the cached fallback (return true) but do NOT back off, so the next
-  // request retries the DB immediately. Genuine connectivity failures still back off.
-  if (!isPoolContentionError(error)) {
-    deploymentListDbBackoff.markFailure({
-      error,
-      logger,
-      message: "Algo deployment list database unavailable; serving cached deployments",
-      nowMs,
-    });
-  }
-  return true;
+  return buildDeploymentListResponse(rows);
 }
 
 function readOrStartDeploymentListRequest(
@@ -758,16 +649,11 @@ function readOrStartDeploymentListRequest(
     return existing;
   }
 
-  const request = loadAlgoDeploymentList(input)
-    .catch((error) => {
-      markDeploymentListError(error, Date.now());
-      throw error;
-    })
-    .finally(() => {
-      if (deploymentListInFlight.get(key) === request) {
-        deploymentListInFlight.delete(key);
-      }
-    });
+  const request = loadAlgoDeploymentList(input).finally(() => {
+    if (deploymentListInFlight.get(key) === request) {
+      deploymentListInFlight.delete(key);
+    }
+  });
   deploymentListInFlight.set(key, request);
   request.catch(() => {});
   return request;
@@ -778,7 +664,7 @@ function readOrStartDeploymentListRequest(
 // is set, so it is never read/parsed on the event loop for the common feed.
 function executionEventToResponse(
   event: Omit<typeof executionEventsTable.$inferSelect, "payload"> & {
-    payload?: typeof executionEventsTable.$inferSelect["payload"];
+    payload?: (typeof executionEventsTable.$inferSelect)["payload"];
   },
   input: { includePayload?: boolean } = {},
 ) {
@@ -799,10 +685,8 @@ function executionEventToResponse(
   };
 }
 
-// Attach per-deployment today's P&L without mutating the cached entity list.
-// Only signal-options deployments carry P&L; other kinds (and an empty/
-// unavailable list) get no entries. Computed fresh per request from the shared
-// 15s summary cache, so it stays current under the client's ~15s list poll.
+// Attach per-deployment today's P&L without mutating the deployment rows.
+// Only signal-options deployments carry P&L; other kinds get no entries.
 // Today's net P&L for shadow-mode overnight-spot deployments, sourced from the
 // shadow ledger's equity positions (which already carry unrealized/realized P&L):
 // open positions -> unrealized; positions closed today (UTC) -> realized.
@@ -893,44 +777,21 @@ async function attachTodayPnlToDeploymentList(
   return { ...response, pnlByDeployment };
 }
 
-async function resolveAlgoDeploymentList(
-  input: ListAlgoDeploymentsInput,
-): Promise<AlgoDeploymentListResponse> {
-  const nowMs = Date.now();
-  if (deploymentListDbBackoff.isActive(nowMs)) {
-    const cached = deploymentListFallback(input);
-    if (cached) return cached;
-  }
-
-  try {
-    return await readOrStartDeploymentListRequest(input);
-  } catch (error) {
-    if (!markDeploymentListError(error, nowMs)) {
-      throw error;
-    }
-    const cached = deploymentListFallback(input);
-    if (cached) return cached;
-    // Transient DB error (pool contention or a connectivity blip) with no cached
-    // fallback yet — e.g. the cold-boot pool race before the cache is primed.
-    // Return an explicit "unavailable" marker instead of throwing a 500 so the
-    // client renders a "temporarily unavailable, refresh" state and the SSE
-    // clobber-guard preserves any already-known deployments, rather than the
-    // misleading "no deployments exist" empty state.
-    return { deployments: [], cacheStatus: "unavailable" };
-  }
-}
-
 export async function listAlgoDeployments(
   input: ListAlgoDeploymentsInput,
 ): Promise<AlgoDeploymentListResponse> {
-  return attachTodayPnlToDeploymentList(await resolveAlgoDeploymentList(input));
+  return attachTodayPnlToDeploymentList(
+    await readOrStartDeploymentListRequest(input),
+  );
 }
 
 export async function createAlgoDeployment(input: CreateAlgoDeploymentInput) {
   // Overnight deployments bind to a dedicated overnight strategy (server-resolved)
   // so they never share a strategyId with signal-options; the requested
   // strategyId is ignored for overnight. Other kinds use the requested strategy.
-  const strategy = deploymentHasOvernightSpotProfile({ config: input.config ?? {} })
+  const strategy = deploymentHasOvernightSpotProfile({
+    config: input.config ?? {},
+  })
     ? await ensureDefaultOvernightSpotStrategy()
     : await getStrategyOrThrow(input.strategyId);
   const config = {
@@ -938,10 +799,14 @@ export async function createAlgoDeployment(input: CreateAlgoDeploymentInput) {
     ...(input.config ?? {}),
   };
   if (isRetiredShadowEquityForwardConfig(config)) {
-    throw new HttpError(410, "Retired shadow equity forward deployments cannot be created.", {
-      code: "retired_algo_deployment_disabled",
-      expose: true,
-    });
+    throw new HttpError(
+      410,
+      "Retired shadow equity forward deployments cannot be created.",
+      {
+        code: "retired_algo_deployment_disabled",
+        expose: true,
+      },
+    );
   }
   const providerAccountId = normalizeAlgoDeploymentProviderAccountId({
     providerAccountId: input.providerAccountId,
@@ -980,7 +845,6 @@ export async function createAlgoDeployment(input: CreateAlgoDeploymentInput) {
   });
 
   invalidateSignalOptionsDashboardCaches(deployment.id);
-  applyDeploymentToListCache(deployment);
   notifyAlgoCockpitChanged({
     deploymentId: deployment.id,
     mode: deployment.mode,
@@ -1028,12 +892,12 @@ export async function setAlgoDeploymentEnabled(input: {
     payload: {
       enabled: input.enabled,
       previousProviderAccountId: existing.providerAccountId,
-      providerAccountNormalized: providerAccountId !== existing.providerAccountId,
+      providerAccountNormalized:
+        providerAccountId !== existing.providerAccountId,
     },
   });
 
   invalidateSignalOptionsDashboardCaches(deployment.id);
-  applyDeploymentToListCache(deployment);
   notifyAlgoCockpitChanged({
     deploymentId: deployment.id,
     mode: deployment.mode,
@@ -1090,7 +954,6 @@ export async function setAlgoDeploymentMode(input: {
   });
 
   invalidateSignalOptionsDashboardCaches(deployment.id);
-  applyDeploymentToListCache(deployment);
   notifyAlgoCockpitChanged({
     deploymentId: deployment.id,
     mode: deployment.mode,
@@ -1202,7 +1065,6 @@ export async function updateAlgoDeploymentStrategySettings(input: {
   });
 
   invalidateSignalOptionsDashboardCaches(deployment.id);
-  applyDeploymentToListCache(deployment);
   notifyAlgoCockpitChanged({
     deploymentId: deployment.id,
     mode: deployment.mode,
@@ -1224,7 +1086,9 @@ function mergeExecutionEventRows<T extends { occurredAt: Date }>(
   limit: number,
 ): T[] {
   return [...ledgerRows, ...diagnosticRows]
-    .sort((left, right) => right.occurredAt.getTime() - left.occurredAt.getTime())
+    .sort(
+      (left, right) => right.occurredAt.getTime() - left.occurredAt.getTime(),
+    )
     .slice(0, limit);
 }
 
@@ -1346,7 +1210,8 @@ export async function listExecutionEvents(
     return existing;
   }
 
-  const reader = listExecutionEventsReaderForTests ?? readExecutionEventsUncached;
+  const reader =
+    listExecutionEventsReaderForTests ?? readExecutionEventsUncached;
   const request = reader(normalized)
     .then((value) => {
       executionEventsListCache.set(key, {
@@ -1367,14 +1232,9 @@ export async function listExecutionEvents(
 
 export const __algoAutomationInternalsForTests = {
   buildDeploymentListResponse,
-  clearDeploymentListCacheForTests,
   buildOvernightSpotDeploymentConfig,
   deploymentHasSignalOptionsProfile,
   deploymentHasMixedSignalOptionsAndOvernightProfile,
-  deploymentListDbBackoff,
-  markDeploymentListError,
-  readDeploymentListCache,
-  rememberDeploymentListCache,
   stripOvernightSpotFromSignalOptionsConfig,
   visibleDeploymentRows,
   readSignalTimeframe,
@@ -1383,7 +1243,9 @@ export const __algoAutomationInternalsForTests = {
     executionEventsListCache.clear();
     executionEventsListInFlight.clear();
   },
-  setListExecutionEventsReaderForTests(reader: ListExecutionEventsReader | null) {
+  setListExecutionEventsReaderForTests(
+    reader: ListExecutionEventsReader | null,
+  ) {
     listExecutionEventsReaderForTests = reader;
   },
 };

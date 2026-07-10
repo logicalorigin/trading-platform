@@ -1312,10 +1312,36 @@ export class IbkrClient {
   }
 
   async ensureBrokerageSession(): Promise<SessionStatusSnapshot> {
-    const status = await this.getSessionStatus();
+    let status: SessionStatusSnapshot;
+    try {
+      status = await this.getSessionStatus();
+    } catch (error) {
+      // CPG can reject /iserver/auth/status outright with 401 (instead of
+      // returning an unauthenticated body) until ssodh/init establishes the
+      // REST-side session, including right after a completed web login. Try
+      // the init once; if it cannot recover, surface the original error.
+      await this.initializeBrokerageSession().catch(() => {
+        throw error;
+      });
+      status = await this.getSessionStatus();
+    }
 
-    if (!status.authenticated && !status.connected) {
-      return status;
+    if (!status.authenticated) {
+      // A completed Client Portal web login (SSO/2FA finished) leaves
+      // /iserver/auth/status unauthenticated until ssodh/init promotes the
+      // SSO session to a brokerage session; without this step a finished
+      // login is never detected. Init failure just means nobody has logged
+      // in yet, so the logged-out status is returned as-is.
+      const initialized = await this.initializeBrokerageSession().then(
+        () => true,
+        () => false,
+      );
+      if (initialized) {
+        status = await this.getSessionStatus();
+      }
+      if (!status.authenticated) {
+        return status;
+      }
     }
 
     const tradingAccounts = await this.getTradingAccountsInfo();
@@ -1781,17 +1807,17 @@ export class IbkrClient {
                 asNumber(position["mktPrice"]),
                 asNumber(position["marketPrice"]),
               ) ?? averagePrice;
+            const multiplier = optionContract?.sharesPerContract ?? 1;
             const marketValue =
               firstDefined(
                 asNumber(position["mktValue"]),
                 asNumber(position["marketValue"]),
-              ) ?? marketPrice * quantity;
+              ) ?? marketPrice * quantity * multiplier;
             const unrealizedPnl =
               firstDefined(
                 asNumber(position["unrealizedPnl"]),
                 asNumber(position["unrealized_pnl"]),
               ) ?? 0;
-            const multiplier = optionContract?.sharesPerContract ?? 1;
             const denominator =
               Math.abs(averagePrice * quantity * multiplier) ||
               Math.abs(marketValue) ||

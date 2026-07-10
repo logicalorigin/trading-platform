@@ -175,7 +175,7 @@ test("signal matrix persistence does not gate signal identity on latest-bar trus
   assert.match(persistBlock, /fresh:\s*latestBarTrusted\s*&&\s*status === "ok"/);
 });
 
-test("runtime-fallback stream profiles do not enqueue DB persistence", () => {
+test("non-durable stream profiles do not enqueue DB persistence", () => {
   const emitStart = serviceSource.indexOf(
     "export function emitSignalMonitorMatrixStreamAggregateDelta",
   );
@@ -1598,47 +1598,4 @@ test("signal matrix stream bootstrap keeps stored unavailable cells as row place
   assert.equal(event.coverage.stateCount, 2);
   assert.equal(event.states[0]?.actionEligible, false);
   assert.equal(event.states[0]?.actionBlocker, "no_signal");
-});
-
-test("signal matrix stream bootstrap does not publish runtime fallback state as matrix truth", () => {
-  __signalMonitorInternalsForTests.resetSignalMonitorMatrixStreamForTests();
-  const scope =
-    __signalMonitorInternalsForTests.normalizeSignalMonitorMatrixStreamScope({
-      environment: "shadow",
-      symbols: ["DIA"],
-      timeframes: ["5m"],
-      clientRole: "leader",
-      requestOrigin: "startup",
-    });
-  const event =
-    __signalMonitorInternalsForTests.buildSignalMonitorMatrixStreamBootstrapEventFromStoredState(
-      {
-        profile: { id: "state-unavailable-paper" },
-        evaluatedAt,
-        stateSource: "runtime-fallback",
-        states: [
-          {
-            id: "state-unavailable-paper:DIA:5m:unavailable",
-            profileId: "state-unavailable-paper",
-            symbol: "DIA",
-            timeframe: "5m",
-            currentSignalDirection: null,
-            currentSignalAt: null,
-            currentSignalPrice: null,
-            latestBarAt: null,
-            barsSinceSignal: null,
-            fresh: false,
-            status: "unavailable",
-            active: true,
-            lastEvaluatedAt: evaluatedAt,
-            lastError: "event database unavailable",
-          },
-        ],
-      } as never,
-      scope,
-    );
-
-  assert.equal(event.event, "bootstrap");
-  assert.deepEqual(event.states, []);
-  assert.equal(event.coverage.stateCount, 0);
 });

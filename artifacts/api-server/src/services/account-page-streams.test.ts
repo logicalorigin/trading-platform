@@ -279,62 +279,44 @@ test("real account-page primary positions use fast quote-free first paint", () =
   );
 });
 
-test("live polling retains the last-known payload for cache-first serves", () => {
-  const body = functionSource("subscribeAccountPageSnapshots");
-  // Every successful live poll must record the payload so a later
-  // reconnect/re-navigation can paint it immediately.
-  assert.match(body, /writeCachedAccountPageLivePayload\(input,\s*snapshot\)/);
-  // The retain must happen unconditionally, before the change check — otherwise
-  // an unchanged poll (signature equal) would skip caching and the cache-first
-  // path would only ever see the first emit.
-  const writeIdx = body.indexOf("writeCachedAccountPageLivePayload(input");
-  const changedIdx = body.indexOf("const changed =");
-  assert.ok(writeIdx !== -1 && changedIdx !== -1);
-  assert.ok(
-    writeIdx < changedIdx,
-    "writeCachedAccountPageLivePayload must run before the change check, not inside the changed branch",
-  );
-});
-
-test("subscribe paints a cached live payload first, tagged refreshing", () => {
-  const body = functionSource("subscribeAccountPageSnapshots");
-  // Only when the caller didn't seed an initial payload — otherwise the seed wins.
+test("shadow account-page primary fetches canonical orders", () => {
+  const body = functionSource("fetchAccountPagePrimaryPayload");
   assert.match(
     body,
-    /if\s*\(!options\.initialLivePayload\s*&&\s*!options\.initialPayload\)/,
+    /const \[shadowPositions,\s*shadowOrders\] = await Promise\.all\(\[[\s\S]*?getAccountPositions\([\s\S]*?getAccountOrders\(\{[\s\S]*?tab:\s*normalized\.orderTab[\s\S]*?\}\)[\s\S]*?\]\);/,
   );
-  // Deferred to a microtask so subscribe() returns before the first emit.
-  assert.match(body, /queueMicrotask\(/);
-  assert.match(body, /readCachedAccountPageLivePayload\(input\)/);
-  // The immediate paint must be tagged refreshing so the UI shows the spinner
-  // until the live poll replaces it.
-  assert.match(
-    body,
-    /onLive\(\{\s*\.\.\.cachedLivePayload,\s*refreshing:\s*true\s*\}\)/,
-  );
+  assert.match(body, /orders\s*=\s*shadowOrders/);
+  assert.doesNotMatch(source, /deferredShadowOrders/);
 });
 
-test("clearing the snapshot cache also clears the last-live cache", () => {
-  const body = functionSource("clearAccountPageSnapshotCache");
-  assert.match(body, /accountPageLastLiveCache\.clear\(\)/);
+test("shadow account-page fast risk owns its deferred-history semantics", () => {
+  assert.doesNotMatch(source, /deferredShadowClosedTrades/);
+  for (const functionName of [
+    "fetchAccountPageLivePayload",
+    "fetchAccountPagePrimaryPayload",
+  ]) {
+    const body = functionSource(functionName);
+    assert.doesNotMatch(body, /closedTrades:\s*/);
+    assert.match(
+      body,
+      /getShadowAccountRisk\(\{[\s\S]*?positionsResponse:[\s\S]*?detail:\s*"fast"[\s\S]*?\}\)/,
+    );
+  }
 });
 
-test("the last-live cache is bounded by TTL and a max-entry cap", () => {
-  // Module-level bounds must exist so the retain map can't grow unbounded.
-  assert.match(source, /const ACCOUNT_PAGE_LAST_LIVE_TTL_MS\s*=/);
-  assert.match(source, /const ACCOUNT_PAGE_LAST_LIVE_MAX_ENTRIES\s*=/);
-  // Reads past the TTL evict and return null instead of serving stale data.
-  const readBody = functionSource("readCachedAccountPageLivePayload");
-  assert.match(
-    readBody,
-    /Date\.now\(\)\s*-\s*entry\.at\s*>\s*ACCOUNT_PAGE_LAST_LIVE_TTL_MS[\s\S]*?delete\(key\)[\s\S]*?return null/,
-  );
-  // Writes evict the oldest entry once the cap is exceeded.
-  const writeBody = functionSource("writeCachedAccountPageLivePayload");
-  assert.match(
-    writeBody,
-    /while\s*\(accountPageLastLiveCache\.size\s*>\s*ACCOUNT_PAGE_LAST_LIVE_MAX_ENTRIES\)/,
-  );
+test("account-page subscriptions wait for a current live payload", () => {
+  const body = functionSource("subscribeAccountPageSnapshots");
+  assert.doesNotMatch(body, /writeCachedAccountPageLivePayload/);
+  assert.doesNotMatch(body, /readCachedAccountPageLivePayload/);
+  assert.doesNotMatch(body, /queueMicrotask/);
+  assert.doesNotMatch(body, /refreshing:\s*true/);
+});
+
+test("account-page streams have no last-live replay cache", () => {
+  assert.doesNotMatch(source, /accountPageLastLiveCache/);
+  assert.doesNotMatch(source, /readCachedAccountPageLivePayload/);
+  assert.doesNotMatch(source, /writeCachedAccountPageLivePayload/);
+  assert.doesNotMatch(source, /ACCOUNT_PAGE_LAST_LIVE_/);
 });
 
 test("account-page caches isolate the resolved shadow account scope", () => {
@@ -373,6 +355,25 @@ test("account-page caches isolate real accounts by authenticated user", () => {
       mode: "live",
     }),
   );
+});
+
+test("real account-page custom cache keys include authenticated user scope", () => {
+  for (const functionName of [
+    "fetchAccountPageLivePayload",
+    "fetchAccountPagePrimaryPayload",
+    "fetchAccountPageBenchmarkEquityHistory",
+  ]) {
+    const body = functionSource(functionName);
+    const keyStart = body.indexOf("const cacheKey = stableStringify({");
+    const keyEnd = body.indexOf("\n  });", keyStart);
+    assert.notEqual(keyStart, -1, `${functionName} must build a cache key`);
+    assert.notEqual(keyEnd, -1, `${functionName} cache key must be bounded`);
+    assert.match(
+      body.slice(keyStart, keyEnd),
+      /appUserId/,
+      `${functionName} cache key must include appUserId`,
+    );
+  }
 });
 
 test("account-page payload identity ignores build stamps but keeps source changes", () => {

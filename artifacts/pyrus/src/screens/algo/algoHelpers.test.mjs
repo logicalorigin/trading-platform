@@ -1469,10 +1469,7 @@ test("STA source selection does not reuse previous rows through empty refresh fr
   assert.equal(snapshot.candidates.length, 0);
 });
 
-test("STA source selection serves cache-stale action rows as the live default", () => {
-  // "Served from stored monitor state" (cacheStatus: "stale") is the SSE-era
-  // default, not a degraded source — it must be served, not rejected. Genuine
-  // failures still surface via record.stale/degraded/refreshing/timeout.
+test("STA source selection rejects cache-stale action rows", () => {
   const snapshot = resolveStableStaActionSnapshot({
     signalOptionsState: {
       cacheStatus: "stale",
@@ -1506,11 +1503,12 @@ test("STA source selection serves cache-stale action rows as the live default", 
     },
   });
 
-  assert.equal(snapshot.source, "state");
-  assert.equal(snapshot.signals.length, 1);
-  assert.equal(snapshot.candidates.length, 1);
-  assert.equal(snapshot.sourceHealth.stale, false);
-  assert.equal(snapshot.sourceHealth.degraded, false);
+  assert.equal(snapshot.source, "empty");
+  assert.equal(snapshot.signals.length, 0);
+  assert.equal(snapshot.candidates.length, 0);
+  assert.equal(snapshot.sourceHealth.stale, true);
+  assert.equal(snapshot.sourceHealth.degraded, true);
+  assert.deepEqual(snapshot.sourceHealth.failedSources, ["cockpit", "state"]);
   assert.equal(snapshot.cacheable, true);
 });
 

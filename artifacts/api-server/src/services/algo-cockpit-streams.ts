@@ -1,12 +1,7 @@
 import { logger } from "../lib/logger";
 import type { RuntimeMode } from "../lib/runtime";
-import {
-  listAlgoDeployments,
-  listExecutionEvents,
-} from "./automation";
-import {
-  subscribeAlgoCockpitChanges,
-} from "./algo-cockpit-events";
+import { listAlgoDeployments, listExecutionEvents } from "./automation";
+import { subscribeAlgoCockpitChanges } from "./algo-cockpit-events";
 import {
   getAlgoDeploymentCockpit,
   getSignalOptionsPerformance,
@@ -44,7 +39,9 @@ export type AlgoCockpitStreamPayload = {
   > | null;
   cockpit: Awaited<ReturnType<typeof getAlgoDeploymentCockpit>> | null;
   performance: Awaited<ReturnType<typeof getSignalOptionsPerformance>> | null;
-  signalMonitorProfile: Awaited<ReturnType<typeof getSignalMonitorProfile>> | null;
+  signalMonitorProfile: Awaited<
+    ReturnType<typeof getSignalMonitorProfile>
+  > | null;
 };
 
 const ALGO_COCKPIT_STREAM_SIGNATURE_VOLATILE_FIELDS = {
@@ -115,7 +112,9 @@ function getAlgoCockpitStreamSharingKey(input: AlgoCockpitStreamInput): string {
   return stableStringify(normalizeAlgoCockpitStreamInputForKey(input));
 }
 
-export function shouldUsePrimaryOnlyAlgoCockpitPayload(pressure: unknown): boolean {
+export function shouldUsePrimaryOnlyAlgoCockpitPayload(
+  pressure: unknown,
+): boolean {
   void pressure;
   return false;
 }
@@ -130,9 +129,9 @@ async function resolveAlgoCockpitTarget(input: AlgoCockpitStreamInput = {}) {
     ? await listAlgoDeployments({})
     : { deployments: [] };
   const focusedDeployment = requestedDeploymentId
-    ? deploymentList.deployments.find(
+    ? (deploymentList.deployments.find(
         (deployment) => deployment.id === requestedDeploymentId,
-      ) ?? null
+      ) ?? null)
     : null;
   const deploymentId = focusedDeployment?.id ?? null;
   const mode = focusedDeployment?.mode ?? requestedMode;
@@ -195,33 +194,38 @@ export async function fetchAlgoCockpitStreamPayload(
   stream: AlgoCockpitStreamPayload["stream"] = "algo-cockpit-bootstrap",
 ): Promise<AlgoCockpitStreamPayload> {
   const target = await resolveAlgoCockpitTarget(input);
-  const [events, signalOptionsState, cockpit, performance, signalMonitorProfile] =
-    await Promise.all([
-      target.deploymentId
-        ? listExecutionEvents({
-            deploymentId: target.deploymentId,
-            limit: target.eventLimit,
-          })
-        : Promise.resolve({ events: [] }),
-      target.deploymentId
-        ? listSignalOptionsAutomationState({
-            deploymentId: target.deploymentId,
-            view: "summary",
-          })
-        : Promise.resolve(null),
-      target.deploymentId
-        ? getAlgoDeploymentCockpit({
-            deploymentId: target.deploymentId,
-            view: "summary",
-          })
-        : Promise.resolve(null),
-      target.deploymentId
-        ? getSignalOptionsPerformance({ deploymentId: target.deploymentId })
-        : Promise.resolve(null),
-      target.deploymentId
-        ? getSignalMonitorProfile({ environment: target.mode })
-        : Promise.resolve(null),
-    ]);
+  const [
+    events,
+    signalOptionsState,
+    cockpit,
+    performance,
+    signalMonitorProfile,
+  ] = await Promise.all([
+    target.deploymentId
+      ? listExecutionEvents({
+          deploymentId: target.deploymentId,
+          limit: target.eventLimit,
+        })
+      : Promise.resolve({ events: [] }),
+    target.deploymentId
+      ? listSignalOptionsAutomationState({
+          deploymentId: target.deploymentId,
+          view: "summary",
+        })
+      : Promise.resolve(null),
+    target.deploymentId
+      ? getAlgoDeploymentCockpit({
+          deploymentId: target.deploymentId,
+          view: "summary",
+        })
+      : Promise.resolve(null),
+    target.deploymentId
+      ? getSignalOptionsPerformance({ deploymentId: target.deploymentId })
+      : Promise.resolve(null),
+    target.deploymentId
+      ? getSignalMonitorProfile({ environment: target.mode })
+      : Promise.resolve(null),
+  ]);
 
   return {
     stream,
@@ -258,7 +262,6 @@ type AlgoCockpitSharedPoller = {
   inFlight: boolean;
   queued: boolean;
   queuedTimer: ReturnType<typeof setTimeout> | null;
-  lastPayload: AlgoCockpitStreamPayload | null;
   timer: ReturnType<typeof setInterval> | null;
   unsubscribeChanges: Unsubscribe;
   tick: () => Promise<void>;
@@ -310,7 +313,6 @@ function createAlgoCockpitSharedPoller(
     inFlight: false,
     queued: false,
     queuedTimer: null,
-    lastPayload: null,
     timer: null,
     unsubscribeChanges: () => {},
     deliverToSubscriber: async (subscriber, payload) => {
@@ -362,7 +364,6 @@ function createAlgoCockpitSharedPoller(
         if (!poller.active) {
           return;
         }
-        poller.lastPayload = payload;
         for (const subscriber of [...poller.subscribers]) {
           await poller.deliverToSubscriber(subscriber, payload);
         }
@@ -481,12 +482,7 @@ export function subscribeAlgoCockpitSnapshots(
     poller.start();
   } else {
     poller.subscribers.add(subscriber);
-    if (poller.lastPayload) {
-      const lastPayload = poller.lastPayload;
-      queueMicrotask(() => {
-        void poller?.deliverToSubscriber(subscriber, lastPayload);
-      });
-    } else if (!poller.inFlight) {
+    if (!poller.inFlight) {
       void poller.tick();
     }
   }

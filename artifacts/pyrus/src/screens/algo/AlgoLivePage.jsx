@@ -1,10 +1,4 @@
-import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { AppTooltip } from "@/components/ui/tooltip";
 import { Select } from "../../components/platform/primitives.jsx";
@@ -15,6 +9,7 @@ import {
   Play,
   RefreshCw,
   Settings as SettingsIcon,
+  Shield,
   ShieldAlert,
   ShieldCheck,
   Wallet,
@@ -24,6 +19,7 @@ import {
   CSS_COLOR,
   ELEVATION,
   FONT_WEIGHTS,
+  MISSING_VALUE,
   RADII,
   T,
   cssColorAlpha,
@@ -72,7 +68,6 @@ export const preloadAlgoLivePageModules = () => Promise.resolve();
 
 const EmptyOperationsState = ({
   candidateDrafts,
-  setupDataSettled,
   deploymentListUnavailable = false,
   selectedDraft,
   setSelectedDraftId,
@@ -83,18 +78,14 @@ const EmptyOperationsState = ({
   handleCreateDeployment,
   createDeploymentMutation,
 }) => {
-  const title = !setupDataSettled
-    ? "Loading Signal Operations"
-    : deploymentListUnavailable
-      ? "Signal-Options Deployment Data Unavailable"
-      : candidateDrafts.length
+  const title = deploymentListUnavailable
+    ? "Signal-Options Deployment Data Unavailable"
+    : candidateDrafts.length
       ? "Create Signal-Options Deployment"
       : "Signal-Options Deployment Unavailable";
-  const summary = !setupDataSettled
-    ? "Fetching algo deployments and signal-options automation state."
-    : deploymentListUnavailable
-      ? "The deployment list is temporarily unavailable. Existing signal-options deployments may still be present; refresh to retry the request."
-      : candidateDrafts.length
+  const summary = deploymentListUnavailable
+    ? "The deployment list is temporarily unavailable. Existing signal-options deployments may still be present; refresh to retry the request."
+    : candidateDrafts.length
       ? "Create a shadow deployment from an available strategy draft."
       : "No signal-options deployments are available yet. The default shadow deployment should be seeded at startup.";
 
@@ -131,22 +122,7 @@ const EmptyOperationsState = ({
         >
           {summary}
         </div>
-        {!setupDataSettled ? (
-          <div
-            data-testid="algo-setup-loading"
-            style={{
-              border: `1px dashed ${CSS_COLOR.border}`,
-              borderRadius: dim(RADII.sm),
-              color: CSS_COLOR.textDim,
-              fontFamily: T.sans,
-              fontSize: fs(10),
-              lineHeight: 1.45,
-              padding: sp("14px 10px"),
-            }}
-          >
-            Loading algo deployments and signal-options state...
-          </div>
-        ) : deploymentListUnavailable ? (
+        {deploymentListUnavailable ? (
           <div
             data-testid="algo-deployments-unavailable"
             style={{
@@ -233,8 +209,8 @@ const EmptyOperationsState = ({
               padding: sp("14px 10px"),
             }}
           >
-            Restart the API or check the default signal-options seed if this stays
-            empty.
+            Restart the API or check the default signal-options seed if this
+            stays empty.
           </div>
         )}
       </div>
@@ -269,7 +245,8 @@ export const resolveEffectiveStaMtfAlignmentConfig = ({
   mtfAlignmentDraft = null,
   signalOptionsProfile = null,
 } = {}) => {
-  const source = mtfAlignmentDraft ?? signalOptionsProfile?.entryGate?.mtfAlignment;
+  const source =
+    mtfAlignmentDraft ?? signalOptionsProfile?.entryGate?.mtfAlignment;
   if (!source) return null;
   const timeframes = Array.isArray(source.timeframes) ? source.timeframes : [];
   return {
@@ -306,7 +283,10 @@ const resolveDeploymentAccountLabel = ({ deployment, accountId }) => {
   return accountId || null;
 };
 
-const headerChipStyle = ({ color = CSS_COLOR.textMuted, active = false } = {}) => ({
+const headerChipStyle = ({
+  color = CSS_COLOR.textMuted,
+  active = false,
+} = {}) => ({
   display: "inline-flex",
   alignItems: "center",
   minHeight: dim(20),
@@ -324,7 +304,11 @@ const headerChipStyle = ({ color = CSS_COLOR.textMuted, active = false } = {}) =
   whiteSpace: "nowrap",
 });
 
-const headerActionButtonStyle = ({ color, disabled = false, divided = false } = {}) => ({
+const headerActionButtonStyle = ({
+  color,
+  disabled = false,
+  divided = false,
+} = {}) => ({
   ...compactButtonStyle({ disabled }),
   display: "inline-flex",
   alignItems: "center",
@@ -341,14 +325,19 @@ const headerActionButtonStyle = ({ color, disabled = false, divided = false } = 
 
 export const resolveAttentionSeverity = (attentionItems = []) => {
   if (!attentionItems?.length) return null;
-  if (attentionItems.some((item) => item?.severity === "warning")) return "warning";
+  if (attentionItems.some((item) => item?.severity === "warning"))
+    return "warning";
   return "info";
 };
 
 const resolveHeaderScanWaveMotion = (status) => {
   const state = canonicalizeStreamState(status, "no-subscribers");
   if (state === "healthy") return "fast";
-  if (state === "checking" || state === "capacity-limited" || state === "reconnecting") {
+  if (
+    state === "checking" ||
+    state === "capacity-limited" ||
+    state === "reconnecting"
+  ) {
     return "slow";
   }
   return "flat";
@@ -361,9 +350,14 @@ export const resolveHeaderScanWave = ({
   signalScanReady = true,
   attentionSeverity = null,
 } = {}) => {
-  const infoOnlyScanPause = signalScanReady === false && attentionSeverity === "info";
+  const infoOnlyScanPause =
+    signalScanReady === false && attentionSeverity === "info";
   if (infoOnlyScanPause) {
-    const status = scanRunning ? "healthy" : refreshPending ? "checking" : "no-subscribers";
+    const status = scanRunning
+      ? "healthy"
+      : refreshPending
+        ? "checking"
+        : "no-subscribers";
     const state = canonicalizeStreamState(status, "no-subscribers");
     const badgeLabel =
       state === "healthy"
@@ -398,9 +392,9 @@ export const resolveHeaderScanWave = ({
           ? "checking"
           : operationsStatus === "healthy"
             ? "healthy"
-          : operationsStatus === "attention"
-            ? "capacity-limited"
-            : "no-subscribers";
+            : operationsStatus === "attention"
+              ? "capacity-limited"
+              : "no-subscribers";
   const state = canonicalizeStreamState(status, "no-subscribers");
   const badgeLabel =
     state === "healthy"
@@ -435,7 +429,9 @@ const buildAlgoOptionQuoteGroups = ({
   const addContract = (contract, symbol, source = "primary") => {
     const record = asRecord(contract);
     const providerContractId = optionProviderContractId(record);
-    const underlying = String(record.underlying || symbol || "").trim().toUpperCase();
+    const underlying = String(record.underlying || symbol || "")
+      .trim()
+      .toUpperCase();
     if (!providerContractId || !underlying) return;
     const contractKey = `${underlying}:${providerContractId}`;
     if (source === "preview" && primaryContractKeys.has(contractKey)) return;
@@ -457,13 +453,25 @@ const buildAlgoOptionQuoteGroups = ({
     group.providerContractIds.push(providerContractId);
   };
   positions.forEach((position) => {
-    addContract(asRecord(position).selectedContract, asRecord(position).symbol, "primary");
+    addContract(
+      asRecord(position).selectedContract,
+      asRecord(position).symbol,
+      "primary",
+    );
   });
   ledgerPositions.forEach((position) => {
-    addContract(asRecord(position).optionContract, asRecord(position).symbol, "primary");
+    addContract(
+      asRecord(position).optionContract,
+      asRecord(position).symbol,
+      "primary",
+    );
   });
   candidates.forEach((candidate) => {
-    addContract(asRecord(candidate).selectedContract, asRecord(candidate).symbol, "primary");
+    addContract(
+      asRecord(candidate).selectedContract,
+      asRecord(candidate).symbol,
+      "primary",
+    );
   });
   signals.forEach((signal) => {
     const record = asRecord(signal);
@@ -473,7 +481,9 @@ const buildAlgoOptionQuoteGroups = ({
       "preview",
     );
   });
-  return Array.from(groups.values()).map(({ providerContractIdSet, ...group }) => group);
+  return Array.from(groups.values()).map(
+    ({ providerContractIdSet, ...group }) => group,
+  );
 };
 
 const ALGO_OPTION_QUOTE_CANDIDATE_LIMIT = 12;
@@ -513,8 +523,13 @@ export const buildAlgoOptionQuoteStreamSubscription = (groups = []) => {
       return;
     }
     groupProviderContractIds.forEach((providerContractId) => {
-      const normalizedProviderContractId = String(providerContractId || "").trim();
-      if (!normalizedProviderContractId || seenProviderContractIds.has(normalizedProviderContractId)) {
+      const normalizedProviderContractId = String(
+        providerContractId || "",
+      ).trim();
+      if (
+        !normalizedProviderContractId ||
+        seenProviderContractIds.has(normalizedProviderContractId)
+      ) {
         return;
       }
       seenProviderContractIds.add(normalizedProviderContractId);
@@ -632,6 +647,11 @@ export const AlgoLivePage = ({
   cockpitKpis,
   cockpitRisk,
   cockpitGeneratedAt,
+  cockpitPnlDataAvailable = false,
+  cockpitRiskDataAvailable = false,
+  cockpitPositionDataAvailable = false,
+  performanceDataAvailable = false,
+  positionDataAvailable = false,
   refreshPending,
   cockpitSignalFreshness,
   cockpitTradePath,
@@ -650,7 +670,6 @@ export const AlgoLivePage = ({
   transitions,
   // Signals
   visibleSignalRows,
-  signalMonitorEventsSourceStatus = "database",
   signalOptionsCandidates,
   signalMatrixStates = [],
   selectedCandidate,
@@ -704,16 +723,17 @@ export const AlgoLivePage = ({
         rows: signalOptionsLedgerPositionsQuery?.data?.positions || [],
         deploymentId: focusedDeploymentId,
       }),
-    [
-      focusedDeploymentId,
-      signalOptionsLedgerPositionsQuery?.data?.positions,
-    ],
+    [focusedDeploymentId, signalOptionsLedgerPositionsQuery?.data?.positions],
   );
   const visibleSignalSymbols = useMemo(
     () =>
       new Set(
         (visibleSignalRows || [])
-          .map((row) => String(asRecord(row).symbol || "").trim().toUpperCase())
+          .map((row) =>
+            String(asRecord(row).symbol || "")
+              .trim()
+              .toUpperCase(),
+          )
           .filter(Boolean),
       ),
     [visibleSignalRows],
@@ -721,16 +741,18 @@ export const AlgoLivePage = ({
   const optionQuoteCandidates = useMemo(() => {
     const seen = new Set();
     const selectedId = asRecord(selectedCandidate).id;
-    const selectedSymbol = String(
-      asRecord(selectedCandidate).symbol || "",
-    ).trim().toUpperCase();
+    const selectedSymbol = String(asRecord(selectedCandidate).symbol || "")
+      .trim()
+      .toUpperCase();
     const selectedCandidates = [];
     const visibleCandidates = [];
 
     (signalOptionsCandidates || []).forEach((candidate) => {
       const record = asRecord(candidate);
       const id = String(record.id || "");
-      const symbol = String(record.symbol || "").trim().toUpperCase();
+      const symbol = String(record.symbol || "")
+        .trim()
+        .toUpperCase();
       const key = id || symbol;
       if (!key || seen.has(key)) return;
       const selected = Boolean(
@@ -790,7 +812,9 @@ export const AlgoLivePage = ({
             drawer.querySelectorAll(
               'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
             ),
-          ).filter((el) => el instanceof HTMLElement && el.offsetParent !== null)
+          ).filter(
+            (el) => el instanceof HTMLElement && el.offsetParent !== null,
+          )
         : [];
     const initial = getFocusables();
     if (initial.length) initial[0].focus();
@@ -840,10 +864,7 @@ export const AlgoLivePage = ({
         mtfAlignmentDraft,
         signalOptionsProfile,
       }),
-    [
-      mtfAlignmentDraft,
-      signalOptionsProfile,
-    ],
+    [mtfAlignmentDraft, signalOptionsProfile],
   );
   const indicatorSignalRows = staTableSnapshot.signalRows || [];
   const indicatorTimelineBars = useMemo(() => {
@@ -853,7 +874,8 @@ export const AlgoLivePage = ({
       : 8;
   }, [strategySettingsDraft?.timeHorizon]);
   const cockpitStageItemsForDisplay = useMemo(
-    () => alignSignalCycleStageWithStaTable(cockpitStageItems, staTableSnapshot),
+    () =>
+      alignSignalCycleStageWithStaTable(cockpitStageItems, staTableSnapshot),
     [cockpitStageItems, staTableSnapshot],
   );
   // Keep the header cards tied to the rows computed by the STA table below.
@@ -866,15 +888,14 @@ export const AlgoLivePage = ({
     [indicatorSignalRows, indicatorTimelineBars],
   );
 
-  const emptyOperationsSetupSettled = Boolean(
-    setupDataSettled && !refreshPending,
+  const emptyOperationsSetupSettled = Boolean(setupDataSettled);
+  const showEmptyOperationsState = Boolean(
+    emptyOperationsSetupSettled && !deployments.length,
   );
-  const showEmptyOperationsState = Boolean(!deployments.length);
   if (showEmptyOperationsState) {
     return (
       <EmptyOperationsState
         candidateDrafts={candidateDrafts}
-        setupDataSettled={emptyOperationsSetupSettled}
         deploymentListUnavailable={deploymentListUnavailable}
         selectedDraft={selectedDraft}
         setSelectedDraftId={setSelectedDraftId}
@@ -895,12 +916,16 @@ export const AlgoLivePage = ({
     gatewayBlocks: cockpitTradePath.gatewayBlocks,
   });
   const attentionSeverity = resolveAttentionSeverity(attentionStream);
-  const realizedToday = Number(cockpitKpis?.dailyRealizedPnl ?? 0);
-  const unrealized = Number(cockpitKpis?.openUnrealizedPnl ?? 0);
+  const realizedToday = cockpitPnlDataAvailable
+    ? Number(cockpitKpis?.dailyRealizedPnl)
+    : Number.NaN;
+  const unrealized = cockpitPnlDataAvailable
+    ? Number(cockpitKpis?.openUnrealizedPnl)
+    : Number.NaN;
   const riskRecord = asRecord(cockpitRisk);
-  const openPremiumValue = Number(
-    riskRecord.openPremium ?? cockpitKpis?.openPremium ?? 0,
-  );
+  const openPremiumValue = cockpitPnlDataAvailable
+    ? Number(riskRecord.openPremium ?? cockpitKpis?.openPremium)
+    : Number.NaN;
   const maxOpenPremium = Number(
     riskRecord.maxOpenPremium ?? cockpitKpis?.maxOpenPremium,
   );
@@ -928,9 +953,9 @@ export const AlgoLivePage = ({
     ? "Signal scan paused in safe QA"
     : scanBlocked
       ? signalScanBlockedReason || "Signal scan unavailable"
-    : scanOperationRunning
-      ? "Signal action scan already running"
-      : "Run signal scan";
+      : scanOperationRunning
+        ? "Signal action scan already running"
+        : "Run signal scan";
   const operationsStatus = resolveOperationsStatus({
     marketDataReady,
     scanOn: Boolean(focusedDeployment?.enabled),
@@ -987,13 +1012,23 @@ export const AlgoLivePage = ({
     Number.isFinite(Number(algoLayoutWidth)) && Number(algoLayoutWidth) > 0
       ? Number(algoLayoutWidth) < 520
       : false;
-  const openPositions = Number(
-    cockpitKpis?.openPositions ?? signalOptionsPositions?.length ?? 0,
-  );
-  const rawWins = Number(signalOptionsPerformanceSummary?.wins ?? 0);
-  const rawLosses = Number(signalOptionsPerformanceSummary?.losses ?? 0);
-  const closedTradeCount = Number(signalOptionsPerformanceSummary?.closedTrades ?? 0);
-  const winRate = Number(signalOptionsPerformanceSummary?.winRatePercent);
+  const openPositions = positionDataAvailable
+    ? cockpitPositionDataAvailable
+      ? Number(cockpitKpis?.openPositions)
+      : Number(signalOptionsPositions?.length ?? 0)
+    : Number.NaN;
+  const rawWins = performanceDataAvailable
+    ? Number(signalOptionsPerformanceSummary?.wins ?? 0)
+    : Number.NaN;
+  const rawLosses = performanceDataAvailable
+    ? Number(signalOptionsPerformanceSummary?.losses ?? 0)
+    : Number.NaN;
+  const closedTradeCount = performanceDataAvailable
+    ? Number(signalOptionsPerformanceSummary?.closedTrades ?? 0)
+    : Number.NaN;
+  const winRate = performanceDataAvailable
+    ? Number(signalOptionsPerformanceSummary?.winRatePercent)
+    : Number.NaN;
   const inferredRecord =
     Number.isFinite(closedTradeCount) &&
     closedTradeCount > 0 &&
@@ -1009,19 +1044,28 @@ export const AlgoLivePage = ({
     Number.isFinite(closedTradeCount) ? closedTradeCount : 0,
     (Number.isFinite(wins) ? wins : 0) + (Number.isFinite(losses) ? losses : 0),
   );
-  const hasClosedRecord = recordTradeCount > 0;
-  const profitFactor = Number(signalOptionsPerformanceSummary?.profitFactor);
+  const hasClosedRecord = performanceDataAvailable && recordTradeCount > 0;
+  const profitFactor = performanceDataAvailable
+    ? Number(signalOptionsPerformanceSummary?.profitFactor)
+    : Number.NaN;
   const recordDetail = hasClosedRecord
     ? [
         Number.isFinite(winRate) ? `${formatPct(winRate, 0)} win` : null,
         Number.isFinite(profitFactor) ? `PF ${profitFactor.toFixed(2)}` : null,
-      ].filter(Boolean).join(" · ")
-    : "no closed trades";
-  const openSymbols = Number(
-    riskRecord.openSymbols ?? cockpitKpis?.openSymbols ?? 0,
-  );
-  const maxOpenSymbols =
-    riskRecord.maxOpenSymbols ?? cockpitKpis?.maxOpenSymbols ?? "?";
+      ]
+        .filter(Boolean)
+        .join(" · ")
+    : performanceDataAvailable
+      ? "no closed trades"
+      : "Performance unavailable";
+  const openSymbols = cockpitRiskDataAvailable
+    ? Number(riskRecord.openSymbols ?? cockpitKpis?.openSymbols ?? 0)
+    : Number.NaN;
+  const maxOpenSymbols = cockpitRiskDataAvailable
+    ? (riskRecord.maxOpenSymbols ??
+      cockpitKpis?.maxOpenSymbols ??
+      MISSING_VALUE)
+    : MISSING_VALUE;
   const scanStatusLabel = scanOperationRunning
     ? "scan running"
     : refreshPending
@@ -1042,18 +1086,33 @@ export const AlgoLivePage = ({
   const overviewMetrics = [
     {
       label: "P&L",
-      value: `R ${formatMoney(realizedToday, 0)} / U ${formatMoney(unrealized, 0)}`,
-      detail: `open premium ${formatMoney(openPremiumValue, 0)}`,
-      color: realizedToday + unrealized > 0 ? CSS_COLOR.green : realizedToday + unrealized < 0 ? CSS_COLOR.red : CSS_COLOR.text,
+      value: cockpitPnlDataAvailable
+        ? `R ${formatMoney(realizedToday, 0)} / U ${formatMoney(unrealized, 0)}`
+        : MISSING_VALUE,
+      detail: cockpitPnlDataAvailable
+        ? `open premium ${formatMoney(openPremiumValue, 0)}`
+        : "Cockpit data unavailable",
+      color: cockpitPnlDataAvailable
+        ? realizedToday + unrealized > 0
+          ? CSS_COLOR.green
+          : realizedToday + unrealized < 0
+            ? CSS_COLOR.red
+            : CSS_COLOR.text
+        : CSS_COLOR.textMuted,
       icon: Activity,
       severity: "neutral",
     },
     {
       label: "Exposure",
-      value: `${openPositions.toLocaleString()} open`,
-      detail: `${openSymbols}/${maxOpenSymbols} symbols`,
-      color:
-        openPremiumUsage != null && openPremiumUsage >= 0.7
+      value: positionDataAvailable
+        ? `${openPositions.toLocaleString()} open`
+        : MISSING_VALUE,
+      detail: cockpitRiskDataAvailable
+        ? `${openSymbols}/${maxOpenSymbols} symbols`
+        : "Exposure limits unavailable",
+      color: !positionDataAvailable
+        ? CSS_COLOR.textMuted
+        : openPremiumUsage != null && openPremiumUsage >= 0.7
           ? CSS_COLOR.amber
           : CSS_COLOR.textSec,
       icon: Layers,
@@ -1064,13 +1123,42 @@ export const AlgoLivePage = ({
     },
     {
       label: "Risk",
-      value: riskRecord.dailyHaltActive ? "halt active" : "within limits",
-      detail: `loss left ${formatMoney(cockpitKpis?.dailyLossRemaining, 0)}`,
-      color: riskRecord.dailyHaltActive ? CSS_COLOR.red : CSS_COLOR.green,
-      icon: riskRecord.dailyHaltActive ? ShieldAlert : ShieldCheck,
-      severity: riskRecord.dailyHaltActive ? "warning" : "neutral",
+      value: cockpitRiskDataAvailable
+        ? riskRecord.dailyHaltActive
+          ? "halt active"
+          : "within limits"
+        : MISSING_VALUE,
+      detail: cockpitRiskDataAvailable
+        ? `loss left ${formatMoney(
+            cockpitKpis?.dailyLossRemaining ??
+              Math.abs(Number(riskRecord.maxDailyLoss)) +
+                Number(riskRecord.dailyPnl),
+            0,
+          )}`
+        : "Risk data unavailable",
+      color: cockpitRiskDataAvailable
+        ? riskRecord.dailyHaltActive
+          ? CSS_COLOR.red
+          : CSS_COLOR.green
+        : CSS_COLOR.textMuted,
+      icon: cockpitRiskDataAvailable
+        ? riskRecord.dailyHaltActive
+          ? ShieldAlert
+          : ShieldCheck
+        : Shield,
+      severity:
+        cockpitRiskDataAvailable && riskRecord.dailyHaltActive
+          ? "warning"
+          : "neutral",
     },
-    ...(cockpitKpis?.tradingAllowanceEnabled
+    ...(cockpitRiskDataAvailable &&
+    cockpitKpis?.tradingAllowanceEnabled &&
+    cockpitKpis?.tradingAllowance != null &&
+    Number.isFinite(Number(cockpitKpis?.tradingAllowance)) &&
+    cockpitKpis?.allowanceAvailable != null &&
+    Number.isFinite(Number(cockpitKpis?.allowanceAvailable)) &&
+    cockpitKpis?.allowanceUnrealizedPnl != null &&
+    Number.isFinite(Number(cockpitKpis?.allowanceUnrealizedPnl))
       ? (() => {
           const cap = Number(cockpitKpis?.tradingAllowance ?? 0);
           const available = Number(cockpitKpis?.allowanceAvailable ?? 0);
@@ -1099,10 +1187,22 @@ export const AlgoLivePage = ({
       : []),
     {
       label: "Record",
-      value: hasClosedRecord ? `${wins}W / ${losses}L` : "No exits",
+      value: performanceDataAvailable
+        ? hasClosedRecord
+          ? `${wins}W / ${losses}L`
+          : "No exits"
+        : MISSING_VALUE,
       detail: recordDetail || "session",
-      color: hasClosedRecord && Number.isFinite(profitFactor) && profitFactor >= 1 ? CSS_COLOR.green : CSS_COLOR.textSec,
-      icon: ShieldCheck,
+      color:
+        performanceDataAvailable &&
+        hasClosedRecord &&
+        Number.isFinite(profitFactor) &&
+        profitFactor >= 1
+          ? CSS_COLOR.green
+          : performanceDataAvailable
+            ? CSS_COLOR.textSec
+            : CSS_COLOR.textMuted,
+      icon: performanceDataAvailable ? ShieldCheck : Shield,
       severity: "neutral",
     },
   ];
@@ -1120,7 +1220,9 @@ export const AlgoLivePage = ({
         <AlgoOptionQuoteStreamGroup
           key={optionQuoteStreamSubscription.owner}
           underlying={optionQuoteStreamSubscription.underlying}
-          providerContractIds={optionQuoteStreamSubscription.providerContractIds}
+          providerContractIds={
+            optionQuoteStreamSubscription.providerContractIds
+          }
           owner={optionQuoteStreamSubscription.owner}
           requiresGreeks={optionQuoteStreamSubscription.requiresGreeks}
         />
@@ -1130,11 +1232,10 @@ export const AlgoLivePage = ({
         data-testid="algo-live-grid"
         style={{
           display: "grid",
-          gridTemplateColumns:
-            algoIsPhone
-              ? "minmax(0, 1fr)"
-              : algoIsNarrow
-                ? "minmax(0, 1fr) 320px"
+          gridTemplateColumns: algoIsPhone
+            ? "minmax(0, 1fr)"
+            : algoIsNarrow
+              ? "minmax(0, 1fr) 320px"
               : "minmax(0, 1fr) 380px",
           gap: sp(algoIsPhone ? 5 : 8),
           alignItems: "start",
@@ -1329,7 +1430,9 @@ export const AlgoLivePage = ({
                       style={headerActionButtonStyle({
                         // Color tracks operational STATE (running=green,
                         // paused=amber); the Pause/Play icon carries the action.
-                        color: focusedDeployment.enabled ? CSS_COLOR.green : CSS_COLOR.amber,
+                        color: focusedDeployment.enabled
+                          ? CSS_COLOR.green
+                          : CSS_COLOR.amber,
                         disabled: deploymentToggleDisabled,
                       })}
                     >
@@ -1354,10 +1457,10 @@ export const AlgoLivePage = ({
                     >
                       <RefreshCw
                         size={HEADER_ICON_SIZE}
-                      strokeWidth={2}
-                      aria-hidden="true"
-                    />
-                  </button>
+                        strokeWidth={2}
+                        aria-hidden="true"
+                      />
+                    </button>
                   </AppTooltip>
                 </div>
               ) : null}
@@ -1380,10 +1483,16 @@ export const AlgoLivePage = ({
             style={{
               display: "grid",
               gap: sp(algoIsPhone ? 2 : 5),
-              padding: sp(algoIsPhone ? "4px 0" : denseOperationsLayout ? "6px" : "7px"),
+              padding: sp(
+                algoIsPhone ? "4px 0" : denseOperationsLayout ? "6px" : "7px",
+              ),
               border: algoIsPhone ? 0 : `1px solid ${CSS_COLOR.border}`,
-              borderTop: algoIsPhone ? `1px solid ${CSS_COLOR.border}` : undefined,
-              borderBottom: algoIsPhone ? `1px solid ${CSS_COLOR.border}` : undefined,
+              borderTop: algoIsPhone
+                ? `1px solid ${CSS_COLOR.border}`
+                : undefined,
+              borderBottom: algoIsPhone
+                ? `1px solid ${CSS_COLOR.border}`
+                : undefined,
               borderRadius: algoIsPhone ? 0 : dim(RADII.sm),
               background: CSS_COLOR.bg1,
               minWidth: 0,
@@ -1477,7 +1586,6 @@ export const AlgoLivePage = ({
           <OperationsSignalTable
             signals={visibleSignalRows}
             candidates={signalOptionsCandidates}
-            signalMonitorEventsSourceStatus={signalMonitorEventsSourceStatus}
             signalMatrixStates={signalMatrixStates}
             signalTimeframes={staSignalTimeframes}
             mtfAlignmentConfig={effectiveMtfAlignmentConfig}
@@ -1503,11 +1611,7 @@ export const AlgoLivePage = ({
           />
 
           <OperationsPositionsTable
-            positions={
-              positionAccountUsesShadowOverlay ? signalOptionsPositions : []
-            }
             accountPositionsQuery={signalOptionsLedgerPositionsQuery}
-            symbolIndex={symbolIndex}
             deploymentId={
               positionAccountUsesShadowOverlay ? focusedDeploymentId : null
             }
@@ -1541,7 +1645,7 @@ export const AlgoLivePage = ({
         ) : null}
       </div>
       {algoIsPhone && settingsDrawerOpen && typeof document !== "undefined"
-        ? createPortal((
+        ? createPortal(
             <div
               data-testid="algo-settings-drawer"
               role="dialog"
@@ -1610,8 +1714,9 @@ export const AlgoLivePage = ({
                   {renderedRightRail}
                 </div>
               </div>
-            </div>
-          ), document.body)
+            </div>,
+            document.body,
+          )
         : null}
     </div>
   );

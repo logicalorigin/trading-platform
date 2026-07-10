@@ -1,6 +1,4 @@
-import {
-  buildTransferAdjustedPnlSeries as buildSharedTransferAdjustedPnlSeries,
-} from "@workspace/account-math";
+import { buildTransferAdjustedPnlSeries as buildSharedTransferAdjustedPnlSeries } from "@workspace/account-math";
 
 const EQUITY_JOIN_TOLERANCE_BY_RANGE_MS = {
   "1D": 5 * 60_000,
@@ -30,18 +28,6 @@ export const equityJoinToleranceMs = (range) =>
 
 export const equityRangeResponseMatches = (response, range) =>
   Boolean(response) && (!response.range || !range || response.range === range);
-
-export const resolveStableEquityRangeResponse = ({
-  response,
-  fallback = null,
-  range,
-  acceptResponse = true,
-} = {}) =>
-  equityRangeResponseMatches(response, range)
-    ? acceptResponse
-      ? response
-      : fallback ?? response
-    : fallback;
 
 export const normalizeEquityPointSeries = (points = []) =>
   points
@@ -194,7 +180,11 @@ export const joinBenchmarkPercentSeries = (
   });
 };
 
-export const mapEquityEventsToPoints = (events = [], equityPoints = [], range) => {
+export const mapEquityEventsToPoints = (
+  events = [],
+  equityPoints = [],
+  range,
+) => {
   const toleranceMs = equityJoinToleranceMs(range);
   return events
     .map((event) => {
@@ -202,7 +192,11 @@ export const mapEquityEventsToPoints = (events = [], equityPoints = [], range) =
       if (timestampMs === null) {
         return null;
       }
-      const point = findNearestEquityPoint(equityPoints, timestampMs, toleranceMs);
+      const point = findNearestEquityPoint(
+        equityPoints,
+        timestampMs,
+        toleranceMs,
+      );
       return point
         ? {
             ...event,
@@ -263,7 +257,10 @@ export const buildAnchoredValueDomain = (
     return [baseMin, baseMax];
   }
 
-  const clampedRatio = Math.min(0.999, Math.max(0.001, Number(anchorRatio) || 0.5));
+  const clampedRatio = Math.min(
+    0.999,
+    Math.max(0.001, Number(anchorRatio) || 0.5),
+  );
   const neededAbove = Math.max(0, baseMax - anchorValue);
   const neededBelow = Math.max(0, anchorValue - baseMin);
   const scale = Math.max(

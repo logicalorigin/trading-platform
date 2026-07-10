@@ -11,6 +11,4 @@ export type SignalMonitorStateResponseStateSource = typeof SignalMonitorStateRes
 
 export const SignalMonitorStateResponseStateSource = {
   database: 'database',
-  'runtime-fallback': 'runtime-fallback',
-  'memory-cache': 'memory-cache',
 } as const;

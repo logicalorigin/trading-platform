@@ -1,5 +1,5 @@
-import { logger } from "../lib/logger";
 import type { RuntimeMode } from "../lib/runtime";
+import { HttpError } from "../lib/errors";
 import { IbkrClient } from "../providers/ibkr/client";
 import type {
   BrokerAccountSnapshot,
@@ -7,12 +7,7 @@ import type {
   BrokerOrderSnapshot,
   BrokerPositionSnapshot,
 } from "../providers/ibkr/client";
-import {
-  isTransientWorkError,
-  isWorkBackedOff,
-  runGovernedWork,
-  type WorkGovernorCategory,
-} from "./work-governor";
+import { runGovernedWork, type WorkGovernorCategory } from "./work-governor";
 import { getIbkrClientPortalClient } from "./ibkr-client-runtime";
 import { readPositiveIntegerEnv } from "../lib/env";
 
@@ -59,49 +54,19 @@ function accountFreshTtlMs(): number {
   return readPositiveIntegerEnv("IBKR_ACCOUNT_CACHE_TTL_MS", 2_000);
 }
 
-function accountStaleTtlMs(): number {
-  return readPositiveIntegerEnv("IBKR_ACCOUNT_STALE_CACHE_TTL_MS", 120_000);
-}
-
 function executionsFreshTtlMs(): number {
   return readPositiveIntegerEnv("IBKR_ACCOUNT_EXECUTION_CACHE_TTL_MS", 10_000);
-}
-
-function executionsInitialWaitMs(): number {
-  return readPositiveIntegerEnv("IBKR_ACCOUNT_EXECUTION_INITIAL_WAIT_MS", 1_500);
-}
-
-function positionsInitialWaitMs(): number {
-  return readPositiveIntegerEnv("IBKR_ACCOUNT_POSITIONS_INITIAL_WAIT_MS", 2_000);
-}
-
-function normalizeInitialWaitMs(value: number | null | undefined): number | null {
-  if (typeof value !== "number" || !Number.isFinite(value)) {
-    return null;
-  }
-  return Math.max(0, Math.floor(value));
-}
-
-function waitForFallback<T>(ms: number, fallback: T): Promise<T> {
-  return new Promise((resolve) => {
-    const timeout = setTimeout(() => resolve(fallback), ms);
-    timeout.unref?.();
-  });
 }
 
 function cacheAgeMs(entry: CacheEntry<unknown>): number {
   return Math.max(0, Date.now() - entry.cachedAt);
 }
 
-function isFresh(entry: CacheEntry<unknown> | undefined, ttlMs: number): boolean {
-  return Boolean(entry && cacheAgeMs(entry) <= ttlMs);
-}
-
-function isUsableStale(
+function isFresh(
   entry: CacheEntry<unknown> | undefined,
-  staleTtlMs: number,
+  ttlMs: number,
 ): boolean {
-  return Boolean(entry && cacheAgeMs(entry) <= staleTtlMs);
+  return Boolean(entry && cacheAgeMs(entry) <= ttlMs);
 }
 
 function stableStringify(value: unknown): string {
@@ -113,13 +78,6 @@ async function runCachedAccountRead<T extends unknown[]>({
   inflight,
   key,
   freshTtlMs,
-  staleTtlMs,
-  label,
-  initialWaitMs,
-  cacheEmptyPayload = true,
-  allowStaleFallback = true,
-  serveStaleWhileRefreshing = true,
-  preserveNonEmptyStaleOnEmpty = false,
   workCategory = "account",
   work,
 }: {
@@ -127,13 +85,6 @@ async function runCachedAccountRead<T extends unknown[]>({
   inflight: Map<string, Promise<T>>;
   key: string;
   freshTtlMs: number;
-  staleTtlMs: number;
-  label: string;
-  initialWaitMs?: number | null;
-  cacheEmptyPayload?: boolean;
-  allowStaleFallback?: boolean;
-  serveStaleWhileRefreshing?: boolean;
-  preserveNonEmptyStaleOnEmpty?: boolean;
   workCategory?: WorkGovernorCategory;
   work: () => Promise<T>;
 }): Promise<T> {
@@ -141,95 +92,25 @@ async function runCachedAccountRead<T extends unknown[]>({
   if (cached && isFresh(cached, freshTtlMs)) {
     return cached.payload;
   }
-  const staleCached =
-    cached && isUsableStale(cached, staleTtlMs) ? cached : null;
-  const normalizedInitialWaitMs = normalizeInitialWaitMs(initialWaitMs);
-  // When the initial-wait budget elapses before the live read returns, prefer
-  // the cached payload over an empty array so a slow broker read still surfaces
-  // last-known data (e.g. open positions) instead of a momentary empty render.
-  // The live read keeps running and refreshes the cache for the next poll.
-  const initialWaitFallback = (staleCached?.payload ?? []) as unknown as T;
+  if (cached) {
+    cache.delete(key);
+  }
 
   const pending = inflight.get(key);
   if (pending) {
-    if (allowStaleFallback && serveStaleWhileRefreshing && staleCached) {
-      return staleCached.payload;
-    }
-    if (normalizedInitialWaitMs !== null) {
-      return Promise.race([
-        pending,
-        waitForFallback(normalizedInitialWaitMs, initialWaitFallback),
-      ]);
-    }
     return pending;
-  }
-
-  if (allowStaleFallback && isWorkBackedOff(workCategory) && staleCached) {
-    return staleCached.payload;
   }
 
   const promise = runGovernedWork(workCategory, work)
     .then((payload) => {
-      if (
-        preserveNonEmptyStaleOnEmpty &&
-        allowStaleFallback &&
-        payload.length === 0 &&
-        staleCached &&
-        staleCached.payload.length > 0
-      ) {
-        logger.warn(
-          { label, key, cacheAgeMs: cacheAgeMs(staleCached) },
-          "Preserving non-empty IBKR account cache after empty refresh",
-        );
-        return staleCached.payload;
-      }
-      if (payload.length > 0 || cacheEmptyPayload) {
-        cache.set(key, { payload, cachedAt: Date.now() });
-      }
+      cache.set(key, { payload, cachedAt: Date.now() });
       return payload;
-    })
-    .catch((error) => {
-      if (
-        isTransientWorkError(error) &&
-        allowStaleFallback &&
-        cached &&
-        isUsableStale(cached, staleTtlMs)
-      ) {
-        logger.warn(
-          { err: error, label, key, cacheAgeMs: cacheAgeMs(cached) },
-          "Returning cached IBKR account read after transient failure",
-        );
-        return cached.payload;
-      }
-      if (isTransientWorkError(error)) {
-        logger.warn(
-          { err: error, label, key },
-          "Returning empty IBKR account read after transient failure",
-        );
-        return [] as unknown as T;
-      }
-      throw error;
     })
     .finally(() => {
       inflight.delete(key);
     });
 
   inflight.set(key, promise);
-  if (allowStaleFallback && serveStaleWhileRefreshing && staleCached) {
-    promise.catch((error) => {
-      logger.warn(
-        { err: error, label, key, cacheAgeMs: cacheAgeMs(staleCached) },
-        "Background IBKR account refresh failed after serving stale cache",
-      );
-    });
-    return staleCached.payload;
-  }
-  if (normalizedInitialWaitMs !== null) {
-    return Promise.race([
-      promise,
-      waitForFallback(normalizedInitialWaitMs, initialWaitFallback),
-    ]);
-  }
   return promise;
 }
 
@@ -241,8 +122,6 @@ export function listIbkrAccounts(
     inflight: accountListInflight,
     key: mode,
     freshTtlMs: accountFreshTtlMs(),
-    staleTtlMs: accountStaleTtlMs(),
-    label: "accounts",
     work: () => accountClientFactory().listAccounts(mode),
   });
 }
@@ -260,12 +139,6 @@ export function listIbkrPositions(input: {
     inflight: positionInflight,
     key,
     freshTtlMs: accountFreshTtlMs(),
-    staleTtlMs: accountStaleTtlMs(),
-    label: "positions",
-    cacheEmptyPayload: false,
-    allowStaleFallback: true,
-    serveStaleWhileRefreshing: false,
-    initialWaitMs: positionsInitialWaitMs(),
     work: async () =>
       (await accountClientFactory().listPositions(input)).filter(
         (position) => Math.abs(Number(position.quantity)) > 1e-9,
@@ -294,10 +167,6 @@ export function listIbkrExecutions(input: {
     inflight: executionInflight,
     key,
     freshTtlMs: executionsFreshTtlMs(),
-    staleTtlMs: accountStaleTtlMs(),
-    label: "executions",
-    initialWaitMs: executionsInitialWaitMs(),
-    preserveNonEmptyStaleOnEmpty: true,
     work: () => accountClientFactory().listExecutions(input),
   });
 }
@@ -317,14 +186,17 @@ export function listIbkrOrders(input: {
     inflight: orderInflight,
     key,
     freshTtlMs: accountFreshTtlMs(),
-    staleTtlMs: accountStaleTtlMs(),
-    label: "orders",
     workCategory: "orders",
-    initialWaitMs: readPositiveIntegerEnv("IBKR_ORDER_STREAM_INITIAL_WAIT_MS", 1_500),
-    allowStaleFallback: true,
-    serveStaleWhileRefreshing: false,
-    preserveNonEmptyStaleOnEmpty: true,
-    work: () => accountClientFactory().listOrders?.(input) ?? Promise.resolve([]),
+    work: async () => {
+      const client = accountClientFactory();
+      if (!client.listOrders) {
+        throw new HttpError(503, "IBKR orders are unavailable.", {
+          code: "ibkr_orders_unavailable",
+          expose: true,
+        });
+      }
+      return client.listOrders(input);
+    },
   });
 }
 

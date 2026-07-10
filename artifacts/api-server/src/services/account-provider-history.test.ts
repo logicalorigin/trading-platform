@@ -12,9 +12,19 @@ import {
   snapTradeAccountActivitiesTable,
 } from "@workspace/db";
 import { withTestDb } from "@workspace/db/testing";
+import { HttpError } from "../lib/errors";
 import { __setIbkrAccountBridgeDependenciesForTests } from "./ibkr-account-bridge";
 import { bootstrapInitialUser } from "./auth";
-import { getAccountClosedTrades, getAccountEquityHistory } from "./account";
+import {
+  __resetApiResourcePressureForTests,
+  updateApiResourcePressure,
+} from "./resource-pressure";
+import {
+  applyRobinhoodAccountBalances,
+  applySnapTradeAccountBalances,
+  getAccountClosedTrades,
+  getAccountEquityHistory,
+} from "./account";
 import type { BrokerAccountSnapshot } from "../providers/ibkr/client";
 
 async function withBootstrapToken<T>(fn: () => Promise<T>): Promise<T> {
@@ -136,6 +146,61 @@ async function createProviderAccount(input: {
       includedInTrading: true,
     })
     .returning({ id: brokerAccountsTable.id });
+  const snapshot = {
+    id: account.id,
+    providerAccountId: input.providerAccountId,
+    provider: input.provider,
+    mode: "live" as const,
+    displayName:
+      input.provider === "snaptrade" ? "E*TRADE History" : "Robinhood History",
+    currency: "USD",
+    updatedAt: new Date("2026-06-20T20:00:00.000Z"),
+  };
+  if (input.provider === "snaptrade") {
+    await applySnapTradeAccountBalances(
+      [{ appUserId: auth.user.id, snapshot }],
+      {
+        fetchPortfolio: async () => ({
+          provider: "snaptrade",
+          syncedAt: "2026-06-20T20:00:00.000Z",
+          account: {
+            id: account.id,
+            connectionId: connection.id,
+            snapTradeAccountId: input.providerAccountId,
+            displayName: snapshot.displayName,
+            baseCurrency: "USD",
+            mode: "live",
+            lastSyncedAt: null,
+          },
+          balances: [],
+          positions: [],
+          totals: {
+            cash: 1_000,
+            buyingPower: 1_000,
+            positionMarketValue: 0,
+            unrealizedPnl: 0,
+            netLiquidation: 1_000,
+            positionCount: 0,
+          },
+          dataFreshness: { asOf: "2026-06-20T20:00:00.000Z" },
+        }),
+      },
+    );
+  } else {
+    await applyRobinhoodAccountBalances(
+      [{ appUserId: auth.user.id, snapshot }],
+      {
+        fetchPortfolio: async () => ({
+          data: {
+            total_value: "1000",
+            cash: "1000",
+            buying_power: { buying_power: "1000" },
+            currency: "USD",
+          },
+        }),
+      },
+    );
+  }
   return { auth, account };
 }
 
@@ -143,7 +208,7 @@ test("generic account closed trades include SnapTrade activity backfill", async 
   await withBootstrapToken(async () =>
     withTestDb(async () =>
       withEmptyIbkrAccounts(async () => {
-        const { account } = await createProviderAccount({
+        const { auth, account } = await createProviderAccount({
           email: "generic-snaptrade-history@example.com",
           provider: "snaptrade",
           providerAccountId: "snaptrade:acct-generic-history",
@@ -192,6 +257,7 @@ test("generic account closed trades include SnapTrade activity backfill", async 
 
         const result = await getAccountClosedTrades({
           accountId: account.id,
+          appUserId: auth.user.id,
           from: new Date("2026-06-01T00:00:00.000Z"),
           to: new Date("2026-06-30T23:59:59.999Z"),
           mode: "live",
@@ -212,7 +278,7 @@ test("generic account equity history includes SnapTrade balance snapshots", asyn
   await withBootstrapToken(async () =>
     withTestDb(async () =>
       withEmptyIbkrAccounts(async () => {
-        const { account } = await createProviderAccount({
+        const { auth, account } = await createProviderAccount({
           email: "generic-snaptrade-equity-history@example.com",
           provider: "snaptrade",
           providerAccountId: "snaptrade:acct-generic-equity-history",
@@ -241,6 +307,7 @@ test("generic account equity history includes SnapTrade balance snapshots", asyn
 
         const result = await getAccountEquityHistory({
           accountId: account.id,
+          appUserId: auth.user.id,
           range: "ALL",
           mode: "live",
         });
@@ -261,7 +328,7 @@ test("generic account equity history reconstructs SnapTrade activity ledger when
   await withBootstrapToken(async () =>
     withTestDb(async () =>
       withEmptyIbkrAccounts(async () => {
-        const { account } = await createProviderAccount({
+        const { auth, account } = await createProviderAccount({
           email: "generic-snaptrade-reconstructed-equity@example.com",
           provider: "snaptrade",
           providerAccountId: "snaptrade:acct-generic-reconstructed-equity",
@@ -319,6 +386,7 @@ test("generic account equity history reconstructs SnapTrade activity ledger when
 
         const result = await getAccountEquityHistory({
           accountId: account.id,
+          appUserId: auth.user.id,
           range: "ALL",
           mode: "live",
         });
@@ -333,11 +401,11 @@ test("generic account equity history reconstructs SnapTrade activity ledger when
   );
 });
 
-test("generic account equity history marks open SnapTrade stock positions with stored daily closes", async () => {
+test("generic account equity history rejects pressure-blocked marks instead of returning a partial curve", async () => {
   await withBootstrapToken(async () =>
     withTestDb(async () =>
       withEmptyIbkrAccounts(async () => {
-        const { account } = await createProviderAccount({
+        const { auth, account } = await createProviderAccount({
           email: "generic-snaptrade-marked-equity@example.com",
           provider: "snaptrade",
           providerAccountId: "snaptrade:acct-generic-marked-equity",
@@ -432,11 +500,34 @@ test("generic account equity history marks open SnapTrade stock positions with s
           asOf: new Date("2026-06-04T20:00:00.000Z"),
         });
 
-        const result = await getAccountEquityHistory({
+        const historyInput = {
           accountId: account.id,
-          range: "ALL",
-          mode: "live",
-        });
+          appUserId: auth.user.id,
+          range: "ALL" as const,
+          mode: "live" as const,
+        };
+        __resetApiResourcePressureForTests();
+        try {
+          const saturatedPool = {
+            dbPoolActive: 12,
+            dbPoolWaiting: 8,
+            dbPoolMax: 12,
+          };
+          updateApiResourcePressure(saturatedPool);
+          updateApiResourcePressure(saturatedPool);
+          await assert.rejects(
+            () => getAccountEquityHistory(historyInput),
+            (error: unknown) =>
+              error instanceof HttpError &&
+              error.statusCode === 503 &&
+              error.code === "account_db_unavailable" &&
+              error.detail?.includes("resource pressure") === true,
+          );
+        } finally {
+          __resetApiResourcePressureForTests();
+        }
+
+        const result = await getAccountEquityHistory(historyInput);
         const byDay = new Map(
           result.points.map((point) => [
             point.timestamp.toISOString().slice(0, 10),
@@ -457,7 +548,7 @@ test("combined account equity history reconstructs SnapTrade activity ledger", a
   await withBootstrapToken(async () =>
     withTestDb(async () =>
       withEmptyIbkrAccounts(async () => {
-        const { account } = await createProviderAccount({
+        const { auth, account } = await createProviderAccount({
           email: "combined-snaptrade-reconstructed-equity@example.com",
           provider: "snaptrade",
           providerAccountId: "snaptrade:acct-combined-reconstructed-equity",
@@ -515,6 +606,7 @@ test("combined account equity history reconstructs SnapTrade activity ledger", a
 
         const result = await getAccountEquityHistory({
           accountId: "combined",
+          appUserId: auth.user.id,
           range: "ALL",
           mode: "live",
           source: "combined-snaptrade-reconstruction-test",
@@ -533,7 +625,7 @@ test("combined account equity history includes SnapTrade reconstruction alongsid
   await withBootstrapToken(async () =>
     withTestDb(async () =>
       withIbkrAccounts([ibkrAccountSnapshot("DU-MIXED-1")], async () => {
-        const { account } = await createProviderAccount({
+        const { auth, account } = await createProviderAccount({
           email: "combined-mixed-snaptrade-equity@example.com",
           provider: "snaptrade",
           providerAccountId: "snaptrade:acct-combined-mixed-equity",
@@ -591,6 +683,7 @@ test("combined account equity history includes SnapTrade reconstruction alongsid
 
         const result = await getAccountEquityHistory({
           accountId: "combined",
+          appUserId: auth.user.id,
           range: "ALL",
           mode: "live",
           source: "combined-mixed-snaptrade-reconstruction-test",
@@ -613,7 +706,7 @@ test("generic account closed trades include SnapTrade option expirations", async
   await withBootstrapToken(async () =>
     withTestDb(async () =>
       withEmptyIbkrAccounts(async () => {
-        const { account } = await createProviderAccount({
+        const { auth, account } = await createProviderAccount({
           email: "generic-snaptrade-expiration-history@example.com",
           provider: "snaptrade",
           providerAccountId: "snaptrade:acct-generic-expiration-history",
@@ -662,6 +755,7 @@ test("generic account closed trades include SnapTrade option expirations", async
 
         const result = await getAccountClosedTrades({
           accountId: account.id,
+          appUserId: auth.user.id,
           from: new Date("2026-06-01T00:00:00.000Z"),
           to: new Date("2026-06-30T23:59:59.999Z"),
           mode: "live",
@@ -687,7 +781,7 @@ test("combined account closed trades include SnapTrade option expirations", asyn
   await withBootstrapToken(async () =>
     withTestDb(async () =>
       withEmptyIbkrAccounts(async () => {
-        const { account } = await createProviderAccount({
+        const { auth, account } = await createProviderAccount({
           email: "combined-snaptrade-expiration-history@example.com",
           provider: "snaptrade",
           providerAccountId: "snaptrade:acct-combined-expiration-history",
@@ -736,6 +830,7 @@ test("combined account closed trades include SnapTrade option expirations", asyn
 
         const result = await getAccountClosedTrades({
           accountId: "combined",
+          appUserId: auth.user.id,
           from: new Date("2026-06-01T00:00:00.000Z"),
           to: new Date("2026-06-30T23:59:59.999Z"),
           mode: "live",
@@ -761,7 +856,7 @@ test("generic account closed trades include Robinhood realized-P&L backfill", as
   await withBootstrapToken(async () =>
     withTestDb(async () =>
       withEmptyIbkrAccounts(async () => {
-        const { account } = await createProviderAccount({
+        const { auth, account } = await createProviderAccount({
           email: "generic-robinhood-history@example.com",
           provider: "robinhood",
           providerAccountId: "robinhood:560316630",
@@ -782,6 +877,7 @@ test("generic account closed trades include Robinhood realized-P&L backfill", as
 
         const result = await getAccountClosedTrades({
           accountId: account.id,
+          appUserId: auth.user.id,
           from: new Date("2026-06-01T00:00:00.000Z"),
           to: new Date("2026-06-30T23:59:59.999Z"),
           mode: "live",

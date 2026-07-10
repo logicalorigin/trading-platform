@@ -238,11 +238,6 @@ export const SIGNAL_OPTIONS_DEFAULT_PROFILE = {
   },
 };
 
-export const SIGNAL_OPTIONS_EXPANDED_CAPACITY = {
-  maxOpenSymbols: 10,
-  maxDailyLoss: 1000,
-};
-
 export const SIGNAL_OPTIONS_STRIKE_SLOT_OPTIONS = [
   { value: 0, label: "Lower -2" },
   { value: 1, label: "Lower -1" },
@@ -568,13 +563,11 @@ const buildStaActionSourceSnapshot = (sourceName, source) => {
   const activePositions = staSourceArray(record.activePositions);
   const rowCount = signals.length + candidates.length + activePositions.length;
   const reason = normalizeMatchKey(record.reason).toLowerCase();
-  // "Served from stored monitor state" (cacheStatus="stale") is the SSE-era
-  // default, not a degraded source — it no longer marks a source transient.
-  // Genuine failures still surface via record.stale/degraded/refreshing/timeout.
   const transient = Boolean(
     record.stale === true ||
       record.degraded === true ||
       record.refreshing === true ||
+      record.cacheStatus === "stale" ||
       reason.includes("timeout"),
   );
   return {
@@ -762,13 +755,9 @@ export const staRowPassesMtfAlignment = (
     matrixStatesByTimeframe: signalMatrixBySymbol?.[symbolUpper] || {},
     signalDirection: normalizeStaRowSignalDirection(signalRecord.direction),
     timeframes,
-    // Owner requirement 2026-07-08: the STA table shows ONLY fully-aligned rows —
-    // EVERY configured MTF frame must agree, regardless of the panel's requiredCount
-    // dial. A stored dial (e.g. 2-of-3) was still surfacing rows with a divergent
-    // frame (mixed buy/sell arrows), so the display gate FORCES full alignment over
-    // the configured frames here. resolveConfiguredMtfAlignment clamps to
-    // [1, frames.length].
-    requiredCount: timeframes.length,
+    // Match the entry gate and the panel's n-of-N control. The shared resolver
+    // clamps the configured count to [1, frames.length].
+    requiredCount: mtfAlignmentConfig?.requiredCount,
     enabled: mtfAlignmentConfig?.enabled !== false,
   });
   return !(result.applicable && !result.aligned);
@@ -2525,17 +2514,6 @@ export const mergeSignalOptionsProfile = (source) => {
   }
 
   return normalizeSignalOptionsProfileStrikeSlots(profile);
-};
-
-export const buildExpandedSignalOptionsProfile = (profile) => {
-  const currentProfile = cloneProfile(profile);
-  return {
-    ...currentProfile,
-    riskCaps: {
-      ...asRecord(currentProfile.riskCaps),
-      ...SIGNAL_OPTIONS_EXPANDED_CAPACITY,
-    },
-  };
 };
 
 export const signalOptionsApi = async (url, options = {}) => {

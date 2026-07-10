@@ -161,10 +161,6 @@ import {
   useAlgoStaMtfTimeframes,
 } from "./algoStaExecutionTimeframeStore.js";
 import {
-  isSignalMonitorDegradedProfile,
-  isSignalMonitorRuntimeFallbackProfile,
-} from "./signalMonitorStatusModel";
-import {
   buildWatchlistIdentityPayload,
   buildWatchlistRows,
 } from "./watchlistModel";
@@ -250,7 +246,6 @@ const fetchAllSignalMonitorEventPages = async (params, options = {}) => {
   const seenCursors = new Set();
   let cursor = null;
   let lastPage = null;
-  let sourceStatus = "database";
 
   do {
     const page = await listSignalMonitorEvents(
@@ -262,14 +257,12 @@ const fetchAllSignalMonitorEventPages = async (params, options = {}) => {
       options,
     );
     lastPage = page;
-    sourceStatus = page.sourceStatus || sourceStatus;
     events.push(...(page.events || []));
     if (!page.hasMore || !page.nextCursor) {
       return {
         events,
         nextCursor: null,
         hasMore: false,
-        sourceStatus,
       };
     }
     if (seenCursors.has(page.nextCursor)) {
@@ -283,7 +276,6 @@ const fetchAllSignalMonitorEventPages = async (params, options = {}) => {
     events,
     nextCursor: lastPage?.nextCursor ?? null,
     hasMore: Boolean(lastPage?.hasMore),
-    sourceStatus,
   };
 };
 
@@ -376,13 +368,10 @@ const SIGNAL_MATRIX_STA_BOOTSTRAP_TIMEFRAMES = Object.freeze([
 ]);
 const SIGNAL_MATRIX_FULL_TIMEFRAME_WIDEN_DELAY_MS = 1_500;
 const AUTOMATIC_BACKGROUND_SCREEN_PRELOAD_ENABLED = false;
-const PRIORITY_SCREEN_MODULE_PRELOAD_ORDER = [
+const NAVIGATION_CRITICAL_SCREEN_MODULE_PRELOAD_ORDER = [
   "account",
-  "signals",
-  "trade",
   "algo",
 ];
-const PRIORITY_SCREEN_MODULE_PRELOAD_DELAY_MS = 0;
 const OPERATIONAL_SCREEN_PRELOAD_IDLE_DELAY_MS = 0;
 const OPERATIONAL_SCREEN_PRELOAD_IDLE_STAGGER_MS = 0;
 const WATCHLIST_SIDEBAR_WIDTH_DEFAULT = 220;
@@ -1326,6 +1315,7 @@ export default function PlatformApp() {
     data: sessionQuery.data,
     enabled: Boolean(sessionQuery.data),
     ttlMs: PLATFORM_FRESHNESS_TTL_MS.session,
+    fetchedAt: sessionQuery.dataUpdatedAt,
     payloadSizeClass: "small",
     sourceVisible: pageVisible,
   });
@@ -1357,14 +1347,16 @@ export default function PlatformApp() {
     family: PLATFORM_FRESHNESS_FAMILY.watchlists,
     freshnessKey: WATCHLISTS_QUERY_KEY,
     data: watchlistsQuery.data,
-    enabled: Boolean(watchlistsQuery.data),
+    enabled: Boolean(watchlistsQuery.data) && !watchlistsQuery.isError,
     ttlMs: PLATFORM_FRESHNESS_TTL_MS.watchlists,
+    fetchedAt: watchlistsQuery.dataUpdatedAt,
     payloadSizeClass: "small",
     sourceVisible: pageVisible,
   });
   const watchlists = useMemo(
-    () => watchlistsQuery.data?.watchlists || [],
-    [watchlistsQuery.data],
+    () =>
+      watchlistsQuery.isError ? [] : watchlistsQuery.data?.watchlists || [],
+    [watchlistsQuery.data, watchlistsQuery.isError],
   );
   useRuntimeWorkloadFlag("platform:watchlists", true, {
     kind: "poll",
@@ -1373,65 +1365,52 @@ export default function PlatformApp() {
     priority: 5,
   });
   const defaultWatchlist = useMemo(() => {
-    if (!watchlistsQuery.data?.watchlists?.length) return null;
+    if (!watchlists.length) return null;
     return (
-      watchlistsQuery.data.watchlists.find((w) => w.isDefault) ||
-      watchlistsQuery.data.watchlists[0]
+      watchlists.find((watchlist) => watchlist.isDefault) || watchlists[0]
     );
-  }, [watchlistsQuery.data]);
+  }, [watchlists]);
   const activeWatchlist = useMemo(() => {
-    if (!watchlistsQuery.data?.watchlists?.length) {
+    if (!watchlists.length) {
       return defaultWatchlist;
     }
 
     if (activeWatchlistId) {
       return (
-        watchlistsQuery.data.watchlists.find(
-          (watchlist) => watchlist.id === activeWatchlistId,
-        ) || null
+        watchlists.find((watchlist) => watchlist.id === activeWatchlistId) ||
+        null
       );
     }
 
-    return defaultWatchlist || watchlistsQuery.data.watchlists[0] || null;
-  }, [activeWatchlistId, defaultWatchlist, watchlistsQuery.data]);
+    return defaultWatchlist || watchlists[0] || null;
+  }, [activeWatchlistId, defaultWatchlist, watchlists]);
   const watchlistSymbols = useMemo(() => {
-    const fallback = watchlistsQuery.data?.watchlists?.length
-      ? []
-      : WATCHLIST.map((item) => item.sym);
-    const unique = [
+    return [
       ...new Set(
         buildWatchlistRows({
           activeWatchlist,
-          fallbackSymbols: fallback,
+          fallbackSymbols: [],
           signalStates: [],
         })
           .map((item) => item.sym)
           .filter(Boolean),
       ),
     ];
-    return unique.length ? unique : ["SPY"];
-  }, [activeWatchlist, watchlistsQuery.data]);
+  }, [activeWatchlist]);
   const allWatchlistSymbolList = useMemo(() => {
-    const fallback = watchlistsQuery.data?.watchlists?.length
-      ? []
-      : WATCHLIST.map((item) => item.sym);
     const sourceWatchlists = Array.isArray(watchlists) ? watchlists : [];
-    const symbols = sourceWatchlists.length
-      ? sourceWatchlists.flatMap((watchlist) =>
+    return [
+      ...new Set(
+        sourceWatchlists.flatMap((watchlist) =>
           buildWatchlistRows({
             activeWatchlist: watchlist,
             fallbackSymbols: [],
             signalStates: [],
           }).map((item) => item.sym),
-        )
-      : buildWatchlistRows({
-          activeWatchlist: null,
-          fallbackSymbols: fallback,
-          signalStates: [],
-        }).map((item) => item.sym);
-    const unique = [...new Set(symbols.filter(Boolean))];
-    return unique.length ? unique : watchlistSymbols;
-  }, [watchlistSymbols, watchlists, watchlistsQuery.data]);
+        ).filter(Boolean),
+      ),
+    ];
+  }, [watchlists]);
   const marketScreenActive = screen === "market";
   const flowScreenActive = screen === "flow";
   const activeScreenReadiness =
@@ -1719,6 +1698,9 @@ export default function PlatformApp() {
       !isPhone &&
       !warmupTestOverrides.disableOperationalCodePreload,
   );
+  const navigationCriticalScreenCodePreloadReady = Boolean(
+    operationalCodePreloadReady && memoryAllowsBackgroundWarmup,
+  );
   const screenCodePreloadReady = Boolean(
     AUTOMATIC_BACKGROUND_SCREEN_PRELOAD_ENABLED &&
       operationalCodePreloadReady &&
@@ -1775,14 +1757,14 @@ export default function PlatformApp() {
   ]);
   useEffect(() => {
     if (
-      !screenCodePreloadReady ||
+      !navigationCriticalScreenCodePreloadReady ||
       priorityScreenCodePreloadStartedRef.current ||
       priorityScreenCodePreloadCompleteRef.current
     ) {
       return undefined;
     }
 
-    const preloadOrder = PRIORITY_SCREEN_MODULE_PRELOAD_ORDER.filter(
+    const preloadOrder = NAVIGATION_CRITICAL_SCREEN_MODULE_PRELOAD_ORDER.filter(
       (screenId) => screenId !== screen,
     );
     if (!preloadOrder.length) {
@@ -1791,40 +1773,38 @@ export default function PlatformApp() {
     }
 
     let cancelled = false;
-    let timerId = null;
-    const runPriorityScreenPreload = () => {
+    const runNavigationCriticalScreenPreload = async () => {
       if (cancelled) {
         return;
       }
       priorityScreenCodePreloadStartedRef.current = true;
       markWarmupTimeline("priorityScreenCodePreloadQueuedAtMs");
-      void Promise.allSettled(
-        preloadOrder.map((screenId) => preloadScreenModule(screenId)),
-      ).then(() => {
-        if (cancelled) {
-          return;
+      for (const screenId of preloadOrder) {
+        if (cancelled) return;
+        try {
+          await preloadScreenModule(screenId);
+        } catch {
+          // Navigation retries failed chunks through the normal screen loader.
         }
-        priorityScreenCodePreloadCompleteRef.current = true;
-        markWarmupTimeline("priorityScreenCodePreloadCompleteAtMs");
-      });
+      }
+      if (cancelled) return;
+      priorityScreenCodePreloadCompleteRef.current = true;
+      markWarmupTimeline("priorityScreenCodePreloadCompleteAtMs");
     };
 
-    if (PRIORITY_SCREEN_MODULE_PRELOAD_DELAY_MS > 0) {
-      timerId = window.setTimeout(
-        runPriorityScreenPreload,
-        PRIORITY_SCREEN_MODULE_PRELOAD_DELAY_MS,
-      );
-    } else {
-      runPriorityScreenPreload();
-    }
+    void runNavigationCriticalScreenPreload();
 
     return () => {
       cancelled = true;
-      if (timerId != null) {
-        window.clearTimeout(timerId);
+      if (!priorityScreenCodePreloadCompleteRef.current) {
+        priorityScreenCodePreloadStartedRef.current = false;
       }
     };
-  }, [markWarmupTimeline, screen, screenCodePreloadReady]);
+  }, [
+    markWarmupTimeline,
+    navigationCriticalScreenCodePreloadReady,
+    screen,
+  ]);
   const preloadCalendarWindow = useMemo(() => {
     const from = new Date();
     const to = new Date(from);
@@ -2425,23 +2405,21 @@ export default function PlatformApp() {
   );
 
   useEffect(() => {
-    if (!watchlistsQuery.data?.watchlists?.length) {
+    if (!watchlists.length) {
       return;
     }
     if (
       activeWatchlistId &&
-      watchlistsQuery.data.watchlists.some(
-        (watchlist) => watchlist.id === activeWatchlistId,
-      )
+      watchlists.some((watchlist) => watchlist.id === activeWatchlistId)
     ) {
       return;
     }
     const nextWatchlistId =
-      defaultWatchlist?.id || watchlistsQuery.data.watchlists[0]?.id || null;
+      defaultWatchlist?.id || watchlists[0]?.id || null;
     if (nextWatchlistId) {
       setActiveWatchlistId(nextWatchlistId);
     }
-  }, [activeWatchlistId, defaultWatchlist, watchlistsQuery.data]);
+  }, [activeWatchlistId, defaultWatchlist, watchlists]);
 
   useEffect(() => {
     if (!activeWatchlistId) return;
@@ -3189,7 +3167,6 @@ export default function PlatformApp() {
         refetchInterval: signalMonitorWorkVisible ? 60_000 : false,
         retry: retryUnlessTimeout(2),
         retryDelay: QUERY_DEFAULTS.retryDelay,
-        placeholderData: (previousData) => previousData,
       },
     },
   );
@@ -3205,14 +3182,17 @@ export default function PlatformApp() {
     family: PLATFORM_FRESHNESS_FAMILY.signalProfile,
     freshnessKey: signalMonitorProfileQueryKey,
     data: signalMonitorProfileQuery.data,
-    enabled: Boolean(signalMonitorProfileQuery.data),
+    enabled:
+      Boolean(signalMonitorProfileQuery.data) &&
+      !signalMonitorProfileQuery.isError,
     ttlMs: PLATFORM_FRESHNESS_TTL_MS.signalProfile,
+    fetchedAt: signalMonitorProfileQuery.dataUpdatedAt,
     payloadSizeClass: "small",
     sourceVisible: pageVisible,
   });
-  const signalMonitorProfile = signalMonitorProfileQuery.data || null;
-  const signalMonitorProfileDegraded =
-    isSignalMonitorDegradedProfile(signalMonitorProfile);
+  const signalMonitorProfile = signalMonitorProfileQuery.isError
+    ? null
+    : signalMonitorProfileQuery.data || null;
   const ibkrWorkPressure = useMemo(
     () => resolveIbkrWorkPressure(session?.ibkrBridge),
     [session?.ibkrBridge],
@@ -3312,7 +3292,6 @@ export default function PlatformApp() {
   });
   const signalMonitorEventsReady = Boolean(
     signalMonitorDisplayReady &&
-      screen !== "algo" &&
       screen !== "trade" &&
       !criticalApiMutationPaused,
   );
@@ -3327,7 +3306,6 @@ export default function PlatformApp() {
       : false,
     retry: retryUnlessTimeout(2),
     retryDelay: QUERY_DEFAULTS.retryDelay,
-    placeholderData: (previousData) => previousData,
   });
   usePlatformFreshnessQueryHydration({
     bus: platformFreshnessBus,
@@ -3341,8 +3319,11 @@ export default function PlatformApp() {
     family: PLATFORM_FRESHNESS_FAMILY.signalEvents,
     freshnessKey: signalMonitorEventsQueryKey,
     data: signalMonitorEventsQuery.data,
-    enabled: Boolean(signalMonitorEventsQuery.data),
+    enabled:
+      Boolean(signalMonitorEventsQuery.data) &&
+      !signalMonitorEventsQuery.isError,
     ttlMs: PLATFORM_FRESHNESS_TTL_MS.signalEvents,
+    fetchedAt: signalMonitorEventsQuery.dataUpdatedAt,
     payloadSizeClass: "medium",
     sourceVisible: pageVisible,
   });
@@ -3398,10 +3379,6 @@ export default function PlatformApp() {
     signalMonitorProfileQuery.isError,
     signalMonitorProfileQuery.isFetched,
   ]);
-  const signalMonitorDegraded = Boolean(signalMonitorProfileDegraded);
-  const signalMonitorRuntimeFallback = Boolean(
-    isSignalMonitorRuntimeFallbackProfile(signalMonitorProfile),
-  );
   useRuntimeWorkloadFlag("signal-monitor:display", signalMonitorDisplayReady, {
     kind: "poll",
     label: "Signal display",
@@ -3485,12 +3462,34 @@ export default function PlatformApp() {
   // closes (EventSource hides the HTTP status). Cleared on the next open.
   const [signalMatrixTransportErrored, setSignalMatrixTransportErrored] =
     useState(false);
+  const handleSignalMatrixTransportError = useCallback((errored) => {
+    setSignalMatrixTransportErrored(errored);
+    if (!errored) {
+      return;
+    }
+    signalMatrixBootstrapTimeframesKeyRef.current = "";
+    setSignalMatrixBootstrapSequence(0);
+    signalMatrixStatesRef.current = EMPTY_SIGNAL_MONITOR_STATES;
+    setSignalMatrixSnapshot((current) => {
+      if (
+        !current.states?.length &&
+        !current.coverage &&
+        !current.skippedSymbols?.length &&
+        !current.truncated
+      ) {
+        return current;
+      }
+      return {
+        states: EMPTY_SIGNAL_MONITOR_STATES,
+        timeframes: current.timeframes || SIGNAL_MATRIX_TIMEFRAMES,
+      };
+    });
+  }, []);
   const activeStaExecutionTimeframe = useAlgoStaExecutionTimeframe();
   const activeStaMtfTimeframes = useAlgoStaMtfTimeframes();
-  const signalMonitorEvents =
-    signalMonitorEventsQuery.data?.events || EMPTY_SIGNAL_MONITOR_EVENTS;
-  const signalMonitorEventsSourceStatus =
-    signalMonitorEventsQuery.data?.sourceStatus || "database";
+  const signalMonitorEvents = signalMonitorEventsQuery.isError
+    ? EMPTY_SIGNAL_MONITOR_EVENTS
+    : signalMonitorEventsQuery.data?.events || EMPTY_SIGNAL_MONITOR_EVENTS;
   // Matrix truth is states only (SSE snapshot as base, REST as fill). Events
   // are history: the backend reconciles stored states from canonical events
   // at startup and latches identity in transport, so overlaying events onto
@@ -4019,7 +4018,7 @@ export default function PlatformApp() {
     profileUniverseKey: signalMatrixProfileUniverseStreamKey,
     enabled: signalMatrixStreamReady,
     onStates: handleSignalMatrixStreamStates,
-    onTransportError: setSignalMatrixTransportErrored,
+    onTransportError: handleSignalMatrixTransportError,
   });
   const signalMatrixPrioritySymbolsKey = useMemo(
     () => signalMatrixPrioritySymbols.join(","),
@@ -4590,7 +4589,6 @@ export default function PlatformApp() {
       events: signalMonitorEvents,
       universe: signalMatrixUniverseDescriptor,
       pending: evaluateSignalMonitorMutation.isPending,
-      degraded: signalMonitorDegraded,
       // Matrix SSE repeatedly dead → hard transport failure (red).
       transportError: signalMatrixTransportErrored,
       rateLimited: signalMonitorRateLimited,
@@ -4600,7 +4598,6 @@ export default function PlatformApp() {
     evaluateSignalMonitorMutation.isPending,
     signalMatrixUniverseDescriptor,
     signalMonitorEvents,
-    signalMonitorDegraded,
     signalMonitorProfile,
     signalMonitorPublishedStates,
     signalMatrixTransportErrored,
@@ -5153,7 +5150,7 @@ export default function PlatformApp() {
         signalMonitorStateError={null}
         signalMonitorDataManagedByPlatform
         signalMonitorEvents={signalMonitorEvents}
-        signalMonitorEventsSourceStatus={signalMonitorEventsSourceStatus}
+        signalMonitorEventsError={signalMonitorEventsQuery.error || null}
         signalMonitorEventsLoaded={Boolean(
           signalMonitorEventsQuery.data || signalMonitorEventsQuery.isFetched,
         )}
@@ -5243,8 +5240,8 @@ export default function PlatformApp() {
       signalMonitorDisplaySymbols,
       signalMonitorEvents,
       signalMonitorEventsQuery.data,
+      signalMonitorEventsQuery.error,
       signalMonitorEventsQuery.isFetched,
-      signalMonitorEventsSourceStatus,
       signalMonitorSymbols,
       signalMatrixAuxiliaryStreamGateReason,
       stockAggregateStreamingEnabled,
@@ -5384,7 +5381,7 @@ export default function PlatformApp() {
           onReorderSymbolInWatchlist={handleReorderSymbolInWatchlist}
           onRemoveSymbolFromWatchlist={handleRemoveSymbolFromWatchlist}
           onSignalAction={handleSignalAction}
-          watchlists={watchlistsQuery.data?.watchlists || []}
+          watchlists={watchlists}
           watchlistsBusy={watchlistsBusy}
           accounts={accounts}
           primaryAccountId={primaryAccountId}
@@ -5404,17 +5401,14 @@ export default function PlatformApp() {
           auxiliarySurfacesReady={auxiliarySurfacesReady}
           frameAuxiliaryDataEnabled={frameAuxiliaryDataEnabled}
           onFlowAction={handleJumpToTradeFromFlow}
-          signalScanEnabled={Boolean(
-            signalMonitorProfile?.enabled && !signalMonitorDegraded,
-          )}
+          signalScanEnabled={Boolean(signalMonitorProfile?.enabled)}
           signalScanPending={updateSignalMonitorProfileMutation.isPending}
           signalEvaluationPending={evaluateSignalMonitorMutation.isPending}
           signalScanErrored={Boolean(
-            (!signalMonitorRuntimeFallback && signalMonitorDegraded) ||
-              (signalMonitorProfile?.enabled &&
-                (signalMonitorEventsQuery.isError ||
-                  evaluateSignalMonitorMutation.isError ||
-                  updateSignalMonitorProfileMutation.isError)),
+            signalMonitorProfile?.enabled &&
+              (signalMonitorEventsQuery.isError ||
+                evaluateSignalMonitorMutation.isError ||
+                updateSignalMonitorProfileMutation.isError),
           )}
           onToggleSignalScan={handleToggleSignalMonitor}
           onChangeSignalMonitorTimeframe={handleChangeSignalMonitorTimeframe}

@@ -729,7 +729,6 @@ async function storeActivities(
 function storedActivityToHistory(
   row: SnapTradeAccountActivity,
 ): SnapTradeHistoryActivity {
-  const raw = asRecord(row.rawPayload);
   const optionContract = activityOptionContract({
     symbol: row.symbol,
     rawSymbol: row.rawSymbol,
@@ -752,9 +751,7 @@ function storedActivityToHistory(
     fee: numberOrNull(row.fee),
     currency: row.currency,
     externalReferenceId: row.externalReferenceId,
-    optionContract:
-      optionContract ??
-      (asRecord(raw["optionContract"]) as SnapTradeHistoryOptionContract | null),
+    optionContract,
   };
 }
 
@@ -1327,6 +1324,15 @@ async function storedEquityMarkEvents(input: {
   const terminalDay = marketDateKey(input.terminal.timestamp);
   if (!firstDay || !terminalDay || firstDay > terminalDay) {
     return [];
+  }
+
+  if (isApiResourcePressureHardBlock()) {
+    throw new HttpError(503, "Account data is temporarily unavailable.", {
+      code: "account_db_unavailable",
+      detail:
+        "Account history cannot read stored market marks while API resource pressure is high. Retry after resource pressure recovers.",
+      expose: true,
+    });
   }
 
   const symbols = Array.from(

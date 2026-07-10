@@ -1,5 +1,4 @@
 import { useMemo, useSyncExternalStore } from "react";
-import { isSignalMonitorDegradedProfile } from "./signalMonitorStatusModel";
 
 const EMPTY_SIGNAL_MONITOR_SNAPSHOT = Object.freeze({
   profile: null,
@@ -140,18 +139,11 @@ const notifySymbol = (symbol) => {
 };
 
 export const publishSignalMonitorSnapshot = (nextSnapshot) => {
-  const degraded = Boolean(
-    nextSnapshot?.degraded ||
-      isSignalMonitorDegradedProfile(nextSnapshot?.profile),
-  );
+  const degraded = Boolean(nextSnapshot?.degraded);
   const nextStates =
-    degraded && !(nextSnapshot?.states || []).length
-      ? signalMonitorSnapshot.states
-      : nextSnapshot?.states || EMPTY_SIGNAL_MONITOR_SNAPSHOT.states;
+    nextSnapshot?.states || EMPTY_SIGNAL_MONITOR_SNAPSHOT.states;
   const nextEvents =
-    degraded && !(nextSnapshot?.events || []).length
-      ? signalMonitorSnapshot.events
-      : nextSnapshot?.events || EMPTY_SIGNAL_MONITOR_SNAPSHOT.events;
+    nextSnapshot?.events || EMPTY_SIGNAL_MONITOR_SNAPSHOT.events;
   const normalizedStates = {};
   const preferredTimeframe = normalizeTimeframe(nextSnapshot?.profile?.timeframe);
   nextStates.forEach((state) => {

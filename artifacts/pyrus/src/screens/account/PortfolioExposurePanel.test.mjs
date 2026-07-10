@@ -46,15 +46,20 @@ test("degraded_upstream 503 renders a soft retrying state instead of the raw err
   assert.doesNotMatch(html, /HTTP 503 Internal Server Error/);
 });
 
-test("degraded risk payload renders a stale as-of badge while keeping data visible", () => {
+test("degraded risk payload hides cached metrics behind the unavailable state", () => {
   const html = renderPanel({
     data: {
       accountId: "shadow",
       degraded: true,
       degradedReason: "statement_timeout",
       asOf: "2026-07-09T20:00:00.000Z",
-      margin: {},
-      concentration: { topPositions: [] },
+      margin: {
+        marginUsed: 12_345,
+        maintenanceMargin: 6_789,
+      },
+      concentration: {
+        topPositions: [{ symbol: "STALE", marketValue: 12_345 }],
+      },
       greeks: {},
     },
     error: null,
@@ -66,9 +71,9 @@ test("degraded risk payload renders a stale as-of badge while keeping data visib
     refetch: () => undefined,
   });
 
-  assert.match(html, /stale · as of/i);
-  assert.match(html, /Risk Level/);
-  assert.match(html, /Concentration/);
+  assert.match(html, /temporarily degraded, retrying…/i);
+  assert.doesNotMatch(html, /stale · as of/i);
+  assert.doesNotMatch(html, /12,345|6,789|STALE/);
 });
 
 test("non-degraded 500 keeps the existing hard error and Retry control", () => {

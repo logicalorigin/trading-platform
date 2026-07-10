@@ -621,6 +621,7 @@ test("incremental eval: flag unset/off leaves the instrumentation dormant (from-
     mode: "off",
     appends: 0,
     seeds: 0,
+    formingReplays: 0,
     shadowChecks: 0,
     shadowMismatches: 0,
     ...emptyMatrixServeMismatchStats,
@@ -650,6 +651,7 @@ test("incremental eval ON: multi-append sequence is state-identical to from-scra
       mode: "on",
       appends: steps.length - 1,
       seeds: 1,
+      formingReplays: 0,
       shadowChecks: 0,
       shadowMismatches: 0,
       ...emptyMatrixServeMismatchStats,
@@ -714,6 +716,7 @@ test("incremental eval SHADOW: legacy always served, parity sampled clean; a cor
         mode: "shadow",
         appends: steps.length - 2,
         seeds: 1,
+        formingReplays: 0,
         shadowChecks: steps.length - 1,
         shadowMismatches: 0,
         ...emptyMatrixServeMismatchStats,
@@ -788,6 +791,134 @@ test("incremental eval ON: a served evaluation is immutable across later appends
   });
 });
 
+test("incremental eval ON: forming-bar mutations replay from the closed checkpoint (byte-identical, no re-seed)", () => {
+  const settings = resolvePyrusSignalsSignalSettings({});
+  const closed = buildChartBars();
+  const lastClosedTime = Number(closed[closed.length - 1].time);
+  const formingTime = lastClosedTime + 60;
+  const forming = (time: number, close: number) => ({
+    time,
+    ts: new Date(time * 1000).toISOString(),
+    o: 100.5,
+    h: Number((close + 0.6).toFixed(2)),
+    l: Number((close - 0.7).toFixed(2)),
+    c: close,
+    v: 1_000 + Math.round(close),
+  });
+  const fromScratch = (chartBars: unknown[]) =>
+    evaluatePyrusSignalsSignals({
+      chartBars: chartBars as never,
+      settings,
+      includeProvisionalSignals: !settings.waitForBarClose,
+      lastBarClosed: false,
+    });
+  const serveForming = (chartBars: unknown[]) =>
+    heavyEval({
+      settings,
+      symbol: "SPY",
+      timeframe: "1m" as never,
+      chartBars: chartBars as never,
+      lastBarClosed: false,
+    });
+
+  withIncrementalMode({ PYRUS_SIGNALS_INCREMENTAL_EVAL: "on" }, () => {
+    // First sight of the forming bar seeds the cell (and its checkpoint).
+    const seedSeries = [...closed, forming(formingTime, 100.9)];
+    assert.deepEqual(serveForming(seedSeries), fromScratch(seedSeries));
+    assert.equal(incrementalStats().seeds, 1);
+    assert.equal(incrementalStats().formingReplays, 0);
+
+    // Successive in-place mutations of the forming bar (same timestamp,
+    // changing OHLCV): every serve must be byte-identical to from-scratch and
+    // must replay from the checkpoint, never re-seed. A previously served
+    // evaluation must stay immutable across later replays.
+    const mutations = [101.4, 100.2, 102.6, 99.8, 101.1];
+    let previousServedJson: string | null = null;
+    let previousServed: unknown = null;
+    for (const [k, close] of mutations.entries()) {
+      const series = [...closed, forming(formingTime, close)];
+      const served = serveForming(series);
+      assert.deepEqual(
+        served,
+        fromScratch(series),
+        `forming mutation ${k} diverged from from-scratch`,
+      );
+      if (previousServedJson != null) {
+        assert.equal(
+          JSON.stringify(previousServed),
+          previousServedJson,
+          "a served forming evaluation mutated after a later replay",
+        );
+      }
+      previousServed = served;
+      previousServedJson = JSON.stringify(served);
+    }
+    assert.equal(incrementalStats().seeds, 1);
+    assert.equal(incrementalStats().appends, 0);
+    assert.equal(incrementalStats().formingReplays, mutations.length);
+
+    // Bar close where the FINAL bar content differs from the last observed
+    // mutation (ticks were missed) plus a brand-new forming bar: the replay
+    // path absorbs it too — the checkpoint appends the now-closed bar and the
+    // clone serves the new forming bar. No re-seed.
+    const closedFinalBar = forming(formingTime, 101.05);
+    const secondFormingTime = formingTime + 60;
+    const afterClose = [
+      ...closed,
+      closedFinalBar,
+      forming(secondFormingTime, 101.3),
+    ];
+    assert.deepEqual(serveForming(afterClose), fromScratch(afterClose));
+    assert.equal(incrementalStats().seeds, 1);
+    assert.equal(incrementalStats().formingReplays, mutations.length + 1);
+
+    // Mutate the new forming bar: replays continue against the advanced
+    // checkpoint.
+    const secondMutation = [
+      ...closed,
+      closedFinalBar,
+      forming(secondFormingTime, 102),
+    ];
+    assert.deepEqual(serveForming(secondMutation), fromScratch(secondMutation));
+    assert.equal(incrementalStats().formingReplays, mutations.length + 2);
+
+    // Bar close with content IDENTICAL to the last observed mutation plus a
+    // new forming bar: this is a pure extension of the serving evaluator and
+    // takes the existing append fast path (not a replay, not a seed).
+    const thirdFormingTime = secondFormingTime + 60;
+    const pureExtension = [
+      ...secondMutation,
+      forming(thirdFormingTime, 101.9),
+    ];
+    assert.deepEqual(serveForming(pureExtension), fromScratch(pureExtension));
+    assert.equal(incrementalStats().appends, 1);
+    assert.equal(incrementalStats().seeds, 1);
+    assert.equal(incrementalStats().formingReplays, mutations.length + 2);
+
+    // lastBarClosed=true cells never serve a forming-bar clone: a mutated
+    // tail on the closed-keyed cell re-seeds instead of replaying.
+    const closedKeyed = [...closed, forming(formingTime, 100.9)];
+    heavyEval({
+      settings,
+      symbol: "SPY",
+      timeframe: "1m" as never,
+      chartBars: closedKeyed as never,
+      lastBarClosed: true,
+    });
+    assert.equal(incrementalStats().seeds, 2);
+    const closedKeyedMutated = [...closed, forming(formingTime, 101.7)];
+    heavyEval({
+      settings,
+      symbol: "SPY",
+      timeframe: "1m" as never,
+      chartBars: closedKeyedMutated as never,
+      lastBarClosed: true,
+    });
+    assert.equal(incrementalStats().seeds, 3);
+    assert.equal(incrementalStats().formingReplays, mutations.length + 2);
+  });
+});
+
 test("symbol-state persist counts display mismatches and excludes latch/preserve paths", async () => {
   const storedAt = new Date("2026-06-09T15:00:00.000Z");
   const evaluatedAt = new Date("2026-06-09T15:05:00.000Z");
@@ -838,6 +969,7 @@ test("symbol-state persist counts display mismatches and excludes latch/preserve
     mode: "off",
     appends: 0,
     seeds: 0,
+    formingReplays: 0,
     shadowChecks: 0,
     shadowMismatches: 0,
     matrixServeMismatchCount: 1,

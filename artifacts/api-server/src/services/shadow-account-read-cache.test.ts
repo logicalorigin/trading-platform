@@ -85,25 +85,6 @@ type TestShadowRiskResponse = {
   asOf?: string;
 };
 
-test("fast shadow positions use one source-scoped ledger bundle for rows and totals", () => {
-  const start = shadowAccountSource.indexOf(
-    "async function buildFastShadowPositionsResponse",
-  );
-  const end = shadowAccountSource.indexOf(
-    "export async function getShadowAccountPositions",
-    start,
-  );
-  assert.notEqual(start, -1, "Missing buildFastShadowPositionsResponse");
-  assert.notEqual(end, -1, "Missing fast response end marker");
-  const body = shadowAccountSource.slice(start, end);
-
-  assert.match(
-    body,
-    /input\.source\s*\?\s*await readShadowLedgerBundleForSource\(input\.source\)\s*:\s*null/,
-  );
-  assert.match(body, /totals: sourceBundle\?\.totals \?\? null/);
-});
-
 test("shadow mark refresh single-flight is partitioned by account", () => {
   const start = shadowAccountSource.indexOf(
     "function kickShadowPositionMarkRefresh",
@@ -115,7 +96,10 @@ test("shadow mark refresh single-flight is partitioned by account", () => {
 
   assert.match(body, /const accountId = currentShadowAccountId\(\);/);
   assert.match(body, /shadowPositionMarkRefreshInFlight\.get\(accountId\)/);
-  assert.match(body, /shadowPositionMarkRefreshInFlight\.set\(accountId, request\)/);
+  assert.match(
+    body,
+    /shadowPositionMarkRefreshInFlight\.set\(accountId, request\)/,
+  );
   assert.match(body, /shadowPositionMarkRefreshInFlight\.delete\(accountId\)/);
 });
 
@@ -262,7 +246,10 @@ test("mark refresh batches mark writes and preserves per-row values", async () =
       },
     ]);
 
-    restoreQueryLogger = captureShadowMarkWriteQueries(testDb, markWriteStatements);
+    restoreQueryLogger = captureShadowMarkWriteQueries(
+      testDb,
+      markWriteStatements,
+    );
     const result = await refreshShadowPositionMarks();
 
     assert.equal(result.updatedCount, 2);
@@ -295,10 +282,7 @@ test("mark refresh batches mark writes and preserves per-row values", async () =
 
     assert.equal(tslaPosition.mark, testMoney(12.3456789));
     assert.equal(tslaPosition.marketValue, testMoney(3 * 12.3456789));
-    assert.equal(
-      tslaPosition.unrealizedPnl,
-      testMoney((12.3456789 - 10) * 3),
-    );
+    assert.equal(tslaPosition.unrealizedPnl, testMoney((12.3456789 - 10) * 3));
     assert.equal(tslaPosition.asOf.toISOString(), tslaAsOf.toISOString());
 
     const marks = await db
@@ -335,9 +319,10 @@ test("mark refresh batches mark writes and preserves per-row values", async () =
       ],
     );
 
-    const markInserts = markWriteStatements.filter((statement) =>
-      statement.startsWith('insert into "shadow_position_marks"') ||
-      statement.startsWith("insert into shadow_position_marks"),
+    const markInserts = markWriteStatements.filter(
+      (statement) =>
+        statement.startsWith('insert into "shadow_position_marks"') ||
+        statement.startsWith("insert into shadow_position_marks"),
     );
     const positionUpdates = markWriteStatements.filter((statement) =>
       statement.startsWith("update shadow_positions as p"),
@@ -353,28 +338,23 @@ test("mark refresh batches mark writes and preserves per-row values", async () =
   }
 });
 
-test("shadow read cache serves stale values immediately while refresh continues", async () => {
-  const key = `test-shadow-read-immediate-${Date.now()}-${Math.random()}`;
+test("expired generic shadow reads wait for the fresh result", async () => {
+  const key = `test-shadow-read-fresh-${Date.now()}-${Math.random()}`;
   let resolveRefresh: (value: TestShadowPositionsResponse) => void = () => {
     throw new Error("refresh promise was not initialized");
   };
   let refreshStarted = false;
+  let refreshSettled = false;
 
   internals.setShadowReadCacheWindowsForTests({
     ttlMs: 5,
-    staleTtlMs: 1_000,
-    staleWaitMs: 250,
   });
 
   try {
-    await internals.withShadowReadCache(
-      key,
-      async () => ({
-        positions: [{ id: "cached", symbol: "CACHED", assetClass: "stock" }],
-        totals: {},
-      }),
-      { allowStale: () => true },
-    );
+    await internals.withShadowReadCache(key, async () => ({
+      positions: [{ id: "cached", symbol: "CACHED", assetClass: "stock" }],
+      totals: {},
+    }));
 
     await new Promise((resolve) => setTimeout(resolve, 15));
 
@@ -382,40 +362,70 @@ test("shadow read cache serves stale values immediately while refresh continues"
       resolveRefresh = resolve;
     });
 
-    const startedAt = Date.now();
-    const stale = await internals.withShadowReadCache(
-      key,
-      () => {
+    const pending = internals
+      .withShadowReadCache(key, () => {
         refreshStarted = true;
         return refresh;
-      },
-      {
-        allowStale: () => true,
-        staleStrategy: "immediate",
-      },
-    );
+      })
+      .then((value) => {
+        refreshSettled = true;
+        return value;
+      });
 
     assert.equal(refreshStarted, true);
-    assert.equal(stale.stale, true);
-    assert.equal(stale.reason, "shadow_read_stale_cache");
-    assert.equal(stale.positions[0]?.id, "cached");
-    assert.ok(
-      Date.now() - startedAt < 100,
-      "stale value should return without waiting for the refresh",
-    );
+    await new Promise((resolve) => setTimeout(resolve, 15));
+    assert.equal(refreshSettled, false);
 
     resolveRefresh({
       positions: [{ id: "fresh", symbol: "FRESH", assetClass: "stock" }],
       totals: {},
     });
-    await refresh;
+    const fresh = await pending;
+    assert.equal(fresh.stale, undefined);
+    assert.equal(fresh.reason, undefined);
+    assert.equal(fresh.positions[0]?.id, "fresh");
   } finally {
     internals.setShadowReadCacheWindowsForTests({
       ttlMs: null,
-      staleTtlMs: null,
-      staleWaitMs: null,
     });
   }
+});
+
+test("generic shadow read cache has no stale-serving strategy", () => {
+  const optionsStart = shadowAccountSource.indexOf(
+    "type ShadowReadCacheOptions",
+  );
+  const optionsEnd = shadowAccountSource.indexOf(
+    "type ShadowReadDiagnosticStatus",
+    optionsStart,
+  );
+  assert.notEqual(optionsStart, -1);
+  assert.notEqual(optionsEnd, -1);
+  assert.doesNotMatch(
+    shadowAccountSource.slice(optionsStart, optionsEnd),
+    /allowStale|staleStrategy|staleTtlMs/,
+  );
+
+  const cacheStart = shadowAccountSource.indexOf(
+    "async function withShadowReadCache",
+  );
+  const cacheEnd = shadowAccountSource.indexOf(
+    "async function withShadowRiskReadCache",
+    cacheStart,
+  );
+  assert.notEqual(cacheStart, -1);
+  assert.notEqual(cacheEnd, -1);
+  const cacheBlock = shadowAccountSource.slice(cacheStart, cacheEnd);
+  assert.doesNotMatch(
+    cacheBlock,
+    /staleStrategy|shadowReadStaleWaitMs|Promise\.race|setTimeout/,
+  );
+  assert.match(cacheBlock, /options\.serveStaleOnError/);
+  assert.doesNotMatch(shadowAccountSource, /staleStrategy:/);
+  assert.doesNotMatch(
+    shadowAccountSource,
+    /SHADOW_READ_CACHE_STALE|SHADOW_TRADE_DIAGNOSTICS_CACHE_STALE/,
+  );
 });
 
 test("shadow risk read serves warm stale data only for degraded upstream errors", async () => {
@@ -434,7 +444,7 @@ test("shadow risk read serves warm stale data only for degraded upstream errors"
         accountId: SHADOW_ACCOUNT_ID,
         updatedAt,
       }),
-      { ttlMs: 5, staleTtlMs: 1_000 },
+      { ttlMs: 5 },
     );
     await new Promise((resolve) => setTimeout(resolve, 15));
 
@@ -442,13 +452,14 @@ test("shadow risk read serves warm stale data only for degraded upstream errors"
       new Error("canceling statement due to statement timeout"),
       { code: "57014" },
     );
-    const stale = await internals.withShadowRiskReadCache<TestShadowRiskResponse>(
-      key,
-      async () => {
-        throw timeout;
-      },
-      { ttlMs: 5, staleTtlMs: 1_000 },
-    );
+    const stale =
+      await internals.withShadowRiskReadCache<TestShadowRiskResponse>(
+        key,
+        async () => {
+          throw timeout;
+        },
+        { ttlMs: 5 },
+      );
 
     assert.equal(stale.accountId, SHADOW_ACCOUNT_ID);
     assert.equal(stale.degraded, true);
@@ -462,9 +473,12 @@ test("shadow risk read serves warm stale data only for degraded upstream errors"
 });
 
 test("shadow risk read maps a degraded error without stale data to structured 503", async () => {
-  const lockError = Object.assign(new Error("could not obtain lock on relation"), {
-    code: "55P03",
-  });
+  const lockError = Object.assign(
+    new Error("could not obtain lock on relation"),
+    {
+      code: "55P03",
+    },
+  );
 
   await assert.rejects(
     () =>
@@ -473,7 +487,7 @@ test("shadow risk read maps a degraded error without stale data to structured 50
         async () => {
           throw lockError;
         },
-        { ttlMs: 5, staleTtlMs: 1_000 },
+        { ttlMs: 5 },
       ),
     (error: unknown) => {
       assert.equal(
@@ -503,7 +517,7 @@ test("shadow risk read never masks non-degraded programming errors with stale da
         accountId: SHADOW_ACCOUNT_ID,
         updatedAt: "2026-07-09T20:00:00.000Z",
       }),
-      { ttlMs: 5, staleTtlMs: 1_000 },
+      { ttlMs: 5 },
     );
     await new Promise((resolve) => setTimeout(resolve, 15));
 
@@ -514,37 +528,59 @@ test("shadow risk read never masks non-degraded programming errors with stale da
           async () => {
             throw new TypeError("risk model invariant failed");
           },
-          { ttlMs: 5, staleTtlMs: 1_000 },
+          { ttlMs: 5 },
         ),
       (error: unknown) =>
-        error instanceof TypeError && error.message === "risk model invariant failed",
+        error instanceof TypeError &&
+        error.message === "risk model invariant failed",
     );
   } finally {
     internals.invalidateShadowFreshStateCache();
   }
 });
 
-test("shadow risk degraded classifier stays limited to timeout and lock pressure", () => {
+test("shadow risk degraded classifier includes explicit shadow DB outages", () => {
   const cases: Array<[unknown, string]> = [
-    [Object.assign(new Error("query canceled"), { code: "57014" }), "statement_timeout"],
     [
-      Object.assign(new Error("could not obtain lock on relation"), { code: "55P03" }),
+      Object.assign(new Error("query canceled"), { code: "57014" }),
+      "statement_timeout",
+    ],
+    [
+      Object.assign(new Error("could not obtain lock on relation"), {
+        code: "55P03",
+      }),
       "lock_not_available",
     ],
     [new Error("canceling statement due to lock timeout"), "lock_wait_timeout"],
-    [new Error("Lock wait timeout exceeded; try restarting transaction"), "lock_wait_timeout"],
+    [
+      new Error("Lock wait timeout exceeded; try restarting transaction"),
+      "lock_wait_timeout",
+    ],
     [
       new Error("pool timed out while waiting for an open connection"),
       "pool_acquire_timeout",
     ],
-    [new Error("timeout exceeded when trying to connect"), "pool_acquire_timeout"],
+    [
+      new Error("timeout exceeded when trying to connect"),
+      "pool_acquire_timeout",
+    ],
+    [
+      internals.createShadowAccountDbUnavailableError(
+        Object.assign(new Error("connect ECONNREFUSED"), {
+          code: "ECONNREFUSED",
+        }),
+      ),
+      "shadow_account_db_unavailable",
+    ],
   ];
 
   for (const [error, expected] of cases) {
     assert.equal(internals.shadowRiskDegradedErrorReason(error), expected);
   }
   assert.equal(
-    internals.shadowRiskDegradedErrorReason(new TypeError("risk model invariant failed")),
+    internals.shadowRiskDegradedErrorReason(
+      new TypeError("risk model invariant failed"),
+    ),
     null,
   );
 });
@@ -553,8 +589,6 @@ test("background mark refresh keeps order and history caches hot", async () => {
   internals.invalidateShadowFreshStateCache();
   internals.setShadowReadCacheWindowsForTests({
     ttlMs: 60_000,
-    staleTtlMs: 60_000,
-    staleWaitMs: 250,
   });
 
   let ordersReads = 0;
@@ -568,7 +602,10 @@ test("background mark refresh keeps order and history caches hot", async () => {
 
   try {
     await internals.withShadowReadCache("orders:history:all", readOrders);
-    await internals.withShadowReadCache("dashboard:fills-with-orders", readFills);
+    await internals.withShadowReadCache(
+      "dashboard:fills-with-orders",
+      readFills,
+    );
     await internals.withShadowReadCache("equity-history:ALL::all", readHistory);
     await internals.withShadowReadCache("summary:all", readSummary);
 
@@ -586,18 +623,31 @@ test("background mark refresh keeps order and history caches hot", async () => {
       "equity-history:ALL::all",
       readHistory,
     );
-    const summary = await internals.withShadowReadCache("summary:all", readSummary);
+    const summary = await internals.withShadowReadCache(
+      "summary:all",
+      readSummary,
+    );
 
     assert.deepEqual(orders, { reads: 1 });
     assert.deepEqual(fills, { reads: 1 });
     assert.deepEqual(history, { reads: 1 });
-    assert.deepEqual(summary, { reads: 2 });
+    // Mark-affected key within its natural TTL age: stale-while-revalidate serves
+    // the cached value immediately (no blocking multi-second ledger rebuild)...
+    assert.deepEqual(summary, { reads: 1 });
+    // ...while a single background revalidation lands the fresh value, so the
+    // next read serves it as a plain hit without another factory call.
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(summaryReads, 2);
+    const summaryAfterRevalidation = await internals.withShadowReadCache(
+      "summary:all",
+      readSummary,
+    );
+    assert.deepEqual(summaryAfterRevalidation, { reads: 2 });
+    assert.equal(summaryReads, 2);
   } finally {
     internals.invalidateShadowFreshStateCache();
     internals.setShadowReadCacheWindowsForTests({
       ttlMs: null,
-      staleTtlMs: null,
-      staleWaitMs: null,
     });
   }
 });
@@ -606,8 +656,6 @@ test("mark refresh during an in-flight non-mark-affected compute keeps the cache
   internals.invalidateShadowFreshStateCache();
   internals.setShadowReadCacheWindowsForTests({
     ttlMs: 60_000,
-    staleTtlMs: 60_000,
-    staleWaitMs: 250,
   });
 
   let historyReads = 0;
@@ -650,8 +698,6 @@ test("mark refresh during an in-flight non-mark-affected compute keeps the cache
     internals.invalidateShadowFreshStateCache();
     internals.setShadowReadCacheWindowsForTests({
       ttlMs: null,
-      staleTtlMs: null,
-      staleWaitMs: null,
     });
   }
 });
@@ -660,8 +706,6 @@ test("mark refresh during an in-flight mark-affected compute still discards its 
   internals.invalidateShadowFreshStateCache();
   internals.setShadowReadCacheWindowsForTests({
     ttlMs: 60_000,
-    staleTtlMs: 60_000,
-    staleWaitMs: 250,
   });
 
   let summaryReads = 0;
@@ -684,23 +728,67 @@ test("mark refresh during an in-flight mark-affected compute still discards its 
     releaseSummary();
     await inflight;
 
-    const second = await internals.withShadowReadCache("summary:all", async () => {
-      summaryReads += 1;
-      return { reads: summaryReads };
-    });
+    const second = await internals.withShadowReadCache(
+      "summary:all",
+      async () => {
+        summaryReads += 1;
+        return { reads: summaryReads };
+      },
+    );
     assert.deepEqual(second, { reads: 2 });
     assert.equal(summaryReads, 2);
   } finally {
     internals.invalidateShadowFreshStateCache();
     internals.setShadowReadCacheWindowsForTests({
       ttlMs: null,
-      staleTtlMs: null,
-      staleWaitMs: null,
     });
   }
 });
 
-test("shadow option quote cache keeps stale display quotes during live refresh gaps", async () => {
+test("shadow option quote cache has one fresh expiry horizon", () => {
+  const constantsStart = shadowAccountSource.indexOf(
+    "const SHADOW_OPTION_QUOTE_CACHE_TTL_MS",
+  );
+  const constantsEnd = shadowAccountSource.indexOf(
+    "const SHADOW_OPTION_PROVIDER_ID_CACHE_TTL_MS",
+    constantsStart,
+  );
+  assert.notEqual(constantsStart, -1);
+  assert.notEqual(constantsEnd, -1);
+  assert.doesNotMatch(
+    shadowAccountSource.slice(constantsStart, constantsEnd),
+    /STALE/,
+  );
+
+  const cacheStart = shadowAccountSource.indexOf(
+    "const shadowOptionQuoteCache =",
+  );
+  const cacheEnd = shadowAccountSource.indexOf(
+    "const shadowOptionGreekQuoteCache =",
+    cacheStart,
+  );
+  assert.notEqual(cacheStart, -1);
+  assert.notEqual(cacheEnd, -1);
+  assert.doesNotMatch(
+    shadowAccountSource.slice(cacheStart, cacheEnd),
+    /staleExpiresAt/,
+  );
+
+  const readStart = shadowAccountSource.indexOf(
+    "function rememberShadowOptionQuote",
+  );
+  const readEnd = shadowAccountSource.indexOf(
+    "function rememberShadowOptionGreekQuote",
+    readStart,
+  );
+  assert.notEqual(readStart, -1);
+  assert.notEqual(readEnd, -1);
+  const readBlock = shadowAccountSource.slice(readStart, readEnd);
+  assert.doesNotMatch(readBlock, /staleExpiresAt/);
+  assert.doesNotMatch(readBlock, /allowStale/);
+});
+
+test("shadow option quote cache drops display quotes at the fresh TTL", async () => {
   const providerContractId = `twsopt:test-${Date.now()}-${Math.random()}`;
   const positions = [
     {
@@ -720,7 +808,6 @@ test("shadow option quote cache keeps stale display quotes during live refresh g
   internals.clearShadowOptionQuoteCachesForTests();
   internals.setShadowOptionQuoteCacheWindowsForTests({
     ttlMs: 5,
-    staleTtlMs: 1_000,
   });
 
   try {
@@ -733,29 +820,17 @@ test("shadow option quote cache keeps stale display quotes during live refresh g
 
     await new Promise((resolve) => setTimeout(resolve, 15));
 
-    const freshOnly =
-      internals.readCachedShadowOptionQuotesForTests(positions);
+    const freshOnly = internals.readCachedShadowOptionQuotesForTests(positions);
     assert.equal(freshOnly.size, 0);
-
-    const staleAllowed =
-      internals.readCachedShadowOptionQuotesForTests(positions, {
-        allowStale: true,
-      });
-    assert.equal(staleAllowed.size, 1);
-    assert.equal(
-      (staleAllowed.get(providerContractId) as Record<string, unknown>)?.bid,
-      1.23,
-    );
   } finally {
     internals.clearShadowOptionQuoteCachesForTests();
     internals.setShadowOptionQuoteCacheWindowsForTests({
       ttlMs: null,
-      staleTtlMs: null,
     });
   }
 });
 
-test("shadow option quote cache does not replace display quotes with empty updates", () => {
+test("empty option quote updates do not renew an expired display quote", async () => {
   const providerContractId = `twsopt:test-empty-${Date.now()}-${Math.random()}`;
   const positions = [
     {
@@ -774,8 +849,7 @@ test("shadow option quote cache does not replace display quotes with empty updat
 
   internals.clearShadowOptionQuoteCachesForTests();
   internals.setShadowOptionQuoteCacheWindowsForTests({
-    ttlMs: 1_000,
-    staleTtlMs: 1_000,
+    ttlMs: 5,
   });
 
   try {
@@ -785,300 +859,162 @@ test("shadow option quote cache does not replace display quotes with empty updat
       ask: 2.3,
       updatedAt: "2026-06-08T15:56:31.004Z",
     });
+    await new Promise((resolve) => setTimeout(resolve, 15));
     internals.rememberShadowOptionQuoteForTests(providerContractId, {
       providerContractId,
       updatedAt: "2026-06-08T15:56:32.004Z",
     });
 
     const quotes = internals.readCachedShadowOptionQuotesForTests(positions);
-    assert.equal(quotes.size, 1);
-    assert.equal(
-      (quotes.get(providerContractId) as Record<string, unknown>)?.bid,
-      2.1,
-    );
-    assert.equal(
-      (quotes.get(providerContractId) as Record<string, unknown>)?.ask,
-      2.3,
-    );
+    assert.equal(quotes.size, 0);
   } finally {
     internals.clearShadowOptionQuoteCachesForTests();
     internals.setShadowOptionQuoteCacheWindowsForTests({
       ttlMs: null,
-      staleTtlMs: null,
     });
   }
 });
 
-test("shadow positions pressure fallback builds a bounded degraded snapshot from open rows", () => {
-  const observedAt = new Date("2026-06-10T02:45:00.000Z");
-  const optionContract = {
-    ticker: "SPY 20260612 600 C",
-    underlying: "SPY",
-    expirationDate: new Date("2026-06-12T00:00:00.000Z"),
-    strike: 600,
-    right: "call",
-    multiplier: 100,
-    sharesPerContract: 100,
-    providerContractId: "twsopt:test-pressure",
-  };
-  const response = internals.buildFastShadowPositionsResponseFromRows({
-    account: {
-      cash: "1000",
-      startingBalance: "500",
-    } as never,
-    assetClassFilter: "option",
-    source: null,
-    observedAt,
-    positions: [
-      {
-        id: "stock-position",
-        symbol: "AAPL",
-        assetClass: "equity",
-        positionKey: "equity:AAPL",
-        quantity: "2",
-        averageCost: "100",
-        mark: "110",
-        marketValue: "220",
-        unrealizedPnl: "20",
-        asOf: observedAt,
-        openedAt: observedAt,
-      },
-      {
-        id: "option-position",
-        symbol: "SPY",
-        assetClass: "option",
-        positionKey: "option:SPY:20260612:600:C",
-        quantity: "1",
-        averageCost: "2",
-        mark: "3",
-        optionContract,
-        asOf: observedAt,
-        openedAt: observedAt,
-      },
-    ] as never,
-  });
-
-  assert.equal(response.degraded, true);
-  assert.equal(response.stale, true);
-  assert.equal(response.reason, "shadow_positions_pressure_fallback");
-  assert.equal(response.positions.length, 1);
-  assert.equal(response.positions[0]?.id, "option-position");
-  assert.equal(response.positions[0]?.marketValue, 300);
-  assert.equal(response.totals.cash, 1000);
-  assert.equal(response.totals.netLiquidation, 1300);
-});
-
-test("source-scoped pressure positions use source cash instead of whole-ledger cash", () => {
-  const observedAt = new Date("2026-07-09T14:45:00.000Z");
-  const response = internals.buildFastShadowPositionsResponseFromRows({
-    account: {
-      cash: "1000",
-      startingBalance: "500",
-    } as never,
-    totals: {
-      cash: 400,
-      startingBalance: 500,
-      realizedPnl: 0,
-      unrealizedPnl: 25,
-      fees: 0,
-      marketValue: 125,
-      netLiquidation: 525,
-      updatedAt: observedAt,
-    },
-    assetClassFilter: "all",
-    source: "automation",
-    observedAt,
-    positions: [
-      {
-        id: "automation-position",
-        symbol: "AAPL",
-        assetClass: "equity",
-        positionKey: "equity:AAPL",
-        quantity: "1",
-        averageCost: "100",
-        mark: "125",
-        marketValue: "125",
-        unrealizedPnl: "25",
-        asOf: observedAt,
-        openedAt: observedAt,
-      },
-    ] as never,
-  });
-
-  assert.equal(response.positions.length, 1);
-  assert.equal(response.totals.cash, 400);
-  assert.equal(response.totals.netLiquidation, 525);
-});
-
-test("shadow positions pressure fallback surfaces day change decoupled from pressure", () => {
-  const observedAt = new Date("2026-07-09T14:45:00.000Z");
-  const baseInput = {
-    account: { cash: "1000", startingBalance: "500" } as never,
-    assetClassFilter: "option" as const,
-    source: null,
-    observedAt,
-    positions: [
-      {
-        id: "rh-daychange-position",
-        symbol: "RH",
-        assetClass: "option",
-        positionKey: "option:RH:20260710:152.5:C",
-        quantity: "2",
-        averageCost: "7.03",
-        mark: "14.4",
-        marketValue: "2880",
-        optionContract: {
-          ticker: "RH 20260710 152.5 C",
-          underlying: "RH",
-          expirationDate: new Date("2026-07-10T00:00:00.000Z"),
-          strike: 152.5,
-          right: "call",
-          multiplier: 100,
-          sharesPerContract: 100,
-          providerContractId: "twsopt:rh-daychange",
-        },
-        asOf: observedAt,
-        openedAt: new Date("2026-07-08T14:30:00.000Z"),
-      },
-    ] as never,
-  };
-
-  // A freshly-computed baseline day change is surfaced instead of being blanked to $0.
-  const withFresh = internals.buildFastShadowPositionsResponseFromRows({
-    ...baseInput,
-    dayChangesByPositionId: new Map([
-      ["rh-daychange-position", { dayChange: 960, dayChangePercent: 50 }],
-    ]),
-  });
-  assert.equal(withFresh.positions[0]?.dayChange, 960);
-  assert.equal(withFresh.positions[0]?.dayChangePercent, 50);
-
-  // A later pressure build with no fresh value reuses the last-known cached day change
-  // recorded above, so it is never reset to $0.
-  const fromCache = internals.buildFastShadowPositionsResponseFromRows(baseInput);
-  assert.equal(fromCache.positions[0]?.dayChange, 960);
-  assert.equal(fromCache.positions[0]?.dayChangePercent, 50);
-});
-
-test("shadow account positions use immediate stale cache strategy", () => {
-  const source = readFileSync(new URL("./shadow-account.ts", import.meta.url), "utf8");
-  const start = source.indexOf("export async function getShadowAccountPositions");
-  const end = source.indexOf("function dateFromShadowPositionResponse", start);
-  assert.notEqual(start, -1);
-  assert.notEqual(end, -1);
-
-  const block = source.slice(start, end);
-  assert.match(block, /allowStale:\s*shadowReadCacheValueHasRows/);
-  assert.match(block, /staleStrategy:\s*"immediate"/);
-  assert.doesNotMatch(block, /staleStrategy:\s*"never"/);
-});
-
-test("open shadow positions helper serves stale cache immediately", () => {
-  const source = readFileSync(new URL("./shadow-account.ts", import.meta.url), "utf8");
-  const start = source.indexOf("async function readOpenShadowPositionsForSourceCached");
-  const end = source.indexOf("async function readShadowOrdersByFillOrderId", start);
-  assert.notEqual(start, -1);
-  assert.notEqual(end, -1);
-
-  const block = source.slice(start, end);
-  assert.match(block, /allowStale:\s*shadowReadCacheValueHasRows/);
-  assert.match(block, /staleStrategy:\s*"immediate"/);
-  assert.doesNotMatch(block, /staleStrategy:\s*"never"/);
-});
-
-test("shadow account positions pressure path does not start a full refresh", () => {
-  const source = readFileSync(new URL("./shadow-account.ts", import.meta.url), "utf8");
-  const start = source.indexOf("export async function getShadowAccountPositions");
-  const end = source.indexOf("function dateFromShadowPositionResponse", start);
-  assert.notEqual(start, -1);
-  assert.notEqual(end, -1);
-
-  const block = source.slice(start, end);
-  const pressureStart = block.indexOf("if (shouldServeFastShadowPositionsForPressure())");
-  const pressureEnd = block.indexOf("return withShadowReadCache", pressureStart);
-  assert.notEqual(pressureStart, -1);
-  assert.notEqual(pressureEnd, -1);
-
-  const pressureBlock = block.slice(pressureStart, pressureEnd);
-  assert.match(pressureBlock, /return buildFastShadowPositionsResponse/);
-  assert.doesNotMatch(pressureBlock, /withShadowReadCache\(/);
-  assert.doesNotMatch(pressureBlock, /readFullPositions/);
-});
-
-test("shadow positions fast wrapper warms day change without kicking mark refresh", () => {
-  const source = readFileSync(new URL("./shadow-account.ts", import.meta.url), "utf8");
-  const start = source.indexOf("async function buildFastShadowPositionsResponse");
-  const end = source.indexOf("export async function getShadowAccountPositions", start);
-  assert.notEqual(start, -1, "Missing buildFastShadowPositionsResponse");
-  assert.notEqual(end, -1, "Missing function boundary after fast positions wrapper");
-
-  const block = source.slice(start, end);
-  // Gate 2: a high-pressure positions GET (served by the fast path) must not
-  // start a mark refresh — no mark/snapshot writes from the saturated path.
-  assert.doesNotMatch(block, /kickShadowPositionMarkRefresh\(\)/);
-  assert.match(block, /void readShadowPositionDayChanges\(/);
-  assert.match(block, /recordLastKnownShadowPositionDayChange/);
-  assert.doesNotMatch(block, /await\s+readShadowPositionDayChanges/);
-});
-
-test("shadow reusable position caches gate stale reuse on resource pressure", () => {
-  const source = readFileSync(new URL("./shadow-account.ts", import.meta.url), "utf8");
-
-  assert.match(source, /getApiResourcePressureSnapshot\(\)\.resourceLevel !== "high"/);
-  assert.match(source, /const pressureLevel = getApiResourcePressureSnapshot\(\)\.resourceLevel;/);
-  assert.doesNotMatch(
-    source,
-    /getApiResourcePressureSnapshot\(\)\.level !== "high"/,
+test("shadow account positions have no pressure fallback or last-known substitution", () => {
+  const source = readFileSync(
+    new URL("./shadow-account.ts", import.meta.url),
+    "utf8",
   );
+  const start = source.indexOf(
+    "export async function getShadowAccountPositions",
+  );
+  const end = source.indexOf("function dateFromShadowPositionResponse", start);
+  assert.notEqual(start, -1);
+  assert.notEqual(end, -1);
+
+  const block = source.slice(start, end);
+  assert.match(block, /return withShadowReadCache\(/);
+  assert.doesNotMatch(source, /shouldServeFastShadowPositionsForPressure/);
+  assert.doesNotMatch(source, /buildFastShadowPositionsResponse/);
+  assert.doesNotMatch(source, /lastKnownShadowPosition/);
+  assert.doesNotMatch(source, /positionsFastPath/);
+  assert.doesNotMatch(source, /positions-fast:/);
+  assert.doesNotMatch(source, /shadowReadCacheValueHasRows/);
 });
 
-test("shared dashboard fills+orders read serves stale immediately at the derived TTL", () => {
-  // Regression: this shared full fills+orders scan backs equity-history,
-  // positions, closed-trades, and cash-activity. Under a saturated DB pool the
-  // default "wait" strategy blocked each stale miss ~1.5s before serving the same
-  // cached value. It must serve stale immediately (background refresh) and use the
-  // wider derived-read TTL so the heavy scan recomputes less often. Trading logic
-  // reads the uncached readShadowFillsWithOrders, so this cannot serve stale P&L
-  // into an order path.
-  const source = readFileSync(new URL("./shadow-account.ts", import.meta.url), "utf8");
+test("shadow reusable position caches only reuse fresh entries", () => {
+  const source = readFileSync(
+    new URL("./shadow-account.ts", import.meta.url),
+    "utf8",
+  );
+  const boundaries = [
+    [
+      "function readReusableShadowPositionsResponseForAssetClass",
+      "function readReusableLiveQuotedShadowPositionsResponse",
+    ],
+    [
+      "function readReusableLiveQuotedShadowPositionsResponse",
+      "function readReusableShadowAllocationFromPositions",
+    ],
+    [
+      "function readReusableShadowAllocationFromPositions",
+      "export async function getShadowAccountPositions",
+    ],
+  ];
+
+  for (const [startMarker, endMarker] of boundaries) {
+    const start = source.indexOf(startMarker);
+    const end = source.indexOf(endMarker, start);
+    assert.notEqual(start, -1, `Missing ${startMarker}`);
+    assert.notEqual(end, -1, `Missing boundary after ${startMarker}`);
+    const block = source.slice(start, end);
+    assert.match(block, /cached\.expiresAt <= now/);
+    assert.doesNotMatch(block, /cached\.staleExpiresAt/);
+    assert.doesNotMatch(block, /markShadowReadValueStale/);
+    assert.doesNotMatch(block, /getApiResourcePressureSnapshot/);
+  }
+});
+
+test("shared dashboard fills+orders read waits for a fresh result at the derived TTL", () => {
+  const source = readFileSync(
+    new URL("./shadow-account.ts", import.meta.url),
+    "utf8",
+  );
   const start = source.indexOf("function readShadowDashboardFillsWithOrders");
-  const end = source.indexOf("async function readShadowFillsForOrderIds", start);
+  const end = source.indexOf(
+    "async function readShadowFillsForOrderIds",
+    start,
+  );
   assert.notEqual(start, -1, "Missing readShadowDashboardFillsWithOrders");
-  assert.notEqual(end, -1, "Missing function boundary after dashboard fills read");
+  assert.notEqual(
+    end,
+    -1,
+    "Missing function boundary after dashboard fills read",
+  );
   const block = source.slice(start, end);
 
   assert.match(block, /"dashboard:fills-with-orders"/);
-  assert.match(block, /staleStrategy:\s*"immediate"/);
   assert.match(block, /ttlMs:\s*SHADOW_DERIVED_READ_CACHE_TTL_MS/);
-  assert.doesNotMatch(block, /staleStrategy:\s*"never"/);
 });
 
-test("equity-history base snapshot scan yields under hard DB pool pressure", () => {
-  const source = readFileSync(new URL("./shadow-account.ts", import.meta.url), "utf8");
-  const start = source.indexOf("export async function getShadowAccountEquityHistory");
-  const end = source.indexOf("function readFreshCachedShadowEquityHistoryReturnMetrics", start);
-  assert.notEqual(start, -1, "Missing getShadowAccountEquityHistory");
-  assert.notEqual(end, -1, "Missing function boundary after equity-history reader");
-  const block = source.slice(start, end);
-  const pressureCheck = block.indexOf(
-    'getApiResourcePressureSnapshot().hardResourceLevel === "high"',
+test("Account shadow readers report database outages instead of fabricating account data", () => {
+  assert.doesNotMatch(
+    shadowAccountSource,
+    /buildFallbackShadowTotals|buildFallbackShadowAccountEquityHistory|buildEmptyShadowAccountPositionsResponse|SHADOW_RUNTIME_FALLBACK|shadowStartingBalanceForFastSummary/,
   );
-  const snapshotScan = block.indexOf("readShadowEquityHistorySnapshotRowsBucketed({");
+  assert.doesNotMatch(shadowAccountSource, /degraded:\s*true/);
+  assert.match(shadowAccountSource, /code:\s*"shadow_account_db_unavailable"/);
+  assert.match(shadowAccountSource, /startingBalance:\s*totals\.startingBalance/);
 
-  assert.notEqual(pressureCheck, -1, "Missing hard-pressure fallback");
-  assert.notEqual(snapshotScan, -1, "Missing bucket-first snapshot read");
-  assert.ok(
-    pressureCheck < snapshotScan,
-    "equity-history must fall back before opening the bounded snapshot read",
+  const cause = Object.assign(new Error("connect ECONNREFUSED"), {
+    code: "ECONNREFUSED",
+  });
+  const error = internals.createShadowAccountDbUnavailableError(cause);
+  assert.equal(error.statusCode, 503);
+  assert.equal(error.code, "shadow_account_db_unavailable");
+  assert.equal(error.expose, true);
+  assert.equal((error as Error & { cause?: unknown }).cause, cause);
+});
+
+test("equity-history reports DB backoff instead of fabricating history", () => {
+  const source = readFileSync(
+    new URL("./shadow-account.ts", import.meta.url),
+    "utf8",
   );
+  const start = source.indexOf(
+    "export async function getShadowAccountEquityHistory",
+  );
+  const end = source.indexOf(
+    "function readFreshCachedShadowEquityHistoryReturnMetrics",
+    start,
+  );
+  assert.notEqual(start, -1, "Missing getShadowAccountEquityHistory");
+  assert.notEqual(
+    end,
+    -1,
+    "Missing function boundary after equity-history reader",
+  );
+  const block = source.slice(start, end);
+  assert.match(block, /isShadowAccountDbBackoffActive\(\)/);
+  assert.match(block, /createShadowAccountDbUnavailableError\(\)/);
+  assert.match(block, /readShadowEquityHistorySnapshotRowsBucketed\(\{/);
+  assert.doesNotMatch(block, /hardResourceLevel/);
+  assert.doesNotMatch(block, /equityHistoryPressureFallback/);
 });
 
 test("shared dashboard fills+orders read is bounded and uses a 30s derived TTL", () => {
-  const source = readFileSync(new URL("./shadow-account.ts", import.meta.url), "utf8");
-  const start = source.indexOf("async function readBoundedShadowFillsWithOrders");
-  const end = source.indexOf("function readShadowDashboardFillsWithOrders", start);
+  const source = readFileSync(
+    new URL("./shadow-account.ts", import.meta.url),
+    "utf8",
+  );
+  const start = source.indexOf(
+    "async function readBoundedShadowFillsWithOrders",
+  );
+  const end = source.indexOf(
+    "function readShadowDashboardFillsWithOrders",
+    start,
+  );
   assert.notEqual(start, -1, "Missing bounded dashboard fills reader");
-  assert.notEqual(end, -1, "Missing function boundary after bounded fills reader");
+  assert.notEqual(
+    end,
+    -1,
+    "Missing function boundary after bounded fills reader",
+  );
   const block = source.slice(start, end);
 
   assert.match(source, /const SHADOW_DERIVED_READ_CACHE_TTL_MS = 30_000;/);
@@ -1089,7 +1025,10 @@ test("shared dashboard fills+orders read is bounded and uses a 30s derived TTL",
 });
 
 test("automation ledger realized P&L keeps the all-time source path", () => {
-  const source = readFileSync(new URL("./shadow-account.ts", import.meta.url), "utf8");
+  const source = readFileSync(
+    new URL("./shadow-account.ts", import.meta.url),
+    "utf8",
+  );
   const realizedStart = source.indexOf(
     "export async function computeSignalOptionsLedgerRealizedForDeployment",
   );
@@ -1100,14 +1039,24 @@ test("automation ledger realized P&L keeps the all-time source path", () => {
   assert.notEqual(realizedStart, -1);
   assert.notEqual(realizedEnd, -1);
   const realizedBlock = source.slice(realizedStart, realizedEnd);
-  assert.match(realizedBlock, /readShadowLedgerBundleForSource\("automation"\)/);
+  assert.match(
+    realizedBlock,
+    /readShadowLedgerBundleForSource\("automation"\)/,
+  );
 
-  const ordersStart = source.indexOf("async function readShadowOrdersForSource");
-  const ordersEnd = source.indexOf("async function readShadowFillsWithOrdersForSource", ordersStart);
+  const ordersStart = source.indexOf(
+    "async function readShadowOrdersForSource",
+  );
+  const ordersEnd = source.indexOf(
+    "async function readShadowFillsWithOrdersForSource",
+    ordersStart,
+  );
   assert.notEqual(ordersStart, -1);
   assert.notEqual(ordersEnd, -1);
   const ordersBlock = source.slice(ordersStart, ordersEnd);
-  const automationBranch = ordersBlock.slice(ordersBlock.indexOf("const orders = await db"));
+  const automationBranch = ordersBlock.slice(
+    ordersBlock.indexOf("const orders = await db"),
+  );
   assert.doesNotMatch(automationBranch, /shadowLedgerDashboardReadLimit/);
 });
 
@@ -1115,8 +1064,6 @@ test("shared dashboard fills+orders read joins one in-flight operation", async (
   internals.invalidateShadowFreshStateCache();
   internals.setShadowReadCacheWindowsForTests({
     ttlMs: 60_000,
-    staleTtlMs: 60_000,
-    staleWaitMs: 250,
   });
 
   let reads = 0;
@@ -1127,15 +1074,19 @@ test("shared dashboard fills+orders read joins one in-flight operation", async (
   const value = { fills: [], ordersById: new Map() };
 
   try {
-    const first = internals.readShadowDashboardFillsWithOrdersForTests(async () => {
-      reads += 1;
-      await gate;
-      return value;
-    });
-    const second = internals.readShadowDashboardFillsWithOrdersForTests(async () => {
-      reads += 1;
-      return { fills: [], ordersById: new Map() };
-    });
+    const first = internals.readShadowDashboardFillsWithOrdersForTests(
+      async () => {
+        reads += 1;
+        await gate;
+        return value;
+      },
+    );
+    const second = internals.readShadowDashboardFillsWithOrdersForTests(
+      async () => {
+        reads += 1;
+        return { fills: [], ordersById: new Map() };
+      },
+    );
 
     await waitTurn();
     assert.equal(reads, 1);
@@ -1149,8 +1100,6 @@ test("shared dashboard fills+orders read joins one in-flight operation", async (
     internals.invalidateShadowFreshStateCache();
     internals.setShadowReadCacheWindowsForTests({
       ttlMs: null,
-      staleTtlMs: null,
-      staleWaitMs: null,
     });
   }
 });
@@ -1171,15 +1120,21 @@ test("tax overview and events join one shared analysis-fold computation", async 
   };
 
   try {
-    const first = internals.readShadowAnalysisLedgerFoldForTests(input, async () => {
-      reads += 1;
-      await gate;
-      return { fills: [], ordersById: new Map() };
-    });
-    const second = internals.readShadowAnalysisLedgerFoldForTests(input, async () => {
-      reads += 1;
-      return { fills: [], ordersById: new Map() };
-    });
+    const first = internals.readShadowAnalysisLedgerFoldForTests(
+      input,
+      async () => {
+        reads += 1;
+        await gate;
+        return { fills: [], ordersById: new Map() };
+      },
+    );
+    const second = internals.readShadowAnalysisLedgerFoldForTests(
+      input,
+      async () => {
+        reads += 1;
+        return { fills: [], ordersById: new Map() };
+      },
+    );
 
     await waitTurn();
     assert.equal(reads, 1);
@@ -1204,13 +1159,22 @@ test("ledger mutation invalidation recomputes the shared analysis fold", async (
   };
 
   try {
-    await internals.readShadowAnalysisLedgerFoldForTests({ scope: "all" }, reader);
-    await internals.readShadowAnalysisLedgerFoldForTests({ scope: "all" }, reader);
+    await internals.readShadowAnalysisLedgerFoldForTests(
+      { scope: "all" },
+      reader,
+    );
+    await internals.readShadowAnalysisLedgerFoldForTests(
+      { scope: "all" },
+      reader,
+    );
     assert.equal(reads, 1);
 
     // Fill/order commit paths call this generation bump before broadcasting.
     internals.invalidateShadowFreshStateCache();
-    await internals.readShadowAnalysisLedgerFoldForTests({ scope: "all" }, reader);
+    await internals.readShadowAnalysisLedgerFoldForTests(
+      { scope: "all" },
+      reader,
+    );
     assert.equal(reads, 2);
   } finally {
     internals.invalidateShadowFreshStateCache();
@@ -1218,7 +1182,11 @@ test("ledger mutation invalidation recomputes the shared analysis fold", async (
 });
 
 test("closed trades and tax use the bounded shared fold without capturing fresh write reads", () => {
-  const sourceBlock = (source: string, startMarker: string, endMarker: string) => {
+  const sourceBlock = (
+    source: string,
+    startMarker: string,
+    endMarker: string,
+  ) => {
     const start = source.indexOf(startMarker);
     const end = source.indexOf(endMarker, start);
     assert.notEqual(start, -1);
@@ -1254,22 +1222,18 @@ test("closed trades and tax use the bounded shared fold without capturing fresh 
       "function buildShadowCashActivityTotalsFromAccount",
     ),
   ];
-  const fold = sourceBlock(
-    shadowAccountSource,
-    "async function readShadowAnalysisLedgerFold",
-    "export type ShadowTaxFoldFill",
-  );
-
   assert.match(closed, /readShadowAnalysisLedgerFold\(/);
   assert.match(closed, /!Number\.isFinite\(input\.to\.getTime\(\)\)/);
-  assert.match(fold, /staleStrategy:\s*"never"/);
   for (const carveOut of freshCarveOuts) {
     assert.doesNotMatch(carveOut, /readShadowAnalysisLedgerFold\(/);
   }
   assert.match(snapshot, /readShadowFillsWithOrders\(\)/);
   assert.match(watchlist, /readShadowFillsWithOrders\(\)/);
 
-  const taxSource = readFileSync(new URL("./tax-planning.ts", import.meta.url), "utf8");
+  const taxSource = readFileSync(
+    new URL("./tax-planning.ts", import.meta.url),
+    "utf8",
+  );
   const taxLoader = sourceBlock(
     taxSource,
     "async function loadShadowTaxFills",
@@ -1297,23 +1261,36 @@ test("closed trades and tax use the bounded shared fold without capturing fresh 
 });
 
 test("shadow order tabs share the cached full account order scan", () => {
-  const source = readFileSync(new URL("./shadow-account.ts", import.meta.url), "utf8");
-  const ordersStart = source.indexOf("export async function getShadowAccountOrders");
-  const ordersEnd = source.indexOf("\nfunction shadowResponseReason", ordersStart);
+  const source = readFileSync(
+    new URL("./shadow-account.ts", import.meta.url),
+    "utf8",
+  );
+  const ordersStart = source.indexOf(
+    "export async function getShadowAccountOrders",
+  );
+  const ordersEnd = source.indexOf(
+    "\nfunction shadowResponseReason",
+    ordersStart,
+  );
   assert.notEqual(ordersStart, -1, "Missing getShadowAccountOrders");
   assert.notEqual(ordersEnd, -1, "Missing function boundary after orders");
   const ordersBody = source.slice(ordersStart, ordersEnd);
 
   assert.match(ordersBody, /readShadowOrdersForDisplay\(source\)/);
   assert.match(ordersBody, /`orders:all:\$\{shadowSourceCacheKey\(source\)\}`/);
-  assert.match(ordersBody, /staleStrategy:\s*"immediate"/);
   assert.match(ordersBody, /SHADOW_DERIVED_READ_CACHE_TTL_MS/);
 });
 
-test("account-level shadow order scan is shared with immediate stale reuse", () => {
-  const source = readFileSync(new URL("./shadow-account.ts", import.meta.url), "utf8");
+test("account-level shadow order scan is shared without expired reuse", () => {
+  const source = readFileSync(
+    new URL("./shadow-account.ts", import.meta.url),
+    "utf8",
+  );
   const start = source.indexOf("async function readShadowOrdersForAccount()");
-  const end = source.indexOf("\nasync function readShadowOrdersForSource", start);
+  const end = source.indexOf(
+    "\nasync function readShadowOrdersForSource",
+    start,
+  );
   assert.notEqual(start, -1, "Missing readShadowOrdersForAccount");
   assert.notEqual(end, -1, "Missing function boundary after account orders");
   const body = source.slice(start, end);
@@ -1321,37 +1298,31 @@ test("account-level shadow order scan is shared with immediate stale reuse", () 
   assert.match(body, /withShadowReadCache\(/);
   assert.match(body, /`orders:account-bounded:\$\{limit\}`/);
   assert.match(body, /ttlMs:\s*SHADOW_DERIVED_READ_CACHE_TTL_MS/);
-  assert.match(body, /staleStrategy:\s*"immediate"/);
-  assert.doesNotMatch(body, /staleStrategy:\s*"never"/);
 });
 
-test("shadow trade diagnostics uses shared stale-immediate read cache", () => {
-  const source = readFileSync(new URL("./shadow-account.ts", import.meta.url), "utf8");
-  const start = source.indexOf("export async function computeShadowTradeDiagnostics");
-  const end = source.indexOf("\nasync function getShadowTradeEquityEvents", start);
+test("shadow trade diagnostics waits for a fresh shared read", () => {
+  const source = readFileSync(
+    new URL("./shadow-account.ts", import.meta.url),
+    "utf8",
+  );
+  const start = source.indexOf(
+    "export async function computeShadowTradeDiagnostics",
+  );
+  const end = source.indexOf(
+    "\nasync function getShadowTradeEquityEvents",
+    start,
+  );
   assert.notEqual(start, -1, "Missing computeShadowTradeDiagnostics");
   assert.notEqual(end, -1, "Missing function boundary after diagnostics");
   const body = source.slice(start, end);
 
   assert.match(body, /withShadowReadCache\(/);
   assert.match(body, /`trade-diagnostics:\$\{range\}`/);
-  assert.match(body, /staleStrategy:\s*"immediate"/);
   assert.match(body, /SHADOW_TRADE_DIAGNOSTICS_CACHE_TTL_MS/);
-  assert.match(body, /SHADOW_TRADE_DIAGNOSTICS_CACHE_STALE_TTL_MS/);
 });
 
-// Retirement doctrine (docs/plans/pressure-gate-retirement-2026-07-10.md): every
-// user-visible pressure degrade must count its firings so "this gate never fires"
-// is provable. Guard the diagnostic surface those verdicts read from.
-test("read diagnostics expose pressure-degrade serve counters", async () => {
+test("read diagnostics no longer expose fallback serve counters", async () => {
   const { getShadowAccountReadDiagnostics } = await import("./shadow-account");
   const diagnostics = getShadowAccountReadDiagnostics();
-  assert.deepEqual(Object.keys(diagnostics.pressureDegrades).sort(), [
-    "equityHistoryDbBackoffFallback",
-    "equityHistoryPressureFallback",
-    "positionsFastPath",
-  ]);
-  for (const value of Object.values(diagnostics.pressureDegrades)) {
-    assert.equal(typeof value, "number");
-  }
+  assert.equal("pressureDegrades" in diagnostics, false);
 });

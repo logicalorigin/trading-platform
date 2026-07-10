@@ -2,20 +2,12 @@ import { useMemo } from "react";
 import PositionsPanel from "../account/PositionsPanel";
 import { setAlgoFocus } from "../../features/platform/algoFocusStore";
 import {
-  getStoredOptionQuoteSnapshot,
-  useStoredOptionQuoteSnapshotVersion,
-} from "../../features/platform/live-streams";
-import {
-  buildAlgoAccountPositionRows,
   buildAlgoAccountPositionsResponse,
-  collectAlgoRuntimeProviderContractIds,
   filterAccountPositionRowsForDeployment,
 } from "./algoAccountPositions";
 
 export const OperationsPositionsTable = ({
-  positions = [],
   accountPositionsQuery = null,
-  symbolIndex = {},
   deploymentId = null,
   filterByDeployment = true,
   sourceLabel = "Shadow algo positions",
@@ -32,70 +24,24 @@ export const OperationsPositionsTable = ({
         : accountRows,
     [accountRows, deploymentId, filterByDeployment],
   );
-  const providerContractIds = useMemo(
-    () =>
-      Array.from(
-        new Set(collectAlgoRuntimeProviderContractIds(positions, symbolIndex)),
-      ),
-    [positions, symbolIndex],
-  );
-  const quoteVersion = useStoredOptionQuoteSnapshotVersion(providerContractIds);
-  const runtimeRows = useMemo(() => {
-    const liveQuoteByContractId = Object.fromEntries(
-      providerContractIds.map((providerContractId) => [
-        providerContractId,
-        getStoredOptionQuoteSnapshot(providerContractId),
-      ]),
-    );
-    return buildAlgoAccountPositionRows({
-      positions,
-      symbolIndex,
-      liveQuoteByContractId,
-    });
-  }, [positions, providerContractIds, quoteVersion, symbolIndex]);
-  const accountPositionsSettled = Boolean(
-    accountPositionsQuery?.data ||
-      accountPositionsQuery?.isFetched ||
-      accountPositionsQuery?.isSuccess ||
-      accountPositionsQuery?.isError,
-  );
-  const useAccountPositionRows = Boolean(
-    scopedAccountRows.length ||
-      (accountPositionsSettled && runtimeRows.length === 0),
-  );
-  const rows = useMemo(
-    () => (useAccountPositionRows ? scopedAccountRows : runtimeRows),
-    [runtimeRows, scopedAccountRows, useAccountPositionRows],
-  );
   const response = useMemo(
-    () => buildAlgoAccountPositionsResponse(rows),
-    [rows],
+    () => buildAlgoAccountPositionsResponse(scopedAccountRows),
+    [scopedAccountRows],
   );
   const query = useMemo(
     () => ({
-      data: useAccountPositionRows
+      ...accountPositionsQuery,
+      data: accountPositionsQuery?.data
         ? {
-            ...(accountPositionsQuery?.data ||
-              buildAlgoAccountPositionsResponse([])),
+            ...accountPositionsQuery.data,
             totals: response.totals,
-            positions: rows,
+            positions: scopedAccountRows,
           }
-        : response,
-      isLoading: Boolean(
-        useAccountPositionRows && accountPositionsQuery?.isLoading && !rows.length,
-      ),
-      isPending: Boolean(
-        useAccountPositionRows && accountPositionsQuery?.isPending && !rows.length,
-      ),
-      fetchStatus: accountPositionsQuery?.fetchStatus,
-      error: useAccountPositionRows ? accountPositionsQuery?.error : null,
+        : accountPositionsQuery?.data,
       refetch: accountPositionsQuery?.refetch || (() => undefined),
     }),
-    [accountPositionsQuery, response, rows, useAccountPositionRows],
+    [accountPositionsQuery, response.totals, scopedAccountRows],
   );
-  const positionsSourceLabel = useAccountPositionRows
-    ? sourceLabel
-    : "Runtime algo positions";
 
   return (
     <div data-testid="algo-operations-positions-table">
@@ -107,7 +53,7 @@ export const OperationsPositionsTable = ({
         sourceFilter="all"
         onJumpToChart={(symbol) => setAlgoFocus(symbol, "position")}
         onPositionSelect={(row) => setAlgoFocus(row?.symbol, "position")}
-        rightRail={positionsSourceLabel}
+        rightRail={sourceLabel}
         emptyBody="Open shadow algo positions will appear here once an entry signal fills."
         showFilters={false}
         isPhone={algoIsPhone}

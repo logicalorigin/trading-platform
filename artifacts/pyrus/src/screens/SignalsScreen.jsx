@@ -3195,6 +3195,7 @@ export default function SignalsScreen({
   signalMonitorStateError = null,
   signalMonitorDataManagedByPlatform = false,
   signalMonitorEvents = [],
+  signalMonitorEventsError = null,
   signalMonitorEventsLoaded = false,
   signalMatrixStates = [],
   signalMatrixCoverage = null,
@@ -3290,7 +3291,6 @@ export default function SignalsScreen({
       staleTime: 15_000,
       retry: retryUnlessTimeout(2),
       retryDelay: QUERY_DEFAULTS.retryDelay,
-      placeholderData: (previousData) => previousData,
     },
   });
   const stateQuery = useGetSignalMonitorState(signalMonitorParams, {
@@ -3300,7 +3300,6 @@ export default function SignalsScreen({
       refetchInterval: active && !platformManagedSignalData ? 15_000 : false,
       retry: retryUnlessTimeout(2),
       retryDelay: QUERY_DEFAULTS.retryDelay,
-      placeholderData: (previousData) => previousData,
     },
   });
   const eventsQuery = useListSignalMonitorEvents(signalMonitorEventsParams, {
@@ -3310,7 +3309,6 @@ export default function SignalsScreen({
       refetchInterval: eventsQueryEnabled ? 15_000 : false,
       retry: retryUnlessTimeout(2),
       retryDelay: QUERY_DEFAULTS.retryDelay,
-      placeholderData: (previousData) => previousData,
     },
   });
   const breadthHistoryQuery = useListSignalMonitorBreadthHistory(
@@ -3322,7 +3320,6 @@ export default function SignalsScreen({
         refetchInterval: active ? 30_000 : false,
         retry: retryUnlessTimeout(2),
         retryDelay: QUERY_DEFAULTS.retryDelay,
-        placeholderData: (previousData) => previousData,
       },
     },
   );
@@ -3334,8 +3331,12 @@ export default function SignalsScreen({
     },
   });
   const effectiveStateData = platformManagedSignalData
-    ? signalMonitorState
-    : stateQuery.data;
+    ? signalMonitorStateError
+      ? null
+      : signalMonitorState
+    : stateQuery.isError
+      ? null
+      : stateQuery.data;
   const effectiveStateFetched = platformManagedSignalData
     ? signalMonitorStateLoaded
     : stateQuery.isFetched;
@@ -3349,8 +3350,12 @@ export default function SignalsScreen({
     !platformManagedSignalData && stateQuery.isError
   );
   const effectiveProfileData = platformManagedSignalData
-    ? signalMonitorProfile
-    : profileQuery.data;
+    ? signalMonitorProfileError
+      ? null
+      : signalMonitorProfile
+    : profileQuery.isError
+      ? null
+      : profileQuery.data;
   const effectiveProfileLoading = platformManagedSignalData
     ? signalMonitorProfileLoading
     : profileQuery.isLoading;
@@ -3359,6 +3364,12 @@ export default function SignalsScreen({
     : profileQuery.error;
   const effectiveProfileIsError = Boolean(effectiveProfileError) || (
     !platformManagedSignalData && profileQuery.isError
+  );
+  const effectiveEventsError = platformManagedSignalData
+    ? signalMonitorEventsError
+    : eventsQuery.error;
+  const effectiveEventsIsError = Boolean(effectiveEventsError) || (
+    !platformManagedSignalData && eventsQuery.isError
   );
   const profile = effectiveStateData?.profile || effectiveProfileData || null;
   const profileIndicatorSettings = useMemo(
@@ -3489,10 +3500,13 @@ export default function SignalsScreen({
     : signalsHydrationSourceUniverseSymbols;
   const signalEventsForRows = useMemo(
     () =>
-      hasProvidedSignalMonitorEvents
-        ? providedSignalMonitorEvents.slice(0, SIGNALS_EVENT_LIMIT)
-        : eventsQuery.data?.events || [],
+      effectiveEventsIsError
+        ? []
+        : hasProvidedSignalMonitorEvents
+          ? providedSignalMonitorEvents.slice(0, SIGNALS_EVENT_LIMIT)
+          : eventsQuery.data?.events || [],
     [
+      effectiveEventsIsError,
       eventsQuery.data?.events,
       hasProvidedSignalMonitorEvents,
       providedSignalMonitorEvents,
@@ -3881,8 +3895,11 @@ export default function SignalsScreen({
     [overviewMetricRows],
   );
   const breadthHistory = useMemo(
-    () => normalizeSignalsBreadthHistory(breadthHistoryQuery.data),
-    [breadthHistoryQuery.data],
+    () =>
+      normalizeSignalsBreadthHistory(
+        breadthHistoryQuery.isError ? null : breadthHistoryQuery.data,
+      ),
+    [breadthHistoryQuery.data, breadthHistoryQuery.isError],
   );
   const selectedRow = useMemo(
     () =>
@@ -4351,7 +4368,7 @@ export default function SignalsScreen({
       (!profile && effectiveProfileLoading));
   const errored =
     !hasSignalData &&
-    (effectiveStateIsError || effectiveProfileIsError || eventsQuery.isError);
+    (effectiveStateIsError || effectiveProfileIsError || effectiveEventsIsError);
   useEffect(() => {
     if (!active || loading || errored) {
       return;
@@ -4373,7 +4390,7 @@ export default function SignalsScreen({
   const signalsErrorCopy = useMemo(
     () =>
       describeUserFacingRuntimeError(
-        effectiveStateError || effectiveProfileError || eventsQuery.error,
+        effectiveStateError || effectiveProfileError || effectiveEventsError,
         {
           title: "Signals unavailable",
           detail: "Signal monitor data could not be loaded.",
@@ -4384,7 +4401,7 @@ export default function SignalsScreen({
     [
       effectiveProfileError,
       effectiveStateError,
-      eventsQuery.error,
+      effectiveEventsError,
     ],
   );
   const cacheTone =
@@ -4534,6 +4551,11 @@ export default function SignalsScreen({
             {scopeCoverageLabel ? (
               <StatusPill color={CSS_COLOR.amber} variant="outline">
                 {scopeCoverageLabel}
+              </StatusPill>
+            ) : null}
+            {effectiveEventsIsError ? (
+              <StatusPill color={CSS_COLOR.red} variant="outline">
+                History unavailable
               </StatusPill>
             ) : null}
           </div>

@@ -36,7 +36,6 @@ export const useRuntimeControlSnapshot = ({
     refetchInterval: shouldFetchRuntimeDiagnostics
       ? runtimeDiagnosticsRefetchInterval
       : false,
-    placeholderData: (previousData) => previousData,
     retry: false,
     staleTime: Math.min(2_000, runtimeDiagnosticsRefetchInterval),
   });
@@ -44,7 +43,9 @@ export const useRuntimeControlSnapshot = ({
   const brokerStreamFreshness = useBrokerStreamFreshnessSnapshot(active);
   const flowScannerControl = useFlowScannerControlState({ subscribe: active });
   const effectiveRuntimeDiagnostics =
-    runtimeDiagnostics || runtimeDiagnosticsQuery.data || null;
+    runtimeDiagnostics ||
+    (runtimeDiagnosticsQuery.isError ? null : runtimeDiagnosticsQuery.data) ||
+    null;
   const snapshot = useMemo(
     () =>
       buildRuntimeControlSnapshot({

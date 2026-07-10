@@ -2,7 +2,12 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
-const source = readFileSync(new URL("./AccountScreen.jsx", import.meta.url), "utf8");
+import { livePositionsDayPnlMetric } from "./AccountScreen.jsx";
+
+const source = readFileSync(
+  new URL("./AccountScreen.jsx", import.meta.url),
+  "utf8",
+);
 
 test("positions source selector is wired to live state, not pinned to all", () => {
   assert.match(
@@ -44,15 +49,20 @@ test("account positions REST polling yields to the live account-page stream", ()
 test("SnapTrade account positions enable live Massive quote hydration", () => {
   assert.match(
     source,
-    /const accountLiveOptionQuotesEnabled = Boolean\(\s*\(genericAccountQueriesEnabled \|\| snapTradeAccountPanelsEnabled\) &&\s*accountPrimaryReady,?\s*\);/,
+    /const accountLiveOptionQuotesEnabled = Boolean\(\s*genericAccountQueriesEnabled \|\| snapTradeAccountPanelsEnabled,?\s*\);/,
     "SnapTrade account tabs must enable the shared positions quote hydrator",
   );
+});
+
+test("Account stream freshness gates REST directly without fallback-ready state", () => {
+  assert.doesNotMatch(source, /FallbackReady/);
+  assert.doesNotMatch(source, /rest-fallback/);
 });
 
 test("Accounts and Algo current-position tables share the generic account positions source", () => {
   assert.match(
     source,
-    /const positionsQueryForDisplay = positionsQuery;/,
+    /const positionsQueryForDisplay = withoutFailedQueryData\(positionsQuery\);/,
     "Current positions must use the canonical generic account endpoint on every account tab.",
   );
   assert.doesNotMatch(
@@ -84,7 +94,7 @@ test("account tabs render above the account summary hero", () => {
 test("SnapTrade account equity inspector uses provider-normalized positions", () => {
   assert.match(
     source,
-    /const positionsAtDateQueryForDisplay = snapTradeAccountPanelsEnabled\s*\?\s*buildIdleAccountQuery\(snapTradePanelData\?\.positionsAtDate\)\s*:\s*positionsAtDateQuery;/,
+    /const positionsAtDateQueryForDisplay = snapTradeAccountPanelsEnabled\s*\?\s*buildIdleAccountQuery\(snapTradePanelData\?\.positionsAtDate\)\s*:\s*withoutFailedQueryData\(positionsAtDateQuery\);/,
     "SnapTrade equity chart inspector must not receive an empty positions placeholder",
   );
 });
@@ -102,22 +112,22 @@ test("SnapTrade account history query does not override generic derived surfaces
   );
   assert.match(
     source,
-    /history: snapTradeHistoryQuery\.data/,
+    /history: snapTradeHistoryQueryForDisplay\.data/,
     "SnapTrade panel data must receive backend activity and balance history",
   );
   assert.match(
     source,
-    /const tradesQueryForDisplay = tradesQuery;/,
+    /const tradesQueryForDisplay = withoutFailedQueryData\(tradesQuery\);/,
     "SnapTrade trading analysis must use the generic closed-trades endpoint",
   );
   assert.match(
     source,
-    /const performanceCalendarTradesQueryForDisplay = performanceCalendarTradesQuery;/,
+    /const performanceCalendarTradesQueryForDisplay =\s*withoutFailedQueryData\(\s*performanceCalendarTradesQuery,?\s*\);/,
     "SnapTrade returns calendar must use the generic closed-trades endpoint",
   );
   assert.match(
     source,
-    /const performanceCalendarEquityQueryForDisplay = performanceCalendarEquityQuery;/,
+    /const performanceCalendarEquityQueryForDisplay =\s*withoutFailedQueryData\(\s*performanceCalendarEquityQuery,?\s*\);/,
     "SnapTrade returns calendar must use the generic true-NAV equity endpoint",
   );
   assert.doesNotMatch(
@@ -134,20 +144,27 @@ test("account positions trading actions use broker-safe account context", () => 
     source,
     /const positionManagementAccountId =\s*shadowMode \|\| activeAccountId === "combined" \? null : activeAccountId;/,
   );
-  assert.match(source, /const positionManagementGatewayReady = Boolean\(!shadowMode && gatewayTradingReady\);/);
+  assert.match(
+    source,
+    /const positionManagementGatewayReady = Boolean\(\s*!shadowMode && gatewayTradingReady,?\s*\);/,
+  );
   assert.match(
     source,
     /const positionManagementGatewayMessage = shadowMode\s*\?\s*"Shadow positions cannot be managed with live broker orders\."\s*:\s*gatewayTradingMessage;/,
   );
 
-  const positionsPanel = source.match(
-    /<PositionsPanel[\s\S]*?\/>/,
-  )?.[0] ?? "";
+  const positionsPanel = source.match(/<PositionsPanel[\s\S]*?\/>/)?.[0] ?? "";
 
   assert.match(positionsPanel, /accountId=\{positionManagementAccountId\}/);
   assert.match(positionsPanel, /environment=\{modeParams\.mode\}/);
-  assert.match(positionsPanel, /gatewayTradingReady=\{positionManagementGatewayReady\}/);
-  assert.match(positionsPanel, /gatewayTradingMessage=\{positionManagementGatewayMessage\}/);
+  assert.match(
+    positionsPanel,
+    /gatewayTradingReady=\{positionManagementGatewayReady\}/,
+  );
+  assert.match(
+    positionsPanel,
+    /gatewayTradingMessage=\{positionManagementGatewayMessage\}/,
+  );
 });
 
 // Owner ruling 2026-07-09: day P&L on the account screen means the positions-table
@@ -162,7 +179,7 @@ test("hero pill day P&L reads the positions-table day change, not the equity met
   );
   assert.match(
     source,
-    /openDayPnl = Number\(livePositionsDayPnl\?\.openPositionsDayPnl\)/,
+    /openDayPnl = finiteAccountNumber\(\s*livePositionsDayPnl\?\.openPositionsDayPnl/,
     "Pill override must source livePositionsDayPnl.openPositionsDayPnl",
   );
   assert.match(
@@ -170,4 +187,32 @@ test("hero pill day P&L reads the positions-table day change, not the equity met
     /summary=\{heroSummaryData\}/,
     "AccountHeroBlock must receive the overridden summary",
   );
+});
+
+test("hero position Day percent uses summed prior-close bases", () => {
+  const metric = livePositionsDayPnlMetric({
+    positionsResponse: {
+      currency: "USD",
+      positions: [
+        {
+          quantity: 1,
+          marketValue: 1_200,
+          dayChange: 200,
+          dayChangePercent: 20,
+        },
+        {
+          quantity: -1,
+          marketValue: -800,
+          dayChange: -100,
+          dayChangePercent: -10,
+        },
+      ],
+    },
+    fallbackMetric: null,
+    tradesResponse: null,
+    currency: "USD",
+  });
+
+  assert.equal(metric.openPositionsDayPnl, 100);
+  assert.equal(metric.openPositionsDayPnlPercent, 5);
 });

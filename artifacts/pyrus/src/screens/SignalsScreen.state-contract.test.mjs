@@ -87,6 +87,31 @@ test("Signals table loading/errored do not mask pushed matrix state", () => {
   );
 });
 
+test("Signals surfaces platform STA history failures without replaying history", () => {
+  const screenSource = source();
+  const appSource = readFileSync(
+    new URL("../features/platform/PlatformApp.jsx", import.meta.url),
+    "utf8",
+  );
+  const routerSource = readFileSync(
+    new URL("../features/platform/PlatformScreenRouter.jsx", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(
+    appSource,
+    /signalMonitorEventsError=\{signalMonitorEventsQuery\.error \|\| null\}/,
+  );
+  assert.match(routerSource, /signalMonitorEventsError=\{signalMonitorEventsError\}/);
+  assert.match(screenSource, /signalMonitorEventsError = null/);
+  assert.match(screenSource, /const effectiveEventsIsError =/);
+  assert.match(screenSource, />\s*History unavailable\s*<\/StatusPill>/);
+  assert.match(
+    screenSource,
+    /const signalEventsForRows =[\s\S]*effectiveEventsIsError[\s\S]*\? \[\]/,
+  );
+});
+
 test("Signals platform-managed refresh does not manually refetch state snapshots", () => {
   const screenSource = source();
 
@@ -164,7 +189,7 @@ test("Signals screen surfaces scope truncation from existing matrix metadata", (
   assert.match(screenSource, /\{scopeCoverageLabel\}/);
 });
 
-test("Signals fallback REST queries keep stale data and retry 429 pressure sheds", () => {
+test("Signals REST queries retry pressure sheds without retaining prior-scope data", () => {
   const screenSource = source();
   const queryNames = [
     "profileQuery",
@@ -179,6 +204,23 @@ test("Signals fallback REST queries keep stale data and retry 429 pressure sheds
     const block = screenSource.slice(index, index + 700);
     assert.match(block, /retry:\s*retryUnlessTimeout\(2\)/, `${name} retries`);
     assert.match(block, /retryDelay:\s*QUERY_DEFAULTS\.retryDelay/, `${name} uses shared retry delay`);
-    assert.match(block, /placeholderData:\s*\(previousData\) => previousData/, `${name} keeps stale data`);
+    assert.doesNotMatch(block, /placeholderData/, `${name} does not keep prior data`);
   });
+
+  assert.match(
+    screenSource,
+    /: stateQuery\.isError\s*\? null\s*:\s*stateQuery\.data;/,
+  );
+  assert.match(
+    screenSource,
+    /: profileQuery\.isError\s*\? null\s*:\s*profileQuery\.data;/,
+  );
+  assert.match(
+    screenSource,
+    /effectiveEventsIsError\s*\? \[\]/,
+  );
+  assert.match(
+    screenSource,
+    /normalizeSignalsBreadthHistory\(\s*breadthHistoryQuery\.isError \? null : breadthHistoryQuery\.data,?\s*\)/,
+  );
 });

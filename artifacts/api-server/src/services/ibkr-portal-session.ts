@@ -1,6 +1,10 @@
+import { appendFile } from "node:fs";
+import path from "node:path";
+
 import type { IbkrRuntimeConfig } from "../lib/runtime";
 import { HttpError } from "../lib/errors";
 import { IbkrClient } from "../providers/ibkr/client";
+import { findRepoRoot } from "./runtime-flight-recorder";
 
 import {
   ensureGateway,
@@ -9,6 +13,7 @@ import {
   refreshGateway,
   stopGateway,
 } from "./ibkr-portal-gateway-manager";
+import { revokeIbkrPortalEmbedSessions } from "./ibkr-portal-embed-session";
 
 // Orchestrates the browser-login IBKR Client Portal session on top of the
 // per-user gateway pool. The gateway holds the authenticated session after the
@@ -16,11 +21,34 @@ import {
 // session alive with periodic tickles. Trading + account only (no market-data
 // websocket).
 
-export const IBKR_PORTAL_LOGIN_PATH =
-  "/api/broker-execution/ibkr-portal/gateway/vnc.html" +
-  "?autoconnect=1&resize=scale" +
-  "&path=api%2Fbroker-execution%2Fibkr-portal%2Fgateway%2Fwebsockify";
+export const IBKR_PORTAL_CLIENT_MOUNT =
+  "/api/broker-execution/ibkr-portal/client";
 const TICKLE_INTERVAL_MS = 55_000;
+const LOGIN_MONITOR_INTERVAL_MS = 3_000;
+const LOGIN_MONITOR_TTL_MS = 6 * 60_000;
+
+// Readiness-refresh failures land on the same JSONL timeline as the login
+// proxy requests (.pyrus-runtime/ibkr-portal-proxy-trail.jsonl); a swallowed
+// status error here previously left a completed login looking like a silent
+// "needs_login" dead-end with no diagnosable trace.
+const READINESS_TRAIL_PATH = path.join(
+  findRepoRoot(),
+  ".pyrus-runtime",
+  "ibkr-portal-proxy-trail.jsonl",
+);
+function traceReadinessFailure(error: unknown): void {
+  appendFile(
+    READINESS_TRAIL_PATH,
+    JSON.stringify({
+      ts: new Date().toISOString(),
+      source: "readiness",
+      outcome: "status-error",
+      code: error instanceof HttpError ? error.code : undefined,
+      detail: error instanceof Error ? error.message : String(error),
+    }) + "\n",
+    () => undefined,
+  );
+}
 
 export type PortalConnectionStatus =
   | "unavailable"
@@ -41,6 +69,7 @@ export type PortalReadiness = {
 };
 
 const tickers = new Map<string, NodeJS.Timeout>();
+const loginMonitors = new Map<string, NodeJS.Timeout>();
 
 function clientFor(baseUrl: string): IbkrClient {
   const config: IbkrRuntimeConfig = {
@@ -53,7 +82,9 @@ function clientFor(baseUrl: string): IbkrClient {
     username: null,
     password: null,
     allowInsecureTls: true,
-    paperAccountOnly: true,
+    // Any IBKR account may connect through the Client Portal login (user
+    // decision 2026-07-10: not paper-only).
+    paperAccountOnly: false,
   };
   return new IbkrClient(config);
 }
@@ -77,6 +108,53 @@ function stopTickle(appUserId: string): void {
     clearInterval(timer);
     tickers.delete(appUserId);
   }
+}
+
+function stopLoginMonitor(appUserId: string): void {
+  const timer = loginMonitors.get(appUserId);
+  if (timer) clearTimeout(timer);
+  loginMonitors.delete(appUserId);
+}
+
+function startLoginMonitor(appUserId: string): void {
+  stopLoginMonitor(appUserId);
+  const expiresAt = Date.now() + LOGIN_MONITOR_TTL_MS;
+  const poll = async (): Promise<void> => {
+    if (!loginMonitors.has(appUserId)) return;
+    if (Date.now() >= expiresAt) {
+      stopLoginMonitor(appUserId);
+      revokeIbkrPortalEmbedSessions(appUserId);
+      await stopGateway(appUserId).catch(() => undefined);
+      return;
+    }
+    let readiness: PortalReadiness;
+    try {
+      readiness = await readPortalReadiness(appUserId);
+    } catch {
+      if (loginMonitors.has(appUserId)) {
+        const timer = setTimeout(poll, LOGIN_MONITOR_INTERVAL_MS);
+        timer.unref?.();
+        loginMonitors.set(appUserId, timer);
+      }
+      return;
+    }
+    if (!loginMonitors.has(appUserId)) return;
+    if (
+      readiness.status === "connected" ||
+      readiness.status === "disconnected" ||
+      readiness.status === "unavailable"
+    ) {
+      stopLoginMonitor(appUserId);
+      revokeIbkrPortalEmbedSessions(appUserId);
+      return;
+    }
+    const timer = setTimeout(poll, LOGIN_MONITOR_INTERVAL_MS);
+    timer.unref?.();
+    loginMonitors.set(appUserId, timer);
+  };
+  const timer = setTimeout(poll, LOGIN_MONITOR_INTERVAL_MS);
+  timer.unref?.();
+  loginMonitors.set(appUserId, timer);
 }
 
 function base(overrides: Partial<PortalReadiness>): PortalReadiness {
@@ -116,7 +194,6 @@ export async function readPortalReadiness(
     return base({
       status: "gateway_starting",
       gatewayRunning: true,
-      loginPath: IBKR_PORTAL_LOGIN_PATH,
       message: "Starting the IBKR gateway…",
     });
   }
@@ -128,14 +205,13 @@ export async function readPortalReadiness(
       return base({
         status: "competing",
         gatewayRunning: true,
-        loginPath: IBKR_PORTAL_LOGIN_PATH,
         message:
           "Another live IBKR session is competing. Re-login to take over this session.",
       });
     }
     if (status.authenticated) {
       if (!markGatewayPaperAccountVerified(appUserId)) {
-        throw new HttpError(503, "The IBKR paper session could not be verified.", {
+        throw new HttpError(503, "The IBKR session could not be verified.", {
           code: "ibkr_paper_session_verification_failed",
         });
       }
@@ -153,35 +229,14 @@ export async function readPortalReadiness(
     return base({
       status: "needs_login",
       gatewayRunning: true,
-      loginPath: IBKR_PORTAL_LOGIN_PATH,
       message: "Gateway is running. Log in to IBKR to finish connecting.",
     });
   } catch (error) {
     markGatewayPaperAccountVerified(appUserId, false);
-    if (
-      error instanceof HttpError &&
-      error.code === "ibkr_paper_account_required"
-    ) {
-      stopTickle(appUserId);
-      try {
-        await stopGateway(appUserId);
-      } catch {
-        return base({
-          status: "disconnected",
-          message:
-            "Broker access is blocked, but the hosted IBKR session could not be confirmed stopped. Contact support before reconnecting.",
-        });
-      }
-      return base({
-        status: "disconnected",
-        message:
-          "Only verified IBKR Paper Trading accounts are allowed. This session was closed; sign in with your separate Paper Trading username.",
-      });
-    }
+    traceReadinessFailure(error);
     return base({
       status: "needs_login",
       gatewayRunning: true,
-      loginPath: IBKR_PORTAL_LOGIN_PATH,
       message: "Gateway is running. Log in to IBKR to finish connecting.",
     });
   }
@@ -189,12 +244,16 @@ export async function readPortalReadiness(
 
 export async function connectPortal(
   appUserId: string,
-): Promise<{ loginPath: string; status: PortalConnectionStatus }> {
-  await ensureGateway(appUserId);
-  const readiness = await readPortalReadiness(appUserId);
+): Promise<{ status: PortalConnectionStatus }> {
+  const gateway = await ensureGateway(appUserId);
+  const status: PortalConnectionStatus =
+    gateway.status === "starting" ? "gateway_starting" : "needs_login";
+  // The login surface must not wait on /iserver/auth/status. A fresh CPG can
+  // take the full request timeout to answer before the browser has opened its
+  // login page; the background monitor performs the same paper-only check.
+  startLoginMonitor(appUserId);
   return {
-    loginPath: readiness.loginPath ?? IBKR_PORTAL_LOGIN_PATH,
-    status: readiness.status,
+    status,
   };
 }
 
@@ -207,7 +266,9 @@ export async function getPortalStatus(
 export async function disconnectPortal(
   appUserId: string,
 ): Promise<{ ok: true }> {
+  stopLoginMonitor(appUserId);
   stopTickle(appUserId);
+  revokeIbkrPortalEmbedSessions(appUserId);
   await stopGateway(appUserId);
   return { ok: true };
 }

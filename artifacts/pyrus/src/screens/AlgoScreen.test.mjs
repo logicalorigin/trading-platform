@@ -2,7 +2,10 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
-const source = readFileSync(new URL("./AlgoScreen.jsx", import.meta.url), "utf8");
+const source = readFileSync(
+  new URL("./AlgoScreen.jsx", import.meta.url),
+  "utf8",
+);
 const settingsRegionSource = readFileSync(
   new URL("./algo/AlgoSettingsRegion.jsx", import.meta.url),
   "utf8",
@@ -11,22 +14,30 @@ const settingsRegionSource = readFileSync(
 test("Algo readiness uses Massive market data instead of the retired IBKR bridge", () => {
   assert.match(
     source,
-    /const isMarketDataReadyForAlgo = \(session\) => Boolean\(session\?\.configured\?\.massive\);/,
+    /const isMarketDataReadyForAlgo = \(session\) =>\s*Boolean\(session\?\.configured\?\.massive\);/,
   );
-  assert.match(source, /const marketDataConfigured = Boolean\(session\?\.configured\?\.massive\);/);
-  assert.match(source, /const marketDataReady = isMarketDataReadyForAlgo\(session\);/);
-  assert.doesNotMatch(source, /isGatewayReadyForAlgo|hasGatewayLiveDataProof|bridgeRuntimeTone/);
+  assert.match(
+    source,
+    /const marketDataConfigured = Boolean\(session\?\.configured\?\.massive\);/,
+  );
+  assert.match(
+    source,
+    /const marketDataReady = isMarketDataReadyForAlgo\(session\);/,
+  );
+  assert.doesNotMatch(
+    source,
+    /isGatewayReadyForAlgo|hasGatewayLiveDataProof|bridgeRuntimeTone/,
+  );
 });
 
-test("Algo account-position placeholders cannot cross account tabs", () => {
-  assert.match(
-    source,
-    /const retainPreviousAccountData = \(accountId\) => \(previousData\) =>[\s\S]*?previousData\?\.accountId[\s\S]*?previousData[\s\S]*?undefined;/,
-  );
-  assert.match(
-    source,
-    /const signalOptionsLedgerPositionsQuery = useGetAccountPositions\([\s\S]*?placeholderData: retainPreviousAccountData\(algoPositionsAccountId\),/,
-  );
+test("Algo account positions do not substitute previous query data", () => {
+  const query = source.match(
+    /const signalOptionsLedgerPositionsQuery = useGetAccountPositions\([\s\S]*?\n  \);/,
+  )?.[0];
+
+  assert.ok(query, "Missing Algo account positions query");
+  assert.doesNotMatch(source, /retainPreviousAccountData/);
+  assert.doesNotMatch(query, /placeholderData/);
 });
 
 test("Algo account positions use the Accounts fast live-quote normalization", () => {
@@ -49,14 +60,17 @@ test("Algo shadow deployment creation is not blocked on IBKR account readiness",
   );
   assert.match(source, /marketDataAccountId: activeAccountId \|\| "shadow"/);
   assert.doesNotMatch(source, /No data account selected/);
-  assert.doesNotMatch(source, /The bridge is authenticated, but no IBKR data account is active yet\./);
+  assert.doesNotMatch(
+    source,
+    /The bridge is authenticated, but no IBKR data account is active yet\./,
+  );
 });
 
 test("Algo account tabs use the live brokerage account list", () => {
   assert.match(source, /accountTabsAccounts = accounts,/);
   assert.match(
     source,
-    /const positionAccounts = accountTabsAccounts\.length \? accountTabsAccounts : accounts;/,
+    /const positionAccounts =\s*accountTabsAccounts\.length\s*\?\s*accountTabsAccounts\s*:\s*accounts;/,
   );
   assert.match(
     source,
@@ -89,10 +103,7 @@ test("Algo STA row universe follows the Signal Matrix universe before deployment
     source,
     /const signalMonitorUniverseSymbols = Array\.isArray\(\s*signalMonitorState\?\.universeSymbols,/,
   );
-  assert.match(
-    source,
-    /const signalMatrixStateUniverseSymbols = useMemo\(/,
-  );
+  assert.match(source, /const signalMatrixStateUniverseSymbols = useMemo\(/);
   assert.match(
     source,
     /const staSignalUniverseSymbols = signalMonitorUniverseSymbols\.length\s*\?\s*signalMonitorUniverseSymbols\s*:\s*signalMatrixStateUniverseSymbols\.length\s*\?\s*signalMatrixStateUniverseSymbols\s*:\s*focusedDeployment\?\.symbolUniverse \|\| \[\];/,
@@ -103,7 +114,10 @@ test("Algo STA row universe follows the Signal Matrix universe before deployment
 test("Algo settings save mutations fail fast instead of spinning indefinitely", () => {
   assert.match(source, /const ALGO_SETTINGS_SAVE_TIMEOUT_MS = 25_000;/);
   assert.match(source, /const ALGO_SETTINGS_SAVE_STREAM_DRAIN_MS = 300;/);
-  assert.match(source, /const ALGO_SETTINGS_SAVE_PAUSE_TTL_MS =\s*ALGO_SETTINGS_SAVE_TIMEOUT_MS \+ ALGO_SETTINGS_SAVE_STREAM_DRAIN_MS \+ 5_000;/);
+  assert.match(
+    source,
+    /const ALGO_SETTINGS_SAVE_PAUSE_TTL_MS =\s*ALGO_SETTINGS_SAVE_TIMEOUT_MS \+ ALGO_SETTINGS_SAVE_STREAM_DRAIN_MS \+ 5_000;/,
+  );
   assert.doesNotMatch(source, /ALGO_SETTINGS_SAVE_API_BASE_URL/);
   assert.doesNotMatch(source, /VITE_PROXY_API_TARGET/);
   assert.match(
@@ -132,9 +146,15 @@ test("Algo settings save frees live stream connection slots before mutating", ()
   assert.match(source, /getListAlgoDeploymentsQueryKey/);
   assert.match(source, /getListExecutionEventsQueryKey/);
   assert.match(source, /getGetAccountPositionsQueryKey\("shadow"\)/);
-  assert.match(source, /getGetSignalOptionsAutomationStateQueryKey\(deploymentId\)/);
+  assert.match(
+    source,
+    /getGetSignalOptionsAutomationStateQueryKey\(deploymentId\)/,
+  );
   assert.match(source, /getGetAlgoDeploymentCockpitQueryKey\(deploymentId\)/);
-  assert.match(source, /getGetSignalOptionsPerformanceQueryKey\(deploymentId\)/);
+  assert.match(
+    source,
+    /getGetSignalOptionsPerformanceQueryKey\(deploymentId\)/,
+  );
   assert.match(
     source,
     /void queryClient\.cancelQueries\(\{\s*queryKey: getListSignalMonitorEventsQueryKey\(\),\s*\}\);/,
@@ -146,52 +166,12 @@ test("Algo settings save frees live stream connection slots before mutating", ()
   assert.match(source, /releaseConnectionPause\(\);/);
 });
 
-test("Expanded Limits APPLY shares the algo save-drain disabled gate", () => {
-  const regionDisabledExpression = settingsRegionSource.match(
-    /const disabled =\s*!focusedDeployment \|\|\s*!controlBaselineReady \|\|\s*saveInProgress \|\|\s*updateProfileMutation\?\.isPending \|\|\s*updateStrategySettingsMutation\?\.isPending;/u,
-  )?.[0];
-  assert.ok(regionDisabledExpression, "region disabled expression should include saveInProgress");
-
-  const expandedLimitsRender = settingsRegionSource.match(
-    /<ExpandedLimitsSection[\s\S]*?\/>/u,
-  )?.[0];
-  assert.ok(expandedLimitsRender, "ExpandedLimitsSection render should exist");
-  assert.match(expandedLimitsRender, /disabled=\{disabled\}/);
-  assert.doesNotMatch(expandedLimitsRender, /disabled=\{!focusedDeployment\}/);
-
-  const expandedLimitsApply = settingsRegionSource.match(
-    /data-testid="signal-options-expanded-capacity"[\s\S]*?>\s*APPLY/u,
-  )?.[0];
-  assert.ok(expandedLimitsApply, "Expanded Limits APPLY button should exist");
-  assert.match(expandedLimitsApply, /disabled=\{disabled \|\| updateProfileMutation\?\.isPending\}/);
-
-  const settingsDisabled = ({
-    focusedDeployment,
-    controlBaselineReady = true,
-    saveInProgress = false,
-    profilePending = false,
-    strategyPending = false,
-  }) =>
-    !focusedDeployment ||
-    !controlBaselineReady ||
-    saveInProgress ||
-    profilePending ||
-    strategyPending;
-
-  assert.equal(
-    settingsDisabled({
-      focusedDeployment: { id: "deployment-1" },
-      saveInProgress: true,
-    }),
-    true,
-  );
-  assert.equal(
-    settingsDisabled({
-      focusedDeployment: { id: "deployment-1" },
-      saveInProgress: false,
-    }),
-    false,
-  );
+test("Algo settings omit the retired Expanded Limits preset surface", () => {
+  assert.doesNotMatch(settingsRegionSource, /Expanded Limits/);
+  assert.doesNotMatch(settingsRegionSource, /signal-options-expanded-capacity/);
+  assert.doesNotMatch(settingsRegionSource, /ExpandedLimitsSection/);
+  assert.doesNotMatch(source, /handleApplyExpandedCapacity/);
+  assert.doesNotMatch(source, /buildExpandedSignalOptionsProfile/);
 });
 
 test("Algo settings save avoids the full performance refresh lane", () => {
@@ -205,18 +185,50 @@ test("Algo settings save avoids the full performance refresh lane", () => {
   assert.match(profileSaveSuccess, /includeSignalOptionsPerformance: false,/);
 
   const strategySaveSuccess = source.match(
-    /const updateStrategySettingsMutation = useUpdateAlgoDeploymentStrategySettings\([\s\S]*?const createDeploymentMutation =/u,
+    /const updateStrategySettingsMutation =\s*useUpdateAlgoDeploymentStrategySettings\([\s\S]*?const createDeploymentMutation =/u,
   )?.[0];
   assert.ok(strategySaveSuccess, "strategy save mutation block should exist");
   assert.match(strategySaveSuccess, /includeSignalOptionsPerformance: false,/);
 });
 
-test("Algo deployments query retains previous data through refetches", () => {
+test("Algo deployments query does not substitute previous data through refetches", () => {
   const deploymentsQueryBlock = source.match(
     /const deploymentsQuery = useListAlgoDeployments\([\s\S]*?\n  \);/u,
   )?.[0];
   assert.ok(deploymentsQueryBlock, "deployments query block should exist");
-  assert.match(deploymentsQueryBlock, /placeholderData: retainPreviousData,/);
+  assert.doesNotMatch(deploymentsQueryBlock, /placeholderData/);
+  assert.doesNotMatch(source, /isPlaceholderData/);
+});
+
+test("Algo does not render TanStack-retained payloads after a refetch error", () => {
+  assert.match(
+    source,
+    /const deploymentsResponse = deploymentsQuery\.isError\s*\? null\s*:\s*deploymentsQuery\.data;/,
+  );
+  assert.match(
+    source,
+    /const draftsResponse = draftsQuery\.isError \? null : draftsQuery\.data;/,
+  );
+  assert.match(
+    source,
+    /const eventsResponse = eventsQuery\.isError \? null : eventsQuery\.data;/,
+  );
+  assert.match(
+    source,
+    /const cockpit = cockpitQuery\.isError \? null : cockpitQuery\.data \|\| null;/,
+  );
+  assert.match(
+    source,
+    /signalOptionsPerformanceQuery\.isError\s*\? null\s*:\s*signalOptionsPerformanceQuery\.data \|\| null/,
+  );
+  assert.match(
+    source,
+    /signalOptionsStateQuery\.isError\s*\? null\s*:\s*signalOptionsStateQuery\.data \|\| null/,
+  );
+  assert.match(
+    source,
+    /signalOptionsLedgerPositionsQuery\.isError\s*\? \{ \.\.\.signalOptionsLedgerPositionsQuery, data: undefined \}/,
+  );
 });
 
 test("Algo settings all-save reconciles drafts from mutation payloads", () => {
@@ -252,8 +264,5 @@ test("Algo settings save helper is not lazy-loaded at click time", () => {
     source,
     /import \{[\s\S]*?\bsaveAllAlgoAdjustments\b[\s\S]*?\} from "\.\/algo\/saveAllAlgoAdjustments";/,
   );
-  assert.doesNotMatch(
-    source,
-    /import\("\.\/algo\/saveAllAlgoAdjustments"\)/,
-  );
+  assert.doesNotMatch(source, /import\("\.\/algo\/saveAllAlgoAdjustments"\)/);
 });

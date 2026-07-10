@@ -36,7 +36,7 @@ import { HttpError } from "../lib/errors";
 import { logger } from "../lib/logger";
 import {
   createTransientPostgresBackoff,
-  isPoolContentionError,
+  isStatementTimeoutError,
   isTransientPostgresError,
 } from "../lib/transient-db-error";
 import { normalizeSymbol, toIsoDateString } from "../lib/values";
@@ -83,6 +83,8 @@ import {
   isOpenBrokerPosition,
   positionAveragePrice,
   positionMarketPrice,
+  positionPnlBasis,
+  positionPnlPercent,
   positionReferenceSymbol,
   positionSignedNotional,
   POSITION_QUANTITY_EPSILON,
@@ -163,7 +165,7 @@ import {
   readOptionQuoteDemandState,
   releaseOptionQuoteDemand,
 } from "./option-quote-demand-coordinator";
-import { fetchBridgeOptionQuoteSnapshots } from "./bridge-option-quote-stream";
+import { fetchMassiveOptionQuoteSnapshots } from "./massive-option-quote-stream";
 import { releaseMarketDataLeases } from "./market-data-admission";
 import {
   buildSnapTradeAccountPortfolioTotals,
@@ -198,10 +200,8 @@ const ACCOUNT_POSITION_MARKET_DATA_TTL_MS = null;
 const ACCOUNT_MONITOR_EQUITY_QUOTE_TTL_MS = ACCOUNT_POSITION_MARKET_DATA_TTL_MS;
 const ACCOUNT_PAGE_SHARED_LIVE_READ_CACHE_TTL_MS = 2_000;
 const ACCOUNT_LIST_RESPONSE_CACHE_TTL_MS = 5_000;
-const ACCOUNT_LIST_RESPONSE_STALE_TTL_MS = 60_000;
 const ACCOUNT_ROUTE_EQUITY_HISTORY_RESPONSE_CACHE_TTL_MS = 30_000;
 const ACCOUNT_ROUTE_DERIVED_RESPONSE_CACHE_TTL_MS = 60_000;
-const ACCOUNT_ROUTE_RESPONSE_STALE_TTL_MS = 5 * 60_000;
 const ACCOUNT_ROUTE_CLOSED_TRADES_RESPONSE_CACHE_TTL_MS =
   ACCOUNT_PAGE_SHARED_LIVE_READ_CACHE_TTL_MS;
 const ACCOUNT_POSITION_OPEN_DATE_CACHE_TTL_MS = 30_000;
@@ -270,7 +270,7 @@ type AccountUniverse = {
   isCombined: boolean;
   accounts: BrokerAccountSnapshot[];
   primaryCurrency: string;
-  source: "live" | "snaptrade" | "robinhood" | "broker" | "flex";
+  source: "live" | "snaptrade" | "robinhood" | "broker";
   latestSnapshotAt: Date | null;
   staleReason: string | null;
 };
@@ -389,7 +389,6 @@ type AccountRouteResponseCacheEntry<T> = {
   value: T | null;
   hasValue: boolean;
   expiresAt: number;
-  staleExpiresAt: number;
 };
 
 type AccountPositionTotalsInput = {
@@ -412,7 +411,6 @@ type OptionChainCacheEntry = {
 const snapshotWriteTimestamps = new Map<string, number>();
 const snapshotProviderTimestamps = new Map<string, number>();
 const accountSnapshotPersistenceBackoff = createTransientPostgresBackoff();
-const accountSnapshotReadBackoff = createTransientPostgresBackoff();
 const liveAccountUniverseReadCache = new Map<
   string,
   ShortLivedAccountCacheEntry<AccountUniverse>
@@ -464,18 +462,16 @@ const snapTradeAccountBalanceCache = new Map<
 >();
 const snapTradeAccountBalanceInflight = new Map<
   string,
-  Promise<SnapTradeAccountBalanceValues | null>
+  Promise<SnapTradeAccountBalanceValues>
 >();
-const snapTradeAccountBalanceErrorLogSuppressedUntil = new Map<string, number>();
 const robinhoodAccountBalanceCache = new Map<
   string,
   { value: RobinhoodAccountBalanceValues; expiresAt: number }
 >();
 const robinhoodAccountBalanceInflight = new Map<
   string,
-  Promise<RobinhoodAccountBalanceValues | null>
+  Promise<RobinhoodAccountBalanceValues>
 >();
-const robinhoodAccountBalanceErrorLogSuppressedUntil = new Map<string, number>();
 
 function readShortLivedAccountCache<T>(
   cache: Map<string, ShortLivedAccountCacheEntry<T>>,
@@ -536,11 +532,10 @@ function readAccountRouteResponseCache<T>(
   input: Record<string, unknown>,
   factory: () => Promise<T>,
   ttlMs: number,
-  staleTtlMs = ACCOUNT_ROUTE_RESPONSE_STALE_TTL_MS,
 ): Promise<T> {
   const now = Date.now();
   for (const [entryKey, entry] of accountRouteResponseCache.entries()) {
-    if (!entry.promise && entry.staleExpiresAt <= now) {
+    if (!entry.promise && entry.expiresAt <= now) {
       accountRouteResponseCache.delete(entryKey);
     }
   }
@@ -553,9 +548,6 @@ function readAccountRouteResponseCache<T>(
     return Promise.resolve(cached.value as T);
   }
   if (cached?.promise) {
-    if (cached.hasValue && cached.staleExpiresAt > now) {
-      return Promise.resolve(cached.value as T);
-    }
     return cached.promise;
   }
 
@@ -564,7 +556,6 @@ function readAccountRouteResponseCache<T>(
     value: null,
     hasValue: false,
     expiresAt: 0,
-    staleExpiresAt: 0,
   };
   const request = Promise.resolve().then(factory).then(
     (value) => {
@@ -573,19 +564,11 @@ function readAccountRouteResponseCache<T>(
       entry.hasValue = true;
       const cachedAt = Date.now();
       entry.expiresAt = cachedAt + ttlMs;
-      entry.staleExpiresAt = cachedAt + Math.max(ttlMs, staleTtlMs);
       accountRouteResponseCache.set(cacheKey, entry);
       return value;
     },
     (error) => {
       entry.promise = null;
-      if (entry.hasValue && entry.staleExpiresAt > Date.now()) {
-        logger.debug?.(
-          { err: error, route, cacheKey },
-          "Account route background refresh failed; serving stale cached response",
-        );
-        return entry.value as T;
-      }
       if (accountRouteResponseCache.get(cacheKey) === entry) {
         accountRouteResponseCache.delete(cacheKey);
       }
@@ -594,17 +577,8 @@ function readAccountRouteResponseCache<T>(
   );
   entry.promise = request;
   accountRouteResponseCache.set(cacheKey, entry);
-  if (entry.hasValue && entry.staleExpiresAt > now) {
-    void request.catch(() => {
-      // The refresh is observed above; this catch prevents background refresh
-      // failures from surfacing as unhandled rejections when serving stale.
-    });
-    return Promise.resolve(entry.value as T);
-  }
   return request;
 }
-const accountPositionLotsReadBackoff = createTransientPostgresBackoff();
-const optionalAccountSchemaReadBackoff = createTransientPostgresBackoff();
 const optionGreekChainCache = new Map<string, OptionChainCacheEntry>();
 
 function snapshotAccountCacheKey(
@@ -754,64 +728,32 @@ async function resolveAccountSummaryReturnMetrics(input: {
   mode: RuntimeMode;
   source?: string | null;
 }) {
-  const summarizeRange = async (range: AccountRange) => {
-    try {
-      const history = await getAccountEquityHistory({
-        accountId: input.accountId,
-        appUserId: input.appUserId,
-        range,
-        mode: input.mode,
-        source: input.source,
-      });
-      return calculateTransferAdjustedReturnSummary(
-        history.points.map((point) => ({
-          netLiquidation: point.netLiquidation,
-          deposits: point.deposits,
-          withdrawals: point.withdrawals,
-        })),
-      );
-    } catch (error) {
-      logger.debug?.(
-        { err: error, accountId: input.accountId, range },
-        "Account summary return metrics unavailable",
-      );
-      return null;
-    }
-  };
-  const readRange = async (range: AccountRange) => {
-    try {
-      return await getAccountEquityHistory({
-        accountId: input.accountId,
-        appUserId: input.appUserId,
-        range,
-        mode: input.mode,
-        source: input.source,
-      });
-    } catch (error) {
-      logger.debug?.(
-        { err: error, accountId: input.accountId, range },
-        "Account summary equity history unavailable",
-      );
-      return null;
-    }
-  };
+  const readRange = (range: AccountRange) =>
+    getAccountEquityHistory({
+      accountId: input.accountId,
+      appUserId: input.appUserId,
+      range,
+      mode: input.mode,
+      source: input.source,
+    });
 
-  const [allTime, intradayHistory] = await Promise.all([
-    summarizeRange("ALL"),
+  const [allTimeHistory, intradayHistory] = await Promise.all([
+    readRange("ALL"),
     readRange("1D"),
   ]);
-  const intraday = intradayHistory
-    ? calculateTransferAdjustedReturnSummary(
-        intradayHistory.points.map((point) => ({
-          netLiquidation: point.netLiquidation,
-          deposits: point.deposits,
-          withdrawals: point.withdrawals,
-        })),
-      )
-    : null;
-  const dayPnl = intradayHistory
-    ? calculateLatestMarketDayPnlFromHistory(intradayHistory.points)
-    : null;
+  const summarize = (history: typeof allTimeHistory) =>
+    calculateTransferAdjustedReturnSummary(
+      history.points.map((point) => ({
+        netLiquidation: point.netLiquidation,
+        deposits: point.deposits,
+        withdrawals: point.withdrawals,
+      })),
+    );
+  const allTime = summarize(allTimeHistory);
+  const intraday = summarize(intradayHistory);
+  const dayPnl = calculateLatestMarketDayPnlFromHistory(
+    intradayHistory.points,
+  );
 
   return {
     totalPnl: allTime?.cumulativePnl ?? null,
@@ -919,7 +861,7 @@ function recordMissingAccountSchemaTables(
       missingTables: newlyMissing,
       err: error,
     },
-    "Account/FLEX storage tables are missing; using degraded live-only fallbacks",
+    "Account/FLEX optional storage tables are missing; affected history fields are unavailable",
   );
 }
 
@@ -1002,125 +944,78 @@ async function getOptionalAccountSchemaReadiness(
   return accountSchemaReadinessPromise;
 }
 
-async function withOptionalAccountSchemaFallback<T>(input: {
+function createAccountDbUnavailableError(error?: unknown): HttpError {
+  return new HttpError(503, "Account data is temporarily unavailable.", {
+    code: "account_db_unavailable",
+    detail:
+      "Account database reads are timing out or disconnected. Retry after Postgres connectivity recovers.",
+    expose: true,
+    ...(error === undefined ? {} : { cause: error }),
+  });
+}
+
+function isAccountDbReadUnavailableError(error: unknown): boolean {
+  return (
+    isTransientPostgresError(error) ||
+    isStatementTimeoutError(error) ||
+    isMissingRelationError(error)
+  );
+}
+
+async function withAccountDbRead<T>(run: () => Promise<T>): Promise<T> {
+  try {
+    return await run();
+  } catch (error) {
+    if (isAccountDbReadUnavailableError(error)) {
+      throw createAccountDbUnavailableError(error);
+    }
+    throw error;
+  }
+}
+
+async function withOptionalAccountSchema<T>(input: {
   tables: readonly OptionalAccountSchemaTable[];
-  fallback: () => T;
+  whenMissing: () => T;
   run: () => Promise<T>;
 }): Promise<T> {
-  const now = Date.now();
-  if (optionalAccountSchemaReadBackoff.isActive(now)) {
-    return input.fallback();
-  }
-
   const readiness = await getOptionalAccountSchemaReadiness();
   if (readiness.schemaError) {
-    return input.fallback();
+    throw createAccountDbUnavailableError();
   }
 
   const knownMissingTables = input.tables.filter((tableName) =>
     readiness.missingTables.includes(tableName),
   );
   if (knownMissingTables.length) {
-    return input.fallback();
+    return input.whenMissing();
   }
 
   try {
-    const result = await input.run();
-    optionalAccountSchemaReadBackoff.clear();
-    return result;
+    return await input.run();
   } catch (error) {
     if (isMissingRelationError(error)) {
       const missingTable = extractMissingRelationName(error);
       if (!missingTable || !input.tables.includes(missingTable)) {
-        throw error;
+        throw createAccountDbUnavailableError(error);
       }
       markAccountSchemaTablesMissing([missingTable], error);
-      return input.fallback();
+      return input.whenMissing();
     }
-    if (isTransientPostgresError(error)) {
-      // Pool-acquire timeouts are momentary pool saturation, not a DB outage; do
-      // not arm the lockout (next read retries). Still serve the fallback.
-      if (!isPoolContentionError(error)) {
-        optionalAccountSchemaReadBackoff.markFailure({
-          error,
-          logger,
-          message:
-            "Account optional history database unavailable; using live-only account fallbacks",
-          nowMs: Date.now(),
-        });
-      }
-      return input.fallback();
+    if (
+      isTransientPostgresError(error) ||
+      isStatementTimeoutError(error)
+    ) {
+      throw createAccountDbUnavailableError(error);
     }
     throw error;
   }
 }
 
-async function withAccountSnapshotReadFallback<T>(input: {
-  fallback: () => T;
-  message: string;
-  run: () => Promise<T>;
-}): Promise<T> {
-  const now = Date.now();
-  if (accountSnapshotReadBackoff.isActive(now)) {
-    return input.fallback();
-  }
-
-  try {
-    const result = await input.run();
-    accountSnapshotReadBackoff.clear();
-    return result;
-  } catch (error) {
-    if (!isTransientPostgresError(error)) {
-      throw error;
-    }
-    if (!isPoolContentionError(error)) {
-      accountSnapshotReadBackoff.markFailure({
-        error,
-        logger,
-        message: input.message,
-        nowMs: Date.now(),
-      });
-    }
-    return input.fallback();
-  }
-}
-
-async function withAccountPositionLotsReadFallback<T>(input: {
-  backoff?: ReturnType<typeof createTransientPostgresBackoff>;
-  fallback: () => T;
-  logger?: { warn: (payload: unknown, message: string) => void };
-  nowMs?: () => number;
-  run: () => Promise<T>;
-}): Promise<T> {
-  const backoff = input.backoff ?? accountPositionLotsReadBackoff;
-  const now = input.nowMs?.() ?? Date.now();
-  if (backoff.isActive(now)) {
-    return input.fallback();
-  }
-
-  try {
-    const result = await input.run();
-    backoff.clear();
-    return result;
-  } catch (error) {
-    if (!isTransientPostgresError(error)) {
-      throw error;
-    }
-    if (!isPoolContentionError(error)) {
-      backoff.markFailure({
-        error,
-        logger: input.logger ?? logger,
-        message:
-          "Account position lots database unavailable; returning live positions without lots",
-        nowMs: now,
-      });
-    }
-    return input.fallback();
-  }
-}
-
 async function ensureFlexStorageTablesAvailable(): Promise<void> {
   const readiness = await getOptionalAccountSchemaReadiness();
+  if (readiness.schemaError) {
+    throw createAccountDbUnavailableError();
+  }
   const missingTables = FLEX_STORAGE_REQUIRED_TABLES.filter((tableName) =>
     readiness.missingTables.includes(tableName),
   );
@@ -1308,13 +1203,6 @@ function buildAccountPositionTotals(input: AccountPositionTotalsInput) {
   };
 }
 
-async function emptyPersistedBackedAccounts(): Promise<{
-  accounts: BrokerAccountSnapshot[];
-  latestSnapshotAt: Date | null;
-}> {
-  return { accounts: [], latestSnapshotAt: null };
-}
-
 function liveAccountUniverseCacheKey(
   accountId: string,
   mode: RuntimeMode,
@@ -1355,11 +1243,11 @@ async function readLiveAccountUniverseUncached(
 ): Promise<AccountUniverse> {
   const appUserId =
     options.appUserId === undefined ? getCurrentAppUserId() : options.appUserId;
-  let liveReadFailed = false;
+  let liveReadError: unknown = null;
   const accounts = await (options.listLiveAccounts ?? listIbkrAccounts)(
     mode,
-  ).catch(() => {
-    liveReadFailed = true;
+  ).catch((error) => {
+    liveReadError = error;
     return [] as BrokerAccountSnapshot[];
   });
   const requestedAccountId = accountId || COMBINED_ACCOUNT_ID;
@@ -1373,9 +1261,12 @@ async function readLiveAccountUniverseUncached(
       mode,
       appUserId,
     ).catch((error) => {
+      if (isAccountDbReadUnavailableError(error)) {
+        throw createAccountDbUnavailableError(error);
+      }
       logger.warn(
         { err: error },
-        "SnapTrade account detail resolution failed; continuing account fallback waterfall",
+        "SnapTrade account detail resolution failed; omitting unavailable provider",
       );
       return [] as BrokerAccountSnapshot[];
     })),
@@ -1383,9 +1274,12 @@ async function readLiveAccountUniverseUncached(
       mode,
       appUserId,
     ).catch((error) => {
+      if (isAccountDbReadUnavailableError(error)) {
+        throw createAccountDbUnavailableError(error);
+      }
       logger.warn(
         { err: error },
-        "Robinhood account detail resolution failed; continuing account fallback waterfall",
+        "Robinhood account detail resolution failed; omitting unavailable provider",
       );
       return [] as BrokerAccountSnapshot[];
     })),
@@ -1438,31 +1332,12 @@ async function readLiveAccountUniverseUncached(
         primaryCurrency: currencyOf(selectedProviderBackedAccounts),
         source,
         latestSnapshotAt: latestTimestampOf(selectedProviderBackedAccounts),
-        staleReason: liveReadFailed
-          ? "ibkr_unavailable_using_provider_accounts"
-          : "ibkr_accounts_empty_using_provider_accounts",
+        staleReason: null,
       };
     }
 
-    const flexAccounts = await getFlexBackedAccounts(
-      requestedAccountId,
-      mode,
-      appUserId,
-    );
-    if (flexAccounts.length) {
-      return {
-        appUserId,
-        requestedAccountId,
-        accountIds: flexAccounts.map((account) => account.id),
-        isCombined,
-        accounts: flexAccounts,
-        primaryCurrency: currencyOf(flexAccounts),
-        source: "flex",
-        latestSnapshotAt: null,
-        staleReason: liveReadFailed
-          ? "ibkr_unavailable_using_flex_history"
-          : "ibkr_accounts_empty_using_flex_history",
-      };
+    if (liveReadError) {
+      throw liveReadError;
     }
 
     throw new HttpError(404, `Account "${requestedAccountId}" was not found.`, {
@@ -1482,79 +1357,6 @@ async function readLiveAccountUniverseUncached(
     latestSnapshotAt: null,
     staleReason: null,
   };
-}
-
-async function getFlexBackedAccounts(
-  requestedAccountId: string,
-  mode: RuntimeMode,
-  appUserId: string | null,
-): Promise<BrokerAccountSnapshot[]> {
-  if (!appUserId) {
-    return [];
-  }
-  const navRows = await withOptionalAccountSchemaFallback({
-    tables: ["flex_nav_history"],
-    fallback: () => [],
-    run: async () =>
-      db
-        .select({
-          providerAccountId: flexNavHistoryTable.providerAccountId,
-          currency: flexNavHistoryTable.currency,
-          statementDate: flexNavHistoryTable.statementDate,
-          netAssetValue: flexNavHistoryTable.netAssetValue,
-        })
-        .from(flexNavHistoryTable)
-        .where(
-          flexProviderAccountOwnershipCondition(
-            flexNavHistoryTable.providerAccountId,
-            appUserId,
-            mode,
-          ),
-        )
-        .orderBy(desc(flexNavHistoryTable.statementDate))
-        .limit(250),
-  });
-
-  const latestByAccount = new Map();
-  navRows.forEach((row) => {
-    if (
-      requestedAccountId !== COMBINED_ACCOUNT_ID &&
-      row.providerAccountId !== requestedAccountId
-    ) {
-      return;
-    }
-    if (!latestByAccount.has(row.providerAccountId)) {
-      latestByAccount.set(row.providerAccountId, row);
-    }
-  });
-
-  return Array.from(latestByAccount.values()).map((row) => ({
-    id: row.providerAccountId,
-    providerAccountId: row.providerAccountId,
-    provider: "ibkr",
-    mode,
-    displayName: `IBKR ${row.providerAccountId}`,
-    currency: row.currency,
-    buyingPower: 0,
-    cash: 0,
-    netLiquidation: toNumber(row.netAssetValue) ?? 0,
-    accountType: inferAccountType(row.providerAccountId),
-    totalCashValue: null,
-    settledCash: null,
-    accruedCash: null,
-    initialMargin: null,
-    maintenanceMargin: null,
-    excessLiquidity: null,
-    cushion: null,
-    sma: null,
-    dayTradingBuyingPower: null,
-    regTInitialMargin: null,
-    grossPositionValue: null,
-    leverage: null,
-    dayTradesRemaining: null,
-    isPatternDayTrader: null,
-    updatedAt: dateFromDateOnly(row.statementDate),
-  }));
 }
 
 function accountUniverseReadCacheKey(
@@ -1775,14 +1577,6 @@ export async function getAccountPositionVisibilityProbe(input: {
 
 type AccountUniverseOrderResult = {
   orders: BrokerOrderSnapshot[];
-  degraded?: boolean;
-  reason?: string;
-  stale?: boolean;
-  debug?: {
-    message: string;
-    code: string;
-    timeoutMs?: number;
-  };
 };
 
 async function listOrdersForUniverse(
@@ -1818,16 +1612,8 @@ async function readOrdersForUniverseUncached(
       listOrders({ accountId: account.id, mode }),
     ),
   );
-  const degraded = results.some((result) => result.degraded);
-  const firstDegraded = results.find((result) => result.degraded);
   return {
     orders: results.flatMap((result) => result.orders),
-    degraded: degraded || undefined,
-    reason: firstDegraded?.reason,
-    stale: degraded
-      ? results.some((result) => result.stale === true)
-      : undefined,
-    debug: firstDegraded?.debug,
   };
 }
 
@@ -2323,7 +2109,7 @@ async function fetchOptionQuoteSnapshotsForPositions(
           const demandProviderContractIdsForUnderlying = Array.from(
             new Set(underlyingProviderContractIds.demandProviderContractIds),
           );
-          return fetchBridgeOptionQuoteSnapshots({
+          return fetchMassiveOptionQuoteSnapshots({
             underlying,
             providerContractIds: demandProviderContractIdsForUnderlying,
             owner: `${ownerForUnderlying}:snapshot`,
@@ -2978,9 +2764,9 @@ async function fetchFlexOpenDatesForPositions(
     return new Map();
   }
 
-  const rows = await withOptionalAccountSchemaFallback({
+  const rows = await withOptionalAccountSchema({
     tables: ["flex_open_positions"],
-    fallback: () => [] as FlexOpenPositionRecord[],
+    whenMissing: () => [] as FlexOpenPositionRecord[],
     run: async () =>
       db
         .select()
@@ -4574,17 +4360,8 @@ export async function recordAccountSnapshots(
 type ListAccountsOptions = {
   appUserId?: string | null;
   listLiveAccounts?: (mode: RuntimeMode) => Promise<BrokerAccountSnapshot[]>;
-  getPersistedAccounts?: (
-    requestedAccountId: string,
-    mode: RuntimeMode,
-  ) => Promise<{
-    accounts: BrokerAccountSnapshot[];
-    latestSnapshotAt: Date | null;
-  }>;
-  getFlexAccounts?: (
-    requestedAccountId: string,
-    mode: RuntimeMode,
-    appUserId: string | null,
+  hydrateDayPnl?: (
+    accounts: BrokerAccountSnapshot[],
   ) => Promise<BrokerAccountSnapshot[]>;
   recordSnapshots?: (accounts: BrokerAccountSnapshot[]) => Promise<void>;
   getSnapTradeAccounts?: (
@@ -4614,15 +4391,20 @@ type RobinhoodAccountBalanceValues = {
   currency: string;
 };
 
-// A zero-filled SnapTrade snapshot paired with the app user that owns it, so the
-// live portfolio balance fetch can be user-scoped.
+type BackedAccountIdentity = Omit<
+  BrokerAccountSnapshot,
+  "buyingPower" | "cash" | "netLiquidation"
+>;
+
+// A persisted SnapTrade account identity paired with its owning app user so the
+// required live portfolio balance fetch can be user-scoped.
 type SnapTradeAccountRecord = {
-  snapshot: BrokerAccountSnapshot;
+  snapshot: BackedAccountIdentity;
   appUserId: string | null;
 };
 
 type RobinhoodAccountRecord = {
-  snapshot: BrokerAccountSnapshot;
+  snapshot: BackedAccountIdentity;
   appUserId: string | null;
 };
 
@@ -4694,8 +4476,8 @@ async function withAccountListDayPnl(
     return accounts;
   }
 
-  try {
-    const snapshotRows = await db
+  const snapshotRows = await withAccountDbRead(() =>
+    db
       .select({
         localAccountId: brokerAccountsTable.id,
         providerAccountId: brokerAccountsTable.providerAccountId,
@@ -4709,55 +4491,49 @@ async function withAccountListDayPnl(
       )
       .where(condition)
       .orderBy(desc(balanceSnapshotsTable.asOf))
-      .limit(Math.max(200, accounts.length * 20));
+      .limit(Math.max(200, accounts.length * 20)),
+  );
 
-    const rowsByKey = new Map<
-      string,
-      Array<{ asOf: Date; netLiquidation: number }>
-    >();
-    for (const row of snapshotRows) {
-      const netLiquidation = toNumber(row.netLiquidation);
-      if (netLiquidation == null) continue;
-      for (const key of [row.localAccountId, row.providerAccountId]) {
-        const bucket = rowsByKey.get(key) ?? [];
-        bucket.push({ asOf: row.asOf, netLiquidation });
-        rowsByKey.set(key, bucket);
-      }
+  const rowsByKey = new Map<
+    string,
+    Array<{ asOf: Date; netLiquidation: number }>
+  >();
+  for (const row of snapshotRows) {
+    const netLiquidation = toNumber(row.netLiquidation);
+    if (netLiquidation == null) continue;
+    for (const key of [row.localAccountId, row.providerAccountId]) {
+      const bucket = rowsByKey.get(key) ?? [];
+      bucket.push({ asOf: row.asOf, netLiquidation });
+      rowsByKey.set(key, bucket);
     }
+  }
 
-    return accounts.map((account) => {
-      const currentNav = toNumber(account.netLiquidation);
-      const marketDate = accountMarketDateKey(account.updatedAt) ?? accountMarketDateKey(new Date());
-      const rows =
-        accountListSnapshotKeys(account)
-          .map((key) => rowsByKey.get(key) ?? [])
-          .find((bucket) => bucket.length > 0) ?? [];
-      const baseline = marketDate
-        ? rows.find((row) => accountMarketDateKey(row.asOf) !== marketDate)
-        : null;
-      if (currentNav == null || !baseline) {
-        return {
-          ...account,
-          dayPnl: null,
-          dayPnlPercent: null,
-        };
-      }
-      const dayPnl = currentNav - baseline.netLiquidation;
+  return accounts.map((account) => {
+    const currentNav = toNumber(account.netLiquidation);
+    const marketDate = accountMarketDateKey(account.updatedAt) ?? accountMarketDateKey(new Date());
+    const rows =
+      accountListSnapshotKeys(account)
+        .map((key) => rowsByKey.get(key) ?? [])
+        .find((bucket) => bucket.length > 0) ?? [];
+    const baseline = marketDate
+      ? rows.find((row) => accountMarketDateKey(row.asOf) !== marketDate)
+      : null;
+    if (currentNav == null || !baseline) {
       return {
         ...account,
-        dayPnl,
-        dayPnlPercent: baseline.netLiquidation
-          ? (dayPnl / Math.abs(baseline.netLiquidation)) * 100
-          : null,
+        dayPnl: null,
+        dayPnlPercent: null,
       };
-    });
-  } catch (error) {
-    logger.warn(
-      { err: error },
-      "Account list day P&L hydration failed; returning accounts without tab day P&L",
-    );
-    return accounts;
-  }
+    }
+    const dayPnl = currentNav - baseline.netLiquidation;
+    return {
+      ...account,
+      dayPnl,
+      dayPnlPercent: baseline.netLiquidation
+        ? (dayPnl / Math.abs(baseline.netLiquidation)) * 100
+        : null,
+    };
+  });
 }
 
 // Reads SnapTrade-linked brokerage accounts (e.g. E*TRADE) from the persisted
@@ -4765,8 +4541,7 @@ async function withAccountListDayPnl(
 // portfolio balances (netLiquidation/cash/buyingPower/currency) via a short-lived
 // per-account cache. Only accounts whose connection is currently `connected`
 // (SnapTrade disabled/error connections are stored as `disconnected`/`error`) are
-// surfaced. A balance fetch failure degrades the account to zero-filled balances
-// rather than dropping it from the list.
+// surfaced only after its current portfolio balances resolve.
 async function getSnapTradeBackedAccounts(
   mode: RuntimeMode,
   appUserId: string | null,
@@ -4818,9 +4593,6 @@ async function getSnapTradeBackedAccounts(
         mode: row.mode,
         displayName: row.displayName || "SnapTrade account",
         currency: row.baseCurrency || "USD",
-        buyingPower: 0,
-        cash: 0,
-        netLiquidation: 0,
         accountType: row.accountType,
         includedInTrading: row.includedInTrading,
         totalCashValue: null,
@@ -4906,9 +4678,6 @@ export async function getRobinhoodBackedAccounts(
         mode: row.mode,
         displayName: row.displayName || "Robinhood account",
         currency: row.baseCurrency || "USD",
-        buyingPower: 0,
-        cash: 0,
-        netLiquidation: 0,
         accountType: row.accountType,
         includedInTrading: row.includedInTrading,
         capabilities,
@@ -4936,7 +4705,7 @@ export async function getRobinhoodBackedAccounts(
           syncedAt && !Number.isNaN(syncedAt.getTime())
             ? syncedAt
             : row.updatedAt ?? new Date(),
-      } satisfies BrokerAccountSnapshot & BackedAccountReadiness,
+      } satisfies BackedAccountIdentity & BackedAccountReadiness,
     };
   });
 
@@ -5092,55 +4861,42 @@ function snapTradeBalanceValuesFromPortfolio(
   const positionMarketValue =
     normalizedTotals.positionMarketValue ?? portfolio.totals.positionMarketValue;
   const netLiquidation =
-    positionMarketValue != null
-      ? (cashValue ?? 0) + (positionMarketValue ?? 0)
+    positionMarketValue != null && cashValue != null
+      ? cashValue + positionMarketValue
       : (portfolio.totals.netLiquidation ??
         normalizedTotals.netLiquidation ??
-        cashValue ??
-        0);
+        cashValue);
+  if (
+    cashValue == null ||
+    buyingPowerValue == null ||
+    netLiquidation == null
+  ) {
+    throw new HttpError(503, "SnapTrade account balances are unavailable.", {
+      code: "snaptrade_account_balances_unavailable",
+      expose: true,
+    });
+  }
   return {
     netLiquidation,
-    cash: cashValue ?? 0,
-    buyingPower: buyingPowerValue ?? 0,
+    cash: cashValue,
+    buyingPower: buyingPowerValue,
     currency: portfolio.account.baseCurrency || fallbackCurrency,
   };
 }
 
-// Logs a SnapTrade balance-fetch failure at most once per cache TTL window per
-// account so a persistent upstream outage does not flood the log on every list
-// build.
-function logSnapTradeBalanceFailureOncePerWindow(
-  accountId: string,
-  error: unknown,
-  now: () => number,
-): void {
-  const nowMs = now();
-  const suppressedUntil =
-    snapTradeAccountBalanceErrorLogSuppressedUntil.get(accountId) ?? 0;
-  if (suppressedUntil > nowMs) {
-    return;
-  }
-  snapTradeAccountBalanceErrorLogSuppressedUntil.set(
-    accountId,
-    nowMs + SNAPTRADE_BALANCE_CACHE_TTL_MS,
-  );
-  logger.warn(
-    { err: error, snapTradeAccountId: accountId },
-    "SnapTrade portfolio balance fetch failed; reporting zero balances for account",
-  );
-}
-
-// Resolves live balances for a single SnapTrade account, serving a cached value
-// while fresh, deduping concurrent in-flight fetches, and returning null (degrade
-// to zero-filled) on any failure.
+// Resolves live balances for a single SnapTrade account, serving only a fresh
+// cached value and deduping concurrent in-flight fetches.
 async function resolveSnapTradeAccountBalance(
   record: SnapTradeAccountRecord,
   fetchPortfolio: SnapTradeAccountPortfolioFetcher,
   now: () => number,
-): Promise<SnapTradeAccountBalanceValues | null> {
+): Promise<SnapTradeAccountBalanceValues> {
   const appUserId = record.appUserId;
   if (!appUserId) {
-    return null;
+    throw new HttpError(503, "SnapTrade account identity is unavailable.", {
+      code: "snaptrade_account_identity_unavailable",
+      expose: true,
+    });
   }
   const accountId = record.snapshot.id;
   const cached = snapTradeAccountBalanceCache.get(accountId);
@@ -5153,38 +4909,31 @@ async function resolveSnapTradeAccountBalance(
   }
 
   const request = (async () => {
-    try {
-      const portfolio = await fetchPortfolio({ appUserId, accountId });
-      const value = snapTradeBalanceValuesFromPortfolio(
-        portfolio,
-        record.snapshot.currency,
-      );
-      const expiresAt = now() + SNAPTRADE_BALANCE_CACHE_TTL_MS;
-      snapTradeAccountBalanceCache.set(accountId, {
-        value,
-        expiresAt,
-      });
-      rememberLatestSnapTradeAccountPortfolio({
-        appUserId,
-        accountId,
-        value: portfolio,
-        expiresAt,
-      });
-      return value;
-    } catch (error) {
-      logSnapTradeBalanceFailureOncePerWindow(accountId, error, now);
-      return null;
-    } finally {
-      snapTradeAccountBalanceInflight.delete(accountId);
-    }
-  })();
+    const portfolio = await fetchPortfolio({ appUserId, accountId });
+    const value = snapTradeBalanceValuesFromPortfolio(
+      portfolio,
+      record.snapshot.currency,
+    );
+    const expiresAt = now() + SNAPTRADE_BALANCE_CACHE_TTL_MS;
+    snapTradeAccountBalanceCache.set(accountId, {
+      value,
+      expiresAt,
+    });
+    rememberLatestSnapTradeAccountPortfolio({
+      appUserId,
+      accountId,
+      value: portfolio,
+      expiresAt,
+    });
+    return value;
+  })().finally(() => {
+    snapTradeAccountBalanceInflight.delete(accountId);
+  });
   snapTradeAccountBalanceInflight.set(accountId, request);
   return request;
 }
 
-// Hydrates zero-filled SnapTrade snapshots with live portfolio balances,
-// resolving accounts concurrently (bounded) and degrading any failed account to
-// its zero-filled snapshot. Exported for tests.
+// Hydrates SnapTrade account identities with current portfolio balances.
 export async function applySnapTradeAccountBalances(
   records: SnapTradeAccountRecord[],
   deps: {
@@ -5218,9 +4967,7 @@ export async function applySnapTradeAccountBalances(
           fetchPortfolio,
           now,
         );
-        results[index] = balances
-          ? { ...record.snapshot, ...balances }
-          : record.snapshot;
+        results[index] = { ...record.snapshot, ...balances };
       }
     }),
   );
@@ -5251,39 +4998,21 @@ function robinhoodBalanceValuesFromPortfolio(
     (typeof buyingPower["display_currency"] === "string" &&
       buyingPower["display_currency"].trim()) ||
     fallbackCurrency;
-  const cash = toNumber(data["cash"]) ?? 0;
+  const cash = toNumber(data["cash"]);
+  const netLiquidation = toNumber(data["total_value"]);
+  const buyingPowerValue = toNumber(buyingPower["buying_power"]);
+  if (cash == null || netLiquidation == null || buyingPowerValue == null) {
+    throw new HttpError(503, "Robinhood account balances are unavailable.", {
+      code: "robinhood_account_balances_unavailable",
+      expose: true,
+    });
+  }
   return {
-    netLiquidation: toNumber(data["total_value"]) ?? cash,
+    netLiquidation,
     cash,
-    buyingPower: toNumber(buyingPower["buying_power"]) ?? 0,
+    buyingPower: buyingPowerValue,
     currency: currency.toUpperCase(),
   };
-}
-
-function logRobinhoodBalanceFailureOncePerWindow(
-  accountId: string,
-  accountNumber: string,
-  error: unknown,
-  now: () => number,
-): void {
-  const nowMs = now();
-  const suppressedUntil =
-    robinhoodAccountBalanceErrorLogSuppressedUntil.get(accountId) ?? 0;
-  if (suppressedUntil > nowMs) {
-    return;
-  }
-  robinhoodAccountBalanceErrorLogSuppressedUntil.set(
-    accountId,
-    nowMs + ROBINHOOD_BALANCE_CACHE_TTL_MS,
-  );
-  logger.warn(
-    {
-      err: error,
-      robinhoodAccountId: accountId,
-      robinhoodAccountNumber: accountNumber,
-    },
-    "Robinhood portfolio balance fetch failed; reporting zero balances for account",
-  );
 }
 
 function createRobinhoodAccountPortfolioFetcher(options: {
@@ -5328,12 +5057,15 @@ async function resolveRobinhoodAccountBalance(
   record: RobinhoodAccountRecord,
   fetchPortfolio: RobinhoodAccountPortfolioFetcher,
   now: () => number,
-): Promise<RobinhoodAccountBalanceValues | null> {
+): Promise<RobinhoodAccountBalanceValues> {
   const appUserId = record.appUserId;
   const accountId = record.snapshot.id;
   const accountNumber = robinhoodAccountNumber(record.snapshot.providerAccountId);
   if (!appUserId || !accountNumber) {
-    return null;
+    throw new HttpError(503, "Robinhood account identity is unavailable.", {
+      code: "robinhood_account_identity_unavailable",
+      expose: true,
+    });
   }
 
   const cached = robinhoodAccountBalanceCache.get(accountId);
@@ -5346,29 +5078,19 @@ async function resolveRobinhoodAccountBalance(
   }
 
   const request = (async () => {
-    try {
-      const portfolio = await fetchPortfolio({ appUserId, accountNumber });
-      const value = robinhoodBalanceValuesFromPortfolio(
-        portfolio,
-        record.snapshot.currency,
-      );
-      robinhoodAccountBalanceCache.set(accountId, {
-        value,
-        expiresAt: now() + ROBINHOOD_BALANCE_CACHE_TTL_MS,
-      });
-      return value;
-    } catch (error) {
-      logRobinhoodBalanceFailureOncePerWindow(
-        accountId,
-        accountNumber,
-        error,
-        now,
-      );
-      return null;
-    } finally {
-      robinhoodAccountBalanceInflight.delete(accountId);
-    }
-  })();
+    const portfolio = await fetchPortfolio({ appUserId, accountNumber });
+    const value = robinhoodBalanceValuesFromPortfolio(
+      portfolio,
+      record.snapshot.currency,
+    );
+    robinhoodAccountBalanceCache.set(accountId, {
+      value,
+      expiresAt: now() + ROBINHOOD_BALANCE_CACHE_TTL_MS,
+    });
+    return value;
+  })().finally(() => {
+    robinhoodAccountBalanceInflight.delete(accountId);
+  });
   robinhoodAccountBalanceInflight.set(accountId, request);
   return request;
 }
@@ -5418,9 +5140,7 @@ export async function applyRobinhoodAccountBalances(
           fetchPortfolio,
           now,
         );
-        results[index] = balances
-          ? { ...record.snapshot, ...balances }
-          : record.snapshot;
+        results[index] = { ...record.snapshot, ...balances };
       }
     }),
   );
@@ -5436,8 +5156,7 @@ export async function listAccounts(
     options.appUserId === undefined ? getCurrentAppUserId() : options.appUserId;
   const hasDependencyOverrides = Boolean(
     options.listLiveAccounts ||
-      options.getPersistedAccounts ||
-      options.getFlexAccounts ||
+      options.hydrateDayPnl ||
       options.recordSnapshots ||
       options.getSnapTradeAccounts ||
       options.getRobinhoodAccounts,
@@ -5448,7 +5167,6 @@ export async function listAccounts(
       { appUserId, mode },
       () => listAccountsUncached({ mode }, { ...options, appUserId }),
       ACCOUNT_LIST_RESPONSE_CACHE_TTL_MS,
-      ACCOUNT_LIST_RESPONSE_STALE_TTL_MS,
     );
   }
   return listAccountsUncached({ mode }, { ...options, appUserId });
@@ -5461,9 +5179,7 @@ async function listAccountsUncached(
   const mode = input.mode;
   const appUserId = options.appUserId ?? null;
   const listLiveAccounts = options.listLiveAccounts ?? listIbkrAccounts;
-  const getPersistedAccounts =
-    options.getPersistedAccounts ?? emptyPersistedBackedAccounts;
-  const getFlexAccounts = options.getFlexAccounts ?? getFlexBackedAccounts;
+  const hydrateDayPnl = options.hydrateDayPnl ?? withAccountListDayPnl;
   const recordSnapshots =
     options.recordSnapshots ??
     ((accounts: BrokerAccountSnapshot[]) =>
@@ -5473,11 +5189,11 @@ async function listAccountsUncached(
   const getRobinhoodAccounts =
     options.getRobinhoodAccounts ?? getRobinhoodBackedAccounts;
 
-  // Persisted broker accounts are additive to whatever IBKR source wins the waterfall
-  // below. Resolve them in parallel and degrade to IBKR-only on any failure so a
-  // provider outage never breaks the account list.
   const snapTradeAccountsPromise = getSnapTradeAccounts(mode, appUserId).catch(
     (error) => {
+      if (isAccountDbReadUnavailableError(error)) {
+        throw createAccountDbUnavailableError(error);
+      }
       logger.warn(
         { err: error },
         "SnapTrade account merge failed; returning brokers without SnapTrade accounts",
@@ -5487,6 +5203,9 @@ async function listAccountsUncached(
   );
   const robinhoodAccountsPromise = getRobinhoodAccounts(mode, appUserId).catch(
     (error) => {
+      if (isAccountDbReadUnavailableError(error)) {
+        throw createAccountDbUnavailableError(error);
+      }
       logger.warn(
         { err: error },
         "Robinhood account merge failed; returning brokers without Robinhood accounts",
@@ -5502,69 +5221,33 @@ async function listAccountsUncached(
     ...robinhoodAccounts,
   ]);
 
+  let liveAccounts: BrokerAccountSnapshot[] = [];
+  let liveReadError: unknown = null;
   try {
-    const liveAccounts = await listLiveAccounts(mode);
-    if (liveAccounts.length) {
-      void recordSnapshots(liveAccounts).catch((error) => {
-        logger.warn(
-          { err: error },
-          "Account snapshot persistence failed after live account list",
-        );
-      });
-      const accounts = withTradingInclusionDefault(
-        mergeAccountsWithDirectIbkrSupersedence(
-          liveAccounts,
-          await additionalBrokerAccountsPromise,
-        ),
+    liveAccounts = await listLiveAccounts(mode);
+  } catch (error) {
+    liveReadError = error;
+  }
+  if (liveAccounts.length) {
+    void recordSnapshots(liveAccounts).catch((error) => {
+      logger.warn(
+        { err: error },
+        "Account snapshot persistence failed after live account list",
       );
-      return {
-        accounts: await withAccountListDayPnl(accounts),
-      };
-    }
-  } catch {
-    // A stale or unavailable bridge should not prevent persisted account views.
-  }
-
-  const persistedAccounts = await withAccountSnapshotReadFallback({
-    message:
-      "Account snapshot database unavailable; returning account list without persisted fallback",
-    fallback: () => ({ accounts: [], latestSnapshotAt: null }),
-    run: () => getPersistedAccounts(COMBINED_ACCOUNT_ID, mode),
-  });
-  if (persistedAccounts.accounts.length) {
-    const accounts = withTradingInclusionDefault(
-      mergeAccountsWithDirectIbkrSupersedence(
-        persistedAccounts.accounts,
-        await additionalBrokerAccountsPromise,
-      ),
-    );
-    return {
-      accounts: await withAccountListDayPnl(accounts),
-    };
-  }
-
-  const flexAccounts = await getFlexAccounts(
-    COMBINED_ACCOUNT_ID,
-    mode,
-    appUserId,
-  );
-  if (flexAccounts.length) {
-    const accounts = withTradingInclusionDefault(
-      mergeAccountsWithDirectIbkrSupersedence(
-        flexAccounts,
-        await additionalBrokerAccountsPromise,
-      ),
-    );
-    return {
-      accounts: await withAccountListDayPnl(accounts),
-    };
+    });
   }
 
   const accounts = withTradingInclusionDefault(
-    await additionalBrokerAccountsPromise,
+    mergeAccountsWithDirectIbkrSupersedence(
+      liveAccounts,
+      await additionalBrokerAccountsPromise,
+    ),
   );
+  if (!accounts.length && liveReadError) {
+    throw liveReadError;
+  }
   return {
-    accounts: await withAccountListDayPnl(accounts),
+    accounts: await hydrateDayPnl(accounts),
   };
 }
 
@@ -5983,9 +5666,9 @@ async function getAccountEquityHistoryUncached(input: {
     );
   }
 
-  const flexRows = await withOptionalAccountSchemaFallback({
+  const flexRows = await withOptionalAccountSchema({
     tables: ["flex_nav_history"],
-    fallback: () => [],
+    whenMissing: () => [],
     run: async () =>
       db
         .select()
@@ -6004,9 +5687,9 @@ async function getAccountEquityHistoryUncached(input: {
   if (start) {
     flexCashConditions.push(gte(flexCashActivityTable.activityDate, start));
   }
-  const flexCashRows = await withOptionalAccountSchemaFallback({
+  const flexCashRows = await withOptionalAccountSchema({
     tables: ["flex_cash_activity"],
-    fallback: () => [],
+    whenMissing: () => [],
     run: async () =>
       db
         .select()
@@ -6020,11 +5703,7 @@ async function getAccountEquityHistoryUncached(input: {
     snapshotConditions.push(gte(balanceSnapshotsTable.asOf, start));
   }
 
-  const rawSnapshotRows = await withAccountSnapshotReadFallback({
-    fallback: () => [],
-    message:
-      "Account equity snapshot database unavailable; using live account point only",
-    run: async () =>
+  const rawSnapshotRows = await withAccountDbRead(async () =>
       db
         .select({
           providerAccountId: brokerAccountsTable.providerAccountId,
@@ -6041,9 +5720,9 @@ async function getAccountEquityHistoryUncached(input: {
         )
         .where(and(...snapshotConditions))
         .orderBy(balanceSnapshotsTable.asOf),
-  });
-  const providerEquitySeedPoints = await readProviderEquitySeedPointsForUniverse(
-    universe,
+  );
+  const providerEquitySeedPoints = await withAccountDbRead(() =>
+    readProviderEquitySeedPointsForUniverse(universe),
   );
   const rawSnapshotRowsForEquity =
     providerEquitySeedPoints.replacedProviderAccountIds.size > 0
@@ -6262,9 +5941,9 @@ async function getAccountEquityHistoryUncached(input: {
             ? "snaptrade_balance_history"
           : null;
 
-  const lastRun = await withOptionalAccountSchemaFallback({
+  const lastRun = await withOptionalAccountSchema({
     tables: ["flex_report_runs"],
-    fallback: () => null,
+    whenMissing: () => null,
     run: async () => {
       const [row] = await db
         .select()
@@ -6284,8 +5963,8 @@ async function getAccountEquityHistoryUncached(input: {
     benchmark: input.benchmark || null,
     asOf: lastPoint?.timestamp ?? null,
     latestSnapshotAt,
-    isStale: universe.source !== "live",
-    staleReason: universe.staleReason,
+    isStale: false,
+    staleReason: null,
     terminalPointSource,
     liveTerminalIncluded,
     points: pointsWithBenchmark,
@@ -6574,11 +6253,10 @@ async function buildRealPositionAttribution(input: {
       .orderBy(desc(executionEventsTable.occurredAt))
       .limit(1000);
   } catch (error) {
-    logger.warn(
-      { err: error, code: "real_position_attribution_query_failed" },
-      "Real position source attribution query failed; falling back to manual",
-    );
-    return attribution;
+    if (isAccountDbReadUnavailableError(error)) {
+      throw createAccountDbUnavailableError(error);
+    }
+    throw error;
   }
 
   return foldRealPositionAttribution(events);
@@ -6777,11 +6455,10 @@ async function getAccountPositionsUncached(input: {
     markAccumulator: number;
     markWeight: number;
     averageWeight: number;
-    unrealizedWeight: number;
     dayChange: number | null;
-    dayChangePercent: number | null;
+    dayChangeBasis: number;
     unrealizedPnl: number;
-    unrealizedPnlPercentAccumulator: number;
+    unrealizedCostBasis: number;
     marketValue: number;
     betaWeightedDelta: number | null;
     lots: typeof lots;
@@ -6813,11 +6490,10 @@ async function getAccountPositionsUncached(input: {
             markAccumulator: 0,
             markWeight: 0,
             averageWeight: 0,
-            unrealizedWeight: 0,
             dayChange: null as number | null,
-            dayChangePercent: null as number | null,
+            dayChangeBasis: 0,
             unrealizedPnl: 0,
-            unrealizedPnlPercentAccumulator: 0,
+            unrealizedCostBasis: 0,
             marketValue: 0,
             betaWeightedDelta: null as number | null,
             lots: [] as typeof lots,
@@ -6840,8 +6516,6 @@ async function getAccountPositionsUncached(input: {
             (Math.abs(positionMarketPrice(position) || 0) > POSITION_QUANTITY_EPSILON
               ? positionMarketPrice(position)
               : null);
-          const marketValueWeight = Math.abs(positionValue);
-
           current.quantity += position.quantity;
           current.averageCostAccumulator += positionAveragePrice(position) * quantityWeight;
           if (positionMark != null) {
@@ -6849,7 +6523,6 @@ async function getAccountPositionsUncached(input: {
             current.markWeight += quantityWeight;
           }
           current.averageWeight += quantityWeight;
-          current.unrealizedWeight += marketValueWeight;
           // Same-day positions contribute change-since-entry (unrealized P&L); held
           // positions contribute the prior-close day change. Keeps the combined/"All"
           // view consistent with the per-account view (which applies the same mapping
@@ -6863,23 +6536,19 @@ async function getAccountPositionsUncached(input: {
               hydratedMarket?.dayChange ??
               null)
             : (hydratedMarket?.dayChange ?? null);
-          const contributedDayChangePercentBase = positionOpenedToday
-            ? (hydratedMarket?.unrealizedPnlPercent ?? position.unrealizedPnlPercent)
-            : hydratedMarket?.dayChangePercent;
           current.dayChange = upsertNullableTotal(
             current.dayChange,
             contributedDayChange,
           );
-          current.dayChangePercent = upsertNullableTotal(
-            current.dayChangePercent,
-            contributedDayChangePercentBase == null || marketValueWeight <= 0
-              ? null
-              : contributedDayChangePercentBase * marketValueWeight,
-          );
-          current.unrealizedPnl += hydratedMarket?.unrealizedPnl ?? position.unrealizedPnl;
-          current.unrealizedPnlPercentAccumulator +=
-            (hydratedMarket?.unrealizedPnlPercent ?? position.unrealizedPnlPercent ?? 0) *
-            marketValueWeight;
+          if (contributedDayChange != null) {
+            current.dayChangeBasis +=
+              positionPnlBasis(positionValue, contributedDayChange) ?? 0;
+          }
+          const positionUnrealizedPnl =
+            hydratedMarket?.unrealizedPnl ?? position.unrealizedPnl;
+          current.unrealizedPnl += positionUnrealizedPnl;
+          current.unrealizedCostBasis +=
+            positionPnlBasis(positionValue, positionUnrealizedPnl) ?? 0;
           current.marketValue += positionValue;
           current.betaWeightedDelta = upsertNullableTotal(
             current.betaWeightedDelta,
@@ -6927,13 +6596,13 @@ async function getAccountPositionsUncached(input: {
         mark: row.markWeight > 0 ? row.markAccumulator / row.markWeight : null,
         dayChange: row.dayChange,
         dayChangePercent:
-          row.unrealizedWeight > 0 && row.dayChangePercent !== null
-            ? row.dayChangePercent / row.unrealizedWeight
+          row.dayChange !== null && row.dayChangeBasis > 0
+            ? positionPnlPercent(row.dayChange, row.dayChangeBasis)
             : null,
         unrealizedPnl: row.unrealizedPnl,
         unrealizedPnlPercent:
-          row.unrealizedWeight > 0
-            ? row.unrealizedPnlPercentAccumulator / row.unrealizedWeight
+          row.unrealizedCostBasis > 0
+            ? positionPnlPercent(row.unrealizedPnl, row.unrealizedCostBasis)
             : 0,
         marketValue: row.marketValue,
         weightPercent: weightPercent(row.marketValue, nav),
@@ -7146,9 +6815,9 @@ export async function getAccountPositionsAtDate(input: {
     balanceRows,
     previousBalanceRows,
   ] = await Promise.all([
-    withOptionalAccountSchemaFallback({
+    withOptionalAccountSchema({
       tables: ["flex_open_positions"],
-      fallback: () => [],
+      whenMissing: () => [],
       run: async () =>
         db
           .select()
@@ -7156,9 +6825,9 @@ export async function getAccountPositionsAtDate(input: {
           .where(and(...positionConditions))
           .orderBy(flexOpenPositionsTable.asOf),
     }),
-    withOptionalAccountSchemaFallback({
+    withOptionalAccountSchema({
       tables: ["flex_trades"],
-      fallback: () => [],
+      whenMissing: () => [],
       run: async () =>
         db
           .select()
@@ -7177,9 +6846,9 @@ export async function getAccountPositionsAtDate(input: {
           )
           .orderBy(flexTradesTable.tradeDate),
     }),
-    withOptionalAccountSchemaFallback({
+    withOptionalAccountSchema({
       tables: ["flex_cash_activity"],
-      fallback: () => [],
+      whenMissing: () => [],
       run: async () =>
         db
           .select()
@@ -7198,9 +6867,9 @@ export async function getAccountPositionsAtDate(input: {
           )
           .orderBy(flexCashActivityTable.activityDate),
     }),
-    withOptionalAccountSchemaFallback({
+    withOptionalAccountSchema({
       tables: ["flex_dividends"],
-      fallback: () => [],
+      whenMissing: () => [],
       run: async () =>
         db
           .select()
@@ -7219,11 +6888,7 @@ export async function getAccountPositionsAtDate(input: {
           )
           .orderBy(flexDividendsTable.paidDate),
     }),
-    withAccountSnapshotReadFallback({
-      fallback: () => [],
-      message:
-        "Account date balance snapshot database unavailable; returning positions without balance summary",
-      run: async () =>
+    withAccountDbRead(async () =>
         db
           .select({
             providerAccountId: brokerAccountsTable.providerAccountId,
@@ -7241,12 +6906,8 @@ export async function getAccountPositionsAtDate(input: {
           )
           .where(and(...balanceConditions))
           .orderBy(balanceSnapshotsTable.asOf),
-    }),
-    withAccountSnapshotReadFallback({
-      fallback: () => [],
-      message:
-        "Account previous balance snapshot database unavailable; returning date balance without P&L",
-      run: async () =>
+    ),
+    withAccountDbRead(async () =>
         db
           .select({
             providerAccountId: brokerAccountsTable.providerAccountId,
@@ -7264,7 +6925,7 @@ export async function getAccountPositionsAtDate(input: {
           )
           .where(and(...previousBalanceConditions))
           .orderBy(desc(balanceSnapshotsTable.asOf)),
-    }),
+    ),
   ]);
 
   const filteredPositionRows = positionRows.filter((row) =>
@@ -7543,9 +7204,7 @@ async function getPositionLots(accountIds: string[]) {
     return [];
   }
 
-  return withAccountPositionLotsReadFallback({
-    fallback: () => [],
-    run: async () => {
+  return withAccountDbRead(async () => {
       const rows = await db
         .select({
           providerAccountId: brokerAccountsTable.providerAccountId,
@@ -7580,7 +7239,6 @@ async function getPositionLots(accountIds: string[]) {
         asOf: row.asOf,
         source: "LOCAL_LEDGER",
       }));
-    },
   });
 }
 
@@ -8608,22 +8266,24 @@ async function listProviderActivityClosedTradesForUniverse(
     .filter((account) => account.provider === "robinhood")
     .map((account) => account.id);
 
-  const [snapTradeTrades, robinhoodTrades] = await Promise.all([
-    Promise.all(
-      snapTradeAccountIds.map((accountId) =>
-        readSnapTradeAccountClosedTrades({
-          accountId,
-          from: input.from,
-          to: input.to,
-        }),
+  const [snapTradeTrades, robinhoodTrades] = await withAccountDbRead(() =>
+    Promise.all([
+      Promise.all(
+        snapTradeAccountIds.map((accountId) =>
+          readSnapTradeAccountClosedTrades({
+            accountId,
+            from: input.from,
+            to: input.to,
+          }),
+        ),
       ),
-    ),
-    Promise.all(
-      robinhoodAccountIds.map((accountId) =>
-        readRobinhoodAccountActivities(accountId),
+      Promise.all(
+        robinhoodAccountIds.map((accountId) =>
+          readRobinhoodAccountActivities(accountId),
+        ),
       ),
-    ),
-  ]);
+    ]),
+  );
 
   return [
     ...snapTradeTrades.flat().map(snapTradeHistoryTradeToAccountTrade),
@@ -8830,9 +8490,9 @@ async function listClosedTradesForUniverse(
     conditions.push(eq(flexTradesTable.symbol, normalizeSymbol(input.symbol)));
   }
 
-  const flexRows = await withOptionalAccountSchemaFallback({
+  const flexRows = await withOptionalAccountSchema({
     tables: ["flex_trades"],
-    fallback: () => [],
+    whenMissing: () => [],
     run: async () =>
       db
         .select()
@@ -8943,8 +8603,6 @@ async function getAccountClosedTradesUncached(input: {
   return {
     accountId: universe.requestedAccountId,
     currency: universe.primaryCurrency,
-    activityDegraded: orderResult.degraded,
-    activityReason: orderResult.reason,
     trades,
     summary: {
       count: trades.length,
@@ -8993,10 +8651,6 @@ export async function getAccountOrders(input: {
     accountId: universe.requestedAccountId,
     tab,
     currency: universe.primaryCurrency,
-    degraded: orderResult.degraded,
-    reason: orderResult.reason,
-    stale: orderResult.stale,
-    debug: orderResult.debug,
     orders: historyRows,
     updatedAt: new Date(),
   };
@@ -9568,9 +9222,9 @@ async function getAccountCashActivityUncached(input: {
   }
 
   const [activities, dividends] = await Promise.all([
-    withOptionalAccountSchemaFallback({
+    withOptionalAccountSchema({
       tables: ["flex_cash_activity"],
-      fallback: () => [],
+      whenMissing: () => [],
       run: async () =>
         db
           .select()
@@ -9579,9 +9233,9 @@ async function getAccountCashActivityUncached(input: {
           .orderBy(desc(flexCashActivityTable.activityDate))
           .limit(200),
     }),
-    withOptionalAccountSchemaFallback({
+    withOptionalAccountSchema({
       tables: ["flex_dividends"],
-      fallback: () => [],
+      whenMissing: () => [],
       run: async () =>
         db
           .select()
@@ -9655,9 +9309,9 @@ async function getAccountCashActivityUncached(input: {
 export async function getFlexHealth() {
   const schema = await getOptionalAccountSchemaReadiness();
   const [lastRun, lastCompletedRun] = await Promise.all([
-    withOptionalAccountSchemaFallback({
+    withOptionalAccountSchema({
       tables: ["flex_report_runs"],
-      fallback: () => null,
+      whenMissing: () => null,
       run: async () => {
         const [row] = await db
           .select()
@@ -9667,9 +9321,9 @@ export async function getFlexHealth() {
         return row ?? null;
       },
     }),
-    withOptionalAccountSchemaFallback({
+    withOptionalAccountSchema({
       tables: ["flex_report_runs"],
-      fallback: () => null,
+      whenMissing: () => null,
       run: async () => {
         const [row] = await db
           .select()
@@ -9681,22 +9335,14 @@ export async function getFlexHealth() {
       },
     }),
   ]);
-  const latestSnapshot = await withAccountSnapshotReadFallback({
-    fallback: () => [],
-    message:
-      "Account snapshot database unavailable while checking Flex health; using empty snapshot coverage",
-    run: async () =>
+  const latestSnapshot = await withAccountDbRead(async () =>
       db
         .select({ asOf: balanceSnapshotsTable.asOf })
         .from(balanceSnapshotsTable)
         .orderBy(desc(balanceSnapshotsTable.asOf))
         .limit(1),
-  });
-  const [snapshotCoverage] = await withAccountSnapshotReadFallback({
-    fallback: () => [{ firstAsOf: null, lastAsOf: null, rowCount: 0 }],
-    message:
-      "Account snapshot database unavailable while checking Flex health; using empty snapshot coverage",
-    run: async () =>
+  );
+  const [snapshotCoverage] = await withAccountDbRead(async () =>
       db
         .select({
           firstAsOf: sql<Date | null>`min(${balanceSnapshotsTable.asOf})`,
@@ -9704,10 +9350,10 @@ export async function getFlexHealth() {
           rowCount: sql<number>`count(*)::int`,
         })
         .from(balanceSnapshotsTable),
-  });
-  const [flexCoverage] = await withOptionalAccountSchemaFallback({
+  );
+  const [flexCoverage] = await withOptionalAccountSchema({
     tables: ["flex_nav_history"],
-    fallback: () => [{ firstDate: null, lastDate: null, rowCount: 0 }],
+    whenMissing: () => [{ firstDate: null, lastDate: null, rowCount: 0 }],
     run: async () =>
       db
         .select({
@@ -9717,9 +9363,9 @@ export async function getFlexHealth() {
         })
         .from(flexNavHistoryTable),
   });
-  const [tradeCoverage] = await withOptionalAccountSchemaFallback({
+  const [tradeCoverage] = await withOptionalAccountSchema({
     tables: ["flex_trades"],
-    fallback: () => [{ firstAt: null, lastAt: null, rowCount: 0 }],
+    whenMissing: () => [{ firstAt: null, lastAt: null, rowCount: 0 }],
     run: async () =>
       db
         .select({
@@ -9729,9 +9375,9 @@ export async function getFlexHealth() {
         })
         .from(flexTradesTable),
   });
-  const [cashCoverage] = await withOptionalAccountSchemaFallback({
+  const [cashCoverage] = await withOptionalAccountSchema({
     tables: ["flex_cash_activity"],
-    fallback: () => [{ firstAt: null, lastAt: null, rowCount: 0 }],
+    whenMissing: () => [{ firstAt: null, lastAt: null, rowCount: 0 }],
     run: async () =>
       db
         .select({
@@ -9741,9 +9387,9 @@ export async function getFlexHealth() {
         })
         .from(flexCashActivityTable),
   });
-  const [dividendCoverage] = await withOptionalAccountSchemaFallback({
+  const [dividendCoverage] = await withOptionalAccountSchema({
     tables: ["flex_dividends"],
-    fallback: () => [{ firstAt: null, lastAt: null, rowCount: 0 }],
+    whenMissing: () => [{ firstAt: null, lastAt: null, rowCount: 0 }],
     run: async () =>
       db
         .select({
@@ -9753,9 +9399,9 @@ export async function getFlexHealth() {
         })
         .from(flexDividendsTable),
   });
-  const [openPositionCoverage] = await withOptionalAccountSchemaFallback({
+  const [openPositionCoverage] = await withOptionalAccountSchema({
     tables: ["flex_open_positions"],
-    fallback: () => [{ firstAt: null, lastAt: null, rowCount: 0 }],
+    whenMissing: () => [{ firstAt: null, lastAt: null, rowCount: 0 }],
     run: async () =>
       db
         .select({
@@ -9859,7 +9505,10 @@ export const __accountPositionInternalsForTests = {
   stabilizeExecutionOpenDatesForPositions,
   selectFlexOpenPositionCandidate,
   selectBalanceBoundaryRows,
-  withAccountPositionLotsReadFallback,
+};
+
+export const __accountDbReadInternalsForTests = {
+  withAccountDbRead,
 };
 
 export const __accountMarginInternalsForTests = {

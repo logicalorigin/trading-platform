@@ -1130,6 +1130,52 @@ function resolveWorkerActivityDiagnostics(input: {
   };
 }
 
+async function archiveStaleFailedMarketDataIngestJobs(
+  pool: DbModule["pool"],
+): Promise<void> {
+  try {
+    // ponytail: cap each diagnostics sweep at 100 rows; raise only if the
+    // terminal backlog outgrows the collector cadence.
+    await pool.query(`
+with stale_failed as (
+  select candidate.id
+  from market_data_ingest_jobs candidate
+  where candidate.status = 'failed'
+    and candidate.updated_at < now() - interval '24 hours'
+    and not (
+      candidate.kind = 'option_chain_snapshot'
+      and exists (
+        select 1
+        from market_data_ingest_jobs gex
+        where gex.kind = 'gex_snapshot'
+          and gex.status in ('queued', 'running')
+          and gex.symbol = candidate.symbol
+          and coalesce(gex.payload->>'dedupeBucket', '') <> ''
+          and coalesce(gex.payload->>'dedupeBucket', '') =
+            coalesce(candidate.payload->>'dedupeBucket', '')
+      )
+    )
+  order by candidate.updated_at, candidate.id
+  limit 100
+)
+update market_data_ingest_jobs jobs
+set status = 'cancelled',
+    lease_owner = null,
+    lease_expires_at = null,
+    last_heartbeat_at = null,
+    next_run_at = null,
+    updated_at = now()
+where jobs.id in (select id from stale_failed)
+  and jobs.status = 'failed'
+    `);
+  } catch (error) {
+    logger.debug(
+      { err: error },
+      "Failed to archive stale failed market data ingest jobs",
+    );
+  }
+}
+
 export async function getMarketDataIngestDiagnostics(): Promise<MarketDataIngestDiagnostics> {
   if (marketDataIngestDiagnosticsGetterForTests) {
     return marketDataIngestDiagnosticsGetterForTests();
@@ -1159,6 +1205,7 @@ export async function getMarketDataIngestDiagnostics(): Promise<MarketDataIngest
   const { db, pool, marketDataIngestJobsTable, providerRequestLogTable } = dbModule;
   const now = new Date();
   try {
+    await archiveStaleFailedMarketDataIngestJobs(pool);
     const depthRows = await db
       .select({
         status: marketDataIngestJobsTable.status,

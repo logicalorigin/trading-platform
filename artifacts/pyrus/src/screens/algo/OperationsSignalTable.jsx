@@ -1374,7 +1374,6 @@ const OperationsSignalColumnDrawer = ({
 export const OperationsSignalTable = ({
   signals = [],
   candidates = [],
-  signalMonitorEventsSourceStatus = "database",
   signalMatrixStates = [],
   signalTimeframes = SIGNALS_TABLE_TIMEFRAMES,
   mtfAlignmentConfig = null,
@@ -1465,7 +1464,7 @@ export const OperationsSignalTable = ({
       executionTimeframe: String(executionTimeframe || "").trim(),
       mtf: {
         enabled: mtfAlignmentConfig?.enabled !== false,
-        requiredCount: mtfTimeframes.length || null,
+        requiredCount: mtfAlignmentConfig?.requiredCount ?? null,
         timeframes: mtfTimeframes,
       },
     });
@@ -1724,11 +1723,6 @@ export const OperationsSignalTable = ({
           .filter(Boolean)
           .join(" ")
       : null;
-  const receivedHistorySourceFallback =
-    signalMonitorEventsSourceStatus === "runtime-fallback";
-  const receivedHistorySourceBanner = receivedHistorySourceFallback
-    ? "STA received history is using runtime fallback because the event database is unavailable."
-    : null;
   const matrixHydrationBanner = matrixPendingRows.length
     ? [
         `${matrixPendingRows.length} STA signal ${
@@ -2061,9 +2055,7 @@ export const OperationsSignalTable = ({
             </span>
           ) : null}
         </div>
-        {staleScanBanner ||
-        receivedHistorySourceBanner ||
-        matrixHydrationBanner ? (
+        {staleScanBanner || matrixHydrationBanner ? (
           <div
             role="status"
             style={{
@@ -2095,11 +2087,7 @@ export const OperationsSignalTable = ({
                 whiteSpace: algoIsPhone ? "normal" : "nowrap",
               }}
             >
-              {[
-                staleScanBanner,
-                receivedHistorySourceBanner,
-                matrixHydrationBanner,
-              ]
+              {[staleScanBanner, matrixHydrationBanner]
                 .filter(Boolean)
                 .join(" ")}
             </span>

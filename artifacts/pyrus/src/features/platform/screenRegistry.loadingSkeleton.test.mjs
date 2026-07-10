@@ -13,7 +13,10 @@ test("cold-chunk loading branch renders a compact status, not fake screen chrome
   assert.doesNotMatch(source, /ScreenLoadingSkeleton/);
   assert.doesNotMatch(source, /<LoadingSpinner size=\{22\} \/>/);
   assert.doesNotMatch(source, /import \{ LoadingSpinner \}/);
-  assert.match(source, /const loadingLabel = label\.replace\(\/Screen\$\/, ""\);/);
+  assert.match(
+    source,
+    /const loadingLabel = label\.replace\(\/Screen\$\/, ""\);/,
+  );
   assert.match(source, /<span>\{`Loading \$\{loadingLabel\}`\}<\/span>/);
   // The loading branch keeps its testid/role contract used by boot + QA.
   assert.match(source, /data-testid=\{`screen-loading-\$\{screenId\}`\}/);
@@ -28,4 +31,13 @@ test("algo stays listed for explicit/manual screen preloading", () => {
   const block = source.slice(start, end);
   assert.notEqual(start, -1);
   assert.match(block, /"algo"/, "algo must be in the preload order");
+});
+
+test("preloaded screens render synchronously when immediate navigation activates them", () => {
+  assert.match(
+    source,
+    /const ResolvedScreenComponent =\s*ScreenComponent \|\| getPreloadedScreenComponent\(screenId\)/,
+  );
+  assert.match(source, /return ResolvedScreenComponent \?/);
+  assert.match(source, /<ResolvedScreenComponent \{\.\.\.props\} \/>/);
 });

@@ -26,7 +26,10 @@ import {
 import { createTaxOrderPreflight } from "../services/tax-planning";
 import { AUTH_CSRF_HEADER, __resetAuthRateLimitsForTests } from "./auth";
 import { __brokerExecutionRouteInternalsForTests } from "./broker-execution";
-import { filterIbkrGatewayRequestHeaders } from "./ibkr-portal";
+import {
+  filterIbkrGatewayRequestHeaders,
+  getIbkrGatewayReanchorLocation,
+} from "./ibkr-portal";
 
 beforeEach(() => {
   __resetAuthRateLimitsForTests();
@@ -649,30 +652,43 @@ test("IBKR portal stays off for members without the compliance flag (SPEC §6)",
   );
 });
 
-test("IBKR portal re-anchors Authenticator-family root API escapes under the gateway mount", async () => {
+test("IBKR portal re-anchors Authenticator-family root API escapes under the active login mount", async () => {
+  const clientMount = "/api/broker-execution/ibkr-portal/client";
+  assert.equal(
+    getIbkrGatewayReanchorLocation(
+      `${clientMount}?locale=en`,
+      `http://localhost${clientMount}/sso/Login`,
+    ),
+    null,
+  );
+
   await withServer(async (baseUrl) => {
     const origin = baseUrl.slice(0, -"/api".length);
-    const mount = "/api/broker-execution/ibkr-portal/gateway";
-    const referer = `${origin}${mount}/sso/Login`;
-    const cases = [
-      ["/api/Authenticator", `${mount}/sso/Authenticator`],
-      ["/api/Dispatcher?locale=en", `${mount}/sso/Dispatcher?locale=en`],
-      ["/api/report", `${mount}/sso/report`],
-    ] as const;
+    for (const mount of [
+      "/api/broker-execution/ibkr-portal/gateway",
+      "/api/broker-execution/ibkr-portal/client",
+    ]) {
+      const referer = `${origin}${mount}/sso/Login`;
+      const cases = [
+        ["/api/Authenticator", `${mount}/sso/Authenticator`],
+        ["/api/Dispatcher?locale=en", `${mount}/sso/Dispatcher?locale=en`],
+        ["/api/report", `${mount}/sso/report`],
+      ] as const;
 
-    for (const [path, expectedLocation] of cases) {
-      const resp = await fetch(`${origin}${path}`, {
-        method: "POST",
-        headers: {
-          referer,
-          "content-type": "application/x-www-form-urlencoded",
-        },
-        body: "username=demo",
-        redirect: "manual",
-      });
+      for (const [path, expectedLocation] of cases) {
+        const resp = await fetch(`${origin}${path}`, {
+          method: "POST",
+          headers: {
+            referer,
+            "content-type": "application/x-www-form-urlencoded",
+          },
+          body: "username=demo",
+          redirect: "manual",
+        });
 
-      assert.equal(resp.status, 307);
-      assert.equal(resp.headers.get("location"), expectedLocation);
+        assert.equal(resp.status, 307);
+        assert.equal(resp.headers.get("location"), expectedLocation);
+      }
     }
   });
 });
@@ -682,6 +698,18 @@ test("IBKR gateway proxy strips PYRUS credentials and preserves gateway cookies"
     authorization: "Bearer app-secret",
     cookie: "gateway_session=kept; pyrus_session=app-secret; theme=dark",
     "proxy-authorization": "Basic app-secret",
+    connection: "keep-alive",
+    "content-encoding": "gzip",
+    forwarded: "for=203.0.113.5;host=evil.example",
+    "keep-alive": "timeout=5",
+    te: "trailers",
+    trailer: "x-secret",
+    "transfer-encoding": "chunked",
+    upgrade: "websocket",
+    via: "1.1 evil.example",
+    "x-forwarded-for": "203.0.113.5",
+    "x-forwarded-host": "evil.example",
+    "x-forwarded-proto": "https",
     "x-csrf-token": "app-csrf-secret",
     "x-gateway-header": "kept",
   });
@@ -691,11 +719,46 @@ test("IBKR gateway proxy strips PYRUS credentials and preserves gateway cookies"
   assert.equal(headers.authorization, undefined);
   assert.equal(headers["proxy-authorization"], undefined);
   assert.equal(headers["x-csrf-token"], undefined);
+  for (const name of [
+    "connection",
+    "content-encoding",
+    "forwarded",
+    "keep-alive",
+    "te",
+    "trailer",
+    "transfer-encoding",
+    "upgrade",
+    "via",
+    "x-forwarded-for",
+    "x-forwarded-host",
+    "x-forwarded-proto",
+  ]) {
+    assert.equal(headers[name], undefined, `${name} must stay at the proxy`);
+  }
   assert.equal(
     filterIbkrGatewayRequestHeaders({ cookie: "pyrus_session=app-secret" })
       .cookie,
     undefined,
   );
+});
+
+test("IBKR native proxy rejects request bodies over 256 KiB with 413", async () => {
+  await withServer(async (baseUrl) => {
+    const response = await fetch(
+      `${baseUrl}/broker-execution/ibkr-portal/client/sso/Authenticator`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/octet-stream" },
+        body: Buffer.alloc(256 * 1024 + 1),
+      },
+    );
+
+    assert.equal(response.status, 413);
+    assert.equal(
+      ((await response.json()) as { status?: number }).status,
+      413,
+    );
+  });
 });
 
 test("IBKR portal opens for admins (bypass) and for flag-on members with ibkr_access (SPEC §6 allow path)", async () => {

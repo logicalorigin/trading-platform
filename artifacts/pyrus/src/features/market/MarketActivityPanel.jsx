@@ -37,10 +37,6 @@ import {
   normalizeSignalMonitorTimeframe,
 } from "../platform/marketActivityLaneModel";
 import {
-  isSignalMonitorDegradedProfile,
-  isSignalMonitorRuntimeFallbackProfile,
-} from "../platform/signalMonitorStatusModel";
-import {
   SEMANTIC_TONE,
   toneForDirectionalIntent,
   toneForOptionSide,
@@ -671,12 +667,7 @@ export const MarketActivityPanel = ({
   const monitorTimeframe = normalizeSignalMonitorTimeframe(
     signalMonitorProfile?.timeframe,
   );
-  const monitorDegraded = Boolean(
-    signalMonitorDegraded || isSignalMonitorDegradedProfile(signalMonitorProfile),
-  );
-  const monitorRuntimeFallback = isSignalMonitorRuntimeFallbackProfile(
-    signalMonitorProfile,
-  );
+  const monitorDegraded = Boolean(signalMonitorDegraded);
   const lanes = useMemo(
     () =>
       buildMarketActivityLanes({
@@ -708,8 +699,6 @@ export const MarketActivityPanel = ({
   ).length;
   const monitorMeta = signalMonitorPending
     ? "SYNCING"
-    : monitorRuntimeFallback
-      ? "RUNTIME"
     : monitorDegraded
       ? "DEGRADED"
     : signalMonitorProfile?.enabled
@@ -871,18 +860,14 @@ export const MarketActivityPanel = ({
                 Icon={Power}
                 active={Boolean(signalMonitorProfile?.enabled && !monitorDegraded)}
                 tone={
-                  monitorRuntimeFallback
-                    ? CSS_COLOR.amber
-                    : monitorDegraded
+                  monitorDegraded
                     ? CSS_COLOR.red
                     : signalMonitorProfile?.enabled
                       ? CSS_COLOR.green
                       : CSS_COLOR.textDim
                 }
                 label={
-                  monitorRuntimeFallback
-                    ? "Signal monitor runtime fallback"
-                    : monitorDegraded
+                  monitorDegraded
                     ? "Signal monitor degraded"
                     : "Toggle signal monitor"
                 }

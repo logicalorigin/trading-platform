@@ -92,15 +92,11 @@ before changing.
 **Verify** the per-minute claim against a real run before changing; this moves every
 options backtest's headline risk stat (ranking unaffected, absolute values change).
 
-### 5. Stale IBKR positions/balances shown to UI as "live" (no staleness flag) — MED
-`ibkr-account-bridge.ts:187-216` (`runCachedAccountRead`, `preserveNonEmptyStaleOnEmpty`,
-120s `IBKR_ACCOUNT_STALE_CACHE_TTL_MS`), consumed at `bridge-streams.ts:748-757`. A
-≤120s-old (or a just-closed) position renders identically to live; the orders path
-sets `stale:true` but the account path does not. Auto-trading path is SAFE (uses live
-`/positions`). Human-facing only.
-**Fix**: thread a `stale`/`cachedAt` flag out and into the account-monitor SSE so the
-UI can badge it; only preserve-on-empty when the refresh actually FAILED (not a clean
-empty), or cap the preserve window well under 120s.
+### 5. Stale IBKR positions/balances shown to UI as "live" — RESOLVED 2026-07-10
+The Account bridge now keeps only its short fresh TTL and in-flight joining. Expired
+account, position, execution, and order reads wait for the current broker result and
+propagate upstream failures; the stream and route layers no longer replay stale rows
+or turn failures into empty successful payloads.
 
 ### 6. `tightenAtFiveX` trailing giveback (30%) looser than base (25/20%) — LOW, config
 `signal-options-exit-policy.ts:432-437`; defaults `lib/backtest-core/src/signal-options.ts:267-269,358-360`.

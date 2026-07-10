@@ -924,7 +924,6 @@ export const AccountEquityHistoryResponseSourceScope = {
   automation: 'automation',
   watchlist_backtest: 'watchlist_backtest',
   signal_options_replay: 'signal_options_replay',
-  runtime_fallback: 'runtime_fallback',
 } as const;
 
 export type AccountEquityPointSource = typeof AccountEquityPointSource[keyof typeof AccountEquityPointSource];
@@ -5241,21 +5240,10 @@ export const AccountOrdersResponseTab = {
   history: 'history',
 } as const;
 
-export type AccountOrdersResponseDebug = {
-  message: string;
-  code: string;
-  timeoutMs?: number;
-};
-
 export interface AccountOrdersResponse {
   accountId: string;
   tab: AccountOrdersResponseTab;
   currency: string;
-  degraded?: boolean;
-  /** @nullable */
-  reason?: string | null;
-  stale?: boolean;
-  debug?: AccountOrdersResponseDebug;
   orders: AccountOrder[];
   updatedAt: string;
 }
@@ -5365,18 +5353,8 @@ export interface PositionsResponse {
   positions: Position[];
 }
 
-export type OrdersResponseDebug = {
-  message: string;
-  code: string;
-  timeoutMs?: number;
-};
-
 export interface OrdersResponse {
   orders: Order[];
-  degraded?: boolean;
-  reason?: string;
-  stale?: boolean;
-  debug?: OrdersResponseDebug;
 }
 
 export interface QuoteSnapshotsResponse {
@@ -7106,8 +7084,6 @@ export type SignalMonitorStateResponseStateSource = typeof SignalMonitorStateRes
 
 export const SignalMonitorStateResponseStateSource = {
   database: 'database',
-  'runtime-fallback': 'runtime-fallback',
-  'memory-cache': 'memory-cache',
 } as const;
 
 export interface SignalMonitorStateResponse {
@@ -7349,7 +7325,6 @@ export type SignalMonitorEventsResponseSourceStatus = typeof SignalMonitorEvents
 
 export const SignalMonitorEventsResponseSourceStatus = {
   database: 'database',
-  'runtime-fallback': 'runtime-fallback',
 } as const;
 
 export interface SignalMonitorEventsResponse {

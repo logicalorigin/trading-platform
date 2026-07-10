@@ -6,8 +6,8 @@ import {
   __shadowWatchlistBacktestInternalsForTests as internals,
 } from "./shadow-account";
 
-const DB_FALLBACK_REASON =
-  "Shadow account database is unavailable; using runtime-only shadow account fallback.";
+const DB_UNAVAILABLE_REASON =
+  "Shadow account database is temporarily unavailable.";
 
 const baseTotals = {
   cash: 100,
@@ -104,7 +104,7 @@ test("risk reports DB-unavailable only when the backoff is genuinely active", as
       closedTrades: closedTrades as never,
     });
     assert.equal(risk.degraded, true);
-    assert.equal(risk.reason, DB_FALLBACK_REASON);
+    assert.equal(risk.reason, DB_UNAVAILABLE_REASON);
   } finally {
     internals.clearShadowAccountDbBackoff();
   }
@@ -119,7 +119,12 @@ test("identical injected risk inputs share one build and changed inputs do not c
     detail: "fast" as const,
     positionsResponse: positionsResponse({
       positions: [riskPosition(100)],
-      totals: { cash: 100, netExposure: 100, netLiquidation: 200 },
+      totals: {
+        cash: 100,
+        netExposure: 100,
+        netLiquidation: 200,
+        startingBalance: 100,
+      },
       updatedAt: positionSnapshotAt,
     }) as never,
     closedTrades: closedTrades as never,
@@ -140,7 +145,8 @@ test("identical injected risk inputs share one build and changed inputs do not c
     let builds = internals
       .getShadowAccountReadDiagnostics()
       .recent.filter(
-        (event) => event.status === "operation" && event.key.includes("risk-build:"),
+        (event) =>
+          event.status === "operation" && event.key.includes("risk-build:"),
       );
     assert.equal(builds.length, 1);
 
@@ -148,7 +154,12 @@ test("identical injected risk inputs share one build and changed inputs do not c
       ...input,
       positionsResponse: positionsResponse({
         positions: [riskPosition(125)],
-        totals: { cash: 100, netExposure: 125, netLiquidation: 225 },
+        totals: {
+          cash: 100,
+          netExposure: 125,
+          netLiquidation: 225,
+          startingBalance: 100,
+        },
         updatedAt: positionSnapshotAt,
       }) as never,
     });
@@ -156,7 +167,8 @@ test("identical injected risk inputs share one build and changed inputs do not c
     builds = internals
       .getShadowAccountReadDiagnostics()
       .recent.filter(
-        (event) => event.status === "operation" && event.key.includes("risk-build:"),
+        (event) =>
+          event.status === "operation" && event.key.includes("risk-build:"),
       );
     assert.equal(builds.length, 2);
   } finally {

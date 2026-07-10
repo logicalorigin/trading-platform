@@ -191,6 +191,24 @@ export function positionMultiplier(position: BrokerPositionSnapshot): number {
   return Number.isFinite(multiplier) && multiplier > 0 ? multiplier : 1;
 }
 
+export function positionPnlBasis(
+  currentValue: number,
+  pnl: number,
+): number | null {
+  return Number.isFinite(currentValue) && Number.isFinite(pnl)
+    ? Math.abs(currentValue - pnl)
+    : null;
+}
+
+export function positionPnlPercent(
+  pnl: number,
+  basis: number,
+): number | null {
+  return Number.isFinite(pnl) && Number.isFinite(basis) && basis > 0
+    ? (pnl / Math.abs(basis)) * 100
+    : null;
+}
+
 export function canHydratePositionFromEquityQuote(
   position: BrokerPositionSnapshot,
 ): boolean {
@@ -294,6 +312,15 @@ export function buildPositionMarketHydration(
     ? quoteMark
     : positionMark;
   const hasMark = mark !== null && Number.isFinite(mark);
+  const inferredQuotePrevClose =
+    quotePrevClose === null &&
+    quoteChange !== null &&
+    quoteChange !== 0 &&
+    hasMark &&
+    mark - quoteChange > 0
+      ? mark - quoteChange
+      : null;
+  const dayChangePrevClose = quotePrevClose ?? inferredQuotePrevClose;
   const marketValue =
     hasMark &&
     Number.isFinite(quantity) &&
@@ -328,21 +355,16 @@ export function buildPositionMarketHydration(
     Number.isFinite(quantity) &&
     Number.isFinite(multiplier)
   ) {
-    if (
-      quoteChange !== null &&
-      (quoteChange !== 0 || quotePrevClose !== null)
-    ) {
-      quoteDayChange = quoteChange * quantity * multiplier;
-    } else if (quotePrevClose !== null && hasMark) {
-      quoteDayChange = (mark - quotePrevClose) * quantity * multiplier;
+    if (dayChangePrevClose !== null && hasMark) {
+      quoteDayChange = (mark - dayChangePrevClose) * quantity * multiplier;
     }
   }
   const dayChange = sameDayPosition ? unrealizedPnl : quoteDayChange;
   const previousValue =
-    quotePrevClose !== null &&
+    dayChangePrevClose !== null &&
     Number.isFinite(quantity) &&
     Number.isFinite(multiplier)
-      ? quotePrevClose * quantity * multiplier
+      ? dayChangePrevClose * quantity * multiplier
       : null;
 
   return {

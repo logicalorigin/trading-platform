@@ -493,6 +493,7 @@ export const usePlatformFreshnessQueryPublisher = ({
   data,
   enabled = true,
   ttlMs,
+  fetchedAt,
   payloadSizeClass = "small",
   sourceVisible,
 }: {
@@ -502,6 +503,7 @@ export const usePlatformFreshnessQueryPublisher = ({
   data: unknown;
   enabled?: boolean;
   ttlMs: number;
+  fetchedAt?: number;
   payloadSizeClass?: PlatformFreshnessPayloadSize;
   sourceVisible?: boolean;
 }) => {
@@ -509,17 +511,36 @@ export const usePlatformFreshnessQueryPublisher = ({
   useEffect(() => {
     if (!enabled || !bus || data == null) return undefined;
     if (isSharedFreshnessPayload(data)) return undefined;
-    const publish = () =>
-      bus.publish({
+    const resolvedFetchedAt = Number.isFinite(Number(fetchedAt))
+      ? Number(fetchedAt)
+      : Date.now();
+    const resolvedExpiresAt =
+      resolvedFetchedAt + Math.max(0, Number(ttlMs) || 0);
+    const publish = () => {
+      if (resolvedExpiresAt <= Date.now()) return null;
+      return bus.publish({
         family,
         key,
         payload: data,
         ttlMs,
+        fetchedAt: resolvedFetchedAt,
+        expiresAt: resolvedExpiresAt,
         payloadSizeClass,
         sourceVisible,
       });
+    };
 
     publish();
     return bus.subscribeRequests({ family, key }, publish);
-  }, [bus, data, enabled, family, key, payloadSizeClass, sourceVisible, ttlMs]);
+  }, [
+    bus,
+    data,
+    enabled,
+    family,
+    fetchedAt,
+    key,
+    payloadSizeClass,
+    sourceVisible,
+    ttlMs,
+  ]);
 };

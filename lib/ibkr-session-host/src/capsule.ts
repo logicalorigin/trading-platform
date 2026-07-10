@@ -227,8 +227,11 @@ const UUID_PATTERN =
 const SESSION_HASH_PATTERN = /^[a-f0-9]{24}$/;
 const CAPSULE_SLOT_NAME = "pyrus-ibkr-slot-1";
 const CAPSULE_READY_MARKER = "PYRUS_IBKR_CAPSULE_READY_V1";
-const CAPSULE_READY_ATTEMPTS = 18;
-const CAPSULE_READY_INTERVAL_MS = 5_000;
+// 1s granularity: CPG takes tens of seconds to boot, and every extra poll
+// interval after the ready marker appears is dead time the user spends staring
+// at the "starting session" screen. Same overall 90s budget as before.
+const CAPSULE_READY_ATTEMPTS = 90;
+const CAPSULE_READY_INTERVAL_MS = 1_000;
 const CAPSULE_TARGETS = {
   cpg: { host: "127.0.0.1", port: 15000 },
   console: { host: "127.0.0.1", port: 16080 },
@@ -360,6 +363,9 @@ export function buildCreateCapsuleInvocation(
       "2g",
       "--memory-swap",
       "2g",
+      // Measured 2026-07-10: raising this to 2 CPUs did not improve the ~40s
+      // CPG boot on the contended 2-core VM (boot time tracks VM load, not
+      // this cap), so the tighter limit stays.
       "--cpus",
       "1",
       "--pids-limit",

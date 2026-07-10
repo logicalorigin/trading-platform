@@ -47,8 +47,7 @@ import {
   type ApiResourcePressureSnapshot,
 } from "./resource-pressure";
 import {
-  createTransientPostgresBackoff,
-  isPoolContentionError,
+  isStatementTimeoutError,
   isTransientPostgresError,
 } from "../lib/transient-db-error";
 import {
@@ -142,12 +141,11 @@ import {
   recordStockQuoteDayChangeContexts,
 } from "./stock-quote-day-change-context";
 import {
-  fetchBridgeOptionQuoteSnapshots,
-  getCurrentBridgeOptionQuoteSnapshots,
-} from "./bridge-option-quote-stream";
+  fetchMassiveOptionQuoteSnapshots,
+  getCurrentMassiveOptionQuoteSnapshots,
+} from "./massive-option-quote-stream";
 import { recordServerDiagnosticEvent } from "./diagnostics";
 import { getSignalMonitorDbFallbackDiagnostics } from "./signal-monitor-diagnostics";
-import { getWorkGovernorSnapshot } from "./work-governor";
 import { listIbkrExecutions } from "./ibkr-account-bridge";
 import {
   filterClosedBarsForStore,
@@ -760,36 +758,6 @@ function mapWatchlistRows(
   };
 }
 
-function buildBuiltInWatchlistSnapshot(): { watchlists: WatchlistRecord[] } {
-  const now = new Date();
-  return {
-    watchlists: BUILT_IN_WATCHLISTS.map((watchlist, watchlistIndex) => ({
-      id: `built-in-${watchlist.name.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`,
-      name: watchlist.name,
-      isDefault: watchlist.isDefault,
-      updatedAt: now,
-      items: watchlist.items.map((item, itemIndex) => ({
-        id: `built-in-${watchlistIndex}-${item.symbol}`,
-        symbol: item.symbol,
-        name: item.name,
-        market: "stocks" as UniverseMarket,
-        normalizedExchangeMic: null,
-        exchangeDisplay: null,
-        countryCode: "US",
-        exchangeCountryCode: "US",
-        sector: null,
-        industry: null,
-        sortOrder: itemIndex,
-        addedAt: now,
-      })),
-    })),
-  };
-}
-
-export function listWatchlistsRuntimeFallback() {
-  return buildBuiltInWatchlistSnapshot();
-}
-
 async function listWatchlistsFromDb(appUserId?: string) {
   return mapWatchlistRows(await selectWatchlistRows(undefined, appUserId));
 }
@@ -814,7 +782,6 @@ let pendingIbkrWatchlistPrewarmRerunReason: string | null = null;
 let ibkrWatchlistPrewarmSequence = 0;
 let ibkrWatchlistPrewarmRotationOffset = 0;
 let liveWarmupBackgroundHoldUntil = 0;
-const watchlistDbBackoff = createTransientPostgresBackoff();
 const IBKR_BRIDGE_STARTUP_PREWARM_OWNER = "bridge-startup";
 const IBKR_WATCHLIST_PREWARM_OWNER = "watchlist-prewarm";
 const IBKR_WATCHLIST_PREWARM_FILLER_OWNER = "watchlist-prewarm-filler";
@@ -828,7 +795,6 @@ const IBKR_WATCHLIST_PREWARM_BRIDGE_RECONCILE_TIMEOUT_MS =
     1_500,
   );
 const WATCHLIST_LIST_CACHE_TTL_MS = 5_000;
-const WATCHLIST_LIST_STALE_TTL_MS = 60_000;
 const WATCHLIST_LIST_PREWARM_THROTTLE_MS = 15_000;
 const LIVE_WARMUP_BACKGROUND_HOLD_MS = Math.max(
   5_000,
@@ -844,7 +810,6 @@ let watchlistListCache:
   | {
       value: WatchlistSnapshot;
       freshUntil: number;
-      staleUntil: number;
     }
   | null = null;
 let watchlistListInFlight: Promise<WatchlistSnapshot> | null = null;
@@ -858,7 +823,6 @@ function cacheWatchlistSnapshot(
   watchlistListCache = {
     value: snapshot,
     freshUntil: nowMs + WATCHLIST_LIST_CACHE_TTL_MS,
-    staleUntil: nowMs + WATCHLIST_LIST_STALE_TTL_MS,
   };
   return snapshot;
 }
@@ -1009,9 +973,7 @@ function collectDefaultWatchlistSymbols(
   ).sort();
 }
 
-let latestWatchlistLaneSymbols = collectWatchlistSymbols(
-  buildBuiltInWatchlistSnapshot().watchlists,
-);
+let latestWatchlistLaneSymbols: string[] = [];
 
 function collectAccountMonitorQuoteSymbols(): string[] {
   return Array.from(
@@ -2829,14 +2791,6 @@ const eventLoopDelayWindowTimer = setInterval(() => {
 }, EVENT_LOOP_DELAY_WINDOW_MS);
 eventLoopDelayWindowTimer.unref();
 
-function orderReadTimeoutMs(): number {
-  const configured = Number.parseInt(
-    process.env["IBKR_ORDER_READ_TIMEOUT_MS"] ?? "9000",
-    10,
-  );
-  return Number.isFinite(configured) && configured > 0 ? configured : 9_000;
-}
-
 function gatewayTradingHealthTimeoutMs(): number {
   const configured = Number.parseInt(
     process.env["IBKR_GATEWAY_TRADING_HEALTH_TIMEOUT_MS"] ?? "2500",
@@ -2869,79 +2823,25 @@ function withTimeout<T>(
   });
 }
 
-function serializeOrderReadDebug(error: unknown, timeoutMs: number) {
-  const cause = isHttpError(error) ? error.cause : null;
-  const causeCode = cause instanceof HttpError ? cause.code : null;
-  const code =
-    causeCode === "orders_timeout"
-      ? "orders_timeout"
-      : isHttpError(error)
-        ? (error.code ?? "orders_timeout")
-        : "orders_timeout";
-  return {
-    message:
-      error instanceof Error && error.message
-        ? error.message
-        : "IBKR order read timed out.",
-    code,
-    timeoutMs,
-  };
-}
-
-function getBridgeBackoffRemainingMs(category: "orders"): number {
-  return getWorkGovernorSnapshot()[category].backoffRemainingMs;
-}
-
-async function recordOrderReadDegraded(input: {
+type OrderReadInput = {
   accountId?: string;
   mode?: "shadow" | "live";
-  reason: string;
-  message: string;
-  timeoutMs?: number;
-  stale?: boolean;
-  detail?: string | null;
-}) {
-  await recordServerDiagnosticEvent({
-    subsystem: "orders",
-    category: "visibility",
-    code: input.reason,
-    severity: "warning",
-    message: input.message,
-    dimensions: {
-      accountId: input.accountId ?? null,
-      mode: input.mode ?? null,
-      timeoutMs: input.timeoutMs ?? null,
-      stale: input.stale ?? null,
-    },
-    raw: {
-      detail: input.detail ?? null,
-    },
-  }).catch(() => {});
-}
+  status?: BrokerOrderSnapshot["status"];
+};
 
-export type ResilientOrdersResponse = {
+type OrderVisibilityResponse = {
   orders: BrokerOrderSnapshot[];
-  degraded?: boolean;
-  reason?: string;
-  stale?: boolean;
-  debug?: {
-    message: string;
-    code: string;
-    timeoutMs?: number;
-  };
 };
 
 type OrderVisibilityCacheEntry = {
-  payload: ResilientOrdersResponse;
-  cachedAt: number;
+  payload: OrderVisibilityResponse;
   expiresAt: number;
-  staleExpiresAt: number;
 };
 
 const orderVisibilityCache = new Map<string, OrderVisibilityCacheEntry>();
 const orderVisibilityInFlight = new Map<
   string,
-  Promise<ResilientOrdersResponse>
+  Promise<OrderVisibilityResponse>
 >();
 
 function orderVisibilityCacheTtlMs(): number {
@@ -2952,74 +2852,7 @@ function orderVisibilityCacheTtlMs(): number {
   return Number.isFinite(configured) && configured > 0 ? configured : 2_000;
 }
 
-function orderVisibilityStaleTtlMs(): number {
-  const configured = Number.parseInt(
-    process.env["IBKR_ORDER_VISIBILITY_STALE_TTL_MS"] ?? "120000",
-    10,
-  );
-  return Number.isFinite(configured) && configured > 0 ? configured : 120_000;
-}
-
-function orderVisibilityWaitMs(): number {
-  const configured = Number.parseInt(
-    process.env["IBKR_ORDER_VISIBILITY_WAIT_MS"] ?? "1200",
-    10,
-  );
-  return Number.isFinite(configured) && configured >= 0 ? configured : 1_200;
-}
-
-function markOrderVisibilitySnapshotStale(
-  payload: ResilientOrdersResponse,
-  input: {
-    reason: string;
-    message: string;
-    timeoutMs?: number;
-  },
-): ResilientOrdersResponse {
-  return {
-    ...payload,
-    degraded: true,
-    stale: true,
-    reason: input.reason,
-    debug: {
-      message: input.message,
-      code: input.reason,
-      timeoutMs: input.timeoutMs,
-    },
-  };
-}
-
-function orderVisibilityFallback(input: {
-  reason: string;
-  message: string;
-  timeoutMs?: number;
-}): ResilientOrdersResponse {
-  return {
-    orders: [],
-    degraded: true,
-    stale: true,
-    reason: input.reason,
-    debug: {
-      message: input.message,
-      code: input.reason,
-      timeoutMs: input.timeoutMs,
-    },
-  };
-}
-
-function orderVisibilityCacheKey(input: {
-  accountId?: string;
-  mode?: "shadow" | "live";
-  status?:
-    | "pending_submit"
-    | "submitted"
-    | "accepted"
-    | "partially_filled"
-    | "filled"
-    | "canceled"
-    | "rejected"
-    | "expired";
-}): string {
+function orderVisibilityCacheKey(input: OrderReadInput): string {
   return JSON.stringify({
     accountId: input.accountId ?? null,
     mode: input.mode ?? getRuntimeMode(),
@@ -3027,134 +2860,43 @@ function orderVisibilityCacheKey(input: {
   });
 }
 
-export async function listOrdersWithResilience(input: {
-  accountId?: string;
-  mode?: "shadow" | "live";
-  status?:
-    | "pending_submit"
-    | "submitted"
-    | "accepted"
-    | "partially_filled"
-    | "filled"
-    | "canceled"
-    | "rejected"
-    | "expired";
-}): Promise<ResilientOrdersResponse> {
+async function readCurrentOrders(
+  input: OrderReadInput,
+): Promise<OrderVisibilityResponse> {
   const client = getIbkrClientPortalClient();
-  const timeoutMs = orderReadTimeoutMs();
-
-  try {
-    const orders = await withTimeout(
-      client.listOrders({
-        accountId: input.accountId,
-        mode: input.mode ?? getRuntimeMode(),
-        status: input.status,
-      }),
-      timeoutMs,
-      () =>
-        new HttpError(504, "IBKR order read timed out.", {
-          code: "orders_timeout",
-          detail: `Order read did not respond within ${timeoutMs}ms.`,
-        }),
-    );
-    return {
-      orders,
-    };
-  } catch (error) {
-    const debug = serializeOrderReadDebug(error, timeoutMs);
-    void recordOrderReadDegraded({
+  return {
+    orders: await client.listOrders({
       accountId: input.accountId,
-      mode: input.mode,
-      reason: "orders_timeout",
-      message: "IBKR Client Portal order read failed or timed out.",
-      timeoutMs,
-      stale: false,
-      detail: debug.message,
-    });
-    return {
-      orders: [],
-      degraded: true,
-      reason: "orders_timeout",
-      stale: false,
-      debug,
-    };
-  }
+      mode: input.mode ?? getRuntimeMode(),
+      status: input.status,
+    }),
+  };
 }
 
-async function listOrdersForVisibility(input: {
-  accountId?: string;
-  mode?: "shadow" | "live";
-  status?:
-    | "pending_submit"
-    | "submitted"
-    | "accepted"
-    | "partially_filled"
-    | "filled"
-    | "canceled"
-    | "rejected"
-    | "expired";
-}): Promise<ResilientOrdersResponse> {
+async function listOrdersForVisibility(
+  input: OrderReadInput,
+): Promise<OrderVisibilityResponse> {
   const key = orderVisibilityCacheKey(input);
   const now = Date.now();
   const cached = orderVisibilityCache.get(key);
   if (cached && cached.expiresAt > now) {
     return cached.payload;
   }
-  if (cached && cached.staleExpiresAt <= now) {
+  if (cached) {
     orderVisibilityCache.delete(key);
   }
-  const staleCached =
-    cached && cached.staleExpiresAt > now ? cached.payload : null;
   const pending = orderVisibilityInFlight.get(key);
   if (pending) {
-    if (staleCached) {
-      return markOrderVisibilitySnapshotStale(staleCached, {
-        reason: "orders_refreshing",
-        message: "Open-orders visibility is refreshing in the background.",
-      });
-    }
-    const waitMs = orderVisibilityWaitMs();
-    return Promise.race([
-      pending,
-      new Promise<ResilientOrdersResponse>((resolve) => {
-        const timeout = setTimeout(() => {
-          resolve(
-            orderVisibilityFallback({
-              reason: "orders_refreshing",
-              message:
-                "Open-orders visibility is refreshing in the background.",
-              timeoutMs: waitMs,
-            }),
-          );
-        }, waitMs);
-        timeout.unref?.();
-      }),
-    ]);
+    return pending;
   }
 
-  const request = listOrdersWithResilience(input)
+  const request = readCurrentOrders(input)
     .then((payload) => {
-      const cachedAt = Date.now();
       orderVisibilityCache.set(key, {
         payload,
-        cachedAt,
-        expiresAt: cachedAt + orderVisibilityCacheTtlMs(),
-        staleExpiresAt: cachedAt + orderVisibilityStaleTtlMs(),
+        expiresAt: Date.now() + orderVisibilityCacheTtlMs(),
       });
       return payload;
-    })
-    .catch((error) => {
-      logger.warn(
-        { err: error, key },
-        "Open-orders visibility refresh failed",
-      );
-      return orderVisibilityFallback({
-        reason: "orders_visibility_error",
-        message:
-          error instanceof Error && error.message
-            ? error.message
-            : "Open-orders visibility refresh failed.",
-      });
     })
     .finally(() => {
       if (orderVisibilityInFlight.get(key) === request) {
@@ -3162,49 +2904,15 @@ async function listOrdersForVisibility(input: {
       }
     });
   orderVisibilityInFlight.set(key, request);
-
-  if (staleCached) {
-    request.catch(() => {});
-    return markOrderVisibilitySnapshotStale(staleCached, {
-      reason: "orders_refreshing",
-      message: "Open-orders visibility is refreshing in the background.",
-    });
-  }
-
-  const waitMs = orderVisibilityWaitMs();
-  return Promise.race([
-    request,
-    new Promise<ResilientOrdersResponse>((resolve) => {
-      const timeout = setTimeout(() => {
-        resolve(
-          orderVisibilityFallback({
-            reason: "orders_refreshing",
-            message: "Open-orders visibility is refreshing in the background.",
-            timeoutMs: waitMs,
-          }),
-        );
-      }, waitMs);
-      timeout.unref?.();
-    }),
-  ]);
+  return request;
 }
 
-export function getOrderVisibilityProbe(input: {
-  accountId?: string;
-  mode?: "shadow" | "live";
-  status?:
-    | "pending_submit"
-    | "submitted"
-    | "accepted"
-    | "partially_filled"
-    | "filled"
-    | "canceled"
-    | "rejected"
-    | "expired";
-}): ResilientOrdersResponse & {
-  probeOnly: true;
-  cacheStatus: "fresh" | "stale" | "missing";
-} {
+export async function getOrderVisibilityProbe(input: OrderReadInput): Promise<
+  OrderVisibilityResponse & {
+    probeOnly: true;
+    cacheStatus: "fresh";
+  }
+> {
   const key = orderVisibilityCacheKey(input);
   const now = Date.now();
   const cached = orderVisibilityCache.get(key);
@@ -3215,43 +2923,13 @@ export function getOrderVisibilityProbe(input: {
       cacheStatus: "fresh",
     };
   }
-  if (cached && cached.staleExpiresAt > now) {
-    const staleEmptySnapshot = !cached.payload.degraded && !cached.payload.orders.length;
-    if (staleEmptySnapshot) {
-      return {
-        ...cached.payload,
-        stale: true,
-        reason: cached.payload.reason ?? "orders_cached_stale",
-        debug: {
-          message:
-            cached.payload.debug?.message ??
-            "Open-orders visibility has a stale cached empty snapshot.",
-          code: cached.payload.reason ?? "orders_cached_stale",
-        },
-        probeOnly: true,
-        cacheStatus: "stale",
-      };
-    }
-    return {
-      ...markOrderVisibilitySnapshotStale(cached.payload, {
-        reason: cached.payload.reason ?? "orders_cached_stale",
-        message:
-          cached.payload.debug?.message ??
-          "Open-orders visibility has a stale cached snapshot.",
-      }),
-      probeOnly: true,
-      cacheStatus: "stale",
-    };
-  }
   if (cached) {
     orderVisibilityCache.delete(key);
   }
-
-  return {
-    orders: [],
-    probeOnly: true,
-    cacheStatus: "missing",
-  };
+  throw new HttpError(503, "No fresh IBKR order snapshot is available.", {
+    code: "ibkr_orders_snapshot_unavailable",
+    expose: true,
+  });
 }
 
 const DEFAULT_RUNTIME_DIAGNOSTICS_MARKET_DATA_INGEST_TIMEOUT_MS = 1_500;
@@ -3975,26 +3653,45 @@ async function listRobinhoodBrokerConnections(appUserId: string): Promise<
 }
 
 // Route-facing read: only the current user's watchlists. listWatchlists() itself
-// stays GLOBAL because the shared signal pipeline / shadow / automation read the
-// full watched-symbol universe across all users — so we filter the (globally
-// cached) snapshot down to the caller's owned rows here, per request.
+// stays global because the shared signal pipeline, shadow account, and automation
+// read the watched-symbol universe across all users.
+function createWatchlistDbUnavailableError(error?: unknown): HttpError {
+  return new HttpError(503, "Watchlists are temporarily unavailable.", {
+    code: "watchlist_db_unavailable",
+    detail:
+      "Watchlist database reads are timing out or disconnected. Retry after Postgres connectivity recovers.",
+    expose: true,
+    ...(error === undefined ? {} : { cause: error }),
+  });
+}
+
 export async function listWatchlistsForCurrentUser(): Promise<WatchlistSnapshot> {
-  const userId = requireCurrentAppUserId();
-  const snapshot = await listWatchlists();
-  const ownedIds = new Set(
-    (
-      await db
-        .select({ id: watchlistsTable.id })
-        .from(watchlistsTable)
-        .where(eq(watchlistsTable.appUserId, userId))
-    ).map((row) => row.id),
-  );
-  return {
-    ...snapshot,
-    watchlists: snapshot.watchlists.filter((watchlist) =>
-      ownedIds.has(watchlist.id),
-    ),
-  };
+  try {
+    const userId = requireCurrentAppUserId();
+    const snapshot = await listWatchlists();
+    const ownedIds = new Set(
+      (
+        await db
+          .select({ id: watchlistsTable.id })
+          .from(watchlistsTable)
+          .where(eq(watchlistsTable.appUserId, userId))
+      ).map((row) => row.id),
+    );
+    return {
+      ...snapshot,
+      watchlists: snapshot.watchlists.filter((watchlist) =>
+        ownedIds.has(watchlist.id),
+      ),
+    };
+  } catch (error) {
+    if (isHttpError(error)) {
+      throw error;
+    }
+    if (isTransientPostgresError(error) || isStatementTimeoutError(error)) {
+      throw createWatchlistDbUnavailableError(error);
+    }
+    throw error;
+  }
 }
 
 export async function listWatchlists() {
@@ -4008,35 +3705,8 @@ export async function listWatchlists() {
     return watchlistListCache.value;
   }
 
-  if (watchlistDbBackoff.isActive(nowMs)) {
-    if (watchlistListCache && watchlistListCache.staleUntil > nowMs) {
-      scheduleIbkrWatchlistPrewarmFromListRead(
-        watchlistListCache.value.watchlists,
-        "list-stale-db-backoff",
-        nowMs,
-      );
-      return watchlistListCache.value;
-    }
-    const fallback = cacheWatchlistSnapshot(buildBuiltInWatchlistSnapshot(), nowMs);
-    scheduleIbkrWatchlistPrewarmFromListRead(
-      fallback.watchlists,
-      "list-fallback",
-      nowMs,
-    );
-    return fallback;
-  }
-
-  const inFlight = watchlistListInFlight;
-  if (inFlight) {
-    if (watchlistListCache && watchlistListCache.staleUntil > nowMs) {
-      scheduleIbkrWatchlistPrewarmFromListRead(
-        watchlistListCache.value.watchlists,
-        "list-stale-inflight",
-        nowMs,
-      );
-      return watchlistListCache.value;
-    }
-    const result = await inFlight;
+  if (watchlistListInFlight) {
+    const result = await watchlistListInFlight;
     scheduleIbkrWatchlistPrewarmFromListRead(
       result.watchlists,
       "list-inflight",
@@ -4046,9 +3716,12 @@ export async function listWatchlists() {
   }
 
   const request = listWatchlistsFromDb()
-    .then((result) => {
-      watchlistDbBackoff.clear();
-      return cacheWatchlistSnapshot(result);
+    .then((result) => cacheWatchlistSnapshot(result))
+    .catch((error) => {
+      if (isTransientPostgresError(error) || isStatementTimeoutError(error)) {
+        throw createWatchlistDbUnavailableError(error);
+      }
+      throw error;
     })
     .finally(() => {
       if (watchlistListInFlight === request) {
@@ -4057,69 +3730,13 @@ export async function listWatchlists() {
     });
   watchlistListInFlight = request;
 
-  if (watchlistListCache && watchlistListCache.staleUntil > nowMs) {
-    void request
-      .then((result) =>
-        scheduleIbkrWatchlistPrewarmFromListRead(
-          result.watchlists,
-          "list-refresh",
-          Date.now(),
-        ),
-      )
-      .catch((error) => {
-        logger.warn(
-          { err: error },
-          "watchlist database refresh failed after stale list read",
-        );
-      });
-    scheduleIbkrWatchlistPrewarmFromListRead(
-      watchlistListCache.value.watchlists,
-      "list-stale-refreshing",
-      nowMs,
-    );
-    return watchlistListCache.value;
-  }
-
-  try {
-    const result = await request;
-    scheduleIbkrWatchlistPrewarmFromListRead(
-      result.watchlists,
-      "list",
-      Date.now(),
-    );
-    return result;
-  } catch (error) {
-    if (isTransientPostgresError(error)) {
-      // Pool-acquire timeouts are momentary pool saturation, not a DB outage; do
-      // not arm the lockout (next read retries). Still serve the fallback below.
-      if (!isPoolContentionError(error)) {
-        watchlistDbBackoff.markFailure({
-          error,
-          logger,
-          message: "watchlist database unavailable; serving built-in watchlists",
-          nowMs,
-        });
-      }
-      const fallback = cacheWatchlistSnapshot(buildBuiltInWatchlistSnapshot(), nowMs);
-      scheduleIbkrWatchlistPrewarmFromListRead(
-        fallback.watchlists,
-        "list-fallback",
-        nowMs,
-      );
-      return fallback;
-    }
-    logger.warn(
-      { err: error },
-      "watchlist database unavailable; serving built-in watchlists",
-    );
-    const fallback = cacheWatchlistSnapshot(buildBuiltInWatchlistSnapshot(), nowMs);
-    scheduleIbkrWatchlistPrewarmFromListRead(
-      fallback.watchlists,
-      "list-fallback",
-      nowMs,
-    );
-    return fallback;
-  }
+  const result = await request;
+  scheduleIbkrWatchlistPrewarmFromListRead(
+    result.watchlists,
+    "list",
+    Date.now(),
+  );
+  return result;
 }
 
 export async function createWatchlist(input: {
@@ -4451,7 +4068,7 @@ async function enrichBrokerPositionsForDisplay(
   const optionQuoteEntries = await Promise.all(
     Array.from(optionPositionsByUnderlying.entries()).map(
       async ([underlying, providerContractIds]) =>
-        fetchBridgeOptionQuoteSnapshots({
+        fetchMassiveOptionQuoteSnapshots({
           underlying,
           providerContractIds: Array.from(new Set(providerContractIds)),
           intent: "visible-live",
@@ -4510,19 +4127,7 @@ export async function listPositions(input: {
   };
 }
 
-export async function listOrders(input: {
-  accountId?: string;
-  mode?: "shadow" | "live";
-  status?:
-    | "pending_submit"
-    | "submitted"
-    | "accepted"
-    | "partially_filled"
-    | "filled"
-    | "canceled"
-    | "rejected"
-    | "expired";
-}) {
+export async function listOrders(input: OrderReadInput) {
   return listOrdersForVisibility(input);
 }
 
@@ -4754,21 +4359,20 @@ async function validateOrderIntentForRouting(
     );
   }
 
-  const orders = await listOrdersWithResilience({
-    accountId: input.accountId,
-    mode: input.mode,
-  });
-  if (orders.degraded) {
+  let orders: OrderVisibilityResponse;
+  try {
+    orders = await readCurrentOrders({
+      accountId: input.accountId,
+      mode: input.mode,
+    });
+  } catch (error) {
     throw new HttpError(
       409,
       "Cannot validate the call sale until open IBKR orders are available.",
       {
         code: "ibkr_option_order_open_orders_unavailable",
         expose: true,
-        data: {
-          reason: orders.reason ?? "orders_unavailable",
-          debug: orders.debug ?? null,
-        },
+        cause: error,
       },
     );
   }
@@ -10816,7 +10420,7 @@ async function fetchOptionStudyFallbackBar(input: {
     return null;
   }
 
-  const cachedQuote = getCurrentBridgeOptionQuoteSnapshots({
+  const cachedQuote = getCurrentMassiveOptionQuoteSnapshots({
     underlying: input.request.symbol,
     providerContractIds: [providerContractId],
   }).find(
@@ -10829,7 +10433,7 @@ async function fetchOptionStudyFallbackBar(input: {
   const quotes = cachedQuote
     ? [cachedQuote]
     : await resolveWithin(
-        fetchBridgeOptionQuoteSnapshots({
+        fetchMassiveOptionQuoteSnapshots({
           underlying: input.request.symbol,
           providerContractIds: [providerContractId],
           intent: "historical",
@@ -17703,7 +17307,7 @@ async function hydrateFlowScannerContractsFromLiveQuotes(input: {
     };
   }
 
-  const quotePayload = await fetchBridgeOptionQuoteSnapshots({
+  const quotePayload = await fetchMassiveOptionQuoteSnapshots({
     underlying: input.underlying,
     providerContractIds,
     owner: input.owner,

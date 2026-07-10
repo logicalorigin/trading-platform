@@ -7,7 +7,6 @@ import {
   getMarketDataAdmissionDiagnostics,
   getMarketDataLeasesSnapshot,
   recordMarketDataAdmissionIbkrPressure,
-  setMarketDataAdmissionBridgeLineBudget,
   setMarketDataAdmissionRuntimeDefaults,
   type MarketDataIntent,
   type MarketDataLineRequest,
@@ -395,13 +394,12 @@ test("new Trade Options Chain demand grows without demoting Massive scanner", ()
   );
 });
 
-test("Massive flow scanner ignores broker bridge line budget", () => {
+test("Massive flow scanner admits up to its configured line budget", () => {
   __resetMarketDataAdmissionForTests();
   setMarketDataAdmissionRuntimeDefaults({
     flowScannerLineBudget: 250,
     flowScannerConcurrency: 1,
   });
-  setMarketDataAdmissionBridgeLineBudget(5, Date.now());
 
   const scanner = admitMarketDataLeases({
     owner: "flow-scanner:SPY",
@@ -413,7 +411,6 @@ test("Massive flow scanner ignores broker bridge line budget", () => {
 
   assert.equal(scanner.rejected.length, 0);
   assert.equal(scanner.admitted.length, 100);
-  assert.equal(diagnostics.budget.bridgeLineBudget, 5);
   assert.equal(diagnostics.budget.flowScannerLineCap, 250);
   assert.equal(diagnostics.flowScannerChargedLineCount, 100);
   assert.equal(diagnostics.flowScannerContractCount, 100);

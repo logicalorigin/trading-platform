@@ -14,5 +14,4 @@ export type SignalMonitorEventsResponseSourceStatus = typeof SignalMonitorEvents
 
 export const SignalMonitorEventsResponseSourceStatus = {
   database: 'database',
-  'runtime-fallback': 'runtime-fallback',
 } as const;

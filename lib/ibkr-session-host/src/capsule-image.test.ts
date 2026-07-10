@@ -88,17 +88,8 @@ test("capsule restricts CPG clients and exposes only fixed host relays with RAM-
     entrypoint,
     /start_service cpg-relay \/usr\/local\/bin\/pyrus-capsule-relay[\s\S]*?15000[\s\S]*?5000/,
   );
-  assert.match(entrypoint, /chromium/);
-  assert.doesNotMatch(entrypoint, /--incognito/);
-  assert.match(
-    entrypoint,
-    /--disable-extensions-except=\/opt\/pyrus\/paper-only-extension/,
-  );
-  assert.match(
-    entrypoint,
-    /--load-extension=\/opt\/pyrus\/paper-only-extension/,
-  );
-  assert.match(entrypoint, /http:\/\/localhost:5000/);
+  assert.match(entrypoint, /wait_for_cpg_login 60/);
+  assert.doesNotMatch(entrypoint, /start_service chromium/);
   assert.match(entrypoint, /ibgroup\.web\.core\.clientportal\.gw\.GatewayStart/);
   assert.match(entrypoint, /start_service watchdog watchdog/);
   assert.equal(entrypoint.match(/PYRUS_IBKR_CAPSULE_READY_V1/g)?.length, 1);
@@ -125,6 +116,7 @@ test("capsule restricts CPG clients and exposes only fixed host relays with RAM-
   assert.match(health, /listener_exists 00000000 15000/);
   assert.match(health, /listener_exists 0100007F 5900/);
   assert.match(health, /listener_exists 00000000 16080/);
+  assert.doesNotMatch(health, /\bcpg-relay chromium\b/);
   assert.doesNotMatch(health, /\/dev\/tcp/);
   assert.match(relay, /127\.0\.0\.1/);
   assert.match(relay, /socket\.create_connection/);

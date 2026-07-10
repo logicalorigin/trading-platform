@@ -21,6 +21,13 @@ import {
 } from "./OperationsSignalTable.jsx";
 
 const source = readFileSync(new URL("./OperationsSignalTable.jsx", import.meta.url), "utf8");
+const signalSurfaceSource = [
+  "../../features/market/MarketActivityPanel.jsx",
+  "../../features/platform/HeaderBroadcastScrollerStack.jsx",
+  "../../features/platform/signalMonitorStatusModel.js",
+]
+  .map((path) => readFileSync(new URL(path, import.meta.url), "utf8"))
+  .join("\n");
 
 test("STA table does not request Signal Matrix hydration", () => {
   assert.doesNotMatch(source, /onRequestSignalMatrixHydration/);
@@ -106,10 +113,17 @@ test("STA table does not render cached action-source health", () => {
   assert.doesNotMatch(source, /sourceHealthBanner/);
   assert.doesNotMatch(source, /Action source degraded/);
   assert.doesNotMatch(source, /STA action source is currently unavailable/);
+  assert.doesNotMatch(source, /receivedHistorySourceFallback/);
+  assert.doesNotMatch(source, /runtime fallback because the event database/);
   assert.match(
     source,
     /const candidate = findSignalOptionsCandidateForSignal\(candidates, signal\)/,
   );
+});
+
+test("signal surfaces do not retain runtime-fallback profile compatibility", () => {
+  assert.doesNotMatch(signalSurfaceSource, /runtime[-_ ]fallback/i);
+  assert.doesNotMatch(signalSurfaceSource, /Signal monitor runtime fallback/);
 });
 
 test("STA stale scan banner only fires on a genuinely empty matrix", () => {
@@ -176,7 +190,6 @@ test("STA status summary separates rows, received signals, actions, and history"
     actionCount: 3,
     historyCount: 5,
     freshnessLine: "Signal 2m ago",
-    receivedHistorySourceStatus: "runtime-fallback",
   });
 
   assert.equal(

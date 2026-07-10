@@ -83,7 +83,7 @@ test("normal workspace preloading is gated behind signed-in auth state", () => {
   );
 });
 
-test("PlatformApp does not automatically background-preload cold screen modules", () => {
+test("PlatformApp keeps broad background screen preloading disabled", () => {
   // Normal-mode browser evidence showed the post-first-paint priority sweep
   // competing with the screen the user clicked. The import should happen on the
   // user's navigation path, not as an automatic account/signals/trade/algo sweep.
@@ -104,16 +104,27 @@ test("PlatformApp does not automatically background-preload cold screen modules"
   );
 });
 
-test("the priority sweep can only run behind the background screen-code gate", () => {
+test("navigation-critical Account and Algo modules warm sequentially after first paint", () => {
   assert.match(
     platformAppSource,
-    /PRIORITY_SCREEN_MODULE_PRELOAD_ORDER\.filter/,
-    "the priority sweep must iterate PRIORITY_SCREEN_MODULE_PRELOAD_ORDER",
+    /const NAVIGATION_CRITICAL_SCREEN_MODULE_PRELOAD_ORDER = \[\s*"account",\s*"algo",\s*\];/,
+    "only the two cold routes named by the visual regression should receive automatic code warmup",
   );
   assert.match(
     platformAppSource,
-    /if \(\s*!screenCodePreloadReady[\s\S]*?priorityScreenCodePreloadStartedRef\.current[\s\S]*?priorityScreenCodePreloadCompleteRef\.current[\s\S]*?\) \{/,
-    "the priority sweep must be blocked when screenCodePreloadReady is false",
+    /const navigationCriticalScreenCodePreloadReady = Boolean\(\s*operationalCodePreloadReady &&\s*memoryAllowsBackgroundWarmup,\s*\);/,
+    "critical route code must wait until the first screen has painted and startup protection has lifted",
+  );
+  const priorityEffect = platformAppSource.match(
+    /const runNavigationCriticalScreenPreload = async \(\) => \{[\s\S]*?void runNavigationCriticalScreenPreload\(\);/,
+  )?.[0];
+  assert.ok(priorityEffect, "missing navigation-critical preload effect");
+  assert.match(priorityEffect, /for \(const screenId of preloadOrder\)/);
+  assert.match(priorityEffect, /await preloadScreenModule\(screenId\)/);
+  assert.doesNotMatch(
+    priorityEffect,
+    /Promise\.all(?:Settled)?/,
+    "critical route chunks must not contend through a parallel sweep",
   );
 });
 
@@ -166,7 +177,18 @@ test("PlatformApp applies signal matrix stream frames as non-urgent React work",
   );
 });
 
-test("PlatformApp signal monitor queries retain stale data and retry pressure sheds", () => {
+test("PlatformApp clears matrix rows after a terminal stream failure", () => {
+  assert.match(
+    platformAppSource,
+    /const handleSignalMatrixTransportError = useCallback\([\s\S]*setSignalMatrixTransportErrored\(errored\);[\s\S]*if \(!errored\) \{[\s\S]*return;[\s\S]*\}[\s\S]*signalMatrixStatesRef\.current = EMPTY_SIGNAL_MONITOR_STATES;[\s\S]*setSignalMatrixSnapshot\(\(current\) =>[\s\S]*states: EMPTY_SIGNAL_MONITOR_STATES/,
+  );
+  assert.match(
+    platformAppSource,
+    /onTransportError: handleSignalMatrixTransportError/,
+  );
+});
+
+test("PlatformApp never substitutes prior profile or event history after errors", () => {
   const profileBlock =
     platformAppSource.match(
       /const signalMonitorProfileQuery = useGetSignalMonitorProfile\([\s\S]*?\n  \);/,
@@ -179,8 +201,21 @@ test("PlatformApp signal monitor queries retain stale data and retry pressure sh
   [profileBlock, eventsBlock].forEach((block) => {
     assert.match(block, /retry:\s*retryUnlessTimeout\(2\)/);
     assert.match(block, /retryDelay:\s*QUERY_DEFAULTS\.retryDelay/);
-    assert.match(block, /placeholderData:\s*\(previousData\) => previousData/);
   });
+  [profileBlock, eventsBlock].forEach((block) => {
+    assert.doesNotMatch(
+      block,
+      /placeholderData:\s*\(previousData\) => previousData/,
+    );
+  });
+  assert.match(
+    platformAppSource,
+    /const signalMonitorProfile = signalMonitorProfileQuery\.isError\s*\? null\s*:\s*signalMonitorProfileQuery\.data \|\| null;/,
+  );
+  assert.match(
+    platformAppSource,
+    /const signalMonitorEvents = signalMonitorEventsQuery\.isError\s*\? EMPTY_SIGNAL_MONITOR_EVENTS\s*:\s*signalMonitorEventsQuery\.data\?\.events \|\| EMPTY_SIGNAL_MONITOR_EVENTS;/,
+  );
 });
 
 test("signal monitor event history pauses during blocking API mutations", () => {
@@ -191,7 +226,7 @@ test("signal monitor event history pauses during blocking API mutations", () => 
   );
   assert.match(
     platformAppSource,
-    /const signalMonitorEventsReady = Boolean\(\s*signalMonitorDisplayReady &&\s*screen !== "algo" &&\s*screen !== "trade" &&\s*!criticalApiMutationPaused,\s*\);/,
-    "signal event history must not run on Algo/Trade or restart during blocking API mutations",
+    /const signalMonitorEventsReady = Boolean\(\s*signalMonitorDisplayReady &&\s*screen !== "trade" &&\s*!criticalApiMutationPaused,\s*\);/,
+    "signal event history must recover while Algo is visible and stay paused for Trade or blocking API mutations",
   );
 });

@@ -651,6 +651,15 @@ const optionPositionMultiplier = (row) => {
   );
 };
 
+const scaledPositionGreek = (row, field) => {
+  const greek = firstFiniteNumber(row?.optionQuote?.[field]);
+  const quantity = firstFiniteNumber(row?.quantity);
+  const multiplier = optionPositionMultiplier(row);
+  return greek != null && quantity != null && multiplier != null
+    ? greek * quantity * multiplier
+    : null;
+};
+
 const optionPriceLooksContractScaled = (row, price, multiplier) => {
   if (!isOptionPosition(row) || multiplier == null || multiplier <= 1 || price <= 0) {
     return false;
@@ -748,20 +757,29 @@ const applyLiveOptionQuoteToRow = (row, liveQuote) => {
       ? (unrealizedPnl / costBasis) * 100
       : row.unrealizedPnlPercent;
   const perContractDayChange = firstFiniteNumber(displayOptionQuote?.dayChange);
+  const previousClose = firstPositiveFiniteNumber(
+    displayOptionQuote?.prevClose,
+    displayOptionQuote?.previousClose,
+    optionQuote?.prevClose,
+    optionQuote?.previousClose,
+  );
+  const markDayChange =
+    mark != null && previousClose != null ? mark - previousClose : null;
+  const resolvedPerContractDayChange = markDayChange ?? perContractDayChange;
   const sameDayPosition = positionOpenedOnCurrentMarketDay(row.openedAt);
   const dayChange =
     sameDayPosition && unrealizedPnl != null
       ? unrealizedPnl
-      : perContractDayChange != null && quantity != null && multiplier != null
-      ? perContractDayChange * quantity * multiplier
+      : resolvedPerContractDayChange != null && quantity != null && multiplier != null
+      ? resolvedPerContractDayChange * quantity * multiplier
       : row.dayChange;
   // The option quote's own dayChangePercent is the contract's price move; for a SHORT
   // the position's Day % is inverted, so it must carry the position sign to match Day $
   // (perContractDayChange * quantity) in the same cell.
-  const perContractDayChangePercent = firstFiniteNumber(
-    optionQuote?.dayChangePercent,
-    row.dayChangePercent,
-  );
+  const perContractDayChangePercent =
+    markDayChange != null && previousClose != null
+      ? (markDayChange / previousClose) * 100
+      : firstFiniteNumber(optionQuote?.dayChangePercent, row.dayChangePercent);
   const dayChangePercent =
     sameDayPosition && unrealizedPnlPercent != null
       ? unrealizedPnlPercent
@@ -841,9 +859,10 @@ const applyLiveOptionQuoteToRow = (row, liveQuote) => {
       ? firstFiniteNumber(row.brokerUnrealizedPnlPercent ?? row.unrealizedPnlPercent)
       : null,
     betaWeightedDelta:
-      delta != null && quantity != null && multiplier != null
+      firstFiniteNumber(row.betaWeightedDelta) ??
+      (delta != null && quantity != null && multiplier != null
         ? delta * quantity * multiplier
-        : row.betaWeightedDelta,
+        : null),
   };
 };
 
@@ -1089,6 +1108,7 @@ const buildDisplayTotals = (rows, fallbackTotals = {}) => {
       const marketValue = brokerMarketValueForRow(row);
       const unrealizedPnl = brokerUnrealizedPnlForRow(row);
       const dayChange = firstFiniteNumber(row.dayChange);
+      const dayChangePercent = firstFiniteNumber(row.dayChangePercent);
       const weightPercent = firstFiniteNumber(row.weightPercent);
       if (marketValue != null) {
         acc.netExposure += marketValue;
@@ -1096,7 +1116,23 @@ const buildDisplayTotals = (rows, fallbackTotals = {}) => {
         else acc.grossShort += marketValue;
       }
       if (unrealizedPnl != null) acc.unrealizedPnl += unrealizedPnl;
-      if (dayChange != null) acc.dayChange += dayChange;
+      if (marketValue != null && unrealizedPnl != null) {
+        acc.unrealizedCostBasis += Math.abs(marketValue - unrealizedPnl);
+      }
+      if (dayChange != null) {
+        acc.dayChange += dayChange;
+        const dayChangeBasis =
+          dayChangePercent != null && dayChangePercent !== 0
+            ? Math.abs((dayChange * 100) / dayChangePercent)
+            : dayChange === 0 && marketValue != null
+              ? Math.abs(marketValue)
+              : null;
+        if (dayChangeBasis != null && dayChangeBasis > 0) {
+          acc.dayChangeBasis += dayChangeBasis;
+        } else {
+          acc.dayChangeBasisComplete = false;
+        }
+      }
       if (weightPercent != null) {
         acc.weightPercent = (acc.weightPercent ?? 0) + weightPercent;
       }
@@ -1107,7 +1143,10 @@ const buildDisplayTotals = (rows, fallbackTotals = {}) => {
       grossLong: 0,
       grossShort: 0,
       unrealizedPnl: 0,
+      unrealizedCostBasis: 0,
       dayChange: 0,
+      dayChangeBasis: 0,
+      dayChangeBasisComplete: true,
       weightPercent: null,
       cash: fallbackCash,
       totalCash: fallbackCash,
@@ -1118,8 +1157,23 @@ const buildDisplayTotals = (rows, fallbackTotals = {}) => {
   if (totals.netLiquidation == null && totals.cash != null) {
     totals.netLiquidation = totals.cash + totals.netExposure;
   }
+  if (!totals.dayChangeBasisComplete) {
+    totals.dayChangeBasis = null;
+  }
   return totals;
 };
+
+const displayTotalsDayChangePercent = (totals) =>
+  totals?.dayChangeBasis
+    ? (Number(totals.dayChange) / Math.abs(Number(totals.dayChangeBasis))) * 100
+    : null;
+
+const displayTotalsUnrealizedPnlPercent = (totals) =>
+  totals?.unrealizedCostBasis
+    ? (Number(totals.unrealizedPnl) /
+        Math.abs(Number(totals.unrealizedCostBasis))) *
+      100
+    : null;
 
 const applyDisplayWeights = (rows, fallbackTotals = null) => {
   const safeRows = Array.isArray(rows) ? rows : [];
@@ -1669,10 +1723,13 @@ export const __positionsPanelInternalsForTests = {
   automationPositionMetrics,
   automationStopTone,
   buildDisplayTotals,
+  displayTotalsDayChangePercent,
+  displayTotalsUnrealizedPnlPercent,
   formatAutomationStopDistanceLabel,
   optionDetailMetrics,
   optionInlineDetail,
   positionOpenedOnCurrentMarketDay,
+  scaledPositionGreek,
 };
 
 const resolvePositionUnderlyingPrice = (row, snapshotsBySymbol = {}) => {
@@ -2802,6 +2859,14 @@ const DensePositionCell = ({
   const quote = denseDisplayQuote(row);
   const bidAsk = formatPositionBidAskPair(quote, maskValues);
   const quoteHasBidAsk = hasPositionBidAsk(quote);
+  // Price and Bid/Ask should live-update and flash on change exactly like the
+  // Spot column (DenseUnderlyingPriceCell). Each keys on its own value; the
+  // combined "Bid / Ask" cell flashes when EITHER side moves (mid alone moves too
+  // rarely). Hooks run unconditionally regardless of which column this renders.
+  const bidFlashClassName = useValueFlash(quote?.bid);
+  const askFlashClassName = useValueFlash(quote?.ask);
+  const markFlashClassName = useValueFlash(quote?.mark ?? quote?.mid ?? row.mark);
+  const quoteFlashClassName = bidFlashClassName || askFlashClassName;
   const spread = formatPositionSpreadLabel(quote, (value) =>
     formatAccountPercent(value, 1, maskValues),
   );
@@ -2889,23 +2954,43 @@ const DensePositionCell = ({
   } else if (column.id === "price") {
     return (
       <td style={denseTableCellStyle(column, expanded)}>
-        <DenseStackedValue
-          primary={formatAccountPrice(markValue, 2, maskValues)}
-          primaryTone={CSS_COLOR.text}
-          align={column.align}
-          title={formatQuoteUpdatedDetail(quote)}
-        />
+        <span
+          className={markFlashClassName}
+          style={{
+            display: "block",
+            maxWidth: "100%",
+            padding: sp("1px 2px"),
+            borderRadius: dim(RADII.xs),
+          }}
+        >
+          <DenseStackedValue
+            primary={formatAccountPrice(markValue, 2, maskValues)}
+            primaryTone={CSS_COLOR.text}
+            align={column.align}
+            title={formatQuoteUpdatedDetail(quote)}
+          />
+        </span>
       </td>
     );
   } else if (column.id === "quote") {
     return (
       <td style={denseTableCellStyle(column, expanded)}>
-        <DenseStackedValue
-          primary={bidAsk}
-          primaryTone={quoteHasBidAsk ? CSS_COLOR.textSec : CSS_COLOR.textDim}
-          align={column.align}
-          title={[bidAsk, quoteDetail].filter(Boolean).join(" · ")}
-        />
+        <span
+          className={quoteFlashClassName}
+          style={{
+            display: "block",
+            maxWidth: "100%",
+            padding: sp("1px 2px"),
+            borderRadius: dim(RADII.xs),
+          }}
+        >
+          <DenseStackedValue
+            primary={bidAsk}
+            primaryTone={quoteHasBidAsk ? CSS_COLOR.textSec : CSS_COLOR.textDim}
+            align={column.align}
+            title={[bidAsk, quoteDetail].filter(Boolean).join(" · ")}
+          />
+        </span>
       </td>
     );
   } else if (column.id === "stop") {
@@ -3052,10 +3137,21 @@ const DensePositionCell = ({
     content = formatNumber(row?.optionQuote?.theta, 2);
   }
 
+  const contentFlashClassName =
+    column.id === "bid"
+      ? bidFlashClassName
+      : column.id === "ask"
+        ? askFlashClassName
+        : column.id === "last"
+          ? markFlashClassName
+          : "";
   return (
     <td style={denseTableCellStyle(column, expanded)}>
       <AppTooltip content={title}>
-        <span style={denseColumnTextStyle({ align: column.align, color })}>
+        <span
+          className={contentFlashClassName}
+          style={denseColumnTextStyle({ align: column.align, color })}
+        >
           {content}
         </span>
       </AppTooltip>
@@ -3069,7 +3165,7 @@ const summarySegments = ({ rows, displayTotals, totalDayChange, currency, maskVa
     0,
   );
   const netTheta = rows.reduce(
-    (sum, row) => sum + (firstFiniteNumber(row?.optionQuote?.theta) ?? 0),
+    (sum, row) => sum + (scaledPositionGreek(row, "theta") ?? 0),
     0,
   );
   const cash = firstDisplayTotalNumber(
@@ -3111,9 +3207,10 @@ const summarySegments = ({ rows, displayTotals, totalDayChange, currency, maskVa
       label: "Day",
       value: formatAccountSignedMoney(totalDayChange, currency, false, maskValues),
       extra: signedPercent(
-        displayTotals.netExposure
-          ? (totalDayChange / Math.abs(displayTotals.netExposure)) * 100
-          : null,
+        displayTotalsDayChangePercent({
+          ...displayTotals,
+          dayChange: totalDayChange,
+        }),
         2,
         maskValues,
       ),
@@ -3123,9 +3220,7 @@ const summarySegments = ({ rows, displayTotals, totalDayChange, currency, maskVa
       label: "Unreal",
       value: formatAccountSignedMoney(displayTotals.unrealizedPnl, currency, false, maskValues),
       extra: signedPercent(
-        displayTotals.netExposure
-          ? (displayTotals.unrealizedPnl / Math.abs(displayTotals.netExposure)) * 100
-          : null,
+        displayTotalsUnrealizedPnlPercent(displayTotals),
         2,
         maskValues,
       ),

@@ -3,30 +3,24 @@ import test from "node:test";
 
 import { ensureGateway, getGateway } from "./ibkr-portal-gateway-manager";
 import {
+  connectPortal,
   disconnectPortal,
-  IBKR_PORTAL_LOGIN_PATH,
   readPortalReadiness,
 } from "./ibkr-portal-session";
 
-test("hosted IBKR login opens noVNC with its socket path inside the authenticated mount", () => {
-  assert.equal(
-    IBKR_PORTAL_LOGIN_PATH,
-    "/api/broker-execution/ibkr-portal/gateway/vnc.html" +
-      "?autoconnect=1&resize=scale" +
-      "&path=api%2Fbroker-execution%2Fibkr-portal%2Fgateway%2Fwebsockify",
-  );
-});
-
-test("hosted portal verifies paper accounts and releases live accounts", async () => {
+test("hosted portal connects any authenticated account (not paper-only)", async () => {
   const previousEnabled = process.env["IBKR_SESSION_HOST_ENABLED"];
   const previousToken = process.env["IBKR_SESSION_HOST_CONTROL_TOKEN"];
   const previousUrl = process.env["IBKR_SESSION_HOST_URL"];
   const previousFetch = globalThis.fetch;
   const liveUserId = "33333333-3333-4333-8333-333333333333";
   const paperUserId = "44444444-4444-4444-8444-444444444444";
-  const failedReleaseUserId = "88888888-8888-4888-8888-888888888888";
+  const needsLoginUserId = "55555555-5555-4555-8555-555555555555";
+  const delayedLiveUserId = "66666666-6666-4666-8666-666666666666";
   const released = new Set<string>();
   let accountId = "U1234567";
+  let authenticated = true;
+  let authStatusCalls = 0;
 
   process.env["IBKR_SESSION_HOST_ENABLED"] = "1";
   process.env["IBKR_SESSION_HOST_CONTROL_TOKEN"] = "host-token";
@@ -36,12 +30,6 @@ test("hosted portal verifies paper accounts and releases live accounts", async (
     if (url.port === "18748") {
       const sessionId = url.pathname.split("/")[2] ?? "";
       if (url.pathname.endsWith("/release")) {
-        if (sessionId === failedReleaseUserId) {
-          return Response.json(
-            { error: { code: "docker_failure" } },
-            { status: 503 },
-          );
-        }
         released.add(sessionId);
         return Response.json({ released: true });
       }
@@ -59,9 +47,10 @@ test("hosted portal verifies paper accounts and releases live accounts", async (
       });
     }
     if (url.pathname.endsWith("/iserver/auth/status")) {
+      authStatusCalls += 1;
       return Response.json({
-        authenticated: true,
-        connected: true,
+        authenticated,
+        connected: authenticated,
         selectedAccount: accountId,
       });
     }
@@ -75,12 +64,13 @@ test("hosted portal verifies paper accounts and releases live accounts", async (
   }) as typeof fetch;
 
   try {
+    // A live (non-DU) account is a first-class Client Portal connection.
     await ensureGateway(liveUserId);
     const liveReadiness = await readPortalReadiness(liveUserId);
-    assert.equal(liveReadiness.status, "disconnected");
-    assert.match(liveReadiness.message, /Only verified IBKR Paper Trading/);
-    assert.equal(getGateway(liveUserId), null);
-    assert(released.has(liveUserId));
+    assert.equal(liveReadiness.status, "connected");
+    assert.equal(liveReadiness.selectedAccountId, "U1234567");
+    assert.equal(getGateway(liveUserId)?.paperAccountVerified, true);
+    assert(!released.has(liveUserId));
 
     accountId = "DU1234567";
     await ensureGateway(paperUserId);
@@ -89,21 +79,32 @@ test("hosted portal verifies paper accounts and releases live accounts", async (
     assert.equal(paperReadiness.selectedAccountId, "DU1234567");
     assert.equal(getGateway(paperUserId)?.paperAccountVerified, true);
 
-    accountId = "U7654321";
-    await ensureGateway(failedReleaseUserId);
-    const failedReleaseReadiness = await readPortalReadiness(
-      failedReleaseUserId,
+    authenticated = false;
+    await ensureGateway(needsLoginUserId);
+    const needsLoginReadiness = await readPortalReadiness(needsLoginUserId);
+    assert.equal(needsLoginReadiness.status, "needs_login");
+    assert.equal(needsLoginReadiness.loginPath, null);
+
+    const callsBeforeConnect = authStatusCalls;
+    const delayedLiveStart = await connectPortal(delayedLiveUserId);
+    assert.equal(delayedLiveStart.status, "needs_login");
+    assert.equal(
+      authStatusCalls,
+      callsBeforeConnect,
+      "connect must return the login surface without blocking on auth status",
     );
-    assert.equal(failedReleaseReadiness.status, "disconnected");
-    assert.match(
-      failedReleaseReadiness.message,
-      /could not be confirmed stopped/,
-    );
-    assert.equal(getGateway(failedReleaseUserId), null);
+    authenticated = true;
+    accountId = "U2468101";
+    const delayedReadiness = await readPortalReadiness(delayedLiveUserId);
+    assert.equal(delayedReadiness.status, "connected");
+    assert.equal(delayedReadiness.selectedAccountId, "U2468101");
+    assert.ok(getGateway(delayedLiveUserId), "live login keeps its gateway");
+    assert(!released.has(delayedLiveUserId));
   } finally {
     await disconnectPortal(liveUserId).catch(() => undefined);
     await disconnectPortal(paperUserId).catch(() => undefined);
-    await disconnectPortal(failedReleaseUserId).catch(() => undefined);
+    await disconnectPortal(needsLoginUserId).catch(() => undefined);
+    await disconnectPortal(delayedLiveUserId).catch(() => undefined);
     globalThis.fetch = previousFetch;
     if (previousEnabled === undefined) {
       delete process.env["IBKR_SESSION_HOST_ENABLED"];

@@ -1,10 +1,10 @@
 import type { QuoteSnapshot } from "../providers/ibkr/client";
 import {
-  getBridgeOptionQuoteStreamDiagnostics,
-  getCurrentBridgeOptionQuoteSnapshots,
-  subscribeBridgeOptionQuoteSnapshots,
+  getMassiveOptionQuoteStreamDiagnostics,
+  getCurrentMassiveOptionQuoteSnapshots,
+  subscribeMassiveOptionQuoteSnapshots,
   type OptionQuoteSnapshotPayload,
-} from "./bridge-option-quote-stream";
+} from "./massive-option-quote-stream";
 import {
   getMarketDataAdmissionDiagnostics,
   getMarketDataLeasesSnapshot,
@@ -220,7 +220,7 @@ function resolveMissingQuoteState(input: {
     };
   }
 
-  const streamDiagnostics = getBridgeOptionQuoteStreamDiagnostics();
+  const streamDiagnostics = getMassiveOptionQuoteStreamDiagnostics();
   const streamStatus = streamDiagnostics.lastStreamStatus as
     | { reason?: unknown; state?: unknown }
     | null
@@ -345,7 +345,7 @@ export function declareOptionQuoteDemand(input: OptionQuoteDemandDeclaration): v
     declaredAt: Date.now(),
   };
   activeDemands.set(owner, demand);
-  demand.unsubscribe = subscribeBridgeOptionQuoteSnapshots(
+  demand.unsubscribe = subscribeMassiveOptionQuoteSnapshots(
     {
       owner,
       intent: input.intent,
@@ -390,7 +390,7 @@ export function readOptionQuoteDemandState(
   const ownerDemand = owner ? activeDemands.get(owner) : undefined;
   const requiresGreeks = input.requiresGreeks ?? ownerDemand?.requiresGreeks ?? true;
   const quotesByProviderContractId = new Map(
-    getCurrentBridgeOptionQuoteSnapshots({
+    getCurrentMassiveOptionQuoteSnapshots({
       underlying,
       providerContractIds,
     }).map((quote) => [quote.providerContractId?.trim?.() || "", quote] as const),
@@ -436,7 +436,7 @@ export function readOptionQuoteDemandState(
 }
 
 export function getOptionQuoteDemandDiagnostics() {
-  const bridge = getBridgeOptionQuoteStreamDiagnostics();
+  const stream = getMassiveOptionQuoteStreamDiagnostics();
   const admission = getMarketDataAdmissionDiagnostics();
   const requestedProviderContractIds = normalizeProviderContractIds(
     Array.from(activeDemands.values()).flatMap(
@@ -448,11 +448,11 @@ export function getOptionQuoteDemandDiagnostics() {
     activeDemandCount: activeDemands.size,
     requestedProviderContractIdCount: requestedProviderContractIds.length,
     requestedProviderContractIds: requestedProviderContractIds.slice(0, 100),
-    desiredProviderContractIds: bridge.desiredProviderContractIds,
-    subscribedProviderContractIdCount: bridge.unionProviderContractIdCount,
-    cachedQuoteCount: bridge.cachedQuoteCount,
-    streamPressure: bridge.pressure,
-    streamStatus: bridge.lastStreamStatus,
+    desiredProviderContractIds: stream.desiredProviderContractIds,
+    subscribedProviderContractIdCount: stream.unionProviderContractIdCount,
+    cachedQuoteCount: stream.cachedQuoteCount,
+    streamPressure: stream.pressure,
+    streamStatus: stream.lastStreamStatus,
     admissionIntentUsage: admission.intentUsage,
     admissionPoolUsage: admission.poolUsage,
     leaseCount: admission.leaseCount,

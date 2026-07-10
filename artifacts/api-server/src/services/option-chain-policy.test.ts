@@ -16,7 +16,7 @@ const bridgeStreamsSource = readFileSync(
   "utf8",
 );
 const optionQuoteStreamSource = readFileSync(
-  new URL("./bridge-option-quote-stream.ts", import.meta.url),
+  new URL("./massive-option-quote-stream.ts", import.meta.url),
   "utf8",
 );
 

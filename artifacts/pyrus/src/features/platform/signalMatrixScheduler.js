@@ -871,8 +871,6 @@ export function mergeSignalMatrixStreamSnapshot({
     ? currentSnapshot.states
     : [];
   const states = Array.isArray(incomingStates) ? incomingStates : [];
-  const hasMetadata =
-    coverage || skippedSymbols !== null || truncated !== null;
   const nextMetadata = {
     coverage: coverage ?? currentSnapshot.coverage ?? null,
     skippedSymbols: skippedSymbols ?? currentSnapshot.skippedSymbols ?? [],
@@ -880,12 +878,12 @@ export function mergeSignalMatrixStreamSnapshot({
   };
 
   if (!states.length) {
-    if (kind !== "bootstrap" || !hasMetadata) {
+    if (kind !== "bootstrap") {
       return currentSnapshot;
     }
     return {
       ...currentSnapshot,
-      states: currentStates,
+      states,
       ...nextMetadata,
     };
   }

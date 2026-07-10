@@ -57,6 +57,7 @@ let lifecyclePhase = "initializing";
 let apiChild = null;
 let webChild = null;
 let workerChild = null;
+let ibkrHostChild = null;
 // In-place API reload (agent-driven, SIGUSR2): rebuild + restart the API child
 // WITHOUT tearing down the supervisor, so the Replit preview (anchored to this
 // supervisor process) and the web dev server stay attached and just reflect the
@@ -190,6 +191,7 @@ function currentFlightHeartbeat(extra = {}) {
     apiPid: apiChild?.pid ?? null,
     webPid: webChild?.pid ?? null,
     workerPid: workerChild?.pid ?? null,
+    ibkrHostPid: ibkrHostChild?.pid ?? null,
     children: currentChildrenSnapshot(),
     supervisorRssMb: processRssMb(process.pid),
     systemMemoryMb: systemMemorySnapshotMb(),
@@ -277,6 +279,11 @@ function marketDataWorkerEnv() {
       ? {}
       : { DATABASE_URL: process.env.LOCAL_DATABASE_URL }),
   };
+}
+
+function ibkrSessionHostEnabled() {
+  const env = { ...process.env, ...readDevEnvLocal() };
+  return env["IBKR_SESSION_HOST_ENABLED"] === "1";
 }
 
 function startLifecycleHeartbeat() {
@@ -1137,6 +1144,25 @@ try {
   });
   flightRecorder.writeHeartbeat(currentFlightHeartbeat());
 
+  let ibkrHostExit = null;
+  if (ibkrSessionHostEnabled()) {
+    lifecyclePhase = "ibkr-host-starting";
+    const ibkrHost = spawnService(
+      "IBKR session host",
+      ["--filter", "@workspace/ibkr-session-host", "run", "dev"],
+      {},
+    );
+    ibkrHostChild = ibkrHost;
+    ibkrHostExit = exitPromise("IBKR session host", ibkrHost);
+    writeLifecycleEvent("ibkr-host-started", {
+      childPid: ibkrHost.pid || null,
+      sinceLaunchMs: Date.now() - launchStartedAt,
+    });
+    flightRecorder.writeHeartbeat(currentFlightHeartbeat());
+  } else {
+    writeLifecycleEvent("ibkr-host-skipped", { reason: "disabled" });
+  }
+
   // Observe (without gating) when vite first serves, so the launch summary can
   // attribute web readiness from the supervisor's point of view.
   probeWebReady(launchStartedAt)
@@ -1209,6 +1235,7 @@ try {
     workerStartup.start
       ? `worker +${formatLaunchMs(Math.max(0, (workerStartedMs ?? totalMs) - (apiHealthyMs ?? 0)))}`
       : "worker skipped",
+    ibkrHostExit ? "ibkr host started" : "ibkr host skipped",
   ];
   console.log(
     `[pyrus-dev] launch ready in ${formatLaunchMs(totalMs)} — ${summaryParts.join(", ")}`,
@@ -1232,6 +1259,9 @@ try {
     watchFatalExit("PYRUS web", webExit);
     if (workerExit) {
       watchFatalExit("market-data worker", workerExit);
+    }
+    if (ibkrHostExit) {
+      watchFatalExit("IBKR session host", ibkrHostExit);
     }
   });
   const code = firstExit.code ?? (firstExit.signal ? 1 : 0);

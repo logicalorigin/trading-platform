@@ -13,8 +13,7 @@ import {
 // queued duplicate reads on the saturated 12-connection pool until the 15s
 // statement timeout 500'd the stream.
 
-const snapshot = (marker: string, stateSource = "stored") =>
-  ({ marker, stateSource }) as never;
+const snapshot = (marker: string) => ({ marker, stateSource: "database" }) as never;
 
 test("concurrent bootstrap reads share one underlying stored-state read", async () => {
   let reads = 0;
@@ -38,16 +37,12 @@ test("concurrent bootstrap reads share one underlying stored-state read", async 
   assert.equal(left, right);
 });
 
-test("bootstrap snapshot is served from cache within the TTL and refreshed after stale reuse", async () => {
+test("bootstrap snapshot is served from cache within the TTL and refreshed after expiry", async () => {
   let reads = 0;
   let nowMs = 0;
   let releaseRefresh = () => {};
-  let resolveRefreshDone = (_snapshot: unknown) => {};
   const refreshGate = new Promise<void>((resolve) => {
     releaseRefresh = resolve;
-  });
-  const refreshDone = new Promise<unknown>((resolve) => {
-    resolveRefreshDone = resolve;
   });
   const reader = createSignalMonitorStreamBootstrapSnapshotReader({
     read: async () => {
@@ -55,11 +50,7 @@ test("bootstrap snapshot is served from cache within the TTL and refreshed after
       if (reads === 2) {
         await refreshGate;
       }
-      const result = snapshot(`read-${reads}`);
-      if (reads === 2) {
-        resolveRefreshDone(result);
-      }
-      return result;
+      return snapshot(`read-${reads}`);
     },
     now: () => nowMs,
   });
@@ -71,23 +62,41 @@ test("bootstrap snapshot is served from cache within the TTL and refreshed after
   assert.equal(cached, first);
 
   nowMs += 2;
-  const stalePromise = reader("shadow" as never);
-  let staleSettled = false;
-  stalePromise.then(() => {
-    staleSettled = true;
+  const refreshPromise = reader("shadow" as never);
+  let refreshSettled = false;
+  refreshPromise.then(() => {
+    refreshSettled = true;
   });
   await Promise.resolve();
-  assert.equal(staleSettled, true);
-  assert.equal(await stalePromise, first);
+  assert.equal(refreshSettled, false);
   assert.equal(reads, 2);
   releaseRefresh();
-  await refreshDone;
-  await new Promise<void>((resolve) => {
-    setImmediate(resolve);
+  const refreshed = await refreshPromise;
+  assert.notEqual(refreshed, first);
+});
+
+test("an expired snapshot never hides a failed database refresh", async () => {
+  let reads = 0;
+  let nowMs = 0;
+  const reader = createSignalMonitorStreamBootstrapSnapshotReader({
+    read: async () => {
+      reads += 1;
+      if (reads === 2) {
+        throw new Error("database unavailable");
+      }
+      return snapshot(`read-${reads}`);
+    },
+    ttlMs: 10,
+    now: () => nowMs,
   });
 
-  const refreshed = await reader("shadow" as never);
-  assert.notEqual(refreshed, first);
+  await reader("shadow" as never);
+  nowMs = 11;
+  await assert.rejects(() => reader("shadow" as never), /database unavailable/);
+  const recovered = (await reader("shadow" as never)) as unknown as {
+    marker: string;
+  };
+  assert.equal(recovered.marker, "read-3");
 });
 
 test("environments do not share bootstrap snapshots", async () => {
@@ -102,22 +111,6 @@ test("environments do not share bootstrap snapshots", async () => {
   await reader("shadow" as never);
   await reader("live" as never);
   assert.deepEqual(seen, ["shadow", "live"]);
-});
-
-test("degraded runtime-fallback snapshots are never cached", async () => {
-  let reads = 0;
-  const reader = createSignalMonitorStreamBootstrapSnapshotReader({
-    read: async () => {
-      reads += 1;
-      return snapshot(`read-${reads}`, "runtime-fallback");
-    },
-  });
-
-  await reader("shadow" as never);
-  await reader("shadow" as never);
-  // Each call re-reads: a transient DB blip must not pin empty bootstraps on
-  // every reconnect for a full TTL.
-  assert.equal(reads, 2);
 });
 
 test("a failed read is not cached and the next call retries", async () => {

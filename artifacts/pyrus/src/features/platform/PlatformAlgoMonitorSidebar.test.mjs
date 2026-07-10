@@ -266,7 +266,7 @@ test("Platform shells pass the STA profile timeframe into the algo monitor sideb
   );
   assert.match(
     algoScreenSource,
-    /publishAlgoStaMtfAlignmentConfig\(profileDraft\?\.entryGate\?\.mtfAlignment \|\| null\)/,
+    /publishAlgoStaMtfAlignmentConfig\(\s*profileDraft\?\.entryGate\?\.mtfAlignment \|\| null,?\s*\)/,
   );
   assert.match(algoScreenSource, /clearAlgoStaExecutionTimeframe\(\)/);
   assert.match(shellSource, /signalActionTimeframe=\{signalActionTimeframe\}/);
@@ -301,18 +301,65 @@ test("Platform shell algo stream pauses during blocking API mutations", () => {
   );
 });
 
-test("Algo monitor sidebar first paint is not coupled to shadow account position fallback", () => {
+test("Algo monitor sidebar keeps independent signals without fabricating deployment metrics", () => {
   const sidebarSource = readLocalSource("./PlatformAlgoMonitorSidebar.jsx");
 
   assert.equal(sidebarSource.includes("useGetAccountPositions"), false);
   assert.equal(sidebarSource.includes("rowDeploymentIds"), false);
   assert.match(
     sidebarSource,
-    /const loading =[\s\S]*deploymentsQuery\.isLoading[\s\S]*!hasSignalActionRows;/,
+    /const loading = Boolean\([\s\S]*deploymentsQuery\.isLoading &&[\s\S]*!hasSignalActionRows/,
   );
   assert.match(
     sidebarSource,
     /const canRenderSignalSurface = Boolean\(focusedDeployment \|\| hasSignalActionRows\);/,
+  );
+  assert.match(
+    sidebarSource,
+    /!focusedDeployment \? \([\s\S]*title=\{[\s\S]*Deployment data unavailable[\s\S]*No algo deployment[\s\S]*\) : \([\s\S]*data-testid="algo-monitor-deployment"/,
+  );
+});
+
+test("Algo monitor sidebar never renders retained data after a query changes or fails", () => {
+  const sidebarSource = readLocalSource("./PlatformAlgoMonitorSidebar.jsx");
+
+  assert.doesNotMatch(sidebarSource, /placeholderData/);
+  assert.match(
+    sidebarSource,
+    /const deployments = deploymentsQuery\.isError\s*\? \[\]\s*:\s*deploymentsQuery\.data\?\.deployments \|\| \[\];/,
+  );
+  assert.match(
+    sidebarSource,
+    /const cockpit = cockpitQuery\.isError \? null : cockpitQuery\.data \|\| null;/,
+  );
+  assert.match(
+    sidebarSource,
+    /const automationState = automationStateQuery\.isError\s*\? null\s*:\s*automationStateQuery\.data \|\| null;/,
+  );
+  assert.match(
+    sidebarSource,
+    /const performance = performanceQuery\.isError\s*\? null\s*:\s*performanceQuery\.data \|\| null;/,
+  );
+  assert.match(sidebarSource, /const primaryDetailLoading =/);
+  assert.match(sidebarSource, /const primaryDetailUnavailable =/);
+  assert.match(sidebarSource, /const detailQueryErrors =/);
+  assert.match(
+    sidebarSource,
+    /deploymentsQuery\.isError && !hasSignalActionRows \? \([\s\S]*title="Algo monitor unavailable"/,
+  );
+  assert.match(
+    sidebarSource,
+    /primaryDetailUnavailable && !hasSignalActionRows \? \([\s\S]*title="Algo monitor data unavailable"/,
+  );
+  assert.doesNotMatch(sidebarSource, /detailQueriesFailed \? \(/);
+  assert.match(sidebarSource, /detailQueryErrors\.join\(", "\)/);
+  assert.match(
+    sidebarSource,
+    /primaryDetailUnavailable \? \([\s\S]*Current cockpit and automation data could not be loaded[\s\S]*primaryDetailLoading \? \([\s\S]*Pulling current deployment data[\s\S]*!focusedDeployment \? \(/,
+  );
+  assert.match(
+    sidebarSource,
+    /readinessReady:\s*cockpit\s*\?\s*cockpit\?\.readiness\?\.ready !== false\s*:\s*false/,
   );
 });
 

@@ -380,9 +380,9 @@ test("bounds marker polling and sanitizes readiness failure before cleanup", asy
       error.code === "capsule_readiness_failed" &&
       !error.message.includes(secret),
   );
-  assert.equal(logProbes, 18);
-  assert.equal(inspectProbes, 18);
-  assert.equal(delays, 17);
+  assert.equal(logProbes, 90);
+  assert.equal(inspectProbes, 90);
+  assert.equal(delays, 89);
   assert.equal(removes, 1);
   assert.deepEqual(manager.snapshot(), {
     mode: "paper",

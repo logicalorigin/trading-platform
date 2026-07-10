@@ -124,9 +124,6 @@ export type MarketDataAdmissionResult = {
     usableLines: number;
     configuredMaxLines: number;
     targetFillLines: number;
-    bridgeLineBudget: number | null;
-    bridgeLineBudgetObservedAt: string | null;
-    budgetSource: "app-config" | "bridge-diagnostics";
     automationExecutionLineCap: number;
     executionLineCap: number;
     automationLineCap: number;
@@ -205,7 +202,6 @@ const DEFAULT_VISIBLE_OPTION_CHAIN_LINE_COUNT =
 const DEFAULT_VISIBLE_OPTION_QUOTE_CONTRACT_LIMIT = 40;
 const DEFAULT_VISIBLE_OPTION_QUOTE_LINE_RESERVE =
   DEFAULT_VISIBLE_OPTION_QUOTE_CONTRACT_LIMIT + 1;
-const BRIDGE_LINE_BUDGET_TTL_MS = 30_000;
 const IBKR_PRESSURE_SCANNER_REMAINING_RATIO = 0.5;
 const IBKR_PRESSURE_SCANNER_DAMPING_WINDOW_MS = 60_000;
 const TARGET_FILL_LINES_ENV = "IBKR_MARKET_DATA_TARGET_FILL_LINES";
@@ -280,12 +276,6 @@ const leaseChangeListeners = new Set<
   (event: MarketDataLeaseChangeEvent) => void
 >();
 let nextLeaseId = 1;
-let runtimeBridgeLineBudget:
-  | {
-      value: number;
-      observedAt: number;
-    }
-  | null = null;
 let runtimeFlowScannerLineCap: number | null = null;
 let lastIbkrPressureEvent:
   | {
@@ -468,16 +458,6 @@ export function setMarketDataAdmissionRuntimeDefaults(input: {
   rebalanceFlowScannerLeasesAboveEffectiveCap("scanner_runtime_cap_changed");
 }
 
-export function setMarketDataAdmissionBridgeLineBudget(
-  value: number | null | undefined,
-  observedAt = Date.now(),
-): void {
-  runtimeBridgeLineBudget =
-    typeof value === "number" && Number.isFinite(value) && value > 0
-      ? { value: Math.floor(value), observedAt }
-      : null;
-}
-
 function normalizeRuntimeTimestamp(value: number | Date | null | undefined): number {
   if (value instanceof Date) {
     const timestamp = value.getTime();
@@ -574,32 +554,12 @@ function getActiveIbkrPressureDampingEvent(now = Date.now()) {
     : null;
 }
 
-function resolveRuntimeBridgeLineBudget(now = Date.now()):
-  | {
-      value: number;
-      observedAt: number;
-    }
-  | null {
-  if (!runtimeBridgeLineBudget) {
-    return null;
-  }
-  if (now - runtimeBridgeLineBudget.observedAt > BRIDGE_LINE_BUDGET_TTL_MS) {
-    runtimeBridgeLineBudget = null;
-    return null;
-  }
-  return runtimeBridgeLineBudget;
-}
-
 export function getMarketDataAdmissionBudget() {
   const configuredMaxLines = readPositiveIntegerEnv(
     "IBKR_MARKET_DATA_APP_MAX_LINES",
     DEFAULT_MAX_LINES,
   );
-  const bridgeLineBudget = resolveRuntimeBridgeLineBudget();
-  const maxLines =
-    bridgeLineBudget === null
-      ? configuredMaxLines
-      : Math.min(configuredMaxLines, bridgeLineBudget.value);
+  const maxLines = configuredMaxLines;
   const reserveLines = Math.min(
     maxLines - 1,
     readNonNegativeIntegerEnv(
@@ -619,10 +579,6 @@ export function getMarketDataAdmissionBudget() {
   const accountMonitorLineCap = poolLineCaps["account-monitor"];
   const visibleLineCap = poolLineCaps.visible;
   const flowScannerLineCap = poolLineCaps["flow-scanner"];
-  const budgetSource: "app-config" | "bridge-diagnostics" =
-    bridgeLineBudget && bridgeLineBudget.value < configuredMaxLines
-      ? "bridge-diagnostics"
-      : "app-config";
 
   return {
     maxLines,
@@ -630,11 +586,6 @@ export function getMarketDataAdmissionBudget() {
     usableLines,
     configuredMaxLines,
     targetFillLines,
-    bridgeLineBudget: bridgeLineBudget?.value ?? null,
-    bridgeLineBudgetObservedAt: bridgeLineBudget
-      ? new Date(bridgeLineBudget.observedAt).toISOString()
-      : null,
-    budgetSource,
     automationExecutionLineCap,
     executionLineCap,
     automationLineCap,
@@ -1995,9 +1946,7 @@ export function getMarketDataLinePressureSnapshot() {
     state,
     utilizationLevel,
     policy: "options-flow-rotation-allocation",
-    budgetSource: budget.budgetSource,
     configuredMaxLines: budget.configuredMaxLines,
-    bridgeLineBudget: budget.bridgeLineBudget,
     activeLineCount: brokerBudgetLines.size,
     grossActiveLineCount: brokerBudgetLines.size,
     usableLineCount: budget.usableLines,
@@ -2629,7 +2578,6 @@ export function __resetMarketDataAdmissionForTests(): void {
   countersByIntent.clear();
   recentEvents.length = 0;
   nextLeaseId = 1;
-  runtimeBridgeLineBudget = null;
   runtimeFlowScannerLineCap = null;
   lastIbkrPressureEvent = null;
 }

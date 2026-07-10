@@ -1,4 +1,4 @@
-import { getBridgeOptionQuoteStreamDiagnostics } from "./bridge-option-quote-stream";
+import { getMassiveOptionQuoteStreamDiagnostics } from "./massive-option-quote-stream";
 import {
   getMassiveProviderIdentity,
   getMassiveRuntimeConfig,
@@ -16,7 +16,7 @@ export function getRuntimeMarketDataDiagnostics() {
     massiveStockQuotes: getMassiveStockQuoteStreamDiagnostics(),
     signalMonitorLocalBars: getSignalMonitorLocalBarCacheDiagnostics(),
     signalMonitorIncrementalEval: getSignalMonitorIncrementalEvalStats(),
-    optionQuotes: getBridgeOptionQuoteStreamDiagnostics(),
+    optionQuotes: getMassiveOptionQuoteStreamDiagnostics(),
     stockAggregates: getStockAggregateStreamDiagnostics(),
     marketDataAdmission: getMarketDataAdmissionDiagnostics(),
   };

@@ -1150,7 +1150,7 @@ export const GetSnapTradeAccountHistoryResponse = zod.object({
   "staleReason": zod.string().nullable(),
   "terminalPointSource": zod.enum(['live_account_summary', 'persisted_snapshot', 'flex', 'shadow_ledger', 'shadow_watchlist_backtest', 'shadow_options_replay', 'snaptrade_balance_history']).nullable(),
   "liveTerminalIncluded": zod.boolean(),
-  "sourceScope": zod.enum(['ledger', 'manual', 'automation', 'watchlist_backtest', 'signal_options_replay', 'runtime_fallback']).nullish(),
+  "sourceScope": zod.enum(['ledger', 'manual', 'automation', 'watchlist_backtest', 'signal_options_replay']).nullish(),
   "selectedSnapshotSource": zod.string().nullish(),
   "points": zod.array(zod.object({
   "timestamp": zod.coerce.date(),
@@ -2031,7 +2031,7 @@ export const GetAccountEquityHistoryResponse = zod.object({
   "staleReason": zod.string().nullable(),
   "terminalPointSource": zod.enum(['live_account_summary', 'persisted_snapshot', 'flex', 'shadow_ledger', 'shadow_watchlist_backtest', 'shadow_options_replay', 'snaptrade_balance_history']).nullable(),
   "liveTerminalIncluded": zod.boolean(),
-  "sourceScope": zod.enum(['ledger', 'manual', 'automation', 'watchlist_backtest', 'signal_options_replay', 'runtime_fallback']).nullish(),
+  "sourceScope": zod.enum(['ledger', 'manual', 'automation', 'watchlist_backtest', 'signal_options_replay']).nullish(),
   "selectedSnapshotSource": zod.string().nullish(),
   "points": zod.array(zod.object({
   "timestamp": zod.coerce.date(),
@@ -2622,14 +2622,6 @@ export const GetAccountOrdersResponse = zod.object({
   "accountId": zod.string(),
   "tab": zod.enum(['working', 'history']),
   "currency": zod.string(),
-  "degraded": zod.boolean().optional(),
-  "reason": zod.string().nullish(),
-  "stale": zod.boolean().optional(),
-  "debug": zod.object({
-  "message": zod.string(),
-  "code": zod.string(),
-  "timeoutMs": zod.number().optional()
-}).optional(),
   "orders": zod.array(zod.object({
   "id": zod.string(),
   "accountId": zod.string(),
@@ -3137,15 +3129,7 @@ export const ListOrdersResponse = zod.object({
   "primaryExchange": zod.string().nullish(),
   "includeOvernight": zod.boolean().nullish(),
   "routingReason": zod.string().nullish()
-})),
-  "degraded": zod.boolean().optional(),
-  "reason": zod.string().optional(),
-  "stale": zod.boolean().optional(),
-  "debug": zod.object({
-  "message": zod.string(),
-  "code": zod.string(),
-  "timeoutMs": zod.number().optional()
-}).optional()
+}))
 })
 
 
@@ -5480,7 +5464,7 @@ export const EvaluateSignalMonitorResponse = zod.object({
   "cacheStatus": zod.enum(['hit', 'stale', 'inflight', 'miss']).optional(),
   "refreshing": zod.boolean().optional(),
   "servedAt": zod.coerce.date().optional(),
-  "stateSource": zod.enum(['database', 'runtime-fallback', 'memory-cache']).optional()
+  "stateSource": zod.enum(['database']).optional()
 })
 
 
@@ -5565,7 +5549,7 @@ export const GetSignalMonitorStateResponse = zod.object({
   "cacheStatus": zod.enum(['hit', 'stale', 'inflight', 'miss']).optional(),
   "refreshing": zod.boolean().optional(),
   "servedAt": zod.coerce.date().optional(),
-  "stateSource": zod.enum(['database', 'runtime-fallback', 'memory-cache']).optional()
+  "stateSource": zod.enum(['database']).optional()
 })
 
 
@@ -5635,7 +5619,7 @@ export const ListSignalMonitorEventsResponse = zod.object({
 })),
   "nextCursor": zod.string().nullable().describe('Opaque cursor for the next page, or null when the page is complete.'),
   "hasMore": zod.boolean().describe('True when another page is available for the same filter set.'),
-  "sourceStatus": zod.enum(['database', 'runtime-fallback']).describe('Source used for this event page.')
+  "sourceStatus": zod.enum(['database']).describe('Source used for this event page.')
 })
 
 

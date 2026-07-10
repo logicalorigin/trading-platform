@@ -11,33 +11,33 @@ import {
   setMarketDataAdmissionRuntimeDefaults,
 } from "./market-data-admission";
 import {
-  __getBridgeOptionQuoteLastErrorForTests,
-  getBridgeOptionQuoteStreamDiagnostics,
-  __resetBridgeOptionQuoteStreamForTests,
-  __setBridgeOptionQuoteClientForTests,
-  __setBridgeOptionQuoteRuntimeConfiguredForTests,
-  __setBridgeOptionQuoteStreamNowForTests,
-  fetchBridgeOptionQuoteSnapshots,
-  subscribeBridgeOptionQuoteSnapshots,
-} from "./bridge-option-quote-stream";
+  __getMassiveOptionQuoteLastErrorForTests,
+  getMassiveOptionQuoteStreamDiagnostics,
+  __resetMassiveOptionQuoteStreamForTests,
+  __setMassiveOptionQuoteClientForTests,
+  __setMassiveOptionQuoteRuntimeConfiguredForTests,
+  __setMassiveOptionQuoteStreamNowForTests,
+  fetchMassiveOptionQuoteSnapshots,
+  subscribeMassiveOptionQuoteSnapshots,
+} from "./massive-option-quote-stream";
 import { HttpError } from "../lib/errors";
 
 afterEach(() => {
-  __resetBridgeOptionQuoteStreamForTests();
+  __resetMassiveOptionQuoteStreamForTests();
   __resetBridgeGovernorForTests();
   __resetMarketDataAdmissionForTests();
-  __setBridgeOptionQuoteClientForTests(null);
-  __setBridgeOptionQuoteStreamNowForTests(null);
+  __setMassiveOptionQuoteClientForTests(null);
+  __setMassiveOptionQuoteStreamNowForTests(null);
 });
 
 const SPY_OPRA = "O:SPY260608C00500000";
 
 test("algo operations automation live quote snapshots use Massive OPRA quotes", async () => {
-  __resetBridgeOptionQuoteStreamForTests();
+  __resetMassiveOptionQuoteStreamForTests();
   __resetBridgeGovernorForTests();
   __resetMarketDataAdmissionForTests();
-  __setBridgeOptionQuoteStreamNowForTests(new Date("2026-06-08T18:00:00.000Z"));
-  __setBridgeOptionQuoteClientForTests({
+  __setMassiveOptionQuoteStreamNowForTests(new Date("2026-06-08T18:00:00.000Z"));
+  __setMassiveOptionQuoteClientForTests({
     async getHealth() {
       return {
         transport: "tws",
@@ -66,7 +66,7 @@ test("algo operations automation live quote snapshots use Massive OPRA quotes", 
     },
   });
 
-  const payload = await fetchBridgeOptionQuoteSnapshots({
+  const payload = await fetchMassiveOptionQuoteSnapshots({
     underlying: "SPY",
     providerContractIds: [SPY_OPRA],
     owner: "algo-operations:SPY",
@@ -79,12 +79,12 @@ test("algo operations automation live quote snapshots use Massive OPRA quotes", 
   assert.equal(payload.quotes[0]?.source, "massive");
 });
 
-test("option quote payload freshness uses market-data age, not server cache age", async () => {
-  __resetBridgeOptionQuoteStreamForTests();
+test("option quote payload freshness uses server receive-age, not market-data age", async () => {
+  __resetMassiveOptionQuoteStreamForTests();
   __resetBridgeGovernorForTests();
   __resetMarketDataAdmissionForTests();
-  __setBridgeOptionQuoteStreamNowForTests(new Date("2026-06-08T18:00:10.000Z"));
-  __setBridgeOptionQuoteClientForTests({
+  __setMassiveOptionQuoteStreamNowForTests(new Date("2026-06-08T18:00:10.000Z"));
+  __setMassiveOptionQuoteClientForTests({
     async getHealth() {
       return {
         transport: "tws" as const,
@@ -113,7 +113,7 @@ test("option quote payload freshness uses market-data age, not server cache age"
     },
   });
 
-  const payload = await fetchBridgeOptionQuoteSnapshots({
+  const payload = await fetchMassiveOptionQuoteSnapshots({
     underlying: "SPY",
     providerContractIds: [SPY_OPRA],
     owner: "account-position-option-quotes:test:stale-upstream",
@@ -123,18 +123,22 @@ test("option quote payload freshness uses market-data age, not server cache age"
   });
 
   assert.equal(payload.quotes.length, 1);
-  assert.equal(payload.quotes[0]?.freshness, "stale");
+  // The NBBO last changed 10s ago (ageMs 10_000) but we just re-fetched this
+  // snapshot (cacheAgeMs 0). A quiet-but-current NBBO is the live market, so the
+  // freshly-received quote is "live" — staleness keys on our receive-age, not on
+  // how long the underlying market has been quiet.
+  assert.equal(payload.quotes[0]?.freshness, "live");
   assert.equal(payload.quotes[0]?.ageMs, 10_000);
   assert.equal(payload.quotes[0]?.cacheAgeMs, 0);
 });
 
 test("unconfigured Massive option snapshots report Massive runtime unavailable", async () => {
-  __resetBridgeOptionQuoteStreamForTests();
+  __resetMassiveOptionQuoteStreamForTests();
   __resetBridgeGovernorForTests();
   __resetMarketDataAdmissionForTests();
-  __setBridgeOptionQuoteRuntimeConfiguredForTests(false);
+  __setMassiveOptionQuoteRuntimeConfiguredForTests(false);
 
-  const payload = await fetchBridgeOptionQuoteSnapshots({
+  const payload = await fetchMassiveOptionQuoteSnapshots({
     underlying: "SPY",
     providerContractIds: [SPY_OPRA],
     owner: "flow-scanner:SPY",
@@ -168,7 +172,7 @@ async function waitForLastOptionQuoteError(
   pattern: RegExp,
 ): Promise<string> {
   for (let index = 0; index < 20; index += 1) {
-    const lastError = __getBridgeOptionQuoteLastErrorForTests();
+    const lastError = __getMassiveOptionQuoteLastErrorForTests();
     if (lastError && pattern.test(lastError)) {
       return lastError;
     }
@@ -178,11 +182,11 @@ async function waitForLastOptionQuoteError(
 }
 
 test("off-hours upstream-unavailable option fetch does not record a connection error", async () => {
-  __resetBridgeOptionQuoteStreamForTests();
+  __resetMassiveOptionQuoteStreamForTests();
   __resetBridgeGovernorForTests();
   __resetMarketDataAdmissionForTests();
-  __setBridgeOptionQuoteStreamNowForTests(new Date("2026-06-08T23:30:00.000Z"));
-  __setBridgeOptionQuoteClientForTests(
+  __setMassiveOptionQuoteStreamNowForTests(new Date("2026-06-08T23:30:00.000Z"));
+  __setMassiveOptionQuoteClientForTests(
     makeThrowingOptionQuoteClient(
       new HttpError(502, "Upstream request failed.", {
         code: "upstream_request_failed",
@@ -190,7 +194,7 @@ test("off-hours upstream-unavailable option fetch does not record a connection e
     ),
   );
 
-  await fetchBridgeOptionQuoteSnapshots({
+  await fetchMassiveOptionQuoteSnapshots({
     underlying: "SPY",
     providerContractIds: [SPY_OPRA],
     owner: "flow-scanner:SPY",
@@ -199,22 +203,22 @@ test("off-hours upstream-unavailable option fetch does not record a connection e
   });
 
   assert.equal(
-    __getBridgeOptionQuoteLastErrorForTests(),
+    __getMassiveOptionQuoteLastErrorForTests(),
     null,
     "upstream-unavailable must not surface as option-stream lastError",
   );
 });
 
 test("a genuine upstream error still records a connection error", async () => {
-  __resetBridgeOptionQuoteStreamForTests();
+  __resetMassiveOptionQuoteStreamForTests();
   __resetBridgeGovernorForTests();
   __resetMarketDataAdmissionForTests();
-  __setBridgeOptionQuoteStreamNowForTests(new Date("2026-06-08T18:00:00.000Z"));
-  __setBridgeOptionQuoteClientForTests(
+  __setMassiveOptionQuoteStreamNowForTests(new Date("2026-06-08T18:00:00.000Z"));
+  __setMassiveOptionQuoteClientForTests(
     makeThrowingOptionQuoteClient(new Error("tws auth rejected")),
   );
 
-  await fetchBridgeOptionQuoteSnapshots({
+  await fetchMassiveOptionQuoteSnapshots({
     underlying: "SPY",
     providerContractIds: [SPY_OPRA],
     owner: "flow-scanner:SPY",
@@ -223,21 +227,21 @@ test("a genuine upstream error still records a connection error", async () => {
   });
 
   assert.match(
-    __getBridgeOptionQuoteLastErrorForTests() ?? "",
+    __getMassiveOptionQuoteLastErrorForTests() ?? "",
     /tws auth rejected/,
     "non-upstream errors must still surface as option-stream lastError",
   );
 });
 
 test("account monitor can refresh stale cached option quotes with a bounded timeout", async () => {
-  __resetBridgeOptionQuoteStreamForTests();
+  __resetMassiveOptionQuoteStreamForTests();
   __resetBridgeGovernorForTests();
   __resetMarketDataAdmissionForTests();
-  __setBridgeOptionQuoteStreamNowForTests(new Date("2026-06-08T18:00:00.000Z"));
+  __setMassiveOptionQuoteStreamNowForTests(new Date("2026-06-08T18:00:00.000Z"));
 
   let snapshotCalls = 0;
   const observedTimeouts: Array<number | undefined> = [];
-  __setBridgeOptionQuoteClientForTests({
+  __setMassiveOptionQuoteClientForTests({
     async getHealth() {
       return {
         transport: "tws" as const,
@@ -271,7 +275,7 @@ test("account monitor can refresh stale cached option quotes with a bounded time
     },
   });
 
-  await fetchBridgeOptionQuoteSnapshots({
+  await fetchMassiveOptionQuoteSnapshots({
     underlying: "SPY",
     providerContractIds: [SPY_OPRA],
     owner: "account-position-option-quotes:test:prime",
@@ -281,7 +285,7 @@ test("account monitor can refresh stale cached option quotes with a bounded time
     timeoutMs: 1234,
   });
 
-  const cachedPayload = await fetchBridgeOptionQuoteSnapshots({
+  const cachedPayload = await fetchMassiveOptionQuoteSnapshots({
     underlying: "SPY",
     providerContractIds: [SPY_OPRA],
     owner: "account-position-option-quotes:test:cached",
@@ -292,7 +296,7 @@ test("account monitor can refresh stale cached option quotes with a bounded time
   assert.equal(cachedPayload.quotes[0]?.bid, 1);
   assert.equal(cachedPayload.quotes[0]?.freshness, "stale");
 
-  const refreshedPayload = await fetchBridgeOptionQuoteSnapshots({
+  const refreshedPayload = await fetchMassiveOptionQuoteSnapshots({
     underlying: "SPY",
     providerContractIds: [SPY_OPRA],
     owner: "account-position-option-quotes:test:refresh",
@@ -308,12 +312,12 @@ test("account monitor can refresh stale cached option quotes with a bounded time
 });
 
 test("option stream generic Output exceeded error does not shed scanner demand", async () => {
-  __resetBridgeOptionQuoteStreamForTests();
+  __resetMassiveOptionQuoteStreamForTests();
   __resetBridgeGovernorForTests();
   __resetMarketDataAdmissionForTests();
-  __setBridgeOptionQuoteStreamNowForTests(new Date("2026-06-12T12:00:00.000Z"));
+  __setMassiveOptionQuoteStreamNowForTests(new Date("2026-06-12T12:00:00.000Z"));
 
-  __setBridgeOptionQuoteClientForTests({
+  __setMassiveOptionQuoteClientForTests({
     async getHealth() {
       return {
         transport: "tws" as const,
@@ -343,7 +347,7 @@ test("option stream generic Output exceeded error does not shed scanner demand",
     fallbackProvider: "none",
   });
 
-  const unsubscribe = subscribeBridgeOptionQuoteSnapshots(
+  const unsubscribe = subscribeMassiveOptionQuoteSnapshots(
     {
       underlying: "SPY",
       providerContractIds: [SPY_OPRA],
@@ -360,7 +364,7 @@ test("option stream generic Output exceeded error does not shed scanner demand",
   assert.equal(diagnostics.pressure.ibkrPressure, null);
   assert.equal(diagnostics.pressure.scannerChargedLineCount, 10);
   assert.match(
-    __getBridgeOptionQuoteLastErrorForTests() ?? "",
+    __getMassiveOptionQuoteLastErrorForTests() ?? "",
     /Output exceeded limit/,
   );
 
@@ -368,12 +372,12 @@ test("option stream generic Output exceeded error does not shed scanner demand",
 });
 
 test("a transient option-stream timeout does not shed the scanner or tear down the chunk", async () => {
-  __resetBridgeOptionQuoteStreamForTests();
+  __resetMassiveOptionQuoteStreamForTests();
   __resetBridgeGovernorForTests();
   __resetMarketDataAdmissionForTests();
-  __setBridgeOptionQuoteStreamNowForTests(new Date("2026-06-12T12:00:00.000Z"));
+  __setMassiveOptionQuoteStreamNowForTests(new Date("2026-06-12T12:00:00.000Z"));
 
-  __setBridgeOptionQuoteClientForTests({
+  __setMassiveOptionQuoteClientForTests({
     async getHealth() {
       return {
         transport: "tws" as const,
@@ -406,7 +410,7 @@ test("a transient option-stream timeout does not shed the scanner or tear down t
     fallbackProvider: "none",
   });
 
-  const unsubscribe = subscribeBridgeOptionQuoteSnapshots(
+  const unsubscribe = subscribeMassiveOptionQuoteSnapshots(
     {
       underlying: "SPY",
       providerContractIds: [SPY_OPRA],
@@ -423,10 +427,10 @@ test("a transient option-stream timeout does not shed the scanner or tear down t
   // A transient request timeout must NOT be treated as capacity pressure, so the
   // one-shot scanner shed never fires (this was half the flap).
   assert.equal(diagnostics.pressure.ibkrPressure, null);
-  assert.equal(getBridgeOptionQuoteStreamDiagnostics().activeBridgeChunkCount, 1);
+  assert.equal(getMassiveOptionQuoteStreamDiagnostics().activeMassiveChunkCount, 1);
   // The timeout is still surfaced as the stream's lastError for visibility.
   assert.match(
-    __getBridgeOptionQuoteLastErrorForTests() ?? "",
+    __getMassiveOptionQuoteLastErrorForTests() ?? "",
     /timed out/,
   );
 

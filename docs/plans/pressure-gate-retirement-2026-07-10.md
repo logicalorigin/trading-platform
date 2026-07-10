@@ -27,6 +27,14 @@ tonight max queue 1, zero pressure events) was DEMAND REDUCTION + LANE FAIRNESS,
 
 ## Gate inventory and verdicts
 
+Implementation update (2026-07-10): gates 1–4 are retired. Shadow positions,
+allocation, and equity history now wait for fresh canonical reads after their
+short fresh TTL; Signal Options performance serves only a fresh snapshot or an
+explicit unavailable error. Shadow database outages likewise return
+`503 shadow_account_db_unavailable` instead of invented balances, empty ledgers,
+or runtime equity history. The safety-scoped risk read may still serve a marked
+stale value only for its explicit degraded-upstream classifier.
+
 Proof window: 2026-07-10 market open through Friday 2026-07-11 close, measured via the new
 `shadowAccountReads.pressureDegrades` counters (runtime diagnostics), existing per-route
 `staleServedCount`, `barsBackgroundPersist.pressureSkipped`, admission-lane gauges, and

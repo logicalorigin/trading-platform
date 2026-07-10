@@ -2,14 +2,19 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
-import { GetSignalMonitorStateResponse } from "@workspace/api-zod";
+import { __setDbForTests } from "@workspace/db";
 
 import { signalMonitorSignalAgeBlocker } from "./signal-monitor-actionability";
 import {
   __signalMonitorInternalsForTests,
   evaluateSignalMonitorProfileSymbols,
   isSignalMonitorBarComplete,
+  listSignalMonitorEvents,
 } from "./signal-monitor";
+import {
+  __resetApiResourcePressureForTests,
+  updateApiResourcePressure,
+} from "./resource-pressure";
 
 const barWithClose = (timestamp: string, close: number) =>
   ({
@@ -1270,90 +1275,92 @@ test("canonical signal monitor event eligibility is shared by matrix and symbol 
   );
 });
 
-test("signal monitor event pagination reports source status", () => {
-  const response =
-    __signalMonitorInternalsForTests.paginateSignalMonitorEventResponses(
-      [
-        {
-          id: "event-1",
-          profileId: "profile-1",
-          environment: "shadow",
-          symbol: "SPY",
-          timeframe: "5m",
-          direction: "buy",
-          signalAt: new Date("2026-06-09T16:40:00.000Z"),
-          signalPrice: 100,
-          close: 100,
-          emittedAt: new Date("2026-06-09T16:40:01.000Z"),
-          source: "pyrus-signals",
-        },
-      ],
-      100,
-      "runtime-fallback",
-    );
+const installSignalMonitorEventsRead = (
+  readRows: () => Promise<unknown[]>,
+) => {
+  let reads = 0;
+  const restore = __setDbForTests({
+    select() {
+      reads += 1;
+      return {
+        from: () => ({
+          where: () => ({
+            orderBy: () => ({ limit: readRows }),
+          }),
+        }),
+      };
+    },
+  } as never);
+  return { restore, reads: () => reads };
+};
 
-  assert.equal(response.sourceStatus, "runtime-fallback");
-  assert.equal(response.hasMore, false);
-});
+test("signal monitor event history still reads the canonical database under hard pressure", async () => {
+  __resetApiResourcePressureForTests();
+  const fakeDb = installSignalMonitorEventsRead(async () => []);
+  try {
+    updateApiResourcePressure({ dbPoolActive: 12, dbPoolWaiting: 8, dbPoolMax: 12 });
+    updateApiResourcePressure({ dbPoolActive: 12, dbPoolWaiting: 8, dbPoolMax: 12 });
 
-test("signal monitor events fallback backoff latches transient read failures", () => {
-  __signalMonitorInternalsForTests.resetSignalMonitorEventsReadFallbackBackoffForTests();
-
-  __signalMonitorInternalsForTests.markSignalMonitorEventsReadFallbackForTests({
-    error: new Error("pool timed out while waiting for an open connection"),
-    environment: "shadow",
-    nowMs: 1_000,
-  });
-
-  assert.equal(
-    __signalMonitorInternalsForTests.shouldServeSignalMonitorEventsRuntimeFallback(
-      1_000,
-    ),
-    true,
-  );
-  assert.equal(
-    __signalMonitorInternalsForTests.shouldServeSignalMonitorEventsRuntimeFallback(
-      15_999,
-    ),
-    true,
-  );
-  assert.equal(
-    __signalMonitorInternalsForTests.shouldServeSignalMonitorEventsRuntimeFallback(
-      16_001,
-    ),
-    false,
-  );
-
-  const response =
-    __signalMonitorInternalsForTests.buildSignalMonitorEventsRuntimeFallbackResponse({
+    const response = await listSignalMonitorEvents({
       environment: "shadow",
-      limit: 10,
+      symbol: "STA-PRESSURE-READ",
     });
-  assert.equal(response.sourceStatus, "runtime-fallback");
+
+    assert.equal(fakeDb.reads(), 1);
+    assert.equal(response.sourceStatus, "database");
+  } finally {
+    fakeDb.restore();
+    __resetApiResourcePressureForTests();
+  }
 });
 
-test("signal monitor events read checks fallback latch before retrying the database", () => {
-  const source = readFileSync(new URL("./signal-monitor.ts", import.meta.url), "utf8");
-  const listStart = source.indexOf("export async function listSignalMonitorEvents");
-  const listEnd = source.indexOf(
-    "function buildSignalMonitorEventsRuntimeFallbackResponse",
-    listStart,
-  );
-  assert.notEqual(listStart, -1);
-  assert.notEqual(listEnd, -1);
-  const listBlock = source.slice(listStart, listEnd);
-  const latchCheck = listBlock.indexOf("shouldServeSignalMonitorEventsRuntimeFallback");
-  const dbRead = listBlock.indexOf("loadSignalMonitorEventRows");
-  const markFailure = listBlock.indexOf("markSignalMonitorEventsReadFallback");
-
-  assert.notEqual(latchCheck, -1);
-  assert.notEqual(dbRead, -1);
-  assert.notEqual(markFailure, -1);
-  assert.ok(
-    latchCheck < dbRead,
-    "listSignalMonitorEvents must serve the latched runtime fallback before opening a DB read",
-  );
-});
+for (const [label, dbError, symbol] of [
+  [
+    "transient connection failure",
+    Object.assign(new Error("connection terminated unexpectedly"), {
+      code: "08006",
+    }),
+    "STA-TRANSIENT-READ",
+  ],
+  [
+    "statement timeout",
+    Object.assign(new Error("canceling statement due to statement timeout"), {
+      code: "57014",
+    }),
+    "STA-TIMEOUT-READ",
+  ],
+] as const) {
+  test(`signal monitor event history exposes ${label} as unavailable`, async () => {
+    const fakeDb = installSignalMonitorEventsRead(async () => {
+      throw dbError;
+    });
+    try {
+      await assert.rejects(
+        () =>
+          listSignalMonitorEvents({
+            environment: "shadow",
+            symbol,
+          }),
+        (error: unknown) => {
+          const unavailable = error as {
+            statusCode?: number;
+            code?: string;
+            expose?: boolean;
+            cause?: unknown;
+          };
+          assert.equal(unavailable.statusCode, 503);
+          assert.equal(unavailable.code, "signal_monitor_db_unavailable");
+          assert.equal(unavailable.expose, true);
+          assert.equal(unavailable.cause, dbError);
+          return true;
+        },
+      );
+      assert.equal(fakeDb.reads(), 1);
+    } finally {
+      fakeDb.restore();
+    }
+  });
+}
 
 test("signal monitor events cursor reads stay projected and index-range bounded", () => {
   const source = readFileSync(new URL("./signal-monitor.ts", import.meta.url), "utf8");
@@ -1363,14 +1370,9 @@ test("signal monitor events cursor reads stay projected and index-range bounded"
     loadStart,
   );
   const listStart = source.indexOf("export async function listSignalMonitorEvents");
-  const listEnd = source.indexOf(
-    "function shouldServeSignalMonitorEventsRuntimeFallback",
-    listStart,
-  );
   assert.notEqual(loadStart, -1);
   assert.notEqual(loadEnd, -1);
   assert.notEqual(listStart, -1);
-  assert.notEqual(listEnd, -1);
 
   const loadBlock = source.slice(loadStart, loadEnd);
   const selectStart = loadBlock.indexOf(".select({");
@@ -1396,7 +1398,7 @@ test("signal monitor events cursor reads stay projected and index-range bounded"
   ]);
   assert.match(loadBlock, /\.limit\(input\.limit \+ 1\)/);
 
-  const listBlock = source.slice(listStart, listEnd);
+  const listBlock = source.slice(listStart);
   assert.match(
     listBlock,
     /conditions\.push\(gte\(signalMonitorEventsTable\.signalAt, from\)\)/,
@@ -1417,27 +1419,102 @@ test("signal monitor events cursor reads stay projected and index-range bounded"
   );
 });
 
-test("signal monitor state fallback carries its source through the API contract", () => {
-  const fallback =
-    __signalMonitorInternalsForTests.buildSignalMonitorStateUnavailableResult(
-      "shadow",
-      new Date("2026-06-12T16:30:00.000Z"),
+test("signal monitor canonical reads retire runtime fallback producers", () => {
+  const source = readFileSync(new URL("./signal-monitor.ts", import.meta.url), "utf8");
+  assert.doesNotMatch(
+    source,
+    /runtimeSignalMonitorProfiles|buildSignalMonitorRuntimeFallbackProfile|updateRuntimeSignalMonitorProfile|evaluateSignalMonitorMatrixRuntime|buildSignalMonitorStateUnavailableResult|listWatchlistsRuntimeFallback/,
+  );
+
+  for (const operation of [
+    "resolve_signal_monitor_matrix_stream_profile",
+    "hydrate_signal_monitor_matrix_from_stored_states",
+    "evaluate_signal_monitor_matrix",
+    "get_signal_monitor_profile",
+    "update_signal_monitor_profile",
+    "read_signal_monitor_state",
+    "evaluate_signal_monitor",
+  ]) {
+    const operationAt = source.indexOf(`operation: "${operation}"`);
+    assert.notEqual(operationAt, -1, `${operation} must classify DB outages`);
+    assert.match(
+      source.slice(operationAt, operationAt + 500),
+      /throw createSignalMonitorDbUnavailableError\(error\)/,
+      `${operation} must reject instead of returning a successful fallback`,
     );
+  }
 
-  assert.equal(fallback.stateSource, "runtime-fallback");
+  const directionStart = source.indexOf(
+    "export async function getSignalDirectionsForSymbolAsOf",
+  );
+  const directionEnd = source.indexOf(
+    "export async function evaluateSignalMonitor",
+    directionStart,
+  );
+  assert.match(
+    source.slice(directionStart, directionEnd),
+    /if \(isSignalMonitorHardResourcePressure\(\)\) \{\s*return directions;\s*\}/s,
+    "the trading alignment read must remain fail-closed under hard pressure",
+  );
+  assert.equal(
+    source.match(/isSignalMonitorHardResourcePressure\(\)/g)?.length,
+    2,
+    "only the helper definition and fail-closed trading gate may remain",
+  );
 
-  const parsed = GetSignalMonitorStateResponse.parse({
-    ...fallback.value,
-    stateSource: fallback.stateSource,
-  });
-
-  assert.equal(parsed.stateSource, "runtime-fallback");
+  const breadthStart = source.indexOf(
+    "export async function listSignalMonitorBreadthHistory",
+  );
+  const breadthEnd = source.indexOf(
+    "export async function listSignalMonitorEvents",
+    breadthStart,
+  );
+  const breadthBlock = source.slice(breadthStart, breadthEnd);
+  assert.match(
+    breadthBlock,
+    /isTransientPostgresError\(snapshotError\)[\s\S]*isStatementTimeoutError\(snapshotError\)[\s\S]*throw createSignalMonitorDbUnavailableError\(snapshotError\)/,
+  );
 });
 
-test("public signal monitor state responses do not drop state source", () => {
+test("watchlist reads do not substitute stale or built-in snapshots for database failures", () => {
+  const source = readFileSync(new URL("./platform.ts", import.meta.url), "utf8");
+  assert.doesNotMatch(
+    source,
+    /buildBuiltInWatchlistSnapshot|listWatchlistsRuntimeFallback|WATCHLIST_LIST_STALE_TTL_MS|watchlistDbBackoff/,
+  );
+
+  const currentUserStart = source.indexOf(
+    "export async function listWatchlistsForCurrentUser",
+  );
+  const listStart = source.indexOf(
+    "export async function listWatchlists()",
+    currentUserStart,
+  );
+  const listEnd = source.indexOf(
+    "export async function createWatchlist",
+    listStart,
+  );
+  assert.notEqual(currentUserStart, -1);
+  assert.notEqual(listStart, -1);
+  assert.notEqual(listEnd, -1);
+  assert.match(
+    source.slice(currentUserStart, listStart),
+    /throw createWatchlistDbUnavailableError\(error\)/,
+  );
+  assert.match(
+    source.slice(listStart, listEnd),
+    /throw createWatchlistDbUnavailableError\(error\)/,
+  );
+  assert.doesNotMatch(
+    source.slice(listStart, listEnd),
+    /list-stale|list-fallback|serving built-in watchlists/,
+  );
+});
+
+test("public signal monitor state responses keep only canonical state source", () => {
   const source = readFileSync(new URL("./signal-monitor.ts", import.meta.url), "utf8");
   const storedStart = source.indexOf("export async function getSignalMonitorStoredState");
-  const storedEnd = source.indexOf("function buildSignalMonitorStateUnavailableResult", storedStart);
+  const storedEnd = source.indexOf("export async function getSignalMonitorState", storedStart);
   const stateStart = source.indexOf("export async function getSignalMonitorState");
   const stateEnd = source.indexOf("export async function evaluateSignalMonitor", stateStart);
   const evaluateStart = stateEnd;
@@ -1459,7 +1536,7 @@ test("public signal monitor state responses do not drop state source", () => {
   assert.doesNotMatch(stateBlock, /return fresh\.value;/);
   assert.match(evaluateBlock, /stateSource:\s*stored\.stateSource/);
   assert.match(evaluateBlock, /stateSource:\s*"database" as const/);
-  assert.match(evaluateBlock, /stateSource:\s*fallback\.stateSource/);
+  assert.doesNotMatch(evaluateBlock, /runtime-fallback|fallback\.stateSource/);
 });
 
 test("signal monitor reconciliation trusts event integrity and websocket-backed bar cache rows", () => {

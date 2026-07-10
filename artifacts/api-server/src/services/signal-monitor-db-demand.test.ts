@@ -66,35 +66,34 @@ test("B1: catalog expansion JOIN is memoized per effective limit and re-reads af
   });
 });
 
-test("signal monitor optional reads yield before DB work under hard pool pressure", async () => {
-  __resetApiResourcePressureForTests();
-  I.invalidateSignalMonitorCatalogExpansionMemo();
-  I.invalidateSignalMonitorProfileCache();
-  I.resetSignalMonitorEventsReadFallbackBackoffForTests();
-  const base = I.getSignalMonitorCatalogExpansionMemoStats();
-  try {
-    updateApiResourcePressure({ dbPoolActive: 12, dbPoolWaiting: 8, dbPoolMax: 12 });
-    updateApiResourcePressure({ dbPoolActive: 12, dbPoolWaiting: 8, dbPoolMax: 12 });
-
-    const expansion = await I.loadSignalMonitorCatalogExpansionSymbols({
-      seedSymbols: ["AAA"],
-      maxSymbols: 5,
-    });
-    assert.deepEqual(expansion.symbols, ["AAA"]);
-    assert.equal(
-      I.getSignalMonitorCatalogExpansionMemoStats().misses,
-      base.misses,
-      "catalog expansion must not open the ranked catalog JOIN under pressure",
-    );
-
-    assert.equal(I.shouldServeSignalMonitorEventsRuntimeFallback(), true);
-    const profile = await getSignalMonitorProfile({ environment: "shadow" });
-    assert.equal(profile.environment, "shadow");
-  } finally {
-    I.invalidateSignalMonitorProfileCache();
-    I.resetSignalMonitorEventsReadFallbackBackoffForTests();
+test("signal monitor catalog/profile reads stay canonical under hard pool pressure", async () => {
+  await withTestDb(async () => {
     __resetApiResourcePressureForTests();
-  }
+    I.invalidateSignalMonitorCatalogExpansionMemo();
+    I.invalidateSignalMonitorProfileCache();
+    const base = I.getSignalMonitorCatalogExpansionMemoStats();
+    try {
+      updateApiResourcePressure({ dbPoolActive: 12, dbPoolWaiting: 8, dbPoolMax: 12 });
+      updateApiResourcePressure({ dbPoolActive: 12, dbPoolWaiting: 8, dbPoolMax: 12 });
+
+      const expansion = await I.loadSignalMonitorCatalogExpansionSymbols({
+        seedSymbols: ["AAA"],
+        maxSymbols: 5,
+      });
+      assert.deepEqual(expansion.symbols, ["AAA"]);
+      assert.equal(
+        I.getSignalMonitorCatalogExpansionMemoStats().misses,
+        base.misses + 1,
+        "catalog expansion must still read the canonical ranked catalog",
+      );
+
+      const profile = await getSignalMonitorProfile({ environment: "shadow" });
+      assert.equal(profile.environment, "shadow");
+    } finally {
+      I.invalidateSignalMonitorProfileCache();
+      __resetApiResourcePressureForTests();
+    }
+  });
 });
 
 // ── B2: event_key dedup batch ───────────────────────────────────────────────

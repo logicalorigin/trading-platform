@@ -20,7 +20,10 @@ import {
 } from "./services/route-admission";
 import { isRawJson } from "./lib/raw-json";
 import { readSessionToken } from "./routes/auth";
-import { getIbkrGatewayReanchorLocation } from "./routes/ibkr-portal";
+import {
+  getIbkrGatewayReanchorLocation,
+  IBKR_PORTAL_CLIENT_MOUNT,
+} from "./routes/ibkr-portal";
 import { readAuthSessionFromToken } from "./services/auth";
 import { runAsAppUser } from "./services/app-user-context";
 import { runWithIbkrPortalUser } from "./services/ibkr-portal-context";
@@ -42,6 +45,20 @@ function isZodError(error: unknown): error is ZodErrorLike {
       typeof error === "object" &&
       (error as ZodErrorLike).name === "ZodError" &&
       Array.isArray((error as ZodErrorLike).issues),
+  );
+}
+
+function isPayloadTooLargeError(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const value = error as {
+    name?: unknown;
+    status?: unknown;
+    statusCode?: unknown;
+    type?: unknown;
+  };
+  return (
+    (value.status === 413 || value.statusCode === 413) &&
+    (value.name === "PayloadTooLargeError" || value.type === "entity.too.large")
   );
 }
 
@@ -191,6 +208,24 @@ app.use(
   }),
 );
 app.use(cors());
+
+// Re-anchor the Client Portal's root-absolute credential POST before any body
+// parser touches it. The 307 preserves its bytes for the bounded raw proxy.
+app.use((req, res, next) => {
+  const location = getIbkrGatewayReanchorLocation(
+    req.originalUrl,
+    req.headers.referer,
+  );
+  if (!location) {
+    next();
+    return;
+  }
+  res.redirect(307, location);
+});
+app.use(
+  IBKR_PORTAL_CLIENT_MOUNT,
+  express.raw({ type: () => true, limit: "256kb" }),
+);
 app.use(express.json({ type: ["application/json", "application/reports+json"] }));
 app.use(express.urlencoded({ extended: true }));
 app.use(apiRouteAdmissionMiddleware);
@@ -237,28 +272,6 @@ app.use((req, _res, next) => {
 });
 app.use(gzipJsonResponses);
 
-// The IBKR Client Portal gateway popup (reverse-proxied at this mount) runs
-// IBKR's SPA, which computes root-absolute URLs at runtime — asset includes
-// (e.g. /en/includes/general/gdpr-am.php) and the credential POST itself
-// (/api/Authenticator). Those escape the subpath mount and would otherwise
-// hit OUR routes: the SPA shell gets INJECTED into the login popup (PYRUS
-// boots inside the popup and hides the form) and the credential POST 404s
-// against our /api. Re-anchor any request whose Referer is inside the
-// gateway mount back into the mount. 307 preserves method + body across the
-// redirect (302 would turn the credential POST into a bodyless GET). Mirrors
-// the dev-side guard in artifacts/pyrus/vite.config.ts.
-app.use((req, res, next) => {
-  const location = getIbkrGatewayReanchorLocation(
-    req.originalUrl,
-    req.headers.referer,
-  );
-  if (!location) {
-    next();
-    return;
-  }
-  res.redirect(307, location);
-});
-
 app.use("/api", router);
 
 if (process.env["PYRUS_SERVE_WEB"] === "1") {
@@ -280,6 +293,16 @@ if (process.env["PYRUS_SERVE_WEB"] === "1") {
 
 app.use((error: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   if (res.headersSent) {
+    return;
+  }
+
+  if (isPayloadTooLargeError(error)) {
+    res.status(413).type("application/problem+json").json({
+      type: "https://pyrus.local/problems/payload-too-large",
+      title: "Payload too large",
+      status: 413,
+      detail: "The request body exceeds the allowed size.",
+    });
     return;
   }
 

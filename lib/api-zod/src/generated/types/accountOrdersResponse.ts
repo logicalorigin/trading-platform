@@ -6,18 +6,12 @@
  * OpenAPI spec version: 0.2.0
  */
 import type { AccountOrder } from './accountOrder';
-import type { AccountOrdersResponseDebug } from './accountOrdersResponseDebug';
 import type { AccountOrdersResponseTab } from './accountOrdersResponseTab';
 
 export interface AccountOrdersResponse {
   accountId: string;
   tab: AccountOrdersResponseTab;
   currency: string;
-  degraded?: boolean;
-  /** @nullable */
-  reason?: string | null;
-  stale?: boolean;
-  debug?: AccountOrdersResponseDebug;
   orders: AccountOrder[];
   updatedAt: Date;
 }

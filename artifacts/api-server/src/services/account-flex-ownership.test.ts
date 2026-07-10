@@ -19,17 +19,13 @@ const listFlexAccountsForCurrentUser = () =>
     { mode: "live" },
     {
       listLiveAccounts: async () => [],
-      getPersistedAccounts: async () => ({
-        accounts: [],
-        latestSnapshotAt: null,
-      }),
       recordSnapshots: async () => {},
       getSnapTradeAccounts: async () => [],
       getRobinhoodAccounts: async () => [],
     },
   );
 
-test("Flex discovery isolates provider accounts by app user and mode", async () => {
+test("Flex history never substitutes for the live Account list", async () => {
   await withTestDb(async () => {
     const [userA, userB] = await db
       .insert(usersTable)
@@ -117,8 +113,8 @@ test("Flex discovery isolates provider accounts by app user and mode", async () 
     const forUserB = await runAsAppUser(userB.id, listFlexAccountsForCurrentUser);
     const unauthenticated = await listFlexAccountsForCurrentUser();
 
-    assert.deepEqual(forUserA.accounts.map((account) => account.id), ["FLEX-A"]);
-    assert.deepEqual(forUserB.accounts.map((account) => account.id), ["FLEX-B"]);
+    assert.deepEqual(forUserA.accounts, []);
+    assert.deepEqual(forUserB.accounts, []);
     assert.deepEqual(unauthenticated.accounts, []);
   });
 });

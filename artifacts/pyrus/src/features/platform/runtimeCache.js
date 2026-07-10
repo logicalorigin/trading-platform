@@ -1,7 +1,7 @@
 import Dexie from "dexie";
 
 export const RUNTIME_CACHE_DB_NAME = "pyrus-runtime-cache";
-export const RUNTIME_CACHE_DB_VERSION = 2;
+export const RUNTIME_CACHE_DB_VERSION = 3;
 export const RUNTIME_CACHE_SCHEMA_VERSION = 2;
 
 export const RUNTIME_CACHE_CLASS = {
@@ -17,7 +17,6 @@ export const RUNTIME_CACHE_TTL_MS = {
   chartBarsIntraday: 15 * 60 * 1000,
   flowEvents: 30 * 60 * 1000,
   optionChains: 10 * 60 * 1000,
-  accountHistory: 10 * 60 * 1000,
   referenceStatic: 60 * 60 * 1000,
 };
 
@@ -26,7 +25,6 @@ export const RUNTIME_CACHE_STALE_TTL_MS = {
   chartBarsIntraday: 60 * 60 * 1000,
   flowEvents: 2 * 60 * 60 * 1000,
   optionChains: 60 * 60 * 1000,
-  accountHistory: 24 * 60 * 60 * 1000,
   referenceStatic: 7 * 24 * 60 * 60 * 1000,
 };
 
@@ -87,7 +85,6 @@ const RUNTIME_CACHE_MAX_ROWS = {
   chartBars: 240,
   flowEvents: 120,
   optionChains: 120,
-  accountHistory: 160,
   reference: 240,
 };
 
@@ -113,7 +110,7 @@ export const getRuntimeCacheDb = () => {
       "&cacheKey, underlying, expiration, coverage, marketDataMode, updatedAt, expiresAt",
     meta: "&key, updatedAt",
   });
-  runtimeCacheDb.version(RUNTIME_CACHE_DB_VERSION).stores({
+  runtimeCacheDb.version(2).stores({
     chartBars:
       "&cacheKey, ticker, interval, session, source, cacheClass, updatedAt, expiresAt, staleExpiresAt, schemaVersion",
     flowEvents:
@@ -125,6 +122,9 @@ export const getRuntimeCacheDb = () => {
     reference:
       "&cacheKey, namespace, source, cacheClass, updatedAt, expiresAt, staleExpiresAt, schemaVersion",
     meta: "&key, updatedAt",
+  });
+  runtimeCacheDb.version(RUNTIME_CACHE_DB_VERSION).stores({
+    accountHistory: null,
   });
   return runtimeCacheDb;
 };
@@ -179,30 +179,6 @@ export const buildOptionChainSnapshotCacheKey = ({
     normalizeKeyPart(coverage),
     normalizeKeyPart(marketDataMode),
     normalizeKeyPart(provider),
-  ].join(":");
-
-export const buildAccountHistoryCacheKey = ({
-  accountId,
-  mode = "live",
-  range = "all",
-  assetClass = "all",
-  benchmark = "none",
-  filters = "default",
-  source = "account-history",
-  environment = mode,
-} = {}) =>
-  [
-    "account",
-    normalizeKeyPart(accountId),
-    normalizeKeyPart(mode),
-    normalizeKeyPart(environment),
-    normalizeKeyPart(range),
-    normalizeKeyPart(assetClass),
-    normalizeKeyPart(benchmark),
-    normalizeKeyPart(source),
-    normalizeKeyPart(
-      typeof filters === "string" ? filters : JSON.stringify(filters ?? {}),
-    ),
   ].join(":");
 
 export const buildReferenceCacheKey = ({
@@ -594,50 +570,6 @@ export const writeCachedOptionChainSnapshot = (
     },
   });
 
-export const readCachedAccountHistory = (cacheKey) =>
-  readCacheEntry("accountHistory", cacheKey);
-
-export const writeCachedAccountHistory = (
-  cacheKey,
-  payload,
-  {
-    accountId,
-    mode = "live",
-    range = "all",
-    assetClass = "all",
-    benchmark = "none",
-    filters = "default",
-    source = "account-history",
-    environment = mode,
-    ttlMs = RUNTIME_CACHE_TTL_MS.accountHistory,
-    staleTtlMs = RUNTIME_CACHE_STALE_TTL_MS.accountHistory,
-  } = {},
-) =>
-  writeCacheEntry("accountHistory", {
-    cacheKey,
-    accountId: normalizeKeyPart(accountId),
-    mode: normalizeKeyPart(mode),
-    range: normalizeKeyPart(range),
-    payload,
-    cacheClass: RUNTIME_CACHE_CLASS.historicalHeavy,
-    ttlMs,
-    staleTtlMs,
-    source,
-    safetyScope: {
-      accountId: normalizeKeyPart(accountId),
-      mode: normalizeKeyPart(mode),
-      environment: normalizeKeyPart(environment),
-      range: normalizeKeyPart(range),
-      assetClass: normalizeKeyPart(assetClass),
-      benchmark: normalizeKeyPart(benchmark),
-      source: normalizeKeyPart(source),
-      filters:
-        typeof filters === "string"
-          ? normalizeKeyPart(filters)
-          : normalizeKeyPart(JSON.stringify(filters ?? {})),
-    },
-  });
-
 export const readCachedReference = (cacheKey) =>
   readCacheEntry("reference", cacheKey);
 
@@ -705,25 +637,21 @@ export const getRuntimeCacheDiagnostics = async () => {
       chartBars: 0,
       flowEvents: 0,
       optionChains: 0,
-      accountHistory: 0,
       reference: 0,
       stats: { ...runtimeCacheStats },
     };
   }
-  const [chartBars, flowEvents, optionChains, accountHistory, reference] =
-    await Promise.all([
-      db.chartBars.count(),
-      db.flowEvents.count(),
-      db.optionChains.count(),
-      db.accountHistory.count(),
-      db.reference.count(),
-    ]);
+  const [chartBars, flowEvents, optionChains, reference] = await Promise.all([
+    db.chartBars.count(),
+    db.flowEvents.count(),
+    db.optionChains.count(),
+    db.reference.count(),
+  ]);
   return {
     available: true,
     chartBars,
     flowEvents,
     optionChains,
-    accountHistory,
     reference,
     stats: { ...runtimeCacheStats },
   };
