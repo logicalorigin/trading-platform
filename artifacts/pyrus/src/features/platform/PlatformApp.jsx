@@ -3212,9 +3212,7 @@ export default function PlatformApp() {
         brokerAuthenticated: Boolean(session?.ibkrBridge?.authenticated),
         massiveStockRealtimeConfigured,
         mobileViewport: isPhone,
-        automationEnabled: Boolean(
-          signalMonitorProfile?.enabled && !signalMonitorProfileDegraded,
-        ),
+        automationEnabled: Boolean(signalMonitorProfile?.enabled),
         tradingEnabled: Boolean(gatewayTradingReady),
       }),
     [
@@ -3231,7 +3229,6 @@ export default function PlatformApp() {
       activeScreenBackgroundDataAllowed,
       sessionMetadataSettled,
       session?.ibkrBridge?.authenticated,
-      signalMonitorProfileDegraded,
       signalMonitorProfile?.enabled,
     ],
   );

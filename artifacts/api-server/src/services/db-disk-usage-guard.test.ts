@@ -1,8 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { pool } from "@workspace/db";
+
 import {
+  __probeDbDiskUsageOnceForTests,
   __setDbDiskUsageSnapshotForTests,
+  getDbDiskUsageSnapshot,
   isBarCacheWriteBlockedByDbDiskUsage,
   type DbDiskUsageSnapshot,
 } from "./db-disk-usage-guard";
@@ -64,4 +68,37 @@ test("disk-usage guard fails open on an unparseable snapshot timestamp", () => {
   );
   assert.equal(isBarCacheWriteBlockedByDbDiskUsage(), false);
   __setDbDiskUsageSnapshotForTests(null);
+});
+
+test("probe blocks on bar_cache size, not total database size", async (t) => {
+  const originalQuery = pool.query.bind(pool);
+  let nextRows: Array<{ database_bytes: string; bar_cache_bytes: string }> = [];
+  (pool as { query: unknown }).query = async () => ({ rows: nextRows });
+  t.after(() => {
+    (pool as { query: unknown }).query = originalQuery;
+    __setDbDiskUsageSnapshotForTests(null);
+  });
+
+  // Large DB (preserved history) but small bar_cache: must NOT block.
+  nextRows = [
+    {
+      database_bytes: String(10_000 * MB),
+      bar_cache_bytes: String(200 * MB),
+    },
+  ];
+  __setDbDiskUsageSnapshotForTests(null);
+  await __probeDbDiskUsageOnceForTests();
+  assert.equal(getDbDiskUsageSnapshot()?.barCacheWritesBlocked, false);
+  assert.equal(isBarCacheWriteBlockedByDbDiskUsage(), false);
+
+  // bar_cache itself at/above the cap: must block.
+  nextRows = [
+    {
+      database_bytes: String(10_000 * MB),
+      bar_cache_bytes: String(8_192 * MB),
+    },
+  ];
+  await __probeDbDiskUsageOnceForTests();
+  assert.equal(getDbDiskUsageSnapshot()?.barCacheWritesBlocked, true);
+  assert.equal(isBarCacheWriteBlockedByDbDiskUsage(), true);
 });

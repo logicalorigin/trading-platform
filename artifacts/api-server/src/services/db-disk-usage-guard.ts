@@ -124,11 +124,12 @@ async function probeOnce(): Promise<void> {
     }
 
     const wasBlocked = snapshot?.barCacheWritesBlocked ?? false;
-    const blocked = databaseBytes >= blockBytes;
+    const safeBarCacheBytes = Number.isFinite(barCacheBytes) ? barCacheBytes : 0;
+    const blocked = safeBarCacheBytes >= blockBytes;
     snapshot = {
       checkedAt: new Date().toISOString(),
       databaseBytes,
-      barCacheBytes: Number.isFinite(barCacheBytes) ? barCacheBytes : 0,
+      barCacheBytes: safeBarCacheBytes,
       warnBytes,
       blockBytes,
       barCacheWritesBlocked: blocked,
@@ -136,7 +137,7 @@ async function probeOnce(): Promise<void> {
 
     const detail = {
       databaseMb: Math.round(databaseBytes / MB),
-      barCacheMb: Math.round((Number.isFinite(barCacheBytes) ? barCacheBytes : 0) / MB),
+      barCacheMb: Math.round(safeBarCacheBytes / MB),
       warnMb: Math.round(warnBytes / MB),
       blockMb: Math.round(blockBytes / MB),
     };
@@ -144,11 +145,11 @@ async function probeOnce(): Promise<void> {
       logger.warn(
         detail,
         wasBlocked
-          ? "DB disk usage still at/above hard cap; bar_cache writes remain paused"
-          : "DB disk usage reached hard cap; pausing bar_cache writes until retention frees space",
+          ? "bar_cache size still at/above hard cap; bar_cache writes remain paused"
+          : "bar_cache size reached hard cap; pausing bar_cache writes until retention frees space",
       );
     } else if (wasBlocked) {
-      logger.warn(detail, "DB disk usage back below hard cap; bar_cache writes resumed");
+      logger.warn(detail, "bar_cache size back below hard cap; bar_cache writes resumed");
     } else if (databaseBytes >= warnBytes) {
       logger.warn(
         detail,
