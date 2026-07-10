@@ -43,6 +43,26 @@ fillQuoteSource: "mark"}`. Mechanism (signal-options-automation.ts ~4750–4790)
 Gates that cannot evaluate their input currently PASS. They must FAIL CLOSED: an entry
 whose quote can't prove liquidity is exactly the entry the gate exists to block.
 
+## Surgery verification (2026-07-09 ~21:45 MDT, pre-execution — wf_61de3b9f + direct SQL)
+
+- **Shadow-scoped, verified row-by-row**: all 6 fills, the ASTN position/orders, the 4 position
+  matches, and all 10,342 affected snapshots are `account_id='shadow'`; script also carries
+  explicit shadow filters on every UPDATE.
+- **No double-counting**: UI cash/realized fold from `shadow_fills` on every read
+  (`buildShadowTotalsFromLedger`); the account row feeds ONLY Cash Activity — both must be
+  patched, with deltas equal to the cent (fold +2062 & ASTN reversal +1266.72 = row +3328.72 ✓).
+- **Snapshot tolerance filter** (`filterShadowEquityHistoryRowsToLiveLedger`, 0.05 tol) drops
+  chart points that disagree with the fills-fold — the per-timestamp snapshot deltas match the
+  patched fold cursor by construction, so points stay valid.
+- **Resurrection risk found and neutralized (v2 appendix)**: mirror-repair re-creates ledger
+  records for any entry/exit event lacking a `shadow_orders.source_event_id` mirror (~60s TTL).
+  The ASTN events are flagged `payload.backfill.source` (the designed repair exemption) +
+  `voided` annotation; without this the deleted trade would re-book itself within a minute.
+- **Daily-loss halt reads exit-event payload pnl** — v2 patches the 6 exit events (incl. KTOS/
+  MULL duplicates) to corrected pnl/exitPrice; ASTN's zeroed.
+- Precision note: BRKR's corrected price is from its exactly-captured quote; ZETA/KTOS/MULL mids
+  come from 10–33-min-old marks (conservative estimates under that morning's pressure).
+
 ## Recommendations
 
 1. **Ledger (Riley decision)** — options:
