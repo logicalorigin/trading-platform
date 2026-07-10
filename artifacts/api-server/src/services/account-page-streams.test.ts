@@ -339,15 +339,40 @@ test("the last-live cache is bounded by TTL and a max-entry cap", () => {
 
 test("account-page caches isolate the resolved shadow account scope", () => {
   const { cacheKeyForInput } = __accountPageStreamInternalsForTests;
-  const input = { accountId: "shadow", mode: "shadow" } as const;
+  const input = {
+    accountId: "shadow",
+    appUserId: "app-user-1",
+    mode: "shadow",
+  } as const;
   const first = runWithShadowAccountId("shadow-user-1", () =>
     cacheKeyForInput(input),
   );
   const second = runWithShadowAccountId("shadow-user-2", () =>
     cacheKeyForInput(input),
   );
+  const sameScopeOtherUser = runWithShadowAccountId("shadow-user-1", () =>
+    cacheKeyForInput({ ...input, appUserId: "app-user-2" }),
+  );
 
   assert.notEqual(first, second);
+  assert.equal(first, sameScopeOtherUser);
+});
+
+test("account-page caches isolate real accounts by authenticated user", () => {
+  const { cacheKeyForInput } = __accountPageStreamInternalsForTests;
+
+  assert.notEqual(
+    cacheKeyForInput({
+      accountId: "combined",
+      appUserId: "app-user-1",
+      mode: "live",
+    }),
+    cacheKeyForInput({
+      accountId: "combined",
+      appUserId: "app-user-2",
+      mode: "live",
+    }),
+  );
 });
 
 test("account-page payload identity ignores build stamps but keeps source changes", () => {
@@ -431,7 +456,11 @@ test("account-page subscriber emits and serializes each changed lane exactly onc
   let liveFetches = 0;
   let derivedFetches = 0;
   const unsubscribe = subscribeAccountPageSnapshots(
-    { accountId: "account-test", mode: "live" },
+    {
+      accountId: "account-test",
+      appUserId: "app-user-test",
+      mode: "live",
+    },
     (payload) => {
       liveEmits.push(payload);
       serializeSseEventData(payload);

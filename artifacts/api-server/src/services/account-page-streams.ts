@@ -39,6 +39,7 @@ export const ACCOUNT_PAGE_PRIMARY_CACHE_TTL_MS = 2_000;
 
 type AccountPageSnapshotInput = {
   accountId: string;
+  appUserId: string;
   mode: RuntimeMode;
   range?: AccountRange;
   orderTab?: OrderTab;
@@ -454,6 +455,7 @@ function normalizePositionTypeFilterValue(value: string | null | undefined): str
 function normalizeInput(input: AccountPageSnapshotInput): Required<AccountPageSnapshotInput> {
   return {
     accountId: input.accountId || "combined",
+    appUserId: input.appUserId,
     mode: input.mode,
     range: input.range ?? "ALL",
     orderTab: input.orderTab ?? "working",
@@ -502,11 +504,13 @@ function deferredShadowOrders(accountId: string, tab: OrderTab): AccountOrdersPa
 
 function cacheKeyForInput(input: AccountPageSnapshotInput): string {
   const normalized = normalizeInput(input);
+  const { appUserId, ...cacheInput } = normalized;
   return stableStringify({
-    ...normalized,
+    ...cacheInput,
     from: isoOrNull(normalized.from),
     to: isoOrNull(normalized.to),
     performanceCalendarFrom: isoOrNull(normalized.performanceCalendarFrom),
+    ...(isShadowAccountId(normalized.accountId) ? {} : { appUserId }),
     shadowAccountId: shadowAccountIdForCache(normalized.accountId),
   });
 }
@@ -618,6 +622,7 @@ export async function fetchAccountPageLivePayload(
     mode: normalized.mode,
     orderTab: normalized.orderTab,
     assetClass: normalized.assetClass,
+    ...(isShadow ? {} : { appUserId: normalized.appUserId }),
     shadowAccountId: shadowAccountIdForCache(normalized.accountId),
   });
   const inFlight = accountPageLiveInflight.get(cacheKey);
@@ -631,6 +636,7 @@ export async function fetchAccountPageLivePayload(
     try {
       const common = {
         accountId: normalized.accountId,
+        appUserId: normalized.appUserId,
         mode: normalized.mode,
       };
 
@@ -738,6 +744,7 @@ export async function fetchAccountPagePrimaryPayload(
     mode: normalized.mode,
     orderTab: normalized.orderTab,
     assetClass: normalized.assetClass,
+    ...(isShadow ? {} : { appUserId: normalized.appUserId }),
     shadowAccountId: shadowAccountIdForCache(normalized.accountId),
   });
   const now = Date.now();
@@ -763,6 +770,7 @@ export async function fetchAccountPagePrimaryPayload(
     try {
       const common = {
         accountId: normalized.accountId,
+        appUserId: normalized.appUserId,
         mode: normalized.mode,
       };
       let summary: AccountPagePrimaryPayload["summary"];
@@ -849,6 +857,7 @@ export async function fetchAccountPagePrimaryPayload(
 
 async function fetchAccountPageBenchmarkEquityHistory(input: {
   accountId: string;
+  appUserId: string;
   mode: RuntimeMode;
   range?: AccountRange;
   benchmark: BenchmarkSymbol;
@@ -859,6 +868,7 @@ async function fetchAccountPageBenchmarkEquityHistory(input: {
     mode: input.mode,
     range: input.range ?? null,
     benchmark: input.benchmark,
+    ...(isShadowAccountId(input.accountId) ? {} : { appUserId: input.appUserId }),
     shadowAccountId: shadowAccountIdForCache(input.accountId),
   });
   const cached = accountPageBenchmarkEquityCache.get(cacheKey);
@@ -908,6 +918,7 @@ export async function fetchAccountPageDerivedPayload(
     try {
       const common = {
         accountId: normalized.accountId,
+        appUserId: normalized.appUserId,
         mode: normalized.mode,
       };
       const closedTradeInput = {

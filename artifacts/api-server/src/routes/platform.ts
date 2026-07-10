@@ -3283,6 +3283,7 @@ router.get("/streams/footprints", async (req, res) => {
 });
 
 router.get("/streams/accounts/page", async (req, res) => {
+  const { user } = await requireUser(req);
   const mode: RuntimeMode = req.query.mode === "live" ? "live" : "shadow";
   const accountId =
     typeof req.query.accountId === "string" && req.query.accountId.trim()
@@ -3291,6 +3292,7 @@ router.get("/streams/accounts/page", async (req, res) => {
   if (!(await admitAccountRoute(res, accountId))) return;
   const input = {
     accountId,
+    appUserId: user.id,
     mode,
     range:
       typeof req.query.range === "string"
