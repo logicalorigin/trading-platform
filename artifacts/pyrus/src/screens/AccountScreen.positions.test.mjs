@@ -149,3 +149,25 @@ test("account positions trading actions use broker-safe account context", () => 
   assert.match(positionsPanel, /gatewayTradingReady=\{positionManagementGatewayReady\}/);
   assert.match(positionsPanel, /gatewayTradingMessage=\{positionManagementGatewayMessage\}/);
 });
+
+// Owner ruling 2026-07-09: day P&L on the account screen means the positions-table
+// number (open positions' day change). The hero pill must read the SAME source as
+// the P&L calendar — on 2026-07-09 the backend equity-history metric showed -$3.7K
+// while the positions table showed +$2.0K, and the pill must never diverge again.
+test("hero pill day P&L reads the positions-table day change, not the equity metric", () => {
+  assert.match(
+    source,
+    /const heroSummaryData = useMemo\(/,
+    "Missing heroSummaryData override in AccountScreen",
+  );
+  assert.match(
+    source,
+    /openDayPnl = Number\(livePositionsDayPnl\?\.openPositionsDayPnl\)/,
+    "Pill override must source livePositionsDayPnl.openPositionsDayPnl",
+  );
+  assert.match(
+    source,
+    /summary=\{heroSummaryData\}/,
+    "AccountHeroBlock must receive the overridden summary",
+  );
+});

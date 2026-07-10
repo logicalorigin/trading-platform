@@ -2298,6 +2298,42 @@ const AccountScreenInner = ({
       positionsQueryForDisplay.data,
     ],
   );
+  // Owner ruling (2026-07-09, Riley): day P&L on this screen means the positions-table
+  // number — the open positions' day change — NOT the equity-history NLV move the
+  // backend summary metric carries (that one also folds in realized P&L from exited
+  // positions; the two read +$2.0K vs -$3.7K on 2026-07-09). The hero pill must read
+  // the same source as the P&L calendar so the two surfaces can never disagree.
+  const heroSummaryData = useMemo(() => {
+    const openDayPnl = Number(livePositionsDayPnl?.openPositionsDayPnl);
+    if (!displaySummaryData || !Number.isFinite(openDayPnl)) {
+      return displaySummaryData;
+    }
+    const netLiquidation = Number(
+      displaySummaryData?.metrics?.netLiquidation?.value,
+    );
+    const base =
+      Number.isFinite(netLiquidation) && netLiquidation - openDayPnl !== 0
+        ? Math.abs(netLiquidation - openDayPnl)
+        : null;
+    return {
+      ...displaySummaryData,
+      metrics: {
+        ...displaySummaryData.metrics,
+        dayPnl: {
+          ...(displaySummaryData.metrics?.dayPnl || {}),
+          value: openDayPnl,
+          source: "positions_table",
+          field: "OpenPositionsDayChange",
+        },
+        dayPnlPercent: {
+          ...(displaySummaryData.metrics?.dayPnlPercent || {}),
+          value: base ? (openDayPnl / base) * 100 : null,
+          source: "positions_table",
+          field: "OpenPositionsDayChangePercent",
+        },
+      },
+    };
+  }, [displaySummaryData, livePositionsDayPnl]);
   const equityQueryForDisplay = useMemo(
     () =>
       equityQueryWithLivePositionsTerminal({
@@ -2454,7 +2490,7 @@ const AccountScreenInner = ({
           detail="Preparing balances and account status."
         >
           <AccountHeroBlock
-            summary={displaySummaryData}
+            summary={heroSummaryData}
             equityHistory={equityQueryForPanel.data}
             benchmarkHistories={{
               SPY: spyBenchmarkQuery.data,
