@@ -16,6 +16,7 @@ import {
   useBootProgress,
 } from "./bootProgress";
 import {
+  postClientDiagnosticEvent,
   rememberBrowserDiagnosticEvent,
 } from "./crashDiagnostics";
 
@@ -245,20 +246,6 @@ function AuthenticatedWorkspacePreloader({
   }, [isLoading, labMode, signedIn]);
 
   return null;
-}
-
-function postClientDiagnosticEvent(input: {
-  category: string;
-  severity: "info" | "warning";
-  code?: string | null;
-  message: string;
-  raw?: Record<string, unknown>;
-}) {
-  fetch("/api/diagnostics/client-events", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Accept: "application/json" },
-    body: JSON.stringify(input),
-  }).catch(() => {});
 }
 
 function diagnosticErrorCode(

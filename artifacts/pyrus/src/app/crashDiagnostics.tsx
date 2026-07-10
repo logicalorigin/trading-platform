@@ -79,7 +79,7 @@ const normalizeError = (error: unknown): Error =>
   error instanceof Error ? error : new Error(String(error || "Unknown error"));
 
 const redactString = (value: string): string => {
-  const withoutAccountIds = value.replace(/\bU\d{4,}\b/g, "U***");
+  const withoutAccountIds = value.replace(/\bD?U\d{4,}\b/gi, "U***");
   const withoutCredentials = withoutAccountIds.replace(
     /([a-z][a-z0-9+.-]*:\/\/)[^/\s:@]+:[^/\s@]+@/gi,
     "$1[redacted]@",
@@ -142,6 +142,15 @@ export const redactCrashDiagnosticValue = (
     );
   }
   return String(value);
+};
+
+export const postClientDiagnosticEvent = (event: BrowserDiagnosticEvent) => {
+  if (typeof fetch !== "function") return;
+  fetch("/api/diagnostics/client-events", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Accept: "application/json" },
+    body: JSON.stringify(redactCrashDiagnosticValue(event)),
+  }).catch(() => {});
 };
 
 const readRecentBrowserEvents = (): unknown[] => {

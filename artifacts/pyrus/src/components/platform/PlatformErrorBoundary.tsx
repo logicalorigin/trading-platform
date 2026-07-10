@@ -14,6 +14,7 @@ import {
 import {
   buildRootCrashDiagnosticBundle,
   openDiagnosticsScreen,
+  postClientDiagnosticEvent,
   redactCrashDiagnosticValue,
 } from "../../app/crashDiagnostics";
 import { FONT_CSS_VAR, FONT_WEIGHT, TYPE_CSS_VAR } from "../../lib/typography";
@@ -68,25 +69,17 @@ const reportPlatformBoundaryError = (
     componentStack: info.componentStack,
   });
 
-  if (typeof fetch !== "function") {
-    return;
-  }
-
-  fetch("/api/diagnostics/client-events", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Accept: "application/json" },
-    body: JSON.stringify({
-      category: options.category ?? "react-error-boundary",
-      severity: options.severity ?? "warning",
-      code: label.slice(0, 96),
-      message: error.message || "Render boundary error",
-      raw: options.raw ?? {
-        label,
-        name: error.name,
-        componentStack: info.componentStack,
-      },
-    }),
-  }).catch(() => {});
+  postClientDiagnosticEvent({
+    category: options.category ?? "react-error-boundary",
+    severity: options.severity ?? "warning",
+    code: label.slice(0, 96),
+    message: error.message || "Render boundary error",
+    raw: options.raw ?? {
+      label,
+      name: error.name,
+      componentStack: info.componentStack,
+    },
+  });
 };
 
 const normalizeBoundaryError = (error: unknown): Error =>
