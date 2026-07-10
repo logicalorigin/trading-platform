@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { eq } from "drizzle-orm";
+import { and, asc, eq, gte, lt } from "drizzle-orm";
 
 import {
   db,
@@ -62,32 +62,35 @@ async function seedSnapshots(accountId: string, rows: SeedSnapshot[]) {
 test("shadowEquityHistoryReadPolicy scales bucket size with span at a fixed candidate count", () => {
   const day = internals.shadowEquityHistoryReadPolicy(86_400_000);
   const year = internals.shadowEquityHistoryReadPolicy(365 * 86_400_000);
-  assert.equal(day.candidates, 3);
-  assert.equal(year.candidates, 3);
-  assert.ok(day.bucketMs >= 60_000, "min 1-minute bucket floor");
+  const all = internals.shadowEquityHistoryReadPolicy(5 * 365 * 86_400_000);
+  assert.equal(day.candidatesPerBucket, 3);
+  assert.equal(year.candidatesPerBucket, 3);
+  assert.equal(all.candidatesPerBucket, 3);
+  assert.equal(day.bucketMs, 60_000, "1D remains minute-dense");
   assert.ok(year.bucketMs > day.bucketMs, "longer span => coarser buckets");
+  assert.ok(all.bucketMs > year.bucketMs, "ALL derives a coarser bucket from its span");
   // total sampled rows track the budget: buckets*(candidates+1) ~= budget
   const yearBuckets = (365 * 86_400_000) / year.bucketMs;
   assert.ok(
-    yearBuckets * (year.candidates + 1) <= 1_400,
+    yearBuckets * (year.candidatesPerBucket + 1) <= 1_400,
     `bucket count must keep the read bounded, got ${yearBuckets}`,
   );
   // a sub-minute span is floored, never sub-minute buckets
   assert.equal(internals.shadowEquityHistoryReadPolicy(1_000).bucketMs, 60_000);
 });
 
-test("bucket-first reader bounds a dense day far below the raw row count", async () => {
+test("bucket-first reader bounds a dense span below the raw row count", async () => {
   const t = await createTestDb();
   try {
     const accountId = "eqh-bound";
     await seedAccount(accountId);
     const end = new Date("2026-07-09T20:00:00.000Z");
-    const start = new Date(end.getTime() - 24 * 3_600_000);
-    const total = 2_880; // one every 30s across the day
+    const start = new Date(end.getTime() - 2 * 3_600_000);
+    const total = 720; // one every 10s across two dense hours
     const rows: SeedSnapshot[] = [];
     for (let i = 0; i < total; i++) {
       rows.push({
-        asOf: new Date(start.getTime() + i * 30_000),
+        asOf: new Date(start.getTime() + i * 10_000),
         source: "mark",
         netLiquidation: 100_000 + i,
       });
@@ -103,8 +106,12 @@ test("bucket-first reader bounds a dense day far below the raw row count", async
     );
     console.log("EQH_1D_BOUND", sampled.length, "of", total);
     assert.ok(
-      sampled.length < total / 2,
+      sampled.length < total,
       `expected a bounded read, got ${sampled.length} of ${total}`,
+    );
+    assert.ok(
+      sampled.length <= 2 * 60 * 4 + 1,
+      "at most newest-3 + oldest per minute",
     );
     // sorted ascending by asOf
     for (let i = 1; i < sampled.length; i++) {
@@ -113,13 +120,40 @@ test("bucket-first reader bounds a dense day far below the raw row count", async
     // newest and oldest raw rows are both retained
     const asOfMs = sampled.map((r) => r.asOf.getTime());
     assert.equal(Math.min(...asOfMs), start.getTime());
-    assert.equal(Math.max(...asOfMs), new Date(end.getTime() - 30_000).getTime());
+    assert.equal(Math.max(...asOfMs), new Date(end.getTime() - 10_000).getTime());
   } finally {
     await t.cleanup();
   }
 });
 
-test("bucket-first reader is a faithful superset over a small mixed-source fixture", async () => {
+test("bucket-first reader keeps the requested range end-exclusive", async () => {
+  const t = await createTestDb();
+  try {
+    const accountId = "eqh-end-bound";
+    await seedAccount(accountId);
+    const start = new Date("2026-07-09T14:30:00.000Z");
+    const end = new Date("2026-07-09T14:35:00.000Z");
+    await seedSnapshots(accountId, [
+      { asOf: start, source: "mark", netLiquidation: 100_000 },
+      { asOf: new Date(end.getTime() - 1), source: "mark", netLiquidation: 100_001 },
+      { asOf: end, source: "mark", netLiquidation: 100_002 },
+      { asOf: new Date(end.getTime() + 1), source: "mark", netLiquidation: 100_003 },
+    ]);
+
+    const sampled = await runWithShadowAccountId(accountId, () =>
+      internals.readShadowEquityHistorySnapshotRowsBucketed({ accountId, start, end }),
+    );
+
+    assert.deepEqual(
+      sampled.map((row) => row.asOf.getTime()),
+      [start.getTime(), end.getTime() - 1],
+    );
+  } finally {
+    await t.cleanup();
+  }
+});
+
+test("bucket-first reader matches the old broad-read pipeline over mixed sources", async () => {
   const t = await createTestDb();
   try {
     const accountId = "eqh-superset";
@@ -130,12 +164,25 @@ test("bucket-first reader is a faithful superset over a small mixed-source fixtu
       { asOf: new Date(base.getTime() + 60_000), source: "automation_mark", netLiquidation: 100_150 },
       { asOf: new Date(base.getTime() + 120_000), source: "automation", netLiquidation: 100_200 },
       { asOf: new Date(base.getTime() + 180_000), source: "signal_options_replay", netLiquidation: 55_000 },
-      { asOf: new Date(base.getTime() + 240_000), source: "watchlist_backtest_mark", netLiquidation: 42_000 },
-      { asOf: new Date(base.getTime() + 300_000), source: "mark", netLiquidation: 100_250 },
+      {
+        asOf: new Date(base.getTime() + 240_000),
+        source: "watchlist_backtest:1D",
+        netLiquidation: 42_000,
+      },
+      { asOf: new Date(base.getTime() + 300_000), source: "watchlist_backtest_mark", netLiquidation: 42_050 },
+      { asOf: new Date(base.getTime() + 360_000), source: "mark", netLiquidation: 100_250 },
+      ...Array.from({ length: 8 }, (_, index) => ({
+        asOf: new Date(base.getTime() + 365_000 + index * 5_000),
+        source: "mark",
+        netLiquidation: 9_000 + index,
+        cash: 999,
+        realizedPnl: 123,
+        fees: 7,
+      })),
     ];
     await seedSnapshots(accountId, fixture);
     const start = new Date(base.getTime() - 60_000);
-    const end = new Date(base.getTime() + 360_000);
+    const end = new Date(base.getTime() + 480_000);
 
     const sampled = await runWithShadowAccountId(accountId, () =>
       internals.readShadowEquityHistorySnapshotRowsBucketed({
@@ -144,14 +191,73 @@ test("bucket-first reader is a faithful superset over a small mixed-source fixtu
         end,
       }),
     );
-    // At fixture scale nothing is sampled away, so feeding this set to the
-    // unchanged pipeline is identical to feeding the full-scan result.
-    assert.equal(sampled.length, fixture.length);
-    const sampledNlv = new Set(sampled.map((r) => Number(r.netLiquidation)));
-    for (const row of fixture) {
-      assert.ok(
-        sampledNlv.has(row.netLiquidation),
-        `missing ${row.source} row nlv=${row.netLiquidation}`,
+    // Test-only copy of the replaced broad read. Compare after the unchanged
+    // source-selection/live-ledger/compaction/display-bucketing pipeline so the
+    // assertion covers every field that can affect chart output.
+    const broad = await t.db
+      .select()
+      .from(shadowBalanceSnapshotsTable)
+      .where(
+        and(
+          eq(shadowBalanceSnapshotsTable.accountId, accountId),
+          gte(shadowBalanceSnapshotsTable.asOf, start),
+          lt(shadowBalanceSnapshotsTable.asOf, end),
+        ),
+      )
+      .orderBy(asc(shadowBalanceSnapshotsTable.asOf));
+    assert.ok(sampled.length < broad.length, "fixture must exercise bounded sampling");
+
+    type ComparisonSource =
+      | null
+      | "automation"
+      | "signal_options_replay"
+      | "watchlist_backtest";
+    type PipelineRow = Pick<
+      (typeof broad)[number],
+      | "asOf"
+      | "source"
+      | "cash"
+      | "realizedPnl"
+      | "fees"
+      | "netLiquidation"
+      | "createdAt"
+    >;
+    const pipelineOutput = (rows: PipelineRow[], source: ComparisonSource) => {
+      const selection = internals.selectShadowEquityHistoryRows(rows, { source });
+      const ledgerRows =
+        source === "signal_options_replay" || source === "watchlist_backtest"
+          ? selection.rows
+          : source
+            ? internals.filterShadowEquityHistoryRowsToLiveLedger(selection.rows, {
+                account: { startingBalance: "100000" },
+                fills: [],
+              })
+            : internals.buildDefaultShadowEquityHistoryRows(selection.rows, {
+                account: { startingBalance: "100000" },
+                fills: [],
+                terminalTotals: null,
+              });
+      const compacted = internals.compactShadowEquityHistoryRows(ledgerRows);
+      return internals.bucketShadowEquityHistoryRows(compacted, 60_000).map((row) => ({
+        asOf: row.asOf.toISOString(),
+        source: row.source,
+        cash: row.cash,
+        realizedPnl: row.realizedPnl,
+        fees: row.fees,
+        netLiquidation: row.netLiquidation,
+      }));
+    };
+
+    for (const source of [
+      null,
+      "automation",
+      "signal_options_replay",
+      "watchlist_backtest",
+    ] as const) {
+      assert.deepEqual(
+        pipelineOutput(sampled, source),
+        pipelineOutput(broad, source),
+        `bounded and broad outputs differ for ${source ?? "ledger"}`,
       );
     }
   } finally {
