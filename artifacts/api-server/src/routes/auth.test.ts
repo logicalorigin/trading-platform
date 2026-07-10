@@ -229,40 +229,80 @@ test("password login rejects a cross-site form without replacing the session", a
   );
 });
 
-test("session cookie is Secure only when the request is https", async () => {
-  await withBootstrapToken(async () =>
-    withTestDb(async () =>
-      withServer(async (baseUrl) => {
-        const httpBootstrap = await fetch(`${baseUrl}/auth/bootstrap`, {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({
-            email: "owner@example.com",
-            password: "correct horse battery staple",
-            bootstrapToken: "setup-token",
-          }),
-        });
-        assert.equal(httpBootstrap.status, 200);
-        assert.doesNotMatch(
-          httpBootstrap.headers.get("set-cookie") ?? "",
-          /Secure/i,
-        );
+test("session cookies are Secure outside explicit HTTP development", async () => {
+  const previousNodeEnv = process.env["NODE_ENV"];
+  try {
+    await withBootstrapToken(async () =>
+      withTestDb(async () =>
+        withServer(async (baseUrl) => {
+          process.env["NODE_ENV"] = "development";
+          const httpBootstrap = await fetch(`${baseUrl}/auth/bootstrap`, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              email: "owner@example.com",
+              password: "correct horse battery staple",
+              bootstrapToken: "setup-token",
+            }),
+          });
+          assert.equal(httpBootstrap.status, 200);
+          assert.doesNotMatch(
+            httpBootstrap.headers.get("set-cookie") ?? "",
+            /Secure/i,
+          );
 
-        __resetAuthRateLimitsForTests();
-        const httpsLogin = await fetch(`${baseUrl}/auth/login`, {
-          method: "POST",
-          headers: {
-            "content-type": "application/json",
-            "x-forwarded-proto": "https",
-          },
-          body: JSON.stringify({
-            email: "owner@example.com",
-            password: "correct horse battery staple",
-          }),
-        });
-        assert.equal(httpsLogin.status, 200);
-        assert.match(httpsLogin.headers.get("set-cookie") ?? "", /Secure/i);
-      }),
-    ),
-  );
+          __resetAuthRateLimitsForTests();
+          const httpsLogin = await fetch(`${baseUrl}/auth/login`, {
+            method: "POST",
+            headers: {
+              "content-type": "application/json",
+              "x-forwarded-proto": "https",
+            },
+            body: JSON.stringify({
+              email: "owner@example.com",
+              password: "correct horse battery staple",
+            }),
+          });
+          assert.equal(httpsLogin.status, 200);
+          assert.match(httpsLogin.headers.get("set-cookie") ?? "", /Secure/i);
+
+          process.env["NODE_ENV"] = "production";
+          const productionLogin = await fetch(`${baseUrl}/auth/login`, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              email: "owner@example.com",
+              password: "correct horse battery staple",
+            }),
+          });
+          assert.equal(productionLogin.status, 200);
+          assert.match(
+            productionLogin.headers.get("set-cookie") ?? "",
+            /Secure/i,
+          );
+
+          delete process.env["NODE_ENV"];
+          const defaultLogin = await fetch(`${baseUrl}/auth/login`, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              email: "owner@example.com",
+              password: "correct horse battery staple",
+            }),
+          });
+          assert.equal(defaultLogin.status, 200);
+          assert.match(
+            defaultLogin.headers.get("set-cookie") ?? "",
+            /Secure/i,
+          );
+        }),
+      ),
+    );
+  } finally {
+    if (previousNodeEnv === undefined) {
+      delete process.env["NODE_ENV"];
+    } else {
+      process.env["NODE_ENV"] = previousNodeEnv;
+    }
+  }
 });

@@ -161,6 +161,7 @@ function readCookie(req: RequestWithHeaders, name: string): string | null {
 }
 
 function isSecureRequest(req: Request): boolean {
+  if (process.env["NODE_ENV"] !== "development") return true;
   if (req.secure) return true;
   const forwarded = req.headers["x-forwarded-proto"];
   const proto = Array.isArray(forwarded) ? forwarded[0] : forwarded;
