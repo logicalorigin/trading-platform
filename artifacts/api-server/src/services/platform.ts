@@ -17,6 +17,7 @@ import {
   db,
   getDbAdmissionDiagnostics,
   instrumentsTable,
+  runInDbLane,
   watchlistItemsTable,
   watchlistsTable,
 } from "@workspace/db";
@@ -9211,7 +9212,7 @@ function drainBarsBackgroundPersistQueue(): void {
       key,
       (barsBackgroundPersistActiveKeys.get(key) ?? 0) + 1,
     );
-    void barsBackgroundPersistWorker(input)
+    void runInDbLane("bulk", () => barsBackgroundPersistWorker(input))
       .then((ok) => {
         if (ok === true) {
           barsBackgroundPersistCompleted += 1;
