@@ -810,6 +810,7 @@ function appendPostgresPoolDiagnosticEvent(
   const detail: JsonRecord = {
     source: event.source,
     durationMs: event.durationMs,
+    executionDurationMs: event.executionDurationMs ?? null,
     sql:
       event.sql == null ? null : event.sql.slice(0, SLOW_EVENT_SQL_MAX_CHARS),
     queryName: event.queryName,

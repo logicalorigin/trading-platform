@@ -239,10 +239,20 @@ test("DB diagnostic flight-recorder events include request workload context", ()
       type: "query",
       source: "pool",
       durationMs: 2500,
+      executionDurationMs: 1800,
       sql: "select 1",
       queryName: "test-query",
       error: null,
-      pool: { max: 12, total: 12, idle: 0, active: 12, waiting: 4 },
+      pool: {
+        max: 12,
+        total: 12,
+        idle: 0,
+        active: 12,
+        waiting: 4,
+        rawPoolWaiting: 4,
+        admissionWaiting: 0,
+        totalWaiting: 4,
+      },
       stack: [],
       context: {
         requestId: "req-1",
@@ -268,6 +278,7 @@ test("DB diagnostic flight-recorder events include request workload context", ()
     const event = JSON.parse(line);
 
     assert.equal(event.event, "api-db-query-slow");
+    assert.equal(event.executionDurationMs, 1800);
     assert.deepEqual(event.context, {
       requestId: "req-1",
       method: "GET",
@@ -317,7 +328,16 @@ test("slow-query recorder truncates SQL to 300 chars and drops the stack field",
       sql: "x".repeat(500),
       queryName: "trunc-test",
       error: null,
-      pool: { max: 12, total: 12, idle: 0, active: 12, waiting: 4 },
+      pool: {
+        max: 12,
+        total: 12,
+        idle: 0,
+        active: 12,
+        waiting: 4,
+        rawPoolWaiting: 4,
+        admissionWaiting: 0,
+        totalWaiting: 4,
+      },
       stack: ["frame-a", "frame-b"],
       context: null,
     });
@@ -353,7 +373,16 @@ test("slow-query recorder rate-limits per family and carries a suppressedCount",
     sql: "select 1",
     queryName: "rate-test",
     error: null,
-    pool: { max: 12, total: 12, idle: 0, active: 12, waiting: 4 },
+    pool: {
+      max: 12,
+      total: 12,
+      idle: 0,
+      active: 12,
+      waiting: 4,
+      rawPoolWaiting: 4,
+      admissionWaiting: 0,
+      totalWaiting: 4,
+    },
     stack: [],
     context: null,
     ...extra,
@@ -407,7 +436,16 @@ test("slow-query recorder stops appending after the intra-day byte cap and flags
         // byte cap is the only gate under test.
         queryName: `cap-test-${i}`,
         error: null,
-        pool: { max: 12, total: 12, idle: 0, active: 12, waiting: 4 },
+        pool: {
+          max: 12,
+          total: 12,
+          idle: 0,
+          active: 12,
+          waiting: 4,
+          rawPoolWaiting: 4,
+          admissionWaiting: 0,
+          totalWaiting: 4,
+        },
         stack: [],
         context: null,
       });

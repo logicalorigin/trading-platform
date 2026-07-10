@@ -35,6 +35,7 @@ export type PostgresPoolDiagnosticEvent = {
   type: "acquire" | "query";
   source: "pool" | "client";
   durationMs: number;
+  executionDurationMs?: number;
   sql: string | null;
   queryName: string | null;
   error: string | null;
@@ -50,6 +51,14 @@ type PostgresPoolDiagnosticListener = (
 let postgresPoolDiagnosticListener: PostgresPoolDiagnosticListener | null = null;
 const postgresDiagnosticContext =
   new AsyncLocalStorage<PostgresDiagnosticContext>();
+type PostgresPoolQueryDiagnosticCorrelation = {
+  active: boolean;
+  innerClaimed: boolean;
+  executionDurationMs?: number;
+  context: PostgresDiagnosticContext | null;
+};
+const postgresPoolQueryDiagnosticContext =
+  new AsyncLocalStorage<PostgresPoolQueryDiagnosticCorrelation>();
 
 export function runWithPostgresDiagnosticContext<T>(
   context: PostgresDiagnosticContext,
@@ -159,6 +168,8 @@ function emitPostgresPoolDiagnostic(input: {
   // vast majority — never pay it.
   queryArgs?: unknown[];
   error?: unknown;
+  executionDurationMs?: number;
+  context?: PostgresDiagnosticContext | null;
 }): void {
   const listener = postgresPoolDiagnosticListener;
   if (!listener) return;
@@ -179,12 +190,18 @@ function emitPostgresPoolDiagnostic(input: {
       type: input.type,
       source: input.source,
       durationMs,
+      ...(input.executionDurationMs === undefined
+        ? {}
+        : { executionDurationMs: input.executionDurationMs }),
       sql: args ? queryText(args) : null,
       queryName: args ? queryName(args) : null,
       error: errorMessage(input.error),
       pool: getPoolStats(),
       stack: diagnosticStack(),
-      context: getPostgresDiagnosticContext(),
+      context:
+        input.context === undefined
+          ? getPostgresDiagnosticContext()
+          : input.context,
     });
   } catch {
     // Diagnostics must not affect database behavior.
@@ -344,77 +361,86 @@ function instrumentQuery(
 ): (...args: unknown[]) => unknown {
   return (...args: unknown[]) => {
     const startedAtMs = Date.now();
+    const context = getPostgresDiagnosticContext();
+    const correlation: PostgresPoolQueryDiagnosticCorrelation | undefined =
+      source === "pool"
+        ? { active: true, innerClaimed: false, context }
+        : postgresPoolQueryDiagnosticContext.getStore();
+    const correlatedInner =
+      source === "client" &&
+      correlation?.active &&
+      !correlation.innerClaimed
+        ? correlation
+        : null;
+    if (correlatedInner) {
+      correlatedInner.innerClaimed = true;
+    }
     const lastArg = args[args.length - 1];
 
-    if (typeof lastArg === "function") {
-      const callback = lastArg as (...callbackArgs: unknown[]) => unknown;
-      const wrappedArgs = [...args];
-      wrappedArgs[wrappedArgs.length - 1] = (...callbackArgs: unknown[]) => {
-        emitPostgresPoolDiagnostic({
-          type: "query",
-          source,
-          startedAtMs,
-          queryArgs: args,
-          error: callbackArgs[0],
-        });
-        return callback(...callbackArgs);
-      };
-      try {
-        return originalQuery(...wrappedArgs);
-      } catch (error) {
-        emitPostgresPoolDiagnostic({
-          type: "query",
-          source,
-          startedAtMs,
-          queryArgs: args,
-          error,
-        });
-        throw error;
-      }
-    }
-
-    try {
-      const result = originalQuery(...args);
-      if (result && typeof (result as Promise<unknown>).then === "function") {
-        return (result as Promise<unknown>).then(
-          (value) => {
-            emitPostgresPoolDiagnostic({
-              type: "query",
-              source,
-              startedAtMs,
-              queryArgs: args,
-            });
-            return value;
-          },
-          (error) => {
-            emitPostgresPoolDiagnostic({
-              type: "query",
-              source,
-              startedAtMs,
-              queryArgs: args,
-              error,
-            });
-            throw error;
-          },
+    const complete = (error?: unknown): void => {
+      if (correlatedInner) {
+        correlatedInner.executionDurationMs = Math.max(
+          0,
+          Math.round(Date.now() - startedAtMs),
         );
+        return;
       }
-      emitPostgresPoolDiagnostic({
-        type: "query",
-        source,
-        startedAtMs,
-        queryArgs: args,
-      });
-      return result;
-    } catch (error) {
+      if (source === "pool" && correlation) {
+        correlation.active = false;
+      }
       emitPostgresPoolDiagnostic({
         type: "query",
         source,
         startedAtMs,
         queryArgs: args,
         error,
+        executionDurationMs:
+          source === "pool" ? correlation?.executionDurationMs : undefined,
+        context: source === "pool" ? correlation?.context : context,
       });
-      throw error;
-    }
+    };
+
+    const run = () => {
+      if (typeof lastArg === "function") {
+        const callback = lastArg as (...callbackArgs: unknown[]) => unknown;
+        const wrappedArgs = [...args];
+        wrappedArgs[wrappedArgs.length - 1] = (...callbackArgs: unknown[]) => {
+          complete(callbackArgs[0]);
+          return callback(...callbackArgs);
+        };
+        try {
+          return originalQuery(...wrappedArgs);
+        } catch (error) {
+          complete(error);
+          throw error;
+        }
+      }
+
+      try {
+        const result = originalQuery(...args);
+        if (result && typeof (result as Promise<unknown>).then === "function") {
+          return (result as Promise<unknown>).then(
+            (value) => {
+              complete();
+              return value;
+            },
+            (error) => {
+              complete(error);
+              throw error;
+            },
+          );
+        }
+        complete();
+        return result;
+      } catch (error) {
+        complete(error);
+        throw error;
+      }
+    };
+
+    return source === "pool"
+      ? postgresPoolQueryDiagnosticContext.run(correlation!, run)
+      : run();
   };
 }
 
@@ -657,6 +683,12 @@ export type PostgresPoolStats = {
   active: number;
   /** Acquire requests queued because every connection is checked out. */
   waiting: number;
+  /** Raw node-postgres acquire queue; identical to legacy `waiting`. */
+  rawPoolWaiting: number;
+  /** Callers queued in the admission bus before reaching node-postgres. */
+  admissionWaiting: number;
+  /** All queued callers (`rawPoolWaiting + admissionWaiting`). */
+  totalWaiting: number;
   /** Admission bus lane gauges for the shared pool. */
   admission?: DbAdmissionDiagnostics;
 };
@@ -670,13 +702,22 @@ export type PostgresPoolStats = {
 export function getPoolStats(): PostgresPoolStats {
   const total = pool.totalCount;
   const idle = pool.idleCount;
+  const rawPoolWaiting = pool.waitingCount;
+  const admission = getDbAdmissionDiagnostics();
+  const admissionWaiting =
+    admission.interactive.queued +
+    admission.bulk.queued +
+    admission.background.queued;
   return {
     max: resolvedPoolMax,
     total,
     idle,
     active: Math.max(0, total - idle),
-    waiting: pool.waitingCount,
-    admission: getDbAdmissionDiagnostics(),
+    waiting: rawPoolWaiting,
+    rawPoolWaiting,
+    admissionWaiting,
+    totalWaiting: rawPoolWaiting + admissionWaiting,
+    admission,
   };
 }
 
