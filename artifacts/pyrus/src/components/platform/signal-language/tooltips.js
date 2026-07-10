@@ -2,6 +2,7 @@ import { MISSING_VALUE } from "../../../lib/uiTokens.jsx";
 import { FRESHNESS_BAR_DENOM, SCORE_COLD, SCORE_HOT } from "./thresholds.js";
 
 const finiteNumber = (value) => {
+  if (value == null || value === "") return null;
   const numeric = Number(value);
   return Number.isFinite(numeric) ? numeric : null;
 };

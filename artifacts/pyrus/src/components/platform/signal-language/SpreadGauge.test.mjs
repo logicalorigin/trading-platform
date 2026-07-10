@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  resolveSpreadWidthFraction,
   spreadGaugeTone,
   spreadThresholdScaleForDte,
 } from "./SpreadGauge.jsx";
@@ -29,4 +30,15 @@ test("a structurally wide LEAP spread reads warn, while the same spread on a wee
 test("spread tone falls back to the dim tone when the width is non-finite", () => {
   assert.equal(spreadGaugeTone(undefined, 200), getTone("dim"));
   assert.equal(spreadGaugeTone(Number.NaN, 200), getTone("dim"));
+});
+
+test("spread width stays unavailable when either quote side is absent", () => {
+  assert.equal(resolveSpreadWidthFraction({ bid: null, ask: 1, mid: 0.5 }), null);
+  assert.equal(resolveSpreadWidthFraction({ bid: 1, ask: null, mid: 1.05 }), null);
+  assert.equal(resolveSpreadWidthFraction({ bid: "", ask: 1, mid: 0.5 }), null);
+  assert.equal(resolveSpreadWidthFraction({ bid: 1, ask: "", mid: 1.05 }), null);
+});
+
+test("spread width stays unavailable for a crossed quote", () => {
+  assert.equal(resolveSpreadWidthFraction({ bid: 1.1, ask: 1, mid: 1.05 }), null);
 });

@@ -5,6 +5,7 @@ import { spreadTooltip } from "./tooltips.js";
 import { getTone } from "./tones.js";
 
 const finiteNumber = (value) => {
+  if (value == null || value === "") return null;
   const numeric = Number(value);
   return Number.isFinite(numeric) ? numeric : null;
 };
@@ -15,10 +16,16 @@ export const resolveSpreadWidthFraction = ({ bid, ask, mid }) => {
   const midValue = finiteNumber(mid) ?? (
     bidValue != null && askValue != null ? (bidValue + askValue) / 2 : null
   );
-  if (bidValue == null || askValue == null || midValue == null || midValue <= 0) {
+  if (
+    bidValue == null ||
+    askValue == null ||
+    midValue == null ||
+    midValue <= 0 ||
+    askValue < bidValue
+  ) {
     return null;
   }
-  return Math.max(0, (askValue - bidValue) / midValue);
+  return (askValue - bidValue) / midValue;
 };
 
 // Long-dated (LEAP) options structurally quote wider than weeklies, so the fixed
