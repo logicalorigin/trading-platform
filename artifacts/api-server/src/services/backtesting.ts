@@ -1556,7 +1556,12 @@ function jobToResponse(job: BacktestStudyJob) {
   };
 }
 
-async function getStudyOrThrow(studyId: string): Promise<BacktestStudy> {
+async function getStudyOrThrow(studyId: string | null): Promise<BacktestStudy> {
+  if (!studyId) {
+    throw new HttpError(404, "Backtest study not found.", {
+      code: "backtest_study_not_found",
+    });
+  }
   const [study] = await db
     .select()
     .from(backtestStudiesTable)

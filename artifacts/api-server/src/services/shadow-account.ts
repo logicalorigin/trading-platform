@@ -1,6 +1,18 @@
 import { createHash, randomUUID } from "node:crypto";
 import { setTimeout as sleep } from "node:timers/promises";
-import { and, asc, desc, eq, gte, inArray, isNull, lt, lte, sql } from "drizzle-orm";
+import {
+  and,
+  asc,
+  desc,
+  eq,
+  getTableColumns,
+  gte,
+  inArray,
+  isNull,
+  lt,
+  lte,
+  sql,
+} from "drizzle-orm";
 import type { SQL } from "drizzle-orm";
 import {
   DEFAULT_PYRUS_SIGNALS_SIGNAL_SETTINGS,
@@ -28,7 +40,9 @@ import {
 } from "@workspace/account-math";
 import {
   algoDeploymentsTable,
+  backtestRunExecutionsTable,
   backtestRunPointsTable,
+  backtestRunsTable,
   db,
   dbTrading,
   pool,
@@ -220,6 +234,68 @@ const SIGNAL_OPTIONS_SHADOW_ENTRY_EXIT_EVENT_PREDICATE = sql`${executionEventsTa
 const SIGNAL_OPTIONS_SHADOW_MARK_EVENT_PREDICATE = sql`${executionEventsTable.eventType} = 'signal_options_shadow_mark'`;
 const SHADOW_AUTOMATION_MIRROR_REPAIR_LIMIT = 10_000;
 const SHADOW_AUTOMATION_MIRROR_REPAIR_TTL_MS = 60_000;
+
+export function useOwnBacktestLedger(): boolean {
+  return process.env.PYRUS_BACKTEST_LEDGER?.trim().toLowerCase() === "own";
+}
+
+const BACKTEST_LEDGER_REQUIRED_COLUMNS = [
+  ...Object.values(getTableColumns(backtestRunsTable)).map(
+    (column) => ["backtest_runs", column.name] as const,
+  ),
+  ...Object.values(getTableColumns(backtestRunExecutionsTable)).map(
+    (column) => ["backtest_run_executions", column.name] as const,
+  ),
+  ...Object.values(getTableColumns(backtestRunPointsTable)).map(
+    (column) => ["backtest_run_points", column.name] as const,
+  ),
+];
+
+export async function assertBacktestLedgerMigrationApplied(): Promise<void> {
+  const requiredColumnsSql = sql.join(
+    BACKTEST_LEDGER_REQUIRED_COLUMNS.map(
+      ([tableName, columnName]) => sql`(${tableName}, ${columnName})`,
+    ),
+    sql`, `,
+  );
+  const result = (await db.execute(sql`
+    with required_columns(table_name, column_name) as (
+      values ${requiredColumnsSql}
+    )
+    select (
+      not exists (
+        select 1
+        from required_columns required
+        where not exists (
+          select 1
+          from information_schema.columns available
+          where available.table_schema = current_schema()
+            and available.table_name = required.table_name
+            and available.column_name = required.column_name
+        )
+      )
+      and exists (
+        select 1 from information_schema.columns
+        where table_schema = current_schema()
+          and table_name = 'backtest_runs'
+          and column_name = 'study_id'
+          and is_nullable = 'YES'
+      )
+      and exists (
+        select 1 from pg_constraint
+        where conname = 'backtest_runs_study_requires_study_id_chk'
+          and conrelid = to_regclass('backtest_runs')
+      )
+    ) as ready
+  `)) as unknown as { rows: Array<{ ready: boolean }> };
+  if (result.rows[0]?.ready === true) {
+    return;
+  }
+  throw new HttpError(503, "backtest ledger migration not applied", {
+    code: "backtest_ledger_migration_not_applied",
+    expose: true,
+  });
+}
 
 const shadowAccountDbBackoff = createTransientPostgresBackoff({
   warningCooldownMs: 60_000,
@@ -3989,8 +4065,14 @@ async function resolveShadowCashActivityTotals(input: {
   return computeShadowTotalsForSource(input.source);
 }
 
-async function computeWatchlistBacktestStartingBook(): Promise<WatchlistBacktestStartingBook> {
-  const account = (await readShadowAccount()) ?? (await ensureShadowAccount());
+async function computeWatchlistBacktestStartingBook(
+  options: { createShadowAccount?: boolean } = {},
+): Promise<WatchlistBacktestStartingBook> {
+  const account =
+    (await readShadowAccount()) ??
+    (options.createShadowAccount === false
+      ? buildSyntheticShadowAccountRow(currentShadowAccountId())
+      : await ensureShadowAccount());
   const startingBalance = toNumber(account.startingBalance) ?? SHADOW_STARTING_BALANCE;
   const { fills, ordersById } = await readShadowFillsWithOrders();
   const baselineFills = fills.filter((fill) => isLiveShadowOrder(ordersById.get(fill.orderId)));
@@ -6879,7 +6961,7 @@ function shadowOptionQuoteValuationBlockReason(
 // off exactly such quotes; underlyings recovered by close on most (whipsaw, ~$2.7K).
 // Marking the quote ineligible here is the single choke point: the degenerate mark is
 // never persisted (last good mark is kept), the live stop gate skips evaluation
-// (mark_not_actionable), and the maintenance sweep cannot read a degenerate mark.
+// (mark_not_actionable), and the maintenance sweep can't read a degenerate mark.
 // Trade-off accepted (shadow): a genuinely collapsing option whose bid craters may
 // exit later than ideal — the floor-at-stop fill rule bounds that damage.
 const SHADOW_OPTION_MARK_DEGENERATE_GAP_FRACTION = 0.4;
@@ -15068,6 +15150,51 @@ export async function recomputeShadowAccountFromLedger(
     .where(eq(shadowAccountsTable.id, currentShadowAccountId()));
 }
 
+export async function fingerprintShadowAccountFoldInputsForTests(): Promise<string> {
+  const fills = await db
+    .select()
+    .from(shadowFillsTable)
+    .where(eq(shadowFillsTable.accountId, currentShadowAccountId()));
+  const referencedOrderIds = Array.from(
+    new Set(fills.map((fill) => fill.orderId)),
+  );
+  const orders = referencedOrderIds.length
+    ? await db
+        .select()
+        .from(shadowOrdersTable)
+        .where(inArray(shadowOrdersTable.id, referencedOrderIds))
+    : [];
+  const qualifyingOrderIds = new Set(
+    orders
+      .filter(isDefaultShadowLedgerAnalyticsOrder)
+      .map((order) => order.id),
+  );
+  const qualifyingFills = fills
+    .filter((fill) => qualifyingOrderIds.has(fill.orderId))
+    .sort((left, right) => left.id.localeCompare(right.id));
+  const totals = qualifyingFills.reduce(
+    (sum, fill) => ({
+      cashDelta: sum.cashDelta + (toNumber(fill.cashDelta) ?? 0),
+      realizedPnl: sum.realizedPnl + (toNumber(fill.realizedPnl) ?? 0),
+      fees: sum.fees + (toNumber(fill.fees) ?? 0),
+    }),
+    { cashDelta: 0, realizedPnl: 0, fees: 0 },
+  );
+  return createHash("sha256")
+    .update(
+      JSON.stringify({
+        orderIds: Array.from(qualifyingOrderIds).sort(),
+        fillIds: qualifyingFills.map((fill) => fill.id),
+        totals: {
+          cashDelta: money(totals.cashDelta),
+          realizedPnl: money(totals.realizedPnl),
+          fees: money(totals.fees),
+        },
+      }),
+    )
+    .digest("hex");
+}
+
 function compactMarketDateForSource(value: string) {
   return value.replaceAll("-", "");
 }
@@ -15132,6 +15259,9 @@ async function deleteWatchlistBacktestRowsForRange(
     replaceAll?: boolean;
   },
 ) {
+  if (useOwnBacktestLedger()) {
+    return { deletedOrders: 0, deletedPositionKeys: 0 };
+  }
   const orders = await tx
     .select()
     .from(shadowOrdersTable)
@@ -15264,6 +15394,9 @@ async function resetWatchlistBacktestRowsForRange(input: {
   cleanupEnd: Date;
   replaceAll?: boolean;
 }) {
+  if (useOwnBacktestLedger()) {
+    return;
+  }
   await db.transaction(async (tx) => {
     await deleteWatchlistBacktestRowsForRange(tx, input);
     await recomputeShadowAccountFromLedger(tx, new Date());
@@ -15364,6 +15497,9 @@ export async function resetSignalOptionsReplayRowsForRange(input: {
   windowStart: Date;
   cleanupEnd: Date;
 }) {
+  if (useOwnBacktestLedger()) {
+    return { deletedEvents: 0 };
+  }
   const matchingEvents = (
     await db
       .select()
@@ -15478,6 +15614,674 @@ export async function resetSignalOptionsReplayRowsForRange(input: {
   };
 }
 
+type WatchlistBacktestOwnLedgerInput = {
+  runId: string;
+  marketDate: string | null;
+  marketDateFrom: string;
+  marketDateTo: string;
+  rangeKey: string;
+  windowStart: Date;
+  windowEnd: Date;
+  timeframe: ShadowWatchlistBacktestTimeframe;
+  riskOverlay: WatchlistBacktestRiskOverlay | null;
+  sizingOverlay: WatchlistBacktestSizingOverlay;
+  selectionOverlay: WatchlistBacktestSelectionOverlay;
+  entryGateOverlay: WatchlistBacktestEntryGateOverlay | null;
+  regimeOverlay: WatchlistBacktestRegimeOverlay | null;
+  symbolUniverse: string[];
+  startingNetLiquidation: number;
+  metrics: Record<string, unknown>;
+  fills: WatchlistBacktestFill[];
+  snapshots: ReturnType<typeof buildWatchlistBacktestFills>["snapshots"];
+};
+
+async function writeWatchlistBacktestRunToOwnLedger(
+  input: WatchlistBacktestOwnLedgerInput,
+) {
+  await assertBacktestLedgerMigrationApplied();
+  const now = new Date();
+  const positions = new Map<
+    string,
+    {
+      id: string;
+      quantity: number;
+      averageCost: number;
+      openedAt: Date;
+    }
+  >();
+  const executions: Array<typeof backtestRunExecutionsTable.$inferInsert> = [];
+
+  for (let index = 0; index < input.fills.length; index += 1) {
+    const fill = input.fills[index]!;
+    const current = positions.get(fill.positionKey);
+    const position = current ?? {
+      id: randomUUID(),
+      quantity: 0,
+      averageCost: fill.price,
+      openedAt: fill.placedAt,
+    };
+    if (fill.side === "buy") {
+      if (position.quantity === 0) {
+        position.openedAt = fill.placedAt;
+      }
+      const nextQuantity = position.quantity + fill.quantity;
+      position.averageCost = nextQuantity
+        ? (position.averageCost * position.quantity + fill.price * fill.quantity) /
+          nextQuantity
+        : fill.price;
+      position.quantity = nextQuantity;
+    } else {
+      position.quantity = Math.max(0, position.quantity - fill.quantity);
+    }
+    positions.set(fill.positionKey, position);
+    const positionStatus = position.quantity > 0 ? "open" : "closed";
+    const positionType = classifyAccountPositionType({
+      symbol: fill.symbol,
+      assetClass: "equity",
+    });
+    executions.push({
+      runId: input.runId,
+      accountId: currentShadowAccountId(),
+      source: WATCHLIST_BACKTEST_SOURCE,
+      sourceOrderId: randomUUID(),
+      sourceFillId: randomUUID(),
+      sourcePositionId: position.id,
+      clientOrderId: `shadow-watchlist-backtest-${input.rangeKey}-${input.runId}-${index + 1}`,
+      eventType: "watchlist_backtest_order_fill",
+      summary: `${fill.symbol} ${fill.side} ${fill.quantity} at ${fill.price}`,
+      symbol: fill.symbol,
+      assetClass: "equity",
+      positionType,
+      positionKey: fill.positionKey,
+      side: fill.side,
+      direction: "long",
+      timeframe: input.timeframe,
+      orderType: "market",
+      timeInForce: "day",
+      status: "filled",
+      quantity: money(fill.quantity),
+      filledQuantity: money(fill.quantity),
+      averageFillPrice: money(fill.price),
+      price: money(fill.price),
+      grossAmount: money(fill.grossAmount),
+      fees: money(fill.fees),
+      realizedPnl: money(fill.realizedPnl),
+      cashDelta: money(fill.cashDelta),
+      signalAt: fill.signalAt,
+      signalPrice:
+        fill.signalPrice === null ? null : money(fill.signalPrice),
+      signalClose:
+        fill.signalClose === null ? null : money(fill.signalClose),
+      signalScore:
+        fill.signalScore == null ? null : money(fill.signalScore),
+      signalScoreDetails: fill.signalScoreDetails ?? null,
+      watchlists: fill.watchlists,
+      regime: fill.regime ?? null,
+      fillSource: fill.fillSource,
+      marketDate: marketDateKey(fill.placedAt),
+      positionQuantity: money(position.quantity),
+      averageCost: money(position.averageCost),
+      mark: money(fill.price),
+      marketValue: money(position.quantity * fill.price),
+      unrealizedPnl: money(
+        (fill.price - position.averageCost) * position.quantity,
+      ),
+      positionStatus,
+      positionOpenedAt: position.openedAt,
+      positionClosedAt:
+        positionStatus === "closed" ? fill.placedAt : null,
+      positionAsOf: fill.placedAt,
+      occurredAt: fill.placedAt,
+      placedAt: fill.placedAt,
+      filledAt: fill.placedAt,
+    });
+  }
+
+  const snapshotsByTime = new Map(
+    input.snapshots.map((snapshot) => [snapshot.asOf.getTime(), snapshot]),
+  );
+  let highWaterMark = Math.max(0, input.startingNetLiquidation);
+  const points = Array.from(snapshotsByTime.values())
+    .sort((left, right) => left.asOf.getTime() - right.asOf.getTime())
+    .map((snapshot): typeof backtestRunPointsTable.$inferInsert => {
+      highWaterMark = Math.max(highWaterMark, snapshot.netLiquidation);
+      const drawdownPercent = highWaterMark
+        ? ((snapshot.netLiquidation - highWaterMark) / highWaterMark) * 100
+        : 0;
+      return {
+        runId: input.runId,
+        source: WATCHLIST_BACKTEST_SOURCE,
+        currency: SHADOW_CURRENCY,
+        occurredAt: snapshot.asOf,
+        equity: money(snapshot.netLiquidation),
+        cash: money(snapshot.cash),
+        buyingPower: money(Math.max(0, snapshot.cash)),
+        grossExposure: money(
+          Math.max(0, snapshot.netLiquidation - snapshot.cash),
+        ),
+        realizedPnl: money(snapshot.realizedPnl),
+        unrealizedPnl: money(snapshot.unrealizedPnl),
+        fees: money(snapshot.fees),
+        drawdownPercent: money(drawdownPercent),
+      };
+    });
+
+  await db.transaction(async (tx) => {
+    await tx.insert(backtestRunsTable).values({
+      id: input.runId,
+      kind: "watchlist_backtest",
+      studyId: null,
+      name: `Watchlist backtest ${input.rangeKey}`,
+      strategyId: "watchlist_backtest",
+      strategyVersion: "1",
+      status: "completed",
+      symbolUniverse: Array.from(new Set(input.symbolUniverse)).sort(),
+      parameters: {
+        timeframe: input.timeframe,
+        riskOverlay: input.riskOverlay,
+        sizingOverlay: input.sizingOverlay,
+        selectionOverlay: input.selectionOverlay,
+        entryGateOverlay: input.entryGateOverlay,
+        regimeOverlay: input.regimeOverlay,
+      },
+      portfolioRules: {
+        riskOverlay: input.riskOverlay,
+        sizingOverlay: input.sizingOverlay,
+        selectionOverlay: input.selectionOverlay,
+        entryGateOverlay: input.entryGateOverlay,
+        regimeOverlay: input.regimeOverlay,
+      },
+      executionProfile: {
+        fillModel: "next_bar_open_or_signal_close",
+        commissionModel: "shadow",
+      },
+      metrics: input.metrics,
+      sourceRunKey: input.runId,
+      sourceAccountId: currentShadowAccountId(),
+      marketDate: input.marketDate,
+      marketDateFrom: input.marketDateFrom,
+      marketDateTo: input.marketDateTo,
+      rangeKey: input.rangeKey,
+      windowStartsAt: input.windowStart,
+      windowEndsAt: input.windowEnd,
+      configUsedRef: `watchlist_backtest:${input.rangeKey}`,
+      fidelity: "full",
+      startedAt: now,
+      finishedAt: now,
+    });
+    if (executions.length) {
+      await tx.insert(backtestRunExecutionsTable).values(executions);
+    }
+    if (points.length) {
+      await tx.insert(backtestRunPointsTable).values(points);
+    }
+  });
+}
+
+type SignalOptionsReplayLedgerPosition = {
+  id: string;
+  quantity: number;
+  averageCost: number;
+  mark: number;
+  openedAt: Date;
+  multiplier: number;
+};
+
+type SignalOptionsReplayLedgerState = {
+  cash: number;
+  realizedPnl: number;
+  fees: number;
+  highWaterMark: number;
+  positions: Map<string, SignalOptionsReplayLedgerPosition>;
+};
+
+const signalOptionsReplayLedgerStates = new Map<
+  string,
+  SignalOptionsReplayLedgerState
+>();
+
+export async function startSignalOptionsReplayBacktestRun(input: {
+  sourceRunKey: string;
+  marketDate: string;
+  marketDateFrom: string;
+  marketDateTo: string;
+  rangeKey: string;
+  windowStart: Date;
+  windowEnd: Date;
+  deploymentId: string;
+  deploymentName: string;
+  providerAccountId: string;
+  timeframe: string;
+  symbolUniverse: string[];
+  parameters: Record<string, unknown>;
+  portfolioRules: Record<string, unknown>;
+  executionProfile: Record<string, unknown>;
+}): Promise<string> {
+  await assertBacktestLedgerMigrationApplied();
+  const account = await readShadowAccount();
+  const startingBalance =
+    toNumber(account?.startingBalance) ?? SHADOW_STARTING_BALANCE;
+  const [run] = await db
+    .insert(backtestRunsTable)
+    .values({
+      kind: "signal_options_replay",
+      studyId: null,
+      name: `Signal options replay ${input.deploymentName} ${input.rangeKey}`,
+      strategyId: "signal_options",
+      strategyVersion: "1",
+      directionMode: "long_short",
+      status: "running",
+      symbolUniverse: Array.from(new Set(input.symbolUniverse)).sort(),
+      parameters: {
+        ...input.parameters,
+        timeframe: input.timeframe,
+        deploymentId: input.deploymentId,
+        providerAccountId: input.providerAccountId,
+      },
+      portfolioRules: input.portfolioRules,
+      executionProfile: input.executionProfile,
+      sourceRunKey: input.sourceRunKey,
+      sourceAccountId: currentShadowAccountId(),
+      marketDate: input.marketDate,
+      marketDateFrom: input.marketDateFrom,
+      marketDateTo: input.marketDateTo,
+      rangeKey: input.rangeKey,
+      windowStartsAt: input.windowStart,
+      windowEndsAt: input.windowEnd,
+      configUsedRef: `deployment:${input.deploymentId}`,
+      fidelity: "full",
+      startedAt: new Date(),
+    })
+    .returning({ id: backtestRunsTable.id });
+  if (!run) {
+    throw new Error("Signal-options replay backtest run could not be created.");
+  }
+  signalOptionsReplayLedgerStates.set(run.id, {
+    cash: startingBalance,
+    realizedPnl: 0,
+    fees: 0,
+    highWaterMark: startingBalance,
+    positions: new Map(),
+  });
+  return run.id;
+}
+
+export async function completeSignalOptionsReplayBacktestRun(
+  runId: string,
+  metrics: Record<string, unknown>,
+): Promise<void> {
+  try {
+    await db
+      .update(backtestRunsTable)
+      .set({
+        status: "completed",
+        metrics,
+        finishedAt: new Date(),
+        updatedAt: new Date(),
+      })
+      .where(eq(backtestRunsTable.id, runId));
+  } finally {
+    signalOptionsReplayLedgerStates.delete(runId);
+  }
+}
+
+export async function failSignalOptionsReplayBacktestRun(
+  runId: string,
+  error: unknown,
+): Promise<void> {
+  try {
+    await db
+      .update(backtestRunsTable)
+      .set({
+        status: "failed",
+        errorMessage:
+          error instanceof Error && error.message
+            ? error.message
+            : "Signal-options replay failed.",
+        finishedAt: new Date(),
+        updatedAt: new Date(),
+      })
+      .where(eq(backtestRunsTable.id, runId));
+  } finally {
+    signalOptionsReplayLedgerStates.delete(runId);
+  }
+}
+
+function signalOptionsReplayEventContract(payload: Record<string, unknown>) {
+  const candidate = readRecord(payload.candidate) ?? {};
+  const position = readRecord(payload.position) ?? {};
+  return (
+    readRecord(payload.selectedContract) ??
+    readRecord(position.selectedContract) ??
+    readRecord(candidate.selectedContract) ??
+    {}
+  );
+}
+
+export async function recordSignalOptionsReplayBacktestEvent(
+  event: ExecutionEvent,
+  runId: string,
+): Promise<void> {
+  const currentState = signalOptionsReplayLedgerStates.get(runId);
+  if (!currentState) {
+    throw new Error("Signal-options replay backtest run context is missing.");
+  }
+  const state: SignalOptionsReplayLedgerState = {
+    ...currentState,
+    positions: new Map(
+      Array.from(currentState.positions, ([key, position]) => [
+        key,
+        { ...position },
+      ]),
+    ),
+  };
+  const payload = readRecord(event.payload) ?? {};
+  const metadata = readRecord(payload.metadata) ?? {};
+  const candidate = readRecord(payload.candidate) ?? {};
+  const positionPayload = readRecord(payload.position) ?? {};
+  const orderPlan = readRecord(payload.orderPlan) ?? {};
+  const quote = readRecord(payload.quote) ?? {};
+  const contract = signalOptionsReplayEventContract(payload);
+  const positionKey =
+    readString(metadata.positionKey) ??
+    readString(positionPayload.id) ??
+    readString(candidate.id) ??
+    `${runId}:${event.symbol ?? event.id}`;
+  const quantity = Math.abs(
+    toNumber(orderPlan.quantity) ?? toNumber(positionPayload.quantity) ?? 0,
+  );
+  const multiplier = Math.max(
+    1,
+    Math.floor(
+      toNumber(contract.multiplier) ??
+        toNumber(contract.sharesPerContract) ??
+        100,
+    ),
+  );
+  const entryEvent = event.eventType === SIGNAL_OPTIONS_SHADOW_ENTRY_EVENT;
+  const exitEvent = event.eventType === SIGNAL_OPTIONS_SHADOW_EXIT_EVENT;
+  const markEvent = event.eventType === SIGNAL_OPTIONS_SHADOW_MARK_EVENT;
+  const positionEvent = entryEvent || exitEvent || markEvent;
+  const hasOptionContract = Object.keys(contract).length > 0;
+  const exitMarkPrice = exitEvent
+    ? toNumber(
+        payload.exitMarkPrice ??
+          positionPayload.lastMarkPrice ??
+          payload.exitPrice,
+      )
+    : null;
+  const price =
+    toNumber(
+      entryEvent
+        ? payload.fillPrice ??
+            orderPlan.simulatedFillPrice ??
+            positionPayload.entryPrice
+        : exitEvent
+          ? payload.exitPrice ??
+            payload.exitMarkPrice ??
+            positionPayload.lastMarkPrice
+          : payload.markPrice ?? quote.mark ?? positionPayload.lastMarkPrice,
+    ) ?? 0;
+  const existing = state.positions.get(positionKey);
+  const fillQuantity =
+    exitEvent && existing
+      ? Math.min(existing.quantity, quantity || existing.quantity)
+      : quantity;
+  const fees =
+    (entryEvent || exitEvent) && fillQuantity > 0 && price > 0
+      ? computeShadowOrderFees({
+          assetClass: "option",
+          quantity: fillQuantity,
+          price,
+          multiplier,
+        })
+      : 0;
+  let position = existing ?? {
+    id: randomUUID(),
+    quantity: fillQuantity,
+    averageCost:
+      toNumber(positionPayload.entryPrice) ?? (entryEvent ? price : 0),
+    mark: price,
+    openedAt:
+      dateOrNull(positionPayload.openedAt) ?? event.occurredAt,
+    multiplier,
+  };
+  let cashDelta = 0;
+  let grossRealizedPnl = 0;
+  let fillRealizedPnl = 0;
+  if (entryEvent) {
+    position = {
+      ...position,
+      quantity,
+      averageCost: price,
+      mark: price,
+      multiplier,
+    };
+    cashDelta = -(quantity * price * multiplier + fees);
+    state.cash += cashDelta;
+    state.fees += fees;
+    state.positions.set(positionKey, position);
+  } else if (exitEvent) {
+    const exitQuantity = fillQuantity;
+    grossRealizedPnl =
+      toNumber(payload.pnl) ??
+      (price - position.averageCost) * exitQuantity * multiplier;
+    fillRealizedPnl = grossRealizedPnl - fees;
+    cashDelta = exitQuantity * price * multiplier - fees;
+    state.cash += cashDelta;
+    state.realizedPnl += fillRealizedPnl;
+    state.fees += fees;
+    position.quantity = Math.max(0, position.quantity - exitQuantity);
+    position.mark = price;
+    if (position.quantity > 0) {
+      state.positions.set(positionKey, position);
+    } else {
+      state.positions.delete(positionKey);
+    }
+  } else if (markEvent) {
+    position.mark = price || position.mark;
+    state.positions.set(positionKey, position);
+  }
+
+  const marketValue = position.quantity * position.mark * position.multiplier;
+  const positionUnrealizedPnl =
+    (position.mark - position.averageCost) *
+    position.quantity *
+    position.multiplier;
+  const grossExposure = Array.from(state.positions.values()).reduce(
+    (sum, openPosition) =>
+      sum +
+      Math.abs(
+        openPosition.quantity * openPosition.mark * openPosition.multiplier,
+      ),
+    0,
+  );
+  const unrealizedPnl = Array.from(state.positions.values()).reduce(
+    (sum, openPosition) =>
+      sum +
+      (openPosition.mark - openPosition.averageCost) *
+        openPosition.quantity *
+        openPosition.multiplier,
+    0,
+  );
+  const equity =
+    state.cash +
+    Array.from(state.positions.values()).reduce(
+      (sum, openPosition) =>
+        sum +
+        openPosition.quantity * openPosition.mark * openPosition.multiplier,
+      0,
+    );
+  state.highWaterMark = Math.max(state.highWaterMark, equity);
+  const drawdownPercent = state.highWaterMark
+    ? ((equity - state.highWaterMark) / state.highWaterMark) * 100
+    : 0;
+  const optionExpirationDate = readString(contract.expirationDate);
+  const sourceOrderId = entryEvent || exitEvent ? randomUUID() : null;
+  const sourceFillId = entryEvent || exitEvent ? randomUUID() : null;
+  const sourcePositionMarkId = markEvent ? randomUUID() : null;
+  const positionStatus = !positionEvent
+    ? null
+    : exitEvent && position.quantity === 0
+      ? "closed"
+      : "open";
+  const eventExecution: typeof backtestRunExecutionsTable.$inferInsert = {
+    runId,
+    accountId: currentShadowAccountId(),
+    source: SIGNAL_OPTIONS_REPLAY_SOURCE,
+    sourceEventId: event.id,
+    deploymentId: event.deploymentId,
+    providerAccountId: event.providerAccountId,
+    eventType: event.eventType,
+    summary: event.summary,
+    symbol: event.symbol ?? readString(positionPayload.symbol),
+    assetClass: hasOptionContract ? "option" : null,
+    positionType: positionEvent ? "option" : null,
+    positionKey,
+    side: entryEvent ? "buy" : exitEvent ? "sell" : null,
+    direction:
+      readString(positionPayload.direction) ?? readString(candidate.direction),
+    timeframe:
+      readString(positionPayload.timeframe) ?? readString(candidate.timeframe),
+    orderType: null,
+    timeInForce: null,
+    status: null,
+    quantity: quantity ? money(quantity) : null,
+    filledQuantity: null,
+    averageFillPrice: entryEvent || exitEvent ? money(price) : null,
+    price: price ? money(price) : null,
+    grossAmount: null,
+    fees: null,
+    realizedPnl: exitEvent ? money(grossRealizedPnl) : null,
+    cashDelta: null,
+    optionTicker: readString(contract.ticker),
+    optionUnderlying:
+      readString(contract.underlying) ?? readString(contract.symbol),
+    optionExpirationDate,
+    optionStrike:
+      toNumber(contract.strike) == null
+        ? null
+        : money(toNumber(contract.strike)!),
+    optionRight: readString(contract.right),
+    optionMultiplier: hasOptionContract ? multiplier : null,
+    optionProviderContractId: readString(contract.providerContractId),
+    signalAt:
+      dateOrNull(candidate.signalAt) ?? dateOrNull(positionPayload.signalAt),
+    signalPrice:
+      toNumber(candidate.signalPrice) == null
+        ? null
+        : money(toNumber(candidate.signalPrice)!),
+    candidateId:
+      readString(positionPayload.candidateId) ?? readString(candidate.id),
+    signalKey:
+      readString(payload.signalKey) ?? readString(payload.backfillEventKey),
+    reason: readString(payload.reason) ?? readString(payload.skipReason),
+    marketDate: readString(metadata.marketDate),
+    positionMarketDate: readString(metadata.positionMarketDate),
+    positionQuantity: positionEvent ? money(position.quantity) : null,
+    averageCost: positionEvent ? money(position.averageCost) : null,
+    mark: positionEvent
+      ? money(exitEvent ? (exitMarkPrice ?? position.mark) : position.mark)
+      : null,
+    marketValue: positionEvent ? money(marketValue) : null,
+    unrealizedPnl: positionEvent ? money(positionUnrealizedPnl) : null,
+    positionStatus,
+    positionOpenedAt: positionEvent ? position.openedAt : null,
+    positionClosedAt: positionStatus === "closed" ? event.occurredAt : null,
+    positionAsOf: positionEvent ? event.occurredAt : null,
+    occurredAt: event.occurredAt,
+    placedAt: null,
+    filledAt: null,
+  };
+  const mirrorExecution: typeof backtestRunExecutionsTable.$inferInsert | null =
+    positionEvent
+      ? {
+          ...eventExecution,
+          source: markEvent
+            ? SIGNAL_OPTIONS_REPLAY_MARK_SOURCE
+            : SIGNAL_OPTIONS_REPLAY_SOURCE,
+          sourceOrderId,
+          sourceFillId,
+          sourcePositionId: position.id,
+          sourcePositionMarkId,
+          clientOrderId: entryEvent
+            ? `shadow-auto-entry-${event.id}`
+            : exitEvent
+              ? `shadow-auto-exit-${event.id}`
+              : null,
+          eventType: markEvent
+            ? "signal_options_replay_position_mark"
+            : "signal_options_replay_order_fill",
+          orderType: sourceOrderId ? "limit" : null,
+          timeInForce: sourceOrderId ? "day" : null,
+          status: sourceOrderId ? "filled" : null,
+          quantity: sourceOrderId ? money(fillQuantity) : null,
+          filledQuantity: sourceFillId ? money(fillQuantity) : null,
+          limitPrice: sourceOrderId ? money(price) : null,
+          averageFillPrice: sourceFillId ? money(price) : null,
+          grossAmount: sourceFillId
+            ? money(fillQuantity * price * multiplier)
+            : null,
+          fees: sourceFillId ? money(fees) : null,
+          realizedPnl: exitEvent ? money(fillRealizedPnl) : null,
+          cashDelta: sourceFillId ? money(cashDelta) : null,
+          mark: money(position.mark),
+          placedAt: sourceOrderId ? event.occurredAt : null,
+          filledAt: sourceFillId ? event.occurredAt : null,
+        }
+      : null;
+  const point =
+    entryEvent || exitEvent || markEvent
+      ? {
+          runId,
+          source: markEvent
+            ? SIGNAL_OPTIONS_REPLAY_MARK_SOURCE
+            : SIGNAL_OPTIONS_REPLAY_SOURCE,
+          currency: SHADOW_CURRENCY,
+          occurredAt: event.occurredAt,
+          equity: money(equity),
+          cash: money(state.cash),
+          buyingPower: money(Math.max(0, state.cash)),
+          grossExposure: money(grossExposure),
+          realizedPnl: money(state.realizedPnl),
+          unrealizedPnl: money(unrealizedPnl),
+          fees: money(state.fees),
+          drawdownPercent: money(drawdownPercent),
+        }
+      : null;
+
+  await db.transaction(async (tx) => {
+    await tx
+      .insert(backtestRunExecutionsTable)
+      .values(mirrorExecution ? [eventExecution, mirrorExecution] : [eventExecution]);
+    if (point) {
+      await tx
+        .insert(backtestRunPointsTable)
+        .values(point)
+        .onConflictDoUpdate({
+          target: [
+            backtestRunPointsTable.runId,
+            backtestRunPointsTable.occurredAt,
+          ],
+          set: {
+            source: point.source,
+            currency: point.currency,
+            equity: point.equity,
+            cash: point.cash,
+            buyingPower: point.buyingPower,
+            grossExposure: point.grossExposure,
+            realizedPnl: point.realizedPnl,
+            unrealizedPnl: point.unrealizedPnl,
+            fees: point.fees,
+            drawdownPercent: point.drawdownPercent,
+            updatedAt: new Date(),
+          },
+        });
+    }
+  });
+  signalOptionsReplayLedgerStates.set(runId, state);
+}
+
 async function insertWatchlistBacktestFills(input: {
   runId: string;
   marketDateFrom: string;
@@ -15588,6 +16392,8 @@ async function insertWatchlistBacktestFills(input: {
 }
 
 export const __shadowWatchlistBacktestInternalsForTests = {
+  writeWatchlistBacktestRunToOwnLedgerForTests:
+    writeWatchlistBacktestRunToOwnLedger,
   invalidateShadowFreshStateCache,
   invalidateShadowReadCachesAfterBackgroundMarkRefresh,
   setShadowReadCacheWindowsForTests(input: {
@@ -16389,7 +17195,14 @@ export async function runShadowWatchlistBacktest(input: {
   maxDrawdownLimitPercent?: unknown;
   targetOutperformanceMultiple?: unknown;
 } = {}) {
-  await ensureShadowAccount();
+  const ownBacktestLedger = useOwnBacktestLedger();
+  const persist = input.persist !== false;
+  if (ownBacktestLedger && persist) {
+    await assertBacktestLedgerMigrationApplied();
+  }
+  if (!ownBacktestLedger) {
+    await ensureShadowAccount();
+  }
   const runId = randomUUID();
   const timeframe = normalizeWatchlistBacktestTimeframe(input.timeframe);
   const riskOverlay = normalizeWatchlistBacktestRiskOverlay(input.riskOverlay);
@@ -16405,7 +17218,6 @@ export async function runShadowWatchlistBacktest(input: {
   const excludedSymbols = normalizeWatchlistBacktestExcludedSymbols(
     input.excludedSymbols,
   );
-  const persist = input.persist !== false;
   const sweep = input.sweep === true;
   const exploratorySweep = input.exploratorySweep === true;
   const maxDrawdownLimitPercent = normalizeWatchlistBacktestDrawdownLimitPercent(
@@ -16421,9 +17233,14 @@ export async function runShadowWatchlistBacktest(input: {
     range: input.range,
   });
 
-  await refreshShadowPositionMarks().catch((error) => {
-    logger.debug?.({ err: error }, "Shadow mark refresh before watchlist backtest failed");
-  });
+  if (!ownBacktestLedger) {
+    await refreshShadowPositionMarks().catch((error) => {
+      logger.debug?.(
+        { err: error },
+        "Shadow mark refresh before watchlist backtest failed",
+      );
+    });
+  }
   const { watchlists } = await listWatchlists();
   const universe = withWatchlistBacktestProxyUniverse(
     collectWatchlistBacktestUniverse(watchlists, { excludedSymbols }),
@@ -16473,7 +17290,7 @@ export async function runShadowWatchlistBacktest(input: {
       },
       "Shadow watchlist backtest regime hydration completed",
     );
-    if (persist) {
+    if (persist && !ownBacktestLedger) {
       await resetWatchlistBacktestRowsForRange({
         marketDateFrom: window.marketDateFrom,
         marketDateTo: window.marketDateTo,
@@ -16483,10 +17300,15 @@ export async function runShadowWatchlistBacktest(input: {
         replaceAll: true,
       });
       await refreshShadowPositionMarks().catch((error) => {
-        logger.debug?.({ err: error }, "Shadow mark refresh before watchlist sweep failed");
+        logger.debug?.(
+          { err: error },
+          "Shadow mark refresh before watchlist sweep failed",
+        );
       });
     }
-    const startingBook = await computeWatchlistBacktestStartingBook();
+    const startingBook = await computeWatchlistBacktestStartingBook({
+      createShadowAccount: !ownBacktestLedger,
+    });
     const startingTotals = startingBook.totals;
     const baseMarketValue = startingBook.baseMarketValue;
     const simulationStartedAt = Date.now();
@@ -16562,22 +17384,45 @@ export async function runShadowWatchlistBacktest(input: {
 
     let finalTotals: ShadowTotals | null = null;
     if (persist) {
-      await insertWatchlistBacktestFills({
-        runId: winner.runId,
-        marketDateFrom: window.marketDateFrom,
-        marketDateTo: window.marketDateTo,
-        rangeKey: window.rangeKey,
-        windowStart: window.start,
-        cleanupEnd: window.cleanupEnd,
-        replaceAll: true,
-        riskOverlay: winner.riskOverlay,
-        sizingOverlay: winner.sizingOverlay,
-        selectionOverlay: winner.selectionOverlay,
-        entryGateOverlay,
-        fills: winner.simulation.fills,
-        snapshots: winner.simulation.snapshots,
-      });
-      finalTotals = await ensureFreshShadowState(true);
+      if (ownBacktestLedger) {
+        await writeWatchlistBacktestRunToOwnLedger({
+          runId: winner.runId,
+          marketDate: window.marketDate,
+          marketDateFrom: window.marketDateFrom,
+          marketDateTo: window.marketDateTo,
+          rangeKey: window.rangeKey,
+          windowStart: window.start,
+          windowEnd: window.end,
+          timeframe,
+          riskOverlay: winner.riskOverlay,
+          sizingOverlay: winner.sizingOverlay,
+          selectionOverlay: winner.selectionOverlay,
+          entryGateOverlay,
+          regimeOverlay: winner.regimeOverlay,
+          symbolUniverse: universe.map((item) => item.symbol),
+          startingNetLiquidation: startingTotals.netLiquidation,
+          metrics: winner.summary,
+          fills: winner.simulation.fills,
+          snapshots: winner.simulation.snapshots,
+        });
+      } else {
+        await insertWatchlistBacktestFills({
+          runId: winner.runId,
+          marketDateFrom: window.marketDateFrom,
+          marketDateTo: window.marketDateTo,
+          rangeKey: window.rangeKey,
+          windowStart: window.start,
+          cleanupEnd: window.cleanupEnd,
+          replaceAll: true,
+          riskOverlay: winner.riskOverlay,
+          sizingOverlay: winner.sizingOverlay,
+          selectionOverlay: winner.selectionOverlay,
+          entryGateOverlay,
+          fills: winner.simulation.fills,
+          snapshots: winner.simulation.snapshots,
+        });
+        finalTotals = await ensureFreshShadowState(true);
+      }
     }
     return buildWatchlistBacktestRunResponse({
       runId: winner.runId,
@@ -16635,7 +17480,7 @@ export async function runShadowWatchlistBacktest(input: {
         })
       ).candidates
     : [];
-  if (persist) {
+  if (persist && !ownBacktestLedger) {
     await resetWatchlistBacktestRowsForRange({
       marketDateFrom: window.marketDateFrom,
       marketDateTo: window.marketDateTo,
@@ -16645,10 +17490,15 @@ export async function runShadowWatchlistBacktest(input: {
       replaceAll: true,
     });
     await refreshShadowPositionMarks().catch((error) => {
-      logger.debug?.({ err: error }, "Shadow mark refresh before watchlist backtest persist failed");
+      logger.debug?.(
+        { err: error },
+        "Shadow mark refresh before watchlist backtest persist failed",
+      );
     });
   }
-  const startingBook = await computeWatchlistBacktestStartingBook();
+  const startingBook = await computeWatchlistBacktestStartingBook({
+    createShadowAccount: !ownBacktestLedger,
+  });
   const startingTotals = startingBook.totals;
   const baseMarketValue = startingBook.baseMarketValue;
   const simulation = buildWatchlistBacktestFills({
@@ -16670,22 +17520,53 @@ export async function runShadowWatchlistBacktest(input: {
 
   let finalTotals: ShadowTotals | null = null;
   if (persist) {
-    await insertWatchlistBacktestFills({
-      runId,
-      marketDateFrom: window.marketDateFrom,
-      marketDateTo: window.marketDateTo,
-      rangeKey: window.rangeKey,
-      windowStart: window.start,
-      cleanupEnd: window.cleanupEnd,
-      replaceAll: true,
-      riskOverlay,
-      sizingOverlay,
-      selectionOverlay,
-      entryGateOverlay,
-      fills: simulation.fills,
-      snapshots: simulation.snapshots,
-    });
-    finalTotals = await ensureFreshShadowState(true);
+    if (ownBacktestLedger) {
+      await writeWatchlistBacktestRunToOwnLedger({
+        runId,
+        marketDate: window.marketDate,
+        marketDateFrom: window.marketDateFrom,
+        marketDateTo: window.marketDateTo,
+        rangeKey: window.rangeKey,
+        windowStart: window.start,
+        windowEnd: window.end,
+        timeframe,
+        riskOverlay,
+        sizingOverlay,
+        selectionOverlay,
+        entryGateOverlay,
+        regimeOverlay,
+        symbolUniverse: universe.map((item) => item.symbol),
+        startingNetLiquidation: startingTotals.netLiquidation,
+        metrics: summarizeWatchlistBacktestSimulation({
+          simulation,
+          startingTotals,
+          commonSkippedCount: effectiveSignalScan.skipped.length,
+          barsBySymbol: effectiveSignalScan.barsBySymbol,
+          windowStart: window.start,
+          windowEnd: window.end,
+          targetOutperformanceMultiple,
+        }),
+        fills: simulation.fills,
+        snapshots: simulation.snapshots,
+      });
+    } else {
+      await insertWatchlistBacktestFills({
+        runId,
+        marketDateFrom: window.marketDateFrom,
+        marketDateTo: window.marketDateTo,
+        rangeKey: window.rangeKey,
+        windowStart: window.start,
+        cleanupEnd: window.cleanupEnd,
+        replaceAll: true,
+        riskOverlay,
+        sizingOverlay,
+        selectionOverlay,
+        entryGateOverlay,
+        fills: simulation.fills,
+        snapshots: simulation.snapshots,
+      });
+      finalTotals = await ensureFreshShadowState(true);
+    }
   }
 
   return buildWatchlistBacktestRunResponse({

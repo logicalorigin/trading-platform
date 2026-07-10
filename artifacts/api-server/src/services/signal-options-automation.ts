@@ -135,10 +135,16 @@ import { getApiResourcePressureSnapshot } from "./resource-pressure";
 import {
   SIGNAL_OPTIONS_REPLAY_MARK_SOURCE,
   SIGNAL_OPTIONS_REPLAY_SOURCE,
+  assertBacktestLedgerMigrationApplied,
+  completeSignalOptionsReplayBacktestRun,
   computeShadowTradeDiagnostics,
   computeSignalOptionsLedgerRealizedForDeployment,
+  failSignalOptionsReplayBacktestRun,
+  recordSignalOptionsReplayBacktestEvent,
   recordShadowAutomationEvent,
   resetSignalOptionsReplayRowsForRange,
+  startSignalOptionsReplayBacktestRun,
+  useOwnBacktestLedger,
 } from "./shadow-account";
 import {
   buildInitialStopPrice,
@@ -2568,6 +2574,7 @@ async function insertSignalOptionsEvent(input: {
   occurredAt?: Date;
   ledgerSource?: "automation" | "signal_options_replay";
   ledgerMarkSource?: string;
+  backtestRunId?: string | null;
 }) {
   const occurredAt = input.occurredAt ?? new Date();
   const payload = signalOptionsPayloadWithRunMetadata({
@@ -2589,36 +2596,52 @@ async function insertSignalOptionsEvent(input: {
       event: bufferedEvent,
       occurredAt,
     });
-  const event = persistToLedger
-    ? await db
-        .insert(executionEventsTable)
-        .values({
-          deploymentId: input.deployment.id,
-          providerAccountId: input.deployment.providerAccountId,
-          symbol: bufferedEvent.symbol,
-          eventType: input.eventType,
-          summary: input.summary,
-          payload,
-          occurredAt,
-        })
-        .returning()
-        .then((rows) => rows[0] ?? bufferedEvent)
-    : bufferedEvent;
-
-  if (
-    event.eventType === SIGNAL_OPTIONS_ENTRY_EVENT ||
-    event.eventType === SIGNAL_OPTIONS_EXIT_EVENT ||
-    event.eventType === SIGNAL_OPTIONS_MARK_EVENT
-  ) {
-    await recordShadowAutomationEvent(event, {
-      source: input.ledgerSource,
-      markSource: input.ledgerMarkSource,
-    }).catch((error) => {
-      logger.warn?.(
-        { err: error, eventId: event.id, eventType: event.eventType },
-        "Failed to mirror signal-options event into Shadow account ledger",
+  const ownReplayLedger =
+    input.ledgerSource === SIGNAL_OPTIONS_REPLAY_SOURCE &&
+    Boolean(input.backtestRunId);
+  let event = bufferedEvent;
+  if (ownReplayLedger) {
+    if (!input.backtestRunId) {
+      throw new Error("Signal-options replay backtest run context is missing.");
+    }
+    if (persistToLedger) {
+      await recordSignalOptionsReplayBacktestEvent(
+        bufferedEvent,
+        input.backtestRunId,
       );
-    });
+    }
+  } else {
+    event = persistToLedger
+      ? await db
+          .insert(executionEventsTable)
+          .values({
+            deploymentId: input.deployment.id,
+            providerAccountId: input.deployment.providerAccountId,
+            symbol: bufferedEvent.symbol,
+            eventType: input.eventType,
+            summary: input.summary,
+            payload,
+            occurredAt,
+          })
+          .returning()
+          .then((rows) => rows[0] ?? bufferedEvent)
+      : bufferedEvent;
+
+    if (
+      event.eventType === SIGNAL_OPTIONS_ENTRY_EVENT ||
+      event.eventType === SIGNAL_OPTIONS_EXIT_EVENT ||
+      event.eventType === SIGNAL_OPTIONS_MARK_EVENT
+    ) {
+      await recordShadowAutomationEvent(event, {
+        source: input.ledgerSource,
+        markSource: input.ledgerMarkSource,
+      }).catch((error) => {
+        logger.warn?.(
+          { err: error, eventId: event.id, eventType: event.eventType },
+          "Failed to mirror signal-options event into Shadow account ledger",
+        );
+      });
+    }
   }
 
   invalidateSignalOptionsDashboardCaches(input.deployment.id);
@@ -17086,6 +17109,7 @@ type SignalOptionsReplayMetadata = {
   marketDate: string;
   deploymentId: string;
   deploymentName: string;
+  backtestRunId?: string;
 };
 
 type SignalOptionsBackfillSummary = {
@@ -18037,6 +18061,7 @@ async function insertSignalOptionsBackfillEvent(input: {
     input.summaryCounters.existingEvents += 1;
     if (
       input.commit &&
+      !input.replay?.backtestRunId &&
       (existing.eventType === SIGNAL_OPTIONS_ENTRY_EVENT ||
         existing.eventType === SIGNAL_OPTIONS_EXIT_EVENT)
     ) {
@@ -18078,6 +18103,7 @@ async function insertSignalOptionsBackfillEvent(input: {
       input.replay || source === SIGNAL_OPTIONS_REPLAY_SOURCE
         ? SIGNAL_OPTIONS_REPLAY_MARK_SOURCE
         : undefined,
+    backtestRunId: input.replay?.backtestRunId,
     payload: historicalEventPayload({
       source,
       deployment: input.deployment,
@@ -20305,6 +20331,11 @@ export async function runSignalOptionsShadowBackfill(input: {
   // (processEntryCandidate) never sets this and is unaffected.
   useBarDerivedMtf?: boolean;
 }) {
+  const ownReplayRequested =
+    useOwnBacktestLedger() && Boolean(input.replay) && input.commit !== false;
+  if (ownReplayRequested) {
+    await assertBacktestLedgerMigrationApplied();
+  }
   if (!isSignalMonitorBarEvaluationEnabled()) {
     throw new HttpError(
       503,
@@ -20325,12 +20356,12 @@ export async function runSignalOptionsShadowBackfill(input: {
       expose: true,
     });
   }
-
+  let replayBacktestRunId: string | null = null;
   markSignalOptionsScanActive(input.deploymentId);
   try {
     const deployment = await getDeploymentOrThrow(input.deploymentId);
     const window = resolveSignalOptionsBackfillWindow(input);
-    const replay =
+    const replay: SignalOptionsReplayMetadata | null =
       input.replay && typeof input.replay === "object"
         ? {
             ...input.replay,
@@ -20339,6 +20370,7 @@ export async function runSignalOptionsShadowBackfill(input: {
             deploymentName: normalizeLegacyAlgoBrandText(
               input.replay.deploymentName || deployment.name,
             ),
+            backtestRunId: undefined,
           }
         : input.replay
           ? {
@@ -20363,7 +20395,12 @@ export async function runSignalOptionsShadowBackfill(input: {
         marketDate: replay?.marketDate,
       }),
     );
-    if (replay && input.replaceReplayRows !== false && commit) {
+    if (
+      replay &&
+      input.replaceReplayRows !== false &&
+      commit &&
+      !ownReplayRequested
+    ) {
       await resetSignalOptionsReplayRowsForRange({
         deploymentId: deployment.id,
         marketDateFrom: window.startDate,
@@ -20437,6 +20474,40 @@ export async function runSignalOptionsShadowBackfill(input: {
       closedTrades: [],
       errors: [],
     };
+    if (replay && commit && ownReplayRequested) {
+      replayBacktestRunId = await startSignalOptionsReplayBacktestRun({
+        sourceRunKey: replay.runId,
+        marketDate: replay.marketDate,
+        marketDateFrom: window.startDate,
+        marketDateTo: window.endDate,
+        rangeKey: `${window.startDate}:${window.endDate}`,
+        windowStart: window.from,
+        windowEnd: window.to,
+        deploymentId: deployment.id,
+        deploymentName: replay.deploymentName,
+        providerAccountId: deployment.providerAccountId,
+        timeframe,
+        symbolUniverse: backfillUniverse.symbols,
+        parameters: {
+          replay: {
+            runId: replay.runId,
+            marketDate: replay.marketDate,
+          },
+          profilePatch,
+          pyrusSignalsSettingsPatch: asRecord(
+            input.pyrusSignalsSettingsPatch,
+          ),
+          pyrusSignalsSettings: resolvedPyrusSignalsSettings,
+        },
+        portfolioRules: {
+          riskCaps: profile.riskCaps,
+          riskHaltControls: profile.riskHaltControls,
+          positionHaltControls: profile.positionHaltControls,
+        },
+        executionProfile: profile as unknown as Record<string, unknown>,
+      });
+      replay.backtestRunId = replayBacktestRunId;
+    }
     const initialEvents =
       replay || !commit
         ? []
@@ -20864,9 +20935,16 @@ export async function runSignalOptionsShadowBackfill(input: {
         .where(eq(algoDeploymentsTable.id, deployment.id));
     }
 
-    const finalState = commit
+    const finalState = commit && !replayBacktestRunId
       ? await listSignalOptionsAutomationState({ deploymentId: deployment.id })
       : null;
+    if (replayBacktestRunId) {
+      await completeSignalOptionsReplayBacktestRun(
+        replayBacktestRunId,
+        summary as unknown as Record<string, unknown>,
+      );
+      replayBacktestRunId = null;
+    }
 
     return {
       deployment: deploymentToResponse(deployment),
@@ -20899,6 +20977,19 @@ export async function runSignalOptionsShadowBackfill(input: {
         })),
       state: finalState,
     };
+  } catch (error) {
+    if (replayBacktestRunId) {
+      await failSignalOptionsReplayBacktestRun(
+        replayBacktestRunId,
+        error,
+      ).catch((failureError) => {
+        logger.warn?.(
+          { err: failureError, runId: replayBacktestRunId },
+          "Failed to mark signal-options replay backtest run as failed",
+        );
+      });
+    }
+    throw error;
   } finally {
     clearSignalOptionsScanActive(input.deploymentId);
     activeSignalOptionsRunMetadata.delete(input.deploymentId);
@@ -21975,6 +22066,7 @@ export async function promoteMtfPatternToDeployment(input: {
 }
 
 export const __signalOptionsAutomationInternalsForTests = {
+  insertSignalOptionsEventForTests: insertSignalOptionsEvent,
   resolveSameScanEntryAction,
   signalOptionsContractMultiplier,
   signalOptionsRealizedPnl,

@@ -106,3 +106,20 @@ CREATE INDEX IF NOT EXISTS backtest_run_executions_run_idx
 -- Existing table listing path: apply outside an explicit transaction.
 CREATE INDEX CONCURRENTLY IF NOT EXISTS backtest_runs_kind_created_at_idx
   ON backtest_runs (kind, created_at DESC);
+
+ALTER TABLE backtest_runs
+  ALTER COLUMN study_id DROP NOT NULL;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_constraint
+    WHERE conname = 'backtest_runs_study_requires_study_id_chk'
+      AND conrelid = 'backtest_runs'::regclass
+  ) THEN
+    ALTER TABLE backtest_runs
+      ADD CONSTRAINT backtest_runs_study_requires_study_id_chk
+      CHECK (kind <> 'study' OR study_id IS NOT NULL);
+  END IF;
+END $$;

@@ -1,7 +1,9 @@
 import { createInsertSchema } from "drizzle-zod";
+import { sql } from "drizzle-orm";
 import {
   bigint,
   boolean,
+  check,
   date,
   index,
   integer,
@@ -93,7 +95,6 @@ export const backtestRunsTable = pgTable(
       .notNull()
       .default("study"),
     studyId: uuid("study_id")
-      .notNull()
       .references(() => backtestStudiesTable.id),
     sweepId: uuid("sweep_id").references(() => backtestSweepsTable.id),
     name: text("name").notNull(),
@@ -140,6 +141,10 @@ export const backtestRunsTable = pgTable(
     index("backtest_runs_kind_created_at_idx").on(
       table.kind,
       table.createdAt.desc(),
+    ),
+    check(
+      "backtest_runs_study_requires_study_id_chk",
+      sql`${table.kind} <> 'study' OR ${table.studyId} IS NOT NULL`,
     ),
   ],
 );
