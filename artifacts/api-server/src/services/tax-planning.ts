@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { and, asc, eq, gte, inArray, isNull, lt } from "drizzle-orm";
+import { and, eq, inArray, isNull } from "drizzle-orm";
 import { db } from "@workspace/db";
 import {
   brokerAccountsTable,
@@ -7,8 +7,6 @@ import {
   instrumentsTable,
   orderRequestsTable,
   shadowAccountsTable,
-  shadowFillsTable,
-  shadowOrdersTable,
   taxAuditEventsTable,
   taxPreflightChecksTable,
   taxProfileAccountsTable,
@@ -42,24 +40,7 @@ const PROVIDER_ACCOUNT_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/u;
 
 type TaxProfileRow = typeof taxProfilesTable.$inferSelect;
 type TaxProfileAccountRow = typeof taxProfileAccountsTable.$inferSelect;
-type ShadowFillSelectRow = typeof shadowFillsTable.$inferSelect;
-type ShadowOrderSelectRow = typeof shadowOrdersTable.$inferSelect;
-type ShadowTaxFillRow = {
-  fillId: ShadowFillSelectRow["id"];
-  orderId: ShadowFillSelectRow["orderId"];
-  source: ShadowOrderSelectRow["source"];
-  symbol: ShadowFillSelectRow["symbol"];
-  assetClass: ShadowFillSelectRow["assetClass"];
-  side: ShadowFillSelectRow["side"];
-  quantity: ShadowFillSelectRow["quantity"];
-  price: ShadowFillSelectRow["price"];
-  grossAmount: ShadowFillSelectRow["grossAmount"];
-  fees: ShadowFillSelectRow["fees"];
-  realizedPnl: ShadowFillSelectRow["realizedPnl"];
-  cashDelta: ShadowFillSelectRow["cashDelta"];
-  optionContract: ShadowFillSelectRow["optionContract"];
-  occurredAt: ShadowFillSelectRow["occurredAt"];
-};
+type ShadowTaxFillRow = import("./shadow-account").ShadowTaxFoldFill;
 type TaxAccountScope =
   | { accountId: "all"; accountScope: "connected_accounts" }
   | { accountId: "shadow"; accountScope: "shadow_simulation" }
@@ -275,36 +256,14 @@ async function loadShadowTaxFills(
     return { shadowAccountId: null, fills: [] };
   }
   const { start, end } = taxYearWindow(taxYear);
-  const fills = await db
-    .select({
-      fillId: shadowFillsTable.id,
-      orderId: shadowFillsTable.orderId,
-      source: shadowOrdersTable.source,
-      symbol: shadowFillsTable.symbol,
-      assetClass: shadowFillsTable.assetClass,
-      side: shadowFillsTable.side,
-      quantity: shadowFillsTable.quantity,
-      price: shadowFillsTable.price,
-      grossAmount: shadowFillsTable.grossAmount,
-      fees: shadowFillsTable.fees,
-      realizedPnl: shadowFillsTable.realizedPnl,
-      cashDelta: shadowFillsTable.cashDelta,
-      optionContract: shadowFillsTable.optionContract,
-      occurredAt: shadowFillsTable.occurredAt,
-    })
-    .from(shadowFillsTable)
-    .innerJoin(
-      shadowOrdersTable,
-      eq(shadowOrdersTable.id, shadowFillsTable.orderId),
-    )
-    .where(
-      and(
-        eq(shadowFillsTable.accountId, accountId),
-        gte(shadowFillsTable.occurredAt, start),
-        lt(shadowFillsTable.occurredAt, end),
-      ),
-    )
-    .orderBy(asc(shadowFillsTable.occurredAt));
+  // Function-local import avoids the static cycle
+  // shadow-account -> platform -> tax-planning -> shadow-account.
+  const { readShadowTaxFillsFromSharedFold } = await import("./shadow-account");
+  const fills = await readShadowTaxFillsFromSharedFold({
+    accountId,
+    start,
+    end,
+  });
   return { shadowAccountId: accountId, fills };
 }
 

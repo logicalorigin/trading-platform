@@ -1,6 +1,6 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { setTimeout as sleep } from "node:timers/promises";
-import { and, asc, desc, eq, gte, inArray, isNull, lte, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, isNull, lt, lte, sql } from "drizzle-orm";
 import type { SQL } from "drizzle-orm";
 import {
   DEFAULT_PYRUS_SIGNALS_SIGNAL_SETTINGS,
@@ -10733,9 +10733,8 @@ export async function getShadowAccountPositionsAtDate(input: {
 }
 
 function shadowClosedTradesDateCachePart(value: Date | null | undefined): string {
-  return value instanceof Date && Number.isFinite(value.getTime())
-    ? value.toISOString()
-    : "";
+  if (!(value instanceof Date)) return "";
+  return Number.isFinite(value.getTime()) ? value.toISOString() : "invalid";
 }
 
 function shadowClosedTradesStringCachePart(value: string | null | undefined): string {
@@ -10804,27 +10803,20 @@ export async function getShadowAccountClosedTrades(input: {
       }
       try {
         await ensureShadowAccount();
-        // Closed-trades is the all-time P&L consumer; keep it on the raw ledger
-        // reader instead of the dashboard-capped stream reader.
-        const toBound = input.to;
-        const { fills: allFills, ordersById } =
-          await readShadowFillsWithOrders();
-        const rawFills = (
-          toBound
-            ? allFills.filter((fill) => fill.occurredAt <= toBound)
-            : [...allFills]
-        ).sort((a, b) => a.occurredAt.getTime() - b.occurredAt.getTime());
-        const fills = source
-          ? rawFills.filter((fill) =>
-              shadowOrderMatchesSource(ordersById.get(fill.orderId), source),
-            )
-          : rawFills.filter((fill) =>
-              isDefaultShadowLedgerAnalyticsOrder(ordersById.get(fill.orderId)),
-            );
-        const events = fills.map((fill) =>
-          shadowAnalysisTradeEvent(fill, ordersById.get(fill.orderId)),
-        );
-        const { roundTrips } = buildShadowAnalysisRoundTrips(events);
+        // `from` stays projection-only because older opening lots determine FIFO
+        // basis. The optional `to` bound is safe to push into the shared read.
+        const analysis =
+          input.to instanceof Date && !Number.isFinite(input.to.getTime())
+            ? {
+                events: [] as ShadowAnalysisTradeEvent[],
+                roundTrips: [] as ShadowAnalysisRoundTrip[],
+              }
+            : await readShadowAnalysisLedgerFold({
+                scope: source,
+                end: input.to,
+                endInclusive: true,
+              });
+        const { events, roundTrips } = analysis;
         const closedTrades = roundTrips
           .map(shadowRoundTripToClosedTrade)
           .filter((trade) =>
@@ -11569,6 +11561,161 @@ function buildShadowAnalysisRoundTrips(events: ShadowAnalysisTradeEvent[]) {
   return { roundTrips, openLots, anomalies };
 }
 
+type ShadowAnalysisLedgerFoldScope = ShadowSourceScope | "all" | null;
+type ShadowAnalysisLedgerFoldInput = {
+  scope: ShadowAnalysisLedgerFoldScope;
+  start?: Date | null;
+  end?: Date | null;
+  endInclusive?: boolean;
+};
+type ShadowAnalysisLedgerRowsReader = (
+  input: ShadowAnalysisLedgerFoldInput,
+) => Promise<ShadowFillsWithOrders>;
+
+function shadowAnalysisLedgerFoldCacheKey(input: ShadowAnalysisLedgerFoldInput) {
+  const scope =
+    input.scope === "all" ? "all" : shadowSourceCacheKey(input.scope);
+  return [
+    "analysis-fold:v1",
+    scope,
+    shadowClosedTradesDateCachePart(input.start),
+    shadowClosedTradesDateCachePart(input.end),
+    input.end ? (input.endInclusive === false ? "exclusive" : "inclusive") : "",
+  ].join(":");
+}
+
+async function readShadowAnalysisLedgerRows(
+  input: ShadowAnalysisLedgerFoldInput,
+): Promise<ShadowFillsWithOrders> {
+  const conditions: SQL<unknown>[] = [
+    eq(shadowFillsTable.accountId, currentShadowAccountId()),
+  ];
+  if (input.start) {
+    conditions.push(gte(shadowFillsTable.occurredAt, input.start));
+  }
+  if (input.end) {
+    conditions.push(
+      input.endInclusive === false
+        ? lt(shadowFillsTable.occurredAt, input.end)
+        : lte(shadowFillsTable.occurredAt, input.end),
+    );
+  }
+  if (input.scope === "all") {
+    const rows = await db
+      .select({ fill: shadowFillsTable, order: shadowOrdersTable })
+      .from(shadowFillsTable)
+      .innerJoin(
+        shadowOrdersTable,
+        eq(shadowOrdersTable.id, shadowFillsTable.orderId),
+      )
+      .where(and(...conditions))
+      .orderBy(asc(shadowFillsTable.occurredAt));
+    return {
+      fills: rows.map((row) => row.fill),
+      ordersById: new Map(rows.map((row) => [row.order.id, row.order])),
+    };
+  }
+  const fills = (
+    await db.select().from(shadowFillsTable).where(and(...conditions))
+  ).sort(
+    (left, right) => left.occurredAt.getTime() - right.occurredAt.getTime(),
+  );
+  return {
+    fills,
+    ordersById: await readShadowOrdersByFillOrderId(fills),
+  };
+}
+
+async function readShadowAnalysisLedgerFold(
+  input: ShadowAnalysisLedgerFoldInput,
+  reader: ShadowAnalysisLedgerRowsReader = readShadowAnalysisLedgerRows,
+) {
+  return withShadowReadCache(
+    shadowAnalysisLedgerFoldCacheKey(input),
+    async () => {
+      const { fills: rows, ordersById } = await reader(input);
+      const fills = rows.filter((fill) => {
+        const order = ordersById.get(fill.orderId);
+        if (input.scope === "all") {
+          // Tax previously used an INNER JOIN and therefore omitted orphan fills.
+          return Boolean(order);
+        }
+        return input.scope
+          ? shadowOrderMatchesSource(order, input.scope)
+          : isDefaultShadowLedgerAnalyticsOrder(order);
+      });
+      const events = fills.map((fill) =>
+        shadowAnalysisTradeEvent(fill, ordersById.get(fill.orderId)),
+      );
+      return {
+        fills,
+        ordersById,
+        events,
+        ...buildShadowAnalysisRoundTrips(events),
+      };
+    },
+    {
+      staleStrategy: "never",
+      ttlMs: SHADOW_DERIVED_READ_CACHE_TTL_MS,
+    },
+  );
+}
+
+export type ShadowTaxFoldFill = {
+  fillId: ShadowFillRow["id"];
+  orderId: ShadowFillRow["orderId"];
+  source: ShadowOrderRow["source"];
+  symbol: ShadowFillRow["symbol"];
+  assetClass: ShadowFillRow["assetClass"];
+  side: ShadowFillRow["side"];
+  quantity: ShadowFillRow["quantity"];
+  price: ShadowFillRow["price"];
+  grossAmount: ShadowFillRow["grossAmount"];
+  fees: ShadowFillRow["fees"];
+  realizedPnl: ShadowFillRow["realizedPnl"];
+  cashDelta: ShadowFillRow["cashDelta"];
+  optionContract: ShadowFillRow["optionContract"];
+  occurredAt: ShadowFillRow["occurredAt"];
+};
+
+export async function readShadowTaxFillsFromSharedFold(input: {
+  accountId: string;
+  start: Date;
+  end: Date;
+}): Promise<ShadowTaxFoldFill[]> {
+  return runWithShadowAccountId(input.accountId, async () => {
+    const fold = await readShadowAnalysisLedgerFold({
+      scope: "all",
+      start: input.start,
+      end: input.end,
+      endInclusive: false,
+    });
+    return fold.fills.flatMap((fill) => {
+      const order = fold.ordersById.get(fill.orderId);
+      return order
+        ? [
+            {
+              fillId: fill.id,
+              orderId: fill.orderId,
+              source: order.source,
+              symbol: fill.symbol,
+              assetClass: fill.assetClass,
+              side: fill.side,
+              quantity: fill.quantity,
+              price: fill.price,
+              grossAmount: fill.grossAmount,
+              fees: fill.fees,
+              realizedPnl: fill.realizedPnl,
+              cashDelta: fill.cashDelta,
+              optionContract: fill.optionContract,
+              occurredAt: fill.occurredAt,
+            },
+          ]
+        : [];
+    });
+  });
+}
+
 function weekdayForShadowAnalysis(date: Date) {
   return new Intl.DateTimeFormat("en-US", {
     timeZone: WATCHLIST_BACKTEST_TIME_ZONE,
@@ -11945,6 +12092,32 @@ function shadowResponseReason(value: unknown): string | null {
   return typeof reason === "string" && reason.trim() ? reason : null;
 }
 
+function shadowInjectedFastRiskReadCacheKey(input: {
+  source: ShadowSourceScope | null;
+  positionsResponse: Awaited<ReturnType<typeof getShadowAccountPositions>>;
+  closedTrades?: Awaited<ReturnType<typeof getShadowAccountClosedTrades>>;
+}) {
+  // Account-page primary/live reads share the same position projection but each
+  // creates a fresh deferred closed-trades timestamp. Hash all risk-relevant
+  // content except that unused timestamp; writes/mark refreshes invalidate `risk:`.
+  const fingerprint = createHash("sha256")
+    .update(
+      JSON.stringify({
+        positionsResponse: input.positionsResponse,
+        closedTrades: input.closedTrades
+          ? {
+              degraded: input.closedTrades.degraded,
+              reason: shadowResponseReason(input.closedTrades),
+              trades: input.closedTrades.trades,
+            }
+          : null,
+        dbBackoff: isShadowAccountDbBackoffActive(),
+      }),
+    )
+    .digest("hex");
+  return `risk:${shadowSourceCacheKey(input.source)}:fast:injected:${fingerprint}`;
+}
+
 export async function getShadowAccountRisk(input: {
   source?: string | null;
   totals?: Awaited<ReturnType<typeof ensureFreshShadowState>>;
@@ -11963,6 +12136,28 @@ export async function getShadowAccountRisk(input: {
       cacheKey,
       () => buildShadowAccountRisk({ source, detail }),
     );
+  }
+  if (detail === "fast" && input.positionsResponse && !input.totals) {
+    const cacheKey = shadowInjectedFastRiskReadCacheKey({
+      source,
+      positionsResponse: input.positionsResponse,
+      closedTrades: input.closedTrades,
+    });
+    const response = await withShadowRiskReadCache(
+      cacheKey,
+      () => buildShadowAccountRisk({ ...input, source, detail }),
+    );
+    const partitionedKey = shadowReadCacheAccountKey(cacheKey);
+    const partitionedPrefix = shadowReadCacheAccountKey(
+      `risk:${shadowSourceCacheKey(source)}:fast:injected:`,
+    );
+    // Content hashes must not turn the stale-cache map into an unbounded history.
+    for (const key of shadowReadCache.keys()) {
+      if (key.startsWith(partitionedPrefix) && key !== partitionedKey) {
+        shadowReadCache.delete(key);
+      }
+    }
+    return response;
   }
   return buildShadowAccountRisk({ ...input, source, detail });
 }
@@ -15406,6 +15601,7 @@ export const __shadowWatchlistBacktestInternalsForTests = {
   rememberShadowOptionQuoteForTests: rememberShadowOptionQuote,
   readCachedShadowOptionQuotesForTests: readCachedShadowOptionQuotes,
   readShadowDashboardFillsWithOrdersForTests: readShadowDashboardFillsWithOrders,
+  readShadowAnalysisLedgerFoldForTests: readShadowAnalysisLedgerFold,
   withShadowReadCache,
   withShadowRiskReadCache,
   shadowRiskDegradedErrorReason,

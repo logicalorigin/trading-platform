@@ -1155,6 +1155,147 @@ test("shared dashboard fills+orders read joins one in-flight operation", async (
   }
 });
 
+test("tax overview and events join one shared analysis-fold computation", async () => {
+  internals.invalidateShadowFreshStateCache();
+
+  let reads = 0;
+  let releaseRead: () => void = () => {};
+  const gate = new Promise<void>((resolve) => {
+    releaseRead = resolve;
+  });
+  const input = {
+    scope: "all" as const,
+    start: new Date("2026-01-01T00:00:00.000Z"),
+    end: new Date("2027-01-01T00:00:00.000Z"),
+    endInclusive: false as const,
+  };
+
+  try {
+    const first = internals.readShadowAnalysisLedgerFoldForTests(input, async () => {
+      reads += 1;
+      await gate;
+      return { fills: [], ordersById: new Map() };
+    });
+    const second = internals.readShadowAnalysisLedgerFoldForTests(input, async () => {
+      reads += 1;
+      return { fills: [], ordersById: new Map() };
+    });
+
+    await waitTurn();
+    assert.equal(reads, 1);
+    releaseRead();
+    const [overviewFold, eventsFold] = await Promise.all([first, second]);
+    assert.equal(overviewFold, eventsFold);
+    assert.deepEqual(overviewFold.roundTrips, []);
+    assert.equal(reads, 1);
+  } finally {
+    releaseRead();
+    await waitTurn();
+    internals.invalidateShadowFreshStateCache();
+  }
+});
+
+test("ledger mutation invalidation recomputes the shared analysis fold", async () => {
+  internals.invalidateShadowFreshStateCache();
+  let reads = 0;
+  const reader = async () => {
+    reads += 1;
+    return { fills: [], ordersById: new Map() };
+  };
+
+  try {
+    await internals.readShadowAnalysisLedgerFoldForTests({ scope: "all" }, reader);
+    await internals.readShadowAnalysisLedgerFoldForTests({ scope: "all" }, reader);
+    assert.equal(reads, 1);
+
+    // Fill/order commit paths call this generation bump before broadcasting.
+    internals.invalidateShadowFreshStateCache();
+    await internals.readShadowAnalysisLedgerFoldForTests({ scope: "all" }, reader);
+    assert.equal(reads, 2);
+  } finally {
+    internals.invalidateShadowFreshStateCache();
+  }
+});
+
+test("closed trades and tax use the bounded shared fold without capturing fresh write reads", () => {
+  const sourceBlock = (source: string, startMarker: string, endMarker: string) => {
+    const start = source.indexOf(startMarker);
+    const end = source.indexOf(endMarker, start);
+    assert.notEqual(start, -1);
+    assert.notEqual(end, -1);
+    return source.slice(start, end);
+  };
+  const closed = sourceBlock(
+    shadowAccountSource,
+    "export async function getShadowAccountClosedTrades",
+    "function buildDeferredShadowClosedTradesForFastRisk",
+  );
+  const snapshot = sourceBlock(
+    shadowAccountSource,
+    "async function computeShadowSnapshotTotalsAt",
+    "async function computeShadowTotalsForSource",
+  );
+  const watchlist = sourceBlock(
+    shadowAccountSource,
+    "async function computeWatchlistBacktestStartingBook",
+    "async function writeShadowBalanceSnapshot",
+  );
+  const freshCarveOuts = [
+    snapshot,
+    watchlist,
+    sourceBlock(
+      shadowAccountSource,
+      "async function buildShadowFillPlan",
+      "export async function previewShadowOrder",
+    ),
+    sourceBlock(
+      shadowAccountSource,
+      "export async function computeSignalOptionsLedgerRealizedForDeployment",
+      "function buildShadowCashActivityTotalsFromAccount",
+    ),
+  ];
+  const fold = sourceBlock(
+    shadowAccountSource,
+    "async function readShadowAnalysisLedgerFold",
+    "export type ShadowTaxFoldFill",
+  );
+
+  assert.match(closed, /readShadowAnalysisLedgerFold\(/);
+  assert.match(closed, /!Number\.isFinite\(input\.to\.getTime\(\)\)/);
+  assert.match(fold, /staleStrategy:\s*"never"/);
+  for (const carveOut of freshCarveOuts) {
+    assert.doesNotMatch(carveOut, /readShadowAnalysisLedgerFold\(/);
+  }
+  assert.match(snapshot, /readShadowFillsWithOrders\(\)/);
+  assert.match(watchlist, /readShadowFillsWithOrders\(\)/);
+
+  const taxSource = readFileSync(new URL("./tax-planning.ts", import.meta.url), "utf8");
+  const taxLoader = sourceBlock(
+    taxSource,
+    "async function loadShadowTaxFills",
+    "function summarizeShadowTaxFills",
+  );
+  assert.match(taxLoader, /await import\("\.\/shadow-account"\)/);
+  assert.match(taxLoader, /readShadowTaxFillsFromSharedFold/);
+  assert.doesNotMatch(taxLoader, /\.from\(shadowFillsTable\)/);
+
+  const cacheInput = {
+    source: null,
+    from: null,
+    to: null,
+    symbol: null,
+    assetClassFilter: null,
+    pnlSign: null,
+  };
+  assert.notEqual(
+    internals.shadowClosedTradesReadCacheKey(cacheInput),
+    internals.shadowClosedTradesReadCacheKey({
+      ...cacheInput,
+      to: new Date("invalid"),
+    }),
+  );
+});
+
 test("shadow order tabs share the cached full account order scan", () => {
   const source = readFileSync(new URL("./shadow-account.ts", import.meta.url), "utf8");
   const ordersStart = source.indexOf("export async function getShadowAccountOrders");
