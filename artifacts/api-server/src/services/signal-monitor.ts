@@ -5727,11 +5727,24 @@ function groupSignalMonitorBackfillDueCellsByTimeframe(
     symbols.add(symbol);
     grouped.set(cell.timeframe, symbols);
   }
+  // Coarse-first group order (1d, 1h, 15m, ... 1m), NOT first-encounter order.
+  // The sweep below processes groups sequentially and its progress lives only
+  // in the in-memory backfilled-base LRU, so a process restart re-colds every
+  // cell and restarts the sweep at the first group. Under restart churn a
+  // fine-first order starves the tail groups forever: after the 2026-07-10
+  // bar_cache truncate, 1h/1d never received a single provider fetch for
+  // ~1,900 universe symbols (only the always-fetched benchmark symbols had
+  // rows) because every sweep died in the four fine-grained groups ahead of
+  // them. Coarse frames go first because they are the ONLY frames with no
+  // alternate durable supply (the evaluation worker keeps 5m/15m persisted;
+  // the live ring supplies 1m) and the cheapest to warm (one 240-bar request
+  // per cell). Once persisted, later sweeps serve them from bar_cache without
+  // provider fetches, so the restart ratchet converges instead of starving.
   return new Map(
-    Array.from(grouped.entries()).map(([timeframe, symbols]) => [
-      timeframe,
-      Array.from(symbols),
-    ]),
+    [...SIGNAL_MONITOR_MATRIX_TIMEFRAMES]
+      .reverse()
+      .filter((timeframe) => grouped.has(timeframe))
+      .map((timeframe) => [timeframe, Array.from(grouped.get(timeframe)!)]),
   );
 }
 

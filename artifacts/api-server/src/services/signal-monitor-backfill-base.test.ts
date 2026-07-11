@@ -299,16 +299,75 @@ test("due-cell prefetch grouping keeps symbols scoped to their due timeframe", (
     { symbol: "AAPL", timeframe: "1h" },
   ]);
 
+  // Coarse-first: 1h ahead of 1m regardless of insertion order (see below).
   assert.deepEqual(
     Array.from(grouped.entries()).map(([timeframe, symbols]) => [
       timeframe,
       symbols,
     ]),
     [
-      ["1m", ["AAPL", "MSFT"]],
       ["1h", ["AAPL"]],
+      ["1m", ["AAPL", "MSFT"]],
     ],
   );
+});
+
+test("backfill groups coarse timeframes first", () => {
+  // The sweep's progress is in-memory only, so a restart re-colds every cell
+  // and restarts at the FIRST group. Fine-first ordering starved 1h/1d of any
+  // provider fetch under restart churn (post-truncate 2026-07-10: ~1,900
+  // symbols repopulated 1m/5m/15m, zero repopulated 1h/1d). Coarse frames are
+  // the only ones without an alternate durable supply, so they must go first.
+  const grouped = groupSignalMonitorBackfillDueCellsByTimeframe(
+    (["1m", "2m", "5m", "15m", "1h", "1d"] as const).map((timeframe) => ({
+      symbol: "AAPL",
+      timeframe,
+    })),
+  );
+
+  assert.deepEqual(Array.from(grouped.keys()), [
+    "1d",
+    "1h",
+    "15m",
+    "5m",
+    "2m",
+    "1m",
+  ]);
+});
+
+test("a sweep that dies mid-run still warms 1d and 1h first", async () => {
+  resetSignalMonitorMatrixStreamForTests();
+  resetSignalMonitorBackfillRefreshDiagnosticsForTests();
+
+  const processedGroups: string[] = [];
+  await assert.doesNotReject(
+    refreshSignalMonitorBackfilledBaseBarsForTests(
+      {
+        symbols: ["AAA", "BBB"],
+        timeframes: ["1m", "2m", "5m", "15m", "1h", "1d"],
+        evaluatedAt: new Date("2026-06-25T15:00:00.000Z"),
+        environment: "shadow",
+      },
+      {
+        runWithStoredBarsPrefetch: async (input) => {
+          processedGroups.push(String(input.timeframes[0]));
+          if (processedGroups.length >= 2) {
+            // Simulate the process dying mid-sweep (the restart-churn regime
+            // that starved 1h/1d): only the first groups ever complete.
+            throw new Error("sweep died mid-run for test");
+          }
+          return null as never;
+        },
+      },
+    ),
+  );
+
+  assert.deepEqual(processedGroups, ["1d", "1h"]);
+  const diagnostics = getSignalMonitorBackfillRefreshDiagnosticsForTests();
+  assert.equal(diagnostics.failureCount, 1);
+  assert.equal(diagnostics.lastError, "sweep died mid-run for test");
+
+  resetSignalMonitorMatrixStreamForTests();
 });
 
 test("backfilled base refresh swallows grouped prefetch rejection and records diagnostics", async () => {
