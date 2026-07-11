@@ -28,6 +28,7 @@ import {
   type SignalMonitorProfile as DbSignalMonitorProfile,
   type SignalMonitorSymbolState as DbSignalMonitorSymbolState,
 } from "@workspace/db";
+import * as dbExports from "@workspace/db";
 import {
   aggregatePyrusSignalsBarsForTimeframe,
   createIncrementalPyrusSignalsEvaluator,
@@ -5160,6 +5161,17 @@ function createSignalMonitorBackgroundDbGate(limit: number) {
     }
   };
 }
+
+// Bulk-lane runner for the full-universe symbol-state upserts (chunked ~12k-row
+// writes from the producer flush). On the default interactive lane these were
+// the single worst pool occupier measured on 2026-07-11 (848s execution across
+// 60 slow-query events in ~2h) — queueing tiny interactive route queries behind
+// them. The bulk lane (cap 6, 5s aging promotion) keeps them off the
+// interactive path without starving them.
+type SignalMonitorDbLaneRunner = <T>(lane: "bulk", fn: () => T) => T;
+const runSignalMonitorBulkDbWrite = (
+  dbExports as typeof dbExports & { runInDbLane: SignalMonitorDbLaneRunner }
+).runInDbLane;
 
 // Single shared gate instance: both background fan-outs acquire from it, so their
 // combined DB-connection demand is bounded by one budget rather than summing.
@@ -10559,17 +10571,21 @@ async function persistSignalMonitorMatrixStatesBestEffort(input: {
       offset < rows.length;
       offset += SIGNAL_MONITOR_STATE_UPSERT_MAX_ROWS
     ) {
-      await db
-        .insert(signalMonitorSymbolStatesTable)
-        .values(rows.slice(offset, offset + SIGNAL_MONITOR_STATE_UPSERT_MAX_ROWS))
-        .onConflictDoUpdate({
-          target: [
-            signalMonitorSymbolStatesTable.profileId,
-            signalMonitorSymbolStatesTable.symbol,
-            signalMonitorSymbolStatesTable.timeframe,
-          ],
-          set: signalMonitorSymbolStateUpsertSet,
-        });
+      await runSignalMonitorBulkDbWrite("bulk", async () => {
+        await db
+          .insert(signalMonitorSymbolStatesTable)
+          .values(
+            rows.slice(offset, offset + SIGNAL_MONITOR_STATE_UPSERT_MAX_ROWS),
+          )
+          .onConflictDoUpdate({
+            target: [
+              signalMonitorSymbolStatesTable.profileId,
+              signalMonitorSymbolStatesTable.symbol,
+              signalMonitorSymbolStatesTable.timeframe,
+            ],
+            set: signalMonitorSymbolStateUpsertSet,
+          });
+      });
     }
     invalidateSignalMonitorStateRowsCacheForWrittenCells(rows);
   } catch (error) {
