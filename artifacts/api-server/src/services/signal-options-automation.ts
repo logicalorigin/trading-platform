@@ -13523,6 +13523,40 @@ export type SignalOptionsTodayPnl = {
 // focused cockpit) and reads only the risk P&L numbers — far lighter than the full
 // cockpit payload. One deployment's failure degrades to nulls rather than failing
 // the batch. The caller restricts ids to signal-options deployments.
+// GET /algo/deployments awaits this PnL attach, and the summary snapshot's
+// execution_events reads were observed at 20-22s under pool contention —
+// past the browser's never-retried 20s GET timeout, which is what painted
+// the "deployment list unavailable" banner. The deployment LIST must stay a
+// fast interactive read; PnL is decoration with an already-designed
+// null-degrade path, so bound the await and let a slow snapshot reject into
+// that path instead of holding the whole response. The raced snapshot keeps
+// running in the background and warms the summary cache for the next poll.
+const SIGNAL_OPTIONS_TODAY_PNL_DEADLINE_MS = 4_000;
+
+function withSignalOptionsTodayPnlDeadline<T>(
+  promise: Promise<T>,
+  ms: number,
+): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(
+        new Error(`signal-options today-PnL deadline (${ms}ms) exceeded`),
+      );
+    }, ms);
+    timer.unref?.();
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error) => {
+        clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
+}
+
 export async function getSignalOptionsTodayPnlByDeployment(
   deploymentIds: string[],
 ): Promise<Record<string, SignalOptionsTodayPnl>> {
@@ -13533,10 +13567,13 @@ export async function getSignalOptionsTodayPnlByDeployment(
     uniqueIds.map(
       async (deploymentId): Promise<[string, SignalOptionsTodayPnl]> => {
         try {
-          const snapshot = await getSignalOptionsDashboardSnapshot({
-            deploymentId,
-            view: "summary",
-          });
+          const snapshot = await withSignalOptionsTodayPnlDeadline(
+            getSignalOptionsDashboardSnapshot({
+              deploymentId,
+              view: "summary",
+            }),
+            SIGNAL_OPTIONS_TODAY_PNL_DEADLINE_MS,
+          );
           const risk = snapshot.state.risk;
           return [
             deploymentId,

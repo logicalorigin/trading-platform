@@ -1,5 +1,13 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  lazy,
+  Suspense,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   getGetAlgoDeploymentCockpitQueryKey,
   getGetAccountPositionsQueryKey,
@@ -62,7 +70,6 @@ import {
   signalOptionsActionLabel,
 } from "./algo/algoHelpers";
 import { normalizeAlgoAlignedMtfTimeframes } from "./algo/algoTimeframeControls";
-import { AlgoLivePage, preloadAlgoLivePageModules } from "./algo/AlgoLivePage";
 import { CreateDeploymentModal } from "./algo/CreateDeploymentModal.jsx";
 import {
   planAlgoAdjustmentsSaveReconciliation,
@@ -90,7 +97,10 @@ import {
   clearAlgoDeploymentFocus,
   publishAlgoDeploymentFocus,
 } from "../features/platform/algoDeploymentFocusStore.js";
-import { QUERY_DEFAULTS } from "../features/platform/queryDefaults";
+import {
+  QUERY_DEFAULTS,
+  retryUnlessTimeout,
+} from "../features/platform/queryDefaults";
 import { useToast } from "../features/platform/platformContexts.jsx";
 import {
   beginCriticalApiMutationPause,
@@ -108,12 +118,40 @@ import { CSS_COLOR, MISSING_VALUE, sp } from "../lib/uiTokens.jsx";
 import { responsiveFlags, useElementSize } from "../lib/responsive";
 import { retryDynamicImport } from "../lib/dynamicImport";
 
-// Warm BOTH the live-page chunk and the lazily-imported algo runtime helpers
-// (transitions / activity / KPI). loadAlgoRuntimeHelpers is memoized, so this
-// shares the same promise the screen awaits on first data, eliminating the
-// gate/transitions/KPI pop-in that otherwise lands after first render.
+let algoLivePageImport = null;
+const loadAlgoLivePage = () => {
+  if (!algoLivePageImport) {
+    algoLivePageImport = retryDynamicImport(
+      () => import("./algo/AlgoLivePage"),
+      { label: "AlgoLivePage", reloadOnFailure: false },
+    ).catch((error) => {
+      algoLivePageImport = null;
+      throw error;
+    });
+  }
+  return algoLivePageImport;
+};
+const LazyAlgoLivePage = lazy(() =>
+  loadAlgoLivePage().then((mod) => ({ default: mod.AlgoLivePage })),
+);
+const preloadAlgoLivePage = () =>
+  loadAlgoLivePage().then((mod) => mod.preloadAlgoLivePageModules?.());
+
+const AlgoLivePageLoadingStatus = () => (
+  <div
+    role="status"
+    data-testid="algo-live-page-loading"
+    style={{ padding: sp("18px 0"), color: CSS_COLOR.textMuted }}
+  >
+    Loading algo workspace
+  </div>
+);
+
+// Warm both nested live-page code and the lazily-imported runtime helpers.
+// The route component itself resolves first so navigation can paint its real
+// container while this compact status truthfully reports the remaining work.
 export const preloadScreenModules = () =>
-  Promise.all([preloadAlgoLivePageModules(), loadAlgoRuntimeHelpers()]).then(
+  Promise.all([preloadAlgoLivePage(), loadAlgoRuntimeHelpers()]).then(
     () => undefined,
   );
 
@@ -476,8 +514,19 @@ export const AlgoScreen = ({
     query: {
       ...QUERY_DEFAULTS,
       enabled: algoSetupQueriesEnabled,
-      refetchInterval: algoRoutineRefetchInterval,
-      retry: false,
+      // One transient blip (an API reload gap, a queued-pool 5xx) must not
+      // latch the "deployment list unavailable" banner: when the cockpit
+      // stream is fresh the routine interval is `false`, so an errored query
+      // would otherwise never refetch and the banner persists until a manual
+      // refresh. Keep polling while errored so recovery is guaranteed, and
+      // retry transient failures. Timeouts stay terminal (retryUnlessTimeout)
+      // and the banner still renders on persistent failure — the fail-visible
+      // contract (automation.test.ts: no stale substitution) is unchanged.
+      refetchInterval: (query) =>
+        query.state.status === "error"
+          ? QUERY_DEFAULTS.refetchInterval
+          : algoRoutineRefetchInterval,
+      retry: retryUnlessTimeout(2),
     },
   });
   const deploymentsResponse = deploymentsQuery.isError
@@ -1813,7 +1862,8 @@ export const AlgoScreen = ({
             minWidth: 0,
           }}
         >
-          <AlgoLivePage
+          <Suspense fallback={<AlgoLivePageLoadingStatus />}>
+            <LazyAlgoLivePage
             deployments={deployments}
             pnlByDeploymentId={deploymentPnlById}
             candidateDrafts={candidateDrafts}
@@ -1922,7 +1972,8 @@ export const AlgoScreen = ({
                 algoIsNarrow={algoIsNarrow}
               />
             }
-          />
+            />
+          </Suspense>
           <CreateDeploymentModal
             open={createModalOpen}
             onClose={() => setCreateModalOpen(false)}
