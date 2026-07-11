@@ -9484,6 +9484,36 @@ function getSignalMonitorMatrixHeavyEvaluationCacheStats() {
   };
 }
 
+// Resident bar-count census across the signal-monitor's retained caches — the
+// F2 (retained-set) sizing evidence. Counts only; byte math belongs to the
+// reader. Cheap: two O(cells) sums per diagnostics poll.
+export function getSignalMonitorResidentBarStats() {
+  let backfilledBaseBars = 0;
+  for (const entry of signalMonitorBackfilledBaseByCell.values()) {
+    backfilledBaseBars += entry.bars.length;
+  }
+  let streamCompletedBars = 0;
+  for (const entry of signalMonitorStreamCompletedBarsCache.values()) {
+    streamCompletedBars += entry.bars.length;
+  }
+  return {
+    backfilledBase: {
+      cells: signalMonitorBackfilledBaseByCell.size,
+      bars: backfilledBaseBars,
+    },
+    streamCompletedBars: {
+      entries: signalMonitorStreamCompletedBarsCache.size,
+      bars: streamCompletedBars,
+    },
+    heavyEvaluationCache: {
+      entries: signalMonitorMatrixHeavyEvaluationCache.size,
+    },
+    incrementalEvaluators: {
+      cells: signalMonitorIncrementalEvaluatorCells.size,
+    },
+  };
+}
+
 function getSignalMonitorIndicatorSnapshotBaseCacheStats() {
   return {
     size: signalMonitorIndicatorSnapshotBaseCache.size,

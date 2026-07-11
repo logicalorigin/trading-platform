@@ -1818,6 +1818,10 @@ export function getSignalMonitorLocalBarCacheDiagnostics() {
     storedBarsCache: {
       maxCells: storedBarsCacheMaxCells(),
       cellCount: storedBarsCrossCycleCache.size,
+      barCount: Array.from(storedBarsCrossCycleCache.values()).reduce(
+        (total, cell) => total + cell.bars.length,
+        0,
+      ),
       hitCount: storedBarsCacheHitCount,
       missCount: storedBarsCacheMissCount,
       fullReadCount: storedBarsCacheFullReadCount,
