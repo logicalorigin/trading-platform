@@ -46,10 +46,13 @@ test("signal monitor state route does not serve cached matrix state responses", 
   assert.doesNotMatch(routeSource, /signalMonitorStateReadCache/);
   assert.doesNotMatch(routeSource, /getCachedSerializedSignalMonitorState/);
   assert.doesNotMatch(routeSource, /SIGNAL_MONITOR_STATE_CACHE_TTL_MS/);
-  assert.match(
-    stateRoute,
-    /GetSignalMonitorStateResponse\.parse\(\s*await getSignalMonitorState\(/s,
-  );
+  // Fresh read (not a cached matrix-state response), serialized directly. The
+  // route no longer re-validates the full ~12k-state payload with zod on the hot
+  // event loop — that reflective re-walk was the primary source of the periodic
+  // ~1s /state event-loop stalls. The response-shape contract is enforced off the
+  // hot path by signal-monitor-state-serialize.test.ts (byte-parity vs the schema).
+  assert.match(stateRoute, /JSON\.stringify\(\s*await getSignalMonitorState\(/s);
+  assert.doesNotMatch(stateRoute, /GetSignalMonitorStateResponse\.parse/);
 });
 
 test("signal matrix stream signature includes latest bar close for STA move hydration", () => {

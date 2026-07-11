@@ -5,7 +5,6 @@ import {
   GetSignalMonitorProfileQueryParams,
   GetSignalMonitorProfileResponse,
   GetSignalMonitorStateQueryParams,
-  GetSignalMonitorStateResponse,
   ListSignalMonitorBreadthHistoryQueryParams,
   ListSignalMonitorBreadthHistoryResponse,
   ListSignalMonitorEventsQueryParams,
@@ -329,11 +328,16 @@ router.get("/signal-monitor/state", async (req, res) => {
   let pending = signalMonitorStateInFlight.get(environment);
   if (!pending) {
     const compute = (async () => {
-      const json = JSON.stringify(
-        GetSignalMonitorStateResponse.parse(
-          await getSignalMonitorState({ environment }),
-        ),
-      );
+      // getSignalMonitorState assembles the response from typed rows in the exact
+      // response-schema shape (schema-ordered keys, Date fields, no extra keys).
+      // Re-validating it against the response schema here only re-walked the full
+      // universe (~12k states) synchronously on the event loop (~0.4-1s per miss)
+      // to reproduce bytes the handler already produces — a self-check paid on the
+      // hot loop, the primary source of the periodic ~1s event-loop stalls.
+      // Serialize the handler output directly; the shape contract is now enforced
+      // off the hot path by the byte-parity test in
+      // signal-monitor-state-serialize.test.ts (fails in CI if shaping/schema drift).
+      const json = JSON.stringify(await getSignalMonitorState({ environment }));
       signalMonitorStateCache.set(environment, { json, at: Date.now() });
       return json;
     })();
