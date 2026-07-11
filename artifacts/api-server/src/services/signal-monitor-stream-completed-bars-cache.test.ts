@@ -270,6 +270,37 @@ const evalAt = (iso: string, timeframe = "1m") =>
     evaluatedAt: new Date(iso),
   });
 
+test("stream completed bars use the canonical signal-bar shape", () => {
+  const startMs = Date.parse("2026-07-10T14:00:00.000Z");
+  __stockAggregateStreamTestInternals.ingestAggregateForTests(
+    aggregate(startMs, 100),
+  );
+
+  const bars = loadSignalMonitorStreamCompletedBars({
+    symbol: SYMBOL,
+    timeframe: "1m",
+    evaluatedAt: new Date(startMs + 2 * 60_000),
+    limit: 1,
+  });
+
+  assert.deepEqual(bars, [
+    {
+      timestamp: new Date(startMs),
+      open: 100,
+      high: 100.5,
+      low: 99.5,
+      close: 100,
+      volume: 1_100,
+      source: "massive-websocket",
+      partial: false,
+      delayed: false,
+      freshness: "live",
+      marketDataMode: "live",
+      dataUpdatedAt: new Date(startMs + 60_000),
+    },
+  ]);
+});
+
 // --- Out-of-order revision logic (the dirty-track's correctness backbone) ---
 
 test("revision bumps ONLY on out-of-order minutes, not forward/forming updates", () => {

@@ -104,6 +104,8 @@ import {
   readSignalMonitorLocalMemoryBars,
   runWithSignalMonitorStoredBarsPrefetch,
   storeSourceNames,
+  toSignalMonitorCachedBar,
+  type SignalMonitorCachedBar,
 } from "./signal-monitor-local-bar-cache";
 import {
   loadStoredMarketBars,
@@ -387,9 +389,7 @@ type SignalMonitorUniverseSource =
   | "high_beta_500";
 export type EvaluationMode = "hydrate" | "incremental";
 
-export type SignalMonitorBarSnapshot = Awaited<
-  ReturnType<typeof getBars>
->["bars"][number];
+export type SignalMonitorBarSnapshot = SignalMonitorCachedBar;
 export type SignalMonitorCompletedBarsSnapshot = {
   bars: SignalMonitorBarSnapshot[];
   latestBarAt: Date | null;
@@ -3926,7 +3926,7 @@ export function signalMonitorCompletedBarsQueryTo(input: {
 }
 
 function filterCompletedBars(
-  inputBars: Awaited<ReturnType<typeof getBars>>["bars"],
+  inputBars: SignalMonitorBarSnapshot[],
   timeframe: SignalMonitorMatrixTimeframe,
   evaluatedAt: Date,
 ) {
@@ -4233,7 +4233,6 @@ function traceSignalMonitorLiveEdgeIntegrity(input: {
 
 function stockMinuteAggregateToSignalMonitorBar(
   aggregate: StockMinuteAggregateMessage,
-  evaluatedAt: Date,
 ): SignalMonitorBarSnapshot | null {
   const values = [
     aggregate.open,
@@ -4257,20 +4256,12 @@ function stockMinuteAggregateToSignalMonitorBar(
     low: aggregate.low,
     close: aggregate.close,
     volume: Number.isFinite(volume) ? volume : 0,
-    bid: null,
-    ask: null,
-    mid: null,
-    quoteAsOf: null,
     source: aggregate.source,
-    providerContractId: null,
-    outsideRth: true,
     partial: false,
-    transport: "tws",
     delayed: aggregate.delayed,
     freshness: aggregate.delayed ? "delayed" : "live",
     marketDataMode: aggregate.delayed ? "delayed" : "live",
     dataUpdatedAt,
-    ageMs: Math.max(0, evaluatedAt.getTime() - dataUpdatedAt.getTime()),
   };
 }
 
@@ -4327,7 +4318,6 @@ function aggregateStockMinuteBarsForTimeframe(input: {
               ...bar,
               partial: true,
               dataUpdatedAt: input.evaluatedAt,
-              ageMs: 0,
             };
       })
       .slice(-input.limit);
@@ -4424,9 +4414,6 @@ function aggregateStockMinuteBarsForTimeframe(input: {
         freshness: delayed ? "delayed" : "live",
         marketDataMode: delayed ? "delayed" : "live",
         dataUpdatedAt,
-        ageMs: dataUpdatedAt
-          ? Math.max(0, input.evaluatedAt.getTime() - dataUpdatedAt.getTime())
-          : null,
       };
     },
   )
@@ -4555,9 +4542,7 @@ function loadSignalMonitorStreamSourceMinuteBars(input: {
     input.historyLimit,
   );
   const minuteBars = aggregates
-    .map((aggregate) =>
-      stockMinuteAggregateToSignalMonitorBar(aggregate, input.evaluatedAt),
-    )
+    .map(stockMinuteAggregateToSignalMonitorBar)
     .filter((bar): bar is SignalMonitorBarSnapshot => Boolean(bar));
 
   memo?.set(memoKey, { key: dirtyKey, minuteBars });
@@ -5257,7 +5242,7 @@ async function loadSignalMonitorCompletedBarsGapFetchBars(input: {
         sourceName,
       }),
     );
-    sourceResults.push(bars as SignalMonitorBarSnapshot[]);
+    sourceResults.push(bars.map(toSignalMonitorCachedBar));
   }
   return mergeCompletedBars(sourceResults.flat(), [], request.limit);
 }
@@ -5950,7 +5935,7 @@ function primeSignalMonitorMatrixStockAggregateStream(symbols: string[]): void {
 }
 
 export function aggregateCompletedMinuteBars(
-  inputBars: Awaited<ReturnType<typeof getBars>>["bars"],
+  inputBars: SignalMonitorBarSnapshot[],
   timeframe: SignalMonitorMatrixTimeframe,
   evaluatedAt: Date,
 ) {
@@ -5958,10 +5943,7 @@ export function aggregateCompletedMinuteBars(
     return inputBars;
   }
 
-  const grouped = new Map<
-    number,
-    Awaited<ReturnType<typeof getBars>>["bars"]
-  >();
+  const grouped = new Map<number, SignalMonitorBarSnapshot[]>();
   filterCompletedBars(inputBars, "1m", evaluatedAt).forEach((bar) => {
     const timestamp = dateOrNull(bar.timestamp);
     if (!timestamp) return;
@@ -6039,7 +6021,7 @@ export function aggregateCompletedMinuteBars(
 }
 
 export function aggregateCompletedFiveMinuteBars(
-  inputBars: Awaited<ReturnType<typeof getBars>>["bars"],
+  inputBars: SignalMonitorBarSnapshot[],
   timeframe: SignalMonitorMatrixTimeframe,
   evaluatedAt: Date,
 ) {
@@ -6047,10 +6029,7 @@ export function aggregateCompletedFiveMinuteBars(
     return inputBars;
   }
 
-  const grouped = new Map<
-    number,
-    Awaited<ReturnType<typeof getBars>>["bars"]
-  >();
+  const grouped = new Map<number, SignalMonitorBarSnapshot[]>();
   filterCompletedBars(inputBars, "5m", evaluatedAt).forEach((bar) => {
     const timestamp = dateOrNull(bar.timestamp);
     if (!timestamp) return;
@@ -6156,7 +6135,7 @@ const signalMonitorChartBarsMemo = new WeakMap<
 >();
 
 function barsToPyrusSignalsBarEntries(
-  inputBars: Awaited<ReturnType<typeof getBars>>["bars"],
+  inputBars: SignalMonitorBarSnapshot[],
 ): SignalMonitorPyrusBarEntry[] {
   const memoized = signalMonitorBarEntriesMemo.get(inputBars);
   if (memoized) {
@@ -6685,7 +6664,7 @@ function isSignalMonitorIbkrBar(bar: SignalMonitorBarSnapshot | undefined) {
 }
 
 function filterSignalMonitorBarsForSourcePolicy(
-  bars: Awaited<ReturnType<typeof getBars>>["bars"],
+  bars: SignalMonitorBarSnapshot[],
   policy: SignalMonitorBarSourcePolicy,
 ) {
   return policy === "ibkr-only" ? bars.filter(isSignalMonitorIbkrBar) : bars;
@@ -8050,7 +8029,7 @@ export async function loadSignalMonitorCompletedBars(input: {
     }
   };
   const buildCompletedBars = (
-    bars: Awaited<ReturnType<typeof getBars>>["bars"],
+    bars: SignalMonitorBarSnapshot[],
   ) => {
     const sourceFilteredBars = filterSignalMonitorBarsForSourcePolicy(
       bars,
@@ -8166,7 +8145,9 @@ export async function loadSignalMonitorCompletedBars(input: {
   };
   const fetchCompletedBars = async (mode: "primary" | "full-retry") => {
     throwIfSignalMonitorAborted(input.signal);
-    const result = buildCompletedBars((await fetchBars(mode)).bars);
+    const result = buildCompletedBars((await fetchBars(mode)).bars).map(
+      toSignalMonitorCachedBar,
+    );
     throwIfSignalMonitorAborted(input.signal);
     return result;
   };
