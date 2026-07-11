@@ -128,6 +128,7 @@ test("retention scheduler uses backlog cadence after a capped sweep", async () =
         deleted: 3,
         hitCap: false,
         durationMs: 7,
+        error: null,
       },
     },
     {
@@ -137,6 +138,7 @@ test("retention scheduler uses backlog cadence after a capped sweep", async () =
         deleted: 1_000_000,
         hitCap: true,
         durationMs: 42,
+        error: null,
       },
     },
     {
@@ -146,6 +148,7 @@ test("retention scheduler uses backlog cadence after a capped sweep", async () =
         deleted: 12,
         hitCap: false,
         durationMs: 9,
+        error: null,
       },
     },
   ]);

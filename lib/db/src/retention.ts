@@ -113,9 +113,20 @@ async function sweep(input: {
   const candidates = Number(counted.rows[0]?.n ?? 0);
 
   let deleted = 0;
+  let drainError: string | undefined;
   if (!input.dryRun && candidates > 0) {
     for (;;) {
-      const removed = await db.execute<{ id: string }>(input.deleteBatch);
+      // A mid-drain failure (e.g. statement timeout under load) must not
+      // erase the progress report: batches already deleted are committed, so
+      // return the real count with the error instead of throwing it away.
+      let removed;
+      try {
+        removed = await db.execute<{ id: string }>(input.deleteBatch);
+      } catch (error) {
+        drainError =
+          error instanceof Error ? error.message : String(error);
+        break;
+      }
       if (removed.rows.length === 0) break;
       deleted += removed.rows.length;
     }
@@ -129,6 +140,7 @@ async function sweep(input: {
     hitCap: false,
     durationMs: Math.max(0, Date.now() - startedAt),
     dryRun: input.dryRun,
+    ...(drainError ? { error: drainError } : {}),
   };
 }
 
@@ -251,8 +263,16 @@ export async function pruneSignalMonitorEvents(
   const { dryRun, batchSize, cutoff } = resolve(opts);
   const t = signalMonitorEventsTable;
   const trusted = sql`${inArray(t.direction, ["buy", "sell"])} and ${t.close} is not null`;
-  const latestTrustedPerCell = sql`select distinct on (${t.profileId}, ${t.symbol}, ${t.timeframe}) ${t.id} from ${t} where ${trusted} order by ${t.profileId}, ${t.symbol}, ${t.timeframe}, ${t.signalAt} desc, ${t.createdAt} desc`;
-  const deletable = sql`${t.signalAt} < ${cutoff} and ${t.id} not in (${latestTrustedPerCell})`;
+  // Per-row NOT-EXISTS instead of `id NOT IN (DISTINCT ON ...)`: the anti-join
+  // materialized the whole trusted set per statement regardless of LIMIT (the
+  // 57014 timeouts that killed the chain), while this shape costs one index
+  // probe (profile_id, symbol, timeframe, signal_at) per AGED row. Semantics:
+  // an aged row is deletable unless it IS the latest trusted row of its cell —
+  // i.e. it is trusted and no strictly-newer trusted row exists. On an exact
+  // (signal_at, created_at) tie DISTINCT ON deleted the arbitrary loser; this
+  // keeps both, which is the conservative direction (an extra latch row).
+  const newerTrustedExists = sql`exists (select 1 from ${t} n where n.profile_id = ${t.profileId} and n.symbol = ${t.symbol} and n.timeframe = ${t.timeframe} and n.direction in ('buy','sell') and n.close is not null and (n.signal_at > ${t.signalAt} or (n.signal_at = ${t.signalAt} and n.created_at > ${t.createdAt})))`;
+  const deletable = sql`${t.signalAt} < ${cutoff} and ((${trusted}) is not true or ${newerTrustedExists})`;
   return sweep({
     table: "signal_monitor_events",
     cutoff,
@@ -347,11 +367,21 @@ export async function pruneBarCache(
   const candidates = Number(probed.rows[0]?.n ?? 0);
 
   let deleted = 0;
+  let drainError: string | undefined;
   if (!dryRun && candidates > 0) {
     while (deleted < maxRowsPerRun) {
       const limit = Math.min(batchSize, maxRowsPerRun - deleted);
       const deleteBatch = sql`delete from ${t} where ctid = any(array(select ctid from ${t} where ${deletable} limit ${limit})) returning ${t.id}`;
-      const removed = await db.execute<{ id: string }>(deleteBatch);
+      // A mid-drain failure must not zero the progress report: completed
+      // batches are committed, so keep the real count (and hitCap math) and
+      // surface the error on the result instead of throwing it away.
+      let removed;
+      try {
+        removed = await db.execute<{ id: string }>(deleteBatch);
+      } catch (error) {
+        drainError = error instanceof Error ? error.message : String(error);
+        break;
+      }
       if (removed.rows.length === 0) break;
       deleted += removed.rows.length;
     }
@@ -435,11 +465,21 @@ export async function pruneExecutionEventsDiagnostics(
   const candidates = Number(probed.rows[0]?.n ?? 0);
 
   let deleted = 0;
+  let drainError: string | undefined;
   if (!dryRun && candidates > 0) {
     while (deleted < maxRowsPerRun) {
       const limit = Math.min(batchSize, maxRowsPerRun - deleted);
       const deleteBatch = sql`delete from ${t} where ctid = any(array(select ctid from ${t} where ${deletable} limit ${limit})) returning ${t.id}`;
-      const removed = await db.execute<{ id: string }>(deleteBatch);
+      // A mid-drain failure must not zero the progress report: completed
+      // batches are committed, so keep the real count (and hitCap math) and
+      // surface the error on the result instead of throwing it away.
+      let removed;
+      try {
+        removed = await db.execute<{ id: string }>(deleteBatch);
+      } catch (error) {
+        drainError = error instanceof Error ? error.message : String(error);
+        break;
+      }
       if (removed.rows.length === 0) break;
       deleted += removed.rows.length;
     }
@@ -578,7 +618,10 @@ export async function runAllSnapshotRetention(opts?: {
   const config = opts?.config ?? resolveSnapshotRetentionConfig();
   const now = opts?.now ?? new Date();
   const dryRun = opts?.dryRun ?? true;
-  const common = { now: opts?.now, batchSize: config.batchSize, dryRun: opts?.dryRun };
+  // Chain-start clock for every sweep (success AND error paths) so reported
+  // cutoffs are consistent across the chain rather than drifting by the
+  // duration of preceding sweeps.
+  const common = { now, batchSize: config.batchSize, dryRun: opts?.dryRun };
   const cutoffFor = (days: number) =>
     new Date(now.getTime() - days * 24 * 3_600_000);
   const results: RetentionResult[] = [];
@@ -646,7 +689,7 @@ export async function runAllSnapshotRetention(opts?: {
       cutoff: cutoffFor(config.barCacheIntradayDays),
       run: () =>
         pruneBarCache({
-          now: opts?.now,
+          now,
           batchSize: config.batchSize,
           dryRun: opts?.dryRun,
           intradayRetentionDays: config.barCacheIntradayDays,
@@ -661,7 +704,7 @@ export async function runAllSnapshotRetention(opts?: {
       ),
       run: () =>
         pruneExecutionEventsDiagnostics({
-          now: opts?.now,
+          now,
           batchSize: config.batchSize,
           dryRun: opts?.dryRun,
           retentionHours: config.executionEventsDiagnosticHours,

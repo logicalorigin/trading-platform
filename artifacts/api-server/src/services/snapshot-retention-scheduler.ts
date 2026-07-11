@@ -148,6 +148,22 @@ async function runOnce(
       const results = await runRetention();
       for (const result of results) {
         emitSweepEvent(recordEvent, result);
+        if (result.error) {
+          // Per-table failures are isolated upstream; without this branch a
+          // failed sweep would log a normal-looking info line with zeroed
+          // counts and never surface at warn level anywhere.
+          logger.warn(
+            {
+              table: result.table,
+              cutoff: result.cutoff,
+              deleted: result.deleted,
+              durationMs: result.durationMs,
+              error: result.error,
+            },
+            "Snapshot retention sweep failed",
+          );
+          continue;
+        }
         logger.info(
           {
             table: result.table,

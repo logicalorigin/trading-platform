@@ -141,6 +141,12 @@ type StoredBarsCacheCell = {
   lastDeltaBucketMs: number | null;
   deltaDue: boolean;
   invalidated: boolean;
+  // Bumped by every bar-cache change event that mutates this cell. A delta
+  // read that was in flight when an event landed must NOT apply its (pre-event
+  // snapshot) result: the acceptance path clears deltaDue/pendingMax, which
+  // would permanently drop a correction committed mid-read. Readers capture
+  // the epoch before awaiting and fall back to a full read on mismatch.
+  changeEpoch: number;
   lastAccessMs: number;
 };
 
@@ -623,6 +629,7 @@ function writeStoredBarsCacheCell(input: {
     lastDeltaBucketMs: input.deltaBucketMs,
     deltaDue: false,
     invalidated: false,
+    changeEpoch: 0,
     lastAccessMs: Date.now(),
   };
   removeStoredBarsCacheCell(key);
@@ -659,7 +666,11 @@ function updateStoredBarsCacheCellWithDelta(input: {
     invalidated: false,
     lastAccessMs: Date.now(),
   };
-  storedBarsCrossCycleCache.set(cell.key, cell);
+  // rememberStoredBarsCacheCell (not a bare Map.set): a cell evicted while its
+  // delta read was in flight would otherwise be resurrected WITHOUT its
+  // keys-by-base index entry, making it permanently un-invalidatable while it
+  // keeps serving hits. Idempotent for already-indexed cells.
+  rememberStoredBarsCacheCell(cell);
   return cell;
 }
 
@@ -684,7 +695,15 @@ function ensureStoredBarsCacheSubscription(): void {
         if (!cell) {
           continue;
         }
-        if (change.kind === "historical" && cell.highWaterMs != null) {
+        if (
+          change.kind === "historical" &&
+          cell.highWaterMs != null &&
+          // When the pre-write high-water read failed, change.maxStartsAtMs is
+          // only the changed batch's max, not the key-wide DB max — a delta
+          // refill bounded by it could mark the cell clean while its tail
+          // still lags the DB. Fall through to full invalidation instead.
+          !change.previousMaxUnknown
+        ) {
           const oldestBarTimestamp = dateOrNull(cell.bars[0]?.timestamp);
           if (
             oldestBarTimestamp != null &&
@@ -719,6 +738,7 @@ function ensureStoredBarsCacheSubscription(): void {
               cell.pendingMaxStartsAtMs ?? change.maxStartsAtMs,
               change.maxStartsAtMs,
             );
+            cell.changeEpoch += 1;
             continue;
           }
           // Truncation emptied the cell — fall through to full invalidation.
@@ -729,6 +749,7 @@ function ensureStoredBarsCacheSubscription(): void {
           cell.invalidated = true;
           cell.deltaDue = false;
           cell.pendingMaxStartsAtMs = null;
+          cell.changeEpoch += 1;
         } else if (change.maxStartsAtMs > cell.highWaterMs) {
           storedBarsCacheInvalidationDeltaDueCount += 1;
           cell.deltaDue = true;
@@ -736,6 +757,7 @@ function ensureStoredBarsCacheSubscription(): void {
             cell.pendingMaxStartsAtMs ?? change.maxStartsAtMs,
             change.maxStartsAtMs,
           );
+          cell.changeEpoch += 1;
         }
       }
     }
@@ -1358,6 +1380,15 @@ async function loadStoredBarsForSymbolsForPrefetch(input: {
   }
 
   const gapFallbackSymbols: string[] = [];
+  const epochBeforeBySymbol = new Map<string, number>();
+  for (const symbols of deltaReadSymbolsByAfter.values()) {
+    for (const symbol of symbols) {
+      const cell = reusableCellsBySymbol.get(symbol);
+      if (cell) {
+        epochBeforeBySymbol.set(symbol, cell.changeEpoch);
+      }
+    }
+  }
   for (const [afterMs, symbols] of deltaReadSymbolsByAfter) {
     storedBarsCacheDeltaReadCount += 1;
     storedBarsDeltaReadCount += 1;
@@ -1372,6 +1403,15 @@ async function loadStoredBarsForSymbolsForPrefetch(input: {
     for (const symbol of symbols) {
       const existing = reusableCellsBySymbol.get(symbol);
       if (!existing) {
+        continue;
+      }
+      // A change event that landed while the delta SELECT was in flight means
+      // the loaded rows are a pre-event snapshot: applying them would clear
+      // deltaDue/pendingMax and permanently drop the event's correction. Fall
+      // back to a full read for this symbol instead.
+      if (existing.changeEpoch !== epochBeforeBySymbol.get(symbol)) {
+        storedBarsDeltaGapFallbackCount += 1;
+        gapFallbackSymbols.push(symbol);
         continue;
       }
       const deltaBars = loaded.get(symbol) ?? [];

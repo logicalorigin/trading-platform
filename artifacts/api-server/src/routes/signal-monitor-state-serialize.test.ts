@@ -2,6 +2,31 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import { GetSignalMonitorStateResponse } from "@workspace/api-zod";
+import type { z } from "zod";
+
+import type { getSignalMonitorState } from "../services/signal-monitor";
+
+// Compile-time handler<->schema tie (zero runtime cost; type-only imports).
+// The fixture tests below lock the SCHEMA against reshaping a conformant
+// value, but cannot see HANDLER drift: since the route serializes handler
+// output directly (no .parse() strip), a key added to the handler would leak
+// to clients. These checks fail the typecheck if the handler's output type
+// ever gains a key the schema does not declare.
+type HandlerState = Awaited<ReturnType<typeof getSignalMonitorState>>;
+type SchemaState = z.infer<typeof GetSignalMonitorStateResponse>;
+type AssertNoExtraKeys<A, B> = Exclude<keyof A, keyof B> extends never
+  ? true
+  : ["handler key missing from schema:", Exclude<keyof A, keyof B>];
+true satisfies AssertNoExtraKeys<HandlerState, SchemaState>;
+true satisfies AssertNoExtraKeys<
+  HandlerState["states"][number],
+  SchemaState["states"][number]
+>;
+true satisfies AssertNoExtraKeys<HandlerState["profile"], SchemaState["profile"]>;
+true satisfies AssertNoExtraKeys<
+  HandlerState["universe"],
+  SchemaState["universe"]
+>;
 
 // The /signal-monitor/state route serializes getSignalMonitorState() output
 // directly (JSON.stringify) instead of re-validating it through

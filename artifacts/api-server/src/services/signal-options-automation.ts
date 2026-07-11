@@ -13533,15 +13533,20 @@ export type SignalOptionsTodayPnl = {
 // running in the background and warms the summary cache for the next poll.
 const SIGNAL_OPTIONS_TODAY_PNL_DEADLINE_MS = 4_000;
 
+class SignalOptionsTodayPnlDeadlineError extends Error {
+  constructor(ms: number) {
+    super(`signal-options today-PnL deadline (${ms}ms) exceeded`);
+    this.name = "SignalOptionsTodayPnlDeadlineError";
+  }
+}
+
 function withSignalOptionsTodayPnlDeadline<T>(
   promise: Promise<T>,
   ms: number,
 ): Promise<T> {
   return new Promise<T>((resolve, reject) => {
     const timer = setTimeout(() => {
-      reject(
-        new Error(`signal-options today-PnL deadline (${ms}ms) exceeded`),
-      );
+      reject(new SignalOptionsTodayPnlDeadlineError(ms));
     }, ms);
     timer.unref?.();
     promise.then(
@@ -13584,10 +13589,20 @@ export async function getSignalOptionsTodayPnlByDeployment(
             },
           ];
         } catch (error) {
-          logger.warn(
-            { err: error, deploymentId },
-            "Failed to resolve today's P&L for deployment tab",
-          );
+          // The 4s deadline fires once per deployment per 15s poll for as
+          // long as the DB stays contended — that is expected degradation
+          // (PnL renders null), not a fault worth a warn each time.
+          if (error instanceof SignalOptionsTodayPnlDeadlineError) {
+            logger.debug(
+              { deploymentId },
+              "Today's P&L deadline exceeded; serving null PnL for deployment tab",
+            );
+          } else {
+            logger.warn(
+              { err: error, deploymentId },
+              "Failed to resolve today's P&L for deployment tab",
+            );
+          }
           return [
             deploymentId,
             { todayPnl: null, dailyRealizedPnl: null, openUnrealizedPnl: null },

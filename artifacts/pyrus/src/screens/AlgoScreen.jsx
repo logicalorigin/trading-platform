@@ -535,9 +535,12 @@ export const AlgoScreen = ({
   const deployments =
     deploymentsResponse?.deployments || EMPTY_ALGO_DEPLOYMENTS;
   const deploymentPnlById = deploymentsResponse?.pnlByDeployment || null;
-  const deploymentListUnavailable = Boolean(
-    !deploymentsQuery.isFetching && deploymentsQuery.isError,
-  );
+  // isError alone (no !isFetching guard): with polling-while-errored, the
+  // guard made the banner flicker away during every in-flight recovery
+  // refetch — replaced by the misleading "create a deployment" empty card for
+  // most of a persistent outage. isError stays true across background
+  // refetches and clears exactly when a fetch succeeds.
+  const deploymentListUnavailable = Boolean(deploymentsQuery.isError);
   const draftsResponse = draftsQuery.isError ? null : draftsQuery.data;
   const candidateDrafts = useMemo(() => {
     const drafts = draftsResponse?.drafts || EMPTY_ALGO_DRAFTS;

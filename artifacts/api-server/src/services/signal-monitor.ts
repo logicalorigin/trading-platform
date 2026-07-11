@@ -9175,7 +9175,7 @@ function compareSignalMonitorIncrementalEvaluation(
     timeframe: SignalMonitorMatrixTimeframe;
     barsFingerprint: string;
   },
-): void {
+): boolean {
   const corrupt = signalMonitorIncrementalEvalCorruptForTests;
   const incrementalForCompare = corrupt ? corrupt(incremental) : incremental;
   signalMonitorIncrementalEvalShadowChecks += 1;
@@ -9184,7 +9184,7 @@ function compareSignalMonitorIncrementalEvaluation(
   );
   const legacyJson = canonicalSignalMonitorEvaluationJson(legacy);
   if (incrementalJson === legacyJson) {
-    return;
+    return true;
   }
   signalMonitorIncrementalEvalShadowMismatches += 1;
   let divergeAt = 0;
@@ -9210,6 +9210,7 @@ function compareSignalMonitorIncrementalEvaluation(
     },
     "signal-monitor incremental eval diverged from from-scratch (parity sample)",
   );
+  return false;
 }
 
 function evaluateSignalMonitorMatrixIncrementalEvaluation(input: {
@@ -9396,11 +9397,16 @@ function evaluateSignalMonitorMatrixHeavyEvaluationWithIncremental(input: {
     return evaluateFromScratch();
   }
   if (sampled) {
-    compareSignalMonitorIncrementalEvaluation(
-      incremental,
-      evaluateFromScratch(),
-      input,
-    );
+    const legacy = evaluateFromScratch();
+    if (!compareSignalMonitorIncrementalEvaluation(incremental, legacy, input)) {
+      // A diverged evaluator must not keep serving: drop its cell so the next
+      // evaluation re-seeds from scratch, and serve the already-computed
+      // legacy result (zero extra cost — it was computed for the comparison).
+      signalMonitorIncrementalEvaluatorCells.delete(
+        `${input.key}\u0000${input.lastBarClosed ? "lc1" : "lc0"}`,
+      );
+      return legacy;
+    }
   }
   return incremental;
 }

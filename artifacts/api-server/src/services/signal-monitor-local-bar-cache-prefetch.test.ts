@@ -7,6 +7,7 @@ import { createTestDb, type TestDatabase } from "@workspace/db/testing";
 
 import { isMassiveStocksRealtimeConfigured } from "../lib/runtime";
 import {
+  __dispatchBarCacheChangesForTests,
   __resetMarketDataStoreBackoffForTests,
   __resetStoreInstrumentCacheForTests,
   loadStoredMarketBarsForSymbols,
@@ -578,6 +579,136 @@ test("mid-window corrections truncate the cell suffix and re-fill via delta read
     ),
     "the parity baseline carries the corrected values",
   );
+});
+
+test("historical change with unknown pre-write high-water full-invalidates instead of truncating", async () => {
+  const startsAt = await seed("AAPL", 5);
+  const evaluatedAt = new Date();
+  const limit = 50;
+  await runWithSignalMonitorStoredBarsPrefetch(
+    { symbols: ["AAPL"], timeframes: [TIMEFRAME], evaluatedAt, limit },
+    () =>
+      loadSignalMonitorLocalBarCache({
+        symbol: "AAPL",
+        timeframe: TIMEFRAME,
+        evaluatedAt,
+        limit,
+      }),
+  );
+
+  // When the pre-write high-water read failed, maxStartsAtMs is only the
+  // changed batch's max — trusting it for a truncate + bounded delta refill
+  // could mark the cell clean while its tail lags the DB. The contract is
+  // full invalidation.
+  const before = getSignalMonitorLocalBarCacheDiagnostics().storedBarsCache;
+  __dispatchBarCacheChangesForTests([
+    {
+      symbol: "AAPL",
+      timeframe: TIMEFRAME,
+      sourceName: SOURCES[0]!,
+      startsAtMs: startsAt[3]!.getTime(),
+      maxStartsAtMs: startsAt[3]!.getTime(),
+      kind: "historical",
+      previousMaxUnknown: true,
+    },
+  ]);
+  const after = getSignalMonitorLocalBarCacheDiagnostics().storedBarsCache;
+  assert.equal(
+    after.invalidationFullCount - before.invalidationFullCount,
+    1,
+    "unknown pre-write high-water forces full invalidation",
+  );
+  assert.equal(
+    after.invalidationTruncateCount - before.invalidationTruncateCount,
+    0,
+  );
+});
+
+test("a change event landing during an in-flight delta read forces a full re-read", async () => {
+  const startsAt = await seed("AAPL", 3);
+  let fullReads = 0;
+  internals.__setLoadStoredMarketBarsForSymbolsForTests(async (input) => {
+    fullReads += 1;
+    return loadStoredMarketBarsForSymbols(input);
+  });
+
+  const evaluatedAt = new Date();
+  const limit = 50;
+  const loadAapl = () =>
+    runWithSignalMonitorStoredBarsPrefetch(
+      { symbols: ["AAPL"], timeframes: [TIMEFRAME], evaluatedAt, limit },
+      () =>
+        loadSignalMonitorLocalBarCache({
+          symbol: "AAPL",
+          timeframe: TIMEFRAME,
+          evaluatedAt,
+          limit,
+        }),
+    );
+  await loadAapl();
+
+  // Real append persist makes the cell delta-due.
+  const appendedAt = new Date(startsAt.at(-1)!.getTime() + 60_000);
+  await persistMarketDataBarsForSymbols({
+    timeframe: TIMEFRAME,
+    sourceName: SOURCES[0]!,
+    assetClass: "equity",
+    outsideRth: true,
+    source: "trades",
+    recentWindowMinutes: 0,
+    bySymbol: [
+      {
+        symbol: "AAPL",
+        bars: [
+          {
+            timestamp: appendedAt,
+            open: 150,
+            high: 151,
+            low: 149,
+            close: 150.5,
+            volume: 5_000,
+          },
+        ],
+      },
+    ],
+  });
+
+  // The delta loader dispatches a change for the same cell MID-FLIGHT. The
+  // duplicate-append shape leaves the cell's bars/high-water untouched, so
+  // without the change-epoch guard the delta result would be accepted (and a
+  // real correction in its place would be permanently dropped) — the guard is
+  // the only thing forcing the full re-read here.
+  internals.__setLoadStoredMarketBarsForSymbolsSinceForTests(async (input) => {
+    __dispatchBarCacheChangesForTests([
+      {
+        symbol: "AAPL",
+        timeframe: TIMEFRAME,
+        sourceName: SOURCES[0]!,
+        startsAtMs: appendedAt.getTime(),
+        maxStartsAtMs: appendedAt.getTime(),
+        kind: "append",
+        previousMaxUnknown: false,
+      },
+    ]);
+    return loadStoredMarketBarsForSymbolsSince(input);
+  });
+
+  const before = getSignalMonitorLocalBarCacheDiagnostics().storedBarsDelta;
+  const fullReadsBefore = fullReads;
+  const served = await loadAapl();
+  const after = getSignalMonitorLocalBarCacheDiagnostics().storedBarsDelta;
+  assert.equal(
+    after.gapFallbacks - before.gapFallbacks,
+    1,
+    "mid-flight change event rejects the delta result",
+  );
+  assert.ok(fullReads > fullReadsBefore, "the symbol was re-read in full");
+
+  // Parity: the full re-read serves exactly what an off-mode read serves.
+  process.env[STORED_BARS_DELTA_ENV] = "off";
+  const full = await loadAapl();
+  process.env[STORED_BARS_DELTA_ENV] = "on";
+  assert.deepEqual(served, full);
 });
 
 test("rewrites below a full cell's cached window do not invalidate it", async () => {

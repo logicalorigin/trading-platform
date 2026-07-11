@@ -995,6 +995,15 @@ export type BarCacheChange = {
   startsAtMs: number;
   maxStartsAtMs: number;
   kind: "append" | "historical";
+  /**
+   * True when the pre-write high-water read failed: maxStartsAtMs is then only
+   * the max of THIS batch's changed rows, NOT the key-wide DB max. Consumers
+   * that use maxStartsAtMs as a completeness watermark (the stored-bars cell
+   * truncate/delta-refill path) MUST fall back to full invalidation when set —
+   * trusting a batch-local max lets a bounded delta refill mark a cell clean
+   * while its tail still lags the DB.
+   */
+  previousMaxUnknown: boolean;
 };
 type BarCacheChangeListener = (changes: BarCacheChange[]) => void;
 const barCacheChangeListeners = new Set<BarCacheChangeListener>();
@@ -1094,7 +1103,9 @@ async function loadPreviousBarCacheMaxStartsAt(
     return previousMaxByKey;
   } catch {
     // Persistence remains authoritative. An unavailable pre-write high-water is
-    // classified conservatively as historical below so readers do a full reload.
+    // classified conservatively as historical below AND flagged
+    // previousMaxUnknown so cell consumers full-invalidate instead of
+    // truncate/delta-refilling against a batch-local (non-key-wide) max.
     return null;
   }
 }
@@ -1132,8 +1143,18 @@ function buildBarCacheChanges(
       startsAtMs: startsAtToMs(row.startsAt),
       maxStartsAtMs: summary.maxStartsAtMs,
       kind: summary.historical ? "historical" : "append",
+      previousMaxUnknown: previousMaxByKey === null,
     };
   });
+}
+
+/** Test seam: emit synthetic change events to subscribed caches (e.g. to
+ * exercise the previousMaxUnknown full-invalidation contract, which is only
+ * reachable in production when the pre-write high-water read fails). */
+export function __dispatchBarCacheChangesForTests(
+  changes: BarCacheChange[],
+): void {
+  dispatchBarCacheChanges(changes);
 }
 
 function dispatchBarCacheChanges(changes: BarCacheChange[]): void {
