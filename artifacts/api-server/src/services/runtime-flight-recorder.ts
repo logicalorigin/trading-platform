@@ -610,6 +610,42 @@ export function __recordMemorySampleForTests(heartbeat: JsonRecord): void {
   recordMemorySampleIfDue(heartbeat);
 }
 
+// Event-loop stall detector. A ~54s whole-process stall was observed on
+// 2026-07-11 (memory-sample timer gap carrying byte-identical stale ELU
+// values) and could not be classified: a Node event-loop block and a
+// whole-VM pause look identical in the 5s samples. This 1s ticker records an
+// explicit api-event-loop-stall event with the measured gap whenever a tick
+// arrives late. Classification key: the SUPERVISOR heartbeats (separate
+// process, 5s cadence) gap too on a VM pause but keep beating through a Node
+// block — correlate the two streams at the next occurrence.
+const STALL_TICK_MS = 1_000;
+const STALL_REPORT_THRESHOLD_MS = (() => {
+  const raw = Number.parseInt(
+    process.env["PYRUS_API_FLIGHT_RECORDER_STALL_THRESHOLD_MS"] ?? "5000",
+    10,
+  );
+  return Number.isFinite(raw) && raw > 0 ? raw : 5_000;
+})();
+let stallTimer: NodeJS.Timeout | null = null;
+let lastStallTickAt = 0;
+
+export function startEventLoopStallDetector(): void {
+  if (stallTimer) return;
+  lastStallTickAt = Date.now();
+  stallTimer = setInterval(() => {
+    const now = Date.now();
+    const gapMs = now - lastStallTickAt - STALL_TICK_MS;
+    lastStallTickAt = now;
+    if (gapMs >= STALL_REPORT_THRESHOLD_MS) {
+      appendRuntimeFlightRecorderEvent("api-event-loop-stall", {
+        stallMs: gapMs,
+        thresholdMs: STALL_REPORT_THRESHOLD_MS,
+      });
+    }
+  }, STALL_TICK_MS);
+  stallTimer.unref?.();
+}
+
 const RSS_PRESSURE_REARM_RATIO = 0.9;
 const RSS_PRESSURE_MIN_REWARN_MS = 60_000;
 let memoryPressureActive = false;
@@ -724,6 +760,7 @@ export function startRuntimeFlightRecorder(): void {
     writeRuntimeFlightRecorderHeartbeat();
   }, Number.isFinite(HEARTBEAT_INTERVAL_MS) && HEARTBEAT_INTERVAL_MS > 0 ? HEARTBEAT_INTERVAL_MS : 5000);
   heartbeatTimer.unref?.();
+  startEventLoopStallDetector();
 }
 
 // Slow-query firehose diet (census S3+D5): the recorder wrote full SQL + stack +
