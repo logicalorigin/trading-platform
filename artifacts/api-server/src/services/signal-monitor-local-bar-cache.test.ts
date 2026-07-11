@@ -213,3 +213,50 @@ test("signal monitor local bar cache rolls up sparse completed hourly buckets", 
     internals.reset();
   }
 });
+
+test("merge reuses immutable input bars; clones only to normalize timestamps", () => {
+  const internals = __signalMonitorLocalBarCacheInternalsForTests;
+  const merge = internals.mergeBarsByTimestampForTests;
+  const base = {
+    open: 10,
+    high: 11,
+    low: 9,
+    close: 10.5,
+    volume: 100,
+    source: "massive-history",
+    providerContractId: null,
+    outsideRth: true,
+    partial: false,
+    transport: "massive_rest" as const,
+    delayed: false,
+  };
+  const dateBar = { ...base, timestamp: new Date("2026-07-10T14:00:00.000Z") };
+  const stringBar = {
+    ...base,
+    timestamp: "2026-07-10T14:01:00.000Z" as unknown as Date,
+  };
+
+  const merged = merge([dateBar, stringBar], 10);
+
+  assert.equal(merged.length, 2);
+  // A bar whose timestamp is already a valid Date is passed through BY
+  // REFERENCE: every downstream cache layer then shares one object per bar
+  // instead of retaining its own copy (the F2 retained-set fix). Bars are
+  // immutable by convention, so sharing is safe.
+  assert.equal(merged[0], dateBar);
+  // A non-Date timestamp still gets a normalized copy.
+  assert.notEqual(merged[1], stringBar);
+  assert.ok(merged[1]!.timestamp instanceof Date);
+  assert.equal(
+    merged[1]!.timestamp.toISOString(),
+    "2026-07-10T14:01:00.000Z",
+  );
+
+  // The delayed-replacement rule is preserved: a live bar replaces a delayed
+  // one at the same timestamp, and the replacement is the live INPUT object.
+  const delayedBar = { ...dateBar, delayed: true };
+  const liveBar = { ...dateBar, delayed: false };
+  const replaced = merge([delayedBar, liveBar], 10);
+  assert.equal(replaced.length, 1);
+  assert.equal(replaced[0], liveBar);
+});

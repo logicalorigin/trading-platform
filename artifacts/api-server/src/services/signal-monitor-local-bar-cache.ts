@@ -461,10 +461,19 @@ function mergeBarsByTimestamp(
     }
     const existing = byTimestamp.get(timestamp.getTime());
     if (!existing || (existing.delayed && !bar.delayed)) {
-      byTimestamp.set(timestamp.getTime(), {
-        ...bar,
-        timestamp,
-      });
+      // Bars are immutable by convention (no reader assigns to bar fields),
+      // and dateOrNull returns the bar's own Date instance when the timestamp
+      // is already a valid Date — which it is on every hot path (pg-decoded
+      // loader rows, websocket CachedBars). Cloning here anyway made every
+      // cache layer (stored-bars cells, local-cache returns, completed-bars
+      // cache, backfilled base) retain its OWN copy of the same bar: ~2-3x
+      // the retained set and millions of spread-allocations per cold
+      // full-universe pass. Reuse the object; clone only to normalize a
+      // string/number timestamp.
+      byTimestamp.set(
+        timestamp.getTime(),
+        timestamp === bar.timestamp ? bar : { ...bar, timestamp },
+      );
     }
   });
   return Array.from(byTimestamp.entries())
@@ -1932,6 +1941,7 @@ export const __signalMonitorLocalBarCacheInternalsForTests = {
   ): void {
     loadStoredMarketBarsForSymbolsSinceOverride = fn;
   },
+  mergeBarsByTimestampForTests: mergeBarsByTimestamp,
   async flushNow(): Promise<void> {
     await flushPendingPersistBars();
   },
