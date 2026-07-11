@@ -59,6 +59,13 @@ export type RetentionResult = {
   /** Wall-clock time spent in this table sweep. */
   durationMs: number;
   dryRun: boolean;
+  /**
+   * Set when this table's sweep threw (e.g. a statement timeout under load):
+   * counts are zeroed and the OTHER tables' sweeps still ran. A sweep chain
+   * that aborted on first error once silently disabled every later table's
+   * retention for days — failures must stay isolated and visible.
+   */
+  error?: string;
 };
 
 export type RetentionOptions = {
@@ -232,6 +239,12 @@ export async function pruneShadowBalanceSnapshots(
  * per cell to survive REGARDLESS of age, or a thinly-signaled symbol loses its
  * canonical signal identity. Untrusted rows have no latest-per-cell reader.
  */
+/** Report "at least N" eligible rows via a bounded probe: the anti-join count
+ * over the whole table trips the 15s statement_timeout on a contended host
+ * (observed 2026-07-11: this exact count was the first sweep failure in the
+ * chain, which then aborted every later table's retention). */
+const SIGNAL_MONITOR_EVENTS_PROBE_CAP = 50_000;
+
 export async function pruneSignalMonitorEvents(
   opts: RetentionOptions,
 ): Promise<RetentionResult> {
@@ -244,7 +257,7 @@ export async function pruneSignalMonitorEvents(
     table: "signal_monitor_events",
     cutoff,
     dryRun,
-    count: sql`select count(*)::int as n from ${t} where ${deletable}`,
+    count: sql`select count(*)::int as n from (select 1 from ${t} where ${deletable} limit ${SIGNAL_MONITOR_EVENTS_PROBE_CAP}) s`,
     deleteBatch: sql`delete from ${t} where ctid = any(array(select ctid from ${t} where ${deletable} limit ${batchSize})) returning ${t.id}`,
   });
 }
@@ -528,52 +541,138 @@ export function resolveSnapshotRetentionConfig(
  * Run all Task 7 retention sweeps with one config. Dry-run by default.
  * `diagnostic_snapshots` is owned by the diagnostics collector.
  */
+// One table's failure must never abort the other tables' sweeps: a thrown
+// statement timeout in an early sweep once cancelled the whole chain on every
+// scheduled run, silently disabling bar_cache and execution_events retention
+// for days (observed 2026-07-11: zero snapshot-retention-sweep events since
+// the scheduler landed). Failures land in the result as `error` so the
+// scheduler still emits per-table evidence.
+async function settleRetentionSweep(
+  table: string,
+  cutoff: Date,
+  dryRun: boolean,
+  run: () => Promise<RetentionResult>,
+): Promise<RetentionResult> {
+  const startedAt = Date.now();
+  try {
+    return await run();
+  } catch (error) {
+    return {
+      table,
+      cutoff: cutoff.toISOString(),
+      candidates: 0,
+      deleted: 0,
+      hitCap: false,
+      durationMs: Math.max(0, Date.now() - startedAt),
+      dryRun,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
 export async function runAllSnapshotRetention(opts?: {
   config?: SnapshotRetentionConfig;
   now?: Date;
   dryRun?: boolean;
 }): Promise<RetentionResult[]> {
   const config = opts?.config ?? resolveSnapshotRetentionConfig();
+  const now = opts?.now ?? new Date();
+  const dryRun = opts?.dryRun ?? true;
   const common = { now: opts?.now, batchSize: config.batchSize, dryRun: opts?.dryRun };
-  return [
-    await pruneSignalMonitorBreadthSnapshots({
-      ...common,
-      retentionDays: config.signalBreadthSnapshotDays,
-    }),
-    await pruneBalanceSnapshots({
-      ...common,
-      retentionDays: config.balanceSnapshotDays,
-    }),
-    await pruneShadowBalanceSnapshots({
-      ...common,
-      retentionDays: config.shadowBalanceSnapshotDays,
-    }),
-    await pruneClosedShadowPositionMarks({
-      ...common,
-      retentionDays: config.shadowPositionMarkDays,
-    }),
-    await pruneSignalMonitorEvents({
-      ...common,
-      retentionDays: config.signalMonitorEventDays,
-    }),
-    await pruneInactiveSignalMonitorSymbolStates({
-      ...common,
-      retentionDays: config.signalMonitorInactiveStateDays,
-    }),
-    await pruneBarCache({
-      now: opts?.now,
-      batchSize: config.batchSize,
-      dryRun: opts?.dryRun,
-      intradayRetentionDays: config.barCacheIntradayDays,
-      dailyRetentionDays: config.barCacheDailyDays,
-      maxRowsPerRun: config.barCacheMaxRowsPerRun,
-    }),
-    await pruneExecutionEventsDiagnostics({
-      now: opts?.now,
-      batchSize: config.batchSize,
-      dryRun: opts?.dryRun,
-      retentionHours: config.executionEventsDiagnosticHours,
-      maxRowsPerRun: config.executionEventsDiagnosticMaxRowsPerRun,
-    }),
+  const cutoffFor = (days: number) =>
+    new Date(now.getTime() - days * 24 * 3_600_000);
+  const results: RetentionResult[] = [];
+  const sweeps: Array<{
+    table: string;
+    cutoff: Date;
+    run: () => Promise<RetentionResult>;
+  }> = [
+    {
+      table: "signal_monitor_breadth_snapshots",
+      cutoff: cutoffFor(config.signalBreadthSnapshotDays),
+      run: () =>
+        pruneSignalMonitorBreadthSnapshots({
+          ...common,
+          retentionDays: config.signalBreadthSnapshotDays,
+        }),
+    },
+    {
+      table: "balance_snapshots",
+      cutoff: cutoffFor(config.balanceSnapshotDays),
+      run: () =>
+        pruneBalanceSnapshots({
+          ...common,
+          retentionDays: config.balanceSnapshotDays,
+        }),
+    },
+    {
+      table: "shadow_balance_snapshots",
+      cutoff: cutoffFor(config.shadowBalanceSnapshotDays),
+      run: () =>
+        pruneShadowBalanceSnapshots({
+          ...common,
+          retentionDays: config.shadowBalanceSnapshotDays,
+        }),
+    },
+    {
+      table: "shadow_position_marks",
+      cutoff: cutoffFor(config.shadowPositionMarkDays),
+      run: () =>
+        pruneClosedShadowPositionMarks({
+          ...common,
+          retentionDays: config.shadowPositionMarkDays,
+        }),
+    },
+    {
+      table: "signal_monitor_events",
+      cutoff: cutoffFor(config.signalMonitorEventDays),
+      run: () =>
+        pruneSignalMonitorEvents({
+          ...common,
+          retentionDays: config.signalMonitorEventDays,
+        }),
+    },
+    {
+      table: "signal_monitor_symbol_states",
+      cutoff: cutoffFor(config.signalMonitorInactiveStateDays),
+      run: () =>
+        pruneInactiveSignalMonitorSymbolStates({
+          ...common,
+          retentionDays: config.signalMonitorInactiveStateDays,
+        }),
+    },
+    {
+      table: "bar_cache",
+      cutoff: cutoffFor(config.barCacheIntradayDays),
+      run: () =>
+        pruneBarCache({
+          now: opts?.now,
+          batchSize: config.batchSize,
+          dryRun: opts?.dryRun,
+          intradayRetentionDays: config.barCacheIntradayDays,
+          dailyRetentionDays: config.barCacheDailyDays,
+          maxRowsPerRun: config.barCacheMaxRowsPerRun,
+        }),
+    },
+    {
+      table: "execution_events",
+      cutoff: new Date(
+        now.getTime() - config.executionEventsDiagnosticHours * 3_600_000,
+      ),
+      run: () =>
+        pruneExecutionEventsDiagnostics({
+          now: opts?.now,
+          batchSize: config.batchSize,
+          dryRun: opts?.dryRun,
+          retentionHours: config.executionEventsDiagnosticHours,
+          maxRowsPerRun: config.executionEventsDiagnosticMaxRowsPerRun,
+        }),
+    },
   ];
+  for (const entry of sweeps) {
+    results.push(
+      await settleRetentionSweep(entry.table, entry.cutoff, dryRun, entry.run),
+    );
+  }
+  return results;
 }

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { after, before, beforeEach, test } from "node:test";
 
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 
 import {
   balanceSnapshotsTable,
@@ -489,6 +489,32 @@ test("runAllSnapshotRetention runs all configured sweeps, dry-run by default", a
     ],
   );
   assert.ok(results.every((r) => r.dryRun === true && r.deleted === 0));
+});
+
+test("one failing sweep does not abort the rest of the chain", async () => {
+  // A thrown sweep (e.g. a statement timeout under host contention) once
+  // cancelled the whole chain: every table AFTER the failure silently lost
+  // retention on every scheduled run. Break one mid-chain table and prove the
+  // later tables still sweep and the failure is reported, not swallowed.
+  await db.execute(
+    sql`alter table signal_monitor_events rename to signal_monitor_events_broken`,
+  );
+  try {
+    const results = await runAllSnapshotRetention({ now: NOW });
+    assert.equal(results.length, 8);
+    const failed = results.find((r) => r.table === "signal_monitor_events");
+    assert.ok(failed?.error, "the broken table's sweep reports its error");
+    assert.equal(failed?.deleted, 0);
+    for (const table of ["bar_cache", "execution_events"]) {
+      const later = results.find((r) => r.table === table);
+      assert.ok(later, `${table} sweep still ran after the failure`);
+      assert.equal(later?.error, undefined);
+    }
+  } finally {
+    await db.execute(
+      sql`alter table signal_monitor_events_broken rename to signal_monitor_events`,
+    );
+  }
 });
 
 test("ctid batched delete converges across multiple iterations", async () => {

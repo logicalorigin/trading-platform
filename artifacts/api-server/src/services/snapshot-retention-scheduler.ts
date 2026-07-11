@@ -40,6 +40,7 @@ type RetentionSweepResult = {
   hitCap: boolean;
   durationMs: number;
   dryRun: boolean;
+  error?: string;
 };
 type RetentionRunner = () => Promise<RetentionSweepResult[]>;
 type EventRecorder = (event: string, detail: Record<string, unknown>) => void;
@@ -114,6 +115,10 @@ function emitSweepEvent(
     deleted: result.deleted,
     hitCap: result.hitCap,
     durationMs: result.durationMs,
+    // Per-table failures are isolated in runAllSnapshotRetention and land
+    // here instead of aborting the chain — keep them queryable in the
+    // flight recorder, not just in ephemeral process logs.
+    error: result.error ?? null,
   });
 }
 
