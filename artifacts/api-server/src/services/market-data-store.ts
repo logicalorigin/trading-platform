@@ -983,7 +983,9 @@ const barCacheRowChangedPredicate = sql`
 // miss it. Each writer captures the key's pre-write max and uses the guarded
 // upsert's RETURNING rows to classify the whole key as append-only or historical;
 // no-op re-upserts return no rows and emit nothing. The cache marks append-only
-// keys delta-due and fully invalidates historical keys. In-process and complete:
+// keys delta-due; for historical keys it truncates cells at the earliest changed
+// row and delta-refills (full invalidation only when nothing survives). In-process
+// and complete:
 // the API is the sole bar_cache writer (the Rust worker only runs retention
 // DELETEs), so this catches 100% of relevant changes with no IPC.
 export type BarCacheChange = {

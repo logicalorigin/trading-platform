@@ -490,6 +490,177 @@ test("below-high-water persisted changes invalidate the affected source cell", a
   assert.equal(deltaReads, 0);
 });
 
+test("mid-window corrections truncate the cell suffix and re-fill via delta read", async () => {
+  const startsAt = await seed("AAPL", 5);
+  let fullReads = 0;
+  let deltaReads = 0;
+  internals.__setLoadStoredMarketBarsForSymbolsForTests(async (input) => {
+    fullReads += 1;
+    return loadStoredMarketBarsForSymbols(input);
+  });
+  internals.__setLoadStoredMarketBarsForSymbolsSinceForTests(async (input) => {
+    deltaReads += 1;
+    return loadStoredMarketBarsForSymbolsSince(input);
+  });
+
+  const evaluatedAt = new Date();
+  const limit = 50;
+  const loadAapl = () =>
+    runWithSignalMonitorStoredBarsPrefetch(
+      { symbols: ["AAPL"], timeframes: [TIMEFRAME], evaluatedAt, limit },
+      () =>
+        loadSignalMonitorLocalBarCache({
+          symbol: "AAPL",
+          timeframe: TIMEFRAME,
+          evaluatedAt,
+          limit,
+        }),
+    );
+
+  await loadAapl();
+  assert.equal(fullReads, SOURCES.length);
+
+  // Rewrite a mid-window bar (NOT the oldest): the cell must keep the bars
+  // below the corrected timestamp and re-read only from it upward.
+  const before = getSignalMonitorLocalBarCacheDiagnostics().storedBarsCache;
+  await persistMarketDataBarsForSymbols({
+    timeframe: TIMEFRAME,
+    sourceName: SOURCES[0]!,
+    assetClass: "equity",
+    outsideRth: true,
+    source: "trades",
+    recentWindowMinutes: 0,
+    bySymbol: [
+      {
+        symbol: "AAPL",
+        bars: [
+          {
+            timestamp: startsAt[3]!,
+            open: 200,
+            high: 201,
+            low: 199,
+            close: 200.5,
+            volume: 9_000,
+          },
+        ],
+      },
+    ],
+  });
+  const after = getSignalMonitorLocalBarCacheDiagnostics().storedBarsCache;
+  assert.equal(
+    after.invalidationTruncateCount - before.invalidationTruncateCount,
+    1,
+    "a mid-window correction truncates instead of fully invalidating",
+  );
+  assert.equal(
+    after.invalidationFullCount - before.invalidationFullCount,
+    0,
+  );
+
+  const served = await loadAapl();
+  assert.equal(
+    fullReads,
+    SOURCES.length,
+    "no full re-read after a mid-window correction",
+  );
+  assert.equal(deltaReads, 1, "the corrected suffix re-fills via one delta read");
+
+  // Value parity with a fresh full read (which sees the corrected row).
+  process.env[STORED_BARS_DELTA_ENV] = "off";
+  const full = await loadAapl();
+  process.env[STORED_BARS_DELTA_ENV] = "on";
+  assert.deepEqual(served, full);
+  assert.ok(
+    full.some(
+      (bar) =>
+        bar.timestamp.getTime() === startsAt[3]!.getTime() &&
+        bar.close === 200.5,
+    ),
+    "the parity baseline carries the corrected values",
+  );
+});
+
+test("rewrites below a full cell's cached window do not invalidate it", async () => {
+  const startsAt = await seed("AAPL", 5);
+  let fullReads = 0;
+  let deltaReads = 0;
+  internals.__setLoadStoredMarketBarsForSymbolsForTests(async (input) => {
+    fullReads += 1;
+    return loadStoredMarketBarsForSymbols(input);
+  });
+  internals.__setLoadStoredMarketBarsForSymbolsSinceForTests(async (input) => {
+    deltaReads += 1;
+    return loadStoredMarketBarsForSymbolsSince(input);
+  });
+
+  const evaluatedAt = new Date();
+  // Cell caches the newest 3 of 5 seeded bars → startsAt[0] is below its window.
+  const limit = 3;
+  const loadAapl = () =>
+    runWithSignalMonitorStoredBarsPrefetch(
+      { symbols: ["AAPL"], timeframes: [TIMEFRAME], evaluatedAt, limit },
+      () =>
+        loadSignalMonitorLocalBarCache({
+          symbol: "AAPL",
+          timeframe: TIMEFRAME,
+          evaluatedAt,
+          limit,
+        }),
+    );
+
+  await loadAapl();
+  assert.equal(fullReads, SOURCES.length);
+
+  const before = getSignalMonitorLocalBarCacheDiagnostics().storedBarsCache;
+  await persistMarketDataBarsForSymbols({
+    timeframe: TIMEFRAME,
+    sourceName: SOURCES[0]!,
+    assetClass: "equity",
+    outsideRth: true,
+    source: "trades",
+    recentWindowMinutes: 0,
+    bySymbol: [
+      {
+        symbol: "AAPL",
+        bars: [
+          {
+            timestamp: startsAt[0]!,
+            open: 175,
+            high: 176,
+            low: 174,
+            close: 175.5,
+            volume: 7_500,
+          },
+        ],
+      },
+    ],
+  });
+  const after = getSignalMonitorLocalBarCacheDiagnostics().storedBarsCache;
+  assert.equal(
+    after.invalidationEventsCount - before.invalidationEventsCount,
+    1,
+    "the change event is still received",
+  );
+  assert.equal(
+    after.invalidationBelowWindowSkipCount -
+      before.invalidationBelowWindowSkipCount,
+    1,
+    "a rewrite below a full cell's window is skipped",
+  );
+  assert.equal(after.invalidationCount - before.invalidationCount, 0);
+  assert.equal(after.invalidationFullCount - before.invalidationFullCount, 0);
+
+  const served = await loadAapl();
+  assert.equal(fullReads, SOURCES.length, "the cell keeps serving without a re-read");
+  assert.equal(deltaReads, 0);
+
+  // Parity: a below-window rewrite cannot change the newest-`limit` read set.
+  process.env[STORED_BARS_DELTA_ENV] = "off";
+  const full = await loadAapl();
+  process.env[STORED_BARS_DELTA_ENV] = "on";
+  assert.deepEqual(served, full);
+});
+
 test("stored-bar invalidation diagnostics separate change events from per-cell branch counts", async () => {
   const startsAt = await seed("AAPL", 2);
   const evaluatedAt = new Date();

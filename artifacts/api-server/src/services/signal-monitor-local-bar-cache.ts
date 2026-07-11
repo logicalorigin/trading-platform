@@ -155,6 +155,8 @@ let storedBarsCacheInvalidationCount = 0;
 let storedBarsCacheInvalidationEventsCount = 0;
 let storedBarsCacheInvalidationFullCount = 0;
 let storedBarsCacheInvalidationDeltaDueCount = 0;
+let storedBarsCacheInvalidationTruncateCount = 0;
+let storedBarsCacheInvalidationBelowWindowSkipCount = 0;
 let storedBarsCacheEvictionCount = 0;
 let storedBarsDeltaReadCount = 0;
 let storedBarsDeltaFullReadCount = 0;
@@ -672,6 +674,45 @@ function ensureStoredBarsCacheSubscription(): void {
         const cell = storedBarsCrossCycleCache.get(key);
         if (!cell) {
           continue;
+        }
+        if (change.kind === "historical" && cell.highWaterMs != null) {
+          const oldestBarTimestamp = dateOrNull(cell.bars[0]?.timestamp);
+          if (
+            oldestBarTimestamp != null &&
+            change.startsAtMs < oldestBarTimestamp.getTime() &&
+            cell.bars.length >= cell.limit
+          ) {
+            // A rewrite/backfill entirely below a full cell's cached window
+            // cannot change what a fresh newest-`limit` read would return
+            // (older rows never displace newer ones), so the cell stays valid.
+            storedBarsCacheInvalidationBelowWindowSkipCount += 1;
+            continue;
+          }
+          const bars = cell.bars.filter((bar) => {
+            const timestamp = dateOrNull(bar.timestamp);
+            return timestamp != null && timestamp.getTime() < change.startsAtMs;
+          });
+          const highWaterMs = highWaterMsForBars(bars);
+          if (highWaterMs != null) {
+            // Below-water rewrite: drop only the bars from the corrected
+            // timestamp up and let the standard delta read re-fill from the
+            // new tail with authoritative rows. Nuking the whole cell here
+            // (the previous behavior) meant every provider restatement forced
+            // a full `limit`-row re-read — the invalidation storm that kept
+            // cross-cycle reuse at zero. If the re-fill can't extend the tail
+            // contiguously, the existing gap fallback still does a full read.
+            storedBarsCacheInvalidationCount += 1;
+            storedBarsCacheInvalidationTruncateCount += 1;
+            cell.bars = bars;
+            cell.highWaterMs = highWaterMs;
+            cell.deltaDue = true;
+            cell.pendingMaxStartsAtMs = Math.max(
+              cell.pendingMaxStartsAtMs ?? change.maxStartsAtMs,
+              change.maxStartsAtMs,
+            );
+            continue;
+          }
+          // Truncation emptied the cell — fall through to full invalidation.
         }
         storedBarsCacheInvalidationCount += 1;
         if (change.kind === "historical" || cell.highWaterMs == null) {
@@ -1785,6 +1826,9 @@ export function getSignalMonitorLocalBarCacheDiagnostics() {
       invalidationEventsCount: storedBarsCacheInvalidationEventsCount,
       invalidationFullCount: storedBarsCacheInvalidationFullCount,
       invalidationDeltaDueCount: storedBarsCacheInvalidationDeltaDueCount,
+      invalidationTruncateCount: storedBarsCacheInvalidationTruncateCount,
+      invalidationBelowWindowSkipCount:
+        storedBarsCacheInvalidationBelowWindowSkipCount,
       evictionCount: storedBarsCacheEvictionCount,
     },
     storedBarsDelta: {
@@ -1847,6 +1891,8 @@ export const __signalMonitorLocalBarCacheInternalsForTests = {
     storedBarsCacheInvalidationEventsCount = 0;
     storedBarsCacheInvalidationFullCount = 0;
     storedBarsCacheInvalidationDeltaDueCount = 0;
+    storedBarsCacheInvalidationTruncateCount = 0;
+    storedBarsCacheInvalidationBelowWindowSkipCount = 0;
     storedBarsCacheEvictionCount = 0;
     storedBarsDeltaReadCount = 0;
     storedBarsDeltaFullReadCount = 0;
