@@ -36,7 +36,18 @@ export type SignalMonitorLocalBarCacheTimeframe =
   | "1h"
   | "1d";
 
-type CachedBar = BrokerBarSnapshot & { symbol: string };
+export type SignalMonitorCachedBar = MarketDataStoreBarInput &
+  Pick<
+    BrokerBarSnapshot,
+    | "source"
+    | "partial"
+    | "delayed"
+    | "freshness"
+    | "marketDataMode"
+    | "dataUpdatedAt"
+  >;
+
+type CachedBar = SignalMonitorCachedBar & { symbol: string };
 type PendingPersistBar = {
   symbol: string;
   timeframe: MarketDataStoreTimeframe;
@@ -124,7 +135,7 @@ type StoredBarsPrefetch = {
   evaluatedAtMs: number;
   limit: number;
   // timeframe -> sourceName -> normalizedSymbol -> bars
-  byTimeframe: Map<string, Map<string, Map<string, BrokerBarSnapshot[]>>>;
+  byTimeframe: Map<string, Map<string, Map<string, SignalMonitorCachedBar[]>>>;
 };
 const storedBarsPrefetchStore = new AsyncLocalStorage<StoredBarsPrefetch>();
 
@@ -135,7 +146,7 @@ type StoredBarsCacheCell = {
   timeframe: SignalMonitorLocalBarCacheTimeframe;
   sourceName: string;
   limit: number;
-  bars: BrokerBarSnapshot[];
+  bars: SignalMonitorCachedBar[];
   highWaterMs: number | null;
   pendingMaxStartsAtMs: number | null;
   lastDeltaBucketMs: number | null;
@@ -377,7 +388,6 @@ function aggregateClosedAtMs(aggregate: MassiveDelayedStockAggregate): number {
 
 function aggregateToCachedMinuteBar(
   aggregate: MassiveDelayedStockAggregate,
-  observedAt: Date,
 ): CachedBar | null {
   const symbol = normalizeSymbol(aggregate.symbol).toUpperCase();
   if (
@@ -402,20 +412,31 @@ function aggregateToCachedMinuteBar(
     low: aggregate.low,
     close: aggregate.close,
     volume: Number.isFinite(volume) ? volume : 0,
-    bid: null,
-    ask: null,
-    mid: null,
-    quoteAsOf: null,
     source: aggregate.source,
-    providerContractId: null,
-    outsideRth: true,
     partial: false,
-    transport: "massive_websocket",
     delayed: aggregate.delayed,
     freshness: aggregate.delayed ? "delayed" : "live",
     marketDataMode: aggregate.delayed ? "delayed" : "live",
     dataUpdatedAt,
-    ageMs: Math.max(0, observedAt.getTime() - dataUpdatedAt.getTime()),
+  };
+}
+
+export function toSignalMonitorCachedBar(
+  bar: BrokerBarSnapshot,
+): SignalMonitorCachedBar {
+  return {
+    timestamp: bar.timestamp,
+    open: bar.open,
+    high: bar.high,
+    low: bar.low,
+    close: bar.close,
+    volume: bar.volume,
+    source: bar.source,
+    partial: bar.partial,
+    delayed: bar.delayed,
+    freshness: bar.freshness,
+    marketDataMode: bar.marketDataMode,
+    dataUpdatedAt: bar.dataUpdatedAt,
   };
 }
 
@@ -433,7 +454,7 @@ function cacheKey(input: {
   ].join(":");
 }
 
-function barSignature(bar: BrokerBarSnapshot): string {
+function barSignature(bar: SignalMonitorCachedBar): string {
   return [
     bar.open,
     bar.high,
@@ -455,11 +476,11 @@ function prunePersistedBarSignatures(): void {
     .forEach((key) => persistedBarSignatures.delete(key));
 }
 
-function mergeBarsByTimestamp(
-  bars: Array<BrokerBarSnapshot | CachedBar>,
+function mergeBarsByTimestamp<T extends SignalMonitorCachedBar>(
+  bars: T[],
   limit: number,
-): BrokerBarSnapshot[] {
-  const byTimestamp = new Map<number, BrokerBarSnapshot>();
+): T[] {
+  const byTimestamp = new Map<number, T>();
   bars.forEach((bar) => {
     const timestamp = dateOrNull(bar.timestamp);
     if (!timestamp) {
@@ -520,7 +541,9 @@ function evaluatedBucketMs(
   return Math.floor(evaluatedAtMs / stepMs) * stepMs;
 }
 
-function highWaterMsForBars(bars: readonly BrokerBarSnapshot[]): number | null {
+function highWaterMsForBars(
+  bars: readonly SignalMonitorCachedBar[],
+): number | null {
   let highWaterMs: number | null = null;
   for (const bar of bars) {
     const timestamp = dateOrNull(bar.timestamp);
@@ -536,10 +559,10 @@ function highWaterMsForBars(bars: readonly BrokerBarSnapshot[]): number | null {
 }
 
 function barsThroughEvaluatedAt(
-  bars: readonly BrokerBarSnapshot[],
+  bars: readonly SignalMonitorCachedBar[],
   evaluatedAtMs: number,
   limit: number,
-): BrokerBarSnapshot[] {
+): SignalMonitorCachedBar[] {
   return bars
     .filter((bar) => {
       const timestamp = dateOrNull(bar.timestamp);
@@ -599,7 +622,7 @@ function writeStoredBarsCacheCell(input: {
   timeframe: SignalMonitorLocalBarCacheTimeframe;
   sourceName: string;
   limit: number;
-  bars: BrokerBarSnapshot[];
+  bars: SignalMonitorCachedBar[];
   evaluatedAtMs: number;
   deltaBucketMs: number | null;
 }): StoredBarsCacheCell {
@@ -640,7 +663,7 @@ function writeStoredBarsCacheCell(input: {
 
 function updateStoredBarsCacheCellWithDelta(input: {
   cell: StoredBarsCacheCell;
-  deltaBars: BrokerBarSnapshot[];
+  deltaBars: SignalMonitorCachedBar[];
   deltaBucketMs: number;
   evaluatedAtMs: number;
 }): StoredBarsCacheCell {
@@ -784,19 +807,19 @@ type StoredBarsPrefetchLoadInput = {
 };
 
 function mergeLoadedStoredBars(
-  target: Map<string, BrokerBarSnapshot[]>,
+  target: Map<string, SignalMonitorCachedBar[]>,
   loaded: Map<string, BrokerBarSnapshot[]>,
 ): void {
   for (const [symbol, bars] of loaded) {
-    target.set(symbol, bars);
+    target.set(symbol, bars.map(toSignalMonitorCachedBar));
   }
 }
 
 async function loadFullStoredBarsForPrefetch(
   input: StoredBarsPrefetchLoadInput,
-): Promise<Map<string, BrokerBarSnapshot[]>> {
+): Promise<Map<string, SignalMonitorCachedBar[]>> {
   const fullLoader = getLoadStoredMarketBarsForSymbols();
-  const result = new Map<string, BrokerBarSnapshot[]>();
+  const result = new Map<string, SignalMonitorCachedBar[]>();
   for (const symbols of chunkArray(
     input.symbols,
     storedBarsPrefetchSymbolBatchSize(input.limit),
@@ -821,9 +844,9 @@ async function loadFullStoredBarsForPrefetch(
 
 async function loadDeltaStoredBarsForPrefetch(
   input: StoredBarsPrefetchLoadInput & { after: Date },
-): Promise<Map<string, BrokerBarSnapshot[]>> {
+): Promise<Map<string, SignalMonitorCachedBar[]>> {
   const deltaLoader = getLoadStoredMarketBarsForSymbolsSince();
-  const result = new Map<string, BrokerBarSnapshot[]>();
+  const result = new Map<string, SignalMonitorCachedBar[]>();
   // Deltas batch wide (STORED_BARS_DELTA_SYMBOL_BATCH) rather than by the
   // limit-based full-read budget: their rows are bounded by the high-water filter,
   // not by `limit`. Grouping/order/limit/after semantics of each query are
@@ -853,7 +876,7 @@ async function loadDeltaStoredBarsForPrefetch(
 
 function deltaBarsExtendCachedTail(input: {
   cell: StoredBarsCacheCell;
-  deltaBars: readonly BrokerBarSnapshot[];
+  deltaBars: readonly SignalMonitorCachedBar[];
   evaluatedAtMs: number;
 }): boolean {
   if (input.cell.highWaterMs == null) {
@@ -932,7 +955,7 @@ function storeMinuteBar(bar: CachedBar): void {
   }
 }
 
-function sourceNameForBar(bar: BrokerBarSnapshot): string {
+function sourceNameForBar(bar: SignalMonitorCachedBar): string {
   return bar.source === "massive-delayed-websocket"
     ? "massive-delayed-websocket"
     : "massive-websocket";
@@ -1081,7 +1104,6 @@ function rollupMinuteBars(input: {
         freshness: delayed ? "delayed" : "live",
         marketDataMode: delayed ? "delayed" : "live",
         dataUpdatedAt,
-        ageMs: Math.max(0, input.evaluatedAt.getTime() - dataUpdatedAt.getTime()),
       };
     })
     .filter((bar): bar is CachedBar => Boolean(bar))
@@ -1117,7 +1139,7 @@ async function readStoredBars(input: {
   timeframe: SignalMonitorLocalBarCacheTimeframe;
   evaluatedAt: Date;
   limit: number;
-}): Promise<BrokerBarSnapshot[]> {
+}): Promise<SignalMonitorCachedBar[]> {
   const sourceNames = storeSourceNames();
   const prefetch = storedBarsPrefetchStore.getStore();
   if (
@@ -1164,7 +1186,10 @@ async function readStoredBars(input: {
       }),
     ),
   );
-  return mergeBarsByTimestamp(results.flat(), input.limit);
+  return mergeBarsByTimestamp(
+    results.flat().map(toSignalMonitorCachedBar),
+    input.limit,
+  );
 }
 
 async function loadStoredBarsForSymbolsForShadow(input: {
@@ -1173,7 +1198,7 @@ async function loadStoredBarsForSymbolsForShadow(input: {
   limit: number;
   to: Date;
   sourceName: string;
-}): Promise<Map<string, BrokerBarSnapshot[]>> {
+}): Promise<Map<string, SignalMonitorCachedBar[]>> {
   ensureStoredBarsCacheSubscription();
   const evaluatedAtMs = input.to.getTime();
   const deltaBucketMs = evaluatedBucketMs(evaluatedAtMs, input.timeframe);
@@ -1290,7 +1315,7 @@ async function loadStoredBarsForSymbolsForPrefetch(input: {
   limit: number;
   to: Date;
   sourceName: string;
-}): Promise<Map<string, BrokerBarSnapshot[]>> {
+}): Promise<Map<string, SignalMonitorCachedBar[]>> {
   const deltaMode = storedBarsDeltaMode();
   if (deltaMode === "off" || storedBarsCacheMaxCells() <= 0) {
     storedBarsCacheFullReadCount += 1;
@@ -1308,7 +1333,7 @@ async function loadStoredBarsForSymbolsForPrefetch(input: {
   }
 
   ensureStoredBarsCacheSubscription();
-  const result = new Map<string, BrokerBarSnapshot[]>();
+  const result = new Map<string, SignalMonitorCachedBar[]>();
   const evaluatedAtMs = input.to.getTime();
   const deltaBucketMs = evaluatedBucketMs(evaluatedAtMs, input.timeframe);
   const fullReadSymbols: string[] = [];
@@ -1756,7 +1781,7 @@ function enqueueRollups(symbol: string, evaluatedAt: Date): void {
 
 function handleMassiveAggregate(aggregate: MassiveDelayedStockAggregate): void {
   const observedAt = new Date();
-  const bar = aggregateToCachedMinuteBar(aggregate, observedAt);
+  const bar = aggregateToCachedMinuteBar(aggregate);
   if (!bar) {
     return;
   }
@@ -1798,7 +1823,7 @@ export async function loadSignalMonitorLocalBarCache(input: {
   evaluatedAt: Date;
   limit: number;
   includeProvisional?: boolean;
-}): Promise<BrokerBarSnapshot[]> {
+}): Promise<SignalMonitorCachedBar[]> {
   if (!LOCAL_CACHE_TIMEFRAMES.includes(input.timeframe)) {
     return [];
   }
@@ -1823,7 +1848,7 @@ export function readSignalMonitorLocalMemoryBars(input: {
   evaluatedAt: Date;
   limit: number;
   includeProvisional?: boolean;
-}): BrokerBarSnapshot[] {
+}): SignalMonitorCachedBar[] {
   if (!LOCAL_CACHE_TIMEFRAMES.includes(input.timeframe)) {
     return [];
   }

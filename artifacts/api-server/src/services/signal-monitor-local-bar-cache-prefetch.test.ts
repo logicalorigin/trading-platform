@@ -6,6 +6,7 @@ import { barCacheTable, db, instrumentsTable } from "@workspace/db";
 import { createTestDb, type TestDatabase } from "@workspace/db/testing";
 
 import { isMassiveStocksRealtimeConfigured } from "../lib/runtime";
+import type { BrokerBarSnapshot } from "../providers/ibkr/client";
 import {
   __dispatchBarCacheChangesForTests,
   __resetMarketDataStoreBackoffForTests,
@@ -306,6 +307,67 @@ test("the cross-cycle prefetch cache avoids repeated full bar_cache reads", asyn
     "second cycle should serve cached closed bars without full DB reads",
   );
   assert.equal(deltaReads, 0);
+});
+
+test("stored-bar ingress projects wide broker bars once and reuses the canonical objects", async () => {
+  const timestamp = new Date("2026-07-10T14:00:00.000Z");
+  const dataUpdatedAt = new Date("2026-07-10T14:01:00.000Z");
+  const canonicalBar = {
+    timestamp,
+    open: 100,
+    high: 101,
+    low: 99,
+    close: 100.5,
+    volume: 1_000,
+    source: "massive-history",
+    partial: false,
+    delayed: false,
+    freshness: "live",
+    marketDataMode: "live",
+    dataUpdatedAt,
+  } as const;
+  const wideBar = {
+    ...canonicalBar,
+    bid: 100.4,
+    ask: 100.6,
+    mid: 100.5,
+    quoteAsOf: dataUpdatedAt,
+    providerContractId: "drop-me",
+    outsideRth: true,
+    transport: "massive_rest",
+    ageMs: 123,
+  } satisfies BrokerBarSnapshot;
+  let fullReads = 0;
+  internals.__setLoadStoredMarketBarsForSymbolsForTests(async (input) => {
+    fullReads += 1;
+    return new Map(input.symbols.map((symbol) => [symbol, [wideBar]]));
+  });
+
+  const evaluatedAt = new Date("2026-07-10T15:00:00.000Z");
+  const load = () =>
+    runWithSignalMonitorStoredBarsPrefetch(
+      {
+        symbols: ["AAPL"],
+        timeframes: [TIMEFRAME],
+        evaluatedAt,
+        limit: 50,
+      },
+      () =>
+        loadSignalMonitorLocalBarCache({
+          symbol: "AAPL",
+          timeframe: TIMEFRAME,
+          evaluatedAt,
+          limit: 50,
+        }),
+    );
+
+  const first = await load();
+  const second = await load();
+
+  assert.deepEqual(first, [canonicalBar]);
+  assert.notEqual(first[0], wideBar);
+  assert.equal(second[0], first[0]);
+  assert.equal(fullReads, SOURCES.length);
 });
 
 test("above-high-water persisted bars use the delta reader instead of full reload", async () => {
