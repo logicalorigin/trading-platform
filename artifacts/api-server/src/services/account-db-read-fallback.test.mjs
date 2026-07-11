@@ -72,6 +72,18 @@ test("Account summary, list P&L, and Flex health propagate database outages", ()
   );
 });
 
+test("Flex health batches its independent database reads", () => {
+  const flexHealth = sourceBetween(
+    "export async function getFlexHealth",
+    "export async function testFlexToken",
+  );
+
+  assert.match(
+    flexHealth,
+    /const \[\s*lastRun,\s*lastCompletedRun,\s*latestSnapshot,\s*\[snapshotCoverage\],\s*\[flexCoverage\],\s*\[tradeCoverage\],\s*\[cashCoverage\],\s*\[dividendCoverage\],\s*\[openPositionCoverage\],?\s*\]\s*=\s*await Promise\.all\(\[/,
+  );
+});
+
 test("provider portfolio failures never become zero-balance accounts", () => {
   const backedAccounts = sourceBetween(
     "async function getSnapTradeBackedAccounts",

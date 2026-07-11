@@ -9302,7 +9302,17 @@ async function getAccountCashActivityUncached(input: {
 
 export async function getFlexHealth() {
   const schema = await getOptionalAccountSchemaReadiness();
-  const [lastRun, lastCompletedRun] = await Promise.all([
+  const [
+    lastRun,
+    lastCompletedRun,
+    latestSnapshot,
+    [snapshotCoverage],
+    [flexCoverage],
+    [tradeCoverage],
+    [cashCoverage],
+    [dividendCoverage],
+    [openPositionCoverage],
+  ] = await Promise.all([
     withOptionalAccountSchema({
       tables: ["flex_report_runs"],
       whenMissing: () => null,
@@ -9328,15 +9338,14 @@ export async function getFlexHealth() {
         return row ?? null;
       },
     }),
-  ]);
-  const latestSnapshot = await withAccountDbRead(async () =>
+    withAccountDbRead(async () =>
       db
         .select({ asOf: balanceSnapshotsTable.asOf })
         .from(balanceSnapshotsTable)
         .orderBy(desc(balanceSnapshotsTable.asOf))
         .limit(1),
-  );
-  const [snapshotCoverage] = await withAccountDbRead(async () =>
+    ),
+    withAccountDbRead(async () =>
       db
         .select({
           firstAsOf: sql<Date | null>`min(${balanceSnapshotsTable.asOf})`,
@@ -9344,67 +9353,68 @@ export async function getFlexHealth() {
           rowCount: sql<number>`count(*)::int`,
         })
         .from(balanceSnapshotsTable),
-  );
-  const [flexCoverage] = await withOptionalAccountSchema({
-    tables: ["flex_nav_history"],
-    whenMissing: () => [{ firstDate: null, lastDate: null, rowCount: 0 }],
-    run: async () =>
-      db
-        .select({
-          firstDate: sql<string | null>`min(${flexNavHistoryTable.statementDate})`,
-          lastDate: sql<string | null>`max(${flexNavHistoryTable.statementDate})`,
-          rowCount: sql<number>`count(*)::int`,
-        })
-        .from(flexNavHistoryTable),
-  });
-  const [tradeCoverage] = await withOptionalAccountSchema({
-    tables: ["flex_trades"],
-    whenMissing: () => [{ firstAt: null, lastAt: null, rowCount: 0 }],
-    run: async () =>
-      db
-        .select({
-          firstAt: sql<Date | null>`min(${flexTradesTable.tradeDate})`,
-          lastAt: sql<Date | null>`max(${flexTradesTable.tradeDate})`,
-          rowCount: sql<number>`count(*)::int`,
-        })
-        .from(flexTradesTable),
-  });
-  const [cashCoverage] = await withOptionalAccountSchema({
-    tables: ["flex_cash_activity"],
-    whenMissing: () => [{ firstAt: null, lastAt: null, rowCount: 0 }],
-    run: async () =>
-      db
-        .select({
-          firstAt: sql<Date | null>`min(${flexCashActivityTable.activityDate})`,
-          lastAt: sql<Date | null>`max(${flexCashActivityTable.activityDate})`,
-          rowCount: sql<number>`count(*)::int`,
-        })
-        .from(flexCashActivityTable),
-  });
-  const [dividendCoverage] = await withOptionalAccountSchema({
-    tables: ["flex_dividends"],
-    whenMissing: () => [{ firstAt: null, lastAt: null, rowCount: 0 }],
-    run: async () =>
-      db
-        .select({
-          firstAt: sql<Date | null>`min(${flexDividendsTable.paidDate})`,
-          lastAt: sql<Date | null>`max(${flexDividendsTable.paidDate})`,
-          rowCount: sql<number>`count(*)::int`,
-        })
-        .from(flexDividendsTable),
-  });
-  const [openPositionCoverage] = await withOptionalAccountSchema({
-    tables: ["flex_open_positions"],
-    whenMissing: () => [{ firstAt: null, lastAt: null, rowCount: 0 }],
-    run: async () =>
-      db
-        .select({
-          firstAt: sql<Date | null>`min(${flexOpenPositionsTable.asOf})`,
-          lastAt: sql<Date | null>`max(${flexOpenPositionsTable.asOf})`,
-          rowCount: sql<number>`count(*)::int`,
-        })
-        .from(flexOpenPositionsTable),
-  });
+    ),
+    withOptionalAccountSchema({
+      tables: ["flex_nav_history"],
+      whenMissing: () => [{ firstDate: null, lastDate: null, rowCount: 0 }],
+      run: async () =>
+        db
+          .select({
+            firstDate: sql<string | null>`min(${flexNavHistoryTable.statementDate})`,
+            lastDate: sql<string | null>`max(${flexNavHistoryTable.statementDate})`,
+            rowCount: sql<number>`count(*)::int`,
+          })
+          .from(flexNavHistoryTable),
+    }),
+    withOptionalAccountSchema({
+      tables: ["flex_trades"],
+      whenMissing: () => [{ firstAt: null, lastAt: null, rowCount: 0 }],
+      run: async () =>
+        db
+          .select({
+            firstAt: sql<Date | null>`min(${flexTradesTable.tradeDate})`,
+            lastAt: sql<Date | null>`max(${flexTradesTable.tradeDate})`,
+            rowCount: sql<number>`count(*)::int`,
+          })
+          .from(flexTradesTable),
+    }),
+    withOptionalAccountSchema({
+      tables: ["flex_cash_activity"],
+      whenMissing: () => [{ firstAt: null, lastAt: null, rowCount: 0 }],
+      run: async () =>
+        db
+          .select({
+            firstAt: sql<Date | null>`min(${flexCashActivityTable.activityDate})`,
+            lastAt: sql<Date | null>`max(${flexCashActivityTable.activityDate})`,
+            rowCount: sql<number>`count(*)::int`,
+          })
+          .from(flexCashActivityTable),
+    }),
+    withOptionalAccountSchema({
+      tables: ["flex_dividends"],
+      whenMissing: () => [{ firstAt: null, lastAt: null, rowCount: 0 }],
+      run: async () =>
+        db
+          .select({
+            firstAt: sql<Date | null>`min(${flexDividendsTable.paidDate})`,
+            lastAt: sql<Date | null>`max(${flexDividendsTable.paidDate})`,
+            rowCount: sql<number>`count(*)::int`,
+          })
+          .from(flexDividendsTable),
+    }),
+    withOptionalAccountSchema({
+      tables: ["flex_open_positions"],
+      whenMissing: () => [{ firstAt: null, lastAt: null, rowCount: 0 }],
+      run: async () =>
+        db
+          .select({
+            firstAt: sql<Date | null>`min(${flexOpenPositionsTable.asOf})`,
+            lastAt: sql<Date | null>`max(${flexOpenPositionsTable.asOf})`,
+            rowCount: sql<number>`count(*)::int`,
+          })
+          .from(flexOpenPositionsTable),
+    }),
+  ]);
 
   return {
     bridgeConnected: null,
