@@ -39,6 +39,20 @@ cadence and drains the ~1M-row backlog over successive runs — exactly the
 `bar_cache` pruner pattern. **Physical space is NOT reclaimed by DELETE** (dead
 tuples stay until VACUUM); that is the step below.
 
+## Status update 2026-07-11 (~19:00Z)
+
+The retention sweep had NEVER completed a run since landing: the
+`pruneSignalMonitorEvents` full-count anti-join probe hit the 15s statement
+timeout on the contended host and the throw aborted the whole chain before the
+execution_events sweep (and before any sweep event emission). Fixed in commit
+`afd31574` (per-table fault isolation + bounded probe + error-bearing sweep
+events); first-ever complete sweep ran 18:54Z on pid 205500:
+**execution_events deleted 962,939 rows in 253s** (bar_cache 645; all 8 tables,
+zero errors). Post-drain OBSERVED: n_live_tup 18,350, n_dead_tup ~1.09M,
+physical size still 3,368 MB pending vacuum. **The reclaim precondition below
+is now met** — the live set is tiny, so the owner-run `VACUUM (FULL)` lock
+window will be brief.
+
 ## Reclaim sequence (run AFTER the retention sweep has drained the backlog)
 
 Precondition: the retention scheduler has run enough backlog sweeps that the
