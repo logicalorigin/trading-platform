@@ -17,6 +17,7 @@ test("crash diagnostic strings redact common credential forms", () => {
       "https://user:password@service.test/path?token=query-secret&ok=1",
       "Account DU12345",
       "account du67890",
+      "broker account F24680",
     ].join("\n"),
   );
 
@@ -32,6 +33,7 @@ test("crash diagnostic strings redact common credential forms", () => {
     "query-secret",
     "DU12345",
     "du67890",
+    "F24680",
   ]) {
     assert.doesNotMatch(redacted, new RegExp(secret));
   }

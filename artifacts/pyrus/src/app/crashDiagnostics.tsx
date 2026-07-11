@@ -79,7 +79,7 @@ const normalizeError = (error: unknown): Error =>
   error instanceof Error ? error : new Error(String(error || "Unknown error"));
 
 const redactString = (value: string): string => {
-  const withoutAccountIds = value.replace(/\bD?U\d{4,}\b/gi, "U***");
+  const withoutAccountIds = value.replace(/\b(?:D?U|F)\d{4,}\b/gi, "U***");
   const withoutCredentials = withoutAccountIds.replace(
     /([a-z][a-z0-9+.-]*:\/\/)[^/\s:@]+:[^/\s@]+@/gi,
     "$1[redacted]@",
