@@ -136,6 +136,37 @@ the SAME pid alive after — a changed pid means the reload killed the tree. If 
 calmer post-fix regime, instrument then (watch `/tmp/pyrus/pyrus-dev-lifecycle-8080.jsonl` +
 process counts at kill moments).
 
+## Addendum 2026-07-11 — F1 unknowns resolved, mitigation flags promoted
+
+- **Prefetch-fallback split (carried UNKNOWN): resolved — fallback is a non-issue.** OBSERVED
+  `storedBarsRead`: prefetchHitCount 993, fallbackCount 0 (5-min window, pid 325).
+- **Cross-cycle zero reuse (hit 0 / delta 0): root-caused and fixed.** Two verified mechanisms:
+  (a) shadow mode structurally cannot serve hits — `loadStoredBarsForSymbolsForShadow` always runs
+  the full read and uses cells for parity only, so the 07-09/07-10 "hit 0" was partly a mode
+  artifact; (b) the F1B-predicted full-invalidation storm was CONFIRMED live
+  (invalidationFullCount 28,380 in ~5 min) and the below-water writer identified: the provider
+  genuinely restates closed bars (OBSERVED 2,186 bar_cache rows with created_at < updated_at in
+  30 min, massive-history 5m/15m), and any such rewrite nuked every cell for the key. Fix landed
+  (commit `21c51f03`): below-water rewrites now truncate the cell at the earliest changed row and
+  delta-refill; rewrites entirely below a full cell's window are skipped. New counters
+  `invalidationTruncateCount` / `invalidationBelowWindowSkipCount`.
+- **Flags promoted** (owner directive "flip and watch now", 2026-07-11):
+  `PYRUS_SIGNALS_STORED_BARS_DELTA=on` + `PYRUS_SIGNALS_INCREMENTAL_EVAL=on` via
+  `.pyrus-runtime/dev-env.local` (overrides `.replit`'s shadow values; SIGUSR2-applied).
+  On-mode tripwires: 1-in-500 incremental self-check, shadowMismatches counters,
+  matrixServeMismatchCount (0 since 15:15Z restart; the 35 seen on the prior process remain
+  unexplained — watch at Monday open). Rollback: set both to `shadow` + SIGUSR2.
+  Truncate path CONFIRMED live 16:0xZ: 300 of 309 invalidations took the new truncate branch
+  (previously all would have been full). hitCount/deltaReads engagement NOT yet observed — a
+  concurrent session was SIGUSR2-reloading the API every ~2-15 min all afternoon, resetting
+  counters before a second universe pass could complete; confirm reuse (hitCount > 0,
+  deltaReads > 0, ELU/heap trend) at Monday 07-13 open via /api/diagnostics/runtime
+  `signalMonitorLocalBars.storedBarsCache`.
+- `/signal-monitor/state` hot-path zod re-parse (~0.4-1s stall per miss) dropped (commit `9ff0b1be`).
+- Still open per F-ranking: F1b (15m warmup rollup from in-memory 1m), F1c (warmup=1000 audit),
+  completed-bars 30s TTL, F2 retained-set shrink (RSS re-inflated to ~2.0GB within minutes of the
+  15:15Z restart — unchanged).
+
 ## Provenance
 
 Live probes: this session inline (CPU/alloc profiles, pg_stat_activity, firehose aggregation,
