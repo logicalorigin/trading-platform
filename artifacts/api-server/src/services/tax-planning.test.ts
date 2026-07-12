@@ -17,8 +17,11 @@ import {
   listAccountTaxEvents,
   listAccountTaxLots,
   listAccountWashWindows,
+  claimTaxPreflightIbkrReply,
+  recordTaxPreflightIbkrReplyRequired,
 } from "./tax-planning";
 import type { TaxOrderLike } from "./tax-planning-model";
+import { fingerprintIbkrOrderBody } from "./ibkr-order-intent";
 
 async function createUser(email: string): Promise<string> {
   const [user] = await db
@@ -139,6 +142,113 @@ test("tax preflight requires returned acknowledgements for sell orders", async (
       });
 
       assert.equal(accepted?.preflightToken, preflight.preflightToken);
+    });
+  });
+});
+
+test("tax preflight binds and atomically claims the prepared IBKR order", async () => {
+  await withTestDb(async () => {
+    const appUserId = await createUser("tax-preflight-ibkr-intent@example.com");
+    await runAsAppUser(appUserId, async () => {
+      const order = baseOrder({ quantity: 1, limitPrice: 100 });
+      const orderBody = {
+        orders: [
+          {
+            acctId: "U1234567",
+            conid: 265598,
+            cOID: "intent-123",
+            orderType: "LMT",
+            outsideRTH: false,
+            side: "BUY",
+            tif: "DAY",
+            quantity: 1,
+            price: 100,
+          },
+        ],
+      };
+      const orderFingerprint = fingerprintIbkrOrderBody(orderBody);
+      const preflight = await createTaxOrderPreflight(
+        { order },
+        {
+          ibkrPreparedIntent: {
+            version: 1,
+            accountId: "U1234567",
+            clientOrderId: "intent-123",
+            orderFingerprint,
+            orderBody,
+            preparedAt: new Date().toISOString(),
+            whatIf: {
+              error: null,
+              warnings: ["Review broker estimate."],
+            },
+          },
+        },
+      );
+
+      assert.ok(
+        preflight.requiredAcknowledgements.includes(
+          "ibkr_what_if_warning_reviewed",
+        ),
+      );
+      await assert.rejects(
+        assertTaxPreflightForOrderSubmission({
+          order,
+          taxPreflightToken: preflight.preflightToken,
+          taxAcknowledgements: preflight.requiredAcknowledgements,
+          requireIbkrPreparedIntent: true,
+          expectedClientOrderId: "different-intent",
+        }),
+        (error: unknown) => {
+          assert.equal(
+            (error as { code?: string }).code,
+            "ibkr_order_intent_mismatch",
+          );
+          return true;
+        },
+      );
+
+      const accepted = await assertTaxPreflightForOrderSubmission({
+        order,
+        taxPreflightToken: preflight.preflightToken,
+        taxAcknowledgements: preflight.requiredAcknowledgements,
+        requireIbkrPreparedIntent: true,
+        expectedClientOrderId: "intent-123",
+        expectedOrderFingerprint: orderFingerprint,
+      });
+      assert.equal(accepted?.ibkrPreparedIntent?.clientOrderId, "intent-123");
+      assert.deepEqual(accepted?.ibkrPreparedIntent?.orderBody, orderBody);
+
+      const challenge = await recordTaxPreflightIbkrReplyRequired({
+        preflightToken: preflight.preflightToken,
+        replyId: "raw-broker-reply-id",
+        messages: ["Review broker warning."],
+      });
+      assert.notEqual(challenge.challengeId, "raw-broker-reply-id");
+      assert.deepEqual(challenge.messages, ["Review broker warning."]);
+
+      const claims = await Promise.allSettled([
+        claimTaxPreflightIbkrReply({
+          preflightToken: preflight.preflightToken,
+          challengeId: challenge.challengeId,
+        }),
+        claimTaxPreflightIbkrReply({
+          preflightToken: preflight.preflightToken,
+          challengeId: challenge.challengeId,
+        }),
+      ]);
+      assert.equal(
+        claims.filter((claim) => claim.status === "fulfilled").length,
+        1,
+      );
+      assert.equal(
+        claims.filter((claim) => claim.status === "rejected").length,
+        1,
+      );
+      const claimed = claims.find(
+        (claim): claim is PromiseFulfilledResult<Awaited<ReturnType<typeof claimTaxPreflightIbkrReply>>> =>
+          claim.status === "fulfilled",
+      );
+      assert.equal(claimed?.value.replyId, "raw-broker-reply-id");
     });
   });
 });

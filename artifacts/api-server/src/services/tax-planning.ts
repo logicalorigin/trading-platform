@@ -29,14 +29,72 @@ import {
   type TaxStateRuleSetRow,
 } from "./tax-planning-model";
 import { HttpError } from "../lib/errors";
+import { fingerprintIbkrOrderBody } from "./ibkr-order-intent";
 
 const TAX_PREFLIGHT_TTL_MS = 2 * 60 * 1000;
 const TAX_PREFLIGHT_ORDER_SUBMISSION_CONSUMED_MARKER =
   "__order_submission_consumed__";
+const IBKR_REPLY_PENDING_PREFIX = "__ibkr_reply_pending__:";
+const IBKR_REPLY_CLAIMED_PREFIX = "__ibkr_reply_claimed__:";
 const LEGACY_SHADOW_ACCOUNT_ID = "shadow";
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const PROVIDER_ACCOUNT_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/u;
+
+export type IbkrPreparedOrderIntent = {
+  version: 1;
+  accountId: string;
+  clientOrderId: string;
+  orderFingerprint: string;
+  orderBody: Record<string, unknown>;
+  preparedAt: string;
+  whatIf: Record<string, unknown>;
+};
+
+function readIbkrPreparedOrderIntent(
+  value: unknown,
+  expectedAccountId: string,
+): IbkrPreparedOrderIntent {
+  const record = readJsonRecord(value);
+  const orderBody = readJsonRecord(record.orderBody);
+  const orders = Array.isArray(orderBody.orders) ? orderBody.orders : [];
+  const order = readJsonRecord(orders[0]);
+  const accountId = String(record.accountId || "").trim();
+  const clientOrderId = String(record.clientOrderId || "").trim();
+  const orderFingerprint = String(record.orderFingerprint || "").trim();
+  const actualFingerprint = fingerprintIbkrOrderBody(orderBody);
+  if (
+    record.version !== 1 ||
+    orders.length !== 1 ||
+    accountId !== expectedAccountId ||
+    String(order.acctId || "").trim() !== accountId ||
+    String(order.cOID || "").trim() !== clientOrderId ||
+    !/^[A-Za-z0-9._:-]{1,64}$/u.test(clientOrderId) ||
+    !/^[a-f0-9]{64}$/u.test(orderFingerprint) ||
+    actualFingerprint !== orderFingerprint
+  ) {
+    throw new HttpError(409, "The prepared IBKR order intent is invalid.", {
+      code: "ibkr_order_intent_invalid",
+      expose: true,
+    });
+  }
+  const whatIf = readJsonRecord(record.whatIf);
+  if (String(whatIf.error || "").trim()) {
+    throw new HttpError(409, "IBKR what-if rejected the prepared order.", {
+      code: "ibkr_what_if_rejected",
+      expose: true,
+    });
+  }
+  return {
+    version: 1,
+    accountId,
+    clientOrderId,
+    orderFingerprint,
+    orderBody,
+    preparedAt: String(record.preparedAt || ""),
+    whatIf,
+  };
+}
 
 type TaxProfileRow = typeof taxProfilesTable.$inferSelect;
 type TaxProfileAccountRow = typeof taxProfileAccountsTable.$inferSelect;
@@ -821,7 +879,10 @@ async function loadOpenOrdersForPreflight(
   }));
 }
 
-export async function createTaxOrderPreflight(input: unknown) {
+export async function createTaxOrderPreflight(
+  input: unknown,
+  options: { ibkrPreparedIntent?: IbkrPreparedOrderIntent | null } = {},
+) {
   const appUserId = requireCurrentAppUserId();
   const body = readJsonRecord(input);
   const order = readJsonRecord(body.order) as unknown as TaxOrderLike;
@@ -842,41 +903,65 @@ export async function createTaxOrderPreflight(input: unknown) {
     order,
     openOrders,
   });
+  const ibkrPreparedIntent = options.ibkrPreparedIntent
+    ? readIbkrPreparedOrderIntent(options.ibkrPreparedIntent, order.accountId)
+    : null;
+  const whatIfWarnings = ibkrPreparedIntent
+    ? stringList(ibkrPreparedIntent.whatIf.warnings)
+    : [];
+  const requiredAcknowledgements = Array.from(
+    new Set([
+      ...evaluation.requiredAcknowledgements,
+      ...(whatIfWarnings.length ? ["ibkr_what_if_warning_reviewed"] : []),
+    ]),
+  );
+  const preflightEvaluation = {
+    ...evaluation,
+    action:
+      evaluation.action === "block"
+        ? "block"
+        : requiredAcknowledgements.length
+          ? "warn_ack_required"
+          : "allow",
+    warnings: [...evaluation.warnings, ...whatIfWarnings],
+    requiredAcknowledgements,
+  };
   const preflightToken = `tax_pf_${randomUUID()}`;
   const expiresAt = new Date(Date.now() + TAX_PREFLIGHT_TTL_MS);
   await db.insert(taxPreflightChecksTable).values({
     appUserId,
     accountId: String(order.accountId || ""),
     preflightToken,
-    orderFingerprint: evaluation.orderFingerprint,
-    action: evaluation.action,
-    washSaleRisk: evaluation.washSaleRisk,
-    selfTradeRisk: evaluation.selfTradeRisk,
-    reasons: evaluation.reasons,
-    warnings: evaluation.warnings,
-    requiredAcknowledgements: evaluation.requiredAcknowledgements,
+    orderFingerprint: preflightEvaluation.orderFingerprint,
+    action: preflightEvaluation.action,
+    washSaleRisk: preflightEvaluation.washSaleRisk,
+    selfTradeRisk: preflightEvaluation.selfTradeRisk,
+    reasons: preflightEvaluation.reasons,
+    warnings: preflightEvaluation.warnings,
+    requiredAcknowledgements: preflightEvaluation.requiredAcknowledgements,
     expiresAt,
     metadata: {
       order,
       rolloutMode: "compute_only",
+      ...(ibkrPreparedIntent ? { ibkrPreparedIntent } : {}),
     },
   });
   await db.insert(taxAuditEventsTable).values({
     appUserId,
     taxYear: profile.taxYear,
     eventType:
-      evaluation.action === "block"
+      preflightEvaluation.action === "block"
         ? "tax_preflight_blocked"
         : "tax_preflight_created",
-    severity: evaluation.action === "block" ? "warning" : "info",
+    severity: preflightEvaluation.action === "block" ? "warning" : "info",
     message:
-      evaluation.action === "block"
+      preflightEvaluation.action === "block"
         ? "Tax/compliance preflight blocked an order."
         : "Tax/compliance preflight was created.",
-    metadata: { ...evaluation, accountId: order.accountId },
+    metadata: { ...preflightEvaluation, accountId: order.accountId },
   });
   return {
-    ...evaluation,
+    ...preflightEvaluation,
     preflightToken,
     expiresAt: expiresAt.toISOString(),
     sourceFreshness: {
@@ -913,6 +998,7 @@ export type TaxPreflightSubmissionRecord = {
   preflightToken: string;
   orderFingerprint: string;
   action: string;
+  ibkrPreparedIntent: IbkrPreparedOrderIntent | null;
 };
 
 export async function assertTaxPreflightForOrderSubmission(input: {
@@ -920,6 +1006,9 @@ export async function assertTaxPreflightForOrderSubmission(input: {
   order: TaxOrderLike;
   taxPreflightToken?: string | null;
   taxAcknowledgements?: unknown;
+  requireIbkrPreparedIntent?: boolean;
+  expectedClientOrderId?: string | null;
+  expectedOrderFingerprint?: string | null;
   now?: Date;
 }): Promise<TaxPreflightSubmissionRecord | null> {
   if (input.order.mode !== "live") {
@@ -979,6 +1068,29 @@ export async function assertTaxPreflightForOrderSubmission(input: {
     );
   }
 
+  const ibkrPreparedIntentValue =
+    readJsonRecord(preflight.metadata).ibkrPreparedIntent;
+  const ibkrPreparedIntent = ibkrPreparedIntentValue
+    ? readIbkrPreparedOrderIntent(ibkrPreparedIntentValue, input.order.accountId)
+    : null;
+  if (input.requireIbkrPreparedIntent && !ibkrPreparedIntent) {
+    throw new HttpError(409, "A prepared IBKR order intent is required.", {
+      code: "ibkr_order_intent_required",
+      expose: true,
+    });
+  }
+  if (
+    (input.expectedClientOrderId &&
+      ibkrPreparedIntent?.clientOrderId !== input.expectedClientOrderId) ||
+    (input.expectedOrderFingerprint &&
+      ibkrPreparedIntent?.orderFingerprint !== input.expectedOrderFingerprint)
+  ) {
+    throw new HttpError(409, "The prepared IBKR order intent does not match.", {
+      code: "ibkr_order_intent_mismatch",
+      expose: true,
+    });
+  }
+
   const orderFingerprint = fingerprintTaxOrder(input.order);
   if (preflight.orderFingerprint !== orderFingerprint) {
     throw new HttpError(
@@ -1036,6 +1148,7 @@ export async function assertTaxPreflightForOrderSubmission(input: {
     preflightToken: token,
     orderFingerprint,
     action: preflight.action,
+    ibkrPreparedIntent,
   };
 }
 
@@ -1062,6 +1175,146 @@ export async function recordTaxPreflightOrderSubmitted(input: {
         eq(taxPreflightChecksTable.preflightToken, input.preflightToken),
       ),
     );
+}
+
+export async function recordTaxPreflightIbkrReplyRequired(input: {
+  appUserId?: string;
+  preflightToken: string;
+  replyId: string;
+  messages: unknown;
+  now?: Date;
+}) {
+  const appUserId = input.appUserId ?? requireCurrentAppUserId();
+  const replyId = String(input.replyId || "").trim();
+  if (!replyId || replyId.length > 256) {
+    throw new HttpError(409, "The IBKR order warning reply is invalid.", {
+      code: "ibkr_order_reply_invalid",
+      expose: true,
+    });
+  }
+  const [preflight] = await db
+    .select()
+    .from(taxPreflightChecksTable)
+    .where(
+      and(
+        eq(taxPreflightChecksTable.appUserId, appUserId),
+        eq(taxPreflightChecksTable.preflightToken, input.preflightToken),
+      ),
+    )
+    .limit(1);
+  const currentMarker = preflight?.submittedOrderId ?? "";
+  if (
+    !preflight ||
+    (currentMarker !== TAX_PREFLIGHT_ORDER_SUBMISSION_CONSUMED_MARKER &&
+      !currentMarker.startsWith(IBKR_REPLY_CLAIMED_PREFIX))
+  ) {
+    throw new HttpError(409, "The IBKR order reply cannot be continued.", {
+      code: "ibkr_order_reply_unavailable",
+      expose: true,
+    });
+  }
+  const challengeId = `ibkr_reply_${randomUUID()}`;
+  const messages = stringList(input.messages);
+  const priorReply = readJsonRecord(readJsonRecord(preflight.metadata).ibkrReply);
+  const replyCount = Number(priorReply.replyCount || 0) + 1;
+  if (replyCount > 5) {
+    throw new HttpError(409, "Too many chained IBKR order warnings.", {
+      code: "ibkr_order_reply_limit_exceeded",
+      expose: true,
+    });
+  }
+  const metadata = {
+    ...readJsonRecord(preflight.metadata),
+    ibkrReply: {
+      challengeId,
+      replyId,
+      messages,
+      replyCount,
+      createdAt: (input.now ?? new Date()).toISOString(),
+    },
+  };
+  const updated = await db
+    .update(taxPreflightChecksTable)
+    .set({
+      submittedOrderId: `${IBKR_REPLY_PENDING_PREFIX}${challengeId}`,
+      metadata,
+      updatedAt: input.now ?? new Date(),
+    })
+    .where(
+      and(
+        eq(taxPreflightChecksTable.id, preflight.id),
+        eq(taxPreflightChecksTable.submittedOrderId, currentMarker),
+      ),
+    )
+    .returning({ id: taxPreflightChecksTable.id });
+  if (!updated.length) {
+    throw new HttpError(409, "The IBKR order reply was already changed.", {
+      code: "ibkr_order_reply_already_used",
+      expose: true,
+    });
+  }
+  return { challengeId, messages, expiresAt: preflight.expiresAt.toISOString() };
+}
+
+export async function claimTaxPreflightIbkrReply(input: {
+  appUserId?: string;
+  preflightToken: string;
+  challengeId: string;
+  now?: Date;
+}) {
+  const appUserId = input.appUserId ?? requireCurrentAppUserId();
+  const [preflight] = await db
+    .select()
+    .from(taxPreflightChecksTable)
+    .where(
+      and(
+        eq(taxPreflightChecksTable.appUserId, appUserId),
+        eq(taxPreflightChecksTable.preflightToken, input.preflightToken),
+      ),
+    )
+    .limit(1);
+  const now = input.now ?? new Date();
+  if (!preflight || preflight.expiresAt.getTime() <= now.getTime()) {
+    throw new HttpError(409, "The IBKR order reply has expired.", {
+      code: "ibkr_order_reply_expired",
+      expose: true,
+    });
+  }
+  const challengeId = String(input.challengeId || "").trim();
+  const pendingMarker = `${IBKR_REPLY_PENDING_PREFIX}${challengeId}`;
+  const reply = readJsonRecord(readJsonRecord(preflight.metadata).ibkrReply);
+  if (
+    preflight.submittedOrderId !== pendingMarker ||
+    String(reply.challengeId || "") !== challengeId
+  ) {
+    throw new HttpError(409, "The IBKR order reply was already used.", {
+      code: "ibkr_order_reply_already_used",
+      expose: true,
+    });
+  }
+  const claimed = await db
+    .update(taxPreflightChecksTable)
+    .set({
+      submittedOrderId: `${IBKR_REPLY_CLAIMED_PREFIX}${challengeId}`,
+      updatedAt: now,
+    })
+    .where(
+      and(
+        eq(taxPreflightChecksTable.id, preflight.id),
+        eq(taxPreflightChecksTable.submittedOrderId, pendingMarker),
+      ),
+    )
+    .returning({ id: taxPreflightChecksTable.id });
+  if (!claimed.length) {
+    throw new HttpError(409, "The IBKR order reply was already used.", {
+      code: "ibkr_order_reply_already_used",
+      expose: true,
+    });
+  }
+  return {
+    replyId: String(reply.replyId || ""),
+    messages: stringList(reply.messages),
+  };
 }
 
 async function getOrCreateReserveBucket() {
