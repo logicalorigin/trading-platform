@@ -13658,6 +13658,7 @@ async function refreshActivePosition(input: {
     return { managed: false, reason: "invalid_expiration" };
   }
   const now = input.now ?? new Date();
+  const liveOptionSession = isLiveOptionTradingSession(now, contract);
 
   const providerContractId =
     typeof contract.providerContractId === "string"
@@ -13941,20 +13942,22 @@ async function refreshActivePosition(input: {
   const entryGreeks =
     input.position.entryGreeks ??
     greekSnapshotFromQuote(input.position.selectedContract);
-  await persistSignalOptionsQuoteSnapshot({
-    contract,
-    quote,
-    source: `signal-options:${markSource ?? "mark"}`,
-  }).catch((error: unknown) => {
-    logger.debug?.(
-      {
-        err: error,
-        positionId: input.position.id,
-        symbol: input.position.symbol,
-      },
-      "Signal-options quote greek snapshot persistence skipped",
-    );
-  });
+  if (liveOptionSession) {
+    await persistSignalOptionsQuoteSnapshot({
+      contract,
+      quote,
+      source: `signal-options:${markSource ?? "mark"}`,
+    }).catch((error: unknown) => {
+      logger.debug?.(
+        {
+          err: error,
+          positionId: input.position.id,
+          symbol: input.position.symbol,
+        },
+        "Signal-options quote greek snapshot persistence skipped",
+      );
+    });
+  }
   const wireContext =
     input.profile.exitPolicy.wireGreekTrail.enabled &&
     input.pyrusSignalsSettings
@@ -14092,7 +14095,7 @@ async function refreshActivePosition(input: {
   // place an exit — it defers to the next in-session scan (same exit timing as before,
   // since orders are never placed off-hours). This splits the old blanket off-hours
   // early-return so position marks stay current 24/7 without enabling off-hours exits.
-  if ((exitReason || scaleOutExit) && isLiveOptionTradingSession(now, contract)) {
+  if ((exitReason || scaleOutExit) && liveOptionSession) {
     const exitQuoteEligible =
       isSignalOptionsLiveExitQuoteEligible({
         quote,

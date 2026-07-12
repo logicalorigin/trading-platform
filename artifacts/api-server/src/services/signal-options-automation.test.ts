@@ -238,6 +238,30 @@ test("Signal Options does not evaluate Signal Matrix directly", () => {
   assert.doesNotMatch(source, /enrichSignalOptionsCandidateWithMatrixMtf/);
 });
 
+test("active-position quote metadata persistence runs only in a live option session", () => {
+  const start = source.indexOf("async function refreshActivePosition");
+  const end = source.indexOf(
+    "export async function manageSignalOptionsActivePositionQuote",
+    start,
+  );
+  assert.notEqual(start, -1, "missing active-position refresh function");
+  assert.notEqual(end, -1, "missing active-position refresh boundary");
+  const body = source.slice(start, end);
+
+  assert.match(
+    body,
+    /const liveOptionSession =\s*isLiveOptionTradingSession\(now, contract\);/,
+  );
+  assert.match(
+    body,
+    /if \(liveOptionSession\) \{\s*await persistSignalOptionsQuoteSnapshot\(/,
+  );
+  assert.match(
+    body,
+    /if \(\(exitReason \|\| scaleOutExit\) && liveOptionSession\)/,
+  );
+});
+
 test("Signal Options default state endpoint bypasses cached fast-summary state", () => {
   const stateFunctionStart = source.indexOf(
     "export async function listSignalOptionsAutomationState",
