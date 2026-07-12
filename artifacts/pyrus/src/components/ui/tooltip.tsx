@@ -420,6 +420,7 @@ function AppTooltip({
     <span
       className={cn("ra-tooltip-disabled-trigger", className)}
       style={disabledTriggerLayoutStyle(children)}
+      tabIndex={0}
       {...tooltipTriggerProps({})}
     >
       {children}
