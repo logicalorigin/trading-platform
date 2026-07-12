@@ -24,6 +24,8 @@ test("hosted portal connects any authenticated account (not paper-only)", async 
   const released = new Set<string>();
   let accountId = "U1234567";
   let authenticated = true;
+  let authStatusUnauthorizedUntilInit = false;
+  let brokerageSessionInitialized = false;
   let authStatusCalls = 0;
   let ssodhInitCalls = 0;
   const loginCompletions = new Map<string, number>();
@@ -74,6 +76,9 @@ test("hosted portal connects any authenticated account (not paper-only)", async 
     }
     if (url.pathname.endsWith("/iserver/auth/status")) {
       authStatusCalls += 1;
+      if (authStatusUnauthorizedUntilInit && !brokerageSessionInitialized) {
+        return new Response("Unauthorized", { status: 401 });
+      }
       return Response.json({
         authenticated,
         connected: authenticated,
@@ -82,7 +87,8 @@ test("hosted portal connects any authenticated account (not paper-only)", async 
     }
     if (url.pathname.endsWith("/iserver/auth/ssodh/init")) {
       ssodhInitCalls += 1;
-      return Response.json({ authenticated: false });
+      brokerageSessionInitialized = true;
+      return Response.json({ authenticated });
     }
     if (url.pathname.endsWith("/iserver/accounts")) {
       return Response.json({ accounts: [accountId] });
@@ -118,7 +124,7 @@ test("hosted portal connects any authenticated account (not paper-only)", async 
     assert.equal(
       ssodhInitCalls,
       0,
-      "the hosted portal leaves SSO promotion to its Client Portal Gateway",
+      "the hosted portal does not promote a brokerage session before browser login completes",
     );
 
     const callsBeforeQuietWindow = authStatusCalls;
@@ -259,7 +265,10 @@ test("hosted portal connects any authenticated account (not paper-only)", async 
       );
 
       authenticated = true;
+      authStatusUnauthorizedUntilInit = true;
+      brokerageSessionInitialized = false;
       accountId = "U2468101";
+      const initCallsBeforeCompletion = ssodhInitCalls;
       loginCompletions.set(delayedLiveUserId, 8);
       const completionObserved = await readPortalReadiness(delayedLiveUserId);
       assert.equal(completionObserved.status, "needs_login");
@@ -283,7 +292,12 @@ test("hosted portal connects any authenticated account (not paper-only)", async 
       const delayedReadiness = await readPortalReadiness(delayedLiveUserId);
       assert.equal(delayedReadiness.status, "connected");
       assert.equal(delayedReadiness.browserLoginComplete, true);
-      assert.equal(authStatusCalls, callsBeforeConnect + 1);
+      assert.equal(authStatusCalls, callsBeforeConnect + 2);
+      assert.equal(
+        ssodhInitCalls,
+        initCallsBeforeCompletion + 1,
+        "browser completion permits one guarded REST brokerage-session promotion",
+      );
       assert.equal(delayedReadiness.selectedAccountId, "U2468101");
       assert.ok(getGateway(delayedLiveUserId), "live login keeps its gateway");
       assert(!released.has(delayedLiveUserId));

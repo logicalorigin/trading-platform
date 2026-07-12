@@ -313,7 +313,9 @@ export async function readPortalReadiness(
     const status = await clientFor(gateway.baseUrl, (stage, failure) => {
       stagedFailureTraced = true;
       traceReadinessFailure(failure, stage);
-    }).ensureBrokerageSession({ initializeIfNeeded: false });
+    }).ensureBrokerageSession({
+      initializeIfNeeded: loginObservation.browserLoginComplete,
+    });
     stagedFailureTraced = false;
     if (status.competing) {
       markGatewayPaperAccountVerified(appUserId, false);
