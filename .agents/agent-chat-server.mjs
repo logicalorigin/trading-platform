@@ -25,14 +25,15 @@ const taskBoardFile = process.env.AGENT_CHAT_TASK_BOARD_FILE
   ? path.resolve(process.env.AGENT_CHAT_TASK_BOARD_FILE)
   : path.join(repoRoot, "AGENT_TASK_BOARD.md");
 const serverFile = path.join(dataDir, "server.json");
-const host = process.env.AGENT_CHAT_HOST || "127.0.0.1";
+const host = "127.0.0.1";
 const requestedPort = Number.parseInt(
   process.env.AGENT_CHAT_PORT || "8765",
   10,
 );
-const port = Number.isFinite(requestedPort) && requestedPort > 0
+const port = Number.isFinite(requestedPort) && requestedPort >= 0
   ? requestedPort
   : 8765;
+let activePort = port;
 
 mkdirSync(dataDir, { recursive: true });
 
@@ -51,6 +52,13 @@ function nowIso() {
   return new Date().toISOString();
 }
 
+function normalizeSender(value) {
+  if (typeof value !== "string") {
+    return "agent";
+  }
+  return value.replace(/\s+/g, " ").replaceAll("`", "'").trim().slice(0, 80) || "agent";
+}
+
 function readMessages() {
   let raw = "";
   try {
@@ -64,7 +72,12 @@ function readMessages() {
     .filter(Boolean)
     .map((line, index) => {
       try {
-        return { seq: index + 1, ...JSON.parse(line) };
+        const message = JSON.parse(line);
+        return {
+          seq: index + 1,
+          ...message,
+          from: normalizeSender(message.from),
+        };
       } catch {
         return null;
       }
@@ -76,6 +89,7 @@ function escapeTableCell(value) {
   return String(value)
     .replaceAll("\\", "\\\\")
     .replaceAll("|", "\\|")
+    .replaceAll("`", "'")
     .replace(/\s+/g, " ")
     .trim();
 }
@@ -143,7 +157,7 @@ function writeTranscript() {
     "| Field | Value |",
     "| --- | --- |",
     `| Last rendered | \`${nowIso()}\` |`,
-    `| Endpoint | \`http://${host}:${port}\` |`,
+    `| Endpoint | \`http://${host}:${activePort}\` |`,
     `| Message log | \`${path.relative(repoRoot, messageFile)}\` |`,
     `| Transcript | \`${path.relative(repoRoot, transcriptFile)}\` |`,
     `| Task board | \`${path.relative(repoRoot, taskBoardFile)}\` |`,
@@ -187,9 +201,7 @@ function writeTranscript() {
 }
 
 function appendMessage(input) {
-  const from = typeof input.from === "string" && input.from.trim()
-    ? input.from.trim().slice(0, 80)
-    : "agent";
+  const from = normalizeSender(input.from);
   const text = typeof input.text === "string" ? input.text.trim() : "";
   if (!text) {
     const error = new Error("message text is required");
@@ -230,31 +242,62 @@ function sendText(res, statusCode, text) {
 function readRequestBody(req) {
   return new Promise((resolve, reject) => {
     let body = "";
+    let bodyBytes = 0;
+    let rejected = false;
     req.setEncoding("utf8");
     req.on("data", (chunk) => {
-      body += chunk;
-      if (body.length > 64 * 1024) {
+      if (rejected) {
+        return;
+      }
+      bodyBytes += Buffer.byteLength(chunk, "utf8");
+      if (bodyBytes > 64 * 1024) {
+        rejected = true;
         reject(Object.assign(new Error("request body too large"), {
           statusCode: 413,
         }));
-        req.destroy();
+        return;
+      }
+      body += chunk;
+    });
+    req.on("end", () => {
+      if (!rejected) {
+        resolve(body);
       }
     });
-    req.on("end", () => resolve(body));
-    req.on("error", reject);
+    req.on("error", (error) => {
+      if (!rejected) {
+        reject(error);
+      }
+    });
   });
 }
 
 async function parseMessageRequest(req) {
-  const body = await readRequestBody(req);
-  const contentType = req.headers["content-type"] || "";
-  if (contentType.includes("application/json")) {
-    return JSON.parse(body || "{}");
+  const mediaType = String(req.headers["content-type"] || "")
+    .split(";", 1)[0]
+    .trim()
+    .toLowerCase();
+  if (mediaType !== "application/json") {
+    throw Object.assign(new Error("content-type must be application/json"), {
+      statusCode: 415,
+    });
   }
-  return {
-    from: req.headers["x-agent-name"] || "agent",
-    text: body,
-  };
+
+  const body = await readRequestBody(req);
+  let input;
+  try {
+    input = JSON.parse(body || "{}");
+  } catch {
+    throw Object.assign(new Error("request body must be valid JSON"), {
+      statusCode: 400,
+    });
+  }
+  if (typeof input !== "object" || input === null || Array.isArray(input)) {
+    throw Object.assign(new Error("request body must be a JSON object"), {
+      statusCode: 400,
+    });
+  }
+  return input;
 }
 
 function usageText(actualPort) {
@@ -282,7 +325,7 @@ function usageText(actualPort) {
 
 const server = createServer(async (req, res) => {
   try {
-    const url = new URL(req.url || "/", `http://${host}:${port}`);
+    const url = new URL(req.url || "/", `http://${host}:${activePort}`);
 
     if (req.method === "GET" && url.pathname === "/health") {
       sendJson(res, 200, {
@@ -352,11 +395,18 @@ migrateLegacyMessages();
 writeTranscript();
 
 server.listen(port, host, () => {
-  const actualPort = server.address().port;
+  const address = server.address();
+  if (!address || typeof address === "string") {
+    throw new Error("agent chat server did not expose a TCP address");
+  }
+  const actualHost = address.address;
+  const actualPort = address.port;
+  activePort = actualPort;
+  writeTranscript();
   const metadata = {
-    host,
+    host: actualHost,
     port: actualPort,
-    baseUrl: `http://${host}:${actualPort}`,
+    baseUrl: `http://${actualHost}:${actualPort}`,
     pid: process.pid,
     startedAt: nowIso(),
     messageFile,
