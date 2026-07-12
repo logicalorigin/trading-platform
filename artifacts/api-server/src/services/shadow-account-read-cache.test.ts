@@ -1076,6 +1076,25 @@ test("read-side fill analysis reuses cached account orders and fetches only miss
   );
 });
 
+test("default equity annotations reuse the shared analysis fold", () => {
+  const start = shadowAccountSource.indexOf(
+    "async function getShadowTradeEquityEvents",
+  );
+  const end = shadowAccountSource.indexOf(
+    "\nexport async function getShadowAccountOrders",
+    start,
+  );
+  assert.notEqual(start, -1, "Missing trade equity-event reader");
+  assert.notEqual(end, -1, "Missing trade equity-event reader boundary");
+  const block = shadowAccountSource.slice(start, end);
+
+  assert.match(block, /if \(!input\.sources\?\.length\)/);
+  assert.match(
+    block,
+    /readShadowAnalysisLedgerFold\(\{\s*scope: null,\s*\}\)/,
+  );
+});
+
 test("automation ledger realized P&L keeps the all-time source path", () => {
   const source = readFileSync(
     new URL("./shadow-account.ts", import.meta.url),

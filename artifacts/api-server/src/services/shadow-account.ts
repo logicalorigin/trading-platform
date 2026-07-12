@@ -12192,6 +12192,19 @@ async function getShadowTradeEquityEvents(input: {
   end?: Date | null;
   sources?: string[];
 }) {
+  if (!input.sources?.length) {
+    const { events } = await readShadowAnalysisLedgerFold({
+      scope: null,
+    });
+    return buildShadowEquityAnnotations(
+      events.filter(
+        (event) =>
+          (!input.start || event.occurredAtDate >= input.start) &&
+          (!input.end || event.occurredAtDate <= input.end),
+      ),
+    );
+  }
+
   const conditions: SQL<unknown>[] = [
     eq(shadowFillsTable.accountId, currentShadowAccountId()),
   ];
@@ -12207,19 +12220,15 @@ async function getShadowTradeEquityEvents(input: {
     .where(and(...conditions))
     .orderBy(shadowFillsTable.occurredAt);
   const ordersById = await readCachedShadowOrdersByFillOrderId(fills);
-  const selectedFills = input.sources?.length
-    ? fills.filter((fill) => {
-        const order = ordersById.get(fill.orderId);
-        return Boolean(
-          order &&
-            input.sources?.some((source) =>
-              shadowOrderMatchesSource(order, source),
-            ),
-        );
-      })
-    : fills.filter((fill) =>
-        isDefaultShadowLedgerAnalyticsOrder(ordersById.get(fill.orderId)),
-      );
+  const selectedFills = fills.filter((fill) => {
+    const order = ordersById.get(fill.orderId);
+    return Boolean(
+      order &&
+        input.sources.some((source) =>
+          shadowOrderMatchesSource(order, source),
+        ),
+    );
+  });
   return buildShadowEquityAnnotations(
     selectedFills.map((fill) =>
       shadowAnalysisTradeEvent(fill, ordersById.get(fill.orderId)),
