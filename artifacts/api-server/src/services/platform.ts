@@ -52,7 +52,11 @@ import {
 } from "../lib/transient-db-error";
 import {
   assertTaxPreflightForOrderSubmission,
+  claimTaxPreflightIbkrReply,
+  createTaxOrderPreflight,
+  recordTaxPreflightIbkrReplyRequired,
   recordTaxPreflightOrderSubmitted,
+  type IbkrPreparedOrderIntent,
 } from "./tax-planning";
 import type { TaxOrderLike } from "./tax-planning-model";
 import { getCachedStorageHealthSnapshot } from "./storage-health";
@@ -3812,16 +3816,66 @@ export async function placeOrder(input: PlaceOrderInput) {
       expose: true,
     });
   }
+  if (!input.clientOrderId?.trim()) {
+    throw new HttpError(409, "A prepared IBKR order intent is required.", {
+      code: "ibkr_order_intent_required",
+      expose: true,
+    });
+  }
+  await assertIbkrGatewayTradingAvailable(input.accountId);
+  const client = getIbkrClientPortalClient();
+  await validateOrderIntentForRouting(input, client);
   const taxInput = input as PlaceOrderInput & PlaceOrderTaxPreflightFields;
   const taxPreflight = await assertTaxPreflightForOrderSubmission({
     order: ibkrOrderToTaxOrder(input, { taxMode: "live" }),
     taxPreflightToken: taxInput.taxPreflightToken,
     taxAcknowledgements: taxInput.taxAcknowledgements,
+    requireIbkrPreparedIntent: true,
+    expectedClientOrderId: input.clientOrderId,
   });
-  await assertIbkrGatewayTradingAvailable(input.accountId);
-  const client = getIbkrClientPortalClient();
-  await validateOrderIntentForRouting(input, client);
-  const order = await client.placeOrder(input);
+  const preparedIntent = taxPreflight?.ibkrPreparedIntent;
+  if (!preparedIntent) {
+    throw new HttpError(409, "A prepared IBKR order intent is required.", {
+      code: "ibkr_order_intent_required",
+      expose: true,
+    });
+  }
+  let order: BrokerOrderSnapshot;
+  try {
+    order = await client.placePreparedOrder(input, {
+      accountId: preparedIntent.accountId,
+      body: preparedIntent.orderBody,
+    });
+  } catch (error) {
+    if (
+      isHttpError(error) &&
+      error.code === "ibkr_order_warning_confirmation_required"
+    ) {
+      const data =
+        error.data && typeof error.data === "object" && !Array.isArray(error.data)
+          ? (error.data as Record<string, unknown>)
+          : {};
+      const replyId = String(data.replyId || "").trim();
+      if (!replyId) {
+        throw new HttpError(409, "IBKR order warning requires reconciliation.", {
+          code: "ibkr_order_reply_reconciliation_required",
+          expose: true,
+          cause: error,
+        });
+      }
+      const challenge = await recordTaxPreflightIbkrReplyRequired({
+        preflightToken: taxPreflight.preflightToken,
+        replyId,
+        messages: data.messages,
+      });
+      throw new HttpError(409, "IBKR requires explicit review of an order warning.", {
+        code: "ibkr_order_warning_confirmation_required",
+        data: challenge,
+        expose: true,
+      });
+    }
+    throw error;
+  }
   // IBKR has ACCEPTED the live order. A post-submit bookkeeping failure must NOT
   // throw — that makes the caller see a failed submit and retry, placing a
   // DUPLICATE live order (SYS-DUP-ORDER). Mirror the overnight/Schwab fix: log and
@@ -3850,10 +3904,94 @@ export async function placeOrder(input: PlaceOrderInput) {
   return order;
 }
 
+export async function continueIbkrOrderReply(input: {
+  taxPreflightToken: string;
+  challengeId: string;
+  confirmed: boolean;
+}) {
+  const claimed = await claimTaxPreflightIbkrReply({
+    preflightToken: input.taxPreflightToken,
+    challengeId: input.challengeId,
+  });
+  const client = getIbkrClientPortalClient();
+  let result: Awaited<ReturnType<typeof client.replyOrderWarning>>;
+  try {
+    result = await client.replyOrderWarning({
+      replyId: claimed.replyId,
+      confirmed: input.confirmed,
+    });
+  } catch (error) {
+    throw new HttpError(409, "IBKR order reply requires reconciliation.", {
+      code: "ibkr_order_reply_reconciliation_required",
+      expose: true,
+      cause: error,
+    });
+  }
+  if (result.kind === "declined") {
+    await recordTaxPreflightOrderSubmitted({
+      preflightToken: input.taxPreflightToken,
+      submittedOrderId: "__ibkr_order_reply_declined__",
+    });
+    return { status: "declined" as const };
+  }
+  if (result.kind === "warning") {
+    const challenge = await recordTaxPreflightIbkrReplyRequired({
+      preflightToken: input.taxPreflightToken,
+      replyId: result.replyId,
+      messages: result.messages,
+    });
+    return { status: "warning" as const, ...challenge };
+  }
+  const orderId = String(
+    result.acknowledgement.order_id || result.acknowledgement.orderId || "",
+  ).trim();
+  const orderStatus = String(
+    result.acknowledgement.order_status ||
+      result.acknowledgement.status ||
+      "Submitted",
+  );
+  await recordTaxPreflightOrderSubmitted({
+    preflightToken: input.taxPreflightToken,
+    submittedOrderId: orderId,
+  });
+  return { status: "acknowledged" as const, orderId, orderStatus };
+}
+
 export async function previewOrder(input: PlaceOrderInput) {
   const client = getIbkrClientPortalClient();
-  await validateOrderIntentForRouting(input, client);
-  return client.previewOrder(input);
+  const preparedInput = {
+    ...input,
+    clientOrderId: input.clientOrderId?.trim() || randomUUID(),
+  };
+  await assertIbkrGatewayTradingAvailable(preparedInput.accountId);
+  await validateOrderIntentForRouting(preparedInput, client);
+  const preview = await client.previewOrder(preparedInput);
+  if (preview.whatIf.error) {
+    throw new HttpError(409, "IBKR what-if rejected the prepared order.", {
+      code: "ibkr_what_if_rejected",
+      detail: preview.whatIf.error,
+      expose: true,
+    });
+  }
+  const preparedAt = new Date().toISOString();
+  const ibkrPreparedIntent: IbkrPreparedOrderIntent = {
+    version: 1,
+    accountId: preview.accountId,
+    clientOrderId: preview.clientOrderId,
+    orderFingerprint: preview.orderFingerprint,
+    orderBody: { orders: [preview.orderPayload] },
+    preparedAt,
+    whatIf: preview.whatIf,
+  };
+  const taxPreflight = await createTaxOrderPreflight(
+    { order: ibkrOrderToTaxOrder(preparedInput, { taxMode: "live" }) },
+    { ibkrPreparedIntent },
+  );
+  return {
+    ...preview,
+    preparedAt,
+    taxPreflight,
+  };
 }
 
 export async function submitRawOrders(input: {

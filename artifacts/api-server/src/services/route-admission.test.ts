@@ -85,6 +85,13 @@ test("tax planning routes keep protected admission classes", () => {
   );
 });
 
+test("IBKR order warning replies keep protected execution admission", () => {
+  assert.equal(
+    classifyApiRoute({ method: "POST", path: "/api/orders/reply" }),
+    "protected-execution",
+  );
+});
+
 test("Signal Options full state remains active-screen", () => {
   assert.equal(
     classifyApiRoute({

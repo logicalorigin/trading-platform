@@ -4223,6 +4223,39 @@ export interface PlaceOrderRequest {
   taxAcknowledgements?: string[] | null;
 }
 
+export type IbkrOrderPreviewWhatIf = {
+  amount: string | null;
+  commission: string | null;
+  total: string | null;
+  equityChange: string | null;
+  initialMarginChange: string | null;
+  maintenanceMarginChange: string | null;
+  positionChange: string | null;
+  warnings: string[];
+  error: string | null;
+};
+
+export interface IbkrOrderPreview {
+  accountId: string;
+  mode: EnvironmentMode;
+  symbol: string;
+  assetClass: AssetClass;
+  resolvedContractId: number;
+  clientOrderId: string;
+  /** @pattern ^[a-f0-9]{64}$ */
+  orderFingerprint: string;
+  orderPayload: JsonObject;
+  whatIf: IbkrOrderPreviewWhatIf;
+  preparedAt: string;
+  taxPreflight: JsonObject;
+  optionContract: OptionContract | null;
+  tradingSession?: TradingSession | null;
+  resolvedExchange?: string | null;
+  primaryExchange?: string | null;
+  includeOvernight?: boolean | null;
+  routingReason?: string | null;
+}
+
 export interface OrderPreview {
   accountId: string;
   mode: EnvironmentMode;
@@ -4250,6 +4283,30 @@ export interface SubmitIbkrOrdersRequest {
   /** Required acknowledgement ids returned by tax/compliance preflight; submit every returned id when the preflight action requires acknowledgement. */
   taxAcknowledgements?: string[] | null;
   ibkrOrders: JsonObject[];
+}
+
+export interface IbkrOrderReplyRequest {
+  taxPreflightToken: string;
+  challengeId: string;
+  confirmed: boolean;
+}
+
+export type IbkrOrderReplyResponseStatus = typeof IbkrOrderReplyResponseStatus[keyof typeof IbkrOrderReplyResponseStatus];
+
+
+export const IbkrOrderReplyResponseStatus = {
+  declined: 'declined',
+  warning: 'warning',
+  acknowledged: 'acknowledged',
+} as const;
+
+export interface IbkrOrderReplyResponse {
+  status: IbkrOrderReplyResponseStatus;
+  challengeId?: string;
+  messages?: string[];
+  expiresAt?: string;
+  orderId?: string;
+  orderStatus?: string;
 }
 
 export interface SubmitIbkrOrdersResponse { [key: string]: unknown }

@@ -39,6 +39,7 @@ import {
   ListPositionsQueryParams,
   ListPositionsResponse,
   PlaceOrderBody,
+  ContinueIbkrOrderReplyBody,
   ReplaceOrderBody,
   CancelAccountOrderBody,
   CancelOrderBody,
@@ -47,6 +48,7 @@ import {
 } from "@workspace/api-zod";
 import {
   cancelOrder,
+  continueIbkrOrderReply,
   createWatchlist,
   deleteWatchlist,
   getBarsWithDebug,
@@ -2086,9 +2088,16 @@ router.post("/orders", async (req, res) => {
 });
 
 router.post("/orders/preview", async (req, res) => {
+  await requireEntitlementCsrf("broker_connect")(req);
   const body = PlaceOrderBody.parse(req.body);
 
   res.json(await previewOrder(body));
+});
+
+router.post("/orders/reply", async (req, res) => {
+  await requireEntitlementCsrf("broker_connect")(req);
+  const body = ContinueIbkrOrderReplyBody.parse(req.body);
+  res.json(await continueIbkrOrderReply(body));
 });
 
 router.post("/orders/submit", async (req, res) => {

@@ -1749,7 +1749,26 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/OrderPreview"
+                $ref: "#/components/schemas/IbkrOrderPreview"
+
+  /orders/reply:
+    post:
+      operationId: continueIbkrOrderReply
+      tags: [orders]
+      summary: Continue or decline one pending IBKR order warning
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/IbkrOrderReplyRequest"
+      responses:
+        "200":
+          description: Order warning continuation result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IbkrOrderReplyResponse"
 
   /shadow/orders/preview:
     post:
@@ -10670,6 +10689,106 @@ components:
         - timeInForce
         - optionContract
 
+    IbkrOrderPreview:
+      type: object
+      properties:
+        accountId:
+          type: string
+        mode:
+          $ref: "#/components/schemas/EnvironmentMode"
+        symbol:
+          type: string
+        assetClass:
+          $ref: "#/components/schemas/AssetClass"
+        resolvedContractId:
+          type: number
+        clientOrderId:
+          type: string
+        orderFingerprint:
+          type: string
+          pattern: "^[a-f0-9]{64}$"
+        orderPayload:
+          $ref: "#/components/schemas/JsonObject"
+        whatIf:
+          type: object
+          properties:
+            amount:
+              type: string
+              nullable: true
+            commission:
+              type: string
+              nullable: true
+            total:
+              type: string
+              nullable: true
+            equityChange:
+              type: string
+              nullable: true
+            initialMarginChange:
+              type: string
+              nullable: true
+            maintenanceMarginChange:
+              type: string
+              nullable: true
+            positionChange:
+              type: string
+              nullable: true
+            warnings:
+              type: array
+              items:
+                type: string
+            error:
+              type: string
+              nullable: true
+          required:
+            - amount
+            - commission
+            - total
+            - equityChange
+            - initialMarginChange
+            - maintenanceMarginChange
+            - positionChange
+            - warnings
+            - error
+        preparedAt:
+          type: string
+          format: date-time
+        taxPreflight:
+          $ref: "#/components/schemas/JsonObject"
+        optionContract:
+          oneOf:
+            - $ref: "#/components/schemas/OptionContract"
+            - type: "null"
+        tradingSession:
+          oneOf:
+            - $ref: "#/components/schemas/TradingSession"
+            - type: "null"
+        resolvedExchange:
+          type: string
+          nullable: true
+        primaryExchange:
+          type: string
+          nullable: true
+        includeOvernight:
+          type: boolean
+          nullable: true
+        routingReason:
+          type: string
+          nullable: true
+      required:
+        - accountId
+        - mode
+        - symbol
+        - assetClass
+        - resolvedContractId
+        - clientOrderId
+        - orderFingerprint
+        - orderPayload
+        - whatIf
+        - preparedAt
+        - taxPreflight
+        - optionContract
+
     OrderPreview:
       type: object
       properties:
@@ -10746,6 +10865,42 @@ components:
             $ref: "#/components/schemas/JsonObject"
       required:
         - ibkrOrders
+
+    IbkrOrderReplyRequest:
+      type: object
+      properties:
+        taxPreflightToken:
+          type: string
+        challengeId:
+          type: string
+        confirmed:
+          type: boolean
+      required:
+        - taxPreflightToken
+        - challengeId
+        - confirmed
+
+    IbkrOrderReplyResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [declined, warning, acknowledged]
+        challengeId:
+          type: string
+        messages:
+          type: array
+          items:
+            type: string
+        expiresAt:
+          type: string
+          format: date-time
+        orderId:
+          type: string
+        orderStatus:
+          type: string
+      required:
+        - status
 
     SubmitIbkrOrdersResponse:
       type: object

@@ -254,6 +254,7 @@ export function classifyApiRoute(input: {
   if (
     path === "/orders/submit" ||
     path === "/orders/preview" ||
+    path === "/orders/reply" ||
     (path === "/tax/profile" && method === "PUT") ||
     (path === "/tax/reserve/plan" && method === "POST") ||
     /^\/accounts\/[^/]+\/tax\/preflight$/.test(path) ||

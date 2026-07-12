@@ -127,3 +127,10 @@ test("runtime defaults cannot authorize raw submission or replacement", async ()
     rejectsWithCode("ibkr_order_mode_required"),
   );
 });
+
+test("live submission requires a prepared order intent", async () => {
+  await assert.rejects(
+    placeOrder(baseOrder()),
+    rejectsWithCode("ibkr_order_intent_required"),
+  );
+});

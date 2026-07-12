@@ -122,6 +122,9 @@ import type {
   GexSnapshotsResponse,
   HealthStatus,
   IbkrOAuthReadinessResponse,
+  IbkrOrderPreview,
+  IbkrOrderReplyRequest,
+  IbkrOrderReplyResponse,
   IbkrPortalConnectResponse,
   IbkrPortalDisconnectResponse,
   IbkrPortalReadinessResponse,
@@ -6833,9 +6836,9 @@ export const getPreviewOrderUrl = () => {
   return `/api/orders/preview`
 }
 
-export const previewOrder = async (placeOrderRequest: PlaceOrderRequest, options?: RequestInit): Promise<OrderPreview> => {
+export const previewOrder = async (placeOrderRequest: PlaceOrderRequest, options?: RequestInit): Promise<IbkrOrderPreview> => {
 
-  return customFetch<OrderPreview>(getPreviewOrderUrl(),
+  return customFetch<IbkrOrderPreview>(getPreviewOrderUrl(),
   {
     ...options,
     method: 'POST',
@@ -6891,6 +6894,77 @@ export const usePreviewOrder = <TError = ErrorType<unknown>,
         TContext
       > => {
       return useMutation(getPreviewOrderMutationOptions(options));
+    }
+
+/**
+ * @summary Continue or decline one pending IBKR order warning
+ */
+export const getContinueIbkrOrderReplyUrl = () => {
+
+
+
+
+  return `/api/orders/reply`
+}
+
+export const continueIbkrOrderReply = async (ibkrOrderReplyRequest: IbkrOrderReplyRequest, options?: RequestInit): Promise<IbkrOrderReplyResponse> => {
+
+  return customFetch<IbkrOrderReplyResponse>(getContinueIbkrOrderReplyUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      ibkrOrderReplyRequest,)
+  }
+);}
+
+
+
+
+export const getContinueIbkrOrderReplyMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof continueIbkrOrderReply>>, TError,{data: BodyType<IbkrOrderReplyRequest>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof continueIbkrOrderReply>>, TError,{data: BodyType<IbkrOrderReplyRequest>}, TContext> => {
+
+const mutationKey = ['continueIbkrOrderReply'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof continueIbkrOrderReply>>, {data: BodyType<IbkrOrderReplyRequest>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  continueIbkrOrderReply(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ContinueIbkrOrderReplyMutationResult = NonNullable<Awaited<ReturnType<typeof continueIbkrOrderReply>>>
+    export type ContinueIbkrOrderReplyMutationBody = BodyType<IbkrOrderReplyRequest>
+    export type ContinueIbkrOrderReplyMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Continue or decline one pending IBKR order warning
+ */
+export const useContinueIbkrOrderReply = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof continueIbkrOrderReply>>, TError,{data: BodyType<IbkrOrderReplyRequest>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof continueIbkrOrderReply>>,
+        TError,
+        {data: BodyType<IbkrOrderReplyRequest>},
+        TContext
+      > => {
+      return useMutation(getContinueIbkrOrderReplyMutationOptions(options));
     }
 
 /**

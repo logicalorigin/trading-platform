@@ -3208,13 +3208,31 @@ export const PreviewOrderBody = zod.object({
   "taxAcknowledgements": zod.array(zod.string()).nullish().describe('Required acknowledgement ids returned by tax\/compliance preflight; submit every returned id when the preflight action requires acknowledgement.')
 })
 
+export const previewOrderResponseOrderFingerprintRegExp = new RegExp('^[a-f0-9]{64}$');
+
+
 export const PreviewOrderResponse = zod.object({
   "accountId": zod.string(),
   "mode": zod.enum(['shadow', 'live']),
   "symbol": zod.string(),
   "assetClass": zod.enum(['equity', 'option']),
   "resolvedContractId": zod.number(),
+  "clientOrderId": zod.string(),
+  "orderFingerprint": zod.string().regex(previewOrderResponseOrderFingerprintRegExp),
   "orderPayload": zod.record(zod.string(), zod.unknown()),
+  "whatIf": zod.object({
+  "amount": zod.string().nullable(),
+  "commission": zod.string().nullable(),
+  "total": zod.string().nullable(),
+  "equityChange": zod.string().nullable(),
+  "initialMarginChange": zod.string().nullable(),
+  "maintenanceMarginChange": zod.string().nullable(),
+  "positionChange": zod.string().nullable(),
+  "warnings": zod.array(zod.string()),
+  "error": zod.string().nullable()
+}),
+  "preparedAt": zod.coerce.date(),
+  "taxPreflight": zod.record(zod.string(), zod.unknown()),
   "optionContract": zod.union([zod.object({
   "ticker": zod.string(),
   "underlying": zod.string(),
@@ -3231,6 +3249,25 @@ export const PreviewOrderResponse = zod.object({
   "primaryExchange": zod.string().nullish(),
   "includeOvernight": zod.boolean().nullish(),
   "routingReason": zod.string().nullish()
+})
+
+
+/**
+ * @summary Continue or decline one pending IBKR order warning
+ */
+export const ContinueIbkrOrderReplyBody = zod.object({
+  "taxPreflightToken": zod.string(),
+  "challengeId": zod.string(),
+  "confirmed": zod.boolean()
+})
+
+export const ContinueIbkrOrderReplyResponse = zod.object({
+  "status": zod.enum(['declined', 'warning', 'acknowledged']),
+  "challengeId": zod.string().optional(),
+  "messages": zod.array(zod.string()).optional(),
+  "expiresAt": zod.coerce.date().optional(),
+  "orderId": zod.string().optional(),
+  "orderStatus": zod.string().optional()
 })
 
 
