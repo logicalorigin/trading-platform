@@ -128,7 +128,14 @@ const SparkCell = ({ symbol }) => {
   if (!data.length) {
     return <span style={{ color: CSS_COLOR.textMuted, fontSize: textSize("bodyStrong") }}>—</span>;
   }
-  return <MicroSparkline data={data} width={56} height={18} />;
+  return (
+    <MicroSparkline
+      data={data}
+      width={56}
+      height={18}
+      ariaLabel={`${symbol} price trend`}
+    />
+  );
 };
 
 // Net γ cell. The value comes from one bulk `/api/gex-snapshots` query for the
@@ -169,6 +176,7 @@ const FlowHeatCell = ({ row }) => {
         width={64}
         height={12}
         showNumber={false}
+        ariaLabel={`Options premium ${Math.round(row.bullShare * 100)}% calls, ${Math.round((1 - row.bullShare) * 100)}% puts`}
       />
       <span style={{ color: tone, fontVariantNumeric: "tabular-nums", fontSize: textSize("metric") }}>
         {row.net >= 0 ? "▲" : "▼"} {fmtM(Math.abs(row.net))}

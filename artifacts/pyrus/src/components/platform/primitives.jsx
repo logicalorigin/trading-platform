@@ -173,6 +173,7 @@ const MicroSparklineBase = ({
     typeof resolvedPointColors[index] === "string"
       ? resolvedPointColors[index]
       : null;
+  const resolvedAriaHidden = ariaHidden ?? !ariaLabel;
   const toY = (value) => {
     if (range === 0) {
       return height / 2;
@@ -220,9 +221,9 @@ const MicroSparklineBase = ({
       viewBox={`0 0 ${width} ${height}`}
       preserveAspectRatio="none"
       className={className}
-      aria-hidden={ariaHidden}
-      aria-label={ariaLabel || undefined}
-      role={ariaLabel ? "img" : undefined}
+      aria-hidden={resolvedAriaHidden}
+      aria-label={resolvedAriaHidden ? undefined : ariaLabel || undefined}
+      role={!resolvedAriaHidden && ariaLabel ? "img" : undefined}
       style={{ display: "block", ...style }}
     >
       {lineRuns.map((run, index) => (
@@ -758,6 +759,7 @@ export const Pill = ({
     : { background: "transparent", border: "none", color: CSS_COLOR.textSec };
   return (
     <button
+      type="button"
       {...buttonProps}
       onClick={onClick}
       className={onClick ? "ra-interactive ra-touch-target" : undefined}
@@ -2041,17 +2043,23 @@ export const ThresholdHistogram = ({
   thresholdPosition = null,
   width = 96,
   height = 18,
+  ariaLabel = null,
+  ariaHidden,
 }) => {
   if (!buckets.length) return null;
   const maxCount = buckets.reduce((max, count) => Math.max(max, count), 0);
   if (maxCount === 0) return null;
   const bucketWidth = width / buckets.length;
+  const resolvedAriaHidden = ariaHidden ?? !ariaLabel;
   return (
     <svg
       width={width}
       height={height}
       viewBox={`0 0 ${width} ${height}`}
       preserveAspectRatio="none"
+      aria-hidden={resolvedAriaHidden}
+      aria-label={resolvedAriaHidden ? undefined : ariaLabel || undefined}
+      role={!resolvedAriaHidden && ariaLabel ? "img" : undefined}
       style={{ display: "block" }}
     >
       {buckets.map((count, index) => {
@@ -2101,6 +2109,7 @@ export const ScoreBar = ({
   width = 64,
   height = 14,
   showNumber = true,
+  ariaLabel = null,
 }) => {
   if (!Number.isFinite(Number(value))) {
     return (
@@ -2135,6 +2144,9 @@ export const ScoreBar = ({
   ].join(", ");
   return (
     <span
+      aria-hidden={!showNumber && !ariaLabel ? true : undefined}
+      aria-label={ariaLabel || undefined}
+      role={ariaLabel ? "img" : undefined}
       style={{
         position: "relative",
         display: "inline-block",
@@ -2335,6 +2347,7 @@ export const TableExpandableRow = ({
     <div
       role="button"
       tabIndex={0}
+      aria-expanded={Boolean(expanded)}
       className={rowClassName}
       onClick={onToggle}
       onKeyDown={(event) => {

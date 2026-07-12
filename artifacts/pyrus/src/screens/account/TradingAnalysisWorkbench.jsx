@@ -1041,7 +1041,13 @@ const OutcomeDistribution = ({ trades, currency, maskValues }) => {
   const thresholdPosition = Math.min(1, Math.max(0, (0 - min) / span));
   return (
     <div style={{ display: "grid", gap: sp(6), placeItems: "center" }}>
-      <ThresholdHistogram buckets={buckets} thresholdPosition={thresholdPosition} width={220} height={54} />
+      <ThresholdHistogram
+        buckets={buckets}
+        thresholdPosition={thresholdPosition}
+        width={220}
+        height={54}
+        ariaLabel="Trade outcome distribution"
+      />
       <div style={{ display: "flex", justifyContent: "space-between", width: "100%", color: CSS_COLOR.textDim, fontSize: textSize("caption"), fontFamily: T.data }}>
         <span>{formatAccountMoney(min, currency, true, maskValues)}</span>
         <span>0</span>

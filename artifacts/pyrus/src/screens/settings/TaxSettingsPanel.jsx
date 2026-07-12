@@ -13,8 +13,8 @@ import {
 } from "@workspace/api-client-react";
 import { Button } from "../../components/ui/Button.jsx";
 import {
-  Pill,
   Select,
+  StatusPill,
   SurfacePanel,
   TextField,
 } from "../../components/platform/primitives.jsx";
@@ -98,12 +98,12 @@ const draftToPayload = (draft) => ({
 const statusTone = (status) => {
   const normalized = String(status || "").toLowerCase();
   if (normalized === "available" || normalized === "verified" || normalized === "ready") {
-    return "green";
+    return CSS_COLOR.green;
   }
   if (normalized === "failed_validation") {
-    return "red";
+    return CSS_COLOR.red;
   }
-  return "amber";
+  return CSS_COLOR.amber;
 };
 
 const fieldGridStyle = (isSingleColumn = false) => ({
@@ -330,7 +330,7 @@ export default function TaxSettingsPanel({ enabled = true, isPhone = false }) {
       <SurfacePanel
         title="Tax Profile"
         subtitle="Connected taxable accounts only"
-        rightRail={<Pill tone={stateReady ? "green" : "amber"}>{stateReady ? "state ready" : "state unavailable"}</Pill>}
+        rightRail={<StatusPill color={stateReady ? CSS_COLOR.green : CSS_COLOR.amber}>{stateReady ? "state ready" : "state unavailable"}</StatusPill>}
         action={
           <Button
             size="sm"
@@ -429,7 +429,7 @@ export default function TaxSettingsPanel({ enabled = true, isPhone = false }) {
       <SurfacePanel
         title="State Rule Packs"
         subtitle="Fail-closed until every jurisdiction is source verified"
-        rightRail={<Pill tone={stateReady ? "green" : "amber"}>{stateReady ? "verified" : "unavailable"}</Pill>}
+        rightRail={<StatusPill color={stateReady ? CSS_COLOR.green : CSS_COLOR.amber}>{stateReady ? "verified" : "unavailable"}</StatusPill>}
       >
         <div style={{ display: "grid", gap: sp(8), minWidth: 0 }}>
           <div style={fieldGridStyle(isPhone)}>
@@ -454,7 +454,7 @@ export default function TaxSettingsPanel({ enabled = true, isPhone = false }) {
       <SurfacePanel
         title="Tax Reserve"
         subtitle="Virtual tracking now, broker purchase beta later"
-        rightRail={<Pill tone={statusTone(reserveCapability.reason)}>{reserveCapability.supportsBrokerReserve ? "broker capable" : "virtual"}</Pill>}
+        rightRail={<StatusPill color={statusTone(reserveCapability.reason)}>{reserveCapability.supportsBrokerReserve ? "broker capable" : "virtual"}</StatusPill>}
         action={
           <Button
             size="sm"

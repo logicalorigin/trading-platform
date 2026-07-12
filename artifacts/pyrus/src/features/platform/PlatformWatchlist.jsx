@@ -669,6 +669,7 @@ const WatchlistRow = memo(
                 pointColors={sparklinePointColors}
                 width={TABLE_SPARKLINE_COMPACT_WIDTH}
                 height={TABLE_SPARKLINE_COMPACT_HEIGHT}
+                ariaHidden
                 style={SPARKLINE_FILL_STYLE}
               />
             </span>
@@ -850,6 +851,7 @@ const WatchlistRow = memo(
                 pointColors={sparklinePointColors}
                 width={TABLE_SPARKLINE_WIDTH}
                 height={TABLE_SPARKLINE_HEIGHT}
+                ariaHidden
                 style={SPARKLINE_FILL_STYLE}
               />
             </span>

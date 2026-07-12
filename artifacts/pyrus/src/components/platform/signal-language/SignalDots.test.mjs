@@ -3,8 +3,11 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import React from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 
 import {
+  SignalDots,
   resolveSignalDotGlyph,
   resolveSignalDotHydrationMeta,
 } from "./SignalDots.jsx";
@@ -203,4 +206,33 @@ test("glyph: a missing cell is a neutral attention marker", () => {
   assert.equal(glyph.kind, "neutral");
   assert.equal(glyph.attention, true);
   assert.equal(glyph.tone, NEUTRAL_TONE);
+});
+
+test("only directional signal dots render as actionable targets", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(SignalDots, {
+      timeframes: ["1m", "5m"],
+      onSelect: () => {},
+      statesByTimeframe: {
+        "1m": {
+          status: "ok",
+          currentSignalDirection: "buy",
+          currentSignalAt: "2026-06-09T18:10:00.000Z",
+          latestBarAt: "2026-06-09T18:15:00.000Z",
+          fresh: true,
+        },
+        "5m": {
+          status: "pending",
+          latestBarAt: "2026-06-09T18:15:00.000Z",
+        },
+      },
+    }),
+  );
+
+  assert.equal(markup.match(/<button/g)?.length, 1);
+  assert.match(
+    markup,
+    /<button[^>]*data-timeframe="1m"[^>]*class="[^"]*ra-touch-target-y[^"]*"/,
+  );
+  assert.match(markup, /<span[^>]*data-timeframe="5m"[^>]*role="img"/);
 });

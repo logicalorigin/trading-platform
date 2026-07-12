@@ -208,6 +208,7 @@ export const SignalDots = ({
           ? "stale"
           : "";
       const glyph = resolveSignalDotGlyph(state);
+      const interactive = Boolean(onSelect && hasDirection);
       const dotBorder = hydrationMeta.attention
         ? `2px solid ${CSS_COLOR.amber}`
         : showLabels
@@ -253,9 +254,9 @@ export const SignalDots = ({
         alignItems: "center",
         justifyContent: "center",
         boxSizing: "border-box",
-        width: dim(8),
+        width: dim(interactive ? 24 : 8),
         height: dim(8),
-        minWidth: dim(8),
+        minWidth: dim(interactive ? 24 : 8),
         border: "none",
         background: "transparent",
         color: glyph.tone,
@@ -278,10 +279,12 @@ export const SignalDots = ({
           hydrationMeta.attention ? "ra-signal-dot-attention" : null,
           hydrationMeta.stale ? "ra-signal-dot-stale" : null,
           hydrationMeta.unhydrated ? "ra-signal-dot-unhydrated" : null,
+          interactive ? "ra-touch-target-y" : null,
         ]
           .filter(Boolean)
           .join(" "),
         "aria-label": attentionLabel ? `${label} - ${attentionLabel}` : label,
+        role: interactive ? undefined : "img",
         style: showLabels ? dotStyle : glyphWrapperStyle,
       };
 
@@ -308,15 +311,13 @@ export const SignalDots = ({
             .filter(Boolean)
             .join(" - ")}
         >
-          {onSelect ? (
+          {interactive ? (
             <button
               type="button"
               {...triggerProps}
               onClick={(event) => {
                 event.stopPropagation();
-                if (hasDirection) {
-                  onSelect(state);
-                }
+                onSelect(state);
               }}
             >
               {glyphChild}
