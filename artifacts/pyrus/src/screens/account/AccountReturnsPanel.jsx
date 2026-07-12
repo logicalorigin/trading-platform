@@ -146,7 +146,6 @@ const calendarMoneyOrDash = (value, currency, maskValues) =>
 
 const calendarPnlSourceLabel = (day) => {
   if (!day) return "—";
-  if (day.pnlSource === "account-summary") return "Account page";
   return day.pnlSource === "total" ? "NAV total" : "realized fallback";
 };
 
@@ -710,7 +709,6 @@ const CalendarSummary = ({ summary, currency, maskValues, calendarStyle, compact
 const DailyPnlCalendar = ({
   trades = [],
   equityPoints = [],
-  dailyPnl = null,
   currency,
   maskValues,
   isPhone = false,
@@ -735,22 +733,20 @@ const DailyPnlCalendar = ({
       buildMonthPnlCalendarModel({
         trades,
         equityPoints,
-        dailyPnl,
         monthDate: visibleMonth,
         today,
       }),
-    [trades, equityPoints, dailyPnl, visibleMonth, today],
+    [trades, equityPoints, visibleMonth, today],
   );
   const yearModel = useMemo(
     () =>
       buildYearPnlCalendarModel({
         trades,
         equityPoints,
-        dailyPnl,
         year: visibleYear,
         today,
       }),
-    [trades, equityPoints, dailyPnl, visibleYear, today],
+    [trades, equityPoints, visibleYear, today],
   );
   const activeLabel = view === "month" ? monthModel.label : yearModel.label;
   const activeSummary = view === "month" ? monthModel.summary : yearModel.summary;
@@ -936,12 +932,10 @@ export const AccountReturnsPanel = ({
   isPhone = false,
   tradesData = null,
   equityPoints = null,
-  dailyPnl = null,
 }) => (
   <DailyPnlCalendar
     trades={tradesData?.trades || []}
     equityPoints={equityPoints || []}
-    dailyPnl={dailyPnl}
     currency={currency}
     maskValues={maskValues}
     isPhone={isPhone}

@@ -167,10 +167,9 @@ test("account positions trading actions use broker-safe account context", () => 
   );
 });
 
-// Owner ruling 2026-07-09: day P&L on the account screen means the positions-table
-// number (open positions' day change). The hero pill must read the SAME source as
-// the P&L calendar — on 2026-07-09 the backend equity-history metric showed -$3.7K
-// while the positions table showed +$2.0K, and the pill must never diverge again.
+// Owner ruling 2026-07-09: the account hero Day P&L means the positions-table
+// number (open positions' day change). The calendar has a separate whole-account
+// contract so realized exits and transfer-adjusted NAV remain continuous at midnight.
 test("hero pill day P&L reads the positions-table day change, not the equity metric", () => {
   assert.match(
     source,
@@ -187,6 +186,14 @@ test("hero pill day P&L reads the positions-table day change, not the equity met
     /summary=\{heroSummaryData\}/,
     "AccountHeroBlock must receive the overridden summary",
   );
+});
+
+test("P&L calendar does not receive the open-position hero metric", () => {
+  const returnsPanel = source.match(/<AccountReturnsPanel[\s\S]*?\/>/)?.[0] ?? "";
+
+  assert.ok(returnsPanel, "Missing AccountReturnsPanel in AccountScreen");
+  assert.doesNotMatch(returnsPanel, /dailyPnl=/);
+  assert.match(returnsPanel, /equityPoints=\{returnsCalendarEquityPoints\}/);
 });
 
 test("hero position Day percent uses summed prior-close bases", () => {

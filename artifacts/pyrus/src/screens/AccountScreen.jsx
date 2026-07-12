@@ -2118,11 +2118,10 @@ const AccountScreenInner = ({
       positionsQueryForDisplay.data,
     ],
   );
-  // Owner ruling (2026-07-09, Riley): day P&L on this screen means the positions-table
-  // number — the open positions' day change — NOT the equity-history NLV move the
-  // backend summary metric carries (that one also folds in realized P&L from exited
-  // positions; the two read +$2.0K vs -$3.7K on 2026-07-09). The hero pill must read
-  // the same source as the P&L calendar so the two surfaces can never disagree.
+  // Owner ruling (2026-07-09, Riley): the hero Day P&L is the positions-table
+  // number — open positions' day change — rather than whole-account NLV movement.
+  // The calendar intentionally uses transfer-adjusted equity history so it retains
+  // one realized + unrealized whole-account contract across today and past days.
   const heroSummaryData = useMemo(() => {
     const openDayPnl = finiteAccountNumber(
       livePositionsDayPnl?.openPositionsDayPnl,
@@ -2346,7 +2345,6 @@ const AccountScreenInner = ({
                 maskValues={maskAccountValues}
                 tradesData={returnsCalendarTradesData}
                 equityPoints={returnsCalendarEquityPoints}
-                dailyPnl={livePositionsDayPnl}
                 isPhone={accountIsPhone}
               />
             </DeferredPanelSuspense>
