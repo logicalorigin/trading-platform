@@ -129,7 +129,7 @@ export function useValueFlash(value, options = {}) {
 
 export function useListMotionKeys(items, getKey) {
   const previousKeysRef = useRef(new Set());
-  return useMemo(() => {
+  const [keyed, nextKeys] = useMemo(() => {
     const previousKeys = previousKeysRef.current;
     const nextKeys = new Set();
     const keyed = (Array.isArray(items) ? items : []).map((item, index) => {
@@ -140,7 +140,12 @@ export function useListMotionKeys(items, getKey) {
         isNew: !previousKeys.has(key),
       };
     });
-    previousKeysRef.current = nextKeys;
-    return keyed;
+    return [keyed, nextKeys];
   }, [getKey, items]);
+
+  useEffect(() => {
+    previousKeysRef.current = nextKeys;
+  }, [nextKeys]);
+
+  return keyed;
 }
