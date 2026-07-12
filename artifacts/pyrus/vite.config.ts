@@ -413,14 +413,13 @@ export default defineConfig({
           }
 
           // Neural loading-screen engine — only ever reached through the
-          // React.lazy boundary in NeuralCanvas, so keep it (and its runtime
-          // geometry sampler) out of the eager boot path. NeuralBootOverlay and
+          // React.lazy boundary in NeuralCanvas, so keep it out of the eager
+          // boot path. NeuralBootOverlay and
           // webglCapability deliberately stay eager (App.tsx imports them) and
           // are NOT matched here.
           if (
             normalizedId.includes("/src/components/neural/neural-core/") ||
-            normalizedId.includes("/src/components/neural/NeuralCanvas") ||
-            normalizedId.includes("/src/lib/neural-geometry")
+            normalizedId.includes("/src/components/neural/NeuralCanvas")
           ) {
             return "neural";
           }

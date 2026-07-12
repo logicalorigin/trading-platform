@@ -222,8 +222,9 @@ export const SignalDots = ({
         justifyContent: "center",
         boxSizing: "border-box",
         width: showLabels ? "auto" : dim(8),
-        minWidth: showLabels ? dim(18) : dim(8),
-        height: showLabels ? dim(14) : dim(8),
+        minWidth: showLabels ? dim(interactive ? 24 : 18) : dim(8),
+        height: showLabels ? dim(interactive ? 24 : 14) : dim(8),
+        minHeight: showLabels ? dim(interactive ? 24 : 14) : dim(8),
         borderRadius: showLabels ? dim(RADII.pill) : "50%",
         border: dotBorder,
         background: hasDirection
@@ -255,8 +256,9 @@ export const SignalDots = ({
         justifyContent: "center",
         boxSizing: "border-box",
         width: dim(interactive ? 24 : 8),
-        height: dim(8),
+        height: dim(interactive ? 24 : 8),
         minWidth: dim(interactive ? 24 : 8),
+        minHeight: dim(interactive ? 24 : 8),
         border: "none",
         background: "transparent",
         color: glyph.tone,
@@ -279,7 +281,6 @@ export const SignalDots = ({
           hydrationMeta.attention ? "ra-signal-dot-attention" : null,
           hydrationMeta.stale ? "ra-signal-dot-stale" : null,
           hydrationMeta.unhydrated ? "ra-signal-dot-unhydrated" : null,
-          interactive ? "ra-touch-target-y" : null,
         ]
           .filter(Boolean)
           .join(" "),

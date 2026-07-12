@@ -14,6 +14,14 @@ const bigDirectionGlyph = readFileSync(
   ),
   "utf8",
 );
+const surfacePanel = primitives.slice(
+  primitives.indexOf("export const SurfacePanel"),
+  primitives.indexOf("export const ThresholdHistogram"),
+);
+const expandableRow = primitives.slice(
+  primitives.indexOf("export const TableExpandableRow"),
+  primitives.indexOf("export const CardTitle"),
+);
 
 test("OS and app reduced-motion preferences override inline control transitions", () => {
   assert.match(
@@ -28,7 +36,11 @@ test("OS and app reduced-motion preferences override inline control transitions"
 
 test("unit-39 inline motion surfaces have targeted reduced-motion hooks", () => {
   assert.match(primitives, /className="ra-loading-spinner"/);
-  assert.match(primitives, /className="ra-expandable-row-content"/);
+  assert.doesNotMatch(surfacePanel, /className="ra-expandable-row-content"/);
+  assert.match(
+    expandableRow,
+    /className="ra-expandable-row-content"[\s\S]*?maxHeight:/,
+  );
   assert.match(bigDirectionGlyph, /className="ra-big-direction-freshness"/);
 
   assert.match(

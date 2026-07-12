@@ -10,6 +10,7 @@ const card = read("./card.tsx");
 const dropdown = read("./dropdown-menu.tsx");
 const popover = read("./popover.tsx");
 const tooltip = read("./tooltip.tsx");
+const pyrusPackage = JSON.parse(read("../../../package.json"));
 
 test("shared UI modules expose only primitives with current consumers", () => {
   for (const deadName of ["CardAction", "CardFooter"]) {
@@ -46,4 +47,5 @@ test("the custom tooltip has no inert Radix provider surface", () => {
   ]) {
     assert.doesNotMatch(tooltip, new RegExp(`\\b${deadName}\\b`));
   }
+  assert.equal(pyrusPackage.dependencies?.["@radix-ui/react-tooltip"], undefined);
 });

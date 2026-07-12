@@ -523,7 +523,7 @@ const getSignalDrilldownId = (symbol) =>
 
 const isNestedInteractiveTarget = (event) => {
   const interactive = event.target?.closest?.(
-    "button,a,input,select,textarea,[role='button'],[role='menuitem']",
+    "button,a,input,select,textarea,[role='button'],[role='menuitem'],[tabindex]",
   );
   return Boolean(interactive && interactive !== event.currentTarget);
 };
@@ -3988,20 +3988,6 @@ export default function SignalsScreen({
     [onSelectSymbol],
   );
 
-  const handleRowKeyDown = useCallback(
-    (event, row) => {
-      if (
-        isNestedInteractiveTarget(event) ||
-        (event.key !== "Enter" && event.key !== " ")
-      ) {
-        return;
-      }
-      event.preventDefault();
-      handleRowSelect(row);
-    },
-    [handleRowSelect],
-  );
-
   const patchSettingsDraft = useCallback((patch) => {
     setSettingsDraft((current) => ({
       ...current,
@@ -4834,16 +4820,10 @@ export default function SignalsScreen({
                       : "inset 3px 0 0 transparent";
                   const flippedRow = flippedSignalSymbols.has(row.symbol);
                   return {
-                    role: "button",
-                    tabIndex: 0,
                     onClick: (event) => {
                       if (isNestedInteractiveTarget(event)) return;
                       handleRowSelect(row);
                     },
-                    onKeyDown: (event) => handleRowKeyDown(event, row),
-                    "aria-controls": getSignalDrilldownId(row.symbol),
-                    "aria-expanded": expandedRow ? "true" : "false",
-                    "aria-selected": activeRow ? "true" : "false",
                     "data-signal-direction": row.direction || "none",
                     "data-signal-flipped": flippedRow ? "true" : "false",
                     "data-matrix-hydrated-count": SIGNALS_TABLE_TIMEFRAMES.filter(

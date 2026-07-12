@@ -6,6 +6,10 @@ const source = readFileSync(
   new URL("./dynamicImport.ts", import.meta.url),
   "utf8",
 );
+const viteConfig = readFileSync(
+  new URL("../../vite.config.ts", import.meta.url),
+  "utf8",
+);
 
 test("reload branch rejects after a bounded grace window instead of hanging forever", () => {
   // Root cause of the stuck loader spinner: the reload branch used to return a
@@ -242,4 +246,13 @@ test("the timeout race is applied to every loader attempt", () => {
     /const DEFAULT_DYNAMIC_IMPORT_TIMEOUT_MS = 25_000;/,
     "a generous default stall timeout must be defined",
   );
+});
+
+test("the neural chunk rule does not reference the retired geometry sampler", () => {
+  const neuralChunkRule = viteConfig.slice(
+    viteConfig.indexOf("// Neural loading-screen engine"),
+    viteConfig.indexOf('return "neural"') + 'return "neural"'.length,
+  );
+
+  assert.doesNotMatch(neuralChunkRule, /geometry sampler|neural-geometry/);
 });

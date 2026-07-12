@@ -167,6 +167,7 @@ const FlowHeatCell = ({ row }) => {
     return <span style={{ color: CSS_COLOR.textMuted, fontSize: textSize("bodyStrong") }}>—</span>;
   }
   const tone = toneForDirectionalIntent(row.net >= 0 ? "bullish" : "bearish");
+  const callPercent = Math.round(row.bullShare * 100);
   return (
     <div style={{ display: "flex", alignItems: "center", gap: sp("8px"), minWidth: 0 }}>
       <ScoreBar
@@ -176,7 +177,7 @@ const FlowHeatCell = ({ row }) => {
         width={64}
         height={12}
         showNumber={false}
-        ariaLabel={`Options premium ${Math.round(row.bullShare * 100)}% calls, ${Math.round((1 - row.bullShare) * 100)}% puts`}
+        ariaLabel={`Options premium ${callPercent}% calls, ${100 - callPercent}% puts`}
       />
       <span style={{ color: tone, fontVariantNumeric: "tabular-nums", fontSize: textSize("metric") }}>
         {row.net >= 0 ? "▲" : "▼"} {fmtM(Math.abs(row.net))}

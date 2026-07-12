@@ -34,7 +34,7 @@ export const DiagPanel = ({
     : null;
 
   if (!showExpanded) {
-    return (
+    const collapsedButton = (
       <button
         type="button"
         data-testid={`algo-diag-panel-${title.toLowerCase().replace(/\s+/g, "-")}`}
@@ -76,6 +76,16 @@ export const DiagPanel = ({
         ) : null}
       </button>
     );
+    return panelFailurePoint ? (
+      <FailurePointTooltip
+        point={panelFailurePoint}
+        side="top"
+        align="center"
+        compact
+      >
+        {collapsedButton}
+      </FailurePointTooltip>
+    ) : collapsedButton;
   }
 
   const headerStyle = {
@@ -109,6 +119,16 @@ export const DiagPanel = ({
       ) : null}
     </>
   );
+  const headerButton = (
+    <button
+      type="button"
+      onClick={onToggle}
+      className="ra-interactive"
+      style={headerStyle}
+    >
+      {headerContent}
+    </button>
+  );
 
   return (
     <div
@@ -124,15 +144,17 @@ export const DiagPanel = ({
     >
       {readOnly ? (
         <div style={headerStyle}>{headerContent}</div>
-      ) : (
-        <button
-          type="button"
-          onClick={onToggle}
-          className="ra-interactive"
-          style={headerStyle}
+      ) : panelFailurePoint ? (
+        <FailurePointTooltip
+          point={panelFailurePoint}
+          side="top"
+          align="center"
+          compact
         >
-          {headerContent}
-        </button>
+          {headerButton}
+        </FailurePointTooltip>
+      ) : (
+        headerButton
       )}
       {rows && rows.length ? (
         <div style={{ display: "grid", gap: sp(5), minWidth: 0 }}>

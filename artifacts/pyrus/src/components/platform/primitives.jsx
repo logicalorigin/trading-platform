@@ -256,6 +256,69 @@ const MicroSparklineBase = ({
 // SVG path recompute when this sparkline's props are referentially unchanged.
 export const MicroSparkline = memo(MicroSparklineBase);
 
+/**
+ * RowSparkValue — compact inline row: [value] [delta?] [MicroSparkline].
+ * Kept as the documented composition surface for dense market/list rows.
+ */
+export const RowSparkValue = ({
+  value,
+  delta,
+  sparklineData,
+  sparklineWidth = 44,
+  sparklineHeight = 18,
+  positive = null,
+  align = "end",
+  className,
+  style,
+}) => (
+  <span
+    className={className}
+    style={{
+      display: "inline-flex",
+      alignItems: "center",
+      gap: sp(6),
+      minWidth: 0,
+      justifyContent: align === "start" ? "flex-start" : "flex-end",
+      fontFamily: T.sans,
+      fontVariantNumeric: "tabular-nums",
+      ...style,
+    }}
+  >
+    {value != null ? (
+      <span
+        style={{
+          color: CSS_COLOR.text,
+          fontSize: textSize("paragraph"),
+          fontWeight: FONT_WEIGHTS.medium,
+          whiteSpace: "nowrap",
+        }}
+      >
+        {value}
+      </span>
+    ) : null}
+    {delta != null ? (
+      <span
+        style={{
+          color: CSS_COLOR.textDim,
+          fontSize: textSize("body"),
+          fontWeight: FONT_WEIGHTS.medium,
+          whiteSpace: "nowrap",
+        }}
+      >
+        {delta}
+      </span>
+    ) : null}
+    {sparklineData ? (
+      <MicroSparkline
+        data={sparklineData}
+        width={sparklineWidth}
+        height={sparklineHeight}
+        positive={positive}
+      />
+    ) : null}
+  </span>
+);
+
 const finiteGaugeNumber = (value) => {
   const numeric = Number(value);
   return Number.isFinite(numeric) ? numeric : null;
@@ -684,6 +747,7 @@ export const Pill = ({
   return (
     <button
       type="button"
+      aria-pressed={onClick && active != null ? Boolean(active) : undefined}
       {...buttonProps}
       onClick={onClick}
       className={onClick ? "ra-interactive ra-touch-target" : undefined}
@@ -1878,7 +1942,6 @@ export const SurfacePanel = ({
     }}
   >
     <div
-      className="ra-expandable-row-content"
       style={{
         position: "relative",
         display: "flex",
@@ -2299,6 +2362,7 @@ export const TableExpandableRow = ({
       {row}
     </div>
     <div
+      className="ra-expandable-row-content"
       style={{
         overflow: "hidden",
         maxHeight: expanded ? expandedHeight : 0,

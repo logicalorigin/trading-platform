@@ -945,7 +945,7 @@ export const AlgoPipelineOverview = ({
         const failurePoint = alarmStatus
           ? buildPipelineStageFailurePoint({ stage, leak })
           : null;
-        return (
+        const stageButton = (
           <button
             key={stage.id}
             type="button"
@@ -1074,6 +1074,17 @@ export const AlgoPipelineOverview = ({
             )}
           </button>
         );
+        return failurePoint ? (
+          <FailurePointTooltip
+            key={stage.id}
+            point={failurePoint}
+            side="top"
+            align="center"
+            compact
+          >
+            {stageButton}
+          </FailurePointTooltip>
+        ) : stageButton;
       })}
     </div>
   );

@@ -23,6 +23,22 @@ test("actionable pills do not submit surrounding forms", () => {
   assert.match(actionMarkup, /^<button[^>]*type="button"/);
 });
 
+test("active actionable pills expose their pressed state", () => {
+  const activeMarkup = render(Pill, {
+    active: true,
+    children: "Favorites",
+    onClick: () => {},
+  });
+  const inactiveMarkup = render(Pill, {
+    active: false,
+    children: "Favorites",
+    onClick: () => {},
+  });
+
+  assert.match(activeMarkup, /aria-pressed="true"/);
+  assert.match(inactiveMarkup, /aria-pressed="false"/);
+});
+
 test("expandable rows expose their current state", () => {
   const markup = render(TableExpandableRow, {
     expanded: true,

@@ -14,15 +14,23 @@ type AppTooltipProps = {
   contentClassName?: string
 }
 
-const isDisabledDomButton = (
-  children: React.ReactNode,
-): children is React.ReactElement<{
+type DisabledDomButton = React.ReactElement<{
   disabled?: boolean
   style?: React.CSSProperties
-}> =>
-  React.isValidElement<{ disabled?: boolean }>(children) &&
-  children.type === "button" &&
-  Boolean(children.props.disabled)
+  children?: React.ReactNode
+}>
+
+const findDisabledDomButton = (
+  children: React.ReactNode,
+): DisabledDomButton | null => {
+  for (const child of React.Children.toArray(children)) {
+    if (!React.isValidElement<DisabledDomButton["props"]>(child)) continue
+    if (child.type === "button" && child.props.disabled) return child
+    const nestedButton = findDisabledDomButton(child.props.children)
+    if (nestedButton) return nestedButton
+  }
+  return null
+}
 
 const disabledTriggerLayoutStyle = (
   children: React.ReactElement<{ style?: React.CSSProperties }>,
@@ -37,9 +45,7 @@ const disabledTriggerLayoutStyle = (
     flexShrink: style.flexShrink,
     gridColumn: style.gridColumn,
     gridRow: style.gridRow,
-    height: style.height,
     justifySelf: style.justifySelf,
-    maxHeight: style.maxHeight,
     maxWidth: style.maxWidth,
     minHeight: style.minHeight,
     minWidth: style.minWidth,
@@ -389,10 +395,11 @@ function AppTooltip({
     [hideTooltip, open, showTooltip, tooltipId, updatePosition],
   )
 
-  const trigger = isDisabledDomButton(children) ? (
+  const disabledDomButton = findDisabledDomButton(children)
+  const trigger = disabledDomButton ? (
     <span
       className={cn("ra-tooltip-disabled-trigger", className)}
-      style={disabledTriggerLayoutStyle(children)}
+      style={disabledTriggerLayoutStyle(disabledDomButton)}
       tabIndex={0}
       {...tooltipTriggerProps({})}
     >

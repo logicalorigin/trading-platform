@@ -55,7 +55,6 @@
     "@dnd-kit/utilities": "^3.2.2",
     "@fontsource/ibm-plex-mono": "^5.2.7",
     "@fontsource/ibm-plex-sans": "^5.2.8",
-    "@radix-ui/react-tooltip": "^1.2.8",
     "@workspace/account-math": "workspace:*",
     "class-variance-authority": "^0.7.1",
     "hls.js": "^1.6.16",

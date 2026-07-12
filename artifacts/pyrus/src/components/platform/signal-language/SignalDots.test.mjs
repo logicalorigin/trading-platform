@@ -230,9 +230,35 @@ test("only directional signal dots render as actionable targets", () => {
   );
 
   assert.equal(markup.match(/<button/g)?.length, 1);
+  assert.doesNotMatch(markup, /ra-touch-target-y/);
   assert.match(
     markup,
-    /<button[^>]*data-timeframe="1m"[^>]*class="[^"]*ra-touch-target-y[^"]*"/,
+    /<button[^>]*data-timeframe="1m"[^>]*style="[^"]*width:24px;height:24px;min-width:24px;min-height:24px[^"]*"/,
   );
   assert.match(markup, /<span[^>]*data-timeframe="5m"[^>]*role="img"/);
+});
+
+test("labelled directional signal dots retain the 24px target floor", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(SignalDots, {
+      onSelect: () => {},
+      showLabels: true,
+      timeframes: ["1m"],
+      statesByTimeframe: {
+        "1m": {
+          status: "ok",
+          currentSignalDirection: "buy",
+          currentSignalAt: "2026-06-09T18:10:00.000Z",
+          latestBarAt: "2026-06-09T18:15:00.000Z",
+          fresh: true,
+        },
+      },
+    }),
+  );
+
+  assert.doesNotMatch(markup, /ra-touch-target-y/);
+  assert.match(
+    markup,
+    /<button[^>]*style="[^"]*min-width:24px;height:24px;min-height:24px[^"]*"/,
+  );
 });

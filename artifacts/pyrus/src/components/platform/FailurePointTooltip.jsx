@@ -211,7 +211,13 @@ export const FailurePointInlineIcon = ({
   const tone = severityTone(point.severity);
   const Icon = severityIcon(point.severity);
   return (
-    <FailurePointTooltip point={point} side={side} align={align} compact>
+    <FailurePointTooltip
+      point={point}
+      side={side}
+      align={align}
+      disabled={!focusable}
+      compact
+    >
       <span
         data-testid="failure-point-inline-icon"
         role="img"

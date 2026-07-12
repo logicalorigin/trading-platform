@@ -434,7 +434,7 @@ const StateRow = ({ label, value, tone = CSS_COLOR.textSec, onClick }) => (
 
 const MetricCard = ({ label, value, sub, severity = "info", onClick, failurePoint }) => {
   const showFailurePoint = failurePoint && failurePoint.severity !== "info";
-  return (
+  const card = (
     <button
       type="button"
       className={onClick ? "ra-interactive" : undefined}
@@ -472,6 +472,16 @@ const MetricCard = ({ label, value, sub, severity = "info", onClick, failurePoin
       />
     </button>
   );
+  return showFailurePoint ? (
+    <FailurePointTooltip
+      point={failurePoint}
+      side="bottom"
+      align="center"
+      compact
+    >
+      {card}
+    </FailurePointTooltip>
+  ) : card;
 };
 
 const Sparkline = ({ points, metricKey, subsystem }) => {
