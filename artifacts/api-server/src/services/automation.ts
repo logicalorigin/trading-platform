@@ -6,7 +6,7 @@ import {
   executionEventsTable,
   shadowPositionsTable,
 } from "@workspace/db";
-import { and, desc, eq, gte, or, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, or, sql } from "drizzle-orm";
 import { HttpError } from "../lib/errors";
 import { logger } from "../lib/logger";
 import { assertAlgoGatewayReady } from "./algo-gateway";
@@ -89,6 +89,25 @@ type ListExecutionEventsResult = {
 type ListExecutionEventsReader = (
   input: NormalizedListExecutionEventsInput,
 ) => Promise<ListExecutionEventsResult>;
+type ExecutionEventSource = "execution_events" | "automation_diagnostics";
+type ExecutionEventIdentity = {
+  source: ExecutionEventSource;
+  id: string;
+  occurredAt: Date;
+  updatedAt: Date;
+};
+type MaterializedExecutionEventRow<T> = {
+  source: ExecutionEventSource;
+  id: string;
+  value: T;
+};
+type ExecutionEventRowCache<T> = Map<
+  string,
+  {
+    version: string;
+    value: T;
+  }
+>;
 const executionEventsListCache = new Map<
   string,
   {
@@ -99,6 +118,10 @@ const executionEventsListCache = new Map<
 const executionEventsListInFlight = new Map<
   string,
   Promise<ListExecutionEventsResult>
+>();
+const executionEventRowsCache = new Map<
+  string,
+  ExecutionEventRowCache<ListExecutionEventsResult["events"][number]>
 >();
 let listExecutionEventsReaderForTests: ListExecutionEventsReader | null = null;
 let mixedDeploymentRepairInFlight: Promise<void> | null = null;
@@ -1115,15 +1138,82 @@ function executionEventsListCacheKey(
 async function readExecutionEventsUncached(
   input: NormalizedListExecutionEventsInput,
 ): Promise<ListExecutionEventsResult> {
-  const { limit, includePayload } = input;
+  // The identity query remains authoritative every two seconds. Full rows (and
+  // opted-in JSONB payloads) are materialized only when an identity is new or
+  // its occurred/updated version changed.
+  const identities = await readExecutionEventIdentities(input);
+  const cacheKey = executionEventsListCacheKey(input);
+  const materialized = await materializeExecutionEventRows(
+    identities,
+    executionEventRowsCache.get(cacheKey),
+    (changed) => readExecutionEventRows(input, changed),
+  );
+  executionEventRowsCache.set(cacheKey, materialized.cache);
+  return { events: materialized.rows };
+}
 
-  // Project scalar columns only for the default feed and OMIT the jsonb `payload`
-  // unless the caller opted in (`view=full`/includePayload). The `candidate_skipped`
-  // firehose (~236K rows/day) previously read + JSON.parse'd payload per row on the
-  // event loop only to have executionEventToResponse discard it (payload:{}); the
-  // load-bearing payload consumer is the separate cached deployment-scoped path
-  // (signal-options-automation listDeploymentEvents), not this list. Both union
-  // branches keep an identical column set so the merge stays type-compatible.
+async function readExecutionEventIdentities(
+  input: NormalizedListExecutionEventsInput,
+): Promise<ExecutionEventIdentity[]> {
+  const ledgerQuery = db
+    .select({
+      id: executionEventsTable.id,
+      occurredAt: executionEventsTable.occurredAt,
+      updatedAt: executionEventsTable.updatedAt,
+    })
+    .from(executionEventsTable)
+    .where(
+      input.deploymentId
+        ? eq(executionEventsTable.deploymentId, input.deploymentId)
+        : undefined,
+    )
+    .orderBy(desc(executionEventsTable.occurredAt))
+    .limit(input.limit);
+  const diagnosticsQuery = db
+    .select({
+      id: automationDiagnosticsTable.id,
+      occurredAt: automationDiagnosticsTable.occurredAt,
+      updatedAt: automationDiagnosticsTable.updatedAt,
+    })
+    .from(automationDiagnosticsTable)
+    .where(
+      input.deploymentId
+        ? eq(automationDiagnosticsTable.deploymentId, input.deploymentId)
+        : undefined,
+    )
+    .orderBy(desc(automationDiagnosticsTable.occurredAt))
+    .limit(input.limit);
+
+  const [ledgerRows, diagnosticRows] = await Promise.all([
+    ledgerQuery,
+    diagnosticsQuery,
+  ]);
+  const ledgerIdentities: ExecutionEventIdentity[] = ledgerRows.map((row) => ({
+    ...row,
+    source: "execution_events",
+  }));
+  const diagnosticIdentities: ExecutionEventIdentity[] = diagnosticRows.map(
+    (row) => ({ ...row, source: "automation_diagnostics" }),
+  );
+  return mergeExecutionEventRows(
+    ledgerIdentities,
+    diagnosticIdentities,
+    input.limit,
+  );
+}
+
+async function readExecutionEventRows(
+  input: NormalizedListExecutionEventsInput,
+  identities: ExecutionEventIdentity[],
+): Promise<
+  MaterializedExecutionEventRow<ListExecutionEventsResult["events"][number]>[]
+> {
+  const ledgerIds = identities
+    .filter((identity) => identity.source === "execution_events")
+    .map((identity) => identity.id);
+  const diagnosticIds = identities
+    .filter((identity) => identity.source === "automation_diagnostics")
+    .map((identity) => identity.id);
   const ledgerColumns = {
     id: executionEventsTable.id,
     deploymentId: executionEventsTable.deploymentId,
@@ -1135,7 +1225,7 @@ async function readExecutionEventsUncached(
     occurredAt: executionEventsTable.occurredAt,
     createdAt: executionEventsTable.createdAt,
     updatedAt: executionEventsTable.updatedAt,
-    ...(includePayload ? { payload: executionEventsTable.payload } : {}),
+    ...(input.includePayload ? { payload: executionEventsTable.payload } : {}),
   };
   const diagnosticsColumns = {
     id: automationDiagnosticsTable.id,
@@ -1148,48 +1238,87 @@ async function readExecutionEventsUncached(
     occurredAt: automationDiagnosticsTable.occurredAt,
     createdAt: automationDiagnosticsTable.createdAt,
     updatedAt: automationDiagnosticsTable.updatedAt,
-    ...(includePayload ? { payload: automationDiagnosticsTable.payload } : {}),
+    ...(input.includePayload
+      ? { payload: automationDiagnosticsTable.payload }
+      : {}),
   };
-
-  // Union the ledger (execution_events) with telemetry (automation_diagnostics)
-  // so the feed is identical to before the split: the cockpit/operations UI and
-  // /algo/events still surface blocked/tracked/lifecycle events. Each branch is
-  // sorted+limited independently then merge-sorted with an outer limit — correct
-  // because a row outside a branch's top-`limit` (each branch sorted desc) can
-  // never be in the global top-`limit`. Columns mirror exactly, so the two table
-  // selects are union-compatible and executionEventToResponse maps both.
-  const ledgerQuery = db
-    .select(ledgerColumns)
-    .from(executionEventsTable)
-    .where(
-      input.deploymentId
-        ? eq(executionEventsTable.deploymentId, input.deploymentId)
-        : undefined,
-    )
-    .orderBy(desc(executionEventsTable.occurredAt))
-    .limit(limit);
-  const diagnosticsQuery = db
-    .select(diagnosticsColumns)
-    .from(automationDiagnosticsTable)
-    .where(
-      input.deploymentId
-        ? eq(automationDiagnosticsTable.deploymentId, input.deploymentId)
-        : undefined,
-    )
-    .orderBy(desc(automationDiagnosticsTable.occurredAt))
-    .limit(limit);
-
   const [ledgerRows, diagnosticRows] = await Promise.all([
-    ledgerQuery,
-    diagnosticsQuery,
+    ledgerIds.length
+      ? db
+          .select(ledgerColumns)
+          .from(executionEventsTable)
+          .where(inArray(executionEventsTable.id, ledgerIds))
+      : [],
+    diagnosticIds.length
+      ? db
+          .select(diagnosticsColumns)
+          .from(automationDiagnosticsTable)
+          .where(inArray(automationDiagnosticsTable.id, diagnosticIds))
+      : [],
   ]);
-  const rows = mergeExecutionEventRows(ledgerRows, diagnosticRows, limit);
 
-  return {
-    events: rows.map((event) =>
-      executionEventToResponse(event, { includePayload }),
-    ),
-  };
+  return [
+    ...ledgerRows.map((event) => ({
+      source: "execution_events" as const,
+      id: event.id,
+      value: executionEventToResponse(event, {
+        includePayload: input.includePayload,
+      }),
+    })),
+    ...diagnosticRows.map((event) => ({
+      source: "automation_diagnostics" as const,
+      id: event.id,
+      value: executionEventToResponse(event, {
+        includePayload: input.includePayload,
+      }),
+    })),
+  ];
+}
+
+function executionEventIdentityKey(identity: {
+  source: ExecutionEventSource;
+  id: string;
+}) {
+  return `${identity.source}:${identity.id}`;
+}
+
+function executionEventIdentityVersion(identity: ExecutionEventIdentity) {
+  return `${identity.occurredAt.getTime()}:${identity.updatedAt.getTime()}`;
+}
+
+async function materializeExecutionEventRows<T>(
+  identities: ExecutionEventIdentity[],
+  previous: ExecutionEventRowCache<T> | undefined,
+  load: (
+    identities: ExecutionEventIdentity[],
+  ) => Promise<MaterializedExecutionEventRow<T>[]>,
+): Promise<{ rows: T[]; cache: ExecutionEventRowCache<T> }> {
+  const changed = identities.filter((identity) => {
+    const cached = previous?.get(executionEventIdentityKey(identity));
+    return cached?.version !== executionEventIdentityVersion(identity);
+  });
+  const loaded = new Map(
+    (changed.length ? await load(changed) : []).map((row) => [
+      executionEventIdentityKey(row),
+      row.value,
+    ]),
+  );
+  const cache: ExecutionEventRowCache<T> = new Map();
+  const rows: T[] = [];
+  for (const identity of identities) {
+    const key = executionEventIdentityKey(identity);
+    const version = executionEventIdentityVersion(identity);
+    const prior = previous?.get(key);
+    const value =
+      loaded.get(key) ?? (prior?.version === version ? prior.value : undefined);
+    if (value === undefined) {
+      continue;
+    }
+    cache.set(key, { version, value });
+    rows.push(value);
+  }
+
+  return { rows, cache };
 }
 
 export async function listExecutionEvents(
@@ -1239,9 +1368,11 @@ export const __algoAutomationInternalsForTests = {
   visibleDeploymentRows,
   readSignalTimeframe,
   mergeExecutionEventRows,
+  materializeExecutionEventRows,
   clearExecutionEventsListCacheForTests() {
     executionEventsListCache.clear();
     executionEventsListInFlight.clear();
+    executionEventRowsCache.clear();
   },
   setListExecutionEventsReaderForTests(
     reader: ListExecutionEventsReader | null,
