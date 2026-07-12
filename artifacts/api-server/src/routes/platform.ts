@@ -40,6 +40,7 @@ import {
   ListPositionsResponse,
   PlaceOrderBody,
   ContinueIbkrOrderReplyBody,
+  PreviewOrderReplacementBody,
   ReplaceOrderBody,
   CancelAccountOrderBody,
   CancelOrderBody,
@@ -77,6 +78,7 @@ import {
   addWatchlistSymbol,
   placeOrder,
   previewOrder,
+  previewOrderReplacement,
   removeWatchlistSymbol,
   reorderWatchlistSymbols,
   replaceOrder,
@@ -2141,9 +2143,23 @@ router.post("/orders/:orderId/replace", async (req, res) => {
   res.json(await replaceOrder({
     accountId: body.accountId,
     orderId: req.params.orderId,
-    order: body.order,
-    mode: body.mode === "live" ? "live" : "shadow",
+    limitPrice: body.limitPrice,
+    orderFingerprint: body.orderFingerprint,
+    taxPreflightToken: body.taxPreflightToken,
+    taxAcknowledgements: body.taxAcknowledgements,
+    mode: body.mode,
     confirm: body.confirm ?? false,
+  }));
+});
+
+router.post("/orders/:orderId/replace/preview", async (req, res) => {
+  await requireEntitlementCsrf("broker_connect")(req);
+  const body = PreviewOrderReplacementBody.parse(req.body);
+  res.json(await previewOrderReplacement({
+    accountId: body.accountId,
+    orderId: req.params.orderId,
+    limitPrice: body.limitPrice,
+    mode: body.mode,
   }));
 });
 

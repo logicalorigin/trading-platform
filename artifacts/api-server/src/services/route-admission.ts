@@ -260,6 +260,7 @@ export function classifyApiRoute(input: {
     /^\/accounts\/[^/]+\/tax\/preflight$/.test(path) ||
     /^\/tax\/reserve\/actions\/(preview|submit)$/.test(path) ||
     /^\/orders\/[^/]+\/(replace|cancel)$/.test(path) ||
+    /^\/orders\/[^/]+\/replace\/preview$/.test(path) ||
     (path === "/orders" && method === "POST") ||
     path === "/shadow/orders/preview" ||
     path === "/shadow/orders" ||

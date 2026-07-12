@@ -54,6 +54,7 @@ import {
   assertTaxPreflightForOrderSubmission,
   claimTaxPreflightIbkrReply,
   createTaxOrderPreflight,
+  loadSubmittedIbkrPreparedOrderIntent,
   recordTaxPreflightIbkrReconciliationRequired,
   recordTaxPreflightIbkrReplyRequired,
   recordTaxPreflightOrderSubmitted,
@@ -62,7 +63,14 @@ import {
 import type { TaxOrderLike } from "./tax-planning-model";
 import { getCachedStorageHealthSnapshot } from "./storage-health";
 import { requireCurrentAppUserId } from "./app-user-context";
-import { normalizeSymbol } from "../lib/values";
+import {
+  asArray,
+  asNumber,
+  asRecord,
+  asString,
+  normalizeSymbol,
+} from "../lib/values";
+import { fingerprintIbkrOrderBody } from "./ibkr-order-intent";
 import {
   type BrokerBarSnapshot,
   type BrokerOrderSnapshot,
@@ -3804,6 +3812,53 @@ function ibkrOrderToTaxOrder(
   };
 }
 
+function preparedIbkrEquityOrderInput(
+  intent: IbkrPreparedOrderIntent,
+): PlaceOrderInput {
+  const orders = asArray(intent.orderBody.orders);
+  const order = asRecord(orders[0]);
+  const side = asString(order?.side)?.trim().toUpperCase();
+  const orderType = asString(order?.orderType)?.trim().toUpperCase();
+  const tif = asString(order?.tif)?.trim().toUpperCase();
+  const quantity = asNumber(order?.quantity);
+  const limitPrice = asNumber(order?.price);
+  if (
+    orders.length !== 1 ||
+    !order ||
+    (side !== "BUY" && side !== "SELL") ||
+    orderType !== "LMT" ||
+    tif !== "DAY" ||
+    quantity !== 1 ||
+    limitPrice === null ||
+    limitPrice <= 0 ||
+    asString(order.acctId) !== intent.accountId ||
+    asString(order.cOID) !== intent.clientOrderId ||
+    String(order.secType || "").toUpperCase().endsWith(":STK") !== true ||
+    order.outsideRTH !== false ||
+    order.manualIndicator !== true
+  ) {
+    throw new HttpError(409, "The prepared IBKR equity intent is invalid.", {
+      code: "ibkr_order_intent_invalid",
+      expose: true,
+    });
+  }
+  return {
+    accountId: intent.accountId,
+    mode: "live",
+    confirm: true,
+    clientOrderId: intent.clientOrderId,
+    symbol: normalizeSymbol(asString(order.ticker) ?? ""),
+    assetClass: "equity",
+    side: side === "BUY" ? "buy" : "sell",
+    type: "limit",
+    quantity,
+    limitPrice,
+    stopPrice: null,
+    timeInForce: "day",
+    optionContract: null,
+  };
+}
+
 type PlaceOrderTaxPreflightFields = {
   taxPreflightToken?: string | null;
   taxAcknowledgements?: string[] | null;
@@ -3872,7 +3927,7 @@ export async function placeOrder(input: PlaceOrderInput) {
       });
       throw new HttpError(409, "IBKR requires explicit review of an order warning.", {
         code: "ibkr_order_warning_confirmation_required",
-        data: challenge,
+        data: { ...challenge, operation: "place" },
         expose: true,
       });
     }
@@ -3931,6 +3986,10 @@ export async function continueIbkrOrderReply(input: {
     preflightToken: input.taxPreflightToken,
     challengeId: input.challengeId,
   });
+  const preparedIntent = claimed.ibkrPreparedIntent;
+  const operation = preparedIntent?.kind === "replace" ? "replace" : "place";
+  const replacementOrderId =
+    preparedIntent?.kind === "replace" ? preparedIntent.orderId : null;
   const client = getIbkrClientPortalClient();
   let result: Awaited<ReturnType<typeof client.replyOrderWarning>>;
   try {
@@ -3961,9 +4020,17 @@ export async function continueIbkrOrderReply(input: {
   if (result.kind === "declined") {
     await recordTaxPreflightOrderSubmitted({
       preflightToken: input.taxPreflightToken,
-      submittedOrderId: "__ibkr_order_reply_declined__",
+      submittedOrderId:
+        operation === "replace"
+          ? "__ibkr_replace_reply_declined__"
+          : "__ibkr_order_reply_declined__",
     });
-    return { status: "declined" as const };
+    return {
+      status: "declined" as const,
+      operation,
+      ...(replacementOrderId ? { orderId: replacementOrderId } : {}),
+      originalOrderRemainsLive: operation === "replace",
+    };
   }
   if (result.kind === "warning") {
     const challenge = await recordTaxPreflightIbkrReplyRequired({
@@ -3971,7 +4038,12 @@ export async function continueIbkrOrderReply(input: {
       replyId: result.replyId,
       messages: result.messages,
     });
-    return { status: "warning" as const, ...challenge };
+    return {
+      status: "warning" as const,
+      ...challenge,
+      operation,
+      ...(replacementOrderId ? { orderId: replacementOrderId } : {}),
+    };
   }
   const orderId = String(
     result.acknowledgement.order_id || result.acknowledgement.orderId || "",
@@ -3981,11 +4053,51 @@ export async function continueIbkrOrderReply(input: {
       result.acknowledgement.status ||
       "Submitted",
   );
+  if (!orderId || (replacementOrderId && orderId !== replacementOrderId)) {
+    await recordTaxPreflightIbkrReconciliationRequired({
+      preflightToken: input.taxPreflightToken,
+      reason: "reply_acknowledgement_order_mismatch",
+    });
+    throw new HttpError(409, "IBKR order reply requires reconciliation.", {
+      code: "ibkr_order_reply_reconciliation_required",
+      expose: true,
+    });
+  }
+  if (preparedIntent?.kind === "replace") {
+    const verification = await client.verifyPreparedOrderReplacement({
+      accountId: preparedIntent.accountId,
+      orderId: preparedIntent.orderId,
+      mode: "live",
+      preparedOrderBody: preparedIntent.orderBody,
+    });
+    if (verification.reconciliationRequired || !verification.replacementConfirmed) {
+      await recordTaxPreflightIbkrReconciliationRequired({
+        preflightToken: input.taxPreflightToken,
+        reason: "replace_reply_post_ack_verification_incomplete",
+      });
+      return {
+        status: "acknowledged" as const,
+        operation,
+        orderId,
+        orderStatus,
+        replacementConfirmed: false,
+        reconciliationRequired: true,
+      };
+    }
+  }
   await recordTaxPreflightOrderSubmitted({
     preflightToken: input.taxPreflightToken,
     submittedOrderId: orderId,
   });
-  return { status: "acknowledged" as const, orderId, orderStatus };
+  return {
+    status: "acknowledged" as const,
+    operation,
+    orderId,
+    orderStatus,
+    ...(operation === "replace"
+      ? { replacementConfirmed: true, reconciliationRequired: false }
+      : {}),
+  };
 }
 
 export async function previewOrder(input: PlaceOrderInput) {
@@ -4042,19 +4154,231 @@ export async function submitRawOrders(input: {
   });
 }
 
+export async function previewOrderReplacement(input: {
+  accountId: string;
+  orderId: string;
+  limitPrice: number;
+  mode?: "shadow" | "live" | null;
+}) {
+  const mode = requireExplicitOrderActionMode(input.mode, "Order replacement preview");
+  if (mode !== "live") {
+    throw new HttpError(409, "IBKR replacement preview requires live mode.", {
+      code: "ibkr_broker_mutation_live_mode_required",
+      expose: true,
+    });
+  }
+  await assertIbkrGatewayTradingAvailable(input.accountId);
+  const previousIntent = await loadSubmittedIbkrPreparedOrderIntent({
+    accountId: input.accountId,
+    submittedOrderId: input.orderId,
+  });
+  const client = getIbkrClientPortalClient();
+  const preview = await client.previewOrderReplacement({
+    accountId: input.accountId,
+    orderId: input.orderId,
+    mode,
+    originalOrderBody: previousIntent.orderBody,
+    limitPrice: input.limitPrice,
+  });
+  if (preview.whatIf.error) {
+    throw new HttpError(409, "IBKR what-if rejected the prepared replacement.", {
+      code: "ibkr_replace_what_if_rejected",
+      detail: preview.whatIf.error,
+      expose: true,
+    });
+  }
+  const preparedAt = new Date().toISOString();
+  const ibkrPreparedIntent: IbkrPreparedOrderIntent = {
+    version: 2,
+    kind: "replace",
+    orderId: input.orderId,
+    previousOrderFingerprint: previousIntent.orderFingerprint,
+    accountId: input.accountId,
+    clientOrderId: preview.clientOrderId,
+    orderFingerprint: preview.orderFingerprint,
+    orderBody: { orders: [preview.orderPayload] },
+    preparedAt,
+    whatIf: preview.whatIf,
+  };
+  const preparedOrder = preparedIbkrEquityOrderInput(ibkrPreparedIntent);
+  const taxPreflight = await createTaxOrderPreflight(
+    { order: ibkrOrderToTaxOrder(preparedOrder, { taxMode: "live" }) },
+    { ibkrPreparedIntent },
+  );
+  return {
+    ...preview,
+    preparedAt,
+    taxPreflight,
+    operation: "replace" as const,
+    orderId: input.orderId,
+    previousOrderFingerprint: previousIntent.orderFingerprint,
+    whatIfScope: "new_order_estimate_for_modified_ticket" as const,
+  };
+}
+
 export async function replaceOrder(input: {
   accountId: string;
   orderId: string;
-  order: Record<string, unknown>;
-  mode?: "shadow" | "live";
+  limitPrice: number;
+  orderFingerprint: string;
+  taxPreflightToken: string;
+  taxAcknowledgements?: string[] | null;
+  mode?: "shadow" | "live" | null;
   confirm?: boolean | null;
 }) {
   const mode = requireExplicitOrderActionMode(input.mode, "Order replacement");
   assertLiveOrderConfirmed(mode, input.confirm);
-  throw new HttpError(409, "IBKR order replacement requires a prepared intent.", {
-    code: "ibkr_replace_intent_required",
-    expose: true,
+  if (
+    !input.taxPreflightToken.trim() ||
+    !/^[a-f0-9]{64}$/u.test(input.orderFingerprint) ||
+    !Number.isFinite(input.limitPrice) ||
+    input.limitPrice <= 0
+  ) {
+    throw new HttpError(409, "IBKR order replacement requires a prepared intent.", {
+      code: "ibkr_replace_intent_required",
+      expose: true,
+    });
+  }
+  await assertIbkrGatewayTradingAvailable(input.accountId);
+  const previousBeforeClaim = await loadSubmittedIbkrPreparedOrderIntent({
+    accountId: input.accountId,
+    submittedOrderId: input.orderId,
   });
+  const expectedBody = structuredClone(previousBeforeClaim.orderBody);
+  const expectedOrder = asRecord(asArray(expectedBody.orders)[0]);
+  if (!expectedOrder) {
+    throw new HttpError(409, "The acknowledged IBKR order intent is invalid.", {
+      code: "ibkr_submitted_order_intent_invalid",
+      expose: true,
+    });
+  }
+  expectedOrder.price = input.limitPrice;
+  if (fingerprintIbkrOrderBody(expectedBody) !== input.orderFingerprint) {
+    throw new HttpError(409, "The prepared IBKR replacement does not match.", {
+      code: "ibkr_replace_intent_mismatch",
+      expose: true,
+    });
+  }
+  const expectedIntent: IbkrPreparedOrderIntent = {
+    version: 2,
+    kind: "replace",
+    orderId: input.orderId,
+    previousOrderFingerprint: previousBeforeClaim.orderFingerprint,
+    accountId: input.accountId,
+    clientOrderId: previousBeforeClaim.clientOrderId,
+    orderFingerprint: input.orderFingerprint,
+    orderBody: expectedBody,
+    preparedAt: new Date().toISOString(),
+    whatIf: {},
+  };
+  const taxPreflight = await assertTaxPreflightForOrderSubmission({
+    order: ibkrOrderToTaxOrder(preparedIbkrEquityOrderInput(expectedIntent), {
+      taxMode: "live",
+    }),
+    taxPreflightToken: input.taxPreflightToken,
+    taxAcknowledgements: input.taxAcknowledgements,
+    requireIbkrPreparedIntent: true,
+    expectedIbkrIntentKind: "replace",
+    expectedBrokerOrderId: input.orderId,
+    expectedClientOrderId: previousBeforeClaim.clientOrderId,
+    expectedOrderFingerprint: input.orderFingerprint,
+  });
+  const replacementIntent = taxPreflight?.ibkrPreparedIntent;
+  if (replacementIntent?.kind !== "replace") {
+    throw new HttpError(409, "A prepared IBKR replacement intent is required.", {
+      code: "ibkr_replace_intent_required",
+      expose: true,
+    });
+  }
+  const previousIntent = await loadSubmittedIbkrPreparedOrderIntent({
+    accountId: input.accountId,
+    submittedOrderId: input.orderId,
+  });
+  if (
+    replacementIntent.previousOrderFingerprint !== previousIntent.orderFingerprint
+  ) {
+    await recordTaxPreflightOrderSubmitted({
+      preflightToken: input.taxPreflightToken,
+      submittedOrderId: "__ibkr_replace_intent_stale__",
+    });
+    throw new HttpError(409, "The live IBKR order changed after replacement preview.", {
+      code: "ibkr_replace_intent_stale",
+      expose: true,
+    });
+  }
+  const client = getIbkrClientPortalClient();
+  let result: Awaited<ReturnType<typeof client.replacePreparedOrder>>;
+  try {
+    result = await client.replacePreparedOrder({
+      accountId: input.accountId,
+      orderId: input.orderId,
+      mode,
+      previousOrderBody: previousIntent.orderBody,
+      preparedOrderBody: replacementIntent.orderBody,
+    });
+  } catch (error) {
+    if (
+      isHttpError(error) &&
+      error.code === "ibkr_order_warning_confirmation_required"
+    ) {
+      const data = asRecord(error.data) ?? {};
+      const replyId = asString(data.replyId)?.trim() ?? "";
+      if (!replyId) {
+        await recordTaxPreflightIbkrReconciliationRequired({
+          preflightToken: input.taxPreflightToken,
+          reason: "replace_warning_reply_missing",
+        });
+        throw new HttpError(409, "IBKR replacement requires reconciliation.", {
+          code: "ibkr_order_reply_reconciliation_required",
+          expose: true,
+          cause: error,
+        });
+      }
+      const challenge = await recordTaxPreflightIbkrReplyRequired({
+        preflightToken: input.taxPreflightToken,
+        replyId,
+        messages: data.messages,
+      });
+      throw new HttpError(409, "IBKR requires explicit review of a replacement warning.", {
+        code: "ibkr_order_warning_confirmation_required",
+        data: { ...challenge, operation: "replace", orderId: input.orderId },
+        expose: true,
+      });
+    }
+    await recordTaxPreflightIbkrReconciliationRequired({
+      preflightToken: input.taxPreflightToken,
+      reason: "replace_transport_or_acknowledgement_unknown",
+    }).catch(() => undefined);
+    throw new HttpError(409, "IBKR replacement requires reconciliation.", {
+      code: "ibkr_replace_reconciliation_required",
+      expose: true,
+      cause: error,
+    });
+  }
+  if (result.reconciliationRequired || !result.replacementConfirmed) {
+    await recordTaxPreflightIbkrReconciliationRequired({
+      preflightToken: input.taxPreflightToken,
+      reason: "replace_post_ack_verification_incomplete",
+    });
+    return result;
+  }
+  try {
+    await recordTaxPreflightOrderSubmitted({
+      preflightToken: input.taxPreflightToken,
+      submittedOrderId: result.id,
+    });
+  } catch (error) {
+    logger.warn(
+      {
+        action: "ibkr_order_replace",
+        errorType: error instanceof Error ? error.name : "unknown",
+        reconciliationRequired: true,
+      },
+      "IBKR order replaced but submit record failed; reconciliation required",
+    );
+    return { ...result, reconciliationRequired: true };
+  }
+  return result;
 }
 
 export async function cancelOrder(input: {

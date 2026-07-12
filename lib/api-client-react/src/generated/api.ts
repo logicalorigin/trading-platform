@@ -172,6 +172,7 @@ import type {
   QuoteSnapshotsResponse,
   ReadinessStatus,
   ReorderWatchlistItemsRequest,
+  ReplaceOrderPreviewRequest,
   ReplaceOrderRequest,
   ResearchCalendarResponse,
   ResearchFilingsResponse,
@@ -7181,7 +7182,7 @@ export const useSubmitOrders = <TError = ErrorType<unknown>,
     }
 
 /**
- * @summary Replace an existing IBKR order using the raw IBKR modify payload
+ * @summary Submit one prepared price-only IBKR replacement
  */
 export const getReplaceOrderUrl = (orderId: string,) => {
 
@@ -7239,7 +7240,7 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
     export type ReplaceOrderMutationError = ErrorType<unknown>
 
     /**
- * @summary Replace an existing IBKR order using the raw IBKR modify payload
+ * @summary Submit one prepared price-only IBKR replacement
  */
 export const useReplaceOrder = <TError = ErrorType<unknown>,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof replaceOrder>>, TError,{orderId: string;data: BodyType<ReplaceOrderRequest>}, TContext>, request?: SecondParameter<typeof customFetch>}
@@ -7250,6 +7251,78 @@ export const useReplaceOrder = <TError = ErrorType<unknown>,
         TContext
       > => {
       return useMutation(getReplaceOrderMutationOptions(options));
+    }
+
+/**
+ * @summary Prepare and what-if one price-only IBKR replacement
+ */
+export const getPreviewOrderReplacementUrl = (orderId: string,) => {
+
+
+
+
+  return `/api/orders/${orderId}/replace/preview`
+}
+
+export const previewOrderReplacement = async (orderId: string,
+    replaceOrderPreviewRequest: ReplaceOrderPreviewRequest, options?: RequestInit): Promise<IbkrOrderPreview> => {
+
+  return customFetch<IbkrOrderPreview>(getPreviewOrderReplacementUrl(orderId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      replaceOrderPreviewRequest,)
+  }
+);}
+
+
+
+
+export const getPreviewOrderReplacementMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof previewOrderReplacement>>, TError,{orderId: string;data: BodyType<ReplaceOrderPreviewRequest>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof previewOrderReplacement>>, TError,{orderId: string;data: BodyType<ReplaceOrderPreviewRequest>}, TContext> => {
+
+const mutationKey = ['previewOrderReplacement'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof previewOrderReplacement>>, {orderId: string;data: BodyType<ReplaceOrderPreviewRequest>}> = (props) => {
+          const {orderId,data} = props ?? {};
+
+          return  previewOrderReplacement(orderId,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type PreviewOrderReplacementMutationResult = NonNullable<Awaited<ReturnType<typeof previewOrderReplacement>>>
+    export type PreviewOrderReplacementMutationBody = BodyType<ReplaceOrderPreviewRequest>
+    export type PreviewOrderReplacementMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Prepare and what-if one price-only IBKR replacement
+ */
+export const usePreviewOrderReplacement = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof previewOrderReplacement>>, TError,{orderId: string;data: BodyType<ReplaceOrderPreviewRequest>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof previewOrderReplacement>>,
+        TError,
+        {orderId: string;data: BodyType<ReplaceOrderPreviewRequest>},
+        TContext
+      > => {
+      return useMutation(getPreviewOrderReplacementMutationOptions(options));
     }
 
 /**

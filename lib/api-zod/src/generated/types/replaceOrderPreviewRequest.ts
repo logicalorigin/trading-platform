@@ -7,14 +7,9 @@
  */
 import type { EnvironmentMode } from './environmentMode';
 
-export interface ReplaceOrderRequest {
+export interface ReplaceOrderPreviewRequest {
   accountId: string;
   mode: EnvironmentMode;
-  confirm: boolean;
   /** @exclusiveMinimum 0 */
   limitPrice: number;
-  /** @pattern ^[a-f0-9]{64}$ */
-  orderFingerprint: string;
-  taxPreflightToken: string;
-  taxAcknowledgements?: string[];
 }

@@ -5,6 +5,7 @@
  * Internal trading platform API for Massive market data and IBKR execution.
  * OpenAPI spec version: 0.2.0
  */
+import type { IbkrOrderReplyResponseOperation } from './ibkrOrderReplyResponseOperation';
 import type { IbkrOrderReplyResponseStatus } from './ibkrOrderReplyResponseStatus';
 
 export interface IbkrOrderReplyResponse {
@@ -14,4 +15,8 @@ export interface IbkrOrderReplyResponse {
   expiresAt?: Date;
   orderId?: string;
   orderStatus?: string;
+  operation?: IbkrOrderReplyResponseOperation;
+  originalOrderRemainsLive?: boolean;
+  replacementConfirmed?: boolean;
+  reconciliationRequired?: boolean;
 }

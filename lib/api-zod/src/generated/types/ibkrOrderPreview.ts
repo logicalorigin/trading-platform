@@ -7,7 +7,9 @@
  */
 import type { AssetClass } from './assetClass';
 import type { EnvironmentMode } from './environmentMode';
+import type { IbkrOrderPreviewOperation } from './ibkrOrderPreviewOperation';
 import type { IbkrOrderPreviewWhatIf } from './ibkrOrderPreviewWhatIf';
+import type { IbkrOrderPreviewWhatIfScope } from './ibkrOrderPreviewWhatIfScope';
 import type { JsonObject } from './jsonObject';
 import type { OptionContract } from './optionContract';
 import type { TradingSession } from './tradingSession';
@@ -31,4 +33,9 @@ export interface IbkrOrderPreview {
   primaryExchange?: string | null;
   includeOvernight?: boolean | null;
   routingReason?: string | null;
+  operation?: IbkrOrderPreviewOperation;
+  orderId?: string;
+  /** @pattern ^[a-f0-9]{64}$ */
+  previousOrderFingerprint?: string;
+  whatIfScope?: IbkrOrderPreviewWhatIfScope;
 }

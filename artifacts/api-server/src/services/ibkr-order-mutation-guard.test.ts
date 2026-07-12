@@ -57,8 +57,10 @@ test("shadow mode cannot reach IBKR replacement", async () => {
   await assert.rejects(
     replaceOrder({
       accountId: "U1234567",
-      orderId: "order-1",
-      order: {},
+      orderId: "1234567890",
+      limitPrice: 99,
+      orderFingerprint: "0".repeat(64),
+      taxPreflightToken: "tax-pf",
       mode: "shadow",
       confirm: true,
     }),
@@ -120,8 +122,10 @@ test("runtime defaults cannot authorize raw submission or replacement", async ()
   await assert.rejects(
     replaceOrder({
       accountId: "U1234567",
-      orderId: "order-1",
-      order: {},
+      orderId: "1234567890",
+      limitPrice: 99,
+      orderFingerprint: "0".repeat(64),
+      taxPreflightToken: "tax-pf",
       confirm: true,
     }),
     rejectsWithCode("ibkr_order_mode_required"),
@@ -139,8 +143,10 @@ test("raw live replacement remains disabled without a prepared intent", async ()
   await assert.rejects(
     replaceOrder({
       accountId: "U1234567",
-      orderId: "order-1",
-      order: { price: 99 },
+      orderId: "1234567890",
+      limitPrice: 99,
+      orderFingerprint: "",
+      taxPreflightToken: "",
       mode: "live",
       confirm: true,
     }),

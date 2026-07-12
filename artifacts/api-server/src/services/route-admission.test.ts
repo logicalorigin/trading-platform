@@ -90,6 +90,13 @@ test("IBKR order warning replies keep protected execution admission", () => {
     classifyApiRoute({ method: "POST", path: "/api/orders/reply" }),
     "protected-execution",
   );
+  assert.equal(
+    classifyApiRoute({
+      method: "POST",
+      path: "/api/orders/1234567890/replace/preview",
+    }),
+    "protected-execution",
+  );
 });
 
 test("Signal Options full state remains active-screen", () => {

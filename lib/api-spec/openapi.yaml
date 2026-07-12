@@ -1835,7 +1835,7 @@ paths:
     post:
       operationId: replaceOrder
       tags: [orders]
-      summary: Replace an existing IBKR order using the raw IBKR modify payload
+      summary: Submit one prepared price-only IBKR replacement
       parameters:
         - name: orderId
           in: path
@@ -1855,6 +1855,31 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Order"
+
+  /orders/{orderId}/replace/preview:
+    post:
+      operationId: previewOrderReplacement
+      tags: [orders]
+      summary: Prepare and what-if one price-only IBKR replacement
+      parameters:
+        - name: orderId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReplaceOrderPreviewRequest"
+      responses:
+        "200":
+          description: Prepared replacement payload
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IbkrOrderPreview"
 
   /orders/{orderId}/cancel:
     post:
@@ -10600,6 +10625,10 @@ components:
         routingReason:
           type: string
           nullable: true
+        replacementConfirmed:
+          type: boolean
+        reconciliationRequired:
+          type: boolean
       required:
         - id
         - accountId
@@ -10776,6 +10805,17 @@ components:
         routingReason:
           type: string
           nullable: true
+        operation:
+          type: string
+          enum: [place, replace]
+        orderId:
+          type: string
+        previousOrderFingerprint:
+          type: string
+          pattern: "^[a-f0-9]{64}$"
+        whatIfScope:
+          type: string
+          enum: [new_order_estimate_for_modified_ticket]
       required:
         - accountId
         - mode
@@ -10900,6 +10940,15 @@ components:
           type: string
         orderStatus:
           type: string
+        operation:
+          type: string
+          enum: [place, replace]
+        originalOrderRemainsLive:
+          type: boolean
+        replacementConfirmed:
+          type: boolean
+        reconciliationRequired:
+          type: boolean
       required:
         - status
 
@@ -10916,11 +10965,40 @@ components:
           $ref: "#/components/schemas/EnvironmentMode"
         confirm:
           type: boolean
-        order:
-          $ref: "#/components/schemas/JsonObject"
+        limitPrice:
+          type: number
+          exclusiveMinimum: 0
+        orderFingerprint:
+          type: string
+          pattern: "^[a-f0-9]{64}$"
+        taxPreflightToken:
+          type: string
+        taxAcknowledgements:
+          type: array
+          items:
+            type: string
       required:
         - accountId
-        - order
+        - mode
+        - confirm
+        - limitPrice
+        - orderFingerprint
+        - taxPreflightToken
+
+    ReplaceOrderPreviewRequest:
+      type: object
+      properties:
+        accountId:
+          type: string
+        mode:
+          $ref: "#/components/schemas/EnvironmentMode"
+        limitPrice:
+          type: number
+          exclusiveMinimum: 0
+      required:
+        - accountId
+        - mode
+        - limitPrice
 
     CancelOrderRequest:
       type: object

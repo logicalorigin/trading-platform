@@ -3990,6 +3990,28 @@ export class IbkrClient {
     );
     this.requireOrderAcknowledgement(payload);
 
+    return this.verifyPreparedOrderReplacement({
+      accountId: input.accountId,
+      orderId: input.orderId,
+      mode: input.mode,
+      preparedOrderBody: input.preparedOrderBody,
+    });
+  }
+
+  async verifyPreparedOrderReplacement(input: {
+    accountId: string;
+    orderId: string;
+    mode: RuntimeMode;
+    preparedOrderBody: Record<string, unknown>;
+  }): Promise<ReplaceOrderSnapshot> {
+    const preparedOrder = asRecord(asArray(input.preparedOrderBody["orders"])[0]);
+    const preparedPrice = asNumber(preparedOrder?.["price"]);
+    if (!preparedOrder || preparedPrice === null) {
+      throw new HttpError(409, "The prepared IBKR replacement is invalid.", {
+        code: "ibkr_replace_intent_invalid",
+        expose: true,
+      });
+    }
     let lastEvidence: IbkrOrderMutationEvidence | null = null;
     for (let attempt = 0; attempt < 8; attempt += 1) {
       try {

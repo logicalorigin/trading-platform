@@ -4187,6 +4187,8 @@ export interface Order {
   primaryExchange?: string | null;
   includeOvernight?: boolean | null;
   routingReason?: string | null;
+  replacementConfirmed?: boolean;
+  reconciliationRequired?: boolean;
 }
 
 export type PlaceOrderRequestSource = typeof PlaceOrderRequestSource[keyof typeof PlaceOrderRequestSource];
@@ -4236,6 +4238,21 @@ export type IbkrOrderPreviewWhatIf = {
   error: string | null;
 };
 
+export type IbkrOrderPreviewOperation = typeof IbkrOrderPreviewOperation[keyof typeof IbkrOrderPreviewOperation];
+
+
+export const IbkrOrderPreviewOperation = {
+  place: 'place',
+  replace: 'replace',
+} as const;
+
+export type IbkrOrderPreviewWhatIfScope = typeof IbkrOrderPreviewWhatIfScope[keyof typeof IbkrOrderPreviewWhatIfScope];
+
+
+export const IbkrOrderPreviewWhatIfScope = {
+  new_order_estimate_for_modified_ticket: 'new_order_estimate_for_modified_ticket',
+} as const;
+
 export interface IbkrOrderPreview {
   accountId: string;
   mode: EnvironmentMode;
@@ -4255,6 +4272,11 @@ export interface IbkrOrderPreview {
   primaryExchange?: string | null;
   includeOvernight?: boolean | null;
   routingReason?: string | null;
+  operation?: IbkrOrderPreviewOperation;
+  orderId?: string;
+  /** @pattern ^[a-f0-9]{64}$ */
+  previousOrderFingerprint?: string;
+  whatIfScope?: IbkrOrderPreviewWhatIfScope;
 }
 
 export interface OrderPreview {
@@ -4301,6 +4323,14 @@ export const IbkrOrderReplyResponseStatus = {
   acknowledged: 'acknowledged',
 } as const;
 
+export type IbkrOrderReplyResponseOperation = typeof IbkrOrderReplyResponseOperation[keyof typeof IbkrOrderReplyResponseOperation];
+
+
+export const IbkrOrderReplyResponseOperation = {
+  place: 'place',
+  replace: 'replace',
+} as const;
+
 export interface IbkrOrderReplyResponse {
   status: IbkrOrderReplyResponseStatus;
   challengeId?: string;
@@ -4308,15 +4338,31 @@ export interface IbkrOrderReplyResponse {
   expiresAt?: string;
   orderId?: string;
   orderStatus?: string;
+  operation?: IbkrOrderReplyResponseOperation;
+  originalOrderRemainsLive?: boolean;
+  replacementConfirmed?: boolean;
+  reconciliationRequired?: boolean;
 }
 
 export interface SubmitIbkrOrdersResponse { [key: string]: unknown }
 
 export interface ReplaceOrderRequest {
   accountId: string;
-  mode?: EnvironmentMode;
-  confirm?: boolean;
-  order: JsonObject;
+  mode: EnvironmentMode;
+  confirm: boolean;
+  /** @exclusiveMinimum 0 */
+  limitPrice: number;
+  /** @pattern ^[a-f0-9]{64}$ */
+  orderFingerprint: string;
+  taxPreflightToken: string;
+  taxAcknowledgements?: string[];
+}
+
+export interface ReplaceOrderPreviewRequest {
+  accountId: string;
+  mode: EnvironmentMode;
+  /** @exclusiveMinimum 0 */
+  limitPrice: number;
 }
 
 export interface CancelOrderRequest {

@@ -1447,6 +1447,10 @@ export async function claimTaxPreflightIbkrReply(input: {
   const challengeId = String(input.challengeId || "").trim();
   const pendingMarker = `${IBKR_REPLY_PENDING_PREFIX}${challengeId}`;
   const reply = readJsonRecord(readJsonRecord(preflight.metadata).ibkrReply);
+  const preparedValue = readJsonRecord(preflight.metadata).ibkrPreparedIntent;
+  const preparedIntent = preparedValue
+    ? readIbkrPreparedOrderIntent(preparedValue, preflight.accountId)
+    : null;
   if (
     preflight.submittedOrderId !== pendingMarker ||
     String(reply.challengeId || "") !== challengeId
@@ -1478,6 +1482,7 @@ export async function claimTaxPreflightIbkrReply(input: {
   return {
     replyId: String(reply.replyId || ""),
     messages: stringList(reply.messages),
+    ibkrPreparedIntent: preparedIntent,
   };
 }
 

@@ -2181,7 +2181,9 @@ export const GetAccountPositionsResponse = zod.object({
   "resolvedExchange": zod.string().nullish(),
   "primaryExchange": zod.string().nullish(),
   "includeOvernight": zod.boolean().nullish(),
-  "routingReason": zod.string().nullish()
+  "routingReason": zod.string().nullish(),
+  "replacementConfirmed": zod.boolean().optional(),
+  "reconciliationRequired": zod.boolean().optional()
 })),
   "stopLoss": zod.number().nullish().describe('Active stop-loss price for display and trade-management UI, when available.'),
   "takeProfit": zod.number().nullish().describe('Active explicit take-profit price for display and trade-management UI, when available.'),
@@ -2399,7 +2401,9 @@ export const GetAccountPositionsAtDateResponse = zod.object({
   "resolvedExchange": zod.string().nullish(),
   "primaryExchange": zod.string().nullish(),
   "includeOvernight": zod.boolean().nullish(),
-  "routingReason": zod.string().nullish()
+  "routingReason": zod.string().nullish(),
+  "replacementConfirmed": zod.boolean().optional(),
+  "reconciliationRequired": zod.boolean().optional()
 })),
   "stopLoss": zod.number().nullish().describe('Active stop-loss price for display and trade-management UI, when available.'),
   "takeProfit": zod.number().nullish().describe('Active explicit take-profit price for display and trade-management UI, when available.'),
@@ -3131,7 +3135,9 @@ export const ListOrdersResponse = zod.object({
   "resolvedExchange": zod.string().nullish(),
   "primaryExchange": zod.string().nullish(),
   "includeOvernight": zod.boolean().nullish(),
-  "routingReason": zod.string().nullish()
+  "routingReason": zod.string().nullish(),
+  "replacementConfirmed": zod.boolean().optional(),
+  "reconciliationRequired": zod.boolean().optional()
 }))
 })
 
@@ -3214,6 +3220,7 @@ export const PreviewOrderBody = zod.object({
 })
 
 export const previewOrderResponseOrderFingerprintRegExp = new RegExp('^[a-f0-9]{64}$');
+export const previewOrderResponsePreviousOrderFingerprintRegExp = new RegExp('^[a-f0-9]{64}$');
 
 
 export const PreviewOrderResponse = zod.object({
@@ -3253,7 +3260,11 @@ export const PreviewOrderResponse = zod.object({
   "resolvedExchange": zod.string().nullish(),
   "primaryExchange": zod.string().nullish(),
   "includeOvernight": zod.boolean().nullish(),
-  "routingReason": zod.string().nullish()
+  "routingReason": zod.string().nullish(),
+  "operation": zod.enum(['place', 'replace']).optional(),
+  "orderId": zod.string().optional(),
+  "previousOrderFingerprint": zod.string().regex(previewOrderResponsePreviousOrderFingerprintRegExp).optional(),
+  "whatIfScope": zod.enum(['new_order_estimate_for_modified_ticket']).optional()
 })
 
 
@@ -3272,7 +3283,11 @@ export const ContinueIbkrOrderReplyResponse = zod.object({
   "messages": zod.array(zod.string()).optional(),
   "expiresAt": zod.coerce.date().optional(),
   "orderId": zod.string().optional(),
-  "orderStatus": zod.string().optional()
+  "orderStatus": zod.string().optional(),
+  "operation": zod.enum(['place', 'replace']).optional(),
+  "originalOrderRemainsLive": zod.boolean().optional(),
+  "replacementConfirmed": zod.boolean().optional(),
+  "reconciliationRequired": zod.boolean().optional()
 })
 
 
@@ -3460,17 +3475,25 @@ export const SubmitOrdersBody = zod.union([zod.object({
 
 
 /**
- * @summary Replace an existing IBKR order using the raw IBKR modify payload
+ * @summary Submit one prepared price-only IBKR replacement
  */
 export const ReplaceOrderParams = zod.object({
   "orderId": zod.coerce.string()
 })
 
+export const replaceOrderBodyLimitPriceExclusiveMin = 0;
+
+export const replaceOrderBodyOrderFingerprintRegExp = new RegExp('^[a-f0-9]{64}$');
+
+
 export const ReplaceOrderBody = zod.object({
   "accountId": zod.string(),
-  "mode": zod.enum(['shadow', 'live']).optional(),
-  "confirm": zod.boolean().optional(),
-  "order": zod.record(zod.string(), zod.unknown())
+  "mode": zod.enum(['shadow', 'live']),
+  "confirm": zod.boolean(),
+  "limitPrice": zod.number().gt(replaceOrderBodyLimitPriceExclusiveMin),
+  "orderFingerprint": zod.string().regex(replaceOrderBodyOrderFingerprintRegExp),
+  "taxPreflightToken": zod.string(),
+  "taxAcknowledgements": zod.array(zod.string()).optional()
 })
 
 export const ReplaceOrderResponse = zod.object({
@@ -3505,7 +3528,75 @@ export const ReplaceOrderResponse = zod.object({
   "resolvedExchange": zod.string().nullish(),
   "primaryExchange": zod.string().nullish(),
   "includeOvernight": zod.boolean().nullish(),
-  "routingReason": zod.string().nullish()
+  "routingReason": zod.string().nullish(),
+  "replacementConfirmed": zod.boolean().optional(),
+  "reconciliationRequired": zod.boolean().optional()
+})
+
+
+/**
+ * @summary Prepare and what-if one price-only IBKR replacement
+ */
+export const PreviewOrderReplacementParams = zod.object({
+  "orderId": zod.coerce.string()
+})
+
+export const previewOrderReplacementBodyLimitPriceExclusiveMin = 0;
+
+
+
+export const PreviewOrderReplacementBody = zod.object({
+  "accountId": zod.string(),
+  "mode": zod.enum(['shadow', 'live']),
+  "limitPrice": zod.number().gt(previewOrderReplacementBodyLimitPriceExclusiveMin)
+})
+
+export const previewOrderReplacementResponseOrderFingerprintRegExp = new RegExp('^[a-f0-9]{64}$');
+export const previewOrderReplacementResponsePreviousOrderFingerprintRegExp = new RegExp('^[a-f0-9]{64}$');
+
+
+export const PreviewOrderReplacementResponse = zod.object({
+  "accountId": zod.string(),
+  "mode": zod.enum(['shadow', 'live']),
+  "symbol": zod.string(),
+  "assetClass": zod.enum(['equity', 'option']),
+  "resolvedContractId": zod.number(),
+  "clientOrderId": zod.string(),
+  "orderFingerprint": zod.string().regex(previewOrderReplacementResponseOrderFingerprintRegExp),
+  "orderPayload": zod.record(zod.string(), zod.unknown()),
+  "whatIf": zod.object({
+  "amount": zod.string().nullable(),
+  "commission": zod.string().nullable(),
+  "total": zod.string().nullable(),
+  "equityChange": zod.string().nullable(),
+  "initialMarginChange": zod.string().nullable(),
+  "maintenanceMarginChange": zod.string().nullable(),
+  "positionChange": zod.string().nullable(),
+  "warnings": zod.array(zod.string()),
+  "error": zod.string().nullable()
+}),
+  "preparedAt": zod.coerce.date(),
+  "taxPreflight": zod.record(zod.string(), zod.unknown()),
+  "optionContract": zod.union([zod.object({
+  "ticker": zod.string(),
+  "underlying": zod.string(),
+  "expirationDate": zod.coerce.date(),
+  "strike": zod.number(),
+  "right": zod.enum(['call', 'put']),
+  "multiplier": zod.number(),
+  "sharesPerContract": zod.number(),
+  "providerContractId": zod.string().nullish(),
+  "brokerContractId": zod.string().nullish()
+}),zod.null()]),
+  "tradingSession": zod.union([zod.enum(['default', 'regular', 'extended', 'overnight', 'overnight_plus_day']),zod.null()]).optional(),
+  "resolvedExchange": zod.string().nullish(),
+  "primaryExchange": zod.string().nullish(),
+  "includeOvernight": zod.boolean().nullish(),
+  "routingReason": zod.string().nullish(),
+  "operation": zod.enum(['place', 'replace']).optional(),
+  "orderId": zod.string().optional(),
+  "previousOrderFingerprint": zod.string().regex(previewOrderReplacementResponsePreviousOrderFingerprintRegExp).optional(),
+  "whatIfScope": zod.enum(['new_order_estimate_for_modified_ticket']).optional()
 })
 
 
