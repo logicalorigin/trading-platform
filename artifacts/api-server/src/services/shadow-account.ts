@@ -2377,42 +2377,89 @@ async function latestShadowAutomationManagementEvents(
   positions: ShadowPositionRow[],
   ordersByPositionKey: Map<string, ShadowOrderRow>,
 ) {
-  const automationPositionKeys = new Set(
-    positions
-      .filter(
-        (position) =>
-          shadowSourceType(ordersByPositionKey.get(position.positionKey)) ===
-          "automation",
-      )
-      .map((position) => position.positionKey),
-  );
-  if (!automationPositionKeys.size) {
+  const requestedByPositionKey = new Map<
+    string,
+    { positionKey: string; symbol: string; contractIdentifier: string | null }
+  >();
+  for (const position of positions) {
+    if (
+      shadowSourceType(ordersByPositionKey.get(position.positionKey)) !==
+      "automation"
+    ) {
+      continue;
+    }
+    const symbol = normalizeSymbol(position.symbol).toUpperCase();
+    if (!symbol) continue;
+    const contract = asOptionContract(position.optionContract);
+    requestedByPositionKey.set(position.positionKey, {
+      positionKey: position.positionKey,
+      symbol,
+      contractIdentifier:
+        contract?.providerContractId ?? contract?.ticker ?? null,
+    });
+  }
+  const requestedContracts = Array.from(requestedByPositionKey.values());
+  if (!requestedContracts.length) {
     return new Map<string, ExecutionEvent>();
   }
-
-  const symbols = Array.from(
-    new Set(
-      positions
-        .filter((position) => automationPositionKeys.has(position.positionKey))
-        .map((position) => normalizeSymbol(position.symbol).toUpperCase())
-        .filter(Boolean),
-    ),
+  const automationPositionKeys = new Set(
+    requestedContracts.map((request) => request.positionKey),
   );
-  if (!symbols.length) {
+  const requestedContractsSql = sql.join(
+    requestedContracts.map(
+      (request) =>
+        sql`(${request.positionKey}, ${request.symbol}, ${request.contractIdentifier})`,
+    ),
+    sql`, `,
+  );
+  const eventExplicitPositionKeySql = sql`coalesce(
+    nullif(btrim(execution_events.payload->'metadata'->>'positionKey'), ''),
+    nullif(btrim(execution_events.payload->>'positionKey'), ''),
+    nullif(btrim(execution_events.payload->'position'->>'positionKey'), '')
+  )`;
+  const eventContractSql = sql`coalesce(
+    nullif(execution_events.payload->'selectedContract', 'null'::jsonb),
+    execution_events.payload->'position'->'selectedContract'
+  )`;
+  const eventContractIdentifierSql = sql`coalesce(
+    nullif(btrim(${eventContractSql}->>'providerContractId'), ''),
+    nullif(btrim(${eventContractSql}->>'ticker'), '')
+  )`;
+  const latestIds = (await db.execute(sql`
+    SELECT latest.id
+    FROM (VALUES ${requestedContractsSql}) AS requested(
+      position_key,
+      symbol,
+      contract_identifier
+    )
+    JOIN LATERAL (
+      SELECT id
+      FROM execution_events
+      WHERE ${SIGNAL_OPTIONS_SHADOW_MARK_EVENT_PREDICATE}
+        AND execution_events.symbol = requested.symbol
+        AND (
+          ${eventExplicitPositionKeySql} = requested.position_key
+          OR (
+            ${eventExplicitPositionKeySql} IS NULL
+            AND requested.contract_identifier IS NOT NULL
+            AND ${eventContractIdentifierSql} = requested.contract_identifier
+          )
+        )
+      ORDER BY occurred_at DESC
+      LIMIT 1
+    ) AS latest ON true
+  `)) as unknown as { rows: Array<{ id: unknown }> };
+  const eventIds = latestIds.rows
+    .map((row) => String(row.id ?? ""))
+    .filter(Boolean);
+  if (!eventIds.length) {
     return new Map<string, ExecutionEvent>();
   }
 
   const events = await db
     .select()
     .from(executionEventsTable)
-    .where(
-      and(
-        SIGNAL_OPTIONS_SHADOW_MARK_EVENT_PREDICATE,
-        inArray(executionEventsTable.symbol, symbols),
-      ),
-    )
-    .orderBy(desc(executionEventsTable.occurredAt))
-    .limit(1000);
+    .where(inArray(executionEventsTable.id, eventIds));
   const byPositionKey = new Map<string, ExecutionEvent>();
   for (const event of events) {
     const key = shadowAutomationEventPositionKey(event);

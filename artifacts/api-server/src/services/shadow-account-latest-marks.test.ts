@@ -93,6 +93,32 @@ test("shadow automation event reads keep literal predicates for partial indexes"
   assert.doesNotMatch(marksBody, /eq\(executionEventsTable\.eventType/);
 });
 
+test("shadow automation management reads only the latest mark per requested contract", () => {
+  const marksStart = source.indexOf(
+    "async function latestShadowAutomationManagementEvents",
+  );
+  const marksEnd = source.indexOf(
+    "function buildShadowAutomationContext",
+    marksStart,
+  );
+  assert.notEqual(marksStart, -1, "Missing latest mark-event query");
+  assert.notEqual(marksEnd, -1, "Missing latest mark-event query end marker");
+  const marksBody = source.slice(marksStart, marksEnd);
+
+  assert.match(
+    marksBody,
+    /FROM \(VALUES \$\{requestedContractsSql\}\) AS requested/i,
+  );
+  assert.match(marksBody, /JOIN LATERAL \(/i);
+  assert.match(
+    marksBody,
+    /SELECT id[\s\S]*ORDER BY occurred_at DESC[\s\S]*LIMIT 1/i,
+  );
+  assert.match(marksBody, /inArray\(executionEventsTable\.id, eventIds\)/);
+  assert.match(marksBody, /shadowAutomationEventPositionKey\(event\)/);
+  assert.doesNotMatch(marksBody, /\.limit\(1000\)/);
+});
+
 test("shadow automation mirror repair excludes mirrored events before decoding payloads", () => {
   const repairStart = source.indexOf(
     "shadowAutomationMirrorRepairInFlight = (async () => {",
