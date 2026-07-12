@@ -621,6 +621,13 @@ function normalizeOrderStatus(
     return "pending_submit";
   }
 
+  if (
+    normalized.includes("pendingcancel") ||
+    normalized.includes("precancelled")
+  ) {
+    return "pending_cancel";
+  }
+
   if (normalized.includes("accepted") || normalized.includes("working")) {
     return "accepted";
   }
@@ -3594,6 +3601,60 @@ export class IbkrClient {
       },
     );
     const record = asRecord(payload);
+    let status: OrderStatus = "pending_cancel";
+    let filledQuantity = 0;
+    let reconciliationRequired = true;
+    // ponytail: bounded polling is enough for one manual order; use the order
+    // websocket before enabling concurrent automated mutations.
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      try {
+        const statusPayload = await this.request<unknown>(
+          `/iserver/account/order/status/${encodeURIComponent(input.orderId)}`,
+        );
+        const statusRecord =
+          asRecord(statusPayload) ??
+          compact(asArray(statusPayload).map(asRecord))[0] ??
+          {};
+        filledQuantity =
+          firstDefined(
+            asNumber(statusRecord["filledQuantity"]),
+            asNumber(statusRecord["filled_quantity"]),
+          ) ?? 0;
+        const remainingQuantity =
+          firstDefined(
+            asNumber(statusRecord["remainingQuantity"]),
+            asNumber(statusRecord["remaining_quantity"]),
+          ) ?? 0;
+        status = normalizeOrderStatus(
+          firstDefined(
+            asString(statusRecord["order_status"]),
+            asString(statusRecord["status"]),
+          ),
+          filledQuantity,
+          remainingQuantity,
+        );
+        if (
+          status === "canceled" ||
+          status === "filled" ||
+          status === "partially_filled" ||
+          status === "rejected" ||
+          status === "expired"
+        ) {
+          reconciliationRequired = status !== "canceled";
+          break;
+        }
+      } catch {
+        break;
+      }
+      if (attempt < 7) {
+        await sleep(500);
+      }
+    }
+    const terminal =
+      status === "canceled" ||
+      status === "filled" ||
+      status === "rejected" ||
+      status === "expired";
 
     return {
       orderId:
@@ -3615,6 +3676,11 @@ export class IbkrClient {
           "Request submitted",
         ) ?? "Request submitted",
       submittedAt: new Date(),
+      status,
+      filledQuantity,
+      terminal,
+      cancelConfirmed: status === "canceled",
+      reconciliationRequired,
     };
   }
 

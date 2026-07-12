@@ -15,6 +15,7 @@ export type OptionOrderStrategyIntent =
   | "uncovered_short_call";
 export type OrderStatus =
   | "pending_submit"
+  | "pending_cancel"
   | "submitted"
   | "accepted"
   | "partially_filled"
@@ -517,6 +518,11 @@ export type CancelOrderSnapshot = {
   accountId: string | null;
   message: string;
   submittedAt: Date;
+  status: OrderStatus;
+  filledQuantity: number;
+  terminal: boolean;
+  cancelConfirmed: boolean;
+  reconciliationRequired: boolean;
 };
 
 export type ReplaceOrderSnapshot = BrokerOrderSnapshot;

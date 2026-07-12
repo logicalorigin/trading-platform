@@ -5,6 +5,7 @@
  * Internal trading platform API for Massive market data and IBKR execution.
  * OpenAPI spec version: 0.2.0
  */
+import type { OrderStatus } from './orderStatus';
 
 export interface CancelOrderResponse {
   orderId: string;
@@ -12,4 +13,9 @@ export interface CancelOrderResponse {
   accountId: string | null;
   message: string;
   submittedAt: Date;
+  status: OrderStatus;
+  filledQuantity: number;
+  terminal: boolean;
+  cancelConfirmed: boolean;
+  reconciliationRequired: boolean;
 }

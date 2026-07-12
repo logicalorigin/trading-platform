@@ -11,6 +11,7 @@ export type OrderStatus = typeof OrderStatus[keyof typeof OrderStatus];
 
 export const OrderStatus = {
   pending_submit: 'pending_submit',
+  pending_cancel: 'pending_cancel',
   submitted: 'submitted',
   accepted: 'accepted',
   partially_filled: 'partially_filled',

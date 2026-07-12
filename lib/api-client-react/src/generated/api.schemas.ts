@@ -2061,6 +2061,7 @@ export type OrderStatus = typeof OrderStatus[keyof typeof OrderStatus];
 
 export const OrderStatus = {
   pending_submit: 'pending_submit',
+  pending_cancel: 'pending_cancel',
   submitted: 'submitted',
   accepted: 'accepted',
   partially_filled: 'partially_filled',
@@ -4334,6 +4335,11 @@ export interface CancelOrderResponse {
   accountId: string | null;
   message: string;
   submittedAt: string;
+  status: OrderStatus;
+  filledQuantity: number;
+  terminal: boolean;
+  cancelConfirmed: boolean;
+  reconciliationRequired: boolean;
 }
 
 export interface FlowPremiumDistributionBucket {

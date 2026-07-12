@@ -4020,13 +4020,9 @@ export async function replaceOrder(input: {
 }) {
   const mode = requireExplicitOrderActionMode(input.mode, "Order replacement");
   assertLiveOrderConfirmed(mode, input.confirm);
-  await assertIbkrGatewayTradingAvailable(input.accountId);
-  const client = getIbkrClientPortalClient();
-  return client.replaceOrder({
-    accountId: input.accountId,
-    orderId: input.orderId,
-    order: input.order,
-    mode,
+  throw new HttpError(409, "IBKR order replacement requires a prepared intent.", {
+    code: "ibkr_replace_intent_required",
+    expose: true,
   });
 }
 

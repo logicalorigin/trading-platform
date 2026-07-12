@@ -2159,7 +2159,7 @@ export const GetAccountPositionsResponse = zod.object({
   "side": zod.enum(['buy', 'sell']),
   "type": zod.enum(['market', 'limit', 'stop', 'stop_limit']),
   "timeInForce": zod.enum(['day', 'gtc', 'ioc', 'fok']),
-  "status": zod.enum(['pending_submit', 'submitted', 'accepted', 'partially_filled', 'filled', 'canceled', 'rejected', 'expired']),
+  "status": zod.enum(['pending_submit', 'pending_cancel', 'submitted', 'accepted', 'partially_filled', 'filled', 'canceled', 'rejected', 'expired']),
   "quantity": zod.number(),
   "filledQuantity": zod.number(),
   "limitPrice": zod.number().nullable(),
@@ -2377,7 +2377,7 @@ export const GetAccountPositionsAtDateResponse = zod.object({
   "side": zod.enum(['buy', 'sell']),
   "type": zod.enum(['market', 'limit', 'stop', 'stop_limit']),
   "timeInForce": zod.enum(['day', 'gtc', 'ioc', 'fok']),
-  "status": zod.enum(['pending_submit', 'submitted', 'accepted', 'partially_filled', 'filled', 'canceled', 'rejected', 'expired']),
+  "status": zod.enum(['pending_submit', 'pending_cancel', 'submitted', 'accepted', 'partially_filled', 'filled', 'canceled', 'rejected', 'expired']),
   "quantity": zod.number(),
   "filledQuantity": zod.number(),
   "limitPrice": zod.number().nullable(),
@@ -2632,7 +2632,7 @@ export const GetAccountOrdersResponse = zod.object({
   "limitPrice": zod.number().nullable(),
   "stopPrice": zod.number().nullable(),
   "timeInForce": zod.enum(['day', 'gtc', 'ioc', 'fok']),
-  "status": zod.enum(['pending_submit', 'submitted', 'accepted', 'partially_filled', 'filled', 'canceled', 'rejected', 'expired']),
+  "status": zod.enum(['pending_submit', 'pending_cancel', 'submitted', 'accepted', 'partially_filled', 'filled', 'canceled', 'rejected', 'expired']),
   "placedAt": zod.coerce.date(),
   "filledAt": zod.coerce.date().nullable(),
   "updatedAt": zod.coerce.date(),
@@ -2667,7 +2667,12 @@ export const CancelAccountOrderResponse = zod.object({
   "orderId": zod.string(),
   "accountId": zod.string().nullable(),
   "message": zod.string(),
-  "submittedAt": zod.coerce.date()
+  "submittedAt": zod.coerce.date(),
+  "status": zod.enum(['pending_submit', 'pending_cancel', 'submitted', 'accepted', 'partially_filled', 'filled', 'canceled', 'rejected', 'expired']),
+  "filledQuantity": zod.number(),
+  "terminal": zod.boolean(),
+  "cancelConfirmed": zod.boolean(),
+  "reconciliationRequired": zod.boolean()
 })
 
 
@@ -3090,7 +3095,7 @@ export const ListPositionsResponse = zod.object({
 export const ListOrdersQueryParams = zod.object({
   "accountId": zod.coerce.string().optional(),
   "mode": zod.enum(['shadow', 'live']).optional(),
-  "status": zod.enum(['pending_submit', 'submitted', 'accepted', 'partially_filled', 'filled', 'canceled', 'rejected', 'expired']).optional()
+  "status": zod.enum(['pending_submit', 'pending_cancel', 'submitted', 'accepted', 'partially_filled', 'filled', 'canceled', 'rejected', 'expired']).optional()
 })
 
 export const ListOrdersResponse = zod.object({
@@ -3104,7 +3109,7 @@ export const ListOrdersResponse = zod.object({
   "side": zod.enum(['buy', 'sell']),
   "type": zod.enum(['market', 'limit', 'stop', 'stop_limit']),
   "timeInForce": zod.enum(['day', 'gtc', 'ioc', 'fok']),
-  "status": zod.enum(['pending_submit', 'submitted', 'accepted', 'partially_filled', 'filled', 'canceled', 'rejected', 'expired']),
+  "status": zod.enum(['pending_submit', 'pending_cancel', 'submitted', 'accepted', 'partially_filled', 'filled', 'canceled', 'rejected', 'expired']),
   "quantity": zod.number(),
   "filledQuantity": zod.number(),
   "limitPrice": zod.number().nullable(),
@@ -3478,7 +3483,7 @@ export const ReplaceOrderResponse = zod.object({
   "side": zod.enum(['buy', 'sell']),
   "type": zod.enum(['market', 'limit', 'stop', 'stop_limit']),
   "timeInForce": zod.enum(['day', 'gtc', 'ioc', 'fok']),
-  "status": zod.enum(['pending_submit', 'submitted', 'accepted', 'partially_filled', 'filled', 'canceled', 'rejected', 'expired']),
+  "status": zod.enum(['pending_submit', 'pending_cancel', 'submitted', 'accepted', 'partially_filled', 'filled', 'canceled', 'rejected', 'expired']),
   "quantity": zod.number(),
   "filledQuantity": zod.number(),
   "limitPrice": zod.number().nullable(),
@@ -3523,7 +3528,12 @@ export const CancelOrderResponse = zod.object({
   "orderId": zod.string(),
   "accountId": zod.string().nullable(),
   "message": zod.string(),
-  "submittedAt": zod.coerce.date()
+  "submittedAt": zod.coerce.date(),
+  "status": zod.enum(['pending_submit', 'pending_cancel', 'submitted', 'accepted', 'partially_filled', 'filled', 'canceled', 'rejected', 'expired']),
+  "filledQuantity": zod.number(),
+  "terminal": zod.boolean(),
+  "cancelConfirmed": zod.boolean(),
+  "reconciliationRequired": zod.boolean()
 })
 
 
@@ -4396,7 +4406,7 @@ export const StreamOptionQuoteSnapshotsQueryParams = zod.object({
 export const StreamOrdersQueryParams = zod.object({
   "accountId": zod.coerce.string().optional(),
   "mode": zod.enum(['shadow', 'live']).optional(),
-  "status": zod.enum(['pending_submit', 'submitted', 'accepted', 'partially_filled', 'filled', 'canceled', 'rejected', 'expired']).optional()
+  "status": zod.enum(['pending_submit', 'pending_cancel', 'submitted', 'accepted', 'partially_filled', 'filled', 'canceled', 'rejected', 'expired']).optional()
 })
 
 

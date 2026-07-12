@@ -134,3 +134,16 @@ test("live submission requires a prepared order intent", async () => {
     rejectsWithCode("ibkr_order_intent_required"),
   );
 });
+
+test("raw live replacement remains disabled without a prepared intent", async () => {
+  await assert.rejects(
+    replaceOrder({
+      accountId: "U1234567",
+      orderId: "order-1",
+      order: { price: 99 },
+      mode: "live",
+      confirm: true,
+    }),
+    rejectsWithCode("ibkr_replace_intent_required"),
+  );
+});
