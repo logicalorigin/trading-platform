@@ -73,6 +73,7 @@ export const BigDirectionGlyph = ({
           style={{ display: "block", overflow: "visible" }}
         >
           <circle
+            className="ra-big-direction-freshness"
             cx={center}
             cy={center}
             r={radius}

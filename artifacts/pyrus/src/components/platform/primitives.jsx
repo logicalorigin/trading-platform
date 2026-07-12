@@ -1034,6 +1034,7 @@ export const SeverityRail = ({ tone = CSS_COLOR.textDim, style = {} }) => (
 
 export const LoadingSpinner = ({ size = 18, color = CSS_COLOR.accent }) => (
   <span
+    className="ra-loading-spinner"
     data-testid="loading-spinner"
     role="status"
     aria-label="Loading"
@@ -1953,6 +1954,7 @@ export const SurfacePanel = ({
     }}
   >
     <div
+      className="ra-expandable-row-content"
       style={{
         position: "relative",
         display: "flex",

@@ -1695,9 +1695,32 @@ summary,
   input,
   textarea,
   summary,
-  [role="button"] {
-    transition: none;
+  [role="button"],
+  .ra-big-direction-freshness,
+  .ra-expandable-row-content {
+    transition: none !important;
   }
+
+  .ra-loading-spinner {
+    animation: none !important;
+  }
+}
+
+html[data-pyrus-reduced-motion="on"] .ra-row-hover,
+html[data-pyrus-reduced-motion="on"] button,
+html[data-pyrus-reduced-motion="on"] a,
+html[data-pyrus-reduced-motion="on"] select,
+html[data-pyrus-reduced-motion="on"] input,
+html[data-pyrus-reduced-motion="on"] textarea,
+html[data-pyrus-reduced-motion="on"] summary,
+html[data-pyrus-reduced-motion="on"] [role="button"],
+html[data-pyrus-reduced-motion="on"] .ra-big-direction-freshness,
+html[data-pyrus-reduced-motion="on"] .ra-expandable-row-content {
+  transition: none !important;
+}
+
+html[data-pyrus-reduced-motion="on"] .ra-loading-spinner {
+  animation: none !important;
 }
 
 .ra-pnl-positive {
@@ -2912,7 +2935,7 @@ textarea:disabled:not([data-ra-keep-opacity]) {
   .ra-spread-gauge-fill,
   .ra-spread-gauge-marker,
   .ra-signal-action-button {
-    transition-duration: 1ms !important;
+    transition: none !important;
   }
 
   .ra-interactive:hover,
@@ -2999,7 +3022,7 @@ html[data-pyrus-reduced-motion="on"] .ra-signal-dot,
 html[data-pyrus-reduced-motion="on"] .ra-spread-gauge-fill,
 html[data-pyrus-reduced-motion="on"] .ra-spread-gauge-marker,
 html[data-pyrus-reduced-motion="on"] .ra-signal-action-button {
-  transition-duration: 1ms !important;
+  transition: none !important;
 }
 
 html[data-pyrus-reduced-motion="on"] .ra-interactive:hover,
