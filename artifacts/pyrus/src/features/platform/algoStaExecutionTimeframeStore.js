@@ -29,14 +29,11 @@ const createStore = () => {
           .map((value) => String(value || "").trim())
           .filter(Boolean)
       : [];
-    const requiredCount = Number(next.requiredCount);
     return Object.freeze({
       enabled: next.enabled !== false,
       preset: String(next.preset || "").trim() || null,
       timeframes,
-      requiredCount: Number.isFinite(requiredCount)
-        ? Math.max(1, Math.floor(requiredCount))
-        : null,
+      requiredCount: Math.max(1, timeframes.length),
     });
   };
   return {

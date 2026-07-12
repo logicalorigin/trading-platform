@@ -34,26 +34,24 @@ test("mtf enabled defaults on when unset", () => {
 
 test("unset mtf requiredCount defaults to full alignment over the selected frames", () => {
   const profile = resolveSignalOptionsExecutionProfile({});
-  // 5 default timeframes; an unset requiredCount defaults to full alignment (all 5)
-  // per the 2026-07-08 owner decision. The panel dial can lower it to n-of-N.
+  // 5 default timeframes; requiredCount is derived as all 5.
   assert.equal(profile.entryGate.mtfAlignment.timeframes.length, 5);
   assert.equal(profile.entryGate.mtfAlignment.requiredCount, 5);
 });
 
-test("stored mtf requiredCount is preserved and clamped to the timeframe count", () => {
-  const stored = resolveSignalOptionsExecutionProfile({
-    entryGate: {
-      mtfAlignment: { requiredCount: 3, timeframes: ["5m", "15m", "1h"] },
-    },
-  });
-  assert.equal(stored.entryGate.mtfAlignment.requiredCount, 3);
-
-  const clamped = resolveSignalOptionsExecutionProfile({
-    entryGate: {
-      mtfAlignment: { requiredCount: 9, timeframes: ["5m", "15m"] },
-    },
-  });
-  assert.equal(clamped.entryGate.mtfAlignment.requiredCount, 2);
+test("persisted stale mtf requiredCount normalizes to the selected timeframe count", () => {
+  const available = ["1m", "2m", "5m", "15m", "1h"];
+  for (let count = 1; count <= available.length; count += 1) {
+    const profile = resolveSignalOptionsExecutionProfile({
+      entryGate: {
+        mtfAlignment: {
+          requiredCount: 1,
+          timeframes: available.slice(0, count),
+        },
+      },
+    });
+    assert.equal(profile.entryGate.mtfAlignment.requiredCount, count);
+  }
 });
 
 test("does not force unrelated boolean knobs on", () => {

@@ -778,10 +778,7 @@ test("STA MTF alignment filter does not add execution frame to selected-frame ch
   );
 });
 
-test("STA MTF alignment filter honors the panel n-of-N (2-of-3 passes)", () => {
-  // product ruling 2026-07-07: filter honors panel n-of-N (overrules full-count intent).
-  // de14395d forced full-count here (this row was rejected); the ruling reverts that so
-  // the filter follows the panel's configured requiredCount, mirroring the backend gate.
+test("STA MTF alignment filter rejects 2-of-3 despite a stale lower count", () => {
   const nOfNConfig = {
     enabled: true,
     timeframes: ["2m", "5m", "15m"],
@@ -795,11 +792,9 @@ test("STA MTF alignment filter honors the panel n-of-N (2-of-3 passes)", () => {
     },
   };
 
-  // 2 of 3 configured frames confirm buy; requiredCount 2 is met (matches >= required),
-  // so the row passes even though 15m diverges — the panel asked for 2-of-3, not full-count.
   assert.equal(
     staRowPassesMtfAlignment(buyRow("MU", "15m"), matrix, nOfNConfig),
-    true,
+    false,
   );
 });
 

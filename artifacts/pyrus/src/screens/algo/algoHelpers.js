@@ -85,11 +85,8 @@ export const SIGNAL_OPTIONS_DEFAULT_MTF_TIMEFRAMES = [
   "1h",
 ];
 
-// Presets pick WHICH timeframes to watch; requiredCount is a user dial that
-// DEFAULTS to full alignment (all selected frames) so the STA table + entry gate
-// match the backend (requiredSignalOptionsMtfCount in signal-options-automation.ts:
-// an unset count means full count). Owner decision 2026-07-08: the default is
-// unanimity over the selected frames; the user may lower the dial to n-of-N.
+// Presets pick WHICH timeframes to watch. Every selected frame must agree, so
+// requiredCount is derived from the preset's frame count.
 export const SIGNAL_OPTIONS_MTF_PRESETS = [
   {
     value: "custom",
@@ -755,8 +752,7 @@ export const staRowPassesMtfAlignment = (
     matrixStatesByTimeframe: signalMatrixBySymbol?.[symbolUpper] || {},
     signalDirection: normalizeStaRowSignalDirection(signalRecord.direction),
     timeframes,
-    // Match the entry gate and the panel's n-of-N control. The shared resolver
-    // clamps the configured count to [1, frames.length].
+    // Match the entry gate's unanimous selected-frame contract.
     requiredCount: mtfAlignmentConfig?.requiredCount,
     enabled: mtfAlignmentConfig?.enabled !== false,
   });
@@ -2447,12 +2443,7 @@ export const mergeSignalOptionsProfile = (source) => {
     ...mtfAlignment,
     timeframes: mtfTimeframes,
     preset: normalizeSignalOptionsMtfPreset(mtfAlignment.preset),
-    requiredCount: boundedNumberFrom(
-      mtfAlignment.requiredCount,
-      mtfTimeframes.length,
-      1,
-      mtfTimeframes.length,
-    ),
+    requiredCount: Math.max(1, mtfTimeframes.length),
   };
 
   if (parameters.executionMode === "signal_options") {

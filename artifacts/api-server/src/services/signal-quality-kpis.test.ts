@@ -80,12 +80,13 @@ test("passesMtfGate mirrors the signal-options confluence gate", () => {
     requiredCount: 2,
     timeframes: ["5m", "15m", "1h"],
   };
-  // 2 of 3 frames bullish, requiredCount 2 -> passes for a long (+1).
-  assert.equal(passesMtfGate([1, 1, -1], 1, long), true);
-  // Only 1 of 3 bullish, requiredCount 2 -> fails for a long.
+  // A stale lower requiredCount cannot admit partial alignment.
+  assert.equal(passesMtfGate([1, 1, -1], 1, long), false);
+  // Only 1 of 3 bullish also fails for a long.
   assert.equal(passesMtfGate([1, -1, -1], 1, long), false);
-  // For a short (-1), 2 of 3 bearish -> passes.
-  assert.equal(passesMtfGate([1, -1, -1], -1, long), true);
+  // For a short (-1), 2 of 3 bearish is still partial and fails.
+  assert.equal(passesMtfGate([1, -1, -1], -1, long), false);
+  assert.equal(passesMtfGate([-1, -1, -1], -1, long), true);
   // Disabled gate admits everything.
   assert.equal(
     passesMtfGate([1, -1, -1], 1, { ...long, enabled: false }),

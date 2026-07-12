@@ -80,9 +80,9 @@ export type SignalQualityKpiResult = SignalQualityKpiMetrics & {
 
 // Mirrors the signal-options MTF-alignment confluence gate
 // (evaluateSignalOptionsEntryGate in signal-options-automation.ts): a candidate
-// is admitted when at least `requiredCount` of the configured timeframes carry a
-// trend direction matching the signal direction. When the gate is disabled,
-// every signal passes. requiredCount is clamped to [1, frameCount].
+// is admitted only when every configured timeframe carries a trend direction
+// matching the signal direction. When the gate is disabled, every signal passes.
+// requiredCount remains in the compatibility shape but cannot loosen unanimity.
 export type SignalQualityMtfConfig = {
   enabled: boolean;
   requiredCount: number;
@@ -1450,15 +1450,10 @@ function passesMtfGate(
   if (!mtf.enabled || !mtfDirections.length) {
     return true;
   }
-  const frameCount = Math.max(1, mtfDirections.length);
-  const requiredCount = Math.min(
-    frameCount,
-    Math.max(1, Math.round(mtf.requiredCount)),
-  );
   const matches = mtfDirections.filter(
     (direction) => direction === directionSign,
   ).length;
-  return matches >= requiredCount;
+  return matches === mtfDirections.length;
 }
 
 export type ComputeSignalQualityKpisInput = {

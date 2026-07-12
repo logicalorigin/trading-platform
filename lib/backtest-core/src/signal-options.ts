@@ -101,8 +101,7 @@ export type SignalOptionsExecutionProfile = {
       preset: SignalOptionsMtfPreset;
     };
     // Divergence-aware gate: requires the LIVE per-timeframe signal matrix to
-    // match every non-"any" entry EXACTLY (unlike mtfAlignment's N-agree
-    // confluence, which cannot express divergence). Populated by promoting a
+    // match every non-"any" entry EXACTLY. Populated by promoting a
     // discovered MTF pattern. Optional so existing profiles need no migration.
     mtfPattern?: {
       enabled: boolean;
@@ -253,9 +252,7 @@ export const defaultSignalOptionsExecutionProfile: SignalOptionsExecutionProfile
     entryGate: {
       mtfAlignment: {
         enabled: true,
-        // Owner decision 2026-07-08: default to FULL alignment over the selected
-        // frames (all must agree). The control panel's MTF REQUIRED COUNT dial
-        // overrides this to loosen to n-of-N when desired.
+        // Full alignment is invariant: all selected frames must agree.
         requiredCount: signalOptionsDefaultMtfTimeframes.length,
         timeframes: [...signalOptionsDefaultMtfTimeframes],
         preset: "custom",
@@ -934,17 +931,10 @@ export function resolveSignalOptionsExecutionProfile(
           mtfAlignment.enabled,
           defaults.entryGate.mtfAlignment.enabled,
         ),
-        // Owner decision 2026-07-08: an unset requiredCount defaults to FULL
-        // alignment (all selected frames must agree), so the STA table and the
-        // bot's entry gate only act on fully-aligned signals. An explicitly
-        // stored dial (from the control panel) is still honored and clamped to
-        // the frames present. Loosen by lowering the panel's MTF REQUIRED COUNT.
-        requiredCount: finiteInteger(
-          mtfAlignment.requiredCount,
-          Math.max(1, mtfTimeframes.length),
-          1,
-          Math.max(1, mtfTimeframes.length),
-        ),
+        // Full alignment is invariant: every selected timeframe must agree.
+        // Derive this value so stale profiles written by the retired N-of-N
+        // control normalize safely on every read and subsequent persistence.
+        requiredCount: Math.max(1, mtfTimeframes.length),
         timeframes: mtfTimeframes,
         preset: signalOptionsMtfPreset(
           mtfAlignment.preset ?? root.mtfAlignmentPreset,

@@ -71,7 +71,7 @@ test("MTF config: publish normalizes and preserves value-equal identity", () => 
     enabled: false,
     preset: " custom ",
     timeframes: [" 1m ", "", "5m", null],
-    requiredCount: 2.8,
+    requiredCount: 1,
   });
   const first = getAlgoStaMtfAlignmentConfigForTests();
   assert.deepEqual(first, {

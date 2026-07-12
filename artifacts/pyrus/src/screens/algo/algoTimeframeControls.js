@@ -63,29 +63,14 @@ export const normalizeAlgoAlignedMtfTimeframes = (
 };
 
 export const normalizeAlgoMtfRequiredCount = (
-  value,
+  _value,
   selectedTimeframes,
-  fallback = 2,
+  _fallback = 2,
 ) => {
-  // product ruling 2026-07-07: the panel's n-of-N governs. The stored value is
-  // honored (clamped to the selection size); full-count is only the ceiling,
-  // never forced — discarding the value here made every panel interaction
-  // write unanimity back into the profile.
-  const frameCount = Math.max(
+  return Math.max(
     1,
     Array.isArray(selectedTimeframes) ? selectedTimeframes.length : 0,
   );
-  // Number(null) === 0 — treat null/undefined/"" as unset, not as zero.
-  const numericValue =
-    value == null || value === "" ? Number.NaN : Number(value);
-  const numericFallback =
-    fallback == null || fallback === "" ? Number.NaN : Number(fallback);
-  const base = Number.isFinite(numericValue)
-    ? Math.round(numericValue)
-    : Number.isFinite(numericFallback)
-      ? Math.round(numericFallback)
-      : frameCount;
-  return Math.max(1, Math.min(frameCount, base));
 };
 
 export const buildAlgoExecutionTimeframePatch = (

@@ -1335,11 +1335,7 @@ export const PlatformAlgoMonitorSidebar = memo(function PlatformAlgoMonitorSideb
     return {
       ...(source || {}),
       timeframes: displaySignalTimeframes,
-      // product ruling 2026-07-07: filter follows the panel's configured n-of-N —
-      // thread the profile's requiredCount through (full-count fallback when only a
-      // live selection exists). staRowPassesMtfAlignment clamps to [1, frames.length].
-      requiredCount:
-        source?.requiredCount ?? Math.max(1, displaySignalTimeframes.length),
+      requiredCount: Math.max(1, displaySignalTimeframes.length),
       enabled: source?.enabled !== false,
     };
   }, [

@@ -303,14 +303,11 @@ test("STA MTF config uses the configured draft timeframe set for table and KPI c
     staSignalTimeframes: ["1m", "2m", "5m"],
   });
 
-  // product ruling 2026-07-07: the draft's requiredCount is honored (clamped
-  // to the selection), not forced to full-count.
   assert.deepEqual(config.timeframes, ["1m", "2m"]);
-  assert.equal(config.requiredCount, 1);
+  assert.equal(config.requiredCount, 2);
 });
 
-test("STA MTF config honors the configured n-of-N", () => {
-  // product ruling 2026-07-07: overrules the prior full-count intent.
+test("STA MTF config repairs stale lower requiredCount to full alignment", () => {
   const config = resolveEffectiveStaMtfAlignmentConfig({
     mtfAlignmentDraft: {
       enabled: true,
@@ -321,7 +318,7 @@ test("STA MTF config honors the configured n-of-N", () => {
   });
 
   assert.deepEqual(config.timeframes, ["5m", "15m", "1h"]);
-  assert.equal(config.requiredCount, 2);
+  assert.equal(config.requiredCount, 3);
 });
 
 test("algo account tabs route shadow to automation overlay and live tabs to broker rows", () => {

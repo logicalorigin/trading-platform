@@ -207,16 +207,6 @@ const SETTING_FIELD_SECTIONS = [
       },
       {
         slice: "profile",
-        path: "entryGate.mtfAlignment.requiredCount",
-        label: "MTF REQUIRED COUNT",
-        type: "number",
-        step: 1,
-        min: 1,
-        max: 6,
-        unit: "matches",
-      },
-      {
-        slice: "profile",
         path: "entryGate.mtfAlignment.preset",
         label: "MTF PRESET",
         type: "select",

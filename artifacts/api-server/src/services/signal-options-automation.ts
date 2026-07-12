@@ -5641,13 +5641,10 @@ function mtfFrameCount(mtfDirections: number[]) {
 }
 
 function requiredSignalOptionsMtfCount(
-  value: unknown,
+  _value: unknown,
   mtfDirections: number[],
 ) {
-  const frames = mtfFrameCount(mtfDirections);
-  const configured = finiteNumber(value);
-  if (configured == null) return frames;
-  return Math.max(1, Math.min(frames, Math.round(configured)));
+  return mtfFrameCount(mtfDirections);
 }
 
 function signalOptionsMtfAlignmentScore(

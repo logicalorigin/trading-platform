@@ -1653,19 +1653,18 @@ test("Signal Options flags cold rebuilds freshlyBuilt and skips the refresh only
   );
 });
 
-test("MTF entry gate honors configured requiredCount instead of forcing unanimity", async () => {
+test("MTF entry gate requires unanimity despite a stale lower requiredCount", async () => {
   const { evaluateSignalOptionsEntryGate, requiredSignalOptionsMtfCount } =
     __signalOptionsAutomationInternalsForTests;
   const { resolveSignalOptionsExecutionProfile } = await import(
     "@workspace/backtest-core"
   );
 
-  // Clamping: unset falls back to full frame count; configured values clamp
-  // to [1, frames].
+  // Required count is derived from the selected frame count.
   assert.equal(requiredSignalOptionsMtfCount(undefined, [1, 1, 1]), 3);
-  assert.equal(requiredSignalOptionsMtfCount(2, [1, 1, 1]), 2);
+  assert.equal(requiredSignalOptionsMtfCount(2, [1, 1, 1]), 3);
   assert.equal(requiredSignalOptionsMtfCount(9, [1, 1, 1]), 3);
-  assert.equal(requiredSignalOptionsMtfCount(0, [1, 1, 1]), 1);
+  assert.equal(requiredSignalOptionsMtfCount(0, [1, 1, 1]), 3);
 
   const candidate = {
     symbol: "PLTR",
@@ -1683,7 +1682,7 @@ test("MTF entry gate honors configured requiredCount instead of forcing unanimit
     typeof evaluateSignalOptionsEntryGate
   >[0]["mtfTimeframeDirections"];
 
-  // Configured 2-of-3: two bearish frames align a sell entry.
+  // A stale configured 2-of-3 count normalizes to 3-of-3.
   const partialProfile = resolveSignalOptionsExecutionProfile({
     signalOptions: {
       entryGate: {
@@ -1695,18 +1694,17 @@ test("MTF entry gate honors configured requiredCount instead of forcing unanimit
       },
     },
   });
-  assert.equal(partialProfile.entryGate.mtfAlignment.requiredCount, 2);
+  assert.equal(partialProfile.entryGate.mtfAlignment.requiredCount, 3);
   const partial = evaluateSignalOptionsEntryGate({
     candidate,
     profile: partialProfile,
     mtfTimeframeDirections,
   });
-  assert.equal(partial.requiredMtfCount, 2);
+  assert.equal(partial.requiredMtfCount, 3);
   assert.equal(partial.mtfMatches, 2);
-  assert.equal(partial.reasons.includes("mtf_not_aligned"), false);
+  assert.equal(partial.reasons.includes("mtf_not_aligned"), true);
 
-  // Unconfigured count falls back to full selected-frame alignment; a looser
-  // threshold must come from the panel's saved requiredCount.
+  // Unconfigured count also resolves to full selected-frame alignment.
   const strictProfile = resolveSignalOptionsExecutionProfile({
     signalOptions: {
       entryGate: {

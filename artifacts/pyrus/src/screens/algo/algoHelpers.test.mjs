@@ -2016,9 +2016,7 @@ test("Gateway halt does not fire on a shadow signal-options deployment (retired 
   );
 });
 
-test("STA MTF filter honors the stored requiredCount dial", () => {
-  // Owner decision 2026-07-08: the panel's configured requiredCount is
-  // authoritative, so a stored dial of 2 lets a 2-of-3 row through.
+test("STA MTF filter ignores a stale lower requiredCount", () => {
   const divergent = {
     MU: {
       "2m": { currentSignalDirection: "buy", status: "ok", active: true },
@@ -2032,9 +2030,9 @@ test("STA MTF filter honors the stored requiredCount dial", () => {
       divergent,
       { enabled: true, timeframes: ["2m", "5m", "15m"], requiredCount: 2 },
     ),
-    true,
+    false,
   );
-  // A fully-aligned 3-of-3 row still passes with the same stored dial of 2.
+  // A fully-aligned 3-of-3 row passes even when the stored count is stale.
   assert.equal(
     staRowPassesMtfAlignment(
       { symbol: "MU", timeframe: "15m", direction: "buy" },

@@ -546,13 +546,13 @@ const getMtfGateSignalDirection = (state) => {
 // (buy/sell crossover) agrees with the entry direction, using the same crossover
 // source the backend entry gate trades on (getSignalDirectionsForSymbolAsOf).
 // A frame with no current signal is neutral and cannot satisfy the selected-frame
-// confluence contract. Aligned when matches >= requiredCount,
-// matching the gate that actually decides entries.
+// confluence contract. Alignment is unanimous across the configured frames,
+// matching the gate that actually decides entries. requiredCount remains in
+// the input shape only for backward wire/profile compatibility.
 export const resolveConfiguredMtfAlignment = ({
   matrixStatesByTimeframe = {},
   signalDirection = null,
   timeframes = [],
-  requiredCount = null,
   enabled = true,
 } = {}) => {
   const direction = normalizeSignalDirection(signalDirection);
@@ -572,10 +572,7 @@ export const resolveConfiguredMtfAlignment = ({
       opposingTimeframes: [],
     };
   }
-  const required = Math.min(
-    frames.length,
-    Math.max(1, Math.round(Number(requiredCount) || 2)),
-  );
+  const required = frames.length;
   let matches = 0;
   let opposing = 0;
   let neutral = 0;

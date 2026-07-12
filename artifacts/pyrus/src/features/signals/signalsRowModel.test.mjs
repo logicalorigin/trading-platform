@@ -188,7 +188,7 @@ test("MTF alignment reproduces the reported bug: stale-opposing 5m blocks even t
   assert.deepEqual(alignment.opposingTimeframes, ["5m"]);
 });
 
-test("MTF alignment passes when requiredCount is met by partial agreement", () => {
+test("MTF alignment rejects partial agreement despite a stale lower requiredCount", () => {
   const alignment = resolveConfiguredMtfAlignment({
     matrixStatesByTimeframe: {
       "1m": mtfState("1m", "buy"),
@@ -199,8 +199,9 @@ test("MTF alignment passes when requiredCount is met by partial agreement", () =
     timeframes: ["1m", "2m", "5m"],
     requiredCount: 2,
   });
-  assert.equal(alignment.aligned, true);
+  assert.equal(alignment.aligned, false);
   assert.equal(alignment.matches, 2);
+  assert.equal(alignment.required, 3);
 });
 
 test("MTF alignment counts a stale opposing frame as disagreement (bubble is shown)", () => {
