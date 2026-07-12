@@ -132,7 +132,7 @@ export const Button = forwardRef(function Button(
       ref={ref}
       type={type}
       disabled={isDisabled}
-      data-testid={dataTestId}
+      data-testid={dataTestId ?? rest["data-testid"]}
       className="ra-btn ra-touch-target"
       style={{
         display: fullWidth ? "flex" : "inline-flex",

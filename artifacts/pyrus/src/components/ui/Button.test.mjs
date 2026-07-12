@@ -46,3 +46,15 @@ test("loading spinner motion honors OS and app reduced-motion preferences", () =
     /html\[data-pyrus-reduced-motion="on"\] \.ra-btn[\s\S]*?html\[data-pyrus-reduced-motion="on"\] \.ra-btn-spinner\s*\{\s*animation: none;/,
   );
 });
+
+test("standard data-testid props survive the compatibility alias", () => {
+  const standardMarkup = renderToStaticMarkup(
+    React.createElement(Button, { "data-testid": "standard-id" }, "Run"),
+  );
+  const aliasMarkup = renderToStaticMarkup(
+    React.createElement(Button, { dataTestId: "alias-id" }, "Run"),
+  );
+
+  assert.match(standardMarkup, /data-testid="standard-id"/);
+  assert.match(aliasMarkup, /data-testid="alias-id"/);
+});
