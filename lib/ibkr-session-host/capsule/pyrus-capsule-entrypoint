@@ -176,6 +176,8 @@ start_service chromium chromium \
   --disable-background-networking \
   --disable-component-update \
   --disable-sync \
+  --window-position=0,0 \
+  --window-size=1364,768 \
   --ignore-certificate-errors-spki-list="${CPG_SPKI_SHA256}" \
   --app=https://localhost:5000/
 
