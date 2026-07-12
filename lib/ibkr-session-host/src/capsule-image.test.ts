@@ -56,6 +56,26 @@ test("capsule image is immutable, nonroot, internally watched, and has no volume
   assert.doesNotMatch(dockerfile, /^\s*(VOLUME|EXPOSE)\b/m);
 });
 
+test("capsule hides Chromium's bad-flag infobar without weakening TLS or the sandbox", async () => {
+  const [dockerfile, entrypoint, policyBytes] = await Promise.all([
+    readFile(path.join(capsuleDir, "Dockerfile"), "utf8"),
+    readFile(path.join(capsuleDir, "pyrus-capsule-entrypoint"), "utf8"),
+    readFile(path.join(capsuleDir, "chromium-managed-policy.json"), "utf8"),
+  ]);
+  const policy = JSON.parse(policyBytes) as Record<string, unknown>;
+
+  assert.deepEqual(policy, { CommandLineFlagSecurityWarningsEnabled: false });
+  assert.match(
+    dockerfile,
+    /COPY --chmod=0444 chromium-managed-policy\.json \/etc\/chromium\/policies\/managed\/pyrus\.json/,
+  );
+  assert.match(entrypoint, /--ignore-certificate-errors-spki-list=/);
+  assert.doesNotMatch(
+    entrypoint,
+    /--ignore-certificate-errors(?:[=\s]|$)|--no-sandbox|--disable-setuid-sandbox/,
+  );
+});
+
 test("capsule restricts CPG clients and exposes only fixed host relays with RAM-only state", async () => {
   const dockerfile = await readFile(path.join(capsuleDir, "Dockerfile"), "utf8");
   const entrypoint = await readFile(

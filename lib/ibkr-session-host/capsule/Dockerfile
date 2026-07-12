@@ -55,6 +55,7 @@ RUN apt-get update \
 
 COPY --from=cpg --chown=10001:10001 /opt/ibkr/clientportal /opt/ibkr/clientportal
 COPY --chown=10001:10001 paper-only-extension /opt/pyrus/paper-only-extension
+COPY --chmod=0444 chromium-managed-policy.json /etc/chromium/policies/managed/pyrus.json
 COPY --chmod=0555 pyrus-capsule-entrypoint /usr/local/bin/pyrus-capsule-entrypoint
 COPY --chmod=0555 pyrus-capsule-health /usr/local/bin/pyrus-capsule-health
 COPY --chmod=0555 pyrus-capsule-relay.py /usr/local/bin/pyrus-capsule-relay
