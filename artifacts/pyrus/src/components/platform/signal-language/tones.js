@@ -10,16 +10,6 @@ const DEFAULT_TONES = {
   dim: "var(--ra-text-dim)",
 };
 
-const PALETTES = {
-  default: DEFAULT_TONES,
-  deuteranopia: DEFAULT_TONES,
-  protanopia: DEFAULT_TONES,
-  tritanopia: DEFAULT_TONES,
-};
-
-export const getTone = (kind, palette = "default") => {
-  const selected = PALETTES[palette] || DEFAULT_TONES;
-  return selected[kind] || DEFAULT_TONES.dim;
-};
+export const getTone = (kind) => DEFAULT_TONES[kind] || DEFAULT_TONES.dim;
 
 export default getTone;
