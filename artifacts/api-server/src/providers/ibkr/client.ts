@@ -81,6 +81,10 @@ import { signHmacRequest, type OAuthParams } from "./oauth-signer";
 
 type HeaderInput = ConstructorParameters<typeof Headers>[0];
 
+function strictBoolean(value: unknown): boolean | null {
+  return typeof value === "boolean" ? value : null;
+}
+
 export type IbkrClientOAuthConfig = {
   consumerKey: string;
   accessToken: string;
@@ -1248,6 +1252,8 @@ export class IbkrClient {
   private async getTradingAccountsInfo(): Promise<{
     accounts: string[];
     allowCustomerTime: boolean;
+    selectedAccountId: string | null;
+    isPaper: boolean | null;
   }> {
     const payload = await this.request<unknown>("/iserver/accounts");
     const record = asRecord(payload);
@@ -1255,6 +1261,12 @@ export class IbkrClient {
     const result = {
       accounts: compact(asArray(record?.["accounts"]).map(asString)),
       allowCustomerTime: Boolean(record?.["allowCustomerTime"]),
+      selectedAccountId:
+        firstDefined(
+          asString(record?.["selectedAccount"]),
+          asString(record?.["selectedAccountId"]),
+        ) ?? null,
+      isPaper: strictBoolean(record?.["isPaper"]),
     };
     this.assertPaperAccounts(result.accounts);
     return result;
@@ -1268,13 +1280,14 @@ export class IbkrClient {
     const record = asRecord(payload);
 
     return {
-      authenticated: Boolean(
-        record?.["authenticated"] ??
-          record?.["isAuthenticated"] ??
-          record?.["connected"],
-      ),
-      connected: Boolean(record?.["connected"] ?? record?.["authenticated"]),
-      competing: Boolean(record?.["competing"]),
+      authenticated:
+        strictBoolean(
+          record?.["authenticated"] ?? record?.["isAuthenticated"],
+        ) ?? false,
+      connected: strictBoolean(record?.["connected"]) ?? false,
+      established: strictBoolean(record?.["established"]),
+      isPaper: strictBoolean(record?.["isPaper"]),
+      competing: strictBoolean(record?.["competing"]) === true,
       selectedAccountId:
         firstDefined(
           asString(record?.["selectedAccount"]),
@@ -1402,10 +1415,7 @@ export class IbkrClient {
       },
     );
     const selectedAccountId =
-      status.selectedAccountId ??
-      this.config.defaultAccountId ??
-      tradingAccounts.accounts[0] ??
-      null;
+      tradingAccounts.selectedAccountId ?? status.selectedAccountId;
     this.assertPaperAccounts(
       selectedAccountId
         ? [...tradingAccounts.accounts, selectedAccountId]
@@ -1414,6 +1424,7 @@ export class IbkrClient {
 
     return {
       ...status,
+      isPaper: tradingAccounts.isPaper ?? status.isPaper,
       selectedAccountId,
       accounts:
         tradingAccounts.accounts.length > 0
@@ -3163,10 +3174,7 @@ export class IbkrClient {
     resolvedContractId: number;
   }> {
     const tradingAccounts = await this.getTradingAccountsInfo();
-    const accountId =
-      input.accountId ||
-      this.config.defaultAccountId ||
-      tradingAccounts.accounts[0];
+    const accountId = input.accountId.trim();
 
     if (!accountId) {
       throw new HttpError(
@@ -3176,6 +3184,12 @@ export class IbkrClient {
           code: "ibkr_missing_account_id",
         },
       );
+    }
+    if (!tradingAccounts.accounts.includes(accountId)) {
+      throw new HttpError(409, "The selected IBKR account is not tradable.", {
+        code: "ibkr_order_account_not_tradable",
+        expose: true,
+      });
     }
     this.assertPaperAccounts([accountId]);
 

@@ -19,6 +19,73 @@ function config(): IbkrRuntimeConfig {
   };
 }
 
+function liveCapableConfig(): IbkrRuntimeConfig {
+  return { ...config(), paperAccountOnly: false };
+}
+
+test("brokerage session preserves strict live state and broker selection", async () => {
+  const previousFetch = globalThis.fetch;
+  globalThis.fetch = (async (input) => {
+    const path = new URL(String(input)).pathname;
+    if (path.endsWith("/iserver/auth/status")) {
+      return Response.json({
+        authenticated: true,
+        connected: true,
+        established: true,
+      });
+    }
+    if (path.endsWith("/iserver/accounts")) {
+      return Response.json({
+        accounts: ["U1111111", "U2222222", "U3333333"],
+        selectedAccount: "U2222222",
+        isPaper: false,
+      });
+    }
+    throw new Error(`unexpected IBKR request: ${path}`);
+  }) as typeof fetch;
+
+  try {
+    const status = await new IbkrClient(liveCapableConfig()).ensureBrokerageSession();
+    assert.equal(status.established, true);
+    assert.equal(status.isPaper, false);
+    assert.equal(status.selectedAccountId, "U2222222");
+    assert.deepEqual(status.accounts, ["U1111111", "U2222222", "U3333333"]);
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
+test("brokerage session does not invent selection or coerce live state", async () => {
+  const previousFetch = globalThis.fetch;
+  globalThis.fetch = (async (input) => {
+    const path = new URL(String(input)).pathname;
+    if (path.endsWith("/iserver/auth/status")) {
+      return Response.json({
+        authenticated: true,
+        connected: true,
+        established: "true",
+      });
+    }
+    if (path.endsWith("/iserver/accounts")) {
+      return Response.json({
+        accounts: ["U1111111", "U2222222", "U3333333"],
+        isPaper: "false",
+      });
+    }
+    throw new Error(`unexpected IBKR request: ${path}`);
+  }) as typeof fetch;
+
+  try {
+    const status = await new IbkrClient(liveCapableConfig()).ensureBrokerageSession();
+    assert.equal(status.established, null);
+    assert.equal(status.isPaper, null);
+    assert.equal(status.selectedAccountId, null);
+    assert.equal(status.accounts.length, 3);
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
 test("paper-only IBKR client rejects an authenticated live account", async () => {
   const previousFetch = globalThis.fetch;
   globalThis.fetch = (async (input) => {
@@ -54,7 +121,10 @@ test("paper-only IBKR client accepts an authenticated paper account", async () =
       return Response.json({ authenticated: true, connected: true });
     }
     if (path.endsWith("/iserver/accounts")) {
-      return Response.json({ accounts: ["DU1234567"] });
+      return Response.json({
+        accounts: ["DU1234567"],
+        selectedAccount: "DU1234567",
+      });
     }
     throw new Error(`unexpected IBKR request: ${path}`);
   }) as typeof fetch;

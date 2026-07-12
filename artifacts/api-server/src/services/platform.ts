@@ -3537,6 +3537,8 @@ function requireExplicitOrderActionMode(
 type GatewayTradingHealth = {
   connected?: boolean | null;
   authenticated?: boolean | null;
+  established?: boolean | null;
+  isPaper?: boolean | null;
   accountsLoaded?: boolean | null;
   accounts?: unknown[] | null;
   selectedAccountId?: string | null;
@@ -3559,6 +3561,7 @@ function gatewayTradingUnavailable(
 
 export function resolveIbkrGatewayTradingReadinessForTests(input: {
   configured: boolean;
+  targetAccountId?: string | null;
   health: GatewayTradingHealth | null | undefined;
 }): GatewayTradingReadiness {
   if (!input.configured) {
@@ -3604,6 +3607,22 @@ export function resolveIbkrGatewayTradingReadinessForTests(input: {
     );
   }
 
+  if (health.established !== true) {
+    return gatewayTradingUnavailable(
+      "gateway_not_established",
+      "IBKR Client Portal is authenticated, but the brokerage session is not fully established.",
+    );
+  }
+
+  if (health.isPaper !== false) {
+    return gatewayTradingUnavailable(
+      health.isPaper === true ? "paper_account" : "broker_environment_unknown",
+      health.isPaper === true
+        ? "Live IBKR trading is unavailable because the active brokerage session is paper."
+        : "Live IBKR trading is unavailable until the broker confirms the account environment.",
+    );
+  }
+
   const accountsLoaded =
     health.accountsLoaded === true ||
     (Array.isArray(health.accounts) && health.accounts.length > 0) ||
@@ -3612,6 +3631,23 @@ export function resolveIbkrGatewayTradingReadinessForTests(input: {
     return gatewayTradingUnavailable(
       "accounts_unavailable",
       "IBKR Client Portal is connected, but no broker accounts are loaded yet.",
+    );
+  }
+
+  const targetAccountId = input.targetAccountId?.trim();
+  if (!targetAccountId) {
+    return gatewayTradingUnavailable(
+      "account_required",
+      "Live IBKR trading requires an explicitly selected account.",
+    );
+  }
+  if (
+    !Array.isArray(health.accounts) ||
+    !health.accounts.some((accountId) => accountId === targetAccountId)
+  ) {
+    return gatewayTradingUnavailable(
+      "account_not_tradable",
+      "The selected IBKR account is not in the current tradable account set.",
     );
   }
 
@@ -3635,11 +3671,12 @@ function throwGatewayTradingUnavailable(
   });
 }
 
-export async function assertIbkrGatewayTradingAvailable() {
+export async function assertIbkrGatewayTradingAvailable(accountId: string) {
   if (!getProviderConfiguration().ibkr) {
     throwGatewayTradingUnavailable(
       resolveIbkrGatewayTradingReadinessForTests({
         configured: false,
+        targetAccountId: accountId,
         health: null,
       }),
     );
@@ -3669,9 +3706,12 @@ export async function assertIbkrGatewayTradingAvailable() {
 
   const readiness = resolveIbkrGatewayTradingReadinessForTests({
     configured: true,
+    targetAccountId: accountId,
     health: {
       connected: session.connected,
       authenticated: session.authenticated,
+      established: session.established,
+      isPaper: session.isPaper,
       accountsLoaded: session.accounts.length > 0 || Boolean(session.selectedAccountId),
       accounts: session.accounts,
       selectedAccountId: session.selectedAccountId,
@@ -3778,7 +3818,7 @@ export async function placeOrder(input: PlaceOrderInput) {
     taxPreflightToken: taxInput.taxPreflightToken,
     taxAcknowledgements: taxInput.taxAcknowledgements,
   });
-  await assertIbkrGatewayTradingAvailable();
+  await assertIbkrGatewayTradingAvailable(input.accountId);
   const client = getIbkrClientPortalClient();
   await validateOrderIntentForRouting(input, client);
   const order = await client.placeOrder(input);
@@ -3842,7 +3882,7 @@ export async function replaceOrder(input: {
 }) {
   const mode = requireExplicitOrderActionMode(input.mode, "Order replacement");
   assertLiveOrderConfirmed(mode, input.confirm);
-  await assertIbkrGatewayTradingAvailable();
+  await assertIbkrGatewayTradingAvailable(input.accountId);
   const client = getIbkrClientPortalClient();
   return client.replaceOrder({
     accountId: input.accountId,
@@ -3862,7 +3902,7 @@ export async function cancelOrder(input: {
 }) {
   const mode = requireExplicitOrderActionMode(input.mode, "Order cancellation");
   assertLiveOrderConfirmed(mode, input.confirm);
-  await assertIbkrGatewayTradingAvailable();
+  await assertIbkrGatewayTradingAvailable(input.accountId);
   const client = getIbkrClientPortalClient();
   return client.cancelOrder({
     ...input,

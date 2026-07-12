@@ -472,6 +472,8 @@ export type OptionChainContract = {
 export type SessionStatusSnapshot = {
   authenticated: boolean;
   connected: boolean;
+  established: boolean | null;
+  isPaper: boolean | null;
   competing: boolean;
   selectedAccountId: string | null;
   accounts: string[];
