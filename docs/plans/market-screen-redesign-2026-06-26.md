@@ -64,7 +64,7 @@ Entry: `MarketScreen.jsx` → `MarketScreenInner` (lines 215–1316); routed in
 From `components/platform/primitives.jsx` + `signal-language/`:
 - **`DenseVirtualTable`** (`components/platform/DenseVirtualTable.jsx`, 32px rows, virtualized,
   reorderable) — backbone of the universe hero table.
-- **`RowSparkValue`** / **`MicroSparkline`** — value + delta + trend line per row.
+- **`MicroSparkline`** — trend line primitive for direct composition with row values.
 - **`ScoreBar`** (red↔neutral↔green heat) and **`MetricChip`** / **`StatusPill`** / **`Badge`**.
 - **`Card`** / **`SurfacePanel`** (`surfaceStyle()`), **`DataUnavailableState`**, **`Skeleton`**.
 - **`SegmentedControl`** / **`InlineFilterBar`** for the hero's sort/filter controls.
