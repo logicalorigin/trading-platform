@@ -278,7 +278,8 @@ function isProviderBackedAccount(account: BrokerAccountSnapshot): boolean {
   return account.provider === "snaptrade" || account.provider === "robinhood";
 }
 
-const IBKR_ACCOUNT_TEXT_PATTERN = /\b(?:interactive\s+brokers|ibkr)\b/i;
+const IBKR_ACCOUNT_TEXT_PATTERN =
+  /\b(?:interactive(?:\s+|-|_)+brokers|ibkr)\b/i;
 
 function accountBrokerText(account: BrokerAccountSnapshot): string {
   const accountWithBrokerFields = account as BrokerAccountSnapshot &
@@ -289,6 +290,7 @@ function accountBrokerText(account: BrokerAccountSnapshot): string {
     accountWithBrokerFields.institutionName,
     accountWithBrokerFields.institution,
     accountWithBrokerFields.providerName,
+    account.brokerageSlug,
     account.displayName,
   ]
     .filter(
@@ -309,6 +311,23 @@ function isSnapTradeIbkrAccount(account: BrokerAccountSnapshot): boolean {
   );
 }
 
+function accountIdentityLastFour(
+  account: BrokerAccountSnapshot,
+): string | null {
+  for (const value of [
+    account.accountNumberLastFour ?? "",
+    account.providerAccountId,
+    account.id,
+    account.displayName,
+  ]) {
+    const digits = value.replace(/\D/gu, "");
+    if (digits.length >= 4) {
+      return digits.slice(-4);
+    }
+  }
+  return null;
+}
+
 function filterDirectSupersededProviderAccounts(
   baseAccounts: BrokerAccountSnapshot[],
   providerAccounts: BrokerAccountSnapshot[],
@@ -316,7 +335,34 @@ function filterDirectSupersededProviderAccounts(
   if (!baseAccounts.some(isDirectIbkrAccount)) {
     return providerAccounts;
   }
-  return providerAccounts.filter((account) => !isSnapTradeIbkrAccount(account));
+  const directSuffixCounts = new Map<string, number>();
+  for (const account of baseAccounts.filter(isDirectIbkrAccount)) {
+    const suffix = accountIdentityLastFour(account);
+    if (suffix) {
+      directSuffixCounts.set(suffix, (directSuffixCounts.get(suffix) ?? 0) + 1);
+    }
+  }
+  const snapTradeSuffixCounts = new Map<string, number>();
+  for (const account of providerAccounts.filter(isSnapTradeIbkrAccount)) {
+    const suffix = accountIdentityLastFour(account);
+    if (suffix) {
+      snapTradeSuffixCounts.set(
+        suffix,
+        (snapTradeSuffixCounts.get(suffix) ?? 0) + 1,
+      );
+    }
+  }
+  return providerAccounts.filter((account) => {
+    if (!isSnapTradeIbkrAccount(account)) {
+      return true;
+    }
+    const suffix = accountIdentityLastFour(account);
+    return (
+      !suffix ||
+      directSuffixCounts.get(suffix) !== 1 ||
+      snapTradeSuffixCounts.get(suffix) !== 1
+    );
+  });
 }
 
 function mergeAccountsWithDirectIbkrSupersedence(
@@ -4509,6 +4555,8 @@ async function getSnapTradeBackedAccounts(
       providerAccountId: brokerAccountsTable.providerAccountId,
       displayName: brokerAccountsTable.displayName,
       accountType: brokerAccountsTable.accountType,
+      capabilities: brokerAccountsTable.capabilities,
+      connectionCapabilities: brokerConnectionsTable.capabilities,
       includedInTrading: brokerAccountsTable.includedInTrading,
       baseCurrency: brokerAccountsTable.baseCurrency,
       mode: brokerAccountsTable.mode,
@@ -4543,6 +4591,16 @@ async function getSnapTradeBackedAccounts(
       snapshot: {
         id: row.id,
         providerAccountId: rawSnapTradeId || row.providerAccountId,
+        accountNumberLastFour:
+          row.capabilities
+            .find((capability) =>
+              capability.startsWith("snaptrade-account-last4:"),
+            )
+            ?.slice("snaptrade-account-last4:".length) ?? null,
+        brokerageSlug:
+          row.connectionCapabilities
+            .find((capability) => capability.startsWith("snaptrade-brokerage:"))
+            ?.slice("snaptrade-brokerage:".length) ?? null,
         provider: "snaptrade" as const,
         mode: row.mode,
         displayName: row.displayName || "SnapTrade account",

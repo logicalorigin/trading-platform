@@ -70,6 +70,8 @@ export type OptionContractSnapshot = {
 export type BrokerAccountSnapshot = {
   id: string;
   providerAccountId: string;
+  accountNumberLastFour?: string | null;
+  brokerageSlug?: string | null;
   provider: "ibkr" | "snaptrade" | "robinhood" | "schwab";
   mode: RuntimeMode;
   displayName: string;

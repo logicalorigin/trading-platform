@@ -95,6 +95,7 @@ type NormalizedAccount = {
   displayName: string;
   accountType: "crypto" | "futures" | "prediction" | "equity";
   brokerageName: string | null;
+  accountNumberLastFour: string | null;
   status: "open" | "closed" | "archived" | null;
   baseCurrency: string;
 };
@@ -499,6 +500,7 @@ function normalizeAccount(
     displayName,
     accountType: classifyBrokerAccountCategory(displayName),
     brokerageName,
+    accountNumberLastFour: lastFour,
     status: normalizeAccountStatus(record),
     baseCurrency: normalizeCurrency(record),
   };
@@ -532,6 +534,9 @@ function accountExecutionBlockers(
 
 function accountCapabilities(account: AccountForStorage): string[] {
   const capabilities = ["accounts", "positions", "snaptrade"];
+  if (account.accountNumberLastFour) {
+    capabilities.push(`snaptrade-account-last4:${account.accountNumberLastFour}`);
+  }
   if (account.executionReady) {
     capabilities.push("orders", "executions", "execution-ready");
   }

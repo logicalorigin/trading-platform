@@ -119,17 +119,17 @@ test("listAccounts merges SnapTrade accounts onto the live IBKR branch", async (
   );
 });
 
-test("listAccounts lets direct IBKR supersede SnapTrade-linked IBKR accounts", async () => {
+test("listAccounts lets direct IBKR supersede the matching SnapTrade account", async () => {
   const result = await listAccounts(
     { mode: "live" },
     {
-      listLiveAccounts: async () => [snapshot("U1", "ibkr")],
+      listLiveAccounts: async () => [snapshot("U1234567", "ibkr")],
       hydrateDayPnl: passthroughDayPnl,
       recordSnapshots: noopRecordSnapshots,
       getSnapTradeAccounts: async () => [
         {
           ...snapshot("snaptrade-ibkr", "snaptrade"),
-          displayName: "Interactive Brokers Individual",
+          displayName: "Interactive Brokers Individual ...4567",
         },
         {
           ...snapshot("etrade-a", "snaptrade"),
@@ -142,7 +142,81 @@ test("listAccounts lets direct IBKR supersede SnapTrade-linked IBKR accounts", a
 
   assert.deepEqual(
     result.accounts.map((a) => `${a.provider}:${a.id}`),
-    ["ibkr:U1", "snaptrade:etrade-a"],
+    ["ibkr:U1234567", "snaptrade:etrade-a"],
+  );
+});
+
+test("listAccounts preserves an unmatched SnapTrade IBKR portfolio account", async () => {
+  const result = await listAccounts(
+    { mode: "live" },
+    {
+      listLiveAccounts: async () => [
+        snapshot("U1111111", "ibkr"),
+        snapshot("U2222222", "ibkr"),
+      ],
+      hydrateDayPnl: passthroughDayPnl,
+      recordSnapshots: noopRecordSnapshots,
+      getSnapTradeAccounts: async () => [
+        {
+          ...snapshot("snaptrade-ibkr-1", "snaptrade"),
+          displayName: "Retirement account ...1111",
+          brokerageSlug: "INTERACTIVE-BROKERS-FLEX",
+        },
+        {
+          ...snapshot("snaptrade-ibkr-2", "snaptrade"),
+          displayName: "Interactive Brokers account ...2222",
+        },
+        {
+          ...snapshot("snaptrade-ibkr-3", "snaptrade"),
+          displayName: "Interactive Brokers account ...3333",
+        },
+        {
+          ...snapshot("etrade-a", "snaptrade"),
+          displayName: "E*TRADE account ...4444",
+        },
+      ],
+      getRobinhoodAccounts: async () => [],
+    },
+  );
+
+  assert.deepEqual(
+    result.accounts.map((account) => `${account.provider}:${account.id}`),
+    [
+      "ibkr:U1111111",
+      "ibkr:U2222222",
+      "snaptrade:snaptrade-ibkr-3",
+      "snaptrade:etrade-a",
+    ],
+  );
+});
+
+test("listAccounts retains ambiguous SnapTrade IBKR identity matches", async () => {
+  const result = await listAccounts(
+    { mode: "live" },
+    {
+      listLiveAccounts: async () => [
+        snapshot("U12341111", "ibkr"),
+        snapshot("U98761111", "ibkr"),
+      ],
+      hydrateDayPnl: passthroughDayPnl,
+      recordSnapshots: noopRecordSnapshots,
+      getSnapTradeAccounts: async () => [
+        {
+          ...snapshot("snaptrade-ibkr", "snaptrade"),
+          displayName: "Interactive Brokers account ...1111",
+        },
+      ],
+      getRobinhoodAccounts: async () => [],
+    },
+  );
+
+  assert.deepEqual(
+    result.accounts.map((account) => `${account.provider}:${account.id}`),
+    [
+      "ibkr:U12341111",
+      "ibkr:U98761111",
+      "snaptrade:snaptrade-ibkr",
+    ],
   );
 });
 

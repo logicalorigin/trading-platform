@@ -259,6 +259,7 @@ test("SnapTrade account sync signs user-scoped reads and upserts sanitized broke
           .map((account) => ({
             providerAccountId: account.providerAccountId,
             displayName: account.displayName,
+            capabilities: account.capabilities,
             mode: account.mode,
             baseCurrency: account.baseCurrency,
             lastSyncedAt: account.lastSyncedAt,
@@ -268,6 +269,12 @@ test("SnapTrade account sync signs user-scoped reads and upserts sanitized broke
           {
             providerAccountId: "snaptrade:acct-etrade-1",
             displayName: "E*TRADE account ...2222",
+            capabilities: [
+              "accounts",
+              "positions",
+              "snaptrade",
+              "snaptrade-account-last4:2222",
+            ],
             mode: "live",
             baseCurrency: "USD",
             lastSyncedAt: "2026-07-01T19:10:00.000Z",
@@ -275,6 +282,15 @@ test("SnapTrade account sync signs user-scoped reads and upserts sanitized broke
           {
             providerAccountId: "snaptrade:acct-ibkr-1",
             displayName: "Main IBKR",
+            capabilities: [
+              "accounts",
+              "positions",
+              "snaptrade",
+              "snaptrade-account-last4:4567",
+              "orders",
+              "executions",
+              "execution-ready",
+            ],
             mode: "live",
             baseCurrency: "USD",
             lastSyncedAt: "2026-07-01T19:10:00.000Z",
