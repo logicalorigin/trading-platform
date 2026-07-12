@@ -7,8 +7,6 @@ const prefersReducedMotion = () => {
   return Boolean(
     window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches ||
       document?.documentElement?.getAttribute("data-pyrus-reduced-motion") ===
-        "on" ||
-      document?.documentElement?.getAttribute("data-pyrus-reduced-motion") ===
         "on",
   );
 };
@@ -82,10 +80,4 @@ export const useNumberTick = (target, durationMs = 600) => {
   }, [numericTarget, durationMs]);
 
   return value;
-};
-
-export const _testing = {
-  easeOutQuint,
-  prefersReducedMotion,
-  resolveAnimationStartValue,
 };

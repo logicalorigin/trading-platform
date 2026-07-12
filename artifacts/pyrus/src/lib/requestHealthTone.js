@@ -10,17 +10,6 @@ import { CSS_COLOR } from "./uiTokens.jsx";
  * loading. "off" means the feature is intentionally disabled AND we could
  * verify that (a failed profile/status fetch is an error, not "off").
  */
-export const REQUEST_HEALTH_STATUSES = [
-  "error",
-  "rateLimited",
-  "degraded",
-  "stale",
-  "loading",
-  "off",
-  "empty",
-  "healthy",
-];
-
 const HEALTH_TONE = {
   error: CSS_COLOR.red,
   rateLimited: CSS_COLOR.amber,

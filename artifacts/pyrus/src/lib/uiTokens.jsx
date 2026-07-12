@@ -237,13 +237,6 @@ export const GLOW = {
   negative: "var(--ra-glow-negative)",
 };
 
-export const MAX_WIDTHS = {
-  reading: 720,
-  content: 1280,
-  cockpit: 1600,
-  full: null,
-};
-
 export const SCALE_LEVELS = {
   xs: 0.85,
   s: 0.92,
@@ -337,8 +330,6 @@ export const setCurrentTheme = (nextTheme) => {
   return CURRENT_THEME;
 };
 
-export const getCurrentScale = () => CURRENT_SCALE;
-
 export const setCurrentScale = (nextScale) => {
   CURRENT_SCALE =
     typeof nextScale === "string" &&
@@ -348,8 +339,6 @@ export const setCurrentScale = (nextScale) => {
 
   return CURRENT_SCALE;
 };
-
-export const getCurrentDensity = () => CURRENT_DENSITY;
 
 export const setCurrentDensity = (nextDensity) => {
   CURRENT_DENSITY =

@@ -12,15 +12,3 @@ export const chartTooltipContentStyle = {
   lineHeight: 1.4,
   boxShadow: "var(--ra-tooltip-shadow)",
 } as const;
-
-export const chartTooltipLabelStyle = {
-  color: "var(--ra-tooltip-muted)",
-  fontFamily: T.display,
-  fontSize: "var(--ra-type-label)",
-} as const;
-
-export const chartTooltipItemStyle = {
-  color: "var(--ra-tooltip-text)",
-  fontFamily: T.display,
-  fontSize: "var(--ra-type-body)",
-} as const;

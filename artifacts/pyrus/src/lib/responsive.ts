@@ -151,8 +151,3 @@ export const responsiveFlags = (width: number): ResponsiveFlags => ({
   isNarrow: width > 0 && width < BREAKPOINTS.desktop,
   isDesktop: width >= BREAKPOINTS.desktop,
 });
-
-export const viewportBelow = (
-  width: number,
-  breakpoint: number | BreakpointName,
-) => width > 0 && width < resolveBreakpoint(breakpoint);

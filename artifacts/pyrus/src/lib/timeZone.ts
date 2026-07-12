@@ -54,13 +54,8 @@ export const formatAppDateForPreferences = (
     });
   }
 
-  const dateOptions: Intl.DateTimeFormatOptions =
-    Object.keys(options).length > 0
-      ? options
-      : { year: "numeric", month: "numeric", day: "numeric" };
-
   return getCachedPreferenceDateTimeFormatter(
-    withAppTimeZone(preferences, dateOptions),
+    withAppTimeZone(preferences, options),
   ).format(date);
 };
 
@@ -83,13 +78,8 @@ export const formatAppTimeForPreferences = (
     });
   }
 
-  const timeOptions: Intl.DateTimeFormatOptions =
-    Object.keys(options).length > 0
-      ? options
-      : { hour: "numeric", minute: "2-digit" };
-
   return getCachedPreferenceDateTimeFormatter(
-    withAppTimeZone(preferences, timeOptions),
+    withAppTimeZone(preferences, options),
   ).format(date);
 };
 
@@ -111,19 +101,8 @@ export const formatAppDateTimeForPreferences = (
     });
   }
 
-  const dateTimeOptions: Intl.DateTimeFormatOptions =
-    Object.keys(options).length > 0
-      ? options
-      : {
-          year: "numeric",
-          month: "numeric",
-          day: "numeric",
-          hour: "numeric",
-          minute: "2-digit",
-        };
-
   return getCachedPreferenceDateTimeFormatter(
-    withAppTimeZone(preferences, dateTimeOptions),
+    withAppTimeZone(preferences, options),
   ).format(date);
 };
 
