@@ -7,14 +7,32 @@ import readline from "node:readline";
 import { setTimeout as sleep } from "node:timers/promises";
 
 import { parseCpuProfileSummaryOutput } from "./cpu-profile-utils.mjs";
+import {
+  acceptanceFailedStepKeys,
+  assertStableApiPid,
+  diffRuntimeCounters,
+  pickRuntimeAcceptanceSnapshot,
+  summarizeRuntimeSamples,
+} from "./market-open-acceptance-utils.mjs";
 
 const REPO_ROOT = process.cwd();
 const RECORDER_DIR = path.join(REPO_ROOT, ".pyrus-runtime", "flight-recorder");
 const CPU_PROFILE_MS = 20_000;
 const ALLOC_PROFILE_MS = 20_000;
 const SYMBOL_STATE_GATE_MS = 60_000;
+const RUNTIME_SAMPLE_MS = 5_000;
 const INSPECTOR_URL = "http://127.0.0.1:9229/json/list";
 const RUNTIME_URL = "http://127.0.0.1:8080/api/diagnostics/runtime";
+const REQUIRED_STEPS = [
+  "identity",
+  "counterBaseline",
+  "symbolStateGate",
+  "cpuProfile",
+  "allocationProfile",
+  "counterFinal",
+  "counters",
+  "firehose",
+];
 
 const BASELINES = {
   gcBusyPercent: 32.6,
@@ -46,12 +64,30 @@ const state = {
 console.log(`market-open acceptance capture -> ${path.relative(REPO_ROOT, outDir)}`);
 
 await runStep("identity", "1. identity", captureIdentity);
-await runStep("symbolStateGate", "2. BUS-3B symbol-state write-rate gate", captureSymbolStateGate);
-await runStep("cpuProfile", "3. CPU profile", captureCpuProfile);
-await runStep("allocationProfile", "4. allocation profile", captureAllocationProfile);
-await runStep("counters", "5. runtime counters", captureCounters);
-await runStep("firehose", "6. firehose window", captureFirehoseWindow);
+await runStep("counterBaseline", "2. runtime counter baseline", captureRuntimeSnapshot);
+state.windowStartedAt = new Date().toISOString();
+const runtimeSampler = startRuntimeSampler();
+try {
+  await runStep(
+    "symbolStateGate",
+    "3. BUS-3B symbol-state write-rate gate",
+    captureSymbolStateGate,
+  );
+  await Promise.all([
+    runStep("cpuProfile", "4a. CPU profile", captureCpuProfile),
+    runStep("allocationProfile", "4b. allocation profile", captureAllocationProfile),
+  ]);
+  await runStep("counterFinal", "5. runtime counter final", captureRuntimeSnapshot);
+  state.windowEndedAt = new Date().toISOString();
+} finally {
+  await runtimeSampler.stop();
+}
+state.runtimeSamples = runtimeSampler.samples;
+state.steps.counters = buildCounterWindowStep();
+await runStep("firehose", "6. exact-window firehose", captureFirehoseWindow);
 
+const failedSteps = acceptanceFailedStepKeys(state.steps, REQUIRED_STEPS);
+state.acceptance = { passed: failedSteps.length === 0, failedSteps };
 const summaryRows = buildSummaryRows(state);
 state.summaryRows = summaryRows;
 
@@ -63,11 +99,17 @@ console.log("");
 console.log(renderMarkdownTable(summaryRows));
 console.log("");
 console.log(`report.md: ${path.join(outDir, "report.md")}`);
+if (failedSteps.length) {
+  console.error(`acceptance incomplete: ${failedSteps.join(", ")}`);
+  process.exitCode = 1;
+}
 
 async function runStep(key, label, fn) {
   console.log(label);
   try {
+    if (key !== "identity") await currentApiPid();
     const data = await fn();
+    if (key !== "identity") await currentApiPid();
     state.steps[key] = { ok: true, data };
     if (data?.verdictLine) {
       console.log(data.verdictLine);
@@ -94,6 +136,16 @@ async function captureIdentity() {
   const supervisorAncestry = supervisorPid ? await processAncestry(supervisorPid) : [];
   const pid2Owned = supervisorAncestry.some((entry) => cmdlineIsPid2(entry.cmdlineRaw ?? ""));
   const gitSha = findRecordedGitSha(apiCurrent) ?? findRecordedGitSha(current) ?? null;
+
+  if (!apiPid || !pidIsAlive(apiPid)) {
+    throw new Error(`recorded API pid is unavailable or dead: ${apiPid ?? "n-a"}`);
+  }
+  if (supervisors.length !== 1) {
+    throw new Error(`expected one runDevApp supervisor, found ${supervisors.length}`);
+  }
+  if (!pid2Owned) {
+    throw new Error(`supervisor ${supervisorPid ?? "n-a"} is not pid2-owned`);
+  }
 
   return {
     apiCurrentPath: path.relative(REPO_ROOT, apiCurrentPath),
@@ -169,17 +221,20 @@ async function runCpuProfiler(apiPid) {
 async function captureAllocationProfile() {
   const apiPid = await currentApiPid();
   if (!apiPid) throw new Error("api pid unavailable");
+  const rawProfilePath = path.join(outDir, "allocation.heapprofile");
   const inspector = await openInspector(apiPid);
   try {
     await inspector.send("HeapProfiler.enable");
     await inspector.send("HeapProfiler.startSampling", { samplingInterval: 65_536 });
     await sleep(ALLOC_PROFILE_MS);
     const { profile } = await inspector.send("HeapProfiler.stopSampling");
+    await writeFile(rawProfilePath, `${JSON.stringify(profile)}\n`);
     const heapStats = await evaluateHeapStats(inspector);
     const aggregate = aggregateHeapProfile(profile);
     return {
       apiPid,
       durationMs: ALLOC_PROFILE_MS,
+      rawProfilePath: path.relative(REPO_ROOT, rawProfilePath),
       totalAllocatedBytes: aggregate.totalBytes,
       mbPerSec: aggregate.totalBytes / 1024 / 1024 / (ALLOC_PROFILE_MS / 1000),
       parseRowAsArrayPercent: aggregate.parseRowAsArrayPercent,
@@ -192,7 +247,7 @@ async function captureAllocationProfile() {
   }
 }
 
-async function captureCounters() {
+async function captureRuntimeSnapshot() {
   const response = await fetch(RUNTIME_URL, {
     headers: { accept: "application/json" },
     signal: AbortSignal.timeout(60_000),
@@ -201,52 +256,26 @@ async function captureCounters() {
     throw new Error(`GET ${RUNTIME_URL} -> ${response.status}: ${trimForError(await response.text())}`);
   }
   const runtime = await response.json();
-  const apiCurrent = await readJsonIfExists(path.join(RECORDER_DIR, "api-current.json"));
-  const localBarCache =
-    getPath(runtime, ["providers", "massive", "localBarCache"]) ??
-    findFirstByKey(runtime, "localBarCache");
-  const storedBarsCache =
-    getPath(localBarCache, ["storedBarsCache"]) ?? findFirstByKey(runtime, "storedBarsCache");
-  const storedBarsRead =
-    getPath(localBarCache, ["storedBarsRead"]) ?? findFirstByKey(runtime, "storedBarsRead");
-  const dbPool =
-    findDbPool(runtime) ??
-    (apiCurrent?.dbPool && typeof apiCurrent.dbPool === "object" ? apiCurrent.dbPool : null);
-  const dbAdmission =
-    findFirstByKey(runtime, "dbAdmission") ??
-    getPath(dbPool, ["admission"]) ??
-    getPath(apiCurrent, ["dbPool", "admission"]) ??
-    null;
-
-  return {
-    runtimeFetchedAt: new Date().toISOString(),
-    storedBarsCache: pickObject(storedBarsCache, [
-      "hitCount",
-      "missCount",
-      "deltaReadCount",
-      "invalidationFullCount",
-      "invalidationDeltaDueCount",
-      "fullReadCount",
-      "invalidationCount",
-      "evictionCount",
-      "cellCount",
-      "maxCells",
-    ]),
-    storedBarsRead,
-    dbAdmission,
-    dbPool,
-  };
+  return pickRuntimeAcceptanceSnapshot(runtime);
 }
 
 async function captureFirehoseWindow() {
-  const now = Date.now();
-  const cutoffMs = now - 30 * 60_000;
-  const date = new Date(now).toISOString().slice(0, 10);
+  const cutoffMs = Date.parse(state.windowStartedAt);
+  const now = Date.parse(state.windowEndedAt);
+  if (!Number.isFinite(cutoffMs) || !Number.isFinite(now) || now < cutoffMs) {
+    throw new Error("acceptance window bounds are unavailable");
+  }
+  const dates = new Set([
+    new Date(cutoffMs).toISOString().slice(0, 10),
+    new Date(now).toISOString().slice(0, 10),
+  ]);
   const files = (await readdir(RECORDER_DIR))
-    .filter((name) => name === `api-events-${date}.jsonl`)
+    .filter((name) =>
+      [...dates].some((date) => name === `api-events-${date}.jsonl`),
+    )
     .map((name) => path.join(RECORDER_DIR, name));
   if (files.length === 0) {
-    throw new Error(`no api-events file for ${date}`);
+    throw new Error(`no api-events files for ${[...dates].join(", ")}`);
   }
 
   const byShape = new Map();
@@ -308,13 +337,66 @@ async function captureFirehoseWindow() {
 
 async function currentApiPid() {
   const apiCurrent = await readJsonIfExists(path.join(RECORDER_DIR, "api-current.json"));
-  const freshPid = finiteNumber(apiCurrent?.pid);
-  if (freshPid && pidIsAlive(freshPid)) return freshPid;
   const identityPid = finiteNumber(stepData(state, "identity")?.apiPid);
-  if (identityPid && pidIsAlive(identityPid)) return identityPid;
-  throw new Error(
-    `api pid unavailable or stale (fresh=${freshPid ?? "n-a"}, identity=${identityPid ?? "n-a"})`,
-  );
+  const freshPid = finiteNumber(apiCurrent?.pid);
+  assertStableApiPid(identityPid, freshPid);
+  if (!pidIsAlive(identityPid)) {
+    throw new Error(`API pid ${identityPid} is no longer alive`);
+  }
+  return identityPid;
+}
+
+function startRuntimeSampler() {
+  const samples = [];
+  let pending = Promise.resolve();
+  const sample = () => {
+    pending = pending.then(async () => {
+      try {
+        const apiPid = await currentApiPid();
+        samples.push({
+          at: new Date().toISOString(),
+          apiPid,
+          snapshot: await captureRuntimeSnapshot(),
+        });
+      } catch (error) {
+        samples.push({ at: new Date().toISOString(), error: errorMessage(error) });
+      }
+    });
+  };
+  sample();
+  const timer = setInterval(sample, RUNTIME_SAMPLE_MS);
+  timer.unref?.();
+  return {
+    samples,
+    async stop() {
+      clearInterval(timer);
+      await pending;
+    },
+  };
+}
+
+function buildCounterWindowStep() {
+  const before = stepData(state, "counterBaseline");
+  const after = stepData(state, "counterFinal");
+  if (!before || !after) {
+    return { ok: false, unavailable: "runtime counter boundary unavailable" };
+  }
+  const runtimeWindow = summarizeRuntimeSamples([
+    { at: state.windowStartedAt, snapshot: before },
+    ...state.runtimeSamples,
+    { at: state.windowEndedAt, snapshot: after },
+  ]);
+  return {
+    ok: true,
+    data: {
+      windowStart: state.windowStartedAt,
+      windowEnd: state.windowEndedAt,
+      before,
+      after,
+      delta: diffRuntimeCounters(before.counters, after.counters),
+      runtimeWindow,
+    },
+  };
 }
 
 async function readSymbolStateWriteCounter() {
@@ -473,9 +555,17 @@ function buildSummaryRows(reportState) {
   const alloc = stepData(reportState, "allocationProfile");
   const counters = stepData(reportState, "counters");
   const firehose = stepData(reportState, "firehose");
-  const storedBarsCache = counters?.storedBarsCache;
+  const counterDelta = counters?.delta ?? {};
+  const after = counters?.after;
+  const storedBarsCache = after?.diagnostics?.storedBarsCache;
+  const incremental = after?.diagnostics?.incremental;
+  const scannerCoverage = after?.diagnostics?.scannerCoverage;
   const firehoseMetrics = firehose?.derived ?? {};
-  const dbWaiters = finiteNumber(counters?.dbPool?.waiting);
+  const dbWaiters = finiteNumber(counters?.runtimeWindow?.peakDbTotalWaiting);
+  const storedBarsWindow = {
+    hitCount: counterDelta.storedBarsHitCount,
+    deltaReadCount: counterDelta.storedBarsDeltaReadCount,
+  };
 
   return [
     {
@@ -511,41 +601,82 @@ function buildSummaryRows(reportState) {
       baseline: `${BASELINES.dbWaitersRange[0]}-${BASELINES.dbWaitersRange[1]}`,
       captured: formatMaybeNumber(dbWaiters, 0),
       verdict: compareLowerRange(dbWaiters, BASELINES.dbWaitersRange[0], BASELINES.dbWaitersRange[1]),
-      notes: "runtime dbPool.waiting",
+      notes: "5s peak of raw pool + admission queue",
     },
     {
       metric: "auth_sessions max queue",
       baseline: `${BASELINES.authSessionsMaxSec}s`,
       captured: formatMaybeSeconds(firehoseMetrics.authSessionsMaxSec),
       verdict: compareLower(firehoseMetrics.authSessionsMaxSec, BASELINES.authSessionsMaxSec),
-      notes: "last 30m slow-query firehose",
+      notes: "exact acceptance-window slow-query firehose",
     },
     {
       metric: "bar_cache SELECT total",
       baseline: `${BASELINES.barCacheSelectTotalSec}s`,
       captured: formatMaybeSeconds(firehoseMetrics.barCacheSelectTotalSec),
       verdict: compareLower(firehoseMetrics.barCacheSelectTotalSec, BASELINES.barCacheSelectTotalSec),
-      notes: "last 30m slow-query firehose",
+      notes: "exact acceptance-window slow-query firehose",
     },
     {
       metric: "storedBarsCache hit/delta",
       baseline: `${BASELINES.storedBarsHitCount} / ${BASELINES.storedBarsDeltaReadCount}`,
       captured:
-        storedBarsCache == null
+        counters == null
           ? "n-a"
-          : `${formatMaybeNumber(storedBarsCache.hitCount, 0)} / ${formatMaybeNumber(
-              storedBarsCache.deltaReadCount,
+          : `${formatMaybeNumber(counterDelta.storedBarsHitCount, 0)} / ${formatMaybeNumber(
+              counterDelta.storedBarsDeltaReadCount,
               0,
             )}`,
-      verdict: compareStoredBars(storedBarsCache),
-      notes: "runtime providers.massive.localBarCache",
+      verdict: compareStoredBars(storedBarsWindow),
+      notes: "exact-window counter delta",
+    },
+    {
+      metric: "stored bars compact/object",
+      baseline: "compact=bars / object=0",
+      captured: storedBarsCache
+        ? `${formatMaybeNumber(storedBarsCache.compactBarCount, 0)}/${formatMaybeNumber(
+            storedBarsCache.barCount,
+            0,
+          )} / ${formatMaybeNumber(storedBarsCache.objectBarCount, 0)}`
+        : "n-a",
+      verdict:
+        storedBarsCache &&
+        storedBarsCache.compactBarCount === storedBarsCache.barCount &&
+        storedBarsCache.objectBarCount === 0
+          ? "PASS"
+          : "FAIL",
+      notes: "end-of-window resident cache",
+    },
+    {
+      metric: "incremental mismatches",
+      baseline: "0 shadow / 0 serve",
+      captured: `${formatMaybeNumber(
+        counterDelta.incrementalShadowMismatches,
+        0,
+      )} / ${formatMaybeNumber(counterDelta.matrixServeMismatchCount, 0)}`,
+      verdict:
+        counterDelta.incrementalShadowMismatches === 0 &&
+        counterDelta.matrixServeMismatchCount === 0
+          ? "PASS"
+          : "FAIL",
+      notes: incremental?.lastMatrixServeMismatchCellKey ?? "exact-window counter delta",
+    },
+    {
+      metric: "matrix SSE / scanner progress",
+      baseline: ">0 events / full cycle",
+      captured: `${formatMaybeNumber(counterDelta.matrixEventCount, 0)} / ${formatMaybeNumber(
+        scannerCoverage?.cycleScannedSymbols,
+        0,
+      )}/${formatMaybeNumber(scannerCoverage?.selectedSymbols, 0)}`,
+      verdict: "OBSERVE",
+      notes: "exact-window events; end-of-window scanner coverage",
     },
     {
       metric: "execution_events read max",
       baseline: `~${BASELINES.executionEventsReadMaxSec}s`,
       captured: formatMaybeSeconds(firehoseMetrics.executionEventsReadMaxSec),
       verdict: compareLower(firehoseMetrics.executionEventsReadMaxSec, BASELINES.executionEventsReadMaxSec),
-      notes: "last 30m slow-query firehose",
+      notes: "exact acceptance-window slow-query firehose",
     },
   ];
 }
@@ -566,6 +697,10 @@ function renderReport(reportState, summaryRows) {
     "",
     `Captured: ${reportState.capturedAt}`,
     `Output dir: ${reportState.outDir}`,
+    `Acceptance: ${reportState.acceptance?.passed ? "PASS" : "INCOMPLETE"}`,
+    reportState.acceptance?.failedSteps?.length
+      ? `Failed steps: ${reportState.acceptance.failedSteps.join(", ")}`
+      : "Failed steps: none",
     "",
     "## Summary",
     "",
@@ -588,11 +723,17 @@ function renderReport(reportState, summaryRows) {
     "",
     "## CPU Top Self-Time",
     "",
+    cpu?.rawProfilePath ? `Raw profile: ${cpu.rawProfilePath}` : "Raw profile: unavailable",
+    "",
     cpu?.topRows?.length
       ? renderRows(cpu.topRows, ["percent", "durationUs", "frame"])
       : "unavailable",
     "",
     "## Allocation Top Self-Size",
+    "",
+    alloc?.rawProfilePath
+      ? `Raw profile: ${alloc.rawProfilePath}`
+      : "Raw profile: unavailable",
     "",
     alloc
       ? renderKeyValues({
@@ -614,7 +755,7 @@ function renderReport(reportState, summaryRows) {
         )
       : "unavailable",
     "",
-    "## Runtime Counters",
+    "## Runtime Acceptance Window",
     "",
     counters ? fencedJson(counters) : "unavailable",
     "",
@@ -630,7 +771,7 @@ function renderReport(reportState, summaryRows) {
           })),
           ["count", "totalSec", "maxSec", "shape"],
         )
-      : "No api-db-query-slow events in the last 30 minutes.",
+      : "No api-db-query-slow events in the acceptance window.",
     "",
     unavailable.length ? ["## Unavailable", "", ...unavailable, ""].join("\n") : "",
   ]
@@ -847,68 +988,6 @@ function formatCallFrame(callFrame) {
   return `${fn} ${url}${line}`.trim();
 }
 
-function findDbPool(root) {
-  const candidate = findFirstByKey(root, "dbPool");
-  if (candidate && typeof candidate === "object") return candidate;
-  const metrics = findFirstObject(root, (value) =>
-    ["dbPoolActive", "dbPoolWaiting", "dbPoolMax"].every((key) => key in value),
-  );
-  if (!metrics) return null;
-  return {
-    active: finiteNumber(metrics.dbPoolActive),
-    waiting: finiteNumber(metrics.dbPoolWaiting),
-    max: finiteNumber(metrics.dbPoolMax),
-    total: finiteNumber(metrics.dbPoolTotal),
-    idle: finiteNumber(metrics.dbPoolIdle),
-  };
-}
-
-function findFirstByKey(root, wantedKey) {
-  let found = null;
-  const visit = (value) => {
-    if (found || value == null || typeof value !== "object") return;
-    if (Object.prototype.hasOwnProperty.call(value, wantedKey)) {
-      found = value[wantedKey];
-      return;
-    }
-    for (const child of Object.values(value)) visit(child);
-  };
-  visit(root);
-  return found;
-}
-
-function findFirstObject(root, predicate) {
-  let found = null;
-  const visit = (value) => {
-    if (found || value == null || typeof value !== "object") return;
-    if (!Array.isArray(value) && predicate(value)) {
-      found = value;
-      return;
-    }
-    for (const child of Object.values(value)) visit(child);
-  };
-  visit(root);
-  return found;
-}
-
-function getPath(root, keys) {
-  let current = root;
-  for (const key of keys) {
-    if (current == null || typeof current !== "object") return null;
-    current = current[key];
-  }
-  return current ?? null;
-}
-
-function pickObject(value, keys) {
-  if (value == null || typeof value !== "object") return null;
-  const picked = {};
-  for (const key of keys) {
-    if (Object.prototype.hasOwnProperty.call(value, key)) picked[key] = value[key];
-  }
-  return picked;
-}
-
 function sqlShape(sql, queryName) {
   if (queryName) return `queryName:${queryName}`;
   if (!sql) return "unknown";
@@ -955,6 +1034,7 @@ function compareStoredBars(storedBarsCache) {
 }
 
 function finiteNumber(value) {
+  if (value == null || value === "") return null;
   const number = Number(value);
   return Number.isFinite(number) ? number : null;
 }
