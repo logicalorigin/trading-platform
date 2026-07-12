@@ -37,7 +37,6 @@ import {
   startSignalMonitorStateReconciliation,
 } from "./services/signal-monitor";
 import { startOvernightSpotWorker } from "./services/overnight-spot-worker";
-import { startSignalMonitorEvaluationWorker } from "./services/signal-monitor-evaluation-worker";
 import { startSignalUniverseRankingScheduler } from "./services/signal-universe-ranking";
 import { startDbDiskUsageGuard } from "./services/db-disk-usage-guard";
 import { startSnapshotRetentionScheduler } from "./services/snapshot-retention-scheduler";
@@ -321,7 +320,6 @@ server.listen(port, () => {
     startSignalOptionsWorker,
     startSignalOptionsPositionTickManager,
     startOvernightSpotWorker,
-    startSignalMonitorEvaluationWorker,
     () => startDiagnosticsCollector(collectDiagnosticsInput),
     startSnapshotRetentionScheduler,
     startDbDiskUsageGuard,

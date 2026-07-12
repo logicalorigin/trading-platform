@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "unset REPLIT_LD_LIBRARY_PATH LD_LIBRARY_PATH NIX_LD NIX_LD_LIBRARY_PATH; exec node ./scripts/runDevApp.mjs",
-    "dev:replit": "unset REPLIT_LD_LIBRARY_PATH LD_LIBRARY_PATH NIX_LD NIX_LD_LIBRARY_PATH; export PYRUS_REPLIT_RUN=1; export PYRUS_SIGNAL_MONITOR_BAR_EVALUATION_ENABLED=1; export PYRUS_BACKGROUND_STOCK_AGGREGATE_STREAMS_ENABLED=1; exec node ./scripts/runDevApp.mjs",
+    "dev:replit": "unset REPLIT_LD_LIBRARY_PATH LD_LIBRARY_PATH NIX_LD NIX_LD_LIBRARY_PATH PYRUS_SIGNAL_MONITOR_BAR_EVALUATION_ENABLED SIGNAL_MONITOR_BAR_EVALUATION_ENABLED; export PYRUS_REPLIT_RUN=1; export PYRUS_BACKGROUND_STOCK_AGGREGATE_STREAMS_ENABLED=1; exec node ./scripts/runDevApp.mjs",
     "dev:web": "unset REPLIT_LD_LIBRARY_PATH LD_LIBRARY_PATH NIX_LD NIX_LD_LIBRARY_PATH; export PORT=${PORT:-18747} BASE_PATH=${BASE_PATH:-/} VITE_PROXY_API_TARGET=${VITE_PROXY_API_TARGET:-http://127.0.0.1:8080}; node ../../scripts/reap-dev-port.mjs && exec vite --config vite.config.ts --host 0.0.0.0",
     "build": "unset REPLIT_LD_LIBRARY_PATH LD_LIBRARY_PATH NIX_LD NIX_LD_LIBRARY_PATH; export PORT=${PORT:-18747} BASE_PATH=${BASE_PATH:-/}; vite build --config vite.config.ts",
     "serve": "unset REPLIT_LD_LIBRARY_PATH LD_LIBRARY_PATH NIX_LD NIX_LD_LIBRARY_PATH; export PORT=${PORT:-18747} BASE_PATH=${BASE_PATH:-/}; vite preview --config vite.config.ts --host 0.0.0.0",

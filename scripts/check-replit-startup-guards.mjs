@@ -172,6 +172,19 @@ check(
   "PYRUS dev:replit script must tag the Replit-owned full app supervisor startup.",
 );
 check(
+  /\bunset\b[^;]*\bPYRUS_SIGNAL_MONITOR_BAR_EVALUATION_ENABLED\b/.test(
+    pyrusDevReplit,
+  ) &&
+    /\bunset\b[^;]*\bSIGNAL_MONITOR_BAR_EVALUATION_ENABLED\b/.test(
+      pyrusDevReplit,
+    ) &&
+    !pyrusDevReplit.includes(
+      "export PYRUS_SIGNAL_MONITOR_BAR_EVALUATION_ENABLED",
+    ) &&
+    !pyrusDevReplit.includes("export SIGNAL_MONITOR_BAR_EVALUATION_ENABLED"),
+  "PYRUS dev:replit must unset both retired Signal Monitor scan flags before startup.",
+);
+check(
   pyrusDevWeb.includes("vite --config vite.config.ts") &&
     pyrusDevWeb.includes("reap-dev-port.mjs"),
   "PYRUS dev:web script must remain the Vite-only dev server with port reaping.",
@@ -249,6 +262,12 @@ check(
 );
 
 const apiApp = read("artifacts/api-server/src/app.ts");
+const apiIndex = read("artifacts/api-server/src/index.ts");
+check(
+  !apiIndex.includes("startSignalMonitorEvaluationWorker") &&
+    !apiIndex.includes('from "./services/signal-monitor-evaluation-worker"'),
+  "API startup must not register the retired Signal Monitor scan worker.",
+);
 check(
   apiApp.includes('process.env["PYRUS_SERVE_WEB"] === "1"') &&
     apiApp.includes("express.static") &&
