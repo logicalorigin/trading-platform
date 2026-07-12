@@ -67,7 +67,12 @@ export const DiagPanel = ({
           {healthy ? "ok" : aggregate}
         </span>
         {panelFailurePoint ? (
-          <FailurePointInlineIcon point={panelFailurePoint} side="top" size={11} />
+          <FailurePointInlineIcon
+            point={panelFailurePoint}
+            side="top"
+            size={11}
+            focusable={false}
+          />
         ) : null}
       </button>
     );
@@ -95,7 +100,12 @@ export const DiagPanel = ({
       <span style={{ flex: 1 }}>{String(title).toUpperCase()}</span>
       {!healthy ? <span style={{ color }}>{aggregate}</span> : null}
       {panelFailurePoint ? (
-        <FailurePointInlineIcon point={panelFailurePoint} side="top" size={11} />
+        <FailurePointInlineIcon
+          point={panelFailurePoint}
+          side="top"
+          size={11}
+          focusable={readOnly}
+        />
       ) : null}
     </>
   );

@@ -56,7 +56,6 @@ import {
 } from "../components/platform/tableColumnInteractions.js";
 import { InfoTooltipIcon } from "../components/platform/InfoTooltipIcon.jsx";
 import { FailurePointTooltip } from "../components/platform/FailurePointTooltip.jsx";
-import { DataIssueInlineIcon } from "../components/platform/DataIssueInlineIcon.jsx";
 import { getGexGlossaryEntry } from "../features/gex/gexGlossary.js";
 import { HeatmapColorLegend } from "../features/gex/HeatmapColorLegend.jsx";
 import {
@@ -65,7 +64,6 @@ import {
   useGexZeroGamma,
 } from "../features/gex/useGexZeroGamma.js";
 import { buildFailurePoint } from "../features/platform/failurePointModel.js";
-import { collectCoverageDataIssues } from "../features/platform/dataIssueModel.js";
 import {
   SEMANTIC_TONE,
   toneForDirectionalIntent,
@@ -372,23 +370,6 @@ const SourceCoverageBanner = ({ data, warnings, lastUpdatedLabel }) => {
     nextAction:
       "Inspect source coverage before relying on the current GEX heatmap or strike table.",
   });
-  const coverageIssues = collectCoverageDataIssues(
-    {
-      ...coverage,
-      loadedCount: coverage?.loadedCount ?? source.usableOptionCount,
-      returnedCount: coverage?.returnedCount ?? source.optionCount,
-      coverageHealth: "lagging",
-      degradedReason: warnings[0],
-      updatedAt: lastUpdatedLabel,
-    },
-    {
-      valueLabel: "GEX source coverage",
-      source: "gex",
-      nextAction:
-        "Inspect source coverage before relying on the current GEX heatmap or strike table.",
-    },
-  );
-
   return (
     <FailurePointTooltip
       point={failurePoint}
@@ -398,6 +379,7 @@ const SourceCoverageBanner = ({ data, warnings, lastUpdatedLabel }) => {
     >
       <div
         data-testid="gex-source-coverage-banner"
+        tabIndex={0}
         style={{
           display: "flex",
           alignItems: "flex-start",
@@ -410,12 +392,6 @@ const SourceCoverageBanner = ({ data, warnings, lastUpdatedLabel }) => {
           minWidth: 0,
         }}
       >
-        <DataIssueInlineIcon
-          issues={coverageIssues.length ? coverageIssues : [failurePoint]}
-          side="bottom"
-          align="start"
-          size={13}
-        />
         <div style={{ display: "grid", gap: sp(3), minWidth: 0 }}>
           <div
             style={{

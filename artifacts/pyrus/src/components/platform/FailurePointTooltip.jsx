@@ -205,6 +205,7 @@ export const FailurePointInlineIcon = ({
   side = "top",
   align = "center",
   size = 13,
+  focusable = true,
 }) => {
   if (!point) return null;
   const tone = severityTone(point.severity);
@@ -215,6 +216,7 @@ export const FailurePointInlineIcon = ({
         data-testid="failure-point-inline-icon"
         role="img"
         aria-label={`${point.title} details`}
+        tabIndex={focusable ? 0 : undefined}
         style={{
           display: "inline-flex",
           alignItems: "center",

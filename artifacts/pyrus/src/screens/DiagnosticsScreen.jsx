@@ -461,7 +461,12 @@ const MetricCard = ({ label, value, sub, severity = "info", onClick, failurePoin
         minWidth={140}
         info={
           showFailurePoint ? (
-            <FailurePointInlineIcon point={failurePoint} side="bottom" size={12} />
+            <FailurePointInlineIcon
+              point={failurePoint}
+              side="bottom"
+              size={12}
+              focusable={false}
+            />
           ) : null
         }
       />

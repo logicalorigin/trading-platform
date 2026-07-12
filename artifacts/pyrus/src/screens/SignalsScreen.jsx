@@ -1740,7 +1740,7 @@ function CompactIntervalCell({
           ? `${timeframe} ${direction || "none"} · ${formatBars(state.barsSinceSignal)} · ${intervalAge}`
           : `${timeframe} not hydrated`;
   return (
-    <AppTooltip content={content}>
+    <AppTooltip content={issues.length ? undefined : content}>
       <span
         style={{
           display: "grid",

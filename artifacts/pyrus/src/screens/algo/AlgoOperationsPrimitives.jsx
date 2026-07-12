@@ -52,6 +52,7 @@ export const AlgoOverviewMetric = ({
       : null;
   const metricBody = (
     <div
+      tabIndex={failurePoint ? 0 : undefined}
       style={{
         display: "grid",
         gridTemplateColumns: Icon
@@ -94,14 +95,6 @@ export const AlgoOverviewMetric = ({
           <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}>
             {label}
           </span>
-          {failurePoint ? (
-            <FailurePointInlineIcon
-              point={failurePoint}
-              side="top"
-              align="start"
-              size={dense ? 10 : 11}
-            />
-          ) : null}
         </span>
         <span
           style={{
@@ -1020,6 +1013,7 @@ export const AlgoPipelineOverview = ({
                       side="top"
                       align="center"
                       size={11}
+                      focusable={false}
                     />
                   ) : null}
                 </span>
@@ -1073,6 +1067,7 @@ export const AlgoPipelineOverview = ({
                     side="top"
                     align="center"
                     size={11}
+                    focusable={false}
                   />
                 ) : null}
               </>
