@@ -1,34 +1,14 @@
 #!/usr/bin/env node
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
-const repoRoot = path.resolve(new URL("..", import.meta.url).pathname);
+const scriptPath = fileURLToPath(import.meta.url);
+const repoRoot = path.resolve(path.dirname(scriptPath), "..");
 
-const ignoredDirs = new Set([
-  ".agents",
-  ".cache",
-  ".claude",
-  ".config",
-  ".git",
-  ".local",
-  ".upm",
-  ".vendor",
-  "node_modules",
-  "dist",
-  "build",
-  "output",
-  "out-tsc",
-  "tmp",
-  "attached_assets",
-]);
-
-const ignoredPathParts = [
-  "scripts/check-legacy-branding.mjs",
-  "AGENT_CHAT_",
-  "SESSION_HANDOFF_",
-  "SESSION_HANDOFF_CURRENT.md",
-  "SESSION_HANDOFF_MASTER.md",
-];
+const ignoredPaths = new Set(["scripts/check-legacy-branding.mjs"]);
+const ignoredRootPrefixes = ["AGENT_CHAT_", "SESSION_HANDOFF_"];
 
 const binaryExtensions = new Set([
   ".png",
@@ -98,8 +78,14 @@ const allowed = [
   },
 ];
 
-function shouldIgnore(relPath) {
-  if (ignoredPathParts.some((part) => relPath.includes(part))) return true;
+export function shouldIgnore(relPath) {
+  if (ignoredPaths.has(relPath)) return true;
+  if (
+    !relPath.includes("/") &&
+    ignoredRootPrefixes.some((prefix) => relPath.startsWith(prefix))
+  ) {
+    return true;
+  }
   return binaryExtensions.has(path.extname(relPath).toLowerCase());
 }
 
@@ -109,47 +95,50 @@ function isAllowed(relPath, line) {
   );
 }
 
-function walk(dir, files = []) {
-  for (const entry of readdirSync(dir, { withFileTypes: true })) {
-    if (entry.isDirectory() && ignoredDirs.has(entry.name)) continue;
-    const fullPath = path.join(dir, entry.name);
-    const relPath = path.relative(repoRoot, fullPath).replaceAll(path.sep, "/");
-    if (shouldIgnore(relPath)) continue;
-    if (entry.isDirectory()) {
-      walk(fullPath, files);
-      continue;
+function listFiles() {
+  return execFileSync(
+    "git",
+    ["ls-files", "--cached", "--others", "--exclude-standard", "-z"],
+    { cwd: repoRoot, encoding: "utf8" },
+  )
+    .split("\0")
+    .filter(Boolean)
+    .filter((relPath) => !shouldIgnore(relPath))
+    .map((relPath) => ({
+      fullPath: path.join(repoRoot, relPath),
+      relPath,
+    }));
+}
+
+const main = () => {
+  const failures = [];
+
+  for (const { fullPath, relPath } of listFiles()) {
+    if (!existsSync(fullPath) || statSync(fullPath).size > 2_000_000) continue;
+    const source = readFileSync(fullPath, "utf8");
+    const lines = source.split(/\r?\n/);
+    lines.forEach((line, index) => {
+      if (!forbidden.some((pattern) => pattern.test(line))) return;
+      if (isAllowed(relPath, line)) return;
+      failures.push(`${relPath}:${index + 1}: ${line.trim()}`);
+    });
+  }
+
+  if (failures.length > 0) {
+    console.error(
+      "[check-legacy-branding] retired branding remains outside the compatibility allowlist:",
+    );
+    for (const failure of failures.slice(0, 80)) {
+      console.error(`  ${failure}`);
     }
-    if (entry.isFile()) {
-      files.push({ fullPath, relPath });
+    if (failures.length > 80) {
+      console.error(`  ...and ${failures.length - 80} more`);
     }
+    process.exitCode = 1;
+    return;
   }
-  return files;
-}
 
-const failures = [];
+  console.log("[check-legacy-branding] ok: no retired branding remains");
+};
 
-for (const { fullPath, relPath } of walk(repoRoot)) {
-  if (!existsSync(fullPath) || statSync(fullPath).size > 2_000_000) continue;
-  const source = readFileSync(fullPath, "utf8");
-  const lines = source.split(/\r?\n/);
-  lines.forEach((line, index) => {
-    if (!forbidden.some((pattern) => pattern.test(line))) return;
-    if (isAllowed(relPath, line)) return;
-    failures.push(`${relPath}:${index + 1}: ${line.trim()}`);
-  });
-}
-
-if (failures.length > 0) {
-  console.error(
-    "[check-legacy-branding] retired branding remains outside the compatibility allowlist:",
-  );
-  for (const failure of failures.slice(0, 80)) {
-    console.error(`  ${failure}`);
-  }
-  if (failures.length > 80) {
-    console.error(`  ...and ${failures.length - 80} more`);
-  }
-  process.exit(1);
-}
-
-console.log("[check-legacy-branding] ok: no retired branding remains");
+if (process.argv[1] && path.resolve(process.argv[1]) === scriptPath) main();
