@@ -525,7 +525,10 @@ export type CancelOrderSnapshot = {
   reconciliationRequired: boolean;
 };
 
-export type ReplaceOrderSnapshot = BrokerOrderSnapshot;
+export type ReplaceOrderSnapshot = BrokerOrderSnapshot & {
+  replacementConfirmed: boolean;
+  reconciliationRequired: boolean;
+};
 
 export type BrokerExecutionSnapshot = {
   id: string;

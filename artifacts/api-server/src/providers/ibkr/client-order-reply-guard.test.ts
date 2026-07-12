@@ -146,3 +146,34 @@ test("explicit IBKR reply continuation sends only the chosen decision", async ()
     globalThis.fetch = previousFetch;
   }
 });
+
+test("IBKR object acknowledgement errors fail closed as broker rejection", async () => {
+  const previousFetch = globalThis.fetch;
+  globalThis.fetch = (async (input) => {
+    const path = new URL(String(input)).pathname;
+    if (path.endsWith("/iserver/accounts")) {
+      return Response.json({ accounts: ["U1234567"], isPaper: false });
+    }
+    if (path.endsWith("/iserver/secdef/search")) {
+      return Response.json([
+        { symbol: "AAPL", conid: 265598, description: "NASDAQ" },
+      ]);
+    }
+    if (path.endsWith("/iserver/account/U1234567/orders")) {
+      return Response.json({ error: "Invalid order price fields" });
+    }
+    throw new Error(`unexpected IBKR request: ${path}`);
+  }) as typeof fetch;
+
+  try {
+    await assert.rejects(
+      new IbkrClient(config()).placeOrder(order),
+      (error: unknown) => {
+        assert.equal((error as { code?: string }).code, "ibkr_order_rejected");
+        return true;
+      },
+    );
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
