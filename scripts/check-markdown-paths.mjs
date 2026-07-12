@@ -3,7 +3,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const scriptPath = fileURLToPath(import.meta.url);
+const repoRoot = path.resolve(path.dirname(scriptPath), "..");
 const maintainedDocs = [
   "AGENTS.md",
   "APP_SURFACE_OWNERSHIP_REVIEW.md",
@@ -15,7 +16,13 @@ const maintainedDocs = [
 
 const fileLikeExtension =
   /\.(cjs|js|jsx|json|md|mjs|ps1|sh|toml|ts|tsx|txt|yaml|yml)$/i;
-const rootQualifiedPrefixes = ["artifacts/", "lib/", "scripts/", ".agents/"];
+const rootQualifiedPrefixes = [
+  "artifacts/",
+  "lib/",
+  "scripts/",
+  ".agents/",
+  ".claude/",
+];
 
 const extractCandidates = (markdown) => {
   const candidates = [];
@@ -33,8 +40,11 @@ const extractCandidates = (markdown) => {
   return candidates;
 };
 
-const normalizeCandidate = (candidate, docPath) => {
-  const trimmed = candidate.trim().replace(/^<|>$/g, "").replace(/[.,;:]$/g, "");
+export const normalizeCandidate = (candidate, docPath, root = repoRoot) => {
+  const trimmed = candidate
+    .trim()
+    .replace(/^<|>$/g, "")
+    .replace(/[.,;:]$/g, "");
   if (
     !trimmed ||
     trimmed.startsWith("#") ||
@@ -52,11 +62,18 @@ const normalizeCandidate = (candidate, docPath) => {
     trimmed.startsWith(prefix),
   );
   const isDocLocalFile =
-    docPath.includes("/") && !trimmed.includes("/") && fileLikeExtension.test(trimmed);
+    docPath.includes("/") &&
+    !trimmed.includes("/") &&
+    fileLikeExtension.test(trimmed);
   const isExistingRootFile =
-    !trimmed.includes("/") && fs.existsSync(path.join(repoRoot, trimmed));
+    !trimmed.includes("/") && fs.existsSync(path.join(root, trimmed));
 
-  if (!isRelativePath && !isRootQualified && !isDocLocalFile && !isExistingRootFile) {
+  if (
+    !isRelativePath &&
+    !isRootQualified &&
+    !isDocLocalFile &&
+    !isExistingRootFile
+  ) {
     return null;
   }
 
@@ -75,26 +92,33 @@ const candidateExists = (docPath, candidate) => {
   return candidates.some((candidatePath) => fs.existsSync(candidatePath));
 };
 
-const missing = [];
+const main = () => {
+  const missing = [];
 
-for (const docPath of maintainedDocs) {
-  const markdown = fs.readFileSync(path.join(repoRoot, docPath), "utf8");
-  for (const rawCandidate of extractCandidates(markdown)) {
-    const candidate = normalizeCandidate(rawCandidate, docPath);
-    if (candidate && !candidateExists(docPath, candidate)) {
-      missing.push({ docPath, candidate });
+  for (const docPath of maintainedDocs) {
+    const markdown = fs.readFileSync(path.join(repoRoot, docPath), "utf8");
+    for (const rawCandidate of extractCandidates(markdown)) {
+      const candidate = normalizeCandidate(rawCandidate, docPath);
+      if (candidate && !candidateExists(docPath, candidate)) {
+        missing.push({ docPath, candidate });
+      }
     }
   }
-}
 
-if (missing.length > 0) {
-  console.error(
-    `[check-markdown-paths] missing ${missing.length} path reference(s) in maintained docs:`,
-  );
-  for (const { docPath, candidate } of missing) {
-    console.error(`  - ${docPath}: ${candidate}`);
+  if (missing.length > 0) {
+    console.error(
+      `[check-markdown-paths] missing ${missing.length} path reference(s) in maintained docs:`,
+    );
+    for (const { docPath, candidate } of missing) {
+      console.error(`  - ${docPath}: ${candidate}`);
+    }
+    process.exitCode = 1;
+    return;
   }
-  process.exit(1);
-}
 
-console.log(`[check-markdown-paths] ok: ${maintainedDocs.length} maintained docs checked`);
+  console.log(
+    `[check-markdown-paths] ok: ${maintainedDocs.length} maintained docs checked`,
+  );
+};
+
+if (process.argv[1] && path.resolve(process.argv[1]) === scriptPath) main();
