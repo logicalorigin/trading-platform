@@ -28,16 +28,16 @@ const rejectsWithCode = (code: string) => (error: unknown): boolean => {
   return true;
 };
 
-test("IBKR structured broker submission requires tax preflight even when request mode is shadow", async () => {
+test("IBKR structured broker submission rejects shadow mode before tax preflight", async () => {
   await runAsAppUser("tax-platform-structured", async () => {
     await assert.rejects(
       placeOrder(baseIbkrOrder()),
-      rejectsWithCode("tax_preflight_required"),
+      rejectsWithCode("ibkr_broker_mutation_live_mode_required"),
     );
   });
 });
 
-test("IBKR raw broker submission requires tax preflight even when request mode is shadow", async () => {
+test("IBKR raw broker submission rejects shadow mode before tax preflight", async () => {
   await runAsAppUser("tax-platform-raw", async () => {
     await assert.rejects(
       submitRawOrders({
@@ -57,16 +57,16 @@ test("IBKR raw broker submission requires tax preflight even when request mode i
           },
         ],
       }),
-      rejectsWithCode("tax_preflight_required"),
+      rejectsWithCode("ibkr_broker_mutation_live_mode_required"),
     );
   });
 });
 
-test("IBKR raw broker submission requires parent order request for tax fingerprinting", async () => {
+test("IBKR raw live submission remains disabled", async () => {
   await assert.rejects(
     submitRawOrders({
       accountId: "U1234567",
-      mode: "shadow",
+      mode: "live",
       confirm: true,
       ibkrOrders: [
         {
@@ -80,6 +80,6 @@ test("IBKR raw broker submission requires parent order request for tax fingerpri
         },
       ],
     }),
-    rejectsWithCode("tax_preflight_parent_order_required"),
+    rejectsWithCode("ibkr_raw_live_orders_disabled"),
   );
 });

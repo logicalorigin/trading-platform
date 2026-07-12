@@ -3491,7 +3491,18 @@ function assertLiveOrderConfirmed(
   mode: "shadow" | "live" | null | undefined,
   confirm: boolean | null | undefined,
 ) {
-  if (mode !== "live" || confirm === true) {
+  if (mode !== "live") {
+    throw new HttpError(
+      409,
+      "Direct IBKR broker actions require explicit live mode. Use the shadow-order routes for simulation.",
+      {
+        code: "ibkr_broker_mutation_live_mode_required",
+        expose: true,
+      },
+    );
+  }
+
+  if (confirm === true) {
     return;
   }
 
@@ -3748,23 +3759,6 @@ function ibkrOrderToTaxOrder(
   };
 }
 
-function submittedOrderIdText(value: unknown): string | null {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return null;
-  }
-  const record = value as Record<string, unknown>;
-  const submittedOrderIds = Array.isArray(record["submittedOrderIds"])
-    ? record["submittedOrderIds"]
-        .map((entry) => String(entry || "").trim())
-        .filter(Boolean)
-    : [];
-  if (submittedOrderIds.length > 0) {
-    return submittedOrderIds.join(",");
-  }
-  const id = String(record["id"] || record["orderId"] || "").trim();
-  return id || null;
-}
-
 type PlaceOrderTaxPreflightFields = {
   taxPreflightToken?: string | null;
   taxAcknowledgements?: string[] | null;
@@ -3772,6 +3766,12 @@ type PlaceOrderTaxPreflightFields = {
 
 export async function placeOrder(input: PlaceOrderInput) {
   assertLiveOrderConfirmed(input.mode, input.confirm);
+  if ((input as PlaceOrderInput & { source?: unknown }).source === "automation") {
+    throw new HttpError(409, "Automated live IBKR orders are disabled.", {
+      code: "ibkr_automated_live_orders_disabled",
+      expose: true,
+    });
+  }
   const taxInput = input as PlaceOrderInput & PlaceOrderTaxPreflightFields;
   const taxPreflight = await assertTaxPreflightForOrderSubmission({
     order: ibkrOrderToTaxOrder(input, { taxMode: "live" }),
@@ -3825,67 +3825,12 @@ export async function submitRawOrders(input: {
   taxAcknowledgements?: string[] | null;
   ibkrOrders: Record<string, unknown>[];
 }) {
-  assertLiveOrderConfirmed(input.mode ?? getRuntimeMode(), input.confirm);
-  const mode = input.mode ?? getRuntimeMode();
-  const parentOrderRequest = input.parentOrderRequest
-    ? {
-        ...input.parentOrderRequest,
-        accountId: input.accountId || input.parentOrderRequest.accountId,
-        mode,
-      } as PlaceOrderInput & PlaceOrderTaxPreflightFields
-    : null;
-  const taxPreflight = await assertTaxPreflightForOrderSubmission({
-    order: parentOrderRequest
-      ? ibkrOrderToTaxOrder(parentOrderRequest, { taxMode: "live" })
-      : (() => {
-          throw new HttpError(
-            409,
-            "Tax/compliance preflight requires the parent order request for raw IBKR submissions.",
-            {
-              code: "tax_preflight_parent_order_required",
-              expose: true,
-            },
-          );
-        })(),
-    taxPreflightToken:
-      input.taxPreflightToken ?? parentOrderRequest?.taxPreflightToken,
-    taxAcknowledgements:
-      input.taxAcknowledgements ?? parentOrderRequest?.taxAcknowledgements,
+  const mode = requireExplicitOrderActionMode(input.mode, "Raw order submission");
+  assertLiveOrderConfirmed(mode, input.confirm);
+  throw new HttpError(409, "Raw live IBKR order submission is disabled.", {
+    code: "ibkr_raw_live_orders_disabled",
+    expose: true,
   });
-  await assertIbkrGatewayTradingAvailable();
-  const client = getIbkrClientPortalClient();
-  if (parentOrderRequest) {
-    await validateOrderIntentForRouting(parentOrderRequest, client);
-  }
-  const result = await client.submitRawOrders({
-    accountId: input.accountId,
-    orders: input.ibkrOrders,
-  });
-  // IBKR has ACCEPTED the raw order(s). A post-submit bookkeeping failure must NOT
-  // throw — that makes the caller see a failed submit and retry, placing a
-  // DUPLICATE live order (SYS-DUP-ORDER). Mirror the overnight/Schwab fix: log and
-  // return the accepted order with a reconcile marker so the caller does not retry.
-  try {
-    await recordTaxPreflightOrderSubmitted({
-      preflightToken: taxPreflight?.preflightToken,
-      submittedOrderId: submittedOrderIdText(result),
-    });
-  } catch (error) {
-    logger.warn(
-      {
-        err: error,
-        accountId: input.accountId,
-        submittedOrderId: submittedOrderIdText(result),
-      },
-      "IBKR raw orders placed but tax preflight submit record failed; reconciliation required",
-    );
-    return {
-      ...result,
-      reconcileRequired: true,
-      reconciliationReason: "tax_preflight_order_submit_record_failed",
-    };
-  }
-  return result;
 }
 
 export async function replaceOrder(input: {
@@ -3895,14 +3840,15 @@ export async function replaceOrder(input: {
   mode?: "shadow" | "live";
   confirm?: boolean | null;
 }) {
-  assertLiveOrderConfirmed(input.mode ?? getRuntimeMode(), input.confirm);
+  const mode = requireExplicitOrderActionMode(input.mode, "Order replacement");
+  assertLiveOrderConfirmed(mode, input.confirm);
   await assertIbkrGatewayTradingAvailable();
   const client = getIbkrClientPortalClient();
   return client.replaceOrder({
     accountId: input.accountId,
     orderId: input.orderId,
     order: input.order,
-    mode: input.mode ?? getRuntimeMode(),
+    mode,
   });
 }
 

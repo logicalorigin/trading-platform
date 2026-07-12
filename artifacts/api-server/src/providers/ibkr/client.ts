@@ -3124,44 +3124,28 @@ export class IbkrClient {
     };
   }
 
-  private async confirmOrderReplies(
+  private requireOrderAcknowledgement(
     responsePayload: unknown,
-  ): Promise<Record<string, unknown>> {
-    let currentPayload = responsePayload;
+  ): Record<string, unknown> {
+    const results = compact(asArray(responsePayload).map(asRecord));
+    const successfulOrder = results.find(
+      (result) =>
+        asString(result["order_id"]) !== null ||
+        asString(result["orderId"]) !== null,
+    );
 
-    for (let replyCount = 0; replyCount < 5; replyCount += 1) {
-      const results = compact(asArray(currentPayload).map(asRecord));
-      const successfulOrder = results.find(
-        (result) =>
-          asString(result["order_id"]) !== null ||
-          asString(result["orderId"]) !== null,
-      );
+    if (successfulOrder) {
+      return successfulOrder;
+    }
 
-      if (successfulOrder) {
-        return successfulOrder;
-      }
-
-      const reply = results.find((result) => asString(result["id"]) !== null);
-
-      if (!reply) {
-        break;
-      }
-
-      const replyId = asString(reply["id"]);
-
-      if (!replyId) {
-        break;
-      }
-
-      await this.getTradingAccountsInfo();
-
-      currentPayload = await this.request<unknown>(
-        `/iserver/reply/${encodeURIComponent(replyId)}`,
-        {
-          method: "POST",
-          body: JSON.stringify({ confirmed: true }),
-        },
-      );
+    const reply = results.find((result) => asString(result["id"]) !== null);
+    if (reply) {
+      const messages = compact(asArray(reply["message"]).map(asString));
+      throw new HttpError(409, "IBKR requires explicit review of an order warning.", {
+        code: "ibkr_order_warning_confirmation_required",
+        data: { messages },
+        expose: true,
+      });
     }
 
     throw new HttpError(
@@ -3324,7 +3308,7 @@ export class IbkrClient {
         body: JSON.stringify(body),
       },
     );
-    const result = await this.confirmOrderReplies(responsePayload);
+    const result = this.requireOrderAcknowledgement(responsePayload);
     const placedAt = new Date();
     return this.mapAcknowledgedOrder(input, result, accountId, placedAt);
   }
@@ -3371,7 +3355,7 @@ export class IbkrClient {
       },
     );
 
-    return await this.confirmOrderReplies(payload);
+    return this.requireOrderAcknowledgement(payload);
   }
 
   async replaceOrder(input: {
@@ -3397,7 +3381,7 @@ export class IbkrClient {
         body: JSON.stringify(input.order),
       },
     );
-    const result = await this.confirmOrderReplies(payload);
+    const result = this.requireOrderAcknowledgement(payload);
     const currentOrders = await this.listOrders({
       accountId: input.accountId,
       mode: input.mode,
