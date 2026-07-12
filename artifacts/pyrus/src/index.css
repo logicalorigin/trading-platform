@@ -962,6 +962,39 @@ optgroup {
   }
 }
 
+@keyframes pyrusBtnSpin {
+  to { transform: rotate(360deg); }
+}
+
+.ra-btn {
+  background: var(--ra-btn-bg);
+  color: var(--ra-btn-color);
+  transition:
+    background-color var(--ra-motion-standard) var(--ra-motion-ease),
+    color var(--ra-motion-standard) var(--ra-motion-ease),
+    box-shadow var(--ra-motion-standard) var(--ra-motion-ease),
+    transform var(--ra-motion-micro) var(--ra-motion-ease);
+}
+
+.ra-btn:hover:not(:disabled) {
+  background: var(--ra-btn-bg-hover, var(--ra-btn-bg));
+  color: var(--ra-btn-color-hover, var(--ra-btn-color));
+}
+
+.ra-btn:active:not(:disabled) {
+  transform: translateY(0.5px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ra-btn {
+    transition: none;
+  }
+
+  .ra-btn:active:not(:disabled) {
+    transform: none;
+  }
+}
+
 /* Touch-target floor. The name promised a guarantee it only gave on phone
    (SYS-05). Now every viewport gets at least the WCAG 2.2 24px minimum, and
    the touch viewports (phone + tablet) get the full 44px comfortable target. */

@@ -97,30 +97,6 @@ const SpinnerIcon = ({ size = 14, color = "currentColor" }) => (
   />
 );
 
-const BUTTON_CSS = `
-@keyframes pyrusBtnSpin {
-  to { transform: rotate(360deg); }
-}
-.ra-btn {
-  background: var(--ra-btn-bg);
-  color: var(--ra-btn-color);
-  transition:
-    background-color var(--ra-motion-standard) var(--ra-motion-ease),
-    color var(--ra-motion-standard) var(--ra-motion-ease),
-    box-shadow var(--ra-motion-standard) var(--ra-motion-ease),
-    transform var(--ra-motion-micro) var(--ra-motion-ease);
-}
-.ra-btn:hover:not(:disabled) {
-  background: var(--ra-btn-bg-hover, var(--ra-btn-bg));
-  color: var(--ra-btn-color-hover, var(--ra-btn-color));
-}
-.ra-btn:active:not(:disabled) { transform: translateY(0.5px); }
-@media (prefers-reduced-motion: reduce) {
-  .ra-btn { transition: none; }
-  .ra-btn:active:not(:disabled) { transform: none; }
-}
-`;
-
 const renderButtonIcon = (IconSlot, size) => {
   if (!IconSlot) return null;
   if (React.isValidElement(IconSlot)) return IconSlot;
@@ -151,49 +127,46 @@ export const Button = forwardRef(function Button(
   const isDisabled = disabled || loading;
 
   return (
-    <>
-      <style>{BUTTON_CSS}</style>
-      <button
-        {...rest}
-        ref={ref}
-        type={type}
-        disabled={isDisabled}
-        data-testid={dataTestId}
-        className="ra-btn ra-touch-target"
-        style={{
-          display: fullWidth ? "flex" : "inline-flex",
-          width: fullWidth ? "100%" : undefined,
-          alignItems: "center",
-          justifyContent: "center",
-          gap: sp(dims.gap),
-          padding: sp(dims.padding),
-          "--ra-btn-bg": v.background,
-          "--ra-btn-bg-hover": v.hoverBackground,
-          "--ra-btn-color": v.color,
-          "--ra-btn-color-hover": v.hoverColor || v.color,
-          background: "var(--ra-btn-bg)",
-          color: "var(--ra-btn-color)",
-          border: v.border,
-          borderRadius: dim(RADII.pill),
-          boxShadow: v.boxShadow,
-          fontFamily: T.sans,
-          fontSize: textSize(dims.font),
-          fontWeight: v.fontWeight || FONT_WEIGHTS.medium,
-          letterSpacing: "0.01em",
-          cursor: isDisabled ? "not-allowed" : "pointer",
-          opacity: isDisabled && !loading ? 0.55 : 1,
-          whiteSpace: "nowrap",
-          ...style,
-        }}
-      >
-        {loading ? (
-          <SpinnerIcon size={dims.icon} color={v.color} />
-        ) : (
-          renderButtonIcon(LeftIcon, dims.icon)
-        )}
-        {children}
-        {!loading ? renderButtonIcon(RightIcon, dims.icon) : null}
-      </button>
-    </>
+    <button
+      {...rest}
+      ref={ref}
+      type={type}
+      disabled={isDisabled}
+      data-testid={dataTestId}
+      className="ra-btn ra-touch-target"
+      style={{
+        display: fullWidth ? "flex" : "inline-flex",
+        width: fullWidth ? "100%" : undefined,
+        alignItems: "center",
+        justifyContent: "center",
+        gap: sp(dims.gap),
+        padding: sp(dims.padding),
+        "--ra-btn-bg": v.background,
+        "--ra-btn-bg-hover": v.hoverBackground,
+        "--ra-btn-color": v.color,
+        "--ra-btn-color-hover": v.hoverColor || v.color,
+        background: "var(--ra-btn-bg)",
+        color: "var(--ra-btn-color)",
+        border: v.border,
+        borderRadius: dim(RADII.pill),
+        boxShadow: v.boxShadow,
+        fontFamily: T.sans,
+        fontSize: textSize(dims.font),
+        fontWeight: v.fontWeight || FONT_WEIGHTS.medium,
+        letterSpacing: "0.01em",
+        cursor: isDisabled ? "not-allowed" : "pointer",
+        opacity: isDisabled && !loading ? 0.55 : 1,
+        whiteSpace: "nowrap",
+        ...style,
+      }}
+    >
+      {loading ? (
+        <SpinnerIcon size={dims.icon} color={v.color} />
+      ) : (
+        renderButtonIcon(LeftIcon, dims.icon)
+      )}
+      {children}
+      {!loading ? renderButtonIcon(RightIcon, dims.icon) : null}
+    </button>
   );
 });
