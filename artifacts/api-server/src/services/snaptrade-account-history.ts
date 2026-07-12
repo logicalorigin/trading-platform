@@ -1108,6 +1108,48 @@ function balancePointToEquityInputPoint(
   };
 }
 
+function balancePointsWithActivityTransfers(input: {
+  points: BalanceHistoryPoint[];
+  activities: SnapTradeHistoryActivity[];
+}): EquityHistoryInputPoint[] {
+  const points = input.points.map(balancePointToEquityInputPoint);
+  const pointDays = points.map((point) => marketDateKey(point.timestamp));
+  for (const activity of input.activities) {
+    const classification = snapTradeActivityCashClassification(activity);
+    if (
+      classification?.type !== "deposit" &&
+      classification?.type !== "withdrawal"
+    ) {
+      continue;
+    }
+    const activityDay = marketDateKey(activity.tradeDate);
+    if (!activityDay) {
+      continue;
+    }
+    let low = 0;
+    let high = pointDays.length;
+    while (low < high) {
+      const middle = Math.floor((low + high) / 2);
+      const pointDay = pointDays[middle];
+      if (!pointDay || pointDay < activityDay) {
+        low = middle + 1;
+      } else {
+        high = middle;
+      }
+    }
+    const point = points[low];
+    if (!point) {
+      continue;
+    }
+    if (classification.type === "deposit") {
+      point.deposits += classification.amount;
+    } else {
+      point.withdrawals += classification.amount;
+    }
+  }
+  return points;
+}
+
 function latestBalancePoint(points: BalanceHistoryPoint[]): BalanceHistoryPoint | null {
   return points.reduce<BalanceHistoryPoint | null>((latest, point) => {
     if (!latest || point.timestamp.getTime() > latest.timestamp.getTime()) {
@@ -1651,7 +1693,10 @@ async function snapTradeEquityHistoryPoints(input: {
     })
   ) {
     return {
-      points: input.storedBalancePoints.map(balancePointToEquityInputPoint),
+      points: balancePointsWithActivityTransfers({
+        points: input.storedBalancePoints,
+        activities: input.activities,
+      }),
       selectedSnapshotSource: "SNAPTRADE_BALANCE_HISTORY",
     };
   }

@@ -148,6 +148,19 @@ test("SnapTrade account history backfills activities and beta balance history", 
                   external_reference_id: "order-2",
                 },
                 {
+                  id: "act-contribution",
+                  symbol: null,
+                  price: null,
+                  units: null,
+                  amount: 100,
+                  currency: { code: "USD" },
+                  type: "CONTRIBUTION",
+                  description: "Cash contribution",
+                  trade_date: "2026-06-10T15:00:00.000Z",
+                  settlement_date: "2026-06-10T15:00:00.000Z",
+                  fee: 0,
+                },
+                {
                   id: "act-dividend",
                   symbol: null,
                   price: null,
@@ -161,7 +174,7 @@ test("SnapTrade account history backfills activities and beta balance history", 
                   fee: 0,
                 },
               ],
-              pagination: { offset: 0, limit: 1000, total: 3 },
+              pagination: { offset: 0, limit: 1000, total: 4 },
             }),
             { status: 200, headers: { "content-type": "application/json" } },
           );
@@ -207,7 +220,7 @@ test("SnapTrade account history backfills activities and beta balance history", 
         ],
       );
       assert.doesNotMatch(requestedUrls.join("\n"), /consumer-secret/);
-      assert.equal(ingest.activitiesStored, 3);
+      assert.equal(ingest.activitiesStored, 4);
       assert.equal(ingest.balanceSnapshotsStored, 2);
 
       // Read path is STORED-FIRST: it serves persisted data and makes NO blocking
@@ -230,17 +243,25 @@ test("SnapTrade account history backfills activities and beta balance history", 
       assert.equal(result.closedTrades.summary.realizedPnl, 88);
       assert.equal(result.equityHistory.points.length, 2);
       assert.equal(result.equityHistory.points[1]?.netLiquidation, 1090);
-      assert.equal(result.equityHistory.points[1]?.returnPercent, 9);
-      assert.equal(result.equityHistory.events.length, 1);
-      assert.equal(result.equityHistory.events[0]?.type, "dividend");
+      assert.equal(result.equityHistory.points[1]?.deposits, 100);
+      assert.ok(
+        Math.abs(
+          (result.equityHistory.points[1]?.returnPercent ?? 0) + 10 / 11,
+        ) < 1e-9,
+      );
+      assert.equal(result.equityHistory.events.length, 2);
+      assert.deepEqual(
+        result.equityHistory.events.map((event) => event.type).sort(),
+        ["deposit", "dividend"],
+      );
       assert.equal(result.balanceHistory.available, true);
-      assert.equal(result.backfill.activitiesStored, 3);
+      assert.equal(result.backfill.activitiesStored, 4);
       assert.equal(result.backfill.balanceSnapshotsStored, 2);
 
       const storedActivities = await db
         .select()
         .from(snapTradeAccountActivitiesTable);
-      assert.equal(storedActivities.length, 3);
+      assert.equal(storedActivities.length, 4);
       assert.equal(storedActivities[0]?.snapTradeActivityId, "act-option-open");
 
       const storedSnapshots = await db.select().from(balanceSnapshotsTable);
