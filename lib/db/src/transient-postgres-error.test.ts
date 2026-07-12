@@ -15,6 +15,14 @@ test("classifies pg/sqlx pool acquire timeouts as transient", () => {
   );
 });
 
+test("classifies server connection exhaustion as transient", () => {
+  const error = Object.assign(new Error("sorry, too many clients already"), {
+    code: "53300",
+  });
+  assert.equal(isTransientPostgresError(error), true);
+  assert.equal(isPoolContentionError(error), false);
+});
+
 test("classifies pool-acquire timeouts as pool contention", () => {
   assert.equal(
     isPoolContentionError(

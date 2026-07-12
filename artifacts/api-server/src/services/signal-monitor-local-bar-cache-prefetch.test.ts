@@ -370,6 +370,163 @@ test("stored-bar ingress projects wide broker bars once and reuses the canonical
   assert.equal(fullReads, SOURCES.length);
 });
 
+test("DB-shaped stored-bar cells retain numeric columns instead of per-bar objects", async () => {
+  await seed("AAPL", 4);
+  const evaluatedAt = new Date();
+  const limit = 50;
+  const baseline = await loadSignalMonitorLocalBarCache({
+    symbol: "AAPL",
+    timeframe: TIMEFRAME,
+    evaluatedAt,
+    limit,
+  });
+  let fullReads = 0;
+  internals.__setLoadStoredMarketBarsForSymbolsForTests(async (input) => {
+    fullReads += 1;
+    return loadStoredMarketBarsForSymbols(input);
+  });
+
+  const load = () =>
+    runWithSignalMonitorStoredBarsPrefetch(
+      { symbols: ["AAPL"], timeframes: [TIMEFRAME], evaluatedAt, limit },
+      () =>
+        loadSignalMonitorLocalBarCache({
+          symbol: "AAPL",
+          timeframe: TIMEFRAME,
+          evaluatedAt,
+          limit,
+        }),
+    );
+  const first = await load();
+  const second = await load();
+
+  assert.deepEqual(first, baseline);
+  assert.deepEqual(second, baseline);
+  assert.ok(first.length > 0);
+  for (const bar of first) {
+    assert.ok(bar.dataUpdatedAt instanceof Date);
+    assert.notEqual(
+      bar.timestamp,
+      bar.dataUpdatedAt,
+      "store-timeframe normalization keeps equal-time Dates distinct",
+    );
+    assert.equal(bar.timestamp.getTime(), bar.dataUpdatedAt.getTime());
+  }
+  assert.equal(
+    fullReads,
+    SOURCES.length,
+    "the second cycle must still avoid full DB reads",
+  );
+
+  const diagnostics =
+    getSignalMonitorLocalBarCacheDiagnostics().storedBarsCache;
+  assert.ok(diagnostics.barCount > 0);
+  assert.equal(diagnostics.compactBarCount, diagnostics.barCount);
+  assert.equal(diagnostics.objectBarCount, 0);
+  assert.equal(
+    diagnostics.compactBytes,
+    diagnostics.barCount * 6 * Float64Array.BYTES_PER_ELEMENT,
+  );
+});
+
+test("packed bars preserve a shared timestamp/dataUpdatedAt Date alias", async () => {
+  const timestamp = new Date("2026-07-10T14:00:00.000Z");
+  internals.__setLoadStoredMarketBarsForSymbolsForTests(async (input) =>
+    new Map(
+      input.symbols.map((symbol) => [
+        symbol,
+        [
+          {
+            timestamp,
+            open: 100,
+            high: 101,
+            low: 99,
+            close: 100.5,
+            volume: 1_000,
+            source: input.sourceName,
+            providerContractId: null,
+            outsideRth: true,
+            partial: false,
+            transport: "massive_websocket" as const,
+            delayed: false,
+            freshness: "live" as const,
+            marketDataMode: "live" as const,
+            dataUpdatedAt: timestamp,
+          },
+        ],
+      ]),
+    ),
+  );
+  const evaluatedAt = new Date("2026-07-10T15:00:00.000Z");
+
+  const bars = await runWithSignalMonitorStoredBarsPrefetch(
+    { symbols: ["AAPL"], timeframes: [TIMEFRAME], evaluatedAt, limit: 50 },
+    () =>
+      loadSignalMonitorLocalBarCache({
+        symbol: "AAPL",
+        timeframe: TIMEFRAME,
+        evaluatedAt,
+        limit: 50,
+      }),
+  );
+
+  assert.equal(bars.length, 1);
+  assert.equal(bars[0]!.timestamp, bars[0]!.dataUpdatedAt);
+  const diagnostics =
+    getSignalMonitorLocalBarCacheDiagnostics().storedBarsCache;
+  assert.equal(diagnostics.compactBarCount, SOURCES.length);
+  assert.equal(diagnostics.objectBarCount, 0);
+});
+
+test("packed append at the cell limit drops the oldest bars", async () => {
+  const startsAt = await seed("AAPL", 2);
+  const evaluatedAt = new Date();
+  const limit = 2;
+  const load = () =>
+    runWithSignalMonitorStoredBarsPrefetch(
+      { symbols: ["AAPL"], timeframes: [TIMEFRAME], evaluatedAt, limit },
+      () =>
+        loadSignalMonitorLocalBarCache({
+          symbol: "AAPL",
+          timeframe: TIMEFRAME,
+          evaluatedAt,
+          limit,
+        }),
+    );
+  await load();
+
+  const appended = [1, 2].map((offset) => ({
+    timestamp: new Date(startsAt.at(-1)!.getTime() + offset * 60_000),
+    open: 150 + offset,
+    high: 151 + offset,
+    low: 149 + offset,
+    close: 150.5 + offset,
+    volume: 5_000 + offset,
+  }));
+  await persistMarketDataBarsForSymbols({
+    timeframe: TIMEFRAME,
+    sourceName: SOURCES[0]!,
+    assetClass: "equity",
+    outsideRth: true,
+    source: "trades",
+    recentWindowMinutes: 0,
+    bySymbol: [{ symbol: "AAPL", bars: appended }],
+  });
+
+  const served = await load();
+  process.env[STORED_BARS_DELTA_ENV] = "off";
+  const full = await load();
+  process.env[STORED_BARS_DELTA_ENV] = "on";
+  assert.deepEqual(served, full);
+  assert.deepEqual(
+    served.map((bar) => bar.timestamp.getTime()),
+    appended.map((bar) => bar.timestamp.getTime()),
+  );
+  const diagnostics =
+    getSignalMonitorLocalBarCacheDiagnostics().storedBarsCache;
+  assert.equal(diagnostics.objectBarCount, 0);
+});
+
 test("above-high-water persisted bars use the delta reader instead of full reload", async () => {
   const startsAt = await seed("AAPL", 2);
   let fullReads = 0;
@@ -675,6 +832,12 @@ test("historical change with unknown pre-write high-water full-invalidates inste
     },
   ]);
   const after = getSignalMonitorLocalBarCacheDiagnostics().storedBarsCache;
+  assert.equal(
+    before.barCount - after.barCount,
+    5,
+    "full invalidation immediately detaches the affected cell's bars",
+  );
+  assert.equal(before.compactBarCount - after.compactBarCount, 5);
   assert.equal(
     after.invalidationFullCount - before.invalidationFullCount,
     1,

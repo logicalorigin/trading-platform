@@ -11,6 +11,11 @@ import {
   type DbAdmissionDiagnostics,
   type DbAdmissionScheduler,
 } from "./admission";
+import { sharedAdvisoryLockHolder } from "./advisory-lock";
+import {
+  createPostgresConnectionExhaustionGatedClient,
+  postgresConnectionExhaustionGate,
+} from "./connection-exhaustion-gate";
 import { attachPostgresPoolErrorHandler } from "./pool-error-handler";
 import { resolveDatabaseRuntimeConfig } from "./runtime";
 import * as schema from "./schema";
@@ -252,6 +257,18 @@ const isHeliumDatabase = (): boolean => {
 };
 
 const heliumDatabase = isHeliumDatabase();
+const ConnectionExhaustionGatedClient =
+  createPostgresConnectionExhaustionGatedClient(
+    pg.Client,
+    postgresConnectionExhaustionGate,
+  );
+const heliumConnectionOptions = heliumDatabase
+  ? {
+      ssl: false as const,
+      keepAlive: true,
+      keepAliveInitialDelayMillis: 10_000,
+    }
+  : {};
 const defaultConnectionTimeoutMillis = heliumDatabase ? 30_000 : undefined;
 // Circuit-breaker for the hard 12-connection ceiling: one query stalled for tens
 // of seconds (lock wait, contention-stalled scan) pins a scarce connection and
@@ -271,11 +288,12 @@ const idleInTransactionSessionTimeoutMillis = readPositiveInteger(
 );
 
 export const pool = new Pool({
+  Client: ConnectionExhaustionGatedClient,
   connectionString: resolvedDatabaseUrl,
   max: resolvedPoolMax,
   application_name: `pyrus-${process.env.PYRUS_DB_APP || "app"}`,
   idle_in_transaction_session_timeout: idleInTransactionSessionTimeoutMillis,
-  ...(heliumDatabase ? { ssl: false } : {}),
+  ...heliumConnectionOptions,
   ...(readOptionalPositiveInteger("DB_CONNECTION_TIMEOUT_MS") !== undefined ||
   defaultConnectionTimeoutMillis !== undefined
     ? {
@@ -306,9 +324,10 @@ attachPostgresPoolErrorHandler(pool);
  * pathological and must release its scarce connection fast.
  */
 export const tradingPool = new Pool({
+  Client: ConnectionExhaustionGatedClient,
   connectionString: resolvedDatabaseUrl,
   max: readPositiveInteger("DB_TRADING_POOL_MAX", 3),
-  ...(heliumDatabase ? { ssl: false } : {}),
+  ...heliumConnectionOptions,
   ...(readOptionalPositiveInteger("DB_CONNECTION_TIMEOUT_MS") !== undefined ||
   defaultConnectionTimeoutMillis !== undefined
     ? {
@@ -334,9 +353,10 @@ attachPostgresPoolErrorHandler(tradingPool);
  * scarce connection fast.
  */
 export const authPool = new Pool({
+  Client: ConnectionExhaustionGatedClient,
   connectionString: resolvedDatabaseUrl,
   max: readPositiveInteger("DB_AUTH_POOL_MAX", 2),
-  ...(heliumDatabase ? { ssl: false } : {}),
+  ...heliumConnectionOptions,
   ...(readOptionalPositiveInteger("DB_CONNECTION_TIMEOUT_MS") !== undefined ||
   defaultConnectionTimeoutMillis !== undefined
     ? {
@@ -719,6 +739,22 @@ export function getPoolStats(): PostgresPoolStats {
     totalWaiting: rawPoolWaiting + admissionWaiting,
     admission,
   };
+}
+
+/** Gracefully releases every process-owned Postgres connection on API reload. */
+export async function closeDatabaseConnections(): Promise<void> {
+  const results = await Promise.allSettled([
+    pool.end(),
+    tradingPool.end(),
+    authPool.end(),
+    sharedAdvisoryLockHolder.close(),
+  ]);
+  const errors = results.flatMap((result) =>
+    result.status === "rejected" ? [result.reason] : [],
+  );
+  if (errors.length > 0) {
+    throw new AggregateError(errors, "Failed to close database connections");
+  }
 }
 
 export {

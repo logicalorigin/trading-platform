@@ -9498,7 +9498,7 @@ function getSignalMonitorMatrixHeavyEvaluationCacheStats() {
 
 // Resident bar-count census across the signal-monitor's retained caches — the
 // F2 (retained-set) sizing evidence. Counts only; byte math belongs to the
-// reader. Cheap: two O(cells) sums per diagnostics poll.
+// reader. Cheap: three O(cells) sums per diagnostics poll.
 export function getSignalMonitorResidentBarStats() {
   let backfilledBaseBars = 0;
   for (const entry of signalMonitorBackfilledBaseByCell.values()) {
@@ -9508,6 +9508,10 @@ export function getSignalMonitorResidentBarStats() {
   for (const entry of signalMonitorStreamCompletedBarsCache.values()) {
     streamCompletedBars += entry.bars.length;
   }
+  let completedBarsCacheBars = 0;
+  for (const entry of signalMonitorCompletedBarsCache.values()) {
+    completedBarsCacheBars += entry.value.bars.length;
+  }
   return {
     backfilledBase: {
       cells: signalMonitorBackfilledBaseByCell.size,
@@ -9516,6 +9520,10 @@ export function getSignalMonitorResidentBarStats() {
     streamCompletedBars: {
       entries: signalMonitorStreamCompletedBarsCache.size,
       bars: streamCompletedBars,
+    },
+    completedBarsCache: {
+      entries: signalMonitorCompletedBarsCache.size,
+      bars: completedBarsCacheBars,
     },
     heavyEvaluationCache: {
       entries: signalMonitorMatrixHeavyEvaluationCache.size,

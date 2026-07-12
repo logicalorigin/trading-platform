@@ -135,9 +135,27 @@ type StoredBarsPrefetch = {
   evaluatedAtMs: number;
   limit: number;
   // timeframe -> sourceName -> normalizedSymbol -> bars
-  byTimeframe: Map<string, Map<string, Map<string, SignalMonitorCachedBar[]>>>;
+  byTimeframe: Map<string, Map<string, Map<string, StoredSignalMonitorBars>>>;
 };
 const storedBarsPrefetchStore = new AsyncLocalStorage<StoredBarsPrefetch>();
+
+const STORED_BAR_NUMBER_WIDTH = 6;
+type PackedStoredSignalMonitorBars = {
+  kind: "packed";
+  // Interleaved timestamp/open/high/low/close/volume doubles.
+  values: Float64Array;
+  source: string;
+  partial: boolean;
+  delayed: boolean;
+  freshness: SignalMonitorCachedBar["freshness"];
+  marketDataMode: SignalMonitorCachedBar["marketDataMode"];
+  // Store-timeframe normalization creates equal-time but distinct Dates, while
+  // some test/stream ingress preserves one shared Date. Reads preserve either.
+  dataUpdatedAtAliasesTimestamp: boolean;
+};
+type StoredSignalMonitorBars =
+  | PackedStoredSignalMonitorBars
+  | { kind: "objects"; bars: SignalMonitorCachedBar[] };
 
 type StoredBarsCacheCell = {
   baseKey: string;
@@ -146,7 +164,7 @@ type StoredBarsCacheCell = {
   timeframe: SignalMonitorLocalBarCacheTimeframe;
   sourceName: string;
   limit: number;
-  bars: SignalMonitorCachedBar[];
+  bars: StoredSignalMonitorBars;
   highWaterMs: number | null;
   pendingMaxStartsAtMs: number | null;
   lastDeltaBucketMs: number | null;
@@ -571,6 +589,224 @@ function barsThroughEvaluatedAt(
     .slice(-Math.max(1, Math.floor(limit || 1)));
 }
 
+function packStoredSignalMonitorBars(
+  bars: SignalMonitorCachedBar[],
+): StoredSignalMonitorBars {
+  const first = bars[0];
+  if (!first || !(first.dataUpdatedAt instanceof Date)) {
+    return { kind: "objects", bars };
+  }
+  const firstTimestampMs = first.timestamp.getTime();
+  const firstUpdatedAtMs = first.dataUpdatedAt.getTime();
+  const aliasesTimestamp = first.dataUpdatedAt === first.timestamp;
+  if (
+    !Number.isFinite(firstTimestampMs) ||
+    firstUpdatedAtMs !== firstTimestampMs ||
+    bars.some((bar) => {
+      const updatedAt = bar.dataUpdatedAt;
+      return (
+        !(updatedAt instanceof Date) ||
+        !Number.isFinite(bar.timestamp.getTime()) ||
+        updatedAt.getTime() !== bar.timestamp.getTime() ||
+        (updatedAt === bar.timestamp) !== aliasesTimestamp ||
+        bar.source !== first.source ||
+        bar.partial !== first.partial ||
+        bar.delayed !== first.delayed ||
+        bar.freshness !== first.freshness ||
+        bar.marketDataMode !== first.marketDataMode
+      );
+    })
+  ) {
+    return { kind: "objects", bars };
+  }
+
+  const values = new Float64Array(bars.length * STORED_BAR_NUMBER_WIDTH);
+  bars.forEach((bar, index) => {
+    const offset = index * STORED_BAR_NUMBER_WIDTH;
+    values[offset] = bar.timestamp.getTime();
+    values[offset + 1] = bar.open;
+    values[offset + 2] = bar.high;
+    values[offset + 3] = bar.low;
+    values[offset + 4] = bar.close;
+    values[offset + 5] = bar.volume;
+  });
+  return {
+    kind: "packed",
+    values,
+    source: first.source,
+    partial: first.partial,
+    delayed: first.delayed,
+    freshness: first.freshness,
+    marketDataMode: first.marketDataMode,
+    dataUpdatedAtAliasesTimestamp: aliasesTimestamp,
+  };
+}
+
+function storedSignalMonitorBarsLength(bars: StoredSignalMonitorBars): number {
+  return bars.kind === "packed"
+    ? bars.values.length / STORED_BAR_NUMBER_WIDTH
+    : bars.bars.length;
+}
+
+function materializePackedStoredBars(
+  bars: PackedStoredSignalMonitorBars,
+  start = 0,
+  end = storedSignalMonitorBarsLength(bars),
+): SignalMonitorCachedBar[] {
+  const materialized: SignalMonitorCachedBar[] = [];
+  for (let index = start; index < end; index += 1) {
+    const offset = index * STORED_BAR_NUMBER_WIDTH;
+    const timestamp = new Date(bars.values[offset]!);
+    materialized.push({
+      timestamp,
+      open: bars.values[offset + 1]!,
+      high: bars.values[offset + 2]!,
+      low: bars.values[offset + 3]!,
+      close: bars.values[offset + 4]!,
+      volume: bars.values[offset + 5]!,
+      source: bars.source,
+      partial: bars.partial,
+      delayed: bars.delayed,
+      freshness: bars.freshness,
+      marketDataMode: bars.marketDataMode,
+      dataUpdatedAt: bars.dataUpdatedAtAliasesTimestamp
+        ? timestamp
+        : new Date(timestamp.getTime()),
+    });
+  }
+  return materialized;
+}
+
+function materializeStoredSignalMonitorBars(
+  bars: StoredSignalMonitorBars,
+): SignalMonitorCachedBar[] {
+  return bars.kind === "packed" ? materializePackedStoredBars(bars) : bars.bars;
+}
+
+function storedBarsThroughEvaluatedAt(
+  bars: StoredSignalMonitorBars,
+  evaluatedAtMs: number,
+  limit: number,
+): SignalMonitorCachedBar[] {
+  if (bars.kind === "objects") {
+    return barsThroughEvaluatedAt(bars.bars, evaluatedAtMs, limit);
+  }
+  let end = storedSignalMonitorBarsLength(bars);
+  while (
+    end > 0 &&
+    bars.values[(end - 1) * STORED_BAR_NUMBER_WIDTH]! > evaluatedAtMs
+  ) {
+    end -= 1;
+  }
+  const start = Math.max(0, end - Math.max(1, Math.floor(limit || 1)));
+  return materializePackedStoredBars(bars, start, end);
+}
+
+function firstStoredBarTimestampMs(
+  bars: StoredSignalMonitorBars,
+): number | null {
+  if (!storedSignalMonitorBarsLength(bars)) {
+    return null;
+  }
+  return bars.kind === "packed"
+    ? bars.values[0]!
+    : (dateOrNull(bars.bars[0]?.timestamp)?.getTime() ?? null);
+}
+
+function highWaterMsForStoredBars(
+  bars: StoredSignalMonitorBars,
+): number | null {
+  const length = storedSignalMonitorBarsLength(bars);
+  if (!length) {
+    return null;
+  }
+  return bars.kind === "packed"
+    ? bars.values[(length - 1) * STORED_BAR_NUMBER_WIDTH]!
+    : highWaterMsForBars(bars.bars);
+}
+
+function storedBarsBeforeTimestamp(
+  bars: StoredSignalMonitorBars,
+  timestampMs: number,
+): StoredSignalMonitorBars {
+  if (bars.kind === "objects") {
+    return {
+      kind: "objects",
+      bars: bars.bars.filter((bar) => bar.timestamp.getTime() < timestampMs),
+    };
+  }
+  let end = 0;
+  const length = storedSignalMonitorBarsLength(bars);
+  while (
+    end < length &&
+    bars.values[end * STORED_BAR_NUMBER_WIDTH]! < timestampMs
+  ) {
+    end += 1;
+  }
+  return {
+    ...bars,
+    values: bars.values.slice(0, end * STORED_BAR_NUMBER_WIDTH),
+  };
+}
+
+function packedStoredBarsMetadataEqual(
+  left: PackedStoredSignalMonitorBars,
+  right: PackedStoredSignalMonitorBars,
+): boolean {
+  return (
+    left.source === right.source &&
+    left.partial === right.partial &&
+    left.delayed === right.delayed &&
+    left.freshness === right.freshness &&
+    left.marketDataMode === right.marketDataMode &&
+    left.dataUpdatedAtAliasesTimestamp ===
+      right.dataUpdatedAtAliasesTimestamp
+  );
+}
+
+function appendStoredSignalMonitorBars(input: {
+  current: StoredSignalMonitorBars;
+  delta: SignalMonitorCachedBar[];
+  limit: number;
+}): StoredSignalMonitorBars {
+  if (!input.delta.length) {
+    return input.current;
+  }
+  const packedDelta = packStoredSignalMonitorBars(input.delta);
+  if (
+    input.current.kind !== "packed" ||
+    packedDelta.kind !== "packed" ||
+    !packedStoredBarsMetadataEqual(input.current, packedDelta)
+  ) {
+    return packStoredSignalMonitorBars(
+      mergeBarsByTimestamp(
+        [...materializeStoredSignalMonitorBars(input.current), ...input.delta],
+        input.limit,
+      ),
+    );
+  }
+
+  const currentLength = storedSignalMonitorBarsLength(input.current);
+  const deltaLength = storedSignalMonitorBarsLength(packedDelta);
+  const keptLength = Math.min(
+    Math.max(1, Math.floor(input.limit || 1)),
+    currentLength + deltaLength,
+  );
+  const skippedLength = currentLength + deltaLength - keptLength;
+  const currentStart = Math.min(currentLength, skippedLength);
+  const deltaStart = Math.max(0, skippedLength - currentLength);
+  const values = new Float64Array(keptLength * STORED_BAR_NUMBER_WIDTH);
+  const keptCurrentValues = input.current.values.subarray(
+    currentStart * STORED_BAR_NUMBER_WIDTH,
+  );
+  values.set(keptCurrentValues);
+  values.set(
+    packedDelta.values.subarray(deltaStart * STORED_BAR_NUMBER_WIDTH),
+    keptCurrentValues.length,
+  );
+  return { ...input.current, values };
+}
+
 function removeStoredBarsCacheCell(key: string): void {
   const cell = storedBarsCrossCycleCache.get(key);
   if (!cell) {
@@ -638,7 +874,8 @@ function writeStoredBarsCacheCell(input: {
     sourceName: input.sourceName,
     limit: input.limit,
   });
-  const bars = mergeBarsByTimestamp(input.bars, input.limit);
+  const mergedBars = mergeBarsByTimestamp(input.bars, input.limit);
+  const bars = packStoredSignalMonitorBars(mergedBars);
   const cell: StoredBarsCacheCell = {
     baseKey,
     key,
@@ -647,7 +884,7 @@ function writeStoredBarsCacheCell(input: {
     sourceName: input.sourceName,
     limit: Math.max(1, Math.floor(input.limit || 1)),
     bars,
-    highWaterMs: highWaterMsForBars(bars),
+    highWaterMs: highWaterMsForBars(mergedBars),
     pendingMaxStartsAtMs: null,
     lastDeltaBucketMs: input.deltaBucketMs,
     deltaDue: false,
@@ -667,11 +904,12 @@ function updateStoredBarsCacheCellWithDelta(input: {
   deltaBucketMs: number;
   evaluatedAtMs: number;
 }): StoredBarsCacheCell {
-  const bars = mergeBarsByTimestamp(
-    [...input.cell.bars, ...input.deltaBars],
-    input.cell.limit,
-  );
-  const highWaterMs = highWaterMsForBars(bars);
+  const bars = appendStoredSignalMonitorBars({
+    current: input.cell.bars,
+    delta: input.deltaBars,
+    limit: input.cell.limit,
+  });
+  const highWaterMs = highWaterMsForStoredBars(bars);
   const pendingMaxStartsAtMs =
     input.cell.pendingMaxStartsAtMs != null &&
     (highWaterMs == null || highWaterMs < input.cell.pendingMaxStartsAtMs)
@@ -727,11 +965,11 @@ function ensureStoredBarsCacheSubscription(): void {
           // still lags the DB. Fall through to full invalidation instead.
           !change.previousMaxUnknown
         ) {
-          const oldestBarTimestamp = dateOrNull(cell.bars[0]?.timestamp);
+          const oldestBarTimestampMs = firstStoredBarTimestampMs(cell.bars);
           if (
-            oldestBarTimestamp != null &&
-            change.startsAtMs < oldestBarTimestamp.getTime() &&
-            cell.bars.length >= cell.limit
+            oldestBarTimestampMs != null &&
+            change.startsAtMs < oldestBarTimestampMs &&
+            storedSignalMonitorBarsLength(cell.bars) >= cell.limit
           ) {
             // A rewrite/backfill entirely below a full cell's cached window
             // cannot change what a fresh newest-`limit` read would return
@@ -739,11 +977,11 @@ function ensureStoredBarsCacheSubscription(): void {
             storedBarsCacheInvalidationBelowWindowSkipCount += 1;
             continue;
           }
-          const bars = cell.bars.filter((bar) => {
-            const timestamp = dateOrNull(bar.timestamp);
-            return timestamp != null && timestamp.getTime() < change.startsAtMs;
-          });
-          const highWaterMs = highWaterMsForBars(bars);
+          const bars = storedBarsBeforeTimestamp(
+            cell.bars,
+            change.startsAtMs,
+          );
+          const highWaterMs = highWaterMsForStoredBars(bars);
           if (highWaterMs != null) {
             // Below-water rewrite: drop only the bars from the corrected
             // timestamp up and let the standard delta read re-fill from the
@@ -770,6 +1008,8 @@ function ensureStoredBarsCacheSubscription(): void {
         if (change.kind === "historical" || cell.highWaterMs == null) {
           storedBarsCacheInvalidationFullCount += 1;
           cell.invalidated = true;
+          cell.bars = { kind: "objects", bars: [] };
+          cell.highWaterMs = null;
           cell.deltaDue = false;
           cell.pendingMaxStartsAtMs = null;
           cell.changeEpoch += 1;
@@ -1152,9 +1392,16 @@ async function readStoredBars(input: {
     // done, so no pooled connection is taken here.
     const bySource = prefetch.byTimeframe.get(input.timeframe)!;
     const symbol = normalizeSymbol(input.symbol);
-    const prefetched = sourceNames.map(
-      (sourceName) => bySource.get(sourceName)?.get(symbol) ?? [],
-    );
+    const prefetched = sourceNames.map((sourceName) => {
+      const bars = bySource.get(sourceName)?.get(symbol);
+      return bars
+        ? storedBarsThroughEvaluatedAt(
+            bars,
+            input.evaluatedAt.getTime(),
+            input.limit,
+          )
+        : [];
+    });
     storedBarsPrefetchHitCount += 1;
     return mergeBarsByTimestamp(prefetched.flat(), input.limit);
   }
@@ -1198,7 +1445,7 @@ async function loadStoredBarsForSymbolsForShadow(input: {
   limit: number;
   to: Date;
   sourceName: string;
-}): Promise<Map<string, SignalMonitorCachedBar[]>> {
+}): Promise<Map<string, StoredSignalMonitorBars>> {
   ensureStoredBarsCacheSubscription();
   const evaluatedAtMs = input.to.getTime();
   const deltaBucketMs = evaluatedBucketMs(evaluatedAtMs, input.timeframe);
@@ -1250,7 +1497,7 @@ async function loadStoredBarsForSymbolsForShadow(input: {
     storedBarsDeltaShadowCheckCount += 1;
     if (
       !isDeepStrictEqual(
-        barsThroughEvaluatedAt(cell.bars, evaluatedAtMs, input.limit),
+        storedBarsThroughEvaluatedAt(cell.bars, evaluatedAtMs, input.limit),
         full.get(symbol) ?? [],
       )
     ) {
@@ -1279,8 +1526,12 @@ async function loadStoredBarsForSymbolsForShadow(input: {
         storedBarsDeltaGapFallbackCount += 1;
         continue;
       }
-      const candidate = barsThroughEvaluatedAt(
-        mergeBarsByTimestamp([...cell.bars, ...deltaBars], input.limit),
+      const candidate = storedBarsThroughEvaluatedAt(
+        appendStoredSignalMonitorBars({
+          current: cell.bars,
+          delta: deltaBars,
+          limit: input.limit,
+        }),
         evaluatedAtMs,
         input.limit,
       );
@@ -1291,12 +1542,13 @@ async function loadStoredBarsForSymbolsForShadow(input: {
     }
   }
 
+  const result = new Map<string, StoredSignalMonitorBars>();
   for (const rawSymbol of input.symbols) {
     const symbol = normalizeSymbol(rawSymbol);
     if (!symbol) {
       continue;
     }
-    writeStoredBarsCacheCell({
+    const cell = writeStoredBarsCacheCell({
       symbol,
       timeframe: input.timeframe,
       sourceName: input.sourceName,
@@ -1305,8 +1557,9 @@ async function loadStoredBarsForSymbolsForShadow(input: {
       evaluatedAtMs,
       deltaBucketMs,
     });
+    result.set(symbol, cell.bars);
   }
-  return full;
+  return result;
 }
 
 async function loadStoredBarsForSymbolsForPrefetch(input: {
@@ -1315,25 +1568,31 @@ async function loadStoredBarsForSymbolsForPrefetch(input: {
   limit: number;
   to: Date;
   sourceName: string;
-}): Promise<Map<string, SignalMonitorCachedBar[]>> {
+}): Promise<Map<string, StoredSignalMonitorBars>> {
   const deltaMode = storedBarsDeltaMode();
   if (deltaMode === "off" || storedBarsCacheMaxCells() <= 0) {
     storedBarsCacheFullReadCount += 1;
     storedBarsDeltaFullReadCount += 1;
-    return loadFullStoredBarsForPrefetch({
+    const loaded = await loadFullStoredBarsForPrefetch({
       symbols: input.symbols,
       timeframe: input.timeframe,
       limit: input.limit,
       to: input.to,
       sourceName: input.sourceName,
     });
+    return new Map(
+      Array.from(loaded, ([symbol, bars]) => [
+        symbol,
+        packStoredSignalMonitorBars(bars),
+      ]),
+    );
   }
   if (deltaMode === "shadow") {
     return loadStoredBarsForSymbolsForShadow(input);
   }
 
   ensureStoredBarsCacheSubscription();
-  const result = new Map<string, SignalMonitorCachedBar[]>();
+  const result = new Map<string, StoredSignalMonitorBars>();
   const evaluatedAtMs = input.to.getTime();
   const deltaBucketMs = evaluatedBucketMs(evaluatedAtMs, input.timeframe);
   const fullReadSymbols: string[] = [];
@@ -1370,10 +1629,7 @@ async function loadStoredBarsForSymbolsForPrefetch(input: {
       continue;
     }
     storedBarsCacheHitCount += 1;
-    result.set(
-      symbol,
-      barsThroughEvaluatedAt(cell.bars, evaluatedAtMs, input.limit),
-    );
+    result.set(symbol, cell.bars);
   }
 
   if (fullReadSymbols.length) {
@@ -1397,10 +1653,7 @@ async function loadStoredBarsForSymbolsForPrefetch(input: {
         evaluatedAtMs,
         deltaBucketMs,
       });
-      result.set(
-        symbol,
-        barsThroughEvaluatedAt(cell.bars, evaluatedAtMs, input.limit),
-      );
+      result.set(symbol, cell.bars);
     }
   }
 
@@ -1459,10 +1712,7 @@ async function loadStoredBarsForSymbolsForPrefetch(input: {
       });
       storedBarsDeltaAppliedAppendCount += deltaBars.length;
       storedBarsCacheHitCount += 1;
-      result.set(
-        symbol,
-        barsThroughEvaluatedAt(cell.bars, evaluatedAtMs, input.limit),
-      );
+      result.set(symbol, cell.bars);
     }
   }
 
@@ -1487,10 +1737,7 @@ async function loadStoredBarsForSymbolsForPrefetch(input: {
         evaluatedAtMs,
         deltaBucketMs,
       });
-      result.set(
-        symbol,
-        barsThroughEvaluatedAt(cell.bars, evaluatedAtMs, input.limit),
-      );
+      result.set(symbol, cell.bars);
     }
   }
 
@@ -1893,7 +2140,25 @@ export function getSignalMonitorLocalBarCacheDiagnostics() {
       maxCells: storedBarsCacheMaxCells(),
       cellCount: storedBarsCrossCycleCache.size,
       barCount: Array.from(storedBarsCrossCycleCache.values()).reduce(
-        (total, cell) => total + cell.bars.length,
+        (total, cell) => total + storedSignalMonitorBarsLength(cell.bars),
+        0,
+      ),
+      compactBarCount: Array.from(storedBarsCrossCycleCache.values()).reduce(
+        (total, cell) =>
+          total +
+          (cell.bars.kind === "packed"
+            ? storedSignalMonitorBarsLength(cell.bars)
+            : 0),
+        0,
+      ),
+      objectBarCount: Array.from(storedBarsCrossCycleCache.values()).reduce(
+        (total, cell) =>
+          total + (cell.bars.kind === "objects" ? cell.bars.bars.length : 0),
+        0,
+      ),
+      compactBytes: Array.from(storedBarsCrossCycleCache.values()).reduce(
+        (total, cell) =>
+          total + (cell.bars.kind === "packed" ? cell.bars.values.byteLength : 0),
         0,
       ),
       hitCount: storedBarsCacheHitCount,

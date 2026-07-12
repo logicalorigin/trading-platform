@@ -189,6 +189,23 @@ test("distinct keys are independent on the shared dedicated connection", async (
   await holder.close();
 });
 
+test("simultaneous same-key acquires yield only one release closure", async () => {
+  const backend = createFakeBackend();
+  const holder = createAdvisoryLockHolder({ createClient: backend.createClient });
+
+  const [first, second] = await Promise.all([
+    holder.acquire(300),
+    holder.acquire(300),
+  ]);
+  assert.equal(
+    [first, second].filter((release) => release !== null).length,
+    1,
+  );
+
+  await (first ?? second)!();
+  await holder.close();
+});
+
 test("a dropped lock connection self-heals on the next acquire", async () => {
   const backend = createFakeBackend();
   let last: ReturnType<typeof backend.createClient> | null = null;
@@ -218,4 +235,91 @@ test("a dropped lock connection self-heals on the next acquire", async () => {
 
   await reacquired!();
   await holder.close();
+});
+
+test("close waits for the dedicated client to finish ending", async () => {
+  let resolveEnd!: () => void;
+  let endCount = 0;
+  const client = {
+    async connect() {},
+    end() {
+      endCount += 1;
+      return new Promise<void>((resolve) => {
+        resolveEnd = resolve;
+      });
+    },
+    async query<Row>() {
+      return { rows: [{ locked: true } as Row] };
+    },
+    on() {
+      return client;
+    },
+    off() {
+      return client;
+    },
+  };
+  const holder = createAdvisoryLockHolder({ createClient: () => client });
+  assert.notEqual(await holder.acquire(1), null);
+
+  let closed = false;
+  const closing = holder.close().then(() => {
+    closed = true;
+  });
+  const closingAgain = holder.close();
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(closed, false, "close must await client.end()");
+  assert.equal(endCount, 1);
+
+  resolveEnd();
+  await Promise.all([closing, closingAgain]);
+  assert.equal(closed, true);
+  assert.equal(endCount, 1, "concurrent close calls must end the client once");
+});
+
+test("close drains an in-flight connect and permanently closes the holder", async () => {
+  let resolveConnect!: () => void;
+  let resolveEnd!: () => void;
+  let createCount = 0;
+  let endCount = 0;
+  const client = {
+    connect() {
+      return new Promise<void>((resolve) => {
+        resolveConnect = resolve;
+      });
+    },
+    end() {
+      endCount += 1;
+      return new Promise<void>((resolve) => {
+        resolveEnd = resolve;
+      });
+    },
+    async query<Row>() {
+      return { rows: [{ locked: true } as Row] };
+    },
+    on() {
+      return client;
+    },
+    off() {
+      return client;
+    },
+  };
+  const holder = createAdvisoryLockHolder({
+    createClient: () => {
+      createCount += 1;
+      return client;
+    },
+  });
+
+  const acquiring = holder.acquire(2);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  const closing = holder.close();
+  resolveConnect();
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(endCount, 1);
+  resolveEnd();
+
+  await assert.rejects(acquiring, /closed/i);
+  await closing;
+  await assert.rejects(holder.acquire(3), /closed/i);
+  assert.equal(createCount, 1, "closed holder must not create another client");
 });

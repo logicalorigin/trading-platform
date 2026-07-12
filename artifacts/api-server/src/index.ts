@@ -2,6 +2,7 @@
 // before any module reads process.env.
 import "./dev-env-local";
 import { createServer } from "node:http";
+import { closeDatabaseConnections } from "@workspace/db";
 import app from "./app";
 import { logger } from "./lib/logger";
 import { isTransientPostgresError } from "./lib/transient-db-error";
@@ -26,7 +27,6 @@ import {
   getRuntimeDiagnostics,
   getOrderVisibilityProbe,
   startFlowUniverseOptionabilityVerifier,
-  startIbkrWatchlistPrewarmRuntime,
   startOptionsFlowScanner,
 } from "./services/platform";
 import { startSignalOptionsWorker } from "./services/signal-options-worker";
@@ -237,10 +237,16 @@ function shutdownApi(signal: NodeJS.Signals): void {
   shuttingDown = true;
   appendRuntimeFlightRecorderEvent("api-shutdown-start", { signal });
   stopPythonComputeRuntime();
-  server.close((error) => {
+  server.close(async (error) => {
     if (error) {
       logger.warn({ err: error }, "API server shutdown close failed");
     }
+    await closeDatabaseConnections().catch((databaseError) => {
+      logger.warn(
+        { err: databaseError },
+        "Database connection shutdown failed",
+      );
+    });
     appendRuntimeFlightRecorderEvent("api-shutdown-complete", { signal });
     process.exit(signal === "SIGINT" ? 130 : 143);
   });
@@ -297,7 +303,6 @@ server.listen(port, () => {
   // stampeding Postgres.
   const backgroundWorkers: Array<() => void> = [
     startAccountFlexRefreshScheduler,
-    startIbkrWatchlistPrewarmRuntime,
     startOptionsFlowScanner,
     startFlowUniverseOptionabilityVerifier,
     // Signal-monitor bar-evaluation scan + local-bar-cache warmup workers were

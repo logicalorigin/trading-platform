@@ -8,6 +8,7 @@ import { signalMonitorSignalAgeBlocker } from "./signal-monitor-actionability";
 import {
   __signalMonitorInternalsForTests,
   evaluateSignalMonitorProfileSymbols,
+  getSignalMonitorResidentBarStats,
   isSignalMonitorBarComplete,
   listSignalMonitorEvents,
 } from "./signal-monitor";
@@ -816,6 +817,26 @@ test("signal matrix heavy evaluation cache keys identical completed-bar series o
     hits: 1,
     misses: 2,
   });
+});
+
+test("resident-bar diagnostics include the completed-bars cache payload", () => {
+  const internals = __signalMonitorInternalsForTests;
+  internals.resetSignalMonitorMatrixHeavyEvaluationCache();
+  const bars = [
+    bar("2026-06-12T13:58:00.000Z"),
+    bar("2026-06-12T13:59:00.000Z"),
+    bar("2026-06-12T14:00:00.000Z"),
+  ];
+  internals.writeSignalMonitorCompletedBarsCache("resident-census", {
+    bars,
+    latestBarAt: new Date("2026-06-12T14:00:00.000Z"),
+  });
+
+  assert.deepEqual(
+    getSignalMonitorResidentBarStats().completedBarsCache,
+    { entries: 1, bars: 3 },
+  );
+  internals.resetSignalMonitorMatrixHeavyEvaluationCache();
 });
 
 test("non-current signal state snapshots preserve last-known direction for display hydration", () => {

@@ -1,8 +1,17 @@
 import pg from "pg";
+import {
+  createPostgresConnectionExhaustionGatedClient,
+  postgresConnectionExhaustionGate,
+} from "./connection-exhaustion-gate";
 import { attachPostgresClientErrorHandler } from "./pool-error-handler";
 import { resolveDatabaseRuntimeConfig } from "./runtime";
 
 const { Client } = pg;
+const ConnectionExhaustionGatedClient =
+  createPostgresConnectionExhaustionGatedClient(
+    Client,
+    postgresConnectionExhaustionGate,
+  );
 
 export type AdvisoryLockRelease = () => Promise<void>;
 
@@ -57,14 +66,27 @@ export function createAdvisoryLockHolder(
   let connecting: Promise<ClientLike> | null = null;
   let detachErrorHandler: (() => void) | null = null;
   const heldKeys = new Map<number, ClientLike>();
+  const acquiringKeys = new Set<number>();
+  let generation = 0;
+  let closed = false;
+  let closing: Promise<void> | null = null;
 
-  const dropClient = () => {
+  const closedError = () => new Error(`${context} holder is closed.`);
+
+  const detachClient = () => {
     const current = client;
+    generation += 1;
     client = null;
     connecting = null;
     heldKeys.clear();
+    acquiringKeys.clear();
     detachErrorHandler?.();
     detachErrorHandler = null;
+    return current;
+  };
+
+  const dropClient = () => {
+    const current = detachClient();
     if (current) {
       // Best-effort teardown so a future acquire starts from a clean client.
       // Postgres releases the session's advisory locks once the connection ends.
@@ -73,6 +95,9 @@ export function createAdvisoryLockHolder(
   };
 
   const getClient = async (): Promise<ClientLike> => {
+    if (closed) {
+      throw closedError();
+    }
     if (client) {
       return client;
     }
@@ -80,7 +105,8 @@ export function createAdvisoryLockHolder(
       return connecting;
     }
 
-    connecting = (async () => {
+    const attemptGeneration = generation;
+    const attempt = (async () => {
       const next = createClient();
       // A dropped lock connection releases all of its session locks. Surface the
       // drop so the next acquire reconnects rather than reusing a dead client.
@@ -98,12 +124,26 @@ export function createAdvisoryLockHolder(
         connecting = null;
         throw error;
       }
+      if (closed || generation !== attemptGeneration) {
+        try {
+          await next.end();
+        } catch (error) {
+          throw new AggregateError(
+            [error],
+            `Failed to close late ${context} connection`,
+          );
+        }
+        throw closedError();
+      }
       client = next;
-      connecting = null;
+      if (connecting === attempt) {
+        connecting = null;
+      }
       return next;
     })();
+    connecting = attempt;
 
-    return connecting;
+    return attempt;
   };
 
   /**
@@ -111,9 +151,13 @@ export function createAdvisoryLockHolder(
    * closure when acquired, or `null` when another holder already owns it.
    */
   const acquire = async (key: number): Promise<AdvisoryLockRelease | null> => {
-    if (heldKeys.has(key)) {
+    if (closed) {
+      throw closedError();
+    }
+    if (heldKeys.has(key) || acquiringKeys.has(key)) {
       return null;
     }
+    acquiringKeys.add(key);
 
     let active: ClientLike;
     try {
@@ -137,6 +181,8 @@ export function createAdvisoryLockHolder(
       // a broken connection self-heals on the next acquire.
       dropClient();
       throw error;
+    } finally {
+      acquiringKeys.delete(key);
     }
 
     if (!locked) {
@@ -172,8 +218,24 @@ export function createAdvisoryLockHolder(
   return {
     acquire,
     /** Tear down the dedicated connection (releases all held session locks). */
-    async close() {
-      dropClient();
+    close() {
+      if (closing) {
+        return closing;
+      }
+      closed = true;
+      const pending = connecting;
+      const current = detachClient();
+      closing = (async () => {
+        const currentEnd = current?.end();
+        const pendingEnd = pending?.catch((error) => {
+          if (error instanceof AggregateError) {
+            throw error;
+          }
+          // A failed or deliberately closed connect owns no live session.
+        });
+        await Promise.all([currentEnd, pendingEnd]);
+      })();
+      return closing;
     },
   };
 }
@@ -196,14 +258,20 @@ function defaultLockClient(context: string): ClientLike {
   // Duplicates index.ts's DB_IDLE_TX_TIMEOUT_MS read because importing from
   // index.ts here would be circular (index.ts re-exports this module).
   const idleTxTimeoutMs = Number(process.env.DB_IDLE_TX_TIMEOUT_MS);
-  return new Client({
+  return new ConnectionExhaustionGatedClient({
     connectionString: config.url,
     application_name: "pyrus-advisory-lock",
     idle_in_transaction_session_timeout:
       Number.isFinite(idleTxTimeoutMs) && idleTxTimeoutMs > 0
         ? Math.floor(idleTxTimeoutMs)
         : 10_000,
-    ...(heliumDatabase ? { ssl: false } : {}),
+    ...(heliumDatabase
+      ? {
+          ssl: false,
+          keepAlive: true,
+          keepAliveInitialDelayMillis: 10_000,
+        }
+      : {}),
   }) as unknown as ClientLike;
 }
 
