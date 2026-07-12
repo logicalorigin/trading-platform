@@ -6,6 +6,8 @@ import path from "node:path";
 import readline from "node:readline";
 import { setTimeout as sleep } from "node:timers/promises";
 
+import { parseCpuProfileSummaryOutput } from "./cpu-profile-utils.mjs";
+
 const REPO_ROOT = process.cwd();
 const RECORDER_DIR = path.join(REPO_ROOT, ".pyrus-runtime", "flight-recorder");
 const CPU_PROFILE_MS = 20_000;
@@ -142,16 +144,20 @@ async function captureCpuProfile() {
 
 async function runCpuProfiler(apiPid) {
   const script = path.join(REPO_ROOT, "scripts", "diag", "cpu-profile-running-api.mjs");
-  const result = await runCommand(process.execPath, [script, String(apiPid), String(CPU_PROFILE_MS)], {
-    timeoutMs: CPU_PROFILE_MS + 15_000,
-  });
+  const rawProfilePath = path.join(outDir, "cpu.cpuprofile");
+  const result = await runCommand(
+    process.execPath,
+    [script, String(apiPid), String(CPU_PROFILE_MS), rawProfilePath],
+    { timeoutMs: CPU_PROFILE_MS + 15_000 },
+  );
   if (result.code !== 0) {
     throw new Error(`cpu profiler exited ${result.code}: ${trimForError(result.stderr || result.stdout)}`);
   }
-  const parsed = parseCpuProfileOutput(result.stdout);
+  const parsed = parseCpuProfileSummaryOutput(result.stdout);
   return {
     apiPid,
     durationMs: CPU_PROFILE_MS,
+    rawProfilePath: path.relative(REPO_ROOT, rawProfilePath),
     busyPercent: parsed.busyPercent,
     gcPercent: parsed.gcPercent,
     topRows: parsed.rows.slice(0, 10),
@@ -332,31 +338,6 @@ async function readSymbolStateWriteCounter() {
     throw new Error(`psql returned non-numeric counter: ${JSON.stringify(result.stdout.trim())}`);
   }
   return { at: new Date().toISOString(), atMs: Date.now(), total };
-}
-
-function parseCpuProfileOutput(stdout) {
-  const header = stdout.match(/total samples=(\d+) idle=(\d+) busy=(\d+) \(busy%=([\d.]+)\)/);
-  const rows = [];
-  for (const line of stdout.split(/\r?\n/)) {
-    const match = line.match(/^\s*([\d.]+)%\s+(\d+)\s+(.+)$/);
-    if (!match) continue;
-    rows.push({
-      percent: Number(match[1]),
-      samples: Number(match[2]),
-      frame: match[3].trim(),
-    });
-  }
-  const gcPercent = rows
-    .filter((row) => /garbage collector/i.test(row.frame))
-    .reduce((sum, row) => sum + row.percent, 0);
-  return {
-    totalSamples: header ? Number(header[1]) : null,
-    idleSamples: header ? Number(header[2]) : null,
-    busySamples: header ? Number(header[3]) : null,
-    busyPercent: header ? Number(header[4]) : null,
-    gcPercent,
-    rows,
-  };
 }
 
 async function openInspector(pid) {
@@ -607,7 +588,9 @@ function renderReport(reportState, summaryRows) {
     "",
     "## CPU Top Self-Time",
     "",
-    cpu?.topRows?.length ? renderRows(cpu.topRows, ["percent", "samples", "frame"]) : "unavailable",
+    cpu?.topRows?.length
+      ? renderRows(cpu.topRows, ["percent", "durationUs", "frame"])
+      : "unavailable",
     "",
     "## Allocation Top Self-Size",
     "",

@@ -1,15 +1,20 @@
 #!/usr/bin/env node
 // CPU-profile a RUNNING node process (the live API) with zero app changes.
-// Usage: node scripts/diag/cpu-profile-running-api.mjs <pid> [durationMs=15000]
+// Usage: node scripts/diag/cpu-profile-running-api.mjs <pid> [durationMs=15000] [outPath]
 // Mechanism (from docs/plans/signal-monitor-db-load-rootcause-2026-07-08.md §PROFILING TOOLS):
 // SIGUSR1 opens the V8 inspector on the target; we attach over CDP (Node >=21
 // global WebSocket), run Profiler sampling for the window, and print self-time
 // aggregation as % of on-CPU samples. Profile a WARM process (uptime > a few min).
 
+import { writeFile } from "node:fs/promises";
+
+import { summarizeCpuProfile } from "./cpu-profile-utils.mjs";
+
 const pid = Number(process.argv[2]);
 const durationMs = Number(process.argv[3] ?? 15000);
+const outPath = process.argv[4] ?? null;
 if (!pid) {
-  console.error("usage: cpu-profile-running-api.mjs <pid> [durationMs]");
+  console.error("usage: cpu-profile-running-api.mjs <pid> [durationMs] [outPath]");
   process.exit(1);
 }
 
@@ -53,24 +58,21 @@ await new Promise((r) => setTimeout(r, durationMs));
 const { profile } = await send("Profiler.stop");
 ws.close();
 
-// Aggregate SELF samples per function (exclude idle/program/GC into their own rows).
-const byId = new Map(profile.nodes.map((n) => [n.id, n]));
-const selfHits = new Map();
-for (const n of profile.nodes) {
-  const f = n.callFrame;
-  const key = `${f.functionName || "(anonymous)"} ${f.url.split("/").slice(-1)[0]}:${f.lineNumber + 1}`;
-  selfHits.set(key, (selfHits.get(key) ?? 0) + (n.hitCount ?? 0));
+if (outPath) {
+  await writeFile(outPath, `${JSON.stringify(profile)}\n`);
+  console.error(`raw profile: ${outPath}`);
 }
-const total = [...selfHits.values()].reduce((a, b) => a + b, 0);
-const idleKeys = ["(idle) :0", "(program) :0"];
-const idle = idleKeys.reduce((a, k) => a + (selfHits.get(k) ?? 0), 0);
-const busy = total - idle;
-console.log(`total samples=${total} idle=${idle} busy=${busy} (busy%=${((busy / total) * 100).toFixed(1)})`);
-console.log(`top self-time as % of BUSY samples:`);
-const rows = [...selfHits.entries()]
-  .filter(([k]) => !idleKeys.includes(k))
-  .sort((a, b) => b[1] - a[1])
-  .slice(0, 30);
-for (const [k, v] of rows) {
-  console.log(`${((v / busy) * 100).toFixed(1).padStart(6)}%  ${v.toString().padStart(7)}  ${k}`);
+
+const summary = summarizeCpuProfile(profile);
+console.log(
+  `total samples=${summary.totalSamples} idle=${summary.idleDurationUs} busy=${summary.busyDurationUs} ` +
+    `(busy%=${summary.busyPercent.toFixed(1)})`,
+);
+console.log("top self-time as % of BUSY microseconds:");
+for (const row of summary.rows.slice(0, 30)) {
+  console.log(
+    `${row.percent.toFixed(1).padStart(6)}%  ${Math.round(row.durationUs)
+      .toString()
+      .padStart(9)}  ${row.frame}`,
+  );
 }
