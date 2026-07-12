@@ -123,10 +123,16 @@ test("IBKR keeps the capsule-local login inside a contained sandboxed modal", ()
   assert.doesNotMatch(source, /sandbox="[^"]*allow-popups/);
   assert.match(source, /const ibkrAttemptRef = useRef\(0\)/);
   assert.match(source, /const ibkrConnectBusyRef = useRef\(false\)/);
+  assert.match(
+    source,
+    /const \[ibkrStatusUnavailable, setIbkrStatusUnavailable\] = useState\(false\)/,
+  );
   assert.match(source, /open=\{open\}/);
   assert.match(dialogBlock, /buildIbkrPortalProgressModel/);
   assert.match(dialogBlock, /role="status"/);
   assert.match(dialogBlock, /aria-live="polite"/);
+  assert.doesNotMatch(dialogBlock, /role="alert"/);
+  assert.match(dialogBlock, /Connection status unavailable — retrying/);
   assert.match(dialogBlock, /<ol/);
   assert.match(dialogBlock, /aria-current=/);
   assert.match(
@@ -184,6 +190,14 @@ test("IBKR keeps the capsule-local login inside a contained sandboxed modal", ()
   );
   assert.match(
     connectBlock,
+    /status = await getIbkrPortalStatus\(\);\s*\} catch \{\s*if \(attempt === ibkrAttemptRef\.current\) \{\s*setIbkrStatusUnavailable\(true\);\s*ibkrPollRef\.current = window\.setTimeout\(poll, 3000\);/,
+  );
+  assert.match(
+    connectBlock,
+    /if \(attempt !== ibkrAttemptRef\.current\) return;\s*setIbkrStatusUnavailable\(false\);\s*queryClient\.setQueryData/,
+  );
+  assert.match(
+    connectBlock,
     /hasIbkrPortalLoginTimedOut\(startedAt, Date\.now\(\)\)/,
   );
   assert.doesNotMatch(
@@ -234,6 +248,7 @@ test("IBKR keeps the capsule-local login inside a contained sandboxed modal", ()
     source,
     /<IbkrPortalLoginDialog[\s\S]*?open=\{ibkrDialogOpen\}[\s\S]*?connecting=\{ibkrConnecting\}[\s\S]*?readiness=\{/,
   );
+  assert.match(source, /statusUnavailable=\{ibkrStatusUnavailable\}/);
   assert.match(
     source,
     /queryClient\.setQueryData\(\s*getGetIbkrPortalReadinessQueryKey\(\),\s*status,\s*\)/,

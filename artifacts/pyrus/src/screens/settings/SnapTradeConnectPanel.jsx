@@ -183,7 +183,7 @@ function openBrokerPopup(url, name) {
   );
 }
 
-function IbkrPortalProgress({ model }) {
+function IbkrPortalProgress({ model, statusUnavailable }) {
   return (
     <div
       role="status"
@@ -241,6 +241,24 @@ function IbkrPortalProgress({ model }) {
           </div>
         </div>
       </div>
+      {statusUnavailable ? (
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: sp(7),
+            padding: sp("8px 10px"),
+            color: CSS_COLOR.amber,
+            border: `1px solid ${cssColorMix(CSS_COLOR.amber, 45)}`,
+            background: cssColorMix(CSS_COLOR.amber, 8),
+            fontFamily: T.sans,
+            fontSize: textSize("caption"),
+          }}
+        >
+          <ShieldAlert size={15} strokeWidth={2} aria-hidden="true" />
+          Connection status unavailable — retrying.
+        </div>
+      ) : null}
       <ol
         style={{
           display: "grid",
@@ -335,6 +353,7 @@ function IbkrPortalLoginDialog({
   connecting,
   disconnecting,
   readiness,
+  statusUnavailable,
   onClose,
   onDisconnect,
   returnFocusRef,
@@ -465,7 +484,10 @@ function IbkrPortalLoginDialog({
                 </Dialog.Close>
               </div>
             </div>
-            <IbkrPortalProgress model={progress} />
+            <IbkrPortalProgress
+              model={progress}
+              statusUnavailable={statusUnavailable}
+            />
             {showViewer ? (
               <iframe
                 title="Interactive Brokers Client Portal login"
@@ -1207,6 +1229,7 @@ export function SnapTradeConnectPanel({ enabled = true }) {
   const [ibkrLoginUrl, setIbkrLoginUrl] = useState("");
   const [ibkrDialogOpen, setIbkrDialogOpen] = useState(false);
   const [ibkrConnecting, setIbkrConnecting] = useState(false);
+  const [ibkrStatusUnavailable, setIbkrStatusUnavailable] = useState(false);
   const [ibkrDisconnecting, setIbkrDisconnecting] = useState(false);
   const ibkrPollRef = useRef(null);
   const ibkrAttemptRef = useRef(0);
@@ -1996,6 +2019,7 @@ export function SnapTradeConnectPanel({ enabled = true }) {
     }
     ibkrConnectBusyRef.current = false;
     setIbkrConnecting(false);
+    setIbkrStatusUnavailable(false);
     setPopupBrokerKey((current) =>
       current === IBKR_PORTAL_BROKER_CHOICE.value ? "" : current,
     );
@@ -2027,6 +2051,7 @@ export function SnapTradeConnectPanel({ enabled = true }) {
     setIbkrLoginUrl("");
     setIbkrDialogOpen(true);
     setIbkrConnecting(true);
+    setIbkrStatusUnavailable(false);
     setPopupBrokerKey(IBKR_PORTAL_BROKER_CHOICE.value);
     if (ibkrPollRef.current) {
       window.clearTimeout(ibkrPollRef.current);
@@ -2084,11 +2109,13 @@ export function SnapTradeConnectPanel({ enabled = true }) {
         status = await getIbkrPortalStatus();
       } catch {
         if (attempt === ibkrAttemptRef.current) {
+          setIbkrStatusUnavailable(true);
           ibkrPollRef.current = window.setTimeout(poll, 3000);
         }
         return;
       }
       if (attempt !== ibkrAttemptRef.current) return;
+      setIbkrStatusUnavailable(false);
       queryClient.setQueryData(
         getGetIbkrPortalReadinessQueryKey(),
         status,
@@ -3567,6 +3594,7 @@ export function SnapTradeConnectPanel({ enabled = true }) {
         connecting={ibkrConnecting}
         disconnecting={ibkrDisconnecting}
         readiness={ibkrPortalReadiness}
+        statusUnavailable={ibkrStatusUnavailable}
         onClose={closeIbkrPortalDialog}
         onDisconnect={() => void disconnectIbkrPortal()}
         returnFocusRef={ibkrReturnFocusRef}
