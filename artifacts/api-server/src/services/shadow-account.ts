@@ -15613,6 +15613,7 @@ async function resetWatchlistBacktestRowsForRange(input: {
     await deleteWatchlistBacktestRowsForRange(tx, input);
     await recomputeShadowAccountFromLedger(tx, new Date());
   });
+  invalidateShadowFreshStateCache();
 }
 
 function signalOptionsReplayOrderMatchesDate(
@@ -16607,6 +16608,7 @@ async function insertWatchlistBacktestFills(input: {
     }
     await recomputeShadowAccountFromLedger(tx, new Date());
   });
+  invalidateShadowFreshStateCache();
 }
 
 export const __shadowWatchlistBacktestInternalsForTests = {

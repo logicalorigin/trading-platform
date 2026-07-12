@@ -1356,6 +1356,36 @@ test("account-level shadow order scan uses the mutation-invalidated identity cac
   );
 });
 
+test("shared-ledger watchlist backtest writes invalidate the order identity cache", () => {
+  const resetStart = shadowAccountSource.indexOf(
+    "async function resetWatchlistBacktestRowsForRange",
+  );
+  const resetEnd = shadowAccountSource.indexOf(
+    "\nfunction signalOptionsReplayOrderMatchesDate",
+    resetStart,
+  );
+  assert.notEqual(resetStart, -1, "Missing watchlist backtest reset writer");
+  assert.notEqual(resetEnd, -1, "Missing watchlist backtest reset boundary");
+  assert.match(
+    shadowAccountSource.slice(resetStart, resetEnd),
+    /await db\.transaction[\s\S]*invalidateShadowFreshStateCache\(\);/,
+  );
+
+  const insertStart = shadowAccountSource.indexOf(
+    "async function insertWatchlistBacktestFills",
+  );
+  const insertEnd = shadowAccountSource.indexOf(
+    "\nexport const __shadowWatchlistBacktestInternalsForTests",
+    insertStart,
+  );
+  assert.notEqual(insertStart, -1, "Missing watchlist backtest insert writer");
+  assert.notEqual(insertEnd, -1, "Missing watchlist backtest insert boundary");
+  assert.match(
+    shadowAccountSource.slice(insertStart, insertEnd),
+    /await db\.transaction[\s\S]*invalidateShadowFreshStateCache\(\);/,
+  );
+});
+
 test("shadow trade diagnostics waits for a fresh shared read", () => {
   const source = readFileSync(
     new URL("./shadow-account.ts", import.meta.url),
