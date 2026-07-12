@@ -1894,6 +1894,8 @@ export interface IbkrPortalReadinessResponse {
   status: IbkrPortalConnectionStatus;
   gatewayRunning: boolean;
   authenticated: boolean;
+  /** True after the capsule observes a new IBKR browser-login completion for the current connection attempt; API session verification may still be pending. */
+  browserLoginComplete: boolean;
   selectedAccountId: string | null;
   accounts: string[];
   loginPath: string | null;

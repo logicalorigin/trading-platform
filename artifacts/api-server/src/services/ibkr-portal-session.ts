@@ -73,6 +73,7 @@ export type PortalReadiness = {
   status: PortalConnectionStatus;
   gatewayRunning: boolean;
   authenticated: boolean;
+  browserLoginComplete: boolean;
   selectedAccountId: string | null;
   accounts: string[];
   loginPath: string | null;
@@ -86,6 +87,7 @@ const loginMonitors = new Map<
 >();
 const readinessQuietWindows = new Map<string, NodeJS.Timeout>();
 const observedLoginCompletions = new Map<string, number>();
+const completedLoginAttempts = new Set<string>();
 
 function clearPortalReadinessQuietWindow(appUserId: string): void {
   const timer = readinessQuietWindows.get(appUserId);
@@ -114,22 +116,33 @@ export function beginPortalReadinessQuietWindow(appUserId: string): void {
 function observePortalLoginCompletions(
   appUserId: string,
   loginCompletions: number,
-): boolean {
+): { firstObservation: boolean; browserLoginComplete: boolean } {
   const observed = observedLoginCompletions.get(appUserId);
   if (observed === undefined) {
     observedLoginCompletions.set(appUserId, loginCompletions);
-    if (loginCompletions > 0) beginPortalReadinessQuietWindow(appUserId);
-    return true;
+    if (loginCompletions > 0) {
+      completedLoginAttempts.add(appUserId);
+      beginPortalReadinessQuietWindow(appUserId);
+    }
+    return {
+      firstObservation: true,
+      browserLoginComplete: completedLoginAttempts.has(appUserId),
+    };
   }
   if (loginCompletions < observed) {
     observedLoginCompletions.set(appUserId, loginCompletions);
-    return false;
+    completedLoginAttempts.delete(appUserId);
+    return { firstObservation: false, browserLoginComplete: false };
   }
   if (loginCompletions > observed) {
     observedLoginCompletions.set(appUserId, loginCompletions);
+    completedLoginAttempts.add(appUserId);
     beginPortalReadinessQuietWindow(appUserId);
   }
-  return false;
+  return {
+    firstObservation: false,
+    browserLoginComplete: completedLoginAttempts.has(appUserId),
+  };
 }
 
 function clientFor(
@@ -236,6 +249,7 @@ function base(overrides: Partial<PortalReadiness>): PortalReadiness {
     status: "disconnected",
     gatewayRunning: false,
     authenticated: false,
+    browserLoginComplete: false,
     selectedAccountId: null,
     accounts: [],
     loginPath: null,
@@ -263,11 +277,11 @@ export async function readPortalReadiness(
     });
   }
 
-  const firstObservation = observePortalLoginCompletions(
+  const loginObservation = observePortalLoginCompletions(
     appUserId,
     gateway.loginCompletions,
   );
-  if (firstObservation && gateway.recovered) {
+  if (loginObservation.firstObservation && gateway.recovered) {
     if (gateway.loginCompletions === 0) {
       setPortalReadinessQuietWindow(appUserId, LOGIN_MONITOR_TTL_MS);
     }
@@ -279,6 +293,7 @@ export async function readPortalReadiness(
     return base({
       status: "gateway_starting",
       gatewayRunning: true,
+      browserLoginComplete: loginObservation.browserLoginComplete,
       message: "Starting the IBKR gateway…",
     });
   }
@@ -288,6 +303,7 @@ export async function readPortalReadiness(
     return base({
       status: "needs_login",
       gatewayRunning: true,
+      browserLoginComplete: loginObservation.browserLoginComplete,
       message: "Gateway is running. Log in to IBKR to finish connecting.",
     });
   }
@@ -304,6 +320,7 @@ export async function readPortalReadiness(
       return base({
         status: "competing",
         gatewayRunning: true,
+        browserLoginComplete: loginObservation.browserLoginComplete,
         message:
           "Another live IBKR session is competing. Re-login to take over this session.",
       });
@@ -319,6 +336,7 @@ export async function readPortalReadiness(
         status: "connected",
         gatewayRunning: true,
         authenticated: true,
+        browserLoginComplete: loginObservation.browserLoginComplete,
         selectedAccountId: status.selectedAccountId,
         accounts: status.accounts,
         message: "Connected to IBKR.",
@@ -328,6 +346,7 @@ export async function readPortalReadiness(
     return base({
       status: "needs_login",
       gatewayRunning: true,
+      browserLoginComplete: loginObservation.browserLoginComplete,
       message: "Gateway is running. Log in to IBKR to finish connecting.",
     });
   } catch (error) {
@@ -341,6 +360,7 @@ export async function readPortalReadiness(
     return base({
       status: "needs_login",
       gatewayRunning: true,
+      browserLoginComplete: loginObservation.browserLoginComplete,
       message: "Gateway is running. Log in to IBKR to finish connecting.",
     });
   }
@@ -351,6 +371,7 @@ export async function connectPortal(
 ): Promise<{ status: PortalConnectionStatus }> {
   const gateway = await ensureGateway(appUserId);
   observedLoginCompletions.set(appUserId, gateway.loginCompletions);
+  completedLoginAttempts.delete(appUserId);
   setPortalReadinessQuietWindow(appUserId, LOGIN_MONITOR_TTL_MS);
   const status: PortalConnectionStatus =
     gateway.status === "starting" ? "gateway_starting" : "needs_login";
@@ -375,6 +396,7 @@ export async function disconnectPortal(
 ): Promise<{ ok: true }> {
   clearPortalReadinessQuietWindow(appUserId);
   observedLoginCompletions.delete(appUserId);
+  completedLoginAttempts.delete(appUserId);
   stopLoginMonitor(appUserId);
   stopTickle(appUserId);
   revokeIbkrPortalEmbedSessions(appUserId);

@@ -7009,6 +7009,9 @@ components:
           type: boolean
         authenticated:
           type: boolean
+        browserLoginComplete:
+          type: boolean
+          description: True after the capsule observes a new IBKR browser-login completion for the current connection attempt; API session verification may still be pending.
         selectedAccountId:
           type: string
           nullable: true
@@ -7025,6 +7028,7 @@ components:
         - status
         - gatewayRunning
         - authenticated
+        - browserLoginComplete
         - selectedAccountId
         - accounts
         - loginPath

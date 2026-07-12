@@ -113,6 +113,7 @@ test("hosted portal connects any authenticated account (not paper-only)", async 
     await ensureGateway(needsLoginUserId);
     const needsLoginReadiness = await readPortalReadiness(needsLoginUserId);
     assert.equal(needsLoginReadiness.status, "needs_login");
+    assert.equal(needsLoginReadiness.browserLoginComplete, false);
     assert.equal(needsLoginReadiness.loginPath, null);
     assert.equal(
       ssodhInitCalls,
@@ -247,6 +248,11 @@ test("hosted portal connects any authenticated account (not paper-only)", async 
       const duringLogin = await readPortalReadiness(delayedLiveUserId);
       assert.equal(duringLogin.status, "needs_login");
       assert.equal(
+        duringLogin.browserLoginComplete,
+        false,
+        "an existing capsule marker is only the baseline for a new login attempt",
+      );
+      assert.equal(
         authStatusCalls,
         callsBeforeConnect,
         "browser login must not race against backend auth-status probes",
@@ -257,6 +263,11 @@ test("hosted portal connects any authenticated account (not paper-only)", async 
       loginCompletions.set(delayedLiveUserId, 8);
       const completionObserved = await readPortalReadiness(delayedLiveUserId);
       assert.equal(completionObserved.status, "needs_login");
+      assert.equal(
+        completionObserved.browserLoginComplete,
+        true,
+        "a new capsule marker is safe progress evidence before API verification",
+      );
       assert.equal(authStatusCalls, callsBeforeConnect);
 
       t.mock.timers.tick(9_999);
@@ -271,6 +282,7 @@ test("hosted portal connects any authenticated account (not paper-only)", async 
       t.mock.timers.tick(1);
       const delayedReadiness = await readPortalReadiness(delayedLiveUserId);
       assert.equal(delayedReadiness.status, "connected");
+      assert.equal(delayedReadiness.browserLoginComplete, true);
       assert.equal(authStatusCalls, callsBeforeConnect + 1);
       assert.equal(delayedReadiness.selectedAccountId, "U2468101");
       assert.ok(getGateway(delayedLiveUserId), "live login keeps its gateway");
