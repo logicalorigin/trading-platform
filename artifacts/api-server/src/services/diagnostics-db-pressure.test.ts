@@ -10,6 +10,10 @@ const platformSource = readFileSync(
   new URL("./platform.ts", import.meta.url),
   "utf8",
 );
+const flightRecorderSource = readFileSync(
+  new URL("./runtime-flight-recorder.ts", import.meta.url),
+  "utf8",
+);
 
 function sourceBlock(start: string, end: string): string {
   const startIndex = diagnosticsSource.indexOf(start);
@@ -24,7 +28,9 @@ test("diagnostics resource pressure surfaces DB pool waiters", () => {
   assert.match(diagnosticsSource, /"db-pool"/);
   assert.match(diagnosticsSource, /metricKey:\s*"resource_pressure\.db_pool_waiting"/);
   assert.match(diagnosticsSource, /dbPoolWaiting:\s*dbPool\.waiting/);
+  assert.match(diagnosticsSource, /dbPoolTotalWaiting:\s*dbPool\.totalWaiting/);
   assert.match(diagnosticsSource, /db_pool_waiting:\s*dbPool\.waiting/);
+  assert.match(diagnosticsSource, /db_pool_total_waiting:\s*dbPool\.totalWaiting/);
 });
 
 test("runtime diagnostics surfaces active DB pool admission lane gauges", () => {
@@ -113,7 +119,7 @@ test("diagnostics heavy reads reuse cached telemetry under DB pool pressure", ()
     "function compactDiagnosticRawValue",
   );
   assert.match(saturationBlock, /getPoolStats\(\)/);
-  assert.match(saturationBlock, /stats\.waiting > 0/);
+  assert.match(saturationBlock, /stats\.totalWaiting > 0/);
   assert.match(saturationBlock, /stats\.active >= stats\.max/);
 
   const automationBlock = sourceBlock(
@@ -135,6 +141,25 @@ test("diagnostics heavy reads reuse cached telemetry under DB pool pressure", ()
   assert.match(storageBlock, /storageMetricsInFlight/);
   assert.match(storageBlock, /diagnosticsDbPoolIsSaturated\(\)/);
   assert.match(storageBlock, /storageStatsCacheStatus: "stale"/);
+});
+
+test("runtime flight recorder counts admission waiters as DB pressure", () => {
+  assert.match(
+    flightRecorderSource,
+    /if \(stats\.totalWaiting <= 0\)/,
+  );
+  assert.match(
+    flightRecorderSource,
+    /waiting:\s*stats\.waiting/,
+  );
+  assert.match(
+    flightRecorderSource,
+    /totalWaiting:\s*stats\.totalWaiting/,
+  );
+  assert.match(
+    flightRecorderSource,
+    /dbPool\["totalWaiting"\]\s*\?\?\s*dbPool\["waiting"\]/,
+  );
 });
 
 test("diagnostics event persistence yields to high resource pressure", () => {

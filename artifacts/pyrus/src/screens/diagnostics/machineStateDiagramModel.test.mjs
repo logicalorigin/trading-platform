@@ -718,11 +718,21 @@ test("database card flags pool saturation and storage pressure as degraded", () 
   const model = buildModel({
     latest: latestWithDatabase({
       storage: { ...healthyStorageMetrics, storagePressureLevel: "warning" },
-      resourcePressure: { ...healthyPoolMetrics, dbPoolWaiting: 4 },
+      resourcePressure: {
+        ...healthyPoolMetrics,
+        dbPoolWaiting: 1,
+        dbPoolRawWaiting: 1,
+        dbPoolAdmissionWaiting: 22,
+        dbPoolTotalWaiting: 23,
+      },
     }),
   });
-  assert.equal(nodeById(model, "database-pool").status, "degraded");
-  assert.equal(nodeById(model, "database-pool").canonicalState, "PoolSaturated");
+  const pool = nodeById(model, "database-pool");
+  assert.equal(pool.status, "degraded");
+  assert.equal(pool.canonicalState, "PoolSaturated");
+  assert.match(pool.detail, /23 waiting/);
+  assert.match(pool.detail, /1 pool/);
+  assert.match(pool.detail, /22 admission/);
   assert.equal(nodeById(model, "database-storage").status, "degraded");
   assert.equal(dbMaster(model).status, "degraded");
 });

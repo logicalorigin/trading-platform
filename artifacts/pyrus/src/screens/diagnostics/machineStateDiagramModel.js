@@ -1025,7 +1025,19 @@ export const buildMachineStateDiagramModel = ({
 
   const dbPoolMax = firstFiniteNumber(resourceMetrics.dbPoolMax);
   const dbPoolActive = firstFiniteNumber(resourceMetrics.dbPoolActive);
-  const dbPoolWaiting = firstFiniteNumber(resourceMetrics.dbPoolWaiting);
+  const dbPoolRawWaiting = firstFiniteNumber(
+    resourceMetrics.dbPoolRawWaiting,
+    resourceMetrics.dbPoolWaiting,
+  );
+  const dbPoolAdmissionWaiting = firstFiniteNumber(
+    resourceMetrics.dbPoolAdmissionWaiting,
+  );
+  const dbPoolWaiting = firstFiniteNumber(
+    resourceMetrics.dbPoolTotalWaiting,
+    dbPoolRawWaiting != null || dbPoolAdmissionWaiting != null
+      ? (dbPoolRawWaiting ?? 0) + (dbPoolAdmissionWaiting ?? 0)
+      : null,
+  );
   const dbPoolIdle = firstFiniteNumber(resourceMetrics.dbPoolIdle);
   const poolObserved = dbPoolMax != null;
   const dbPoolStatus = !poolObserved
@@ -1763,6 +1775,9 @@ export const buildMachineStateDiagramModel = ({
         ? metricDetail([
             `${formatCount(dbPoolActive)}/${formatCount(dbPoolMax)} active`,
             `${formatCount(dbPoolWaiting)} waiting`,
+            dbPoolRawWaiting != null && dbPoolAdmissionWaiting != null
+              ? `${formatCount(dbPoolRawWaiting)} pool · ${formatCount(dbPoolAdmissionWaiting)} admission`
+              : null,
             dbPoolIdle != null ? `${formatCount(dbPoolIdle)} idle` : null,
           ])
         : "pool stats not observed",

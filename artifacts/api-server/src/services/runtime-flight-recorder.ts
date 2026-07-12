@@ -596,6 +596,10 @@ function recordMemorySampleIfDue(heartbeat: JsonRecord): void {
         ? {
             active: dbPool["active"] ?? null,
             waiting: dbPool["waiting"] ?? null,
+            totalWaiting:
+              dbPool["totalWaiting"] ?? dbPool["waiting"] ?? null,
+            rawPoolWaiting: dbPool["rawPoolWaiting"] ?? null,
+            admissionWaiting: dbPool["admissionWaiting"] ?? null,
             max: dbPool["max"] ?? null,
           }
         : null,
@@ -713,7 +717,7 @@ let lastDbPoolPressureWarnAt = 0;
 function recordDbPoolPressureIfNeeded(): void {
   try {
     const stats = getPoolStats();
-    if (stats.waiting <= 0) {
+    if (stats.totalWaiting <= 0) {
       dbPoolPressureActive = false;
       return;
     }
@@ -728,6 +732,9 @@ function recordDbPoolPressureIfNeeded(): void {
     lastDbPoolPressureWarnAt = now;
     appendRuntimeFlightRecorderEvent("api-db-pool-pressure", {
       waiting: stats.waiting,
+      totalWaiting: stats.totalWaiting,
+      rawPoolWaiting: stats.rawPoolWaiting,
+      admissionWaiting: stats.admissionWaiting,
       total: stats.total,
       idle: stats.idle,
       active: stats.active,
@@ -1026,7 +1033,12 @@ export function getRuntimeFlightRecorderDiagnostics(): {
       apiRequestP95Ms:
         (apiCurrent?.["requests"] as JsonRecord | undefined)?.["p95Ms"] ?? null,
       apiDbPoolWaiting:
-        (apiCurrent?.["dbPool"] as JsonRecord | undefined)?.["waiting"] ?? null,
+        (apiCurrent?.["dbPool"] as JsonRecord | undefined)?.["waiting"] ??
+        null,
+      apiDbPoolTotalWaiting:
+        (apiCurrent?.["dbPool"] as JsonRecord | undefined)?.["totalWaiting"] ??
+        (apiCurrent?.["dbPool"] as JsonRecord | undefined)?.["waiting"] ??
+        null,
       apiDbPoolActive:
         (apiCurrent?.["dbPool"] as JsonRecord | undefined)?.["active"] ?? null,
       apiDbPoolTotal:

@@ -197,7 +197,16 @@ test("memory sample event captures process, system, and event-loop state in the 
       apiPressure: {
         inputs: { eventLoopDelayP95Ms: 12.5, eventLoopUtilization: 0.42 },
       },
-      dbPool: { max: 12, total: 12, idle: 0, active: 12, waiting: 3 },
+      dbPool: {
+        max: 12,
+        total: 12,
+        idle: 0,
+        active: 12,
+        waiting: 1,
+        rawPoolWaiting: 1,
+        admissionWaiting: 22,
+        totalWaiting: 23,
+      },
     });
     flushRuntimeFlightRecorderBuffersSync();
 
@@ -212,7 +221,14 @@ test("memory sample event captures process, system, and event-loop state in the 
     assert.deepEqual(event.memoryMb, { rss: 1800.5, heapUsed: 400.2 });
     assert.equal(event.eventLoopDelayP95Ms, 12.5);
     assert.equal(event.eventLoopUtilization, 0.42);
-    assert.deepEqual(event.dbPool, { active: 12, waiting: 3, max: 12 });
+    assert.deepEqual(event.dbPool, {
+      active: 12,
+      waiting: 1,
+      rawPoolWaiting: 1,
+      admissionWaiting: 22,
+      totalWaiting: 23,
+      max: 12,
+    });
     // System memory comes from /proc/meminfo — real values on Linux, null
     // (not a crash) where /proc is unavailable.
     if (event.system !== null) {
