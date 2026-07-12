@@ -70,6 +70,7 @@ export function createAdvisoryLockHolder(
   let generation = 0;
   let closed = false;
   let closing: Promise<void> | null = null;
+  let queryTail: Promise<void> = Promise.resolve();
 
   const closedError = () => new Error(`${context} holder is closed.`);
 
@@ -149,6 +150,28 @@ export function createAdvisoryLockHolder(
     return attempt;
   };
 
+  const runQuery = <Row>(
+    active: ClientLike,
+    sql: string,
+    values?: unknown[],
+  ): Promise<{ rows: Row[] }> => {
+    const queryGeneration = generation;
+    const result = queryTail.then(() => {
+      if (closed) {
+        throw closedError();
+      }
+      if (generation !== queryGeneration || client !== active) {
+        throw new Error(`${context} connection changed before lock query.`);
+      }
+      return active.query<Row>(sql, values);
+    });
+    queryTail = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    return result;
+  };
+
   /**
    * Attempt to take the session advisory lock for `key`. Resolves to a release
    * closure when acquired, or `null` when another holder already owns it.
@@ -175,7 +198,8 @@ export function createAdvisoryLockHolder(
 
     let locked = false;
     try {
-      const result = await active.query<{ locked: boolean }>(
+      const result = await runQuery<{ locked: boolean }>(
+        active,
         "select pg_try_advisory_lock($1) as locked",
         [key],
       );
@@ -218,7 +242,7 @@ export function createAdvisoryLockHolder(
         return;
       }
       try {
-        await active.query("select pg_advisory_unlock($1)", [key]);
+        await runQuery(active, "select pg_advisory_unlock($1)", [key]);
         heldKeys.delete(key);
       } catch {
         // A failed unlock means the connection is unhealthy; drop it so the lock

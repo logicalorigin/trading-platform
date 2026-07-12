@@ -189,6 +189,128 @@ test("distinct keys are independent on the shared dedicated connection", async (
   await holder.close();
 });
 
+test("simultaneous distinct-key acquires serialize queries on the dedicated client", async () => {
+  let releaseFirstQuery!: () => void;
+  const firstQueryReleased = new Promise<void>((resolve) => {
+    releaseFirstQuery = resolve;
+  });
+  let markFirstQueryStarted!: () => void;
+  const firstQueryStarted = new Promise<void>((resolve) => {
+    markFirstQueryStarted = resolve;
+  });
+  let inFlightQueries = 0;
+  let maxInFlightQueries = 0;
+  const client = {
+    async connect() {},
+    async end() {},
+    async query<Row>(sql: string, values?: unknown[]) {
+      inFlightQueries += 1;
+      maxInFlightQueries = Math.max(maxInFlightQueries, inFlightQueries);
+      try {
+        if (sql.includes("pg_try_advisory_lock") && values?.[0] === 100) {
+          markFirstQueryStarted();
+          await firstQueryReleased;
+        }
+        return {
+          rows: [
+            (sql.includes("pg_try_advisory_lock")
+              ? { locked: true }
+              : { unlocked: true }) as Row,
+          ],
+        };
+      } finally {
+        inFlightQueries -= 1;
+      }
+    },
+    on() {
+      return client;
+    },
+    off() {
+      return client;
+    },
+  };
+  const holder = createAdvisoryLockHolder({ createClient: () => client });
+
+  const first = holder.acquire(100);
+  await firstQueryStarted;
+  const second = holder.acquire(200);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  const inFlightBeforeRelease = maxInFlightQueries;
+  releaseFirstQuery();
+
+  const [releaseFirst, releaseSecond] = await Promise.all([first, second]);
+  assert.equal(
+    inFlightBeforeRelease,
+    1,
+    "pg.Client must never receive overlapping advisory-lock queries",
+  );
+  await releaseFirst!();
+  await releaseSecond!();
+  await holder.close();
+});
+
+test("unlock and acquire queries do not overlap on the dedicated client", async () => {
+  let releaseUnlockQuery!: () => void;
+  const unlockQueryReleased = new Promise<void>((resolve) => {
+    releaseUnlockQuery = resolve;
+  });
+  let markUnlockQueryStarted!: () => void;
+  const unlockQueryStarted = new Promise<void>((resolve) => {
+    markUnlockQueryStarted = resolve;
+  });
+  let inFlightQueries = 0;
+  let maxInFlightQueries = 0;
+  const client = {
+    async connect() {},
+    async end() {},
+    async query<Row>(sql: string, values?: unknown[]) {
+      inFlightQueries += 1;
+      maxInFlightQueries = Math.max(maxInFlightQueries, inFlightQueries);
+      try {
+        if (sql.includes("pg_advisory_unlock") && values?.[0] === 100) {
+          markUnlockQueryStarted();
+          await unlockQueryReleased;
+        }
+        return {
+          rows: [
+            (sql.includes("pg_try_advisory_lock")
+              ? { locked: true }
+              : { unlocked: true }) as Row,
+          ],
+        };
+      } finally {
+        inFlightQueries -= 1;
+      }
+    },
+    on() {
+      return client;
+    },
+    off() {
+      return client;
+    },
+  };
+  const holder = createAdvisoryLockHolder({ createClient: () => client });
+  const releaseFirst = await holder.acquire(100);
+  maxInFlightQueries = 0;
+
+  const unlocking = releaseFirst!();
+  await unlockQueryStarted;
+  const acquiringSecond = holder.acquire(200);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  const inFlightBeforeRelease = maxInFlightQueries;
+  releaseUnlockQuery();
+
+  const releaseSecond = await acquiringSecond;
+  await unlocking;
+  assert.equal(
+    inFlightBeforeRelease,
+    1,
+    "unlock and acquire must share the same pg.Client query queue",
+  );
+  await releaseSecond!();
+  await holder.close();
+});
+
 test("simultaneous same-key acquires yield only one release closure", async () => {
   const backend = createFakeBackend();
   const holder = createAdvisoryLockHolder({ createClient: backend.createClient });
