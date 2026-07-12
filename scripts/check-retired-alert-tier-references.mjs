@@ -1,34 +1,21 @@
 #!/usr/bin/env node
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-
-const scanRoots = [
-  "artifacts",
-  "scripts",
-].map((relPath) => path.join(repoRoot, relPath));
-
-const ignoredDirs = new Set([
-  ".git",
-  ".replit-artifact",
-  "__pycache__",
-  "build",
-  "coverage",
-  "dist",
-  "node_modules",
-  "out",
-  "out-tsc",
-  "reports",
-]);
+const scriptPath = fileURLToPath(import.meta.url);
+const repoRoot = path.resolve(path.dirname(scriptPath), "..");
 
 const ignoredPathParts = [
   "/data/theme-datasets/",
   "/features/research/data/",
-  "/scripts/reports/",
-  "scripts/check-retired-alert-tier-references.mjs",
+  "/reports/",
 ];
+const ignoredPathPrefixes = ["scripts/reports/"];
+const ignoredPaths = new Set([
+  "scripts/check-retired-alert-tier-references.mjs",
+]);
 
 const binaryExtensions = new Set([
   ".png",
@@ -64,37 +51,40 @@ function isCommentOnlyLine(line) {
   return commentLinePrefixes.some((prefix) => trimmed.startsWith(prefix));
 }
 
-function toRelPath(fullPath) {
-  return path.relative(repoRoot, fullPath).replaceAll(path.sep, "/");
+export function isScanPath(relPath) {
+  return relPath.startsWith("artifacts/") || relPath.startsWith("scripts/");
 }
 
-function shouldIgnore(relPath) {
-  if (ignoredPathParts.some((part) => relPath.includes(part))) return true;
+export function shouldIgnore(relPath) {
+  if (
+    ignoredPaths.has(relPath) ||
+    ignoredPathPrefixes.some((prefix) => relPath.startsWith(prefix)) ||
+    ignoredPathParts.some((part) => relPath.includes(part))
+  ) {
+    return true;
+  }
   return binaryExtensions.has(path.extname(relPath).toLowerCase());
 }
 
-function walk(dir, files = []) {
-  if (!existsSync(dir)) return files;
-  for (const entry of readdirSync(dir, { withFileTypes: true })) {
-    if (entry.isDirectory() && ignoredDirs.has(entry.name)) continue;
-    const fullPath = path.join(dir, entry.name);
-    const relPath = toRelPath(fullPath);
-    if (shouldIgnore(relPath)) continue;
-    if (entry.isDirectory()) {
-      walk(fullPath, files);
-      continue;
-    }
-    if (entry.isFile()) {
-      files.push({ fullPath, relPath });
-    }
-  }
-  return files;
+function listFiles() {
+  return execFileSync(
+    "git",
+    ["ls-files", "--cached", "--others", "--exclude-standard", "-z"],
+    { cwd: repoRoot, encoding: "utf8" },
+  )
+    .split("\0")
+    .filter(Boolean)
+    .filter((relPath) => isScanPath(relPath) && !shouldIgnore(relPath))
+    .map((relPath) => ({
+      fullPath: path.join(repoRoot, relPath),
+      relPath,
+    }));
 }
 
-const failures = [];
+const main = () => {
+  const failures = [];
 
-for (const root of scanRoots) {
-  for (const { fullPath, relPath } of walk(root)) {
+  for (const { fullPath, relPath } of listFiles()) {
     if (!existsSync(fullPath)) continue;
     const stats = statSync(fullPath);
     if (stats.size > MAX_TEXT_FILE_BYTES) {
@@ -110,21 +100,24 @@ for (const root of scanRoots) {
       failures.push(`${relPath}:${index + 1}: ${line.trim()}`);
     });
   }
-}
 
-if (failures.length > 0) {
-  console.error(
-    "[check-retired-alert-tier-references] retired alert-tier vocabulary remains in runtime source:",
+  if (failures.length > 0) {
+    console.error(
+      "[check-retired-alert-tier-references] retired alert-tier vocabulary remains in runtime source:",
+    );
+    for (const failure of failures.slice(0, 120)) {
+      console.error(`  ${failure}`);
+    }
+    if (failures.length > 120) {
+      console.error(`  ...and ${failures.length - 120} more`);
+    }
+    process.exitCode = 1;
+    return;
+  }
+
+  console.log(
+    "[check-retired-alert-tier-references] ok: no retired alert-tier references remain",
   );
-  for (const failure of failures.slice(0, 120)) {
-    console.error(`  ${failure}`);
-  }
-  if (failures.length > 120) {
-    console.error(`  ...and ${failures.length - 120} more`);
-  }
-  process.exit(1);
-}
+};
 
-console.log(
-  "[check-retired-alert-tier-references] ok: no retired alert-tier references remain",
-);
+if (process.argv[1] && path.resolve(process.argv[1]) === scriptPath) main();
