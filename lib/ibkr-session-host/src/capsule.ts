@@ -262,6 +262,13 @@ const CAPSULE_TARGETS = {
 const DIGEST_IMAGE_PATTERN =
   /^[a-z0-9][a-z0-9._:/-]*@sha256:[a-f0-9]{64}$/;
 const LOCAL_IMAGE_ID_PATTERN = /^sha256:[a-f0-9]{64}$/;
+type CapsuleInspection =
+  | {
+      status: "current";
+      networkAddress: string | null;
+      sessionHash: string;
+    }
+  | { status: "stale_image"; containerId: string };
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -677,7 +684,10 @@ export class CapsuleManager {
       if (this.active !== active) {
         throw new CapsuleError("session_not_found", "IBKR session not found.");
       }
-      if (!identity || identity.sessionHash !== active.sessionHash) {
+      if (
+        identity?.status !== "current" ||
+        identity.sessionHash !== active.sessionHash
+      ) {
         throw this.cleanupUnconfirmed();
       }
       active.networkAddress = identity.networkAddress;
@@ -734,6 +744,23 @@ export class CapsuleManager {
     if (!identity) {
       throw this.cleanupUnconfirmed();
     }
+    if (identity.status === "stale_image") {
+      let removed: CommandResult;
+      try {
+        removed = await this.runner(this.config.dockerBinary, [
+          "rm",
+          "--force",
+          identity.containerId,
+        ]);
+      } catch {
+        throw this.cleanupUnconfirmed();
+      }
+      if (removed.code !== 0) {
+        throw this.cleanupUnconfirmed();
+      }
+      this.reconciled = true;
+      return null;
+    }
 
     const probe = await this.probeCapsule(CAPSULE_SLOT_NAME);
     const record: CapsuleRecord = {
@@ -741,7 +768,11 @@ export class CapsuleManager {
       name: CAPSULE_SLOT_NAME,
       status: probe.ready && identity.networkAddress ? "ready" : "occupied",
     };
-    this.active = { ...identity, record };
+    this.active = {
+      networkAddress: identity.networkAddress,
+      sessionHash: identity.sessionHash,
+      record,
+    };
     this.reconciled = true;
     return record;
   }
@@ -886,7 +917,8 @@ export class CapsuleManager {
       const probe = await this.waitForCapsuleReady(name);
       const identity = await this.inspectOwnedCapsule(name, networkId);
       if (
-        !identity?.networkAddress ||
+        identity?.status !== "current" ||
+        !identity.networkAddress ||
         identity.sessionHash !== sessionHash
       ) {
         throw new CapsuleError(
@@ -899,7 +931,11 @@ export class CapsuleManager {
         name,
         status: "ready",
       };
-      this.active = { ...identity, record };
+      this.active = {
+        networkAddress: identity.networkAddress,
+        sessionHash: identity.sessionHash,
+        record,
+      };
       return record;
     } catch (error) {
       if (created) {
@@ -968,7 +1004,7 @@ export class CapsuleManager {
   private async inspectOwnedCapsule(
     name: string,
     networkId: string,
-  ): Promise<{ networkAddress: string | null; sessionHash: string } | null> {
+  ): Promise<CapsuleInspection | null> {
     let inspected: CommandResult;
     try {
       inspected = await this.runner(this.config.dockerBinary, [
@@ -994,14 +1030,15 @@ export class CapsuleManager {
     const endpoint = asRecord(networks?.[CAPSULE_NETWORK_NAME]);
     const state = asRecord(container?.["State"]);
     const sessionHash = labels?.["pyrus.ibkr.session_hash"];
+    const image = containerConfig?.["Image"];
     const rawNetworkAddress = endpoint?.["IPAddress"];
     const networkAddress = isPrivateIpv4(rawNetworkAddress)
       ? rawNetworkAddress
       : rawNetworkAddress === "" && state?.["Running"] === false
         ? null
         : undefined;
-    return labels?.["pyrus.ibkr.capsule"] === "1" &&
-      containerConfig?.["Image"] === this.config.capsuleImage &&
+    const ownedAndIsolated =
+      labels?.["pyrus.ibkr.capsule"] === "1" &&
       typeof sessionHash === "string" &&
       SESSION_HASH_PATTERN.test(sessionHash) &&
       hostConfig?.["NetworkMode"] === CAPSULE_NETWORK_NAME &&
@@ -1010,8 +1047,17 @@ export class CapsuleManager {
       networkNames[0] === CAPSULE_NETWORK_NAME &&
       endpoint?.["NetworkID"] === networkId &&
       isEmptyRecordOrNull(ports) &&
-      networkAddress !== undefined
-      ? { networkAddress, sessionHash }
+      networkAddress !== undefined;
+    if (!ownedAndIsolated) return null;
+    if (image === this.config.capsuleImage) {
+      return { status: "current", networkAddress, sessionHash };
+    }
+    const containerId = container?.["Id"];
+    return typeof containerId === "string" &&
+      DOCKER_ID_PATTERN.test(containerId) &&
+      typeof image === "string" &&
+      (LOCAL_IMAGE_ID_PATTERN.test(image) || DIGEST_IMAGE_PATTERN.test(image))
+      ? { status: "stale_image", containerId }
       : null;
   }
 

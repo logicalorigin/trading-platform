@@ -24,6 +24,7 @@ const SLOT_NAME = "pyrus-ibkr-slot-1";
 const NETWORK_NAME = "pyrus-ibkr-capsule-net";
 const NETWORK_IP = "172.20.0.2";
 const NETWORK_ID = "c".repeat(64);
+const CONTAINER_ID = "e".repeat(64);
 const READY_MARKER = "PYRUS_IBKR_CAPSULE_READY_V1";
 const LOGIN_COMPLETE_MARKER = "PYRUS_IBKR_CAPSULE_LOGIN_COMPLETE_V1";
 const STARTED_AT = "2026-07-09T22:00:00.000Z";
@@ -1509,17 +1510,89 @@ test("a stale address recovery cannot poison a replacement capsule", async () =>
   assert.equal((await manager.status(OTHER_SESSION_ID))?.status, "ready");
 });
 
-test("refuses to adopt persisted slots with unsafe networks, ports, or images", async () => {
-  for (const { image, networkMode, networks, portBindings, ports } of [
+test("removes a fully owned persisted slot whose immutable image is stale", async () => {
+  const calls: string[][] = [];
+  const runner: CommandRunner = async (_command, args) => {
+    calls.push(args);
+    if (args[0] === "network") {
+      return capsuleProbeResult(args) ?? { code: 1, stdout: "", stderr: "" };
+    }
+    if (args[1] === "ls") {
+      return { code: 0, stdout: `${SLOT_NAME}\n`, stderr: "" };
+    }
+    if (args.includes("{{json .}}")) {
+      return {
+        code: 0,
+        stdout: JSON.stringify({
+          Id: CONTAINER_ID,
+          Config: {
+            Image: "sha256:" + "f".repeat(64),
+            Labels: {
+              "pyrus.ibkr.capsule": "1",
+              "pyrus.ibkr.session_hash": SESSION_HASH,
+            },
+          },
+          HostConfig: { NetworkMode: NETWORK_NAME, PortBindings: null },
+          NetworkSettings: {
+            Networks: {
+              [NETWORK_NAME]: {
+                IPAddress: NETWORK_IP,
+                NetworkID: NETWORK_ID,
+              },
+            },
+            Ports: {},
+          },
+          State: { Running: true },
+        }),
+        stderr: "",
+      };
+    }
+    if (args[0] === "rm") {
+      return { code: 0, stdout: "", stderr: "" };
+    }
+    throw new Error(`unexpected Docker command: ${args.join(" ")}`);
+  };
+  const manager = new CapsuleManager(
+    loadSessionHostConfig({ IBKR_SESSION_CAPSULE_IMAGE: IMAGE }),
+    runner,
+  );
+
+  assert.equal(await manager.reconcile(), null);
+  assert.deepEqual(manager.snapshot(), {
+    mode: "paper",
+    capacity: { max: 1, active: 0 },
+  });
+  assert.deepEqual(calls.at(-1), ["rm", "--force", CONTAINER_ID]);
+
+  const failedManager = new CapsuleManager(
+    loadSessionHostConfig({ IBKR_SESSION_CAPSULE_IMAGE: IMAGE }),
+    async (command, args) =>
+      args[0] === "rm"
+        ? { code: 1, stdout: "", stderr: "sensitive Docker failure" }
+        : runner(command, args),
+  );
+  await assert.rejects(
+    () => failedManager.reconcile(),
+    (error) =>
+      error instanceof CapsuleError &&
+      error.code === "cleanup_unconfirmed" &&
+      !error.message.includes("sensitive Docker failure"),
+  );
+  assert.deepEqual(failedManager.snapshot(), {
+    mode: "paper",
+    capacity: { max: 1, active: 1 },
+  });
+});
+
+test("refuses to adopt persisted slots with unsafe networks or ports", async () => {
+  for (const { networkMode, networks, portBindings, ports } of [
     {
-      image: IMAGE,
       networkMode: "bridge",
       networks: { bridge: { IPAddress: NETWORK_IP, NetworkID: "d".repeat(64) } },
       portBindings: null,
       ports: {},
     },
     {
-      image: IMAGE,
       networkMode: NETWORK_NAME,
       networks: {
         [NETWORK_NAME]: { IPAddress: NETWORK_IP, NetworkID: NETWORK_ID },
@@ -1529,7 +1602,6 @@ test("refuses to adopt persisted slots with unsafe networks, ports, or images", 
       ports: {},
     },
     {
-      image: IMAGE,
       networkMode: NETWORK_NAME,
       networks: {
         [NETWORK_NAME]: { IPAddress: NETWORK_IP, NetworkID: NETWORK_ID },
@@ -1540,15 +1612,6 @@ test("refuses to adopt persisted slots with unsafe networks, ports, or images", 
       ports: {
         "15000/tcp": [{ HostIp: "127.0.0.1", HostPort: "15000" }],
       },
-    },
-    {
-      image: "sha256:" + "f".repeat(64),
-      networkMode: NETWORK_NAME,
-      networks: {
-        [NETWORK_NAME]: { IPAddress: NETWORK_IP, NetworkID: NETWORK_ID },
-      },
-      portBindings: null,
-      ports: {},
     },
   ]) {
     let completeInspections = 0;
@@ -1575,7 +1638,7 @@ test("refuses to adopt persisted slots with unsafe networks, ports, or images", 
           code: 0,
           stdout: JSON.stringify({
             Config: {
-              Image: image,
+              Image: IMAGE,
               Labels: {
                 "pyrus.ibkr.capsule": "1",
                 "pyrus.ibkr.session_hash": SESSION_HASH,
