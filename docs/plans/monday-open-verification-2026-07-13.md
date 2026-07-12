@@ -8,7 +8,11 @@ and its rollback or escalation condition.
 Current commits under test: `6132abf5` (compact retained bars, physical-connect gate,
 and graceful pool shutdown), `0267f80c` and `04cc869b` (advisory-connect race fences),
 `250714ae` (resident-census test isolation), and `89c32762` (IBKR quote-line retirement).
-Earlier July 11 commits and the `PYRUS_SIGNALS_STORED_BARS_DELTA=on` and
+Sunday follow-ups `7ae14d7c` through `d43e6775` retire avoidable closed-session work;
+`7410afbc` bounds producer backfill and schedules matrix evaluation only when completed
+inputs can change. Diagnostic commits `6b390e3d`, `456d0a30`, `d45e2c4b`, and
+`335255c0` make the acceptance window PID-stable, time-weighted, exact-window, and
+matrix-stream-aware. Earlier July 11 commits and the `PYRUS_SIGNALS_STORED_BARS_DELTA=on` and
 `PYRUS_SIGNALS_INCREMENTAL_EVAL=on` flags remain in scope.
 
 Sunday matched baseline after a sanctioned reload: 3,126,180 stored bars in 8,000
@@ -18,11 +22,26 @@ ELU between about 0.32 and 0.81, and event-loop p95 between about 39 and 152 ms.
 old failure at the same bar count was about 2.46 GB heap, ELU near 1.0, about 1,812 ms
 event-loop p95, then OOM.
 
+## One-command capture protocol
+
+1. Before 09:30 ET, load the commits above using only the sanctioned SIGUSR2 reload.
+   Verify `/api/healthz` returns 200 and the same pid2-owned supervisor PID survives.
+2. At about 09:30 ET, run `node scripts/diag/market-open-acceptance.mjs`. Run it again
+   near 10:20 ET, after the scanner has had roughly one estimated cycle.
+3. Each run pins one API PID across every phase, samples runtime pressure every five
+   seconds, profiles CPU and allocation in the same 20-second window, saves raw
+   `cpu.cpuprofile` and `allocation.heapprofile`, computes counter deltas and slow-query
+   totals only inside that run's window, and includes admission-queue waiters.
+4. Treat a nonzero exit as an incomplete acceptance. Read `report.md`, `capture.json`,
+   and the named failed phases; do not accept a partial report merely because later
+   phases continued. Preserve both timestamped output directories.
+
 ## 1. The headline: event-loop utilization under market load
 
 - Watch: flight recorder `api-current.json` → `apiPressure.inputs.eventLoopUtilization`
   and `memoryMb.heapUsed`, plus `/api/diagnostics/runtime` → `api.eventLoopDelayMs`,
-  sampled through 09:30–10:30 ET.
+  sampled through 09:30–10:30 ET. The acceptance report records peak ELU, event-loop
+  p95, heap/RSS, and peak/average runtime-diagnostic fetch time for its exact window.
 - PASS: ELU is not sustained near 0.9–1.0, event-loop p95 does not return to a
   sustained >1s regime, heap continues to reclaim between evaluation waves, and the
   process does not approach the old 2.46 GB heap/OOM signature.
@@ -86,7 +105,9 @@ event-loop p95, then OOM.
 ## 7. PostgreSQL physical connections stay bounded
 
 - Watch `/api/diagnostics/runtime` → `api.resourcePressure.inputs.dbPoolActive`,
-  `dbPoolWaiting`, and `dbPoolMax`. Correlate with established API-process sockets:
+  `dbPoolWaiting`, `dbPoolMax`, and top-level `dbPoolAdmission.lanes`. The acceptance
+  report's DB waiter peak is raw pool waiting plus admission-queue waiting. Correlate
+  with established API-process sockets:
   `lsof -nP -a -p "$(lsof -nP -iTCP:8080 -sTCP:LISTEN -t | head -1)" -iTCP -sTCP:ESTABLISHED | awk 'NR==1 || $9 ~ /:5432/'`.
 - Sunday evidence: the old API's 14 PostgreSQL sockets fell to zero during the
   sanctioned reload; the new process started with 2, peaked at 15 during hydration,
@@ -111,6 +132,9 @@ event-loop p95, then OOM.
   `cycleScannedSymbols` should advance during the open. Sunday reached 92 of 755 with
   an estimated 47.25-minute cycle before off-hours work stopped advancing; Monday
   should provide the first full-cycle acceptance window.
+- The acceptance report also captures `ibkr.streams.signalMatrix`, exact-window matrix
+  event deltas, stock-stream reconnect deltas, retained-demand owner summaries, line
+  ownership, and end-of-window scanner coverage without serializing per-symbol rows.
 - IBKR account, order, execution, and session reads must remain healthy. Do not remove
   their `ibkr-bridge` source values.
 
