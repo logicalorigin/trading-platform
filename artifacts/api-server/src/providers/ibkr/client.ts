@@ -613,27 +613,11 @@ function normalizeOrderStatus(
 ): OrderStatus {
   const normalized = normalizeMetricKey(value ?? "");
 
-  if (filledQuantity > 0 && remainingQuantity > 0) {
-    return "partially_filled";
-  }
-
-  if (normalized.includes("pendingsubmit")) {
-    return "pending_submit";
-  }
-
   if (
     normalized.includes("pendingcancel") ||
     normalized.includes("precancelled")
   ) {
     return "pending_cancel";
-  }
-
-  if (normalized.includes("accepted") || normalized.includes("working")) {
-    return "accepted";
-  }
-
-  if (normalized.includes("submitted") || normalized.includes("presubmitted")) {
-    return "submitted";
   }
 
   if (normalized.includes("filled")) {
@@ -652,7 +636,23 @@ function normalizeOrderStatus(
     return "rejected";
   }
 
-  return "submitted";
+  if (filledQuantity > 0 && remainingQuantity > 0) {
+    return "partially_filled";
+  }
+
+  if (normalized.includes("pendingsubmit")) {
+    return "pending_submit";
+  }
+
+  if (normalized.includes("accepted") || normalized.includes("working")) {
+    return "accepted";
+  }
+
+  if (normalized.includes("submitted") || normalized.includes("presubmitted")) {
+    return "submitted";
+  }
+
+  return "pending_submit";
 }
 
 function parseOptionDetails(
@@ -1455,8 +1455,50 @@ export class IbkrClient {
       body: JSON.stringify({ acctId: accountId }),
     });
     const record = asRecord(payload);
+    const selectedAccountId = asString(record?.["acctId"]);
 
-    return asString(record?.["acctId"]) ?? accountId;
+    if (
+      strictBoolean(record?.["set"]) !== true ||
+      selectedAccountId !== accountId
+    ) {
+      throw new HttpError(502, "IBKR did not confirm the account selection.", {
+        code: "ibkr_account_selection_failed",
+        expose: true,
+      });
+    }
+
+    return selectedAccountId;
+  }
+
+  private async ensureActiveTradingAccount(
+    accountId: string,
+    tradingAccounts: Awaited<ReturnType<IbkrClient["getTradingAccountsInfo"]>>,
+  ): Promise<Awaited<ReturnType<IbkrClient["getTradingAccountsInfo"]>>> {
+    if (!tradingAccounts.accounts.includes(accountId)) {
+      throw new HttpError(409, "The selected IBKR account is not tradable.", {
+        code: "ibkr_order_account_not_tradable",
+        expose: true,
+      });
+    }
+
+    if (
+      tradingAccounts.selectedAccountId === accountId ||
+      (tradingAccounts.accounts.length === 1 &&
+        tradingAccounts.selectedAccountId === null)
+    ) {
+      return tradingAccounts;
+    }
+
+    await this.setActiveAccount(accountId);
+    const verified = await this.getTradingAccountsInfo();
+    if (verified.selectedAccountId !== accountId) {
+      throw new HttpError(502, "IBKR did not select the requested account.", {
+        code: "ibkr_account_selection_failed",
+        expose: true,
+      });
+    }
+
+    return verified;
   }
 
   async resolveActiveAccountId(
@@ -1976,14 +2018,18 @@ export class IbkrClient {
     this.assertPaperAccounts(accountIds);
 
     const orderLists: BrokerOrderSnapshot[][] = [];
+    let activeTradingAccounts = tradingAccounts;
 
     for (const accountId of accountIds) {
+      activeTradingAccounts = await this.ensureActiveTradingAccount(
+        accountId,
+        activeTradingAccounts,
+      );
       const payload = await this.request<unknown>(
         "/iserver/account/orders",
         {},
         {
           force: true,
-          accountId,
         },
       );
       const record = asRecord(payload);
@@ -3587,8 +3633,9 @@ export class IbkrClient {
     manualIndicator?: boolean | null;
     extOperator?: string | null;
   }): Promise<CancelOrderSnapshot> {
-    await this.getTradingAccountsInfo();
+    const tradingAccounts = await this.getTradingAccountsInfo();
     this.assertPaperAccounts([input.accountId]);
+    await this.ensureActiveTradingAccount(input.accountId, tradingAccounts);
 
     const payload = await this.request<unknown>(
       `/iserver/account/${encodeURIComponent(input.accountId)}/order/${encodeURIComponent(input.orderId)}`,
@@ -3619,11 +3666,13 @@ export class IbkrClient {
           firstDefined(
             asNumber(statusRecord["filledQuantity"]),
             asNumber(statusRecord["filled_quantity"]),
+            asNumber(statusRecord["cum_fill"]),
           ) ?? 0;
         const remainingQuantity =
           firstDefined(
             asNumber(statusRecord["remainingQuantity"]),
             asNumber(statusRecord["remaining_quantity"]),
+            asNumber(statusRecord["size"]),
           ) ?? 0;
         status = normalizeOrderStatus(
           firstDefined(
