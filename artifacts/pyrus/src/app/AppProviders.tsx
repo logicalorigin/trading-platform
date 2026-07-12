@@ -1,6 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useEffect, type PropsWithChildren } from "react";
-import { TooltipProvider } from "../components/ui/TooltipProvider";
 import { AuthProvider, useAuthSession } from "../features/auth/authSession.jsx";
 import { usePyrusPerformanceMetricsReporter } from "../features/platform/performanceMetrics";
 
@@ -85,11 +84,9 @@ export function AppProviders({ children }: PropsWithChildren) {
 
   return (
     <QueryClientProvider client={queryClient}>
-      <TooltipProvider delayDuration={500} skipDelayDuration={150}>
-        <AuthProvider>
-          <AuthenticatedRuntime>{children}</AuthenticatedRuntime>
-        </AuthProvider>
-      </TooltipProvider>
+      <AuthProvider>
+        <AuthenticatedRuntime>{children}</AuthenticatedRuntime>
+      </AuthProvider>
     </QueryClientProvider>
   );
 }

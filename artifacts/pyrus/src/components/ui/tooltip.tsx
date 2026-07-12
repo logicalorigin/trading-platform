@@ -1,42 +1,15 @@
 import * as React from "react"
 import { createPortal } from "react-dom"
-import * as TooltipPrimitive from "@radix-ui/react-tooltip"
 
 import { cn } from "@/lib/utils"
-
-const TooltipProvider = TooltipPrimitive.Provider
-
-const Tooltip = TooltipPrimitive.Root
-
-const TooltipTrigger = TooltipPrimitive.Trigger
-
-const TooltipPortal = TooltipPrimitive.Portal
-
-const TooltipContent = React.forwardRef<
-  React.ElementRef<typeof TooltipPrimitive.Content>,
-  React.ComponentPropsWithoutRef<typeof TooltipPrimitive.Content>
->(({ className, sideOffset = 7, children, ...props }, ref) => (
-  <TooltipPrimitive.Portal>
-    <TooltipPrimitive.Content
-      ref={ref}
-      sideOffset={sideOffset}
-      className={cn("ra-tooltip-content", className)}
-      {...props}
-    >
-      {children}
-      <TooltipPrimitive.Arrow className="ra-tooltip-arrow" width={9} height={5} />
-    </TooltipPrimitive.Content>
-  </TooltipPrimitive.Portal>
-))
-TooltipContent.displayName = TooltipPrimitive.Content.displayName
 
 type AppTooltipProps = {
   content?: React.ReactNode
   children: React.ReactNode
   disabled?: boolean
-  side?: React.ComponentPropsWithoutRef<typeof TooltipPrimitive.Content>["side"]
-  align?: React.ComponentPropsWithoutRef<typeof TooltipPrimitive.Content>["align"]
-  sideOffset?: React.ComponentPropsWithoutRef<typeof TooltipPrimitive.Content>["sideOffset"]
+  side?: "top" | "right" | "bottom" | "left"
+  align?: "start" | "center" | "end"
+  sideOffset?: number
   className?: string
   contentClassName?: string
 }
@@ -496,11 +469,4 @@ function AppTooltip({
   )
 }
 
-export {
-  AppTooltip,
-  Tooltip,
-  TooltipTrigger,
-  TooltipContent,
-  TooltipPortal,
-  TooltipProvider,
-}
+export { AppTooltip }
