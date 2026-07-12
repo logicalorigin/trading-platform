@@ -18,7 +18,9 @@ import {
   listAccountTaxLots,
   listAccountWashWindows,
   claimTaxPreflightIbkrReply,
+  loadSubmittedIbkrPreparedOrderIntent,
   recordTaxPreflightIbkrReplyRequired,
+  recordTaxPreflightOrderSubmitted,
 } from "./tax-planning";
 import type { TaxOrderLike } from "./tax-planning-model";
 import { fingerprintIbkrOrderBody } from "./ibkr-order-intent";
@@ -249,6 +251,173 @@ test("tax preflight binds and atomically claims the prepared IBKR order", async 
           claim.status === "fulfilled",
       );
       assert.equal(claimed?.value.replyId, "raw-broker-reply-id");
+    });
+  });
+});
+
+test("prepared IBKR replacement is bound to its predecessor and cannot be placed", async () => {
+  await withTestDb(async () => {
+    const appUserId = await createUser("tax-preflight-ibkr-replace@example.com");
+    await runAsAppUser(appUserId, async () => {
+      const originalOrder = baseOrder({ quantity: 1, limitPrice: 100 });
+      const originalBody = {
+        orders: [
+          {
+            acctId: "U1234567",
+            conid: 265598,
+            cOID: "replace-intent-123",
+            orderType: "LMT",
+            outsideRTH: false,
+            side: "BUY",
+            tif: "DAY",
+            quantity: 1,
+            price: 100,
+          },
+        ],
+      };
+      const originalFingerprint = fingerprintIbkrOrderBody(originalBody);
+      const originalPreflight = await createTaxOrderPreflight(
+        { order: originalOrder },
+        {
+          ibkrPreparedIntent: {
+            version: 1,
+            accountId: "U1234567",
+            clientOrderId: "replace-intent-123",
+            orderFingerprint: originalFingerprint,
+            orderBody: originalBody,
+            preparedAt: new Date().toISOString(),
+            whatIf: { error: null, warnings: [] },
+          },
+        },
+      );
+      await assertTaxPreflightForOrderSubmission({
+        order: originalOrder,
+        taxPreflightToken: originalPreflight.preflightToken,
+        requireIbkrPreparedIntent: true,
+        expectedIbkrIntentKind: "place",
+      });
+      await recordTaxPreflightOrderSubmitted({
+        preflightToken: originalPreflight.preflightToken,
+        submittedOrderId: "order-1",
+      });
+
+      const acknowledged = await loadSubmittedIbkrPreparedOrderIntent({
+        accountId: "U1234567",
+        submittedOrderId: "order-1",
+      });
+      assert.equal(acknowledged.kind, "place");
+      assert.equal(acknowledged.orderFingerprint, originalFingerprint);
+
+      const replacementOrder = baseOrder({ quantity: 1, limitPrice: 99 });
+      const replacementBody = structuredClone(originalBody);
+      replacementBody.orders[0].price = 99;
+      const replacementFingerprint = fingerprintIbkrOrderBody(replacementBody);
+      const replacementPreflight = await createTaxOrderPreflight(
+        { order: replacementOrder },
+        {
+          ibkrPreparedIntent: {
+            version: 2,
+            kind: "replace",
+            orderId: "order-1",
+            previousOrderFingerprint: originalFingerprint,
+            accountId: "U1234567",
+            clientOrderId: "replace-intent-123",
+            orderFingerprint: replacementFingerprint,
+            orderBody: replacementBody,
+            preparedAt: new Date().toISOString(),
+            whatIf: { error: null, warnings: [] },
+          },
+        },
+      );
+
+      await assert.rejects(
+        assertTaxPreflightForOrderSubmission({
+          order: replacementOrder,
+          taxPreflightToken: replacementPreflight.preflightToken,
+          requireIbkrPreparedIntent: true,
+          expectedIbkrIntentKind: "place",
+        }),
+        (error: unknown) => {
+          assert.equal((error as { code?: string }).code, "ibkr_order_intent_mismatch");
+          return true;
+        },
+      );
+      const replacement = await assertTaxPreflightForOrderSubmission({
+        order: replacementOrder,
+        taxPreflightToken: replacementPreflight.preflightToken,
+        requireIbkrPreparedIntent: true,
+        expectedIbkrIntentKind: "replace",
+        expectedBrokerOrderId: "order-1",
+      });
+      assert.equal(replacement?.ibkrPreparedIntent?.kind, "replace");
+      assert.equal(
+        replacement?.ibkrPreparedIntent?.previousOrderFingerprint,
+        originalFingerprint,
+      );
+    });
+  });
+});
+
+test("different prepared IBKR tokens cannot enter broker mutation concurrently", async () => {
+  await withTestDb(async () => {
+    const appUserId = await createUser("tax-preflight-ibkr-serialized@example.com");
+    await runAsAppUser(appUserId, async () => {
+      const order = baseOrder({ quantity: 1, limitPrice: 100 });
+      const prepare = async (clientOrderId: string) => {
+        const orderBody = {
+          orders: [
+            {
+              acctId: "U1234567",
+              conid: 265598,
+              cOID: clientOrderId,
+              orderType: "LMT",
+              outsideRTH: false,
+              side: "BUY",
+              tif: "DAY",
+              quantity: 1,
+              price: 100,
+            },
+          ],
+        };
+        return createTaxOrderPreflight(
+          { order },
+          {
+            ibkrPreparedIntent: {
+              version: 1,
+              accountId: "U1234567",
+              clientOrderId,
+              orderFingerprint: fingerprintIbkrOrderBody(orderBody),
+              orderBody,
+              preparedAt: new Date().toISOString(),
+              whatIf: { error: null, warnings: [] },
+            },
+          },
+        );
+      };
+      const [left, right] = await Promise.all([
+        prepare("serialized-left"),
+        prepare("serialized-right"),
+      ]);
+
+      const claims = await Promise.allSettled([
+        assertTaxPreflightForOrderSubmission({
+          order,
+          taxPreflightToken: left.preflightToken,
+          requireIbkrPreparedIntent: true,
+          expectedIbkrIntentKind: "place",
+        }),
+        assertTaxPreflightForOrderSubmission({
+          order,
+          taxPreflightToken: right.preflightToken,
+          requireIbkrPreparedIntent: true,
+          expectedIbkrIntentKind: "place",
+        }),
+      ]);
+      assert.equal(claims.filter((claim) => claim.status === "fulfilled").length, 1);
+      const rejected = claims.find(
+        (claim): claim is PromiseRejectedResult => claim.status === "rejected",
+      );
+      assert.equal(rejected?.reason?.code, "ibkr_order_mutation_in_progress");
     });
   });
 });

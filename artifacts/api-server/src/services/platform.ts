@@ -54,6 +54,7 @@ import {
   assertTaxPreflightForOrderSubmission,
   claimTaxPreflightIbkrReply,
   createTaxOrderPreflight,
+  recordTaxPreflightIbkrReconciliationRequired,
   recordTaxPreflightIbkrReplyRequired,
   recordTaxPreflightOrderSubmitted,
   type IbkrPreparedOrderIntent,
@@ -3831,6 +3832,7 @@ export async function placeOrder(input: PlaceOrderInput) {
     taxPreflightToken: taxInput.taxPreflightToken,
     taxAcknowledgements: taxInput.taxAcknowledgements,
     requireIbkrPreparedIntent: true,
+    expectedIbkrIntentKind: "place",
     expectedClientOrderId: input.clientOrderId,
   });
   const preparedIntent = taxPreflight?.ibkrPreparedIntent;
@@ -3874,7 +3876,24 @@ export async function placeOrder(input: PlaceOrderInput) {
         expose: true,
       });
     }
-    throw error;
+    await recordTaxPreflightIbkrReconciliationRequired({
+      preflightToken: taxPreflight.preflightToken,
+      reason: "place_transport_or_acknowledgement_unknown",
+    }).catch((recordError: unknown) => {
+      logger.warn(
+        {
+          action: "ibkr_order_place_reconciliation_record",
+          errorType:
+            recordError instanceof Error ? recordError.name : "unknown",
+        },
+        "IBKR reconciliation marker could not be persisted",
+      );
+    });
+    throw new HttpError(409, "IBKR order submission requires reconciliation.", {
+      code: "ibkr_order_submission_reconciliation_required",
+      expose: true,
+      cause: error,
+    });
   }
   // IBKR has ACCEPTED the live order. A post-submit bookkeeping failure must NOT
   // throw — that makes the caller see a failed submit and retry, placing a
@@ -3888,10 +3907,9 @@ export async function placeOrder(input: PlaceOrderInput) {
   } catch (error) {
     logger.warn(
       {
-        err: error,
-        accountId: input.accountId,
-        symbol: input.symbol,
-        orderId: order.id,
+        action: "ibkr_order_place",
+        errorType: error instanceof Error ? error.name : "unknown",
+        reconciliationRequired: true,
       },
       "IBKR order placed but tax preflight submit record failed; reconciliation required",
     );
@@ -3921,6 +3939,19 @@ export async function continueIbkrOrderReply(input: {
       confirmed: input.confirmed,
     });
   } catch (error) {
+    await recordTaxPreflightIbkrReconciliationRequired({
+      preflightToken: input.taxPreflightToken,
+      reason: "reply_transport_or_acknowledgement_unknown",
+    }).catch((recordError: unknown) => {
+      logger.warn(
+        {
+          action: "ibkr_order_reply_reconciliation_record",
+          errorType:
+            recordError instanceof Error ? recordError.name : "unknown",
+        },
+        "IBKR reconciliation marker could not be persisted",
+      );
+    });
     throw new HttpError(409, "IBKR order reply requires reconciliation.", {
       code: "ibkr_order_reply_reconciliation_required",
       expose: true,

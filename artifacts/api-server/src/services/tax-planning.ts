@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { and, eq, inArray, isNull } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { db } from "@workspace/db";
 import {
   brokerAccountsTable,
@@ -36,13 +36,16 @@ const TAX_PREFLIGHT_ORDER_SUBMISSION_CONSUMED_MARKER =
   "__order_submission_consumed__";
 const IBKR_REPLY_PENDING_PREFIX = "__ibkr_reply_pending__:";
 const IBKR_REPLY_CLAIMED_PREFIX = "__ibkr_reply_claimed__:";
+const IBKR_RECONCILIATION_REQUIRED_MARKER =
+  "__ibkr_reconciliation_required__";
 const LEGACY_SHADOW_ACCOUNT_ID = "shadow";
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const PROVIDER_ACCOUNT_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/u;
 
-export type IbkrPreparedOrderIntent = {
+export type IbkrPreparedPlaceOrderIntent = {
   version: 1;
+  kind?: "place";
   accountId: string;
   clientOrderId: string;
   orderFingerprint: string;
@@ -50,6 +53,23 @@ export type IbkrPreparedOrderIntent = {
   preparedAt: string;
   whatIf: Record<string, unknown>;
 };
+
+export type IbkrPreparedReplaceOrderIntent = {
+  version: 2;
+  kind: "replace";
+  orderId: string;
+  previousOrderFingerprint: string;
+  accountId: string;
+  clientOrderId: string;
+  orderFingerprint: string;
+  orderBody: Record<string, unknown>;
+  preparedAt: string;
+  whatIf: Record<string, unknown>;
+};
+
+export type IbkrPreparedOrderIntent =
+  | IbkrPreparedPlaceOrderIntent
+  | IbkrPreparedReplaceOrderIntent;
 
 function readIbkrPreparedOrderIntent(
   value: unknown,
@@ -63,15 +83,24 @@ function readIbkrPreparedOrderIntent(
   const clientOrderId = String(record.clientOrderId || "").trim();
   const orderFingerprint = String(record.orderFingerprint || "").trim();
   const actualFingerprint = fingerprintIbkrOrderBody(orderBody);
+  const placeIntent = record.version === 1 && (!record.kind || record.kind === "place");
+  const replaceIntent = record.version === 2 && record.kind === "replace";
+  const orderId = String(record.orderId || "").trim();
+  const previousOrderFingerprint = String(
+    record.previousOrderFingerprint || "",
+  ).trim();
   if (
-    record.version !== 1 ||
+    (!placeIntent && !replaceIntent) ||
     orders.length !== 1 ||
     accountId !== expectedAccountId ||
     String(order.acctId || "").trim() !== accountId ||
     String(order.cOID || "").trim() !== clientOrderId ||
     !/^[A-Za-z0-9._:-]{1,64}$/u.test(clientOrderId) ||
     !/^[a-f0-9]{64}$/u.test(orderFingerprint) ||
-    actualFingerprint !== orderFingerprint
+    actualFingerprint !== orderFingerprint ||
+    (replaceIntent &&
+      (!PROVIDER_ACCOUNT_ID_PATTERN.test(orderId) ||
+        !/^[a-f0-9]{64}$/u.test(previousOrderFingerprint)))
   ) {
     throw new HttpError(409, "The prepared IBKR order intent is invalid.", {
       code: "ibkr_order_intent_invalid",
@@ -85,8 +114,7 @@ function readIbkrPreparedOrderIntent(
       expose: true,
     });
   }
-  return {
-    version: 1,
+  const common = {
     accountId,
     clientOrderId,
     orderFingerprint,
@@ -94,6 +122,15 @@ function readIbkrPreparedOrderIntent(
     preparedAt: String(record.preparedAt || ""),
     whatIf,
   };
+  return replaceIntent
+    ? {
+        version: 2,
+        kind: "replace",
+        orderId,
+        previousOrderFingerprint,
+        ...common,
+      }
+    : { version: 1, kind: "place", ...common };
 }
 
 type TaxProfileRow = typeof taxProfilesTable.$inferSelect;
@@ -1001,12 +1038,53 @@ export type TaxPreflightSubmissionRecord = {
   ibkrPreparedIntent: IbkrPreparedOrderIntent | null;
 };
 
+export async function loadSubmittedIbkrPreparedOrderIntent(input: {
+  appUserId?: string;
+  accountId: string;
+  submittedOrderId: string;
+}): Promise<IbkrPreparedOrderIntent> {
+  const appUserId = input.appUserId ?? requireCurrentAppUserId();
+  const accountId = String(input.accountId || "").trim();
+  const submittedOrderId = String(input.submittedOrderId || "").trim();
+  if (
+    !PROVIDER_ACCOUNT_ID_PATTERN.test(accountId) ||
+    !PROVIDER_ACCOUNT_ID_PATTERN.test(submittedOrderId)
+  ) {
+    throw new HttpError(409, "The submitted IBKR order reference is invalid.", {
+      code: "ibkr_submitted_order_intent_invalid",
+      expose: true,
+    });
+  }
+  const [preflight] = await db
+    .select({ metadata: taxPreflightChecksTable.metadata })
+    .from(taxPreflightChecksTable)
+    .where(
+      and(
+        eq(taxPreflightChecksTable.appUserId, appUserId),
+        eq(taxPreflightChecksTable.accountId, accountId),
+        eq(taxPreflightChecksTable.submittedOrderId, submittedOrderId),
+      ),
+    )
+    .orderBy(desc(taxPreflightChecksTable.updatedAt))
+    .limit(1);
+  const prepared = readJsonRecord(preflight?.metadata).ibkrPreparedIntent;
+  if (!prepared) {
+    throw new HttpError(409, "The acknowledged IBKR order intent is unavailable.", {
+      code: "ibkr_submitted_order_intent_unavailable",
+      expose: true,
+    });
+  }
+  return readIbkrPreparedOrderIntent(prepared, accountId);
+}
+
 export async function assertTaxPreflightForOrderSubmission(input: {
   appUserId?: string;
   order: TaxOrderLike;
   taxPreflightToken?: string | null;
   taxAcknowledgements?: unknown;
   requireIbkrPreparedIntent?: boolean;
+  expectedIbkrIntentKind?: "place" | "replace";
+  expectedBrokerOrderId?: string | null;
   expectedClientOrderId?: string | null;
   expectedOrderFingerprint?: string | null;
   now?: Date;
@@ -1080,6 +1158,11 @@ export async function assertTaxPreflightForOrderSubmission(input: {
     });
   }
   if (
+    (input.expectedIbkrIntentKind &&
+      (ibkrPreparedIntent?.kind ?? "place") !== input.expectedIbkrIntentKind) ||
+    (input.expectedBrokerOrderId &&
+      (ibkrPreparedIntent?.kind !== "replace" ||
+        ibkrPreparedIntent.orderId !== input.expectedBrokerOrderId)) ||
     (input.expectedClientOrderId &&
       ibkrPreparedIntent?.clientOrderId !== input.expectedClientOrderId) ||
     (input.expectedOrderFingerprint &&
@@ -1119,23 +1202,58 @@ export async function assertTaxPreflightForOrderSubmission(input: {
     );
   }
 
-  const consumed = await db
-    .update(taxPreflightChecksTable)
-    .set({
-      acknowledgedAt:
-        (preflight.requiredAcknowledgements || []).length > 0
-          ? now
-          : preflight.acknowledgedAt,
-      submittedOrderId: TAX_PREFLIGHT_ORDER_SUBMISSION_CONSUMED_MARKER,
-      updatedAt: now,
-    })
-    .where(
-      and(
-        eq(taxPreflightChecksTable.id, preflight.id),
-        isNull(taxPreflightChecksTable.submittedOrderId),
-      ),
-    )
-    .returning({ id: taxPreflightChecksTable.id });
+  const consume = async (executor: typeof db) =>
+    executor
+      .update(taxPreflightChecksTable)
+      .set({
+        acknowledgedAt:
+          (preflight.requiredAcknowledgements || []).length > 0
+            ? now
+            : preflight.acknowledgedAt,
+        submittedOrderId: TAX_PREFLIGHT_ORDER_SUBMISSION_CONSUMED_MARKER,
+        updatedAt: now,
+      })
+      .where(
+        and(
+          eq(taxPreflightChecksTable.id, preflight.id),
+          isNull(taxPreflightChecksTable.submittedOrderId),
+        ),
+      )
+      .returning({ id: taxPreflightChecksTable.id });
+
+  const consumed = ibkrPreparedIntent
+    ? await db.transaction(async (tx) => {
+        await tx.execute(
+          sql`SELECT pg_advisory_xact_lock(hashtext(${`ibkr-order-mutation:${appUserId}`}))`,
+        );
+        const candidates = await tx
+          .select({
+            id: taxPreflightChecksTable.id,
+            submittedOrderId: taxPreflightChecksTable.submittedOrderId,
+            metadata: taxPreflightChecksTable.metadata,
+          })
+          .from(taxPreflightChecksTable)
+          .where(eq(taxPreflightChecksTable.appUserId, appUserId));
+        const unresolved = candidates.some((candidate) => {
+          if (candidate.id === preflight.id) return false;
+          if (!readJsonRecord(candidate.metadata).ibkrPreparedIntent) return false;
+          const marker = candidate.submittedOrderId || "";
+          return (
+            marker === TAX_PREFLIGHT_ORDER_SUBMISSION_CONSUMED_MARKER ||
+            marker === IBKR_RECONCILIATION_REQUIRED_MARKER ||
+            marker.startsWith(IBKR_REPLY_PENDING_PREFIX) ||
+            marker.startsWith(IBKR_REPLY_CLAIMED_PREFIX)
+          );
+        });
+        if (unresolved) {
+          throw new HttpError(409, "Another IBKR order action requires reconciliation.", {
+            code: "ibkr_order_mutation_in_progress",
+            expose: true,
+          });
+        }
+        return consume(tx as typeof db);
+      })
+    : await consume(db);
 
   if (consumed.length === 0) {
     throw new HttpError(409, "Tax/compliance preflight has already been used.", {
@@ -1173,6 +1291,52 @@ export async function recordTaxPreflightOrderSubmitted(input: {
       and(
         eq(taxPreflightChecksTable.appUserId, appUserId),
         eq(taxPreflightChecksTable.preflightToken, input.preflightToken),
+      ),
+    );
+}
+
+export async function recordTaxPreflightIbkrReconciliationRequired(input: {
+  appUserId?: string;
+  preflightToken: string;
+  reason: string;
+}): Promise<void> {
+  const appUserId = input.appUserId ?? requireCurrentAppUserId();
+  const [preflight] = await db
+    .select()
+    .from(taxPreflightChecksTable)
+    .where(
+      and(
+        eq(taxPreflightChecksTable.appUserId, appUserId),
+        eq(taxPreflightChecksTable.preflightToken, input.preflightToken),
+      ),
+    )
+    .limit(1);
+  const currentMarker = preflight?.submittedOrderId || "";
+  if (
+    !preflight ||
+    (currentMarker !== TAX_PREFLIGHT_ORDER_SUBMISSION_CONSUMED_MARKER &&
+      !currentMarker.startsWith(IBKR_REPLY_CLAIMED_PREFIX))
+  ) {
+    return;
+  }
+  const metadata = {
+    ...readJsonRecord(preflight.metadata),
+    ibkrReconciliation: {
+      reason: String(input.reason || "broker_outcome_unknown").slice(0, 128),
+      recordedAt: new Date().toISOString(),
+    },
+  };
+  await db
+    .update(taxPreflightChecksTable)
+    .set({
+      submittedOrderId: IBKR_RECONCILIATION_REQUIRED_MARKER,
+      metadata,
+      updatedAt: new Date(),
+    })
+    .where(
+      and(
+        eq(taxPreflightChecksTable.id, preflight.id),
+        eq(taxPreflightChecksTable.submittedOrderId, currentMarker),
       ),
     );
 }
