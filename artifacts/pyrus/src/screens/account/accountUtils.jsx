@@ -266,8 +266,6 @@ const toneValueMap = () => ({
   "pnl-negative": tokenTone("--ra-pnl-negative"),
   "side-buy": tokenTone("--ra-side-buy"),
   "side-sell": tokenTone("--ra-side-sell"),
-  "position-long": tokenTone("--ra-position-long"),
-  "position-short": tokenTone("--ra-position-short"),
   "status-filled": tokenTone("--ra-status-filled"),
   "status-working": tokenTone("--ra-status-working"),
   "status-rejected": tokenTone("--ra-status-rejected"),

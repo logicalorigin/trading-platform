@@ -402,8 +402,6 @@ html[data-pyrus-reduced-motion="on"] .pyrus-boot-cloud-live {
   --ra-pnl-neutral: var(--ra-text-dim);
   --ra-side-buy: var(--ra-blue-500);
   --ra-side-sell: var(--ra-red-500);
-  --ra-position-long: var(--ra-green-500);
-  --ra-position-short: var(--ra-red-500);
   --ra-status-filled: var(--ra-green-500);
   --ra-status-working: var(--ra-amber-500);
   --ra-status-rejected: var(--ra-red-500);
@@ -429,8 +427,6 @@ html[data-pyrus-reduced-motion="on"] .pyrus-boot-cloud-live {
   --ra-category-backtest: var(--ra-purple-500);
   --ra-category-mixed: var(--ra-amber-500);
   --ra-gex-zero-gamma: var(--ra-cyan-500);
-  --ra-gex-call-wall: var(--ra-purple-400);
-  --ra-gex-put-wall: var(--ra-purple-400);
   --ra-color-pnl-positive: var(--ra-pnl-positive);
   --ra-color-pnl-negative: var(--ra-pnl-negative);
   --ra-color-buy: var(--ra-side-buy);
@@ -558,8 +554,7 @@ html[data-pyrus-reduced-motion="on"] .pyrus-boot-cloud-live {
      never chrome decoration: tone must come from the semantic color layer
      (--ra-color-*) so protan mode and accent presets propagate. Recipe vars
      read --ra-glow-tone (set inline per element, like --ra-motion-*); the
-     semantic aliases are prebuilt full box-shadow values for the common
-     operational states. */
+     semantic tone is supplied by each consumer. */
   --ra-glow-tone: var(--ra-color-accent);
   --ra-glow-sm: 0 0 4px color-mix(in srgb, var(--ra-glow-tone) 45%, transparent);
   --ra-glow-md: 0 0 6px color-mix(in srgb, var(--ra-glow-tone) 55%, transparent);
@@ -567,25 +562,12 @@ html[data-pyrus-reduced-motion="on"] .pyrus-boot-cloud-live {
   --ra-glow-ring:
     0 0 0 1px color-mix(in srgb, var(--ra-glow-tone) 60%, transparent),
     0 0 6px color-mix(in srgb, var(--ra-glow-tone) 40%, transparent);
-  --ra-glow-live:
-    0 0 0 1px color-mix(in srgb, var(--ra-color-accent) 55%, transparent),
-    0 0 6px color-mix(in srgb, var(--ra-color-accent) 40%, transparent);
-  --ra-glow-stale:
-    0 0 0 1px color-mix(in srgb, var(--ra-color-status-warn) 55%, transparent),
-    0 0 6px color-mix(in srgb, var(--ra-color-status-warn) 40%, transparent);
-  --ra-glow-error:
-    0 0 0 1px color-mix(in srgb, var(--ra-red-500) 55%, transparent),
-    0 0 6px color-mix(in srgb, var(--ra-red-500) 40%, transparent);
-  --ra-glow-positive: 0 0 6px color-mix(in srgb, var(--ra-color-pnl-positive) 55%, transparent);
-  --ra-glow-negative: 0 0 6px color-mix(in srgb, var(--ra-color-pnl-negative) 55%, transparent);
-
   /* Luminance elevation (item 13, D3): surface tier + 1px lit top edge
      replaces box strokes. page = surface-0, panel = surface-1,
      focused = surface-2. */
   --ra-edge-top: inset 0 1px 0 var(--ra-card-top-highlight);
 }
 
-:root[data-pyrus-theme="light"],
 :root[data-pyrus-theme="light"] {
   --ra-accent-500: #0B66D8;
   --ra-blue-500: #0B66D8;
@@ -680,18 +662,6 @@ html[data-pyrus-reduced-motion="on"] .pyrus-boot-cloud-live {
   --ra-glow-ring:
     0 0 0 1px color-mix(in srgb, var(--ra-glow-tone) 55%, transparent),
     0 0 4px color-mix(in srgb, var(--ra-glow-tone) 25%, transparent);
-  --ra-glow-live:
-    0 0 0 1px color-mix(in srgb, var(--ra-color-accent) 50%, transparent),
-    0 0 4px color-mix(in srgb, var(--ra-color-accent) 25%, transparent);
-  --ra-glow-stale:
-    0 0 0 1px color-mix(in srgb, var(--ra-color-status-warn) 50%, transparent),
-    0 0 4px color-mix(in srgb, var(--ra-color-status-warn) 25%, transparent);
-  --ra-glow-error:
-    0 0 0 1px color-mix(in srgb, var(--ra-red-500) 50%, transparent),
-    0 0 4px color-mix(in srgb, var(--ra-red-500) 25%, transparent);
-  --ra-glow-positive: 0 0 4px color-mix(in srgb, var(--ra-color-pnl-positive) 35%, transparent);
-  --ra-glow-negative: 0 0 4px color-mix(in srgb, var(--ra-color-pnl-negative) 35%, transparent);
-
   /* Luminance elevation — light theme. Top edge uses a faint dark inset
      line instead of a white highlight (light surfaces are already lighter
      than the page). */
@@ -700,7 +670,6 @@ html[data-pyrus-reduced-motion="on"] .pyrus-boot-cloud-live {
 
 /* Accent presets — rotate the brand accent only (preset CSS vars override theme-specified accent).
    PYRUS blue is the default. Each preset has dark and light variants. */
-:root[data-pyrus-accent-preset="pyrus"],
 :root[data-pyrus-accent-preset="pyrus"] {
   --ra-accent-500: #168BFF;
   --ra-color-accent: var(--ra-accent-500);
@@ -708,9 +677,6 @@ html[data-pyrus-reduced-motion="on"] .pyrus-boot-cloud-live {
   --ra-motion-accent: #168BFF;
   --ra-focus-ring: 0 0 0 2px rgba(22, 139, 255, 0.34);
 }
-:root[data-pyrus-accent-preset="pyrus"][data-pyrus-theme="light"],
-:root[data-pyrus-accent-preset="pyrus"][data-pyrus-theme="light"],
-:root[data-pyrus-accent-preset="pyrus"][data-pyrus-theme="light"],
 :root[data-pyrus-accent-preset="pyrus"][data-pyrus-theme="light"] {
   --ra-accent-500: #0B66D8;
   --ra-color-accent: var(--ra-accent-500);
@@ -718,7 +684,6 @@ html[data-pyrus-reduced-motion="on"] .pyrus-boot-cloud-live {
   --ra-motion-accent: #0B66D8;
   --ra-focus-ring: 0 0 0 2px rgba(11, 102, 216, 0.30);
 }
-:root[data-pyrus-accent-preset="coral"],
 :root[data-pyrus-accent-preset="coral"] {
   --ra-accent-500: #E08F76;
   --ra-color-accent: var(--ra-accent-500);
@@ -726,9 +691,6 @@ html[data-pyrus-reduced-motion="on"] .pyrus-boot-cloud-live {
   --ra-motion-accent: #E08F76;
   --ra-focus-ring: 0 0 0 2px rgba(224, 143, 118, 0.32);
 }
-:root[data-pyrus-accent-preset="coral"][data-pyrus-theme="light"],
-:root[data-pyrus-accent-preset="coral"][data-pyrus-theme="light"],
-:root[data-pyrus-accent-preset="coral"][data-pyrus-theme="light"],
 :root[data-pyrus-accent-preset="coral"][data-pyrus-theme="light"] {
   --ra-accent-500: #D97757;
   --ra-color-accent: var(--ra-accent-500);
@@ -736,7 +698,6 @@ html[data-pyrus-reduced-motion="on"] .pyrus-boot-cloud-live {
   --ra-motion-accent: #D97757;
   --ra-focus-ring: 0 0 0 2px rgba(217, 119, 87, 0.30);
 }
-:root[data-pyrus-accent-preset="amber"],
 :root[data-pyrus-accent-preset="amber"] {
   --ra-accent-500: #D9A864;
   --ra-color-accent: var(--ra-accent-500);
@@ -744,9 +705,6 @@ html[data-pyrus-reduced-motion="on"] .pyrus-boot-cloud-live {
   --ra-motion-accent: #D9A864;
   --ra-focus-ring: 0 0 0 2px rgba(217, 168, 100, 0.32);
 }
-:root[data-pyrus-accent-preset="amber"][data-pyrus-theme="light"],
-:root[data-pyrus-accent-preset="amber"][data-pyrus-theme="light"],
-:root[data-pyrus-accent-preset="amber"][data-pyrus-theme="light"],
 :root[data-pyrus-accent-preset="amber"][data-pyrus-theme="light"] {
   --ra-accent-500: #C28526;
   --ra-color-accent: var(--ra-accent-500);
@@ -755,7 +713,6 @@ html[data-pyrus-reduced-motion="on"] .pyrus-boot-cloud-live {
   --ra-focus-ring: 0 0 0 2px rgba(194, 133, 38, 0.30);
 }
 
-:root[data-pyrus-accent-preset="green"],
 :root[data-pyrus-accent-preset="green"] {
   --ra-accent-500: #4FB286;
   --ra-color-accent: var(--ra-accent-500);
@@ -763,9 +720,6 @@ html[data-pyrus-reduced-motion="on"] .pyrus-boot-cloud-live {
   --ra-motion-accent: #4FB286;
   --ra-focus-ring: 0 0 0 2px rgba(79, 178, 134, 0.34);
 }
-:root[data-pyrus-accent-preset="green"][data-pyrus-theme="light"],
-:root[data-pyrus-accent-preset="green"][data-pyrus-theme="light"],
-:root[data-pyrus-accent-preset="green"][data-pyrus-theme="light"],
 :root[data-pyrus-accent-preset="green"][data-pyrus-theme="light"] {
   --ra-accent-500: #0F6E51;
   --ra-color-accent: var(--ra-accent-500);
@@ -774,7 +728,6 @@ html[data-pyrus-reduced-motion="on"] .pyrus-boot-cloud-live {
   --ra-focus-ring: 0 0 0 2px rgba(15, 110, 81, 0.30);
 }
 
-:root[data-pyrus-accent-preset="aurora"],
 :root[data-pyrus-accent-preset="aurora"] {
   --ra-accent-500: #A189CF;
   --ra-color-accent: var(--ra-accent-500);
@@ -782,9 +735,6 @@ html[data-pyrus-reduced-motion="on"] .pyrus-boot-cloud-live {
   --ra-motion-accent: #A189CF;
   --ra-focus-ring: 0 0 0 2px rgba(161, 137, 207, 0.34);
 }
-:root[data-pyrus-accent-preset="aurora"][data-pyrus-theme="light"],
-:root[data-pyrus-accent-preset="aurora"][data-pyrus-theme="light"],
-:root[data-pyrus-accent-preset="aurora"][data-pyrus-theme="light"],
 :root[data-pyrus-accent-preset="aurora"][data-pyrus-theme="light"] {
   --ra-accent-500: #6B4E8E;
   --ra-color-accent: var(--ra-accent-500);
@@ -798,8 +748,6 @@ html[data-pyrus-reduced-motion="on"] .pyrus-boot-cloud-live {
   --ra-pnl-negative: var(--ra-amber-500);
   --ra-side-buy: var(--ra-blue-500);
   --ra-side-sell: var(--ra-amber-500);
-  --ra-position-long: var(--ra-blue-500);
-  --ra-position-short: var(--ra-amber-500);
   --ra-color-pnl-positive: var(--ra-pnl-positive);
   --ra-color-pnl-negative: var(--ra-pnl-negative);
   --ra-color-buy: var(--ra-side-buy);
@@ -818,8 +766,6 @@ html, body, #root {
   overflow: hidden;
 }
 
-:root[data-pyrus-theme="dark"] body,
-:root[data-pyrus-theme="dark"] #root,
 :root[data-pyrus-theme="dark"] body,
 :root[data-pyrus-theme="dark"] #root {
   background: #050814;
@@ -1180,7 +1126,6 @@ table {
   }
 }
 
-html[data-pyrus-reduced-motion="on"] .ra-error-shake,
 html[data-pyrus-reduced-motion="on"] .ra-error-shake {
   animation: none;
 }
@@ -1207,7 +1152,6 @@ html[data-pyrus-reduced-motion="on"] .ra-error-shake {
   }
 }
 
-html[data-pyrus-reduced-motion="on"] .ra-screen-enter,
 html[data-pyrus-reduced-motion="on"] .ra-screen-enter {
   animation: none;
 }
@@ -1350,7 +1294,6 @@ html[data-pyrus-reduced-motion="on"] .ra-screen-enter {
     animation: none;
   }
 }
-[data-pyrus-reduced-motion="on"] .ra-pulse-orb,
 [data-pyrus-reduced-motion="on"] .ra-pulse-orb {
   animation: none;
 }
@@ -1623,7 +1566,6 @@ html[data-pyrus-reduced-motion="on"] .ra-screen-enter {
   }
 }
 
-html[data-pyrus-reduced-motion="on"] .ra-segmented-indicator,
 html[data-pyrus-reduced-motion="on"] .ra-segmented-indicator {
   transition: opacity var(--ra-motion-fast) var(--ra-motion-ease);
 }
@@ -1656,10 +1598,7 @@ html[data-pyrus-reduced-motion="on"] .ra-segmented-indicator {
 }
 
 html[data-pyrus-reduced-motion="on"] .ra-pressure-mini-cluster,
-html[data-pyrus-reduced-motion="on"] .ra-pressure-mini-cluster,
 html[data-pyrus-reduced-motion="on"] .ra-pressure-mini-slot,
-html[data-pyrus-reduced-motion="on"] .ra-pressure-mini-slot,
-html[data-pyrus-reduced-motion="on"] .ra-pressure-mini-label,
 html[data-pyrus-reduced-motion="on"] .ra-pressure-mini-label {
   transition: opacity var(--ra-motion-fast) var(--ra-motion-ease);
 }
@@ -2410,8 +2349,7 @@ textarea:disabled:not([data-ra-keep-opacity]) {
 }
 
 /* Item 13, D2 — status glow. Meaning-bearing only: set --ra-glow-tone inline
-   from a semantic tone (same idiom as --ra-motion-*), or compose the prebuilt
-   --ra-glow-live/stale/error aliases directly. Never attach to static chrome.
+   from a semantic tone (same idiom as --ra-motion-*). Never attach to static chrome.
    Static box-shadow (not animated) — cheap to paint, no reduced-motion gate
    needed. */
 .ra-status-glow {
@@ -3006,13 +2944,11 @@ html[data-pyrus-reduced-motion="on"] .ra-edge-chevron-march {
   opacity: 0.55;
 }
 
-html[data-pyrus-reduced-motion="on"] .ra-sparkline-tail,
 html[data-pyrus-reduced-motion="on"] .ra-sparkline-tail {
   transform: none !important;
   opacity: 1;
 }
 
-html[data-pyrus-reduced-motion="on"] .ra-interactive,
 html[data-pyrus-reduced-motion="on"] .ra-interactive,
 html[data-pyrus-reduced-motion="on"] .ra-signal-cell-motion,
 html[data-pyrus-reduced-motion="on"] .ra-signal-status-pill,
@@ -3027,14 +2963,10 @@ html[data-pyrus-reduced-motion="on"] .ra-signal-action-button {
 
 html[data-pyrus-reduced-motion="on"] .ra-interactive:hover,
 html[data-pyrus-reduced-motion="on"] .ra-bar-fill,
-html[data-pyrus-reduced-motion="on"] .ra-interactive:hover,
-html[data-pyrus-reduced-motion="on"] .ra-bar-fill,
 html[data-pyrus-reduced-motion="on"] .ra-signal-action-button:hover {
   transform: none !important;
 }
 
-html[data-pyrus-reduced-motion="on"] .ra-sparkline polyline,
-html[data-pyrus-reduced-motion="on"] .ra-sparkline path,
 html[data-pyrus-reduced-motion="on"] .ra-sparkline polyline,
 html[data-pyrus-reduced-motion="on"] .ra-sparkline path {
   stroke-dashoffset: 0 !important;

@@ -230,11 +230,6 @@ export const GLOW = {
   md: "var(--ra-glow-md)",
   lg: "var(--ra-glow-lg)",
   ring: "var(--ra-glow-ring)",
-  live: "var(--ra-glow-live)",
-  stale: "var(--ra-glow-stale)",
-  error: "var(--ra-glow-error)",
-  positive: "var(--ra-glow-positive)",
-  negative: "var(--ra-glow-negative)",
 };
 
 export const SCALE_LEVELS = {
