@@ -93,7 +93,11 @@ test("capsule restricts CPG clients and exposes only fixed host relays with RAM-
   assert.match(entrypoint, /wait_for_cpg_login 60/);
   assert.match(
     entrypoint,
-    /start_service chromium chromium[\s\S]*?--user-data-dir="\$\{RUNTIME_DIR\}\/chromium"[\s\S]*?--app=http:\/\/localhost:5000\/sso\/Login/,
+    /printf 'GET \/ HTTP\/1\.0\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3/,
+  );
+  assert.match(
+    entrypoint,
+    /start_service chromium chromium[\s\S]*?--user-data-dir="\$\{RUNTIME_DIR\}\/chromium"[\s\S]*?^  --app=http:\/\/localhost:5000\/$/m,
   );
   assert.doesNotMatch(entrypoint, /--incognito/);
   assert.doesNotMatch(entrypoint, /--load-extension|--disable-extensions-except/);

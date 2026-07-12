@@ -77,7 +77,7 @@ wait_for_cpg_login() {
   for ((attempt = 0; attempt < attempts; attempt += 1)); do
     status=""
     if { exec 3<>/dev/tcp/127.0.0.1/5000; } 2>/dev/null; then
-      printf 'GET /sso/Login HTTP/1.0\r\nHost: localhost\r\nConnection: close\r\n\r\n' >&3
+      printf 'GET / HTTP/1.0\r\nHost: localhost\r\nConnection: close\r\n\r\n' >&3
       IFS= read -r -t 2 status <&3 || true
       exec 3>&- 3<&-
       if [[ "${status}" =~ ^HTTP/[0-9.]+[[:space:]]+(200|302|303)[[:space:]] ]]; then
@@ -169,7 +169,7 @@ start_service chromium chromium \
   --disable-background-networking \
   --disable-component-update \
   --disable-sync \
-  --app=http://localhost:5000/sso/Login
+  --app=http://localhost:5000/
 
 wait_until_healthy
 printf 'PYRUS_IBKR_CAPSULE_READY_V1\n'
