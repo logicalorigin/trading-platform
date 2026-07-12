@@ -335,6 +335,48 @@ test("backfill groups coarse timeframes first", () => {
   ]);
 });
 
+test("failed cold backfill cells do not starve the rest of the universe", async () => {
+  resetSignalMonitorMatrixStreamForTests();
+  resetSignalMonitorBackfillRefreshDiagnosticsForTests();
+
+  const symbols = Array.from({ length: 65 }, (_, index) =>
+    `S${String(index).padStart(3, "0")}`,
+  );
+  const attemptedGroups: string[][] = [];
+  const deps: Parameters<
+    typeof refreshSignalMonitorBackfilledBaseBarsForTests
+  >[1] = {
+    runWithStoredBarsPrefetch: async (input) => {
+      attemptedGroups.push([...input.symbols]);
+      throw new Error("provider unavailable for fairness test");
+    },
+  };
+
+  await refreshSignalMonitorBackfilledBaseBarsForTests(
+    {
+      symbols,
+      timeframes: ["1d"],
+      evaluatedAt: new Date("2026-06-25T15:00:00.000Z"),
+      environment: "shadow",
+    },
+    deps,
+  );
+  await refreshSignalMonitorBackfilledBaseBarsForTests(
+    {
+      symbols,
+      timeframes: ["1d"],
+      evaluatedAt: new Date("2026-06-25T15:01:00.000Z"),
+      environment: "shadow",
+    },
+    deps,
+  );
+
+  assert.equal(attemptedGroups[0]?.length, 64);
+  assert.equal(attemptedGroups[1]?.length, 1);
+  assert.ok(!attemptedGroups[0]?.includes(attemptedGroups[1]![0]!));
+  resetSignalMonitorMatrixStreamForTests();
+});
+
 test("a sweep that dies mid-run still warms 1d and 1h first", async () => {
   resetSignalMonitorMatrixStreamForTests();
   resetSignalMonitorBackfillRefreshDiagnosticsForTests();

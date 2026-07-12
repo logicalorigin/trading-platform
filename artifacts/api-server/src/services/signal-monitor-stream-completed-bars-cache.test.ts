@@ -303,27 +303,37 @@ test("stream completed bars use the canonical signal-bar shape", () => {
 
 // --- Out-of-order revision logic (the dirty-track's correctness backbone) ---
 
-test("revision bumps ONLY on out-of-order minutes, not forward/forming updates", () => {
+test("aggregate dirty tracking queues only completed-input changes", () => {
   const sym = "REVTEST";
   assert.equal(getRevision(sym), 0, "unseen symbol starts at 0");
 
-  recordRevision(sym, 60_000); // first minute seen
+  assert.equal(recordRevision(sym, 60_000), true); // first minute seen
   assert.equal(getRevision(sym), 0, "first message does not bump");
 
-  recordRevision(sym, 60_000); // forming-minute update (same startMs)
+  assert.equal(recordRevision(sym, 60_000), false); // forming-minute update
   assert.equal(getRevision(sym), 0, "forming-minute update does not bump");
 
-  recordRevision(sym, 120_000); // forward minute advance
+  assert.equal(recordRevision(sym, 120_000), true); // forward minute advance
   assert.equal(getRevision(sym), 0, "forward minute advance does not bump");
 
-  recordRevision(sym, 60_000); // out-of-order correction to an older minute
+  assert.equal(recordRevision(sym, 60_000), true); // older-minute correction
   assert.equal(getRevision(sym), 1, "out-of-order correction bumps");
 
-  recordRevision(sym, 180_000); // forward again
+  assert.equal(recordRevision(sym, 180_000), true); // forward again
   assert.equal(getRevision(sym), 1, "forward after a correction does not bump again");
 
-  recordRevision(sym, Number.NaN); // malformed startMs is ignored
+  assert.equal(recordRevision(sym, Number.NaN), false); // malformed startMs
   assert.equal(getRevision(sym), 1, "non-finite startMs is a no-op");
+
+  const delayed = "REVDELAYED";
+  assert.equal(recordRevision(delayed, 60_000, 119_999), true);
+  assert.equal(recordRevision(delayed, 60_000, 119_999), false);
+  assert.equal(
+    recordRevision(delayed, 60_000, 120_000),
+    true,
+    "a same-minute final observed after close must invalidate completed bars",
+  );
+  assert.equal(getRevision(delayed), 1);
 });
 
 // --- completedBars cache hit/miss/skip semantics ---

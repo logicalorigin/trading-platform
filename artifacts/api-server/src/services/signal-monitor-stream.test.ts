@@ -119,6 +119,29 @@ test("signal matrix stream coverage avoids full aggregate diagnostics on delta f
   assert.doesNotMatch(coverageBlock, /getStockAggregateStreamDiagnostics\(/);
 });
 
+test("matrix aggregate queue drops unchanged forming updates before scheduling", () => {
+  const start = serviceSource.indexOf(
+    "function queueSignalMonitorMatrixStreamAggregate",
+  );
+  const end = serviceSource.indexOf(
+    "async function resolveSignalMonitorMatrixStreamProfile",
+    start,
+  );
+  assert.notEqual(start, -1);
+  assert.notEqual(end, -1);
+  const block = serviceSource.slice(start, end);
+
+  assert.match(
+    block,
+    /const completedInputChanged = recordSignalMonitorAggregateRevision\(/,
+  );
+  assert.match(block, /if \(!completedInputChanged\) \{\s*return;\s*\}/);
+  assert.ok(
+    block.indexOf("if (!completedInputChanged)") <
+      block.indexOf("for (const subscriber"),
+  );
+});
+
 test("signal matrix coverage-status helper restores delayed semantics without full diagnostics", () => {
   const helperStart = serviceSource.indexOf(
     "function getSignalMonitorMatrixStreamCoverageStatus",
@@ -1167,7 +1190,7 @@ test("server-owned producer scope normalizes and dedupes universe symbols", () =
   assert.equal(scope.requestedSymbolCount, 2);
 });
 
-test("producer backfill selects all cold cells and only caps warmed refreshes", () => {
+test("producer backfill caps cold and warmed cells to the per-cycle budget", () => {
   const nowMs = Date.parse("2026-06-23T18:30:00.000Z");
   const coldCandidates = ["AAPL", "MSFT", "NVDA", "SPY"].map((symbol) => ({
     symbol,
@@ -1187,11 +1210,10 @@ test("producer backfill selects all cold cells and only caps warmed refreshes", 
       maxCells: 2,
     });
 
-  assert.equal(withCold.length, 4);
-  assert.deepEqual(
-    new Set(withCold.map((cell) => cell.symbol)),
-    new Set(["AAPL", "MSFT", "NVDA", "SPY"]),
-  );
+  assert.equal(withCold.length, 2);
+  assert.ok(withCold.every((cell) =>
+    coldCandidates.some((candidate) => candidate.symbol === cell.symbol),
+  ));
 
   const warmedOnly =
     __signalMonitorInternalsForTests.selectSignalMonitorBackfillDueCells({
@@ -1201,6 +1223,30 @@ test("producer backfill selects all cold cells and only caps warmed refreshes", 
     });
 
   assert.equal(warmedOnly.length, 2);
+});
+
+test("server-owned producers coalesce profile universes into one backfill sweep", () => {
+  const refreshStart = serviceSource.indexOf(
+    "async function refreshSignalMonitorServerOwnedProducers",
+  );
+  const refreshEnd = serviceSource.indexOf(
+    "export function startSignalMonitorServerOwnedProducer",
+    refreshStart,
+  );
+  assert.notEqual(refreshStart, -1);
+  assert.notEqual(refreshEnd, -1);
+  const refreshBlock = serviceSource.slice(refreshStart, refreshEnd);
+
+  assert.match(refreshBlock, /const backfillSymbols = new Set<string>\(\)/);
+  assert.match(refreshBlock, /backfillSymbols\.add\(symbol\)/);
+  assert.equal(
+    refreshBlock.match(/refreshSignalMonitorBackfilledBaseBars\(/g)?.length,
+    1,
+  );
+  assert.ok(
+    refreshBlock.indexOf("refreshSignalMonitorBackfilledBaseBars(") >
+      refreshBlock.indexOf("for (const profile of profiles)"),
+  );
 });
 
 test("server-owned producer evaluates bar-close ticks with no UI subscriber", () => {

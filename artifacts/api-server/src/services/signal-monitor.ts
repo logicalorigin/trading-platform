@@ -5063,6 +5063,9 @@ const signalMonitorBackfilledBaseByCell = new Map<
   string,
   SignalMonitorBackfilledBaseEntry
 >();
+// Failed/empty cold loads must still yield their place in the bounded sweep;
+// otherwise the same first batch can permanently starve every later cell.
+const signalMonitorBackfillLastAttemptAtByCell = new Map<string, number>();
 let unsubscribeSignalMonitorBackfilledBaseBarCacheRowsChanged:
   | (() => void)
   | null = null;
@@ -5086,10 +5089,9 @@ const SIGNAL_MONITOR_BACKFILL_REFRESH_MS: Record<
 // SIGNAL_MONITOR_EVALUATION_CONCURRENCY_LIMIT so the off-path backfill cannot
 // crowd out evaluation / chart-serving bar loads.
 const SIGNAL_MONITOR_BACKFILL_CONCURRENCY_LIMIT = 3;
-// Cap warmed-cell refreshes per invocation so steady-state upkeep does not fire
-// a repeating whole-universe refresh. Cold cells are not coverage-capped: every
-// never-warmed cell must be selected on startup so all six frames become
-// producer-ready; concurrency/yielding below is the pressure control.
+// Cap every refresh invocation, including cold start, so producer startup cannot
+// turn the whole universe into one unbounded history-read batch. Repeated cycles
+// advance through cold cells before revisiting warmed cells.
 const SIGNAL_MONITOR_BACKFILL_MAX_CELLS_PER_CYCLE = 64;
 const SIGNAL_MONITOR_BACKFILL_RECENT_AGGREGATE_GRACE_MS = (() => {
   const parsed = Number(process.env.SIGNAL_MONITOR_BACKFILL_RECENT_AGGREGATE_GRACE_MS);
@@ -5489,6 +5491,7 @@ function ensureSignalMonitorBackfilledBaseInvalidationSubscription(): void {
         }
         const key = signalMonitorBackfillCellKey(change.symbol, change.timeframe);
         signalMonitorBackfilledBaseByCell.delete(key);
+        signalMonitorBackfillLastAttemptAtByCell.delete(key);
         signalMonitorStreamCompletedBarsCache.delete(key);
       }
     });
@@ -5694,18 +5697,7 @@ function selectSignalMonitorBackfillDueCells(input: {
     return [];
   }
 
-  const coldEntries = due.filter(
-    (entry) => entry.candidate.refreshedAt === null,
-  );
-  const refreshEntries = due.filter(
-    (entry) => entry.candidate.refreshedAt !== null,
-  );
-  const selected = [
-    ...coldEntries,
-    ...refreshEntries.slice(0, Math.max(0, cap - coldEntries.length)),
-  ];
-
-  return selected.map(({ candidate }) => ({
+  return due.slice(0, cap).map(({ candidate }) => ({
     symbol: candidate.symbol,
     timeframe: candidate.timeframe,
   }));
@@ -5758,12 +5750,11 @@ async function refreshSignalMonitorBackfilledBaseBars(
     return;
   }
   // The legacy bar-eval flag does NOT gate this backfill: it is the
-  // server-owned SSE producer's own deep-history bar supply — what the
-  // aggregated 2m/5m/15m/1h/1d frames need to warm the pyrus indicator — not
-  // the legacy scan. It must keep running while
+  // server-owned SSE producer's own deep-history bar supply — all frames need
+  // it to warm the pyrus indicator after a process cold start. It is not the
+  // legacy scan, and must keep running while
   // PYRUS_SIGNAL_MONITOR_BAR_EVALUATION_ENABLED is off so the producer stays
-  // self-sufficient. (Only the native 1m frame needs no backfill, which is why
-  // it alone kept generating after this supply was switched off.)
+  // self-sufficient.
   // Back OFF under pressure: the backfill is the very kind of universe-wide
   // getBars load that feeds resource pressure, so skip this cycle entirely once
   // the API is at "high". The live ring / per-tick live edge keeps evaluation
@@ -5793,13 +5784,17 @@ async function refreshSignalMonitorBackfilledBaseBars(
         continue;
       }
       for (const timeframe of input.timeframes) {
-        const existing = getSignalMonitorBackfilledBaseEntry(
-          signalMonitorBackfillCellKey(normalized, timeframe),
+        const key = signalMonitorBackfillCellKey(normalized, timeframe);
+        const existing = getSignalMonitorBackfilledBaseEntry(key);
+        const lastActivityAt = Math.max(
+          existing?.refreshedAt ?? Number.NEGATIVE_INFINITY,
+          signalMonitorBackfillLastAttemptAtByCell.get(key) ??
+            Number.NEGATIVE_INFINITY,
         );
         candidates.push({
           symbol: normalized,
           timeframe,
-          refreshedAt: existing?.refreshedAt ?? null,
+          refreshedAt: Number.isFinite(lastActivityAt) ? lastActivityAt : null,
         });
       }
     }
@@ -5817,6 +5812,14 @@ async function refreshSignalMonitorBackfilledBaseBars(
     const dueSymbolsByTimeframe =
       groupSignalMonitorBackfillDueCellsByTimeframe(dueCells);
     for (const [timeframe, symbols] of dueSymbolsByTimeframe) {
+      for (const symbol of symbols) {
+        lruCacheSet(
+          signalMonitorBackfillLastAttemptAtByCell,
+          signalMonitorBackfillCellKey(symbol, timeframe),
+          nowMs,
+          SIGNAL_MONITOR_BACKFILLED_BASE_MAX_CELLS,
+        );
+      }
       await runWithStoredBarsPrefetch(
         {
           symbols,
@@ -8780,11 +8783,11 @@ function lruCacheTouch<K, V>(cache: Map<K, V>, key: K): V | undefined {
   return value;
 }
 
-// Per-symbol revision that bumps ONLY when an aggregate arrives out-of-order
-// (startMs older than the newest seen for the symbol) — i.e. a correction to an
-// already-completed minute. Forward minute advances are captured by the completed
-// boundary, and forming-minute updates never change completed bars, so neither
-// bumps this. Maintained from queueSignalMonitorMatrixStreamAggregate.
+// Per-symbol completed-input tracker. Returns true when an aggregate can change
+// completed bars: the first observation, a forward minute, an out-of-order
+// correction, or a same-minute observation received after that minute closed.
+// Forming updates for the newest minute return false so they do not schedule
+// matrix evaluation work that can only read the same completed-bar inputs.
 const signalMonitorAggregateRevisionBySymbol = new Map<
   string,
   { maxStartMs: number; revision: number }
@@ -8796,10 +8799,10 @@ function recordSignalMonitorAggregateRevision(
   symbol: string,
   startMs: number,
   observedAtMs?: number,
-): void {
+): boolean {
   const key = signalMonitorAggregateRevisionKey(symbol);
   if (!key || !Number.isFinite(startMs)) {
-    return;
+    return false;
   }
   const entry = signalMonitorAggregateRevisionBySymbol.get(key);
   if (!entry) {
@@ -8807,17 +8810,22 @@ function recordSignalMonitorAggregateRevision(
       maxStartMs: startMs,
       revision: 0,
     });
+    return true;
   } else if (startMs > entry.maxStartMs) {
     entry.maxStartMs = startMs;
+    return true;
   } else if (startMs < entry.maxStartMs) {
     entry.revision += 1;
+    return true;
   } else if (
     observedAtMs != null &&
     Number.isFinite(observedAtMs) &&
     startMs + TIMEFRAME_MS["1m"] <= observedAtMs
   ) {
     entry.revision += 1;
+    return true;
   }
+  return false;
 }
 function getSignalMonitorAggregateRevision(symbol: string): number {
   return (
@@ -11792,14 +11800,14 @@ function queueSignalMonitorMatrixStreamAggregate(
 
   signalMonitorMatrixStreamAggregateEventCount += 1;
   signalMonitorMatrixStreamLastAggregateAt = new Date();
-  // Feed the #2 dirty-track: only out-of-order corrections to already-completed
-  // minutes bump the revision. Forward minute advances are captured by aggregate
-  // high-water progress; forming-minute updates never change completed bars.
-  recordSignalMonitorAggregateRevision(
+  const completedInputChanged = recordSignalMonitorAggregateRevision(
     symbol,
     Number(message.startMs),
     signalMonitorMatrixStreamLastAggregateAt.getTime(),
   );
+  if (!completedInputChanged) {
+    return;
+  }
   for (const subscriber of signalMonitorMatrixStreamSubscribers.values()) {
     if (
       signalMonitorMatrixStreamTimeframesForNormalizedSymbol(
@@ -12021,6 +12029,8 @@ async function refreshSignalMonitorServerOwnedProducers(): Promise<void> {
       return;
     }
     const activeEnvironments = new Set<RuntimeMode>();
+    const backfillSymbols = new Set<string>();
+    const backfillEnvironments = new Set<RuntimeMode>();
     for (const profile of profiles) {
       try {
         const universe = await resolveSignalMonitorProfileUniverse(profile, {
@@ -12056,19 +12066,8 @@ async function refreshSignalMonitorServerOwnedProducers(): Promise<void> {
           profile: universe.profile,
           scope,
         });
-        // Keep the producer self-sufficient: refresh the deep-history backfill
-        // the aggregated frames (2m/5m/15m/1h/1d) need to warm the indicator.
-        // This was previously driven by startSignalMonitorLocalBarCacheWarmup
-        // (removed from backgroundWorkers during scan-deprecation, which dropped
-        // the producer's deep-history supply and stopped generation for every
-        // frame except native 1m). Driving it from the producer ties the bar
-        // supply to the consumer and keeps it independent of the legacy scan.
-        void refreshSignalMonitorBackfilledBaseBars({
-          symbols,
-          timeframes,
-          evaluatedAt: new Date(),
-          environment: universe.profile.environment,
-        });
+        symbols.forEach((symbol) => backfillSymbols.add(symbol));
+        backfillEnvironments.add(universe.profile.environment);
         activeEnvironments.add(universe.profile.environment);
       } catch (error) {
         logger.warn(
@@ -12076,6 +12075,22 @@ async function refreshSignalMonitorServerOwnedProducers(): Promise<void> {
           "Server-owned signal matrix producer universe resolution failed",
         );
       }
+    }
+    // Backfill history is environment-independent. Coalesce all enabled
+    // profile universes so the global in-flight guard cannot let the first
+    // profile suppress every later profile's coverage.
+    if (backfillSymbols.size) {
+      void refreshSignalMonitorBackfilledBaseBars({
+        symbols: Array.from(backfillSymbols).sort((left, right) =>
+          left.localeCompare(right),
+        ),
+        timeframes,
+        evaluatedAt: new Date(),
+        environment:
+          backfillEnvironments.size === 1
+            ? backfillEnvironments.values().next().value
+            : null,
+      });
     }
     // Drop producers for environments that are no longer enabled.
     signalMonitorServerOwnedProducers.forEach((entry, environment) => {
@@ -13274,6 +13289,7 @@ function resetSignalMonitorMatrixStreamForTests() {
   unsubscribeSignalMonitorBackfilledBaseBarCacheRowsChanged?.();
   unsubscribeSignalMonitorBackfilledBaseBarCacheRowsChanged = null;
   signalMonitorBackfilledBaseByCell.clear();
+  signalMonitorBackfillLastAttemptAtByCell.clear();
   signalMonitorBackfillRefreshDiagnostics.failureCount = 0;
   signalMonitorBackfillRefreshDiagnostics.lastError = null;
   signalMonitorBackfillRefreshDiagnostics.lastErrorAt = null;
