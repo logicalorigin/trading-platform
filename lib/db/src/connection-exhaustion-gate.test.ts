@@ -187,6 +187,8 @@ test("53300 blocks new physical opens without blocking idle pool clients", async
       super();
     }
 
+    connect(): Promise<this>;
+    connect(callback: (error: Error | null, client?: this) => void): void;
     connect(
       callback?: (error: Error | null, client?: this) => void,
     ): Promise<this> | void {

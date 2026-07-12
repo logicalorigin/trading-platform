@@ -106,7 +106,8 @@ export function createAdvisoryLockHolder(
     }
 
     const attemptGeneration = generation;
-    const attempt = (async () => {
+    let attempt!: Promise<ClientLike>;
+    attempt = (async () => {
       const next = createClient();
       // A dropped lock connection releases all of its session locks. Surface the
       // drop so the next acquire reconnects rather than reusing a dead client.
@@ -121,7 +122,9 @@ export function createAdvisoryLockHolder(
       } catch (error) {
         detachErrorHandler?.();
         detachErrorHandler = null;
-        connecting = null;
+        if (connecting === attempt) {
+          connecting = null;
+        }
         throw error;
       }
       if (closed || generation !== attemptGeneration) {
