@@ -2890,7 +2890,7 @@ export function createPyrusSignalsPineRuntimeAdapter(
       const signalEvaluation = evaluatePyrusSignalsSignals({
         chartBars,
         settings: signalSettings,
-        includeProvisionalSignals: true,
+        includeProvisionalSignals: !waitForBarClose,
       });
       const structureEventByBarIndex = new Map(
         signalEvaluation.structureEvents
@@ -3305,6 +3305,7 @@ export function createPyrusSignalsPineRuntimeAdapter(
           structureEventByBarIndex.get(`${index}:short`);
         const signalEvent = signalEventByBarIndex.get(index);
         const passesSignalGates =
+          Boolean(structureEvent?.actionable) &&
           Boolean(structureEvent?.filterState?.passes) &&
           ((bullishChoch && structureEvent?.direction === "long") ||
             (bearishChoch && structureEvent?.direction === "short"));
@@ -4031,8 +4032,13 @@ export function createPyrusSignalsPineRuntimeAdapter(
           );
           return {
             label,
-            value: direction === 1 ? "BULL" : "BEAR",
-            color: direction === 1 ? bullColor : bearColor,
+            value: direction === 1 ? "BULL" : direction === -1 ? "BEAR" : "—",
+            color:
+              direction === 1
+                ? bullColor
+                : direction === -1
+                  ? bearColor
+                  : "#86837D",
           };
         });
 

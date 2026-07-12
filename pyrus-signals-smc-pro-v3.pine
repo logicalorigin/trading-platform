@@ -26,7 +26,7 @@ gTR          = "Trend Reversal Signal"
 i_showRev    = input.bool(true, "Show Trend Reversal Signals", group=gTR)
 i_revLineCol = input.color(color.new(color.white, 25), "Line Color", group=gTR)
 i_revTxtCol  = input.color(color.white, "Text Color", group=gTR)
-i_revBars    = input.int(30, "Signal Line Length (Bars)", minval=1, group=gTR)
+i_revBars    = input.int(30, "Signal Line Length (Bars)", minval=1, maxval=500, group=gTR)
 
 // --- Smart Order Blocks ---
 gOB          = "Smart Order Blocks"
@@ -42,7 +42,7 @@ i_srPivotStr = input.int(15, "Pivot Strength", minval=2, group=gSR)
 i_srMinDist  = input.float(0.05, "Minimum Zone Distance (%)", minval=0.01, step=0.01, tooltip="Prevents zones from drawing too close together.", group=gSR)
 i_srThick    = input.float(0.25, "Zone Thickness (ATR Mult)", minval=0.01, tooltip="ATR multiplier for zone thickness.", group=gSR)
 i_srMax      = input.int(7, "Max Number of Zones", minval=1, maxval=20, group=gSR)
-i_srExt      = input.int(100, "Zone Extension (Bars)", minval=1, tooltip="Bars into the future zones extend.", group=gSR)
+i_srExt      = input.int(100, "Zone Extension (Bars)", minval=1, maxval=500, tooltip="Bars into the future zones extend.", group=gSR)
 i_srResCol   = input.color(color.new(color.rgb(233,30,99), 75), "Resistance Color", group=gSR)
 i_srSupCol   = input.color(color.new(color.rgb(0,188,212), 75), "Support Color", group=gSR)
 
@@ -92,16 +92,16 @@ i_sesSyd     = input.bool(false, "Sydney (22:00–07:00 UTC)",   group=gSS)
 // --- TP/SL ---
 gTP          = "TP/SL Settings"
 i_showTPSL   = input.bool(true, "Show TP/SL Levels", group=gTP)
-i_tp1rr      = input.float(0.5, "TP 1 Risk/Reward", step=0.1, group=gTP)
-i_tp2rr      = input.float(1.0, "TP 2 Risk/Reward", step=0.1, group=gTP)
-i_tp3rr      = input.float(1.7, "TP 3 Risk/Reward", step=0.1, group=gTP)
+i_tp1rr      = input.float(0.5, "TP 1 Risk/Reward", minval=0.0, maxval=10, step=0.1, group=gTP)
+i_tp2rr      = input.float(1.0, "TP 2 Risk/Reward", minval=0.0, maxval=10, step=0.1, group=gTP)
+i_tp3rr      = input.float(1.7, "TP 3 Risk/Reward", minval=0.0, maxval=10, step=0.1, group=gTP)
 
 // --- Info Panel ---
 gIP          = "Info Panel"
 i_showPanel  = input.bool(true, "Show Info Panel", group=gIP)
 i_panelPos   = input.string("Bottom Right", "Panel Position", options=["Top Right","Top Left","Bottom Right","Bottom Left"], group=gIP)
 i_panelSize  = input.string("Small", "Panel Size", options=["Tiny","Small","Normal","Large"], group=gIP)
-i_adxLen     = input.int(14, "ADX Length", group=gIP)
+i_adxLen     = input.int(14, "ADX Length", minval=1, maxval=100, group=gIP)
 i_volMaLen   = input.int(20, "Volume MA Length", group=gIP)
 i_mtf1       = input.timeframe("60",  "MTF 1", group=gIP)
 i_mtf2       = input.timeframe("240", "MTF 2", group=gIP)
@@ -146,8 +146,8 @@ textSize(s) =>
      s == "Small"  ? size.small  :
      s == "Normal" ? size.normal : size.large
 
-mtfCol(d) => d == 1 ? i_bullCol : i_bearCol
-mtfTxt(d) => d == 1 ? "BULL"    : "BEAR"
+mtfCol(d) => d == 1 ? i_bullCol : d == -1 ? i_bearCol : color.gray
+mtfTxt(d) => d == 1 ? "BULL"    : d == -1 ? "BEAR" : "—"
 
 // =============================================================================
 //  MAIN TREND BAND — WMA basis + ATR-smoothed envelope
@@ -184,11 +184,8 @@ pShadU = plot(i_showShadow ? bbUp : na, "Shadow Upper", color=color.new(i_shadow
 pShadL = plot(i_showShadow ? bbLo : na, "Shadow Lower", color=color.new(i_shadowCol, 100))
 fill(pShadU, pShadL, color=i_showShadow ? i_shadowCol : na, title="Shadow Fill")
 
-// Reaction/clarity-candle state is computed after the wireband section
-// (need trendLine for the rule). Keeping bbWidthPre here for the dashboard
-// Volatility Score calculation downstream.
-bbWidthPre    = bbUp - bbLo
-volPctPre     = nz(ta.percentrank(bbWidthPre / close, 100), 0)
+// Reaction/clarity-candle state is computed after the wireband section because
+// the rule needs trendLine.
 
 // =============================================================================
 //  MARKET STRUCTURE — pivot swings + BOS/CHOCH
@@ -300,11 +297,11 @@ isBearBreak = (bearBOS or bearCHOCH) and not na(sL)
 if i_showRev and bullCHOCH and not na(revAnchorLo)
     anchorBar = nz(revAnchorLoBar, bar_index)
     line.new(anchorBar, revAnchorLo, anchorBar + i_revBars, revAnchorLo, color=i_revLineCol, style=line.style_dashed, width=1)
-    label.new(anchorBar + math.floor(i_revBars / 2), revAnchorLo, "Trend Reversal", style=label.style_label_center, color=color.new(i_bullCol, 70), textcolor=color.white, size=size.small)
+    label.new(anchorBar + math.floor(i_revBars / 2), revAnchorLo, "Trend Reversal", style=label.style_label_center, color=color.new(i_bullCol, 70), textcolor=i_revTxtCol, size=size.small)
 if i_showRev and bearCHOCH and not na(revAnchorHi)
     anchorBar = nz(revAnchorHiBar, bar_index)
     line.new(anchorBar, revAnchorHi, anchorBar + i_revBars, revAnchorHi, color=i_revLineCol, style=line.style_dashed, width=1)
-    label.new(anchorBar + math.floor(i_revBars / 2), revAnchorHi, "Trend Reversal", style=label.style_label_center, color=color.new(i_bearCol, 70), textcolor=color.white, size=size.small)
+    label.new(anchorBar + math.floor(i_revBars / 2), revAnchorHi, "Trend Reversal", style=label.style_label_center, color=color.new(i_bearCol, 70), textcolor=i_revTxtCol, size=size.small)
 
 // BOS arrows as boolean series (plotshape renders them without touching
 // label budget).
@@ -481,19 +478,19 @@ while array.size(srBoxes) > i_srMax
 //  to the current bar. Label sits at the right edge with "<NAME> <price>".
 // =============================================================================
 // Prior day H/L/C — offset [1] so we read YESTERDAY's completed bar.
-[pdH, pdL, pdC] = request.security(syminfo.tickerid, "D", [high[1], low[1], close[1]], lookahead=barmerge.lookahead_off)
+[pdH, pdL, pdC] = request.security(syminfo.tickerid, "D", [high[1], low[1], close[1]], lookahead=barmerge.lookahead_on)
 // Today's open — no offset, so the first print of the current session.
-todayO = request.security(syminfo.tickerid, "D", open, lookahead=barmerge.lookahead_off)
+todayO = request.security(syminfo.tickerid, "D", open, lookahead=barmerge.lookahead_on)
 // Prior week H/L — offset [1] for last week's completed bar.
-[pwH, pwL] = request.security(syminfo.tickerid, "W", [high[1], low[1]], lookahead=barmerge.lookahead_off)
+[pwH, pwL] = request.security(syminfo.tickerid, "W", [high[1], low[1]], lookahead=barmerge.lookahead_on)
 
 klLineStyle = lineStyle(i_klStyle)
 klLabelSize = textSize(i_klLabelSz)
 
 // Anchor bars: first bar of today / this week. Used as the line's left edge
 // so the level doesn't stretch across prior sessions on the chart.
-var int dayStartBar  = na
-var int weekStartBar = na
+var int dayStartBar  = bar_index
+var int weekStartBar = bar_index
 if ta.change(time("D")) != 0
     dayStartBar := bar_index
 if ta.change(time("W")) != 0
@@ -566,8 +563,6 @@ if barstate.islast
 // Candle filter: if filters enabled and signal filtered, gray out.
 // regimeDir is defined earlier (right before Order Blocks) — it drives
 // candle coloring + background shading so they flip on CHOCH bars.
-bodyBull = close > open
-candleCol = regimeDir == 1 ? i_bullCol : i_bearCol
 regimeCol = regimeDir == 1 ? i_bullCol : i_bearCol
 
 // Trend background
@@ -587,7 +582,7 @@ mtf3Dir = mtfTrend(i_mtf3)
 //  DASHBOARD METRICS
 // =============================================================================
 // ADX for strength
-[diP, diM, adxV] = ta.dmi(i_adxLen, i_adxLen)
+[_, _, adxV] = ta.dmi(i_adxLen, i_adxLen)
 strengthTxt = adxV >= 25 ? "Strong" : "Weak"
 
 // Trend Age — bars since last CHOCH (trend flip)
@@ -633,12 +628,11 @@ panelPos = i_panelPos == "Top Right"    ? position.top_right    :
            i_panelPos == "Bottom Left"  ? position.bottom_left  : position.bottom_right
 tSize = textSize(i_panelSize)
 
-var table dash = table.new(position.bottom_right, 3, 8, border_width=1)
-if i_showPanel and barstate.islast
-    table.clear(dash, 0, 0, 2, 7)
-    dash := table.new(panelPos, 3, 8, border_width=1, bgcolor=color.new(color.black, 70), frame_color=color.new(color.gray, 60), frame_width=1)
-    table.cell(dash, 0, 0, "PYRUS DASHBOARD", text_color=color.white, bgcolor=color.new(color.gray, 50), text_size=tSize)
+var table dash = table.new(panelPos, 3, 8, border_width=1, bgcolor=color.new(color.black, 70), frame_color=color.new(color.gray, 60), frame_width=1)
+if barstate.isfirst
     table.merge_cells(dash, 0, 0, 2, 0)
+if i_showPanel and barstate.islast
+    table.cell(dash, 0, 0, "PYRUS DASHBOARD", text_color=color.white, bgcolor=color.new(color.gray, 50), text_size=tSize)
     table.cell(dash, 0, 1, tfTxt + " TREND", text_color=color.gray, text_size=tSize)
     table.cell(dash, 2, 1, trendTxt,         text_color=regimeCol,  text_size=tSize)
     table.cell(dash, 0, 2, "STRENGTH",   text_color=color.gray,  text_size=tSize)
@@ -661,7 +655,9 @@ mtfAlignOK(dir) =>
     okMTF2 = not i_fMTF2 or mtf2Dir == dir
     okMTF3 = not i_fMTF3 or mtf3Dir == dir
     okADX  = not i_fADX  or adxV >= i_adxMin
-    okVol  = not i_fVol  or (volScore >= i_volMin and volScore <= i_volMax)
+    volScoreLo = math.min(i_volMin, i_volMax)
+    volScoreHi = math.max(i_volMin, i_volMax)
+    okVol  = not i_fVol  or (volScore >= volScoreLo and volScore <= volScoreHi)
     okSes  = not i_fSes or
               ((i_fLon and inSes(8*60,17*60)) or
                (i_fNY  and inSes(13*60,22*60)) or
@@ -669,9 +665,12 @@ mtfAlignOK(dir) =>
                (i_fSyd and inSes(22*60,7*60)))
     okMTF1 and okMTF2 and okMTF3 and okADX and okVol and okSes
 
-bullSignal = bullCHOCH and (not i_fEnable or mtfAlignOK(1))
-bearSignal = bearCHOCH and (not i_fEnable or mtfAlignOK(-1))
-filtered   = i_fEnable and ((bullCHOCH and not bullSignal) or (bearCHOCH and not bearSignal))
+bullSignalSetup = bullCHOCH and (not i_fEnable or mtfAlignOK(1))
+bearSignalSetup = bearCHOCH and (not i_fEnable or mtfAlignOK(-1))
+signalReady = not i_waitClose or barstate.isconfirmed
+bullSignal = bullSignalSetup and signalReady
+bearSignal = bearSignalSetup and signalReady
+filtered   = i_fEnable and ((bullCHOCH and not bullSignalSetup) or (bearCHOCH and not bearSignalSetup))
 
 // BUY/SELL signal bubbles — use label.new with style_label_up/_down to match
 // live Pyrus's rendering exactly (same primitive, same anchor semantics).
@@ -686,10 +685,10 @@ if bearSignal
 
 // Swing markers — plotshape to avoid label-cap pressure. Four calls because
 // plotshape text is a compile-time constant (can't be conditional series).
-plotshape(isHH, "HH", style=shape.labeldown, location=location.abovebar, color=color.new(color.gray, 80), textcolor=color.white, text="HH", size=size.normal)
-plotshape(isLH, "LH", style=shape.labeldown, location=location.abovebar, color=color.new(color.gray, 80), textcolor=color.white, text="LH", size=size.normal)
-plotshape(isHL, "HL", style=shape.labelup,   location=location.belowbar, color=color.new(color.gray, 80), textcolor=color.white, text="HL", size=size.normal)
-plotshape(isLL, "LL", style=shape.labelup,   location=location.belowbar, color=color.new(color.gray, 80), textcolor=color.white, text="LL", size=size.normal)
+plotshape(isHH, "HH", style=shape.labeldown, location=location.abovebar, color=color.new(color.gray, 80), textcolor=color.white, text="HH", size=size.normal, offset=-th)
+plotshape(isLH, "LH", style=shape.labeldown, location=location.abovebar, color=color.new(color.gray, 80), textcolor=color.white, text="LH", size=size.normal, offset=-th)
+plotshape(isHL, "HL", style=shape.labelup,   location=location.belowbar, color=color.new(color.gray, 80), textcolor=color.white, text="HL", size=size.normal, offset=-th)
+plotshape(isLL, "LL", style=shape.labelup,   location=location.belowbar, color=color.new(color.gray, 80), textcolor=color.white, text="LL", size=size.normal, offset=-th)
 
 // Break circle markers + BOS directional arrows — plotshape to stay off the
 // label budget. Break circles use location.absolute so they sit on the
