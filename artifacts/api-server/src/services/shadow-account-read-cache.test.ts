@@ -1021,7 +1021,40 @@ test("shared dashboard fills+orders read is bounded and uses a 30s derived TTL",
   assert.match(source, /const SHADOW_LEDGER_DASHBOARD_READ_LIMIT =/);
   assert.match(block, /orderBy\(desc\(shadowFillsTable\.occurredAt\)\)/);
   assert.match(block, /\.limit\(shadowLedgerDashboardReadLimit\(\)\)/);
-  assert.match(block, /readShadowOrdersByFillOrderId\(fills\)/);
+  assert.match(block, /readCachedShadowOrdersByFillOrderId\(fills\)/);
+});
+
+test("read-side fill analysis reuses cached account orders and fetches only misses", () => {
+  const source = readFileSync(
+    new URL("./shadow-account.ts", import.meta.url),
+    "utf8",
+  );
+  const helperStart = source.indexOf(
+    "async function readCachedShadowOrdersByFillOrderId",
+  );
+  const helperEnd = source.indexOf(
+    "\nasync function readShadowFillsWithOrders",
+    helperStart,
+  );
+  assert.notEqual(helperStart, -1, "Missing cached fill-order reader");
+  assert.notEqual(helperEnd, -1, "Missing cached fill-order reader boundary");
+  const helper = source.slice(helperStart, helperEnd);
+  assert.match(helper, /await readShadowOrdersForAccount\(\)/);
+  assert.match(helper, /missingOrderIds/);
+  assert.match(
+    helper,
+    /readShadowOrdersByFillOrderId\(\s*missingOrderIds\.map/,
+  );
+
+  const analysisStart = source.indexOf(
+    "async function readShadowAnalysisLedgerRows",
+  );
+  const analysisEnd = source.indexOf(
+    "\nasync function readShadowAnalysisLedgerFold",
+    analysisStart,
+  );
+  const analysis = source.slice(analysisStart, analysisEnd);
+  assert.match(analysis, /readCachedShadowOrdersByFillOrderId\(fills\)/);
 });
 
 test("automation ledger realized P&L keeps the all-time source path", () => {

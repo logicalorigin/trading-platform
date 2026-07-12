@@ -3604,6 +3604,30 @@ async function readShadowOrdersByFillOrderId(
   return new Map(orders.map((order) => [order.id, order]));
 }
 
+async function readCachedShadowOrdersByFillOrderId(
+  fills: Pick<ShadowFillRow, "orderId">[],
+): Promise<Map<string, ShadowOrderRow>> {
+  const orderIds = new Set(fills.map((fill) => fill.orderId));
+  if (!orderIds.size) {
+    return new Map();
+  }
+  const ordersById = new Map(
+    (await readShadowOrdersForAccount())
+      .filter((order) => orderIds.has(order.id))
+      .map((order) => [order.id, order]),
+  );
+  const missingOrderIds = Array.from(orderIds).filter(
+    (orderId) => !ordersById.has(orderId),
+  );
+  if (missingOrderIds.length) {
+    const missingOrders = await readShadowOrdersByFillOrderId(
+      missingOrderIds.map((orderId) => ({ orderId })),
+    );
+    missingOrders.forEach((order, orderId) => ordersById.set(orderId, order));
+  }
+  return ordersById;
+}
+
 type ShadowFillsWithOrders = {
   fills: ShadowFillRow[];
   ordersById: Map<string, ShadowOrderRow>;
@@ -3633,7 +3657,7 @@ async function readBoundedShadowFillsWithOrders(): Promise<ShadowFillsWithOrders
   );
   return {
     fills,
-    ordersById: await readShadowOrdersByFillOrderId(fills),
+    ordersById: await readCachedShadowOrdersByFillOrderId(fills),
   };
 }
 
@@ -11802,7 +11826,7 @@ async function readShadowAnalysisLedgerRows(
   );
   return {
     fills,
-    ordersById: await readShadowOrdersByFillOrderId(fills),
+    ordersById: await readCachedShadowOrdersByFillOrderId(fills),
   };
 }
 
