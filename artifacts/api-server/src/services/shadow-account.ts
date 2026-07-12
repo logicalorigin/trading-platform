@@ -641,6 +641,10 @@ const SHADOW_MARK_REFRESH_MIN_INTERVAL_MS = Math.max(
 const shadowNoopMarkRefresh = { updatedCount: 0 } as const;
 const SHADOW_READ_CACHE_TTL_MS = 2_500;
 const SHADOW_DERIVED_READ_CACHE_TTL_MS = 30_000;
+// Orders are identity/attribution history, not marks. Every in-process ledger
+// mutation clears shadowReadCache; this longer fallback only bounds staleness
+// for an out-of-process database writer.
+const SHADOW_LEDGER_IDENTITY_CACHE_TTL_MS = 5 * 60_000;
 const SHADOW_RISK_READ_CACHE_STALE_TTL_MS = 15 * 60_000;
 const SHADOW_LEDGER_DASHBOARD_READ_LIMIT = Math.max(
   1_000,
@@ -3694,7 +3698,7 @@ async function readShadowOrdersForAccount(): Promise<ShadowOrderRow[]> {
     `orders:account-bounded:${limit}`,
     () => readShadowOrdersForAccountUncached(limit),
     {
-      ttlMs: SHADOW_DERIVED_READ_CACHE_TTL_MS,
+      ttlMs: SHADOW_LEDGER_IDENTITY_CACHE_TTL_MS,
     },
   );
 }

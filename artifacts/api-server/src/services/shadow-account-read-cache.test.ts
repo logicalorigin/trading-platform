@@ -1281,7 +1281,7 @@ test("shadow order tabs share the cached full account order scan", () => {
   assert.match(ordersBody, /SHADOW_DERIVED_READ_CACHE_TTL_MS/);
 });
 
-test("account-level shadow order scan is shared without expired reuse", () => {
+test("account-level shadow order scan uses the mutation-invalidated identity cache", () => {
   const source = readFileSync(
     new URL("./shadow-account.ts", import.meta.url),
     "utf8",
@@ -1297,7 +1297,11 @@ test("account-level shadow order scan is shared without expired reuse", () => {
 
   assert.match(body, /withShadowReadCache\(/);
   assert.match(body, /`orders:account-bounded:\$\{limit\}`/);
-  assert.match(body, /ttlMs:\s*SHADOW_DERIVED_READ_CACHE_TTL_MS/);
+  assert.match(body, /ttlMs:\s*SHADOW_LEDGER_IDENTITY_CACHE_TTL_MS/);
+  assert.match(
+    source,
+    /const SHADOW_LEDGER_IDENTITY_CACHE_TTL_MS = 5 \* 60_000;/,
+  );
 });
 
 test("shadow trade diagnostics waits for a fresh shared read", () => {
