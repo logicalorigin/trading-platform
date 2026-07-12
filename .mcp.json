@@ -1,8 +1,8 @@
 {
   "mcpServers": {
     "pyrus": {
-      "command": "node",
-      "args": ["artifacts/mcp-server/dist/index.mjs"],
+      "command": "pnpm",
+      "args": ["--filter", "@workspace/mcp-server", "exec", "tsx", "src/index.ts"],
       "env": {
         "PYRUS_MCP_API_BASE_URL": "http://localhost:8080"
       }

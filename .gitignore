@@ -63,8 +63,6 @@ Thumbs.db
 
 # local agent/tool settings
 .claude/
-/.agents/skills/gstack/
-/.agents/skills/make-interfaces-feel-better/
 /skills-lock.json
 
 # local agent coordination runtime state
