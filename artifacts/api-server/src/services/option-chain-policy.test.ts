@@ -100,6 +100,22 @@ test("option quote snapshots use Massive OPRA snapshots instead of broker quote 
   );
 });
 
+test("flow scanner quote snapshots do not retain live polling demand", () => {
+  const start = platformSource.indexOf(
+    "async function hydrateFlowScannerContractsFromLiveQuotes",
+  );
+  const end = platformSource.indexOf(
+    "type FlowEventsTimeWindow",
+    start,
+  );
+  assert.notEqual(start, -1, "missing flow-scanner quote hydration helper");
+  assert.notEqual(end, -1, "missing flow-scanner quote hydration boundary");
+  const block = platformSource.slice(start, end);
+
+  assert.doesNotMatch(block, /releaseLeasesOnComplete:\s*false/);
+  assert.doesNotMatch(block, /releaseLeasesOnAbort:\s*false/);
+});
+
 test("option-chain streams fetch metadata rows without delayed quote hydration", () => {
   assert.match(bridgeStreamsSource, /quoteHydration: "metadata"/);
   assert.match(bridgeStreamsSource, /allowDelayedSnapshotHydration: false/);

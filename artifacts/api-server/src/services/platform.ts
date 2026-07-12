@@ -16641,8 +16641,6 @@ async function hydrateFlowScannerContractsFromLiveQuotes(input: {
     ttlMs: getOptionsFlowScannerQuoteLeaseTtlMs(),
     fallbackProvider: "none",
     requiresGreeks: false,
-    releaseLeasesOnComplete: false,
-    releaseLeasesOnAbort: false,
     signal: input.signal,
   }).catch((error) => ({
     underlying: input.underlying,
