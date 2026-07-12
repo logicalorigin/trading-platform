@@ -821,7 +821,7 @@ test("signal matrix heavy evaluation cache keys identical completed-bar series o
 
 test("resident-bar diagnostics include the completed-bars cache payload", () => {
   const internals = __signalMonitorInternalsForTests;
-  internals.resetSignalMonitorMatrixHeavyEvaluationCache();
+  internals.clearSignalMonitorMatrixEvaluationCache();
   const bars = [
     bar("2026-06-12T13:58:00.000Z"),
     bar("2026-06-12T13:59:00.000Z"),
@@ -836,7 +836,7 @@ test("resident-bar diagnostics include the completed-bars cache payload", () => 
     getSignalMonitorResidentBarStats().completedBarsCache,
     { entries: 1, bars: 3 },
   );
-  internals.resetSignalMonitorMatrixHeavyEvaluationCache();
+  internals.clearSignalMonitorMatrixEvaluationCache();
 });
 
 test("non-current signal state snapshots preserve last-known direction for display hydration", () => {
