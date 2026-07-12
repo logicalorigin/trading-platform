@@ -63,6 +63,28 @@ test("runtime diagnostics surfaces active DB pool admission lane gauges", () => 
   );
 });
 
+test("runtime diagnostics includes signal-matrix stream status", () => {
+  const start = platformSource.indexOf(
+    "export async function getRuntimeDiagnostics()",
+  );
+  const end = platformSource.indexOf(
+    "export async function getRuntimeDiagnosticsCompact()",
+    start,
+  );
+  assert.notEqual(start, -1);
+  assert.notEqual(end, -1);
+  const runtimeDiagnosticsSource = platformSource.slice(start, end);
+
+  assert.match(
+    runtimeDiagnosticsSource,
+    /{ getSignalMonitorMatrixStreamStatus }[\s\S]*import\("\.\/signal-monitor"\)/,
+  );
+  assert.match(
+    runtimeDiagnosticsSource,
+    /signalMatrix:\s*getSignalMonitorMatrixStreamStatus\(\)/,
+  );
+});
+
 test("diagnostics collector avoids DB bursts while recording snapshots and events", () => {
   const storageStatsBlock = sourceBlock(
     "async function buildMonitoredStorageTableStats()",

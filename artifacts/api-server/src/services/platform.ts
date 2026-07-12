@@ -2355,10 +2355,12 @@ export async function getRuntimeDiagnostics() {
     { getAccountPageStreamDiagnostics },
     { getShadowAccountReadDiagnostics },
     { getSignalOptionsTallyDiagnostics },
+    { getSignalMonitorMatrixStreamStatus },
   ] = await Promise.all([
     import("./account-page-streams"),
     import("./shadow-account"),
     import("./signal-options-automation"),
+    import("./signal-monitor"),
   ]);
   const optionsFlowScannerDiagnostics = getOptionsFlowScannerDiagnostics();
   const marketDataAdmissionWithScanner = {
@@ -2514,6 +2516,7 @@ export async function getRuntimeDiagnostics() {
         massiveStockUniverse: getMassiveStockUniverseStreamDiagnostics(),
         marketDataAdmission: marketDataAdmissionWithScanner,
         marketDataWorkPlan,
+        signalMatrix: getSignalMonitorMatrixStreamStatus(),
         sse: getSseStreamDiagnostics(),
       },
     },
