@@ -8,15 +8,23 @@
 
 import { writeFile } from "node:fs/promises";
 
-import { summarizeCpuProfile } from "./cpu-profile-utils.mjs";
+import {
+  parseCpuProfilerArgs,
+  readInspectorProcessId,
+  summarizeCpuProfile,
+} from "./cpu-profile-utils.mjs";
 
-const pid = Number(process.argv[2]);
-const durationMs = Number(process.argv[3] ?? 15000);
-const outPath = process.argv[4] ?? null;
-if (!pid) {
-  console.error("usage: cpu-profile-running-api.mjs <pid> [durationMs] [outPath]");
+let options;
+try {
+  options = parseCpuProfilerArgs(process.argv.slice(2));
+} catch (error) {
+  console.error(
+    "usage: cpu-profile-running-api.mjs <pid> [durationMs] [outPath]",
+  );
+  console.error(error.message);
   process.exit(1);
 }
+const { pid, durationMs, outPath } = options;
 
 process.kill(pid, "SIGUSR1"); // idempotent: re-signals keep the inspector open
 await new Promise((r) => setTimeout(r, 500));
@@ -49,6 +57,19 @@ await new Promise((resolve, reject) => {
   ws.addEventListener("open", resolve);
   ws.addEventListener("error", reject);
 });
+
+const inspectedPid = readInspectorProcessId(
+  await send("Runtime.evaluate", {
+    expression: "process.pid",
+    returnByValue: true,
+  }),
+);
+if (inspectedPid !== pid) {
+  ws.close();
+  throw new Error(
+    `inspector target pid ${inspectedPid ?? "unknown"} does not match requested pid ${pid}`,
+  );
+}
 
 await send("Profiler.enable");
 await send("Profiler.setSamplingInterval", { interval: 100 });

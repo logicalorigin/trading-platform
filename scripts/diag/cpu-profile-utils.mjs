@@ -1,3 +1,20 @@
+export function parseCpuProfilerArgs(argv) {
+  const pid = Number(argv[0]);
+  const durationMs = Number(argv[1] ?? 15_000);
+  if (!Number.isSafeInteger(pid) || pid <= 0) {
+    throw new Error("pid must be a positive safe integer");
+  }
+  if (!Number.isSafeInteger(durationMs) || durationMs <= 0) {
+    throw new Error("durationMs must be a positive safe integer");
+  }
+  return { pid, durationMs, outPath: argv[2] ?? null };
+}
+
+export function readInspectorProcessId(evaluation) {
+  const pid = evaluation?.result?.value;
+  return Number.isSafeInteger(pid) && pid > 0 ? pid : null;
+}
+
 export function summarizeCpuProfile(profile) {
   const samples = profile?.samples;
   const timeDeltas = profile?.timeDeltas;

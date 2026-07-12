@@ -2,9 +2,40 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  parseCpuProfilerArgs,
   parseCpuProfileSummaryOutput,
+  readInspectorProcessId,
   summarizeCpuProfile,
 } from "./cpu-profile-utils.mjs";
+
+test("CPU profiler arguments reject unsafe process and duration values", () => {
+  for (const argv of [
+    [],
+    ["0"],
+    ["-1"],
+    ["1.5"],
+    ["123", "0"],
+    ["123", "Infinity"],
+  ]) {
+    assert.throws(() => parseCpuProfilerArgs(argv), /positive safe integer/);
+  }
+
+  assert.deepEqual(parseCpuProfilerArgs(["123", "2500", "profile.json"]), {
+    pid: 123,
+    durationMs: 2_500,
+    outPath: "profile.json",
+  });
+});
+
+test("CPU profiler reads the process id reported by the inspector target", () => {
+  assert.equal(
+    readInspectorProcessId({ result: { type: "number", value: 123 } }),
+    123,
+  );
+  assert.equal(readInspectorProcessId({ result: { value: "123" } }), null);
+  assert.equal(readInspectorProcessId({ result: { value: -1 } }), null);
+  assert.equal(readInspectorProcessId({}), null);
+});
 
 test("CPU summaries weight samples by timeDeltas instead of hitCount", () => {
   const summary = summarizeCpuProfile({
