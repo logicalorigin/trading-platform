@@ -43,8 +43,8 @@ export const humanizeResilienceReason = (reason) => {
   return RESILIENCE_REASON_TEXT[key] || key.replace(/_+/g, " ");
 };
 
-// Severity hint for a reason code, to pass as <ResilienceMarker severity={...} />.
-// Widgets may override when they have better context.
+// Severity hint for callers that present a resilience reason code.
+// Callers may override when they have better context.
 export const resilienceSeverityForReason = (reason) =>
   TRANSIENT_RESILIENCE_REASONS.has(normalizeReason(reason)) ? "attention" : "warning";
 

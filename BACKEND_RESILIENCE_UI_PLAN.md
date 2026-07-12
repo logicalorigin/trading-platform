@@ -1,5 +1,10 @@
 # Implementation Plan: Red "!" markers for backend backoffs / timeouts / fallbacks / loadsheds
 
+> **Retired 2026-07-12:** `ResilienceMarker` had no production consumers, and
+> Account contracts explicitly reject resilience-marker wiring. The component
+> was removed by user decision; references below are historical and must not be
+> treated as implementation requirements.
+
 Companion to `BACKEND_RESILIENCE_CATALOGUE.md` (the ~140-instance catalogue + backend→widget mapping). This is the task breakdown.
 
 ## Overview
