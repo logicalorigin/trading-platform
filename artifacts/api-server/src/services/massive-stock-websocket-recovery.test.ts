@@ -69,7 +69,7 @@ test("auth_failed re-arms a reconnect instead of latching the stream off (price-
   internals.reset();
 });
 
-test("subscribed open socket reconnects when Massive stops sending messages", () => {
+test("subscribed open socket reconnects when Massive stops sending messages in an open session", () => {
   internals.reset();
   const socket = makeMockSocket();
   internals.setWebSocketFactory(() => socket as never);
@@ -90,8 +90,11 @@ test("subscribed open socket reconnects when Massive stops sending messages", ()
     "test setup should authenticate and subscribe before staleness recovery",
   );
 
+  const lastActivityAt = new Date("2026-07-13T14:00:00.000Z");
+  internals.setLastActivityAtForTests(lastActivityAt);
+
   assert.equal(
-    internals.recoverWedgedSocketIfNeeded(Date.now() + 61_000),
+    internals.recoverWedgedSocketIfNeeded(lastActivityAt.getTime() + 61_000),
     true,
     "a connected/authenticated but silent socket must be forced through reconnect",
   );
@@ -100,6 +103,36 @@ test("subscribed open socket reconnects when Massive stops sending messages", ()
     true,
     "stale open socket recovery should schedule a reconnect",
   );
+
+  unsubscribe();
+  internals.reset();
+});
+
+test("subscribed healthy socket stays connected during a closed session", () => {
+  internals.reset();
+  const socket = makeMockSocket();
+  internals.setWebSocketFactory(() => socket as never);
+
+  const unsubscribe = subscribeMassiveStockWebSocket({
+    channels: ["Q", "T"],
+    symbols: ["SPY"],
+    onMessage() {},
+  });
+
+  internals.refreshNow();
+  socket.readyState = 1;
+  socket.emit("open");
+  internals.handleRawMessage(JSON.stringify({ status: "auth_success" }));
+  const lastActivityAt = new Date("2026-07-11T14:00:00.000Z");
+  internals.setLastActivityAtForTests(lastActivityAt);
+
+  assert.equal(
+    internals.recoverWedgedSocketIfNeeded(lastActivityAt.getTime() + 61_000),
+    false,
+    "expected weekend silence must not force a healthy socket reconnect",
+  );
+  assert.equal(internals.hasReconnectScheduled(), false);
+  assert.equal(socket.readyState, 1);
 
   unsubscribe();
   internals.reset();

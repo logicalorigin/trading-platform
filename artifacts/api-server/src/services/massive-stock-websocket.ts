@@ -1,4 +1,5 @@
 import { WebSocket } from "ws";
+import { resolveUsEquityMarketStatus } from "@workspace/market-calendar";
 import { logger } from "../lib/logger";
 import {
   getMassiveProviderIdentity,
@@ -282,6 +283,9 @@ function recoverWedgedSocketIfNeeded(nowMs = Date.now()): boolean {
     return reconnectTimer !== null;
   }
   if (socket.readyState !== WebSocket.OPEN || authState !== "authenticated") {
+    return false;
+  }
+  if (!resolveUsEquityMarketStatus(new Date(nowMs)).session.open) {
     return false;
   }
 
@@ -651,5 +655,9 @@ export const __massiveStockWebSocketInternalsForTests = {
   },
   recoverWedgedSocketIfNeeded(nowMs?: number): boolean {
     return recoverWedgedSocketIfNeeded(nowMs);
+  },
+  setLastActivityAtForTests(value: Date): void {
+    lastOpenAt = value;
+    lastSocketMessageAt = null;
   },
 };
