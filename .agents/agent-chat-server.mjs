@@ -9,6 +9,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import path from "node:path";
+import { TextDecoder } from "node:util";
 
 const repoRoot = process.env.AGENT_CHAT_REPO_ROOT
   ? path.resolve(process.env.AGENT_CHAT_REPO_ROOT)
@@ -41,41 +42,93 @@ function ensureParentDir(filePath) {
   mkdirSync(path.dirname(filePath), { recursive: true });
 }
 
+function isolateMessageTail() {
+  if (!existsSync(messageFile)) return;
+  const raw = readFileSync(messageFile);
+  if (raw.length && raw.at(-1) !== 0x0a) appendFileSync(messageFile, "\n");
+}
+
 function migrateLegacyMessages() {
   ensureParentDir(messageFile);
   if (!existsSync(messageFile) && existsSync(legacyMessageFile)) {
     copyFileSync(legacyMessageFile, messageFile);
   }
+  isolateMessageTail();
 }
 
 function nowIso() {
   return new Date().toISOString();
 }
 
+// ponytail: code-point caps avoid malformed UTF-16; use Intl.Segmenter if grapheme-perfect caps matter.
+function truncateCodePoints(value, maxLength) {
+  return [...value].slice(0, maxLength).join("");
+}
+
+const disallowedTextControls =
+  /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/u;
+
+function isInvalidMessageString(value) {
+  return typeof value === "string" &&
+    (!value.isWellFormed() || disallowedTextControls.test(value));
+}
+
 function normalizeSender(value) {
   if (typeof value !== "string") {
     return "agent";
   }
-  return value.replace(/\s+/g, " ").replaceAll("`", "'").trim().slice(0, 80) || "agent";
+  return truncateCodePoints(
+    value.replace(/\s+/g, " ").replaceAll("`", "'").trim(),
+    80,
+  ) || "agent";
+}
+
+const utf8Decoder = new TextDecoder("utf-8", {
+  fatal: true,
+  ignoreBOM: true,
+});
+
+function splitPhysicalLines(raw) {
+  const lines = [];
+  let start = 0;
+  for (let end = 0; end <= raw.length; end += 1) {
+    if (end === raw.length || raw[end] === 0x0a) {
+      lines.push(raw.subarray(start, end));
+      start = end + 1;
+    }
+  }
+  return lines;
 }
 
 function readMessages() {
-  let raw = "";
+  let raw;
   try {
-    raw = readFileSync(messageFile, "utf8");
+    raw = readFileSync(messageFile);
   } catch {
     return [];
   }
 
-  return raw
-    .split("\n")
-    .filter(Boolean)
-    .map((line, index) => {
+  return splitPhysicalLines(raw)
+    .map((lineBytes, index) => {
       try {
+        const line = utf8Decoder.decode(lineBytes);
+        if (!line) return null;
         const message = JSON.parse(line);
+        if (
+          typeof message !== "object" ||
+          message === null ||
+          Array.isArray(message) ||
+          typeof message.at !== "string" ||
+          typeof message.text !== "string" ||
+          isInvalidMessageString(message.at) ||
+          isInvalidMessageString(message.from) ||
+          isInvalidMessageString(message.text)
+        ) {
+          return null;
+        }
         return {
-          seq: index + 1,
           ...message,
+          seq: index + 1,
           from: normalizeSender(message.from),
         };
       } catch {
@@ -96,14 +149,14 @@ function escapeTableCell(value) {
 
 function previewText(value, maxLength = 160) {
   const compact = String(value).replace(/\s+/g, " ").trim();
-  return compact.length > maxLength
-    ? `${compact.slice(0, maxLength - 1)}...`
+  return [...compact].length > maxLength
+    ? `${truncateCodePoints(compact, maxLength - 3)}...`
     : compact;
 }
 
 function formatBlockquote(value) {
   return String(value)
-    .split("\n")
+    .split(/\r\n?|\n/)
     .flatMap((line) => (line.trim() ? [`> ${line}`] : [">"]))
     .join("\n");
 }
@@ -123,7 +176,7 @@ function formatTranscriptMessage(message) {
   return [
     `### #${message.seq} - \`${message.from}\``,
     "",
-    `Time: \`${message.at}\``,
+    `Time: \`${escapeTableCell(message.at)}\``,
     "",
     formatBlockquote(message.text),
     "",
@@ -201,6 +254,13 @@ function writeTranscript() {
 }
 
 function appendMessage(input) {
+  if (isInvalidMessageString(input.from) || isInvalidMessageString(input.text)) {
+    const error = new Error(
+      "message strings must contain well-formed Unicode without control characters",
+    );
+    error.statusCode = 400;
+    throw error;
+  }
   const from = normalizeSender(input.from);
   const text = typeof input.text === "string" ? input.text.trim() : "";
   if (!text) {
@@ -212,13 +272,14 @@ function appendMessage(input) {
   const message = {
     at: nowIso(),
     from,
-    text: text.slice(0, 12_000),
+    text: truncateCodePoints(text, 12_000),
   };
+  isolateMessageTail();
   appendFileSync(messageFile, `${JSON.stringify(message)}\n`, {
     encoding: "utf8",
     mode: 0o600,
   });
-  const seq = readMessages().length;
+  const seq = readMessages().at(-1)?.seq ?? 0;
   writeTranscript();
   return { seq, ...message };
 }
@@ -241,15 +302,14 @@ function sendText(res, statusCode, text) {
 
 function readRequestBody(req) {
   return new Promise((resolve, reject) => {
-    let body = "";
+    const chunks = [];
     let bodyBytes = 0;
     let rejected = false;
-    req.setEncoding("utf8");
     req.on("data", (chunk) => {
       if (rejected) {
         return;
       }
-      bodyBytes += Buffer.byteLength(chunk, "utf8");
+      bodyBytes += chunk.length;
       if (bodyBytes > 64 * 1024) {
         rejected = true;
         reject(Object.assign(new Error("request body too large"), {
@@ -257,11 +317,11 @@ function readRequestBody(req) {
         }));
         return;
       }
-      body += chunk;
+      chunks.push(chunk);
     });
     req.on("end", () => {
       if (!rejected) {
-        resolve(body);
+        resolve(Buffer.concat(chunks, bodyBytes));
       }
     });
     req.on("error", (error) => {
@@ -283,7 +343,15 @@ async function parseMessageRequest(req) {
     });
   }
 
-  const body = await readRequestBody(req);
+  const bodyBytes = await readRequestBody(req);
+  let body;
+  try {
+    body = utf8Decoder.decode(bodyBytes);
+  } catch {
+    throw Object.assign(new Error("request body must be valid UTF-8"), {
+      statusCode: 400,
+    });
+  }
   let input;
   try {
     input = JSON.parse(body || "{}");
@@ -325,6 +393,10 @@ function usageText(actualPort) {
 
 const server = createServer(async (req, res) => {
   try {
+    if (req.headers.host !== `${host}:${activePort}`) {
+      sendJson(res, 421, { error: "host must match the loopback endpoint" });
+      return;
+    }
     const url = new URL(req.url || "/", `http://${host}:${activePort}`);
 
     if (req.method === "GET" && url.pathname === "/health") {
