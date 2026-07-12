@@ -871,7 +871,7 @@ export class CapsuleManager {
     const name = capsuleNameForSession(sessionId);
     let created = false;
     try {
-      const networkId = await this.ensureCapsuleNetwork();
+      const networkId = await this.ensureCapsuleNetwork(true);
       await runChecked(
         this.runner,
         buildCreateCapsuleInvocation(this.config, sessionId),
@@ -1015,9 +1015,13 @@ export class CapsuleManager {
       : null;
   }
 
-  private async ensureCapsuleNetwork(): Promise<string> {
+  private async ensureCapsuleNetwork(
+    recreateForFreshSlot = false,
+  ): Promise<string> {
     const existing = await this.inspectCapsuleNetwork();
-    if (existing.status === "valid") return existing.networkId;
+    if (existing.status === "valid" && !recreateForFreshSlot) {
+      return existing.networkId;
+    }
     if (existing.status === "invalid") {
       throw new CapsuleError(
         "capsule_network_invalid",
@@ -1025,8 +1029,22 @@ export class CapsuleManager {
       );
     }
 
-    try {
-      await this.runner(this.config.dockerBinary, [
+    if (existing.status === "valid") {
+      // Docker can retain valid bridge metadata across a daemon restart without
+      // restoring its isolation rules. A fresh slot must start on a fresh bridge.
+      await runChecked(
+        this.runner,
+        {
+          command: this.config.dockerBinary,
+          args: ["network", "rm", CAPSULE_NETWORK_NAME],
+        },
+        "capsule_network_invalid",
+      );
+    }
+
+    const createInvocation = {
+      command: this.config.dockerBinary,
+      args: [
         "network",
         "create",
         "--driver",
@@ -1039,9 +1057,20 @@ export class CapsuleManager {
         "--label",
         `${CAPSULE_NETWORK_LABEL}=1`,
         CAPSULE_NETWORK_NAME,
-      ]);
-    } catch {
-      // A racing host process may still have created the exact network.
+      ],
+    } satisfies DockerInvocation;
+    if (recreateForFreshSlot) {
+      await runChecked(
+        this.runner,
+        createInvocation,
+        "capsule_network_invalid",
+      );
+    } else {
+      try {
+        await this.runner(createInvocation.command, createInvocation.args);
+      } catch {
+        // A racing host process may still have created the exact network.
+      }
     }
     const created = await this.inspectCapsuleNetwork();
     if (created.status !== "valid") {

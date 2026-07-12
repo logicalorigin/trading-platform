@@ -294,6 +294,99 @@ test("creates and verifies an ICC-disabled capsule network before use", async ()
   );
 });
 
+test("recreates a valid capsule network before provisioning a fresh slot", async () => {
+  const calls: string[][] = [];
+  let networkExists = true;
+  const runner: CommandRunner = async (_command, args) => {
+    calls.push(args);
+    if (args[0] === "network" && args[1] === "inspect") {
+      return networkExists
+        ? (capsuleProbeResult(args) ?? { code: 1, stdout: "", stderr: "" })
+        : { code: 1, stdout: "", stderr: "not found" };
+    }
+    if (args[0] === "network" && args[1] === "rm") {
+      networkExists = false;
+      return { code: 0, stdout: `${NETWORK_NAME}\n`, stderr: "" };
+    }
+    if (args[0] === "network" && args[1] === "create") {
+      assert.equal(networkExists, false);
+      networkExists = true;
+      return { code: 0, stdout: `${NETWORK_NAME}\n`, stderr: "" };
+    }
+    return capsuleProbeResult(args) ?? { code: 0, stdout: "", stderr: "" };
+  };
+  const manager = new CapsuleManager(
+    loadSessionHostConfig({ IBKR_SESSION_CAPSULE_IMAGE: IMAGE }),
+    runner,
+  );
+
+  await manager.ensure(SESSION_ID);
+
+  const removeIndex = calls.findIndex(
+    (args) => args[0] === "network" && args[1] === "rm",
+  );
+  const networkCreateIndex = calls.findIndex(
+    (args) => args[0] === "network" && args[1] === "create",
+  );
+  const capsuleCreateIndex = calls.findIndex((args) => args[0] === "create");
+  assert(removeIndex >= 0);
+  assert(removeIndex < networkCreateIndex);
+  assert(networkCreateIndex < capsuleCreateIndex);
+});
+
+test("fails closed when an existing capsule network cannot be recreated", async () => {
+  const calls: string[][] = [];
+  const runner: CommandRunner = async (_command, args) => {
+    calls.push(args);
+    if (args[0] === "network" && args[1] === "rm") {
+      return { code: 1, stdout: "", stderr: "network is in use" };
+    }
+    return capsuleProbeResult(args) ?? { code: 0, stdout: "", stderr: "" };
+  };
+  const manager = new CapsuleManager(
+    loadSessionHostConfig({ IBKR_SESSION_CAPSULE_IMAGE: IMAGE }),
+    runner,
+  );
+
+  await assert.rejects(
+    () => manager.ensure(SESSION_ID),
+    (error) =>
+      error instanceof CapsuleError &&
+      error.code === "capsule_network_invalid",
+  );
+  assert(!calls.some((args) => args[0] === "create"));
+});
+
+test("fails closed when a fresh network cannot be proven newly created", async () => {
+  const calls: string[][] = [];
+  let networkInspections = 0;
+  const runner: CommandRunner = async (_command, args) => {
+    calls.push(args);
+    if (args[0] === "network" && args[1] === "inspect") {
+      networkInspections += 1;
+      if (networkInspections === 1) {
+        return { code: 1, stdout: "", stderr: "temporarily unavailable" };
+      }
+    }
+    if (args[0] === "network" && args[1] === "create") {
+      return { code: 1, stdout: "", stderr: "already exists" };
+    }
+    return capsuleProbeResult(args) ?? { code: 0, stdout: "", stderr: "" };
+  };
+  const manager = new CapsuleManager(
+    loadSessionHostConfig({ IBKR_SESSION_CAPSULE_IMAGE: IMAGE }),
+    runner,
+  );
+
+  await assert.rejects(
+    () => manager.ensure(SESSION_ID),
+    (error) =>
+      error instanceof CapsuleError &&
+      error.code === "capsule_network_invalid",
+  );
+  assert(!calls.some((args) => args[0] === "create"));
+});
+
 test("rejects a pre-existing capsule network without the isolation contract", async () => {
   for (const overrides of [
     {
@@ -392,6 +485,9 @@ test("keeps one session idempotent and rejects a second before invoking Docker",
     [
       "container",
       "network",
+      "network",
+      "network",
+      "network",
       "create",
       "start",
       "container",
@@ -403,12 +499,17 @@ test("keeps one session idempotent and rejects a second before invoking Docker",
       "container",
     ],
   );
+  const callCountBeforeCapacityRejection = calls.length;
   await assert.rejects(
     () => manager.ensure(OTHER_SESSION_ID),
     (error) =>
       error instanceof CapsuleError && error.code === "capacity_exhausted",
   );
-  assert.equal(calls.length, 11, "capacity rejection happens before Docker");
+  assert.equal(
+    calls.length,
+    callCountBeforeCapacityRejection,
+    "capacity rejection happens before Docker",
+  );
   assert(!calls.some(({ args }) => args[0] === "exec"));
 });
 
@@ -884,12 +985,18 @@ test("bounds marker polling and sanitizes readiness failure before cleanup", asy
 
 test("sanitizes Docker failures", async () => {
   const sentinel = "sensitive-docker-stderr";
-  const runner: CommandRunner = async (_command, args) =>
-    capsuleProbeResult(args) ?? {
+  const runner: CommandRunner = async (_command, args) => {
+    const probe = capsuleProbeResult(args);
+    if (probe) return probe;
+    if (args[0] === "network") {
+      return { code: 0, stdout: "", stderr: "" };
+    }
+    return {
       code: 1,
       stdout: "",
       stderr: sentinel,
     };
+  };
   const manager = new CapsuleManager(
     loadSessionHostConfig({ IBKR_SESSION_CAPSULE_IMAGE: IMAGE }),
     runner,
@@ -935,6 +1042,9 @@ test("reserves capacity while provisioning and coalesces concurrent ensures", as
     [
       "container",
       "network",
+      "network",
+      "network",
+      "network",
       "create",
       "start",
       "container",
@@ -967,7 +1077,16 @@ test("removes a partially created capsule and releases capacity after start fail
   );
   assert.deepEqual(
     calls.map((args) => args[0]),
-    ["container", "network", "create", "start", "rm"],
+    [
+      "container",
+      "network",
+      "network",
+      "network",
+      "network",
+      "create",
+      "start",
+      "rm",
+    ],
   );
 
   failStart = false;
@@ -977,9 +1096,15 @@ test("removes a partially created capsule and releases capacity after start fail
     [
       "container",
       "network",
+      "network",
+      "network",
+      "network",
       "create",
       "start",
       "rm",
+      "network",
+      "network",
+      "network",
       "network",
       "create",
       "start",
@@ -1306,6 +1431,9 @@ test("a stale address recovery cannot poison a replacement capsule", async () =>
         await networkInspectGate;
       }
       return capsuleProbeResult(args) ?? { code: 1, stdout: "", stderr: "" };
+    }
+    if (args[0] === "network") {
+      return { code: 0, stdout: "", stderr: "" };
     }
     if (args[1] === "ls") {
       return { code: 0, stdout: `${SLOT_NAME}\n`, stderr: "" };
