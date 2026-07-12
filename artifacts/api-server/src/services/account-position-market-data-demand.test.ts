@@ -30,6 +30,10 @@ function functionSource(name: string): string {
   return source.slice(target.pos, target.end);
 }
 
+test("real account display quote demand expires when account reads stop", () => {
+  assert.match(source, /const ACCOUNT_POSITION_MARKET_DATA_TTL_MS = 15_000;/);
+});
+
 test("real account positions declare account-monitor demand even for fast quote-free loads", () => {
   const publicLoader = functionSource("getAccountPositions");
   assert.doesNotMatch(
