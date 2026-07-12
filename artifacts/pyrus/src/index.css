@@ -985,6 +985,10 @@ optgroup {
   transform: translateY(0.5px);
 }
 
+.ra-btn-spinner {
+  animation: pyrusBtnSpin 720ms linear infinite;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .ra-btn {
     transition: none;
@@ -993,6 +997,22 @@ optgroup {
   .ra-btn:active:not(:disabled) {
     transform: none;
   }
+
+  .ra-btn-spinner {
+    animation: none;
+  }
+}
+
+html[data-pyrus-reduced-motion="on"] .ra-btn {
+  transition: none;
+}
+
+html[data-pyrus-reduced-motion="on"] .ra-btn:active:not(:disabled) {
+  transform: none;
+}
+
+html[data-pyrus-reduced-motion="on"] .ra-btn-spinner {
+  animation: none;
 }
 
 /* Touch-target floor. The name promised a guarantee it only gave on phone

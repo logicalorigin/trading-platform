@@ -82,6 +82,7 @@ const resolveVariant = (variant, color) => {
 
 const SpinnerIcon = ({ size = 14, color = "currentColor" }) => (
   <span
+    className="ra-btn-spinner"
     role="status"
     aria-label="Loading"
     style={{
@@ -91,7 +92,6 @@ const SpinnerIcon = ({ size = 14, color = "currentColor" }) => (
       borderRadius: dim(RADII.pill),
       border: `2px solid ${cssColorMix(color, 25)}`,
       borderTopColor: color,
-      animation: "pyrusBtnSpin 720ms linear infinite",
       flexShrink: 0,
     }}
   />
