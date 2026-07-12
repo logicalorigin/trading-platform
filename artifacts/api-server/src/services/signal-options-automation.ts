@@ -121,16 +121,11 @@ import { getSignalOptionsWorkerSnapshot } from "./signal-options-worker-state";
 import { isStockAggregateStreamingAvailable } from "./stock-aggregate-stream";
 import { fetchMassiveOptionQuoteSnapshots } from "./massive-option-quote-stream";
 import {
-  declareIbkrLiveDemand,
-  readIbkrLiveDemandState,
-  type IbkrLiveDemandDeclaration,
-  type IbkrLiveDemandState,
-} from "./ibkr-live-demand-coordinator";
-import {
-  admitMarketDataLeases,
-  releaseMarketDataLeases,
-  type MarketDataAdmissionResult,
-} from "./market-data-admission";
+  declareOptionQuoteDemand,
+  readOptionQuoteDemandState,
+  type OptionQuoteDemandDeclaration,
+  type OptionQuoteDemandState,
+} from "./option-quote-demand-coordinator";
 import {
   SIGNAL_OPTIONS_REPLAY_MARK_SOURCE,
   SIGNAL_OPTIONS_REPLAY_SOURCE,
@@ -290,7 +285,6 @@ const DEFAULT_SIGNAL_OPTIONS_MONITOR_POLL_SECONDS = 60;
 const DEFAULT_SIGNAL_OPTIONS_WORKER_MONITOR_BATCH_SIZE = 12;
 const SIGNAL_OPTIONS_ACTION_ITEM_TIMEOUT_MS = 5_000;
 const SIGNAL_OPTIONS_POSITION_MARK_TIMEOUT_MS = 9_000;
-const SIGNAL_OPTIONS_CONTRACT_SELECTION_LEASE_TTL_MS = 60_000;
 const SIGNAL_OPTIONS_CONTRACT_METADATA_RETRY_BUDGET_MS = 30_000;
 const SIGNAL_OPTIONS_CONTRACT_METADATA_RETRY_INTERVAL_MS = 750;
 const SIGNAL_OPTIONS_LIVE_QUOTE_DEMAND_TTL_MS = 120_000;
@@ -4634,7 +4628,7 @@ function signalOptionsLiveQuoteDemandPayload(input: {
   owner: string;
   providerContractId: string;
   requiresGreeks: boolean;
-  state: IbkrLiveDemandState;
+  state: OptionQuoteDemandState;
   snapshotDebug?: unknown;
   hydrationAttempts?: number;
   hydrationWaitMs?: number;
@@ -4670,7 +4664,7 @@ function signalOptionsLiveQuoteDemandBatchPayload(input: {
   owner: string;
   providerContractIds: string[];
   requiresGreeks: boolean;
-  state: IbkrLiveDemandState;
+  state: OptionQuoteDemandState;
   snapshotDebug?: unknown;
   hydrationAttempts?: number;
   hydrationWaitMs?: number;
@@ -9184,73 +9178,11 @@ type SignalOptionsContractQuoteHydration = "metadata" | "snapshot";
 
 type SignalOptionsLiveQuoteDemandConfig = {
   owner: string;
-  intent?: IbkrLiveDemandDeclaration["intent"];
-  ttlMs?: IbkrLiveDemandDeclaration["ttlMs"];
-  fallbackProvider?: IbkrLiveDemandDeclaration["fallbackProvider"];
+  intent?: OptionQuoteDemandDeclaration["intent"];
+  ttlMs?: OptionQuoteDemandDeclaration["ttlMs"];
+  fallbackProvider?: OptionQuoteDemandDeclaration["fallbackProvider"];
   requiresGreeks?: boolean;
 };
-
-type SignalOptionsContractSelectionLease = {
-  owner: string;
-  admission: MarketDataAdmissionResult;
-  detail: Record<string, unknown>;
-  release: (reason?: string) => void;
-};
-
-function signalOptionsContractSelectionLeaseDetail(input: {
-  owner: string;
-  admission: MarketDataAdmissionResult;
-}): Record<string, unknown> {
-  const admittedLineIds = Array.from(
-    new Set(input.admission.admitted.flatMap((lease) => lease.lineIds)),
-  ).sort();
-  return {
-    owner: input.owner,
-    ttlMs: SIGNAL_OPTIONS_CONTRACT_SELECTION_LEASE_TTL_MS,
-    admittedLeaseCount: input.admission.admitted.length,
-    admittedLineCount: admittedLineIds.length,
-    admittedLineIds,
-    rejectedCount: input.admission.rejected.length,
-    rejectedReasons: Array.from(
-      new Set(input.admission.rejected.map((item) => item.reason)),
-    ).sort(),
-    demotedLeaseCount: input.admission.demoted.length,
-  };
-}
-
-function acquireSignalOptionsContractSelectionLease(input: {
-  deployment: AlgoDeployment;
-  candidate: SignalOptionsCandidate;
-  signalKey: string;
-}): SignalOptionsContractSelectionLease | null {
-  const symbol = normalizeSymbol(input.candidate.symbol).toUpperCase();
-  if (!symbol) {
-    return null;
-  }
-  const owner = `signal-options-selection:${input.deployment.id}:${input.signalKey}`;
-  const admission = admitMarketDataLeases({
-    owner,
-    intent: "automation-live",
-    requests: [
-      {
-        assetClass: "equity",
-        symbol,
-        role: "option-underlier-support",
-        priorityOffset: 4,
-      },
-    ],
-    ttlMs: SIGNAL_OPTIONS_CONTRACT_SELECTION_LEASE_TTL_MS,
-    fallbackProvider: "cache",
-  });
-  return {
-    owner,
-    admission,
-    detail: signalOptionsContractSelectionLeaseDetail({ owner, admission }),
-    release: (reason = "contract_selection_complete") => {
-      releaseMarketDataLeases(owner, reason);
-    },
-  };
-}
 
 type SignalOptionsGreekSelectorRuntimeMode = "shadow" | "live";
 
@@ -13806,7 +13738,7 @@ async function refreshActivePosition(input: {
     }
   } else if (providerContractId) {
     const owner = `signal-options-position-mark:${input.deployment.id}:${input.position.id}`;
-    declareIbkrLiveDemand({
+    declareOptionQuoteDemand({
       underlying: input.position.symbol,
       providerContractIds: [providerContractId],
       owner,
@@ -13815,7 +13747,7 @@ async function refreshActivePosition(input: {
       fallbackProvider: "cache",
       requiresGreeks: requiresGreekPositionMark,
     });
-    const demandState = readIbkrLiveDemandState({
+    const demandState = readOptionQuoteDemandState({
       owner,
       underlying: input.position.symbol,
       providerContractIds: [providerContractId],
@@ -13860,7 +13792,7 @@ async function refreshActivePosition(input: {
       : null;
     if (resolvedProviderContractId && chainQuote) {
       const owner = `signal-options-position-mark:${input.deployment.id}:${input.position.id}`;
-      declareIbkrLiveDemand({
+      declareOptionQuoteDemand({
         underlying: input.position.symbol,
         providerContractIds: [resolvedProviderContractId],
         owner,
@@ -13869,7 +13801,7 @@ async function refreshActivePosition(input: {
         fallbackProvider: "cache",
         requiresGreeks: requiresGreekPositionMark,
       });
-      const demandState = readIbkrLiveDemandState({
+      const demandState = readOptionQuoteDemandState({
         owner,
         underlying: input.position.symbol,
         providerContractIds: [resolvedProviderContractId],
@@ -14773,7 +14705,7 @@ function signalOptionsProviderContractIdFromQuote(
 function mergeSignalOptionsSnapshotQuotes(input: {
   contracts: SignalOptionsOptionQuote[];
   snapshots: QuoteSnapshot[];
-  demandState?: IbkrLiveDemandState | null;
+  demandState?: OptionQuoteDemandState | null;
 }) {
   const snapshotsByProviderContractId = new Map<string, QuoteSnapshot>();
   for (const snapshot of input.snapshots) {
@@ -14836,7 +14768,7 @@ async function hydrateSignalOptionsGreekSelectorCandidateQuotes(input: {
   const liveQuoteTtlMs =
     input.liveQuoteDemand.ttlMs ?? SIGNAL_OPTIONS_LIVE_QUOTE_DEMAND_TTL_MS;
   const hydrationStartedAt = Date.now();
-  declareIbkrLiveDemand({
+  declareOptionQuoteDemand({
     underlying: input.candidate.symbol,
     providerContractIds,
     owner: input.liveQuoteDemand.owner,
@@ -14860,7 +14792,7 @@ async function hydrateSignalOptionsGreekSelectorCandidateQuotes(input: {
     releaseLeasesOnAbort: false,
     signal: input.signal,
   });
-  const demandState = readIbkrLiveDemandState({
+  const demandState = readOptionQuoteDemandState({
     owner: input.liveQuoteDemand.owner,
     underlying: input.candidate.symbol,
     providerContractIds,
@@ -15203,7 +15135,7 @@ async function resolveSignalOptionsCandidateContract(input: {
     const requiresGreeks = input.liveQuoteDemand.requiresGreeks ?? true;
     const liveQuoteTtlMs =
       input.liveQuoteDemand.ttlMs ?? SIGNAL_OPTIONS_LIVE_QUOTE_DEMAND_TTL_MS;
-    declareIbkrLiveDemand({
+    declareOptionQuoteDemand({
       underlying: input.candidate.symbol,
       providerContractIds: [providerContractId],
       owner: input.liveQuoteDemand.owner,
@@ -15212,7 +15144,7 @@ async function resolveSignalOptionsCandidateContract(input: {
       fallbackProvider: input.liveQuoteDemand.fallbackProvider ?? "cache",
       requiresGreeks,
     });
-    const demandState = readIbkrLiveDemandState({
+    const demandState = readOptionQuoteDemandState({
       owner: input.liveQuoteDemand.owner,
       underlying: input.candidate.symbol,
       providerContractIds: [providerContractId],
@@ -15249,7 +15181,7 @@ async function resolveSignalOptionsCandidateContract(input: {
     const hydrationStartedAt = Date.now();
     let hydrationAttempts = 0;
     let snapshotDebug: unknown = null;
-    declareIbkrLiveDemand({
+    declareOptionQuoteDemand({
       underlying: input.candidate.symbol,
       providerContractIds: [providerContractId],
       owner: input.liveQuoteDemand.owner,
@@ -15289,7 +15221,7 @@ async function resolveSignalOptionsCandidateContract(input: {
           (item) =>
             item.providerContractId?.trim?.() === providerContractId,
         ) ?? null;
-      const demandState = readIbkrLiveDemandState({
+      const demandState = readOptionQuoteDemandState({
         owner: input.liveQuoteDemand.owner,
         underlying: input.candidate.symbol,
         providerContractIds: [providerContractId],
@@ -15925,13 +15857,6 @@ async function processEntryCandidate(input: {
     mtfTimeframes,
   });
   if (!entryGate.ok) {
-    const contractSelectionLease = acquireSignalOptionsContractSelectionLease({
-      deployment: input.deployment,
-      candidate: input.candidate,
-      signalKey: input.signalKey,
-    });
-    const contractSelectionLeaseDetail =
-      contractSelectionLease?.detail ?? null;
     try {
       let contractSelectedEventEmitted = false;
       const contractResolution = await resolveSignalOptionsCandidateContract({
@@ -15997,7 +15922,6 @@ async function processEntryCandidate(input: {
           ...signalOptionsLiveQuoteDemandDetailFromResolution(
             contractResolution.detail,
           ),
-          contractSelectionLease: contractSelectionLeaseDetail,
         },
       });
     } catch (error) {
@@ -16014,11 +15938,8 @@ async function processEntryCandidate(input: {
             reason,
             detail,
           },
-          contractSelectionLease: contractSelectionLeaseDetail,
         },
       });
-    } finally {
-      contractSelectionLease?.release();
     }
     return false;
   }
@@ -16039,14 +15960,7 @@ async function processEntryCandidate(input: {
     return false;
   }
 
-  const contractSelectionLease = acquireSignalOptionsContractSelectionLease({
-    deployment: input.deployment,
-    candidate: input.candidate,
-    signalKey: input.signalKey,
-  });
-  const contractSelectionLeaseDetail = contractSelectionLease?.detail ?? null;
-
-  try {
+  {
     let contractSelectedEventEmitted = false;
     const contractResolution = await resolveSignalOptionsCandidateContract({
       candidate: input.candidate,
@@ -16099,7 +16013,6 @@ async function processEntryCandidate(input: {
         reason: contractResolution.reason ?? "no_expiration_in_dte_window",
         detail: {
           ...asRecord(contractResolution.detail),
-          contractSelectionLease: contractSelectionLeaseDetail,
         },
       });
       return false;
@@ -16120,7 +16033,6 @@ async function processEntryCandidate(input: {
         reason: contractResolution.reason ?? "no_contract_for_strike_slot",
         detail: {
           ...asRecord(contractResolution.detail),
-          contractSelectionLease: contractSelectionLeaseDetail,
           decisionSnapshot,
         },
       });
@@ -16207,7 +16119,6 @@ async function processEntryCandidate(input: {
           ...signalOptionsLiveQuoteDemandDetailFromResolution(
             contractResolution.detail,
           ),
-          contractSelectionLease: contractSelectionLeaseDetail,
           decisionSnapshot,
         },
       });
@@ -16230,7 +16141,6 @@ async function processEntryCandidate(input: {
           selectedExpiration: selectedExpirationPayload,
           chainDebug,
           chainAttempts,
-          contractSelectionLease: contractSelectionLeaseDetail,
           decisionSnapshot,
         },
       });
@@ -16253,7 +16163,6 @@ async function processEntryCandidate(input: {
           selectedExpiration: selectedExpirationPayload,
           chainDebug,
           chainAttempts,
-          contractSelectionLease: contractSelectionLeaseDetail,
           decisionSnapshot,
         },
       });
@@ -16277,7 +16186,6 @@ async function processEntryCandidate(input: {
           selectedContract,
           quote,
           orderPlan,
-          contractSelectionLease: contractSelectionLeaseDetail,
           decisionSnapshot,
         },
       });
@@ -16322,7 +16230,6 @@ async function processEntryCandidate(input: {
             selectedContract,
             quote,
             orderPlan,
-            contractSelectionLease: contractSelectionLeaseDetail,
             decisionSnapshot,
           },
         });
@@ -16427,7 +16334,6 @@ async function processEntryCandidate(input: {
         position,
         chainDebug,
         contractSelection: contractSelectionPayload,
-        contractSelectionLease: contractSelectionLeaseDetail,
         decisionSnapshot,
         budgetSizeDown,
         ...(consumedReEntryWatch
@@ -16446,8 +16352,6 @@ async function processEntryCandidate(input: {
     }
 
     return true;
-  } finally {
-    contractSelectionLease?.release();
   }
 }
 

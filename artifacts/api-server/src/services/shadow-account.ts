@@ -4276,9 +4276,6 @@ async function resolveEquityMark(symbol: string): Promise<ShadowResolvedMark> {
   const quotes = await getQuoteSnapshots({
     symbols: normalized,
     allowMassiveFallback: false,
-    admissionOwner: `shadow-equity-mark:${normalized}`,
-    admissionIntent: "account-monitor-live",
-    admissionFallbackProvider: "cache",
   }).catch(() => ({
     quotes: [],
   }));
@@ -4601,9 +4598,6 @@ async function getBoundedShadowUnderlyingQuoteSnapshots(
     getQuoteSnapshots({
       symbols,
       allowMassiveFallback: false,
-      admissionOwner: `shadow-underlying-mark:${symbols}`,
-      admissionIntent: "account-monitor-live",
-      admissionFallbackProvider: "cache",
     }).catch(() => fallback),
     sleep(SHADOW_UNDERLYING_QUOTE_MAX_WAIT_MS).then(() => fallback),
   ]);
@@ -4657,7 +4651,6 @@ async function fetchShadowOptionUnderlyingMarkets(
 
 async function fetchShadowEquityPositionQuotes(
   positions: ShadowPositionRow[],
-  options: { owner?: string | null } = {},
 ): Promise<Map<string, Partial<QuoteSnapshot> | Record<string, unknown>>> {
   const symbols = Array.from(
     new Set(
@@ -4681,11 +4674,6 @@ async function fetchShadowEquityPositionQuotes(
     getQuoteSnapshots({
       symbols: symbols.join(","),
       allowMassiveFallback: true,
-      admissionOwner:
-        options.owner ?? "shadow-equity-position-quotes:positions",
-      admissionIntent: "visible-live",
-      admissionFallbackProvider: "massive",
-      ttlMs: 15_000,
     }).catch(() => emptyPayload),
     sleep(SHADOW_EQUITY_POSITION_QUOTE_MAX_WAIT_MS).then(() => emptyPayload),
   ]);
@@ -10034,9 +10022,7 @@ export async function getShadowAccountPositions(input: {
       }
       const [equityQuoteBySymbol, underlyingMarkets] = includeLiveQuotes
         ? await Promise.all([
-            fetchShadowEquityPositionQuotes(filtered, {
-              owner: `${positionQuoteOwnerPrefix}:equity-visible`,
-            }),
+            fetchShadowEquityPositionQuotes(filtered),
             fetchShadowOptionUnderlyingMarkets(filtered),
           ])
         : [

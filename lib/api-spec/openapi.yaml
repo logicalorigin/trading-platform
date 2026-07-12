@@ -1877,7 +1877,7 @@ paths:
         - name: tradingSession
           in: query
           required: false
-          description: Optional trading session override for quote routing. Use `overnight` to force IBKR overnight-capable quote snapshots.
+          description: Optional trading session override for quote routing. Use `overnight` to route through Massive REST instead of the realtime socket cache.
           schema:
             type: string
             enum: [overnight]

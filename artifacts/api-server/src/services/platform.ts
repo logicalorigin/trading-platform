@@ -170,17 +170,12 @@ import {
   __setHistoricalFlowStoreReadTimeoutMsForTests,
 } from "./historical-flow-events";
 import {
-  admitMarketDataLeases,
   getMarketDataAdmissionBudget,
   getMarketDataAdmissionDiagnostics,
   getMarketDataLeasesSnapshot,
   getMarketDataPoolEffectiveLineCap,
   recordMarketDataFallback,
-  releaseMarketDataLeases,
   setMarketDataAdmissionRuntimeDefaults,
-  subscribeMarketDataLeaseChanges,
-  type MarketDataFallbackProvider,
-  type MarketDataIntent,
 } from "./market-data-admission";
 import {
   normalizeUniverseMarket,
@@ -777,31 +772,14 @@ async function getWatchlistById(
   return watchlist ?? null;
 }
 
-let pendingIbkrWatchlistPrewarmSignature: string | null = null;
-let pendingIbkrWatchlistPrewarmRerunReason: string | null = null;
-let ibkrWatchlistPrewarmSequence = 0;
-let ibkrWatchlistPrewarmRotationOffset = 0;
 let liveWarmupBackgroundHoldUntil = 0;
-const IBKR_BRIDGE_STARTUP_PREWARM_OWNER = "bridge-startup";
-const IBKR_WATCHLIST_PREWARM_OWNER = "watchlist-prewarm";
-const IBKR_WATCHLIST_PREWARM_FILLER_OWNER = "watchlist-prewarm-filler";
-const IBKR_WATCHLIST_PREWARM_BRIDGE_RESYNC_MS = readPositiveIntegerEnv(
-  "IBKR_WATCHLIST_PREWARM_BRIDGE_RESYNC_MS",
-  15_000,
-);
-const IBKR_WATCHLIST_PREWARM_BRIDGE_RECONCILE_TIMEOUT_MS =
-  readPositiveIntegerEnv(
-    "IBKR_WATCHLIST_PREWARM_BRIDGE_RECONCILE_TIMEOUT_MS",
-    1_500,
-  );
 const WATCHLIST_LIST_CACHE_TTL_MS = 5_000;
-const WATCHLIST_LIST_PREWARM_THROTTLE_MS = 15_000;
 const LIVE_WARMUP_BACKGROUND_HOLD_MS = Math.max(
   5_000,
   Number.parseInt(
     process.env["IBKR_LIVE_WARMUP_BACKGROUND_HOLD_MS"] ?? "15000",
     10,
-) || 15_000,
+  ) || 15_000,
 );
 
 type WatchlistSnapshot = Awaited<ReturnType<typeof listWatchlistsFromDb>>;
@@ -813,13 +791,17 @@ let watchlistListCache:
     }
   | null = null;
 let watchlistListInFlight: Promise<WatchlistSnapshot> | null = null;
-let lastListWatchlistPrewarmSignature: string | null = null;
-let lastListWatchlistPrewarmAt = 0;
+let latestOptionsFlowWatchlistSymbols: string[] = [];
+const OPTIONS_FLOW_WATCHLIST_SYMBOL_REFRESH_MS = 15_000;
+let optionsFlowWatchlistSnapshotLoader = () => listWatchlistsFromDb();
+let optionsFlowWatchlistRefreshInFlight: Promise<void> | null = null;
+let optionsFlowWatchlistRefreshTimer: NodeJS.Timeout | null = null;
 
 function cacheWatchlistSnapshot(
   snapshot: WatchlistSnapshot,
   nowMs = Date.now(),
 ): WatchlistSnapshot {
+  rememberOptionsFlowWatchlistSymbols(snapshot.watchlists);
   watchlistListCache = {
     value: snapshot,
     freshUntil: nowMs + WATCHLIST_LIST_CACHE_TTL_MS,
@@ -830,76 +812,6 @@ function cacheWatchlistSnapshot(
 function invalidateWatchlistListCache(): void {
   watchlistListCache = null;
   watchlistListInFlight = null;
-}
-
-function scheduleIbkrWatchlistPrewarmFromListRead(
-  watchlists: WatchlistRecord[],
-  reason: string,
-  nowMs = Date.now(),
-): void {
-  const signature = collectWatchlistSymbols(watchlists).join(",");
-  if (
-    signature === lastListWatchlistPrewarmSignature &&
-    nowMs - lastListWatchlistPrewarmAt < WATCHLIST_LIST_PREWARM_THROTTLE_MS
-  ) {
-    return;
-  }
-  lastListWatchlistPrewarmSignature = signature;
-  lastListWatchlistPrewarmAt = nowMs;
-  scheduleIbkrWatchlistPrewarm(watchlists, reason);
-}
-
-export function resolveIbkrWatchlistPrewarmSymbolLimit(
-  candidateSymbolCount: number,
-): number {
-  const normalizedCandidateSymbolCount = Math.max(
-    0,
-    Math.floor(
-      Number.isFinite(candidateSymbolCount) ? candidateSymbolCount : 0,
-    ),
-  );
-  const visibleLineCap = getMarketDataAdmissionBudget().visibleLineCap;
-  return Math.min(normalizedCandidateSymbolCount, visibleLineCap);
-}
-
-export function getIbkrWatchlistPrewarmDiagnostics() {
-  const symbols = latestWatchlistLaneSymbols;
-  const resolvedSymbols = resolveEquityLiveQuoteLaneSymbols(symbols);
-  const primarySymbolLimit = resolveIbkrWatchlistPrewarmSymbolLimit(
-    resolvedSymbols.admittedSymbols.length,
-  );
-  const primarySymbols = leaseSymbolsForOwner(IBKR_WATCHLIST_PREWARM_OWNER);
-  const primarySymbolSet = new Set(primarySymbols);
-  const primaryActiveSourceSymbols = symbols.filter((symbol) =>
-    primarySymbolSet.has(symbol),
-  );
-  const primaryMissingSourceSymbols = symbols.filter(
-    (symbol) => !primarySymbolSet.has(symbol),
-  );
-  const droppedAfterPrimarySymbolCount = Math.max(
-    0,
-    resolvedSymbols.admittedSymbols.length - primarySymbolLimit,
-  );
-
-  return {
-    sourceSymbolCount: symbols.length,
-    admittedLaneSymbolCount: resolvedSymbols.admittedSymbols.length,
-    laneDroppedSymbolCount: resolvedSymbols.droppedSymbols.length,
-    primarySymbolLimit,
-    primaryActiveSymbolCount: primarySymbols.length,
-    primaryActiveSourceSymbolCount: primaryActiveSourceSymbols.length,
-    primaryMissingSourceSymbolCount: primaryMissingSourceSymbols.length,
-    primaryMissingSourceSymbolSample: primaryMissingSourceSymbols.slice(0, 20),
-    primaryRemainingSymbolCount: Math.max(
-      0,
-      primarySymbolLimit - primarySymbols.length,
-    ),
-    droppedAfterPrimarySymbolCount,
-    fillerCandidateSymbolCount: 0,
-    fillerActiveSymbolCount: 0,
-    fillerEnabled: false,
-    fillerConfiguredMaxSymbolCount: 0,
-  };
 }
 
 type MarketDataSymbolResolution = {
@@ -936,15 +848,6 @@ function resolveMarketDataSymbols(
   };
 }
 
-function resolveEquityLiveQuoteLaneSymbols(watchlistSymbols: string[]) {
-  const flowLaneSources = getOptionsFlowLaneSourceSymbols();
-  return resolveMarketDataSymbols({
-    "built-in": flowLaneSources.builtInSymbols,
-    watchlists: watchlistSymbols,
-    "flow-universe": flowLaneSources.flowUniverseSymbols,
-  });
-}
-
 function collectWatchlistSymbols(watchlists: WatchlistRecord[]): string[] {
   return Array.from(
     new Set(
@@ -957,33 +860,63 @@ function collectWatchlistSymbols(watchlists: WatchlistRecord[]): string[] {
   );
 }
 
-function collectDefaultWatchlistSymbols(
+function rememberOptionsFlowWatchlistSymbols(
   watchlists: WatchlistRecord[],
-): string[] {
-  return Array.from(
-    new Set(
-      watchlists
-        .filter((watchlist) => watchlist.isDefault)
-        .flatMap((watchlist) =>
-          watchlist.items
-            .map((item) => normalizeSymbol(item.symbol).toUpperCase())
-            .filter(Boolean),
-        ),
-    ),
-  ).sort();
+): void {
+  latestOptionsFlowWatchlistSymbols = collectWatchlistSymbols(watchlists);
 }
 
-let latestWatchlistLaneSymbols: string[] = [];
+function refreshOptionsFlowWatchlistSymbolsFromDb(): Promise<void> {
+  if (optionsFlowWatchlistRefreshInFlight) {
+    return optionsFlowWatchlistRefreshInFlight;
+  }
+  const request = optionsFlowWatchlistSnapshotLoader()
+    .then((snapshot) => rememberOptionsFlowWatchlistSymbols(snapshot.watchlists))
+    .catch((error) => {
+      logger.debug(
+        { err: error },
+        "Options-flow watchlist symbol refresh skipped",
+      );
+    })
+    .finally(() => {
+      optionsFlowWatchlistRefreshInFlight = null;
+    });
+  optionsFlowWatchlistRefreshInFlight = request;
+  return request;
+}
 
-function collectAccountMonitorQuoteSymbols(): string[] {
-  return Array.from(
-    new Set(
-      getMarketDataLeasesSnapshot()
-        .filter((lease) => lease.intent === "account-monitor-live")
-        .map((lease) => normalizeSymbol(lease.symbol ?? "").toUpperCase())
-        .filter(Boolean),
-    ),
-  ).sort();
+function startOptionsFlowWatchlistSymbolRefreshRuntime(): void {
+  void refreshOptionsFlowWatchlistSymbolsFromDb();
+  if (optionsFlowWatchlistRefreshTimer) {
+    return;
+  }
+  optionsFlowWatchlistRefreshTimer = setInterval(() => {
+    void refreshOptionsFlowWatchlistSymbolsFromDb();
+  }, OPTIONS_FLOW_WATCHLIST_SYMBOL_REFRESH_MS);
+  optionsFlowWatchlistRefreshTimer.unref?.();
+}
+
+function stopOptionsFlowWatchlistSymbolRefreshRuntime(): void {
+  if (optionsFlowWatchlistRefreshTimer) {
+    clearInterval(optionsFlowWatchlistRefreshTimer);
+    optionsFlowWatchlistRefreshTimer = null;
+  }
+}
+
+export function __setOptionsFlowWatchlistSnapshotLoaderForTests(
+  loader: () => Promise<WatchlistSnapshot>,
+): () => void {
+  const previous = optionsFlowWatchlistSnapshotLoader;
+  const previousSymbols = latestOptionsFlowWatchlistSymbols;
+  optionsFlowWatchlistSnapshotLoader = loader;
+  return () => {
+    optionsFlowWatchlistSnapshotLoader = previous;
+    latestOptionsFlowWatchlistSymbols = previousSymbols;
+  };
+}
+
+export function __refreshOptionsFlowWatchlistSymbolsForTests(): Promise<void> {
+  return refreshOptionsFlowWatchlistSymbolsFromDb();
 }
 
 function collectFlowScannerPriorityLeaseSymbols(): string[] {
@@ -1006,242 +939,6 @@ function collectFlowScannerPriorityLeaseSymbols(): string[] {
         .filter(Boolean),
     ),
   ).sort();
-}
-
-function buildWatchlistPrewarmLineRequests(
-  symbols: string[],
-  sourceSymbols: string[] = latestWatchlistLaneSymbols,
-): Array<{
-  assetClass: "equity";
-  symbol: string;
-  priorityOffset: number;
-}> {
-  const sourceSymbolSet = new Set(
-    sourceSymbols
-      .map((symbol) => normalizeSymbol(symbol).toUpperCase())
-      .filter(Boolean),
-  );
-  return symbols
-    .map((symbol) => normalizeSymbol(symbol).toUpperCase())
-    .filter(Boolean)
-    .map((symbol) => ({
-      assetClass: "equity" as const,
-      symbol,
-      priorityOffset: sourceSymbolSet.has(symbol) ? 1 : -1,
-    }));
-}
-
-export function __buildWatchlistPrewarmLineRequestsForTests(
-  symbols: string[],
-  sourceSymbols: string[],
-) {
-  return buildWatchlistPrewarmLineRequests(symbols, sourceSymbols);
-}
-
-function orderWarmupSymbols(input: {
-  admittedSymbols: string[];
-  watchlistSymbols: string[];
-  defaultSymbols: string[];
-  accountSymbols: string[];
-  limit: number;
-  rotationOffset: number;
-  advanceRotation: boolean;
-}): {
-  symbols: string[];
-  nextRotationOffset: number;
-  overflowCount: number;
-} {
-  const admitted = new Set(input.admittedSymbols);
-  const pinned: string[] = [];
-  const watchlistCandidates: string[] = [];
-  const extraCandidates: string[] = [];
-  const seen = new Set<string>();
-  const normalize = (symbol: string) => normalizeSymbol(symbol).toUpperCase();
-  const addPinned = (symbol: string, requireAdmitted: boolean) => {
-    const normalized = normalizeSymbol(symbol).toUpperCase();
-    if (!normalized || seen.has(normalized)) {
-      return;
-    }
-    if (requireAdmitted && !admitted.has(normalized)) {
-      return;
-    }
-    seen.add(normalized);
-    pinned.push(normalized);
-  };
-  const addCandidate = (
-    target: string[],
-    symbol: string,
-    requireAdmitted: boolean,
-  ) => {
-    const normalized = normalize(symbol);
-    if (!normalized || seen.has(normalized)) {
-      return;
-    }
-    if (requireAdmitted && !admitted.has(normalized)) {
-      return;
-    }
-    seen.add(normalized);
-    target.push(normalized);
-  };
-
-  input.defaultSymbols.forEach((symbol) => addPinned(symbol, true));
-  input.watchlistSymbols.forEach((symbol) =>
-    addCandidate(watchlistCandidates, symbol, true),
-  );
-  input.accountSymbols.forEach((symbol) =>
-    addCandidate(extraCandidates, symbol, false),
-  );
-  input.admittedSymbols.forEach((symbol) =>
-    addCandidate(extraCandidates, symbol, true),
-  );
-
-  const limit = Math.max(0, Math.floor(input.limit));
-  const candidateSlots = Math.max(0, limit - pinned.length);
-  const watchlistOverflowCount = Math.max(
-    0,
-    watchlistCandidates.length - candidateSlots,
-  );
-  const rotate = (symbols: string[], rotationOffset: number) =>
-    symbols.length > 0
-      ? [...symbols.slice(rotationOffset), ...symbols.slice(0, rotationOffset)]
-      : symbols;
-  let selectedCandidates: string[];
-  let nextRotationOffset = Math.max(0, Math.floor(input.rotationOffset));
-  if (watchlistOverflowCount > 0) {
-    const rotationOffset = nextRotationOffset % watchlistCandidates.length;
-    selectedCandidates = rotate(watchlistCandidates, rotationOffset).slice(
-      0,
-      candidateSlots,
-    );
-    nextRotationOffset =
-      input.advanceRotation && watchlistCandidates.length > 0
-        ? (rotationOffset + Math.max(1, candidateSlots)) %
-          watchlistCandidates.length
-        : rotationOffset;
-  } else {
-    const extraSlots = Math.max(0, candidateSlots - watchlistCandidates.length);
-    const extraOverflowCount = Math.max(0, extraCandidates.length - extraSlots);
-    const rotationOffset =
-      extraCandidates.length > 0
-        ? nextRotationOffset % extraCandidates.length
-        : 0;
-    const selectedExtras =
-      extraOverflowCount > 0
-        ? rotate(extraCandidates, rotationOffset).slice(0, extraSlots)
-        : extraCandidates.slice(0, extraSlots);
-    selectedCandidates = [...watchlistCandidates, ...selectedExtras];
-    nextRotationOffset =
-      input.advanceRotation &&
-      extraOverflowCount > 0 &&
-      extraCandidates.length > 0
-        ? (rotationOffset + Math.max(1, extraSlots)) % extraCandidates.length
-        : rotationOffset;
-  }
-  const overflowCount = Math.max(
-    0,
-    watchlistCandidates.length + extraCandidates.length - candidateSlots,
-  );
-  const symbols = [...pinned, ...selectedCandidates].slice(0, limit);
-
-  return {
-    symbols,
-    nextRotationOffset,
-    overflowCount,
-  };
-}
-
-export function __orderWatchlistWarmupSymbolsForTests(input: {
-  admittedSymbols: string[];
-  watchlistSymbols: string[];
-  defaultSymbols: string[];
-  accountSymbols: string[];
-  limit: number;
-  rotationOffset?: number;
-  advanceRotation?: boolean;
-}) {
-  return orderWarmupSymbols({
-    ...input,
-    rotationOffset: input.rotationOffset ?? 0,
-    advanceRotation: input.advanceRotation ?? false,
-  });
-}
-
-function leaseSymbolsForOwner(owner: string): string[] {
-  return Array.from(
-    new Set(
-      getMarketDataLeasesSnapshot()
-        .filter((lease) => lease.owner === owner)
-        .map((lease) => normalizeSymbol(lease.symbol ?? "").toUpperCase())
-        .filter(Boolean),
-    ),
-  ).sort();
-}
-
-function readPrewarmBridgeGroupSymbols(
-  diagnostics: unknown,
-  owner: string,
-): string[] {
-  if (!isRecord(diagnostics) || !isRecord(diagnostics.subscriptions)) {
-    return [];
-  }
-  const groups = diagnostics.subscriptions.prewarmGroups;
-  if (!Array.isArray(groups)) {
-    return [];
-  }
-  const group = groups.find(
-    (entry) => isRecord(entry) && entry.owner === owner,
-  );
-  if (!isRecord(group) || !Array.isArray(group.symbols)) {
-    return [];
-  }
-  return Array.from(
-    new Set(
-      group.symbols
-        .map((symbol) => normalizeSymbol(String(symbol)).toUpperCase())
-        .filter(Boolean),
-    ),
-  ).sort();
-}
-
-export function reconcileIbkrWatchlistPrewarmFromBridgeDiagnostics(
-  diagnostics: unknown,
-): void {
-  const primarySymbols = readPrewarmBridgeGroupSymbols(
-    diagnostics,
-    IBKR_WATCHLIST_PREWARM_OWNER,
-  );
-  const fillerSymbols = readPrewarmBridgeGroupSymbols(
-    diagnostics,
-    IBKR_WATCHLIST_PREWARM_FILLER_OWNER,
-  );
-
-  if (primarySymbols.length > 0) {
-    admitMarketDataLeases({
-      owner: IBKR_WATCHLIST_PREWARM_OWNER,
-      intent: "visible-live",
-      requests: buildWatchlistPrewarmLineRequests(primarySymbols),
-      fallbackProvider: "cache",
-    });
-  }
-
-  if (fillerSymbols.length > 0) {
-    releaseMarketDataLeases(
-      IBKR_WATCHLIST_PREWARM_FILLER_OWNER,
-      "retired_filler_reconcile",
-    );
-    void syncWatchlistPrewarmBridgeGroups({
-      primarySymbols,
-    }).catch((error) => {
-      logger.debug(
-        { err: error },
-        "IBKR bridge retired watchlist filler clear skipped",
-      );
-    });
-  }
-}
-
-function reconcileIbkrWatchlistPrewarmFromBridgeSoon(reason: string): void {
-  logger.debug({ reason }, "IBKR bridge prewarm reconciliation retired");
 }
 
 function isLiveWarmupHoldingBackgroundWork(): boolean {
@@ -1430,295 +1127,6 @@ function getOptionsFlowScannerBackgroundBlockReason(
   return null;
 }
 
-type BridgePrewarmSyncState = {
-  signature: string | null;
-  syncedAt: number;
-};
-
-type WatchlistPrewarmBridgeHealth = Pick<
-  NonNullable<Awaited<ReturnType<typeof getBridgeHealthForSession>>>,
-  "strictReady" | "strictReason" | "streamStateReason"
->;
-
-const lastBridgePrimaryPrewarmSync: BridgePrewarmSyncState = {
-  signature: null,
-  syncedAt: 0,
-};
-const lastBridgeFillerPrewarmSync: BridgePrewarmSyncState = {
-  signature: null,
-  syncedAt: 0,
-};
-const lastBridgeStartupPrewarmClearSync: BridgePrewarmSyncState = {
-  signature: null,
-  syncedAt: 0,
-};
-
-function shouldSyncBridgePrewarmGroup(
-  signature: string,
-  state: BridgePrewarmSyncState,
-  now = Date.now(),
-): boolean {
-  return (
-    signature !== state.signature ||
-    now - state.syncedAt >= IBKR_WATCHLIST_PREWARM_BRIDGE_RESYNC_MS
-  );
-}
-
-function isBridgeWorkBackoffError(error: unknown): boolean {
-  return (
-    isHttpError(error) &&
-    (error.code === "ibkr_bridge_work_backoff" || error.code === "work_backoff")
-  );
-}
-
-function getWatchlistPrewarmBridgeSyncBlockReason(
-  health: WatchlistPrewarmBridgeHealth | null | undefined,
-): string | null {
-  if (!health?.strictReady) {
-    const reason = health?.strictReason ?? health?.streamStateReason;
-    if (reason === "market_session_quiet") {
-      return null;
-    }
-    return typeof reason === "string" && reason ? reason : "health_unavailable";
-  }
-  return null;
-}
-
-export function __getWatchlistPrewarmBridgeSyncBlockReasonForTests(
-  health: Partial<WatchlistPrewarmBridgeHealth> | null | undefined,
-): string | null {
-  return getWatchlistPrewarmBridgeSyncBlockReason(
-    health as WatchlistPrewarmBridgeHealth | null | undefined,
-  );
-}
-
-async function syncWatchlistPrewarmBridgeGroups(input: {
-  primarySymbols: string[];
-}): Promise<void> {
-  const groups = [
-    {
-      owner: IBKR_BRIDGE_STARTUP_PREWARM_OWNER,
-      symbols: [],
-      state: lastBridgeStartupPrewarmClearSync,
-    },
-    {
-      owner: IBKR_WATCHLIST_PREWARM_OWNER,
-      symbols: input.primarySymbols,
-      state: lastBridgePrimaryPrewarmSync,
-    },
-    {
-      owner: IBKR_WATCHLIST_PREWARM_FILLER_OWNER,
-      symbols: [],
-      state: lastBridgeFillerPrewarmSync,
-    },
-  ];
-  const now = Date.now();
-  const health = await getBridgeHealthForSession();
-  const blockReason = getWatchlistPrewarmBridgeSyncBlockReason(health);
-  if (blockReason) {
-    logger.debug(
-      {
-        blockReason,
-        primarySymbolCount: input.primarySymbols.length,
-      },
-      "IBKR bridge watchlist prewarm sync skipped",
-    );
-    return;
-  }
-
-  await Promise.all(
-    groups.map(async (group) => {
-      const signature = group.symbols.join(",");
-      if (!shouldSyncBridgePrewarmGroup(signature, group.state, now)) {
-        return;
-      }
-      group.state.signature = signature;
-      group.state.syncedAt = Date.now();
-    }),
-  );
-}
-
-function scheduleIbkrWatchlistPrewarm(
-  watchlists: WatchlistRecord[],
-  reason: string,
-) {
-  if (
-    !getProviderConfiguration().ibkr
-  ) {
-    return;
-  }
-
-  const symbols = collectWatchlistSymbols(watchlists);
-  latestWatchlistLaneSymbols = symbols;
-  if (isMassiveStocksRealtimeConfigured()) {
-    ibkrWatchlistPrewarmSequence += 1;
-    pendingIbkrWatchlistPrewarmSignature = null;
-    pendingIbkrWatchlistPrewarmRerunReason = null;
-    releaseMarketDataLeases(
-      IBKR_WATCHLIST_PREWARM_OWNER,
-      "massive_stock_primary",
-    );
-    releaseMarketDataLeases(
-      IBKR_WATCHLIST_PREWARM_FILLER_OWNER,
-      "massive_stock_primary",
-    );
-    void syncWatchlistPrewarmBridgeGroups({
-      primarySymbols: [],
-    }).catch((error) => {
-      logger.warn(
-        { err: error, reason },
-        "IBKR bridge prewarm clear failed while Massive stocks are primary",
-      );
-    });
-    logger.debug(
-      { reason, symbolCount: symbols.length },
-      "IBKR bridge watchlist prewarm disabled while Massive stocks are primary",
-    );
-    return;
-  }
-  const defaultSymbols = collectDefaultWatchlistSymbols(watchlists);
-  const accountSymbols = collectAccountMonitorQuoteSymbols();
-  const resolvedSymbols = resolveEquityLiveQuoteLaneSymbols(symbols);
-  const warmupLimit = resolveIbkrWatchlistPrewarmSymbolLimit(
-    resolvedSymbols.admittedSymbols.length,
-  );
-  const orderedWarmup = orderWarmupSymbols({
-    admittedSymbols: resolvedSymbols.admittedSymbols,
-    watchlistSymbols: symbols,
-    defaultSymbols,
-    accountSymbols,
-    limit: warmupLimit,
-    rotationOffset: ibkrWatchlistPrewarmRotationOffset,
-    advanceRotation: reason.includes("runtime-resync"),
-  });
-  ibkrWatchlistPrewarmRotationOffset = orderedWarmup.nextRotationOffset;
-  const warmupSymbols = orderedWarmup.symbols;
-  const cappedWarmupSymbols = warmupSymbols.slice(0, warmupLimit);
-  const prewarmDroppedSymbols = warmupSymbols.slice(warmupLimit);
-  const requestedSignature = cappedWarmupSymbols.join(",");
-  if (!requestedSignature) {
-    ibkrWatchlistPrewarmSequence += 1;
-    pendingIbkrWatchlistPrewarmSignature = null;
-    pendingIbkrWatchlistPrewarmRerunReason = null;
-    releaseMarketDataLeases(IBKR_WATCHLIST_PREWARM_OWNER, "prewarm_empty");
-    releaseMarketDataLeases(
-      IBKR_WATCHLIST_PREWARM_FILLER_OWNER,
-      "retired_filler_clear",
-    );
-    void syncWatchlistPrewarmBridgeGroups({
-      primarySymbols: [],
-    }).catch((error) => {
-      logger.warn({ err: error, reason }, "IBKR bridge prewarm clear failed");
-    });
-    return;
-  }
-
-  if (requestedSignature === pendingIbkrWatchlistPrewarmSignature) {
-    pendingIbkrWatchlistPrewarmRerunReason = reason;
-    return;
-  }
-
-  const sequence = ibkrWatchlistPrewarmSequence + 1;
-  ibkrWatchlistPrewarmSequence = sequence;
-  pendingIbkrWatchlistPrewarmSignature = requestedSignature;
-
-  void getBridgeHealthForSession()
-    .then((health) => {
-      if (sequence !== ibkrWatchlistPrewarmSequence) {
-        return;
-      }
-      const healthBlockReason = getWatchlistPrewarmBridgeSyncBlockReason(health);
-      if (healthBlockReason) {
-        logger.debug(
-          {
-            reason,
-            strictReason: healthBlockReason,
-          },
-          "IBKR bridge watchlist prewarm skipped until Gateway is ready",
-        );
-        return;
-      }
-
-      const primaryAdmission = admitMarketDataLeases({
-        owner: IBKR_WATCHLIST_PREWARM_OWNER,
-        intent: "visible-live",
-        requests: buildWatchlistPrewarmLineRequests(
-          cappedWarmupSymbols,
-          symbols,
-        ),
-        fallbackProvider: "cache",
-      });
-      const admittedSymbols = primaryAdmission.admitted
-        .map((lease) => lease.symbol)
-        .filter((symbol): symbol is string => Boolean(symbol));
-      if (!admittedSymbols.length) {
-        releaseMarketDataLeases(IBKR_WATCHLIST_PREWARM_OWNER, "prewarm_empty");
-        releaseMarketDataLeases(
-          IBKR_WATCHLIST_PREWARM_FILLER_OWNER,
-          "retired_filler_clear",
-        );
-        return syncWatchlistPrewarmBridgeGroups({
-          primarySymbols: [],
-        });
-      }
-      releaseMarketDataLeases(
-        IBKR_WATCHLIST_PREWARM_FILLER_OWNER,
-        "retired_filler_clear",
-      );
-
-      const primarySymbols = leaseSymbolsForOwner(IBKR_WATCHLIST_PREWARM_OWNER);
-
-      return syncWatchlistPrewarmBridgeGroups({
-        primarySymbols,
-      }).then(() => {
-        if (sequence !== ibkrWatchlistPrewarmSequence) {
-          return;
-        }
-
-        logger.info(
-          {
-            symbols: primarySymbols,
-            accountSymbols,
-            defaultSymbols,
-            droppedSymbols: [
-              ...resolvedSymbols.droppedSymbols,
-              ...prewarmDroppedSymbols,
-            ],
-            prewarmLimit: warmupLimit,
-            reason,
-          },
-          "IBKR bridge watchlist prewarm synced",
-        );
-      });
-    })
-    .catch((error) => {
-      if (sequence === ibkrWatchlistPrewarmSequence) {
-        releaseMarketDataLeases(IBKR_WATCHLIST_PREWARM_OWNER, "prewarm_failed");
-        releaseMarketDataLeases(
-          IBKR_WATCHLIST_PREWARM_FILLER_OWNER,
-          "retired_filler_clear",
-        );
-      }
-      logger.warn(
-        { err: error, symbols: cappedWarmupSymbols, reason },
-        "IBKR bridge watchlist prewarm failed",
-      );
-    })
-    .finally(() => {
-      if (sequence === ibkrWatchlistPrewarmSequence) {
-        pendingIbkrWatchlistPrewarmSignature = null;
-        const rerunReason = pendingIbkrWatchlistPrewarmRerunReason;
-        pendingIbkrWatchlistPrewarmRerunReason = null;
-        if (rerunReason) {
-          scheduleIbkrWatchlistPrewarm(
-            watchlists,
-            `${rerunReason}-after-pending`,
-          );
-        }
-      }
-    });
-}
-
 export function __holdOptionsFlowScannerBackgroundForTests(
   durationMs = LIVE_WARMUP_BACKGROUND_HOLD_MS,
 ): void {
@@ -1728,57 +1136,6 @@ export function __holdOptionsFlowScannerBackgroundForTests(
 export function __clearOptionsFlowScannerBackgroundHoldForTests(): void {
   liveWarmupBackgroundHoldUntil = 0;
 }
-
-function scheduleIbkrWatchlistPrewarmFromDb(reason: string) {
-  if (!getProviderConfiguration().ibkr) {
-    return;
-  }
-
-  void listWatchlistsFromDb()
-    .then((snapshot) =>
-      scheduleIbkrWatchlistPrewarm(snapshot.watchlists, reason),
-    )
-    .catch((error) => {
-      logger.warn(
-        { err: error, reason },
-        "IBKR bridge watchlist prewarm snapshot failed",
-      );
-    });
-}
-
-let ibkrWatchlistPrewarmResyncTimer: NodeJS.Timeout | null = null;
-let ibkrWatchlistPrewarmRuntimeTimer: NodeJS.Timeout | null = null;
-
-function scheduleIbkrWatchlistPrewarmFromDbSoon(reason: string): void {
-  if (!getProviderConfiguration().ibkr || ibkrWatchlistPrewarmResyncTimer) {
-    return;
-  }
-  ibkrWatchlistPrewarmResyncTimer = setTimeout(() => {
-    ibkrWatchlistPrewarmResyncTimer = null;
-    scheduleIbkrWatchlistPrewarmFromDb(reason);
-  }, 1_000);
-  ibkrWatchlistPrewarmResyncTimer.unref?.();
-}
-
-export function startIbkrWatchlistPrewarmRuntime(): void {
-  if (ibkrWatchlistPrewarmRuntimeTimer) {
-    return;
-  }
-  reconcileIbkrWatchlistPrewarmFromBridgeSoon("startup");
-  scheduleIbkrWatchlistPrewarmFromDbSoon("startup");
-  ibkrWatchlistPrewarmRuntimeTimer = setInterval(() => {
-    reconcileIbkrWatchlistPrewarmFromBridgeSoon("runtime-resync");
-    scheduleIbkrWatchlistPrewarmFromDbSoon("runtime-resync");
-  }, IBKR_WATCHLIST_PREWARM_BRIDGE_RESYNC_MS);
-  ibkrWatchlistPrewarmRuntimeTimer.unref?.();
-}
-
-subscribeMarketDataLeaseChanges((event) => {
-  if (!["released", "demoted", "expired"].includes(event.action)) {
-    return;
-  }
-  scheduleIbkrWatchlistPrewarmFromDbSoon(`lease_${event.action}`);
-});
 
 async function ensureInstrumentForSymbol({
   symbol,
@@ -3697,22 +3054,11 @@ export async function listWatchlistsForCurrentUser(): Promise<WatchlistSnapshot>
 export async function listWatchlists() {
   const nowMs = Date.now();
   if (watchlistListCache && watchlistListCache.freshUntil > nowMs) {
-    scheduleIbkrWatchlistPrewarmFromListRead(
-      watchlistListCache.value.watchlists,
-      "list-cache",
-      nowMs,
-    );
     return watchlistListCache.value;
   }
 
   if (watchlistListInFlight) {
-    const result = await watchlistListInFlight;
-    scheduleIbkrWatchlistPrewarmFromListRead(
-      result.watchlists,
-      "list-inflight",
-      Date.now(),
-    );
-    return result;
+    return watchlistListInFlight;
   }
 
   const request = listWatchlistsFromDb()
@@ -3730,13 +3076,7 @@ export async function listWatchlists() {
     });
   watchlistListInFlight = request;
 
-  const result = await request;
-  scheduleIbkrWatchlistPrewarmFromListRead(
-    result.watchlists,
-    "list",
-    Date.now(),
-  );
-  return result;
+  return request;
 }
 
 export async function createWatchlist(input: {
@@ -3798,7 +3138,7 @@ export async function createWatchlist(input: {
 
   const created = await getWatchlistById(watchlist.id);
   invalidateWatchlistListCache();
-  scheduleIbkrWatchlistPrewarmFromDb("create");
+  refreshOptionsFlowWatchlistSymbolsFromDb();
   return created;
 }
 
@@ -3843,7 +3183,7 @@ export async function updateWatchlist(
 
   const updated = await getWatchlistById(watchlistId);
   invalidateWatchlistListCache();
-  scheduleIbkrWatchlistPrewarmFromDb("update");
+  refreshOptionsFlowWatchlistSymbolsFromDb();
   return updated;
 }
 
@@ -3881,7 +3221,7 @@ export async function deleteWatchlist(watchlistId: string) {
   }
 
   invalidateWatchlistListCache();
-  scheduleIbkrWatchlistPrewarmFromDb("delete");
+  refreshOptionsFlowWatchlistSymbolsFromDb();
   return { ok: true };
 }
 
@@ -3927,7 +3267,7 @@ export async function addWatchlistSymbol(
 
   const updated = await getWatchlistById(watchlistId);
   invalidateWatchlistListCache();
-  scheduleIbkrWatchlistPrewarmFromDb("add-symbol");
+  refreshOptionsFlowWatchlistSymbolsFromDb();
   return updated;
 }
 
@@ -3968,7 +3308,7 @@ export async function removeWatchlistSymbol(
   await rebalanceWatchlistSortOrder(watchlistId);
   const updated = await getWatchlistById(watchlistId);
   invalidateWatchlistListCache();
-  scheduleIbkrWatchlistPrewarmFromDb("remove-symbol");
+  refreshOptionsFlowWatchlistSymbolsFromDb();
   return updated;
 }
 
@@ -4016,7 +3356,7 @@ export async function reorderWatchlistSymbols(
 
   const updated = await getWatchlistById(watchlistId);
   invalidateWatchlistListCache();
-  scheduleIbkrWatchlistPrewarmFromDb("reorder");
+  refreshOptionsFlowWatchlistSymbolsFromDb();
   return updated;
 }
 
@@ -4712,10 +4052,6 @@ function getMassiveRealtimeSocketQuoteSnapshots(symbols: string[]): Array<
 type GetQuoteSnapshotsInput = {
   symbols: string;
   allowMassiveFallback?: boolean;
-  admissionOwner?: string;
-  admissionIntent?: MarketDataIntent;
-  admissionFallbackProvider?: MarketDataFallbackProvider;
-  ttlMs?: number | null;
   tradingSession?: "overnight" | null;
 };
 
@@ -4765,16 +4101,11 @@ function quoteSnapshotStaleWaitMs(): number {
 
 function quoteSnapshotCacheKey(input: {
   symbols: string[];
-  admissionOwner?: string | null;
-  admissionIntent?: MarketDataIntent | null;
   tradingSession?: "overnight" | null;
 }): string {
   const providerMode = getMassiveRuntimeConfig() ? "massive" : "none";
-  const ownerKey = input.admissionOwner
-    ? `:${input.admissionOwner}:${input.admissionIntent ?? ""}`
-    : "";
   const sessionKey = input.tradingSession ? `:${input.tradingSession}` : "";
-  return `${providerMode}:${input.symbols.join(",")}${ownerKey}${sessionKey}`;
+  return `${providerMode}:${input.symbols.join(",")}${sessionKey}`;
 }
 
 function markQuoteSnapshotResponseStale(
@@ -4822,9 +4153,6 @@ async function resolveQuoteSnapshotRequest(
 
 async function getQuoteSnapshotsUncached(input: {
   symbolsList: string[];
-  admissionOwner?: string;
-  admissionIntent?: MarketDataIntent;
-  ttlMs?: number | null;
   tradingSession?: "overnight" | null;
 }): Promise<QuoteSnapshotsServiceResponse> {
   const symbols = input.symbolsList;
@@ -4950,8 +4278,6 @@ export async function getQuoteSnapshots(
     .filter(Boolean);
   const key = quoteSnapshotCacheKey({
     symbols,
-    admissionOwner: input.admissionOwner,
-    admissionIntent: input.admissionIntent,
     tradingSession: input.tradingSession,
   });
   const now = Date.now();
@@ -4967,9 +4293,6 @@ export async function getQuoteSnapshots(
 
   const request = getQuoteSnapshotsUncached({
     symbolsList: symbols,
-    admissionOwner: input.admissionOwner,
-    admissionIntent: input.admissionIntent,
-    ttlMs: input.ttlMs,
     tradingSession: input.tradingSession,
   })
     .then((value) => {
@@ -12047,7 +11370,7 @@ export function getOptionsFlowLaneSourceSymbols(): {
 } {
   const config = getOptionsFlowRuntimeConfig();
   const candidateBuiltInSymbols = getFlowScannerPinnedSymbols();
-  const candidateWatchlistSymbols = latestWatchlistLaneSymbols;
+  const candidateWatchlistSymbols = latestOptionsFlowWatchlistSymbols;
   const candidatePrioritySymbols = collectFlowScannerPriorityLeaseSymbols();
   const scannerPressure = getOptionsFlowScannerPressureGate();
   const schedulableLineCap = getOptionsFlowScannerSchedulableLineCap(
@@ -12315,6 +11638,7 @@ export function startOptionsFlowScanner(): void {
   if (optionsFlowScannerStarted || !config.scannerEnabled) {
     return;
   }
+  startOptionsFlowWatchlistSymbolRefreshRuntime();
 
   const resolveScannerSymbols = () => {
     if (getOptionsFlowScannerBackgroundBlockReason()) {
@@ -12380,6 +11704,7 @@ export function startOptionsFlowScanner(): void {
 }
 
 export function stopOptionsFlowScanner(): void {
+  stopOptionsFlowWatchlistSymbolRefreshRuntime();
   stopMassiveStockUniverseStreams();
   optionsFlowScanner.stop();
   optionsFlowScannerStarted = false;
@@ -13792,6 +13117,7 @@ export function __resetOptionChainCachesForTests(input?: {
   optionsFlowSessionBlockCheckedAt = 0;
   __resetHistoricalFlowEventsForTests();
   if (input?.resetFlowScanner !== false) {
+    stopOptionsFlowWatchlistSymbolRefreshRuntime();
     optionsFlowScanner.reset();
     optionsFlowScannerStarted = false;
     flowUniverseManager.reset();

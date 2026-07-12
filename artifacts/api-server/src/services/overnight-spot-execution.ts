@@ -1067,8 +1067,6 @@ async function loadQuotes(symbols: string[], signal?: AbortSignal) {
     const response = await getQuoteSnapshots({
       symbols: batch.join(","),
       allowMassiveFallback: false,
-      admissionOwner: "overnight-spot-automation",
-      admissionIntent: "automation-live",
       tradingSession: "overnight",
     });
     throwIfOvernightSpotScanAborted(signal);

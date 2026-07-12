@@ -6,7 +6,6 @@ import {
   admitMarketDataLeases,
   getMarketDataAdmissionDiagnostics,
   getMarketDataLeasesSnapshot,
-  recordMarketDataAdmissionIbkrPressure,
   setMarketDataAdmissionRuntimeDefaults,
   type MarketDataIntent,
   type MarketDataLineRequest,
@@ -73,6 +72,19 @@ test("equity lease refresh preserves newly supplied provider contract id", () =>
   assert.equal(leases[0].instrumentKey, "equity:FCEL");
   assert.equal(leases[0].lineIds[0], "equity:FCEL");
   assert.equal(leases[0].providerContractId, "740517233");
+});
+
+test("retired watchlist owner names use provider-neutral intent classification", () => {
+  __resetMarketDataAdmissionForTests();
+
+  const result = admitMarketDataLeases({
+    owner: "watchlist-prewarm:legacy",
+    intent: "historical",
+    requests: [{ assetClass: "equity", symbol: "SPY" }],
+    fallbackProvider: "none",
+  });
+
+  assert.equal(result.admitted[0]?.ownerClass, "historical");
 });
 
 test("Massive flow scanner cap is independent of active protected demand", () => {
@@ -505,9 +517,8 @@ test("execution and automation share priority without preempting each other", ()
   assert.equal(diagnostics.activeLineCount, 200);
 });
 
-test("IBKR pressure does not shed Massive flow scanner lines", () => {
+test("retired IBKR compatibility fields stay inert while Massive scanner refills", () => {
   __resetMarketDataAdmissionForTests();
-  const observedAt = Date.now();
   setMarketDataAdmissionRuntimeDefaults({
     flowScannerLineBudget: 20,
     flowScannerConcurrency: 1,
@@ -530,61 +541,11 @@ test("IBKR pressure does not shed Massive flow scanner lines", () => {
     fallbackProvider: "none",
   });
 
-  const demoted = recordMarketDataAdmissionIbkrPressure({
-    state: "backpressure",
-    reason: "Output exceeded limit (was: 100031)",
-    source: "option-stream",
-    observedAt,
-  });
-  const diagnostics = getMarketDataAdmissionDiagnostics();
-
-  assert.equal(diagnostics.accountMonitorLineCount, 1);
-  assert.equal(diagnostics.pressure.ibkrPressure?.policy, "broker-pressure-observed");
-  assert.equal(diagnostics.pressure.ibkrPressure?.scannerLineCountBefore, 10);
-  assert.equal(diagnostics.pressure.ibkrPressure?.scannerLineTarget, 10);
-  assert.equal(diagnostics.pressure.ibkrPressure?.scannerLineCountAfter, 10);
-  assert.equal(diagnostics.pressure.ibkrPressure?.demotedLeaseCount, 0);
-  assert.equal(diagnostics.pressure.ibkrPressure?.dampingActive, false);
-  assert.equal(diagnostics.pressure.scannerConfiguredLineCap, 20);
-  assert.equal(diagnostics.pressure.scannerEffectiveLineCap, 20);
-  assert.equal(diagnostics.pressure.scannerPressureLineCap, null);
-  assert.equal(diagnostics.pressure.scannerPressureDampingActive, false);
-  assert.equal(diagnostics.pressure.scannerChargedLineCount, 10);
-  assert.equal(diagnostics.poolUsageRanking[0]?.id, "flow-scanner");
-  assert.equal(diagnostics.poolUsageRanking[0]?.recentIbkrPressureShed, false);
-  assert.equal(demoted.length, 0);
-});
-
-test("IBKR pressure leaves Massive scanner refill capacity alone", () => {
-  __resetMarketDataAdmissionForTests();
-  const observedAt = Date.now();
-  setMarketDataAdmissionRuntimeDefaults({
-    flowScannerLineBudget: 20,
-    flowScannerConcurrency: 1,
-  });
-  admitMarketDataLeases({
-    owner: "flow-scanner:SPY",
-    intent: "flow-scanner-live",
-    requests: Array.from({ length: 10 }, (_, index) => ({
-      assetClass: "option",
-      symbol: "SPY",
-      providerContractId: `SPY-C-${index}`,
-    })),
-    fallbackProvider: "none",
-  });
-
-  recordMarketDataAdmissionIbkrPressure({
-    state: "backpressure",
-    reason: "Output exceeded limit (was: 100031)",
-    source: "option-stream",
-    observedAt,
-  });
-
   const refill = admitMarketDataLeases({
     owner: "flow-scanner:SPY:refill",
     intent: "flow-scanner-live",
     requests: Array.from({ length: 5 }, (_, index) => ({
-      assetClass: "option",
+      assetClass: "option" as const,
       symbol: "SPY",
       providerContractId: `SPY-REFILL-C-${index}`,
     })),
@@ -595,11 +556,15 @@ test("IBKR pressure leaves Massive scanner refill capacity alone", () => {
   assert.equal(refill.rejected.length, 0);
   assert.equal(refill.admitted.length, 5);
   assert.equal(refill.demoted.length, 0);
+  assert.equal(diagnostics.accountMonitorLineCount, 1);
+  assert.equal(diagnostics.pressure.ibkrPressure, null);
   assert.equal(diagnostics.pressure.scannerConfiguredLineCap, 20);
   assert.equal(diagnostics.pressure.scannerEffectiveLineCap, 20);
   assert.equal(diagnostics.pressure.scannerPressureLineCap, null);
   assert.equal(diagnostics.pressure.scannerPressureDampingActive, false);
   assert.equal(diagnostics.pressure.scannerChargedLineCount, 15);
+  assert.equal(diagnostics.poolUsageRanking[0]?.id, "flow-scanner");
+  assert.equal(diagnostics.poolUsageRanking[0]?.recentIbkrPressureShed, false);
 });
 
 test("legacy IBKR flow scanner env does not cap Massive scanner budget", () => {
@@ -623,17 +588,13 @@ test("legacy IBKR flow scanner env does not cap Massive scanner budget", () => {
       })),
       fallbackProvider: "none",
     });
-    recordMarketDataAdmissionIbkrPressure({
-      state: "backpressure",
-      reason: "Output exceeded limit (was: 100031)",
-      source: "option-stream",
-      observedAt: Date.now(),
-    });
     const diagnostics = getMarketDataAdmissionDiagnostics();
 
     assert.equal(diagnostics.pressure.scannerConfiguredLineCap, 20);
     assert.equal(diagnostics.pressure.scannerEffectiveLineCap, 20);
     assert.equal(diagnostics.pressure.scannerPressureLineCap, null);
+    assert.equal(diagnostics.pressure.scannerPressureDampingActive, false);
+    assert.equal(diagnostics.pressure.ibkrPressure, null);
     assert.equal(diagnostics.pressure.scannerChargedLineCount, 10);
   } finally {
     if (previousLegacy === undefined) {
@@ -669,62 +630,10 @@ test("Massive flow scanner env controls Massive scanner budget", () => {
     assert.equal(diagnostics.pressure.scannerConfiguredLineCap, 50);
     assert.equal(diagnostics.pressure.scannerEffectiveLineCap, 50);
     assert.equal(diagnostics.pressure.scannerPressureLineCap, null);
+    assert.equal(diagnostics.pressure.scannerPressureDampingActive, false);
+    assert.equal(diagnostics.pressure.ibkrPressure, null);
     assert.equal(diagnostics.pressure.scannerChargedLineCount, 10);
   } finally {
-    if (previous === undefined) {
-      delete process.env.OPTIONS_FLOW_SCANNER_LINE_BUDGET;
-    } else {
-      process.env.OPTIONS_FLOW_SCANNER_LINE_BUDGET = previous;
-    }
-  }
-});
-
-test("IBKR pressure observation does not create scanner damping", () => {
-  __resetMarketDataAdmissionForTests();
-  const originalDateNow = Date.now;
-  const previous = process.env.OPTIONS_FLOW_SCANNER_LINE_BUDGET;
-  let now = new Date("2026-06-18T12:00:00.000Z").getTime();
-  Date.now = () => now;
-  process.env.OPTIONS_FLOW_SCANNER_LINE_BUDGET = "50";
-  try {
-    admitMarketDataLeases({
-      owner: "flow-scanner:SPY",
-      intent: "flow-scanner-live",
-      requests: Array.from({ length: 10 }, (_, index) => ({
-        assetClass: "option",
-        symbol: "SPY",
-        providerContractId: `SPY-C-${index}`,
-      })),
-      fallbackProvider: "none",
-    });
-    recordMarketDataAdmissionIbkrPressure({
-      state: "backpressure",
-      reason: "pacing violation",
-      source: "option-stream",
-      observedAt: now,
-    });
-    const active = getMarketDataAdmissionDiagnostics();
-
-    assert.equal(active.pressure.scannerConfiguredLineCap, 50);
-    assert.equal(active.pressure.scannerEffectiveLineCap, 50);
-    assert.equal(active.pressure.scannerPressureLineCap, null);
-    assert.equal(active.pressure.scannerPressureDampingActive, false);
-    assert.equal(active.pressure.ibkrPressure?.dampingActive, false);
-    assert.equal(active.poolUsageRanking[0]?.id, "flow-scanner");
-    assert.equal(active.poolUsageRanking[0]?.recentIbkrPressureShed, false);
-
-    now += 60_001;
-    const expired = getMarketDataAdmissionDiagnostics();
-
-    assert.equal(expired.pressure.scannerConfiguredLineCap, 50);
-    assert.equal(expired.pressure.scannerEffectiveLineCap, 50);
-    assert.equal(expired.pressure.scannerPressureLineCap, null);
-    assert.equal(expired.pressure.scannerPressureDampingActive, false);
-    assert.equal(expired.pressure.ibkrPressure?.dampingActive, false);
-    assert.equal(expired.poolUsageRanking[0]?.id, "flow-scanner");
-    assert.equal(expired.poolUsageRanking[0]?.recentIbkrPressureShed, false);
-  } finally {
-    Date.now = originalDateNow;
     if (previous === undefined) {
       delete process.env.OPTIONS_FLOW_SCANNER_LINE_BUDGET;
     } else {

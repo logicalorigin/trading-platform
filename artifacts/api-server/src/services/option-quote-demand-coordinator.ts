@@ -465,18 +465,3 @@ export function __resetOptionQuoteDemandCoordinatorForTests(): void {
   });
   activeDemands.clear();
 }
-
-export {
-  declareOptionQuoteDemand as declareIbkrLiveDemand,
-  readOptionQuoteDemandState as readIbkrLiveDemandState,
-  releaseOptionQuoteDemand as releaseIbkrLiveDemand,
-  subscribeOptionQuoteDemand as subscribeIbkrLiveDemand,
-};
-
-export type {
-  OptionQuoteDemandDeclaration as IbkrLiveDemandDeclaration,
-  OptionQuoteDemandQuoteState as IbkrLiveDemandQuoteState,
-  OptionQuoteDemandReadInput as IbkrLiveDemandReadInput,
-  OptionQuoteDemandState as IbkrLiveDemandState,
-  OptionQuoteDemandStatus as IbkrLiveDemandStatus,
-};

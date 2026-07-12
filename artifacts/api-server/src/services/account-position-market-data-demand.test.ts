@@ -61,13 +61,28 @@ test("real account positions declare account-monitor demand even for fast quote-
   );
   assert.match(
     uncachedLoader,
-    /declareAccountPositionEquityQuoteDemands\(\s*marketDataDemandPositions/,
-    "all open real equity positions must be declared to account-monitor demand",
+    /refreshAccountPositionEquityQuotes\(\s*marketDataDemandPositions/,
+    "all open real equity positions must refresh Massive quote snapshots",
   );
   assert.match(
     uncachedLoader,
     /declareAccountPositionOptionQuoteDemands\(\s*marketDataDemandPositions/,
     "all open real option positions must be declared to account-monitor demand",
+  );
+});
+
+test("real account equity quote refresh does not reserve broker market-data lines", () => {
+  const quoteRefresh = functionSource("refreshAccountPositionEquityQuotes");
+
+  assert.match(
+    quoteRefresh,
+    /void fetchEquityQuoteSnapshotsForPositions\(positions\)/,
+    "equity quote refresh must reuse the Massive-backed snapshot reader",
+  );
+  assert.doesNotMatch(
+    quoteRefresh,
+    /admissionOwner|admissionIntent|ttlMs|releaseMarketDataLeases/,
+    "Massive equity quotes must not reserve or release broker market-data lines",
   );
 });
 

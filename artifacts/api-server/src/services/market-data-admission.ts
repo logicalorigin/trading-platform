@@ -37,10 +37,6 @@ export type MarketDataPoolId =
   | "automation"
   | "flow-scanner";
 
-export type MarketDataIbkrPressureState =
-  | "capacity_limited"
-  | "backpressure";
-
 export type MarketDataOwnerClass =
   | "execution"
   | "account-monitor"
@@ -202,8 +198,6 @@ const DEFAULT_VISIBLE_OPTION_CHAIN_LINE_COUNT =
 const DEFAULT_VISIBLE_OPTION_QUOTE_CONTRACT_LIMIT = 40;
 const DEFAULT_VISIBLE_OPTION_QUOTE_LINE_RESERVE =
   DEFAULT_VISIBLE_OPTION_QUOTE_CONTRACT_LIMIT + 1;
-const IBKR_PRESSURE_SCANNER_REMAINING_RATIO = 0.5;
-const IBKR_PRESSURE_SCANNER_DAMPING_WINDOW_MS = 60_000;
 const TARGET_FILL_LINES_ENV = "IBKR_MARKET_DATA_TARGET_FILL_LINES";
 const MARKET_DATA_DIAGNOSTIC_SAMPLE_LIMIT = 20;
 const OPERATOR_POOL_IDS: MarketDataPoolId[] = [
@@ -277,20 +271,6 @@ const leaseChangeListeners = new Set<
 >();
 let nextLeaseId = 1;
 let runtimeFlowScannerLineCap: number | null = null;
-let lastIbkrPressureEvent:
-  | {
-      policy: "broker-pressure-observed" | "scanner-shed-damping";
-      state: MarketDataIbkrPressureState;
-      reason: string;
-      source: string;
-      observedAt: number;
-      dampingExpiresAt: number;
-      scannerLineCountBefore: number;
-      scannerLineTarget: number;
-      scannerLineCountAfter: number;
-      demotedLeaseCount: number;
-    }
-  | null = null;
 
 function classifyMarketDataOwner(input: {
   owner: string;
@@ -315,12 +295,6 @@ function classifyMarketDataOwner(input: {
   }
   if (owner.startsWith("flow-scanner")) {
     return "flow-scanner";
-  }
-  if (
-    owner.startsWith("watchlist-prewarm-filler") ||
-    owner.startsWith("watchlist-prewarm")
-  ) {
-    return "visible";
   }
   if (input.intent === "execution-live") {
     return "execution";
@@ -456,102 +430,6 @@ export function setMarketDataAdmissionRuntimeDefaults(input: {
         ? 0
         : lineBudget;
   rebalanceFlowScannerLeasesAboveEffectiveCap("scanner_runtime_cap_changed");
-}
-
-function normalizeRuntimeTimestamp(value: number | Date | null | undefined): number {
-  if (value instanceof Date) {
-    const timestamp = value.getTime();
-    return Number.isFinite(timestamp) ? timestamp : Date.now();
-  }
-  return typeof value === "number" && Number.isFinite(value) ? value : Date.now();
-}
-
-function normalizePressureText(value: unknown, fallback: string): string {
-  return typeof value === "string" && value.trim() ? value.trim() : fallback;
-}
-
-function shedFlowScannerLeasesForIbkrPressure(reason: string): {
-  demoted: MarketDataLease[];
-  scannerLineCountBefore: number;
-  scannerLineTarget: number;
-  scannerLineCountAfter: number;
-} {
-  const scannerLineCountBefore =
-    activeChargeableLineIdsForStrictPoolScope("flow-scanner").size;
-  const scannerLineTarget = Math.ceil(
-    scannerLineCountBefore * IBKR_PRESSURE_SCANNER_REMAINING_RATIO,
-  );
-  const demoted: MarketDataLease[] = [];
-  let scannerLineIds = activeChargeableLineIdsForStrictPoolScope("flow-scanner");
-  if (scannerLineIds.size <= scannerLineTarget) {
-    return {
-      demoted,
-      scannerLineCountBefore,
-      scannerLineTarget,
-      scannerLineCountAfter: scannerLineIds.size,
-    };
-  }
-
-  const candidates = Array.from(leases.values())
-    .filter((lease) => lease.pool === "flow-scanner")
-    .sort(
-      (left, right) =>
-        left.priority - right.priority ||
-        Date.parse(left.acquiredAt) - Date.parse(right.acquiredAt),
-    );
-
-  for (const candidate of candidates) {
-    if (scannerLineIds.size <= scannerLineTarget) {
-      break;
-    }
-    if (!candidate.lineIds.some((lineId) => scannerLineIds.has(lineId))) {
-      continue;
-    }
-    releaseLease(candidate, "demoted", reason);
-    demoted.push(candidate);
-    scannerLineIds = activeChargeableLineIdsForStrictPoolScope("flow-scanner");
-  }
-
-  return {
-    demoted,
-    scannerLineCountBefore,
-    scannerLineTarget,
-    scannerLineCountAfter: scannerLineIds.size,
-  };
-}
-
-export function recordMarketDataAdmissionIbkrPressure(input: {
-  state: MarketDataIbkrPressureState;
-  reason?: string | null;
-  source?: string | null;
-  observedAt?: number | Date | null;
-}): MarketDataLease[] {
-  const observedAt = normalizeRuntimeTimestamp(input.observedAt);
-  const reason = normalizePressureText(input.reason, "ibkr_market_data_pressure");
-  const source = normalizePressureText(input.source, "ibkr");
-  const scannerLineCountBefore =
-    activeChargeableLineIdsForStrictPoolScope("flow-scanner").size;
-  lastIbkrPressureEvent = {
-    policy: "broker-pressure-observed",
-    state: input.state,
-    reason,
-    source,
-    observedAt,
-    dampingExpiresAt: observedAt + IBKR_PRESSURE_SCANNER_DAMPING_WINDOW_MS,
-    scannerLineCountBefore,
-    scannerLineTarget: scannerLineCountBefore,
-    scannerLineCountAfter: scannerLineCountBefore,
-    demotedLeaseCount: 0,
-  };
-  return [];
-}
-
-function getActiveIbkrPressureDampingEvent(now = Date.now()) {
-  if (!lastIbkrPressureEvent) return null;
-  return lastIbkrPressureEvent.policy === "scanner-shed-damping" &&
-    lastIbkrPressureEvent.dampingExpiresAt > now
-    ? lastIbkrPressureEvent
-    : null;
 }
 
 export function getMarketDataAdmissionBudget() {
@@ -1839,12 +1717,6 @@ function buildFlowScannerDynamicLineCap(
   const optionReserveLineCount = protectedPriorityLineCount;
   const dynamicScannerLineCap = Math.max(0, budget.flowScannerLineCap);
   const effectiveScannerLineCap = dynamicScannerLineCap;
-  const ibkrPressureCap =
-    getActiveIbkrPressureDampingEvent()?.scannerLineTarget ?? null;
-  const dampedScannerLineCap =
-    ibkrPressureCap === null
-      ? effectiveScannerLineCap
-      : Math.max(0, Math.min(effectiveScannerLineCap, ibkrPressureCap));
   return {
     optionBudgetLineCount,
     nonScannerOptionLineCount: nonScannerOptionLineIds.size,
@@ -1853,9 +1725,9 @@ function buildFlowScannerDynamicLineCap(
     protectedPriorityLineCount,
     dynamicScannerLineCap,
     scannerStaticLineCap: budget.flowScannerLineCap,
-    scannerEffectiveLineCap: dampedScannerLineCap,
-    scannerPressureLineCap: ibkrPressureCap,
-    scannerPressureDampingActive: ibkrPressureCap !== null,
+    scannerEffectiveLineCap: effectiveScannerLineCap,
+    scannerPressureLineCap: null,
+    scannerPressureDampingActive: false,
     scannerActiveLineCount: scannerLineIds.size,
     scannerChargedLineCount: scannerChargedLineIds.size,
     scannerSharedLineCount: scannerSharedLineIds.size,
@@ -1933,7 +1805,6 @@ export function getMarketDataLinePressureSnapshot() {
     "flow-scanner",
     budget,
   );
-  const activeIbkrPressureEvent = getActiveIbkrPressureDampingEvent();
   const constrainedByActiveDemand = false;
   const utilizationLevel = marketDataLineUtilizationLevel({
     utilization,
@@ -1997,17 +1868,7 @@ export function getMarketDataLinePressureSnapshot() {
       scannerEffectiveLineCap - flowScannerChargedLines.size,
     ),
     scannerConstrainedByActiveDemand: constrainedByActiveDemand,
-    ibkrPressure: lastIbkrPressureEvent
-      ? {
-          ...lastIbkrPressureEvent,
-          observedAt: new Date(lastIbkrPressureEvent.observedAt).toISOString(),
-          dampingExpiresAt: new Date(
-            lastIbkrPressureEvent.dampingExpiresAt,
-          ).toISOString(),
-          dampingActive:
-            activeIbkrPressureEvent === lastIbkrPressureEvent,
-        }
-      : null,
+    ibkrPressure: null,
   };
 }
 
@@ -2492,9 +2353,7 @@ export function getMarketDataAdmissionDiagnostics() {
       usageRatio,
       usagePercent: Math.round(usageRatio * 1_000) / 10,
       dynamic: usage.dynamic,
-      recentIbkrPressureShed:
-        usage.id === "flow-scanner" &&
-        getActiveIbkrPressureDampingEvent() !== null,
+      recentIbkrPressureShed: false,
     };
   })
     .sort(
@@ -2579,5 +2438,4 @@ export function __resetMarketDataAdmissionForTests(): void {
   recentEvents.length = 0;
   nextLeaseId = 1;
   runtimeFlowScannerLineCap = null;
-  lastIbkrPressureEvent = null;
 }

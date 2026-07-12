@@ -166,7 +166,6 @@ import {
   releaseOptionQuoteDemand,
 } from "./option-quote-demand-coordinator";
 import { fetchMassiveOptionQuoteSnapshots } from "./massive-option-quote-stream";
-import { releaseMarketDataLeases } from "./market-data-admission";
 import {
   buildSnapTradeAccountPortfolioTotals,
   getSnapTradeAccountPortfolio,
@@ -197,7 +196,6 @@ import type {
 
 const COMBINED_ACCOUNT_ID = "combined";
 const ACCOUNT_POSITION_MARKET_DATA_TTL_MS = null;
-const ACCOUNT_MONITOR_EQUITY_QUOTE_TTL_MS = ACCOUNT_POSITION_MARKET_DATA_TTL_MS;
 const ACCOUNT_PAGE_SHARED_LIVE_READ_CACHE_TTL_MS = 2_000;
 const ACCOUNT_LIST_RESPONSE_CACHE_TTL_MS = 5_000;
 const ACCOUNT_ROUTE_EQUITY_HISTORY_RESPONSE_CACHE_TTL_MS = 30_000;
@@ -1616,41 +1614,19 @@ async function readOrdersForUniverseUncached(
 async function fetchEquityQuoteSnapshotsForPositions(
   positions: BrokerPositionSnapshot[],
 ): Promise<Map<string, QuoteSnapshot>> {
-  const admissionOwner = accountPositionEquityQuoteOwner(positions, "mixed");
   const symbols = accountPositionEquityQuoteSymbols(positions);
-  let quotesBySymbol = new Map<string, QuoteSnapshot>();
-
-  if (symbols.length) {
-    const payload = await getQuoteSnapshots({
-      symbols: symbols.join(","),
-      admissionOwner,
-      admissionIntent: "account-monitor-live",
-      ttlMs: ACCOUNT_MONITOR_EQUITY_QUOTE_TTL_MS,
-    }).catch(() => ({
-      quotes: [],
-    }));
-    quotesBySymbol = new Map(
-      (payload.quotes || []).map((quote) => [normalizeSymbol(quote.symbol), quote]),
-    );
-  } else {
-    releaseMarketDataLeases(admissionOwner, "account_position_set_empty");
+  if (!symbols.length) {
+    return new Map();
   }
 
-  return quotesBySymbol;
-}
-
-function accountPositionEquityQuoteOwner(
-  positions: AccountPositionOptionQuoteDemandRow[],
-  fallbackAccountKey: string,
-): string {
-  const accountKey = Array.from(
-    new Set(
-      positions
-        .map((position) => String(position.accountId || "").trim())
-        .filter(Boolean),
-    ),
-  ).sort().join("+") || fallbackAccountKey || "mixed";
-  return `account-position-equity-quotes:${accountKey}`;
+  const payload = await getQuoteSnapshots({
+    symbols: symbols.join(","),
+  }).catch(() => ({
+    quotes: [],
+  }));
+  return new Map(
+    (payload.quotes || []).map((quote) => [normalizeSymbol(quote.symbol), quote]),
+  );
 }
 
 function accountPositionEquityQuoteSymbols(
@@ -1666,27 +1642,10 @@ function accountPositionEquityQuoteSymbols(
   );
 }
 
-function declareAccountPositionEquityQuoteDemands(
+function refreshAccountPositionEquityQuotes(
   positions: BrokerPositionSnapshot[],
-  fallbackAccountKey: string,
 ): void {
-  const admissionOwner = accountPositionEquityQuoteOwner(
-    positions,
-    fallbackAccountKey,
-  );
-  const symbols = accountPositionEquityQuoteSymbols(positions);
-  if (symbols.length) {
-    void getQuoteSnapshots({
-      symbols: symbols.join(","),
-      admissionOwner,
-      admissionIntent: "account-monitor-live",
-      ttlMs: ACCOUNT_MONITOR_EQUITY_QUOTE_TTL_MS,
-    }).catch(() => ({
-      quotes: [],
-    }));
-  } else {
-    releaseMarketDataLeases(admissionOwner, "account_position_set_empty");
-  }
+  void fetchEquityQuoteSnapshotsForPositions(positions);
 }
 
 type AccountPositionOptionQuoteDemandState = OptionQuoteDemandQuoteState;
@@ -6731,10 +6690,7 @@ async function getAccountPositionsUncached(input: {
   const marketDataDemandPositions = allPositions.filter(
     (position) => Math.abs(Number(position.quantity)) > POSITION_QUANTITY_EPSILON,
   );
-  declareAccountPositionEquityQuoteDemands(
-    marketDataDemandPositions,
-    universe.requestedAccountId || input.accountId,
-  );
+  refreshAccountPositionEquityQuotes(marketDataDemandPositions);
   declareAccountPositionOptionQuoteDemands(
     marketDataDemandPositions,
     universe.requestedAccountId || input.accountId,

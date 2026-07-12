@@ -3495,7 +3495,7 @@ export const CancelOrderResponse = zod.object({
  */
 export const GetQuoteSnapshotsQueryParams = zod.object({
   "symbols": zod.coerce.string().describe('Comma-separated ticker symbols.'),
-  "tradingSession": zod.enum(['overnight']).optional().describe('Optional trading session override for quote routing. Use `overnight` to force IBKR overnight-capable quote snapshots.')
+  "tradingSession": zod.enum(['overnight']).optional().describe('Optional trading session override for quote routing. Use `overnight` to route through Massive REST instead of the realtime socket cache.')
 })
 
 export const GetQuoteSnapshotsResponse = zod.object({

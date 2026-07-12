@@ -2,10 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
-import {
-  __bridgeStreamsInternalsForTests,
-  resolveQuoteStreamSource,
-} from "./bridge-streams";
+import { resolveQuoteStreamSource } from "./bridge-streams";
 
 const source = readFileSync(new URL("./bridge-streams.ts", import.meta.url), "utf8");
 
@@ -24,34 +21,21 @@ test("stock quote streams advertise Massive source", () => {
 
 test("stock quote stream snapshot bootstrap uses platform snapshots, not websocket cache only", () => {
   const body = functionSource("fetchQuoteSnapshotPayload");
-  assert.match(body, /isMassiveStocksRealtimeConfigured\(\)/);
   assert.match(body, /await getQuoteSnapshots\(\{\s*symbols:\s*symbols\.join\(","\)\s*\}\)/);
-  assert.match(body, /quotes:\s*payload\.quotes\s+as Array</);
+  assert.match(body, /quote\.source === "massive"/);
   assert.doesNotMatch(body, /getCurrentMassiveStockQuoteSnapshots\(symbols\)/);
   assert.doesNotMatch(source, /bridge-quote-stream/);
 });
 
-test("account monitor stream canonicalizes option position conids to OPRA quote ids", () => {
-  const request =
-    __bridgeStreamsInternalsForTests.marketDataRequestFromInstrument(
-      {
-        symbol: "SPY",
-        assetClass: "Options",
-        optionContract: {
-          providerContractId: "890576032",
-          underlying: "SPY",
-          expirationDate: "2026-06-23T00:00:00.000Z",
-          strike: 740,
-          right: "call",
-          multiplier: 100,
-        },
-      },
-      { massiveStocksRealtime: false },
-    );
+test("account and order snapshots do not reserve market-data capacity", () => {
+  assert.doesNotMatch(source, /accountMonitorSnapshots/);
+  assert.doesNotMatch(source, /admitMarketDataLeases/);
+  assert.doesNotMatch(source, /releaseMarketDataLeases/);
 
-  assert.equal(request?.assetClass, "option");
-  assert.equal(request?.symbol, "SPY");
-  assert.equal(request?.underlying, "SPY");
-  assert.equal(request?.providerContractId, "O:SPY260623C00740000");
-  assert.notEqual(request?.providerContractId, "890576032");
+  const accountSnapshot = functionSource("fetchAccountSnapshotPayload");
+  assert.match(accountSnapshot, /await listIbkrAccounts/);
+  assert.match(accountSnapshot, /await listIbkrPositions/);
+
+  const orderSnapshot = functionSource("fetchOrderSnapshotPayload");
+  assert.match(orderSnapshot, /await listIbkrOrders/);
 });

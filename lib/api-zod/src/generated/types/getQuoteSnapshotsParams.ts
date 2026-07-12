@@ -13,7 +13,7 @@ export type GetQuoteSnapshotsParams = {
  */
 symbols: string;
 /**
- * Optional trading session override for quote routing. Use `overnight` to force IBKR overnight-capable quote snapshots.
+ * Optional trading session override for quote routing. Use `overnight` to route through Massive REST instead of the realtime socket cache.
  */
 tradingSession?: GetQuoteSnapshotsTradingSession;
 };
