@@ -5,7 +5,7 @@ export const isFiniteNumber = (value) =>
   typeof value === "number" && Number.isFinite(value);
 
 export const fmtM = (value) =>
-  value >= 1e6
+  Math.abs(value) >= 1e6
     ? `$${(value / 1e6).toFixed(1)}M`
     : `$${(value / 1e3).toFixed(0)}K`;
 
