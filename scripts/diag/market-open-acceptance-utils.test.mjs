@@ -99,13 +99,15 @@ test("runtime sample summaries preserve peaks and exact-window deltas", () => {
   const second = pickRuntimeAcceptanceSnapshot(secondRuntime);
 
   const summary = summarizeRuntimeSamples([
-    { at: "2026-07-13T13:30:00.000Z", snapshot: first },
-    { at: "2026-07-13T13:30:05.000Z", snapshot: second },
+    { at: "2026-07-13T13:30:00.000Z", fetchDurationMs: 10, snapshot: first },
+    { at: "2026-07-13T13:30:05.000Z", fetchDurationMs: 25, snapshot: second },
   ]);
   assert.equal(summary.peakEventLoopUtilization, 0.8);
   assert.equal(summary.peakEventLoopDelayP95Ms, 120);
   assert.equal(summary.peakHeapUsedMb, 700);
   assert.equal(summary.peakDbTotalWaiting, 9);
+  assert.equal(summary.peakRuntimeFetchMs, 25);
+  assert.equal(summary.averageRuntimeFetchMs, 17.5);
   assert.equal(summary.counterDelta.storedBarsHitCount, 5);
 });
 

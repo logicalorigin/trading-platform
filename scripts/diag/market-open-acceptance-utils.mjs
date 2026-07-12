@@ -39,6 +39,8 @@ export function summarizeRuntimeSamples(samples) {
     peakDbRawWaiting: maxValue(valid, (sample) => sample.snapshot.db.rawWaiting),
     peakDbAdmissionQueued: maxValue(valid, (sample) => sample.snapshot.db.admissionQueued),
     peakDbTotalWaiting: maxValue(valid, (sample) => sample.snapshot.db.totalWaiting),
+    peakRuntimeFetchMs: maxValue(valid, (sample) => sample.fetchDurationMs),
+    averageRuntimeFetchMs: averageValue(valid, (sample) => sample.fetchDurationMs),
     counterDelta:
       first && last ? diffRuntimeCounters(first.counters, last.counters) : {},
     first,
@@ -175,6 +177,13 @@ export function pickRuntimeAcceptanceSnapshot(runtime) {
 function maxValue(values, selector) {
   const numbers = values.map(selector).map(finite).filter((value) => value != null);
   return numbers.length ? Math.max(...numbers) : null;
+}
+
+function averageValue(values, selector) {
+  const numbers = values.map(selector).map(finite).filter((value) => value != null);
+  return numbers.length
+    ? numbers.reduce((sum, value) => sum + value, 0) / numbers.length
+    : null;
 }
 
 function finite(value) {

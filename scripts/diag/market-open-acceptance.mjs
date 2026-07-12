@@ -353,10 +353,13 @@ function startRuntimeSampler() {
     pending = pending.then(async () => {
       try {
         const apiPid = await currentApiPid();
+        const startedAt = performance.now();
+        const snapshot = await captureRuntimeSnapshot();
         samples.push({
           at: new Date().toISOString(),
           apiPid,
-          snapshot: await captureRuntimeSnapshot(),
+          fetchDurationMs: performance.now() - startedAt,
+          snapshot,
         });
       } catch (error) {
         samples.push({ at: new Date().toISOString(), error: errorMessage(error) });
