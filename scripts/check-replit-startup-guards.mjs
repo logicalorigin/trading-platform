@@ -2,9 +2,16 @@
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { detectReplitConfigClobber } from "./replit-config-clobber.mjs";
+import {
+  detectReplitConfigClobber,
+  tomlRoot,
+  tomlSection,
+} from "./replit-config-clobber.mjs";
 
-const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const repoRoot = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "..",
+);
 const failures = [];
 
 function read(relPath) {
@@ -30,6 +37,9 @@ function check(condition, message) {
 }
 
 const replit = read(".replit");
+const replitRoot = tomlRoot(replit);
+const replitAgent = tomlSection(replit, "agent") ?? "";
+const replitWorkflows = tomlSection(replit, "workflows") ?? "";
 const rootPackage = JSON.parse(read("package.json"));
 const rootScripts = rootPackage.scripts ?? {};
 
@@ -69,8 +79,8 @@ function rootReplitPortMappings(source) {
 }
 
 check(
-  /^\s*stack\s*=\s*"PNPM_WORKSPACE"\s*$/m.test(replit),
-  ".replit must keep [agent] stack = \"PNPM_WORKSPACE\" so the PYRUS web artifact owns app bring-up.",
+  /^\s*stack\s*=\s*"PNPM_WORKSPACE"\s*$/m.test(replitAgent),
+  '.replit must keep [agent] stack = "PNPM_WORKSPACE" so the PYRUS web artifact owns app bring-up.',
 );
 check(
   JSON.stringify(rootReplitPortMappings(replit)) ===
@@ -81,17 +91,12 @@ check(
   ".replit must expose only the active PYRUS runtime ports: 8080 -> 8080 and 18747 -> 3000. Do not restore stale/generated ports such as 8000, 3002, 3007, 18748, or 18749.",
 );
 check(
-  !/^\s*run\s*=/m.test(replit),
+  !/^\s*run\s*=/m.test(replitRoot),
   ".replit must not define a root run command; use Replit's default Run Replit App entry.",
 );
 check(
-  // Section-scoped: runButton must appear inside [workflows] itself (no other
-  // section header may intervene), so a runButton stranded under a different
-  // section cannot satisfy this check.
-  /^\s*\[workflows\]\s*\r?\n(?:(?!\s*\[)[^\n]*\r?\n)*?\s*runButton\s*=\s*"artifacts\/pyrus: web"\s*(?:\r?\n|$)/m.test(
-    replit,
-  ),
-  ".replit must keep [workflows] runButton = \"artifacts/pyrus: web\" so the primary Run button targets the single PYRUS app workflow.",
+  /^\s*runButton\s*=\s*"artifacts\/pyrus: web"\s*$/m.test(replitWorkflows),
+  '.replit must keep [workflows] runButton = "artifacts/pyrus: web" so the primary Run button targets the single PYRUS app workflow.',
 );
 check(
   !/^\s*\[\[workflows\.workflow\]\]\s*$/m.test(replit),
@@ -153,7 +158,10 @@ check(
   ),
   "api-server must not define a separate Replit artifact; PYRUS web owns app bring-up.",
 );
-const artifactTomls = findFiles(path.join(repoRoot, "artifacts"), "artifact.toml")
+const artifactTomls = findFiles(
+  path.join(repoRoot, "artifacts"),
+  "artifact.toml",
+)
   .filter((relPath) => relPath.includes("/.replit-artifact/"))
   .sort();
 check(
@@ -199,45 +207,56 @@ check(
 );
 
 const pyrusArtifact = read("artifacts/pyrus/.replit-artifact/artifact.toml");
+const artifactRoot = tomlRoot(pyrusArtifact);
+const artifactDevelopment =
+  tomlSection(pyrusArtifact, "services.development") ?? "";
+const artifactProductionBuild =
+  tomlSection(pyrusArtifact, "services.production.build") ?? "";
+const artifactProductionRun =
+  tomlSection(pyrusArtifact, "services.production.run") ?? "";
+const artifactProductionRunEnv =
+  tomlSection(pyrusArtifact, "services.production.run.env") ?? "";
+const artifactProductionHealth =
+  tomlSection(pyrusArtifact, "services.production.health.startup") ?? "";
 check(
-  /^\s*kind\s*=\s*"web"\s*$/m.test(pyrusArtifact),
-  "PYRUS artifact must remain kind = \"web\" so Replit treats it as the platform web surface.",
+  /^\s*kind\s*=\s*"web"\s*$/m.test(artifactRoot),
+  'PYRUS artifact must remain kind = "web" so Replit treats it as the platform web surface.',
 );
 check(
-  /^\s*previewPath\s*=\s*"\/"\s*$/m.test(pyrusArtifact),
-  "PYRUS artifact must keep previewPath = \"/\" so the platform loads at the default app route.",
+  /^\s*previewPath\s*=\s*"\/"\s*$/m.test(artifactRoot),
+  'PYRUS artifact must keep previewPath = "/" so the platform loads at the default app route.',
 );
 check(
-  /^\s*title\s*=\s*"PYRUS Platform"\s*$/m.test(pyrusArtifact),
-  "PYRUS artifact must keep title = \"PYRUS Platform\" so the workspace identifies the primary web artifact correctly.",
+  /^\s*title\s*=\s*"PYRUS Platform"\s*$/m.test(artifactRoot),
+  'PYRUS artifact must keep title = "PYRUS Platform" so the workspace identifies the primary web artifact correctly.',
 );
 check(
-  /^\s*id\s*=\s*"artifacts\/pyrus"\s*$/m.test(pyrusArtifact),
-  "PYRUS artifact must keep id = \"artifacts/pyrus\" so Replit loads it as the platform artifact.",
+  /^\s*id\s*=\s*"artifacts\/pyrus"\s*$/m.test(artifactRoot),
+  'PYRUS artifact must keep id = "artifacts/pyrus" so Replit loads it as the platform artifact.',
 );
 check(
-  /^\s*router\s*=\s*"path"\s*$/m.test(pyrusArtifact),
-  "PYRUS artifact must keep router = \"path\" so it owns the root path without replacing API routing.",
+  /^\s*router\s*=\s*"path"\s*$/m.test(artifactRoot),
+  'PYRUS artifact must keep router = "path" so it owns the root path without replacing API routing.',
 );
 check(
   /^\s*run\s*=\s*"trap '' HUP; exec pnpm --filter @workspace\/pyrus run dev:replit"\s*$/m.test(
-    pyrusArtifact,
+    artifactDevelopment,
   ),
   "PYRUS artifact dev startup must ignore workflow SIGHUP before running pnpm --filter @workspace/pyrus run dev:replit.",
 );
 check(
   /^\s*args\s*=\s*\["pnpm",\s*"run",\s*"build:pyrus-app"\]\s*$/m.test(
-    pyrusArtifact,
+    artifactProductionBuild,
   ),
   "PYRUS production build must use build:pyrus-app so web and API are built together.",
 );
 check(
   /^\s*args\s*=\s*\["node",\s*"--enable-source-maps",\s*"artifacts\/api-server\/dist\/index\.mjs"\]\s*$/m.test(
-    pyrusArtifact,
+    artifactProductionRun,
   ) &&
-    /^\s*PORT\s*=\s*"18747"\s*$/m.test(pyrusArtifact) &&
-    /^\s*PYRUS_SERVE_WEB\s*=\s*"1"\s*$/m.test(pyrusArtifact) &&
-    /^\s*path\s*=\s*"\/api\/healthz"\s*$/m.test(pyrusArtifact),
+    /^\s*PORT\s*=\s*"18747"\s*$/m.test(artifactProductionRunEnv) &&
+    /^\s*PYRUS_SERVE_WEB\s*=\s*"1"\s*$/m.test(artifactProductionRunEnv) &&
+    /^\s*path\s*=\s*"\/api\/healthz"\s*$/m.test(artifactProductionHealth),
   "PYRUS production run must start the API server as the single fullstack web service on port 18747.",
 );
 
@@ -374,22 +393,30 @@ check(
     pyrusRunner.includes("PYRUS_DEV_DUPLICATE_CHECK_ONLY") &&
     !pyrusRunner.includes("PYRUS_DEV_DUPLICATE_RESTART_AFTER_MS") &&
     !pyrusRunner.includes("shouldHandoffDuplicateReplitStart") &&
-    pyrusRunner.includes("intentional Run-button restart and requesting controlled handoff") &&
-    pyrusRunner.includes("duplicate-check-only found no valid PYRUS dev supervisor lock") &&
+    pyrusRunner.includes(
+      "intentional Run-button restart and requesting controlled handoff",
+    ) &&
+    pyrusRunner.includes(
+      "duplicate-check-only found no valid PYRUS dev supervisor lock",
+    ) &&
     pyrusRunner.includes("exiting without starting API/web processes") &&
-    pyrusRunner.includes("a real Replit workflow start would request controlled handoff") &&
+    pyrusRunner.includes(
+      "a real Replit workflow start would request controlled handoff",
+    ) &&
     pyrusRunner.includes("supervisor ${ownerPid} already alive") &&
     !pyrusRunner.includes("duplicate Replit workflow start detected") &&
     !pyrusRunner.includes("exiting without restart") &&
     pyrusRunner.includes("requestSupervisorHandoff") &&
     pyrusRunner.includes("pyrus-dev-lifecycle-${apiPort}.jsonl") &&
-    pyrusRunner.includes("writeLifecycleEvent(\"heartbeat\"") &&
+    pyrusRunner.includes('writeLifecycleEvent("heartbeat"') &&
     pyrusRunner.includes("readPreviousLifecycleState") &&
     pyrusRunner.includes("supervisor-shutdown-complete") &&
     pyrusRunner.includes('process.env.REPLIT_MODE === "workflow"') &&
     !pyrusRunner.includes('process.env.REPLIT_MODE === "workflow" ||') &&
     pyrusRunner.includes("not authority to") &&
-    !pyrusRunner.includes("refusing to start the full app supervisor from a Codex-owned shell") &&
+    !pyrusRunner.includes(
+      "refusing to start the full app supervisor from a Codex-owned shell",
+    ) &&
     pyrusRunner.includes("controlled handoff") &&
     pyrusRunner.includes("overlapping workflow restart cascade") &&
     pyrusRunner.includes("ignoreWorkflowHangup") &&
@@ -428,7 +455,9 @@ const replitScribeArtifacts = read("scripts/src/replit-scribe-artifacts.ts");
 check(
   replitScribeArtifacts.includes("PYRUS_ALLOW_REPLIT_CONTROL_PLANE_CLEANUP") &&
     replitScribeArtifacts.includes("--confirm-control-plane-cleanup") &&
-    replitScribeArtifacts.includes("may trigger Replit artifact/env reconciliation"),
+    replitScribeArtifacts.includes(
+      "may trigger Replit artifact/env reconciliation",
+    ),
   "replit-scribe-artifacts.ts must require explicit control-plane maintenance opt-in before backup-and-clean cleanup.",
 );
 

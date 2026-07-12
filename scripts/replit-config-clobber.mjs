@@ -18,6 +18,38 @@ const EXPECTED_PORT_MAPPINGS = [
   { localPort: 18747, externalPort: 3000 },
 ];
 
+function tomlHeader(line) {
+  return (
+    line.match(/^\s*\[([^\[\]]+)\]\s*(?:#.*)?$/)?.[1] ??
+    line.match(/^\s*\[\[([^\[\]]+)\]\]\s*(?:#.*)?$/)?.[1] ??
+    null
+  );
+}
+
+export function tomlRoot(source) {
+  const lines = [];
+  for (const line of source.split(/\r?\n/)) {
+    if (tomlHeader(line)) break;
+    lines.push(line);
+  }
+  return lines.join("\n");
+}
+
+export function tomlSection(source, section) {
+  const lines = [];
+  let active = false;
+  for (const line of source.split(/\r?\n/)) {
+    const header = tomlHeader(line);
+    if (header) {
+      if (active) break;
+      active = header === section;
+      continue;
+    }
+    if (active) lines.push(line);
+  }
+  return active ? lines.join("\n") : null;
+}
+
 function parsePortMappings(source) {
   const mappings = [];
   let current = null;
@@ -57,26 +89,25 @@ export function detectReplitConfigClobber(repoRoot) {
   }
 
   const replit = readFileSync(replitPath, "utf8");
+  const root = tomlRoot(replit);
+  const nix = tomlSection(replit, "nix") ?? "";
+  const workflows = tomlSection(replit, "workflows") ?? "";
 
-  if (!/^\s*channel\s*=\s*"stable-25_05"\s*$/m.test(replit)) {
+  if (!/^\s*channel\s*=\s*"stable-25_05"\s*$/m.test(nix)) {
     problems.push('.replit is missing [nix] channel = "stable-25_05"');
   }
-  if (!/^modules\s*=\s*\[[^\]]*"postgresql-16"[^\]]*\]/m.test(replit)) {
-    problems.push('.replit modules is missing "postgresql-16" (psql/client tooling)');
+  if (!/^modules\s*=\s*\[[^\]]*"postgresql-16"[^\]]*\]/m.test(root)) {
+    problems.push(
+      '.replit modules is missing "postgresql-16" (psql/client tooling)',
+    );
   }
-  if (
-    !/^\s*\[workflows\]\s*\r?\n(?:(?!\s*\[)[^\n]*\r?\n)*?\s*runButton\s*=\s*"artifacts\/pyrus: web"\s*(?:\r?\n|$)/m.test(
-      replit,
-    )
-  ) {
+  if (!/^\s*runButton\s*=\s*"artifacts\/pyrus: web"\s*$/m.test(workflows)) {
     problems.push(
       '.replit is missing [workflows] runButton = "artifacts/pyrus: web" (Run button no longer targets the PYRUS web workflow)',
     );
   }
   const ports = parsePortMappings(replit);
-  if (
-    JSON.stringify(ports) !== JSON.stringify(EXPECTED_PORT_MAPPINGS)
-  ) {
+  if (JSON.stringify(ports) !== JSON.stringify(EXPECTED_PORT_MAPPINGS)) {
     problems.push(
       `.replit [[ports]] blocks do not match the expected pair (8080 -> 8080, 18747 -> 3000); found ${ports.length} mapping(s). Recovery clobbers inject stale generated ports.`,
     );
