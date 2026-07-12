@@ -1,26 +1,56 @@
 #!/usr/bin/env node
 import { spawn } from "node:child_process";
 import { createReadStream } from "node:fs";
-import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, readlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import readline from "node:readline";
 import { setTimeout as sleep } from "node:timers/promises";
 
-import { parseCpuProfileSummaryOutput } from "./cpu-profile-utils.mjs";
+import {
+  parseCpuProfileSummaryOutput,
+  readInspectorProcessId,
+} from "./cpu-profile-utils.mjs";
 import {
   acceptanceFailedStepKeys,
+  assertApiDescendsFromSupervisor,
+  assertApiProcessRole,
+  assertFreshApiHeartbeat,
+  assertRuntimeSamplesComplete,
+  assertSameProcessIdentity,
   assertStableApiPid,
+  calculateCounterRate,
+  cleanupHeapProfiler,
+  createSingleFlightRunner,
   diffRuntimeCounters,
+  isWithinAcceptanceWindow,
+  isRunDevSupervisorProcess,
   pickRuntimeAcceptanceSnapshot,
+  psqlEnvironment,
   summarizeRuntimeSamples,
+  terminateChildWithFallback,
+  validateRuntimeAcceptanceSnapshot,
+  withTimeout,
 } from "./market-open-acceptance-utils.mjs";
 
 const REPO_ROOT = process.cwd();
+const API_ROOT = path.join(REPO_ROOT, "artifacts", "api-server");
+const API_ENTRYPOINT = "./dist/index.mjs";
+const PYRUS_ROOT = path.join(REPO_ROOT, "artifacts", "pyrus");
 const RECORDER_DIR = path.join(REPO_ROOT, ".pyrus-runtime", "flight-recorder");
 const CPU_PROFILE_MS = 20_000;
 const ALLOC_PROFILE_MS = 20_000;
 const SYMBOL_STATE_GATE_MS = 60_000;
 const RUNTIME_SAMPLE_MS = 5_000;
+const CDP_COMMAND_TIMEOUT_MS = 60_000;
+const COMMAND_KILL_GRACE_MS = 2_000;
+const configuredHeartbeatMs = Number.parseInt(
+  process.env.PYRUS_API_FLIGHT_RECORDER_INTERVAL_MS ?? "5000",
+  10,
+);
+const MAX_API_HEARTBEAT_AGE_MS =
+  Number.isFinite(configuredHeartbeatMs) && configuredHeartbeatMs > 0
+    ? configuredHeartbeatMs * 3
+    : 15_000;
 const INSPECTOR_URL = "http://127.0.0.1:9229/json/list";
 const RUNTIME_URL = "http://127.0.0.1:8080/api/diagnostics/runtime";
 const REQUIRED_STEPS = [
@@ -77,11 +107,11 @@ try {
     runStep("cpuProfile", "4a. CPU profile", captureCpuProfile),
     runStep("allocationProfile", "4b. allocation profile", captureAllocationProfile),
   ]);
-  await runStep("counterFinal", "5. runtime counter final", captureRuntimeSnapshot);
-  state.windowEndedAt = new Date().toISOString();
 } finally {
   await runtimeSampler.stop();
 }
+await runStep("counterFinal", "5. runtime counter final", captureRuntimeSnapshot);
+state.windowEndedAt = new Date().toISOString();
 state.runtimeSamples = runtimeSampler.samples;
 state.steps.counters = buildCounterWindowStep();
 await runStep("firehose", "6. exact-window firehose", captureFirehoseWindow);
@@ -100,7 +130,7 @@ console.log(renderMarkdownTable(summaryRows));
 console.log("");
 console.log(`report.md: ${path.join(outDir, "report.md")}`);
 if (failedSteps.length) {
-  console.error(`acceptance incomplete: ${failedSteps.join(", ")}`);
+  console.error(`capture incomplete: ${failedSteps.join(", ")}`);
   process.exitCode = 1;
 }
 
@@ -126,7 +156,19 @@ async function captureIdentity() {
   const currentPath = path.join(RECORDER_DIR, "current.json");
   const apiCurrent = await readJson(apiCurrentPath);
   const current = await readJsonIfExists(currentPath);
+  assertFreshApiHeartbeat(
+    apiCurrent.updatedAt,
+    Date.now(),
+    MAX_API_HEARTBEAT_AGE_MS,
+  );
   const apiPid = finiteNumber(apiCurrent.pid);
+  assertStableApiPid(apiPid, apiPid);
+  if (!pidIsAlive(apiPid)) {
+    throw new Error(`recorded API pid is unavailable or dead: ${apiPid ?? "n-a"}`);
+  }
+  const apiProcessIdentity = await readProcIdentity(apiPid);
+  assertSameProcessIdentity(apiProcessIdentity, apiProcessIdentity);
+  assertApiProcessRole(apiProcessIdentity, API_ROOT, API_ENTRYPOINT);
   const supervisors = await findRunDevSupervisors();
   const currentSupervisorPid = finiteNumber(current?.supervisor?.pid);
   const supervisorPid =
@@ -137,15 +179,14 @@ async function captureIdentity() {
   const pid2Owned = supervisorAncestry.some((entry) => cmdlineIsPid2(entry.cmdlineRaw ?? ""));
   const gitSha = findRecordedGitSha(apiCurrent) ?? findRecordedGitSha(current) ?? null;
 
-  if (!apiPid || !pidIsAlive(apiPid)) {
-    throw new Error(`recorded API pid is unavailable or dead: ${apiPid ?? "n-a"}`);
-  }
   if (supervisors.length !== 1) {
     throw new Error(`expected one runDevApp supervisor, found ${supervisors.length}`);
   }
   if (!pid2Owned) {
     throw new Error(`supervisor ${supervisorPid ?? "n-a"} is not pid2-owned`);
   }
+  const apiAncestry = await processAncestry(apiPid);
+  assertApiDescendsFromSupervisor(apiAncestry, supervisorPid);
 
   return {
     apiCurrentPath: path.relative(REPO_ROOT, apiCurrentPath),
@@ -158,6 +199,8 @@ async function captureIdentity() {
     supervisorMatchCount: supervisors.length,
     supervisorCandidatePids: supervisors.map((item) => item.pid),
     pid2Owned,
+    apiProcessIdentity,
+    apiAncestry,
     supervisorAncestry,
     apiCurrent,
     supervisorCurrent: current?.supervisor ?? null,
@@ -168,10 +211,8 @@ async function captureSymbolStateGate() {
   const first = await readSymbolStateWriteCounter();
   await sleep(SYMBOL_STATE_GATE_MS);
   const second = await readSymbolStateWriteCounter();
-  const elapsedMs = second.atMs - first.atMs;
-  const deltaRows = second.total - first.total;
-  const rowsPerMin = elapsedMs > 0 ? (deltaRows * 60_000) / elapsedMs : null;
-  const rounded = rowsPerMin === null ? "n-a" : String(Math.round(rowsPerMin));
+  const { elapsedMs, deltaRows, rowsPerMin } = calculateCounterRate(first, second);
+  const rounded = String(Math.round(rowsPerMin));
   return {
     first,
     second,
@@ -223,11 +264,14 @@ async function captureAllocationProfile() {
   if (!apiPid) throw new Error("api pid unavailable");
   const rawProfilePath = path.join(outDir, "allocation.heapprofile");
   const inspector = await openInspector(apiPid);
+  let samplingStarted = false;
   try {
     await inspector.send("HeapProfiler.enable");
     await inspector.send("HeapProfiler.startSampling", { samplingInterval: 65_536 });
+    samplingStarted = true;
     await sleep(ALLOC_PROFILE_MS);
     const { profile } = await inspector.send("HeapProfiler.stopSampling");
+    samplingStarted = false;
     await writeFile(rawProfilePath, `${JSON.stringify(profile)}\n`);
     const heapStats = await evaluateHeapStats(inspector);
     const aggregate = aggregateHeapProfile(profile);
@@ -243,6 +287,7 @@ async function captureAllocationProfile() {
       topRows: aggregate.rows.slice(0, 15),
     };
   } finally {
+    await cleanupHeapProfiler(inspector, samplingStarted);
     inspector.close();
   }
 }
@@ -256,7 +301,9 @@ async function captureRuntimeSnapshot() {
     throw new Error(`GET ${RUNTIME_URL} -> ${response.status}: ${trimForError(await response.text())}`);
   }
   const runtime = await response.json();
-  return pickRuntimeAcceptanceSnapshot(runtime);
+  return validateRuntimeAcceptanceSnapshot(
+    pickRuntimeAcceptanceSnapshot(runtime),
+  );
 }
 
 async function captureFirehoseWindow() {
@@ -299,7 +346,7 @@ async function captureFirehoseWindow() {
       if (event?.event !== "api-db-query-slow") continue;
       parsedSlowEvents += 1;
       const timeMs = Date.parse(event.time);
-      if (!Number.isFinite(timeMs) || timeMs < cutoffMs || timeMs > now + 60_000) continue;
+      if (!isWithinAcceptanceWindow(timeMs, cutoffMs, now)) continue;
       includedEvents += 1;
       const shape = sqlShape(event.sql, event.queryName);
       const current =
@@ -310,7 +357,6 @@ async function captureFirehoseWindow() {
           maxMs: 0,
           firstAt: event.time,
           lastAt: event.time,
-          sampleSql: event.sql ?? null,
         };
       const durationMs = finiteNumber(event.durationMs) ?? 0;
       current.count += 1;
@@ -337,43 +383,53 @@ async function captureFirehoseWindow() {
 
 async function currentApiPid() {
   const apiCurrent = await readJsonIfExists(path.join(RECORDER_DIR, "api-current.json"));
-  const identityPid = finiteNumber(stepData(state, "identity")?.apiPid);
+  assertFreshApiHeartbeat(
+    apiCurrent?.updatedAt,
+    Date.now(),
+    MAX_API_HEARTBEAT_AGE_MS,
+  );
+  const identity = stepData(state, "identity");
+  const identityPid = finiteNumber(identity?.apiPid);
   const freshPid = finiteNumber(apiCurrent?.pid);
   assertStableApiPid(identityPid, freshPid);
   if (!pidIsAlive(identityPid)) {
     throw new Error(`API pid ${identityPid} is no longer alive`);
   }
+  const currentIdentity = await readProcIdentity(identityPid);
+  assertSameProcessIdentity(identity?.apiProcessIdentity, currentIdentity);
+  assertApiProcessRole(currentIdentity, API_ROOT, API_ENTRYPOINT);
+  assertApiDescendsFromSupervisor(
+    await processAncestry(identityPid),
+    identity?.supervisorPid,
+  );
   return identityPid;
 }
 
 function startRuntimeSampler() {
   const samples = [];
-  let pending = Promise.resolve();
-  const sample = () => {
-    pending = pending.then(async () => {
-      try {
-        const apiPid = await currentApiPid();
-        const startedAt = performance.now();
-        const snapshot = await captureRuntimeSnapshot();
-        samples.push({
-          at: new Date().toISOString(),
-          apiPid,
-          fetchDurationMs: performance.now() - startedAt,
-          snapshot,
-        });
-      } catch (error) {
-        samples.push({ at: new Date().toISOString(), error: errorMessage(error) });
-      }
-    });
-  };
-  sample();
-  const timer = setInterval(sample, RUNTIME_SAMPLE_MS);
+  const runner = createSingleFlightRunner(async () => {
+    try {
+      const apiPid = await currentApiPid();
+      const startedAt = performance.now();
+      const snapshot = await captureRuntimeSnapshot();
+      samples.push({
+        at: new Date().toISOString(),
+        apiPid,
+        fetchDurationMs: performance.now() - startedAt,
+        snapshot,
+      });
+    } catch (error) {
+      samples.push({ at: new Date().toISOString(), error: errorMessage(error) });
+    }
+  });
+  runner.run();
+  const timer = setInterval(() => runner.run(), RUNTIME_SAMPLE_MS);
   timer.unref?.();
   return {
     samples,
     async stop() {
       clearInterval(timer);
-      await pending;
+      await runner.wait();
     },
   };
 }
@@ -383,6 +439,15 @@ function buildCounterWindowStep() {
   const after = stepData(state, "counterFinal");
   if (!before || !after) {
     return { ok: false, unavailable: "runtime counter boundary unavailable" };
+  }
+  try {
+    assertRuntimeSamplesComplete(state.runtimeSamples, {
+      windowStart: state.windowStartedAt,
+      windowEnd: state.windowEndedAt,
+      maxGapMs: RUNTIME_SAMPLE_MS * 2,
+    });
+  } catch (error) {
+    return { ok: false, unavailable: errorMessage(error) };
   }
   const runtimeWindow = summarizeRuntimeSamples([
     { at: state.windowStartedAt, snapshot: before },
@@ -412,7 +477,8 @@ async function readSymbolStateWriteCounter() {
     "  where relname = 'signal_monitor_symbol_states'",
     "), 0);",
   ].join(" ");
-  const result = await runCommand("psql", [databaseUrl, "-AtX", "-v", "ON_ERROR_STOP=1", "-c", query], {
+  const result = await runCommand("psql", ["-AtX", "-v", "ON_ERROR_STOP=1", "-c", query], {
+    env: psqlEnvironment(databaseUrl),
     timeoutMs: 30_000,
   });
   if (result.code !== 0) {
@@ -433,7 +499,24 @@ async function openInspector(pid) {
   const list = await response.json();
   const target = list.find((item) => item.webSocketDebuggerUrl);
   if (!target) throw new Error("no inspector target found on :9229");
-  return connectCdp(target.webSocketDebuggerUrl);
+  const inspector = await connectCdp(target.webSocketDebuggerUrl);
+  try {
+    const inspectedPid = readInspectorProcessId(
+      await inspector.send("Runtime.evaluate", {
+        expression: "process.pid",
+        returnByValue: true,
+      }),
+    );
+    if (inspectedPid !== pid) {
+      throw new Error(
+        `inspector target pid ${inspectedPid ?? "unknown"} does not match requested pid ${pid}`,
+      );
+    }
+    return inspector;
+  } catch (error) {
+    inspector.close();
+    throw error;
+  }
 }
 
 async function connectCdp(url) {
@@ -458,14 +541,23 @@ async function connectCdp(url) {
     for (const { reject } of pending.values()) reject(new Error("inspector websocket closed"));
     pending.clear();
   });
-  await opened;
+  try {
+    await withTimeout(opened, 5_000, "inspector websocket open");
+  } catch (error) {
+    ws.close();
+    throw error;
+  }
   return {
     send(method, params = {}) {
-      return new Promise((resolve, reject) => {
-        const id = nextId++;
-        pending.set(id, { resolve, reject });
-        ws.send(JSON.stringify({ id, method, params }));
-      });
+      return withTimeout(
+        new Promise((resolve, reject) => {
+          const id = nextId++;
+          pending.set(id, { resolve, reject });
+          ws.send(JSON.stringify({ id, method, params }));
+        }),
+        CDP_COMMAND_TIMEOUT_MS,
+        `inspector ${method}`,
+      );
     },
     close() {
       try {
@@ -700,7 +792,7 @@ function renderReport(reportState, summaryRows) {
     "",
     `Captured: ${reportState.capturedAt}`,
     `Output dir: ${reportState.outDir}`,
-    `Acceptance: ${reportState.acceptance?.passed ? "PASS" : "INCOMPLETE"}`,
+    `Capture completeness: ${reportState.acceptance?.passed ? "COMPLETE" : "INCOMPLETE"}`,
     reportState.acceptance?.failedSteps?.length
       ? `Failed steps: ${reportState.acceptance.failedSteps.join(", ")}`
       : "Failed steps: none",
@@ -856,9 +948,10 @@ async function findRunDevSupervisors() {
   for (const entry of entries) {
     if (!entry.isDirectory() || !/^\d+$/.test(entry.name)) continue;
     const pid = Number(entry.name);
-    const cmdlineRaw = await readProcCmdlineRaw(pid);
+    const identity = await readProcIdentity(pid);
+    const cmdlineRaw = identity?.cmdlineRaw ?? "";
     const cmdline = printableCmdline(cmdlineRaw);
-    if (cmdline.includes("runDevApp.mjs")) {
+    if (isRunDevSupervisorProcess(cmdlineRaw, identity?.cwd, PYRUS_ROOT)) {
       matches.push({ pid, cmdline });
     }
   }
@@ -890,6 +983,24 @@ async function readProcCmdlineRaw(pid) {
     return await readFile(`/proc/${pid}/cmdline`, "utf8");
   } catch {
     return "";
+  }
+}
+
+async function readProcIdentity(pid) {
+  // ponytail: /proc fingerprinting is the Node platform ceiling; use pidfd when Node exposes it.
+  try {
+    const [content, cmdlineRaw, cwd] = await Promise.all([
+      readFile(`/proc/${pid}/stat`, "utf8"),
+      readFile(`/proc/${pid}/cmdline`, "utf8"),
+      readlink(`/proc/${pid}/cwd`),
+    ]);
+    const end = content.lastIndexOf(")");
+    if (end === -1 || !cmdlineRaw) return null;
+    const fields = content.slice(end + 2).trim().split(/\s+/);
+    const startTimeTicks = fields[19];
+    return startTimeTicks ? { pid, startTimeTicks, cmdlineRaw, cwd } : null;
+  } catch {
+    return null;
   }
 }
 
@@ -948,18 +1059,33 @@ function runCommand(command, args, options = {}) {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, {
       cwd: REPO_ROOT,
-      env: process.env,
+      env: options.env ?? process.env,
       stdio: ["ignore", "pipe", "pipe"],
     });
     let stdout = "";
     let stderr = "";
     let settled = false;
+    let forceKillTimer = null;
     const timer =
       options.timeoutMs == null
         ? null
         : setTimeout(() => {
             if (settled) return;
-            child.kill("SIGTERM");
+            forceKillTimer = terminateChildWithFallback(
+              child,
+              options.killGraceMs ?? COMMAND_KILL_GRACE_MS,
+              () => {
+                if (settled) return;
+                settled = true;
+                child.stdout.destroy();
+                child.stderr.destroy();
+                reject(
+                  new Error(
+                    `command timed out after ${options.timeoutMs}ms and was force-killed`,
+                  ),
+                );
+              },
+            );
             stderr += `\ncommand timed out after ${options.timeoutMs}ms`;
           }, options.timeoutMs);
     child.stdout.setEncoding("utf8");
@@ -971,13 +1097,17 @@ function runCommand(command, args, options = {}) {
       stderr += chunk;
     });
     child.on("error", (error) => {
+      if (settled) return;
       settled = true;
       if (timer) clearTimeout(timer);
+      if (forceKillTimer) clearTimeout(forceKillTimer);
       reject(error);
     });
     child.on("close", (code, signal) => {
+      if (settled) return;
       settled = true;
       if (timer) clearTimeout(timer);
+      if (forceKillTimer) clearTimeout(forceKillTimer);
       resolve({ code, signal, stdout, stderr });
     });
   });

@@ -1,7 +1,12 @@
 export function assertStableApiPid(expectedPid, observedPid) {
-  if (!Number.isFinite(expectedPid) || !Number.isFinite(observedPid)) {
+  if (!Number.isSafeInteger(expectedPid) || expectedPid <= 0) {
     throw new Error(
-      `API pid unavailable (expected=${expectedPid ?? "n-a"}, observed=${observedPid ?? "n-a"})`,
+      `expected API pid must be a positive safe integer: ${expectedPid ?? "n-a"}`,
+    );
+  }
+  if (!Number.isSafeInteger(observedPid) || observedPid <= 0) {
+    throw new Error(
+      `observed API pid must be a positive safe integer: ${observedPid ?? "n-a"}`,
     );
   }
   if (observedPid !== expectedPid) {
@@ -9,8 +14,229 @@ export function assertStableApiPid(expectedPid, observedPid) {
   }
 }
 
+export function assertApiDescendsFromSupervisor(apiAncestry, supervisorPid) {
+  if (!apiAncestry.some((entry) => entry?.pid === supervisorPid)) {
+    throw new Error(
+      `recorded API pid is not descended from supervisor ${supervisorPid ?? "n-a"}`,
+    );
+  }
+}
+
+export function assertApiProcessRole(identity, expectedCwd, entrypoint) {
+  const argv = String(identity?.cmdlineRaw ?? "").split("\0").filter(Boolean);
+  if (
+    identity?.cwd !== expectedCwd ||
+    !/(?:^|\/)node$/.test(argv[0] ?? "") ||
+    !argv.includes(entrypoint)
+  ) {
+    throw new Error("recorded process does not match the API role");
+  }
+}
+
+export function assertFreshApiHeartbeat(updatedAt, nowMs, maxAgeMs) {
+  const updatedAtMs = Date.parse(updatedAt);
+  const ageMs = nowMs - updatedAtMs;
+  if (
+    !Number.isFinite(updatedAtMs) ||
+    !Number.isFinite(maxAgeMs) ||
+    maxAgeMs <= 0 ||
+    ageMs < 0 ||
+    ageMs > maxAgeMs
+  ) {
+    throw new Error("API heartbeat is stale or invalid");
+  }
+}
+
+export function assertSameProcessIdentity(expected, observed) {
+  const keys = ["pid", "startTimeTicks", "cmdlineRaw", "cwd"];
+  if (
+    !expected ||
+    !observed ||
+    keys.some((key) => expected[key] == null || expected[key] !== observed[key])
+  ) {
+    throw new Error("recorded API process identity changed before profiling");
+  }
+}
+
+export function assertRuntimeSamplesComplete(samples, coverage = null) {
+  if (!Array.isArray(samples) || samples.length === 0) {
+    throw new Error("no runtime interval samples were captured");
+  }
+  const failedCount = samples.filter((sample) => !sample?.snapshot).length;
+  if (failedCount > 0) {
+    throw new Error(
+      `runtime interval sampling failed for ${failedCount} sample(s)`,
+    );
+  }
+  if (coverage) {
+    const times = [
+      coverage.windowStart,
+      ...samples.map((sample) => sample.at),
+      coverage.windowEnd,
+    ].map((value) => Date.parse(value));
+    if (
+      !Number.isFinite(coverage.maxGapMs) ||
+      coverage.maxGapMs <= 0 ||
+      times.some((value) => !Number.isFinite(value))
+    ) {
+      throw new Error("runtime sample coverage bounds are invalid");
+    }
+    for (let index = 1; index < times.length; index += 1) {
+      const gapMs = times[index] - times[index - 1];
+      if (gapMs < 0) throw new Error("runtime samples are out of order");
+      if (gapMs > coverage.maxGapMs) {
+        throw new Error(
+          `runtime sample gap ${gapMs}ms exceeds ${coverage.maxGapMs}ms`,
+        );
+      }
+    }
+  }
+}
+
+export function calculateCounterRate(first, second) {
+  const firstTotal = finite(first?.total);
+  const secondTotal = finite(second?.total);
+  const firstAtMs = finite(first?.atMs);
+  const secondAtMs = finite(second?.atMs);
+  if ([firstTotal, secondTotal, firstAtMs, secondAtMs].some((value) => value == null)) {
+    throw new Error("counter samples must contain finite totals and timestamps");
+  }
+  const elapsedMs = secondAtMs - firstAtMs;
+  if (elapsedMs <= 0) throw new Error("counter elapsed time must be positive");
+  const deltaRows = secondTotal - firstTotal;
+  if (deltaRows < 0) throw new Error("counter decreased during the capture window");
+  return {
+    elapsedMs,
+    deltaRows,
+    rowsPerMin: (deltaRows * 60_000) / elapsedMs,
+  };
+}
+
+export async function cleanupHeapProfiler(inspector, samplingStarted) {
+  if (samplingStarted) {
+    try {
+      await inspector.send("HeapProfiler.stopSampling");
+    } catch {
+      // Best-effort cleanup continues with disabling the profiler domain.
+    }
+  }
+  try {
+    await inspector.send("HeapProfiler.disable");
+  } catch {
+    // The caller still closes the inspector connection.
+  }
+}
+
+export function psqlEnvironment(databaseUrl, env = process.env) {
+  const childEnv = { ...env, PGDATABASE: databaseUrl };
+  delete childEnv.DATABASE_URL;
+  return childEnv;
+}
+
+export function terminateChildWithFallback(child, graceMs, onForceKill = null) {
+  child.kill("SIGTERM");
+  return setTimeout(() => {
+    try {
+      child.kill("SIGKILL");
+    } finally {
+      onForceKill?.();
+    }
+  }, graceMs);
+}
+
+export function withTimeout(promise, timeoutMs, label) {
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(
+      () => reject(new Error(`${label} timed out after ${timeoutMs}ms`)),
+      timeoutMs,
+    );
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
+export function isWithinAcceptanceWindow(timeMs, startMs, endMs) {
+  return (
+    Number.isFinite(timeMs) &&
+    Number.isFinite(startMs) &&
+    Number.isFinite(endMs) &&
+    timeMs >= startMs &&
+    timeMs <= endMs
+  );
+}
+
+export function isRunDevSupervisorProcess(cmdlineRaw, cwd, expectedCwd) {
+  const argv = String(cmdlineRaw ?? "").split("\0").filter(Boolean);
+  const normalizedCwd = String(expectedCwd ?? "").replace(/\/+$/, "");
+  return (
+    /(?:^|\/)node$/.test(argv[0] ?? "") &&
+    ((cwd === normalizedCwd && argv[1] === "./scripts/runDevApp.mjs") ||
+      argv[1] === `${normalizedCwd}/scripts/runDevApp.mjs`)
+  );
+}
+
+export function createSingleFlightRunner(task) {
+  let pending = null;
+  return {
+    run() {
+      if (!pending) {
+        pending = Promise.resolve()
+          .then(task)
+          .finally(() => {
+            pending = null;
+          });
+      }
+      return pending;
+    },
+    wait() {
+      return pending ?? Promise.resolve();
+    },
+  };
+}
+
 export function acceptanceFailedStepKeys(steps, requiredKeys) {
   return requiredKeys.filter((key) => steps[key]?.ok !== true);
+}
+
+export function validateRuntimeAcceptanceSnapshot(snapshot) {
+  const required = {
+    "api.eventLoopUtilization": snapshot?.api?.eventLoopUtilization,
+    "api.eventLoopDelayP95Ms": snapshot?.api?.eventLoopDelayP95Ms,
+    "api.heapUsedMb": snapshot?.api?.heapUsedMb,
+    "api.rssMb": snapshot?.api?.rssMb,
+    "db.rawWaiting": snapshot?.db?.rawWaiting,
+    "db.admissionQueued": snapshot?.db?.admissionQueued,
+    "db.totalWaiting": snapshot?.db?.totalWaiting,
+    "db.max": snapshot?.db?.max,
+    "counters.storedBarsHitCount": snapshot?.counters?.storedBarsHitCount,
+    "counters.storedBarsDeltaReadCount":
+      snapshot?.counters?.storedBarsDeltaReadCount,
+    "counters.storedBarsDeltaReads": snapshot?.counters?.storedBarsDeltaReads,
+    "counters.storedBarsDeltaGapFallbacks":
+      snapshot?.counters?.storedBarsDeltaGapFallbacks,
+    "counters.incrementalShadowMismatches":
+      snapshot?.counters?.incrementalShadowMismatches,
+    "counters.matrixServeMismatchCount":
+      snapshot?.counters?.matrixServeMismatchCount,
+    "counters.matrixEventCount": snapshot?.counters?.matrixEventCount,
+    "diagnostics.storedBarsCache.barCount":
+      snapshot?.diagnostics?.storedBarsCache?.barCount,
+    "diagnostics.storedBarsCache.compactBarCount":
+      snapshot?.diagnostics?.storedBarsCache?.compactBarCount,
+    "diagnostics.storedBarsCache.objectBarCount":
+      snapshot?.diagnostics?.storedBarsCache?.objectBarCount,
+    "diagnostics.scannerCoverage.selectedSymbols":
+      snapshot?.diagnostics?.scannerCoverage?.selectedSymbols,
+    "diagnostics.scannerCoverage.cycleScannedSymbols":
+      snapshot?.diagnostics?.scannerCoverage?.cycleScannedSymbols,
+  };
+  const missing = Object.entries(required)
+    .filter(([, value]) => !Number.isFinite(value))
+    .map(([key]) => key);
+  if (missing.length) {
+    throw new Error(`missing required runtime metrics: ${missing.join(", ")}`);
+  }
+  return snapshot;
 }
 
 export function diffRuntimeCounters(before = {}, after = {}) {
@@ -56,7 +282,8 @@ export function pickRuntimeAcceptanceSnapshot(runtime) {
   const completedBarsCache =
     streams.signalMonitorResidentBars?.completedBarsCache ?? {};
   const incremental = streams.signalMonitorIncrementalEval ?? {};
-  const admissionLanes = Array.isArray(runtime?.dbPoolAdmission?.lanes)
+  const hasAdmissionLanes = Array.isArray(runtime?.dbPoolAdmission?.lanes);
+  const admissionLanes = hasAdmissionLanes
     ? runtime.dbPoolAdmission.lanes.map((lane) =>
         pick(lane, [
           "lane",
@@ -68,11 +295,10 @@ export function pickRuntimeAcceptanceSnapshot(runtime) {
         ]),
       )
     : [];
-  const rawWaiting = finite(runtime?.api?.resourcePressure?.inputs?.dbPoolWaiting) ?? 0;
-  const admissionQueued = admissionLanes.reduce(
-    (sum, lane) => sum + (finite(lane.queued) ?? 0),
-    0,
-  );
+  const rawWaiting = finite(runtime?.api?.resourcePressure?.inputs?.dbPoolWaiting);
+  const admissionQueued = hasAdmissionLanes
+    ? admissionLanes.reduce((sum, lane) => sum + (finite(lane.queued) ?? 0), 0)
+    : null;
   const marketDataAdmission = streams.marketDataAdmission ?? {};
   const scannerCoverage = marketDataAdmission.optionsFlowScanner?.coverage ?? {};
   const signalMatrix = streams.signalMatrix ?? {};
@@ -93,7 +319,10 @@ export function pickRuntimeAcceptanceSnapshot(runtime) {
       max: finite(runtime?.api?.resourcePressure?.inputs?.dbPoolMax),
       rawWaiting,
       admissionQueued,
-      totalWaiting: rawWaiting + admissionQueued,
+      totalWaiting:
+        rawWaiting != null && admissionQueued != null
+          ? rawWaiting + admissionQueued
+          : null,
       admissionLanes,
     },
     counters: {
