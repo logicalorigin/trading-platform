@@ -42,6 +42,7 @@ import {
   WalletCards,
   X,
 } from "lucide-react";
+import { BrokerLogo } from "../../components/brand/brokerLogos";
 import { Button } from "../../components/ui/Button.jsx";
 import { SurfacePanel } from "../../components/platform/primitives.jsx";
 import { useAuthSession } from "../../features/auth/authSession.jsx";
@@ -425,27 +426,37 @@ function IbkrPortalLoginDialog({
                 background: CSS_COLOR.bg1,
               }}
             >
-              <div style={{ minWidth: 0 }}>
-                <Dialog.Title
-                  style={{
-                    margin: 0,
-                    fontFamily: T.sans,
-                    fontSize: textSize("paragraph"),
-                    fontWeight: FONT_WEIGHTS.semibold,
-                    letterSpacing: 0,
-                  }}
-                >
-                  Interactive Brokers
-                </Dialog.Title>
-                <div
-                  style={{
-                    color: CSS_COLOR.textDim,
-                    fontFamily: T.sans,
-                    fontSize: textSize("caption"),
-                    letterSpacing: 0,
-                  }}
-                >
-                  Client Portal
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: sp(8),
+                  minWidth: 0,
+                }}
+              >
+                <BrokerLogo provider="ibkr" size={32} />
+                <div style={{ minWidth: 0 }}>
+                  <Dialog.Title
+                    style={{
+                      margin: 0,
+                      fontFamily: T.sans,
+                      fontSize: textSize("paragraph"),
+                      fontWeight: FONT_WEIGHTS.semibold,
+                      letterSpacing: 0,
+                    }}
+                  >
+                    Interactive Brokers
+                  </Dialog.Title>
+                  <div
+                    style={{
+                      color: CSS_COLOR.textDim,
+                      fontFamily: T.sans,
+                      fontSize: textSize("caption"),
+                      letterSpacing: 0,
+                    }}
+                  >
+                    Client Portal
+                  </div>
                 </div>
               </div>
               <div

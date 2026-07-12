@@ -156,6 +156,11 @@ test("IBKR keeps the capsule-local login inside a contained sandboxed modal", ()
   );
   assert.doesNotMatch(dialogBlock, /onOpenAutoFocus|restoreFocusRef/);
   assert.match(dialogBlock, /<Dialog\.Title/);
+  assert.match(source, /import \{ BrokerLogo \} from "\.\.\/\.\.\/components\/brand\/brokerLogos";/);
+  assert.match(
+    dialogBlock,
+    /<BrokerLogo provider="ibkr" size=\{32\} \/>/,
+  );
   assert.match(dialogBlock, /aria-label="Hide IBKR Client Portal window"/);
   assert.match(dialogBlock, />\s*Disconnect\s*</);
   assert.doesNotMatch(dialogBlock, /onEscapeKeyDown/);
