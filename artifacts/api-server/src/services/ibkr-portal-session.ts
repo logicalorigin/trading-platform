@@ -30,9 +30,11 @@ export const IBKR_PORTAL_CLIENT_MOUNT =
 const TICKLE_INTERVAL_MS = 55_000;
 const LOGIN_MONITOR_INTERVAL_MS = 3_000;
 const LOGIN_MONITOR_TTL_MS = 6 * 60_000;
-// ponytail: fixed pause covers CPG's 3s auth delay after its completion marker;
-// replace it only if CPG exposes a structured readiness callback.
-const POST_DISPATCH_READINESS_QUIET_MS = 10_000;
+// ponytail: the pinned CPG retries its gateway-owned brokerage authentication
+// up to five times at 3s intervals after the Dispatcher marker. This fixed
+// window leaves that stateful handshake undisturbed; replace it when CPG
+// exposes a structured authenticated callback.
+const POST_DISPATCH_READINESS_QUIET_MS = 20_000;
 
 // Readiness-refresh failures land on the same JSONL timeline as the login
 // proxy requests (.pyrus-runtime/ibkr-portal-proxy-trail.jsonl); a swallowed
@@ -258,6 +260,18 @@ function base(overrides: Partial<PortalReadiness>): PortalReadiness {
   };
 }
 
+function needsLoginMessage(
+  browserLoginComplete: boolean,
+  verificationFailed = false,
+): string {
+  if (!browserLoginComplete) {
+    return "Gateway is running. Log in to IBKR to finish connecting.";
+  }
+  return verificationFailed
+    ? "IBKR browser login completed, but the API session is still unavailable. PYRUS is retrying; this connection is not active."
+    : "IBKR browser login completed. Waiting for IBKR's API session; this connection is not active yet.";
+}
+
 export async function readPortalReadiness(
   appUserId: string,
 ): Promise<PortalReadiness> {
@@ -304,7 +318,7 @@ export async function readPortalReadiness(
       status: "needs_login",
       gatewayRunning: true,
       browserLoginComplete: loginObservation.browserLoginComplete,
-      message: "Gateway is running. Log in to IBKR to finish connecting.",
+      message: needsLoginMessage(loginObservation.browserLoginComplete),
     });
   }
 
@@ -314,7 +328,7 @@ export async function readPortalReadiness(
       stagedFailureTraced = true;
       traceReadinessFailure(failure, stage);
     }).ensureBrokerageSession({
-      initializeIfNeeded: loginObservation.browserLoginComplete,
+      initializeIfNeeded: false,
     });
     stagedFailureTraced = false;
     if (status.competing) {
@@ -349,7 +363,7 @@ export async function readPortalReadiness(
       status: "needs_login",
       gatewayRunning: true,
       browserLoginComplete: loginObservation.browserLoginComplete,
-      message: "Gateway is running. Log in to IBKR to finish connecting.",
+      message: needsLoginMessage(loginObservation.browserLoginComplete),
     });
   } catch (error) {
     markGatewayPaperAccountVerified(appUserId, false);
@@ -363,7 +377,10 @@ export async function readPortalReadiness(
       status: "needs_login",
       gatewayRunning: true,
       browserLoginComplete: loginObservation.browserLoginComplete,
-      message: "Gateway is running. Log in to IBKR to finish connecting.",
+      message: needsLoginMessage(
+        loginObservation.browserLoginComplete,
+        true,
+      ),
     });
   }
 }

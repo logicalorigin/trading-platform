@@ -54,15 +54,40 @@ test("IBKR portal progress distinguishes browser login from verified connection"
       browserLoginComplete: true,
       selectedAccountId: null,
       accounts: [],
-      message: "Gateway is running. Log in to IBKR to finish connecting.",
+      message:
+        "IBKR browser login completed. Waiting for IBKR's API session; this connection is not active yet.",
     },
   });
-  assert.equal(verifying.title, "Verifying your IBKR session");
-  assert.match(verifying.detail, /accepted your login/i);
+  assert.equal(verifying.title, "IBKR browser login complete");
+  assert.match(verifying.detail, /connection is not active yet/i);
+  assert.equal(verifying.showLoginViewer, false);
   assert.deepEqual(
     verifying.steps.map(({ status }) => status),
     ["complete", "complete", "current"],
   );
+
+  const verificationUnavailable = buildIbkrPortalProgressModel({
+    readiness: {
+      status: "needs_login",
+      gatewayRunning: true,
+      authenticated: false,
+      browserLoginComplete: true,
+      selectedAccountId: null,
+      accounts: [],
+      message:
+        "IBKR browser login completed, but the API session is still unavailable. PYRUS is retrying; this connection is not active.",
+    },
+  });
+  assert.equal(
+    verificationUnavailable.title,
+    "IBKR browser login complete",
+  );
+  assert.equal(
+    verificationUnavailable.detail,
+    "IBKR browser login completed, but the API session is still unavailable. PYRUS is retrying; this connection is not active.",
+  );
+  assert.equal(verificationUnavailable.connected, false);
+  assert.equal(verificationUnavailable.showLoginViewer, false);
 });
 
 test("IBKR portal progress requires authenticated server truth for success", () => {

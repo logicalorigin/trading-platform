@@ -2112,7 +2112,7 @@ export function SnapTradeConnectPanel({ enabled = true }) {
     const poll = async () => {
       if (attempt !== ibkrAttemptRef.current) return;
       if (hasIbkrPortalLoginTimedOut(startedAt, Date.now())) {
-        void disconnectIbkrPortal("IBKR Client Portal login timed out.");
+        void disconnectIbkrPortal("IBKR connection attempt timed out.");
         return;
       }
       let status;

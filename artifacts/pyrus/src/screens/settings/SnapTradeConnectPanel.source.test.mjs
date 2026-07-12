@@ -205,6 +205,8 @@ test("IBKR keeps the capsule-local login inside a contained sandboxed modal", ()
     connectBlock,
     /hasIbkrPortalLoginTimedOut\(startedAt, Date\.now\(\)\)/,
   );
+  assert.match(connectBlock, /"IBKR connection attempt timed out\."/);
+  assert.doesNotMatch(connectBlock, /IBKR Client Portal login timed out/);
   assert.doesNotMatch(
     connectBlock,
     /window\.location\.assign|openBrokerPopup|popup\./,

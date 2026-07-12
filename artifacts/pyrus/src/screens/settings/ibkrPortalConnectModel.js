@@ -106,9 +106,10 @@ export function buildIbkrPortalProgressModel({
       connected,
       browserLoginComplete,
       showLoginViewer: false,
-      title: "Verifying your IBKR session",
+      title: "IBKR browser login complete",
       detail:
-        "IBKR accepted your login. PYRUS is verifying the API session and loading accounts.",
+        readiness?.message ||
+        "Waiting for IBKR's API session; this connection is not active yet.",
       steps,
     };
   }

@@ -18,14 +18,14 @@ test("hosted portal connects any authenticated account (not paper-only)", async 
   const paperUserId = "44444444-4444-4444-8444-444444444444";
   const needsLoginUserId = "55555555-5555-4555-8555-555555555555";
   const delayedLiveUserId = "66666666-6666-4666-8666-666666666666";
+  const failedAfterLoginUserId = "67676767-6767-4767-8767-676767676767";
   const recoveredLoginUserId = "77777777-7777-4777-8777-777777777777";
   const recoveredStartingUserId = "88888888-8888-4888-8888-888888888888";
   const monitorRaceUserId = "99999999-9999-4999-8999-999999999999";
   const released = new Set<string>();
   let accountId = "U1234567";
   let authenticated = true;
-  let authStatusUnauthorizedUntilInit = false;
-  let brokerageSessionInitialized = false;
+  let forceBrokerageUnauthorized = false;
   let authStatusCalls = 0;
   let ssodhInitCalls = 0;
   const loginCompletions = new Map<string, number>();
@@ -76,7 +76,7 @@ test("hosted portal connects any authenticated account (not paper-only)", async 
     }
     if (url.pathname.endsWith("/iserver/auth/status")) {
       authStatusCalls += 1;
-      if (authStatusUnauthorizedUntilInit && !brokerageSessionInitialized) {
+      if (forceBrokerageUnauthorized) {
         return new Response("Unauthorized", { status: 401 });
       }
       return Response.json({
@@ -87,7 +87,9 @@ test("hosted portal connects any authenticated account (not paper-only)", async 
     }
     if (url.pathname.endsWith("/iserver/auth/ssodh/init")) {
       ssodhInitCalls += 1;
-      brokerageSessionInitialized = true;
+      if (forceBrokerageUnauthorized) {
+        return new Response("Unauthorized", { status: 401 });
+      }
       return Response.json({ authenticated });
     }
     if (url.pathname.endsWith("/iserver/accounts")) {
@@ -139,7 +141,7 @@ test("hosted portal connects any authenticated account (not paper-only)", async 
         "post-login quiet window must not probe CPG readiness",
       );
 
-      t.mock.timers.tick(9_999);
+      t.mock.timers.tick(19_999);
       beginPortalReadinessQuietWindow(needsLoginUserId);
       t.mock.timers.tick(1);
       await readPortalReadiness(needsLoginUserId);
@@ -149,7 +151,7 @@ test("hosted portal connects any authenticated account (not paper-only)", async 
         "an old timer must not clear a replacement quiet window",
       );
 
-      t.mock.timers.tick(9_999);
+      t.mock.timers.tick(19_999);
       await readPortalReadiness(needsLoginUserId);
       assert.equal(
         authStatusCalls,
@@ -265,8 +267,6 @@ test("hosted portal connects any authenticated account (not paper-only)", async 
       );
 
       authenticated = true;
-      authStatusUnauthorizedUntilInit = true;
-      brokerageSessionInitialized = false;
       accountId = "U2468101";
       const initCallsBeforeCompletion = ssodhInitCalls;
       loginCompletions.set(delayedLiveUserId, 8);
@@ -279,29 +279,58 @@ test("hosted portal connects any authenticated account (not paper-only)", async 
       );
       assert.equal(authStatusCalls, callsBeforeConnect);
 
-      t.mock.timers.tick(9_999);
+      t.mock.timers.tick(19_999);
       const stillQuiet = await readPortalReadiness(delayedLiveUserId);
       assert.equal(stillQuiet.status, "needs_login");
       assert.equal(
         authStatusCalls,
         callsBeforeConnect,
-        "a new capsule completion keeps auth status unprobed for ten seconds",
+        "a new capsule completion lets CPG finish its own authentication retries",
       );
 
       t.mock.timers.tick(1);
       const delayedReadiness = await readPortalReadiness(delayedLiveUserId);
       assert.equal(delayedReadiness.status, "connected");
       assert.equal(delayedReadiness.browserLoginComplete, true);
-      assert.equal(authStatusCalls, callsBeforeConnect + 2);
+      assert.equal(authStatusCalls, callsBeforeConnect + 1);
       assert.equal(
         ssodhInitCalls,
-        initCallsBeforeCompletion + 1,
-        "browser completion permits one guarded REST brokerage-session promotion",
+        initCallsBeforeCompletion,
+        "the hosted portal leaves the stateful SSO handshake to CPG",
       );
       assert.equal(delayedReadiness.selectedAccountId, "U2468101");
       assert.ok(getGateway(delayedLiveUserId), "live login keeps its gateway");
       assert(!released.has(delayedLiveUserId));
+
+      loginCompletions.set(failedAfterLoginUserId, 0);
+      await connectPortal(failedAfterLoginUserId);
+      forceBrokerageUnauthorized = true;
+      loginCompletions.set(failedAfterLoginUserId, 1);
+      const failedCompletion = await readPortalReadiness(
+        failedAfterLoginUserId,
+      );
+      assert.equal(failedCompletion.browserLoginComplete, true);
+      t.mock.timers.tick(20_000);
+      const failedVerification = await readPortalReadiness(
+        failedAfterLoginUserId,
+      );
+      assert.equal(failedVerification.status, "needs_login");
+      assert.equal(failedVerification.browserLoginComplete, true);
+      assert.equal(failedVerification.authenticated, false);
+      assert.match(failedVerification.message, /browser login completed/i);
+      assert.match(failedVerification.message, /connection is not active/i);
+      assert.doesNotMatch(
+        failedVerification.message,
+        /401|auth\/status|ssodh|Unauthorized/i,
+      );
+      assert.equal(
+        ssodhInitCalls,
+        initCallsBeforeCompletion,
+        "an unauthorized status probe must not start a competing SSO handshake",
+      );
+      forceBrokerageUnauthorized = false;
     } finally {
+      forceBrokerageUnauthorized = false;
       t.mock.timers.reset();
     }
   } finally {
@@ -309,6 +338,7 @@ test("hosted portal connects any authenticated account (not paper-only)", async 
     await disconnectPortal(paperUserId).catch(() => undefined);
     await disconnectPortal(needsLoginUserId).catch(() => undefined);
     await disconnectPortal(delayedLiveUserId).catch(() => undefined);
+    await disconnectPortal(failedAfterLoginUserId).catch(() => undefined);
     await disconnectPortal(recoveredLoginUserId).catch(() => undefined);
     await disconnectPortal(recoveredStartingUserId).catch(() => undefined);
     await disconnectPortal(monitorRaceUserId).catch(() => undefined);
