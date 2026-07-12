@@ -12,6 +12,9 @@ const BASE_DIGEST =
   "sha256:1def178129dfb5f24db43afbf2fcac04530012e3264ba4ff81c71184e17a9ee4";
 const CPG_SHA256 =
   "2f2d380b2f9424520ff5f9c11fe45e82ef39459329ac056258a3274bea6f76f9";
+const CPG_CERT_SHA256 =
+  "13daf89a0712b962c3ecaa5ede344100aee0d3b5dec5a79abd7602a812eda3be";
+const CPG_SPKI_SHA256 = "QoH2+wIocE83ZkR4/oyn5ru2JtE+/ZrYS9brNjujldU=";
 const SECCOMP_SHA256 =
   "19f1c5b65ff8280092de391959775201004f2c58eae2983612c028c6256a5b54";
 const LOGIN_COMPLETE_MARKER = "PYRUS_IBKR_CAPSULE_LOGIN_COMPLETE_V1";
@@ -35,6 +38,7 @@ test("capsule image is immutable, nonroot, internally watched, and has no volume
   assert.match(dockerfile, /sha256sum --check/);
   assert.match(dockerfile, /openjdk-17-jre-headless=17\.0\.19\+10-1~deb12u2/);
   assert.match(dockerfile, /chromium=150\.0\.7871\.100-1~deb12u1/);
+  assert.match(dockerfile, /chromium-common=150\.0\.7871\.100-1~deb12u1/);
   assert.match(
     dockerfile,
     /chromium-sandbox=150\.0\.7871\.100-1~deb12u1/,
@@ -88,16 +92,21 @@ test("capsule restricts CPG clients and exposes only fixed host relays with RAM-
   );
   assert.match(
     entrypoint,
-    /start_service cpg-relay \/usr\/local\/bin\/pyrus-capsule-relay[\s\S]*?15000[\s\S]*?5000/,
+    /start_service cpg-relay \/usr\/local\/bin\/pyrus-capsule-relay[\s\S]*?15000[\s\S]*?5000[\s\S]*?"\$\{CPG_CERT_SHA256\}"/,
   );
-  assert.match(entrypoint, /wait_for_cpg_login 60/);
+  assert.match(entrypoint, /wait_for_cpg_login 15000 60/);
+  assert(
+    entrypoint.indexOf("start_service cpg-relay") <
+      entrypoint.indexOf("wait_for_cpg_login 15000 60"),
+    "expected the pinned TLS relay before the plaintext readiness probe",
+  );
   assert.match(
     entrypoint,
     /printf 'GET \/ HTTP\/1\.0\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3/,
   );
   assert.match(
     entrypoint,
-    /start_service chromium chromium[\s\S]*?--user-data-dir="\$\{RUNTIME_DIR\}\/chromium"[\s\S]*?^  --app=http:\/\/localhost:5000\/$/m,
+    /start_service chromium chromium[\s\S]*?--user-data-dir="\$\{RUNTIME_DIR\}\/chromium"[\s\S]*?--ignore-certificate-errors-spki-list="\$\{CPG_SPKI_SHA256\}"[\s\S]*?^  --app=https:\/\/localhost:5000\/$/m,
   );
   assert.doesNotMatch(entrypoint, /--incognito/);
   assert.doesNotMatch(entrypoint, /--load-extension|--disable-extensions-except/);
@@ -114,7 +123,8 @@ test("capsule restricts CPG clients and exposes only fixed host relays with RAM-
     /if \{ exec 3<>"\/dev\/tcp\/127\.0\.0\.1\/\$\{port\}"; \} 2>\/dev\/null; then/,
   );
   assert.match(dockerfile, /\)" = '127\.0\.0\.1'/);
-  assert.match(dockerfile, /listenSsl:\\s\*true[\s\S]*listenSsl: false/);
+  assert.match(dockerfile, /grep -Fq 'listenSsl: true'/);
+  assert.doesNotMatch(dockerfile, /listenSsl: false/);
   assert.doesNotMatch(dockerfile, /^\s+in_allow\b/m);
   assert.match(health, /127\.0\.0\.1/);
   assert.match(health, /5000/);
@@ -134,6 +144,10 @@ test("capsule restricts CPG clients and exposes only fixed host relays with RAM-
   assert.doesNotMatch(health, /\/dev\/tcp/);
   assert.match(relay, /127\.0\.0\.1/);
   assert.match(relay, /socket\.create_connection/);
+  assert.match(relay, /ssl\.PROTOCOL_TLS_CLIENT/);
+  assert.match(relay, /getpeercert\(binary_form=True\)/);
+  assert.match(relay, /hashlib\.sha256/);
+  assert.match(relay, /hmac\.compare_digest/);
   assert.doesNotMatch(relay, /print\(|logging|sys\.stdout|sys\.stderr/);
   assert.match(dockerfile, /COPY --chown=10001:10001 paper-only-extension/);
   assert.match(extensionManifest, /"manifest_version"\s*:\s*3/);
@@ -157,6 +171,7 @@ test("capsule forbids browser sandbox bypasses, debug logging, and credentials",
     ),
   );
   const source = files.join("\n");
+  const entrypoint = files[1] ?? "";
 
   for (const forbidden of [
     "--no-sandbox",
@@ -170,6 +185,9 @@ test("capsule forbids browser sandbox bypasses, debug logging, and credentials",
   ]) {
     assert(!source.includes(forbidden), `forbidden capsule content: ${forbidden}`);
   }
+  assert.doesNotMatch(entrypoint, /--ignore-certificate-errors(?:[=\s]|$)/);
+  assert(entrypoint.includes(`readonly CPG_CERT_SHA256=${CPG_CERT_SHA256}`));
+  assert(entrypoint.includes(`readonly CPG_SPKI_SHA256='${CPG_SPKI_SHA256}'`));
   assert.match(source, /<root level=\\?"INFO\\?">/);
 });
 
@@ -232,6 +250,8 @@ test("capsule provenance records the exact official-source bytes", async () => {
 
   assert(readme.includes(BASE_DIGEST));
   assert(readme.includes(CPG_SHA256));
+  assert(readme.includes(CPG_CERT_SHA256));
+  assert(readme.includes(CPG_SPKI_SHA256));
   assert(readme.includes("20230424154245"));
   assert.match(readme, /not an IBKR-published checksum/i);
   assert.match(readme, /Replit development environment/i);

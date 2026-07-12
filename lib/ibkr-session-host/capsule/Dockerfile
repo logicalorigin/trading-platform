@@ -16,7 +16,6 @@ RUN printf '%s  %s\n' "${CPG_SHA256}" /tmp/clientportal.gw.zip | sha256sum --che
   && sed -i \
     -e 's/<root level=.DEBUG.>/<root level="INFO">/' \
     -e '/<appender name="FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">/a\        <file>logs/gw.current.log</file>' \
-    -e 's/listenSsl:\s*true/listenSsl: false/' \
     -e '/^[[:space:]]*- 192\.\*/d' \
     -e '/^[[:space:]]*- 131\.216\.\*/d' \
     /opt/ibkr/clientportal/root/logback.xml \
@@ -24,7 +23,7 @@ RUN printf '%s  %s\n' "${CPG_SHA256}" /tmp/clientportal.gw.zip | sha256sum --che
   && grep -Fq '<root level="INFO">' /opt/ibkr/clientportal/root/logback.xml \
   && grep -Fq '<file>logs/gw.current.log</file>' /opt/ibkr/clientportal/root/logback.xml \
   && ! grep -Eq 'level=.DEBUG.' /opt/ibkr/clientportal/root/logback.xml \
-  && grep -Fq 'listenSsl: false' /opt/ibkr/clientportal/root/conf.yaml \
+  && grep -Fq 'listenSsl: true' /opt/ibkr/clientportal/root/conf.yaml \
   && test "$(awk '/^[[:space:]]*allow:[[:space:]]*$/ { in_allow=1; next } in_allow && /^[[:space:]]*deny:[[:space:]]*$/ { exit } in_allow && /^[[:space:]]*-/ { sub(/^[[:space:]]*-[[:space:]]*/, ""); print }' /opt/ibkr/clientportal/root/conf.yaml)" = '127.0.0.1'
 
 FROM debian:bookworm-slim@sha256:1def178129dfb5f24db43afbf2fcac04530012e3264ba4ff81c71184e17a9ee4
@@ -36,6 +35,7 @@ ENV DISPLAY=:99 \
 RUN apt-get update \
   && apt-get install --yes --no-install-recommends \
     chromium=150.0.7871.100-1~deb12u1 \
+    chromium-common=150.0.7871.100-1~deb12u1 \
     chromium-sandbox=150.0.7871.100-1~deb12u1 \
     fonts-liberation=1:1.07.4-11 \
     novnc=1:1.3.0-1 \

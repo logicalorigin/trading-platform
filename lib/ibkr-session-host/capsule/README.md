@@ -14,7 +14,8 @@ API or persist credentials.
   `sha256:60eac759739651111db372c07be67863818726f754804b8707c90979bda511df`
   and image config creation time `2026-06-23T00:00:00Z`.
 - Java: Debian `openjdk-17-jre-headless=17.0.19+10-1~deb12u2`.
-- Chromium: Debian `chromium=150.0.7871.100-1~deb12u1` and matching
+- Chromium: Debian `chromium=150.0.7871.100-1~deb12u1`, matching
+  `chromium-common=150.0.7871.100-1~deb12u1`, and
   `chromium-sandbox=150.0.7871.100-1~deb12u1`.
 - Chromium seccomp: Moby `seccomp/v0.2.3` default profile
   `sha256:536529b665dd0972c37bfb569f5d4ac8a53592e7b00752bc39ff063ca9864c74`,
@@ -32,6 +33,12 @@ API or persist credentials.
   A fresh download matched the independently provisioned July 3 copy
   byte-for-byte. Its embedded JAR reports implementation version
   `20230424154245` and build time `2023-04-24T15:42:44-0400`.
+- CPG TLS: the stock listener remains enabled. The bundled certificate has
+  SHA-256 `13daf89a0712b962c3ecaa5ede344100aee0d3b5dec5a79abd7602a812eda3be`
+  and SPKI SHA-256 `QoH2+wIocE83ZkR4/oyn5ru2JtE+/ZrYS9brNjujldU=`. Its 2019 validity window
+  has expired, so Chromium bypasses certificate errors only for that exact
+  public key; the API relay accepts only that exact certificate. No global TLS
+  verification bypass is used.
 
 The CPG digest is our independently reproduced checksum of bytes delivered by
 IBKR's official URL; it is **not an IBKR-published checksum**. Both Docker's
@@ -75,11 +82,13 @@ image. The current application policy allows any IBKR account to authenticate
 and applies account capabilities after the session is verified.
 
 CPG admits only `127.0.0.1`; X11 disables TCP; x11vnc binds only to loopback.
-The capsule exposes two fixed relay ports for the session host: `15000` for
-CPG and `16080` for noVNC. Docker publishes no capsule ports. Instead, the
-trusted session-host process binds raw TCP relays at host loopback ports
-`15000` and `16080` and forwards them only to the capsule's validated private
-IPv4 address.
+Chromium opens the stock HTTPS listener directly with the exact SPKI exception
+above. The capsule exposes two fixed relay ports for the session host: `15000`
+for CPG and `16080` for noVNC. The CPG relay verifies the exact bundled server
+certificate before translating the host's private HTTP connection to CPG TLS.
+Docker publishes no capsule ports. Instead, the trusted session-host process
+binds raw TCP relays at host loopback ports `15000` and `16080` and forwards
+them only to the capsule's validated private IPv4 address.
 
 The host requires an IPv4-only `pyrus-ibkr-capsule-net` bridge with NAT gateway
 mode and inter-container communication disabled. It validates the network ID,

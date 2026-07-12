@@ -7,6 +7,8 @@ readonly RUNTIME_DIR=/run/pyrus
 readonly LOG_DIR=${RUNTIME_DIR}/logs
 readonly PID_DIR=${RUNTIME_DIR}/pids
 readonly CPG_HOME=/opt/ibkr/clientportal
+readonly CPG_CERT_SHA256=13daf89a0712b962c3ecaa5ede344100aee0d3b5dec5a79abd7602a812eda3be
+readonly CPG_SPKI_SHA256='QoH2+wIocE83ZkR4/oyn5ru2JtE+/ZrYS9brNjujldU='
 declare -a children=()
 
 mkdir -p \
@@ -72,11 +74,12 @@ wait_for_port() {
 }
 
 wait_for_cpg_login() {
-  local attempts=$1
+  local port=$1
+  local attempts=$2
   local status
   for ((attempt = 0; attempt < attempts; attempt += 1)); do
     status=""
-    if { exec 3<>/dev/tcp/127.0.0.1/5000; } 2>/dev/null; then
+    if { exec 3<>"/dev/tcp/127.0.0.1/${port}"; } 2>/dev/null; then
       printf 'GET / HTTP/1.0\r\nHost: localhost\r\nConnection: close\r\n\r\n' >&3
       IFS= read -r -t 2 status <&3 || true
       exec 3>&- 3<&-
@@ -157,10 +160,14 @@ start_service cpg java \
   ibgroup.web.core.clientportal.gw.GatewayStart \
   --conf ../root/conf.yaml
 wait_for_port 5000 60
-wait_for_cpg_login 60
+
+start_service cpg-relay /usr/local/bin/pyrus-capsule-relay \
+  15000 \
+  5000 \
+  "${CPG_CERT_SHA256}"
+wait_for_cpg_login 15000 60
 
 start_service login-observer observe_cpg_logins
-start_service cpg-relay /usr/local/bin/pyrus-capsule-relay 15000 5000
 
 start_service chromium chromium \
   --user-data-dir="${RUNTIME_DIR}/chromium" \
@@ -169,7 +176,8 @@ start_service chromium chromium \
   --disable-background-networking \
   --disable-component-update \
   --disable-sync \
-  --app=http://localhost:5000/
+  --ignore-certificate-errors-spki-list="${CPG_SPKI_SHA256}" \
+  --app=https://localhost:5000/
 
 wait_until_healthy
 printf 'PYRUS_IBKR_CAPSULE_READY_V1\n'
