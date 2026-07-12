@@ -27,6 +27,96 @@ export function formatIbkrPortalStatus(status) {
   return IBKR_PORTAL_STATUS_LABELS[status] || status || "unknown";
 }
 
+export function buildIbkrPortalProgressModel({
+  readiness,
+  connecting = false,
+} = {}) {
+  const status = readiness?.status || (connecting ? "gateway_starting" : "disconnected");
+  const connected = status === "connected" && readiness?.authenticated === true;
+  const gatewayComplete =
+    readiness?.gatewayRunning === true && status !== "gateway_starting";
+  const browserLoginComplete =
+    readiness?.browserLoginComplete === true || connected;
+  const currentStep = connected
+    ? null
+    : browserLoginComplete
+      ? "session"
+      : gatewayComplete
+        ? "login"
+        : "gateway";
+  const stepStatus = (id, complete) =>
+    complete ? "complete" : currentStep === id ? "current" : "pending";
+  const steps = [
+    {
+      id: "gateway",
+      label: "Secure gateway",
+      status: stepStatus("gateway", gatewayComplete || connected),
+    },
+    {
+      id: "login",
+      label: "IBKR login",
+      status: stepStatus("login", browserLoginComplete),
+    },
+    {
+      id: "session",
+      label: "Verify session & accounts",
+      status: stepStatus("session", connected),
+    },
+  ];
+
+  if (connected) {
+    const accountCount = Array.isArray(readiness?.accounts)
+      ? readiness.accounts.length
+      : 0;
+    const accountLabel = `${accountCount} account${accountCount === 1 ? "" : "s"} available`;
+    return {
+      connected,
+      browserLoginComplete,
+      title: "Connected to IBKR",
+      detail: readiness?.selectedAccountId
+        ? `${readiness.selectedAccountId} · ${accountLabel}`
+        : accountLabel,
+      steps,
+    };
+  }
+
+  if (browserLoginComplete) {
+    return {
+      connected,
+      browserLoginComplete,
+      title: "Verifying your IBKR session",
+      detail:
+        "IBKR accepted your login. PYRUS is verifying the API session and loading accounts.",
+      steps,
+    };
+  }
+
+  if (gatewayComplete) {
+    return {
+      connected,
+      browserLoginComplete,
+      title:
+        status === "competing"
+          ? "IBKR session needs attention"
+          : "Complete your IBKR login",
+      detail:
+        readiness?.message ||
+        "Finish signing in and approving two-factor authentication in the secure viewer.",
+      steps,
+    };
+  }
+
+  return {
+    connected,
+    browserLoginComplete,
+    title: "Starting IBKR Client Portal",
+    detail:
+      readiness?.message ||
+      "The isolated gateway can take up to about a minute on its first launch.",
+    steps,
+  };
+}
+
 export function isTerminalIbkrPortalConnectStatus(readiness) {
   return (
     readiness?.status === "disconnected" && readiness?.gatewayRunning === false

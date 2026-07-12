@@ -3,11 +3,98 @@ import test from "node:test";
 
 import {
   IBKR_PORTAL_LOGIN_TIMEOUT_MS,
+  buildIbkrPortalProgressModel,
   formatIbkrPortalStatus,
   hasIbkrPortalLoginTimedOut,
   isTerminalIbkrPortalConnectStatus,
   restoreIbkrPortalFocus,
 } from "./ibkrPortalConnectModel.js";
+
+test("IBKR portal progress distinguishes browser login from verified connection", () => {
+  const starting = buildIbkrPortalProgressModel({
+    connecting: true,
+    readiness: {
+      status: "gateway_starting",
+      gatewayRunning: true,
+      authenticated: false,
+      browserLoginComplete: false,
+      selectedAccountId: null,
+      accounts: [],
+      message: "Starting the IBKR gateway…",
+    },
+  });
+  assert.equal(starting.title, "Starting IBKR Client Portal");
+  assert.deepEqual(
+    starting.steps.map(({ status }) => status),
+    ["current", "pending", "pending"],
+  );
+
+  const awaitingLogin = buildIbkrPortalProgressModel({
+    readiness: {
+      status: "needs_login",
+      gatewayRunning: true,
+      authenticated: false,
+      browserLoginComplete: false,
+      selectedAccountId: null,
+      accounts: [],
+      message: "Gateway is running. Log in to IBKR to finish connecting.",
+    },
+  });
+  assert.equal(awaitingLogin.title, "Complete your IBKR login");
+  assert.deepEqual(
+    awaitingLogin.steps.map(({ status }) => status),
+    ["complete", "current", "pending"],
+  );
+
+  const verifying = buildIbkrPortalProgressModel({
+    readiness: {
+      status: "needs_login",
+      gatewayRunning: true,
+      authenticated: false,
+      browserLoginComplete: true,
+      selectedAccountId: null,
+      accounts: [],
+      message: "Gateway is running. Log in to IBKR to finish connecting.",
+    },
+  });
+  assert.equal(verifying.title, "Verifying your IBKR session");
+  assert.match(verifying.detail, /accepted your login/i);
+  assert.deepEqual(
+    verifying.steps.map(({ status }) => status),
+    ["complete", "complete", "current"],
+  );
+});
+
+test("IBKR portal progress requires authenticated server truth for success", () => {
+  const connectedReadiness = {
+    status: "connected",
+    gatewayRunning: true,
+    authenticated: true,
+    browserLoginComplete: true,
+    selectedAccountId: "U1234567",
+    accounts: ["U1234567", "U7654321"],
+    message: "Connected to IBKR.",
+  };
+  const connected = buildIbkrPortalProgressModel({
+    readiness: connectedReadiness,
+  });
+  assert.equal(connected.connected, true);
+  assert.equal(
+    connected.steps.every(({ status }) => status === "complete"),
+    true,
+  );
+  assert.equal(connected.title, "Connected to IBKR");
+  assert.equal(connected.detail, "U1234567 · 2 accounts available");
+
+  const unverified = buildIbkrPortalProgressModel({
+    readiness: {
+      ...connectedReadiness,
+      authenticated: false,
+    },
+  });
+  assert.equal(unverified.connected, false);
+  assert.equal(unverified.steps.at(-1)?.status, "current");
+});
 
 test("IBKR portal model recognizes terminal hosted-login failures", () => {
   assert.equal(formatIbkrPortalStatus("disconnected"), "not connected");
