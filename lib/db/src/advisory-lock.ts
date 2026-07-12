@@ -171,6 +171,7 @@ export function createAdvisoryLockHolder(
       dropClient();
       throw error;
     }
+    const acquireGeneration = generation;
 
     let locked = false;
     try {
@@ -190,6 +191,15 @@ export function createAdvisoryLockHolder(
 
     if (!locked) {
       return null;
+    }
+    if (
+      closed ||
+      generation !== acquireGeneration ||
+      client !== active
+    ) {
+      throw closed
+        ? closedError()
+        : new Error(`${context} connection changed during lock acquisition.`);
     }
 
     heldKeys.set(key, active);

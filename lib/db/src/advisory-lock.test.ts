@@ -323,3 +323,41 @@ test("close drains an in-flight connect and permanently closes the holder", asyn
   await assert.rejects(holder.acquire(3), /closed/i);
   assert.equal(createCount, 1, "closed holder must not create another client");
 });
+
+test("close fences an advisory-lock query already in flight", async () => {
+  let resolveQuery!: (value: { rows: Array<{ locked: boolean }> }) => void;
+  let queryStarted = false;
+  let endCount = 0;
+  const client = {
+    async connect() {},
+    async end() {
+      endCount += 1;
+    },
+    query<Row>() {
+      queryStarted = true;
+      return new Promise<{ rows: Row[] }>((resolve) => {
+        resolveQuery = resolve as typeof resolveQuery;
+      });
+    },
+    on() {
+      return client;
+    },
+    off() {
+      return client;
+    },
+  };
+  const holder = createAdvisoryLockHolder({ createClient: () => client });
+
+  const acquiring = holder.acquire(4);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(queryStarted, true);
+  await holder.close();
+  assert.equal(endCount, 1);
+
+  resolveQuery({ rows: [{ locked: true }] });
+  await assert.rejects(
+    acquiring,
+    /closed/i,
+    "an acquire must not report success after permanent close",
+  );
+});
