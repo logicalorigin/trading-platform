@@ -12206,7 +12206,7 @@ async function getShadowTradeEquityEvents(input: {
     .from(shadowFillsTable)
     .where(and(...conditions))
     .orderBy(shadowFillsTable.occurredAt);
-  const ordersById = await readShadowOrdersByFillOrderId(fills);
+  const ordersById = await readCachedShadowOrdersByFillOrderId(fills);
   const selectedFills = input.sources?.length
     ? fills.filter((fill) => {
         const order = ordersById.get(fill.orderId);

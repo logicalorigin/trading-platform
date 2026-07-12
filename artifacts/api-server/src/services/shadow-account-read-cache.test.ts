@@ -1055,6 +1055,25 @@ test("read-side fill analysis reuses cached account orders and fetches only miss
   );
   const analysis = source.slice(analysisStart, analysisEnd);
   assert.match(analysis, /readCachedShadowOrdersByFillOrderId\(fills\)/);
+
+  const equityEventsStart = source.indexOf(
+    "async function getShadowTradeEquityEvents",
+  );
+  const equityEventsEnd = source.indexOf(
+    "\nexport async function getShadowAccountCashActivity",
+    equityEventsStart,
+  );
+  assert.notEqual(equityEventsStart, -1, "Missing trade equity-event reader");
+  assert.notEqual(
+    equityEventsEnd,
+    -1,
+    "Missing trade equity-event reader boundary",
+  );
+  const equityEvents = source.slice(equityEventsStart, equityEventsEnd);
+  assert.match(
+    equityEvents,
+    /readCachedShadowOrdersByFillOrderId\(fills\)/,
+  );
 });
 
 test("automation ledger realized P&L keeps the all-time source path", () => {
