@@ -102,7 +102,7 @@ test("IBKR keeps the capsule-local login inside a contained sandboxed modal", ()
   const source = readLocalSource("./SnapTradeConnectPanel.jsx");
   const viteSource = readLocalSource("../../../vite.config.ts");
   const dialogBlock =
-    /function IbkrPortalLoginDialog[\s\S]*?\n}\n\n\/\/ Watches a broker auth popup/.exec(
+    /function IbkrPortalProgress[\s\S]*?\n}\n\n\/\/ Watches a broker auth popup/.exec(
       source,
     )?.[0] ?? "";
   const connectBlock =
@@ -112,7 +112,7 @@ test("IBKR keeps the capsule-local login inside a contained sandboxed modal", ()
 
   assert.match(
     source,
-    /function IbkrPortalLoginDialog\(\{[\s\S]*?returnFocusRef[\s\S]*?\}\)/,
+    /function IbkrPortalLoginDialog\(\{[\s\S]*?open[\s\S]*?readiness[\s\S]*?returnFocusRef[\s\S]*?\}\)/,
   );
   assert.match(source, /<Dialog\.Content/);
   assert.match(source, /<iframe/);
@@ -123,8 +123,12 @@ test("IBKR keeps the capsule-local login inside a contained sandboxed modal", ()
   assert.doesNotMatch(source, /sandbox="[^"]*allow-popups/);
   assert.match(source, /const ibkrAttemptRef = useRef\(0\)/);
   assert.match(source, /const ibkrConnectBusyRef = useRef\(false\)/);
-  assert.match(source, /open=\{Boolean\(url \|\| connecting\)\}/);
-  assert.match(source, /Starting secure IBKR Client Portal session/);
+  assert.match(source, /open=\{open\}/);
+  assert.match(dialogBlock, /buildIbkrPortalProgressModel/);
+  assert.match(dialogBlock, /role="status"/);
+  assert.match(dialogBlock, /aria-live="polite"/);
+  assert.match(dialogBlock, /<ol/);
+  assert.match(dialogBlock, /aria-current=/);
   assert.match(
     source,
     /onPointerDownOutside=\{\(event\) => event\.preventDefault\(\)\}/,
@@ -135,8 +139,8 @@ test("IBKR keeps the capsule-local login inside a contained sandboxed modal", ()
   assert.match(dialogBlock, /env\(safe-area-inset-bottom, 0px\)/);
   assert.match(dialogBlock, /env\(safe-area-inset-left, 0px\)/);
   assert.match(dialogBlock, /width: "100%"/);
-  assert.match(dialogBlock, /height: "100%"/);
-  assert.match(dialogBlock, /maxWidth: dim\(960\)/);
+  assert.match(dialogBlock, /height: showViewer \? "100%" : "auto"/);
+  assert.match(dialogBlock, /maxWidth: dim\(showViewer \? 960 : 640\)/);
   assert.match(dialogBlock, /maxHeight: dim\(800\)/);
   assert.match(dialogBlock, /boxShadow: ELEVATION\.lg/);
   assert.match(dialogBlock, /onCloseAutoFocus/);
@@ -146,7 +150,7 @@ test("IBKR keeps the capsule-local login inside a contained sandboxed modal", ()
   );
   assert.doesNotMatch(dialogBlock, /onOpenAutoFocus|restoreFocusRef/);
   assert.match(dialogBlock, /<Dialog\.Title/);
-  assert.match(dialogBlock, /aria-label="Close IBKR Client Portal login"/);
+  assert.match(dialogBlock, /aria-label="Close IBKR Client Portal status"/);
   assert.doesNotMatch(dialogBlock, /onEscapeKeyDown/);
   assert.doesNotMatch(
     dialogBlock,
@@ -186,13 +190,31 @@ test("IBKR keeps the capsule-local login inside a contained sandboxed modal", ()
     /window\.location\.assign|openBrokerPopup|popup\./,
   );
   const closeBlock =
-    /const closeIbkrPortalLogin = \(\) => \{[\s\S]*?\n  \};/.exec(
+    /const closeIbkrPortalDialog = \(\) => \{[\s\S]*?\n  \};/.exec(
       source,
     )?.[0] ?? "";
-  assert.match(closeBlock, /\+\+ibkrAttemptRef\.current/);
+  assert.match(closeBlock, /setIbkrDialogOpen\(false\)/);
+  assert.doesNotMatch(closeBlock, /ibkrAttemptRef/);
+  assert.doesNotMatch(closeBlock, /setIbkrLoginUrl/);
+  assert.doesNotMatch(closeBlock, /stopIbkrPortalPoll/);
+  assert.doesNotMatch(closeBlock, /clearConnectHandoff/);
+  assert.doesNotMatch(closeBlock, /ibkrPortalDisconnectMutation/);
+  const disconnectBlock =
+    /const disconnectIbkrPortal = async \([^)]*\) => \{[\s\S]*?\n  \};/.exec(
+      source,
+    )?.[0] ?? "";
   assert.match(
-    closeBlock,
+    disconnectBlock,
     /ibkrPortalDisconnectMutation[\s\S]*?\.mutateAsync\(\)/,
+  );
+  assert.equal(
+    source.match(/ibkrPortalDisconnectMutation[\s\S]{0,120}?\.mutateAsync\(\)/g)
+      ?.length,
+    1,
+  );
+  assert.doesNotMatch(
+    connectBlock,
+    /hasIbkrPortalLoginTimedOut[\s\S]{0,180}?closeIbkrPortalDialog\(\)/,
   );
   assert.match(viteSource, /"\/api\/broker-execution\/ibkr-portal\/client"/);
   assert.match(
@@ -205,7 +227,11 @@ test("IBKR keeps the capsule-local login inside a contained sandboxed modal", ()
   );
   assert.match(
     source,
-    /<IbkrPortalLoginDialog[\s\S]*?connecting=\{ibkrConnecting\}/,
+    /const \[ibkrDialogOpen, setIbkrDialogOpen\] = useState\(false\)/,
+  );
+  assert.match(
+    source,
+    /<IbkrPortalLoginDialog[\s\S]*?open=\{ibkrDialogOpen\}[\s\S]*?connecting=\{ibkrConnecting\}[\s\S]*?readiness=\{/,
   );
   assert.match(source, /const ibkrReturnFocusRef = useRef\(null\)/);
   assert.match(source, /ref=\{focusRef\}/);
@@ -217,6 +243,9 @@ test("IBKR keeps the capsule-local login inside a contained sandboxed modal", ()
     source,
     /<IbkrPortalLoginDialog[\s\S]*?returnFocusRef=\{ibkrReturnFocusRef\}/,
   );
+  assert.match(source, /const ibkrPortalAttemptActive = Boolean\(/);
+  assert.match(source, /label: "View status"/);
+  assert.match(source, /setIbkrDialogOpen\(true\)/);
 });
 
 test("broker picker hydrates connected edges from server truth on load, unioned with sync freshness", () => {
