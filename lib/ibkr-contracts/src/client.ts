@@ -210,6 +210,7 @@ export type PlaceOrderInput = {
   accountId: string;
   mode: RuntimeMode;
   confirm?: boolean | null;
+  clientOrderId?: string | null;
   symbol: string;
   assetClass: AssetClass;
   side: OrderSide;
@@ -489,7 +490,20 @@ export type OrderPreviewSnapshot = {
   symbol: string;
   assetClass: AssetClass;
   resolvedContractId: number;
+  clientOrderId: string;
+  orderFingerprint: string;
   orderPayload: Record<string, unknown>;
+  whatIf: {
+    amount: string | null;
+    commission: string | null;
+    total: string | null;
+    equityChange: string | null;
+    initialMarginChange: string | null;
+    maintenanceMarginChange: string | null;
+    positionChange: string | null;
+    warnings: string[];
+    error: string | null;
+  };
   optionContract: BrokerPositionSnapshot["optionContract"];
   tradingSession?: TradingSession | null;
   resolvedExchange?: string | null;

@@ -77,12 +77,20 @@ import {
   toIbkrMonthCode,
 } from "../../lib/values";
 import { areVerifiedIbkrPaperAccounts } from "../../services/ibkr-paper-account-policy";
+import { fingerprintIbkrOrderBody } from "../../services/ibkr-order-intent";
 import { signHmacRequest, type OAuthParams } from "./oauth-signer";
 
 type HeaderInput = ConstructorParameters<typeof Headers>[0];
 
 function strictBoolean(value: unknown): boolean | null {
   return typeof value === "boolean" ? value : null;
+}
+
+function validatedClientOrderId(value: unknown): string | null {
+  const clientOrderId = asString(value)?.trim() ?? "";
+  return /^[A-Za-z0-9._:-]{1,64}$/u.test(clientOrderId)
+    ? clientOrderId
+    : null;
 }
 
 export type IbkrClientOAuthConfig = {
@@ -3151,10 +3159,11 @@ export class IbkrClient {
 
     const reply = results.find((result) => asString(result["id"]) !== null);
     if (reply) {
+      const replyId = asString(reply["id"]);
       const messages = compact(asArray(reply["message"]).map(asString));
       throw new HttpError(409, "IBKR requires explicit review of an order warning.", {
         code: "ibkr_order_warning_confirmation_required",
-        data: { messages },
+        data: { replyId, messages },
         expose: true,
       });
     }
@@ -3165,6 +3174,63 @@ export class IbkrClient {
       {
         code: "ibkr_missing_order_ack",
       },
+    );
+  }
+
+  async replyOrderWarning(input: {
+    replyId: string;
+    confirmed: boolean;
+  }): Promise<
+    | { kind: "declined" }
+    | {
+        kind: "warning";
+        replyId: string;
+        messages: string[];
+      }
+    | {
+        kind: "acknowledged";
+        acknowledgement: Record<string, unknown>;
+      }
+  > {
+    const replyId = input.replyId.trim();
+    if (!replyId || replyId.length > 256) {
+      throw new HttpError(409, "The IBKR order warning reply is invalid.", {
+        code: "ibkr_order_reply_invalid",
+        expose: true,
+      });
+    }
+    const payload = await this.request<unknown>(
+      `/iserver/reply/${encodeURIComponent(replyId)}`,
+      {
+        method: "POST",
+        body: JSON.stringify({ confirmed: input.confirmed }),
+      },
+    );
+    if (!input.confirmed) {
+      return { kind: "declined" };
+    }
+    const results = compact(asArray(payload).map(asRecord));
+    const acknowledgement = results.find(
+      (result) =>
+        asString(result["order_id"]) !== null ||
+        asString(result["orderId"]) !== null,
+    );
+    if (acknowledgement) {
+      return { kind: "acknowledged", acknowledgement };
+    }
+    const warning = results.find((result) => asString(result["id"]) !== null);
+    const nextReplyId = asString(warning?.["id"]);
+    if (warning && nextReplyId) {
+      return {
+        kind: "warning",
+        replyId: nextReplyId,
+        messages: compact(asArray(warning["message"]).map(asString)),
+      };
+    }
+    throw new HttpError(
+      502,
+      "IBKR order reply did not return a final acknowledgement.",
+      { code: "ibkr_missing_order_ack" },
     );
   }
 
@@ -3205,7 +3271,7 @@ export class IbkrClient {
           conid: resolvedContract.conid,
           manualIndicator: true,
           secType: `${resolvedContract.conid}:${resolvedContract.secType}`,
-          cOID: randomUUID(),
+          cOID: validatedClientOrderId(input.clientOrderId) ?? randomUUID(),
           orderType: INTERNAL_TO_IBKR_ORDER_TYPE[input.type],
           listingExchange: resolvedContract.listingExchange,
           outsideRTH: false,
@@ -3295,6 +3361,33 @@ export class IbkrClient {
   async previewOrder(input: PlaceOrderInput): Promise<OrderPreviewSnapshot> {
     const { accountId, body, resolvedContractId } =
       await this.buildStructuredOrderBody(input);
+    const orderPayload = asRecord(asArray(body["orders"])[0]) ?? {};
+    const clientOrderId = asString(orderPayload["cOID"]);
+    if (!clientOrderId) {
+      throw new HttpError(500, "Prepared IBKR order has no client order ID.", {
+        code: "ibkr_order_intent_invalid",
+      });
+    }
+    await this.preflightMarketData([resolvedContractId]);
+    const whatIfPayload = await this.request<unknown>(
+      `/iserver/account/${encodeURIComponent(accountId)}/orders/whatif`,
+      {
+        method: "POST",
+        body: JSON.stringify(body),
+      },
+    );
+    const whatIf =
+      asRecord(whatIfPayload) ?? compact(asArray(whatIfPayload).map(asRecord))[0] ?? {};
+    const amount = asRecord(whatIf["amount"]);
+    const equity = asRecord(whatIf["equity"]);
+    const initial = asRecord(whatIf["initial"]);
+    const maintenance = asRecord(whatIf["maintenance"]);
+    const position = asRecord(whatIf["position"]);
+    const warnings = compact([
+      asString(whatIf["warn"]),
+      asString(whatIf["warning"]),
+      ...asArray(whatIf["warnings"]).map(asString),
+    ]);
 
     return {
       accountId,
@@ -3302,7 +3395,20 @@ export class IbkrClient {
       symbol: normalizeSymbol(input.symbol),
       assetClass: input.assetClass,
       resolvedContractId,
-      orderPayload: asRecord(asArray(body["orders"])[0]) ?? {},
+      clientOrderId,
+      orderFingerprint: fingerprintIbkrOrderBody(body),
+      orderPayload,
+      whatIf: {
+        amount: asString(amount?.["amount"]),
+        commission: asString(amount?.["commission"]),
+        total: asString(amount?.["total"]),
+        equityChange: asString(equity?.["change"]),
+        initialMarginChange: asString(initial?.["change"]),
+        maintenanceMarginChange: asString(maintenance?.["change"]),
+        positionChange: asString(position?.["change"]),
+        warnings,
+        error: asString(whatIf["error"]),
+      },
       optionContract: input.optionContract
         ? {
             ...input.optionContract,
@@ -3313,18 +3419,57 @@ export class IbkrClient {
   }
 
   async placeOrder(input: PlaceOrderInput): Promise<BrokerOrderSnapshot> {
+    if (!validatedClientOrderId(input.clientOrderId)) {
+      throw new HttpError(409, "A prepared IBKR order intent is required.", {
+        code: "ibkr_order_intent_required",
+        expose: true,
+      });
+    }
     const { accountId, body } = await this.buildStructuredOrderBody(input);
+    return this.placePreparedOrder(input, { accountId, body });
+  }
+
+  async placePreparedOrder(
+    input: PlaceOrderInput,
+    prepared: { accountId: string; body: Record<string, unknown> },
+  ): Promise<BrokerOrderSnapshot> {
+    const clientOrderId = validatedClientOrderId(input.clientOrderId);
+    const order = asRecord(asArray(prepared.body["orders"])[0]);
+    if (
+      !clientOrderId ||
+      asArray(prepared.body["orders"]).length !== 1 ||
+      prepared.accountId !== input.accountId ||
+      asString(order?.["acctId"]) !== input.accountId ||
+      asString(order?.["cOID"]) !== clientOrderId
+    ) {
+      throw new HttpError(409, "The prepared IBKR order intent is invalid.", {
+        code: "ibkr_order_intent_invalid",
+        expose: true,
+      });
+    }
+    const tradingAccounts = await this.getTradingAccountsInfo();
+    if (!tradingAccounts.accounts.includes(prepared.accountId)) {
+      throw new HttpError(409, "The selected IBKR account is not tradable.", {
+        code: "ibkr_order_account_not_tradable",
+        expose: true,
+      });
+    }
 
     const responsePayload = await this.request<unknown>(
-      `/iserver/account/${encodeURIComponent(accountId)}/orders`,
+      `/iserver/account/${encodeURIComponent(prepared.accountId)}/orders`,
       {
         method: "POST",
-        body: JSON.stringify(body),
+        body: JSON.stringify(prepared.body),
       },
     );
     const result = this.requireOrderAcknowledgement(responsePayload);
     const placedAt = new Date();
-    return this.mapAcknowledgedOrder(input, result, accountId, placedAt);
+    return this.mapAcknowledgedOrder(
+      input,
+      result,
+      prepared.accountId,
+      placedAt,
+    );
   }
 
   async submitRawOrders(input: {
