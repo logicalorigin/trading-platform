@@ -34,34 +34,4 @@ export const DataIssueInlineIcon = ({
   );
 };
 
-export const DataIssueValue = ({
-  children,
-  issue,
-  issues,
-  side = "top",
-  align = "center",
-  gap = 4,
-  style = {},
-}) => {
-  const point = issue || summarizeIssues(issues);
-  return (
-    <span
-      style={{
-        display: "inline-flex",
-        alignItems: "center",
-        justifyContent: "inherit",
-        gap,
-        minWidth: 0,
-        maxWidth: "100%",
-        ...style,
-      }}
-    >
-      <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}>
-        {children}
-      </span>
-      <DataIssueInlineIcon issue={point} side={side} align={align} />
-    </span>
-  );
-};
-
 export default DataIssueInlineIcon;

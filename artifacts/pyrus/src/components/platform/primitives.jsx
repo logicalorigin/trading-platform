@@ -85,8 +85,7 @@ const normalizeSparklinePoints = (points = []) =>
 
 /**
  * MicroSparkline — financial green/red line by default plus compact detail cues.
- * Used in PlatformWatchlist rows and (via RowSparkValue) any row primitive
- * that wants an inline trend indicator.
+ * Used in compact market, signal, and watchlist rows.
  *
  *   data       — array of points (any of the shapes extractSparklineValues handles)
  *   positive   — financial outcome override; null infers from first-vs-last value
@@ -256,81 +255,6 @@ const MicroSparklineBase = ({
 // Memoized so re-renders driven by unrelated live signal-state ticks skip the
 // SVG path recompute when this sparkline's props are referentially unchanged.
 export const MicroSparkline = memo(MicroSparklineBase);
-
-/**
- * RowSparkValue — compact inline row: [value] [delta?] [MicroSparkline].
- * For dense lists where each entry is one numeric value, an optional
- * delta indicator, and a tiny trend. Examples: alert history, broker-
- * position rows, watchlist "mini" view. The watchlist's primary row
- * has its own layout; this primitive is for the simpler patterns.
- *
- *   value       — string or ReactNode (the headline number / label)
- *   delta       — optional ReactNode (signed percent, color-toned)
- *   sparklineData — passed through to MicroSparkline
- *   sparklineWidth / sparklineHeight — sized in dim() before scale
- *   positive    — passed through to MicroSparkline (auto-infer if null)
- *   align       — "start" | "end" (default "end"; positions sparkline on the right)
- *
- * No icon / no identity chip on purpose — those compose outside.
- */
-export const RowSparkValue = ({
-  value,
-  delta,
-  sparklineData,
-  sparklineWidth = 44,
-  sparklineHeight = 18,
-  positive = null,
-  align = "end",
-  className,
-  style,
-}) => (
-  <span
-    className={className}
-    style={{
-      display: "inline-flex",
-      alignItems: "center",
-      gap: sp(6),
-      minWidth: 0,
-      justifyContent: align === "start" ? "flex-start" : "flex-end",
-      fontFamily: T.sans,
-      fontVariantNumeric: "tabular-nums",
-      ...style,
-    }}
-  >
-    {value != null ? (
-      <span
-        style={{
-          color: CSS_COLOR.text,
-          fontSize: textSize("paragraph"),
-          fontWeight: FONT_WEIGHTS.medium,
-          whiteSpace: "nowrap",
-        }}
-      >
-        {value}
-      </span>
-    ) : null}
-    {delta != null ? (
-      <span
-        style={{
-          color: CSS_COLOR.textDim,
-          fontSize: textSize("body"),
-          fontWeight: FONT_WEIGHTS.medium,
-          whiteSpace: "nowrap",
-        }}
-      >
-        {delta}
-      </span>
-    ) : null}
-    {sparklineData ? (
-      <MicroSparkline
-        data={sparklineData}
-        width={sparklineWidth}
-        height={sparklineHeight}
-        positive={positive}
-      />
-    ) : null}
-  </span>
-);
 
 const finiteGaugeNumber = (value) => {
   const numeric = Number(value);
