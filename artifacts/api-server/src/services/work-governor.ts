@@ -40,6 +40,30 @@ const DEFAULT_CONFIG: Record<WorkGovernorCategory, WorkGovernorConfig> = {
   orders: { concurrency: 1, failureThreshold: 4, backoffMs: 2_000 },
 };
 
+// Keep the finite environment surface literal so audit:env can verify that
+// every active setting is documented in .env.example.
+const WORK_GOVERNOR_ENV_KEYS = [
+  {
+    category: "account",
+    concurrency: "WORK_GOVERNOR_ACCOUNT_CONCURRENCY",
+    legacyConcurrency: "IBKR_BRIDGE_GOVERNOR_ACCOUNT_CONCURRENCY",
+    failureThreshold: "WORK_GOVERNOR_ACCOUNT_FAILURE_THRESHOLD",
+    legacyFailureThreshold:
+      "IBKR_BRIDGE_GOVERNOR_ACCOUNT_FAILURE_THRESHOLD",
+    backoffMs: "WORK_GOVERNOR_ACCOUNT_BACKOFF_MS",
+    legacyBackoffMs: "IBKR_BRIDGE_GOVERNOR_ACCOUNT_BACKOFF_MS",
+  },
+  {
+    category: "orders",
+    concurrency: "WORK_GOVERNOR_ORDERS_CONCURRENCY",
+    legacyConcurrency: "IBKR_BRIDGE_GOVERNOR_ORDERS_CONCURRENCY",
+    failureThreshold: "WORK_GOVERNOR_ORDERS_FAILURE_THRESHOLD",
+    legacyFailureThreshold: "IBKR_BRIDGE_GOVERNOR_ORDERS_FAILURE_THRESHOLD",
+    backoffMs: "WORK_GOVERNOR_ORDERS_BACKOFF_MS",
+    legacyBackoffMs: "IBKR_BRIDGE_GOVERNOR_ORDERS_BACKOFF_MS",
+  },
+] as const;
+
 const state: Record<WorkGovernorCategory, CategoryState> = {
   account: emptyState(),
   orders: emptyState(),
@@ -66,23 +90,24 @@ function emptyState(): CategoryState {
 
 function configFor(category: WorkGovernorCategory): WorkGovernorConfig {
   const defaults = DEFAULT_CONFIG[category];
-  const prefix = `WORK_GOVERNOR_${category.toUpperCase()}`;
-  const legacyPrefix = `IBKR_BRIDGE_GOVERNOR_${category.toUpperCase()}`;
+  const envKeys = WORK_GOVERNOR_ENV_KEYS.find(
+    (candidate) => candidate.category === category,
+  )!;
   return {
     concurrency: readPositiveIntegerEnv(
-      `${prefix}_CONCURRENCY`,
-      readPositiveIntegerEnv(`${legacyPrefix}_CONCURRENCY`, defaults.concurrency),
+      envKeys.concurrency,
+      readPositiveIntegerEnv(envKeys.legacyConcurrency, defaults.concurrency),
     ),
     failureThreshold: readPositiveIntegerEnv(
-      `${prefix}_FAILURE_THRESHOLD`,
+      envKeys.failureThreshold,
       readPositiveIntegerEnv(
-        `${legacyPrefix}_FAILURE_THRESHOLD`,
+        envKeys.legacyFailureThreshold,
         defaults.failureThreshold,
       ),
     ),
     backoffMs: readPositiveIntegerEnv(
-      `${prefix}_BACKOFF_MS`,
-      readPositiveIntegerEnv(`${legacyPrefix}_BACKOFF_MS`, defaults.backoffMs),
+      envKeys.backoffMs,
+      readPositiveIntegerEnv(envKeys.legacyBackoffMs, defaults.backoffMs),
     ),
   };
 }

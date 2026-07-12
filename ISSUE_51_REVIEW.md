@@ -73,6 +73,8 @@ A write-back to a locked file fails with **EACCES** (not EPERM) — including th
 **M3 — The `[userenv.development]` IBKR flag is dead config, not a behavior restore.** *(verified: no source consumer)*
 `IBKR_ASYNC_SIDECAR_ROUTING_ENABLED` has **no consumer** in any `.ts/.tsx/.js/.mjs/.py` at HEAD (only `.env.example` + handoff docs); its consumer was removed at `0c284e27` (2026-07-05), *before* known-good `31c9a5e9`. Restoring it changes **no runtime behavior** — it re-introduces orphaned config. → Don't describe it as "restoring IBKR routing." Decide explicitly: **parity** (keep, matches locked baseline) *or* **cleanup** (drop it and its `.env.example` placeholder). Either way, split this behavior-adjacent flag out from the plumbing fixes so it isn't silently bundled.
 
+**Resolution (2026-07-12):** cleanup was chosen after a second zero-consumer census; the flag and its example placeholder were retired without changing the active Client Portal bridge path.
+
 **M4 — `postgresql-16` must be restored as the Replit *module*, and it isn't audit-verifiable.** *(verified)*
 `31c9a5e9:replit.nix` has no postgres pkg — psql/managed PG came solely from the `modules = […, "postgresql-16"]` line. The guard does **not** check the modules line, so "run the audit" won't prove this restored. → Restore it in `modules` (compatible with the guard, which only forbids *workspace-local* postgres). Verify separately with `which psql` — and note psql only resolves **after** the container re-provisions the module, not instantly, so a momentarily-failing `which psql` is not a bad restore.
 

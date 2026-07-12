@@ -113,8 +113,8 @@ check(
 
 // Platform "Post-Recovery checkpoint" clobber signature (2026-07-09 lockout):
 // deleted replit.nix, stripped the [nix] channel, dropped postgresql-16,
-// dropped [workflows] runButton, dropped the [userenv.development] sidecar
-// flag, and injected stale [[ports]] blocks. Fail loudly on any of it.
+// dropped [workflows] runButton, and injected stale [[ports]] blocks. Fail
+// loudly on any of it.
 for (const problem of detectReplitConfigClobber(repoRoot)) {
   check(false, `recovery-clobber signature: ${problem}`);
 }
@@ -128,6 +128,14 @@ check(
     existsSync(path.join(repoRoot, "scripts/replit-config/replit.nix")) &&
     existsSync(path.join(repoRoot, "scripts/restore-replit-config.mjs")),
   "Canonical Replit config snapshots (scripts/replit-config/) and scripts/restore-replit-config.mjs must stay checked in for one-command recovery.",
+);
+check(
+  existsSync(nixPath) &&
+    existsSync(path.join(repoRoot, "scripts/replit-config/dot-replit")) &&
+    existsSync(path.join(repoRoot, "scripts/replit-config/replit.nix")) &&
+    replit === read("scripts/replit-config/dot-replit") &&
+    read("replit.nix") === read("scripts/replit-config/replit.nix"),
+  "Live Replit startup config must exactly match scripts/replit-config/ so recovery cannot erase active rollout flags.",
 );
 
 const apiPackage = JSON.parse(read("artifacts/api-server/package.json"));

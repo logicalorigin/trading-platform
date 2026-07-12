@@ -2,8 +2,7 @@
 // Shared detection for the Replit platform "Post-Recovery checkpoint" clobber
 // signature that rewrote .replit from control-plane state (2026-07-09):
 // deleted replit.nix, stripped the [nix] channel, dropped the postgresql-16
-// module, dropped [workflows] runButton, dropped the [userenv.development]
-// IBKR sidecar flag, and injected stale [[ports]] blocks.
+// module, dropped [workflows] runButton, and injected stale [[ports]] blocks.
 //
 // Used by scripts/restore-replit-config.mjs and the PYRUS dev supervisor
 // (artifacts/pyrus/scripts/runDevApp.mjs) to detect-and-warn only. Nothing in
@@ -74,16 +73,6 @@ export function detectReplitConfigClobber(repoRoot) {
       '.replit is missing [workflows] runButton = "artifacts/pyrus: web" (Run button no longer targets the PYRUS web workflow)',
     );
   }
-  if (
-    !/^\s*\[userenv\.development\]\s*\r?\n(?:(?!\s*\[)[^\n]*\r?\n)*?\s*IBKR_ASYNC_SIDECAR_ROUTING_ENABLED\s*=\s*"true"\s*(?:\r?\n|$)/m.test(
-      replit,
-    )
-  ) {
-    problems.push(
-      '.replit is missing the [userenv.development] IBKR_ASYNC_SIDECAR_ROUTING_ENABLED = "true" flag',
-    );
-  }
-
   const ports = parsePortMappings(replit);
   if (
     JSON.stringify(ports) !== JSON.stringify(EXPECTED_PORT_MAPPINGS)

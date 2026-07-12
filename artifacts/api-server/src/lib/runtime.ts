@@ -34,26 +34,12 @@ export type IbkrRuntimeConfig = {
   allowInsecureTls: boolean;
   paperAccountOnly?: boolean;
 };
-export type IbkrTransport = "client_portal" | "tws";
 export type IbkrMarketDataMode =
   | "live"
   | "frozen"
   | "delayed"
   | "delayed_frozen"
   | "unknown";
-export type IbkrTwsRuntimeConfig = {
-  host: string;
-  port: number;
-  clientId: number;
-  defaultAccountId: string | null;
-  mode: RuntimeMode;
-  marketDataType: 1 | 2 | 3 | 4;
-};
-export type IbkrBridgeProviderRuntimeConfig =
-  {
-    transport: "tws";
-    config: IbkrTwsRuntimeConfig;
-  };
 export type IbkrBridgeRuntimeConfig = {
   baseUrl: string;
   apiToken: string | null;
@@ -102,36 +88,6 @@ const FMP_API_KEY_ENV_NAMES = [
 const FMP_BASE_URL_ENV_NAMES = [
   "FMP_BASE_URL",
   "FINANCIAL_MODELING_PREP_BASE_URL",
-];
-
-const IBKR_TRANSPORT_ENV_NAMES = ["IBKR_TRANSPORT"];
-const IBKR_TWS_HOST_ENV_NAMES = [
-  "IBKR_TWS_HOST",
-  "IBKR_SOCKET_HOST",
-  "IB_GATEWAY_HOST",
-  "TWS_HOST",
-];
-const IBKR_TWS_PORT_ENV_NAMES = [
-  "IBKR_TWS_PORT",
-  "IBKR_SOCKET_PORT",
-  "IB_GATEWAY_PORT",
-  "TWS_PORT",
-];
-const IBKR_TWS_CLIENT_ID_ENV_NAMES = [
-  "IBKR_TWS_CLIENT_ID",
-  "IBKR_CLIENT_ID",
-  "IB_GATEWAY_CLIENT_ID",
-  "TWS_CLIENT_ID",
-];
-const IBKR_TWS_MODE_ENV_NAMES = [
-  "IBKR_TWS_MODE",
-  "IBKR_GATEWAY_MODE",
-  "IB_GATEWAY_MODE",
-];
-const IBKR_TWS_MARKET_DATA_TYPE_ENV_NAMES = [
-  "IBKR_TWS_MARKET_DATA_TYPE",
-  "IBKR_MARKET_DATA_TYPE",
-  "IB_GATEWAY_MARKET_DATA_TYPE",
 ];
 
 const IBKR_CLIENT_PORTAL_BASE_URL_ENV_NAMES = [
@@ -418,65 +374,6 @@ export function __setIbkrBridgeLegacyRuntimeOverrideFileForTests(
   ibkrBridgeLegacyRuntimeOverrideFileForTests = path;
 }
 
-function normalizeRuntimeMode(value: string | null): RuntimeMode | null {
-  if (!value) {
-    return null;
-  }
-
-  const normalized = value.trim().toLowerCase();
-
-  if (normalized === "live") {
-    return "live";
-  }
-
-  // "paper" is accepted as a legacy alias for the renamed "shadow" environment
-  // so existing IBKR_TWS_MODE/TRADING_MODE env configs keep resolving.
-  if (normalized === "shadow" || normalized === "paper") {
-    return "shadow";
-  }
-
-  return null;
-}
-
-function normalizeIbkrTransport(value: string | null): IbkrTransport | null {
-  if (!value) {
-    return null;
-  }
-
-  const normalized = value.trim().toLowerCase();
-
-  if (
-    normalized === "client_portal" ||
-    normalized === "client-portal" ||
-    normalized === "cp" ||
-    normalized === "web" ||
-    normalized === "web_api"
-  ) {
-    return null;
-  }
-
-  if (
-    normalized === "tws" ||
-    normalized === "socket" ||
-    normalized === "gateway" ||
-    normalized === "ib_gateway" ||
-    normalized === "ibgateway"
-  ) {
-    return "tws";
-  }
-
-  return null;
-}
-
-function parseIntegerEnv(value: string | null): number | null {
-  if (!value) {
-    return null;
-  }
-
-  const parsed = Number.parseInt(value, 10);
-  return Number.isFinite(parsed) ? parsed : null;
-}
-
 function parseBooleanEnv(value: string | null): boolean {
   if (!value) {
     return false;
@@ -618,62 +515,6 @@ export function getIbkrRuntimeConfig(): IbkrRuntimeConfig | null {
       process.env["IBKR_ALLOW_INSECURE_TLS"] ?? null,
     ),
   };
-}
-
-export function getIbkrTwsRuntimeConfig(): IbkrTwsRuntimeConfig | null {
-  const explicitTransport = normalizeIbkrTransport(
-    getOptionalEnv(IBKR_TRANSPORT_ENV_NAMES),
-  );
-  const host = getOptionalEnv(IBKR_TWS_HOST_ENV_NAMES);
-  const port = parseIntegerEnv(getOptionalEnv(IBKR_TWS_PORT_ENV_NAMES));
-
-  if (explicitTransport !== "tws") {
-    return null;
-  }
-
-  const mode =
-    normalizeRuntimeMode(getOptionalEnv(IBKR_TWS_MODE_ENV_NAMES)) ??
-    "live";
-  const marketDataTypeCandidate = parseIntegerEnv(
-    getOptionalEnv(IBKR_TWS_MARKET_DATA_TYPE_ENV_NAMES),
-  );
-  const marketDataType =
-    marketDataTypeCandidate === 1 ||
-    marketDataTypeCandidate === 2 ||
-    marketDataTypeCandidate === 3 ||
-    marketDataTypeCandidate === 4
-      ? marketDataTypeCandidate
-      : 1;
-
-  return {
-    host: host ?? "127.0.0.1",
-    port: port ?? (mode === "live" ? 4001 : 4002),
-    clientId:
-      parseIntegerEnv(getOptionalEnv(IBKR_TWS_CLIENT_ID_ENV_NAMES)) ?? 101,
-    defaultAccountId: getOptionalEnv(IBKR_DEFAULT_ACCOUNT_ENV_NAMES),
-    mode,
-    marketDataType,
-  };
-}
-
-export function getIbkrBridgeProviderRuntimeConfig(): IbkrBridgeProviderRuntimeConfig | null {
-  const explicitTransport = normalizeIbkrTransport(
-    getOptionalEnv(IBKR_TRANSPORT_ENV_NAMES),
-  );
-
-  if (explicitTransport !== "tws") {
-    return null;
-  }
-
-  const twsConfig = getIbkrTwsRuntimeConfig();
-  if (twsConfig) {
-    return {
-      transport: "tws",
-      config: twsConfig,
-    };
-  }
-
-  return null;
 }
 
 export function getIbkrBridgeRuntimeConfig(): IbkrBridgeRuntimeConfig | null {

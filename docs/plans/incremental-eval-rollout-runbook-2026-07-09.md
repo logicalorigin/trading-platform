@@ -9,8 +9,8 @@ Flag unset/off: from-scratch evaluator only, zero behavior change. Nothing to do
 
 ## Stage 1 — SHADOW soak (≥1 full RTH session)
 1. Set `PYRUS_SIGNALS_INCREMENTAL_EVAL=shadow` in `.replit` `[userenv.development]` (the startup
-   contract's env surface — same place as IBKR_ASYNC_SIDECAR_ROUTING_ENABLED). Remember the
-   startup-config guard: run `pnpm run audit:replit-startup` after editing `.replit`.
+   contract's development env surface). Remember the startup-config guard: run
+   `pnpm run audit:replit-startup` after editing `.replit`.
 2. SIGUSR2 reload (same-pid safety check per the verification runbook).
 3. Soak through a market open + midday. Acceptance (read from the signal-monitor diagnostics
    surface the wiring exposes): `shadowChecks` climbing, **`shadowMismatches` = 0**, appends ≫
