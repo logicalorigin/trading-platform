@@ -11486,8 +11486,6 @@ function shadowTradeEventToActivityTrade(event: ShadowAnalysisTradeEvent) {
       : optionDateKey(contract.expirationDate);
   const selectedExpiration =
     readRecord(event.metadata.selectedExpiration) ?? {};
-  const realizedPnl = event.realizedPnl === 0 ? null : event.realizedPnl;
-
   return {
     id: event.id,
     source: "SHADOW_ACTIVITY",
@@ -11501,7 +11499,9 @@ function shadowTradeEventToActivityTrade(event: ShadowAnalysisTradeEvent) {
     closeDate: event.occurredAt,
     avgOpen: event.side === "buy" ? event.price : null,
     avgClose: event.price,
-    realizedPnl,
+    // An unpaired fill has no fee-complete opening basis. Only matched FIFO
+    // round trips are authoritative realized P&L.
+    realizedPnl: null,
     realizedPnlPercent: null,
     holdDurationMinutes: null,
     fees: event.fees,
@@ -11675,7 +11675,29 @@ function buildShadowAnalysisRoundTrips(events: ShadowAnalysisTradeEvent[]) {
       });
     }
 
-    const avgOpen = matchedQuantity > 0 ? entryValue / matchedQuantity : null;
+    if (matchedQuantity <= 0.000001) {
+      continue;
+    }
+
+    const avgOpen = entryValue / matchedQuantity;
+    const eventGrossBasis = Math.abs(event.price * event.quantity);
+    const multiplier =
+      eventGrossBasis > 0 && Math.abs(event.grossAmount) > 0
+        ? Math.abs(event.grossAmount) / eventGrossBasis
+        : event.positionType === "option"
+          ? 100
+          : 1;
+    const exitFees =
+      event.quantity > 0
+        ? event.fees * (matchedQuantity / event.quantity)
+        : 0;
+    const realizedPnl = Number(
+      (
+        (event.price * matchedQuantity - entryValue) * multiplier -
+        entryFees -
+        exitFees
+      ).toFixed(6),
+    );
     const realizedPnlPercent =
       avgOpen && event.price
         ? ((event.price - avgOpen) / Math.abs(avgOpen)) * 100
@@ -11687,14 +11709,14 @@ function buildShadowAnalysisRoundTrips(events: ShadowAnalysisTradeEvent[]) {
       assetClass: event.assetClass,
       positionType: event.positionType,
       positionKey: event.positionKey,
-      quantity: event.quantity,
+      quantity: matchedQuantity,
       openDate: shadowAnalysisJsonDate(earliestEntry),
       closeDate: event.occurredAt,
       avgOpen,
       avgClose: event.price,
-      realizedPnl: event.realizedPnl,
+      realizedPnl,
       realizedPnlPercent,
-      fees: event.fees + entryFees,
+      fees: exitFees + entryFees,
       holdDurationMinutes: earliestEntry
         ? (event.occurredAtDate.getTime() - earliestEntry.getTime()) / 60_000
         : null,

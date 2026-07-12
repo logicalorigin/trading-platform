@@ -14,6 +14,8 @@ const event = (input: {
   id: string;
   side: "buy" | "sell";
   price: number;
+  quantity?: number;
+  fees?: number;
   realizedPnl?: number;
   occurredAt: string;
   positionKey: string;
@@ -27,10 +29,10 @@ const event = (input: {
   assetClass: input.positionType === "option" ? "option" : "equity",
   positionType: input.positionType ?? "option",
   positionKey: input.positionKey,
-  quantity: 1,
+  quantity: input.quantity ?? 1,
   price: input.price,
-  grossAmount: input.price * 100,
-  fees: 0,
+  grossAmount: input.price * (input.quantity ?? 1) * 100,
+  fees: input.fees ?? 0,
   realizedPnl: input.realizedPnl ?? 0,
   cashDelta: 0,
   occurredAt: input.occurredAt,
@@ -118,4 +120,54 @@ test("shadow closed-trade round trips are keyed by contract identity, not just a
   const trade = shadowRoundTripToClosedTrade(sellB as never);
   assert.equal(trade.assetClass, "Options");
   assert.equal(trade.positionType, "option");
+});
+
+test("shadow round-trip realized P&L includes allocated entry and exit fees", () => {
+  const positionKey = "option:AAPL:2026-06-12:290:call:1";
+  const { roundTrips } = buildShadowAnalysisRoundTrips([
+    event({
+      id: "buy-two",
+      side: "buy",
+      price: 1,
+      quantity: 2,
+      fees: 2,
+      occurredAt: "2026-06-09T14:00:00.000Z",
+      positionKey,
+    }) as never,
+    event({
+      id: "sell-one",
+      side: "sell",
+      price: 1.1,
+      quantity: 1,
+      fees: 2,
+      realizedPnl: 8,
+      occurredAt: "2026-06-09T15:00:00.000Z",
+      positionKey,
+    }) as never,
+  ] as never);
+
+  assert.equal(roundTrips.length, 1);
+  assert.equal(roundTrips[0]?.quantity, 1);
+  assert.equal(roundTrips[0]?.fees, 3);
+  assert.ok(Math.abs((roundTrips[0]?.realizedPnl ?? 0) - 7) < 1e-9);
+});
+
+test("unmatched shadow exits do not become realized round trips", () => {
+  const unmatchedExit = event({
+    id: "sell-without-entry",
+    side: "sell",
+    price: 1.1,
+    fees: 2,
+    realizedPnl: 8,
+    occurredAt: "2026-06-09T15:00:00.000Z",
+    positionKey: "option:AAPL:2026-06-12:290:call:1",
+  });
+  const { roundTrips, anomalies } = buildShadowAnalysisRoundTrips([
+    unmatchedExit as never,
+  ] as never);
+  const activity = shadowTradeEventToActivityTrade(unmatchedExit as never);
+
+  assert.equal(roundTrips.length, 0);
+  assert.equal(anomalies.length, 1);
+  assert.equal(activity.realizedPnl, null);
 });
