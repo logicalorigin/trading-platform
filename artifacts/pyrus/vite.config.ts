@@ -544,8 +544,7 @@ export default defineConfig({
 
             if (
               packageName === "clsx" ||
-              packageName === "tailwind-merge" ||
-              packageName === "class-variance-authority"
+              packageName === "tailwind-merge"
             ) {
               return "utility-vendor";
             }
