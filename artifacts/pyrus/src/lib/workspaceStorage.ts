@@ -18,7 +18,10 @@ export const readPyrusWorkspaceState = (): Record<string, unknown> => {
         raw = retiredRaw;
       }
     }
-    return raw ? JSON.parse(raw) : {};
+    const parsed = raw ? JSON.parse(raw) : {};
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? parsed
+      : {};
   } catch {
     return {};
   }
