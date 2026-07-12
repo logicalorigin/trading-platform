@@ -1631,34 +1631,28 @@ async function repairSignalOptionsAutomationMirrorsForRead(
 
   shadowAutomationMirrorRepairInFlight = (async () => {
     const candidates = await db
-      .select()
+      .select(getTableColumns(executionEventsTable))
       .from(executionEventsTable)
-      .where(SIGNAL_OPTIONS_SHADOW_ENTRY_EXIT_EVENT_PREDICATE)
+      .leftJoin(
+        shadowOrdersTable,
+        and(
+          eq(shadowOrdersTable.accountId, SHADOW_ACCOUNT_ID),
+          eq(shadowOrdersTable.sourceEventId, executionEventsTable.id),
+        ),
+      )
+      .where(
+        and(
+          SIGNAL_OPTIONS_SHADOW_ENTRY_EXIT_EVENT_PREDICATE,
+          isNull(shadowOrdersTable.sourceEventId),
+        ),
+      )
       .orderBy(desc(executionEventsTable.occurredAt))
       .limit(SHADOW_AUTOMATION_MIRROR_REPAIR_LIMIT);
-    const events = candidates
+    const missing = candidates
       .filter(isSignalOptionsAutomationMirrorEvent)
       .sort(
         (left, right) => left.occurredAt.getTime() - right.occurredAt.getTime(),
       );
-    const eventIds = events.map((event) => event.id);
-    const mirrored = eventIds.length
-      ? await db
-          .select({ sourceEventId: shadowOrdersTable.sourceEventId })
-          .from(shadowOrdersTable)
-          .where(
-            and(
-              eq(shadowOrdersTable.accountId, SHADOW_ACCOUNT_ID),
-              inArray(shadowOrdersTable.sourceEventId, eventIds),
-            ),
-          )
-      : [];
-    const mirroredEventIds = new Set(
-      mirrored
-        .map((row) => row.sourceEventId)
-        .filter((id): id is string => Boolean(id)),
-    );
-    const missing = events.filter((event) => !mirroredEventIds.has(event.id));
     let repairedCount = 0;
     let errorCount = 0;
 
@@ -1685,7 +1679,7 @@ async function repairSignalOptionsAutomationMirrorsForRead(
     }
 
     return {
-      checkedCount: events.length,
+      checkedCount: missing.length,
       missingCount: missing.length,
       repairedCount,
       errorCount,

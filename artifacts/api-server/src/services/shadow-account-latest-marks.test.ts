@@ -75,11 +75,11 @@ test("shadow automation event reads keep literal predicates for partial indexes"
   const repairStart = source.indexOf(
     "shadowAutomationMirrorRepairInFlight = (async () => {",
   );
-  const repairEnd = source.indexOf("const events = candidates", repairStart);
+  const repairEnd = source.indexOf("const missing = candidates", repairStart);
   assert.notEqual(repairStart, -1, "Missing mirror repair query");
   assert.notEqual(repairEnd, -1, "Missing mirror repair query end marker");
   const repairBody = source.slice(repairStart, repairEnd);
-  assert.match(repairBody, /\.where\(SIGNAL_OPTIONS_SHADOW_ENTRY_EXIT_EVENT_PREDICATE\)/);
+  assert.match(repairBody, /SIGNAL_OPTIONS_SHADOW_ENTRY_EXIT_EVENT_PREDICATE/);
   assert.doesNotMatch(repairBody, /inArray\(executionEventsTable\.eventType/);
 
   const marksStart = source.indexOf(
@@ -91,4 +91,22 @@ test("shadow automation event reads keep literal predicates for partial indexes"
   const marksBody = source.slice(marksStart, marksEnd);
   assert.match(marksBody, /SIGNAL_OPTIONS_SHADOW_MARK_EVENT_PREDICATE/);
   assert.doesNotMatch(marksBody, /eq\(executionEventsTable\.eventType/);
+});
+
+test("shadow automation mirror repair excludes mirrored events before decoding payloads", () => {
+  const repairStart = source.indexOf(
+    "shadowAutomationMirrorRepairInFlight = (async () => {",
+  );
+  const repairEnd = source.indexOf("for (const event of missing)", repairStart);
+  assert.notEqual(repairStart, -1, "Missing mirror repair query");
+  assert.notEqual(repairEnd, -1, "Missing mirror repair loop");
+  const repairBody = source.slice(repairStart, repairEnd);
+
+  assert.match(repairBody, /\.leftJoin\(\s*shadowOrdersTable,/);
+  assert.match(repairBody, /isNull\(shadowOrdersTable\.sourceEventId\)/);
+  assert.doesNotMatch(
+    repairBody,
+    /const mirrored = eventIds\.length/,
+    "already-mirrored history must not be loaded and decoded in Node",
+  );
 });
