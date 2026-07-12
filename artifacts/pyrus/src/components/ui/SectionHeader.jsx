@@ -36,8 +36,9 @@ export const SectionHeader = ({
       }}
     >
       <div style={{ minWidth: 0 }}>
-        <div
+        <h2
           style={{
+            margin: 0,
             color: CSS_COLOR.text,
             fontFamily: T.sans,
             fontSize: textSize(titleSize),
@@ -50,7 +51,7 @@ export const SectionHeader = ({
           }}
         >
           {title}
-        </div>
+        </h2>
         {subtitle ? (
           <div
             style={{

@@ -43,3 +43,8 @@ test("idle sign-in does not render a hidden loading animation", () => {
   assert.match(bootShellSource, /\{loading \? \(/);
   assert.doesNotMatch(appStyles, /\.pyrus-loading:not\(\[role="status"\]\)/);
 });
+
+test("auth exposes its page title as the primary heading", () => {
+  assert.match(loginGateSource, /<h1[\s\S]*?First-time setup[\s\S]*?Sign in[\s\S]*?<\/h1>/);
+  assert.doesNotMatch(loginGateSource, /\bCardTitle\b/);
+});

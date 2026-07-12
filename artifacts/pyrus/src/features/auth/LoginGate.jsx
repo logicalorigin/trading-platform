@@ -10,7 +10,6 @@ import {
   CardContent,
   CardDescription,
   CardHeader,
-  CardTitle,
 } from "../../components/ui/card.tsx";
 import { Input } from "../../components/ui/input.tsx";
 import { Label } from "../../components/ui/label.tsx";
@@ -170,8 +169,9 @@ export function LoginGate({ children }) {
       >
         <CardHeader>
           <div style={{ display: "grid", gap: sp(6) }}>
-            <CardTitle
+            <h1
               style={{
+                margin: 0,
                 fontFamily: T.sans,
                 fontSize: textSize("screenTitle"),
                 fontWeight: FONT_WEIGHTS.emphasis,
@@ -179,7 +179,7 @@ export function LoginGate({ children }) {
               }}
             >
               {isFirstRun ? "First-time setup" : "Sign in"}
-            </CardTitle>
+            </h1>
             <CardDescription
               style={{
                 fontFamily: T.sans,
