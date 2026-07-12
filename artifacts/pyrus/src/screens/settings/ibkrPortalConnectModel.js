@@ -32,14 +32,21 @@ export function buildIbkrPortalProgressModel({
   connecting = false,
 } = {}) {
   const status = readiness?.status || (connecting ? "gateway_starting" : "disconnected");
+  const competing = status === "competing";
+  const startingFromStaleReadiness = connecting && status === "disconnected";
   const connected = status === "connected" && readiness?.authenticated === true;
   const gatewayComplete =
-    readiness?.gatewayRunning === true && status !== "gateway_starting";
+    !startingFromStaleReadiness &&
+    readiness?.gatewayRunning === true &&
+    status !== "gateway_starting";
   const browserLoginComplete =
     readiness?.browserLoginComplete === true || connected;
+  const loginStepComplete = browserLoginComplete && !competing;
   const currentStep = connected
     ? null
-    : browserLoginComplete
+    : competing
+      ? "login"
+      : loginStepComplete
       ? "session"
       : gatewayComplete
         ? "login"
@@ -55,7 +62,7 @@ export function buildIbkrPortalProgressModel({
     {
       id: "login",
       label: "IBKR login",
-      status: stepStatus("login", browserLoginComplete),
+      status: stepStatus("login", loginStepComplete),
     },
     {
       id: "session",
@@ -72,6 +79,7 @@ export function buildIbkrPortalProgressModel({
     return {
       connected,
       browserLoginComplete,
+      showLoginViewer: false,
       title: "Connected to IBKR",
       detail: readiness?.selectedAccountId
         ? `${readiness.selectedAccountId} · ${accountLabel}`
@@ -80,10 +88,24 @@ export function buildIbkrPortalProgressModel({
     };
   }
 
-  if (browserLoginComplete) {
+  if (competing) {
     return {
       connected,
       browserLoginComplete,
+      showLoginViewer: true,
+      title: "IBKR session needs attention",
+      detail:
+        readiness?.message ||
+        "Another live IBKR session is competing. Re-login to take over this session.",
+      steps,
+    };
+  }
+
+  if (loginStepComplete) {
+    return {
+      connected,
+      browserLoginComplete,
+      showLoginViewer: false,
       title: "Verifying your IBKR session",
       detail:
         "IBKR accepted your login. PYRUS is verifying the API session and loading accounts.",
@@ -95,10 +117,8 @@ export function buildIbkrPortalProgressModel({
     return {
       connected,
       browserLoginComplete,
-      title:
-        status === "competing"
-          ? "IBKR session needs attention"
-          : "Complete your IBKR login",
+      showLoginViewer: true,
+      title: "Complete your IBKR login",
       detail:
         readiness?.message ||
         "Finish signing in and approving two-factor authentication in the secure viewer.",
@@ -109,9 +129,10 @@ export function buildIbkrPortalProgressModel({
   return {
     connected,
     browserLoginComplete,
+    showLoginViewer: true,
     title: "Starting IBKR Client Portal",
     detail:
-      readiness?.message ||
+      (!startingFromStaleReadiness && readiness?.message) ||
       "The isolated gateway can take up to about a minute on its first launch.",
     steps,
   };

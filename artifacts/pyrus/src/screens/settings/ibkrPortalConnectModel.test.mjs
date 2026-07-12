@@ -96,6 +96,45 @@ test("IBKR portal progress requires authenticated server truth for success", () 
   assert.equal(unverified.steps.at(-1)?.status, "current");
 });
 
+test("IBKR portal progress keeps competing sessions on the re-login step", () => {
+  const competing = buildIbkrPortalProgressModel({
+    readiness: {
+      status: "competing",
+      gatewayRunning: true,
+      authenticated: false,
+      browserLoginComplete: true,
+      selectedAccountId: null,
+      accounts: [],
+      message: "Another live IBKR session is competing. Re-login to take over.",
+    },
+  });
+
+  assert.equal(competing.title, "IBKR session needs attention");
+  assert.equal(competing.showLoginViewer, true);
+  assert.deepEqual(
+    competing.steps.map(({ status }) => status),
+    ["complete", "current", "pending"],
+  );
+});
+
+test("IBKR portal progress ignores stale disconnected copy during startup", () => {
+  const starting = buildIbkrPortalProgressModel({
+    connecting: true,
+    readiness: {
+      status: "disconnected",
+      gatewayRunning: false,
+      authenticated: false,
+      browserLoginComplete: false,
+      selectedAccountId: null,
+      accounts: [],
+      message: "Not connected. Start a connection to log in to IBKR.",
+    },
+  });
+
+  assert.equal(starting.title, "Starting IBKR Client Portal");
+  assert.doesNotMatch(starting.detail, /not connected/i);
+});
+
 test("IBKR portal model recognizes terminal hosted-login failures", () => {
   assert.equal(formatIbkrPortalStatus("disconnected"), "not connected");
   assert.equal(

@@ -4,6 +4,7 @@ import { Dialog } from "radix-ui";
 import {
   getGetRobinhoodReadinessQueryKey,
   getGetSchwabReadinessQueryKey,
+  getGetIbkrPortalReadinessQueryKey,
   getGetBrokerExecutionIncludedAccountsQueryKey,
   getGetSnapTradeReadinessQueryKey,
   getListAccountsQueryKey,
@@ -332,14 +333,14 @@ function IbkrPortalLoginDialog({
   open,
   url,
   connecting,
+  disconnecting,
   readiness,
   onClose,
+  onDisconnect,
   returnFocusRef,
 }) {
   const progress = buildIbkrPortalProgressModel({ readiness, connecting });
-  const showViewer = Boolean(
-    url && !progress.browserLoginComplete && !progress.connected,
-  );
+  const showViewer = Boolean(url && progress.showLoginViewer);
   return (
     <Dialog.Root
       open={open}
@@ -428,23 +429,41 @@ function IbkrPortalLoginDialog({
                   Client Portal
                 </div>
               </div>
-              <Dialog.Close asChild>
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: sp(4),
+                  flexShrink: 0,
+                }}
+              >
                 <Button
                   variant="ghost"
                   size="sm"
-                  aria-label="Close IBKR Client Portal status"
-                  title="Close"
-                  style={{
-                    width: dim(40),
-                    height: dim(40),
-                    padding: 0,
-                    borderRadius: dim(RADII.xs),
-                    flexShrink: 0,
-                  }}
+                  loading={disconnecting}
+                  onClick={onDisconnect}
                 >
-                  <X size={18} strokeWidth={2} aria-hidden="true" />
+                  <Unplug size={14} strokeWidth={2} aria-hidden="true" />
+                  Disconnect
                 </Button>
-              </Dialog.Close>
+                <Dialog.Close asChild>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    aria-label="Hide IBKR Client Portal window"
+                    title="Hide window (connection continues)"
+                    style={{
+                      width: dim(40),
+                      height: dim(40),
+                      padding: 0,
+                      borderRadius: dim(RADII.xs),
+                      flexShrink: 0,
+                    }}
+                  >
+                    <X size={18} strokeWidth={2} aria-hidden="true" />
+                  </Button>
+                </Dialog.Close>
+              </div>
             </div>
             <IbkrPortalProgress model={progress} />
             {showViewer ? (
@@ -1187,7 +1206,6 @@ export function SnapTradeConnectPanel({ enabled = true }) {
 
   const [ibkrLoginUrl, setIbkrLoginUrl] = useState("");
   const [ibkrDialogOpen, setIbkrDialogOpen] = useState(false);
-  const [ibkrPortalPollReadiness, setIbkrPortalPollReadiness] = useState(null);
   const [ibkrConnecting, setIbkrConnecting] = useState(false);
   const [ibkrDisconnecting, setIbkrDisconnecting] = useState(false);
   const ibkrPollRef = useRef(null);
@@ -2007,7 +2025,6 @@ export function SnapTradeConnectPanel({ enabled = true }) {
     const attempt = ++ibkrAttemptRef.current;
     ibkrConnectBusyRef.current = true;
     setIbkrLoginUrl("");
-    setIbkrPortalPollReadiness(null);
     setIbkrDialogOpen(true);
     setIbkrConnecting(true);
     setPopupBrokerKey(IBKR_PORTAL_BROKER_CHOICE.value);
@@ -2072,7 +2089,10 @@ export function SnapTradeConnectPanel({ enabled = true }) {
         return;
       }
       if (attempt !== ibkrAttemptRef.current) return;
-      setIbkrPortalPollReadiness(status);
+      queryClient.setQueryData(
+        getGetIbkrPortalReadinessQueryKey(),
+        status,
+      );
       if (status?.status === "connected" && status?.authenticated === true) {
         ++ibkrAttemptRef.current;
         setIbkrLoginUrl("");
@@ -2088,6 +2108,7 @@ export function SnapTradeConnectPanel({ enabled = true }) {
       } else if (isTerminalIbkrPortalConnectStatus(status)) {
         ++ibkrAttemptRef.current;
         setIbkrLoginUrl("");
+        setIbkrDialogOpen(false);
         stopIbkrPortalPoll();
         clearConnectHandoff(IBKR_PORTAL_BROKER_CHOICE.value);
         setLocalError(
@@ -2109,7 +2130,6 @@ export function SnapTradeConnectPanel({ enabled = true }) {
     }
     ++ibkrAttemptRef.current;
     setIbkrLoginUrl("");
-    setIbkrPortalPollReadiness(null);
     setIbkrDialogOpen(false);
     stopIbkrPortalPoll();
     clearConnectHandoff(IBKR_PORTAL_BROKER_CHOICE.value);
@@ -2319,7 +2339,7 @@ export function SnapTradeConnectPanel({ enabled = true }) {
       if (ibkrPortalAttemptActive) {
         return [
           {
-            label: ibkrPortalPollReadiness?.browserLoginComplete
+            label: ibkrPortalReadiness?.browserLoginComplete
               ? "View status"
               : "Continue Login",
             variant: "primary",
@@ -2336,6 +2356,22 @@ export function SnapTradeConnectPanel({ enabled = true }) {
             },
             disabled: !canManage || !csrfToken || ibkrDisconnecting,
             loading: ibkrConnecting && ibkrDialogOpen,
+          },
+          {
+            label: "Disconnect",
+            icon: (
+              <Unplug
+                size={actionIconSize}
+                strokeWidth={2}
+                aria-hidden="true"
+              />
+            ),
+            onClick: () => {
+              setSelectedBroker(key);
+              void disconnectIbkrPortal();
+            },
+            disabled: !canManage || !csrfToken || ibkrDisconnecting,
+            loading: ibkrDisconnecting,
           },
         ];
       }
@@ -3529,8 +3565,10 @@ export function SnapTradeConnectPanel({ enabled = true }) {
         open={ibkrDialogOpen}
         url={ibkrLoginUrl}
         connecting={ibkrConnecting}
-        readiness={ibkrPortalPollReadiness || ibkrPortalReadiness}
+        disconnecting={ibkrDisconnecting}
+        readiness={ibkrPortalReadiness}
         onClose={closeIbkrPortalDialog}
+        onDisconnect={() => void disconnectIbkrPortal()}
         returnFocusRef={ibkrReturnFocusRef}
       />
     </SurfacePanel>
