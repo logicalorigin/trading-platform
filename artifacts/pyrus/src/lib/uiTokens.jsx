@@ -9,6 +9,7 @@ export {
   PYRUS_WORKSPACE_SETTINGS_EVENT,
   readPyrusWorkspaceState,
 };
+export { MISSING_VALUE } from "./displayValues";
 
 export const THEMES = {
   dark: {
@@ -499,5 +500,3 @@ export const resolveCssColor = (color, fallback = "") => {
   const styles = window.getComputedStyle(document.documentElement);
   return resolveCssVarValue(styles, value) || fallback || value;
 };
-
-export const MISSING_VALUE = "—";

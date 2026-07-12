@@ -1132,38 +1132,20 @@ html[data-pyrus-reduced-motion="on"] .ra-error-shake {
   animation: none;
 }
 
-/* Screen-switch entrance — short fade + 4px translateY rise. Reads as
+/* Screen-switch entrance — short 4px translateY rise. Reads as
    "this screen just arrived" without being slow enough to delay user
-   interaction. Re-played from JS by toggling between equivalent
-   animation names, avoiding synchronous layout reads on screen switch. */
+   interaction or making the active host invisible. */
 @keyframes raScreenEnter {
   from {
-    opacity: 0;
     transform: translateY(4px);
   }
   to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-@keyframes raScreenEnterAlt {
-  from {
-    opacity: 0;
-    transform: translateY(4px);
-  }
-  to {
-    opacity: 1;
     transform: translateY(0);
   }
 }
 
 .ra-screen-enter {
   animation: raScreenEnter var(--ra-motion-fast) var(--ra-motion-enter) both;
-}
-
-.ra-screen-enter-alt {
-  animation-name: raScreenEnterAlt;
 }
 
 @media (prefers-reduced-motion: reduce) {

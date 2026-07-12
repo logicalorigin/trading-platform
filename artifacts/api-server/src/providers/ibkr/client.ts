@@ -92,7 +92,21 @@ export type IbkrClientOAuthConfig = {
 
 export type IbkrClientOptions = {
   oauth?: IbkrClientOAuthConfig | null;
+  onBrokerageSessionError?: (
+    stage: BrokerageSessionStage,
+    failure: BrokerageSessionFailure,
+  ) => void;
 };
+
+export type BrokerageSessionStage =
+  | "accounts"
+  | "auth_status"
+  | "ssodh_init";
+
+export type BrokerageSessionFailure = Readonly<{
+  code?: string;
+  httpStatus?: number;
+}>;
 
 const IBKR_TO_INTERNAL_TIF: Record<string, TimeInForce> = {
   DAY: "day",
@@ -999,6 +1013,23 @@ export class IbkrClient {
     private readonly options: IbkrClientOptions = {},
   ) {}
 
+  private observeBrokerageSessionError(
+    stage: BrokerageSessionStage,
+    error: unknown,
+  ): void {
+    const observer = this.options.onBrokerageSessionError;
+    if (!observer) return;
+    const failure: BrokerageSessionFailure = Object.freeze({
+      code: error instanceof HttpError ? error.code : undefined,
+      httpStatus: error instanceof HttpError ? error.statusCode : undefined,
+    });
+    try {
+      void Promise.resolve(observer(stage, failure)).catch(() => undefined);
+    } catch {
+      // Diagnostics must never alter brokerage-session behavior.
+    }
+  }
+
   private assertPaperAccounts(accountIds: readonly string[]): void {
     if (
       this.config.paperAccountOnly &&
@@ -1311,22 +1342,34 @@ export class IbkrClient {
     };
   }
 
-  async ensureBrokerageSession(): Promise<SessionStatusSnapshot> {
+  async ensureBrokerageSession(
+    options: { initializeIfNeeded?: boolean } = {},
+  ): Promise<SessionStatusSnapshot> {
+    const initializeIfNeeded = options.initializeIfNeeded ?? true;
     let status: SessionStatusSnapshot;
     try {
       status = await this.getSessionStatus();
     } catch (error) {
+      this.observeBrokerageSessionError("auth_status", error);
+      if (!initializeIfNeeded) throw error;
       // CPG can reject /iserver/auth/status outright with 401 (instead of
       // returning an unauthenticated body) until ssodh/init establishes the
       // REST-side session, including right after a completed web login. Try
       // the init once; if it cannot recover, surface the original error.
-      await this.initializeBrokerageSession().catch(() => {
+      await this.initializeBrokerageSession().catch((initError: unknown) => {
+        this.observeBrokerageSessionError("ssodh_init", initError);
         throw error;
       });
-      status = await this.getSessionStatus();
+      try {
+        status = await this.getSessionStatus();
+      } catch (retryError) {
+        this.observeBrokerageSessionError("auth_status", retryError);
+        throw retryError;
+      }
     }
 
     if (!status.authenticated) {
+      if (!initializeIfNeeded) return status;
       // A completed Client Portal web login (SSO/2FA finished) leaves
       // /iserver/auth/status unauthenticated until ssodh/init promotes the
       // SSO session to a brokerage session; without this step a finished
@@ -1334,17 +1377,30 @@ export class IbkrClient {
       // in yet, so the logged-out status is returned as-is.
       const initialized = await this.initializeBrokerageSession().then(
         () => true,
-        () => false,
+        (error: unknown) => {
+          this.observeBrokerageSessionError("ssodh_init", error);
+          return false;
+        },
       );
       if (initialized) {
-        status = await this.getSessionStatus();
+        try {
+          status = await this.getSessionStatus();
+        } catch (error) {
+          this.observeBrokerageSessionError("auth_status", error);
+          throw error;
+        }
       }
       if (!status.authenticated) {
         return status;
       }
     }
 
-    const tradingAccounts = await this.getTradingAccountsInfo();
+    const tradingAccounts = await this.getTradingAccountsInfo().catch(
+      (error: unknown) => {
+        this.observeBrokerageSessionError("accounts", error);
+        throw error;
+      },
+    );
     const selectedAccountId =
       status.selectedAccountId ??
       this.config.defaultAccountId ??

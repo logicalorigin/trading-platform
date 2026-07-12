@@ -1,6 +1,6 @@
-# IBKR paper-session capsule
+# IBKR session capsule
 
-This directory defines the capacity-one, paper-only capsule consumed by
+This directory defines the capacity-one IBKR capsule consumed by
 `@workspace/ibkr-session-host`. It packages IBKR Client Portal Gateway (CPG),
 Java 17, Chromium, Xvfb, x11vnc, and noVNC/websockify. The entrypoint is the
 minimal local supervisor/agent for this slice; it does not expose a control
@@ -44,6 +44,8 @@ Primary sources:
   https://www.interactivebrokers.com/campus/ibkr-api-page/cpapi-v1/#download-and-run
 - Docker image digest pinning:
   https://docs.docker.com/build/building/best-practices/#pin-base-image-versions
+- Docker port-publishing and pre-28 localhost caveat:
+  https://docs.docker.com/engine/network/port-publishing/
 - Dockerfile remote `ADD --checksum`:
   https://docs.docker.com/reference/dockerfile/#add---checksum
 - Debian package indexes used for the pinned versions:
@@ -67,16 +69,27 @@ capabilities dropped, no-new-privileges, bounded memory/PIDs/CPU, and tmpfs at
 The host loads the pinned Moby-derived Chromium seccomp profile described
 above. The image declares no `VOLUME` or `EXPOSE` instruction.
 
-Chromium loads the bundled `paper-only-extension` from the immutable image. It
-selects and locks IBKR's Paper Trading login toggle; the API independently
-rejects and tears down any authenticated session whose account IDs are not
-verified `DU` paper accounts.
+Chromium opens CPG's loopback login page directly and does not load the bundled
+`paper-only-extension`; that legacy asset remains dormant in the immutable
+image. The current application policy allows any IBKR account to authenticate
+and applies account capabilities after the session is verified.
 
 CPG admits only `127.0.0.1`; X11 disables TCP; x11vnc binds only to loopback.
 The capsule exposes two fixed relay ports for the session host: `15000` for
-CPG and `16080` for noVNC. Docker publishes only those relays to host loopback.
-x11vnc has no password because the RFB listener is not published. The
-authenticated host tunnel must preserve that boundary.
+CPG and `16080` for noVNC. Docker publishes no capsule ports. Instead, the
+trusted session-host process binds raw TCP relays at host loopback ports
+`15000` and `16080` and forwards them only to the capsule's validated private
+IPv4 address.
+
+The host requires an IPv4-only `pyrus-ibkr-capsule-net` bridge with NAT gateway
+mode and inter-container communication disabled. It validates the network ID,
+the capsule's sole attachment, private address, and absence of Docker port
+bindings before provisioning or adopting a capsule. This blocks direct peer
+access and avoids Docker Engine versions before 28.0.0 leaking localhost-
+published ports to same-L2 hosts. x11vnc has no password because its RFB
+listener is not directly exposed outside the capsule; it is reachable only
+through the noVNC relay. The authenticated host tunnel must preserve that
+boundary.
 
 Replit's current Docker daemon cannot execute container healthchecks, so the
 image intentionally declares none. An internal watchdog runs the retained
@@ -87,6 +100,12 @@ listener state for CPG `5000`, the CPG relay `15000`, RFB `5900`, and noVNC
 relay `16080`. The entrypoint emits exactly one
 nonsecret `PYRUS_IBKR_CAPSULE_READY_V1` marker after three consecutive initial
 checks.
+The supervised login observer follows only the stable active primary CPG log
+and emits a fixed `PYRUS_IBKR_CAPSULE_LOGIN_COMPLETE_V1` marker for each exact
+`GatewayHttpProxy` Client-login success. It never copies the matched log line
+to Docker output. The host exposes only the marker count from a bounded
+1,000-line Docker-log window; CPG authentication and account discovery still
+decide whether the brokerage session is connected.
 Unauthenticated/login-required CPG is healthy; brokerage authentication and
 paper-account readiness remain separate host-level states.
 

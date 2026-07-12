@@ -17,13 +17,18 @@ const createPreloadableScreen = (screenId, label) => {
     const [loadError, setLoadError] = useState(null);
     const ResolvedScreenComponent =
       ScreenComponent || getPreloadedScreenComponent(screenId);
+    const implementationVisible = props?.isHostVisible ?? props?.isVisible;
 
     useEffect(() => {
-      if (ResolvedScreenComponent || loadError || props?.isVisible === false) {
+      if (
+        ResolvedScreenComponent ||
+        loadError ||
+        implementationVisible === false
+      ) {
         return undefined;
       }
       let cancelled = false;
-      loadScreenModule(screenId, { label })
+      loadScreenModule(screenId)
         .then((mod) => {
           if (!cancelled && mod?.default) {
             setLoadError(null);
@@ -38,7 +43,7 @@ const createPreloadableScreen = (screenId, label) => {
       return () => {
         cancelled = true;
       };
-    }, [ResolvedScreenComponent, loadError, props?.isVisible]);
+    }, [ResolvedScreenComponent, implementationVisible, loadError]);
 
     useEffect(() => {
       if (!ResolvedScreenComponent || props?.isVisible === false) {
@@ -70,7 +75,7 @@ const createPreloadableScreen = (screenId, label) => {
 
     return ResolvedScreenComponent ? (
       <ResolvedScreenComponent {...props} />
-    ) : loadError && props?.isVisible !== false ? (
+    ) : loadError && implementationVisible !== false ? (
       <div
         role="alert"
         data-testid={`screen-load-error-${screenId}`}
@@ -101,7 +106,7 @@ const createPreloadableScreen = (screenId, label) => {
           Retry
         </button>
       </div>
-    ) : props?.isVisible === false ? (
+    ) : implementationVisible === false ? (
       null
     ) : (
       <div
@@ -218,8 +223,22 @@ export { getScreenModulePreloadSnapshot, preloadScreenModule };
 export const buildMountedScreenState = (activeScreen) =>
   Object.fromEntries(SCREENS.map(({ id }) => [id, id === activeScreen]));
 
-export const skipStableHiddenScreenRender = (prevProps, nextProps) =>
-  prevProps?.isVisible === false && nextProps?.isVisible === false;
+export const skipStableHiddenScreenRender = (prevProps, nextProps) => {
+  if (
+    prevProps?.isVisible === false &&
+    nextProps?.isVisible === false &&
+    Object.is(prevProps?.isHostVisible, nextProps?.isHostVisible)
+  ) {
+    return true;
+  }
+
+  const previousKeys = Object.keys(prevProps);
+  const nextKeys = Object.keys(nextProps);
+  return (
+    previousKeys.length === nextKeys.length &&
+    previousKeys.every((key) => Object.is(prevProps[key], nextProps[key]))
+  );
+};
 
 export const MemoMarketScreen = memo(MarketScreen, skipStableHiddenScreenRender);
 export const MemoMarketDemoScreen = memo(

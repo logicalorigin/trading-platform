@@ -13,7 +13,7 @@ import {
 } from "node:fs";
 import { request as httpRequest } from "node:http";
 import path from "node:path";
-import { z, type ZodType } from "zod";
+import { z } from "zod";
 
 import { HttpError } from "../lib/errors";
 import { findRepoRoot } from "./runtime-flight-recorder";
@@ -60,11 +60,13 @@ export type PortalGateway = {
   appUserId: string;
   baseUrl: string;
   hosted: boolean;
+  loginCompletions: number;
   origin: string;
   paperAccountVerified: boolean;
   port: number;
   proxyOrigin: string;
   proxyPort: number;
+  recovered: boolean;
   status: "starting" | "ready" | "stopped";
   startedAt: number;
 };
@@ -72,6 +74,21 @@ export type PortalGateway = {
 type Entry = PortalGateway & { process?: ChildProcess };
 
 const gateways = new Map<string, Entry>();
+const gatewayEpochs = new Map<string, number>();
+const hostedEnsureRequests = new Map<string, Set<Promise<unknown>>>();
+const hostedStatusRequests = new Map<
+  string,
+  { epoch: number; request: Promise<HostStatusResponse | null> }
+>();
+const hostedStops = new Map<string, Promise<void>>();
+
+function gatewayEpoch(appUserId: string): number {
+  return gatewayEpochs.get(appUserId) ?? 0;
+}
+
+function bumpGatewayEpoch(appUserId: string): void {
+  gatewayEpochs.set(appUserId, gatewayEpoch(appUserId) + 1);
+}
 
 function hostedConfig(): { baseUrl: string; token: string } | null {
   if (process.env["IBKR_SESSION_HOST_ENABLED"] !== "1") return null;
@@ -168,23 +185,6 @@ function setupInstance(appUserId: string, port: number): string {
     .replace(/listenPort:\s*\d+/, `listenPort: ${port}`)
     .replace(/listenSsl:\s*true/, "listenSsl: false");
   writeFileSync(confPath, conf);
-  // Diagnostic (2026-07-04): raise the gateway's cookie + HTTP-message loggers
-  // to DEBUG so a single login reproduction reveals whether the gateway's own
-  // server-side GET /v1/api/sso/validate?gw=1 actually carries the IBKR session
-  // cookie (x-sess-uuid/web). That discriminates the "reverse proxy loses the
-  // session cookie" hypothesis from an account/IBKR-side rejection. Both loggers
-  // are pinned to INFO in the shipped logback (additivity="false"), which
-  // suppresses the jar/attach detail. Purely observational — no behavior change.
-  const logbackPath = path.join(dir, "root", "logback.xml");
-  if (existsSync(logbackPath)) {
-    const logback = readFileSync(logbackPath, "utf8")
-      .replace(
-        /(name="ibgroup\.web\.core\.clientportal\.gw\.core\.CookieManager"[^>]*level=")INFO/,
-        "$1DEBUG",
-      )
-      .replace(/(name="HttpMessageLogger"[^>]*level=")INFO/, "$1DEBUG");
-    writeFileSync(logbackPath, logback);
-  }
   return dir;
 }
 
@@ -265,16 +265,28 @@ async function waitForReady(port: number): Promise<void> {
 }
 
 const HostCapsuleSchema = z.object({
+  loginCompletions: z.number().int().min(0).max(1_000).default(0),
   name: z.string().min(1).max(128),
   status: z.enum(["ready", "occupied"]),
 });
-const HostTargetSchema = z.object({
-  host: z.literal("127.0.0.1"),
-  port: z.number().int().min(1).max(65_535),
-});
+// ponytail: capsule relay ports are a fixed private host contract; return
+// targets from status if they ever become configurable.
+const HOSTED_TARGETS = {
+  cpg: { host: "127.0.0.1", port: 15000 },
+  console: { host: "127.0.0.1", port: 16080 },
+} as const;
 const HostEnsureResponseSchema = z.object({
   capsule: HostCapsuleSchema,
-  targets: z.object({ cpg: HostTargetSchema, console: HostTargetSchema }),
+  targets: z.object({
+    cpg: z.object({
+      host: z.literal("127.0.0.1"),
+      port: z.number().int().min(1).max(65_535),
+    }),
+    console: z.object({
+      host: z.literal("127.0.0.1"),
+      port: z.number().int().min(1).max(65_535),
+    }),
+  }),
 });
 const HostStatusResponseSchema = z.object({
   capsule: HostCapsuleSchema.nullable(),
@@ -283,7 +295,10 @@ const HostStatusResponseSchema = z.object({
 type HostEnsureResponse = z.infer<typeof HostEnsureResponseSchema>;
 type HostStatusResponse = z.infer<typeof HostStatusResponseSchema>;
 
-function parseHostResponse<T>(schema: ZodType<T>, value: unknown): T {
+function parseHostResponse<T extends z.ZodType>(
+  schema: T,
+  value: unknown,
+): z.output<T> {
   const parsed = schema.safeParse(value);
   if (!parsed.success) {
     throw new HttpError(502, "The IBKR session host returned an invalid response.", {
@@ -319,28 +334,128 @@ async function hostRequest<T>(
   return (await response.json()) as T;
 }
 
-async function ensureHostedGateway(appUserId: string): Promise<PortalGateway> {
-  const result = parseHostResponse(
-    HostEnsureResponseSchema,
+async function requestHostedGatewayStatus(
+  appUserId: string,
+): Promise<HostStatusResponse | null> {
+  try {
+    return parseHostResponse(
+      HostStatusResponseSchema,
+      await hostRequest<unknown>(
+        `/sessions/${encodeURIComponent(appUserId)}/status`,
+        "GET",
+      ),
+    );
+  } catch (error) {
+    if (error instanceof HttpError && error.statusCode === 404) {
+      return null;
+    }
+    throw error;
+  }
+}
+
+function readHostedGatewayStatus(
+  appUserId: string,
+): Promise<HostStatusResponse | null> {
+  const epoch = gatewayEpoch(appUserId);
+  const existing = hostedStatusRequests.get(appUserId);
+  if (existing?.epoch === epoch) return existing.request;
+  const request = requestHostedGatewayStatus(appUserId);
+  hostedStatusRequests.set(appUserId, { epoch, request });
+  const clear = (): void => {
+    if (hostedStatusRequests.get(appUserId)?.request === request) {
+      hostedStatusRequests.delete(appUserId);
+    }
+  };
+  void request.then(clear, clear);
+  return request;
+}
+
+async function releaseHostedGateway(appUserId: string): Promise<void> {
+  try {
     await hostRequest<unknown>(
-      `/sessions/${encodeURIComponent(appUserId)}/ensure`,
+      `/sessions/${encodeURIComponent(appUserId)}/release`,
       "POST",
-    ),
-  );
+    );
+  } catch (error) {
+    if (error instanceof HttpError && error.statusCode === 404) {
+      return;
+    }
+    throw error;
+  }
+}
+
+function rememberHostedGateway(
+  appUserId: string,
+  result: HostEnsureResponse,
+  recovered: boolean,
+): PortalGateway {
+  const existing = gateways.get(appUserId);
+  if (existing?.hosted && isAlive(existing)) {
+    existing.recovered = existing.recovered && recovered;
+    return updateHostedGateway(existing, result.capsule);
+  }
   const entry: Entry = {
     appUserId,
     baseUrl: `http://${result.targets.cpg.host}:${result.targets.cpg.port}/v1/api`,
     hosted: true,
+    loginCompletions: result.capsule.loginCompletions,
     origin: `http://${result.targets.cpg.host}:${result.targets.cpg.port}`,
     paperAccountVerified: false,
     port: result.targets.cpg.port,
     proxyOrigin: `http://${result.targets.console.host}:${result.targets.console.port}`,
     proxyPort: result.targets.console.port,
+    recovered,
     status: result.capsule.status === "ready" ? "ready" : "starting",
     startedAt: Date.now(),
   };
   gateways.set(appUserId, entry);
   return toPublic(entry);
+}
+
+function updateHostedGateway(
+  entry: Entry,
+  capsule: NonNullable<HostStatusResponse["capsule"]>,
+): PortalGateway {
+  entry.status = capsule.status === "ready" ? "ready" : "starting";
+  entry.loginCompletions = Math.max(
+    entry.loginCompletions,
+    capsule.loginCompletions,
+  );
+  if (entry.status !== "ready") {
+    entry.paperAccountVerified = false;
+  }
+  return toPublic(entry);
+}
+
+async function ensureHostedGateway(appUserId: string): Promise<PortalGateway> {
+  const stopping = hostedStops.get(appUserId);
+  if (stopping) await stopping;
+  const epoch = gatewayEpoch(appUserId);
+  const request = hostRequest<unknown>(
+    `/sessions/${encodeURIComponent(appUserId)}/ensure`,
+    "POST",
+  );
+  const pending = hostedEnsureRequests.get(appUserId) ?? new Set();
+  pending.add(request);
+  hostedEnsureRequests.set(appUserId, pending);
+  let value: unknown;
+  try {
+    value = await request;
+  } finally {
+    pending.delete(request);
+    if (pending.size === 0) hostedEnsureRequests.delete(appUserId);
+  }
+  if (gatewayEpoch(appUserId) !== epoch) {
+    throw new HttpError(409, "The IBKR Client Portal connection was cancelled.", {
+      code: "ibkr_portal_connect_cancelled",
+      expose: true,
+    });
+  }
+  const result = parseHostResponse(
+    HostEnsureResponseSchema,
+    value,
+  );
+  return rememberHostedGateway(appUserId, result, false);
 }
 
 export async function ensureGateway(appUserId: string): Promise<PortalGateway> {
@@ -374,10 +489,12 @@ export async function ensureGateway(appUserId: string): Promise<PortalGateway> {
     port,
     baseUrl: `http://127.0.0.1:${port}/v1/api`,
     hosted: false,
+    loginCompletions: 0,
     origin: `http://127.0.0.1:${port}`,
     paperAccountVerified: false,
     proxyOrigin: `http://127.0.0.1:${port}`,
     proxyPort: port,
+    recovered: false,
     status: "starting",
     startedAt: Date.now(),
     process: child,
@@ -418,42 +535,70 @@ export function markGatewayPaperAccountVerified(
 export async function refreshGateway(
   appUserId: string,
 ): Promise<PortalGateway | null> {
+  if (hostedStops.has(appUserId)) return null;
+  const epoch = gatewayEpoch(appUserId);
   const entry = gateways.get(appUserId);
+  if ((!entry || !isAlive(entry)) && hostedConfig()) {
+    const result = await readHostedGatewayStatus(appUserId);
+    if (gatewayEpoch(appUserId) !== epoch) return null;
+    if (!result?.capsule) return null;
+    const recoveredDuringRequest = gateways.get(appUserId);
+    if (
+      recoveredDuringRequest?.hosted &&
+      isAlive(recoveredDuringRequest)
+    ) {
+      return updateHostedGateway(recoveredDuringRequest, result.capsule);
+    }
+    return rememberHostedGateway(
+      appUserId,
+      {
+        capsule: result.capsule,
+        targets: HOSTED_TARGETS,
+      },
+      true,
+    );
+  }
   if (!entry || !isAlive(entry) || !entry.hosted) {
     return entry && isAlive(entry) ? toPublic(entry) : null;
   }
 
-  let result: HostStatusResponse;
-  try {
-    result = parseHostResponse(
-      HostStatusResponseSchema,
-      await hostRequest<unknown>(
-        `/sessions/${encodeURIComponent(appUserId)}/status`,
-        "GET",
-      ),
-    );
-  } catch (error) {
-    if (!(error instanceof HttpError) || error.statusCode !== 404) {
-      throw error;
-    }
+  const result = await readHostedGatewayStatus(appUserId);
+  if (gatewayEpoch(appUserId) !== epoch) return null;
+  if (gateways.get(appUserId) !== entry) return null;
+  if (!result?.capsule) {
     entry.status = "stopped";
     gateways.delete(appUserId);
     return null;
   }
-  if (!result.capsule) {
-    entry.status = "stopped";
-    gateways.delete(appUserId);
-    return null;
-  }
-  entry.status = result.capsule.status === "ready" ? "ready" : "starting";
-  if (entry.status !== "ready") {
-    entry.paperAccountVerified = false;
-  }
-  return toPublic(entry);
+  return updateHostedGateway(entry, result.capsule);
 }
 
 export async function stopGateway(appUserId: string): Promise<void> {
+  const stopping = hostedStops.get(appUserId);
+  if (stopping) {
+    await stopping;
+    return;
+  }
   const entry = gateways.get(appUserId);
+  if (entry?.hosted || (!entry && hostedConfig())) {
+    bumpGatewayEpoch(appUserId);
+    if (entry) {
+      entry.status = "stopped";
+      if (gateways.get(appUserId) === entry) gateways.delete(appUserId);
+    }
+    const pending = [...(hostedEnsureRequests.get(appUserId) ?? [])];
+    const promise = (async () => {
+      await Promise.allSettled(pending);
+      await releaseHostedGateway(appUserId);
+    })();
+    hostedStops.set(appUserId, promise);
+    const clear = (): void => {
+      if (hostedStops.get(appUserId) === promise) hostedStops.delete(appUserId);
+    };
+    void promise.then(clear, clear);
+    await promise;
+    return;
+  }
   if (!entry) {
     rmSync(instanceDir(appUserId), { recursive: true, force: true });
     return;
@@ -461,14 +606,6 @@ export async function stopGateway(appUserId: string): Promise<void> {
 
   entry.status = "stopped";
   gateways.delete(appUserId);
-  if (entry.hosted) {
-    await hostRequest<void>(
-      `/sessions/${encodeURIComponent(appUserId)}/release`,
-      "POST",
-    );
-    return;
-  }
-
   entry.process?.kill("SIGTERM");
   rmSync(instanceDir(appUserId), { recursive: true, force: true });
 }

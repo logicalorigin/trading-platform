@@ -29,7 +29,24 @@ export function formatIbkrPortalStatus(status) {
 
 export function isTerminalIbkrPortalConnectStatus(readiness) {
   return (
-    readiness?.status === "disconnected" &&
-    readiness?.gatewayRunning === false
+    readiness?.status === "disconnected" && readiness?.gatewayRunning === false
   );
+}
+
+export const IBKR_PORTAL_LOGIN_TIMEOUT_MS = 5 * 60_000 + 30_000;
+
+export function hasIbkrPortalLoginTimedOut(startedAt, now) {
+  return now - startedAt > IBKR_PORTAL_LOGIN_TIMEOUT_MS;
+}
+
+export function restoreIbkrPortalFocus(target) {
+  if (
+    !target ||
+    target.isConnected === false ||
+    typeof target.focus !== "function"
+  ) {
+    return false;
+  }
+  target.focus();
+  return true;
 }

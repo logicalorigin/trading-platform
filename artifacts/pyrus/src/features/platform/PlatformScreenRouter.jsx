@@ -32,6 +32,7 @@ const SCREEN_IDS = [
 export const PlatformScreenRouter = ({
   screenId,
   screen,
+  hostScreen = screen,
   sym,
   tradeSymPing,
   marketSymPing,
@@ -108,8 +109,10 @@ export const PlatformScreenRouter = ({
   const gexDataActive = screen === "gex";
   const tradeDataActive = screen === "trade";
   const accountDataActive = screen === "account";
+  const accountHostVisible = hostScreen === "account";
   const researchDataActive = screen === "research";
   const algoDataActive = screen === "algo";
+  const algoHostVisible = hostScreen === "algo";
   const backtestDataActive = screen === "backtest";
   const diagnosticsDataActive = screen === "diagnostics";
   const settingsDataActive = screen === "settings";
@@ -276,6 +279,7 @@ export const PlatformScreenRouter = ({
           gatewayTradingMessage={gatewayTradingMessage}
           safeQaMode={safeQaMode}
           isVisible={accountDataActive}
+          isHostVisible={accountHostVisible}
           onJumpToTrade={onJumpToTradeFromAccount}
           onReadinessChange={buildReadinessHandler("account")}
         />
@@ -301,6 +305,7 @@ export const PlatformScreenRouter = ({
           signalMatrixStates={signalMatrixStates}
           realtimeStreamGateReason={realtimeStreamGateReason}
           isVisible={algoDataActive}
+          isHostVisible={algoHostVisible}
           safeQaMode={safeQaMode}
           onScanNow={onScanNow}
           onJumpToTradeCandidate={onJumpToTradeFromSignalOptionsCandidate}

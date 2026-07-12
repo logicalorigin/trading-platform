@@ -5,12 +5,18 @@ import {
   execFileCommandRunner,
   loadSessionHostConfig,
 } from "./capsule";
+import {
+  createCapsuleRelayServer,
+  listenCapsuleRelay,
+} from "./relay";
 import { createSessionHostServer } from "./server";
 
 async function main(): Promise<void> {
   const config = loadSessionHostConfig();
   const manager = new CapsuleManager(config, execFileCommandRunner);
   const readiness = await checkCapsuleRuntime(execFileCommandRunner, config);
+  const cpgRelay = createCapsuleRelayServer(() => manager.getRelayTarget("cpg"));
+  const consoleRelay = createCapsuleRelayServer(() => manager.getRelayTarget("console"));
   const server = createSessionHostServer({
     controlToken: process.env["IBKR_SESSION_HOST_CONTROL_TOKEN"],
     ensureSession: (sessionId) => manager.ensure(sessionId),
@@ -21,18 +27,24 @@ async function main(): Promise<void> {
     target: (sessionId, kind) => manager.getTarget(sessionId, kind),
   });
 
-  await new Promise<void>((resolve, reject) => {
-    server.once("error", reject);
-    server.listen(config.port, config.bindHost, () => {
-      server.off("error", reject);
-      resolve();
-    });
-  });
+  await Promise.all([
+    listenCapsuleRelay(cpgRelay, 15000),
+    listenCapsuleRelay(consoleRelay, 16080),
+    new Promise<void>((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(config.port, config.bindHost, () => {
+        server.off("error", reject);
+        resolve();
+      });
+    }),
+  ]);
   console.log(
     `[ibkr-session-host] listening on ${config.bindHost}:${config.port}; readiness=${readiness.ready ? "ready" : readiness.code}`,
   );
 
   const shutdown = (): void => {
+    cpgRelay.close();
+    consoleRelay.close();
     server.close(() => process.exit(0));
   };
   process.once("SIGINT", shutdown);

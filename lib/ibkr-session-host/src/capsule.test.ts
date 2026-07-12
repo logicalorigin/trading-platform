@@ -21,8 +21,16 @@ const SESSION_ID = "11111111-1111-4111-8111-111111111111";
 const OTHER_SESSION_ID = "22222222-2222-4222-8222-222222222222";
 const SESSION_HASH = "bd7662a5eeb41614e720d477";
 const SLOT_NAME = "pyrus-ibkr-slot-1";
+const NETWORK_NAME = "pyrus-ibkr-capsule-net";
+const NETWORK_IP = "172.20.0.2";
+const NETWORK_ID = "c".repeat(64);
 const READY_MARKER = "PYRUS_IBKR_CAPSULE_READY_V1";
+const LOGIN_COMPLETE_MARKER = "PYRUS_IBKR_CAPSULE_LOGIN_COMPLETE_V1";
 const STARTED_AT = "2026-07-09T22:00:00.000Z";
+const CURRENT_LOG_AT = "2026-07-09T22:00:01.000Z";
+
+const dockerLogLine = (message: string, timestamp = CURRENT_LOG_AT): string =>
+  `${timestamp} ${message}\n`;
 
 const noExistingSlot = (): CommandResult => ({
   code: 0,
@@ -30,8 +38,63 @@ const noExistingSlot = (): CommandResult => ({
   stderr: "",
 });
 
-const capsuleProbeResult = (args: string[]): CommandResult | null => {
+const capsuleProbeResult = (
+  args: string[],
+  sessionHash = SESSION_HASH,
+): CommandResult | null => {
+  if (args[0] === "network" && args[1] === "inspect") {
+    return {
+      code: 0,
+      stdout: JSON.stringify({
+        Attachable: false,
+        ConfigOnly: false,
+        Driver: "bridge",
+        EnableIPv6: false,
+        Id: NETWORK_ID,
+        Ingress: false,
+        Internal: false,
+        Labels: { "pyrus.ibkr.network": "1" },
+        Name: NETWORK_NAME,
+        Options: {
+          "com.docker.network.bridge.enable_icc": "false",
+          "com.docker.network.bridge.gateway_mode_ipv4": "nat",
+        },
+        Scope: "local",
+      }),
+      stderr: "",
+    };
+  }
   if (args[0] === "container" && args[1] === "ls") return noExistingSlot();
+  if (
+    args[0] === "container" &&
+    args[1] === "inspect" &&
+    args.includes("{{json .}}")
+  ) {
+    return {
+      code: 0,
+      stdout: JSON.stringify({
+        Config: {
+          Image: IMAGE,
+          Labels: {
+            "pyrus.ibkr.capsule": "1",
+            "pyrus.ibkr.session_hash": sessionHash,
+          },
+        },
+        HostConfig: { NetworkMode: NETWORK_NAME, PortBindings: null },
+        NetworkSettings: {
+          Networks: {
+            [NETWORK_NAME]: {
+              IPAddress: NETWORK_IP,
+              NetworkID: NETWORK_ID,
+            },
+          },
+          Ports: {},
+        },
+        State: { Running: true },
+      }),
+      stderr: "",
+    };
+  }
   if (
     args[0] === "container" &&
     args[1] === "inspect" &&
@@ -44,7 +107,7 @@ const capsuleProbeResult = (args: string[]): CommandResult | null => {
     };
   }
   if (args[0] === "logs") {
-    return { code: 0, stdout: `${READY_MARKER}\n`, stderr: "" };
+    return { code: 0, stdout: dockerLogLine(READY_MARKER), stderr: "" };
   }
   return null;
 };
@@ -150,11 +213,7 @@ test("builds a fixed hardened Docker create invocation without secret-bearing in
       "--security-opt",
       `seccomp=${DEFAULT_SECCOMP_PROFILE_PATH}`,
       "--network",
-      "bridge",
-      "--publish",
-      "127.0.0.1:15000:15000/tcp",
-      "--publish",
-      "127.0.0.1:16080:16080/tcp",
+      NETWORK_NAME,
       "--memory",
       "2g",
       "--memory-swap",
@@ -185,21 +244,127 @@ test("builds a fixed hardened Docker create invocation without secret-bearing in
     ],
   });
   assert(!serialized.includes(SESSION_ID));
+  assert(!invocation.args.includes("bridge"));
   assert.equal(invocation.args.at(-1), IMAGE, "image is the final argument");
 });
 
-test("exposes only the fixed capsule relays on host loopback", () => {
+test("creates and verifies an ICC-disabled capsule network before use", async () => {
+  const calls: string[][] = [];
+  let networkInspections = 0;
+  const runner: CommandRunner = async (_command, args) => {
+    calls.push(args);
+    if (args[0] === "network" && args[1] === "inspect") {
+      networkInspections += 1;
+      if (networkInspections === 1) {
+        return { code: 1, stdout: "", stderr: "not found" };
+      }
+    }
+    if (args[0] === "network" && args[1] === "create") {
+      return { code: 0, stdout: `${NETWORK_NAME}\n`, stderr: "" };
+    }
+    return capsuleProbeResult(args) ?? { code: 0, stdout: "", stderr: "" };
+  };
+  const manager = new CapsuleManager(
+    loadSessionHostConfig({ IBKR_SESSION_CAPSULE_IMAGE: IMAGE }),
+    runner,
+  );
+
+  await manager.ensure(SESSION_ID);
+  assert.deepEqual(
+    calls.find((args) => args[0] === "network" && args[1] === "create"),
+    [
+      "network",
+      "create",
+      "--driver",
+      "bridge",
+      "--ipv6=false",
+      "--opt",
+      "com.docker.network.bridge.enable_icc=false",
+      "--opt",
+      "com.docker.network.bridge.gateway_mode_ipv4=nat",
+      "--label",
+      "pyrus.ibkr.network=1",
+      NETWORK_NAME,
+    ],
+  );
+  assert.equal(networkInspections, 2);
+  assert(
+    calls.findIndex((args) => args[0] === "network") <
+      calls.findIndex((args) => args[0] === "create"),
+  );
+});
+
+test("rejects a pre-existing capsule network without the isolation contract", async () => {
+  for (const overrides of [
+    {
+      Options: {
+        "com.docker.network.bridge.enable_icc": "true",
+        "com.docker.network.bridge.gateway_mode_ipv4": "nat",
+      },
+    },
+    { EnableIPv6: true },
+    {
+      Options: {
+        "com.docker.network.bridge.enable_icc": "false",
+        "com.docker.network.bridge.gateway_mode_ipv4": "nat",
+        "com.docker.network.bridge.trusted_host_interfaces": "eth0",
+      },
+    },
+  ]) {
+    const calls: string[][] = [];
+    const runner: CommandRunner = async (_command, args) => {
+      calls.push(args);
+      if (args[0] === "network" && args[1] === "inspect") {
+        return {
+          code: 0,
+          stdout: JSON.stringify({
+            Attachable: false,
+            ConfigOnly: false,
+            Driver: "bridge",
+            EnableIPv6: false,
+            Id: NETWORK_ID,
+            Ingress: false,
+            Internal: false,
+            Labels: { "pyrus.ibkr.network": "1" },
+            Name: NETWORK_NAME,
+            Options: {
+              "com.docker.network.bridge.enable_icc": "false",
+              "com.docker.network.bridge.gateway_mode_ipv4": "nat",
+            },
+            Scope: "local",
+            ...overrides,
+          }),
+          stderr: "",
+        };
+      }
+      return capsuleProbeResult(args) ?? { code: 0, stdout: "", stderr: "" };
+    };
+    const manager = new CapsuleManager(
+      loadSessionHostConfig({ IBKR_SESSION_CAPSULE_IMAGE: IMAGE }),
+      runner,
+    );
+
+    await assert.rejects(
+      () => manager.ensure(SESSION_ID),
+      (error) =>
+        error instanceof CapsuleError &&
+        error.code === "capsule_network_invalid",
+    );
+    assert(!calls.some((args) => args[0] === "create"));
+    assert(
+      !calls.some((args) => args[0] === "network" && args[1] === "create"),
+    );
+  }
+});
+
+test("does not publish the unauthenticated capsule relays through Docker", () => {
   const invocation = buildCreateCapsuleInvocation(
     loadSessionHostConfig({ IBKR_SESSION_CAPSULE_IMAGE: IMAGE }),
     SESSION_ID,
   );
-  const published = invocation.args.filter((arg) => arg.includes(":") && arg.endsWith("/tcp"));
 
-  assert.deepEqual(published, [
-    "127.0.0.1:15000:15000/tcp",
-    "127.0.0.1:16080:16080/tcp",
-  ]);
-  assert(!invocation.args.some((arg) => /^0\.0\.0\.0:/.test(arg)));
+  assert(!invocation.args.includes("--publish"));
+  assert(!invocation.args.some((arg) => arg.endsWith("/tcp")));
 });
 
 test("keeps one session idempotent and rejects a second before invoking Docker", async () => {
@@ -216,18 +381,26 @@ test("keeps one session idempotent and rejects a second before invoking Docker",
   const first = await manager.ensure(SESSION_ID);
   const repeated = await manager.ensure(SESSION_ID);
 
-  assert.deepEqual(first, { name: SLOT_NAME, status: "ready" });
+  assert.deepEqual(first, {
+    name: SLOT_NAME,
+    status: "ready",
+    loginCompletions: 0,
+  });
   assert.deepEqual(repeated, first);
   assert.deepEqual(
     calls.map(({ args }) => args[0]),
     [
       "container",
+      "network",
       "create",
       "start",
       "container",
       "logs",
       "container",
+      "container",
+      "container",
       "logs",
+      "container",
     ],
   );
   await assert.rejects(
@@ -235,8 +408,60 @@ test("keeps one session idempotent and rejects a second before invoking Docker",
     (error) =>
       error instanceof CapsuleError && error.code === "capacity_exhausted",
   );
-  assert.equal(calls.length, 7, "capacity rejection happens before Docker");
+  assert.equal(calls.length, 11, "capacity rejection happens before Docker");
   assert(!calls.some(({ args }) => args[0] === "exec"));
+});
+
+test("does not return a replacement session through an in-flight status probe", async () => {
+  let blockNextStateProbe = false;
+  let markStateProbeStarted!: () => void;
+  let releaseStateProbe!: () => void;
+  const stateProbeStarted = new Promise<void>((resolve) => {
+    markStateProbeStarted = resolve;
+  });
+  const stateProbeGate = new Promise<void>((resolve) => {
+    releaseStateProbe = resolve;
+  });
+  let currentSessionHash = SESSION_HASH;
+  const runner: CommandRunner = async (_command, args) => {
+    if (args[0] === "create") {
+      currentSessionHash =
+        args
+          .find((arg) => arg.startsWith("pyrus.ibkr.session_hash="))
+          ?.split("=", 2)[1] ?? currentSessionHash;
+    }
+    if (args.includes("{{json .State}}") && blockNextStateProbe) {
+      blockNextStateProbe = false;
+      markStateProbeStarted();
+      await stateProbeGate;
+    }
+    return (
+      capsuleProbeResult(args, currentSessionHash) ?? {
+        code: 0,
+        stdout: "",
+        stderr: "",
+      }
+    );
+  };
+  const manager = new CapsuleManager(
+    loadSessionHostConfig({ IBKR_SESSION_CAPSULE_IMAGE: IMAGE }),
+    runner,
+  );
+
+  await manager.ensure(SESSION_ID);
+  blockNextStateProbe = true;
+  const staleStatus = manager.status(SESSION_ID);
+  await stateProbeStarted;
+  await manager.release(SESSION_ID);
+  await manager.ensure(OTHER_SESSION_ID);
+  releaseStateProbe();
+
+  await assert.rejects(
+    staleStatus,
+    (error) =>
+      error instanceof CapsuleError && error.code === "session_not_found",
+  );
+  assert.equal((await manager.status(OTHER_SESSION_ID))?.status, "ready");
 });
 
 test("returns session-owned loopback targets and releases the fixed slot", async () => {
@@ -254,6 +479,7 @@ test("returns session-owned loopback targets and releases the fixed slot", async
     () => manager.getTarget(SESSION_ID, "cpg"),
     (error) => error instanceof CapsuleError && error.code === "session_not_found",
   );
+  assert.equal(manager.getRelayTarget("cpg"), null);
   await manager.ensure(SESSION_ID);
   assert.deepEqual(manager.getTarget(SESSION_ID, "cpg"), {
     host: "127.0.0.1",
@@ -261,6 +487,14 @@ test("returns session-owned loopback targets and releases the fixed slot", async
   });
   assert.deepEqual(manager.getTarget(SESSION_ID, "console"), {
     host: "127.0.0.1",
+    port: 16080,
+  });
+  assert.deepEqual(manager.getRelayTarget("cpg"), {
+    host: NETWORK_IP,
+    port: 15000,
+  });
+  assert.deepEqual(manager.getRelayTarget("console"), {
+    host: NETWORK_IP,
     port: 16080,
   });
   assert.throws(
@@ -276,6 +510,61 @@ test("returns session-owned loopback targets and releases the fixed slot", async
   });
 });
 
+test("coalesces concurrent releases without poisoning capacity", async () => {
+  let markRemoveStarted!: () => void;
+  let releaseRemove!: () => void;
+  const removeStarted = new Promise<void>((resolve) => {
+    markRemoveStarted = resolve;
+  });
+  const removeGate = new Promise<void>((resolve) => {
+    releaseRemove = resolve;
+  });
+  let removeCalls = 0;
+  let currentSessionHash = SESSION_HASH;
+  const runner: CommandRunner = async (_command, args) => {
+    if (args[0] === "create") {
+      currentSessionHash =
+        args
+          .find((arg) => arg.startsWith("pyrus.ibkr.session_hash="))
+          ?.split("=", 2)[1] ?? currentSessionHash;
+    }
+    if (args[0] === "rm") {
+      const call = ++removeCalls;
+      markRemoveStarted();
+      await removeGate;
+      return call === 1
+        ? { code: 0, stdout: "", stderr: "" }
+        : { code: 1, stdout: "", stderr: "already removed" };
+    }
+    return (
+      capsuleProbeResult(args, currentSessionHash) ?? {
+        code: 0,
+        stdout: "",
+        stderr: "",
+      }
+    );
+  };
+  const manager = new CapsuleManager(
+    loadSessionHostConfig({ IBKR_SESSION_CAPSULE_IMAGE: IMAGE }),
+    runner,
+  );
+
+  await manager.ensure(SESSION_ID);
+  const first = manager.release(SESSION_ID);
+  await removeStarted;
+  assert.equal(manager.getRelayTarget("cpg"), null);
+  const repeated = manager.release(SESSION_ID);
+  releaseRemove();
+
+  await Promise.all([first, repeated]);
+  assert.equal(removeCalls, 1);
+  assert.deepEqual(manager.snapshot(), {
+    mode: "paper",
+    capacity: { max: 1, active: 0 },
+  });
+  assert.equal((await manager.ensure(OTHER_SESSION_ID)).status, "ready");
+});
+
 test("reprobes a cached ready capsule before reporting it ready again", async () => {
   let stateProbes = 0;
   const runner: CommandRunner = async (_command, args) => {
@@ -287,16 +576,16 @@ test("reprobes a cached ready capsule before reporting it ready again", async ()
       return {
         code: 0,
         stdout: JSON.stringify({
-          Running: stateProbes === 1,
+          Running: stateProbes <= 2 || stateProbes >= 4,
           StartedAt: STARTED_AT,
         }),
         stderr: "",
       };
     }
     if (args[0] === "logs") {
-      return { code: 0, stdout: `${READY_MARKER}\n`, stderr: "" };
+      return { code: 0, stdout: dockerLogLine(READY_MARKER), stderr: "" };
     }
-    return { code: 0, stdout: "", stderr: "" };
+    return capsuleProbeResult(args) ?? { code: 0, stdout: "", stderr: "" };
   };
   const manager = new CapsuleManager(
     loadSessionHostConfig({ IBKR_SESSION_CAPSULE_IMAGE: IMAGE }),
@@ -306,12 +595,24 @@ test("reprobes a cached ready capsule before reporting it ready again", async ()
   assert.deepEqual(await manager.ensure(SESSION_ID), {
     name: SLOT_NAME,
     status: "ready",
+    loginCompletions: 0,
   });
   assert.deepEqual(await manager.ensure(SESSION_ID), {
     name: SLOT_NAME,
     status: "occupied",
+    loginCompletions: 0,
   });
-  assert.equal(stateProbes, 2);
+  assert.equal(manager.getRelayTarget("cpg"), null);
+  assert.deepEqual(await manager.ensure(SESSION_ID), {
+    name: SLOT_NAME,
+    status: "ready",
+    loginCompletions: 0,
+  });
+  assert.deepEqual(manager.getRelayTarget("cpg"), {
+    host: NETWORK_IP,
+    port: 15000,
+  });
+  assert.equal(stateProbes, 5);
 });
 
 test("waits for an exact log marker and running state before returning ready", async () => {
@@ -326,8 +627,8 @@ test("waits for an exact log marker and running state before returning ready", a
         code: 0,
         stdout:
           logProbe === 1
-            ? `prefix-${READY_MARKER}-suffix\n`
-            : `noise\n${READY_MARKER}\n`,
+            ? dockerLogLine(`prefix-${READY_MARKER}-suffix`)
+            : `${dockerLogLine("noise")}${dockerLogLine(READY_MARKER)}`,
         stderr: "",
       };
     }
@@ -344,10 +645,201 @@ test("waits for an exact log marker and running state before returning ready", a
   assert.deepEqual(await manager.ensure(SESSION_ID), {
     name: SLOT_NAME,
     status: "ready",
+    loginCompletions: 0,
   });
   assert.equal(logProbe, 2);
   assert.equal(delays, 1);
   assert(!calls.some((args) => args[0] === "exec"));
+});
+
+test("counts only exact login markers and never lowers the exposed completion count", async () => {
+  let logProbe = 0;
+  const runner: CommandRunner = async (_command, args) => {
+    if (args[0] === "logs") {
+      logProbe += 1;
+      return {
+        code: 0,
+        stdout:
+          logProbe === 1
+            ? `${dockerLogLine(READY_MARKER)}${dockerLogLine(`prefix-${LOGIN_COMPLETE_MARKER}`)}${dockerLogLine(`${LOGIN_COMPLETE_MARKER}-suffix`)}`
+            : logProbe === 2
+              ? `${dockerLogLine(READY_MARKER)}${dockerLogLine(LOGIN_COMPLETE_MARKER)}${dockerLogLine(LOGIN_COMPLETE_MARKER)}`
+              : `${dockerLogLine(READY_MARKER)}${dockerLogLine(LOGIN_COMPLETE_MARKER)}`,
+        stderr: "",
+      };
+    }
+    return capsuleProbeResult(args) ?? { code: 0, stdout: "", stderr: "" };
+  };
+  const manager = new CapsuleManager(
+    loadSessionHostConfig({ IBKR_SESSION_CAPSULE_IMAGE: IMAGE }),
+    runner,
+  );
+
+  assert.deepEqual(await manager.ensure(SESSION_ID), {
+    name: SLOT_NAME,
+    status: "ready",
+    loginCompletions: 0,
+  });
+  assert.deepEqual(await manager.status(SESSION_ID), {
+    name: SLOT_NAME,
+    status: "ready",
+    loginCompletions: 2,
+  });
+  assert.deepEqual(await manager.status(SESSION_ID), {
+    name: SLOT_NAME,
+    status: "ready",
+    loginCompletions: 2,
+  });
+});
+
+test("keeps cumulative login completions across a capsule restart", async () => {
+  const runner: CommandRunner = async (_command, args) => {
+    if (args[1] === "ls") {
+      return { code: 0, stdout: `${SLOT_NAME}\n`, stderr: "" };
+    }
+    if (args.includes("{{json .Config.Labels}}")) {
+      return {
+        code: 0,
+        stdout: JSON.stringify({
+          "pyrus.ibkr.capsule": "1",
+          "pyrus.ibkr.session_hash": SESSION_HASH,
+        }),
+        stderr: "",
+      };
+    }
+    if (args.includes("{{json .State}}")) {
+      return {
+        code: 0,
+        stdout: JSON.stringify({ Running: true, StartedAt: STARTED_AT }),
+        stderr: "",
+      };
+    }
+    if (args[0] === "logs") {
+      return {
+        code: 0,
+        stdout:
+          dockerLogLine(READY_MARKER, "2026-07-09T21:59:50.000Z") +
+          dockerLogLine(LOGIN_COMPLETE_MARKER, "2026-07-09T21:59:55.000Z") +
+          dockerLogLine(READY_MARKER) +
+          dockerLogLine(LOGIN_COMPLETE_MARKER, "2026-07-09T22:00:02.000Z"),
+        stderr: "",
+      };
+    }
+    const capsuleResult = capsuleProbeResult(args);
+    if (capsuleResult) return capsuleResult;
+    throw new Error(`unexpected Docker command: ${args.join(" ")}`);
+  };
+  const manager = new CapsuleManager(
+    loadSessionHostConfig({ IBKR_SESSION_CAPSULE_IMAGE: IMAGE }),
+    runner,
+  );
+
+  assert.deepEqual(await manager.reconcile(), {
+    name: SLOT_NAME,
+    status: "ready",
+    loginCompletions: 2,
+  });
+});
+
+test("does not accept a prior generation ready marker after restart", async () => {
+  const runner: CommandRunner = async (_command, args) => {
+    if (args[1] === "ls") {
+      return { code: 0, stdout: `${SLOT_NAME}\n`, stderr: "" };
+    }
+    if (args.includes("{{json .Config.Labels}}")) {
+      return {
+        code: 0,
+        stdout: JSON.stringify({
+          "pyrus.ibkr.capsule": "1",
+          "pyrus.ibkr.session_hash": SESSION_HASH,
+        }),
+        stderr: "",
+      };
+    }
+    if (args.includes("{{json .State}}")) {
+      return {
+        code: 0,
+        stdout: JSON.stringify({ Running: true, StartedAt: STARTED_AT }),
+        stderr: "",
+      };
+    }
+    if (args[0] === "logs") {
+      return {
+        code: 0,
+        stdout:
+          dockerLogLine(READY_MARKER, "2026-07-09T21:59:50.000Z") +
+          dockerLogLine(LOGIN_COMPLETE_MARKER, "2026-07-09T21:59:55.000Z"),
+        stderr: "",
+      };
+    }
+    const capsuleResult = capsuleProbeResult(args);
+    if (capsuleResult) return capsuleResult;
+    throw new Error(`unexpected Docker command: ${args.join(" ")}`);
+  };
+  const manager = new CapsuleManager(
+    loadSessionHostConfig({ IBKR_SESSION_CAPSULE_IMAGE: IMAGE }),
+    runner,
+  );
+
+  assert.deepEqual(await manager.reconcile(), {
+    name: SLOT_NAME,
+    status: "occupied",
+    loginCompletions: 1,
+  });
+});
+
+test("does not certify readiness when the capsule restarts during a probe", async () => {
+  let stateReads = 0;
+  const runner: CommandRunner = async (_command, args) => {
+    if (args[1] === "ls") {
+      return { code: 0, stdout: `${SLOT_NAME}\n`, stderr: "" };
+    }
+    if (args.includes("{{json .Config.Labels}}")) {
+      return {
+        code: 0,
+        stdout: JSON.stringify({
+          "pyrus.ibkr.capsule": "1",
+          "pyrus.ibkr.session_hash": SESSION_HASH,
+        }),
+        stderr: "",
+      };
+    }
+    if (args.includes("{{json .State}}")) {
+      stateReads += 1;
+      return {
+        code: 0,
+        stdout: JSON.stringify({
+          Running: true,
+          StartedAt:
+            stateReads === 1
+              ? STARTED_AT
+              : "2026-07-09T22:00:02.000Z",
+        }),
+        stderr: "",
+      };
+    }
+    if (args[0] === "logs") {
+      return {
+        code: 0,
+        stdout: dockerLogLine(READY_MARKER),
+        stderr: "",
+      };
+    }
+    const capsuleResult = capsuleProbeResult(args);
+    if (capsuleResult) return capsuleResult;
+    throw new Error(`unexpected Docker command: ${args.join(" ")}`);
+  };
+  const manager = new CapsuleManager(
+    loadSessionHostConfig({ IBKR_SESSION_CAPSULE_IMAGE: IMAGE }),
+    runner,
+  );
+
+  assert.deepEqual(await manager.reconcile(), {
+    name: SLOT_NAME,
+    status: "occupied",
+    loginCompletions: 0,
+  });
+  assert.equal(stateReads, 2);
 });
 
 test("bounds marker polling and sanitizes readiness failure before cleanup", async () => {
@@ -440,7 +932,16 @@ test("reserves capacity while provisioning and coalesces concurrent ensures", as
   assert.deepEqual(await repeated, await first);
   assert.deepEqual(
     calls.map((args) => args[0]),
-    ["container", "create", "start", "container", "logs"],
+    [
+      "container",
+      "network",
+      "create",
+      "start",
+      "container",
+      "logs",
+      "container",
+      "container",
+    ],
   );
 });
 
@@ -466,7 +967,7 @@ test("removes a partially created capsule and releases capacity after start fail
   );
   assert.deepEqual(
     calls.map((args) => args[0]),
-    ["container", "create", "start", "rm"],
+    ["container", "network", "create", "start", "rm"],
   );
 
   failStart = false;
@@ -475,13 +976,17 @@ test("removes a partially created capsule and releases capacity after start fail
     calls.map((args) => args[0]),
     [
       "container",
+      "network",
       "create",
       "start",
       "rm",
+      "network",
       "create",
       "start",
       "container",
       "logs",
+      "container",
+      "container",
     ],
   );
 });
@@ -492,7 +997,8 @@ test("poisons capacity when partial-capsule cleanup cannot be confirmed", async 
   const calls: string[][] = [];
   const runner: CommandRunner = async (_command, args) => {
     calls.push(args);
-    if (args[0] === "container") return noExistingSlot();
+    const probe = capsuleProbeResult(args);
+    if (probe) return probe;
     if (args[0] === "start") {
       return { code: 1, stdout: "", stderr: startSecret };
     }
@@ -556,10 +1062,12 @@ test("reconciles the fixed daemon slot and preserves capacity across host restar
   assert.deepEqual(await manager.reconcile(), {
     name: SLOT_NAME,
     status: "ready",
+    loginCompletions: 0,
   });
   assert.deepEqual(await manager.ensure(SESSION_ID), {
     name: SLOT_NAME,
     status: "ready",
+    loginCompletions: 0,
   });
   await assert.rejects(
     () => manager.ensure(OTHER_SESSION_ID),
@@ -577,10 +1085,17 @@ test("reconciles the fixed daemon slot and preserves capacity across host restar
       "{{.Names}}",
     ],
     [
+      "network",
+      "inspect",
+      "--format",
+      "{{json .}}",
+      NETWORK_NAME,
+    ],
+    [
       "container",
       "inspect",
       "--format",
-      "{{json .Config.Labels}}",
+      "{{json .}}",
       SLOT_NAME,
     ],
     [
@@ -590,7 +1105,7 @@ test("reconciles the fixed daemon slot and preserves capacity across host restar
       "{{json .State}}",
       SLOT_NAME,
     ],
-    ["logs", "--since", STARTED_AT, "--tail", "100", SLOT_NAME],
+    ["logs", "--timestamps", "--tail", "1000", SLOT_NAME],
     [
       "container",
       "inspect",
@@ -598,15 +1113,29 @@ test("reconciles the fixed daemon slot and preserves capacity across host restar
       "{{json .State}}",
       SLOT_NAME,
     ],
-    ["logs", "--since", STARTED_AT, "--tail", "100", SLOT_NAME],
+    [
+      "container",
+      "inspect",
+      "--format",
+      "{{json .State}}",
+      SLOT_NAME,
+    ],
+    ["logs", "--timestamps", "--tail", "1000", SLOT_NAME],
+    [
+      "container",
+      "inspect",
+      "--format",
+      "{{json .State}}",
+      SLOT_NAME,
+    ],
   ]);
   assert(!calls.some((args) => args[0] === "exec"));
 });
 
 test("reconciliation keeps an unproven existing slot occupied, not ready", async () => {
   for (const probe of [
-    { running: false, logs: `${READY_MARKER}\n` },
-    { running: true, logs: `${READY_MARKER}-suffix\n` },
+    { running: false, logs: dockerLogLine(READY_MARKER) },
+    { running: true, logs: dockerLogLine(`${READY_MARKER}-suffix`) },
   ]) {
     const calls: string[][] = [];
     const runner: CommandRunner = async (_command, args) => {
@@ -624,6 +1153,36 @@ test("reconciliation keeps an unproven existing slot occupied, not ready", async
           stderr: "",
         };
       }
+      if (
+        args[0] === "container" &&
+        args[1] === "inspect" &&
+        args.includes("{{json .}}")
+      ) {
+        return {
+          code: 0,
+          stdout: JSON.stringify({
+            Config: {
+              Image: IMAGE,
+              Labels: {
+                "pyrus.ibkr.capsule": "1",
+                "pyrus.ibkr.session_hash": SESSION_HASH,
+              },
+            },
+            HostConfig: { NetworkMode: NETWORK_NAME, PortBindings: null },
+            NetworkSettings: {
+              Networks: {
+                [NETWORK_NAME]: {
+                  IPAddress: probe.running ? NETWORK_IP : "",
+                  NetworkID: NETWORK_ID,
+                },
+              },
+              Ports: {},
+            },
+            State: { Running: probe.running },
+          }),
+          stderr: "",
+        };
+      }
       if (args.includes("{{json .State}}")) {
         return {
           code: 0,
@@ -637,6 +1196,8 @@ test("reconciliation keeps an unproven existing slot occupied, not ready", async
       if (args[0] === "logs") {
         return { code: 0, stdout: probe.logs, stderr: "" };
       }
+      const capsuleResult = capsuleProbeResult(args);
+      if (capsuleResult) return capsuleResult;
       throw new Error(`unexpected Docker command: ${args.join(" ")}`);
     };
     const manager = new CapsuleManager(
@@ -647,8 +1208,273 @@ test("reconciliation keeps an unproven existing slot occupied, not ready", async
     assert.deepEqual(await manager.reconcile(), {
       name: SLOT_NAME,
       status: "occupied",
+      loginCompletions: 0,
     });
+    assert.equal(manager.getRelayTarget("cpg"), null);
     assert(!calls.some((args) => args[0] === "exec"));
+  }
+});
+
+test("restores the private relay address when a stopped slot becomes ready", async () => {
+  let running = false;
+  let stopOnNextIdentityInspect = false;
+  const runner: CommandRunner = async (_command, args) => {
+    if (args[0] === "network") {
+      return capsuleProbeResult(args) ?? { code: 1, stdout: "", stderr: "" };
+    }
+    if (args[1] === "ls") {
+      return { code: 0, stdout: `${SLOT_NAME}\n`, stderr: "" };
+    }
+    if (args.includes("{{json .State}}")) {
+      return {
+        code: 0,
+        stdout: JSON.stringify({ Running: running, StartedAt: STARTED_AT }),
+        stderr: "",
+      };
+    }
+    if (args[0] === "container" && args.includes("{{json .}}")) {
+      if (stopOnNextIdentityInspect) {
+        stopOnNextIdentityInspect = false;
+        running = false;
+      }
+      return {
+        code: 0,
+        stdout: JSON.stringify({
+          Config: {
+            Image: IMAGE,
+            Labels: {
+              "pyrus.ibkr.capsule": "1",
+              "pyrus.ibkr.session_hash": SESSION_HASH,
+            },
+          },
+          HostConfig: { NetworkMode: NETWORK_NAME, PortBindings: null },
+          NetworkSettings: {
+            Networks: {
+              [NETWORK_NAME]: {
+                IPAddress: running ? NETWORK_IP : "",
+                NetworkID: NETWORK_ID,
+              },
+            },
+            Ports: {},
+          },
+          State: { Running: running },
+        }),
+        stderr: "",
+      };
+    }
+    if (args[0] === "logs") {
+      return { code: 0, stdout: dockerLogLine(READY_MARKER), stderr: "" };
+    }
+    throw new Error(`unexpected Docker command: ${args.join(" ")}`);
+  };
+  const manager = new CapsuleManager(
+    loadSessionHostConfig({ IBKR_SESSION_CAPSULE_IMAGE: IMAGE }),
+    runner,
+  );
+
+  assert.equal((await manager.reconcile())?.status, "occupied");
+  assert.equal(manager.getRelayTarget("cpg"), null);
+  running = true;
+  stopOnNextIdentityInspect = true;
+  assert.equal((await manager.status(SESSION_ID))?.status, "occupied");
+  assert.equal(manager.getRelayTarget("cpg"), null);
+  running = true;
+  assert.equal((await manager.status(SESSION_ID))?.status, "ready");
+  assert.deepEqual(manager.getRelayTarget("cpg"), {
+    host: NETWORK_IP,
+    port: 15000,
+  });
+});
+
+test("a stale address recovery cannot poison a replacement capsule", async () => {
+  let running = false;
+  let currentSessionHash = SESSION_HASH;
+  let blockNextNetworkInspect = false;
+  let markNetworkInspectStarted!: () => void;
+  let releaseNetworkInspect!: () => void;
+  const networkInspectStarted = new Promise<void>((resolve) => {
+    markNetworkInspectStarted = resolve;
+  });
+  const networkInspectGate = new Promise<void>((resolve) => {
+    releaseNetworkInspect = resolve;
+  });
+  const runner: CommandRunner = async (_command, args) => {
+    if (args[0] === "network" && args[1] === "inspect") {
+      if (blockNextNetworkInspect) {
+        blockNextNetworkInspect = false;
+        markNetworkInspectStarted();
+        await networkInspectGate;
+      }
+      return capsuleProbeResult(args) ?? { code: 1, stdout: "", stderr: "" };
+    }
+    if (args[1] === "ls") {
+      return { code: 0, stdout: `${SLOT_NAME}\n`, stderr: "" };
+    }
+    if (args[0] === "create") {
+      currentSessionHash =
+        args
+          .find((arg) => arg.startsWith("pyrus.ibkr.session_hash="))
+          ?.split("=", 2)[1] ?? currentSessionHash;
+      running = true;
+      return { code: 0, stdout: "", stderr: "" };
+    }
+    if (args[0] === "start" || args[0] === "rm") {
+      return { code: 0, stdout: "", stderr: "" };
+    }
+    if (args.includes("{{json .State}}")) {
+      return {
+        code: 0,
+        stdout: JSON.stringify({ Running: running, StartedAt: STARTED_AT }),
+        stderr: "",
+      };
+    }
+    if (args[0] === "container" && args.includes("{{json .}}")) {
+      return {
+        code: 0,
+        stdout: JSON.stringify({
+          Config: {
+            Image: IMAGE,
+            Labels: {
+              "pyrus.ibkr.capsule": "1",
+              "pyrus.ibkr.session_hash": currentSessionHash,
+            },
+          },
+          HostConfig: { NetworkMode: NETWORK_NAME, PortBindings: null },
+          NetworkSettings: {
+            Networks: {
+              [NETWORK_NAME]: {
+                IPAddress: running ? NETWORK_IP : "",
+                NetworkID: NETWORK_ID,
+              },
+            },
+            Ports: {},
+          },
+          State: { Running: running },
+        }),
+        stderr: "",
+      };
+    }
+    if (args[0] === "logs") {
+      return { code: 0, stdout: dockerLogLine(READY_MARKER), stderr: "" };
+    }
+    throw new Error(`unexpected Docker command: ${args.join(" ")}`);
+  };
+  const manager = new CapsuleManager(
+    loadSessionHostConfig({ IBKR_SESSION_CAPSULE_IMAGE: IMAGE }),
+    runner,
+  );
+
+  await manager.reconcile();
+  running = true;
+  blockNextNetworkInspect = true;
+  const staleStatus = manager.status(SESSION_ID);
+  await networkInspectStarted;
+  await manager.release(SESSION_ID);
+  await manager.ensure(OTHER_SESSION_ID);
+  releaseNetworkInspect();
+
+  await assert.rejects(
+    staleStatus,
+    (error) =>
+      error instanceof CapsuleError && error.code === "session_not_found",
+  );
+  assert.equal((await manager.status(OTHER_SESSION_ID))?.status, "ready");
+});
+
+test("refuses to adopt persisted slots with unsafe networks, ports, or images", async () => {
+  for (const { image, networkMode, networks, portBindings, ports } of [
+    {
+      image: IMAGE,
+      networkMode: "bridge",
+      networks: { bridge: { IPAddress: NETWORK_IP, NetworkID: "d".repeat(64) } },
+      portBindings: null,
+      ports: {},
+    },
+    {
+      image: IMAGE,
+      networkMode: NETWORK_NAME,
+      networks: {
+        [NETWORK_NAME]: { IPAddress: NETWORK_IP, NetworkID: NETWORK_ID },
+        bridge: { IPAddress: "172.17.0.2", NetworkID: "d".repeat(64) },
+      },
+      portBindings: null,
+      ports: {},
+    },
+    {
+      image: IMAGE,
+      networkMode: NETWORK_NAME,
+      networks: {
+        [NETWORK_NAME]: { IPAddress: NETWORK_IP, NetworkID: NETWORK_ID },
+      },
+      portBindings: {
+        "15000/tcp": [{ HostIp: "127.0.0.1", HostPort: "15000" }],
+      },
+      ports: {
+        "15000/tcp": [{ HostIp: "127.0.0.1", HostPort: "15000" }],
+      },
+    },
+    {
+      image: "sha256:" + "f".repeat(64),
+      networkMode: NETWORK_NAME,
+      networks: {
+        [NETWORK_NAME]: { IPAddress: NETWORK_IP, NetworkID: NETWORK_ID },
+      },
+      portBindings: null,
+      ports: {},
+    },
+  ]) {
+    let completeInspections = 0;
+    const runner: CommandRunner = async (_command, args) => {
+      if (args[0] === "network") {
+        return capsuleProbeResult(args) ?? { code: 1, stdout: "", stderr: "" };
+      }
+      if (args[1] === "ls") {
+        return { code: 0, stdout: `${SLOT_NAME}\n`, stderr: "" };
+      }
+      if (args.includes("{{json .Config.Labels}}")) {
+        return {
+          code: 0,
+          stdout: JSON.stringify({
+            "pyrus.ibkr.capsule": "1",
+            "pyrus.ibkr.session_hash": SESSION_HASH,
+          }),
+          stderr: "",
+        };
+      }
+      if (args.includes("{{json .}}")) {
+        completeInspections += 1;
+        return {
+          code: 0,
+          stdout: JSON.stringify({
+            Config: {
+              Image: image,
+              Labels: {
+                "pyrus.ibkr.capsule": "1",
+                "pyrus.ibkr.session_hash": SESSION_HASH,
+              },
+            },
+            HostConfig: {
+              NetworkMode: networkMode,
+              PortBindings: portBindings,
+            },
+            NetworkSettings: { Networks: networks, Ports: ports },
+          }),
+          stderr: "",
+        };
+      }
+      return capsuleProbeResult(args) ?? { code: 0, stdout: "", stderr: "" };
+    };
+    const manager = new CapsuleManager(
+      loadSessionHostConfig({ IBKR_SESSION_CAPSULE_IMAGE: IMAGE }),
+      runner,
+    );
+
+    await assert.rejects(
+      () => manager.reconcile(),
+      (error) =>
+        error instanceof CapsuleError && error.code === "cleanup_unconfirmed",
+    );
+    assert.equal(completeInspections, 1);
   }
 });
 

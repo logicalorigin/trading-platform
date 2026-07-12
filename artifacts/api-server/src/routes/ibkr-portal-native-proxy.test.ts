@@ -1,21 +1,28 @@
 import assert from "node:assert/strict";
 import { once } from "node:events";
+import { readFile, stat } from "node:fs/promises";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import test from "node:test";
+import { setTimeout as delay } from "node:timers/promises";
 
 import { db, usersTable } from "@workspace/db";
 import { withTestDb } from "@workspace/db/testing";
 
 import app from "../app";
 import { createAuthSession } from "../services/auth";
-import { __resetIbkrPortalEmbedSessionsForTests } from "../services/ibkr-portal-embed-session";
+import {
+  __resetIbkrPortalEmbedSessionsForTests,
+  issueIbkrPortalEmbedGrant,
+} from "../services/ibkr-portal-embed-session";
 import {
   ensureGateway,
   stopGateway,
 } from "../services/ibkr-portal-gateway-manager";
+import { findRepoRoot } from "../services/runtime-flight-recorder";
 
 const CLIENT_MOUNT = "/api/broker-execution/ibkr-portal/client";
+const PROXY_TRAIL_PATH = `${findRepoRoot()}/.pyrus-runtime/ibkr-portal-proxy-trail.jsonl`;
 
 async function listen(server: Server): Promise<number> {
   server.listen(0, "127.0.0.1");
@@ -79,6 +86,14 @@ test("native IBKR proxy uses the CPG target and keeps app credentials out of the
             response.end(
               '<!doctype html><html><head><script>if (window != top) { top.location.href = location.href; }</script></head><body><script src="/asset.js"></script></body></html>',
             );
+            return;
+          }
+          if (request.url === "/sso/Dispatcher") {
+            response.writeHead(200, {
+              "content-type": "text/plain; charset=utf-8",
+              location: "/restricted/",
+            });
+            response.end("Client login succeeds");
             return;
           }
           if (request.url === "/too-large") {
@@ -162,14 +177,22 @@ test("native IBKR proxy uses the CPG target and keeps app credentials out of the
       );
       assert.equal(connected.status, 200);
       const connectBody = (await connected.json()) as { loginPath: string };
-      assert.match(
+      assert.equal(
         connectBody.loginPath,
-        new RegExp(
-          `^${embedOrigin.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}${CLIENT_MOUNT}/authorize\\?code=`,
-        ),
+        "/api/broker-execution/ibkr-portal/gateway/vnc.html" +
+          "?autoconnect=1&resize=scale" +
+          "&path=api%2Fbroker-execution%2Fibkr-portal%2Fgateway%2Fwebsockify",
       );
 
-      const wrongOriginAuthorizeUrl = connectBody.loginPath.replace(
+      const embedGrant = issueIbkrPortalEmbedGrant({
+        appUserId: admin.id,
+        parentOrigin: origin,
+        embedOrigin,
+      });
+      const authorizeUrl =
+        `${embedOrigin}${CLIENT_MOUNT}/authorize?code=` + embedGrant.code;
+
+      const wrongOriginAuthorizeUrl = authorizeUrl.replace(
         "http://localhost:",
         "http://127.0.0.1:",
       );
@@ -178,7 +201,7 @@ test("native IBKR proxy uses the CPG target and keeps app credentials out of the
       });
       assert.equal(wrongOrigin.status, 401);
 
-      const authorized = await previousFetch(connectBody.loginPath, {
+      const authorized = await previousFetch(authorizeUrl, {
         redirect: "manual",
       });
       assert.equal(authorized.status, 303);
@@ -193,7 +216,7 @@ test("native IBKR proxy uses the CPG target and keeps app credentials out of the
       assert.doesNotMatch(embedCookie, /pyrus_session=/);
       assert.equal(authorized.headers.get("referrer-policy"), "no-referrer");
 
-      const replayed = await previousFetch(connectBody.loginPath, {
+      const replayed = await previousFetch(authorizeUrl, {
         redirect: "manual",
       });
       assert.equal(replayed.status, 401);
@@ -278,6 +301,65 @@ test("native IBKR proxy uses the CPG target and keeps app credentials out of the
       assert.equal(
         upstreamReferer,
         `http://127.0.0.1:${cpgPort}/sso/Login`,
+      );
+
+      const trailOffset = await stat(PROXY_TRAIL_PATH).then(
+        ({ size }) => size,
+        () => 0,
+      );
+      const dispatched = await previousFetch(
+        `${embedOrigin}${CLIENT_MOUNT}/sso/Dispatcher`,
+        {
+          method: "POST",
+          headers: {
+            ...embedAuthHeaders,
+            "content-type": "application/x-www-form-urlencoded",
+            origin: embedOrigin,
+            referer: `${embedOrigin}${CLIENT_MOUNT}/sso/Login`,
+          },
+          body: "loginType=2&forwardTo=22",
+        },
+      );
+      assert.equal(dispatched.status, 200);
+
+      let dispatcherTrace: Record<string, unknown> | undefined;
+      for (let attempt = 0; attempt < 20 && !dispatcherTrace; attempt += 1) {
+        const appended = (await readFile(PROXY_TRAIL_PATH)).subarray(trailOffset);
+        dispatcherTrace = appended
+          .toString("utf8")
+          .trim()
+          .split("\n")
+          .filter(Boolean)
+          .map((line) => JSON.parse(line) as Record<string, unknown>)
+          .find((entry) => entry["path"] === "client:/sso/Dispatcher");
+        if (!dispatcherTrace) await delay(10);
+      }
+      assert.deepEqual(dispatcherTrace?.["forwardedCookieNames"], [
+        "XYZAB",
+        "XYZAB_AM.LOGIN",
+        "gateway_session",
+      ]);
+      assert.equal(dispatcherTrace?.["stage"], "dispatcher_succeeded");
+      assert.equal(
+        dispatcherTrace?.["location"],
+        `${CLIENT_MOUNT}/restricted/`,
+      );
+      assert.doesNotMatch(JSON.stringify(dispatcherTrace), /srp-session|service-session|kept/);
+
+      const requestsBeforeQuietStatus = upstreamRequests.length;
+      const quietStatus = await previousFetch(
+        `${origin}/api/broker-execution/ibkr-portal/status`,
+        { headers: appAuthHeaders },
+      );
+      assert.equal(quietStatus.status, 200);
+      assert.equal(
+        ((await quietStatus.json()) as { status?: string }).status,
+        "needs_login",
+      );
+      assert.equal(
+        upstreamRequests.length,
+        requestsBeforeQuietStatus,
+        "exact Dispatcher success pauses every readiness probe",
       );
 
       const requestsBeforeHostilePost = upstreamRequests.length;

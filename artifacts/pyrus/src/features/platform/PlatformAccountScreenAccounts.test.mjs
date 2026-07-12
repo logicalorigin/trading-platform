@@ -9,7 +9,8 @@ const readLocalSource = (filename) =>
 // (All -> per-account tabs -> Shadow). Real accounts are live-mode entities,
 // so tab account lists are fetched with mode "live" and must not depend on the
 // environment-driven accountsQuery, which is empty when the trading environment
-// is "shadow".
+// is "shadow". Only Account and Algo consume this dedicated list, so unrelated
+// active screens must not poll it in the background.
 
 test("PlatformApp fetches a dedicated live-mode account list for the Accounts screen", () => {
   const source = readLocalSource("./PlatformApp.jsx");
@@ -28,8 +29,8 @@ test("PlatformApp fetches a dedicated live-mode account list for the Accounts sc
   );
   assert.match(
     source,
-    /const accountScreenAccountsQueryEnabled = Boolean\(\s*sessionQuery\.data && !safeQaMode,?\s*\);/,
-    "the live-mode gate must require only a loaded session outside safe-QA (no IBKR bridge dependency)",
+    /const accountScreenAccountsQueryEnabled = Boolean\(\s*sessionQuery\.data &&\s*!safeQaMode &&\s*\(screen === "account" \|\| screen === "algo"\),?\s*\);/,
+    "the live-mode gate must require an active consumer without adding an IBKR bridge dependency",
   );
   assert.match(
     liveQuery,

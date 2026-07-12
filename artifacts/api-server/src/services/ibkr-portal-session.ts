@@ -3,7 +3,11 @@ import path from "node:path";
 
 import type { IbkrRuntimeConfig } from "../lib/runtime";
 import { HttpError } from "../lib/errors";
-import { IbkrClient } from "../providers/ibkr/client";
+import {
+  IbkrClient,
+  type BrokerageSessionFailure,
+  type BrokerageSessionStage,
+} from "../providers/ibkr/client";
 import { findRepoRoot } from "./runtime-flight-recorder";
 
 import {
@@ -26,6 +30,9 @@ export const IBKR_PORTAL_CLIENT_MOUNT =
 const TICKLE_INTERVAL_MS = 55_000;
 const LOGIN_MONITOR_INTERVAL_MS = 3_000;
 const LOGIN_MONITOR_TTL_MS = 6 * 60_000;
+// ponytail: fixed pause covers CPG's 3s auth delay after its completion marker;
+// replace it only if CPG exposes a structured readiness callback.
+const POST_DISPATCH_READINESS_QUIET_MS = 10_000;
 
 // Readiness-refresh failures land on the same JSONL timeline as the login
 // proxy requests (.pyrus-runtime/ibkr-portal-proxy-trail.jsonl); a swallowed
@@ -36,15 +43,19 @@ const READINESS_TRAIL_PATH = path.join(
   ".pyrus-runtime",
   "ibkr-portal-proxy-trail.jsonl",
 );
-function traceReadinessFailure(error: unknown): void {
+function traceReadinessFailure(
+  failure: BrokerageSessionFailure,
+  stage?: BrokerageSessionStage,
+): void {
   appendFile(
     READINESS_TRAIL_PATH,
     JSON.stringify({
       ts: new Date().toISOString(),
       source: "readiness",
       outcome: "status-error",
-      code: error instanceof HttpError ? error.code : undefined,
-      detail: error instanceof Error ? error.message : String(error),
+      code: failure.code,
+      httpStatus: failure.httpStatus,
+      stage,
     }) + "\n",
     () => undefined,
   );
@@ -69,9 +80,65 @@ export type PortalReadiness = {
 };
 
 const tickers = new Map<string, NodeJS.Timeout>();
-const loginMonitors = new Map<string, NodeJS.Timeout>();
+const loginMonitors = new Map<
+  string,
+  { generation: symbol; timer: NodeJS.Timeout }
+>();
+const readinessQuietWindows = new Map<string, NodeJS.Timeout>();
+const observedLoginCompletions = new Map<string, number>();
 
-function clientFor(baseUrl: string): IbkrClient {
+function clearPortalReadinessQuietWindow(appUserId: string): void {
+  const timer = readinessQuietWindows.get(appUserId);
+  if (timer) clearTimeout(timer);
+  readinessQuietWindows.delete(appUserId);
+}
+
+function setPortalReadinessQuietWindow(
+  appUserId: string,
+  durationMs: number,
+): void {
+  clearPortalReadinessQuietWindow(appUserId);
+  const timer = setTimeout(() => {
+    if (readinessQuietWindows.get(appUserId) === timer) {
+      readinessQuietWindows.delete(appUserId);
+    }
+  }, durationMs);
+  timer.unref?.();
+  readinessQuietWindows.set(appUserId, timer);
+}
+
+export function beginPortalReadinessQuietWindow(appUserId: string): void {
+  setPortalReadinessQuietWindow(appUserId, POST_DISPATCH_READINESS_QUIET_MS);
+}
+
+function observePortalLoginCompletions(
+  appUserId: string,
+  loginCompletions: number,
+): boolean {
+  const observed = observedLoginCompletions.get(appUserId);
+  if (observed === undefined) {
+    observedLoginCompletions.set(appUserId, loginCompletions);
+    if (loginCompletions > 0) beginPortalReadinessQuietWindow(appUserId);
+    return true;
+  }
+  if (loginCompletions < observed) {
+    observedLoginCompletions.set(appUserId, loginCompletions);
+    return false;
+  }
+  if (loginCompletions > observed) {
+    observedLoginCompletions.set(appUserId, loginCompletions);
+    beginPortalReadinessQuietWindow(appUserId);
+  }
+  return false;
+}
+
+function clientFor(
+  baseUrl: string,
+  onBrokerageSessionError?: (
+    stage: BrokerageSessionStage,
+    failure: BrokerageSessionFailure,
+  ) => void,
+): IbkrClient {
   const config: IbkrRuntimeConfig = {
     baseUrl,
     bearerToken: null,
@@ -86,7 +153,10 @@ function clientFor(baseUrl: string): IbkrClient {
     // decision 2026-07-10: not paper-only).
     paperAccountOnly: false,
   };
-  return new IbkrClient(config);
+  return new IbkrClient(
+    config,
+    onBrokerageSessionError ? { onBrokerageSessionError } : {},
+  );
 }
 
 function startTickle(appUserId: string, baseUrl: string): void {
@@ -110,19 +180,31 @@ function stopTickle(appUserId: string): void {
   }
 }
 
-function stopLoginMonitor(appUserId: string): void {
-  const timer = loginMonitors.get(appUserId);
-  if (timer) clearTimeout(timer);
+function stopLoginMonitor(appUserId: string, generation?: symbol): boolean {
+  const monitor = loginMonitors.get(appUserId);
+  if (!monitor || (generation && monitor.generation !== generation)) {
+    return false;
+  }
+  clearTimeout(monitor.timer);
   loginMonitors.delete(appUserId);
+  return true;
 }
 
 function startLoginMonitor(appUserId: string): void {
   stopLoginMonitor(appUserId);
+  const generation = Symbol(appUserId);
   const expiresAt = Date.now() + LOGIN_MONITOR_TTL_MS;
+  const isCurrent = (): boolean =>
+    loginMonitors.get(appUserId)?.generation === generation;
+  const schedule = (poll: () => Promise<void>): void => {
+    const timer = setTimeout(poll, LOGIN_MONITOR_INTERVAL_MS);
+    timer.unref?.();
+    loginMonitors.set(appUserId, { generation, timer });
+  };
   const poll = async (): Promise<void> => {
-    if (!loginMonitors.has(appUserId)) return;
+    if (!isCurrent()) return;
     if (Date.now() >= expiresAt) {
-      stopLoginMonitor(appUserId);
+      if (!stopLoginMonitor(appUserId, generation)) return;
       revokeIbkrPortalEmbedSessions(appUserId);
       await stopGateway(appUserId).catch(() => undefined);
       return;
@@ -131,30 +213,22 @@ function startLoginMonitor(appUserId: string): void {
     try {
       readiness = await readPortalReadiness(appUserId);
     } catch {
-      if (loginMonitors.has(appUserId)) {
-        const timer = setTimeout(poll, LOGIN_MONITOR_INTERVAL_MS);
-        timer.unref?.();
-        loginMonitors.set(appUserId, timer);
-      }
+      if (isCurrent()) schedule(poll);
       return;
     }
-    if (!loginMonitors.has(appUserId)) return;
+    if (!isCurrent()) return;
     if (
       readiness.status === "connected" ||
       readiness.status === "disconnected" ||
       readiness.status === "unavailable"
     ) {
-      stopLoginMonitor(appUserId);
+      stopLoginMonitor(appUserId, generation);
       revokeIbkrPortalEmbedSessions(appUserId);
       return;
     }
-    const timer = setTimeout(poll, LOGIN_MONITOR_INTERVAL_MS);
-    timer.unref?.();
-    loginMonitors.set(appUserId, timer);
+    schedule(poll);
   };
-  const timer = setTimeout(poll, LOGIN_MONITOR_INTERVAL_MS);
-  timer.unref?.();
-  loginMonitors.set(appUserId, timer);
+  schedule(poll);
 }
 
 function base(overrides: Partial<PortalReadiness>): PortalReadiness {
@@ -189,6 +263,17 @@ export async function readPortalReadiness(
     });
   }
 
+  const firstObservation = observePortalLoginCompletions(
+    appUserId,
+    gateway.loginCompletions,
+  );
+  if (firstObservation && gateway.recovered) {
+    if (gateway.loginCompletions === 0) {
+      setPortalReadinessQuietWindow(appUserId, LOGIN_MONITOR_TTL_MS);
+    }
+    startLoginMonitor(appUserId);
+  }
+
   if (gateway.status === "starting") {
     markGatewayPaperAccountVerified(appUserId, false);
     return base({
@@ -198,8 +283,22 @@ export async function readPortalReadiness(
     });
   }
 
+  if (readinessQuietWindows.has(appUserId)) {
+    markGatewayPaperAccountVerified(appUserId, false);
+    return base({
+      status: "needs_login",
+      gatewayRunning: true,
+      message: "Gateway is running. Log in to IBKR to finish connecting.",
+    });
+  }
+
+  let stagedFailureTraced = false;
   try {
-    const status = await clientFor(gateway.baseUrl).ensureBrokerageSession();
+    const status = await clientFor(gateway.baseUrl, (stage, failure) => {
+      stagedFailureTraced = true;
+      traceReadinessFailure(failure, stage);
+    }).ensureBrokerageSession({ initializeIfNeeded: false });
+    stagedFailureTraced = false;
     if (status.competing) {
       markGatewayPaperAccountVerified(appUserId, false);
       return base({
@@ -233,7 +332,12 @@ export async function readPortalReadiness(
     });
   } catch (error) {
     markGatewayPaperAccountVerified(appUserId, false);
-    traceReadinessFailure(error);
+    if (!stagedFailureTraced) {
+      traceReadinessFailure({
+        code: error instanceof HttpError ? error.code : undefined,
+        httpStatus: error instanceof HttpError ? error.statusCode : undefined,
+      });
+    }
     return base({
       status: "needs_login",
       gatewayRunning: true,
@@ -246,11 +350,14 @@ export async function connectPortal(
   appUserId: string,
 ): Promise<{ status: PortalConnectionStatus }> {
   const gateway = await ensureGateway(appUserId);
+  observedLoginCompletions.set(appUserId, gateway.loginCompletions);
+  setPortalReadinessQuietWindow(appUserId, LOGIN_MONITOR_TTL_MS);
   const status: PortalConnectionStatus =
     gateway.status === "starting" ? "gateway_starting" : "needs_login";
   // The login surface must not wait on /iserver/auth/status. A fresh CPG can
   // take the full request timeout to answer before the browser has opened its
-  // login page; the background monitor performs the same paper-only check.
+  // login page. Both monitors stay quiet until exact Dispatcher success replaces
+  // this login-length guard with the shorter post-promotion quiet window.
   startLoginMonitor(appUserId);
   return {
     status,
@@ -266,6 +373,8 @@ export async function getPortalStatus(
 export async function disconnectPortal(
   appUserId: string,
 ): Promise<{ ok: true }> {
+  clearPortalReadinessQuietWindow(appUserId);
+  observedLoginCompletions.delete(appUserId);
   stopLoginMonitor(appUserId);
   stopTickle(appUserId);
   revokeIbkrPortalEmbedSessions(appUserId);

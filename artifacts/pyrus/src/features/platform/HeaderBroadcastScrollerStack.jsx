@@ -69,7 +69,6 @@ import {
   useFlowScannerControlState,
   useMarketFlowSnapshotForStoreKey,
 } from "./marketFlowStore";
-import { useRuntimeControlSnapshot } from "./useRuntimeControlSnapshot";
 import {
   providerSummaryHasMarketSessionQuiet,
   providerSummaryHasVisibleFlowDegradation,
@@ -1508,15 +1507,7 @@ export const HeaderBroadcastScrollerStack = memo(({
   );
   const broadScanEnabled = Boolean(flowScannerControl.enabled);
   const broadScanOwnerActive = Boolean(flowScannerControl.ownerActive);
-  const flowRuntimeControl = useRuntimeControlSnapshot({
-    enabled: Boolean(enabled && !safeQaMode && broadScanEnabled),
-    runtimeDiagnosticsEnabled: false,
-  });
-  const broadScanRuntimeActive = Boolean(
-    broadScanOwnerActive || flowRuntimeControl.flowScanner?.active,
-  );
-  const flowRuntimeLoading = Boolean(flowRuntimeControl.loading);
-  const flowRuntimeErrored = Boolean(flowRuntimeControl.error);
+  const broadScanRuntimeActive = broadScanOwnerActive;
   const flowScannerConfig = flowScannerControl.config;
   const flowTapeFilters = useFlowTapeFilterState({
     subscribe: enabled,
@@ -1786,23 +1777,20 @@ export const HeaderBroadcastScrollerStack = memo(({
   const flowScanPaused = Boolean(
     broadScanEnabled &&
       !broadScanRuntimeActive &&
-      !broadScanSnapshotVisible &&
-      !flowRuntimeLoading,
+      !broadScanSnapshotVisible,
   );
   const flowScanHasError = Boolean(
-    (broadScanOwnerActive && flowHasError) ||
-      (broadScanEnabled && !broadScanRuntimeActive && flowRuntimeErrored),
+    broadScanOwnerActive && flowHasError,
   );
   const flowScanDegraded = Boolean(
     broadScanRuntimeActive && !flowScanHasError && flowDegraded,
   );
   const flowScanBusy = Boolean(
-    (broadScanRuntimeActive || flowRuntimeLoading) &&
+    broadScanRuntimeActive &&
       !flowScanHasError &&
       !flowScanDegraded &&
       !flowSessionQuiet &&
-      (flowRuntimeLoading ||
-        flowStatus === "loading" ||
+      (flowStatus === "loading" ||
         flowProviderSummary?.coverage?.isFetching),
   );
   const unusualEmptyLabel =

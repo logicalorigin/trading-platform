@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
+import { isIP } from "node:net";
 import { fileURLToPath } from "node:url";
 
 export type SessionHostConfig = {
@@ -30,6 +31,7 @@ export type CommandRunner = (
 ) => Promise<CommandResult>;
 
 export type CapsuleRecord = {
+  loginCompletions?: number;
   name: string;
   status: "ready" | "occupied";
 };
@@ -38,6 +40,11 @@ export type CapsuleTargetKind = "cpg" | "console";
 
 export type CapsuleTarget = {
   host: "127.0.0.1";
+  port: 15000 | 16080;
+};
+
+export type CapsuleRelayTarget = {
+  host: string;
   port: 15000 | 16080;
 };
 
@@ -102,12 +109,15 @@ export async function checkDocker(
   }
 }
 
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
 function parseJsonRecord(value: string): Record<string, unknown> | null {
   try {
-    const parsed = JSON.parse(value) as unknown;
-    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
-      ? (parsed as Record<string, unknown>)
-      : null;
+    return asRecord(JSON.parse(value) as unknown);
   } catch {
     return null;
   }
@@ -226,12 +236,25 @@ const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const SESSION_HASH_PATTERN = /^[a-f0-9]{24}$/;
 const CAPSULE_SLOT_NAME = "pyrus-ibkr-slot-1";
+const CAPSULE_NETWORK_NAME = "pyrus-ibkr-capsule-net";
+const CAPSULE_NETWORK_LABEL = "pyrus.ibkr.network";
+const CAPSULE_NETWORK_ICC_OPTION =
+  "com.docker.network.bridge.enable_icc";
+const CAPSULE_NETWORK_GATEWAY_OPTION =
+  "com.docker.network.bridge.gateway_mode_ipv4";
+const DOCKER_ID_PATTERN = /^[a-f0-9]{64}$/;
 const CAPSULE_READY_MARKER = "PYRUS_IBKR_CAPSULE_READY_V1";
+const CAPSULE_LOGIN_COMPLETE_MARKER =
+  "PYRUS_IBKR_CAPSULE_LOGIN_COMPLETE_V1";
 // 1s granularity: CPG takes tens of seconds to boot, and every extra poll
 // interval after the ready marker appears is dead time the user spends staring
 // at the "starting session" screen. Same overall 90s budget as before.
 const CAPSULE_READY_ATTEMPTS = 90;
 const CAPSULE_READY_INTERVAL_MS = 1_000;
+// ponytail: PID 1 emits only readiness and completion markers, so this covers
+// hundreds of restart/login cycles. Persist a counter only if measured usage
+// can exceed this bounded Docker-log window.
+const CAPSULE_LOG_TAIL_LINES = 1_000;
 const CAPSULE_TARGETS = {
   cpg: { host: "127.0.0.1", port: 15000 },
   console: { host: "127.0.0.1", port: 16080 },
@@ -242,6 +265,37 @@ const LOCAL_IMAGE_ID_PATTERN = /^sha256:[a-f0-9]{64}$/;
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function parseTimestampedDockerLogLine(
+  line: string,
+): { message: string; timestampMs: number } | null {
+  const separator = line.indexOf(" ");
+  if (separator <= 0) return null;
+  const timestamp = line
+    .slice(0, separator)
+    .replace(/(\.\d{3})\d+(Z|[+-]\d{2}:\d{2})$/, "$1$2");
+  const timestampMs = Date.parse(timestamp);
+  return Number.isFinite(timestampMs)
+    ? { message: line.slice(separator + 1), timestampMs }
+    : null;
+}
+
+function isPrivateIpv4(value: unknown): value is string {
+  if (typeof value !== "string" || isIP(value) !== 4) return false;
+  const octets = value.split(".").map(Number);
+  return (
+    octets[0] === 10 ||
+    (octets[0] === 172 && octets[1] >= 16 && octets[1] <= 31) ||
+    (octets[0] === 192 && octets[1] === 168)
+  );
+}
+
+function isEmptyRecordOrNull(value: unknown): boolean {
+  return (
+    value === null ||
+    (asRecord(value) !== null && Object.keys(asRecord(value) ?? {}).length === 0)
+  );
 }
 
 function parsePort(value: string | undefined): number {
@@ -352,13 +406,8 @@ export function buildCreateCapsuleInvocation(
       "no-new-privileges=true",
       "--security-opt",
       `seccomp=${config.seccompProfilePath}`,
-      // ponytail: capacity is one; use a unique filtered network before raising it.
       "--network",
-      "bridge",
-      "--publish",
-      "127.0.0.1:15000:15000/tcp",
-      "--publish",
-      "127.0.0.1:16080:16080/tcp",
+      CAPSULE_NETWORK_NAME,
       "--memory",
       "2g",
       "--memory-swap",
@@ -410,11 +459,17 @@ async function runChecked(
 }
 
 export class CapsuleManager {
-  private active: { sessionHash: string; record: CapsuleRecord } | null = null;
+  private active: {
+    networkAddress: string | null;
+    sessionHash: string;
+    record: CapsuleRecord;
+  } | null = null;
   private pending: {
     sessionHash: string;
     promise: Promise<CapsuleRecord>;
   } | null =
+    null;
+  private releasing: { sessionHash: string; promise: Promise<void> } | null =
     null;
   private poisoned = false;
   private reconciled = false;
@@ -430,6 +485,14 @@ export class CapsuleManager {
     const sessionHash = sessionHashForSession(sessionId);
     if (this.poisoned) {
       return Promise.reject(this.cleanupUnconfirmed());
+    }
+    if (this.releasing) {
+      return Promise.reject(
+        new CapsuleError(
+          "capacity_exhausted",
+          "The IBKR session host is already in use.",
+        ),
+      );
     }
     if (this.active?.sessionHash === sessionHash) {
       return this.refreshActive(sessionHash);
@@ -478,6 +541,7 @@ export class CapsuleManager {
     if (this.poisoned) {
       throw this.cleanupUnconfirmed();
     }
+    if (this.releasing?.sessionHash === sessionHash) return null;
     if (this.pending?.sessionHash === sessionHash) {
       return this.pending.promise;
     }
@@ -497,11 +561,42 @@ export class CapsuleManager {
     return CAPSULE_TARGETS[kind];
   }
 
-  async release(sessionId: string): Promise<void> {
-    const sessionHash = sessionHashForSession(sessionId);
-    if (this.poisoned) {
-      throw this.cleanupUnconfirmed();
+  getRelayTarget(kind: CapsuleTargetKind): CapsuleRelayTarget | null {
+    return this.active?.networkAddress &&
+      this.active.record.status === "ready" &&
+      !this.releasing
+      ? { host: this.active.networkAddress, port: CAPSULE_TARGETS[kind].port }
+      : null;
+  }
+
+  release(sessionId: string): Promise<void> {
+    let sessionHash: string;
+    try {
+      sessionHash = sessionHashForSession(sessionId);
+    } catch (error) {
+      return Promise.reject(error);
     }
+    if (this.poisoned) {
+      return Promise.reject(this.cleanupUnconfirmed());
+    }
+    if (this.releasing?.sessionHash === sessionHash) {
+      return this.releasing.promise;
+    }
+    if (this.releasing) {
+      return Promise.reject(
+        new CapsuleError("session_not_found", "IBKR session not found."),
+      );
+    }
+    const promise = this.releaseActive(sessionHash);
+    this.releasing = { sessionHash, promise };
+    const clear = (): void => {
+      if (this.releasing?.promise === promise) this.releasing = null;
+    };
+    void promise.then(clear, clear);
+    return promise;
+  }
+
+  private async releaseActive(sessionHash: string): Promise<void> {
     if (this.pending?.sessionHash === sessionHash) {
       await this.pending.promise;
     }
@@ -538,7 +633,11 @@ export class CapsuleManager {
       capacity: {
         max: 1,
         active:
-          this.active || this.pending || this.poisoned || this.reconcilePromise
+          this.active ||
+          this.pending ||
+          this.poisoned ||
+          this.reconcilePromise ||
+          this.releasing
             ? 1
             : 0,
       },
@@ -561,15 +660,37 @@ export class CapsuleManager {
         "The IBKR session host is already in use.",
       );
     }
-    const record: CapsuleRecord = {
-      name: active.record.name,
-      status: (await this.probeCapsuleReady(active.record.name))
-        ? "ready"
-        : "occupied",
-    };
-    if (this.active === active) {
-      active.record = record;
+    const probe = await this.probeCapsule(active.record.name);
+    if (this.active !== active) {
+      throw new CapsuleError("session_not_found", "IBKR session not found.");
     }
+    if (!probe.ready) active.networkAddress = null;
+    if (probe.ready && !active.networkAddress) {
+      const networkId = await this.ensureCapsuleNetwork();
+      if (this.active !== active) {
+        throw new CapsuleError("session_not_found", "IBKR session not found.");
+      }
+      const identity = await this.inspectOwnedCapsule(
+        active.record.name,
+        networkId,
+      );
+      if (this.active !== active) {
+        throw new CapsuleError("session_not_found", "IBKR session not found.");
+      }
+      if (!identity || identity.sessionHash !== active.sessionHash) {
+        throw this.cleanupUnconfirmed();
+      }
+      active.networkAddress = identity.networkAddress;
+    }
+    const record: CapsuleRecord = {
+      loginCompletions: Math.max(
+        active.record.loginCompletions ?? 0,
+        probe.loginCompletions,
+      ),
+      name: active.record.name,
+      status: probe.ready && active.networkAddress ? "ready" : "occupied",
+    };
+    active.record = record;
     return record;
   }
 
@@ -604,35 +725,23 @@ export class CapsuleManager {
       throw this.cleanupUnconfirmed();
     }
 
-    let inspected: CommandResult;
-    try {
-      inspected = await this.runner(this.config.dockerBinary, [
-        "container",
-        "inspect",
-        "--format",
-        "{{json .Config.Labels}}",
-        CAPSULE_SLOT_NAME,
-      ]);
-    } catch {
-      throw this.cleanupUnconfirmed();
-    }
-    const labels = inspected.code === 0 ? parseJsonRecord(inspected.stdout) : null;
-    const sessionHash = labels?.["pyrus.ibkr.session_hash"];
-    if (
-      labels?.["pyrus.ibkr.capsule"] !== "1" ||
-      typeof sessionHash !== "string" ||
-      !SESSION_HASH_PATTERN.test(sessionHash)
-    ) {
+    const networkId = await this.ensureCapsuleNetwork();
+
+    const identity = await this.inspectOwnedCapsule(
+      CAPSULE_SLOT_NAME,
+      networkId,
+    );
+    if (!identity) {
       throw this.cleanupUnconfirmed();
     }
 
+    const probe = await this.probeCapsule(CAPSULE_SLOT_NAME);
     const record: CapsuleRecord = {
+      loginCompletions: probe.loginCompletions,
       name: CAPSULE_SLOT_NAME,
-      status: (await this.probeCapsuleReady(CAPSULE_SLOT_NAME))
-        ? "ready"
-        : "occupied",
+      status: probe.ready && identity.networkAddress ? "ready" : "occupied",
     };
-    this.active = { sessionHash, record };
+    this.active = { ...identity, record };
     this.reconciled = true;
     return record;
   }
@@ -660,7 +769,9 @@ export class CapsuleManager {
     }
   }
 
-  private async probeCapsuleReady(name: string): Promise<boolean> {
+  private async probeCapsule(
+    name: string,
+  ): Promise<{ ready: boolean; loginCompletions: number }> {
     let inspected: CommandResult;
     try {
       inspected = await this.runner(this.config.dockerBinary, [
@@ -671,39 +782,77 @@ export class CapsuleManager {
         name,
       ]);
     } catch {
-      return false;
+      return { ready: false, loginCompletions: 0 };
     }
     const state = inspected.code === 0 ? parseJsonRecord(inspected.stdout) : null;
     const startedAt = state?.["StartedAt"];
     const startedAtMs =
       typeof startedAt === "string" ? Date.parse(startedAt) : Number.NaN;
     if (state?.["Running"] !== true || !Number.isFinite(startedAtMs)) {
-      return false;
+      return { ready: false, loginCompletions: 0 };
     }
 
     let logs: CommandResult;
     try {
       logs = await this.runner(this.config.dockerBinary, [
         "logs",
-        "--since",
-        new Date(startedAtMs).toISOString(),
+        "--timestamps",
         "--tail",
-        "100",
+        String(CAPSULE_LOG_TAIL_LINES),
         name,
       ]);
     } catch {
-      return false;
+      return { ready: false, loginCompletions: 0 };
     }
-    return (
-      logs.code === 0 &&
-      logs.stdout.split(/\r?\n/).includes(CAPSULE_READY_MARKER)
+    if (logs.code !== 0) {
+      return { ready: false, loginCompletions: 0 };
+    }
+    const lines = logs.stdout
+      .split(/\r?\n/)
+      .map(parseTimestampedDockerLogLine)
+      .filter((line) => line !== null);
+    const loginCompletions = lines.filter(
+      (line) => line.message === CAPSULE_LOGIN_COMPLETE_MARKER,
+    ).length;
+    const ready = lines.some(
+      (line) =>
+        line.message === CAPSULE_READY_MARKER &&
+        line.timestampMs >= startedAtMs,
     );
+    if (!ready) return { ready: false, loginCompletions };
+    let confirmed: CommandResult;
+    try {
+      confirmed = await this.runner(this.config.dockerBinary, [
+        "container",
+        "inspect",
+        "--format",
+        "{{json .State}}",
+        name,
+      ]);
+    } catch {
+      return { ready: false, loginCompletions };
+    }
+    const confirmedState =
+      confirmed.code === 0 ? parseJsonRecord(confirmed.stdout) : null;
+    if (
+      confirmedState?.["Running"] !== true ||
+      confirmedState["StartedAt"] !== startedAt
+    ) {
+      return { ready: false, loginCompletions };
+    }
+    return {
+      ready: true,
+      loginCompletions,
+    };
   }
 
-  private async waitForCapsuleReady(name: string): Promise<void> {
+  private async waitForCapsuleReady(
+    name: string,
+  ): Promise<{ ready: true; loginCompletions: number }> {
     for (let attempt = 0; attempt < CAPSULE_READY_ATTEMPTS; attempt += 1) {
-      if (await this.probeCapsuleReady(name)) {
-        return;
+      const probe = await this.probeCapsule(name);
+      if (probe.ready) {
+        return { ready: true, loginCompletions: probe.loginCompletions };
       }
       if (attempt + 1 < CAPSULE_READY_ATTEMPTS) {
         await this.delayFn(CAPSULE_READY_INTERVAL_MS);
@@ -722,6 +871,7 @@ export class CapsuleManager {
     const name = capsuleNameForSession(sessionId);
     let created = false;
     try {
+      const networkId = await this.ensureCapsuleNetwork();
       await runChecked(
         this.runner,
         buildCreateCapsuleInvocation(this.config, sessionId),
@@ -733,9 +883,23 @@ export class CapsuleManager {
         { command: this.config.dockerBinary, args: ["start", name] },
         "docker_start_failed",
       );
-      await this.waitForCapsuleReady(name);
-      const record: CapsuleRecord = { name, status: "ready" };
-      this.active = { sessionHash, record };
+      const probe = await this.waitForCapsuleReady(name);
+      const identity = await this.inspectOwnedCapsule(name, networkId);
+      if (
+        !identity?.networkAddress ||
+        identity.sessionHash !== sessionHash
+      ) {
+        throw new CapsuleError(
+          "capsule_identity_invalid",
+          "IBKR capsule identity could not be confirmed.",
+        );
+      }
+      const record: CapsuleRecord = {
+        loginCompletions: probe.loginCompletions,
+        name,
+        status: "ready",
+      };
+      this.active = { ...identity, record };
       return record;
     } catch (error) {
       if (created) {
@@ -756,5 +920,136 @@ export class CapsuleManager {
       }
       throw error;
     }
+  }
+
+  private async inspectCapsuleNetwork(): Promise<
+    | { status: "missing" | "invalid" }
+    | { status: "valid"; networkId: string }
+  > {
+    let inspected: CommandResult;
+    try {
+      inspected = await this.runner(this.config.dockerBinary, [
+        "network",
+        "inspect",
+        "--format",
+        "{{json .}}",
+        CAPSULE_NETWORK_NAME,
+      ]);
+    } catch {
+      return { status: "missing" };
+    }
+    if (inspected.code !== 0) return { status: "missing" };
+
+    const network = parseJsonRecord(inspected.stdout);
+    const labels = asRecord(network?.["Labels"]);
+    const options = asRecord(network?.["Options"]);
+    const optionNames = options ? Object.keys(options).sort() : [];
+    const networkId = network?.["Id"];
+    return typeof networkId === "string" &&
+      DOCKER_ID_PATTERN.test(networkId) &&
+      network?.["Name"] === CAPSULE_NETWORK_NAME &&
+      network["Scope"] === "local" &&
+      network["Driver"] === "bridge" &&
+      network["EnableIPv6"] === false &&
+      network["Internal"] === false &&
+      network["Attachable"] === false &&
+      network["Ingress"] === false &&
+      network["ConfigOnly"] === false &&
+      labels?.[CAPSULE_NETWORK_LABEL] === "1" &&
+      optionNames.length === 2 &&
+      optionNames[0] === CAPSULE_NETWORK_ICC_OPTION &&
+      optionNames[1] === CAPSULE_NETWORK_GATEWAY_OPTION &&
+      options?.[CAPSULE_NETWORK_ICC_OPTION] === "false" &&
+      options[CAPSULE_NETWORK_GATEWAY_OPTION] === "nat"
+      ? { status: "valid", networkId }
+      : { status: "invalid" };
+  }
+
+  private async inspectOwnedCapsule(
+    name: string,
+    networkId: string,
+  ): Promise<{ networkAddress: string | null; sessionHash: string } | null> {
+    let inspected: CommandResult;
+    try {
+      inspected = await this.runner(this.config.dockerBinary, [
+        "container",
+        "inspect",
+        "--format",
+        "{{json .}}",
+        name,
+      ]);
+    } catch {
+      return null;
+    }
+    const container =
+      inspected.code === 0 ? parseJsonRecord(inspected.stdout) : null;
+    const containerConfig = asRecord(container?.["Config"]);
+    const labels = asRecord(containerConfig?.["Labels"]);
+    const hostConfig = asRecord(container?.["HostConfig"]);
+    const networks = asRecord(
+      asRecord(container?.["NetworkSettings"])?.["Networks"],
+    );
+    const ports = asRecord(container?.["NetworkSettings"])?.["Ports"];
+    const networkNames = networks ? Object.keys(networks) : [];
+    const endpoint = asRecord(networks?.[CAPSULE_NETWORK_NAME]);
+    const state = asRecord(container?.["State"]);
+    const sessionHash = labels?.["pyrus.ibkr.session_hash"];
+    const rawNetworkAddress = endpoint?.["IPAddress"];
+    const networkAddress = isPrivateIpv4(rawNetworkAddress)
+      ? rawNetworkAddress
+      : rawNetworkAddress === "" && state?.["Running"] === false
+        ? null
+        : undefined;
+    return labels?.["pyrus.ibkr.capsule"] === "1" &&
+      containerConfig?.["Image"] === this.config.capsuleImage &&
+      typeof sessionHash === "string" &&
+      SESSION_HASH_PATTERN.test(sessionHash) &&
+      hostConfig?.["NetworkMode"] === CAPSULE_NETWORK_NAME &&
+      isEmptyRecordOrNull(hostConfig["PortBindings"]) &&
+      networkNames.length === 1 &&
+      networkNames[0] === CAPSULE_NETWORK_NAME &&
+      endpoint?.["NetworkID"] === networkId &&
+      isEmptyRecordOrNull(ports) &&
+      networkAddress !== undefined
+      ? { networkAddress, sessionHash }
+      : null;
+  }
+
+  private async ensureCapsuleNetwork(): Promise<string> {
+    const existing = await this.inspectCapsuleNetwork();
+    if (existing.status === "valid") return existing.networkId;
+    if (existing.status === "invalid") {
+      throw new CapsuleError(
+        "capsule_network_invalid",
+        "IBKR capsule network isolation could not be confirmed.",
+      );
+    }
+
+    try {
+      await this.runner(this.config.dockerBinary, [
+        "network",
+        "create",
+        "--driver",
+        "bridge",
+        "--ipv6=false",
+        "--opt",
+        `${CAPSULE_NETWORK_ICC_OPTION}=false`,
+        "--opt",
+        `${CAPSULE_NETWORK_GATEWAY_OPTION}=nat`,
+        "--label",
+        `${CAPSULE_NETWORK_LABEL}=1`,
+        CAPSULE_NETWORK_NAME,
+      ]);
+    } catch {
+      // A racing host process may still have created the exact network.
+    }
+    const created = await this.inspectCapsuleNetwork();
+    if (created.status !== "valid") {
+      throw new CapsuleError(
+        "capsule_network_invalid",
+        "IBKR capsule network isolation could not be confirmed.",
+      );
+    }
+    return created.networkId;
   }
 }

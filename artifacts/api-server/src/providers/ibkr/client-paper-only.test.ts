@@ -130,14 +130,89 @@ test("ensureBrokerageSession recovers when auth/status throws 401 until init run
   }
 });
 
-test("ensureBrokerageSession surfaces the status error when init cannot recover a 401", async () => {
+test("ensureBrokerageSession can leave session promotion to the gateway", async () => {
   const previousFetch = globalThis.fetch;
+  const paths: string[] = [];
+  const stages: string[] = [];
+  globalThis.fetch = (async (input) => {
+    const path = new URL(String(input)).pathname;
+    paths.push(path);
+    if (path.endsWith("/iserver/auth/status")) {
+      return new Response("Unauthorized", { status: 401 });
+    }
+    throw new Error(`unexpected IBKR request: ${path}`);
+  }) as typeof fetch;
+
+  try {
+    await assert.rejects(
+      () =>
+        new IbkrClient(config(), {
+          onBrokerageSessionError: (stage) => stages.push(stage),
+        }).ensureBrokerageSession({ initializeIfNeeded: false }),
+      (error: unknown) =>
+        typeof error === "object" &&
+        error !== null &&
+        "statusCode" in error &&
+        error.statusCode === 401,
+    );
+    assert.deepEqual(stages, ["auth_status"]);
+    assert.deepEqual(paths, ["/v1/api/iserver/auth/status"]);
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
+test("ensureBrokerageSession surfaces the original status error when init fails", async () => {
+  const previousFetch = globalThis.fetch;
+  const stages: string[] = [];
+  const failures: Array<{ code?: string; httpStatus?: number }> = [];
   globalThis.fetch = (async (input) => {
     const path = new URL(String(input)).pathname;
     if (path.endsWith("/iserver/auth/status")) {
       return new Response("Unauthorized", { status: 401 });
     }
     if (path.endsWith("/iserver/auth/ssodh/init")) {
+      return new Response("Unavailable", { status: 503 });
+    }
+    throw new Error(`unexpected IBKR request: ${path}`);
+  }) as typeof fetch;
+
+  try {
+    await assert.rejects(
+      () =>
+        new IbkrClient(config(), {
+          onBrokerageSessionError: async (stage, failure) => {
+            stages.push(stage);
+            failures.push(failure);
+            assert.equal(Object.isFrozen(failure), true);
+            throw new Error("observer failed");
+          },
+        }).ensureBrokerageSession(),
+      (error: unknown) =>
+        typeof error === "object" &&
+        error !== null &&
+        "statusCode" in error &&
+        error.statusCode === 401,
+    );
+    assert.deepEqual(stages, ["auth_status", "ssodh_init"]);
+    assert.deepEqual(failures, [
+      { code: "upstream_http_error", httpStatus: 401 },
+      { code: "upstream_http_error", httpStatus: 503 },
+    ]);
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
+test("ensureBrokerageSession identifies account discovery failures", async () => {
+  const previousFetch = globalThis.fetch;
+  const stages: string[] = [];
+  globalThis.fetch = (async (input) => {
+    const path = new URL(String(input)).pathname;
+    if (path.endsWith("/iserver/auth/status")) {
+      return Response.json({ authenticated: true, connected: true });
+    }
+    if (path.endsWith("/iserver/accounts")) {
       return new Response("Unauthorized", { status: 401 });
     }
     throw new Error(`unexpected IBKR request: ${path}`);
@@ -145,8 +220,11 @@ test("ensureBrokerageSession surfaces the status error when init cannot recover 
 
   try {
     await assert.rejects(() =>
-      new IbkrClient(config()).ensureBrokerageSession(),
+      new IbkrClient(config(), {
+        onBrokerageSessionError: (stage) => stages.push(stage),
+      }).ensureBrokerageSession(),
     );
+    assert.deepEqual(stages, ["accounts"]);
   } finally {
     globalThis.fetch = previousFetch;
   }

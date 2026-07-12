@@ -5,6 +5,8 @@ import {
   startBootProgressTask,
 } from "../../app/bootProgress";
 import { retryDynamicImport } from "../../lib/dynamicImport";
+import AccountRouteScreen from "../../screens/AccountRouteScreen.jsx";
+import AlgoRouteScreen from "../../screens/AlgoRouteScreen.jsx";
 
 const SCREEN_LOADERS = {
   market: () => import("../../screens/MarketDemoScreen.jsx"),
@@ -13,9 +15,9 @@ const SCREEN_LOADERS = {
   flow: () => import("../../screens/FlowScreen.jsx"),
   gex: () => import("../../screens/GexScreen.jsx"),
   trade: () => import("../../screens/TradeScreen.jsx"),
-  account: () => import("../../screens/AccountScreen.jsx"),
+  account: () => Promise.resolve({ default: AccountRouteScreen }),
   research: () => import("../../screens/ResearchScreen.jsx"),
-  algo: () => import("../../screens/AlgoScreen.jsx"),
+  algo: () => Promise.resolve({ default: AlgoRouteScreen }),
   backtest: () => import("../../screens/BacktestScreen.jsx"),
   diagnostics: () => import("../../screens/DiagnosticsScreen.jsx"),
   settings: () => import("../../screens/SettingsScreen.jsx"),
@@ -50,7 +52,14 @@ export const loadScreenModule = (
   const loader = SCREEN_LOADERS[screenId];
   if (!loader) return Promise.resolve(null);
   const existing = SCREEN_MODULE_PRELOADS.get(screenId);
-  if (existing) return existing;
+  if (existing) {
+    if (reloadOnFailure && !existing.reloadOnFailure) {
+      return existing.promise.catch(() =>
+        loadScreenModule(screenId, { label, reloadOnFailure }),
+      );
+    }
+    return existing.promise;
+  }
 
   SCREEN_MODULE_PRELOAD_STATE.set(screenId, {
     status: "loading",
@@ -108,15 +117,20 @@ export const loadScreenModule = (
       throw error;
     });
 
-  SCREEN_MODULE_PRELOADS.set(screenId, promise);
+  SCREEN_MODULE_PRELOADS.set(screenId, { promise, reloadOnFailure });
   return promise;
 };
 
-export const preloadScreenModule = (screenId) =>
-  loadScreenModule(screenId, {
+export const preloadScreenModule = (screenId) => {
+  const preload = loadScreenModule(screenId, {
     label: screenModuleLabel(screenId),
     reloadOnFailure: false,
   });
+  // Discarding intent preloads is safe, while warmup awaiters still receive the
+  // original rejection and can mark their sweep incomplete.
+  void preload.catch(() => undefined);
+  return preload;
+};
 
 export const getScreenModulePreloadSnapshot = () =>
   Array.from(SCREEN_MODULE_PRELOAD_STATE.entries()).reduce(

@@ -632,6 +632,7 @@ export default defineConfig({
         "./src/app/AppContent.tsx",
         "./src/features/platform/PlatformApp.jsx",
         "./src/screens/MarketDemoScreen.jsx",
+        "./src/screens/AccountScreen.jsx",
       ],
     },
     proxy: {

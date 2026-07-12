@@ -1,12 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { wrap } from "comlink";
-import {
-  flowEventsToChartEventConversion,
-  resolveFlowEventChartTimeResolution,
-} from "../charting/chartEvents";
+import { flowEventsToChartEventConversion } from "../charting/chartEvents";
 
 const WORKER_MIN_FLOW_EVENT_COUNT = 250;
-const WORKER_FLOW_EVENT_FALLBACK_MS = 750;
+// ponytail: 2s covers the measured 1.18s six-call cold-worker queue; replace
+// the race with cancellation if the Comlink request becomes abortable.
+const WORKER_FLOW_EVENT_FALLBACK_MS = 2_000;
 const EMPTY_FLOW_EVENTS = Object.freeze([]);
 const EMPTY_FLOW_CHART_EVENT_CONVERSION = Object.freeze({
   events: Object.freeze([]),
@@ -52,23 +51,6 @@ export const disposeAnalyticsWorkerForTests = () => {
   analyticsWorkerUnavailable = false;
 };
 
-const readFlowEventSignatureTime = (event = {}) =>
-  resolveFlowEventChartTimeResolution(event)?.iso || "";
-
-export const buildFlowEventSignature = (events = [], symbol = "") =>
-  [
-    symbol || "",
-    events.length,
-    ...events.map((event) =>
-      [
-        event?.id || "",
-        event?.ticker || event?.underlying || event?.symbol || "",
-        event?.optionTicker || event?.providerContractId || event?.contract || "",
-        readFlowEventSignatureTime(event),
-      ].join(":"),
-    ),
-  ].join("|");
-
 export const buildPendingFlowChartEventConversion = (events = []) => {
   const rawInputCount = Array.isArray(events) ? events.length : 0;
   if (!rawInputCount) {
@@ -105,10 +87,6 @@ export const useFlowChartEventConversion = (
   );
   const revisionRef = useRef(0);
   const conversionSymbolRef = useRef(symbol);
-  const signature = useMemo(
-    () => buildFlowEventSignature(inputEvents, symbol),
-    [inputEvents, symbol],
-  );
 
   useEffect(() => {
     const revision = revisionRef.current + 1;
@@ -164,7 +142,7 @@ export const useFlowChartEventConversion = (
       cancelled = true;
       clearTimeout(fallbackTimer);
     };
-  }, [inputEvents, signature, symbol, syncConversion]);
+  }, [inputEvents, symbol, syncConversion]);
 
   if (syncConversion) {
     return syncConversion;

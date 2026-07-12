@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
@@ -13,6 +14,7 @@ const CPG_SHA256 =
   "2f2d380b2f9424520ff5f9c11fe45e82ef39459329ac056258a3274bea6f76f9";
 const SECCOMP_SHA256 =
   "19f1c5b65ff8280092de391959775201004f2c58eae2983612c028c6256a5b54";
+const LOGIN_COMPLETE_MARKER = "PYRUS_IBKR_CAPSULE_LOGIN_COMPLETE_V1";
 
 test("capsule image is immutable, nonroot, internally watched, and has no volumes", async () => {
   const dockerfile = await readFile(path.join(capsuleDir, "Dockerfile"), "utf8");
@@ -89,7 +91,12 @@ test("capsule restricts CPG clients and exposes only fixed host relays with RAM-
     /start_service cpg-relay \/usr\/local\/bin\/pyrus-capsule-relay[\s\S]*?15000[\s\S]*?5000/,
   );
   assert.match(entrypoint, /wait_for_cpg_login 60/);
-  assert.doesNotMatch(entrypoint, /start_service chromium/);
+  assert.match(
+    entrypoint,
+    /start_service chromium chromium[\s\S]*?--user-data-dir="\$\{RUNTIME_DIR\}\/chromium"[\s\S]*?--app=http:\/\/localhost:5000\/sso\/Login/,
+  );
+  assert.doesNotMatch(entrypoint, /--incognito/);
+  assert.doesNotMatch(entrypoint, /--load-extension|--disable-extensions-except/);
   assert.match(entrypoint, /ibgroup\.web\.core\.clientportal\.gw\.GatewayStart/);
   assert.match(entrypoint, /start_service watchdog watchdog/);
   assert.equal(entrypoint.match(/PYRUS_IBKR_CAPSULE_READY_V1/g)?.length, 1);
@@ -116,7 +123,10 @@ test("capsule restricts CPG clients and exposes only fixed host relays with RAM-
   assert.match(health, /listener_exists 00000000 15000/);
   assert.match(health, /listener_exists 0100007F 5900/);
   assert.match(health, /listener_exists 00000000 16080/);
-  assert.doesNotMatch(health, /\bcpg-relay chromium\b/);
+  assert.match(
+    health,
+    /for service in supervisor xvfb vnc novnc cpg cpg-relay chromium/,
+  );
   assert.doesNotMatch(health, /\/dev\/tcp/);
   assert.match(relay, /127\.0\.0\.1/);
   assert.match(relay, /socket\.create_connection/);
@@ -157,6 +167,60 @@ test("capsule forbids browser sandbox bypasses, debug logging, and credentials",
     assert(!source.includes(forbidden), `forbidden capsule content: ${forbidden}`);
   }
   assert.match(source, /<root level=\\?"INFO\\?">/);
+});
+
+test("capsule supervises a private CPG login observer that emits only a fixed marker", async () => {
+  const dockerfile = await readFile(path.join(capsuleDir, "Dockerfile"), "utf8");
+  const entrypoint = await readFile(
+    path.join(capsuleDir, "pyrus-capsule-entrypoint"),
+    "utf8",
+  );
+  const health = await readFile(
+    path.join(capsuleDir, "pyrus-capsule-health"),
+    "utf8",
+  );
+  const observer =
+    entrypoint.match(/^observe_cpg_logins\(\) \{[\s\S]*?^\}$/m)?.[0] ?? "";
+  const loginCondition =
+    observer.match(/^\s*if (\[\[ .* \]\]); then$/m)?.[1] ?? "";
+  const matchesLoginLine = (line: string): boolean =>
+    spawnSync("bash", ["-c", `line=$1\n${loginCondition}`, "bash", line])
+      .status === 0;
+
+  assert.match(entrypoint, /start_service login-observer observe_cpg_logins/);
+  assert.match(health, /for service in [^\n]*\blogin-observer\b/);
+  assert.match(dockerfile, /<file>logs\/gw\.current\.log<\/file>/);
+  assert.match(observer, /\$\{LOG_DIR\}\/gw\.current\.log/);
+  assert.doesNotMatch(observer, /gw\.\*\.log|gw\.message/);
+  assert.match(observer, /while IFS= read -r line/);
+  assert.match(observer, /tail -n 0 -F "\$\{gateway_log\}"/);
+  assert(loginCondition.startsWith('[[ "${line}" =~ ^'));
+  assert(
+    matchesLoginLine(
+      "12:34:56.789 INFO  nioEventLoopGroup-3-1 GatewayHttpProxy     : Client login succeeds",
+    ),
+  );
+  assert.equal(
+    matchesLoginLine(
+      "12:34:56.789 INFO  nioEventLoopGroup-3-1 SomeOtherLogger : ignored GatewayHttpProxy : Client login succeeds",
+    ),
+    false,
+  );
+  assert.equal(
+    matchesLoginLine(
+      "12:34:56.789 DEBUG nioEventLoopGroup-3-1 GatewayHttpProxy     : Client login succeeds",
+    ),
+    false,
+  );
+  assert.doesNotMatch(observer, /== \*"Client login succeeds"\*/);
+  assert.match(
+    observer,
+    new RegExp(
+      `printf '${LOGIN_COMPLETE_MARKER}\\\\n' >\\/proc\\/1\\/fd\\/1`,
+    ),
+  );
+  assert.doesNotMatch(observer, /(?:echo|printf|tee)[^\n]*\$\{line\}/);
+  assert.equal(entrypoint.match(new RegExp(LOGIN_COMPLETE_MARKER, "g"))?.length, 1);
 });
 
 test("capsule provenance records the exact official-source bytes", async () => {

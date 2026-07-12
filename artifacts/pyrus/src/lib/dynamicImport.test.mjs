@@ -30,6 +30,59 @@ test("reload branch rejects after a bounded grace window instead of hanging fore
   );
 });
 
+test("reload recovery rejects and reloads at most once for the same failing module", { timeout: 2_000 }, async () => {
+  const { retryDynamicImport } = await import("./dynamicImport.ts");
+  const previousWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
+  const nativeSetTimeout = globalThis.setTimeout;
+  const storage = new Map();
+  let reloadCount = 0;
+  const failure = new Error("Failed to fetch dynamically imported module");
+
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: {
+      location: {
+        reload: () => {
+          reloadCount += 1;
+        },
+      },
+      sessionStorage: {
+        getItem: (key) => storage.get(key) ?? null,
+        removeItem: (key) => storage.delete(key),
+        setItem: (key, value) => storage.set(key, value),
+      },
+    },
+  });
+  globalThis.setTimeout = (callback, delay, ...args) =>
+    nativeSetTimeout(callback, delay === 10_000 ? 0 : delay, ...args);
+
+  try {
+    const load = () => Promise.reject(failure);
+    const options = {
+      label: "reload-once-behavior",
+      retries: 0,
+      retryDelayMs: 0,
+      timeoutMs: 100,
+    };
+    await assert.rejects(
+      retryDynamicImport(load, options),
+      (error) => error === failure,
+    );
+    await assert.rejects(
+      retryDynamicImport(load, options),
+      (error) => error === failure,
+    );
+    assert.equal(reloadCount, 1);
+  } finally {
+    globalThis.setTimeout = nativeSetTimeout;
+    if (previousWindow) {
+      Object.defineProperty(globalThis, "window", previousWindow);
+    } else {
+      delete globalThis.window;
+    }
+  }
+});
+
 test("the one-time reload guard and terminal throw remain intact", () => {
   // The grace-reject must not weaken the per-label guard that prevents reload
   // loops: once a reload is spent, a recurring retryable failure must throw so

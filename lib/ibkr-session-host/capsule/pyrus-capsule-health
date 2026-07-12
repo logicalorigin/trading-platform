@@ -3,7 +3,7 @@ set -Eeuo pipefail
 
 readonly PID_DIR=/run/pyrus/pids
 
-for service in supervisor xvfb vnc novnc cpg cpg-relay; do
+for service in supervisor xvfb vnc novnc cpg cpg-relay chromium login-observer; do
   pid=$(<"${PID_DIR}/${service}.pid")
   [[ "${pid}" =~ ^[1-9][0-9]*$ ]]
   kill -0 "${pid}" 2>/dev/null
@@ -27,7 +27,8 @@ listener_exists() {
 }
 
 # CPG listens on the container interface but admits only 127.0.0.1 in its
-# application allowlist. Only relay ports 15000 and 16080 are host-published.
+# application allowlist. Docker publishes no ports; the trusted session host
+# forwards only to relay ports 15000 and 16080 on the isolated bridge.
 listener_exists 00000000 5000
 listener_exists 00000000 15000
 listener_exists 0100007F 5900

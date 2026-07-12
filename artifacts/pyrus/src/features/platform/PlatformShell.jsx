@@ -4,7 +4,6 @@ import {
   Suspense,
   useCallback,
   useEffect,
-  useLayoutEffect,
   useRef,
   useState,
 } from "react";
@@ -68,6 +67,10 @@ import { LoadingSpinner, StatusPill } from "../../components/platform/primitives
 import { SEMANTIC_TONE, toneForOperationalState } from "./semanticToneModel.js";
 import { lazyWithRetry } from "../../lib/dynamicImport";
 import { markScreenSwitchStart } from "./performanceMetrics";
+import {
+  useVisibleScreen,
+  useVisibleScreenNavigation,
+} from "./visibleScreenStore.js";
 
 const TRANSIENT_SCREEN_IDS = new Set(["diagnostics", "settings"]);
 const MOBILE_PRIMARY_SCREEN_IDS = ["market", "signals", "trade", "account"];
@@ -177,33 +180,22 @@ const ScreenSuspenseFallback = () => (
  * activation, including retainInactive screens that stay mounted between
  * switches.
  *
- * The .ra-screen-enter CSS class carries the screen-enter keyframe.
- * CSS animations don't natively re-fire on display:none → display:flex,
- * so activation toggles between two equivalent animation names. That
- * replays the animation without a synchronous layout read.
+ * The .ra-screen-enter CSS class carries the screen-enter keyframe. Hidden
+ * hosts drop the class, so reactivation adds it again and replays the motion
+ * without an effect-driven state update.
  *
  * Honors prefers-reduced-motion / data-pyrus-reduced-motion via the
  * media-query and html[data-pyrus-reduced-motion="on"] overrides in
  * index.css — the animation becomes a no-op when motion is reduced.
  */
 const ScreenTransitionHost = ({ screenId, screenLabel, active, children }) => {
-  const [activationToken, setActivationToken] = useState(0);
   const screenHeadingId = `platform-screen-title-${screenId}`;
-  useEffect(() => {
-    if (!active) return;
-    setActivationToken((current) => (current + 1) % 2);
-  }, [active]);
   return (
     <div
       data-testid={`screen-host-${screenId}`}
       aria-hidden={!active}
       aria-labelledby={active ? screenHeadingId : undefined}
-      className={[
-        "ra-screen-enter",
-        activationToken === 1 ? "ra-screen-enter-alt" : null,
-      ]
-        .filter(Boolean)
-        .join(" ")}
+      className={active ? "ra-screen-enter" : undefined}
       style={{
         flex: 1,
         width: "100%",
@@ -231,10 +223,11 @@ const screenCanRetainInactive = (screenId) => {
 };
 
 const PlatformScreenStack = memo(
-  ({ activeScreen, mountedScreens, renderScreenById }) => {
+  ({ visibleScreenStore, mountedScreens, renderScreenById }) => {
+    const activeScreen = useVisibleScreen(visibleScreenStore);
     const previousActiveScreenRef = useRef(activeScreen);
     const handoffTimersRef = useRef(new Map());
-    const [retainedInactiveScreens, setRetainedInactiveScreens] = useState([]);
+    const retainedInactiveScreensRef = useRef([]);
     const [deferredInactiveScreens, setDeferredInactiveScreens] = useState([]);
     const [stackRef, stackSize] = useElementSize();
     // zoom keeps this element's outer box parent-driven while its content lays
@@ -250,32 +243,37 @@ const PlatformScreenStack = memo(
             ) * 200,
           ) / 200
         : 1;
+    const previousScreenDuringRender = previousActiveScreenRef.current;
+    const nextRetainedScreens = retainedInactiveScreensRef.current.filter(
+      (screenId) =>
+        screenId !== activeScreen &&
+        screenId !== previousScreenDuringRender &&
+        screenCanRetainInactive(screenId),
+    );
+    if (
+      previousScreenDuringRender &&
+      previousScreenDuringRender !== activeScreen &&
+      screenCanRetainInactive(previousScreenDuringRender)
+    ) {
+      nextRetainedScreens.unshift(previousScreenDuringRender);
+    }
+    const retainedInactiveScreens = nextRetainedScreens.slice(
+      0,
+      MAX_RETAINED_INACTIVE_SCREENS,
+    );
 
     useEffect(() => {
       const previousScreen = previousActiveScreenRef.current;
       previousActiveScreenRef.current = activeScreen;
+      retainedInactiveScreensRef.current = retainedInactiveScreens;
       if (!previousScreen || previousScreen === activeScreen) {
-        setRetainedInactiveScreens((current) =>
-          current.filter(
-            (screenId) =>
-              screenId !== activeScreen && screenCanRetainInactive(screenId),
-          ),
-        );
         return undefined;
       }
 
-      setRetainedInactiveScreens((current) => {
-        const next = current.filter(
-          (screenId) =>
-            screenId !== activeScreen &&
-            screenId !== previousScreen &&
-            screenCanRetainInactive(screenId),
-        );
-        if (screenCanRetainInactive(previousScreen)) {
-          next.unshift(previousScreen);
-        }
-        return next.slice(0, MAX_RETAINED_INACTIVE_SCREENS);
-      });
+      const previousScreenRetained = screenCanRetainInactive(previousScreen);
+      if (previousScreenRetained) {
+        return undefined;
+      }
 
       setDeferredInactiveScreens((current) =>
         current.includes(previousScreen)
@@ -341,11 +339,15 @@ const PlatformScreenStack = memo(
         >
           {SCREENS.map(({ id, label }) => {
             const active = activeScreen === id;
+            const preservePreviousScreenDuringHandoff =
+              previousActiveScreenRef.current === id &&
+              previousActiveScreenRef.current !== activeScreen;
             const shouldRender =
-              mountedScreens[id] &&
-              (active ||
-                retainedInactiveScreens.includes(id) ||
-                deferredInactiveScreens.includes(id));
+              active ||
+              (mountedScreens[id] &&
+                (preservePreviousScreenDuringHandoff ||
+                  retainedInactiveScreens.includes(id) ||
+                  deferredInactiveScreens.includes(id)));
             return shouldRender ? (
               <ScreenTransitionHost
                 key={id}
@@ -358,7 +360,7 @@ const PlatformScreenStack = memo(
                   reportCategory="screen-render"
                 >
                   <Suspense fallback={<ScreenSuspenseFallback />}>
-                    {renderScreenById(id)}
+                    {renderScreenById(id, activeScreen)}
                   </Suspense>
                 </PlatformErrorBoundary>
               </ScreenTransitionHost>
@@ -414,11 +416,12 @@ const BloombergLiveDockLauncher = () => {
 };
 
 const MobileBottomNav = ({
-  activeScreen,
+  visibleScreenStore,
   setScreen,
   onOpenMore,
   watchlistsBusy,
 }) => {
+  const activeScreen = useVisibleScreen(visibleScreenStore);
   const activeSecondaryScreen = MOBILE_PRIMARY_SCREEN_SET.has(activeScreen)
     ? null
     : SCREENS.find((item) => item.id === activeScreen);
@@ -738,8 +741,6 @@ export const PlatformShell = ({
   HeaderStatusClusterComponent,
   HeaderBroadcastScrollerStackComponent,
   WatchlistComponent,
-  memoryPressureSignal,
-  apiSourcePressureSnapshot,
   activeWatchlist,
   watchlistSymbols,
   signalMonitorStates,
@@ -831,24 +832,18 @@ export const PlatformShell = ({
   const [mobileBloombergMounted, setMobileBloombergMounted] = useState(false);
   const [watchlistResizing, setWatchlistResizing] = useState(false);
   const [activityResizing, setActivityResizing] = useState(false);
+  const { handleSetScreen, visibleScreenStore } = useVisibleScreenNavigation({
+    activeScreen,
+    markScreenSwitch: markScreenSwitchStart,
+    preloadScreen: preloadScreenModule,
+    setScreen,
+  });
   const mobileAutoCollapseRef = useRef(false);
-  const previousActiveScreenRef = useRef(activeScreen);
   const resizeCleanupRef = useRef(null);
   const toastedEventIdsRef = useRef(new Set());
   const hasReceivedLiveRef = useRef(false);
   const criticalApiMutationPaused = useCriticalApiMutationPause();
   const toast = useToast();
-  const handleSetScreen = useCallback(
-    (screenId) => {
-      if (!screenId || screenId === activeScreen) {
-        return;
-      }
-      void preloadScreenModule(screenId);
-      markScreenSwitchStart(screenId, "navigation");
-      setScreen(screenId);
-    },
-    [activeScreen, setScreen],
-  );
   const handleAlgoAction = useCallback(() => {
     handleSetScreen("algo");
   }, [handleSetScreen]);
@@ -963,14 +958,6 @@ export const PlatformShell = ({
       },
     },
   );
-
-  useLayoutEffect(() => {
-    if (previousActiveScreenRef.current === activeScreen) {
-      return;
-    }
-    previousActiveScreenRef.current = activeScreen;
-    markScreenSwitchStart(activeScreen, "programmatic");
-  }, [activeScreen]);
 
   useEffect(() => {
     return () => {
@@ -1129,7 +1116,7 @@ export const PlatformShell = ({
         headerAccountMinimal={headerAccountMinimal}
         headerCompactStatus={headerCompactStatus}
         headerStatusMinimal={headerStatusMinimal}
-        activeScreen={activeScreen}
+        visibleScreenStore={visibleScreenStore}
         handleSetScreen={handleSetScreen}
         watchlistsBusy={watchlistsBusy}
         selectedSymbol={selectedSymbol}
@@ -1190,8 +1177,6 @@ export const PlatformShell = ({
         activeWatchlist={activeWatchlist}
         selectedSymbol={selectedSymbol}
         session={session}
-        memoryPressureSignal={memoryPressureSignal}
-        apiSourcePressureSnapshot={apiSourcePressureSnapshot}
       />
 
       <MobileActivitySheet
@@ -1343,7 +1328,7 @@ export const PlatformShell = ({
         ) : null}
 
         <PlatformScreenStack
-          activeScreen={activeScreen}
+          visibleScreenStore={visibleScreenStore}
           mountedScreens={mountedScreens}
           renderScreenById={renderScreenById}
         />
@@ -1425,7 +1410,7 @@ export const PlatformShell = ({
 
       {isPhone ? (
         <MobileBottomNav
-          activeScreen={activeScreen}
+          visibleScreenStore={visibleScreenStore}
           setScreen={handleSetScreen}
           onOpenMore={() => setMobileMoreOpen(true)}
           watchlistsBusy={watchlistsBusy}

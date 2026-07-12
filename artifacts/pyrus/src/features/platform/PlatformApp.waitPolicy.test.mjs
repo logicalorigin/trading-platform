@@ -33,16 +33,9 @@ test("screen readiness gates do not use fixed display delays", () => {
   );
 });
 
-test("background screen preloads stay delay-free after the first screen is ready", () => {
-  const criticalPreload = source.match(
-    /const runNavigationCriticalScreenPreload = async \(\) => \{[\s\S]*?void runNavigationCriticalScreenPreload\(\);/,
-  )?.[0];
-  assert.ok(criticalPreload, "missing navigation-critical preload effect");
-  assert.doesNotMatch(
-    criticalPreload,
-    /setTimeout|requestIdleCallback/,
-    "navigation-critical code preload should start immediately after its readiness gate",
-  );
+test("the browser does not automatically import cold screen modules", () => {
+  assert.doesNotMatch(source, /runNavigationCriticalScreenPreload/);
+  assert.doesNotMatch(source, /NAVIGATION_CRITICAL_SCREEN_MODULE_PRELOAD_ORDER/);
   assert.match(
     source,
     /const OPERATIONAL_SCREEN_PRELOAD_IDLE_DELAY_MS = 0;/,

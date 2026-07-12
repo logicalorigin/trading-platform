@@ -47,6 +47,7 @@ import { useAuthSession } from "../../features/auth/authSession.jsx";
 import { writeSnapTradeExecutionAccountState } from "../../features/broker/snapTradeExecutionAccountStore.js";
 import {
   CSS_COLOR,
+  ELEVATION,
   FONT_WEIGHTS,
   MISSING_VALUE,
   RADII,
@@ -79,7 +80,9 @@ import {
 } from "./schwabConnectModel.js";
 import {
   formatIbkrPortalStatus,
+  hasIbkrPortalLoginTimedOut,
   isTerminalIbkrPortalConnectStatus,
+  restoreIbkrPortalFocus,
 } from "./ibkrPortalConnectModel.js";
 import {
   BROKER_ERROR_FLASH_MS,
@@ -149,8 +152,8 @@ const IBKR_LOGO_DATA_URI =
 
 // IBKR Client Portal (hosted gateway) is a DIRECT browser-login broker (not a
 // SnapTrade-aggregated brokerage, and not an OAuth redirect like
-// Robinhood/Schwab): Connect opens the proxied IBKR Client Portal Gateway
-// login page inside PYRUS and the panel polls status until it reports
+// Robinhood/Schwab): Connect opens the capsule-local browser through the
+// authenticated noVNC tunnel and the panel polls status until it reports
 // "connected". Sessions expire roughly every 24h, requiring re-login.
 const IBKR_PORTAL_BROKER_CHOICE = Object.freeze({
   value: "IBKR_PORTAL",
@@ -178,7 +181,7 @@ function openBrokerPopup(url, name) {
   );
 }
 
-function IbkrPortalLoginDialog({ url, connecting, onClose }) {
+function IbkrPortalLoginDialog({ url, connecting, onClose, returnFocusRef }) {
   return (
     <Dialog.Root
       open={Boolean(url || connecting)}
@@ -187,149 +190,167 @@ function IbkrPortalLoginDialog({ url, connecting, onClose }) {
       }}
     >
       <Dialog.Portal>
-        <Dialog.Overlay
+        <div
           style={{
             position: "fixed",
             inset: 0,
             zIndex: 10020,
-            background: CSS_COLOR.bg0,
-          }}
-        />
-        <Dialog.Content
-          aria-describedby={undefined}
-          onPointerDownOutside={(event) => event.preventDefault()}
-          style={{
-            position: "fixed",
-            inset: 0,
-            zIndex: 10021,
             display: "grid",
-            gridTemplateRows: "auto minmax(0, 1fr)",
-            width: "100dvw",
-            height: "100dvh",
-            maxWidth: "none",
-            margin: 0,
-            padding: 0,
-            overflow: "hidden",
-            background: CSS_COLOR.bg0,
-            color: CSS_COLOR.text,
+            placeItems: "center",
+            padding: `max(${sp(12)}px, env(safe-area-inset-top, 0px)) max(${sp(12)}px, env(safe-area-inset-right, 0px)) max(${sp(12)}px, env(safe-area-inset-bottom, 0px)) max(${sp(12)}px, env(safe-area-inset-left, 0px))`,
           }}
         >
-          <div
+          <Dialog.Overlay
             style={{
-              minHeight: dim(52),
-              padding: `calc(env(safe-area-inset-top, 0px) + ${sp(6)}) ${sp(8)} ${sp(6)}`,
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
-              gap: sp(8),
-              borderBottom: `1px solid ${CSS_COLOR.border}`,
-              background: CSS_COLOR.bg1,
+              position: "absolute",
+              inset: 0,
+              background: cssColorMix(CSS_COLOR.bg0, 82),
+            }}
+          />
+          <Dialog.Content
+            aria-describedby={undefined}
+            onCloseAutoFocus={(event) => {
+              event.preventDefault();
+              restoreIbkrPortalFocus(returnFocusRef?.current);
+            }}
+            onPointerDownOutside={(event) => event.preventDefault()}
+            style={{
+              position: "relative",
+              zIndex: 1,
+              display: "grid",
+              gridTemplateRows: "auto minmax(0, 1fr)",
+              width: "100%",
+              height: "100%",
+              maxWidth: dim(960),
+              maxHeight: dim(800),
+              margin: 0,
+              padding: 0,
+              overflow: "hidden",
+              background: CSS_COLOR.bg0,
+              color: CSS_COLOR.text,
+              border: `1px solid ${CSS_COLOR.border}`,
+              borderRadius: dim(RADII.md),
+              boxShadow: ELEVATION.lg,
             }}
           >
-            <div style={{ minWidth: 0 }}>
-              <Dialog.Title
-                style={{
-                  margin: 0,
-                  fontFamily: T.sans,
-                  fontSize: textSize("paragraph"),
-                  fontWeight: FONT_WEIGHTS.semibold,
-                  letterSpacing: 0,
-                }}
-              >
-                Interactive Brokers
-              </Dialog.Title>
-              <div
-                style={{
-                  color: CSS_COLOR.textDim,
-                  fontFamily: T.sans,
-                  fontSize: textSize("caption"),
-                  letterSpacing: 0,
-                }}
-              >
-                Client Portal
-              </div>
-            </div>
-            <Dialog.Close asChild>
-              <Button
-                variant="ghost"
-                size="sm"
-                aria-label="Close IBKR Client Portal login"
-                title="Close"
-                style={{
-                  width: dim(40),
-                  height: dim(40),
-                  padding: 0,
-                  borderRadius: dim(RADII.xs),
-                  flexShrink: 0,
-                }}
-              >
-                <X size={18} strokeWidth={2} aria-hidden="true" />
-              </Button>
-            </Dialog.Close>
-          </div>
-          {url ? (
-            <iframe
-              title="Interactive Brokers Client Portal login"
-              src={url}
-              sandbox="allow-forms allow-modals allow-same-origin allow-scripts"
-              referrerPolicy="same-origin"
-              style={{
-                width: "100%",
-                height: "100%",
-                border: 0,
-                background: "#fff",
-              }}
-            />
-          ) : (
             <div
-              role="status"
-              aria-live="polite"
               style={{
-                display: "grid",
-                placeItems: "center",
-                padding: sp(12),
-                background: CSS_COLOR.bg0,
+                minHeight: dim(52),
+                padding: sp("6px 8px"),
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: sp(8),
+                borderBottom: `1px solid ${CSS_COLOR.border}`,
+                background: CSS_COLOR.bg1,
               }}
             >
-              <div
-                style={{
-                  display: "grid",
-                  justifyItems: "center",
-                  gap: sp(8),
-                  maxWidth: dim(420),
-                  textAlign: "center",
-                }}
-              >
-                <RefreshCw
-                  size={28}
-                  strokeWidth={1.8}
-                  aria-hidden="true"
-                  style={{ color: CSS_COLOR.textDim }}
-                />
-                <div
+              <div style={{ minWidth: 0 }}>
+                <Dialog.Title
                   style={{
+                    margin: 0,
                     fontFamily: T.sans,
                     fontSize: textSize("paragraph"),
                     fontWeight: FONT_WEIGHTS.semibold,
+                    letterSpacing: 0,
                   }}
                 >
-                  Starting secure IBKR Client Portal session…
-                </div>
+                  Interactive Brokers
+                </Dialog.Title>
                 <div
                   style={{
                     color: CSS_COLOR.textDim,
                     fontFamily: T.sans,
                     fontSize: textSize("caption"),
-                    lineHeight: 1.5,
+                    letterSpacing: 0,
                   }}
                 >
-                  The isolated gateway can take up to about a minute on its first
-                  launch. This window will switch to the IBKR login automatically.
+                  Client Portal
                 </div>
               </div>
+              <Dialog.Close asChild>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  aria-label="Close IBKR Client Portal login"
+                  title="Close"
+                  style={{
+                    width: dim(40),
+                    height: dim(40),
+                    padding: 0,
+                    borderRadius: dim(RADII.xs),
+                    flexShrink: 0,
+                  }}
+                >
+                  <X size={18} strokeWidth={2} aria-hidden="true" />
+                </Button>
+              </Dialog.Close>
             </div>
-          )}
-        </Dialog.Content>
+            {url ? (
+              <iframe
+                title="Interactive Brokers Client Portal login"
+                src={url}
+                sandbox="allow-same-origin allow-scripts"
+                referrerPolicy="same-origin"
+                style={{
+                  width: "100%",
+                  height: "100%",
+                  border: 0,
+                  background: "#fff",
+                }}
+              />
+            ) : (
+              <div
+                role="status"
+                aria-live="polite"
+                style={{
+                  display: "grid",
+                  placeItems: "center",
+                  padding: sp(12),
+                  background: CSS_COLOR.bg0,
+                }}
+              >
+                <div
+                  style={{
+                    display: "grid",
+                    justifyItems: "center",
+                    gap: sp(8),
+                    maxWidth: dim(420),
+                    textAlign: "center",
+                  }}
+                >
+                  <RefreshCw
+                    size={28}
+                    strokeWidth={1.8}
+                    aria-hidden="true"
+                    style={{ color: CSS_COLOR.textDim }}
+                  />
+                  <div
+                    style={{
+                      fontFamily: T.sans,
+                      fontSize: textSize("paragraph"),
+                      fontWeight: FONT_WEIGHTS.semibold,
+                    }}
+                  >
+                    Starting secure IBKR Client Portal session…
+                  </div>
+                  <div
+                    style={{
+                      color: CSS_COLOR.textDim,
+                      fontFamily: T.sans,
+                      fontSize: textSize("caption"),
+                      lineHeight: 1.5,
+                    }}
+                  >
+                    The isolated gateway can take up to about a minute on its
+                    first launch. This window will switch to the IBKR login
+                    automatically.
+                  </div>
+                </div>
+              </div>
+            )}
+          </Dialog.Content>
+        </div>
       </Dialog.Portal>
     </Dialog.Root>
   );
@@ -374,7 +395,9 @@ function watchBrokerPopup({
     try {
       const href = popup.location.href;
       if (href && href.startsWith(window.location.origin)) {
-        outcome = new URLSearchParams(popup.location.search).get(originParamKey);
+        outcome = new URLSearchParams(popup.location.search).get(
+          originParamKey,
+        );
       }
     } catch {
       // Cross-origin: popup is still on the provider's domain. Ignore.
@@ -455,7 +478,9 @@ function formatExecutionBlockers(blockers) {
   const labels = Array.from(
     new Set(
       (Array.isArray(blockers) ? blockers : [])
-        .map((blocker) => SNAPTRADE_EXECUTION_BLOCKER_LABELS[blocker] || blocker)
+        .map(
+          (blocker) => SNAPTRADE_EXECUTION_BLOCKER_LABELS[blocker] || blocker,
+        )
         .filter(Boolean),
     ),
   );
@@ -470,7 +495,9 @@ function formatExecutionState(entity) {
 }
 
 function formatBrokerProvider(provider) {
-  const normalized = String(provider || "").trim().toLowerCase();
+  const normalized = String(provider || "")
+    .trim()
+    .toLowerCase();
   if (normalized === "ibkr") return "IBKR";
   if (normalized === "snaptrade") return "SnapTrade";
   if (normalized === "robinhood") return "Robinhood";
@@ -479,7 +506,9 @@ function formatBrokerProvider(provider) {
 }
 
 function formatAccountCategory(category) {
-  const normalized = String(category || "equity").trim().toLowerCase();
+  const normalized = String(category || "equity")
+    .trim()
+    .toLowerCase();
   if (normalized === "crypto") return "Crypto";
   if (normalized === "futures") return "Futures";
   if (normalized === "prediction") return "Prediction";
@@ -757,6 +786,7 @@ function BrokerChoiceButton({
   statusLine = "",
   actions = [],
   onSelect,
+  focusRef,
 }) {
   const connectedVisual = phase === "connected" || phase === "success";
   const borderColor = selected
@@ -766,6 +796,7 @@ function BrokerChoiceButton({
       : cssColorMix(CSS_COLOR.border, 70);
   return (
     <div
+      ref={focusRef}
       role="button"
       tabIndex={0}
       aria-pressed={selected}
@@ -810,7 +841,9 @@ function BrokerChoiceButton({
           <span
             style={{
               fontSize: textSize("caption"),
-              fontWeight: selected ? FONT_WEIGHTS.semibold : FONT_WEIGHTS.medium,
+              fontWeight: selected
+                ? FONT_WEIGHTS.semibold
+                : FONT_WEIGHTS.medium,
               whiteSpace: "nowrap",
               overflow: "hidden",
               textOverflow: "ellipsis",
@@ -818,7 +851,9 @@ function BrokerChoiceButton({
           >
             {choice.label}
           </span>
-          <span style={{ color: CSS_COLOR.textDim, fontSize: textSize("body") }}>
+          <span
+            style={{ color: CSS_COLOR.textDim, fontSize: textSize("body") }}
+          >
             {statusLine || choice.detail}
           </span>
         </span>
@@ -869,7 +904,8 @@ export function SnapTradeConnectPanel({ enabled = true }) {
   const [selectedBrokerChoice, setSelectedBroker] = useState("ETRADE");
   const [lastPortal, setLastPortal] = useState(null);
   const [lastSync, setLastSync] = useState(null);
-  const [selectedPortfolioAccountId, setSelectedPortfolioAccountId] = useState("");
+  const [selectedPortfolioAccountId, setSelectedPortfolioAccountId] =
+    useState("");
   const [portalLaunchBlocked, setPortalLaunchBlocked] = useState(false);
   const [localError, setLocalError] = useState("");
   // Card-native lifecycle state: which card has a connect mutation in flight,
@@ -935,7 +971,9 @@ export function SnapTradeConnectPanel({ enabled = true }) {
       onSuccess: (data) => {
         setLastSync(data);
         setSelectedPortfolioAccountId((current) => {
-          const nextAccountId = data.accounts.some((account) => account.id === current)
+          const nextAccountId = data.accounts.some(
+            (account) => account.id === current,
+          )
             ? current
             : data.accounts.find((account) => account.executionReady === true)
                 ?.id ||
@@ -1041,6 +1079,7 @@ export function SnapTradeConnectPanel({ enabled = true }) {
   const ibkrPollRef = useRef(null);
   const ibkrAttemptRef = useRef(0);
   const ibkrConnectBusyRef = useRef(false);
+  const ibkrReturnFocusRef = useRef(null);
   const ibkrPortalReadinessQuery = useGetIbkrPortalReadiness({
     query: {
       enabled: Boolean(enabled && canManage),
@@ -1071,7 +1110,9 @@ export function SnapTradeConnectPanel({ enabled = true }) {
     (connection) => connection.executionReady === true,
   );
   const selectedPortfolioAccount =
-    syncedAccounts.find((account) => account.id === selectedPortfolioAccountId) ||
+    syncedAccounts.find(
+      (account) => account.id === selectedPortfolioAccountId,
+    ) ||
     syncedAccounts[0] ||
     null;
   const portfolio =
@@ -1079,7 +1120,9 @@ export function SnapTradeConnectPanel({ enabled = true }) {
       ? portfolioQuery.data
       : null;
   const portfolioCurrency =
-    portfolio?.account?.baseCurrency || selectedPortfolioAccount?.baseCurrency || "USD";
+    portfolio?.account?.baseCurrency ||
+    selectedPortfolioAccount?.baseCurrency ||
+    "USD";
   const busy =
     authSession.isLoading ||
     readinessQuery.isLoading ||
@@ -1201,7 +1244,8 @@ export function SnapTradeConnectPanel({ enabled = true }) {
     ? robinhoodReadiness.limitations
     : [];
   const robinhoodSyncedAccounts = robinhoodLastSync?.accounts || [];
-  const robinhoodOutcomeBanner = formatRobinhoodConnectOutcome(robinhoodOutcome);
+  const robinhoodOutcomeBanner =
+    formatRobinhoodConnectOutcome(robinhoodOutcome);
   const robinhoodConnectDisabled = Boolean(
     !canManage ||
       !csrfToken ||
@@ -1250,7 +1294,8 @@ export function SnapTradeConnectPanel({ enabled = true }) {
   const ibkrPortalUnavailable = ibkrPortalStatus === "unavailable";
   const ibkrPortalConnected = ibkrPortalStatus === "connected";
   const ibkrPortalPending =
-    ibkrPortalStatus === "gateway_starting" || ibkrPortalStatus === "needs_login";
+    ibkrPortalStatus === "gateway_starting" ||
+    ibkrPortalStatus === "needs_login";
   const ibkrConnectDisabled = Boolean(
     !canManage ||
       !csrfToken ||
@@ -1616,7 +1661,10 @@ export function SnapTradeConnectPanel({ enabled = true }) {
       void readinessQuery.refetch();
     } catch (error) {
       setLocalError(
-        readErrorMessage(error, "SnapTrade Connection Portal could not be opened."),
+        readErrorMessage(
+          error,
+          "SnapTrade Connection Portal could not be opened.",
+        ),
       );
     } finally {
       setActiveConnectKey("");
@@ -1842,16 +1890,13 @@ export function SnapTradeConnectPanel({ enabled = true }) {
       });
   };
 
-  // IBKR Client Portal login happens on the proxied gateway page (not an
-  // OAuth redirect back to our origin), so we cannot rely on a same-origin
-  // callback flag like Robinhood/Schwab. Poll GET status every ~3s while the
-  // in-app login is open until the server verifies the authenticated session.
+  // IBKR Client Portal login happens in the capsule-local browser (not an
+  // OAuth redirect back to our origin), so we cannot rely on a callback flag
+  // like Robinhood/Schwab. Poll GET status every ~3s while the in-app login is
+  // open until the server verifies the authenticated session.
   const connectIbkrPortal = async () => {
     if (!canManage) return;
-    if (
-      ibkrConnectBusyRef.current ||
-      ibkrPortalConnectMutation.isPending
-    ) {
+    if (ibkrConnectBusyRef.current || ibkrPortalConnectMutation.isPending) {
       return;
     }
     if (!csrfToken) {
@@ -1878,14 +1923,14 @@ export function SnapTradeConnectPanel({ enabled = true }) {
       if (attempt !== ibkrAttemptRef.current) return;
       stopIbkrPortalPoll();
       setLocalError(
-        readErrorMessage(error, "IBKR Client Portal connection could not be started."),
+        readErrorMessage(
+          error,
+          "IBKR Client Portal connection could not be started.",
+        ),
       );
       return;
     }
-    if (attempt !== ibkrAttemptRef.current) {
-      void ibkrPortalDisconnectMutation.mutateAsync().catch(() => undefined);
-      return;
-    }
+    if (attempt !== ibkrAttemptRef.current) return;
     const loginPath = started?.loginPath;
     if (!loginPath) {
       stopIbkrPortalPoll();
@@ -1900,17 +1945,16 @@ export function SnapTradeConnectPanel({ enabled = true }) {
       setLocalError("IBKR Client Portal login URL was invalid.");
       return;
     }
-    if (new URL(loginUrl).origin === window.location.origin) {
+    if (new URL(loginUrl).origin !== window.location.origin) {
       stopIbkrPortalPoll();
-      setLocalError("The isolated IBKR login service is not available.");
+      setLocalError("The secure IBKR login viewer is not available.");
       return;
     }
     setIbkrLoginUrl(loginUrl);
     const startedAt = Date.now();
-    const timeoutMs = 5 * 60_000;
     const poll = async () => {
       if (attempt !== ibkrAttemptRef.current) return;
-      if (Date.now() - startedAt > timeoutMs) {
+      if (hasIbkrPortalLoginTimedOut(startedAt, Date.now())) {
         closeIbkrPortalLogin();
         setLocalError("IBKR Client Portal login timed out.");
         return;
@@ -1972,7 +2016,10 @@ export function SnapTradeConnectPanel({ enabled = true }) {
       });
     } catch (error) {
       setLocalError(
-        readErrorMessage(error, "IBKR Client Portal could not be disconnected."),
+        readErrorMessage(
+          error,
+          "IBKR Client Portal could not be disconnected.",
+        ),
       );
     } finally {
       setIbkrDisconnecting(false);
@@ -2024,7 +2071,8 @@ export function SnapTradeConnectPanel({ enabled = true }) {
     readErrorMessage(robinhoodSyncMutation.error, "") ||
     readErrorMessage(schwabStartMutation.error, "") ||
     readErrorMessage(schwabSyncMutation.error, "");
-  const visibleError = localError || mutationError || authError || readinessError;
+  const visibleError =
+    localError || mutationError || authError || readinessError;
 
   // Contextual footer actions per card, keyed to the card's own lifecycle —
   // the card is the single action surface for its broker.
@@ -2037,7 +2085,11 @@ export function SnapTradeConnectPanel({ enabled = true }) {
           label: robinhoodConnected ? "Reconnect" : "Connect",
           variant: robinhoodConnected ? "secondary" : "primary",
           icon: robinhoodConnected ? (
-            <ExternalLink size={actionIconSize} strokeWidth={2} aria-hidden="true" />
+            <ExternalLink
+              size={actionIconSize}
+              strokeWidth={2}
+              aria-hidden="true"
+            />
           ) : (
             <PlugZap size={actionIconSize} strokeWidth={2} aria-hidden="true" />
           ),
@@ -2053,7 +2105,11 @@ export function SnapTradeConnectPanel({ enabled = true }) {
         actions.push({
           label: "Sync now",
           icon: (
-            <DatabaseZap size={actionIconSize} strokeWidth={2} aria-hidden="true" />
+            <DatabaseZap
+              size={actionIconSize}
+              strokeWidth={2}
+              aria-hidden="true"
+            />
           ),
           onClick: () => {
             setSelectedBroker(key);
@@ -2073,9 +2129,16 @@ export function SnapTradeConnectPanel({ enabled = true }) {
             connected: schwabConnected,
             reauthRequired: schwabReconnectRequired,
           }),
-          variant: schwabReconnectRequired || !schwabConnected ? "primary" : "secondary",
+          variant:
+            schwabReconnectRequired || !schwabConnected
+              ? "primary"
+              : "secondary",
           icon: schwabReconnect ? (
-            <ExternalLink size={actionIconSize} strokeWidth={2} aria-hidden="true" />
+            <ExternalLink
+              size={actionIconSize}
+              strokeWidth={2}
+              aria-hidden="true"
+            />
           ) : (
             <PlugZap size={actionIconSize} strokeWidth={2} aria-hidden="true" />
           ),
@@ -2091,7 +2154,11 @@ export function SnapTradeConnectPanel({ enabled = true }) {
         actions.push({
           label: "Sync now",
           icon: (
-            <DatabaseZap size={actionIconSize} strokeWidth={2} aria-hidden="true" />
+            <DatabaseZap
+              size={actionIconSize}
+              strokeWidth={2}
+              aria-hidden="true"
+            />
           ),
           onClick: () => {
             setSelectedBroker(key);
@@ -2109,7 +2176,11 @@ export function SnapTradeConnectPanel({ enabled = true }) {
           {
             label: "Disconnect",
             icon: (
-              <Unplug size={actionIconSize} strokeWidth={2} aria-hidden="true" />
+              <Unplug
+                size={actionIconSize}
+                strokeWidth={2}
+                aria-hidden="true"
+              />
             ),
             onClick: () => {
               setSelectedBroker(key);
@@ -2146,7 +2217,11 @@ export function SnapTradeConnectPanel({ enabled = true }) {
         label: slugConnected ? "Open Portal" : "Connect",
         variant: slugConnected ? "secondary" : "primary",
         icon: slugConnected ? (
-          <ExternalLink size={actionIconSize} strokeWidth={2} aria-hidden="true" />
+          <ExternalLink
+            size={actionIconSize}
+            strokeWidth={2}
+            aria-hidden="true"
+          />
         ) : (
           <PlugZap size={actionIconSize} strokeWidth={2} aria-hidden="true" />
         ),
@@ -2162,7 +2237,11 @@ export function SnapTradeConnectPanel({ enabled = true }) {
       actions.push({
         label: "Sync now",
         icon: (
-          <DatabaseZap size={actionIconSize} strokeWidth={2} aria-hidden="true" />
+          <DatabaseZap
+            size={actionIconSize}
+            strokeWidth={2}
+            aria-hidden="true"
+          />
         ),
         onClick: () => {
           setSelectedBroker(key);
@@ -2197,12 +2276,7 @@ export function SnapTradeConnectPanel({ enabled = true }) {
     <SurfacePanel
       title="Broker Connections"
       action={
-        <Button
-          variant="secondary"
-          size="sm"
-          onClick={refresh}
-          disabled={busy}
-        >
+        <Button variant="secondary" size="sm" onClick={refresh} disabled={busy}>
           <RefreshCw size={14} strokeWidth={2} aria-hidden="true" />
           Refresh
         </Button>
@@ -2302,7 +2376,8 @@ export function SnapTradeConnectPanel({ enabled = true }) {
                 }
                 tone={statusTone(
                   Boolean(
-                    schwabUser?.refreshTokenExpiresAt && !schwabReconnectRequired,
+                    schwabUser?.refreshTokenExpiresAt &&
+                      !schwabReconnectRequired,
                   ),
                   schwabReadinessQuery.isLoading,
                 )}
@@ -2435,6 +2510,11 @@ export function SnapTradeConnectPanel({ enabled = true }) {
                   statusLine={cardStatusLineFor(choice, phase)}
                   actions={cardActionsFor(choice)}
                   onSelect={setSelectedBroker}
+                  focusRef={
+                    choice.value === IBKR_PORTAL_BROKER_CHOICE.value
+                      ? ibkrReturnFocusRef
+                      : undefined
+                  }
                 />
               );
             })}
@@ -2501,8 +2581,11 @@ export function SnapTradeConnectPanel({ enabled = true }) {
                   fontSize: fs(10),
                 }}
               >
-                {inclusionAccounts.filter((account) => account.includedInTrading)
-                  .length}{" "}
+                {
+                  inclusionAccounts.filter(
+                    (account) => account.includedInTrading,
+                  ).length
+                }{" "}
                 included
               </span>
             </div>
@@ -2578,7 +2661,11 @@ export function SnapTradeConnectPanel({ enabled = true }) {
               size={15}
               strokeWidth={2}
               aria-hidden="true"
-              style={{ color: CSS_COLOR.amber, flexShrink: 0, marginTop: dim(1) }}
+              style={{
+                color: CSS_COLOR.amber,
+                flexShrink: 0,
+                marginTop: dim(1),
+              }}
             />
             <span>
               Connect links a Robinhood Agentic account and syncs balances for
@@ -2608,7 +2695,11 @@ export function SnapTradeConnectPanel({ enabled = true }) {
               size={15}
               strokeWidth={2}
               aria-hidden="true"
-              style={{ color: CSS_COLOR.amber, flexShrink: 0, marginTop: dim(1) }}
+              style={{
+                color: CSS_COLOR.amber,
+                flexShrink: 0,
+                marginTop: dim(1),
+              }}
             />
             <span>
               Connect links a Schwab brokerage account via the Schwab Trader API
@@ -2639,7 +2730,11 @@ export function SnapTradeConnectPanel({ enabled = true }) {
               size={15}
               strokeWidth={2}
               aria-hidden="true"
-              style={{ color: CSS_COLOR.green, flexShrink: 0, marginTop: dim(1) }}
+              style={{
+                color: CSS_COLOR.green,
+                flexShrink: 0,
+                marginTop: dim(1),
+              }}
             />
             <span>
               Connected to account{" "}
@@ -2667,7 +2762,11 @@ export function SnapTradeConnectPanel({ enabled = true }) {
               size={15}
               strokeWidth={2}
               aria-hidden="true"
-              style={{ color: CSS_COLOR.amber, flexShrink: 0, marginTop: dim(1) }}
+              style={{
+                color: CSS_COLOR.amber,
+                flexShrink: 0,
+                marginTop: dim(1),
+              }}
             />
             <span>{ibkrPortalReadiness.message}</span>
           </div>
@@ -2852,8 +2951,12 @@ export function SnapTradeConnectPanel({ enabled = true }) {
             >
               <span>{lastSync.totals.storedConnections} connections</span>
               <span>{lastSync.totals.storedAccounts} accounts</span>
-              <span>{executionReadyConnections.length} execution-ready connections</span>
-              <span>{executionReadyAccounts.length} execution-ready accounts</span>
+              <span>
+                {executionReadyConnections.length} execution-ready connections
+              </span>
+              <span>
+                {executionReadyAccounts.length} execution-ready accounts
+              </span>
               <span>Synced {formatPortfolioDateTime(lastSync.syncedAt)}</span>
             </div>
 
@@ -3106,7 +3209,8 @@ export function SnapTradeConnectPanel({ enabled = true }) {
                       fontSize: fs(10),
                     }}
                   >
-                    Freshness {formatPortfolioDateTime(portfolio.dataFreshness.asOf)}
+                    Freshness{" "}
+                    {formatPortfolioDateTime(portfolio.dataFreshness.asOf)}
                   </div>
                 </>
               ) : (
@@ -3117,7 +3221,8 @@ export function SnapTradeConnectPanel({ enabled = true }) {
                     fontSize: textSize("caption"),
                   }}
                 >
-                  Load a synced account to inspect mocked balances and positions.
+                  Load a synced account to inspect mocked balances and
+                  positions.
                 </div>
               )}
             </div>
@@ -3235,9 +3340,7 @@ export function SnapTradeConnectPanel({ enabled = true }) {
                 fontSize: fs(10),
               }}
             >
-              <span>
-                {schwabLastSync.totals.storedConnections} connections
-              </span>
+              <span>{schwabLastSync.totals.storedConnections} connections</span>
               <span>{schwabLastSync.totals.storedAccounts} accounts</span>
               <span>
                 Synced {formatPortfolioDateTime(schwabLastSync.syncedAt)}
@@ -3273,12 +3376,12 @@ export function SnapTradeConnectPanel({ enabled = true }) {
             ) : null}
           </div>
         ) : null}
-
       </div>
       <IbkrPortalLoginDialog
         url={ibkrLoginUrl}
         connecting={ibkrConnecting}
         onClose={closeIbkrPortalLogin}
+        returnFocusRef={ibkrReturnFocusRef}
       />
     </SurfacePanel>
   );

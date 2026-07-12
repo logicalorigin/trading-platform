@@ -115,8 +115,6 @@ export const MobileMoreSheet = ({
   activeWatchlist,
   selectedSymbol,
   session,
-  memoryPressureSignal,
-  apiSourcePressureSnapshot,
 }) => {
   const secondaryScreens = SCREENS.filter((screen) =>
     SECONDARY_SCREEN_IDS.has(screen.id),

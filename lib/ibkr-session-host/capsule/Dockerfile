@@ -15,12 +15,14 @@ RUN printf '%s  %s\n' "${CPG_SHA256}" /tmp/clientportal.gw.zip | sha256sum --che
   && rm -rf /var/lib/apt/lists/* /tmp/clientportal.gw.zip \
   && sed -i \
     -e 's/<root level=.DEBUG.>/<root level="INFO">/' \
+    -e '/<appender name="FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">/a\        <file>logs/gw.current.log</file>' \
     -e 's/listenSsl:\s*true/listenSsl: false/' \
     -e '/^[[:space:]]*- 192\.\*/d' \
     -e '/^[[:space:]]*- 131\.216\.\*/d' \
     /opt/ibkr/clientportal/root/logback.xml \
     /opt/ibkr/clientportal/root/conf.yaml \
   && grep -Fq '<root level="INFO">' /opt/ibkr/clientportal/root/logback.xml \
+  && grep -Fq '<file>logs/gw.current.log</file>' /opt/ibkr/clientportal/root/logback.xml \
   && ! grep -Eq 'level=.DEBUG.' /opt/ibkr/clientportal/root/logback.xml \
   && grep -Fq 'listenSsl: false' /opt/ibkr/clientportal/root/conf.yaml \
   && test "$(awk '/^[[:space:]]*allow:[[:space:]]*$/ { in_allow=1; next } in_allow && /^[[:space:]]*deny:[[:space:]]*$/ { exit } in_allow && /^[[:space:]]*-/ { sub(/^[[:space:]]*-[[:space:]]*/, ""); print }' /opt/ibkr/clientportal/root/conf.yaml)" = '127.0.0.1'

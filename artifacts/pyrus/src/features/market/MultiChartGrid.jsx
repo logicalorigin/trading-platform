@@ -1,4 +1,5 @@
 import {
+  startTransition,
   useCallback,
   useEffect,
   useMemo,
@@ -54,7 +55,11 @@ import {
   writeMarketGridTrackSession,
 } from "./marketGridTrackState";
 import { useLiveMarketFlow } from "../platform/useLiveMarketFlow";
-import { USER_PREFERENCES_UPDATED_EVENT } from "../preferences/userPreferenceModel";
+import { getAnalyticsWorkerApi } from "../workers/analyticsClient";
+import {
+  USER_PREFERENCES_UPDATED_EVENT,
+  readCachedUserPreferences,
+} from "../preferences/userPreferenceModel";
 import {
   getTickerSearchRowStorageKey,
   normalizePersistedTickerSearchRows,
@@ -118,6 +123,10 @@ const MARKET_CHART_FLOW_REQUEST_PRIORITY = BARS_REQUEST_PRIORITY.active;
 const MARKET_CHART_FLOW_REFRESH_MS = 10_000;
 const MARKET_CHART_FLOW_HISTORY_REFRESH_MS = 15_000;
 const MARKET_CHART_FLOW_HISTORY_TRANSIENT_REFRESH_MS = 5_000;
+// ponytail: 2s covers the measured 1.36s cold dev-worker startup; replace the
+// race with cancellation if the Comlink request becomes abortable.
+const MARKET_CHART_FLOW_WORKER_FALLBACK_MS = 2_000;
+let marketChartFlowWorkerAvailable = true;
 const MARKET_CHART_FLOW_MIN_HISTORY_BUCKET_SECONDS = 60;
 const MARKET_CHART_FLOW_MAX_HISTORY_BUCKET_SECONDS = 3_600;
 const MARKET_CHART_INITIAL_HYDRATION_SLOTS = 1;
@@ -162,6 +171,48 @@ export const preloadMarketChartRuntime = () => {
 const isHistoricalChartFlowTransientSource = (source) => {
   const reason = String(source?.ibkrReason || "").toLowerCase();
   return MARKET_CHART_FLOW_HISTORY_TRANSIENT_REASONS.has(reason);
+};
+
+export const mapMarketChartFlowEvents = async (
+  events,
+  userPreferences,
+  getWorkerApi = getAnalyticsWorkerApi,
+) => {
+  const input = Array.isArray(events) ? events : [];
+  if (!input.length) {
+    return [];
+  }
+
+  const workerApi = marketChartFlowWorkerAvailable ? getWorkerApi() : null;
+  if (workerApi) {
+    let fallbackTimer = null;
+    try {
+      const mapped = await Promise.race([
+        workerApi.mapFlowEventsToUi(input, userPreferences),
+        new Promise((resolve) => {
+          fallbackTimer = window.setTimeout(
+            () => resolve(null),
+            MARKET_CHART_FLOW_WORKER_FALLBACK_MS,
+          );
+        }),
+      ]);
+      if (Array.isArray(mapped)) {
+        return mapped;
+      }
+      // Comlink requests cannot be cancelled. Stop issuing new work after a
+      // timeout/invalid reply so a stalled worker cannot accumulate listeners.
+      marketChartFlowWorkerAvailable = false;
+    } catch (error) {
+      marketChartFlowWorkerAvailable = false;
+      console.warn("[pyrus] analytics worker flow mapping failed", error);
+    } finally {
+      if (fallbackTimer !== null) {
+        window.clearTimeout(fallbackTimer);
+      }
+    }
+  }
+
+  return input.map((event) => mapFlowEventToUi(event, userPreferences));
 };
 
 const getMarketChartFlowHistoryBucketSeconds = (timeframe) => {
@@ -507,18 +558,6 @@ export const MultiChartGrid = ({
         : null,
     );
   }, [visibleSlotEntries]);
-  const streamedSymbols = useMemo(
-    () =>
-      Array.from(
-        new Set(
-          visibleSlotEntries
-            .map((entry) => normalizeTickerSymbol(entry.slot?.ticker))
-            .filter(Boolean),
-        ),
-      ),
-    [visibleSlotEntries],
-  );
-  const streamedSymbolsKey = streamedSymbols.join(",");
   const visibleChartHydrationKey = visibleSlotEntries
     .map((entry, visibleIndex) => {
       const symbol = normalizeTickerSymbol(entry.slot?.ticker) || "";
@@ -540,6 +579,19 @@ export const MultiChartGrid = ({
         Math.max(initialHydrationSlotLimit, hydrationSlotLimit),
       )
     : 0;
+  const streamedSymbols = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          visibleSlotEntries
+            .slice(0, effectiveHydrationSlotLimit)
+            .map((entry) => normalizeTickerSymbol(entry.slot?.ticker))
+            .filter(Boolean),
+        ),
+      ),
+    [effectiveHydrationSlotLimit, visibleSlotEntries],
+  );
+  const streamedSymbolsKey = streamedSymbols.join(",");
   const chartReadySignalKey = `${visibleChartHydrationKey}:${initialHydrationSlotLimit}`;
   useEffect(() => {
     setHydrationSlotLimit(initialHydrationSlotLimit);
@@ -568,9 +620,11 @@ export const MultiChartGrid = ({
           if (cancelled) {
             return;
           }
-          setHydrationSlotLimit((current) =>
-            Math.max(current, nextSlotLimit),
-          );
+          startTransition(() => {
+            setHydrationSlotLimit((current) =>
+              Math.max(current, nextSlotLimit),
+            );
+          });
         }, effectiveHydrationStaggerMs * step),
       );
     }
@@ -602,36 +656,39 @@ export const MultiChartGrid = ({
   const marketChartFlowBatchSize = Math.max(1, streamedSymbols.length || 1);
   const historicalChartFlowRequests = useMemo(() => {
     const requestsByKey = new Map();
-    visibleSlotEntries.forEach((entry) => {
-      const symbol = normalizeTickerSymbol(entry.slot?.ticker);
-      if (!symbol) return;
-      const hydratedTimeframe = normalizeChartTimeframe(entry.slot?.tf);
-      const timeframe = MARKET_CHART_TIMEFRAMES.includes(hydratedTimeframe)
-        ? hydratedTimeframe
-        : "15m";
-      const window = getChartEventLookbackWindow(timeframe);
-      const historicalBucketSeconds =
-        getMarketChartFlowHistoryBucketSeconds(timeframe);
-      const alignedWindow = alignMarketChartFlowHistoryWindow({
-        from: window.from,
-        to: window.to,
-        bucketSeconds: historicalBucketSeconds,
+    visibleSlotEntries
+      .slice(0, effectiveHydrationSlotLimit)
+      .forEach((entry) => {
+        const symbol = normalizeTickerSymbol(entry.slot?.ticker);
+        if (!symbol) return;
+        const hydratedTimeframe = normalizeChartTimeframe(entry.slot?.tf);
+        const timeframe = MARKET_CHART_TIMEFRAMES.includes(hydratedTimeframe)
+          ? hydratedTimeframe
+          : "15m";
+        const window = getChartEventLookbackWindow(timeframe);
+        const historicalBucketSeconds =
+          getMarketChartFlowHistoryBucketSeconds(timeframe);
+        const alignedWindow = alignMarketChartFlowHistoryWindow({
+          from: window.from,
+          to: window.to,
+          bucketSeconds: historicalBucketSeconds,
+        });
+        const request = {
+          symbol,
+          timeframe,
+          from: alignedWindow.from.toISOString(),
+          to: alignedWindow.to.toISOString(),
+          historicalBucketSeconds,
+        };
+        requestsByKey.set(
+          `${request.symbol}:${request.timeframe}:${request.historicalBucketSeconds}`,
+          request,
+        );
       });
-      const request = {
-        symbol,
-        timeframe,
-        from: alignedWindow.from.toISOString(),
-        to: alignedWindow.to.toISOString(),
-        historicalBucketSeconds,
-      };
-      requestsByKey.set(
-        `${request.symbol}:${request.timeframe}:${request.historicalBucketSeconds}`,
-        request,
-      );
-    });
     return Array.from(requestsByKey.values());
-  }, [visibleSlotEntries]);
+  }, [effectiveHydrationSlotLimit, visibleSlotEntries]);
   const historicalChartFlowRetainedRef = useRef(new Map());
+  const historicalChartFlowMappedRef = useRef(new WeakMap());
   const historicalChartFlowQueries = useQueries({
     queries: historicalChartFlowRequests.map((request) => ({
       queryKey: [
@@ -642,8 +699,8 @@ export const MultiChartGrid = ({
         request.to,
         request.historicalBucketSeconds,
       ],
-      queryFn: () =>
-        listFlowEventsRequest(
+      queryFn: async () => {
+        const response = await listFlowEventsRequest(
           {
             underlying: request.symbol,
             limit: MARKET_CHART_FLOW_HISTORY_LIMIT,
@@ -657,7 +714,17 @@ export const MultiChartGrid = ({
             MARKET_CHART_FLOW_REQUEST_PRIORITY,
             "chart-flow",
           ),
-        ),
+        );
+        const rawEvents = Array.isArray(response?.events)
+          ? response.events
+          : [];
+        const userPreferences = readCachedUserPreferences();
+        return {
+          ...response,
+          mappedEvents: await mapMarketChartFlowEvents(rawEvents, userPreferences),
+          mappedPreferenceTimeKey: JSON.stringify(userPreferences.time),
+        };
+      },
       enabled: Boolean(historicalChartFlowEnabled && request.symbol),
       staleTime: MARKET_CHART_FLOW_HISTORY_REFRESH_MS,
       refetchInterval: historicalChartFlowEnabled
@@ -673,6 +740,8 @@ export const MultiChartGrid = ({
   const historicalChartFlowEvents = useMemo(() => {
     const activeKeys = new Set();
     const retained = historicalChartFlowRetainedRef.current;
+    const userPreferences = readCachedUserPreferences();
+    const preferenceTimeKey = JSON.stringify(userPreferences.time);
 
     const events = historicalChartFlowQueries.flatMap((query, index) => {
       const request = historicalChartFlowRequests[index];
@@ -682,9 +751,29 @@ export const MultiChartGrid = ({
 
       const key = `${request.symbol}:${request.timeframe}:${request.from}:${request.to}:${request.historicalBucketSeconds}`;
       activeKeys.add(key);
-      const incomingEvents = (query.data?.events || []).map((event) =>
-        mapFlowEventToUi(event),
-      );
+      const rawEvents = Array.isArray(query.data?.events)
+        ? query.data.events
+        : [];
+      const workerMappedEvents =
+        query.data?.mappedPreferenceTimeKey === preferenceTimeKey
+          ? query.data?.mappedEvents
+          : null;
+      const cachedMapping = historicalChartFlowMappedRef.current.get(rawEvents);
+      const incomingEvents =
+        Array.isArray(workerMappedEvents)
+          ? workerMappedEvents
+          : cachedMapping?.preferenceTimeKey === preferenceTimeKey
+          ? cachedMapping.events
+          : rawEvents.map((event) => mapFlowEventToUi(event, userPreferences));
+      if (
+        !Array.isArray(workerMappedEvents) &&
+        cachedMapping?.preferenceTimeKey !== preferenceTimeKey
+      ) {
+        historicalChartFlowMappedRef.current.set(rawEvents, {
+          preferenceTimeKey,
+          events: incomingEvents,
+        });
+      }
       const transientEmpty =
         query.isPending ||
         query.isError ||
@@ -997,9 +1086,11 @@ export const MultiChartGrid = ({
       : MULTI_CHART_LAYOUT_CARD_HEIGHT[layout] ||
         MULTI_CHART_LAYOUT_CARD_HEIGHT["2x3"],
   );
-  const renderedSlotEntries = phoneGrid
-    ? visibleSlotEntries.slice(0, 1)
-    : visibleSlotEntries;
+  const renderedSlotEntries = !isVisible
+    ? []
+    : phoneGrid
+      ? visibleSlotEntries.slice(0, 1)
+      : visibleSlotEntries;
   const renderedCols = phoneGrid ? 1 : layout === "1x1" ? 1 : cfg.cols;
   const renderedRows = phoneGrid
     ? renderedSlotEntries.length

@@ -1,4 +1,4 @@
-import { MISSING_VALUE } from "./uiTokens.jsx";
+import { MISSING_VALUE } from "./displayValues";
 import { formatAppDate } from "./timeZone";
 
 export const isFiniteNumber = (value) =>

@@ -16,9 +16,14 @@ import {
   buildSectorFlowFromEvents,
   buildTickerFlowFromEvents,
 } from "../flow/flowAnalytics";
+import { mapFlowEventToUi } from "../flow/flowEventMapper";
 import { buildOptionChainRowsFromApi } from "../trade/optionChainRows";
 
 export const analyticsWorkerApi = {
+  mapFlowEventsToUi(events = [], preferences) {
+    return events.map((event) => mapFlowEventToUi(event, preferences));
+  },
+
   flowEventsToChartEventConversion(events = [], symbol = "") {
     return flowEventsToChartEventConversion(events, symbol);
   },

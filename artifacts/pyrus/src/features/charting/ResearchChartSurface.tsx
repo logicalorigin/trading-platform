@@ -834,6 +834,91 @@ const resolveFlowToneColor = (
 ): string =>
   tone === "bullish" ? SEMANTIC_TONE.directionBuy : tone === "bearish" ? theme.red : theme.amber;
 
+const FlowVolumeOverlayNode = memo(function FlowVolumeOverlayNode({
+  overlay,
+  theme,
+  dataTestId,
+  showFlowTooltip,
+  scheduleHideFlowTooltip,
+}: {
+  overlay: FlowVolumeOverlay;
+  theme: ResearchChartTheme;
+  dataTestId?: string;
+  showFlowTooltip: (next: FlowTooltipState) => void;
+  scheduleHideFlowTooltip: (id: string) => void;
+}) {
+  const toneColor = resolveFlowToneColor(overlay.tone, theme);
+  let segmentBottom = 0;
+  const segmentNodes = overlay.segments.map((segment) => {
+    const segmentColor = resolveFlowToneColor(segment.tone, theme);
+    const heightPercent = Math.max(
+      0,
+      Math.min(100 - segmentBottom, segment.ratio * 100),
+    );
+    const node = (
+      <div
+        key={`${overlay.id}:${segment.tone}`}
+        data-chart-flow-volume-segment={segment.tone}
+        data-chart-flow-volume-basis={overlay.flowSourceBasis}
+        style={{
+          position: "absolute",
+          left: 0,
+          right: 0,
+          bottom: `${segmentBottom}%`,
+          height: `${heightPercent}%`,
+          background: withAlpha(segmentColor, "d8"),
+        }}
+      />
+    );
+    segmentBottom += heightPercent;
+    return node;
+  });
+  return (
+    <div
+      aria-label={overlay.title}
+      data-testid={dataTestId ? `${dataTestId}-flow-volume` : undefined}
+      onPointerEnter={() =>
+        showFlowTooltip({
+          id: overlay.id,
+          left: overlay.left + overlay.width,
+          top: overlay.top,
+          model: overlay.tooltip,
+        })
+      }
+      onPointerLeave={() => scheduleHideFlowTooltip(overlay.id)}
+      onFocus={() =>
+        showFlowTooltip({
+          id: overlay.id,
+          left: overlay.left + overlay.width,
+          top: overlay.top,
+          model: overlay.tooltip,
+        })
+      }
+      onBlur={() => scheduleHideFlowTooltip(overlay.id)}
+      tabIndex={0}
+      style={{
+        position: "absolute",
+        left: overlay.left,
+        top: overlay.top,
+        width: overlay.width,
+        height: overlay.height,
+        minWidth: 3,
+        minHeight: 4,
+        borderRadius: RADII.xs,
+        background: withAlpha(toneColor, "1f"),
+        border: `1px solid ${withAlpha(toneColor, "a8")}`,
+        boxSizing: "border-box",
+        boxShadow: `0 0 0 1px ${withAlpha(theme.bg4, "aa")}`,
+        overflow: "hidden",
+        pointerEvents: "auto",
+        cursor: "help",
+      }}
+    >
+      {segmentNodes}
+    </div>
+  );
+});
+
 const resolveChartEventToneColor = (
   overlay: ChartEventOverlay,
   theme: ResearchChartTheme,
@@ -13064,81 +13149,16 @@ const ResearchChartSurfaceComponent = ({
                   }}
                 />
               ))}
-              {flowVolumeOverlays.map((overlay) => {
-                const toneColor = resolveFlowToneColor(overlay.tone, theme);
-                let segmentBottom = 0;
-                const segmentNodes = overlay.segments.map((segment) => {
-                  const segmentColor = resolveFlowToneColor(segment.tone, theme);
-                  const heightPercent = Math.max(
-                    0,
-                    Math.min(100 - segmentBottom, segment.ratio * 100),
-                  );
-                  const node = (
-                    <div
-                      key={`${overlay.id}:${segment.tone}`}
-                      data-chart-flow-volume-segment={segment.tone}
-                      data-chart-flow-volume-basis={overlay.flowSourceBasis}
-                      style={{
-                        position: "absolute",
-                        left: 0,
-                        right: 0,
-                        bottom: `${segmentBottom}%`,
-                        height: `${heightPercent}%`,
-                        background: withAlpha(segmentColor, "d8"),
-                      }}
-                    />
-                  );
-                  segmentBottom += heightPercent;
-                  return node;
-                });
-                return (
-                  <div
-                    key={overlay.id}
-                    aria-label={overlay.title}
-                    data-testid={
-                      dataTestId ? `${dataTestId}-flow-volume` : undefined
-                    }
-                    onPointerEnter={() =>
-                      showFlowTooltip({
-                        id: overlay.id,
-                        left: overlay.left + overlay.width,
-                        top: overlay.top,
-                        model: overlay.tooltip,
-                      })
-                    }
-                    onPointerLeave={() => scheduleHideFlowTooltip(overlay.id)}
-                    onFocus={() =>
-                      showFlowTooltip({
-                        id: overlay.id,
-                        left: overlay.left + overlay.width,
-                        top: overlay.top,
-                        model: overlay.tooltip,
-                      })
-                    }
-                    onBlur={() => scheduleHideFlowTooltip(overlay.id)}
-                    tabIndex={0}
-                    style={{
-                      position: "absolute",
-                      left: overlay.left,
-                      top: overlay.top,
-                      width: overlay.width,
-                      height: overlay.height,
-                      minWidth: 3,
-                      minHeight: 4,
-                      borderRadius: RADII.xs,
-                      background: withAlpha(toneColor, "1f"),
-                      border: `1px solid ${withAlpha(toneColor, "a8")}`,
-                      boxSizing: "border-box",
-                      boxShadow: `0 0 0 1px ${withAlpha(theme.bg4, "aa")}`,
-                      overflow: "hidden",
-                      pointerEvents: "auto",
-                      cursor: "help",
-                    }}
-                  >
-                    {segmentNodes}
-                  </div>
-                );
-              })}
+              {flowVolumeOverlays.map((overlay) => (
+                <FlowVolumeOverlayNode
+                  key={overlay.id}
+                  overlay={overlay}
+                  theme={theme}
+                  dataTestId={dataTestId}
+                  showFlowTooltip={showFlowTooltip}
+                  scheduleHideFlowTooltip={scheduleHideFlowTooltip}
+                />
+              ))}
               {chartEventOverlays.map((overlay) => {
                 const color = resolveChartEventToneColor(overlay, theme);
                 return (

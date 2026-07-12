@@ -65,7 +65,6 @@ import {
 } from "./workloadStats";
 import { useWorkspaceLeadership } from "./workspaceLeadership.js";
 import { useMemoryPressureMonitor } from "./useMemoryPressureSignal";
-import { useRuntimeControlSnapshot } from "./useRuntimeControlSnapshot";
 import { getMemoryPressureSnapshot } from "./memoryPressureStore";
 import { PlatformShell } from "./PlatformShell.jsx";
 import { PlatformProviders } from "./PlatformProviders.jsx";
@@ -368,10 +367,6 @@ const SIGNAL_MATRIX_STA_BOOTSTRAP_TIMEFRAMES = Object.freeze([
 ]);
 const SIGNAL_MATRIX_FULL_TIMEFRAME_WIDEN_DELAY_MS = 1_500;
 const AUTOMATIC_BACKGROUND_SCREEN_PRELOAD_ENABLED = false;
-const NAVIGATION_CRITICAL_SCREEN_MODULE_PRELOAD_ORDER = [
-  "account",
-  "algo",
-];
 const OPERATIONAL_SCREEN_PRELOAD_IDLE_DELAY_MS = 0;
 const OPERATIONAL_SCREEN_PRELOAD_IDLE_STAGGER_MS = 0;
 const WATCHLIST_SIDEBAR_WIDTH_DEFAULT = 220;
@@ -894,12 +889,6 @@ export default function PlatformApp() {
   const viewport = useViewport();
   const isPhone = viewport.flags.isPhone;
   const memoryPressureSignal = useMemoryPressureMonitor();
-  const footerApiSourceRuntime = useRuntimeControlSnapshot({
-    enabled: platformRealtimeWorkActive,
-    runtimeDiagnosticsEnabled: true,
-    runtimeDiagnosticsQueryKey: "footer-api-sources",
-    memoryPressure: memoryPressureSignal,
-  });
   const userPreferences = useUserPreferences();
   const startupRefreshQueuedRef = useRef(false);
   const initialScreenRef = useRef(
@@ -1096,8 +1085,6 @@ export default function PlatformApp() {
   const warmupTestOverrides = useMemo(readWarmupTestOverrides, []);
   const firstScreenBootCompleteRef = useRef(false);
   const bootScreenShellWarmMountCompleteRef = useRef(false);
-  const priorityScreenCodePreloadStartedRef = useRef(false);
-  const priorityScreenCodePreloadCompleteRef = useRef(false);
   const screenCodePreloadStartedRef = useRef(false);
   const screenCodePreloadCompleteRef = useRef(false);
   const researchWorkspaceCodePreloadCompleteRef = useRef(false);
@@ -1571,17 +1558,12 @@ export default function PlatformApp() {
   const activeScreenBackgroundDataAllowed = Boolean(
     activeScreenBackgroundAllowed && backgroundDataWarmupEnabled,
   );
-  const priorityScreenCodePreloadPending = Boolean(
-    priorityScreenCodePreloadStartedRef.current &&
-      !priorityScreenCodePreloadCompleteRef.current,
-  );
   const frameAuxiliaryDataEnabled = Boolean(
     platformRealtimeWorkActive &&
       sessionMetadataSettled &&
       activeScreenBackgroundDataAllowed &&
       screenWarmupPhase === "ready" &&
       !startupProtectionActive &&
-      !priorityScreenCodePreloadPending &&
       (backgroundDataWarmupEnabled || isPhone),
   );
   useEffect(() => {
@@ -1698,9 +1680,6 @@ export default function PlatformApp() {
       !isPhone &&
       !warmupTestOverrides.disableOperationalCodePreload,
   );
-  const navigationCriticalScreenCodePreloadReady = Boolean(
-    operationalCodePreloadReady && memoryAllowsBackgroundWarmup,
-  );
   const screenCodePreloadReady = Boolean(
     AUTOMATIC_BACKGROUND_SCREEN_PRELOAD_ENABLED &&
       operationalCodePreloadReady &&
@@ -1755,56 +1734,6 @@ export default function PlatformApp() {
     screenWarmupPhase,
     startupProtectionActive,
   ]);
-  useEffect(() => {
-    if (
-      !navigationCriticalScreenCodePreloadReady ||
-      priorityScreenCodePreloadStartedRef.current ||
-      priorityScreenCodePreloadCompleteRef.current
-    ) {
-      return undefined;
-    }
-
-    const preloadOrder = NAVIGATION_CRITICAL_SCREEN_MODULE_PRELOAD_ORDER.filter(
-      (screenId) => screenId !== screen,
-    );
-    if (!preloadOrder.length) {
-      priorityScreenCodePreloadCompleteRef.current = true;
-      return undefined;
-    }
-
-    let cancelled = false;
-    const runNavigationCriticalScreenPreload = async () => {
-      if (cancelled) {
-        return;
-      }
-      priorityScreenCodePreloadStartedRef.current = true;
-      markWarmupTimeline("priorityScreenCodePreloadQueuedAtMs");
-      for (const screenId of preloadOrder) {
-        if (cancelled) return;
-        try {
-          await preloadScreenModule(screenId);
-        } catch {
-          // Navigation retries failed chunks through the normal screen loader.
-        }
-      }
-      if (cancelled) return;
-      priorityScreenCodePreloadCompleteRef.current = true;
-      markWarmupTimeline("priorityScreenCodePreloadCompleteAtMs");
-    };
-
-    void runNavigationCriticalScreenPreload();
-
-    return () => {
-      cancelled = true;
-      if (!priorityScreenCodePreloadCompleteRef.current) {
-        priorityScreenCodePreloadStartedRef.current = false;
-      }
-    };
-  }, [
-    markWarmupTimeline,
-    navigationCriticalScreenCodePreloadReady,
-    screen,
-  ]);
   const preloadCalendarWindow = useMemo(() => {
     const from = new Date();
     const to = new Date(from);
@@ -1842,7 +1771,6 @@ export default function PlatformApp() {
       activeScreenBackgroundDataAllowed &&
       screenWarmupPhase === "ready" &&
       !startupProtectionActive &&
-      !priorityScreenCodePreloadPending &&
       platformPressureCaps.broadMarketSymbolLimit !== 0,
   );
   const quoteSymbols = useMemo(() => {
@@ -1945,7 +1873,9 @@ export default function PlatformApp() {
   // bridge: SnapTrade-backed accounts are served from the DB without it, and
   // /api/accounts itself degrades (503 problem) when no broker source exists.
   const accountScreenAccountsQueryEnabled = Boolean(
-    sessionQuery.data && !safeQaMode,
+    sessionQuery.data &&
+      !safeQaMode &&
+      (screen === "account" || screen === "algo"),
   );
   const accountScreenAccountsQuery = useListAccounts(
     { mode: "live" },
@@ -3235,14 +3165,12 @@ export default function PlatformApp() {
   useIbkrAccountSnapshotStream({
     accountId: null,
     mode: environment,
-    enabled:
-      workSchedule.streams.accountRealtime && !priorityScreenCodePreloadPending,
+    enabled: workSchedule.streams.accountRealtime,
   });
   useIbkrOrderSnapshotStream({
     accountId: null,
     mode: environment,
-    enabled:
-      workSchedule.streams.accountRealtime && !priorityScreenCodePreloadPending,
+    enabled: workSchedule.streams.accountRealtime,
   });
   useEffect(() => {
     setHydrationPressureState(workSchedule.hydrationPressure);
@@ -4050,8 +3978,6 @@ export default function PlatformApp() {
       completions: {
         bootScreenShellWarmMountComplete:
           bootScreenShellWarmMountCompleteRef.current,
-        priorityScreenCodePreloadComplete:
-          priorityScreenCodePreloadCompleteRef.current,
         screenCodePreloadComplete: screenCodePreloadCompleteRef.current,
         researchWorkspaceCodePreloadComplete:
           researchWorkspaceCodePreloadCompleteRef.current,
@@ -4064,11 +3990,6 @@ export default function PlatformApp() {
           warmupTimelineRef.current.bootScreenShellWarmMountQueuedAtMs != null,
         bootScreenShellWarmMountCompleted:
           warmupTimelineRef.current.bootScreenShellWarmMountCompleteAtMs !=
-          null,
-        priorityScreenCodePreloadStarted:
-          warmupTimelineRef.current.priorityScreenCodePreloadQueuedAtMs != null,
-        priorityScreenCodePreloadCompleted:
-          warmupTimelineRef.current.priorityScreenCodePreloadCompleteAtMs !=
           null,
         screenCodePreloadStarted:
           warmupTimelineRef.current.screenCodePreloadQueuedAtMs != null,
@@ -4114,7 +4035,6 @@ export default function PlatformApp() {
         memoryPressureObserved,
         memoryPressureLevel,
         memoryAllowsIdlePrefetch,
-        priorityScreenCodePreloadPending,
         auxiliarySurfacesReady,
         signalMonitorDisplayReady,
         signalMatrixStreamReady,
@@ -4150,7 +4070,6 @@ export default function PlatformApp() {
     mountedScreens,
     operationalCodePreloadReady,
     pageVisible,
-    priorityScreenCodePreloadPending,
     screen,
     screenReadiness,
     screenWarmupPhase,
@@ -5112,10 +5031,11 @@ export default function PlatformApp() {
   );
 
   const renderScreenById = useCallback(
-    (screenId) => (
+    (screenId, visibleScreen) => (
       <PlatformScreenRouter
         screenId={screenId}
         screen={screen}
+        hostScreen={visibleScreen}
         sym={sym}
         tradeSymPing={tradeSymPing}
         marketSymPing={marketSymPing}
@@ -5306,7 +5226,6 @@ export default function PlatformApp() {
         lowPriorityHistoryEnabled={
           !safeQaMode &&
           workSchedule.streams.lowPriorityHistory &&
-          !priorityScreenCodePreloadPending &&
           !signalHydrationBootstrapActive
         }
         sparklineHistoryEnabled={
@@ -5315,17 +5234,11 @@ export default function PlatformApp() {
           !signalHydrationBootstrapActive
         }
         sparklineConcurrency={platformPressureCaps.sparklineConcurrency}
-        flowRuntimeEnabled={
-          workSchedule.streams.sharedFlowRuntime &&
-          !priorityScreenCodePreloadPending
-        }
+        flowRuntimeEnabled={workSchedule.streams.sharedFlowRuntime}
         flowRuntimeIntervalMs={
           marketScreenActive || flowScreenActive ? 10_000 : 30_000
         }
-        broadFlowRuntimeEnabled={
-          workSchedule.streams.broadFlowRuntime &&
-          !priorityScreenCodePreloadPending
-        }
+        broadFlowRuntimeEnabled={workSchedule.streams.broadFlowRuntime}
         broadFlowScannerConfig={platformPressureCaps.broadFlowScannerConfig}
         platformFreshnessBus={platformFreshnessBus}
       >
@@ -5344,8 +5257,6 @@ export default function PlatformApp() {
           HeaderStatusClusterComponent={null}
           HeaderBroadcastScrollerStackComponent={HeaderBroadcastScrollerStack}
           WatchlistComponent={MemoWatchlistContainer}
-          memoryPressureSignal={memoryPressureSignal}
-          apiSourcePressureSnapshot={footerApiSourceRuntime.snapshot}
           activeWatchlist={activeWatchlist}
           watchlistSymbols={watchlistSymbols}
           signalMonitorStates={watchlistSignalMonitorStates}

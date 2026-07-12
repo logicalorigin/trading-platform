@@ -3,12 +3,13 @@ import test from "node:test";
 
 import { ensureGateway, getGateway } from "./ibkr-portal-gateway-manager";
 import {
+  beginPortalReadinessQuietWindow,
   connectPortal,
   disconnectPortal,
   readPortalReadiness,
 } from "./ibkr-portal-session";
 
-test("hosted portal connects any authenticated account (not paper-only)", async () => {
+test("hosted portal connects any authenticated account (not paper-only)", async (t) => {
   const previousEnabled = process.env["IBKR_SESSION_HOST_ENABLED"];
   const previousToken = process.env["IBKR_SESSION_HOST_CONTROL_TOKEN"];
   const previousUrl = process.env["IBKR_SESSION_HOST_URL"];
@@ -17,10 +18,19 @@ test("hosted portal connects any authenticated account (not paper-only)", async 
   const paperUserId = "44444444-4444-4444-8444-444444444444";
   const needsLoginUserId = "55555555-5555-4555-8555-555555555555";
   const delayedLiveUserId = "66666666-6666-4666-8666-666666666666";
+  const recoveredLoginUserId = "77777777-7777-4777-8777-777777777777";
+  const recoveredStartingUserId = "88888888-8888-4888-8888-888888888888";
+  const monitorRaceUserId = "99999999-9999-4999-8999-999999999999";
   const released = new Set<string>();
   let accountId = "U1234567";
   let authenticated = true;
   let authStatusCalls = 0;
+  let ssodhInitCalls = 0;
+  const loginCompletions = new Map<string, number>();
+  const capsuleStatuses = new Map<string, "ready" | "occupied">();
+  const hostStatusCalls = new Map<string, number>();
+  let blockedStatusUserId: string | null = null;
+  let blockedStatus: Promise<void> | null = null;
 
   process.env["IBKR_SESSION_HOST_ENABLED"] = "1";
   process.env["IBKR_SESSION_HOST_CONTROL_TOKEN"] = "host-token";
@@ -29,17 +39,33 @@ test("hosted portal connects any authenticated account (not paper-only)", async 
     const url = new URL(String(input));
     if (url.port === "18748") {
       const sessionId = url.pathname.split("/")[2] ?? "";
+      const completionCount = loginCompletions.get(sessionId) ?? 0;
       if (url.pathname.endsWith("/release")) {
         released.add(sessionId);
         return Response.json({ released: true });
       }
       if (url.pathname.endsWith("/status")) {
+        hostStatusCalls.set(
+          sessionId,
+          (hostStatusCalls.get(sessionId) ?? 0) + 1,
+        );
+        if (sessionId === blockedStatusUserId && blockedStatus) {
+          await blockedStatus;
+        }
         return Response.json({
-          capsule: { name: "pyrus-ibkr-slot-1", status: "ready" },
+          capsule: {
+            name: "pyrus-ibkr-slot-1",
+            status: capsuleStatuses.get(sessionId) ?? "ready",
+            loginCompletions: completionCount,
+          },
         });
       }
       return Response.json({
-        capsule: { name: "pyrus-ibkr-slot-1", status: "ready" },
+        capsule: {
+          name: "pyrus-ibkr-slot-1",
+          status: capsuleStatuses.get(sessionId) ?? "ready",
+          loginCompletions: completionCount,
+        },
         targets: {
           cpg: { host: "127.0.0.1", port: 15000 },
           console: { host: "127.0.0.1", port: 16080 },
@@ -53,6 +79,10 @@ test("hosted portal connects any authenticated account (not paper-only)", async 
         connected: authenticated,
         selectedAccount: accountId,
       });
+    }
+    if (url.pathname.endsWith("/iserver/auth/ssodh/init")) {
+      ssodhInitCalls += 1;
+      return Response.json({ authenticated: false });
     }
     if (url.pathname.endsWith("/iserver/accounts")) {
       return Response.json({ accounts: [accountId] });
@@ -84,27 +114,178 @@ test("hosted portal connects any authenticated account (not paper-only)", async 
     const needsLoginReadiness = await readPortalReadiness(needsLoginUserId);
     assert.equal(needsLoginReadiness.status, "needs_login");
     assert.equal(needsLoginReadiness.loginPath, null);
-
-    const callsBeforeConnect = authStatusCalls;
-    const delayedLiveStart = await connectPortal(delayedLiveUserId);
-    assert.equal(delayedLiveStart.status, "needs_login");
     assert.equal(
-      authStatusCalls,
-      callsBeforeConnect,
-      "connect must return the login surface without blocking on auth status",
+      ssodhInitCalls,
+      0,
+      "the hosted portal leaves SSO promotion to its Client Portal Gateway",
     );
-    authenticated = true;
-    accountId = "U2468101";
-    const delayedReadiness = await readPortalReadiness(delayedLiveUserId);
-    assert.equal(delayedReadiness.status, "connected");
-    assert.equal(delayedReadiness.selectedAccountId, "U2468101");
-    assert.ok(getGateway(delayedLiveUserId), "live login keeps its gateway");
-    assert(!released.has(delayedLiveUserId));
+
+    const callsBeforeQuietWindow = authStatusCalls;
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    try {
+      beginPortalReadinessQuietWindow(needsLoginUserId);
+      const quietReadiness = await readPortalReadiness(needsLoginUserId);
+      assert.equal(quietReadiness.status, "needs_login");
+      assert.equal(
+        authStatusCalls,
+        callsBeforeQuietWindow,
+        "post-login quiet window must not probe CPG readiness",
+      );
+
+      t.mock.timers.tick(9_999);
+      beginPortalReadinessQuietWindow(needsLoginUserId);
+      t.mock.timers.tick(1);
+      await readPortalReadiness(needsLoginUserId);
+      assert.equal(
+        authStatusCalls,
+        callsBeforeQuietWindow,
+        "an old timer must not clear a replacement quiet window",
+      );
+
+      t.mock.timers.tick(9_999);
+      await readPortalReadiness(needsLoginUserId);
+      assert.equal(
+        authStatusCalls,
+        callsBeforeQuietWindow + 1,
+        "readiness probing resumes when the replacement window expires",
+      );
+
+      beginPortalReadinessQuietWindow(needsLoginUserId);
+      await connectPortal(needsLoginUserId);
+      await readPortalReadiness(needsLoginUserId);
+      assert.equal(
+        authStatusCalls,
+        callsBeforeQuietWindow + 1,
+        "a fresh connect keeps CPG readiness quiet throughout browser login",
+      );
+    } finally {
+      t.mock.timers.reset();
+    }
+
+    t.mock.timers.enable({
+      apis: ["setTimeout", "Date"],
+      now: Date.now(),
+    });
+    try {
+      authenticated = false;
+      const callsBeforeRecovery = authStatusCalls;
+      const recoveredReadiness = await readPortalReadiness(recoveredLoginUserId);
+      assert.equal(recoveredReadiness.status, "needs_login");
+      assert.equal(
+        authStatusCalls,
+        callsBeforeRecovery,
+        "API reload recovery restores the pre-completion readiness guard",
+      );
+      capsuleStatuses.set(recoveredStartingUserId, "occupied");
+      const recoveredStarting = await readPortalReadiness(
+        recoveredStartingUserId,
+      );
+      assert.equal(recoveredStarting.status, "gateway_starting");
+
+      t.mock.timers.setTime(Date.now() + 6 * 60_000);
+      t.mock.timers.tick(3_000);
+      await new Promise((resolve) => setImmediate(resolve));
+      assert(
+        released.has(recoveredLoginUserId),
+        "API reload recovery restores bounded orphan cleanup",
+      );
+      assert(released.has(recoveredStartingUserId));
+    } finally {
+      t.mock.timers.reset();
+    }
+
+    const monitorRaceStartedAt = Date.now();
+    t.mock.timers.enable({
+      apis: ["setTimeout", "Date"],
+      now: monitorRaceStartedAt,
+    });
+    try {
+      let releaseBlockedStatus!: () => void;
+      blockedStatus = new Promise<void>((resolve) => {
+        releaseBlockedStatus = resolve;
+      });
+      blockedStatusUserId = monitorRaceUserId;
+      await connectPortal(monitorRaceUserId);
+      t.mock.timers.tick(3_000);
+      await new Promise((resolve) => setImmediate(resolve));
+      assert.equal(hostStatusCalls.get(monitorRaceUserId), 1);
+
+      t.mock.timers.setTime(monitorRaceStartedAt + 5 * 60_000);
+      await connectPortal(monitorRaceUserId);
+      blockedStatusUserId = null;
+      blockedStatus = null;
+      releaseBlockedStatus();
+      await new Promise((resolve) => setImmediate(resolve));
+      const callsBeforeReplacementPoll =
+        hostStatusCalls.get(monitorRaceUserId) ?? 0;
+
+      t.mock.timers.setTime(monitorRaceStartedAt + 6 * 60_000);
+      t.mock.timers.tick(3_000);
+      await new Promise((resolve) => setImmediate(resolve));
+      assert.equal(
+        hostStatusCalls.get(monitorRaceUserId),
+        callsBeforeReplacementPoll + 1,
+        "the replacement monitor remains the active generation",
+      );
+      assert(
+        !released.has(monitorRaceUserId),
+        "the old monitor expiry cannot release the replacement gateway",
+      );
+      await disconnectPortal(monitorRaceUserId);
+    } finally {
+      blockedStatusUserId = null;
+      blockedStatus = null;
+      t.mock.timers.reset();
+    }
+
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    try {
+      const callsBeforeConnect = authStatusCalls;
+      loginCompletions.set(delayedLiveUserId, 7);
+      const delayedLiveStart = await connectPortal(delayedLiveUserId);
+      assert.equal(delayedLiveStart.status, "needs_login");
+      const duringLogin = await readPortalReadiness(delayedLiveUserId);
+      assert.equal(duringLogin.status, "needs_login");
+      assert.equal(
+        authStatusCalls,
+        callsBeforeConnect,
+        "browser login must not race against backend auth-status probes",
+      );
+
+      authenticated = true;
+      accountId = "U2468101";
+      loginCompletions.set(delayedLiveUserId, 8);
+      const completionObserved = await readPortalReadiness(delayedLiveUserId);
+      assert.equal(completionObserved.status, "needs_login");
+      assert.equal(authStatusCalls, callsBeforeConnect);
+
+      t.mock.timers.tick(9_999);
+      const stillQuiet = await readPortalReadiness(delayedLiveUserId);
+      assert.equal(stillQuiet.status, "needs_login");
+      assert.equal(
+        authStatusCalls,
+        callsBeforeConnect,
+        "a new capsule completion keeps auth status unprobed for ten seconds",
+      );
+
+      t.mock.timers.tick(1);
+      const delayedReadiness = await readPortalReadiness(delayedLiveUserId);
+      assert.equal(delayedReadiness.status, "connected");
+      assert.equal(authStatusCalls, callsBeforeConnect + 1);
+      assert.equal(delayedReadiness.selectedAccountId, "U2468101");
+      assert.ok(getGateway(delayedLiveUserId), "live login keeps its gateway");
+      assert(!released.has(delayedLiveUserId));
+    } finally {
+      t.mock.timers.reset();
+    }
   } finally {
     await disconnectPortal(liveUserId).catch(() => undefined);
     await disconnectPortal(paperUserId).catch(() => undefined);
     await disconnectPortal(needsLoginUserId).catch(() => undefined);
     await disconnectPortal(delayedLiveUserId).catch(() => undefined);
+    await disconnectPortal(recoveredLoginUserId).catch(() => undefined);
+    await disconnectPortal(recoveredStartingUserId).catch(() => undefined);
+    await disconnectPortal(monitorRaceUserId).catch(() => undefined);
     globalThis.fetch = previousFetch;
     if (previousEnabled === undefined) {
       delete process.env["IBKR_SESSION_HOST_ENABLED"];

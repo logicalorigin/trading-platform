@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useState } from "react";
 import {
   useGetNews,
   useGetResearchEarningsCalendar,
@@ -34,6 +34,8 @@ import {
 } from "../features/platform/semanticToneModel.js";
 import { CSS_COLOR, FONT_WEIGHTS, RADII, T, cssColorMix, dim, sp, textSize } from "../lib/uiTokens.jsx";
 import { useViewport } from "../lib/responsive";
+
+const MemoMultiChartGrid = memo(MultiChartGrid);
 
 const isCallRight = (right) => String(right || "").toLowerCase().startsWith("c");
 
@@ -533,11 +535,11 @@ export default function MarketDemoScreen({
     return isFiniteNumber(proxy?.pct) ? proxy.pct : null;
   }, []);
 
-  const handleSelectSymbol = (nextSymbol) => {
+  const handleSelectSymbol = useCallback((nextSymbol) => {
     if (!nextSymbol) return;
     setSelectedSym(nextSymbol);
     onSymClick?.(nextSymbol);
-  };
+  }, [onSymClick]);
 
   const chartSlot = (
     <div
@@ -570,7 +572,7 @@ export default function MarketDemoScreen({
           </AppTooltip>
         </div>
       </div>
-      <MultiChartGrid
+      <MemoMultiChartGrid
         activeSym={selectedSym}
         externalSelection={marketSymPing}
         onSymClick={handleSelectSymbol}

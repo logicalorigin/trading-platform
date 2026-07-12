@@ -38,6 +38,7 @@ import { CommandPalette } from "./CommandPalette.jsx";
 import { SCREENS, preloadScreenModule } from "./screenRegistry.jsx";
 import { useUserPreferences } from "../preferences/useUserPreferences";
 import { computeUnseenCount, useNotificationSnapshot } from "./notificationStore.js";
+import { useVisibleScreen } from "./visibleScreenStore.js";
 
 const ICONIZED_SCREEN_IDS = new Set(["settings"]);
 
@@ -265,7 +266,7 @@ const AppHeaderInner = ({
   headerAccountMinimal,
   headerCompactStatus,
   headerStatusMinimal,
-  activeScreen,
+  visibleScreenStore,
   handleSetScreen,
   watchlistsBusy,
   selectedSymbol,
@@ -310,6 +311,7 @@ const AppHeaderInner = ({
   HeaderStatusClusterComponent,
   HeaderBroadcastScrollerStackComponent,
 }) => {
+  const activeScreen = useVisibleScreen(visibleScreenStore);
   const compactAccountId = primaryAccountId || accounts?.[0]?.id || MISSING_VALUE;
   const compactNetLiq = fmtCompactCurrency(
     primaryAccount?.netLiquidation,

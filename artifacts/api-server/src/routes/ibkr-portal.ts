@@ -38,6 +38,7 @@ import {
 } from "../services/entitlements";
 import { recordAuditEvent } from "../services/audit-events";
 import {
+  beginPortalReadinessQuietWindow,
   connectPortal,
   disconnectPortal,
   getPortalStatus,
@@ -58,6 +59,9 @@ import { findRepoRoot } from "../services/runtime-flight-recorder";
 const router: IRouter = Router();
 
 const GW_BASE = "/api/broker-execution/ibkr-portal/gateway";
+export const IBKR_PORTAL_CONSOLE_LOGIN_PATH =
+  `${GW_BASE}/vnc.html?autoconnect=1&resize=scale` +
+  `&path=${encodeURIComponent(`${GW_BASE.slice(1)}/websockify`)}`;
 export { IBKR_PORTAL_CLIENT_MOUNT };
 
 function isWithinMount(pathname: string, mount: string): boolean {
@@ -296,16 +300,10 @@ router.get("/broker-execution/ibkr-portal/status", async (req, res) => {
 
 router.post("/broker-execution/ibkr-portal/connect", async (req, res) => {
   const session = await requireIbkrPortalAccessCsrf(req);
-  const parentOrigin = parentOriginForRequest(req);
-  const embedOrigin = configuredEmbedOrigin(parentOrigin);
   const portal = await connectPortal(session.user.id);
   const data = ConnectIbkrPortalResponse.parse({
     ...portal,
-    loginPath: issueAuthorizeUrl(
-      session.user.id,
-      parentOrigin,
-      embedOrigin,
-    ),
+    loginPath: IBKR_PORTAL_CONSOLE_LOGIN_PATH,
   });
   void recordAuditEvent({
     appUserId: session.user.id,
@@ -523,6 +521,20 @@ export function filterIbkrGatewayRequestHeaders(
   return forwardHeaders;
 }
 
+function forwardedCookieNames(
+  headers: Record<string, string | string[]>,
+): string[] {
+  const cookie = Object.entries(headers).find(
+    ([key]) => key.toLowerCase() === "cookie",
+  )?.[1];
+  if (!cookie) return [];
+  return (Array.isArray(cookie) ? cookie.join("; ") : cookie)
+    .split(";")
+    .map((part) => part.trim().split("=", 1)[0])
+    .filter(Boolean)
+    .sort();
+}
+
 async function proxyToClientGateway(
   req: Request,
   res: Response,
@@ -624,6 +636,10 @@ async function proxyToGatewayTarget(
     req.headers,
     gatewayCookieNames,
   );
+  const dispatcherCookieNames =
+    tracePath === "client:/sso/Dispatcher"
+      ? forwardedCookieNames(forwardHeaders)
+      : undefined;
   forwardHeaders["host"] = `127.0.0.1:${targetPort}`;
   if (target === "client") {
     if (req.headers.origin) forwardHeaders["origin"] = targetOrigin;
@@ -770,6 +786,14 @@ async function proxyToGatewayTarget(
             }
           }
 
+          const dispatcherSucceeded =
+            tracePath === "client:/sso/Dispatcher" &&
+            (up.statusCode ?? 502) === 200 &&
+            out.toString("utf8") === "Client login succeeds";
+          if (dispatcherSucceeded) {
+            beginPortalReadinessQuietWindow(appUserId);
+          }
+
           trace({
             method: req.method,
             path: tracePath,
@@ -786,6 +810,8 @@ async function proxyToGatewayTarget(
                     mount,
                   ).split("?")[0]
                 : undefined,
+            forwardedCookieNames: dispatcherCookieNames,
+            stage: dispatcherSucceeded ? "dispatcher_succeeded" : undefined,
           });
 
           finalize(() =>
@@ -941,6 +967,8 @@ async function proxyGatewayUpgrade(
 
   const headers = filterIbkrGatewayRequestHeaders(request.headers);
   headers["host"] = `127.0.0.1:${gateway.proxyPort}`;
+  headers["connection"] = "Upgrade";
+  headers["upgrade"] = "websocket";
 
   await new Promise<void>((resolve, reject) => {
     const upstream = httpRequest({
