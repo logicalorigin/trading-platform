@@ -1,4 +1,9 @@
-export {};
+import { pathToFileURL } from "node:url";
+import { setTimeout as delay } from "node:timers/promises";
+import {
+  parseArgs as parseNodeArgs,
+  stripVTControlCharacters,
+} from "node:util";
 
 type CliOptions = {
   apiBaseUrl: string;
@@ -38,92 +43,132 @@ const DEFAULT_SYMBOLS = [
   "AMZN",
   "META",
 ];
-const DEFAULT_API_BASE_URL =
-  process.env["API_BASE_URL"] ?? "http://127.0.0.1:8080/api";
+const DEFAULT_API_BASE_URL = "http://127.0.0.1:8080/api";
 const DEFAULT_DURATION_MS = 6 * 60 * 60 * 1000;
 const DEFAULT_POLL_INTERVAL_MS = 60_000;
 const DEFAULT_GAP_THRESHOLD_MS = 5_000;
 const DEFAULT_STALL_THRESHOLD_MS = 30_000;
 const DEFAULT_REQUEST_TIMEOUT_MS = 10_000;
+const MAX_JSON_RESPONSE_BYTES = 1024 * 1024;
+const MAX_SSE_BUFFER_BYTES = 1024 * 1024;
+const MAX_TIMER_DELAY_MS = 2_147_483_647;
+const MAX_LOG_STRING_LENGTH = 1_000;
+const UNSAFE_OUTPUT_PATTERN =
+  /[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/gu;
+const SYMBOL_PATTERN = /^[A-Z0-9][A-Z0-9./_-]{0,63}$/u;
+const USAGE =
+  "Usage: pnpm --filter @workspace/scripts run ibkr:soak -- [--api-base-url=HTTP_URL] [--symbols=SYMBOLS] [--duration-ms=POSITIVE_INTEGER] [--poll-interval-ms=POSITIVE_INTEGER] [--gap-threshold-ms=POSITIVE_INTEGER] [--stall-threshold-ms=POSITIVE_INTEGER] [--request-timeout-ms=POSITIVE_INTEGER]";
 
-function parseArgs(argv: string[]): CliOptions {
-  const options: CliOptions = {
-    apiBaseUrl: DEFAULT_API_BASE_URL,
-    symbols: DEFAULT_SYMBOLS,
-    durationMs: DEFAULT_DURATION_MS,
-    pollIntervalMs: DEFAULT_POLL_INTERVAL_MS,
-    gapThresholdMs: DEFAULT_GAP_THRESHOLD_MS,
-    stallThresholdMs: DEFAULT_STALL_THRESHOLD_MS,
-    requestTimeoutMs: DEFAULT_REQUEST_TIMEOUT_MS,
-  };
+function parseArgs(
+  argv: string[],
+  env: NodeJS.ProcessEnv = process.env,
+): CliOptions {
+  const args = argv[0] === "--" ? argv.slice(1) : argv;
+  try {
+    const parsed = parseNodeArgs({
+      args,
+      allowPositionals: false,
+      strict: true,
+      tokens: true,
+      options: {
+        "api-base-url": { type: "string" },
+        symbols: { type: "string" },
+        "duration-ms": { type: "string" },
+        "poll-interval-ms": { type: "string" },
+        "gap-threshold-ms": { type: "string" },
+        "stall-threshold-ms": { type: "string" },
+        "request-timeout-ms": { type: "string" },
+      },
+    });
+    const counts = new Map<string, number>();
+    for (const token of parsed.tokens) {
+      if (token.kind !== "option") continue;
+      counts.set(token.name, (counts.get(token.name) ?? 0) + 1);
+    }
+    if ([...counts.values()].some((count) => count > 1)) {
+      throw new Error("Duplicate options are not allowed.");
+    }
 
-  for (let index = 0; index < argv.length; index += 1) {
-    const token = argv[index];
-    const next = argv[index + 1];
-
-    if (token === "--api-base-url" && next) {
-      options.apiBaseUrl = next;
-      index += 1;
-      continue;
-    }
-    if (token === "--symbols" && next) {
-      options.symbols = normalizeSymbols(next.split(","));
-      index += 1;
-      continue;
-    }
-    if (token === "--duration-ms" && next) {
-      options.durationMs = parsePositiveInteger(next, options.durationMs);
-      index += 1;
-      continue;
-    }
-    if (token === "--poll-interval-ms" && next) {
-      options.pollIntervalMs = parsePositiveInteger(next, options.pollIntervalMs);
-      index += 1;
-      continue;
-    }
-    if (token === "--gap-threshold-ms" && next) {
-      options.gapThresholdMs = parsePositiveInteger(next, options.gapThresholdMs);
-      index += 1;
-      continue;
-    }
-    if (token === "--stall-threshold-ms" && next) {
-      options.stallThresholdMs = parsePositiveInteger(
-        next,
-        options.stallThresholdMs,
-      );
-      index += 1;
-      continue;
-    }
-    if (token === "--request-timeout-ms" && next) {
-      options.requestTimeoutMs = parsePositiveInteger(
-        next,
-        options.requestTimeoutMs,
-      );
-      index += 1;
-      continue;
-    }
+    return {
+      apiBaseUrl: parseApiBaseUrl(
+        parsed.values["api-base-url"] ??
+          env["API_BASE_URL"] ??
+          DEFAULT_API_BASE_URL,
+      ),
+      symbols:
+        parsed.values.symbols === undefined
+          ? [...DEFAULT_SYMBOLS]
+          : parseSymbols(parsed.values.symbols),
+      durationMs: parsePositiveInteger(
+        "duration-ms",
+        parsed.values["duration-ms"],
+        DEFAULT_DURATION_MS,
+      ),
+      pollIntervalMs: parsePositiveInteger(
+        "poll-interval-ms",
+        parsed.values["poll-interval-ms"],
+        DEFAULT_POLL_INTERVAL_MS,
+      ),
+      gapThresholdMs: parsePositiveInteger(
+        "gap-threshold-ms",
+        parsed.values["gap-threshold-ms"],
+        DEFAULT_GAP_THRESHOLD_MS,
+      ),
+      stallThresholdMs: parsePositiveInteger(
+        "stall-threshold-ms",
+        parsed.values["stall-threshold-ms"],
+        DEFAULT_STALL_THRESHOLD_MS,
+      ),
+      requestTimeoutMs: parsePositiveInteger(
+        "request-timeout-ms",
+        parsed.values["request-timeout-ms"],
+        DEFAULT_REQUEST_TIMEOUT_MS,
+      ),
+    };
+  } catch (error) {
+    throw new Error(`${USAGE}\n${rawErrorMessage(error)}`);
   }
-
-  if (!options.symbols.length) {
-    options.symbols = DEFAULT_SYMBOLS;
-  }
-
-  return options;
 }
 
-function normalizeSymbols(symbols: string[]): string[] {
-  return Array.from(
-    new Set(
-      symbols
-        .map((symbol) => symbol.trim().toUpperCase())
-        .filter(Boolean),
-    ),
-  );
+function parseApiBaseUrl(raw: string): string {
+  const url = new URL(raw);
+  if (
+    (url.protocol !== "http:" && url.protocol !== "https:") ||
+    url.username ||
+    url.password ||
+    url.search ||
+    url.hash
+  ) {
+    throw new Error(
+      "--api-base-url must be a credential-free HTTP(S) URL without a query or fragment.",
+    );
+  }
+  url.pathname = url.pathname.replace(/\/+$/u, "") || "/";
+  return url.toString().replace(/\/$/u, "");
 }
 
-function parsePositiveInteger(raw: string, fallback: number): number {
+function parseSymbols(raw: string): string[] {
+  const values = raw.split(",").map((symbol) => symbol.trim().toUpperCase());
+  if (!values.length || values.some((symbol) => !SYMBOL_PATTERN.test(symbol))) {
+    throw new Error("--symbols must contain valid comma-separated symbols.");
+  }
+  return [...new Set(values)];
+}
+
+function parsePositiveInteger(
+  name: string,
+  raw: string | undefined,
+  fallback: number,
+): number {
+  if (raw === undefined) return fallback;
+  if (!/^[1-9]\d*$/u.test(raw)) {
+    throw new Error(`--${name} must be a canonical positive integer.`);
+  }
   const value = Number(raw);
-  return Number.isFinite(value) && value > 0 ? Math.round(value) : fallback;
+  if (!Number.isSafeInteger(value) || value > MAX_TIMER_DELAY_MS) {
+    throw new Error(`--${name} is outside the supported range.`);
+  }
+  return value;
 }
 
 function buildUrl(
@@ -148,12 +193,33 @@ function buildUrl(
 
 function log(type: string, payload: JsonRecord = {}): void {
   process.stdout.write(
-    `${JSON.stringify({ at: new Date().toISOString(), type, ...payload })}\n`,
+    `${JSON.stringify(
+      { at: new Date().toISOString(), type, ...payload },
+      (_key, value) => (typeof value === "string" ? safeText(value) : value),
+    )}\n`,
   );
 }
 
+function rawErrorMessage(error: unknown): string {
+  return error instanceof Error && error.message
+    ? error.message
+    : String(error);
+}
+
+function safeText(value: unknown): string {
+  const withoutCredentials = String(value ?? "")
+    .replace(/([a-z][a-z0-9+.-]*:\/\/)[^@\s]+@/giu, "$1[redacted]@")
+    .replace(/\s+/gu, " ");
+  const cleaned = stripVTControlCharacters(withoutCredentials)
+    .replace(UNSAFE_OUTPUT_PATTERN, " ")
+    .replace(/\s+/gu, " ")
+    .trim();
+  if (cleaned.length <= MAX_LOG_STRING_LENGTH) return cleaned;
+  return `${cleaned.slice(0, MAX_LOG_STRING_LENGTH - 1)}…`;
+}
+
 function errorMessage(error: unknown): string {
-  return error instanceof Error && error.message ? error.message : String(error);
+  return safeText(rawErrorMessage(error)) || "Unknown soak error";
 }
 
 function asRecord(value: unknown): JsonRecord {
@@ -211,7 +277,9 @@ function parseSseBlock(block: string): { event: string; data: string } | null {
   return { event, data: data.join("\n") };
 }
 
-function findSseBoundary(buffer: string): { index: number; length: number } | null {
+function findSseBoundary(
+  buffer: string,
+): { index: number; length: number } | null {
   const lf = buffer.indexOf("\n\n");
   const crlf = buffer.indexOf("\r\n\r\n");
 
@@ -241,41 +309,39 @@ function payloadItemCount(data: string, eventName: string): number {
   }
 }
 
-function wait(ms: number, signal: AbortSignal): Promise<void> {
-  return new Promise((resolve) => {
-    if (signal.aborted) {
-      resolve();
-      return;
-    }
-    const timer = setTimeout(resolve, ms);
-    const cleanup = () => {
-      clearTimeout(timer);
-      resolve();
-    };
-    signal.addEventListener("abort", cleanup, { once: true });
-  });
+async function wait(ms: number, signal: AbortSignal): Promise<void> {
+  if (signal.aborted) return;
+  try {
+    await delay(ms, undefined, { signal });
+  } catch (error) {
+    if (!signal.aborted) throw error;
+  }
 }
 
-function abortAfter(controller: AbortController, ms: number): void {
+function abortAfter(controller: AbortController, ms: number): () => void {
   const timer = setTimeout(() => controller.abort(), ms);
   timer.unref?.();
+  return () => clearTimeout(timer);
 }
 
 async function requestJson(
   name: string,
   url: URL,
   timeoutMs: number,
+  parentSignal?: AbortSignal,
 ): Promise<JsonRecord> {
-  const controller = new AbortController();
-  abortAfter(controller, timeoutMs);
+  const timeoutSignal = AbortSignal.timeout(timeoutMs);
+  const signal = parentSignal
+    ? AbortSignal.any([parentSignal, timeoutSignal])
+    : timeoutSignal;
   const startedAt = performance.now();
 
   try {
     const response = await fetch(url, {
       headers: { Accept: "application/json" },
-      signal: controller.signal,
+      signal,
     });
-    const text = await response.text();
+    const text = await readResponseText(response, MAX_JSON_RESPONSE_BYTES);
     const ms = Math.round(performance.now() - startedAt);
     const base = {
       name,
@@ -284,27 +350,13 @@ async function requestJson(
       ms,
       bytes: Buffer.byteLength(text),
       headers: {
-        cache:
-          response.headers.get("x-pyrus-cache-status") ??
-          response.headers.get("x-pyrus-cache-status"),
-        requestMs:
-          response.headers.get("x-pyrus-request-ms") ??
-          response.headers.get("x-pyrus-request-ms"),
-        upstreamMs:
-          response.headers.get("x-pyrus-upstream-ms") ??
-          response.headers.get("x-pyrus-upstream-ms"),
-        gapFilled:
-          response.headers.get("x-pyrus-gap-filled") ??
-          response.headers.get("x-pyrus-gap-filled"),
-        degraded:
-          response.headers.get("x-pyrus-degraded") ??
-          response.headers.get("x-pyrus-degraded"),
-        degradedReason:
-          response.headers.get("x-pyrus-degraded-reason") ??
-          response.headers.get("x-pyrus-degraded-reason"),
-        stale:
-          response.headers.get("x-pyrus-cache-stale") ??
-          response.headers.get("x-pyrus-cache-stale"),
+        cache: response.headers.get("x-pyrus-cache-status"),
+        requestMs: response.headers.get("x-pyrus-request-ms"),
+        upstreamMs: response.headers.get("x-pyrus-upstream-ms"),
+        gapFilled: response.headers.get("x-pyrus-gap-filled"),
+        degraded: response.headers.get("x-pyrus-degraded"),
+        degradedReason: response.headers.get("x-pyrus-degraded-reason"),
+        stale: response.headers.get("x-pyrus-cache-stale"),
       },
     };
 
@@ -323,11 +375,51 @@ async function requestJson(
   }
 }
 
+async function readResponseText(
+  response: Response,
+  maxBytes: number,
+): Promise<string> {
+  const contentLength = Number(response.headers.get("content-length"));
+  if (Number.isFinite(contentLength) && contentLength > maxBytes) {
+    await response.body?.cancel();
+    throw new Error(`JSON response exceeded the ${maxBytes}-byte limit.`);
+  }
+  if (!response.body) return "";
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let bytes = 0;
+  let text = "";
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      bytes += value.byteLength;
+      if (bytes > maxBytes) {
+        await reader.cancel();
+        throw new Error(`JSON response exceeded the ${maxBytes}-byte limit.`);
+      }
+      text += decoder.decode(value, { stream: true });
+    }
+    return text + decoder.decode();
+  } finally {
+    reader.releaseLock();
+  }
+}
+
 function summarizeRuntime(data: unknown): JsonRecord {
   const ibkr = readPath(data, ["ibkr"]);
-  const bridgeQuote = readPath(data, ["ibkr", "bridgeDiagnostics", "subscriptions"]);
+  const bridgeQuote = readPath(data, [
+    "ibkr",
+    "bridgeDiagnostics",
+    "subscriptions",
+  ]);
   const streamBridgeQuote = readPath(data, ["ibkr", "streams", "bridgeQuote"]);
-  const stockAggregates = readPath(data, ["ibkr", "streams", "stockAggregates"]);
+  const stockAggregates = readPath(data, [
+    "ibkr",
+    "streams",
+    "stockAggregates",
+  ]);
   const governor = readPath(data, ["ibkr", "governor"]);
   const scheduler = readPath(data, ["ibkr", "bridgeDiagnostics", "scheduler"]);
 
@@ -484,8 +576,9 @@ function summarizeQuoteSnapshot(data: unknown): JsonRecord {
     .filter((age): age is number => age !== null);
   return {
     quoteCount: quoteRecords.length,
-    delayedCount: quoteRecords.filter((quote) => readPath(quote, ["delayed"]) === true)
-      .length,
+    delayedCount: quoteRecords.filter(
+      (quote) => readPath(quote, ["delayed"]) === true,
+    ).length,
     maxFreshnessAgeMs: ages.length ? Math.max(...ages) : null,
   };
 }
@@ -513,65 +606,94 @@ async function monitorSse(input: {
   signal: AbortSignal;
   gapThresholdMs: number;
   stallThresholdMs: number;
+  requestTimeoutMs?: number;
+  emit?: typeof log;
 }): Promise<void> {
-  const decoder = new TextDecoder();
+  const emit = input.emit ?? log;
   let lastStallBucket = 0;
+  let connectionAttempts = 0;
 
   while (!input.signal.aborted) {
-    input.stats.reconnects += 1;
+    connectionAttempts += 1;
+    if (connectionAttempts > 1) input.stats.reconnects += 1;
     const controller = new AbortController();
     const relayAbort = () => controller.abort();
     input.signal.addEventListener("abort", relayAbort, { once: true });
+    let stallTimer: NodeJS.Timeout | null = null;
+    const connectTimer = setTimeout(
+      () => controller.abort(),
+      input.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS,
+    );
+    connectTimer.unref?.();
 
     try {
       const response = await fetch(input.url, {
         headers: { Accept: "text/event-stream" },
         signal: controller.signal,
       });
-      log("sse-open", {
+      clearTimeout(connectTimer);
+      emit("sse-open", {
         label: input.stats.label,
         status: response.status,
         ok: response.ok,
         reconnects: input.stats.reconnects,
-        url: input.url.toString(),
+        connectionAttempts,
+        url: `${input.url.origin}${input.url.pathname}`,
       });
 
       if (!response.ok || !response.body) {
         input.stats.errors += 1;
         input.stats.lastError = `HTTP ${response.status}`;
+        await response.body?.cancel();
+        await wait(5_000, input.signal);
+        continue;
+      }
+
+      const mediaType = response.headers
+        .get("content-type")
+        ?.split(";", 1)[0]
+        ?.trim()
+        .toLowerCase();
+      if (mediaType !== "text/event-stream") {
+        input.stats.errors += 1;
+        input.stats.lastError = `Unexpected SSE content type: ${safeText(mediaType ?? "missing")}`;
+        await response.body.cancel();
         await wait(5_000, input.signal);
         continue;
       }
 
       const reader = response.body.getReader();
+      const decoder = new TextDecoder();
       let buffer = "";
+      const connectionOpenedAt = Date.now();
+      lastStallBucket = 0;
+      stallTimer = setInterval(() => {
+        const referenceAt = Math.max(
+          input.stats.lastAt ?? 0,
+          connectionOpenedAt,
+        );
+        const ageMs = Date.now() - referenceAt;
+        const bucket = Math.floor(ageMs / input.stallThresholdMs);
+        if (bucket <= lastStallBucket) return;
+        lastStallBucket = bucket;
+        emit("sse-stall", {
+          label: input.stats.label,
+          ageMs,
+          events: input.stats.events,
+          lastEvent: input.stats.lastEvent,
+        });
+      }, input.stallThresholdMs);
+      stallTimer.unref?.();
 
       while (!input.signal.aborted) {
         const { done, value } = await reader.read();
         if (done) {
-          log("sse-closed", {
+          emit("sse-closed", {
             label: input.stats.label,
             events: input.stats.events,
             gaps: input.stats.gaps,
           });
           break;
-        }
-
-        const now = Date.now();
-        if (
-          input.stats.lastAt !== null &&
-          now - input.stats.lastAt >= input.stallThresholdMs
-        ) {
-          const bucket = Math.floor((now - input.stats.lastAt) / input.stallThresholdMs);
-          if (bucket > lastStallBucket) {
-            lastStallBucket = bucket;
-            log("sse-stall", {
-              label: input.stats.label,
-              ageMs: now - input.stats.lastAt,
-              events: input.stats.events,
-              lastEvent: input.stats.lastEvent,
-            });
-          }
         }
 
         buffer += decoder.decode(value, { stream: true });
@@ -593,7 +715,7 @@ async function monitorSse(input: {
               if (gapMs >= input.gapThresholdMs) {
                 input.stats.gaps += 1;
                 input.stats.lastGapMs = gapMs;
-                log("sse-gap", {
+                emit("sse-gap", {
                   label: input.stats.label,
                   event: message.event,
                   gapMs,
@@ -604,12 +726,15 @@ async function monitorSse(input: {
             }
 
             input.stats.events += 1;
-            input.stats.payloadItems += payloadItemCount(message.data, message.event);
+            input.stats.payloadItems += payloadItemCount(
+              message.data,
+              message.event,
+            );
             input.stats.lastAt = eventAt;
             lastStallBucket = 0;
 
             if (input.stats.events % 1_000 === 0) {
-              log("sse-events", {
+              emit("sse-events", {
                 label: input.stats.label,
                 events: input.stats.events,
                 payloadItems: input.stats.payloadItems,
@@ -621,18 +746,25 @@ async function monitorSse(input: {
 
           boundary = findSseBoundary(buffer);
         }
+        if (Buffer.byteLength(buffer) > MAX_SSE_BUFFER_BYTES) {
+          throw new Error(
+            `SSE buffer exceeded the ${MAX_SSE_BUFFER_BYTES}-byte limit without a message boundary.`,
+          );
+        }
       }
     } catch (error) {
       if (!input.signal.aborted) {
         input.stats.errors += 1;
         input.stats.lastError = errorMessage(error);
-        log("sse-error", {
+        emit("sse-error", {
           label: input.stats.label,
           error: input.stats.lastError,
           errors: input.stats.errors,
         });
       }
     } finally {
+      clearTimeout(connectTimer);
+      if (stallTimer) clearInterval(stallTimer);
       input.signal.removeEventListener("abort", relayAbort);
       controller.abort();
     }
@@ -663,21 +795,25 @@ async function pollLoop(input: {
         "runtime",
         buildUrl(input.options.apiBaseUrl, "diagnostics/runtime"),
         input.options.requestTimeoutMs,
+        input.signal,
       ),
       requestJson(
         "session",
         buildUrl(input.options.apiBaseUrl, "session"),
         input.options.requestTimeoutMs,
+        input.signal,
       ),
       requestJson(
         "diagnostics-latest",
         buildUrl(input.options.apiBaseUrl, "diagnostics/latest"),
         input.options.requestTimeoutMs,
+        input.signal,
       ),
       requestJson(
         "quotes-snapshot",
         buildUrl(input.options.apiBaseUrl, "quotes/snapshot", { symbols }),
         input.options.requestTimeoutMs,
+        input.signal,
       ),
     ]);
 
@@ -770,7 +906,8 @@ async function pollLoop(input: {
       lastRuntimeStockGapCount = stockGapCount;
     }
 
-    const down = connected === false || runtime["ok"] === false || session["ok"] === false;
+    const down =
+      connected === false || runtime["ok"] === false || session["ok"] === false;
     const healthFresh = readPath(runtimeBrief, ["ibkr", "healthFresh"]);
     const runtimeStreamState = readPath(runtimeBrief, ["ibkr", "streamState"]);
     if (
@@ -784,7 +921,10 @@ async function pollLoop(input: {
         connected,
         healthFresh,
         streamState: runtimeStreamState,
-        streamStateReason: readPath(runtimeBrief, ["ibkr", "streamStateReason"]),
+        streamStateReason: readPath(runtimeBrief, [
+          "ibkr",
+          "streamStateReason",
+        ]),
         healthError: readPath(runtimeBrief, ["ibkr", "healthError"]),
         lastError: readPath(runtimeBrief, ["ibkr", "lastError"]),
       });
@@ -819,16 +959,15 @@ async function pollLoop(input: {
 async function main(): Promise<void> {
   const options = parseArgs(process.argv.slice(2));
   const controller = new AbortController();
-  abortAfter(controller, options.durationMs);
+  const clearDurationTimer = abortAfter(controller, options.durationMs);
+  const abort = () => controller.abort();
 
-  process.once("SIGINT", () => controller.abort());
-  process.once("SIGTERM", () => controller.abort());
+  process.once("SIGINT", abort);
+  process.once("SIGTERM", abort);
 
   const symbols = options.symbols.join(",");
-  const streams = [
-    createStreamStats("quotes", "quotes"),
-    createStreamStats("stock-aggregates", "aggregate"),
-  ];
+  const quoteStream = createStreamStats("quotes", "quotes");
+  const streams = [quoteStream];
 
   log("start", {
     apiBaseUrl: options.apiBaseUrl,
@@ -839,23 +978,23 @@ async function main(): Promise<void> {
     stallThresholdMs: options.stallThresholdMs,
   });
 
-  await Promise.all([
-    monitorSse({
-      url: buildUrl(options.apiBaseUrl, "streams/quotes", { symbols }),
-      stats: streams[0],
-      signal: controller.signal,
-      gapThresholdMs: options.gapThresholdMs,
-      stallThresholdMs: options.stallThresholdMs,
-    }),
-    monitorSse({
-      url: buildUrl(options.apiBaseUrl, "streams/stocks/aggregates", { symbols }),
-      stats: streams[1],
-      signal: controller.signal,
-      gapThresholdMs: options.gapThresholdMs,
-      stallThresholdMs: options.stallThresholdMs,
-    }),
-    pollLoop({ options, signal: controller.signal, streams }),
-  ]);
+  try {
+    await Promise.all([
+      monitorSse({
+        url: buildUrl(options.apiBaseUrl, "streams/quotes", { symbols }),
+        stats: quoteStream,
+        signal: controller.signal,
+        gapThresholdMs: options.gapThresholdMs,
+        stallThresholdMs: options.stallThresholdMs,
+        requestTimeoutMs: options.requestTimeoutMs,
+      }),
+      pollLoop({ options, signal: controller.signal, streams }),
+    ]);
+  } finally {
+    clearDurationTimer();
+    process.removeListener("SIGINT", abort);
+    process.removeListener("SIGTERM", abort);
+  }
 
   log("complete", {
     streams: streams.map((stream) => ({
@@ -872,7 +1011,23 @@ async function main(): Promise<void> {
   });
 }
 
-main().catch((error) => {
-  log("fatal", { error: errorMessage(error) });
-  process.exitCode = 1;
-});
+export const __ibkrConnectionSoakInternalsForTests = {
+  buildUrl,
+  createStreamStats,
+  errorMessage,
+  monitorSse,
+  parseArgs,
+  requestJson,
+  summarizeRuntime,
+  wait,
+};
+
+if (
+  process.argv[1] &&
+  import.meta.url === pathToFileURL(process.argv[1]).href
+) {
+  void main().catch((error) => {
+    log("fatal", { error: errorMessage(error) });
+    process.exitCode = 1;
+  });
+}
