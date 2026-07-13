@@ -1142,7 +1142,7 @@ try {
         "[pyrus-dev] REPLIT STARTUP CONFIG CLOBBER DETECTED (recovery-checkpoint signature):",
         ...clobberProblems.map((problem) => `[pyrus-dev]   - ${problem}`),
         `[pyrus-dev] Restore the checked-in canonical config with: ${RESTORE_COMMAND}`,
-        "[pyrus-dev] (diff first with: pnpm run replit:config:restore) — the restore write triggers ONE workspace reload.",
+        "[pyrus-dev] (diff first with: pnpm run replit:config:restore) — staged restore publications may trigger a workspace reload.",
         "".padEnd(76, "!"),
       ].join("\n");
       console.error(banner);

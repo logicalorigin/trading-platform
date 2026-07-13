@@ -63,16 +63,17 @@ directory to define separate Replit app runners.
   startup-config maintenance window.
 - `replit-config-clobber.mjs` detects the platform "Post-Recovery checkpoint"
   clobber signature (deleted `replit.nix`, stripped `[nix]` channel, dropped
-  `postgresql-16` module, dropped `[workflows] runButton`, dropped the
-  `[userenv.development]` sidecar flag, injected stale `[[ports]]` blocks).
+  `postgresql-16` module, dropped `[workflows] runButton`, and changed the
+  configured port mappings).
   Used by the startup guard, the restore script, and the PYRUS dev supervisor
   (warn only — the supervisor never writes `.replit`).
 - `restore-replit-config.mjs` (`pnpm run replit:config:restore`) diffs the live
   `.replit`/`replit.nix` against the checked-in canonical copies in
-  `scripts/replit-config/`; with `-- --write` it restores them in one batch and
-  re-locks. A restore write triggers ONE workspace reload. If the canonical
-  startup config intentionally changes, update `scripts/replit-config/`
-  in the same maintenance window.
+  `scripts/replit-config/`; with `-- --write` it stages both locked replacements
+  before publishing `replit.nix` first and `.replit` second. Each publication
+  may trigger a workspace reload; wait for the workspace to settle before
+  auditing. If the canonical startup config intentionally changes, update
+  `scripts/replit-config/` in the same maintenance window.
 - `check-api-codegen-drift.mjs` regenerates the OpenAPI clients and fails if the
   generated output changes.
 - `check-markdown-paths.mjs` verifies path-like references in maintained docs.

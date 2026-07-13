@@ -1,11 +1,11 @@
 #!/usr/bin/env node
-import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
-  detectReplitConfigClobber,
   tomlRoot,
   tomlSection,
+  validateReplitStartupConfig,
 } from "./replit-config-clobber.mjs";
 
 const repoRoot = path.resolve(
@@ -37,97 +37,16 @@ function check(condition, message) {
 }
 
 const replit = read(".replit");
-const replitRoot = tomlRoot(replit);
-const replitAgent = tomlSection(replit, "agent") ?? "";
-const replitWorkflows = tomlSection(replit, "workflows") ?? "";
 const rootPackage = JSON.parse(read("package.json"));
 const rootScripts = rootPackage.scripts ?? {};
-
-function rootReplitPortMappings(source) {
-  const mappings = [];
-  let current = null;
-  for (const line of source.split(/\r?\n/)) {
-    if (/^\s*\[\[ports\]\]\s*$/.test(line)) {
-      if (current) mappings.push(current);
-      current = {};
-      continue;
-    }
-    if (/^\s*\[/.test(line)) {
-      if (current) mappings.push(current);
-      current = null;
-      continue;
-    }
-    if (!current) continue;
-    const match = line.match(
-      /^\s*(localPort|externalPort|exposeLocalhost)\s*=\s*(.+?)\s*$/,
-    );
-    if (match) current[match[1]] = match[2];
-  }
-  if (current) mappings.push(current);
-  return mappings.map((mapping) => {
-    const normalized = {
-      localPort: Number(mapping.localPort),
-    };
-    if (mapping.externalPort !== undefined) {
-      normalized.externalPort = Number(mapping.externalPort);
-    }
-    if (mapping.exposeLocalhost !== undefined) {
-      normalized.exposeLocalhost = mapping.exposeLocalhost === "true";
-    }
-    return normalized;
-  });
-}
-
-check(
-  /^\s*stack\s*=\s*"PNPM_WORKSPACE"\s*$/m.test(replitAgent),
-  '.replit must keep [agent] stack = "PNPM_WORKSPACE" so the PYRUS web artifact owns app bring-up.',
-);
-check(
-  JSON.stringify(rootReplitPortMappings(replit)) ===
-    JSON.stringify([
-      { localPort: 8080, externalPort: 8080 },
-      { localPort: 18747, externalPort: 3000 },
-    ]),
-  ".replit must expose only the active PYRUS runtime ports: 8080 -> 8080 and 18747 -> 3000. Do not restore stale/generated ports such as 8000, 3002, 3007, 18748, or 18749.",
-);
-check(
-  !/^\s*run\s*=/m.test(replitRoot),
-  ".replit must not define a root run command; use Replit's default Run Replit App entry.",
-);
-check(
-  /^\s*runButton\s*=\s*"artifacts\/pyrus: web"\s*$/m.test(replitWorkflows),
-  '.replit must keep [workflows] runButton = "artifacts/pyrus: web" so the primary Run button targets the single PYRUS app workflow.',
-);
-check(
-  !/^\s*\[\[workflows\.workflow\]\]\s*$/m.test(replit),
-  ".replit must not define repo-tracked workflow tasks; artifact TOMLs are the startup source of truth.",
-);
-check(
-  !/^\s*\[workflows\.workflow\.metadata\]\s*$/m.test(replit) &&
-    !/^\s*task\s*=\s*"workflow\.run"\s*$/m.test(replit) &&
-    !/^\s*args\s*=\s*"Local Postgres"\s*$/m.test(replit) &&
-    !/run-local-postgres\.sh/.test(replit),
-  ".replit must not restore the old Project/Local Postgres workflow body; PYRUS web is the primary Run button target.",
-);
-check(
-  !/^\s*DATABASE_URL\s*=\s*"postgres:\/\/\/dev\?host=\/home\/runner\/workspace\/\.local\/postgres\/run&user=runner"\s*$/m.test(
-    replit,
-  ),
-  ".replit must not force DATABASE_URL to the workspace-local Postgres socket; use Replit's managed PG* env by default.",
-);
-
-// Platform "Post-Recovery checkpoint" clobber signature (2026-07-09 lockout):
-// deleted replit.nix, stripped the [nix] channel, dropped postgresql-16,
-// dropped [workflows] runButton, and injected stale [[ports]] blocks. Fail
-// loudly on any of it.
-for (const problem of detectReplitConfigClobber(repoRoot)) {
-  check(false, `recovery-clobber signature: ${problem}`);
-}
 const nixPath = path.join(repoRoot, "replit.nix");
-check(
-  existsSync(nixPath) && statSync(nixPath).size > 0,
-  "replit.nix must exist and be non-empty; the recovery clobber deletes it and bricks all shells.",
-);
+const replitNix = existsSync(nixPath) ? read("replit.nix") : null;
+for (const problem of validateReplitStartupConfig({
+  replit,
+  nix: replitNix,
+})) {
+  check(false, `startup config: ${problem}`);
+}
 check(
   existsSync(path.join(repoRoot, "scripts/replit-config/dot-replit")) &&
     existsSync(path.join(repoRoot, "scripts/replit-config/replit.nix")) &&

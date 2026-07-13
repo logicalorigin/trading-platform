@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -34,6 +34,21 @@ externalPort = 3000
       detectReplitConfigClobber(root).some((problem) =>
         problem.includes("[nix] channel"),
       ),
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("does not disguise unreadable config paths as recovery clobber", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "replit-clobber-"));
+  try {
+    mkdirSync(path.join(root, ".replit"));
+    writeFileSync(path.join(root, "replit.nix"), "{}\n");
+
+    assert.throws(
+      () => detectReplitConfigClobber(root),
+      (error) => error?.code === "EISDIR",
     );
   } finally {
     rmSync(root, { recursive: true, force: true });
