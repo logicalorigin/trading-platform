@@ -496,6 +496,7 @@ test("submitted IBKR cancellation is claimed once and records terminal outcome",
           },
         ],
       };
+      const orderBodyFingerprint = fingerprintIbkrOrderBody(orderBody);
       const preflight = await createTaxOrderPreflight(
         { order },
         {
@@ -503,7 +504,7 @@ test("submitted IBKR cancellation is claimed once and records terminal outcome",
             version: 1,
             accountId: "U1234567",
             clientOrderId: "cancel-once-intent",
-            orderFingerprint: fingerprintIbkrOrderBody(orderBody),
+            orderFingerprint: orderBodyFingerprint,
             orderBody,
             preparedAt: new Date().toISOString(),
             whatIf: { error: null, warnings: [] },
@@ -518,6 +519,38 @@ test("submitted IBKR cancellation is claimed once and records terminal outcome",
       });
       await recordTaxPreflightOrderSubmitted({
         preflightToken: preflight.preflightToken,
+        submittedOrderId: "1234567890",
+      });
+
+      const replacementOrder = baseOrder({ quantity: 1, limitPrice: 99 });
+      const replacementBody = structuredClone(orderBody);
+      replacementBody.orders[0].price = 99;
+      const replacementPreflight = await createTaxOrderPreflight(
+        { order: replacementOrder },
+        {
+          ibkrPreparedIntent: {
+            version: 2,
+            kind: "replace",
+            orderId: "1234567890",
+            previousOrderFingerprint: orderBodyFingerprint,
+            accountId: "U1234567",
+            clientOrderId: "cancel-once-intent",
+            orderFingerprint: fingerprintIbkrOrderBody(replacementBody),
+            orderBody: replacementBody,
+            preparedAt: new Date().toISOString(),
+            whatIf: { error: null, warnings: [] },
+          },
+        },
+      );
+      await assertTaxPreflightForOrderSubmission({
+        order: replacementOrder,
+        taxPreflightToken: replacementPreflight.preflightToken,
+        requireIbkrPreparedIntent: true,
+        expectedIbkrIntentKind: "replace",
+        expectedBrokerOrderId: "1234567890",
+      });
+      await recordTaxPreflightOrderSubmitted({
+        preflightToken: replacementPreflight.preflightToken,
         submittedOrderId: "1234567890",
       });
 

@@ -1373,6 +1373,19 @@ export async function claimSubmittedIbkrOrderCancellation(input: {
       .from(taxPreflightChecksTable)
       .where(eq(taxPreflightChecksTable.appUserId, appUserId))
       .orderBy(desc(taxPreflightChecksTable.updatedAt));
+    const priorAttempt = preflights.some((preflight) => {
+      if (preflight.accountId !== accountId) return false;
+      const cancellation = readJsonRecord(
+        readJsonRecord(preflight.metadata).ibkrCancellation,
+      );
+      return cancellation.orderId === submittedOrderId;
+    });
+    if (priorAttempt) {
+      throw new HttpError(409, "Cancellation was already requested for this IBKR order.", {
+        code: "ibkr_cancel_already_requested",
+        expose: true,
+      });
+    }
     const target = preflights.find(
       (preflight) =>
         preflight.accountId === accountId &&
@@ -1380,22 +1393,11 @@ export async function claimSubmittedIbkrOrderCancellation(input: {
         Boolean(readJsonRecord(preflight.metadata).ibkrPreparedIntent),
     );
     if (!target) {
-      const priorAttempt = preflights.some((preflight) => {
-        if (preflight.accountId !== accountId) return false;
-        const cancellation = readJsonRecord(
-          readJsonRecord(preflight.metadata).ibkrCancellation,
-        );
-        return cancellation.orderId === submittedOrderId;
-      });
       throw new HttpError(
         409,
-        priorAttempt
-          ? "Cancellation was already requested for this IBKR order."
-          : "A tracked IBKR order intent is required for cancellation.",
+        "A tracked IBKR order intent is required for cancellation.",
         {
-          code: priorAttempt
-            ? "ibkr_cancel_already_requested"
-            : "ibkr_cancel_intent_required",
+          code: "ibkr_cancel_intent_required",
           expose: true,
         },
       );
