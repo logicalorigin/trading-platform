@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import type { PlaceOrderInput } from "@workspace/ibkr-contracts";
 
@@ -27,6 +28,8 @@ const rejectsWithCode = (code: string) => (error: unknown): boolean => {
   assert.equal((error as { code?: string }).code, code);
   return true;
 };
+
+const platformSource = readFileSync(new URL("./platform.ts", import.meta.url), "utf8");
 
 test("IBKR structured broker submission rejects shadow mode before tax preflight", async () => {
   await runAsAppUser("tax-platform-structured", async () => {
@@ -88,5 +91,14 @@ test("IBKR broker-backed preview rejects shadow mode before any provider call", 
   await assert.rejects(
     previewOrder(baseIbkrOrder()),
     rejectsWithCode("ibkr_order_preview_live_mode_required"),
+  );
+});
+
+test("prepared IBKR mutations remain bound to one owned gateway lifecycle", () => {
+  assert.match(platformSource, /getControlledIbkrOrderLifecycle\(\)/);
+  assert.match(platformSource, /gatewaySnapshot = assertIbkrClientPortalGatewaySnapshot\(\)/);
+  assert.equal(
+    platformSource.match(/assertPreparedIbkrGatewayBinding\(/g)?.length,
+    4,
   );
 });

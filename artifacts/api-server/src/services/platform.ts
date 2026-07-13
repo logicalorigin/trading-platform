@@ -55,6 +55,7 @@ import {
   claimSubmittedIbkrOrderCancellation,
   claimTaxPreflightIbkrReply,
   createTaxOrderPreflight,
+  getControlledIbkrOrderLifecycle,
   loadSubmittedIbkrPreparedOrderIntent,
   recordTaxPreflightIbkrReconciliationRequired,
   recordTaxPreflightIbkrReplyRequired,
@@ -88,7 +89,10 @@ import {
   choosePositionQuote,
   positionReferenceSymbol,
 } from "./account-position-model";
-import { getIbkrClientPortalClient } from "./ibkr-client-runtime";
+import {
+  assertIbkrClientPortalGatewaySnapshot,
+  getIbkrClientPortalClient,
+} from "./ibkr-client-runtime";
 import {
   MassiveMarketDataClient,
   computeUnusualMetrics,
@@ -3899,6 +3903,18 @@ type PlaceOrderTaxPreflightFields = {
   taxAcknowledgements?: string[] | null;
 };
 
+function assertPreparedIbkrGatewayBinding(
+  intent: IbkrPreparedOrderIntent,
+): void {
+  if (!intent.gatewaySnapshot) {
+    throw new HttpError(409, "The prepared IBKR gateway binding is unavailable.", {
+      code: "ibkr_order_gateway_binding_required",
+      expose: true,
+    });
+  }
+  assertIbkrClientPortalGatewaySnapshot(intent.gatewaySnapshot);
+}
+
 export async function placeOrder(input: PlaceOrderInput) {
   assertLiveOrderConfirmed(input.mode, input.confirm);
   if ((input as PlaceOrderInput & { source?: unknown }).source === "automation") {
@@ -3931,6 +3947,19 @@ export async function placeOrder(input: PlaceOrderInput) {
     throw new HttpError(409, "A prepared IBKR order intent is required.", {
       code: "ibkr_order_intent_required",
       expose: true,
+    });
+  }
+  try {
+    assertPreparedIbkrGatewayBinding(preparedIntent);
+  } catch (error) {
+    await recordTaxPreflightIbkrReconciliationRequired({
+      preflightToken: taxPreflight.preflightToken,
+      reason: "prepared_gateway_changed_before_place",
+    });
+    throw new HttpError(409, "IBKR order submission requires reconciliation.", {
+      code: "ibkr_order_submission_reconciliation_required",
+      expose: true,
+      cause: error,
     });
   }
   let order: BrokerOrderSnapshot & {
@@ -4052,6 +4081,10 @@ export async function continueIbkrOrderReply(input: {
   const client = getIbkrClientPortalClient();
   let result: Awaited<ReturnType<typeof client.replyOrderWarning>>;
   try {
+    // IBKR requires the warning reply to be the very next broker request. Check
+    // the locally owned gateway identity and short-lived challenge instead of
+    // inserting an auth/accounts request before /iserver/reply.
+    assertPreparedIbkrGatewayBinding(preparedIntent);
     result = await client.replyOrderWarning({
       replyId: claimed.replyId,
       confirmed: input.confirmed,
@@ -4202,12 +4235,29 @@ export async function previewOrder(input: PlaceOrderInput) {
     );
   }
   assertControlledIbkrManualEquityOrder(input);
+  const controlledLifecycle = await getControlledIbkrOrderLifecycle();
+  if (controlledLifecycle.status !== "none") {
+    throw new HttpError(
+      409,
+      controlledLifecycle.status === "active"
+        ? "Finish or cancel the existing controlled IBKR order before preparing another."
+        : "The prior controlled IBKR order requires reconciliation.",
+      {
+        code:
+          controlledLifecycle.status === "active"
+            ? "ibkr_controlled_order_active"
+            : "ibkr_order_reconciliation_required",
+        expose: true,
+      },
+    );
+  }
   const client = getIbkrClientPortalClient();
   const preparedInput = {
     ...input,
     clientOrderId: input.clientOrderId?.trim() || randomUUID(),
   };
   await assertIbkrGatewayTradingAvailable(preparedInput.accountId);
+  const gatewaySnapshot = assertIbkrClientPortalGatewaySnapshot();
   await validateOrderIntentForRouting(preparedInput, client);
   const preview = await client.previewOrder(preparedInput);
   if (preview.whatIf.error) {
@@ -4226,6 +4276,7 @@ export async function previewOrder(input: PlaceOrderInput) {
     orderBody: { orders: [preview.orderPayload] },
     preparedAt,
     whatIf: preview.whatIf,
+    gatewaySnapshot,
   };
   const taxPreflight = await createTaxOrderPreflight(
     { order: ibkrOrderToTaxOrder(preparedInput, { taxMode: "live" }) },
@@ -4269,6 +4320,7 @@ export async function previewOrderReplacement(input: {
     });
   }
   await assertIbkrGatewayTradingAvailable(input.accountId);
+  const gatewaySnapshot = assertIbkrClientPortalGatewaySnapshot();
   const previousIntent = await loadSubmittedIbkrPreparedOrderIntent({
     accountId: input.accountId,
     submittedOrderId: input.orderId,
@@ -4300,6 +4352,7 @@ export async function previewOrderReplacement(input: {
     orderBody: { orders: [preview.orderPayload] },
     preparedAt,
     whatIf: preview.whatIf,
+    gatewaySnapshot,
   };
   const preparedOrder = preparedIbkrEquityOrderInput(ibkrPreparedIntent);
   const taxPreflight = await createTaxOrderPreflight(
@@ -4410,6 +4463,7 @@ export async function replaceOrder(input: {
   const client = getIbkrClientPortalClient();
   let result: Awaited<ReturnType<typeof client.replacePreparedOrder>>;
   try {
+    assertPreparedIbkrGatewayBinding(replacementIntent);
     result = await client.replacePreparedOrder({
       accountId: input.accountId,
       orderId: input.orderId,
@@ -4494,8 +4548,6 @@ export async function cancelOrder(input: {
   orderId: string;
   mode?: "shadow" | "live" | null;
   confirm?: boolean | null;
-  manualIndicator?: boolean | null;
-  extOperator?: string | null;
 }) {
   const mode = requireExplicitOrderActionMode(input.mode, "Order cancellation");
   assertLiveOrderConfirmed(mode, input.confirm);
@@ -4507,7 +4559,8 @@ export async function cancelOrder(input: {
   const client = getIbkrClientPortalClient();
   try {
     const result = await client.cancelOrder({
-      ...input,
+      accountId: input.accountId,
+      orderId: input.orderId,
       mode,
     });
     await recordSubmittedIbkrOrderCancellation({
