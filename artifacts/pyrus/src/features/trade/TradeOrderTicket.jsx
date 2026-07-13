@@ -7,11 +7,17 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   getGetSnapTradeAccountPortfolioQueryKey,
   getGetSnapTradeRecentOrdersQueryKey,
+  useCancelOrder,
   useCheckSnapTradeEquityOrderImpact,
+  useContinueIbkrOrderReply,
   useCreateTaxOrderPreflight,
+  useGetIbkrPortalReadiness,
   useGetSchwabReadiness,
+  useListOrders,
   usePlaceOrder,
   usePreviewOrder,
+  usePreviewOrderReplacement,
+  useReplaceOrder,
   useGetSnapTradeRecentOrders,
   useSearchSnapTradeAccountSymbols,
   useSubmitSnapTradeEquityOrder,
@@ -85,6 +91,18 @@ import {
   reviewBrokerOptionOrderRequest,
 } from "./brokerOptionOrderRequests.js";
 import {
+  buildManualIbkrEquityOrderRequest,
+  buildPreparedIbkrEquityOrderSubmission,
+  buildPreparedIbkrReplacementPreview,
+  buildPreparedIbkrReplacementSubmission,
+  ibkrCancelToast,
+  ibkrLifecycleRequiresReconciliation,
+  isIbkrOrderRejected,
+  isIbkrLiveReadinessReady,
+  readIbkrOrderWarning,
+  resolveExplicitIbkrAccount,
+} from "./ibkrLiveEquityOrderModel.js";
+import {
   CSS_COLOR,
   cssColorAlpha,
   cssColorMix,
@@ -113,6 +131,12 @@ const TRADE_BUY_TONE = toneForDirectionalIntent("buy");
 const TRADE_SELL_TONE = toneForDirectionalIntent("sell");
 const toneForOrderSide = (side) =>
   toneForDirectionalIntent(side, TRADE_BUY_TONE);
+const IBKR_TERMINAL_ORDER_STATUSES = new Set([
+  "filled",
+  "canceled",
+  "rejected",
+  "expired",
+]);
 
 export const resolveIbkrLiveSubmitBlock = ({
   brokerConfigured,
@@ -384,9 +408,32 @@ export const TradeOrderTicket = ({
   const [ticketAssetMode, setTicketAssetMode] = useState("option");
   const [equityBroker, setEquityBroker] = useState("snaptrade");
   const [optionBroker, setOptionBroker] = useState("ibkr");
+  const [selectedIbkrAccountId, setSelectedIbkrAccountId] = useState("");
   const [selectedRobinhoodAccountId, setSelectedRobinhoodAccountId] =
     useState("");
   const [selectedSchwabAccountId, setSelectedSchwabAccountId] = useState("");
+  const ibkrReadinessQuery = useGetIbkrPortalReadiness({
+    query: {
+      enabled:
+        normalizeTicketAssetMode(ticketAssetMode) === "equity" &&
+        equityBroker === "ibkr",
+      staleTime: 5_000,
+      retry: false,
+    },
+  });
+  const ibkrExecutionAccounts = ibkrReadinessQuery.data?.executionTargets || [];
+  const selectedIbkrAccount = resolveExplicitIbkrAccount(
+    ibkrExecutionAccounts,
+    selectedIbkrAccountId,
+  );
+  const inheritedIbkrAccount = resolveExplicitIbkrAccount(
+    ibkrExecutionAccounts,
+    accountId,
+  );
+  const ibkrLiveReadinessReady = isIbkrLiveReadinessReady(
+    ibkrReadinessQuery.data,
+    selectedIbkrAccount,
+  );
   const normalizedTicketAssetMode = normalizeTicketAssetMode(ticketAssetMode);
   const ticketIsShares = normalizedTicketAssetMode === "equity";
   const ticketIsOptions = !ticketIsShares;
@@ -619,7 +666,9 @@ export const TradeOrderTicket = ({
           ? robinhoodAccountReady
           : liveBrokerRoute === "schwab"
             ? schwabAccountReady
-          : snapTradeAccountReady) && slot.ticker,
+            : liveBrokerRoute === "ibkr"
+              ? ibkrLiveReadinessReady
+              : snapTradeAccountReady) && slot.ticker,
       )
     : optionBroker === "ibkr"
       ? Boolean(accountId && selectedContractMeta && expInfo.actualDate)
@@ -636,13 +685,34 @@ export const TradeOrderTicket = ({
       onSuccess: (order) => {
         queryClient.invalidateQueries({ queryKey: ["/api/orders"] });
         queryClient.invalidateQueries({ queryKey: ["/api/positions"] });
+        if (liveUsesIbkrEquity) {
+          setActiveIbkrOrder({
+            ...order,
+            reconciliationRequired: ibkrLifecycleRequiresReconciliation(
+              "place",
+              order,
+            ),
+          });
+          setReplacementLimitPrice(order.limitPrice ?? "");
+          setPreviewSnapshot(null);
+          setIbkrCancelAttempted(false);
+          setIbkrReplacementLocked(false);
+        }
+        const placementConfirmed =
+          !liveUsesIbkrEquity ||
+          !ibkrLifecycleRequiresReconciliation("place", order);
         toast.push({
-          kind: "success",
-          title: `Submitted ${ticketInstrumentLabel}`,
-          body: `${order.quantity} × ${order.type.toUpperCase()} · ${order.status.toUpperCase()} · ${order.id}`,
+          kind: placementConfirmed ? "success" : "warn",
+          title: placementConfirmed
+            ? `Submitted ${ticketInstrumentLabel}`
+            : "Placement requires reconciliation",
+          body: placementConfirmed
+            ? `${order.quantity} × ${order.type.toUpperCase()} · ${order.status.toUpperCase()}`
+            : "Stop here and reconcile the broker order before any further action.",
         });
       },
       onError: (error) => {
+        if (readIbkrOrderWarning(error)) return;
         toast.push({
           kind: "error",
           title: "Order rejected",
@@ -651,6 +721,10 @@ export const TradeOrderTicket = ({
       },
     },
   });
+  const continueIbkrOrderReplyMutation = useContinueIbkrOrderReply();
+  const previewOrderReplacementMutation = usePreviewOrderReplacement();
+  const replaceOrderMutation = useReplaceOrder();
+  const cancelOrderMutation = useCancelOrder();
   const submitOrdersMutation = useSubmitOrders({
     mutation: {
       onSuccess: (result) => {
@@ -705,6 +779,11 @@ export const TradeOrderTicket = ({
     },
   });
   const [previewSnapshot, setPreviewSnapshot] = useState(null);
+  const [activeIbkrOrder, setActiveIbkrOrder] = useState(null);
+  const [replacementLimitPrice, setReplacementLimitPrice] = useState("");
+  const [ibkrSubmitLocked, setIbkrSubmitLocked] = useState(false);
+  const [ibkrReplacementLocked, setIbkrReplacementLocked] = useState(false);
+  const [ibkrCancelAttempted, setIbkrCancelAttempted] = useState(false);
   const [shadowExposureAcknowledged, setShadowExposureAcknowledged] =
     useState(false);
   const recordAutomationDeviationMutation = useMutation({
@@ -730,6 +809,13 @@ export const TradeOrderTicket = ({
     mutation: {
       onSuccess: (preview, variables) => {
         setPreviewSnapshot(preview);
+        if (liveUsesIbkrEquity) {
+          setTaxPreflightState(preview.taxPreflight || null);
+          setIbkrSubmitLocked(false);
+          setIbkrReplacementLocked(false);
+          setIbkrCancelAttempted(false);
+          setActiveIbkrOrder(null);
+        }
         const deviation = automationTicketContext
           ? buildSignalOptionsDeviation(
               automationTicketContext,
@@ -742,7 +828,9 @@ export const TradeOrderTicket = ({
         toast.push({
           kind: "success",
           title: "IBKR preview ready",
-          body: `${preview.symbol} · ${ticketIsShares ? "stock" : "contract"} ${preview.resolvedContractId} · ${preview.accountId}`,
+          body: liveUsesIbkrEquity
+            ? `${preview.symbol} · 1 share · LMT DAY · regular hours`
+            : `${preview.symbol} · ${ticketIsShares ? "stock" : "contract"} ${preview.resolvedContractId}`,
         });
       },
       onError: (error) => {
@@ -880,8 +968,49 @@ export const TradeOrderTicket = ({
     !executionIsShadow && ticketIsShares && liveBrokerRoute === "robinhood";
   const liveUsesSchwab =
     !executionIsShadow && ticketIsShares && liveBrokerRoute === "schwab";
+  const liveUsesIbkrEquity =
+    !executionIsShadow && ticketIsShares && liveBrokerRoute === "ibkr";
   const liveUsesBrokerOption =
     !executionIsShadow && ticketIsOptions && optionBroker !== "ibkr";
+  const activeIbkrOrdersQuery = useListOrders(
+    { accountId: selectedIbkrAccount?.accountId, mode: "live" },
+    {
+      query: {
+        enabled: Boolean(liveUsesIbkrEquity && activeIbkrOrder?.id),
+        staleTime: 1_000,
+        refetchInterval: activeIbkrOrder?.id ? 2_000 : false,
+        retry: false,
+      },
+    },
+  );
+  const queriedIbkrOrder = (activeIbkrOrdersQuery.data?.orders || []).find(
+    (order) => order.id === activeIbkrOrder?.id,
+  );
+  const trackedIbkrOrder = queriedIbkrOrder
+    ? {
+        ...activeIbkrOrder,
+        ...queriedIbkrOrder,
+        reconciliationRequired: Boolean(
+          activeIbkrOrder?.reconciliationRequired ||
+            queriedIbkrOrder.reconciliationRequired,
+        ),
+      }
+    : activeIbkrOrder;
+  const trackedIbkrOrderStatus = String(
+    trackedIbkrOrder?.status || "pending_submit",
+  ).toLowerCase();
+  const trackedIbkrOrderTerminal = IBKR_TERMINAL_ORDER_STATUSES.has(
+    trackedIbkrOrderStatus,
+  );
+  const trackedIbkrOrderRequiresReconciliation = Boolean(
+    trackedIbkrOrder?.reconciliationRequired,
+  );
+  const ibkrLifecyclePending =
+    previewOrderReplacementMutation.isPending ||
+    replaceOrderMutation.isPending ||
+    cancelOrderMutation.isPending ||
+    continueIbkrOrderReplyMutation.isPending;
+  const ibkrWarningDecisionOpen = liveConfirmState?.kind === "ibkr_warning";
   const directOptionCsrfToken = liveUsesBrokerOption
     ? authSession.csrfToken || ""
     : "";
@@ -967,6 +1096,12 @@ export const TradeOrderTicket = ({
       ? schwabAccountReady
         ? "SCHWAB LIVE"
         : "SCHWAB SETUP"
+    : liveUsesIbkrEquity
+      ? ibkrLiveReadinessReady
+        ? "IBKR LIVE"
+        : selectedIbkrAccount
+          ? "IBKR LIVE NOT READY"
+          : "IBKR ACCOUNT REQUIRED"
     : liveUsesBrokerOption
       ? directOptionAccountReady
         ? `${optionBroker.toUpperCase()} LIVE`
@@ -986,10 +1121,12 @@ export const TradeOrderTicket = ({
       ? robinhoodExecutionAccountLabel
     : liveUsesSchwab
       ? schwabExecutionAccountLabel
+    : liveUsesIbkrEquity
+      ? selectedIbkrAccount?.maskedAccountId || "Select an IBKR account"
     : liveUsesBrokerOption
       ? directOptionExecutionAccountLabel
     : brokerConfigured
-      ? accountId || MISSING_VALUE
+      ? inheritedIbkrAccount?.maskedAccountId || "IBKR account"
       : MISSING_VALUE;
   const selectedExecutionColor = executionIsShadow
     ? CSS_COLOR.pink
@@ -1003,6 +1140,10 @@ export const TradeOrderTicket = ({
         : CSS_COLOR.amber
     : liveUsesSchwab
       ? schwabAccountReady
+        ? CSS_COLOR.green
+        : CSS_COLOR.amber
+    : liveUsesIbkrEquity
+      ? ibkrLiveReadinessReady
         ? CSS_COLOR.green
         : CSS_COLOR.amber
     : liveUsesBrokerOption
@@ -1024,7 +1165,7 @@ export const TradeOrderTicket = ({
         : ticketReferencePrice
     : ticketReferencePrice;
   const selectSide = (nextSide) => {
-    setSide(nextSide);
+    setSide(liveUsesIbkrEquity ? "BUY" : nextSide);
     if (ticketIsOptions && slot.cp === "C" && nextSide === "SELL") {
       setOrderType("LMT");
     }
@@ -1038,11 +1179,23 @@ export const TradeOrderTicket = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [requestedNonce, requestedSide]);
   const selectEquityBroker = (broker) => {
-    const nextBroker = ["robinhood", "schwab"].includes(broker)
+    const nextBroker = ["ibkr", "robinhood", "schwab"].includes(broker)
       ? broker
       : "snaptrade";
     setEquityBroker(nextBroker);
     setPreviewSnapshot(null);
+    setTaxPreflightState(null);
+    setIbkrSubmitLocked(
+      nextBroker === "ibkr" && Boolean(activeIbkrOrder?.id),
+    );
+    if (nextBroker === "ibkr") {
+      setSide("BUY");
+      setQty(1);
+      setOrderType("LMT");
+      setTif("DAY");
+      setAttachStopLoss(false);
+      setAttachTakeProfit(false);
+    }
     if (
       (nextBroker === "robinhood" && tif !== "DAY" && tif !== "GTC") ||
       (nextBroker === "schwab" && tif === "IOC")
@@ -1134,6 +1287,7 @@ export const TradeOrderTicket = ({
         <SegmentedControl
           ariaLabel="Equity broker"
           options={[
+            { value: "ibkr", label: "IBKR" },
             { value: "snaptrade", label: "SNAPTRADE" },
             { value: "robinhood", label: "ROBINHOOD" },
             {
@@ -1160,6 +1314,43 @@ export const TradeOrderTicket = ({
           value={optionBroker}
           onChange={selectOptionBroker}
         />
+      ) : null}
+      {liveUsesIbkrEquity ? (
+        <select
+          aria-label="IBKR execution account"
+          value={selectedIbkrAccount?.accountId || ""}
+          disabled={Boolean(
+            trackedIbkrOrder?.id &&
+              (!trackedIbkrOrderTerminal ||
+                trackedIbkrOrderRequiresReconciliation),
+          )}
+          onChange={(event) => {
+            setSelectedIbkrAccountId(event.target.value);
+            setPreviewSnapshot(null);
+            setTaxPreflightState(null);
+            setIbkrSubmitLocked(false);
+            setIbkrReplacementLocked(false);
+            setIbkrCancelAttempted(false);
+            setActiveIbkrOrder(null);
+          }}
+          style={{
+            width: "100%",
+            background: CSS_COLOR.bg1,
+            border: `1px solid ${CSS_COLOR.border}`,
+            borderRadius: dim(RADII.xs),
+            color: CSS_COLOR.textSec,
+            fontFamily: T.sans,
+            fontSize: textSize("body"),
+            padding: sp("5px 7px"),
+          }}
+        >
+          <option value="">Select a live IBKR account</option>
+          {ibkrExecutionAccounts.map((account) => (
+            <option key={account.accountId} value={account.accountId}>
+              {account.maskedAccountId}
+            </option>
+          ))}
+        </select>
       ) : null}
       {robinhoodRouteSelected && robinhoodAccounts.length ? (
         <select
@@ -1314,10 +1505,14 @@ export const TradeOrderTicket = ({
     </>
   );
   const ticketOrderTypes =
-    ticketIsOptions && ["snaptrade", "schwab"].includes(optionBroker)
+    liveUsesIbkrEquity
+      ? ["LMT"]
+      : ticketIsOptions && ["snaptrade", "schwab"].includes(optionBroker)
       ? ["MKT", "LMT"]
       : TICKET_ORDER_TYPES;
-  const ticketTimeInForceOptions = robinhoodRouteSelected
+  const ticketTimeInForceOptions = liveUsesIbkrEquity
+    ? ["DAY"]
+    : robinhoodRouteSelected
     ? ["DAY", "GTC"]
     : schwabRouteSelected
       ? ["DAY", "GTC", "FOK"]
@@ -1583,6 +1778,7 @@ export const TradeOrderTicket = ({
   useEffect(() => {
     if (
       executionMode === "shadow" ||
+      liveUsesIbkrEquity ||
       liveUsesSnapTrade ||
       liveUsesRobinhood ||
       liveUsesSchwab ||
@@ -1593,6 +1789,7 @@ export const TradeOrderTicket = ({
     }
   }, [
     executionMode,
+    liveUsesIbkrEquity,
     liveUsesBrokerOption,
     liveUsesRobinhood,
     liveUsesSchwab,
@@ -1602,6 +1799,9 @@ export const TradeOrderTicket = ({
   useEffect(() => {
     setPreviewSnapshot(null);
     setShadowExposureAcknowledged(false);
+    if (liveUsesIbkrEquity) {
+      setTaxPreflightState(null);
+    }
   }, [
     side,
     orderType,
@@ -1628,10 +1828,12 @@ export const TradeOrderTicket = ({
     expInfo.value,
     environment,
     accountId,
+    selectedIbkrAccountId,
     brokerConfigured,
     brokerAuthenticated,
     automationTicketContext,
     liveBrokerRoute,
+    liveUsesIbkrEquity,
     robinhoodAccount?.id,
     robinhoodAccountReady,
     schwabAccount?.id,
@@ -1642,13 +1844,28 @@ export const TradeOrderTicket = ({
   const bidFlashClass = useValueFlash(ticketIsShares ? equityPrice : bid);
   const midFlashClass = useValueFlash(ticketReferencePrice);
   const askFlashClass = useValueFlash(ticketIsShares ? equityPrice : ask);
-  const closeLiveConfirm = () => {
+  const closeLiveConfirm = async () => {
     if (liveConfirmPending) {
       return;
     }
 
     setLiveConfirmError(null);
-    setLiveConfirmState(null);
+    const closingState = liveConfirmState;
+    if (!closingState?.onCancel) {
+      setLiveConfirmState(null);
+      return;
+    }
+    setLiveConfirmPending(true);
+    try {
+      await closingState.onCancel();
+      setLiveConfirmState((current) =>
+        current === closingState ? null : current,
+      );
+    } catch (error) {
+      setLiveConfirmError(formatLiveBrokerActionError(error));
+    } finally {
+      setLiveConfirmPending(false);
+    }
   };
   const lockedReadinessModel = buildTicketReadinessModel({
     executionMode,
@@ -1656,10 +1873,16 @@ export const TradeOrderTicket = ({
       liveUsesRobinhood || liveUsesSchwab || liveUsesBrokerOption
         ? "snaptrade"
         : liveBrokerRoute,
-    gatewayTradingReady,
-    brokerConfigured,
-    brokerAuthenticated,
-    accountId,
+    gatewayTradingReady: liveUsesIbkrEquity ? true : gatewayTradingReady,
+    brokerConfigured: liveUsesIbkrEquity
+      ? ibkrLiveReadinessReady
+      : brokerConfigured,
+    brokerAuthenticated: liveUsesIbkrEquity
+      ? ibkrLiveReadinessReady
+      : brokerAuthenticated,
+    accountId: liveUsesIbkrEquity
+      ? selectedIbkrAccount?.accountId || null
+      : accountId,
     snapTradeExecutionReady: liveUsesRobinhood
       ? robinhoodAccountReady
       : liveUsesSchwab
@@ -1689,9 +1912,12 @@ export const TradeOrderTicket = ({
 
     setLiveConfirmError(null);
     setLiveConfirmPending(true);
+    const confirmingState = liveConfirmState;
     try {
-      await liveConfirmState.onConfirm();
-      setLiveConfirmState(null);
+      await confirmingState.onConfirm();
+      setLiveConfirmState((current) =>
+        current === confirmingState ? null : current,
+      );
     } catch (error) {
       setLiveConfirmError(formatLiveBrokerActionError(error));
     } finally {
@@ -1740,7 +1966,7 @@ export const TradeOrderTicket = ({
 
   const isLong = side === "BUY";
   const selectedSideColor = isLong ? TRADE_BUY_TONE : TRADE_SELL_TONE;
-  const qtyNum = Number(qty) || 0;
+  const qtyNum = liveUsesIbkrEquity ? 1 : Number(qty) || 0;
   const orderPrices = resolveTicketOrderPrices({
     orderType,
     limitPrice,
@@ -2010,14 +2236,23 @@ export const TradeOrderTicket = ({
     sellCallIntent.applies && sellCallIntent.strategyIntent === "sell_to_close";
   const shadowAddExposureWarningActive =
     sameShadowContractExposure && !shadowSellToCloseIntent;
+  const ibkrOrderAccountId = liveUsesIbkrEquity
+    ? selectedIbkrAccount?.accountId || ""
+    : accountId;
   const orderRequest =
     !liveUsesSnapTrade &&
     !liveUsesRobinhood &&
     !liveUsesSchwab &&
     !liveUsesBrokerOption &&
     liveOrderPayloadReady
-    ? {
-        accountId,
+    ? liveUsesIbkrEquity
+      ? buildManualIbkrEquityOrderRequest({
+          accountId: ibkrOrderAccountId,
+          symbol: slot.ticker,
+          limitPrice: orderPrices.limitPrice,
+        })
+      : {
+        accountId: ibkrOrderAccountId,
         mode: environment,
         symbol: slot.ticker,
         assetClass: ticketAssetClass,
@@ -2035,7 +2270,7 @@ export const TradeOrderTicket = ({
               source: "trade_broker_order",
             }
           : undefined,
-      }
+        }
     : null;
   const shadowExecutionReady = ticketIsShares
     ? Boolean(slot.ticker)
@@ -2221,6 +2456,7 @@ export const TradeOrderTicket = ({
       : MISSING_VALUE;
   const hasAttachedExits =
     !executionIsShadow &&
+    !liveUsesIbkrEquity &&
     !liveUsesSnapTrade &&
     !liveUsesRobinhood &&
     !liveUsesSchwab &&
@@ -2243,6 +2479,7 @@ export const TradeOrderTicket = ({
     .join(" / ");
   const attachedExitTogglesDisabled =
     executionIsShadow ||
+    liveUsesIbkrEquity ||
     liveUsesSnapTrade ||
     liveUsesRobinhood ||
     liveUsesSchwab ||
@@ -2766,15 +3003,17 @@ export const TradeOrderTicket = ({
     }
 
     if (!brokerConfigured) {
-      toast.push({
-        kind: "info",
-        title: "IBKR required",
-        body: "Local preview simulation has been removed. Connect IBKR Client Portal to preview a live order.",
-      });
-      return;
+      if (!liveUsesIbkrEquity) {
+        toast.push({
+          kind: "info",
+          title: "IBKR required",
+          body: "Local preview simulation has been removed. Connect IBKR Client Portal to preview a live order.",
+        });
+        return;
+      }
     }
 
-    if (!accountId) {
+    if (!ibkrOrderAccountId) {
       toast.push({
         kind: "warn",
         title: "No broker account selected",
@@ -2796,6 +3035,148 @@ export const TradeOrderTicket = ({
 
     previewOrderMutation.mutate({ data: orderRequest });
   };
+
+  function openIbkrWarning({
+    challenge,
+    taxPreflightToken,
+    operation,
+    nextLimitPrice = null,
+  }) {
+    setLiveConfirmError(null);
+    setLiveConfirmState({
+      kind: "ibkr_warning",
+      title: "IBKR warning requires a decision",
+      detail:
+        operation === "replace"
+          ? "Accept to transmit the price change. Declining leaves the original order live."
+          : "Accept to transmit this live order. Declining stops this order submission.",
+      confirmLabel: "ACCEPT WARNING",
+      cancelLabel: "DECLINE ORDER",
+      confirmTone: CSS_COLOR.amber,
+      lines: (challenge.messages || []).map((message, index) => ({
+        label: `WARNING ${index + 1}`,
+        value: message,
+        valueColor: CSS_COLOR.amber,
+      })),
+      onConfirm: () =>
+        continueIbkrWarning({
+          challenge,
+          taxPreflightToken,
+          operation,
+          nextLimitPrice,
+          confirmed: true,
+        }),
+      onCancel: () =>
+        continueIbkrWarning({
+          challenge,
+          taxPreflightToken,
+          operation,
+          nextLimitPrice,
+          confirmed: false,
+        }),
+    });
+  }
+
+  async function continueIbkrWarning({
+    challenge,
+    taxPreflightToken,
+    operation,
+    nextLimitPrice,
+    confirmed,
+  }) {
+    let result;
+    try {
+      result = await continueIbkrOrderReplyMutation.mutateAsync({
+        data: {
+          taxPreflightToken,
+          challengeId: challenge.challengeId,
+          confirmed,
+        },
+      });
+    } catch (error) {
+      if (isIbkrOrderRejected(error)) {
+        setLiveConfirmState(null);
+        if (operation === "place") {
+          setPreviewSnapshot(null);
+        }
+        toast.push({
+          kind: "error",
+          title:
+            operation === "replace"
+              ? "Price change rejected"
+              : "Order rejected",
+          body:
+            error?.message ||
+            "IBKR definitively rejected the instruction; no reconciliation is required.",
+        });
+        return;
+      }
+      setActiveIbkrOrder((current) =>
+        current ? { ...current, reconciliationRequired: true } : current,
+      );
+      setLiveConfirmState(null);
+      toast.push({
+        kind: "warn",
+        title: "STOP / RECONCILE",
+        body: "The warning-reply outcome is unknown. Check the broker order before any further action.",
+      });
+      return;
+    }
+    if (result.status === "warning") {
+      openIbkrWarning({
+        challenge: result,
+        taxPreflightToken,
+        operation: result.operation || operation,
+        nextLimitPrice,
+      });
+      return;
+    }
+    if (result.status === "declined") {
+      setLiveConfirmState(null);
+      if (operation === "replace") {
+        setIbkrReplacementLocked(false);
+      } else {
+        setIbkrSubmitLocked(false);
+        setPreviewSnapshot(null);
+      }
+      toast.push({
+        kind: operation === "replace" ? "warn" : "info",
+        title: operation === "replace" ? "Price change declined" : "Order declined",
+        body:
+          operation === "replace"
+            ? "The original IBKR order remains live."
+            : "The live order was not transmitted after the warning.",
+      });
+      return;
+    }
+
+    const reconciliationRequired = ibkrLifecycleRequiresReconciliation(
+      operation,
+      result,
+    );
+    setActiveIbkrOrder((current) => ({
+      ...(current || orderRequest || {}),
+      id: result.orderId || current?.id,
+      status: String(result.orderStatus || "submitted").toLowerCase(),
+      placementConfirmed: result.placementConfirmed,
+      replacementConfirmed: result.replacementConfirmed,
+      reconciliationRequired,
+      ...(operation === "replace" ? { limitPrice: nextLimitPrice } : {}),
+    }));
+    setLiveConfirmState(null);
+    void queryClient.invalidateQueries({ queryKey: ["/api/orders"] });
+    toast.push({
+      kind: reconciliationRequired ? "warn" : "success",
+      title: reconciliationRequired
+        ? "STOP / RECONCILE"
+        : operation === "replace"
+          ? "Price change acknowledged"
+          : "Order acknowledged",
+      body: reconciliationRequired
+        ? "IBKR acknowledged the request, but order status still requires reconciliation."
+        : `IBKR reports ${String(result.orderStatus || "submitted").toUpperCase()}.`,
+    });
+  }
 
   const submitLiveBrokerOrder = async (taxPreflight = taxPreflightState) => {
     const taxSubmissionFields = buildTaxSubmissionFields(taxPreflight);
@@ -2996,6 +3377,45 @@ export const TradeOrderTicket = ({
         title: "Order unavailable",
         body: "The broker order payload is not ready yet.",
       });
+      return;
+    }
+
+    if (liveUsesIbkrEquity) {
+      if (ibkrSubmitLocked) {
+        throw new Error(
+          "This prepared IBKR order has already been submitted. Reconcile it before another attempt.",
+        );
+      }
+      if (
+        !previewSnapshot?.clientOrderId ||
+        !previewSnapshot?.orderFingerprint ||
+        !previewSnapshot?.taxPreflight?.preflightToken
+      ) {
+        throw new Error("Run a fresh IBKR what-if preview before submitting.");
+      }
+
+      setIbkrSubmitLocked(true);
+      try {
+        await placeOrderMutation.mutateAsync({
+          data: buildPreparedIbkrEquityOrderSubmission(
+            orderRequest,
+            previewSnapshot,
+          ),
+        });
+      } catch (error) {
+        const challenge = readIbkrOrderWarning(error);
+        if (!challenge) {
+          if (isIbkrOrderRejected(error)) {
+            setPreviewSnapshot(null);
+          }
+          throw error;
+        }
+        openIbkrWarning({
+          challenge,
+          taxPreflightToken: previewSnapshot.taxPreflight.preflightToken,
+          operation: "place",
+        });
+      }
       return;
     }
 
@@ -3365,24 +3785,40 @@ export const TradeOrderTicket = ({
     }
 
     await submitIbkrLiveOrderAfterGate({
-      brokerConfigured,
-      gatewayTradingBlocked,
+      brokerConfigured: liveUsesIbkrEquity
+        ? ibkrLiveReadinessReady
+        : brokerConfigured,
+      gatewayTradingBlocked: liveUsesIbkrEquity ? false : gatewayTradingBlocked,
       gatewayTradingMessage,
-      accountId,
+      accountId: ibkrOrderAccountId,
       liveOrderPayloadReady,
       orderRequest,
       ticketIsShares,
       toast,
       submit: async () => {
-        const taxPreflight = await runTaxPreflight("ibkr", accountId);
+        const taxPreflight = liveUsesIbkrEquity
+          ? previewSnapshot?.taxPreflight || null
+          : await runTaxPreflight("ibkr", ibkrOrderAccountId);
         if (!taxPreflight || taxPreflight.action === "block") {
+          if (liveUsesIbkrEquity && !previewSnapshot) {
+            toast.push({
+              kind: "warn",
+              title: "Fresh preview required",
+              body: "Run the IBKR what-if preview before submitting this live order.",
+            });
+          }
           return;
         }
         const taxRequiresAcknowledgement =
           taxPreflight.action === "warn_ack_required";
 
         setLiveConfirmError(null);
-        if (!confirmBrokerOrders && environment !== "live" && !taxRequiresAcknowledgement) {
+        if (
+          !liveUsesIbkrEquity &&
+          !confirmBrokerOrders &&
+          environment !== "live" &&
+          !taxRequiresAcknowledgement
+        ) {
           void submitLiveBrokerOrder(taxPreflight);
           return;
         }
@@ -3391,13 +3827,18 @@ export const TradeOrderTicket = ({
           title: `${ticketActionLabel} ${ticketInstrumentLabel}`,
           detail: hasAttachedExits
             ? `Submit this ${environment.toUpperCase()} IBKR parent order with ${attachedExitCount} attached exit order${attachedExitCount === 1 ? "" : "s"}.`
-            : `Submit this ${environment.toUpperCase()} broker order to Interactive Brokers for immediate routing.`,
+            : `Submit this ${liveUsesIbkrEquity ? "LIVE" : environment.toUpperCase()} broker order to Interactive Brokers for immediate routing.`,
           confirmLabel: hasAttachedExits
             ? `${ticketActionLabel} IBKR + ${attachedExitLabel}`
             : `${ticketActionLabel} IBKR ORDER`,
           confirmTone: selectedSideColor,
           lines: [
-            { label: "ACCOUNT", value: accountId || MISSING_VALUE },
+            {
+              label: "ACCOUNT",
+              value: liveUsesIbkrEquity
+                ? selectedIbkrAccount?.maskedAccountId || MISSING_VALUE
+                : inheritedIbkrAccount?.maskedAccountId || "IBKR account",
+            },
             { label: "SYMBOL", value: slot.ticker },
             ...(ticketIsOptions
               ? [
@@ -3469,6 +3910,188 @@ export const TradeOrderTicket = ({
           ],
           onConfirm: () => submitLiveBrokerOrder(taxPreflight),
         });
+      },
+    });
+  };
+
+  const submitPreparedIbkrReplacement = async (preview, nextLimitPrice) => {
+    if (ibkrReplacementLocked) {
+      throw new Error(
+        "This prepared price change has already been sent. Reconcile it before another attempt.",
+      );
+    }
+    setIbkrReplacementLocked(true);
+    try {
+      const order = await replaceOrderMutation.mutateAsync({
+        orderId: trackedIbkrOrder.id,
+        data: buildPreparedIbkrReplacementSubmission({
+          accountId: selectedIbkrAccount.accountId,
+          limitPrice: nextLimitPrice,
+          preview,
+        }),
+      });
+      const reconciliationRequired = ibkrLifecycleRequiresReconciliation(
+        "replace",
+        order,
+      );
+      setActiveIbkrOrder((current) => ({
+        ...current,
+        ...order,
+        reconciliationRequired,
+      }));
+      void queryClient.invalidateQueries({ queryKey: ["/api/orders"] });
+      toast.push({
+        kind: reconciliationRequired ? "warn" : "success",
+        title: reconciliationRequired
+          ? "STOP / RECONCILE"
+          : "Price change confirmed",
+        body: `${order.symbol} · ${String(order.status).toUpperCase()} · ${formatTicketMoney(order.limitPrice)}`,
+      });
+    } catch (error) {
+      const challenge = readIbkrOrderWarning(error);
+      if (!challenge) {
+        if (isIbkrOrderRejected(error)) {
+          setLiveConfirmState(null);
+          toast.push({
+            kind: "error",
+            title: "Price change rejected",
+            body:
+              error?.message ||
+              "IBKR definitively rejected the price change; the original order remains live.",
+          });
+          return;
+        }
+        setActiveIbkrOrder((current) => ({
+          ...current,
+          reconciliationRequired: true,
+        }));
+        setLiveConfirmState(null);
+        toast.push({
+          kind: "warn",
+          title: "STOP / RECONCILE",
+          body: "The price-change outcome is unknown. Check the broker order before any further action.",
+        });
+        return;
+      }
+      openIbkrWarning({
+        challenge,
+        taxPreflightToken: preview.taxPreflight.preflightToken,
+        operation: "replace",
+        nextLimitPrice,
+      });
+    }
+  };
+
+  const previewIbkrReplacement = async () => {
+    const nextLimitPrice = Number(replacementLimitPrice);
+    if (
+      !selectedIbkrAccount ||
+      !trackedIbkrOrder?.id ||
+      trackedIbkrOrderTerminal ||
+      trackedIbkrOrderRequiresReconciliation ||
+      ibkrReplacementLocked ||
+      ibkrCancelAttempted ||
+      Number(trackedIbkrOrder.filledQuantity || 0) > 0 ||
+      !Number.isFinite(nextLimitPrice) ||
+      nextLimitPrice <= 0
+    ) {
+      toast.push({
+        kind: "warn",
+        title: "Price change blocked",
+        body: "A live, completely unfilled one-share limit order and positive new price are required.",
+      });
+      return;
+    }
+    const preview = await previewOrderReplacementMutation.mutateAsync({
+      orderId: trackedIbkrOrder.id,
+      data: buildPreparedIbkrReplacementPreview({
+        accountId: selectedIbkrAccount.accountId,
+        limitPrice: nextLimitPrice,
+      }),
+    });
+    setLiveConfirmError(null);
+    setLiveConfirmState({
+      title: `Change ${trackedIbkrOrder.symbol} limit price`,
+      detail:
+        "Submit this prepared price-only change to the existing live IBKR order.",
+      confirmLabel: "CHANGE LIVE LIMIT",
+      confirmTone: CSS_COLOR.amber,
+      lines: [
+        { label: "ACCOUNT", value: selectedIbkrAccount.maskedAccountId },
+        { label: "FROM", value: formatTicketMoney(trackedIbkrOrder.limitPrice) },
+        { label: "TO", value: formatTicketMoney(nextLimitPrice) },
+        {
+          label: "WHAT-IF COMM",
+          value: preview.whatIf?.commission || MISSING_VALUE,
+        },
+        ...buildTaxPreflightConfirmLines(preview.taxPreflight),
+      ],
+      onConfirm: () =>
+        submitPreparedIbkrReplacement(preview, nextLimitPrice),
+    });
+  };
+
+  const confirmIbkrCancellation = () => {
+    if (
+      !selectedIbkrAccount ||
+      !trackedIbkrOrder?.id ||
+      trackedIbkrOrderTerminal ||
+      trackedIbkrOrderRequiresReconciliation ||
+      ibkrCancelAttempted ||
+      ibkrLifecyclePending ||
+      ibkrWarningDecisionOpen
+    ) {
+      return;
+    }
+    setLiveConfirmError(null);
+    setLiveConfirmState({
+      title: `Cancel ${trackedIbkrOrder.symbol} live order`,
+      detail:
+        "Send one cancellation request and wait for IBKR to confirm terminal cancellation.",
+      confirmLabel: "CANCEL LIVE ORDER",
+      confirmTone: CSS_COLOR.red,
+      lines: [
+        { label: "ACCOUNT", value: selectedIbkrAccount.maskedAccountId },
+        { label: "STATUS", value: trackedIbkrOrderStatus.toUpperCase() },
+        { label: "FILLED", value: String(trackedIbkrOrder.filledQuantity || 0) },
+      ],
+      onConfirm: async () => {
+        setIbkrCancelAttempted(true);
+        try {
+          const result = await cancelOrderMutation.mutateAsync({
+            orderId: trackedIbkrOrder.id,
+            data: {
+              accountId: selectedIbkrAccount.accountId,
+              mode: "live",
+              confirm: true,
+              manualIndicator: true,
+            },
+          });
+          setActiveIbkrOrder((current) => ({
+            ...current,
+            status: result.status,
+            filledQuantity: result.filledQuantity,
+            cancelConfirmed: result.cancelConfirmed,
+            reconciliationRequired: ibkrLifecycleRequiresReconciliation(
+              "cancel",
+              result,
+            ),
+          }));
+          void queryClient.invalidateQueries({ queryKey: ["/api/orders"] });
+          toast.push(ibkrCancelToast(result));
+        } catch (error) {
+          setActiveIbkrOrder((current) => ({
+            ...current,
+            reconciliationRequired: true,
+          }));
+          setLiveConfirmState(null);
+          toast.push({
+            kind: "warn",
+            title: "STOP / RECONCILE",
+            body:
+              "The cancellation outcome is unknown. Check the broker order; this ticket will not send another cancellation.",
+          });
+        }
       },
     });
   };
@@ -3572,9 +4195,15 @@ export const TradeOrderTicket = ({
         ? stopPrice
         : limitPrice;
   const parentPriceDisabled = orderType === "MKT";
-  const qtyPresets = ticketIsShares ? [1, 10, 25, 50, 100] : [1, 3, 5, 10];
+  const qtyPresets = liveUsesIbkrEquity
+    ? [1]
+    : ticketIsShares
+      ? [1, 10, 25, 50, 100]
+      : [1, 3, 5, 10];
   const ibkrSubmitPending =
-    placeOrderMutation.isPending || submitOrdersMutation.isPending;
+    placeOrderMutation.isPending ||
+    submitOrdersMutation.isPending ||
+    continueIbkrOrderReplyMutation.isPending;
   const taxPreflightPending = !executionIsShadow && taxPreflightMutation.isPending;
   const previewIsPending =
     previewOrderMutation.isPending ||
@@ -3621,10 +4250,16 @@ export const TradeOrderTicket = ({
   const baseTicketReadinessModel = buildTicketReadinessModel({
     executionMode,
     brokerRoute: readinessUsesDirectAccount ? "snaptrade" : liveBrokerRoute,
-    gatewayTradingReady,
-    brokerConfigured,
-    brokerAuthenticated,
-    accountId,
+    gatewayTradingReady: liveUsesIbkrEquity ? true : gatewayTradingReady,
+    brokerConfigured: liveUsesIbkrEquity
+      ? ibkrLiveReadinessReady
+      : brokerConfigured,
+    brokerAuthenticated: liveUsesIbkrEquity
+      ? ibkrLiveReadinessReady
+      : brokerAuthenticated,
+    accountId: liveUsesIbkrEquity
+      ? selectedIbkrAccount?.accountId || null
+      : accountId,
     snapTradeExecutionReady: readinessUsesDirectAccount
       ? readinessDirectAccountReady
       : snapTradeAccountReady,
@@ -3683,7 +4318,15 @@ export const TradeOrderTicket = ({
           !directOptionCsrfToken ||
           !brokerOptionOrderDraft.ready ||
           sellCallSubmitBlocked
-      : ibkrSubmitPending ||
+      : liveUsesIbkrEquity
+        ? ibkrSubmitPending ||
+          !selectedIbkrAccount ||
+          !ibkrLiveReadinessReady ||
+          !previewSnapshot?.clientOrderId ||
+          !previewSnapshot?.orderFingerprint ||
+          !previewSnapshot?.taxPreflight?.preflightToken ||
+          ibkrSubmitLocked
+        : ibkrSubmitPending ||
         taxPreflightPending ||
         gatewayTradingBlocked ||
         sellCallSubmitBlocked;
@@ -3695,6 +4338,12 @@ export const TradeOrderTicket = ({
       (!schwabCsrfToken || !schwabEquityOrderDraft.ready)) ||
     (liveUsesBrokerOption &&
       (!directOptionCsrfToken || !brokerOptionOrderDraft.ready)) ||
+    (liveUsesIbkrEquity &&
+      (!selectedIbkrAccount ||
+        !ibkrLiveReadinessReady ||
+        (ibkrSubmitLocked &&
+          Boolean(trackedIbkrOrder?.id) &&
+          !trackedIbkrOrderTerminal))) ||
     sellCallSubmitBlocked;
   const primarySubmitColor = executionIsShadow ? CSS_COLOR.pink : selectedSideColor;
   const primarySubmitLabel = executionIsShadow
@@ -3771,6 +4420,20 @@ export const TradeOrderTicket = ({
                   : !brokerOptionOrderDraft.ready
                     ? brokerOptionDraftButtonLabel
                     : `${ticketActionLabel} ${optionBroker.toUpperCase()} ${qtyNum || 0} ct × ${fillPriceDisplay} · ${signedCostDisplay}`
+    : liveUsesIbkrEquity
+      ? !selectedIbkrAccount
+          ? "SELECT IBKR ACCOUNT"
+          : !ibkrLiveReadinessReady
+            ? "IBKR LIVE NOT READY"
+          : ibkrSubmitPending
+            ? "SUBMITTING..."
+            : !previewSnapshot?.clientOrderId
+                ? "PREVIEW REQUIRED"
+              : ibkrSubmitLocked
+                ? trackedIbkrOrderTerminal
+                  ? "PREVIEW NEXT ORDER"
+                  : "ACTIVE ORDER LOCKED"
+                : `${ticketActionLabel} IBKR 1 sh × ${fillPriceDisplay} · ${signedCostDisplay}`
     : gatewayTradingBlocked
       ? gatewayTradingBlockedLabel
       : taxPreflightPending
@@ -4309,6 +4972,7 @@ export const TradeOrderTicket = ({
         <div style={{ display: "flex", gap: sp(2) }}>
           <button
             onClick={() => selectSide("BUY")}
+            disabled={liveUsesIbkrEquity}
             style={{
               flex: 1,
               padding: sp("4px 0"),
@@ -4320,13 +4984,14 @@ export const TradeOrderTicket = ({
               fontFamily: T.sans,
               fontWeight: FONT_WEIGHTS.regular,
               lineHeight: 1.15,
-              cursor: "pointer",
+              cursor: liveUsesIbkrEquity ? "not-allowed" : "pointer",
             }}
           >
             {ticketIsOptions ? "BUY TO OPEN" : "BUY"}
           </button>
           <button
             onClick={() => selectSide("SELL")}
+            disabled={liveUsesIbkrEquity}
             style={{
               flex: 1,
               padding: sp("4px 0"),
@@ -4338,7 +5003,8 @@ export const TradeOrderTicket = ({
               fontFamily: T.sans,
               fontWeight: FONT_WEIGHTS.regular,
               lineHeight: 1.15,
-              cursor: "pointer",
+              cursor: liveUsesIbkrEquity ? "not-allowed" : "pointer",
+              opacity: liveUsesIbkrEquity ? 0.45 : 1,
             }}
           >
             {sellCallIntent.applies ? sellCallIntent.actionLabel : "SELL"}
@@ -4459,6 +5125,7 @@ export const TradeOrderTicket = ({
             <button
               key={n}
               onClick={() => setQty(n)}
+              disabled={liveUsesIbkrEquity}
               style={{
                 padding: sp("4px 7px"),
                 background: qtyNum === n ? CSS_COLOR.accent : "transparent",
@@ -4468,7 +5135,7 @@ export const TradeOrderTicket = ({
                 fontSize: textSize("caption"),
                 fontFamily: T.sans,
                 fontWeight: FONT_WEIGHTS.regular,
-                cursor: "pointer",
+                cursor: liveUsesIbkrEquity ? "not-allowed" : "pointer",
               }}
             >
               {n}
@@ -4491,6 +5158,7 @@ export const TradeOrderTicket = ({
             min="1"
             aria-label={`${ticketQuantityUnit} quantity`}
             value={qty}
+            disabled={liveUsesIbkrEquity}
             onChange={(e) =>
               setQty(e.target.value === "" ? "" : Math.max(0, +e.target.value))
             }
@@ -4847,7 +5515,11 @@ export const TradeOrderTicket = ({
                 : "PREVIEW"}
             </span>{" "}
             <span style={{ color: CSS_COLOR.text, fontWeight: FONT_WEIGHTS.regular }}>
-              {previewSnapshot.accountId}
+              {liveUsesIbkrEquity
+                ? selectedIbkrAccount?.maskedAccountId || "IBKR account"
+                : ticketIsOptions && optionBroker === "ibkr"
+                  ? inheritedIbkrAccount?.maskedAccountId || "IBKR account"
+                  : previewSnapshot.accountId}
             </span>
           </div>
           <div>
@@ -4887,6 +5559,30 @@ export const TradeOrderTicket = ({
                 : ""}
             </span>
           </div>
+          {liveUsesIbkrEquity && previewSnapshot.whatIf ? (
+            <>
+              <div>
+                <span style={{ color: CSS_COLOR.textMuted }}>WHAT-IF COMM</span>{" "}
+                <span style={{ color: CSS_COLOR.text }}>
+                  {previewSnapshot.whatIf.commission || MISSING_VALUE}
+                </span>
+              </div>
+              <div>
+                <span style={{ color: CSS_COLOR.textMuted }}>MARGIN Δ</span>{" "}
+                <span style={{ color: CSS_COLOR.text }}>
+                  {previewSnapshot.whatIf.initialMarginChange || MISSING_VALUE}
+                </span>
+              </div>
+              {previewSnapshot.whatIf.warnings?.length ? (
+                <div style={{ gridColumn: "1 / -1" }}>
+                  <span style={{ color: CSS_COLOR.textMuted }}>WARNINGS</span>{" "}
+                  <span style={{ color: CSS_COLOR.amber }}>
+                    {previewSnapshot.whatIf.warnings.join(" · ")}
+                  </span>
+                </div>
+              ) : null}
+            </>
+          ) : null}
           {hasAttachedExits ? (
             <div style={{ gridColumn: "1 / -1" }}>
               <span style={{ color: CSS_COLOR.textMuted }}>EXITS</span>{" "}
@@ -5045,6 +5741,116 @@ export const TradeOrderTicket = ({
           ) : null}
         </div>
       )}
+      {liveUsesIbkrEquity && trackedIbkrOrder?.id ? (
+        <div
+          data-testid="trade-ticket-ibkr-live-order"
+          style={{
+            border: `1px solid ${CSS_COLOR.border}`,
+            background: CSS_COLOR.bg0,
+            borderRadius: dim(RADII.xs),
+            padding: sp("7px 8px"),
+            display: "grid",
+            gap: sp(6),
+          }}
+        >
+          <div style={{ display: "flex", justifyContent: "space-between", gap: sp(8) }}>
+            <span style={{ color: CSS_COLOR.textMuted }}>LIVE ORDER</span>
+            <span
+              style={{
+                color:
+                  trackedIbkrOrderStatus === "canceled"
+                    ? CSS_COLOR.green
+                    : trackedIbkrOrderStatus === "pending_cancel"
+                      ? CSS_COLOR.amber
+                      : trackedIbkrOrderTerminal
+                        ? CSS_COLOR.red
+                        : CSS_COLOR.accent,
+              }}
+            >
+              {trackedIbkrOrderStatus.toUpperCase()}
+            </span>
+          </div>
+          <div style={{ color: CSS_COLOR.textSec }}>
+            {trackedIbkrOrder.symbol} · {trackedIbkrOrder.side?.toUpperCase()} 1 share · LMT{" "}
+            {formatTicketMoney(trackedIbkrOrder.limitPrice)} · filled {trackedIbkrOrder.filledQuantity || 0}
+          </div>
+          {trackedIbkrOrderRequiresReconciliation ? (
+            <div
+              role="alert"
+              style={{
+                border: `1px solid ${CSS_COLOR.red}`,
+                background: cssColorAlpha(CSS_COLOR.red, 0.08),
+                color: CSS_COLOR.red,
+                borderRadius: dim(RADII.xs),
+                padding: sp("6px 8px"),
+              }}
+            >
+              STOP / RECONCILE — do not retry, replace, or cancel from this ticket. Check the live broker order first.
+            </div>
+          ) : ibkrCancelAttempted && !trackedIbkrOrderTerminal ? (
+            <div role="status" style={{ color: CSS_COLOR.amber }}>
+              CANCEL SENT — read-only while broker status is reconciled.
+            </div>
+          ) : null}
+          {!trackedIbkrOrderTerminal &&
+          trackedIbkrOrderStatus !== "pending_cancel" &&
+          !trackedIbkrOrderRequiresReconciliation &&
+          !ibkrCancelAttempted ? (
+            <div style={{ display: "grid", gridTemplateColumns: "1fr auto auto", gap: sp(4) }}>
+              <input
+                type="number"
+                min="0.01"
+                step="0.01"
+                aria-label="replacement limit price"
+                value={replacementLimitPrice}
+                onChange={(event) => setReplacementLimitPrice(event.target.value)}
+                disabled={ibkrLifecyclePending || ibkrReplacementLocked}
+                style={{
+                  minWidth: 0,
+                  background: CSS_COLOR.bg1,
+                  border: `1px solid ${CSS_COLOR.border}`,
+                  color: CSS_COLOR.text,
+                  padding: sp("4px 6px"),
+                }}
+              />
+              <button
+                type="button"
+                onClick={previewIbkrReplacement}
+                disabled={
+                  ibkrLifecyclePending ||
+                  ibkrReplacementLocked ||
+                  Number(trackedIbkrOrder.filledQuantity || 0) > 0
+                }
+                style={{
+                  border: `1px solid ${CSS_COLOR.border}`,
+                  background: CSS_COLOR.bg1,
+                  color: CSS_COLOR.amber,
+                  padding: sp("4px 7px"),
+                }}
+              >
+                {previewOrderReplacementMutation.isPending
+                  ? "CHECKING..."
+                  : ibkrReplacementLocked
+                    ? "CHANGE USED"
+                    : "PREVIEW CHANGE"}
+              </button>
+              <button
+                type="button"
+                onClick={confirmIbkrCancellation}
+                disabled={ibkrLifecyclePending || ibkrWarningDecisionOpen}
+                style={{
+                  border: `1px solid ${CSS_COLOR.red}`,
+                  background: "transparent",
+                  color: CSS_COLOR.red,
+                  padding: sp("4px 7px"),
+                }}
+              >
+                CANCEL
+              </button>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
       <div
         style={{
           display: "grid",
@@ -5121,8 +5927,10 @@ export const TradeOrderTicket = ({
         }
         lines={liveConfirmState?.lines || []}
         confirmLabel={liveConfirmState?.confirmLabel || "CONFIRM IBKR ORDER"}
+        cancelLabel={liveConfirmState?.cancelLabel || "Cancel"}
         confirmTone={liveConfirmState?.confirmTone || CSS_COLOR.red}
         pending={liveConfirmPending}
+        requireExplicitDecision={liveConfirmState?.kind === "ibkr_warning"}
         error={liveConfirmError}
         onCancel={closeLiveConfirm}
         onConfirm={runLiveConfirm}

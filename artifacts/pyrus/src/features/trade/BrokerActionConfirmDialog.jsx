@@ -18,8 +18,10 @@ export const BrokerActionConfirmDialog = ({
   detail,
   lines = [],
   confirmLabel = "CONFIRM LIVE ACTION",
+  cancelLabel = "Cancel",
   confirmTone = CSS_COLOR.red,
   pending = false,
+  requireExplicitDecision = false,
   error = null,
   onConfirm,
   onCancel,
@@ -31,8 +33,10 @@ export const BrokerActionConfirmDialog = ({
       detail={detail}
       lines={lines}
       confirmLabel={confirmLabel}
+      cancelLabel={cancelLabel}
       confirmTone={confirmTone}
       pending={pending}
+      requireExplicitDecision={requireExplicitDecision}
       error={error}
       destructive
       onConfirm={onConfirm}

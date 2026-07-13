@@ -9,8 +9,10 @@ export const ConfirmDialog = ({
   detail,
   lines = [],
   confirmLabel = "Confirm",
+  cancelLabel = "Cancel",
   confirmTone,
   pending = false,
+  requireExplicitDecision = false,
   error = null,
   destructive = false,
   onConfirm,
@@ -32,7 +34,7 @@ export const ConfirmDialog = ({
     <Dialog.Root
       open={open}
       onOpenChange={(nextOpen) => {
-        if (!nextOpen && !pending) onCancel?.();
+        if (!nextOpen && !pending && !requireExplicitDecision) onCancel?.();
       }}
     >
       <Dialog.Portal>
@@ -66,10 +68,10 @@ export const ConfirmDialog = ({
               restoreFocusRef.current?.focus?.();
             }}
             onEscapeKeyDown={(event) => {
-              if (pending) event.preventDefault();
+              if (pending || requireExplicitDecision) event.preventDefault();
             }}
             onPointerDownOutside={(event) => {
-              if (pending) event.preventDefault();
+              if (pending || requireExplicitDecision) event.preventDefault();
             }}
             style={{
               position: "relative",
@@ -204,7 +206,7 @@ export const ConfirmDialog = ({
                 fullWidth
                 style={{ borderRadius: dim(RADII.sm), padding: sp("12px 0") }}
               >
-                Cancel
+                {cancelLabel}
               </Button>
               <Button
                 variant={destructive ? "danger" : "primary"}
