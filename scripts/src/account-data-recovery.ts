@@ -1,3 +1,4 @@
+import { pathToFileURL } from "node:url";
 import { Pool, type PoolClient } from "pg";
 
 type DbRow = Record<string, unknown>;
@@ -17,7 +18,7 @@ type FlexTableSpec = {
 };
 
 type SourceBalanceRow = {
-  provider_account_id: string;
+  source_account_id: string;
   currency: string;
   cash: string;
   buying_power: string;
@@ -28,8 +29,6 @@ type SourceBalanceRow = {
   updated_at: Date;
 };
 
-const args = new Set(process.argv.slice(2));
-const execute = args.has("--execute");
 const sourceDatabaseUrl = process.env.SOURCE_DATABASE_URL ?? "";
 const targetDatabaseUrl = process.env.DATABASE_URL ?? "";
 
@@ -71,9 +70,19 @@ const FLEX_TABLES: readonly FlexTableSpec[] = [
   },
   {
     table: "flex_open_positions",
-    conflictColumns: ["provider_account_id", "symbol", "as_of"],
+    conflictColumns: ["provider_account_id", "symbol", "as_of", "contract_key"],
   },
 ];
+
+const BALANCE_SNAPSHOT_KEY_COLUMNS = [
+  "account_id",
+  "currency",
+  "as_of",
+  "cash",
+  "buying_power",
+  "net_liquidation",
+  "maintenance_margin",
+] as const;
 
 const SHADOW_REPLACE_TABLES = [
   "shadow_portfolio_analysis_snapshots",
@@ -120,7 +129,10 @@ function formatBytes(value: string): string {
 }
 
 function timestampSlug(value = new Date()): string {
-  return value.toISOString().replaceAll(/[-:T.Z]/g, "").slice(0, 14);
+  return value
+    .toISOString()
+    .replaceAll(/[-:T.Z]/g, "")
+    .slice(0, 14);
 }
 
 function normalizeKeyValue(value: unknown): string {
@@ -137,6 +149,121 @@ function rowKey(row: DbRow, columns: readonly string[]): string {
   return columns.map((column) => normalizeKeyValue(row[column])).join("\u001f");
 }
 
+function databaseIdentity(fingerprint: DatabaseFingerprint): string {
+  return [
+    fingerprint.database_name,
+    fingerprint.server_addr ?? "local-socket",
+    fingerprint.server_port ?? "socket",
+  ].join("|");
+}
+
+function brokerAccountIdentity(row: DbRow): string {
+  return rowKey(row, ["app_user_id", "provider_account_id"]);
+}
+
+function brokerConnectionIdentity(row: DbRow): string {
+  return rowKey(row, ["app_user_id", "connection_type", "mode", "name"]);
+}
+
+function rowsByKey(
+  rows: readonly DbRow[],
+  keyFor: (row: DbRow) => string,
+  label: string,
+): Map<string, DbRow> {
+  const keyed = new Map<string, DbRow>();
+  for (const row of rows) {
+    const key = keyFor(row);
+    if (keyed.has(key)) {
+      throw new Error(`Ambiguous ${label} identity: ${key}`);
+    }
+    keyed.set(key, row);
+  }
+  return keyed;
+}
+
+function buildBrokerAccountRows(
+  sourceAccounts: readonly DbRow[],
+  sourceConnections: readonly DbRow[],
+  targetAccounts: readonly DbRow[],
+  targetConnections: readonly DbRow[],
+): DbRow[] {
+  const uniqueSourceAccounts = [
+    ...rowsByKey(
+      sourceAccounts,
+      brokerAccountIdentity,
+      "source broker account",
+    ).values(),
+  ];
+  const sourceConnectionById = rowsByKey(
+    sourceConnections,
+    (row) => normalizeKeyValue(row.id),
+    "source broker connection",
+  );
+  const targetAccountByIdentity = rowsByKey(
+    targetAccounts,
+    brokerAccountIdentity,
+    "target broker account",
+  );
+  const targetConnectionByIdentity = rowsByKey(
+    targetConnections,
+    brokerConnectionIdentity,
+    "target broker connection",
+  );
+  const targetConnectionById = rowsByKey(
+    targetConnections,
+    (row) => normalizeKeyValue(row.id),
+    "target broker connection id",
+  );
+
+  return uniqueSourceAccounts.map((sourceAccount) => {
+    const sourceConnection = sourceConnectionById.get(
+      normalizeKeyValue(sourceAccount.connection_id),
+    );
+    if (!sourceConnection) {
+      throw new Error(
+        `No source broker connection found for account id=${normalizeKeyValue(sourceAccount.id)}`,
+      );
+    }
+    if (
+      normalizeKeyValue(sourceAccount.app_user_id) !==
+      normalizeKeyValue(sourceConnection.app_user_id)
+    ) {
+      throw new Error(
+        `Broker account id=${normalizeKeyValue(sourceAccount.id)} and its connection have different owners.`,
+      );
+    }
+
+    const existingTarget = targetAccountByIdentity.get(
+      brokerAccountIdentity(sourceAccount),
+    );
+    if (existingTarget) {
+      const existingTargetConnection = targetConnectionById.get(
+        normalizeKeyValue(existingTarget.connection_id),
+      );
+      if (
+        !existingTargetConnection ||
+        brokerConnectionIdentity(existingTargetConnection) !==
+          brokerConnectionIdentity(sourceConnection)
+      ) {
+        throw new Error(
+          `Existing target broker connection does not match source account id=${normalizeKeyValue(sourceAccount.id)}.`,
+        );
+      }
+      return { ...sourceAccount, connection_id: existingTarget.connection_id };
+    }
+
+    const targetConnection = targetConnectionByIdentity.get(
+      brokerConnectionIdentity(sourceConnection),
+    );
+    if (!targetConnection) {
+      throw new Error(
+        `No target broker connection matches source account id=${normalizeKeyValue(sourceAccount.id)}.`,
+      );
+    }
+    return { ...sourceAccount, connection_id: targetConnection.id };
+  });
+}
+
 function targetUrlLooksLikeHelium(rawUrl: string): boolean {
   try {
     const parsed = new URL(rawUrl);
@@ -147,6 +274,16 @@ function targetUrlLooksLikeHelium(rawUrl: string): boolean {
   } catch {
     return false;
   }
+}
+
+function parseRecoveryArgs(argv: readonly string[]): { execute: boolean } {
+  if (argv.length === 0) {
+    return { execute: false };
+  }
+  if (argv.length === 1 && argv[0] === "--execute") {
+    return { execute: true };
+  }
+  throw new Error("Usage: account-data-recovery [--execute]");
 }
 
 function updateColumnsFor(
@@ -202,6 +339,8 @@ async function loadTableRows(
   client: PoolClient,
   table: string,
 ): Promise<DbRow[]> {
+  // ponytail: manual recovery buffers one table at a time; move this boundary to
+  // keyset/cursor batches if measured source tables outgrow the operator heap.
   const result = await client.query<DbRow>(
     `select * from ${quoteIdentifier(table)}`,
   );
@@ -218,6 +357,64 @@ async function loadTableCount(
   return Number(result.rows[0]?.count ?? "0");
 }
 
+async function loadCommonTableColumns(
+  source: PoolClient,
+  target: PoolClient,
+  table: string,
+): Promise<string[]> {
+  const [sourceColumns, targetColumns] = await Promise.all([
+    loadTableColumns(source, table),
+    loadTableColumns(target, table),
+  ]);
+  const availableFromSource = new Set(sourceColumns);
+  return targetColumns.filter((column) => availableFromSource.has(column));
+}
+
+function assertColumnsPresent(
+  table: string,
+  columns: readonly string[],
+  requiredColumns: readonly string[],
+): void {
+  const available = new Set(columns);
+  const missing = requiredColumns.filter((column) => !available.has(column));
+  if (missing.length > 0) {
+    throw new Error(
+      `Source and target schemas for ${table} do not share required columns: ${missing.join(", ")}`,
+    );
+  }
+}
+
+async function assertTargetUsersExist(
+  target: PoolClient,
+  rows: readonly DbRow[],
+  label: string,
+): Promise<void> {
+  const sourceUserIds = [
+    ...new Set(
+      rows
+        .map((row) => row.app_user_id)
+        .filter(
+          (value): value is string =>
+            typeof value === "string" && value.length > 0,
+        ),
+    ),
+  ];
+  if (sourceUserIds.length === 0) {
+    return;
+  }
+  const result = await target.query<{ id: string }>(
+    `select id::text as id from users where id = any($1::uuid[])`,
+    [sourceUserIds],
+  );
+  const existing = new Set(result.rows.map((row) => row.id));
+  const missing = sourceUserIds.filter((id) => !existing.has(id));
+  if (missing.length > 0) {
+    throw new Error(
+      `Cannot recover ${label}: target is missing app users ${missing.join(", ")}.`,
+    );
+  }
+}
+
 async function insertRows(
   client: PoolClient,
   table: string,
@@ -225,6 +422,7 @@ async function insertRows(
   rows: readonly DbRow[],
   options: {
     conflictColumns?: readonly string[];
+    conflictPredicate?: { column: string; isNull: boolean };
     updateColumns?: readonly string[];
   } = {},
 ): Promise<number> {
@@ -232,18 +430,32 @@ async function insertRows(
     return 0;
   }
 
-  const chunkSize = Math.max(1, Math.min(1000, Math.floor(50_000 / columns.length)));
+  const chunkSize = Math.max(
+    1,
+    Math.min(1000, Math.floor(50_000 / columns.length)),
+  );
   const columnSql = columns.map(quoteIdentifier).join(", ");
   const conflictColumns = options.conflictColumns ?? [];
   const updateColumns = options.updateColumns ?? [];
+  const conflictPredicate = options.conflictPredicate;
+  if (conflictPredicate && conflictColumns.length === 0) {
+    throw new Error("A conflict predicate requires conflict columns.");
+  }
+  const conflictPredicateSql = conflictPredicate
+    ? ` where ${quoteIdentifier(conflictPredicate.column)} is ${
+        conflictPredicate.isNull ? "null" : "not null"
+      }`
+    : "";
   const conflictSql =
     conflictColumns.length === 0
       ? ""
       : updateColumns.length === 0
-        ? ` on conflict (${conflictColumns.map(quoteIdentifier).join(", ")}) do nothing`
+        ? ` on conflict (${conflictColumns
+            .map(quoteIdentifier)
+            .join(", ")})${conflictPredicateSql} do nothing`
         : ` on conflict (${conflictColumns
             .map(quoteIdentifier)
-            .join(", ")}) do update set ${updateColumns
+            .join(", ")})${conflictPredicateSql} do update set ${updateColumns
             .map(
               (column) =>
                 `${quoteIdentifier(column)} = excluded.${quoteIdentifier(column)}`,
@@ -289,7 +501,7 @@ async function loadSourceBalanceRows(
   source: PoolClient,
 ): Promise<SourceBalanceRow[]> {
   const result = await source.query<SourceBalanceRow>(
-    `select ba.provider_account_id,
+    `select ba.id::text as source_account_id,
             bs.currency,
             bs.cash::text as cash,
             bs.buying_power::text as buying_power,
@@ -305,64 +517,76 @@ async function loadSourceBalanceRows(
   return result.rows;
 }
 
-async function loadTargetAccountMap(
+async function loadTargetAccountIdMap(
   target: PoolClient,
-  providerAccountIds: readonly string[],
+  sourceAccounts: readonly DbRow[],
 ): Promise<Map<string, string>> {
+  const providerAccountIds = [
+    ...new Set(
+      sourceAccounts.map((row) => normalizeKeyValue(row.provider_account_id)),
+    ),
+  ].filter(Boolean);
   if (providerAccountIds.length === 0) {
     return new Map();
   }
   const result = await target.query<{
     id: string;
+    app_user_id: string | null;
     provider_account_id: string;
   }>(
-    `select id, provider_account_id
+    `select id::text as id, app_user_id::text as app_user_id, provider_account_id
        from broker_accounts
       where provider_account_id = any($1::text[])`,
     [providerAccountIds],
   );
-  return new Map(
-    result.rows.map((row) => [row.provider_account_id, row.id] as const),
+  const targetByIdentity = rowsByKey(
+    result.rows,
+    brokerAccountIdentity,
+    "target broker account",
   );
+  const accountIdMap = new Map<string, string>();
+  for (const sourceAccount of sourceAccounts) {
+    const sourceId = normalizeKeyValue(sourceAccount.id);
+    const targetAccount = targetByIdentity.get(
+      brokerAccountIdentity(sourceAccount),
+    );
+    if (sourceId && targetAccount) {
+      accountIdMap.set(sourceId, normalizeKeyValue(targetAccount.id));
+    }
+  }
+  return accountIdMap;
 }
 
 async function buildBalanceInsertRows(
   target: PoolClient,
   sourceRows: readonly SourceBalanceRow[],
+  accountIdMap: ReadonlyMap<string, string>,
 ): Promise<{ rows: DbRow[]; unmappedRows: number }> {
-  const providers = [...new Set(sourceRows.map((row) => row.provider_account_id))];
-  const accountMap = await loadTargetAccountMap(target, providers);
-  const targetAccountIds = [...new Set([...accountMap.values()])];
+  const targetAccountIds = [...new Set([...accountIdMap.values()])];
 
   const existingKeys = new Set<string>();
   if (targetAccountIds.length > 0) {
     const existing = await target.query<DbRow>(
       `select account_id,
+              currency,
               as_of,
               cash::text as cash,
               buying_power::text as buying_power,
-              net_liquidation::text as net_liquidation
+              net_liquidation::text as net_liquidation,
+              maintenance_margin::text as maintenance_margin
          from balance_snapshots
         where account_id = any($1::uuid[])`,
       [targetAccountIds],
     );
     for (const row of existing.rows) {
-      existingKeys.add(
-        rowKey(row, [
-          "account_id",
-          "as_of",
-          "cash",
-          "buying_power",
-          "net_liquidation",
-        ]),
-      );
+      existingKeys.add(rowKey(row, BALANCE_SNAPSHOT_KEY_COLUMNS));
     }
   }
 
   const insertRowsForTarget: DbRow[] = [];
   let unmappedRows = 0;
   for (const row of sourceRows) {
-    const accountId = accountMap.get(row.provider_account_id);
+    const accountId = accountIdMap.get(row.source_account_id);
     if (!accountId) {
       unmappedRows += 1;
       continue;
@@ -378,13 +602,7 @@ async function buildBalanceInsertRows(
       created_at: row.created_at,
       updated_at: row.updated_at,
     };
-    const key = rowKey(mapped, [
-      "account_id",
-      "as_of",
-      "cash",
-      "buying_power",
-      "net_liquidation",
-    ]);
+    const key = rowKey(mapped, BALANCE_SNAPSHOT_KEY_COLUMNS);
     if (!existingKeys.has(key)) {
       insertRowsForTarget.push(mapped);
       existingKeys.add(key);
@@ -394,89 +612,82 @@ async function buildBalanceInsertRows(
   return { rows: insertRowsForTarget, unmappedRows };
 }
 
-async function resolveConnectionId(
-  target: PoolClient,
-  sourceAccount: DbRow,
-): Promise<string> {
-  const existingAccount = await target.query<{ connection_id: string }>(
-    `select connection_id
-       from broker_accounts
-      where provider_account_id = $1
-      limit 1`,
-    [sourceAccount.provider_account_id],
-  );
-  const existingConnectionId = existingAccount.rows[0]?.connection_id;
-  if (existingConnectionId) {
-    return existingConnectionId;
-  }
-
-  const fallbackConnection = await target.query<{ id: string }>(
-    `select id
-       from broker_connections
-      where connection_type = 'broker'
-        and mode = $1
-      order by is_default desc, updated_at desc
-      limit 1`,
-    [sourceAccount.mode],
-  );
-  const fallbackConnectionId = fallbackConnection.rows[0]?.id;
-  if (fallbackConnectionId) {
-    return fallbackConnectionId;
-  }
-
-  throw new Error(
-    `No target broker connection found for mode=${String(sourceAccount.mode)}`,
-  );
-}
-
 async function recoverBrokerAccounts(
   source: PoolClient,
   target: PoolClient,
-): Promise<number> {
+): Promise<{ upserted: number; accountIdMap: Map<string, string> }> {
   const sourceRows = await loadTableRows(source, "broker_accounts");
   if (sourceRows.length === 0) {
-    return 0;
+    return { upserted: 0, accountIdMap: new Map() };
   }
 
-  const columns = [
-    "id",
+  await assertTargetUsersExist(target, sourceRows, "broker accounts");
+  const [sourceConnections, targetAccounts, targetConnections, commonColumns] =
+    await Promise.all([
+      loadTableRows(source, "broker_connections"),
+      loadTableRows(target, "broker_accounts"),
+      loadTableRows(target, "broker_connections"),
+      loadCommonTableColumns(source, target, "broker_accounts"),
+    ]);
+  const columns = commonColumns.filter((column) => column !== "id");
+  assertColumnsPresent("broker_accounts", columns, [
     "connection_id",
     "provider_account_id",
     "display_name",
     "mode",
-    "base_currency",
-    "is_default",
-    "last_synced_at",
-    "created_at",
-    "updated_at",
-  ];
-  const rows: DbRow[] = [];
-  for (const sourceRow of sourceRows) {
-    rows.push({
-      ...sourceRow,
-      connection_id: await resolveConnectionId(target, sourceRow),
-    });
-  }
-  await insertRows(target, "broker_accounts", columns, rows, {
+  ]);
+  const rows = buildBrokerAccountRows(
+    sourceRows,
+    sourceConnections,
+    targetAccounts,
+    targetConnections,
+  );
+  const updateColumns = columns.filter(
+    (column) =>
+      ![
+        "app_user_id",
+        "connection_id",
+        "provider_account_id",
+        "created_at",
+      ].includes(column),
+  );
+  const globalRows = rows.filter((row) => row.app_user_id == null);
+  const userRows = rows.filter((row) => row.app_user_id != null);
+  await insertRows(target, "broker_accounts", columns, globalRows, {
     conflictColumns: ["provider_account_id"],
-    updateColumns: [
-      "display_name",
-      "mode",
-      "base_currency",
-      "is_default",
-      "last_synced_at",
-      "updated_at",
-    ],
+    conflictPredicate: { column: "app_user_id", isNull: true },
+    updateColumns,
   });
-  return rows.length;
+  await insertRows(target, "broker_accounts", columns, userRows, {
+    conflictColumns: ["app_user_id", "provider_account_id"],
+    conflictPredicate: { column: "app_user_id", isNull: false },
+    updateColumns,
+  });
+  const accountIdMap = await loadTargetAccountIdMap(target, sourceRows);
+  if (accountIdMap.size !== sourceRows.length) {
+    throw new Error(
+      `Recovered ${accountIdMap.size} of ${sourceRows.length} broker-account identities.`,
+    );
+  }
+  return { upserted: rows.length, accountIdMap };
 }
 
 async function recoverBalanceSnapshots(
   source: PoolClient,
   target: PoolClient,
+  accountIdMap: ReadonlyMap<string, string>,
 ): Promise<{ inserted: number; unmappedRows: number }> {
   const sourceRows = await loadSourceBalanceRows(source);
-  const planned = await buildBalanceInsertRows(target, sourceRows);
+  const planned = await buildBalanceInsertRows(
+    target,
+    sourceRows,
+    accountIdMap,
+  );
+  if (planned.unmappedRows > 0) {
+    throw new Error(
+      `Cannot recover ${planned.unmappedRows} balance snapshots without target broker-account mappings.`,
+    );
+  }
   await insertRows(
     target,
     "balance_snapshots",
@@ -505,11 +716,20 @@ async function recoverFlexReportRuns(
     return new Map();
   }
 
-  const columns = await loadTableColumns(target, "flex_report_runs");
-  const updateColumnsByReference = updateColumnsFor(columns, ["reference_code"]);
+  const columns = await loadCommonTableColumns(
+    source,
+    target,
+    "flex_report_runs",
+  );
+  assertColumnsPresent("flex_report_runs", columns, ["id", "reference_code"]);
+  const updateColumnsByReference = updateColumnsFor(columns, [
+    "reference_code",
+  ]);
   const updateColumnsById = updateColumnsFor(columns, ["id"]);
   const rowsWithReference = rows.filter((row) => row.reference_code !== null);
-  const rowsWithoutReference = rows.filter((row) => row.reference_code === null);
+  const rowsWithoutReference = rows.filter(
+    (row) => row.reference_code === null,
+  );
 
   await insertRows(target, "flex_report_runs", columns, rowsWithReference, {
     conflictColumns: ["reference_code"],
@@ -520,16 +740,20 @@ async function recoverFlexReportRuns(
     updateColumns: updateColumnsById,
   });
 
-  const referenceCodes = rowsWithReference.map((row) => String(row.reference_code));
-  const sourceIdsWithoutReference = rowsWithoutReference.map((row) => String(row.id));
+  const referenceCodes = rowsWithReference.map((row) =>
+    String(row.reference_code),
+  );
+  const sourceIdsWithoutReference = rowsWithoutReference.map((row) =>
+    String(row.id),
+  );
   const targetRows = await target.query<{
     id: string;
     reference_code: string | null;
   }>(
     `select id, reference_code
        from flex_report_runs
-      where ($1::text[] = '{}' or reference_code = any($1::text[]))
-         or ($2::uuid[] = '{}' or id = any($2::uuid[]))`,
+      where reference_code = any($1::text[])
+         or id = any($2::uuid[])`,
     [referenceCodes, sourceIdsWithoutReference],
   );
 
@@ -538,7 +762,9 @@ async function recoverFlexReportRuns(
       .filter((row) => row.reference_code !== null)
       .map((row) => [String(row.reference_code), row.id] as const),
   );
-  const targetIdById = new Map(targetRows.rows.map((row) => [row.id, row.id] as const));
+  const targetIdById = new Map(
+    targetRows.rows.map((row) => [row.id, row.id] as const),
+  );
   const map = new Map<string, string>();
   for (const row of rows) {
     const sourceId = String(row.id);
@@ -554,18 +780,32 @@ async function recoverFlexReportRuns(
       map.set(sourceId, targetId);
     }
   }
+  if (map.size !== rows.length) {
+    throw new Error(
+      `Recovered ${map.size} of ${rows.length} FLEX report runs.`,
+    );
+  }
   return map;
 }
 
-function remapSourceRunIds(rows: DbRow[], sourceRunIdMap: Map<string, string>): DbRow[] {
+function remapSourceRunIds(
+  rows: DbRow[],
+  sourceRunIdMap: Map<string, string>,
+): DbRow[] {
   return rows.map((row) => {
     const sourceRunId = row.source_run_id;
     if (sourceRunId === null || sourceRunId === undefined) {
       return row;
     }
+    const targetRunId = sourceRunIdMap.get(String(sourceRunId));
+    if (!targetRunId) {
+      throw new Error(
+        `No recovered FLEX report run maps source_run_id=${String(sourceRunId)}.`,
+      );
+    }
     return {
       ...row,
-      source_run_id: sourceRunIdMap.get(String(sourceRunId)) ?? sourceRunId,
+      source_run_id: targetRunId,
     };
   });
 }
@@ -580,7 +820,8 @@ async function recoverFlexTables(
   };
 
   for (const spec of FLEX_TABLES) {
-    const columns = await loadTableColumns(target, spec.table);
+    const columns = await loadCommonTableColumns(source, target, spec.table);
+    assertColumnsPresent(spec.table, columns, spec.conflictColumns);
     const sourceRows = remapSourceRunIds(
       dedupeRows(await loadTableRows(source, spec.table), spec.conflictColumns),
       sourceRunIdMap,
@@ -595,9 +836,29 @@ async function recoverFlexTables(
   return recovered;
 }
 
+function remapShadowAccountBrokerIds(
+  rows: readonly DbRow[],
+  accountIdMap: ReadonlyMap<string, string>,
+): DbRow[] {
+  return rows.map((row) => {
+    const sourceAccountId = row.source_broker_account_id;
+    if (sourceAccountId === null || sourceAccountId === undefined) {
+      return row;
+    }
+    const targetAccountId = accountIdMap.get(String(sourceAccountId));
+    if (!targetAccountId) {
+      throw new Error(
+        `No recovered broker account maps shadow source_broker_account_id=${String(sourceAccountId)}.`,
+      );
+    }
+    return { ...row, source_broker_account_id: targetAccountId };
+  });
+}
+
 async function replaceShadowTables(
   source: PoolClient,
   target: PoolClient,
+  accountIdMap: ReadonlyMap<string, string>,
 ): Promise<Record<string, number>> {
   const copied: Record<string, number> = {};
   await target.query(
@@ -606,8 +867,12 @@ async function replaceShadowTables(
     )} restart identity`,
   );
   for (const table of SHADOW_INSERT_ORDER) {
-    const columns = await loadTableColumns(target, table);
-    const rows = await loadTableRows(source, table);
+    const columns = await loadCommonTableColumns(source, target, table);
+    let rows = await loadTableRows(source, table);
+    if (table === "shadow_accounts") {
+      await assertTargetUsersExist(target, rows, "shadow accounts");
+      rows = remapShadowAccountBrokerIds(rows, accountIdMap);
+    }
     await insertRows(target, table, columns, rows);
     copied[table] = rows.length;
   }
@@ -619,6 +884,7 @@ async function printPlan(
   target: PoolClient,
   sourceFingerprint: DatabaseFingerprint,
   targetFingerprint: DatabaseFingerprint,
+  execute: boolean,
 ): Promise<void> {
   console.log("source_database", {
     database: sourceFingerprint.database_name,
@@ -633,8 +899,57 @@ async function printPlan(
     size: formatBytes(targetFingerprint.database_bytes),
   });
 
+  const [
+    sourceBrokerAccounts,
+    sourceBrokerConnections,
+    targetBrokerAccounts,
+    targetBrokerConnections,
+    brokerAccountColumns,
+  ] = await Promise.all([
+    loadTableRows(source, "broker_accounts"),
+    loadTableRows(source, "broker_connections"),
+    loadTableRows(target, "broker_accounts"),
+    loadTableRows(target, "broker_connections"),
+    loadCommonTableColumns(source, target, "broker_accounts"),
+  ]);
+  assertColumnsPresent("broker_accounts", brokerAccountColumns, [
+    "connection_id",
+    "provider_account_id",
+    "display_name",
+    "mode",
+  ]);
+  await assertTargetUsersExist(target, sourceBrokerAccounts, "broker accounts");
+  buildBrokerAccountRows(
+    sourceBrokerAccounts,
+    sourceBrokerConnections,
+    targetBrokerAccounts,
+    targetBrokerConnections,
+  );
+  const flexReportColumns = await loadCommonTableColumns(
+    source,
+    target,
+    "flex_report_runs",
+  );
+  assertColumnsPresent("flex_report_runs", flexReportColumns, [
+    "id",
+    "reference_code",
+  ]);
+  for (const spec of FLEX_TABLES) {
+    const columns = await loadCommonTableColumns(source, target, spec.table);
+    assertColumnsPresent(spec.table, columns, spec.conflictColumns);
+  }
+  const sourceShadowAccounts = await loadTableRows(source, "shadow_accounts");
+  await assertTargetUsersExist(target, sourceShadowAccounts, "shadow accounts");
+  const existingAccountIdMap = await loadTargetAccountIdMap(
+    target,
+    sourceBrokerAccounts,
+  );
   const sourceBalanceRows = await loadSourceBalanceRows(source);
-  const plannedBalanceRows = await buildBalanceInsertRows(target, sourceBalanceRows);
+  const plannedBalanceRows = await buildBalanceInsertRows(
+    target,
+    sourceBalanceRows,
+    existingAccountIdMap,
+  );
 
   const rowCounts: Array<{
     table: string;
@@ -648,21 +963,27 @@ async function printPlan(
       sourceRows:
         table === "balance_snapshots"
           ? sourceBalanceRows.length
-          : await loadTableCount(source, table),
+          : sourceBrokerAccounts.length,
       targetRows: await loadTableCount(target, table),
       action:
         table === "balance_snapshots"
           ? `insert_missing=${plannedBalanceRows.rows.length}, unmapped=${plannedBalanceRows.unmappedRows}`
-          : "upsert_by_provider_account_id",
+          : "upsert_by_app_user_and_provider_account_id",
     });
   }
 
-  for (const table of ["flex_report_runs", ...FLEX_TABLES.map((spec) => spec.table)]) {
+  for (const table of [
+    "flex_report_runs",
+    ...FLEX_TABLES.map((spec) => spec.table),
+  ]) {
     rowCounts.push({
       table,
       sourceRows: await loadTableCount(source, table),
       targetRows: await loadTableCount(target, table),
-      action: table === "flex_report_runs" ? "upsert_by_reference_code" : "upsert_by_natural_key",
+      action:
+        table === "flex_report_runs"
+          ? "upsert_by_reference_code"
+          : "upsert_by_natural_key",
     });
   }
 
@@ -678,7 +999,28 @@ async function printPlan(
   console.table(rowCounts);
   console.log(`dry_run=${execute ? "false" : "true"}`);
   if (!execute) {
-    console.log("Pass --execute to create a Helium backup schema and apply recovery.");
+    console.log(
+      "Pass --execute to create a Helium backup schema and apply recovery.",
+    );
+  }
+}
+
+function assertSafeUrls(): void {
+  if (!sourceDatabaseUrl) {
+    throw new Error("SOURCE_DATABASE_URL is required.");
+  }
+  if (!targetDatabaseUrl) {
+    throw new Error("DATABASE_URL is required.");
+  }
+  if (sourceDatabaseUrl === targetDatabaseUrl) {
+    throw new Error(
+      "SOURCE_DATABASE_URL and DATABASE_URL must not be identical.",
+    );
+  }
+  if (!targetUrlLooksLikeHelium(targetDatabaseUrl)) {
+    throw new Error(
+      "Refusing to run: DATABASE_URL must be postgresql://...@helium/heliumdb...",
+    );
   }
 }
 
@@ -689,21 +1031,6 @@ async function assertSafeConnections(
   sourceFingerprint: DatabaseFingerprint;
   targetFingerprint: DatabaseFingerprint;
 }> {
-  if (!sourceDatabaseUrl) {
-    throw new Error("SOURCE_DATABASE_URL is required.");
-  }
-  if (!targetDatabaseUrl) {
-    throw new Error("DATABASE_URL is required.");
-  }
-  if (sourceDatabaseUrl === targetDatabaseUrl) {
-    throw new Error("SOURCE_DATABASE_URL and DATABASE_URL must not be identical.");
-  }
-  if (!targetUrlLooksLikeHelium(targetDatabaseUrl)) {
-    throw new Error(
-      "Refusing to run: DATABASE_URL must be postgresql://...@helium/heliumdb...",
-    );
-  }
-
   const [sourceFingerprint, targetFingerprint] = await Promise.all([
     loadFingerprint(source),
     loadFingerprint(target),
@@ -715,39 +1042,39 @@ async function assertSafeConnections(
     );
   }
 
-  const sourceIdentity = [
-    sourceFingerprint.database_name,
-    sourceFingerprint.server_addr ?? "local-socket",
-    sourceFingerprint.server_port ?? "socket",
-    sourceFingerprint.user_name,
-  ].join("|");
-  const targetIdentity = [
-    targetFingerprint.database_name,
-    targetFingerprint.server_addr ?? "local-socket",
-    targetFingerprint.server_port ?? "socket",
-    targetFingerprint.user_name,
-  ].join("|");
-  if (sourceIdentity === targetIdentity) {
-    throw new Error("Refusing to run: source and target resolved to the same database.");
+  if (
+    databaseIdentity(sourceFingerprint) === databaseIdentity(targetFingerprint)
+  ) {
+    throw new Error(
+      "Refusing to run: source and target resolved to the same database.",
+    );
   }
 
   return { sourceFingerprint, targetFingerprint };
 }
 
 async function recover(source: PoolClient, target: PoolClient): Promise<void> {
-  await target.query("begin");
+  await target.query("begin transaction isolation level repeatable read");
   try {
     const backupSchema = await createBackupSchema(target);
     console.log(`backup_schema=${backupSchema}`);
 
     const brokerAccounts = await recoverBrokerAccounts(source, target);
-    const balances = await recoverBalanceSnapshots(source, target);
+    const balances = await recoverBalanceSnapshots(
+      source,
+      target,
+      brokerAccounts.accountIdMap,
+    );
     const flex = await recoverFlexTables(source, target);
-    const shadow = await replaceShadowTables(source, target);
+    const shadow = await replaceShadowTables(
+      source,
+      target,
+      brokerAccounts.accountIdMap,
+    );
 
     await target.query("commit");
     console.log("recovery_complete=true");
-    console.log("broker_accounts_upserted", brokerAccounts);
+    console.log("broker_accounts_upserted", brokerAccounts.upserted);
     console.log("balance_snapshots_inserted", balances.inserted);
     console.log("balance_snapshots_unmapped", balances.unmappedRows);
     console.log("flex_rows_processed", flex);
@@ -759,28 +1086,65 @@ async function recover(source: PoolClient, target: PoolClient): Promise<void> {
 }
 
 async function main(): Promise<void> {
+  const { execute } = parseRecoveryArgs(process.argv.slice(2));
+  assertSafeUrls();
   const sourcePool = new Pool({ connectionString: sourceDatabaseUrl, max: 2 });
   const targetPool = new Pool({ connectionString: targetDatabaseUrl, max: 2 });
-  const source = await sourcePool.connect();
-  const target = await targetPool.connect();
+  let source: PoolClient | undefined;
+  let target: PoolClient | undefined;
+  let sourceTransactionOpen = false;
 
   try {
-    const { sourceFingerprint, targetFingerprint } = await assertSafeConnections(
+    source = await sourcePool.connect();
+    target = await targetPool.connect();
+    await source.query(
+      "begin transaction isolation level repeatable read read only",
+    );
+    sourceTransactionOpen = true;
+    const { sourceFingerprint, targetFingerprint } =
+      await assertSafeConnections(source, target);
+    await printPlan(
       source,
       target,
+      sourceFingerprint,
+      targetFingerprint,
+      execute,
     );
-    await printPlan(source, target, sourceFingerprint, targetFingerprint);
     if (execute) {
       await recover(source, target);
     }
   } finally {
-    source.release();
-    target.release();
-    await Promise.all([sourcePool.end(), targetPool.end()]);
+    try {
+      if (sourceTransactionOpen && source) {
+        await source.query("rollback");
+      }
+    } finally {
+      source?.release();
+      target?.release();
+      await Promise.all([sourcePool.end(), targetPool.end()]);
+    }
   }
 }
 
-main().catch((error) => {
-  console.error(error instanceof Error ? error.message : String(error));
-  process.exitCode = 1;
-});
+export const __accountDataRecoveryInternalsForTests = {
+  FLEX_TABLES,
+  buildBalanceInsertRows,
+  buildBrokerAccountRows,
+  databaseIdentity,
+  dedupeRows,
+  insertRows,
+  parseRecoveryArgs,
+  recoverFlexReportRuns,
+  remapShadowAccountBrokerIds,
+  remapSourceRunIds,
+};
+
+if (
+  process.argv[1] &&
+  import.meta.url === pathToFileURL(process.argv[1]).href
+) {
+  main().catch((error) => {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exitCode = 1;
+  });
+}
