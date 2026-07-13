@@ -177,6 +177,61 @@ test("Python compute runtime launches with its configured environment", async ()
   }
 });
 
+test("Python compute stop prevents a pending start from spawning", async () => {
+  const cwd = mkdtempSync(join(tmpdir(), "pyrus-python-compute-"));
+  writeFileSync(join(cwd, "pyproject.toml"), '[project]\nname = "test"\n');
+  let enterProbe = () => {};
+  let releaseProbe = () => {};
+  const probeEntered = new Promise<void>((resolve) => {
+    enterProbe = () => resolve();
+  });
+  const probeRelease = new Promise<void>((resolve) => {
+    releaseProbe = () => resolve();
+  });
+  let spawnCalls = 0;
+  const runtime = new PythonComputeRuntime({
+    laneDefinition: {
+      id: "risk",
+      label: "Risk compute",
+      config: {
+        enabled: true,
+        cwd,
+        host: "127.0.0.1",
+        port: 18_768,
+        startupTimeoutMs: 1,
+      },
+      jobTypes: ["portfolio_risk"],
+    },
+    spawnProcess: (() => {
+      spawnCalls += 1;
+      return fakeSpawnedChild();
+    }) as typeof spawn,
+    fetch: (async () => {
+      enterProbe();
+      await probeRelease;
+      throw new Error("not running");
+    }) as typeof fetch,
+    delay: async () => {},
+    probePortOpen: async () => false,
+  });
+
+  try {
+    const start = runtime.start();
+    await probeEntered;
+    runtime.stop();
+    releaseProbe();
+    const diagnostics = await start;
+
+    assert.equal(spawnCalls, 0);
+    assert.equal(diagnostics.status, "stopped");
+    assert.equal(diagnostics.pid, null);
+  } finally {
+    runtime.stop();
+    releaseProbe();
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
 test("Python compute diagnostics re-probes a degraded live child", async () => {
   const cwd = mkdtempSync(join(tmpdir(), "pyrus-python-compute-"));
   writeFileSync(join(cwd, "pyproject.toml"), "[project]\nname = \"test\"\n");

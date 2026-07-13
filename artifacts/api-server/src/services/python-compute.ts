@@ -291,6 +291,7 @@ export function routePythonComputeJobType(
 export class PythonComputeRuntime implements PythonComputeRuntimeLike {
   private child: ChildProcess | null = null;
   private startPromise: Promise<PythonComputeDiagnostics> | null = null;
+  private lifecycleGeneration = 0;
   private restartTimer: ReturnType<typeof setTimeout> | null = null;
   private diagnostics: PythonComputeDiagnostics;
   private stopping = false;
@@ -368,14 +369,19 @@ export class PythonComputeRuntime implements PythonComputeRuntimeLike {
     if (this.startPromise) {
       return this.startPromise;
     }
-    this.startPromise = this.startInner().finally(() => {
+    this.stopping = false;
+    const generation = ++this.lifecycleGeneration;
+    this.startPromise = this.startInner(generation).finally(() => {
       this.startPromise = null;
     });
     return this.startPromise;
   }
 
-  private async startInner(): Promise<PythonComputeDiagnostics> {
+  private async startInner(generation: number): Promise<PythonComputeDiagnostics> {
     const existingProbe = await this.probeHealthOnce();
+    if (!this.startIsCurrent(generation)) {
+      return this.getDiagnostics();
+    }
     if (existingProbe.ok) {
       this.diagnostics.status = "healthy";
       this.diagnostics.lastError = null;
@@ -385,7 +391,11 @@ export class PythonComputeRuntime implements PythonComputeRuntimeLike {
       return this.getDiagnostics();
     }
 
-    if (await this.probePortOpenFn(this.config.host, this.config.port)) {
+    const portIsOpen = await this.probePortOpenFn(this.config.host, this.config.port);
+    if (!this.startIsCurrent(generation)) {
+      return this.getDiagnostics();
+    }
+    if (portIsOpen) {
       this.markDegraded(
         `Python compute port ${this.config.port} is already in use, but /health was not a compatible ${this.laneId} pyrus-compute response: ${existingProbe.error ?? "unknown health failure"}`,
       );
@@ -397,7 +407,6 @@ export class PythonComputeRuntime implements PythonComputeRuntimeLike {
       return this.getDiagnostics();
     }
 
-    this.stopping = false;
     this.diagnostics.status = "starting";
     this.diagnostics.lastError = null;
     this.diagnostics.reusedExisting = false;
@@ -464,7 +473,10 @@ export class PythonComputeRuntime implements PythonComputeRuntimeLike {
     });
 
     try {
-      await this.waitForHealth();
+      await this.waitForHealth(generation);
+      if (!this.startIsCurrent(generation)) {
+        return this.getDiagnostics();
+      }
       this.diagnostics.status = "healthy";
       this.diagnostics.restartCount = 0;
       logger.info(
@@ -475,6 +487,9 @@ export class PythonComputeRuntime implements PythonComputeRuntimeLike {
         "Python compute service started",
       );
     } catch (error) {
+      if (!this.startIsCurrent(generation)) {
+        return this.getDiagnostics();
+      }
       this.markDegraded(error instanceof Error ? error.message : String(error));
     }
     return this.getDiagnostics();
@@ -545,6 +560,7 @@ export class PythonComputeRuntime implements PythonComputeRuntimeLike {
 
   stop(): void {
     this.stopping = true;
+    this.lifecycleGeneration += 1;
     if (this.restartTimer) {
       clearTimeout(this.restartTimer);
       this.restartTimer = null;
@@ -653,10 +669,13 @@ export class PythonComputeRuntime implements PythonComputeRuntimeLike {
     }
   }
 
-  private async waitForHealth(): Promise<void> {
+  private async waitForHealth(generation: number): Promise<void> {
     const deadline = Date.now() + this.config.startupTimeoutMs;
     let lastError = "health probe did not run";
     while (Date.now() < deadline) {
+      if (!this.startIsCurrent(generation)) {
+        return;
+      }
       // Fail fast if the child died during startup (its exit handler nulls the
       // slot) instead of burning the whole startup window on dead probes.
       if (!this.stopping && !this.child && this.diagnostics.startedAt) {
@@ -665,6 +684,9 @@ export class PythonComputeRuntime implements PythonComputeRuntimeLike {
         );
       }
       const probe = await this.probeHealthOnce();
+      if (!this.startIsCurrent(generation)) {
+        return;
+      }
       if (probe.ok) {
         return;
       }
@@ -672,6 +694,10 @@ export class PythonComputeRuntime implements PythonComputeRuntimeLike {
       await this.delayFn(250);
     }
     throw new Error(`Python compute health check timed out: ${lastError}`);
+  }
+
+  private startIsCurrent(generation: number): boolean {
+    return !this.stopping && generation === this.lifecycleGeneration;
   }
 
   // Re-probe /health for a child that is alive but marked "degraded" (a
