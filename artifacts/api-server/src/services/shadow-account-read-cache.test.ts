@@ -117,6 +117,10 @@ test("marketing shadow ledger reads use compact projected orders and one fill bu
 
   assert.match(compactBlock, /readShadowMarketingFillsWithOrders/);
   assert.match(compactBlock, /withShadowReadCache\(/);
+  assert.match(
+    compactBlock,
+    /ttlMs:\s*SHADOW_LEDGER_IDENTITY_CACHE_TTL_MS/,
+  );
   assert.doesNotMatch(compactBlock, /\.select\(\)/);
   assert.doesNotMatch(
     compactBlock,

@@ -3859,7 +3859,7 @@ function readShadowMarketingFillsWithOrders(): Promise<ShadowMarketingFillsWithO
         ordersById: new Map(compactOrders.map((order) => [order.id, order])),
       };
     },
-    { ttlMs: SHADOW_DERIVED_READ_CACHE_TTL_MS },
+    { ttlMs: SHADOW_LEDGER_IDENTITY_CACHE_TTL_MS },
   );
 }
 
