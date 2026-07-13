@@ -12309,11 +12309,32 @@ function shadowResponseReason(value: unknown): string | null {
   return typeof reason === "string" && reason.trim() ? reason : null;
 }
 
+const shadowInjectedFastRiskReadCacheKeyMemo = new WeakMap<
+  object,
+  {
+    closedTrades: object | null;
+    dbBackoff: boolean;
+    key: string;
+  }
+>();
+
 function shadowInjectedFastRiskReadCacheKey(input: {
   source: ShadowSourceScope | null;
   positionsResponse: Awaited<ReturnType<typeof getShadowAccountPositions>>;
   closedTrades?: Awaited<ReturnType<typeof getShadowAccountClosedTrades>>;
 }) {
+  const closedTrades = input.closedTrades ?? null;
+  const dbBackoff = isShadowAccountDbBackoffActive();
+  const cached = shadowInjectedFastRiskReadCacheKeyMemo.get(
+    input.positionsResponse,
+  );
+  if (
+    cached &&
+    cached.closedTrades === closedTrades &&
+    cached.dbBackoff === dbBackoff
+  ) {
+    return cached.key;
+  }
   // Account-page primary/live reads share the same position projection but each
   // creates a fresh deferred closed-trades timestamp. Hash all risk-relevant
   // content except that unused timestamp; writes/mark refreshes invalidate `risk:`.
@@ -12328,11 +12349,17 @@ function shadowInjectedFastRiskReadCacheKey(input: {
               trades: input.closedTrades.trades,
             }
           : null,
-        dbBackoff: isShadowAccountDbBackoffActive(),
+        dbBackoff,
       }),
     )
     .digest("hex");
-  return `risk:${shadowSourceCacheKey(input.source)}:fast:injected:${fingerprint}`;
+  const key = `risk:${shadowSourceCacheKey(input.source)}:fast:injected:${fingerprint}`;
+  shadowInjectedFastRiskReadCacheKeyMemo.set(input.positionsResponse, {
+    closedTrades,
+    dbBackoff,
+    key,
+  });
+  return key;
 }
 
 export async function getShadowAccountRisk(
@@ -16623,6 +16650,8 @@ async function insertWatchlistBacktestFills(input: {
 export const __shadowWatchlistBacktestInternalsForTests = {
   writeWatchlistBacktestRunToOwnLedgerForTests:
     writeWatchlistBacktestRunToOwnLedger,
+  shadowInjectedFastRiskReadCacheKeyForTests:
+    shadowInjectedFastRiskReadCacheKey,
   invalidateShadowFreshStateCache,
   invalidateShadowReadCachesAfterBackgroundMarkRefresh,
   setShadowReadCacheWindowsForTests(input: { ttlMs?: number | null }) {

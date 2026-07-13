@@ -176,3 +176,34 @@ test("identical injected risk inputs share one build and changed inputs do not c
     internals.resetShadowAccountReadDiagnosticsForTests();
   }
 });
+
+test("identical injected risk response objects reuse their fingerprint", () => {
+  internals.clearShadowAccountDbBackoff();
+  let serializations = 0;
+  const response = positionsResponse({
+    positions: [riskPosition(100)],
+    totals: {
+      cash: 100,
+      netExposure: 100,
+      netLiquidation: 200,
+      startingBalance: 100,
+    },
+  });
+  Object.defineProperty(response, "toJSON", {
+    value() {
+      serializations += 1;
+      return { positions: response.positions, totals: response.totals };
+    },
+  });
+  const input = {
+    source: null,
+    positionsResponse: response as never,
+    closedTrades: closedTrades as never,
+  };
+
+  const first = internals.shadowInjectedFastRiskReadCacheKeyForTests(input);
+  const second = internals.shadowInjectedFastRiskReadCacheKeyForTests(input);
+
+  assert.equal(second, first);
+  assert.equal(serializations, 1);
+});
