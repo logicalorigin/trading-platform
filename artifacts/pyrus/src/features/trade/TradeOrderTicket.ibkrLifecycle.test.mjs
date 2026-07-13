@@ -68,12 +68,13 @@ test("live readiness is strict and fail-closed", () => {
   assert.equal(isIbkrLiveReadinessReady(ready, null), false);
 });
 
-test("manual direct IBKR equity intent is exactly one-share LMT DAY regular-hours live", () => {
+test("manual direct IBKR limit intent is exactly one-share DAY regular-hours live", () => {
   assert.deepEqual(
     buildManualIbkrEquityOrderRequest({
       accountId: "ibkr-one",
       symbol: "aapl",
       side: "SELL",
+      orderType: "LMT",
       limitPrice: 100.25,
     }),
     {
@@ -85,6 +86,34 @@ test("manual direct IBKR equity intent is exactly one-share LMT DAY regular-hour
       type: "limit",
       quantity: 1,
       limitPrice: 100.25,
+      stopPrice: null,
+      timeInForce: "day",
+      optionContract: null,
+      tradingSession: "regular",
+      includeOvernight: false,
+      source: "manual",
+    },
+  );
+});
+
+test("manual direct IBKR market intent is one share with no price cap", () => {
+  assert.deepEqual(
+    buildManualIbkrEquityOrderRequest({
+      accountId: "ibkr-one",
+      symbol: "plug",
+      side: "SELL",
+      orderType: "MKT",
+      limitPrice: 2.22,
+    }),
+    {
+      accountId: "ibkr-one",
+      mode: "live",
+      symbol: "PLUG",
+      assetClass: "equity",
+      side: "buy",
+      type: "market",
+      quantity: 1,
+      limitPrice: null,
       stopPrice: null,
       timeInForce: "day",
       optionContract: null,
@@ -244,6 +273,36 @@ test("ambiguous lifecycle responses require reconciliation before another action
     true,
   );
   assert.equal(
+    ibkrLifecycleRequiresReconciliation("place", {
+      status: "filled",
+      quantity: 1,
+      filledQuantity: 1,
+      placementConfirmed: true,
+      reconciliationRequired: false,
+    }),
+    false,
+  );
+  assert.equal(
+    ibkrLifecycleRequiresReconciliation("place", {
+      status: "filled",
+      quantity: 1,
+      filledQuantity: 0,
+      placementConfirmed: true,
+      reconciliationRequired: false,
+    }),
+    true,
+  );
+  assert.equal(
+    ibkrLifecycleRequiresReconciliation("place", {
+      status: "partially_filled",
+      quantity: 1,
+      filledQuantity: 0.5,
+      placementConfirmed: true,
+      reconciliationRequired: false,
+    }),
+    true,
+  );
+  assert.equal(
     ibkrLifecycleRequiresReconciliation("replace", {
       replacementConfirmed: true,
       reconciliationRequired: true,
@@ -279,6 +338,11 @@ test("ticket wires generated direct IBKR lifecycle hooks", () => {
   assert.match(source, /useReplaceOrder/);
   assert.match(source, /useCancelOrder/);
   assert.match(source, /mode: "live"/);
+  assert.match(source, /liveUsesIbkrEquity\s*\? \["MKT", "LMT"\]/);
+  assert.match(
+    source,
+    /buildManualIbkrEquityOrderRequest\(\{[\s\S]*?orderType,[\s\S]*?limitPrice:/,
+  );
   assert.match(source, /STOP \/ RECONCILE/);
   assert.match(source, /setIbkrCancelAttempted\(true\)/);
   assert.match(

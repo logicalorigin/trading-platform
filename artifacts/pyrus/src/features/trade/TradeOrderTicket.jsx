@@ -98,7 +98,7 @@ import {
   buildPreparedIbkrReplacementSubmission,
   ibkrCancelToast,
   ibkrLifecycleRequiresReconciliation,
-  ibkrOrderHasAnyFill,
+  ibkrOrderNeedsFillReconciliation,
   isIbkrOrderReconciliationError,
   isIbkrOrderRejected,
   isIbkrLiveReadinessReady,
@@ -1013,6 +1013,9 @@ export const TradeOrderTicket = ({
   const trackedIbkrOrderTerminal = IBKR_TERMINAL_ORDER_STATUSES.has(
     trackedIbkrOrderStatus,
   );
+  const trackedIbkrOrderIsMarket =
+    trackedIbkrOrder?.type === "market" ||
+    (trackedIbkrOrder?.type == null && trackedIbkrOrder?.limitPrice == null);
   const trackedIbkrOrderReadPending = Boolean(
     activeIbkrOrder?.id && activeIbkrOrdersQuery.isPending,
   );
@@ -1026,7 +1029,7 @@ export const TradeOrderTicket = ({
   );
   const trackedIbkrOrderRequiresReconciliation = Boolean(
     trackedIbkrOrder?.reconciliationRequired ||
-      ibkrOrderHasAnyFill(trackedIbkrOrder) ||
+      ibkrOrderNeedsFillReconciliation(trackedIbkrOrder) ||
       trackedIbkrOrderReadMissing ||
       trackedIbkrOrderReadFailed,
   );
@@ -1060,6 +1063,7 @@ export const TradeOrderTicket = ({
       symbol: controlledIbkrOrder.symbol || slot.ticker,
       side: controlledIbkrOrder.side || "buy",
       quantity: controlledIbkrOrder.quantity || 1,
+      type: controlledIbkrOrder.limitPrice == null ? "market" : "limit",
       limitPrice: controlledIbkrOrder.limitPrice,
       filledQuantity: 0,
       status:
@@ -1078,7 +1082,7 @@ export const TradeOrderTicket = ({
       !activeIbkrOrder?.id ||
       (!trackedIbkrOrderReadMissing &&
         !trackedIbkrOrderReadFailed &&
-        !ibkrOrderHasAnyFill(queriedIbkrOrder))
+        !ibkrOrderNeedsFillReconciliation(queriedIbkrOrder))
     ) {
       return;
     }
@@ -1585,7 +1589,7 @@ export const TradeOrderTicket = ({
   );
   const ticketOrderTypes =
     liveUsesIbkrEquity
-      ? ["LMT"]
+      ? ["MKT", "LMT"]
       : ticketIsOptions && ["snaptrade", "schwab"].includes(optionBroker)
       ? ["MKT", "LMT"]
       : TICKET_ORDER_TYPES;
@@ -2328,6 +2332,7 @@ export const TradeOrderTicket = ({
       ? buildManualIbkrEquityOrderRequest({
           accountId: ibkrOrderAccountId,
           symbol: slot.ticker,
+          orderType,
           limitPrice: orderPrices.limitPrice,
         })
       : {
@@ -3140,12 +3145,20 @@ export const TradeOrderTicket = ({
         { label: "SYMBOL", value: trackedIbkrOrder?.symbol || slot.ticker },
         { label: "SIDE / SIZE", value: "BUY 1 SHARE" },
         {
-          label: operation === "replace" ? "NEW LIMIT" : "LIMIT",
-          value: formatTicketMoney(
+          label:
             operation === "replace"
-              ? nextLimitPrice
-              : trackedIbkrOrder?.limitPrice || orderRequest?.limitPrice,
-          ),
+              ? "NEW LIMIT"
+              : orderRequest?.type === "market"
+                ? "TYPE"
+                : "LIMIT",
+          value:
+            operation !== "replace" && orderRequest?.type === "market"
+              ? "MARKET"
+              : formatTicketMoney(
+                  operation === "replace"
+                    ? nextLimitPrice
+                    : trackedIbkrOrder?.limitPrice || orderRequest?.limitPrice,
+                ),
         },
         ...(challenge.messages || []).map((message, index) => ({
           label: `WARNING ${index + 1}`,
@@ -3969,12 +3982,14 @@ export const TradeOrderTicket = ({
                 orderType === "STP" || orderType === "STP_LMT"
                   ? "STOP"
                   : orderType === "MKT"
-                    ? "MARK"
+                    ? "TYPE"
                     : "LIMIT",
               value:
                 orderType === "STP_LMT"
                   ? stopLimitPriceDisplay
-                  : fillPriceDisplay,
+                  : orderType === "MKT"
+                    ? "MARKET"
+                    : fillPriceDisplay,
             },
             ...(attachStopLoss
               ? [
@@ -4560,7 +4575,9 @@ export const TradeOrderTicket = ({
                 ? trackedIbkrOrderTerminal
                   ? "PREVIEW NEXT ORDER"
                   : "ACTIVE ORDER LOCKED"
-                : `${ticketActionLabel} IBKR 1 sh × ${fillPriceDisplay} · ${signedCostDisplay}`
+                : orderType === "MKT"
+                  ? `${ticketActionLabel} IBKR 1 sh · MARKET`
+                  : `${ticketActionLabel} IBKR 1 sh × ${fillPriceDisplay} · ${signedCostDisplay}`
     : gatewayTradingBlocked
       ? gatewayTradingBlockedLabel
       : taxPreflightPending
@@ -5899,8 +5916,10 @@ export const TradeOrderTicket = ({
             </span>
           </div>
           <div style={{ color: CSS_COLOR.textSec }}>
-            {trackedIbkrOrder.symbol || slot.ticker} · {trackedIbkrOrder.side?.toUpperCase() || "BUY"} 1 share · LMT{" "}
-            {formatTicketMoney(trackedIbkrOrder.limitPrice)} · filled {trackedIbkrOrder.filledQuantity || 0}
+            {trackedIbkrOrder.symbol || slot.ticker} · {trackedIbkrOrder.side?.toUpperCase() || "BUY"} 1 share ·{" "}
+            {trackedIbkrOrderIsMarket
+              ? "MKT"
+              : `LMT ${formatTicketMoney(trackedIbkrOrder.limitPrice)}`} · filled {trackedIbkrOrder.filledQuantity || 0}
           </div>
           {trackedIbkrOrderRequiresReconciliation ? (
             <div
@@ -5924,44 +5943,56 @@ export const TradeOrderTicket = ({
           trackedIbkrOrderStatus !== "pending_cancel" &&
           !trackedIbkrOrderRequiresReconciliation &&
           !ibkrCancelAttempted ? (
-            <div style={{ display: "grid", gridTemplateColumns: "1fr auto auto", gap: sp(4) }}>
-              <input
-                type="number"
-                min="0.01"
-                step="0.01"
-                aria-label="replacement limit price"
-                value={replacementLimitPrice}
-                onChange={(event) => setReplacementLimitPrice(event.target.value)}
-                disabled={ibkrLifecyclePending || ibkrReplacementLocked}
-                style={{
-                  minWidth: 0,
-                  background: CSS_COLOR.bg1,
-                  border: `1px solid ${CSS_COLOR.border}`,
-                  color: CSS_COLOR.text,
-                  padding: sp("4px 6px"),
-                }}
-              />
-              <button
-                type="button"
-                onClick={previewIbkrReplacement}
-                disabled={
-                  ibkrLifecyclePending ||
-                  ibkrReplacementLocked ||
-                  Number(trackedIbkrOrder.filledQuantity || 0) > 0
-                }
-                style={{
-                  border: `1px solid ${CSS_COLOR.border}`,
-                  background: CSS_COLOR.bg1,
-                  color: CSS_COLOR.amber,
-                  padding: sp("4px 7px"),
-                }}
-              >
-                {previewOrderReplacementMutation.isPending
-                  ? "CHECKING..."
-                  : ibkrReplacementLocked
-                    ? "CHANGE USED"
-                    : "PREVIEW CHANGE"}
-              </button>
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: trackedIbkrOrderIsMarket
+                  ? "1fr"
+                  : "1fr auto auto",
+                gap: sp(4),
+              }}
+            >
+              {!trackedIbkrOrderIsMarket ? (
+                <>
+                  <input
+                    type="number"
+                    min="0.01"
+                    step="0.01"
+                    aria-label="replacement limit price"
+                    value={replacementLimitPrice}
+                    onChange={(event) => setReplacementLimitPrice(event.target.value)}
+                    disabled={ibkrLifecyclePending || ibkrReplacementLocked}
+                    style={{
+                      minWidth: 0,
+                      background: CSS_COLOR.bg1,
+                      border: `1px solid ${CSS_COLOR.border}`,
+                      color: CSS_COLOR.text,
+                      padding: sp("4px 6px"),
+                    }}
+                  />
+                  <button
+                    type="button"
+                    onClick={previewIbkrReplacement}
+                    disabled={
+                      ibkrLifecyclePending ||
+                      ibkrReplacementLocked ||
+                      Number(trackedIbkrOrder.filledQuantity || 0) > 0
+                    }
+                    style={{
+                      border: `1px solid ${CSS_COLOR.border}`,
+                      background: CSS_COLOR.bg1,
+                      color: CSS_COLOR.amber,
+                      padding: sp("4px 7px"),
+                    }}
+                  >
+                    {previewOrderReplacementMutation.isPending
+                      ? "CHECKING..."
+                      : ibkrReplacementLocked
+                        ? "CHANGE USED"
+                        : "PREVIEW CHANGE"}
+                  </button>
+                </>
+              ) : null}
               <button
                 type="button"
                 onClick={confirmIbkrCancellation}

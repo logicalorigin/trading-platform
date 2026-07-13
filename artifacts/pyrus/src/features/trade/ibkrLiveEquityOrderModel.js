@@ -20,23 +20,27 @@ export const isIbkrLiveReadinessReady = (readiness, selectedTarget) =>
 export const buildManualIbkrEquityOrderRequest = ({
   accountId,
   symbol,
+  orderType,
   limitPrice,
-}) => ({
-  accountId: String(accountId || "").trim(),
-  mode: "live",
-  symbol: String(symbol || "").trim().toUpperCase(),
-  assetClass: "equity",
-  side: "buy",
-  type: "limit",
-  quantity: 1,
-  limitPrice: Number(limitPrice),
-  stopPrice: null,
-  timeInForce: "day",
-  optionContract: null,
-  tradingSession: "regular",
-  includeOvernight: false,
-  source: "manual",
-});
+}) => {
+  const market = String(orderType || "").trim().toUpperCase() === "MKT";
+  return {
+    accountId: String(accountId || "").trim(),
+    mode: "live",
+    symbol: String(symbol || "").trim().toUpperCase(),
+    assetClass: "equity",
+    side: "buy",
+    type: market ? "market" : "limit",
+    quantity: 1,
+    limitPrice: market ? null : Number(limitPrice),
+    stopPrice: null,
+    timeInForce: "day",
+    optionContract: null,
+    tradingSession: "regular",
+    includeOvernight: false,
+    source: "manual",
+  };
+};
 
 const preparedTaxFields = (preview) => ({
   taxPreflightToken: String(preview?.taxPreflight?.preflightToken || ""),
@@ -133,8 +137,18 @@ export const ibkrOrderHasAnyFill = (order) => {
   );
 };
 
+export const ibkrOrderNeedsFillReconciliation = (order) =>
+  ibkrOrderHasAnyFill(order) &&
+  !(
+    String(order?.status || "").trim().toLowerCase() === "filled" &&
+    Number(order?.quantity) > 0 &&
+    Number(order?.filledQuantity) === Number(order?.quantity)
+  );
+
 export const ibkrLifecycleRequiresReconciliation = (operation, result) =>
-  ibkrOrderHasAnyFill(result) ||
+  (operation === "place"
+    ? ibkrOrderNeedsFillReconciliation(result)
+    : ibkrOrderHasAnyFill(result)) ||
   result?.reconciliationRequired === true ||
   (operation === "place" && result?.placementConfirmed !== true) ||
   (operation === "replace" && result?.replacementConfirmed !== true) ||
