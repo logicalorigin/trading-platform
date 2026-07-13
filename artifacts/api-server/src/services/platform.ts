@@ -4057,6 +4057,16 @@ export async function continueIbkrOrderReply(input: {
       confirmed: input.confirmed,
     });
   } catch (error) {
+    if (isHttpError(error) && error.code === "ibkr_order_rejected") {
+      await recordTaxPreflightOrderSubmitted({
+        preflightToken: input.taxPreflightToken,
+        submittedOrderId:
+          operation === "replace"
+            ? "__ibkr_replace_reply_rejected__"
+            : "__ibkr_order_reply_rejected__",
+      });
+      throw error;
+    }
     await recordTaxPreflightIbkrReconciliationRequired({
       preflightToken: input.taxPreflightToken,
       reason: "reply_transport_or_acknowledgement_unknown",
