@@ -1,5 +1,5 @@
 import { spawn, type ChildProcess } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { createConnection } from "node:net";
 import { resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -83,7 +83,15 @@ type RuntimeDeps = {
   fetch?: typeof fetch;
   delay?: (ms: number) => Promise<void>;
   probePortOpen?: (host: string, port: number, timeoutMs?: number) => Promise<boolean>;
+  platform?: NodeJS.Platform;
+  readProcessIdentity?: typeof readPythonComputeProcessIdentity;
+  killProcess?: typeof process.kill;
   laneDefinition?: PythonComputeLaneDefinition;
+};
+
+type PythonComputeProcessIdentity = {
+  pid: number;
+  startTimeTicks: string;
 };
 
 const DEFAULT_PORT = 18_768;
@@ -290,6 +298,7 @@ export function routePythonComputeJobType(
 
 export class PythonComputeRuntime implements PythonComputeRuntimeLike {
   private child: ChildProcess | null = null;
+  private childIdentity: PythonComputeProcessIdentity | null = null;
   private startPromise: Promise<PythonComputeDiagnostics> | null = null;
   private lifecycleGeneration = 0;
   private restartTimer: ReturnType<typeof setTimeout> | null = null;
@@ -298,6 +307,9 @@ export class PythonComputeRuntime implements PythonComputeRuntimeLike {
   private reprobing = false;
   private readonly config: RuntimeConfig;
   private readonly environment: NodeJS.ProcessEnv;
+  private readonly platform: NodeJS.Platform;
+  private readonly readProcessIdentity: typeof readPythonComputeProcessIdentity;
+  private readonly killProcess: typeof process.kill;
   private readonly spawnProcess: typeof spawn;
   private readonly fetchFn: typeof fetch;
   private readonly delayFn: (ms: number) => Promise<void>;
@@ -313,6 +325,9 @@ export class PythonComputeRuntime implements PythonComputeRuntimeLike {
   constructor(deps: RuntimeDeps = {}) {
     const laneDefinition = deps.laneDefinition;
     this.environment = { ...(deps.env ?? process.env) };
+    this.platform = deps.platform ?? process.platform;
+    this.readProcessIdentity = deps.readProcessIdentity ?? readPythonComputeProcessIdentity;
+    this.killProcess = deps.killProcess ?? process.kill;
     this.config = laneDefinition?.config ?? resolvePythonComputeConfig(deps);
     this.spawnProcess = deps.spawnProcess ?? spawn;
     this.fetchFn = deps.fetch ?? fetch;
@@ -378,6 +393,12 @@ export class PythonComputeRuntime implements PythonComputeRuntimeLike {
   }
 
   private async startInner(generation: number): Promise<PythonComputeDiagnostics> {
+    // ponytail: API-owned compute lanes deploy on Linux; add a native process-
+    // identity adapter before supporting another host platform.
+    if (this.platform !== "linux") {
+      this.markDegraded("Python compute runtime requires Linux /proc support");
+      return this.getDiagnostics();
+    }
     const existingProbe = await this.probeHealthOnce();
     if (!this.startIsCurrent(generation)) {
       return this.getDiagnostics();
@@ -416,7 +437,7 @@ export class PythonComputeRuntime implements PythonComputeRuntimeLike {
       ["run", "--locked", "--no-env-file", "python", "-m", "pyrus_compute.service"],
       {
         cwd: this.config.cwd,
-        detached: process.platform !== "win32",
+        detached: true,
         env: {
           ...this.environment,
           PYRUS_PYTHON_COMPUTE_HOST: this.config.host,
@@ -428,6 +449,7 @@ export class PythonComputeRuntime implements PythonComputeRuntimeLike {
       },
     );
     this.child = child;
+    this.childIdentity = child.pid ? this.readProcessIdentity(child.pid) : null;
     this.diagnostics.pid = child.pid ?? null;
     child.stdout?.on("data", (chunk: Buffer) => {
       logger.info({ output: chunk.toString("utf8").trim() }, "Python compute stdout");
@@ -454,6 +476,7 @@ export class PythonComputeRuntime implements PythonComputeRuntimeLike {
         return; // a newer child owns the slot
       }
       this.child = null;
+      this.childIdentity = null;
       this.markDegraded(error.message);
     });
     child.once("exit", (code, signal) => {
@@ -461,6 +484,7 @@ export class PythonComputeRuntime implements PythonComputeRuntimeLike {
         return; // a newer child owns the slot
       }
       this.child = null;
+      this.childIdentity = null;
       this.diagnostics.pid = null;
       if (this.stopping) {
         this.diagnostics.status = "stopped";
@@ -566,8 +590,14 @@ export class PythonComputeRuntime implements PythonComputeRuntimeLike {
       this.restartTimer = null;
     }
     if (this.child) {
-      stopPythonComputeChildProcess(this.child);
+      stopPythonComputeChildProcess(this.child, {
+        expectedIdentity: this.childIdentity,
+        platform: this.platform,
+        readIdentity: this.readProcessIdentity,
+        kill: this.killProcess,
+      });
       this.child = null;
+      this.childIdentity = null;
     }
     this.diagnostics.pid = null;
     this.diagnostics.reusedExisting = false;
@@ -801,7 +831,41 @@ async function defaultProbePortOpen(
 type StopPythonComputeChildProcessDeps = {
   platform?: NodeJS.Platform;
   kill?: typeof process.kill;
+  readIdentity?: typeof readPythonComputeProcessIdentity;
+  expectedIdentity?: PythonComputeProcessIdentity | null;
 };
+
+export function readPythonComputeProcessIdentity(
+  pid: number,
+  { readFile = readFileSync }: { readFile?: (path: string, encoding: "utf8") => string } = {},
+): PythonComputeProcessIdentity | null {
+  if (!Number.isSafeInteger(pid) || pid <= 0) {
+    return null;
+  }
+  try {
+    const raw = readFile(`/proc/${pid}/stat`, "utf8");
+    const commandEnd = raw.lastIndexOf(")");
+    if (commandEnd < 0) return null;
+    const fields = raw.slice(commandEnd + 1).trim().split(/\s+/u);
+    const startTimeTicks = fields[19];
+    return startTimeTicks ? { pid, startTimeTicks } : null;
+  } catch {
+    return null;
+  }
+}
+
+function processIdentityMatches(
+  expected: PythonComputeProcessIdentity | null | undefined,
+  current: PythonComputeProcessIdentity | null,
+): boolean {
+  return (
+    current !== null &&
+    Number.isSafeInteger(expected?.pid) &&
+    expected?.pid === current?.pid &&
+    typeof expected?.startTimeTicks === "string" &&
+    expected.startTimeTicks === current.startTimeTicks
+  );
+}
 
 export function stopPythonComputeChildProcess(
   child: ChildProcess,
@@ -809,7 +873,12 @@ export function stopPythonComputeChildProcess(
 ): void {
   const platform = deps.platform ?? process.platform;
   const killProcess = deps.kill ?? process.kill;
-  if (child.pid && platform !== "win32") {
+  const readIdentity = deps.readIdentity ?? readPythonComputeProcessIdentity;
+  if (
+    child.pid &&
+    platform === "linux" &&
+    processIdentityMatches(deps.expectedIdentity, readIdentity(child.pid))
+  ) {
     try {
       killProcess(-child.pid, "SIGTERM");
       return;
@@ -820,6 +889,8 @@ export function stopPythonComputeChildProcess(
       }
     }
   }
+  // ponytail: a direct uv-child signal is the safe ceiling when /proc cannot
+  // prove the detached group leader; add a pidfd/cgroup owner before widening it.
   child.kill("SIGTERM");
 }
 

@@ -9,6 +9,7 @@ import { setImmediate as waitImmediate } from "node:timers/promises";
 
 import {
   PythonComputeRuntime,
+  readPythonComputeProcessIdentity,
   stopPythonComputeChildProcess,
 } from "./python-compute";
 
@@ -35,12 +36,27 @@ const fakeSpawnedChild = (pid = 1234) =>
     },
   }) as unknown as ChildProcess;
 
+test("Python compute process identity parses commands containing parentheses", () => {
+  const fields = Array.from({ length: 20 }, () => "0");
+  fields[19] = "987";
+
+  assert.deepEqual(
+    readPythonComputeProcessIdentity(1234, {
+      readFile: () => `1234 (python ) worker) ${fields.join(" ")}`,
+    }),
+    { pid: 1234, startTimeTicks: "987" },
+  );
+});
+
 test("Python compute stop terminates the process group on non-Windows hosts", () => {
   const { child, calls } = fakeChild(1234);
   const killCalls: Array<{ pid: number; signal: NodeJS.Signals }> = [];
+  const identity = { pid: 1234, startTimeTicks: "1" };
 
   stopPythonComputeChildProcess(child, {
+    expectedIdentity: identity,
     platform: "linux",
+    readIdentity: () => identity,
     kill(pid, signal) {
       killCalls.push({ pid, signal: signal as NodeJS.Signals });
       return true;
@@ -53,9 +69,12 @@ test("Python compute stop terminates the process group on non-Windows hosts", ()
 
 test("Python compute stop falls back to direct child termination when group kill fails", () => {
   const { child, calls } = fakeChild(1234);
+  const identity = { pid: 1234, startTimeTicks: "1" };
 
   stopPythonComputeChildProcess(child, {
+    expectedIdentity: identity,
     platform: "linux",
+    readIdentity: () => identity,
     kill() {
       const error = new Error("unsupported process group") as Error & { code: string };
       error.code = "EINVAL";
@@ -63,6 +82,24 @@ test("Python compute stop falls back to direct child termination when group kill
     },
   });
 
+  assert.deepEqual(calls, [{ signal: "SIGTERM" }]);
+});
+
+test("Python compute stop refuses a reused process-group leader", () => {
+  const { child, calls } = fakeChild(1234);
+  const killCalls: Array<{ pid: number; signal: NodeJS.Signals }> = [];
+
+  stopPythonComputeChildProcess(child, {
+    expectedIdentity: { pid: 1234, startTimeTicks: "1" },
+    platform: "linux",
+    readIdentity: () => ({ pid: 1234, startTimeTicks: "2" }),
+    kill(pid, signal) {
+      killCalls.push({ pid, signal: signal as NodeJS.Signals });
+      return true;
+    },
+  });
+
+  assert.deepEqual(killCalls, []);
   assert.deepEqual(calls, [{ signal: "SIGTERM" }]);
 });
 
@@ -116,6 +153,46 @@ test("Python compute runtime enforces the checked-in uv lock", async () => {
       "-m",
       "pyrus_compute.service",
     ]);
+  } finally {
+    runtime.stop();
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("Python compute runtime refuses unsupported host platforms before spawn", async () => {
+  const cwd = mkdtempSync(join(tmpdir(), "pyrus-python-compute-"));
+  writeFileSync(join(cwd, "pyproject.toml"), '[project]\nname = "test"\n');
+  let spawnCalls = 0;
+  const runtime = new PythonComputeRuntime({
+    platform: "darwin",
+    laneDefinition: {
+      id: "risk",
+      label: "Risk compute",
+      config: {
+        enabled: true,
+        cwd,
+        host: "127.0.0.1",
+        port: 18_768,
+        startupTimeoutMs: 1,
+      },
+      jobTypes: ["portfolio_risk"],
+    },
+    spawnProcess: (() => {
+      spawnCalls += 1;
+      return fakeSpawnedChild();
+    }) as typeof spawn,
+    fetch: (async () => {
+      throw new Error("not started");
+    }) as typeof fetch,
+    delay: async () => {},
+    probePortOpen: async () => false,
+  });
+
+  try {
+    const diagnostics = await runtime.start();
+    assert.equal(spawnCalls, 0);
+    assert.equal(diagnostics.status, "degraded");
+    assert.match(diagnostics.lastError ?? "", /requires Linux/i);
   } finally {
     runtime.stop();
     rmSync(cwd, { recursive: true, force: true });
