@@ -17,14 +17,68 @@ const config = (): IbkrRuntimeConfig => ({
   paperAccountOnly: false,
 });
 
+const preparedOrderBody = {
+  orders: [
+    {
+      acctId: "U1234567",
+      conid: 265598,
+      cOID: "intent-cancel-1",
+      listingExchange: "NASDAQ",
+      manualIndicator: true,
+      orderType: "LMT",
+      outsideRTH: false,
+      price: 100,
+      quantity: 1,
+      secType: "265598:STK",
+      side: "BUY",
+      ticker: "AAPL",
+      tif: "DAY",
+    },
+  ],
+};
+
+const activeLiveOrder = {
+  orderId: "order-1",
+  acct: "U1234567",
+  conid: 265598,
+  ticker: "AAPL",
+  side: "BUY",
+  origOrderType: "LMT",
+  timeInForce: "DAY",
+  totalSize: 1,
+  filledQuantity: 0,
+  remainingQuantity: 1,
+  orderRef: "intent-cancel-1",
+  price: 100,
+};
+
+const activeOrderStatus = {
+  orderId: "order-1",
+  account: "U1234567",
+  conid: 265598,
+  side: "BUY",
+  order_type: "LMT",
+  tif: "DAY",
+  total_size: 1,
+  cum_fill: 0,
+  size: 1,
+  order_status: "Submitted",
+  order_not_editable: false,
+  cannot_cancel_order: false,
+};
+
 test("IBKR cancel waits through PendingCancel until terminal Cancelled", async () => {
   const previousFetch = globalThis.fetch;
   let statusReads = 0;
+  let cancelSubmitted = false;
   globalThis.fetch = (async (input, init) => {
     const url = new URL(String(input));
     const path = url.pathname;
     if (path.endsWith("/iserver/accounts")) {
       return Response.json({ accounts: ["U1234567"], isPaper: false });
+    }
+    if (path.endsWith("/iserver/account/orders")) {
+      return Response.json({ orders: [activeLiveOrder] });
     }
     if (
       path.endsWith("/iserver/account/U1234567/order/order-1") &&
@@ -32,14 +86,17 @@ test("IBKR cancel waits through PendingCancel until terminal Cancelled", async (
     ) {
       assert.equal(url.searchParams.get("manualIndicator"), "true");
       assert.equal(url.searchParams.get("extOperator"), "trusted-server");
+      cancelSubmitted = true;
       return Response.json({ msg: "Request was submitted", order_id: "order-1" });
     }
     if (path.endsWith("/iserver/account/order/status/order-1")) {
+      if (!cancelSubmitted) return Response.json(activeOrderStatus);
       statusReads += 1;
       return Response.json({
         order_status: statusReads === 1 ? "PendingCancel" : "Cancelled",
-        filledQuantity: 0,
-        remainingQuantity: 1,
+        cum_fill: 0,
+        size: 1,
+        total_size: 1,
       });
     }
     throw new Error(`unexpected IBKR request: ${path}`);
@@ -55,6 +112,7 @@ test("IBKR cancel waits through PendingCancel until terminal Cancelled", async (
       mode: "live",
       manualIndicator: false,
       extOperator: "caller-controlled",
+      preparedOrderBody,
     });
     assert.equal(statusReads, 2);
     assert.equal(result.status, "canceled");
@@ -67,18 +125,24 @@ test("IBKR cancel waits through PendingCancel until terminal Cancelled", async (
 
 test("IBKR cancel does not confirm without explicit fill and remaining evidence", async () => {
   const previousFetch = globalThis.fetch;
+  let cancelSubmitted = false;
   globalThis.fetch = (async (input, init) => {
     const path = new URL(String(input)).pathname;
     if (path.endsWith("/iserver/accounts")) {
       return Response.json({ accounts: ["U1234567"], isPaper: false });
     }
+    if (path.endsWith("/iserver/account/orders")) {
+      return Response.json({ orders: [activeLiveOrder] });
+    }
     if (
       path.endsWith("/iserver/account/U1234567/order/order-1") &&
       init?.method === "DELETE"
     ) {
+      cancelSubmitted = true;
       return Response.json({ msg: "Request was submitted", order_id: "order-1" });
     }
     if (path.endsWith("/iserver/account/order/status/order-1")) {
+      if (!cancelSubmitted) return Response.json(activeOrderStatus);
       return Response.json({ order_status: "Cancelled" });
     }
     throw new Error(`unexpected IBKR request: ${path}`);
@@ -89,11 +153,198 @@ test("IBKR cancel does not confirm without explicit fill and remaining evidence"
       accountId: "U1234567",
       orderId: "order-1",
       mode: "live",
+      preparedOrderBody,
     });
     assert.equal(result.status, "canceled");
     assert.equal(result.terminal, true);
     assert.equal(result.cancelConfirmed, false);
     assert.equal(result.reconciliationRequired, true);
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
+test("IBKR cancel does not submit DELETE when pre-cancel evidence is incomplete", async () => {
+  const previousFetch = globalThis.fetch;
+  let deleteSubmitted = false;
+  globalThis.fetch = (async (input, init) => {
+    const path = new URL(String(input)).pathname;
+    if (path.endsWith("/iserver/accounts")) {
+      return Response.json({ accounts: ["U1234567"], isPaper: false });
+    }
+    if (path.endsWith("/iserver/account/orders")) {
+      const { filledQuantity: _missing, ...incompleteOrder } = activeLiveOrder;
+      return Response.json({ orders: [incompleteOrder] });
+    }
+    if (path.endsWith("/iserver/account/order/status/order-1")) {
+      return Response.json(activeOrderStatus);
+    }
+    if (
+      path.endsWith("/iserver/account/U1234567/order/order-1") &&
+      init?.method === "DELETE"
+    ) {
+      deleteSubmitted = true;
+      return Response.json({ msg: "Request was submitted", order_id: "order-1" });
+    }
+    throw new Error(`unexpected IBKR request: ${path}`);
+  }) as typeof fetch;
+
+  try {
+    await assert.rejects(
+      new IbkrClient(config()).cancelOrder({
+        accountId: "U1234567",
+        orderId: "order-1",
+        mode: "live",
+        preparedOrderBody,
+      }),
+      (error: unknown) => {
+        assert.equal(
+          (error as { code?: string }).code,
+          "ibkr_replace_verification_incomplete",
+        );
+        return true;
+      },
+    );
+    assert.equal(deleteSubmitted, false);
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
+test("IBKR cancel does not submit DELETE for a non-BUY prepared order", async () => {
+  const previousFetch = globalThis.fetch;
+  let deleteSubmitted = false;
+  const sellBody = structuredClone(preparedOrderBody);
+  sellBody.orders[0]!.side = "SELL";
+  globalThis.fetch = (async (input, init) => {
+    const path = new URL(String(input)).pathname;
+    if (path.endsWith("/iserver/accounts")) {
+      return Response.json({ accounts: ["U1234567"], isPaper: false });
+    }
+    if (path.endsWith("/iserver/account/orders")) {
+      return Response.json({
+        orders: [{ ...activeLiveOrder, side: "SELL" }],
+      });
+    }
+    if (path.endsWith("/iserver/account/order/status/order-1")) {
+      return Response.json({ ...activeOrderStatus, side: "SELL" });
+    }
+    if (
+      path.endsWith("/iserver/account/U1234567/order/order-1") &&
+      init?.method === "DELETE"
+    ) {
+      deleteSubmitted = true;
+      return Response.json({ msg: "Request was submitted", order_id: "order-1" });
+    }
+    throw new Error(`unexpected IBKR request: ${path}`);
+  }) as typeof fetch;
+
+  try {
+    await assert.rejects(
+      new IbkrClient(config()).cancelOrder({
+        accountId: "U1234567",
+        orderId: "order-1",
+        mode: "live",
+        preparedOrderBody: sellBody,
+      }),
+      (error: unknown) => {
+        assert.equal(
+          (error as { code?: string }).code,
+          "ibkr_replace_intent_mismatch",
+        );
+        return true;
+      },
+    );
+    assert.equal(deleteSubmitted, false);
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
+test("IBKR cancel rejects inconsistent terminal remaining quantity", async () => {
+  const previousFetch = globalThis.fetch;
+  let cancelSubmitted = false;
+  globalThis.fetch = (async (input, init) => {
+    const path = new URL(String(input)).pathname;
+    if (path.endsWith("/iserver/accounts")) {
+      return Response.json({ accounts: ["U1234567"], isPaper: false });
+    }
+    if (path.endsWith("/iserver/account/orders")) {
+      return Response.json({ orders: [activeLiveOrder] });
+    }
+    if (
+      path.endsWith("/iserver/account/U1234567/order/order-1") &&
+      init?.method === "DELETE"
+    ) {
+      cancelSubmitted = true;
+      return Response.json({ msg: "Request was submitted", order_id: "order-1" });
+    }
+    if (path.endsWith("/iserver/account/order/status/order-1")) {
+      if (!cancelSubmitted) return Response.json(activeOrderStatus);
+      return Response.json({
+        order_status: "Cancelled",
+        cum_fill: 0,
+        size: 999,
+        total_size: 1,
+      });
+    }
+    throw new Error(`unexpected IBKR request: ${path}`);
+  }) as typeof fetch;
+
+  try {
+    const result = await new IbkrClient(config()).cancelOrder({
+      accountId: "U1234567",
+      orderId: "order-1",
+      mode: "live",
+      preparedOrderBody,
+    });
+    assert.equal(result.status, "canceled");
+    assert.equal(result.cancelConfirmed, false);
+    assert.equal(result.reconciliationRequired, true);
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
+test("IBKR cancel confirms zero-filled terminal cancellation with zero remaining", async () => {
+  const previousFetch = globalThis.fetch;
+  let cancelSubmitted = false;
+  globalThis.fetch = (async (input, init) => {
+    const path = new URL(String(input)).pathname;
+    if (path.endsWith("/iserver/accounts")) {
+      return Response.json({ accounts: ["U1234567"], isPaper: false });
+    }
+    if (path.endsWith("/iserver/account/orders")) {
+      return Response.json({ orders: [activeLiveOrder] });
+    }
+    if (
+      path.endsWith("/iserver/account/U1234567/order/order-1") &&
+      init?.method === "DELETE"
+    ) {
+      cancelSubmitted = true;
+      return Response.json({ msg: "Request was submitted", order_id: "order-1" });
+    }
+    if (path.endsWith("/iserver/account/order/status/order-1")) {
+      if (!cancelSubmitted) return Response.json(activeOrderStatus);
+      return Response.json({
+        order_status: "Cancelled",
+        cum_fill: 0,
+        size: 0,
+        total_size: 1,
+      });
+    }
+    throw new Error(`unexpected IBKR request: ${path}`);
+  }) as typeof fetch;
+
+  try {
+    const result = await new IbkrClient(config()).cancelOrder({
+      accountId: "U1234567",
+      orderId: "order-1",
+      mode: "live",
+      preparedOrderBody,
+    });
+    assert.equal(result.cancelConfirmed, true);
+    assert.equal(result.reconciliationRequired, false);
   } finally {
     globalThis.fetch = previousFetch;
   }
@@ -135,6 +386,47 @@ test("IBKR order normalization keeps PendingCancel nonterminal", async () => {
       mode: "live",
     });
     assert.equal(order?.status, "pending_cancel");
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
+test("IBKR order reads omit rows with incomplete fill evidence", async () => {
+  const previousFetch = globalThis.fetch;
+  globalThis.fetch = (async (input) => {
+    const path = new URL(String(input)).pathname;
+    if (path.endsWith("/iserver/accounts")) {
+      return Response.json({ accounts: ["U1234567"], isPaper: false });
+    }
+    if (path.endsWith("/iserver/account/orders")) {
+      return Response.json({
+        orders: [
+          {
+            orderId: "order-ambiguous",
+            acct: "U1234567",
+            ticker: "AAPL",
+            secType: "STK",
+            side: "BUY",
+            orderType: "LMT",
+            timeInForce: "DAY",
+            order_ccp_status: "Submitted",
+            totalSize: 1,
+            price: 100,
+          },
+        ],
+      });
+    }
+    throw new Error(`unexpected IBKR request: ${path}`);
+  }) as typeof fetch;
+
+  try {
+    assert.deepEqual(
+      await new IbkrClient(config()).listOrders({
+        accountId: "U1234567",
+        mode: "live",
+      }),
+      [],
+    );
   } finally {
     globalThis.fetch = previousFetch;
   }
@@ -234,6 +526,7 @@ test("IBKR order reads stop when the requested account selection cannot be verif
 test("IBKR cancel status reads legacy cum_fill and size quantities", async () => {
   const previousFetch = globalThis.fetch;
   let accountReads = 0;
+  let cancelSubmitted = false;
   globalThis.fetch = (async (input, init) => {
     const path = new URL(String(input)).pathname;
     if (path.endsWith("/iserver/accounts")) {
@@ -247,13 +540,18 @@ test("IBKR cancel status reads legacy cum_fill and size quantities", async () =>
     if (path.endsWith("/iserver/account") && init?.method === "POST") {
       return Response.json({ set: true, acctId: "U1234567" });
     }
+    if (path.endsWith("/iserver/account/orders")) {
+      return Response.json({ orders: [activeLiveOrder] });
+    }
     if (
       path.endsWith("/iserver/account/U1234567/order/order-1") &&
       init?.method === "DELETE"
     ) {
+      cancelSubmitted = true;
       return Response.json({ msg: "Request was submitted", order_id: "order-1" });
     }
     if (path.endsWith("/iserver/account/order/status/order-1")) {
+      if (!cancelSubmitted) return Response.json(activeOrderStatus);
       return Response.json({
         order_status: "Submitted",
         cum_fill: "0.5",
@@ -269,6 +567,7 @@ test("IBKR cancel status reads legacy cum_fill and size quantities", async () =>
       accountId: "U1234567",
       orderId: "order-1",
       mode: "live",
+      preparedOrderBody,
     });
     assert.equal(result.status, "partially_filled");
     assert.equal(result.filledQuantity, 0.5);
@@ -283,6 +582,7 @@ test("IBKR cancel status reads legacy cum_fill and size quantities", async () =>
 test("IBKR cancel keeps polling after a partial fill until the remainder is cancelled", async () => {
   const previousFetch = globalThis.fetch;
   let statusReads = 0;
+  let cancelSubmitted = false;
   globalThis.fetch = (async (input, init) => {
     const path = new URL(String(input)).pathname;
     if (path.endsWith("/iserver/accounts")) {
@@ -292,13 +592,18 @@ test("IBKR cancel keeps polling after a partial fill until the remainder is canc
         isPaper: false,
       });
     }
+    if (path.endsWith("/iserver/account/orders")) {
+      return Response.json({ orders: [activeLiveOrder] });
+    }
     if (
       path.endsWith("/iserver/account/U1234567/order/order-1") &&
       init?.method === "DELETE"
     ) {
+      cancelSubmitted = true;
       return Response.json({ msg: "Request was submitted", order_id: "order-1" });
     }
     if (path.endsWith("/iserver/account/order/status/order-1")) {
+      if (!cancelSubmitted) return Response.json(activeOrderStatus);
       statusReads += 1;
       return Response.json({
         order_status: statusReads === 1 ? "Submitted" : "Cancelled",
@@ -315,11 +620,12 @@ test("IBKR cancel keeps polling after a partial fill until the remainder is canc
       accountId: "U1234567",
       orderId: "order-1",
       mode: "live",
+      preparedOrderBody,
     });
     assert.equal(statusReads, 2);
     assert.equal(result.status, "canceled");
     assert.equal(result.filledQuantity, 0.5);
-    assert.equal(result.cancelConfirmed, true);
+    assert.equal(result.cancelConfirmed, false);
     assert.equal(result.reconciliationRequired, true);
   } finally {
     globalThis.fetch = previousFetch;

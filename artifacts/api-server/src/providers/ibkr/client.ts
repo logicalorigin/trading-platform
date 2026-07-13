@@ -178,6 +178,7 @@ const OPTION_CHAIN_METADATA_CACHE_TTL_MS = 5 * 60_000;
 const DEFAULT_OPTION_CHAIN_EXPIRATIONS = 1;
 const DEFAULT_OPTION_CHAIN_STRIKES_AROUND_MONEY = 6;
 const OPTION_CHAIN_CONTRACT_INFO_CONCURRENCY = 16;
+const requestEpochByBaseUrl = new Map<string, number>();
 type OptionChainStrikeCoverage = "fast" | "standard" | "full";
 type OptionChainQuoteHydration = "metadata" | "snapshot";
 const HISTORY_SOURCE_TO_IBKR: Record<HistoryDataSource, string> = {
@@ -673,6 +674,52 @@ type IbkrOrderMutationEvidence = {
   cancellable: boolean;
 };
 
+function classifyIbkrOrderResponse(payload: unknown): {
+  results: Record<string, unknown>[];
+  brokerError: Record<string, unknown> | null;
+  acknowledgement: Record<string, unknown> | null;
+  warning: Record<string, unknown> | null;
+  ambiguous: boolean;
+} {
+  const directResult = asRecord(payload);
+  const rawResults = directResult ? [directResult] : asArray(payload);
+  const results = compact(rawResults.map(asRecord));
+  const acknowledgements = results.filter(
+    (result) =>
+      asString(result["order_id"]) !== null ||
+      asString(result["orderId"]) !== null,
+  );
+  const warnings = results.filter((result) => asString(result["id"]) !== null);
+  const orderIds = new Set(
+    compact(
+      acknowledgements.flatMap((result) => [
+        asString(result["order_id"]),
+        asString(result["orderId"]),
+      ]),
+    ),
+  );
+  const warningIds = new Set(
+    compact(warnings.map((result) => asString(result["id"]))),
+  );
+  const malformed =
+    rawResults.length === 0 || results.length !== rawResults.length;
+
+  return {
+    results,
+    brokerError:
+      results.find((result) => asString(result["error"]) !== null) ?? null,
+    acknowledgement: acknowledgements[0] ?? null,
+    warning: warnings[0] ?? null,
+    ambiguous:
+      malformed ||
+      acknowledgements.length > 1 ||
+      warnings.length > 1 ||
+      orderIds.size > 1 ||
+      warningIds.size > 1 ||
+      (acknowledgements.length > 0 && warnings.length > 0),
+  };
+}
+
 function parseIbkrOrderSide(value: string | null): "BUY" | "SELL" | null {
   const side = value?.trim().toUpperCase();
   if (side === "B" || side === "BUY") return "BUY";
@@ -1100,6 +1147,10 @@ export class IbkrClient {
     private readonly options: IbkrClientOptions = {},
   ) {}
 
+  getCurrentRequestEpoch(): number {
+    return requestEpochByBaseUrl.get(this.config.baseUrl) ?? 0;
+  }
+
   private observeBrokerageSessionError(
     stage: BrokerageSessionStage,
     error: unknown,
@@ -1233,6 +1284,15 @@ export class IbkrClient {
     init: RequestInit = {},
     params: Record<string, QueryValue> = {},
   ): Promise<T> {
+    return (await this.requestWithEpoch<T>(path, init, params)).payload;
+  }
+
+  private async requestWithEpoch<T>(
+    path: string,
+    init: RequestInit = {},
+    params: Record<string, QueryValue> = {},
+    expectedRequestEpoch?: number,
+  ): Promise<{ payload: T; requestEpoch: number }> {
     const headers = this.buildHeaders(init.headers);
     const url = this.buildUrl(path, params);
     this.applyOAuthAuthorization(headers, init.method ?? "GET", url, params);
@@ -1248,6 +1308,19 @@ export class IbkrClient {
     await this.waitForRequestPermit();
     throwIfAborted(inputSignal ?? undefined);
 
+    const currentRequestEpoch = this.getCurrentRequestEpoch();
+    if (
+      expectedRequestEpoch !== undefined &&
+      currentRequestEpoch !== expectedRequestEpoch
+    ) {
+      throw new HttpError(409, "The IBKR warning reply is no longer current.", {
+        code: "ibkr_order_reply_epoch_changed",
+        expose: true,
+      });
+    }
+    const requestEpoch = currentRequestEpoch + 1;
+    requestEpochByBaseUrl.set(this.config.baseUrl, requestEpoch);
+
     let didTimeout = false;
     const timeout = setTimeout(() => {
       didTimeout = true;
@@ -1262,11 +1335,12 @@ export class IbkrClient {
     }
 
     try {
-      return await fetchJson<T>(url, {
+      const payload = await fetchJson<T>(url, {
         ...init,
         headers,
         signal: controller.signal,
       });
+      return { payload, requestEpoch };
     } catch (error) {
       if (didTimeout) {
         throw new HttpError(
@@ -2108,16 +2182,22 @@ export class IbkrClient {
             return null;
           }
 
-          const filledQuantity =
-            firstDefined(
-              asNumber(raw["filledQuantity"]),
-              asNumber(raw["filled_quantity"]),
-            ) ?? 0;
-          const remainingQuantity =
-            firstDefined(
-              asNumber(raw["remainingQuantity"]),
-              asNumber(raw["remaining_quantity"]),
-            ) ?? 0;
+          const filledQuantity = firstDefined(
+            asNumber(raw["filledQuantity"]),
+            asNumber(raw["filled_quantity"]),
+          );
+          const remainingQuantity = firstDefined(
+            asNumber(raw["remainingQuantity"]),
+            asNumber(raw["remaining_quantity"]),
+          );
+          if (
+            filledQuantity === null ||
+            filledQuantity < 0 ||
+            remainingQuantity === null ||
+            remainingQuantity < 0
+          ) {
+            return null;
+          }
           const status = normalizeOrderStatus(
             firstDefined(
               asString(raw["order_ccp_status"]),
@@ -3266,44 +3346,44 @@ export class IbkrClient {
 
   private requireOrderAcknowledgement(
     responsePayload: unknown,
+    requestEpoch: number,
   ): Record<string, unknown> {
-    const directResult = asRecord(responsePayload);
-    const results = directResult
-      ? [directResult]
-      : compact(asArray(responsePayload).map(asRecord));
-    const brokerError = results.find((result) => asString(result["error"]));
-    const successfulOrder = results.find(
-      (result) =>
-        asString(result["order_id"]) !== null ||
-        asString(result["orderId"]) !== null,
-    );
-    if (brokerError && successfulOrder) {
+    const response = classifyIbkrOrderResponse(responsePayload);
+    if (
+      response.ambiguous ||
+      (response.brokerError && (response.acknowledgement || response.warning))
+    ) {
       throw new HttpError(
         502,
-        "IBKR returned both an order acknowledgement and an error.",
+        "IBKR returned an ambiguous order acknowledgement.",
         { code: "ibkr_ambiguous_order_ack" },
       );
     }
-    if (brokerError) {
+    if (response.brokerError) {
       throw new HttpError(409, "IBKR rejected the order request.", {
         code: "ibkr_order_rejected",
-        detail: asString(brokerError["error"]) ?? undefined,
+        detail: asString(response.brokerError["error"]) ?? undefined,
         expose: true,
       });
     }
-    if (successfulOrder) {
-      return successfulOrder;
+    if (response.acknowledgement) {
+      return response.acknowledgement;
     }
 
-    const reply = results.find((result) => asString(result["id"]) !== null);
-    if (reply) {
-      const replyId = asString(reply["id"]);
-      const messages = compact(asArray(reply["message"]).map(asString));
-      throw new HttpError(409, "IBKR requires explicit review of an order warning.", {
-        code: "ibkr_order_warning_confirmation_required",
-        data: { replyId, messages },
-        expose: true,
-      });
+    if (response.warning) {
+      const replyId = asString(response.warning["id"]);
+      const messages = compact(
+        asArray(response.warning["message"]).map(asString),
+      );
+      throw new HttpError(
+        409,
+        "IBKR requires explicit review of an order warning.",
+        {
+          code: "ibkr_order_warning_confirmation_required",
+          data: { replyId, messages, requestEpoch },
+          expose: true,
+        },
+      );
     }
 
     throw new HttpError(
@@ -3318,12 +3398,14 @@ export class IbkrClient {
   async replyOrderWarning(input: {
     replyId: string;
     confirmed: boolean;
+    expectedRequestEpoch: number;
   }): Promise<
     | { kind: "declined" }
     | {
         kind: "warning";
         replyId: string;
         messages: string[];
+        requestEpoch: number;
       }
     | {
         kind: "acknowledged";
@@ -3331,53 +3413,76 @@ export class IbkrClient {
       }
   > {
     const replyId = input.replyId.trim();
-    if (!replyId || replyId.length > 256) {
+    if (
+      !replyId ||
+      replyId.length > 256 ||
+      !Number.isSafeInteger(input.expectedRequestEpoch) ||
+      input.expectedRequestEpoch < 0
+    ) {
       throw new HttpError(409, "The IBKR order warning reply is invalid.", {
         code: "ibkr_order_reply_invalid",
         expose: true,
       });
     }
-    const payload = await this.request<unknown>(
+    const { payload, requestEpoch } = await this.requestWithEpoch<unknown>(
       `/iserver/reply/${encodeURIComponent(replyId)}`,
       {
         method: "POST",
         body: JSON.stringify({ confirmed: input.confirmed }),
       },
+      {},
+      input.expectedRequestEpoch,
     );
+    const response = classifyIbkrOrderResponse(payload);
     if (!input.confirmed) {
-      return { kind: "declined" };
-    }
-    const results = compact(asArray(payload).map(asRecord));
-    const brokerError = results.find((result) => asString(result["error"]));
-    const acknowledgement = results.find(
-      (result) =>
-        asString(result["order_id"]) !== null ||
-        asString(result["orderId"]) !== null,
-    );
-    if (brokerError && acknowledgement) {
+      const decline =
+        response.results.length === 1 ? response.results[0] : null;
+      if (
+        !response.ambiguous &&
+        decline &&
+        Object.keys(decline).every((key) => key === "status") &&
+        normalizeMetricKey(asString(decline["status"]) ?? "") === "discarded"
+      ) {
+        return { kind: "declined" };
+      }
       throw new HttpError(
         502,
-        "IBKR returned both an order acknowledgement and an error.",
+        "IBKR returned an ambiguous order decline reply.",
+        {
+          code: "ibkr_ambiguous_order_ack",
+        },
+      );
+    }
+    if (
+      response.ambiguous ||
+      (response.brokerError && (response.acknowledgement || response.warning))
+    ) {
+      throw new HttpError(
+        502,
+        "IBKR returned an ambiguous order acknowledgement.",
         { code: "ibkr_ambiguous_order_ack" },
       );
     }
-    if (brokerError) {
+    if (response.brokerError) {
       throw new HttpError(409, "IBKR rejected the order request.", {
         code: "ibkr_order_rejected",
-        detail: asString(brokerError["error"]) ?? undefined,
+        detail: asString(response.brokerError["error"]) ?? undefined,
         expose: true,
       });
     }
-    if (acknowledgement) {
-      return { kind: "acknowledged", acknowledgement };
+    if (response.acknowledgement) {
+      return {
+        kind: "acknowledged",
+        acknowledgement: response.acknowledgement,
+      };
     }
-    const warning = results.find((result) => asString(result["id"]) !== null);
-    const nextReplyId = asString(warning?.["id"]);
-    if (warning && nextReplyId) {
+    const nextReplyId = asString(response.warning?.["id"]);
+    if (response.warning && nextReplyId) {
       return {
         kind: "warning",
         replyId: nextReplyId,
-        messages: compact(asArray(warning["message"]).map(asString)),
+        messages: compact(asArray(response.warning["message"]).map(asString)),
+        requestEpoch,
       };
     }
     throw new HttpError(
@@ -3599,14 +3704,18 @@ export class IbkrClient {
       });
     }
 
-    const responsePayload = await this.request<unknown>(
-      `/iserver/account/${encodeURIComponent(prepared.accountId)}/orders`,
-      {
-        method: "POST",
-        body: JSON.stringify(prepared.body),
-      },
+    const { payload: responsePayload, requestEpoch } =
+      await this.requestWithEpoch<unknown>(
+        `/iserver/account/${encodeURIComponent(prepared.accountId)}/orders`,
+        {
+          method: "POST",
+          body: JSON.stringify(prepared.body),
+        },
+      );
+    const result = this.requireOrderAcknowledgement(
+      responsePayload,
+      requestEpoch,
     );
-    const result = this.requireOrderAcknowledgement(responsePayload);
     const placedAt = new Date();
     const acknowledged = this.mapAcknowledgedOrder(
       input,
@@ -3740,7 +3849,7 @@ export class IbkrClient {
       ),
     ]);
 
-    const payload = await this.request<unknown>(
+    const { payload, requestEpoch } = await this.requestWithEpoch<unknown>(
       `/iserver/account/${encodeURIComponent(accountId)}/orders`,
       {
         method: "POST",
@@ -3750,7 +3859,7 @@ export class IbkrClient {
       },
     );
 
-    return this.requireOrderAcknowledgement(payload);
+    return this.requireOrderAcknowledgement(payload, requestEpoch);
   }
 
   private async readOrderMutationEvidence(input: {
@@ -3946,6 +4055,7 @@ export class IbkrClient {
       accountId: string;
       orderId: string;
       orderBody: Record<string, unknown>;
+      requireEditable?: boolean;
     },
   ): Record<string, unknown> {
     const orders = asArray(input.orderBody["orders"]);
@@ -3967,6 +4077,7 @@ export class IbkrClient {
       price === null ||
       price !== evidence.limitPrice ||
       side !== evidence.side ||
+      side !== "BUY" ||
       normalizeMetricKey(asString(order["orderType"]) ?? "") !== "lmt" ||
       evidence.orderType !== "lmt" ||
       normalizeMetricKey(asString(order["tif"]) ?? "") !== "day" ||
@@ -3986,7 +4097,10 @@ export class IbkrClient {
         expose: true,
       });
     }
-    if (!evidence.editable || !evidence.cancellable) {
+    if (
+      !evidence.cancellable ||
+      (input.requireEditable !== false && !evidence.editable)
+    ) {
       throw new HttpError(409, "The IBKR order is not safely editable.", {
         code: "ibkr_replace_order_not_editable",
         expose: true,
@@ -4122,11 +4236,11 @@ export class IbkrClient {
       });
     }
 
-    const payload = await this.request<unknown>(
+    const { payload, requestEpoch } = await this.requestWithEpoch<unknown>(
       `/iserver/account/${encodeURIComponent(input.accountId)}/order/${encodeURIComponent(input.orderId)}`,
       { method: "POST", body: JSON.stringify(preparedOrder) },
     );
-    this.requireOrderAcknowledgement(payload);
+    this.requireOrderAcknowledgement(payload, requestEpoch);
 
     return this.verifyPreparedOrderReplacement({
       accountId: input.accountId,
@@ -4233,14 +4347,14 @@ export class IbkrClient {
         ),
       ]),
     );
-    const payload = await this.request<unknown>(
+    const { payload, requestEpoch } = await this.requestWithEpoch<unknown>(
       `/iserver/account/${encodeURIComponent(input.accountId)}/order/${encodeURIComponent(input.orderId)}`,
       {
         method: "POST",
         body: JSON.stringify(input.order),
       },
     );
-    const result = this.requireOrderAcknowledgement(payload);
+    const result = this.requireOrderAcknowledgement(payload, requestEpoch);
     const currentOrders = await this.listOrders({
       accountId: input.accountId,
       mode: input.mode,
@@ -4283,10 +4397,15 @@ export class IbkrClient {
     mode?: RuntimeMode | null;
     manualIndicator?: boolean | null;
     extOperator?: string | null;
+    preparedOrderBody: Record<string, unknown>;
   }): Promise<CancelOrderSnapshot> {
-    const tradingAccounts = await this.getTradingAccountsInfo();
-    this.assertPaperAccounts([input.accountId]);
-    await this.ensureActiveTradingAccount(input.accountId, tradingAccounts);
+    const evidence = await this.readOrderMutationEvidence(input);
+    this.requirePriceOnlyReplacement(evidence, {
+      accountId: input.accountId,
+      orderId: input.orderId,
+      orderBody: input.preparedOrderBody,
+      requireEditable: false,
+    });
 
     const payload = await this.request<unknown>(
       `/iserver/account/${encodeURIComponent(input.accountId)}/order/${encodeURIComponent(input.orderId)}`,
@@ -4324,11 +4443,17 @@ export class IbkrClient {
           asNumber(statusRecord["remaining_quantity"]),
           asNumber(statusRecord["size"]),
         );
+        const observedTotalQuantity = firstDefined(
+          asNumber(statusRecord["totalSize"]),
+          asNumber(statusRecord["total_size"]),
+        );
         cancellationEvidenceComplete =
           observedFilledQuantity !== null &&
           observedFilledQuantity >= 0 &&
           observedRemainingQuantity !== null &&
-          observedRemainingQuantity >= 0;
+          (observedRemainingQuantity === 0 ||
+            observedRemainingQuantity === 1) &&
+          observedTotalQuantity === 1;
         if (observedFilledQuantity !== null && observedFilledQuantity >= 0) {
           filledQuantity = Math.max(filledQuantity, observedFilledQuantity);
         }
@@ -4388,7 +4513,10 @@ export class IbkrClient {
       status,
       filledQuantity,
       terminal,
-      cancelConfirmed: status === "canceled" && cancellationEvidenceComplete,
+      cancelConfirmed:
+        status === "canceled" &&
+        cancellationEvidenceComplete &&
+        filledQuantity === 0,
       reconciliationRequired,
     };
   }
