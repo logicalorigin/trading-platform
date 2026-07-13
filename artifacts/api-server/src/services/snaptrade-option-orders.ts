@@ -509,6 +509,11 @@ function normalizeInput(
       code: "snaptrade_option_order_price_required",
     });
   }
+  if (orderType === "Market" && price != null) {
+    throw new HttpError(422, "SnapTrade option market orders do not accept a price", {
+      code: "snaptrade_option_order_price_unsupported",
+    });
+  }
 
   return {
     underlyingSymbol,

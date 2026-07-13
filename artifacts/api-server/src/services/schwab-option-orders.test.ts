@@ -278,6 +278,14 @@ test("validation requires whole contracts and a positive Limit price", () => {
     422,
     "schwab_option_order_instruction_invalid",
   );
+  expectHttpError(
+    () =>
+      validateSchwabOptionOrderInput(
+        baseInput({ orderType: "Market", limitPrice: 1.25 }),
+      ),
+    422,
+    "schwab_option_order_limit_price_unsupported",
+  );
 });
 
 test("wire construction maps every option instruction and formats Limit prices", () => {

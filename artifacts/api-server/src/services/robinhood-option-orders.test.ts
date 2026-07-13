@@ -320,6 +320,35 @@ test("place requires tax preflight before any MCP tool call", async () => {
   );
 });
 
+test("place rejects an invalid tax preflight before any MCP tool call", async () => {
+  await withBootstrapToken(async () =>
+    withTestDb(async () => {
+      const appUserId = await seedConnectedUser(
+        "rh-option-invalid-tax@example.com",
+      );
+      const accountId = await seedRobinhoodAccount(appUserId);
+      const stub = mcpFetch(() => instrumentPayload());
+
+      await assert.rejects(
+        placeRobinhoodOptionOrder({
+          appUserId,
+          accountId,
+          input: {
+            ...baseOrder(),
+            confirm: true,
+            taxPreflightToken: "tax_pf_missing",
+          },
+          encryptionKey: TEST_ENCRYPTION_KEY,
+          fetchImpl: stub.fetchImpl,
+        }),
+        (error: unknown) =>
+          (error as { code?: string }).code === "tax_preflight_invalid",
+      );
+      assert.equal(stub.calls.length, 0);
+    }),
+  );
+});
+
 test("place submits the resolved leg after a matching option tax preflight", async () => {
   await withBootstrapToken(async () =>
     withTestDb(async () => {

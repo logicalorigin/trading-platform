@@ -546,6 +546,10 @@ test("SnapTrade option validation rejects malformed contracts and orders before 
       input: { orderType: "Limit" as const },
       code: "snaptrade_option_order_price_required",
     },
+    {
+      input: { price: 1.25 },
+      code: "snaptrade_option_order_price_unsupported",
+    },
   ];
 
   for (const testCase of cases) {

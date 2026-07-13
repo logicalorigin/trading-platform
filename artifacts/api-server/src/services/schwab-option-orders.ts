@@ -317,6 +317,11 @@ export function validateSchwabOptionOrderInput(
     "Schwab option session is invalid",
   );
   const quantity = requirePositiveInteger(input.quantity);
+  if (orderType === "Market" && input.limitPrice != null) {
+    throw new HttpError(422, "Schwab option market orders do not accept a limit price", {
+      code: "schwab_option_order_limit_price_unsupported",
+    });
+  }
   const limitPrice =
     orderType === "Limit" ? requirePositivePrice(input.limitPrice) : null;
   const optionSymbol = formatOptionSymbol({

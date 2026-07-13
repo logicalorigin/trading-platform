@@ -1078,15 +1078,13 @@ export async function placeRobinhoodOptionOrder(
     accountId: options.accountId,
     order,
   });
-  if (!options.input.taxPreflightToken?.trim()) {
-    await assertTaxPreflightForOrderSubmission({
-      appUserId: options.appUserId,
-      order: taxOrder,
-      taxPreflightToken: options.input.taxPreflightToken,
-      taxAcknowledgements: options.input.taxAcknowledgements,
-      now,
-    });
-  }
+  const taxPreflight = await assertTaxPreflightForOrderSubmission({
+    appUserId: options.appUserId,
+    order: taxOrder,
+    taxPreflightToken: options.input.taxPreflightToken,
+    taxAcknowledgements: options.input.taxAcknowledgements,
+    now,
+  });
 
   const session = await openSession({
     appUserId: options.appUserId,
@@ -1097,13 +1095,6 @@ export async function placeRobinhoodOptionOrder(
     mcpUrl: options.mcpUrl,
   });
   const instrument = await resolveOptionInstrument(session, order);
-  const taxPreflight = await assertTaxPreflightForOrderSubmission({
-    appUserId: options.appUserId,
-    order: taxOrder,
-    taxPreflightToken: options.input.taxPreflightToken,
-    taxAcknowledgements: options.input.taxAcknowledgements,
-    now,
-  });
   assertSubmitRateLimit(`${options.appUserId}:${account.id}`, now);
 
   const payload = await session.callTool({
