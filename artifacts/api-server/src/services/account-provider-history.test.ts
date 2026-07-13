@@ -684,6 +684,7 @@ test("combined account equity history includes SnapTrade reconstruction alongsid
         const result = await getAccountEquityHistory({
           accountId: "combined",
           appUserId: auth.user.id,
+          allowDirectIbkr: true,
           range: "ALL",
           mode: "live",
           source: "combined-mixed-snaptrade-reconstruction-test",
