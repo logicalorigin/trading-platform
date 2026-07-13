@@ -4,7 +4,12 @@ import test from "node:test";
 import type { PlaceOrderInput } from "@workspace/ibkr-contracts";
 
 import { runAsAppUser } from "./app-user-context";
-import { placeOrder, previewOrder, submitRawOrders } from "./platform";
+import {
+  buildOrderVisibilityCacheKey,
+  placeOrder,
+  previewOrder,
+  submitRawOrders,
+} from "./platform";
 
 const baseIbkrOrder = (
   overrides: Partial<PlaceOrderInput> = {},
@@ -100,5 +105,42 @@ test("prepared IBKR mutations remain bound to one owned gateway lifecycle", () =
   assert.equal(
     platformSource.match(/assertPreparedIbkrGatewayBinding\(/g)?.length,
     4,
+  );
+});
+
+test("direct IBKR order visibility cache isolates app users and gateway generations", () => {
+  const input = { accountId: "U1234567", mode: "live" as const };
+  const gateway = {
+    appUserId: "user-a",
+    baseUrl: "https://127.0.0.1:5000",
+    hosted: true,
+    loginCompletions: 2,
+    startedAt: 123,
+  };
+  const first = buildOrderVisibilityCacheKey(input, {
+    appUserId: "user-a",
+    gatewaySnapshot: gateway,
+  });
+
+  assert.notEqual(
+    first,
+    buildOrderVisibilityCacheKey(input, {
+      appUserId: "user-b",
+      gatewaySnapshot: { ...gateway, appUserId: "user-b" },
+    }),
+  );
+  assert.notEqual(
+    first,
+    buildOrderVisibilityCacheKey(input, {
+      appUserId: "user-a",
+      gatewaySnapshot: { ...gateway, loginCompletions: 3 },
+    }),
+  );
+  assert.notEqual(
+    first,
+    buildOrderVisibilityCacheKey(input, {
+      appUserId: "user-a",
+      gatewaySnapshot: { ...gateway, startedAt: 124 },
+    }),
   );
 });

@@ -92,6 +92,7 @@ import {
 import {
   assertIbkrClientPortalGatewaySnapshot,
   getIbkrClientPortalClient,
+  type IbkrClientPortalGatewaySnapshot,
 } from "./ibkr-client-runtime";
 import {
   MassiveMarketDataClient,
@@ -2228,11 +2229,28 @@ function orderVisibilityCacheTtlMs(): number {
   return Number.isFinite(configured) && configured > 0 ? configured : 2_000;
 }
 
-function orderVisibilityCacheKey(input: OrderReadInput): string {
+type OrderVisibilityCacheIdentity = {
+  appUserId: string;
+  gatewaySnapshot: IbkrClientPortalGatewaySnapshot;
+};
+
+export function buildOrderVisibilityCacheKey(
+  input: OrderReadInput,
+  identity: OrderVisibilityCacheIdentity,
+): string {
   return JSON.stringify({
     accountId: input.accountId ?? null,
+    appUserId: identity.appUserId,
+    gateway: identity.gatewaySnapshot,
     mode: input.mode ?? getRuntimeMode(),
     status: input.status ?? null,
+  });
+}
+
+function orderVisibilityCacheKey(input: OrderReadInput): string {
+  return buildOrderVisibilityCacheKey(input, {
+    appUserId: requireCurrentAppUserId(),
+    gatewaySnapshot: assertIbkrClientPortalGatewaySnapshot(),
   });
 }
 
