@@ -77,6 +77,26 @@ test("Python compute runner enforces the checked-in uv lock", () => {
   }
 });
 
+test("Python compute runner rejects inherited commands and discarded arguments", () => {
+  const inherited = spawnSync(
+    process.execPath,
+    ["scripts/run-python-compute.mjs", "__proto__"],
+    { cwd: repoRoot, encoding: "utf8" },
+  );
+  assert.equal(inherited.status, 2);
+  assert.match(inherited.stderr, /Unknown Python compute command/);
+  assert.doesNotMatch(inherited.stderr, /__proto__/);
+
+  const extra = spawnSync(
+    process.execPath,
+    ["scripts/run-python-compute.mjs", "doctor", "--discarded"],
+    { cwd: repoRoot, encoding: "utf8" },
+  );
+  assert.equal(extra.status, 2);
+  assert.match(extra.stderr, /do not accept extra arguments/);
+  assert.doesNotMatch(extra.stderr, /--discarded/);
+});
+
 test(
   "Python compute runner forwards wrapper shutdown to its child",
   { timeout: 10_000 },

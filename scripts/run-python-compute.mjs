@@ -45,13 +45,18 @@ const commands = {
   test: ["run", "--locked", "--no-env-file", "pytest"],
 };
 
-const command = process.argv[2] ?? "doctor";
-const args = commands[command];
+const commandArgs = process.argv.slice(2);
+const command = commandArgs[0] ?? "doctor";
+const args = Object.hasOwn(commands, command) ? commands[command] : null;
 
 if (!args) {
-  console.error(`Unknown python compute command: ${command}`);
+  console.error("Unknown Python compute command.");
   console.error(`Expected one of: ${Object.keys(commands).join(", ")}`);
-  process.exit(1);
+  process.exit(2);
+}
+if (commandArgs.length > 1) {
+  console.error("Python compute commands do not accept extra arguments.");
+  process.exit(2);
 }
 
 const shutdown = createProcessGroupShutdownController({
