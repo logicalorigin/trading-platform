@@ -18,9 +18,11 @@ import {
   listAccountTaxLots,
   listAccountWashWindows,
   claimTaxPreflightIbkrReply,
+  claimSubmittedIbkrOrderCancellation,
   loadSubmittedIbkrPreparedOrderIntent,
   recordTaxPreflightIbkrReplyRequired,
   recordTaxPreflightOrderSubmitted,
+  recordSubmittedIbkrOrderCancellation,
 } from "./tax-planning";
 import type { TaxOrderLike } from "./tax-planning-model";
 import { fingerprintIbkrOrderBody } from "./ibkr-order-intent";
@@ -418,6 +420,78 @@ test("different prepared IBKR tokens cannot enter broker mutation concurrently",
         (claim): claim is PromiseRejectedResult => claim.status === "rejected",
       );
       assert.equal(rejected?.reason?.code, "ibkr_order_mutation_in_progress");
+    });
+  });
+});
+
+test("submitted IBKR cancellation is claimed once and records terminal outcome", async () => {
+  await withTestDb(async () => {
+    const appUserId = await createUser("tax-preflight-ibkr-cancel-once@example.com");
+    await runAsAppUser(appUserId, async () => {
+      const order = baseOrder({ quantity: 1, limitPrice: 100 });
+      const orderBody = {
+        orders: [
+          {
+            acctId: "U1234567",
+            conid: 265598,
+            cOID: "cancel-once-intent",
+            orderType: "LMT",
+            outsideRTH: false,
+            side: "BUY",
+            tif: "DAY",
+            quantity: 1,
+            price: 100,
+          },
+        ],
+      };
+      const preflight = await createTaxOrderPreflight(
+        { order },
+        {
+          ibkrPreparedIntent: {
+            version: 1,
+            accountId: "U1234567",
+            clientOrderId: "cancel-once-intent",
+            orderFingerprint: fingerprintIbkrOrderBody(orderBody),
+            orderBody,
+            preparedAt: new Date().toISOString(),
+            whatIf: { error: null, warnings: [] },
+          },
+        },
+      );
+      await assertTaxPreflightForOrderSubmission({
+        order,
+        taxPreflightToken: preflight.preflightToken,
+        requireIbkrPreparedIntent: true,
+        expectedIbkrIntentKind: "place",
+      });
+      await recordTaxPreflightOrderSubmitted({
+        preflightToken: preflight.preflightToken,
+        submittedOrderId: "1234567890",
+      });
+
+      const claims = await Promise.allSettled([
+        claimSubmittedIbkrOrderCancellation({
+          accountId: "U1234567",
+          submittedOrderId: "1234567890",
+        }),
+        claimSubmittedIbkrOrderCancellation({
+          accountId: "U1234567",
+          submittedOrderId: "1234567890",
+        }),
+      ]);
+      assert.equal(claims.filter((claim) => claim.status === "fulfilled").length, 1);
+      const rejected = claims.find(
+        (claim): claim is PromiseRejectedResult => claim.status === "rejected",
+      );
+      assert.equal(rejected?.reason?.code, "ibkr_cancel_already_requested");
+
+      await recordSubmittedIbkrOrderCancellation({
+        accountId: "U1234567",
+        submittedOrderId: "1234567890",
+        cancelConfirmed: true,
+        status: "canceled",
+        filledQuantity: 0,
+      });
     });
   });
 });

@@ -52,12 +52,14 @@ import {
 } from "../lib/transient-db-error";
 import {
   assertTaxPreflightForOrderSubmission,
+  claimSubmittedIbkrOrderCancellation,
   claimTaxPreflightIbkrReply,
   createTaxOrderPreflight,
   loadSubmittedIbkrPreparedOrderIntent,
   recordTaxPreflightIbkrReconciliationRequired,
   recordTaxPreflightIbkrReplyRequired,
   recordTaxPreflightOrderSubmitted,
+  recordSubmittedIbkrOrderCancellation,
   type IbkrPreparedOrderIntent,
 } from "./tax-planning";
 import type { TaxOrderLike } from "./tax-planning-model";
@@ -4021,7 +4023,7 @@ export async function placeOrder(input: PlaceOrderInput) {
     );
     return {
       ...order,
-      reconcileRequired: true,
+      reconciliationRequired: true,
       reconciliationReason: "tax_preflight_order_submit_record_failed",
     };
   }
@@ -4478,11 +4480,38 @@ export async function cancelOrder(input: {
   const mode = requireExplicitOrderActionMode(input.mode, "Order cancellation");
   assertLiveOrderConfirmed(mode, input.confirm);
   await assertIbkrGatewayTradingAvailable(input.accountId);
-  const client = getIbkrClientPortalClient();
-  return client.cancelOrder({
-    ...input,
-    mode,
+  await claimSubmittedIbkrOrderCancellation({
+    accountId: input.accountId,
+    submittedOrderId: input.orderId,
   });
+  const client = getIbkrClientPortalClient();
+  try {
+    const result = await client.cancelOrder({
+      ...input,
+      mode,
+    });
+    await recordSubmittedIbkrOrderCancellation({
+      accountId: input.accountId,
+      submittedOrderId: input.orderId,
+      cancelConfirmed: result.cancelConfirmed,
+      status: result.status,
+      filledQuantity: result.filledQuantity,
+    });
+    return result;
+  } catch (error) {
+    await recordSubmittedIbkrOrderCancellation({
+      accountId: input.accountId,
+      submittedOrderId: input.orderId,
+      cancelConfirmed: false,
+      status: "unknown",
+      filledQuantity: 0,
+    }).catch(() => undefined);
+    throw new HttpError(409, "IBKR cancellation requires reconciliation.", {
+      code: "ibkr_cancel_reconciliation_required",
+      expose: true,
+      cause: error,
+    });
+  }
 }
 
 function positiveIntegerEnv(name: string, fallback: number): number {

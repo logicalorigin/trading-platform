@@ -38,6 +38,10 @@ const IBKR_REPLY_PENDING_PREFIX = "__ibkr_reply_pending__:";
 const IBKR_REPLY_CLAIMED_PREFIX = "__ibkr_reply_claimed__:";
 const IBKR_RECONCILIATION_REQUIRED_MARKER =
   "__ibkr_reconciliation_required__";
+const IBKR_CANCEL_INFLIGHT_PREFIX = "__ibkr_cancel_inflight__:";
+const IBKR_CANCEL_RECONCILIATION_PREFIX =
+  "__ibkr_cancel_reconciliation_required__:";
+const IBKR_CANCELLED_PREFIX = "__ibkr_cancelled__:";
 const LEGACY_SHADOW_ACCOUNT_ID = "shadow";
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -1241,6 +1245,8 @@ export async function assertTaxPreflightForOrderSubmission(input: {
           return (
             marker === TAX_PREFLIGHT_ORDER_SUBMISSION_CONSUMED_MARKER ||
             marker === IBKR_RECONCILIATION_REQUIRED_MARKER ||
+            marker.startsWith(IBKR_CANCEL_INFLIGHT_PREFIX) ||
+            marker.startsWith(IBKR_CANCEL_RECONCILIATION_PREFIX) ||
             marker.startsWith(IBKR_REPLY_PENDING_PREFIX) ||
             marker.startsWith(IBKR_REPLY_CLAIMED_PREFIX)
           );
@@ -1337,6 +1343,169 @@ export async function recordTaxPreflightIbkrReconciliationRequired(input: {
       and(
         eq(taxPreflightChecksTable.id, preflight.id),
         eq(taxPreflightChecksTable.submittedOrderId, currentMarker),
+      ),
+    );
+}
+
+export async function claimSubmittedIbkrOrderCancellation(input: {
+  appUserId?: string;
+  accountId: string;
+  submittedOrderId: string;
+}): Promise<void> {
+  const appUserId = input.appUserId ?? requireCurrentAppUserId();
+  const accountId = String(input.accountId || "").trim();
+  const submittedOrderId = String(input.submittedOrderId || "").trim();
+  if (
+    !PROVIDER_ACCOUNT_ID_PATTERN.test(accountId) ||
+    !PROVIDER_ACCOUNT_ID_PATTERN.test(submittedOrderId)
+  ) {
+    throw new HttpError(409, "The IBKR cancellation target is invalid.", {
+      code: "ibkr_cancel_intent_invalid",
+      expose: true,
+    });
+  }
+  await db.transaction(async (tx) => {
+    await tx.execute(
+      sql`SELECT pg_advisory_xact_lock(hashtext(${`ibkr-order-mutation:${appUserId}`}))`,
+    );
+    const preflights = await tx
+      .select()
+      .from(taxPreflightChecksTable)
+      .where(eq(taxPreflightChecksTable.appUserId, appUserId))
+      .orderBy(desc(taxPreflightChecksTable.updatedAt));
+    const target = preflights.find(
+      (preflight) =>
+        preflight.accountId === accountId &&
+        preflight.submittedOrderId === submittedOrderId &&
+        Boolean(readJsonRecord(preflight.metadata).ibkrPreparedIntent),
+    );
+    if (!target) {
+      const priorAttempt = preflights.some((preflight) => {
+        if (preflight.accountId !== accountId) return false;
+        const cancellation = readJsonRecord(
+          readJsonRecord(preflight.metadata).ibkrCancellation,
+        );
+        return cancellation.orderId === submittedOrderId;
+      });
+      throw new HttpError(
+        409,
+        priorAttempt
+          ? "Cancellation was already requested for this IBKR order."
+          : "A tracked IBKR order intent is required for cancellation.",
+        {
+          code: priorAttempt
+            ? "ibkr_cancel_already_requested"
+            : "ibkr_cancel_intent_required",
+          expose: true,
+        },
+      );
+    }
+    const now = new Date();
+    for (const preflight of preflights) {
+      if (preflight.id === target.id) continue;
+      const preparedValue = readJsonRecord(preflight.metadata).ibkrPreparedIntent;
+      if (!preparedValue) continue;
+      let prepared: IbkrPreparedOrderIntent;
+      try {
+        prepared = readIbkrPreparedOrderIntent(preparedValue, preflight.accountId);
+      } catch {
+        continue;
+      }
+      if (prepared.kind !== "replace" || prepared.orderId !== submittedOrderId) {
+        continue;
+      }
+      const marker = preflight.submittedOrderId || "";
+      if (
+        marker === TAX_PREFLIGHT_ORDER_SUBMISSION_CONSUMED_MARKER ||
+        marker.startsWith(IBKR_REPLY_PENDING_PREFIX) ||
+        marker.startsWith(IBKR_REPLY_CLAIMED_PREFIX)
+      ) {
+        await tx
+          .update(taxPreflightChecksTable)
+          .set({
+            submittedOrderId: "__ibkr_replace_invalidated_by_cancel__",
+            updatedAt: now,
+          })
+          .where(eq(taxPreflightChecksTable.id, preflight.id));
+      }
+    }
+    const metadata = {
+      ...readJsonRecord(target.metadata),
+      ibkrCancellation: {
+        orderId: submittedOrderId,
+        attemptedAt: now.toISOString(),
+      },
+    };
+    const claimed = await tx
+      .update(taxPreflightChecksTable)
+      .set({
+        submittedOrderId: `${IBKR_CANCEL_INFLIGHT_PREFIX}${submittedOrderId}`,
+        metadata,
+        updatedAt: now,
+      })
+      .where(
+        and(
+          eq(taxPreflightChecksTable.id, target.id),
+          eq(taxPreflightChecksTable.submittedOrderId, submittedOrderId),
+        ),
+      )
+      .returning({ id: taxPreflightChecksTable.id });
+    if (!claimed.length) {
+      throw new HttpError(409, "Cancellation was already requested for this IBKR order.", {
+        code: "ibkr_cancel_already_requested",
+        expose: true,
+      });
+    }
+  });
+}
+
+export async function recordSubmittedIbkrOrderCancellation(input: {
+  appUserId?: string;
+  accountId: string;
+  submittedOrderId: string;
+  cancelConfirmed: boolean;
+  status: string;
+  filledQuantity: number;
+}): Promise<void> {
+  const appUserId = input.appUserId ?? requireCurrentAppUserId();
+  const inflightMarker = `${IBKR_CANCEL_INFLIGHT_PREFIX}${input.submittedOrderId}`;
+  const [preflight] = await db
+    .select()
+    .from(taxPreflightChecksTable)
+    .where(
+      and(
+        eq(taxPreflightChecksTable.appUserId, appUserId),
+        eq(taxPreflightChecksTable.accountId, input.accountId),
+        eq(taxPreflightChecksTable.submittedOrderId, inflightMarker),
+      ),
+    )
+    .limit(1);
+  if (!preflight) return;
+  const metadata = {
+    ...readJsonRecord(preflight.metadata),
+    ibkrCancellation: {
+      ...readJsonRecord(readJsonRecord(preflight.metadata).ibkrCancellation),
+      status: String(input.status || "unknown").slice(0, 64),
+      filledQuantity: Number.isFinite(input.filledQuantity)
+        ? input.filledQuantity
+        : null,
+      cancelConfirmed: input.cancelConfirmed,
+      recordedAt: new Date().toISOString(),
+    },
+  };
+  await db
+    .update(taxPreflightChecksTable)
+    .set({
+      submittedOrderId: input.cancelConfirmed
+        ? `${IBKR_CANCELLED_PREFIX}${input.submittedOrderId}`
+        : `${IBKR_CANCEL_RECONCILIATION_PREFIX}${input.submittedOrderId}`,
+      metadata,
+      updatedAt: new Date(),
+    })
+    .where(
+      and(
+        eq(taxPreflightChecksTable.id, preflight.id),
+        eq(taxPreflightChecksTable.submittedOrderId, inflightMarker),
       ),
     );
 }
