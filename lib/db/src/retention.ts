@@ -33,9 +33,10 @@ import {
  * replay/backtest runs and cleaned up by their own range-scoped delete paths
  * (`resetSignalOptionsReplayRowsForRange`, `resetWatchlistBacktestRowsForRange`,
  * `backfillSignalOptionsReplayEquitySnapshotsFromRun` in shadow-account.ts).
- * Age-based retention must NEVER touch these. Mirrors the source constants in
- * artifacts/api-server/src/services/shadow-account.ts; keep in sync if new
- * simulation sources are added there.
+ * Age-based retention must NEVER touch these. Mirrors the source constants and
+ * compact `watchlist_bt:*` range source in shadow-account.ts.
+ * ponytail: keep this lower-layer allowlist local until the API writer imports
+ * shared source identifiers from @workspace/db; the PGlite contract guards drift.
  */
 const SIMULATION_SHADOW_BALANCE_SOURCES = [
   "signal_options_replay",
@@ -228,7 +229,7 @@ export async function pruneShadowBalanceSnapshots(
 ): Promise<RetentionResult> {
   const { dryRun, batchSize, cutoff } = resolve(opts);
   const t = shadowBalanceSnapshotsTable;
-  const simulation = sql`(${inArray(t.source, [...SIMULATION_SHADOW_BALANCE_SOURCES])} or ${t.source} like 'signal_options_replay:%' or ${t.source} like 'watchlist_backtest:%')`;
+  const simulation = sql`(${inArray(t.source, [...SIMULATION_SHADOW_BALANCE_SOURCES])} or ${t.source} like 'signal_options_replay:%' or ${t.source} like 'watchlist_backtest:%' or ${t.source} like 'watchlist_bt:%')`;
   const latestPerAccountSource = sql`select distinct on (${t.accountId}, ${t.source}) ${t.id} from ${t} order by ${t.accountId}, ${t.source}, ${t.asOf} desc, ${t.createdAt} desc`;
   const deletable = sql`${t.asOf} < ${cutoff} and not ${simulation} and ${t.id} not in (${latestPerAccountSource})`;
   return sweep({
@@ -493,6 +494,7 @@ export async function pruneExecutionEventsDiagnostics(
     hitCap: !dryRun && maxRowsPerRun > 0 && deleted === maxRowsPerRun,
     durationMs: Math.max(0, Date.now() - startedAt),
     dryRun,
+    ...(drainError ? { error: drainError } : {}),
   };
 }
 
@@ -525,9 +527,10 @@ function envInt(
 ): number {
   const raw = env[name];
   if (!raw) return fallback;
+  if (!/^[1-9]\d*$/u.test(raw)) return fallback;
   const parsed = Number(raw);
-  if (!Number.isFinite(parsed)) return fallback;
-  return Math.min(max, Math.max(min, Math.floor(parsed)));
+  if (!Number.isSafeInteger(parsed)) return fallback;
+  return Math.min(max, Math.max(min, parsed));
 }
 
 export function resolveSnapshotRetentionConfig(
