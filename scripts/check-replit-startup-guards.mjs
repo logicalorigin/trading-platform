@@ -303,13 +303,19 @@ check(
 );
 
 const reaper = read("scripts/reap-dev-port.mjs");
+const replitProcessAuthority = read("scripts/replit-process-authority.mjs");
 check(
-  reaper.includes('process.env.REPLIT_MODE === "workflow"') &&
-    !reaper.includes('process.env.REPLIT_MODE === "workflow" ||') &&
-    reaper.includes("Current PYRUS_REPLIT_RUN") &&
-    reaper.includes("another Replit execution scope") &&
-    reaper.includes("Shell-launched dev commands must not kill"),
-  "reap-dev-port.mjs must allow only true Replit workflow restarts to replace previous Replit execution scopes while preserving shell safety.",
+  reaper.includes("isPid2OwnedReplitWorkflow") &&
+    reaper.includes("proc.hasPyrusWorkflowAncestry(pid)") &&
+    reaper.includes("revalidateHolder") &&
+    reaper.includes("startTimeTicks") &&
+    replitProcessAuthority.includes("cmdlineIsPid2") &&
+    replitProcessAuthority.includes("hasPyrusWorkflowAncestry") &&
+    replitProcessAuthority.includes("@workspace/pyrus") &&
+    replitProcessAuthority.includes("dev:replit") &&
+    replitProcessAuthority.includes('parentName === "pid1"') &&
+    !replitProcessAuthority.includes("pid === 2"),
+  "reap-dev-port.mjs must require pid2 argv0 ancestry and stable process/socket identity before a Replit workflow replaces another execution scope.",
 );
 
 const replitDocs = read("replit.md");
@@ -411,9 +417,11 @@ check(
     pyrusRunner.includes('writeLifecycleEvent("heartbeat"') &&
     pyrusRunner.includes("readPreviousLifecycleState") &&
     pyrusRunner.includes("supervisor-shutdown-complete") &&
-    pyrusRunner.includes('process.env.REPLIT_MODE === "workflow"') &&
-    !pyrusRunner.includes('process.env.REPLIT_MODE === "workflow" ||') &&
-    pyrusRunner.includes("not authority to") &&
+    pyrusRunner.includes("isPid2OwnedReplitWorkflow") &&
+    pyrusRunner.includes("signalStableProcess") &&
+    pyrusRunner.includes("processIdentityMatches") &&
+    pyrusRunner.includes("startTimeTicks") &&
+    pyrusRunner.includes("shell-forgeable tags") &&
     !pyrusRunner.includes(
       "refusing to start the full app supervisor from a Codex-owned shell",
     ) &&

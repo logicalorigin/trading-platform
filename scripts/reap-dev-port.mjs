@@ -1,249 +1,401 @@
 #!/usr/bin/env node
-import { execSync } from "node:child_process";
 import { readFileSync, readdirSync, readlinkSync } from "node:fs";
+import { performance } from "node:perf_hooks";
+import { stripVTControlCharacters } from "node:util";
+import { fileURLToPath } from "node:url";
+import path from "node:path";
 
-const logPrefix = "[reapDevPort]";
+import {
+  hasPyrusWorkflowAncestry,
+  isPid2OwnedReplitWorkflow,
+  parseProcStat,
+} from "./replit-process-authority.mjs";
 
-const rawPort = process.env.PORT;
-if (!rawPort) {
-  console.error(`${logPrefix} PORT env var not set; skipping reap.`);
-  process.exit(0);
+const LOG_PREFIX = "[reapDevPort]";
+const CONTROL_PATTERN =
+  /[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/gu;
+
+export function safeDisplay(value, maxCodePoints = 300) {
+  const clean = stripVTControlCharacters(String(value ?? ""))
+    .replace(CONTROL_PATTERN, " ")
+    .replace(/\s+/gu, " ")
+    .trim();
+  const points = Array.from(clean);
+  return points.length > maxCodePoints
+    ? `${points.slice(0, maxCodePoints).join("")}…`
+    : clean;
 }
 
-const port = Number(rawPort);
-if (!Number.isFinite(port) || port <= 0) {
-  console.error(`${logPrefix} Invalid PORT value '${rawPort}'; skipping reap.`);
-  process.exit(0);
-}
-
-const myPid = process.pid;
-const myPpid = process.ppid;
-
-const portHex = port.toString(16).toUpperCase().padStart(4, "0");
-const portSuffix = `:${portHex}`;
-
-function inodesListeningOnPort() {
-  const inodes = new Set();
-  for (const file of ["/proc/net/tcp", "/proc/net/tcp6"]) {
-    let text;
-    try {
-      text = readFileSync(file, "utf8");
-    } catch {
-      continue;
-    }
-    for (const line of text.split("\n").slice(1)) {
-      const parts = line.trim().split(/\s+/);
-      if (parts.length < 10) continue;
-      const localAddr = parts[1];
-      const state = parts[3];
-      const inode = parts[9];
-      if (state !== "0A") continue;
-      if (!localAddr || !localAddr.endsWith(portSuffix)) continue;
-      inodes.add(inode);
-    }
+export function parsePort(rawPort) {
+  if (!/^[0-9]+$/u.test(rawPort ?? "")) {
+    throw new Error("PORT must be a decimal integer from 1 through 65535");
   }
-  return inodes;
+  const port = Number(rawPort);
+  if (!Number.isSafeInteger(port) || port < 1 || port > 65_535) {
+    throw new Error("PORT must be a decimal integer from 1 through 65535");
+  }
+  return port;
 }
 
-function pidsHoldingInodes(inodes) {
-  if (inodes.size === 0) return new Set();
-  const pids = new Set();
-  let entries;
+function setsIntersect(...sets) {
+  const [first, ...rest] = sets;
+  if (!first) return false;
+  for (const value of first) {
+    if (rest.every((set) => set?.has(value))) return true;
+  }
+  return false;
+}
+
+export function holderIdentityMatches(expected, current, listeningInodes) {
+  return (
+    Number.isSafeInteger(expected?.pid) &&
+    expected.pid === current?.pid &&
+    typeof expected.startTimeTicks === "string" &&
+    expected.startTimeTicks === current.startTimeTicks &&
+    typeof expected.cgroup === "string" &&
+    expected.cgroup !== "" &&
+    expected.cgroup === current.cgroup &&
+    setsIntersect(expected.socketInodes, current.socketInodes, listeningInodes)
+  );
+}
+
+function socketInodesForPid(pid, candidateInodes, readDir, readLink) {
+  let fds;
   try {
-    entries = readdirSync("/proc");
-  } catch {
-    return pids;
-  }
-  for (const entry of entries) {
-    if (!/^\d+$/.test(entry)) continue;
-    const pid = Number(entry);
-    if (pid === myPid || pid === myPpid) continue;
-    let fdEntries;
-    try {
-      fdEntries = readdirSync(`/proc/${entry}/fd`);
-    } catch {
-      continue;
-    }
-    for (const fd of fdEntries) {
-      let target;
-      try {
-        target = readlinkSync(`/proc/${entry}/fd/${fd}`);
-      } catch {
-        continue;
-      }
-      const m = target.match(/^socket:\[(\d+)\]$/);
-      if (m && inodes.has(m[1])) {
-        pids.add(pid);
-        break;
-      }
-    }
-  }
-  return pids;
-}
-
-function readCgroup(pid) {
-  try {
-    return readFileSync(`/proc/${pid}/cgroup`, "utf8").trim();
+    fds = readDir(`/proc/${pid}/fd`);
   } catch {
     return null;
   }
-}
-
-const myCgroup = readCgroup(process.pid);
-// PYRUS_REPLIT_RUN is set by the package script itself, so a normal shell can
-// have it. Only Replit's workflow env can replace a foreign execution scope.
-const runningInsideReplitWorkflow = process.env.REPLIT_MODE === "workflow";
-
-// Returns pids that share our cgroup (safe to reap) vs pids in a different
-// cgroup (usually a separate supervised service).
-function partitionByCgroup(pids) {
-  const sameCgroup = new Set();
-  const foreignCgroup = new Map(); // pid -> cgroup string
-  for (const pid of pids) {
-    const cg = readCgroup(pid);
-    if (myCgroup && cg && cg === myCgroup) {
-      sameCgroup.add(pid);
-    } else {
-      foreignCgroup.set(pid, cg ?? "<unknown>");
+  const found = new Set();
+  for (const fd of fds) {
+    try {
+      const match = /^socket:\[(\d+)\]$/u.exec(
+        readLink(`/proc/${pid}/fd/${fd}`),
+      );
+      if (match && candidateInodes.has(match[1])) found.add(match[1]);
+    } catch {
+      // File descriptors can close during inspection; stable identity is
+      // revalidated immediately before every signal.
     }
   }
-  return { sameCgroup, foreignCgroup };
+  return found;
 }
 
-function describePid(pid) {
-  try {
-    const cmd = readFileSync(`/proc/${pid}/cmdline`, "utf8")
-      .replaceAll("\0", " ")
-      .trim();
-    return `${pid} (${cmd.slice(0, 120)})`;
-  } catch {
-    return String(pid);
+export function createProcInspector({
+  readFile = readFileSync,
+  readDir = readdirSync,
+  readLink = readlinkSync,
+} = {}) {
+  function listeningInodes(port) {
+    const suffix = `:${port.toString(16).toUpperCase().padStart(4, "0")}`;
+    const inodes = new Set();
+    let inspectedTables = 0;
+    for (const file of ["/proc/net/tcp", "/proc/net/tcp6"]) {
+      let text;
+      try {
+        text = readFile(file, "utf8");
+        inspectedTables += 1;
+      } catch (error) {
+        if (error?.code === "ENOENT") continue;
+        return null;
+      }
+      for (const line of text.split("\n").slice(1)) {
+        const fields = line.trim().split(/\s+/u);
+        if (
+          fields.length >= 10 &&
+          fields[3] === "0A" &&
+          fields[1]?.endsWith(suffix)
+        ) {
+          inodes.add(fields[9]);
+        }
+      }
+    }
+    return inspectedTables > 0 ? inodes : null;
   }
+
+  function readCgroup(pid) {
+    try {
+      return readFile(`/proc/${pid}/cgroup`, "utf8").trim() || null;
+    } catch {
+      return null;
+    }
+  }
+
+  function readHolder(pid, socketInodes) {
+    let stat;
+    let command = "";
+    try {
+      stat = parseProcStat(readFile(`/proc/${pid}/stat`, "utf8"));
+      command = readFile(`/proc/${pid}/cmdline`, "utf8");
+    } catch {
+      stat = null;
+    }
+    return {
+      pid,
+      startTimeTicks: stat?.startTimeTicks ?? null,
+      cgroup: readCgroup(pid),
+      socketInodes,
+      command: safeDisplay(command.replaceAll("\0", " "), 120),
+    };
+  }
+
+  function findHolders(inodes, excludedPids = new Set()) {
+    let entries;
+    try {
+      entries = readDir("/proc");
+    } catch {
+      return null;
+    }
+    const holders = [];
+    for (const entry of entries) {
+      if (!/^\d+$/u.test(entry)) continue;
+      const pid = Number(entry);
+      if (excludedPids.has(pid)) continue;
+      const socketInodes = socketInodesForPid(pid, inodes, readDir, readLink);
+      if (socketInodes?.size > 0) holders.push(readHolder(pid, socketInodes));
+    }
+    return holders;
+  }
+
+  function revalidateHolder(expected, port) {
+    const currentListening = listeningInodes(port);
+    if (!currentListening) return false;
+    const socketInodes = socketInodesForPid(
+      expected.pid,
+      currentListening,
+      readDir,
+      readLink,
+    );
+    if (!socketInodes) return false;
+    return holderIdentityMatches(
+      expected,
+      readHolder(expected.pid, socketInodes),
+      currentListening,
+    );
+  }
+
+  return {
+    listeningInodes,
+    findHolders,
+    readCgroup,
+    hasPyrusWorkflowAncestry: (pid) =>
+      hasPyrusWorkflowAncestry(pid, { readFile, readLink }),
+    revalidateHolder,
+  };
 }
 
-function killPids(pids, signal) {
-  for (const pid of pids) {
+function defaultSleep(ms) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+function waitForPortToFree({ proc, port, timeoutMs, now, sleep }) {
+  const startedAt = now();
+  const deadline = startedAt + timeoutMs;
+  while (now() < deadline) {
+    const inodes = proc.listeningInodes(port);
+    if (inodes === null) return { state: "unavailable" };
+    if (inodes.size === 0) {
+      return { state: "freed", elapsedMs: Math.max(0, now() - startedAt) };
+    }
+    sleep(Math.min(100, Math.max(1, deadline - now())));
+  }
+  const inodes = proc.listeningInodes(port);
+  if (inodes === null) return { state: "unavailable" };
+  return inodes.size === 0
+    ? { state: "freed", elapsedMs: Math.max(0, now() - startedAt) }
+    : { state: "occupied" };
+}
+
+function describeHolder(holder) {
+  return `${holder.pid} (${safeDisplay(holder.command || "unknown", 120)}) cgroup=${safeDisplay(holder.cgroup || "<unknown>", 300)}`;
+}
+
+function portIsConfirmedFree(proc, port) {
+  return proc.listeningInodes(port)?.size === 0;
+}
+
+function sendValidatedSignals({ targets, signal, port, proc, kill, warn }) {
+  if (!targets.every((holder) => proc.revalidateHolder(holder, port))) {
+    return 0;
+  }
+  let sent = 0;
+  for (const holder of targets) {
+    if (!proc.revalidateHolder(holder, port)) continue;
     try {
-      process.kill(pid, signal);
-    } catch (err) {
-      if (err && err.code !== "ESRCH") {
-        console.warn(
-          `${logPrefix} Failed to send ${signal} to ${pid}: ${err.message}`,
+      // ponytail: Node exposes no pidfd signal primitive; revalidate the PID,
+      // start time, cgroup, and socket immediately before the numeric signal.
+      kill(holder.pid, signal);
+      sent += 1;
+    } catch (error) {
+      if (error?.code !== "ESRCH") {
+        warn(
+          `${LOG_PREFIX} Failed to send ${signal} to ${holder.pid}: ${safeDisplay(error?.message || error)}`,
         );
       }
     }
   }
+  return sent;
 }
 
-function waitForPortToFree(timeoutMs) {
-  const start = Date.now();
-  const deadline = start + timeoutMs;
-  while (Date.now() < deadline) {
-    const remaining = inodesListeningOnPort();
-    if (remaining.size === 0) {
-      return Date.now() - start;
-    }
-    execSync("sleep 0.1");
+export function reapPort({
+  rawPort,
+  env = process.env,
+  pid = process.pid,
+  ppid = process.ppid,
+  proc = createProcInspector(),
+  kill = process.kill,
+  now = performance.now.bind(performance),
+  sleep = defaultSleep,
+  warn = console.warn,
+  error = console.error,
+}) {
+  let port;
+  try {
+    port = parsePort(rawPort);
+  } catch (parseError) {
+    error(`${LOG_PREFIX} ${safeDisplay(parseError.message)}`);
+    return 1;
   }
-  return null;
-}
 
-const initialInodes = inodesListeningOnPort();
-if (initialInodes.size === 0) {
-  process.exit(0);
-}
+  const initialInodes = proc.listeningInodes(port);
+  if (initialInodes === null) {
+    error(`${LOG_PREFIX} Cannot inspect listeners for port ${port}.`);
+    return 1;
+  }
+  if (initialInodes.size === 0) return 0;
 
-const pids = pidsHoldingInodes(initialInodes);
-if (pids.size === 0) {
-  console.warn(
-    `${logPrefix} Port ${port} is held but the owning PID is not in /proc (likely owned by another user). Letting the dev server surface the conflict.`,
-  );
-  process.exit(0);
-}
-
-const { sameCgroup, foreignCgroup } = partitionByCgroup(pids);
-
-if (foreignCgroup.size > 0) {
-  if (runningInsideReplitWorkflow) {
-    const replaceablePids = new Set(foreignCgroup.keys());
-    console.warn(
-      `${logPrefix} Port ${port} is held by PID(s) from another Replit execution scope: ${[...replaceablePids].map(describePid).join(", ")}. Replacing them because this command is running inside a Replit workflow...`,
+  const holders = proc.findHolders(initialInodes, new Set([pid, ppid]));
+  if (!holders || holders.length === 0) {
+    if (portIsConfirmedFree(proc, port)) return 0;
+    error(
+      `${LOG_PREFIX} Port ${port} is listening but its owner could not be safely attributed.`,
     );
-    killPids(replaceablePids, "SIGTERM");
-
-    const elapsed = waitForPortToFree(2_000);
-    if (elapsed !== null) {
-      console.warn(
-        `${logPrefix} Port ${port} freed after replacing previous Replit execution in ${elapsed}ms.`,
-      );
-      process.exit(0);
-    }
-
-    const remainingReplaceablePids = new Set(
-      [...pidsHoldingInodes(inodesListeningOnPort())].filter((pid) =>
-        replaceablePids.has(pid),
-      ),
+    return 1;
+  }
+  const attributedInodes = new Set(
+    holders.flatMap((holder) => [...(holder.socketInodes ?? [])]),
+  );
+  if ([...initialInodes].some((inode) => !attributedInodes.has(inode))) {
+    if (portIsConfirmedFree(proc, port)) return 0;
+    error(
+      `${LOG_PREFIX} Port ${port} has listener sockets whose owners could not all be safely attributed.`,
     );
-    if (remainingReplaceablePids.size > 0) {
-      console.warn(
-        `${logPrefix} Port ${port} still held after SIGTERM; sending SIGKILL to previous Replit execution PID(s): ${[...remainingReplaceablePids].join(", ")}.`,
+    return 1;
+  }
+  const myCgroup = proc.readCgroup(pid);
+  if (
+    !myCgroup ||
+    holders.some(
+      (holder) =>
+        !holder.cgroup ||
+        !holder.startTimeTicks ||
+        !(holder.socketInodes instanceof Set) ||
+        holder.socketInodes.size === 0,
+    )
+  ) {
+    if (portIsConfirmedFree(proc, port)) return 0;
+    error(
+      `${LOG_PREFIX} Refusing to signal port ${port} holders because process identity or cgroup evidence is unavailable.`,
+    );
+    return 1;
+  }
+
+  const sameScope = holders.filter((holder) => holder.cgroup === myCgroup);
+  const foreignScope = holders.filter((holder) => holder.cgroup !== myCgroup);
+  if (sameScope.length > 0 && foreignScope.length > 0) {
+    error(
+      `${LOG_PREFIX} Refusing mixed-scope holders on port ${port}: ${holders.map(describeHolder).join(", ")}`,
+    );
+    return 1;
+  }
+
+  let targets = sameScope;
+  if (foreignScope.length > 0) {
+    const authorized = isPid2OwnedReplitWorkflow({
+      env,
+      pid,
+      hasWorkflowAncestry: proc.hasPyrusWorkflowAncestry(pid),
+    });
+    if (!authorized) {
+      error(
+        `${LOG_PREFIX} Refusing different-scope holders on port ${port}; REPLIT_MODE alone is not authority and this process has no verified pid2 ancestry. Holder(s): ${foreignScope.map(describeHolder).join(", ")}`,
       );
-      killPids(remainingReplaceablePids, "SIGKILL");
-      execSync("sleep 0.3");
+      return 1;
     }
-
-    if (inodesListeningOnPort().size === 0) {
-      console.warn(`${logPrefix} Port ${port} freed.`);
-      process.exit(0);
-    }
+    targets = foreignScope;
+  }
+  if (targets.length === 0) {
+    error(`${LOG_PREFIX} Port ${port} has no safely attributable holder.`);
+    return 1;
   }
 
-  const lines = [];
-  for (const [pid, cg] of foreignCgroup) {
-    lines.push(`  ${describePid(pid)} cgroup=${cg}`);
+  warn(
+    `${LOG_PREFIX} Port ${port} held in ${foreignScope.length > 0 ? "a different verified Replit execution scope" : "the current execution scope"}: ${targets.map(describeHolder).join(", ")}. Sending SIGTERM.`,
+  );
+  const termSent = sendValidatedSignals({
+    targets,
+    signal: "SIGTERM",
+    port,
+    proc,
+    kill,
+    warn,
+  });
+  if (termSent === 0) {
+    const current = proc.listeningInodes(port);
+    if (current?.size === 0) return 0;
+    error(
+      `${LOG_PREFIX} Refusing to signal port ${port}; holder identity or socket ownership changed before SIGTERM.`,
+    );
+    return 1;
   }
-  console.error(
-    `${logPrefix} Refusing to reap port ${port}: it is held by a process in a different cgroup. Shell-launched dev commands must not kill the live Replit workflow; only commands already running inside a Replit workflow may reclaim a foreign execution scope on their pinned port.\n${logPrefix} Holder(s):\n${lines.join("\n")}\n${logPrefix} My cgroup: ${myCgroup ?? "<unknown>"}\n${logPrefix} Current REPLIT_MODE: ${process.env.REPLIT_MODE ?? "<unset>"}\n${logPrefix} Current PYRUS_REPLIT_RUN: ${process.env.PYRUS_REPLIT_RUN ?? "<unset>"}\n${logPrefix} If you meant to restart the live app, use the Replit workflow restart action. Exiting non-zero so the dev server fails fast with EADDRINUSE.`,
+
+  const termWait = waitForPortToFree({
+    proc,
+    port,
+    timeoutMs: 2_000,
+    now,
+    sleep,
+  });
+  if (termWait.state === "freed") {
+    warn(
+      `${LOG_PREFIX} Port ${port} freed after SIGTERM in ${termWait.elapsedMs}ms.`,
+    );
+    return 0;
+  }
+  if (termWait.state === "unavailable") {
+    error(`${LOG_PREFIX} Listener evidence became unavailable after SIGTERM.`);
+    return 1;
+  }
+
+  warn(`${LOG_PREFIX} Port ${port} still held; revalidating before SIGKILL.`);
+  sendValidatedSignals({
+    targets,
+    signal: "SIGKILL",
+    port,
+    proc,
+    kill,
+    warn,
+  });
+  sleep(300);
+
+  const finalInodes = proc.listeningInodes(port);
+  if (finalInodes?.size === 0) {
+    warn(`${LOG_PREFIX} Port ${port} freed.`);
+    return 0;
+  }
+  error(
+    `${LOG_PREFIX} ${finalInodes === null ? "Cannot verify whether" : "Failed to free"} port ${port}.`,
   );
-  process.exit(1);
+  return 1;
 }
 
-if (sameCgroup.size === 0) {
-  // Defensive: should not happen, but exit cleanly if classification produced nothing.
-  process.exit(0);
+function main() {
+  process.exitCode = reapPort({ rawPort: process.env.PORT });
 }
 
-console.warn(
-  `${logPrefix} Port ${port} held by orphan PIDs in our cgroup: ${[...sameCgroup].map(describePid).join(", ")}. Reaping...`,
-);
-
-killPids(sameCgroup, "SIGTERM");
-
-const elapsed = waitForPortToFree(2_000);
-if (elapsed !== null) {
-  console.warn(
-    `${logPrefix} Port ${port} freed after SIGTERM in ${elapsed}ms.`,
-  );
-  process.exit(0);
+if (
+  process.argv[1] &&
+  path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)
+) {
+  main();
 }
-
-const stragglerPids = pidsHoldingInodes(inodesListeningOnPort());
-const stragglers = partitionByCgroup(stragglerPids).sameCgroup;
-if (stragglers.size > 0) {
-  console.warn(
-    `${logPrefix} Port ${port} still held after SIGTERM; sending SIGKILL to: ${[...stragglers].join(", ")}.`,
-  );
-  killPids(stragglers, "SIGKILL");
-  execSync("sleep 0.3");
-}
-
-const finalInodes = inodesListeningOnPort();
-if (finalInodes.size === 0) {
-  console.warn(`${logPrefix} Port ${port} freed.`);
-  process.exit(0);
-}
-
-console.error(
-  `${logPrefix} Failed to free port ${port}; the dev server should fail with EADDRINUSE.`,
-);
-process.exit(0);

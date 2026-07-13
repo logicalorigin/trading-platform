@@ -17,6 +17,13 @@ import {
   RESTORE_COMMAND,
   detectReplitConfigClobber,
 } from "../../../scripts/replit-config-clobber.mjs";
+import {
+  hasPyrusWorkflowAncestry,
+  isPid2OwnedReplitWorkflow,
+  processIdentityMatches,
+  readProcIdentity,
+  signalStableProcess,
+} from "../../../scripts/replit-process-authority.mjs";
 
 const repoRoot = path.resolve(fileURLToPath(new URL("../../..", import.meta.url)));
 const apiPort = process.env.PYRUS_API_PORT || "8080";
@@ -43,10 +50,9 @@ const supervisorTakeoverGraceMs = Number(
 const MARKET_DATA_WORKER_SHUTDOWN_GRACE_MS = 5_000;
 const API_NODE_MAX_OLD_SPACE_MB = "2560";
 const WEB_NODE_MAX_OLD_SPACE_MB = "1536";
-// PYRUS_REPLIT_RUN is a tag set by dev:replit. It is not authority to
-// replace a live supervisor because any shell can set it by running that
-// package script. Only Replit's workflow env may request handoff/reaping.
-const runningInsideReplitWorkflow = process.env.REPLIT_MODE === "workflow";
+// REPLIT_MODE and PYRUS_REPLIT_RUN are shell-forgeable tags. A destructive
+// supervisor handoff additionally requires ancestry to Replit's pid2 argv0.
+const runningInsideReplitWorkflow = isPid2OwnedReplitWorkflow();
 const forceSupervisorTakeover = process.env.PYRUS_DEV_FORCE_RESTART === "1";
 const duplicateCheckOnly = process.env.PYRUS_DEV_DUPLICATE_CHECK_ONLY === "1";
 
@@ -443,7 +449,30 @@ function readSupervisorLock() {
 }
 
 function isLiveSupervisorPid(pid) {
-  return pidIsAlive(pid) && readProcessCommand(pid).includes("runDevApp.mjs");
+  return readSupervisorIdentity(pid) !== null;
+}
+
+function readSupervisorIdentity(pid) {
+  const identityBeforeAncestry = readProcIdentity(pid);
+  if (!identityBeforeAncestry || !hasPyrusWorkflowAncestry(pid)) return null;
+  const identity = readProcIdentity(pid);
+  if (!processIdentityMatches(identityBeforeAncestry, identity)) return null;
+  const runnerPath = fileURLToPath(import.meta.url);
+  const invokesRunner = identity.cmdlineRaw
+    .split("\0")
+    .filter(Boolean)
+    .slice(1)
+    .some((argument) => path.resolve(identity.cwd, argument) === runnerPath);
+  return invokesRunner ? identity : null;
+}
+
+function lockMatchesSupervisorIdentity(lock, identity) {
+  return (
+    identity !== null &&
+    (typeof lock?.startTimeTicks !== "string" ||
+      lock.startTimeTicks === identity.startTimeTicks) &&
+    (typeof lock?.cgroup !== "string" || lock.cgroup === identity.cgroup)
+  );
 }
 
 function unlinkSupervisorLockForPid(pid) {
@@ -468,17 +497,23 @@ function unlinkSupervisorLockState(lockState) {
   }
 }
 
-function sendSignal(pid, signal) {
+function sendSupervisorSignal(identity, signal) {
   try {
-    process.kill(pid, signal);
-    writeLifecycleEvent("signal-sent", { targetPid: pid, signal });
-    return true;
+    if (
+      !signalStableProcess(identity, signal, {
+        readIdentity: readSupervisorIdentity,
+      })
+    ) {
+      return "changed";
+    }
+    writeLifecycleEvent("signal-sent", { targetPid: identity.pid, signal });
+    return "sent";
   } catch (error) {
-    if (error?.code === "ESRCH") return true;
+    if (error?.code === "ESRCH") return "changed";
     console.warn(
-      `[pyrus-dev] failed to send ${signal} to supervisor PID ${pid}: ${error instanceof Error ? error.message : String(error)}`,
+      `[pyrus-dev] failed to send ${signal} to supervisor PID ${identity.pid}: ${error instanceof Error ? error.message : String(error)}`,
     );
-    return false;
+    return "failed";
   }
 }
 
@@ -513,7 +548,12 @@ function checkDuplicateReplitStartOnly() {
   }
 
   const ownerPid = Number(lockState.lock?.pid);
-  if (!Number.isInteger(ownerPid) || ownerPid <= 0 || !isLiveSupervisorPid(ownerPid)) {
+  const ownerIdentity = readSupervisorIdentity(ownerPid);
+  if (
+    !Number.isInteger(ownerPid) ||
+    ownerPid <= 0 ||
+    !lockMatchesSupervisorIdentity(lockState.lock, ownerIdentity)
+  ) {
     console.warn(
       `[pyrus-dev] duplicate-check-only found no live PYRUS dev supervisor for lock owner ${Number.isInteger(ownerPid) ? ownerPid : "unknown"}; exiting without starting API/web processes.`,
     );
@@ -541,22 +581,30 @@ function removeSupervisorLock() {
   supervisorLockAcquired = false;
 }
 
-async function waitForSupervisorToExit(pid, timeoutMs) {
+async function waitForSupervisorToExit(identity, timeoutMs) {
   const waitMs = Number.isFinite(timeoutMs) && timeoutMs >= 0 ? timeoutMs : 20_000;
   const deadline = Date.now() + waitMs;
 
   while (Date.now() < deadline) {
-    if (!isLiveSupervisorPid(pid)) {
-      unlinkSupervisorLockForPid(pid);
+    if (
+      !processIdentityMatches(identity, readSupervisorIdentity(identity.pid))
+    ) {
       return true;
     }
     await delay(500);
   }
 
-  return !isLiveSupervisorPid(pid);
+  return !processIdentityMatches(
+    identity,
+    readSupervisorIdentity(identity.pid),
+  );
 }
 
-async function requestSupervisorHandoff(ownerPid, { requestMessage = null } = {}) {
+async function requestSupervisorHandoff(
+  ownerIdentity,
+  { requestMessage = null } = {},
+) {
+  const ownerPid = ownerIdentity.pid;
   const graceMs =
     Number.isFinite(supervisorTakeoverGraceMs) && supervisorTakeoverGraceMs >= 0
       ? supervisorTakeoverGraceMs
@@ -568,11 +616,15 @@ async function requestSupervisorHandoff(ownerPid, { requestMessage = null } = {}
   );
   writeLifecycleEvent("supervisor-handoff-requested", { ownerPid });
 
-  if (!sendSignal(ownerPid, "SIGTERM")) {
+  const termResult = sendSupervisorSignal(ownerIdentity, "SIGTERM");
+  if (termResult === "failed") {
     throw new Error(`Could not signal previous PYRUS dev supervisor ${ownerPid}.`);
   }
+  if (termResult === "changed") {
+    return;
+  }
 
-  if (await waitForSupervisorToExit(ownerPid, graceMs)) {
+  if (await waitForSupervisorToExit(ownerIdentity, graceMs)) {
     console.warn(
       `[pyrus-dev] previous PYRUS dev supervisor ${ownerPid} stopped; continuing startup in this workflow.`,
     );
@@ -583,11 +635,15 @@ async function requestSupervisorHandoff(ownerPid, { requestMessage = null } = {}
   console.warn(
     `[pyrus-dev] previous PYRUS dev supervisor ${ownerPid} did not stop after ${graceMs}ms; sending SIGKILL before this workflow starts replacement processes.`,
   );
-  if (!sendSignal(ownerPid, "SIGKILL")) {
+  const killResult = sendSupervisorSignal(ownerIdentity, "SIGKILL");
+  if (killResult === "failed") {
     throw new Error(`Could not kill previous PYRUS dev supervisor ${ownerPid}.`);
   }
+  if (killResult === "changed") {
+    return;
+  }
 
-  if (!(await waitForSupervisorToExit(ownerPid, 3_000))) {
+  if (!(await waitForSupervisorToExit(ownerIdentity, 3_000))) {
     throw new Error(
       `Previous PYRUS dev supervisor ${ownerPid} did not exit; refusing to start overlapping API/web processes.`,
     );
@@ -600,6 +656,12 @@ async function acquireSupervisorLock() {
       ? supervisorLockWaitMs
       : 8000;
   const deadline = Date.now() + waitMs;
+  const selfIdentity = readProcIdentity(process.pid);
+  if (!selfIdentity) {
+    throw new Error(
+      "Could not read this supervisor's stable process identity; refusing to publish an unsafe lock.",
+    );
+  }
 
   while (true) {
     try {
@@ -608,6 +670,8 @@ async function acquireSupervisorLock() {
         supervisorLockPath,
         `${JSON.stringify({
           pid: process.pid,
+          startTimeTicks: selfIdentity.startTimeTicks,
+          cgroup: selfIdentity.cgroup,
           startedAt: new Date().toISOString(),
           apiPort,
           webPort,
@@ -637,15 +701,16 @@ async function acquireSupervisorLock() {
       unlinkSupervisorLockState(lockState);
       continue;
     }
-    if (!isLiveSupervisorPid(ownerPid)) {
-      unlinkSupervisorLockForPid(ownerPid);
+    const ownerIdentity = readSupervisorIdentity(ownerPid);
+    if (!lockMatchesSupervisorIdentity(lockState.lock, ownerIdentity)) {
+      unlinkSupervisorLockState(lockState);
       continue;
     }
 
     if (runningInsideReplitWorkflow && !forceSupervisorTakeover) {
       const ageMs = supervisorLockAgeMs(lockState.lock);
       writeLifecycleEvent("duplicate-start-handoff", { ownerPid, ageMs });
-      await requestSupervisorHandoff(ownerPid, {
+      await requestSupervisorHandoff(ownerIdentity, {
         requestMessage: `[pyrus-dev] Replit workflow start found PYRUS dev supervisor ${ownerPid} already alive${ageMs === null ? "" : ` for ${formatDurationMs(ageMs)}`}; treating this as an intentional Run-button restart and requesting controlled handoff to this workflow without overlapping API/web processes.`,
       });
       continue;
@@ -653,7 +718,7 @@ async function acquireSupervisorLock() {
 
     if (Date.now() >= deadline) {
       if (runningInsideReplitWorkflow) {
-        await requestSupervisorHandoff(ownerPid);
+        await requestSupervisorHandoff(ownerIdentity);
         continue;
       }
 
