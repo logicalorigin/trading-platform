@@ -192,3 +192,21 @@ test("algo deployment list never substitutes stale cached rows", () => {
   assert.doesNotMatch(indexSource, /listAlgoDeployments/);
   assert.doesNotMatch(indexSource, /deployment-list cache prime/);
 });
+
+test("metadata deployment reads bypass P&L decoration while the public list keeps it", () => {
+  const metadataStart = source.indexOf(
+    "export function listAlgoDeploymentMetadata",
+  );
+  const publicStart = source.indexOf(
+    "export async function listAlgoDeployments",
+  );
+  assert.notEqual(metadataStart, -1);
+  assert.notEqual(publicStart, -1);
+
+  const metadataBlock = source.slice(metadataStart, publicStart);
+  const publicBlock = source.slice(publicStart);
+  assert.match(metadataBlock, /readOrStartDeploymentListRequest\(input\)/);
+  assert.doesNotMatch(metadataBlock, /attachTodayPnlToDeploymentList/);
+  assert.match(publicBlock, /attachTodayPnlToDeploymentList/);
+  assert.match(publicBlock, /listAlgoDeploymentMetadata\(input\)/);
+});

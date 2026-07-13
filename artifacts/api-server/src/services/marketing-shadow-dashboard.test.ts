@@ -319,6 +319,20 @@ test("marketing dashboard default snapshots share cache and in-flight work", () 
   assert.match(block, /MARKETING_SHADOW_DASHBOARD_SNAPSHOT_CACHE_MS/);
 });
 
+test("marketing dashboard resolves deployments without P&L decoration", () => {
+  const source = readFileSync(
+    new URL("./marketing-shadow-dashboard.ts", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(source, /listAlgoDeploymentMetadata/);
+  assert.doesNotMatch(source, /\blistAlgoDeployments\b/);
+  assert.match(
+    source,
+    /listDeployments:\s*listAlgoDeploymentMetadata/,
+  );
+});
+
 test("marketing snapshot bounds histories but keeps full trade stats and working orders", async () => {
   const closedTrades = Array.from(
     { length: MARKETING_SHADOW_DASHBOARD_HISTORY_LIMIT + 5 },

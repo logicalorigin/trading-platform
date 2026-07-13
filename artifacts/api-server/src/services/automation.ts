@@ -70,8 +70,10 @@ const DEFAULT_SIGNAL_OPTIONS_DEPLOYMENT_NAME = "Pyrus Signals Options Shadow";
 const LEGACY_SIGNAL_OPTIONS_DEPLOYMENT_NAME = "Pyrus Signals Shadow Paper";
 
 type AlgoDeploymentRow = typeof algoDeploymentsTable.$inferSelect;
-type AlgoDeploymentListResponse = {
+type AlgoDeploymentMetadataListResponse = {
   deployments: ReturnType<typeof deploymentToResponse>[];
+};
+type AlgoDeploymentListResponse = AlgoDeploymentMetadataListResponse & {
   // Sidecar map (deployment id -> today's net P&L) for the deployment tabs.
   // Kept off the deployment entity so create/enable/pause responses stay P&L-free;
   // attached per-request in listAlgoDeployments.
@@ -80,7 +82,7 @@ type AlgoDeploymentListResponse = {
 
 const deploymentListInFlight = new Map<
   string,
-  Promise<AlgoDeploymentListResponse>
+  Promise<AlgoDeploymentMetadataListResponse>
 >();
 const EXECUTION_EVENTS_LIST_CACHE_TTL_MS = 2_000;
 type ListExecutionEventsResult = {
@@ -648,7 +650,7 @@ function deploymentListKey(input: ListAlgoDeploymentsInput) {
 
 async function loadAlgoDeploymentList(
   input: ListAlgoDeploymentsInput,
-): Promise<AlgoDeploymentListResponse> {
+): Promise<AlgoDeploymentMetadataListResponse> {
   let rows = await selectAlgoDeploymentRows(input);
 
   if (shouldEnsureDefaultSignalOptionsDeployment(input, rows)) {
@@ -665,7 +667,7 @@ async function loadAlgoDeploymentList(
 
 function readOrStartDeploymentListRequest(
   input: ListAlgoDeploymentsInput,
-): Promise<AlgoDeploymentListResponse> {
+): Promise<AlgoDeploymentMetadataListResponse> {
   const key = deploymentListKey(input);
   const existing = deploymentListInFlight.get(key);
   if (existing) {
@@ -782,7 +784,7 @@ async function getOvernightTodayPnlByDeployment(
 }
 
 async function attachTodayPnlToDeploymentList(
-  response: AlgoDeploymentListResponse,
+  response: AlgoDeploymentMetadataListResponse,
 ): Promise<AlgoDeploymentListResponse> {
   const signalOptionsIds = response.deployments
     .filter((deployment) => deploymentHasSignalOptionsProfile(deployment))
@@ -800,11 +802,17 @@ async function attachTodayPnlToDeploymentList(
   return { ...response, pnlByDeployment };
 }
 
+export function listAlgoDeploymentMetadata(
+  input: ListAlgoDeploymentsInput,
+): Promise<AlgoDeploymentMetadataListResponse> {
+  return readOrStartDeploymentListRequest(input);
+}
+
 export async function listAlgoDeployments(
   input: ListAlgoDeploymentsInput,
 ): Promise<AlgoDeploymentListResponse> {
   return attachTodayPnlToDeploymentList(
-    await readOrStartDeploymentListRequest(input),
+    await listAlgoDeploymentMetadata(input),
   );
 }
 

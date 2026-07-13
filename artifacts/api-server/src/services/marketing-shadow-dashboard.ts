@@ -1,7 +1,7 @@
 import type { AccountRange } from "./account-ranges";
 import { ACCOUNT_HISTORY_RANGES } from "./account-ranges";
 import {
-  listAlgoDeployments,
+  listAlgoDeploymentMetadata,
   listExecutionEvents,
 } from "./automation";
 import { subscribeAlgoCockpitChanges } from "./algo-cockpit-events";
@@ -28,7 +28,7 @@ type ShadowAllocation = AsyncReturn<
   typeof getShadowAccountAllocationFromPositions
 >;
 type ShadowRisk = AsyncReturn<typeof getShadowAccountRisk>;
-type AlgoDeployments = AsyncReturn<typeof listAlgoDeployments>;
+type AlgoDeployments = AsyncReturn<typeof listAlgoDeploymentMetadata>;
 type AlgoDeployment = AlgoDeployments["deployments"][number];
 type AlgoCockpit = AsyncReturn<typeof getAlgoDeploymentCockpit>;
 type ExecutionEvents = AsyncReturn<typeof listExecutionEvents>;
@@ -148,7 +148,7 @@ export type MarketingShadowDashboardDependencies = {
   getOrders: typeof getShadowAccountOrders;
   getAllocationFromPositions: typeof getShadowAccountAllocationFromPositions;
   getRisk: typeof getShadowAccountRisk;
-  listDeployments: typeof listAlgoDeployments;
+  listDeployments: typeof listAlgoDeploymentMetadata;
   getCockpit: typeof getAlgoDeploymentCockpit;
   listEvents: typeof listExecutionEvents;
   now: () => Date;
@@ -162,7 +162,7 @@ const defaultDependencies: MarketingShadowDashboardDependencies = {
   getOrders: getShadowAccountOrders,
   getAllocationFromPositions: getShadowAccountAllocationFromPositions,
   getRisk: getShadowAccountRisk,
-  listDeployments: listAlgoDeployments,
+  listDeployments: listAlgoDeploymentMetadata,
   getCockpit: getAlgoDeploymentCockpit,
   listEvents: listExecutionEvents,
   now: () => new Date(),
