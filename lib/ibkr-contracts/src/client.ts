@@ -8,11 +8,18 @@ export type AssetClass = "equity" | "option";
 export type OptionRight = "call" | "put";
 export type OrderSide = "buy" | "sell";
 export type OptionOrderPositionEffect = "open" | "close";
+export type OptionOrderAction =
+  | "buy_to_open"
+  | "buy_to_close"
+  | "sell_to_close"
+  | "sell_to_open";
 export type OptionOrderStrategyIntent =
   | "long_option"
   | "sell_to_close"
   | "covered_call"
-  | "uncovered_short_call";
+  | "cash_secured_put"
+  | "uncovered_short_call"
+  | "uncovered_short_put";
 export type OrderStatus =
   | "pending_submit"
   | "pending_cancel"
@@ -202,6 +209,9 @@ export type BrokerOrderSnapshot = {
   placedAt: Date;
   updatedAt: Date;
   optionContract: BrokerPositionSnapshot["optionContract"];
+  optionAction?: OptionOrderAction | null;
+  positionEffect?: OptionOrderPositionEffect | null;
+  strategyIntent?: OptionOrderStrategyIntent | null;
   tradingSession?: TradingSession | null;
   resolvedExchange?: string | null;
   primaryExchange?: string | null;
@@ -223,6 +233,7 @@ export type PlaceOrderInput = {
   stopPrice?: number | null;
   timeInForce: TimeInForce;
   optionContract: OptionContractSnapshot | null;
+  optionAction?: OptionOrderAction;
   positionEffect?: OptionOrderPositionEffect;
   strategyIntent?: OptionOrderStrategyIntent;
   tradingSession?: TradingSession;

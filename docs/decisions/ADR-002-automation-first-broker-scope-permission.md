@@ -58,6 +58,32 @@ connection type for live automation-capable execution.
 - Unknown provider capability, stale account/order state, missing audit
   durability, active kill switches, failed reconciliation, and changed scopes or
   capabilities fail closed.
+- Single-leg option intent is explicit, never inferred from Buy or Sell alone:
+  buy-to-open (BTO), buy-to-close (BTC), sell-to-close (STC), and sell-to-open
+  (STO) are separate actions whose side and position effect must agree.
+- The default live risk boundary permits equity buys, sales of unreserved held
+  shares, BTO, BTC against matching short contracts, STC against matching long
+  contracts, covered-call STO, and cash-secured-put STO. Short equity, naked
+  calls, naked puts, and multi-leg orders remain disabled.
+- Any sale, close, or STO decision requires account-matched, mode-matched,
+  complete, non-cached position and open-order snapshots within the configured
+  freshness window. `pending_cancel` orders remain working, and partially
+  filled orders reserve their full original quantity across non-atomic broker
+  snapshot races.
+- Covered-call capacity subtracts existing short-call obligations, working call
+  sales, and working underlying-share sales. Cash-secured-put capacity uses raw
+  settled USD cash, subtracts existing and working put assignment value plus
+  bounded working-buy debits, and stops if short equity, uncovered calls,
+  unbounded market buys, incomplete pagination, or unverified deliverables make
+  collateral unknowable.
+- STO is initially capped at broker-verified standard 100-share equity-option
+  deliverables. Mini and adjusted contracts remain blocked until the normalized
+  contract model can represent and verify their complete share and cash
+  deliverables; nonstandard existing puts also block inferred cash collateral.
+- Replacement validation may release an existing reservation only for one
+  fully unfilled, active, account-owned order with the same risk identity,
+  quantity, side, order type, and time in force. Option replacement additionally
+  requires the original explicit action and position effect.
 - Private-beta live automated execution does not allow
   `eligible_after_exception`; provider rows must pass normal eligibility or
   remain blocked/research-only. Exception-style provider approval is deferred to
