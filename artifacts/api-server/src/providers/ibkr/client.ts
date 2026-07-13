@@ -4302,7 +4302,6 @@ export class IbkrClient {
         if (
           status === "canceled" ||
           status === "filled" ||
-          status === "partially_filled" ||
           status === "rejected" ||
           status === "expired"
         ) {

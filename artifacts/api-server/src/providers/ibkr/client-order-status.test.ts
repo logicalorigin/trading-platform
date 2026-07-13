@@ -238,6 +238,52 @@ test("IBKR cancel status reads legacy cum_fill and size quantities", async () =>
   }
 });
 
+test("IBKR cancel keeps polling after a partial fill until the remainder is cancelled", async () => {
+  const previousFetch = globalThis.fetch;
+  let statusReads = 0;
+  globalThis.fetch = (async (input, init) => {
+    const path = new URL(String(input)).pathname;
+    if (path.endsWith("/iserver/accounts")) {
+      return Response.json({
+        accounts: ["U1234567"],
+        selectedAccount: "U1234567",
+        isPaper: false,
+      });
+    }
+    if (
+      path.endsWith("/iserver/account/U1234567/order/order-1") &&
+      init?.method === "DELETE"
+    ) {
+      return Response.json({ msg: "Request was submitted", order_id: "order-1" });
+    }
+    if (path.endsWith("/iserver/account/order/status/order-1")) {
+      statusReads += 1;
+      return Response.json({
+        order_status: statusReads === 1 ? "Submitted" : "Cancelled",
+        cum_fill: "0.5",
+        size: statusReads === 1 ? "0.5" : "0",
+        total_size: "1",
+      });
+    }
+    throw new Error(`unexpected IBKR request: ${path}`);
+  }) as typeof fetch;
+
+  try {
+    const result = await new IbkrClient(config()).cancelOrder({
+      accountId: "U1234567",
+      orderId: "order-1",
+      mode: "live",
+    });
+    assert.equal(statusReads, 2);
+    assert.equal(result.status, "canceled");
+    assert.equal(result.filledQuantity, 0.5);
+    assert.equal(result.cancelConfirmed, true);
+    assert.equal(result.reconciliationRequired, false);
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
 test("IBKR unknown order status stays pending instead of appearing submitted", async () => {
   const previousFetch = globalThis.fetch;
   globalThis.fetch = (async (input) => {
