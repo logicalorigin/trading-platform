@@ -1719,8 +1719,15 @@ export const GetIbkrPortalReadinessResponse = zod.object({
   "gatewayRunning": zod.boolean(),
   "authenticated": zod.boolean(),
   "browserLoginComplete": zod.boolean().describe('True after the capsule observes a new IBKR browser-login completion for the current connection attempt; API session verification may still be pending.'),
+  "established": zod.boolean().nullable(),
+  "isPaper": zod.boolean().nullable(),
   "selectedAccountId": zod.string().nullable(),
   "accounts": zod.array(zod.string()),
+  "executionTargets": zod.array(zod.object({
+  "accountId": zod.string().describe('Opaque provider account identifier used only as the execution target value.'),
+  "maskedAccountId": zod.string(),
+  "selected": zod.boolean()
+})),
   "loginPath": zod.string().nullable(),
   "message": zod.string()
 }).describe('IBKR Client Portal browser-login gateway and session readiness. Reflects the per-user gateway pool state, not an OAuth token.')
@@ -1734,8 +1741,15 @@ export const GetIbkrPortalStatusResponse = zod.object({
   "gatewayRunning": zod.boolean(),
   "authenticated": zod.boolean(),
   "browserLoginComplete": zod.boolean().describe('True after the capsule observes a new IBKR browser-login completion for the current connection attempt; API session verification may still be pending.'),
+  "established": zod.boolean().nullable(),
+  "isPaper": zod.boolean().nullable(),
   "selectedAccountId": zod.string().nullable(),
   "accounts": zod.array(zod.string()),
+  "executionTargets": zod.array(zod.object({
+  "accountId": zod.string().describe('Opaque provider account identifier used only as the execution target value.'),
+  "maskedAccountId": zod.string(),
+  "selected": zod.boolean()
+})),
   "loginPath": zod.string().nullable(),
   "message": zod.string()
 }).describe('IBKR Client Portal browser-login gateway and session readiness. Reflects the per-user gateway pool state, not an OAuth token.')
@@ -2183,6 +2197,7 @@ export const GetAccountPositionsResponse = zod.object({
   "includeOvernight": zod.boolean().nullish(),
   "routingReason": zod.string().nullish(),
   "replacementConfirmed": zod.boolean().optional(),
+  "placementConfirmed": zod.boolean().optional(),
   "reconciliationRequired": zod.boolean().optional()
 })),
   "stopLoss": zod.number().nullish().describe('Active stop-loss price for display and trade-management UI, when available.'),
@@ -2403,6 +2418,7 @@ export const GetAccountPositionsAtDateResponse = zod.object({
   "includeOvernight": zod.boolean().nullish(),
   "routingReason": zod.string().nullish(),
   "replacementConfirmed": zod.boolean().optional(),
+  "placementConfirmed": zod.boolean().optional(),
   "reconciliationRequired": zod.boolean().optional()
 })),
   "stopLoss": zod.number().nullish().describe('Active stop-loss price for display and trade-management UI, when available.'),
@@ -3137,6 +3153,7 @@ export const ListOrdersResponse = zod.object({
   "includeOvernight": zod.boolean().nullish(),
   "routingReason": zod.string().nullish(),
   "replacementConfirmed": zod.boolean().optional(),
+  "placementConfirmed": zod.boolean().optional(),
   "reconciliationRequired": zod.boolean().optional()
 }))
 })
@@ -3287,6 +3304,7 @@ export const ContinueIbkrOrderReplyResponse = zod.object({
   "operation": zod.enum(['place', 'replace']).optional(),
   "originalOrderRemainsLive": zod.boolean().optional(),
   "replacementConfirmed": zod.boolean().optional(),
+  "placementConfirmed": zod.boolean().optional(),
   "reconciliationRequired": zod.boolean().optional()
 })
 
@@ -3530,6 +3548,7 @@ export const ReplaceOrderResponse = zod.object({
   "includeOvernight": zod.boolean().nullish(),
   "routingReason": zod.string().nullish(),
   "replacementConfirmed": zod.boolean().optional(),
+  "placementConfirmed": zod.boolean().optional(),
   "reconciliationRequired": zod.boolean().optional()
 })
 

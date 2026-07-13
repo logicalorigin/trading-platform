@@ -76,11 +76,37 @@ export type PortalReadiness = {
   gatewayRunning: boolean;
   authenticated: boolean;
   browserLoginComplete: boolean;
+  established: boolean | null;
+  isPaper: boolean | null;
   selectedAccountId: string | null;
   accounts: string[];
+  executionTargets: PortalExecutionTarget[];
   loginPath: string | null;
   message: string;
 };
+
+export type PortalExecutionTarget = {
+  accountId: string;
+  maskedAccountId: string;
+  selected: boolean;
+};
+
+export function buildPortalExecutionTargets(
+  accounts: string[],
+  selectedAccountId: string | null,
+): PortalExecutionTarget[] {
+  return Array.from(
+    new Set(
+      [...accounts, ...(selectedAccountId ? [selectedAccountId] : [])]
+        .map((accountId) => accountId.trim())
+        .filter(Boolean),
+    ),
+  ).map((accountId) => ({
+    accountId,
+    maskedAccountId: `••••${accountId.slice(-4)}`,
+    selected: accountId === selectedAccountId,
+  }));
+}
 
 const tickers = new Map<string, NodeJS.Timeout>();
 const loginMonitors = new Map<
@@ -252,8 +278,11 @@ function base(overrides: Partial<PortalReadiness>): PortalReadiness {
     gatewayRunning: false,
     authenticated: false,
     browserLoginComplete: false,
+    established: null,
+    isPaper: null,
     selectedAccountId: null,
     accounts: [],
+    executionTargets: [],
     loginPath: null,
     message: "",
     ...overrides,
@@ -353,8 +382,14 @@ export async function readPortalReadiness(
         gatewayRunning: true,
         authenticated: true,
         browserLoginComplete: loginObservation.browserLoginComplete,
+        established: status.established,
+        isPaper: status.isPaper,
         selectedAccountId: status.selectedAccountId,
         accounts: status.accounts,
+        executionTargets: buildPortalExecutionTargets(
+          status.accounts,
+          status.selectedAccountId,
+        ),
         message: "Connected to IBKR.",
       });
     }

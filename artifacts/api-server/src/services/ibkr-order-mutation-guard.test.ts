@@ -139,6 +139,23 @@ test("live submission requires a prepared order intent", async () => {
   );
 });
 
+test("direct live IBKR placement stays inside the first manual equity lane", async () => {
+  await assert.rejects(
+    placeOrder({
+      ...baseOrder({ type: "market", limitPrice: null }),
+      clientOrderId: "intent-market",
+    }),
+    rejectsWithCode("ibkr_live_order_scope_restricted"),
+  );
+  await assert.rejects(
+    placeOrder({
+      ...baseOrder({ quantity: 2 }),
+      clientOrderId: "intent-two-shares",
+    }),
+    rejectsWithCode("ibkr_live_order_scope_restricted"),
+  );
+});
+
 test("raw live replacement remains disabled without a prepared intent", async () => {
   await assert.rejects(
     replaceOrder({

@@ -1887,6 +1887,13 @@ export const IbkrPortalConnectionStatus = {
   connected: 'connected',
 } as const;
 
+export interface IbkrPortalExecutionTarget {
+  /** Opaque provider account identifier used only as the execution target value. */
+  accountId: string;
+  maskedAccountId: string;
+  selected: boolean;
+}
+
 /**
  * IBKR Client Portal browser-login gateway and session readiness. Reflects the per-user gateway pool state, not an OAuth token.
  */
@@ -1896,8 +1903,11 @@ export interface IbkrPortalReadinessResponse {
   authenticated: boolean;
   /** True after the capsule observes a new IBKR browser-login completion for the current connection attempt; API session verification may still be pending. */
   browserLoginComplete: boolean;
+  established: boolean | null;
+  isPaper: boolean | null;
   selectedAccountId: string | null;
   accounts: string[];
+  executionTargets: IbkrPortalExecutionTarget[];
   loginPath: string | null;
   message: string;
 }
@@ -4188,6 +4198,7 @@ export interface Order {
   includeOvernight?: boolean | null;
   routingReason?: string | null;
   replacementConfirmed?: boolean;
+  placementConfirmed?: boolean;
   reconciliationRequired?: boolean;
 }
 
@@ -4341,6 +4352,7 @@ export interface IbkrOrderReplyResponse {
   operation?: IbkrOrderReplyResponseOperation;
   originalOrderRemainsLive?: boolean;
   replacementConfirmed?: boolean;
+  placementConfirmed?: boolean;
   reconciliationRequired?: boolean;
 }
 

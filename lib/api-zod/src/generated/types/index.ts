@@ -411,6 +411,7 @@ export * from './ibkrOrderReplyResponseStatus';
 export * from './ibkrPortalConnectionStatus';
 export * from './ibkrPortalConnectResponse';
 export * from './ibkrPortalDisconnectResponse';
+export * from './ibkrPortalExecutionTarget';
 export * from './ibkrPortalReadinessResponse';
 export * from './ibkrRemoteDesktop';
 export * from './ibkrRemoteDesktopHeartbeatResponse';

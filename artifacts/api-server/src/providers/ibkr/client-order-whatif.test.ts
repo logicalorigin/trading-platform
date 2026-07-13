@@ -66,11 +66,52 @@ test("IBKR what-if and submission use the identical prepared order", async () =>
         maintenance: { change: "100.00" },
       });
     }
-    if (path.endsWith("/iserver/account/U1234567/orders")) {
+    if (
+      path.endsWith("/iserver/account/U1234567/orders") &&
+      init?.method === "POST"
+    ) {
       submittedBody = JSON.parse(String(init?.body));
       return Response.json([
         { order_id: "order-1", order_status: "Submitted" },
       ]);
+    }
+    if (path.endsWith("/iserver/account/orders")) {
+      return Response.json({
+        orders: [
+          {
+            acct: "U1234567",
+            orderId: "order-1",
+            conid: 265598,
+            ticker: "AAPL",
+            filledQuantity: 0,
+            remainingQuantity: 1,
+            totalSize: 1,
+            status: "Submitted",
+            origOrderType: "LMT",
+            order_ref: "intent-123",
+            timeInForce: "DAY",
+            side: "BUY",
+            price: 100,
+          },
+        ],
+      });
+    }
+    if (path.endsWith("/iserver/account/order/status/order-1")) {
+      return Response.json({
+        order_id: "order-1",
+        conid: 265598,
+        symbol: "AAPL",
+        side: "B",
+        size: "1",
+        total_size: "1",
+        account: "U1234567",
+        order_type: "LIMIT",
+        cum_fill: "0",
+        order_status: "Submitted",
+        tif: "DAY",
+        order_not_editable: false,
+        cannot_cancel_order: false,
+      });
     }
     throw new Error(`unexpected IBKR request: ${path}`);
   }) as typeof fetch;
@@ -86,6 +127,8 @@ test("IBKR what-if and submission use the identical prepared order", async () =>
     assert.match(preview.orderFingerprint, /^[a-f0-9]{64}$/u);
     assert.equal(preview.whatIf.commission, "1.00");
     assert.equal(placed.id, "order-1");
+    assert.equal(placed.placementConfirmed, true);
+    assert.equal(placed.reconciliationRequired, false);
     assert.ok(
       paths.indexOf("/v1/api/iserver/marketdata/snapshot") <
         paths.indexOf("/v1/api/iserver/account/U1234567/orders/whatif"),

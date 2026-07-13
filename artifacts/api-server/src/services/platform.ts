@@ -3859,6 +3859,39 @@ function preparedIbkrEquityOrderInput(
   };
 }
 
+function assertControlledIbkrManualEquityOrder(input: PlaceOrderInput): void {
+  const extended = input as PlaceOrderInput & {
+    automationContext?: unknown;
+    payload?: unknown;
+    source?: unknown;
+  };
+  const payload = asRecord(extended.payload);
+  if (
+    input.assetClass !== "equity" ||
+    input.side !== "buy" ||
+    input.type !== "limit" ||
+    input.quantity !== 1 ||
+    !Number.isFinite(input.limitPrice) ||
+    (input.limitPrice ?? 0) <= 0 ||
+    input.stopPrice != null ||
+    input.timeInForce !== "day" ||
+    input.optionContract != null ||
+    input.includeOvernight === true ||
+    extended.source === "automation" ||
+    extended.automationContext != null ||
+    (payload && Object.keys(payload).length > 0)
+  ) {
+    throw new HttpError(
+      409,
+      "Direct IBKR live trading is limited to one manual BUY LMT DAY share in regular hours.",
+      {
+        code: "ibkr_live_order_scope_restricted",
+        expose: true,
+      },
+    );
+  }
+}
+
 type PlaceOrderTaxPreflightFields = {
   taxPreflightToken?: string | null;
   taxAcknowledgements?: string[] | null;
@@ -3878,6 +3911,7 @@ export async function placeOrder(input: PlaceOrderInput) {
       expose: true,
     });
   }
+  assertControlledIbkrManualEquityOrder(input);
   await assertIbkrGatewayTradingAvailable(input.accountId);
   const client = getIbkrClientPortalClient();
   await validateOrderIntentForRouting(input, client);
@@ -3897,7 +3931,10 @@ export async function placeOrder(input: PlaceOrderInput) {
       expose: true,
     });
   }
-  let order: BrokerOrderSnapshot;
+  let order: BrokerOrderSnapshot & {
+    placementConfirmed: boolean;
+    reconciliationRequired: boolean;
+  };
   try {
     order = await client.placePreparedOrder(input, {
       accountId: preparedIntent.accountId,
@@ -3931,6 +3968,13 @@ export async function placeOrder(input: PlaceOrderInput) {
         expose: true,
       });
     }
+    if (isHttpError(error) && error.code === "ibkr_order_rejected") {
+      await recordTaxPreflightOrderSubmitted({
+        preflightToken: taxPreflight.preflightToken,
+        submittedOrderId: "__ibkr_order_rejected__",
+      });
+      throw error;
+    }
     await recordTaxPreflightIbkrReconciliationRequired({
       preflightToken: taxPreflight.preflightToken,
       reason: "place_transport_or_acknowledgement_unknown",
@@ -3949,6 +3993,13 @@ export async function placeOrder(input: PlaceOrderInput) {
       expose: true,
       cause: error,
     });
+  }
+  if (order.reconciliationRequired || !order.placementConfirmed) {
+    await recordTaxPreflightIbkrReconciliationRequired({
+      preflightToken: taxPreflight.preflightToken,
+      reason: "place_post_ack_verification_incomplete",
+    });
+    return order;
   }
   // IBKR has ACCEPTED the live order. A post-submit bookkeeping failure must NOT
   // throw — that makes the caller see a failed submit and retry, placing a
@@ -3987,6 +4038,12 @@ export async function continueIbkrOrderReply(input: {
     challengeId: input.challengeId,
   });
   const preparedIntent = claimed.ibkrPreparedIntent;
+  if (!preparedIntent) {
+    throw new HttpError(409, "IBKR order reply requires reconciliation.", {
+      code: "ibkr_order_reply_reconciliation_required",
+      expose: true,
+    });
+  }
   const operation = preparedIntent?.kind === "replace" ? "replace" : "place";
   const replacementOrderId =
     preparedIntent?.kind === "replace" ? preparedIntent.orderId : null;
@@ -4084,6 +4141,27 @@ export async function continueIbkrOrderReply(input: {
         reconciliationRequired: true,
       };
     }
+  } else if (preparedIntent) {
+    const verification = await client.verifyPreparedOrderPlacement({
+      accountId: preparedIntent.accountId,
+      orderId,
+      mode: "live",
+      preparedOrderBody: preparedIntent.orderBody,
+    });
+    if (verification.reconciliationRequired || !verification.placementConfirmed) {
+      await recordTaxPreflightIbkrReconciliationRequired({
+        preflightToken: input.taxPreflightToken,
+        reason: "place_reply_post_ack_verification_incomplete",
+      });
+      return {
+        status: "acknowledged" as const,
+        operation,
+        orderId,
+        orderStatus,
+        placementConfirmed: false,
+        reconciliationRequired: true,
+      };
+    }
   }
   await recordTaxPreflightOrderSubmitted({
     preflightToken: input.taxPreflightToken,
@@ -4096,11 +4174,12 @@ export async function continueIbkrOrderReply(input: {
     orderStatus,
     ...(operation === "replace"
       ? { replacementConfirmed: true, reconciliationRequired: false }
-      : {}),
+      : { placementConfirmed: true, reconciliationRequired: false }),
   };
 }
 
 export async function previewOrder(input: PlaceOrderInput) {
+  assertControlledIbkrManualEquityOrder(input);
   const client = getIbkrClientPortalClient();
   const preparedInput = {
     ...input,
@@ -4344,6 +4423,13 @@ export async function replaceOrder(input: {
         data: { ...challenge, operation: "replace", orderId: input.orderId },
         expose: true,
       });
+    }
+    if (isHttpError(error) && error.code === "ibkr_order_rejected") {
+      await recordTaxPreflightOrderSubmitted({
+        preflightToken: input.taxPreflightToken,
+        submittedOrderId: "__ibkr_replace_rejected__",
+      });
+      throw error;
     }
     await recordTaxPreflightIbkrReconciliationRequired({
       preflightToken: input.taxPreflightToken,

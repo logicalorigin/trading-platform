@@ -3516,7 +3516,14 @@ export class IbkrClient {
     };
   }
 
-  async placeOrder(input: PlaceOrderInput): Promise<BrokerOrderSnapshot> {
+  async placeOrder(
+    input: PlaceOrderInput,
+  ): Promise<
+    BrokerOrderSnapshot & {
+      placementConfirmed: boolean;
+      reconciliationRequired: boolean;
+    }
+  > {
     if (!validatedClientOrderId(input.clientOrderId)) {
       throw new HttpError(409, "A prepared IBKR order intent is required.", {
         code: "ibkr_order_intent_required",
@@ -3530,7 +3537,12 @@ export class IbkrClient {
   async placePreparedOrder(
     input: PlaceOrderInput,
     prepared: { accountId: string; body: Record<string, unknown> },
-  ): Promise<BrokerOrderSnapshot> {
+  ): Promise<
+    BrokerOrderSnapshot & {
+      placementConfirmed: boolean;
+      reconciliationRequired: boolean;
+    }
+  > {
     const clientOrderId = validatedClientOrderId(input.clientOrderId);
     const order = asRecord(asArray(prepared.body["orders"])[0]);
     if (
@@ -3562,12 +3574,104 @@ export class IbkrClient {
     );
     const result = this.requireOrderAcknowledgement(responsePayload);
     const placedAt = new Date();
-    return this.mapAcknowledgedOrder(
+    const acknowledged = this.mapAcknowledgedOrder(
       input,
       result,
       prepared.accountId,
       placedAt,
     );
+    return this.verifyPreparedOrderPlacement({
+      accountId: prepared.accountId,
+      orderId: acknowledged.id,
+      mode: input.mode,
+      preparedOrderBody: prepared.body,
+    });
+  }
+
+  async verifyPreparedOrderPlacement(input: {
+    accountId: string;
+    orderId: string;
+    mode: RuntimeMode;
+    preparedOrderBody: Record<string, unknown>;
+  }): Promise<
+    BrokerOrderSnapshot & {
+      placementConfirmed: boolean;
+      reconciliationRequired: boolean;
+    }
+  > {
+    const preparedOrder = asRecord(asArray(input.preparedOrderBody["orders"])[0]);
+    const preparedPrice = asNumber(preparedOrder?.["price"]);
+    if (!preparedOrder || preparedPrice === null) {
+      throw new HttpError(409, "The prepared IBKR order intent is invalid.", {
+        code: "ibkr_order_intent_invalid",
+        expose: true,
+      });
+    }
+    let lastEvidence: IbkrOrderMutationEvidence | null = null;
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      try {
+        const evidence = await this.readOrderMutationEvidence(input);
+        lastEvidence = evidence;
+        this.requirePriceOnlyReplacement(evidence, {
+          accountId: input.accountId,
+          orderId: input.orderId,
+          orderBody: input.preparedOrderBody,
+        });
+        return {
+          id: evidence.orderId,
+          accountId: evidence.accountId,
+          mode: input.mode,
+          symbol: evidence.symbol,
+          assetClass: "equity",
+          side: evidence.side === "BUY" ? "buy" : "sell",
+          type: "limit",
+          timeInForce: "day",
+          status: normalizeOrderStatus(
+            evidence.status,
+            evidence.filledQuantity,
+            evidence.remainingQuantity,
+          ),
+          quantity: evidence.quantity,
+          filledQuantity: evidence.filledQuantity,
+          limitPrice: evidence.limitPrice,
+          stopPrice: null,
+          placedAt: new Date(),
+          updatedAt: new Date(),
+          optionContract: null,
+          placementConfirmed: true,
+          reconciliationRequired: false,
+        };
+      } catch {
+        if (lastEvidence?.filledQuantity && lastEvidence.filledQuantity > 0) break;
+      }
+      if (attempt < 7) await sleep(500);
+    }
+    return {
+      id: input.orderId,
+      accountId: input.accountId,
+      mode: input.mode,
+      symbol: lastEvidence?.symbol ?? normalizeSymbol(asString(preparedOrder["ticker"]) ?? "UNKNOWN"),
+      assetClass: "equity",
+      side: parseIbkrOrderSide(asString(preparedOrder["side"])) === "SELL" ? "sell" : "buy",
+      type: "limit",
+      timeInForce: "day",
+      status: lastEvidence
+        ? normalizeOrderStatus(
+            lastEvidence.status,
+            lastEvidence.filledQuantity,
+            lastEvidence.remainingQuantity,
+          )
+        : "pending_submit",
+      quantity: asNumber(preparedOrder["quantity"]) ?? 1,
+      filledQuantity: lastEvidence?.filledQuantity ?? 0,
+      limitPrice: preparedPrice,
+      stopPrice: null,
+      placedAt: new Date(),
+      updatedAt: new Date(),
+      optionContract: null,
+      placementConfirmed: false,
+      reconciliationRequired: true,
+    };
   }
 
   async submitRawOrders(input: {

@@ -18,5 +18,6 @@ export interface IbkrOrderReplyResponse {
   operation?: IbkrOrderReplyResponseOperation;
   originalOrderRemainsLive?: boolean;
   replacementConfirmed?: boolean;
+  placementConfirmed?: boolean;
   reconciliationRequired?: boolean;
 }

@@ -38,5 +38,6 @@ export interface Order {
   includeOvernight?: boolean | null;
   routingReason?: string | null;
   replacementConfirmed?: boolean;
+  placementConfirmed?: boolean;
   reconciliationRequired?: boolean;
 }
