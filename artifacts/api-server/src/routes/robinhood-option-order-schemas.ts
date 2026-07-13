@@ -13,6 +13,9 @@ const marketHours = z.enum([
 const underlyingType = z.enum(["equity", "index"]);
 
 export const ReviewRobinhoodOptionOrderBody = z.object({
+  contractSymbol: z.string(),
+  multiplier: z.number(),
+  sharesPerContract: z.number(),
   chainSymbol: z.string(),
   underlyingType: underlyingType.nullish(),
   expiration: z.string(),
@@ -51,6 +54,9 @@ const account = z.object({
 
 const orderDetails = z.object({
   optionId: z.string(),
+  occSymbol: z.string(),
+  multiplier: z.number(),
+  sharesPerContract: z.number(),
   chainSymbol: z.string(),
   underlyingType,
   expiration: z.string(),

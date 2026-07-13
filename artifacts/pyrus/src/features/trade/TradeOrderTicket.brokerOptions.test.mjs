@@ -71,6 +71,18 @@ test("blocks non-IBKR option sells without broker-specific position context", ()
   );
 });
 
+test("passes exact chain identity and contract economics to direct option brokers", () => {
+  assert.match(
+    source,
+    /contractSymbol:\s*selectedContractMeta\?\.ticker\s*\|\|\s*selectedContractMeta\?\.providerContractId/,
+  );
+  assert.match(source, /multiplier: selectedContractMeta\?\.multiplier/);
+  assert.match(
+    source,
+    /sharesPerContract: selectedContractMeta\?\.sharesPerContract/,
+  );
+});
+
 test("wires Schwab readiness, sync, equity preview, and equity submit", () => {
   assert.match(source, /useGetSchwabReadiness/);
   assert.match(source, /useSyncSchwabConnections/);

@@ -62,6 +62,9 @@ function positionEffectLabel(value) {
 export function buildBrokerOptionOrderDraft({
   broker,
   account,
+  contractSymbol,
+  multiplier,
+  sharesPerContract,
   underlyingSymbol,
   expiration,
   strike,
@@ -85,6 +88,11 @@ export function buildBrokerOptionOrderDraft({
   }
 
   const symbol = String(underlyingSymbol || "").trim().toUpperCase();
+  const normalizedContractSymbol = String(contractSymbol || "")
+    .trim()
+    .toUpperCase();
+  const normalizedMultiplier = positiveInteger(multiplier);
+  const normalizedSharesPerContract = positiveInteger(sharesPerContract);
   const normalizedExpiration = dateKey(expiration);
   const normalizedStrike = positiveNumber(strike);
   const optionType = optionTypeForRight(right);
@@ -96,6 +104,15 @@ export function buildBrokerOptionOrderDraft({
   const limitPrice = positiveNumber(orderPrices?.limitPrice);
   const stopPrice = positiveNumber(orderPrices?.stopPrice);
 
+  if (!normalizedContractSymbol) {
+    return { ready: false, reason: "contract_identity", body: null };
+  }
+  if (
+    normalizedMultiplier !== 100 ||
+    normalizedSharesPerContract !== 100
+  ) {
+    return { ready: false, reason: "contract_economics", body: null };
+  }
   if (!config.symbolPattern.test(symbol)) {
     return { ready: false, reason: "symbol", body: null };
   }
@@ -137,6 +154,9 @@ export function buildBrokerOptionOrderDraft({
   }
 
   const common = {
+    contractSymbol: normalizedContractSymbol,
+    multiplier: normalizedMultiplier,
+    sharesPerContract: normalizedSharesPerContract,
     expiration: normalizedExpiration,
     strike: normalizedStrike,
     optionType,

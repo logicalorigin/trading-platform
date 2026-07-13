@@ -12,6 +12,9 @@ const duration = z.enum(["Day", "GoodTillCancel", "FillOrKill"]);
 const session = z.enum(["Normal", "Am", "Pm", "Seamless"]);
 
 export const PreviewSchwabOptionOrderBody = z.object({
+  contractSymbol: z.string(),
+  multiplier: z.number(),
+  sharesPerContract: z.number(),
   underlyingSymbol: z.string(),
   expiration: z.string(),
   strike: z.number(),

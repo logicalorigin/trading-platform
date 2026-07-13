@@ -23,6 +23,9 @@ import {
   recordTaxPreflightOrderSubmitted,
 } from "./tax-planning";
 import type { TaxOrderLike } from "./tax-planning-model";
+import {
+  requireStandardOptionContractIdentity,
+} from "./standard-option-contract-identity";
 
 const LOCAL_ID_PREFIX = "schwab:";
 const SCHWAB_OPTION_MIN_ORDER_INTERVAL_MS = 1_000;
@@ -38,6 +41,9 @@ export type SchwabOptionTradingSession = "Normal" | "Am" | "Pm" | "Seamless";
 export type SchwabOptionType = "Call" | "Put";
 
 export type SchwabOptionOrderPreviewInput = {
+  contractSymbol: string;
+  multiplier: number;
+  sharesPerContract: number;
   underlyingSymbol: string;
   expiration: string;
   strike: number;
@@ -89,6 +95,8 @@ type NormalizedSchwabOptionOrder = {
   strike: number;
   optionType: SchwabOptionType;
   optionSymbol: string;
+  multiplier: number;
+  sharesPerContract: number;
   instruction: SchwabOptionInstruction;
   orderType: SchwabOptionOrderType;
   duration: SchwabOptionDuration;
@@ -324,7 +332,10 @@ export function validateSchwabOptionOrderInput(
   }
   const limitPrice =
     orderType === "Limit" ? requirePositivePrice(input.limitPrice) : null;
-  const optionSymbol = formatOptionSymbol({
+  const contractIdentity = requireStandardOptionContractIdentity({
+    contractSymbol: input.contractSymbol,
+    multiplier: input.multiplier,
+    sharesPerContract: input.sharesPerContract,
     underlyingSymbol,
     expiration,
     strike,
@@ -335,7 +346,9 @@ export function validateSchwabOptionOrderInput(
     expiration,
     strike,
     optionType,
-    optionSymbol,
+    optionSymbol: contractIdentity.occSymbol,
+    multiplier: contractIdentity.multiplier,
+    sharesPerContract: contractIdentity.sharesPerContract,
     instruction,
     orderType,
     duration,
@@ -389,8 +402,8 @@ function schwabOptionSubmitToTaxOrder(input: {
       expirationDate: input.order.expiration,
       strike: input.order.strike,
       right,
-      multiplier: 100,
-      sharesPerContract: 100,
+      multiplier: input.order.multiplier,
+      sharesPerContract: input.order.sharesPerContract,
       providerContractId: input.order.optionSymbol,
       brokerContractId: input.order.optionSymbol,
     },

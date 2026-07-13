@@ -20,6 +20,9 @@ import {
   recordTaxPreflightOrderSubmitted,
 } from "./tax-planning";
 import type { TaxOrderLike } from "./tax-planning-model";
+import {
+  requireStandardOptionContractIdentity,
+} from "./standard-option-contract-identity";
 
 export const SNAPTRADE_OPTION_ORDER_ACTIONS = [
   "BUY_TO_OPEN",
@@ -45,6 +48,9 @@ export type SnapTradeOptionTimeInForce =
 export type SnapTradeOptionType = (typeof SNAPTRADE_OPTION_TYPES)[number];
 
 export type SnapTradeOptionOrderInput = {
+  contractSymbol: string;
+  multiplier: number;
+  sharesPerContract: number;
   underlyingSymbol: string;
   expiration: string;
   strike: number;
@@ -73,6 +79,8 @@ export type SnapTradeOptionOrderDetails = {
   timeInForce: SnapTradeOptionTimeInForce;
   units: number;
   price: number | null;
+  multiplier: number;
+  sharesPerContract: number;
 };
 
 export type SnapTradeOptionOrderImpactResponse = {
@@ -515,6 +523,16 @@ function normalizeInput(
     });
   }
 
+  const contractIdentity = requireStandardOptionContractIdentity({
+    contractSymbol: input.contractSymbol,
+    multiplier: input.multiplier,
+    sharesPerContract: input.sharesPerContract,
+    underlyingSymbol,
+    expiration,
+    strike,
+    optionType,
+  });
+
   return {
     underlyingSymbol,
     expiration,
@@ -525,12 +543,9 @@ function normalizeInput(
     timeInForce,
     units: input.units,
     price,
-    occSymbol: buildOccSymbol({
-      underlyingSymbol,
-      expiration,
-      strike,
-      optionType,
-    }),
+    occSymbol: contractIdentity.occSymbol,
+    multiplier: contractIdentity.multiplier,
+    sharesPerContract: contractIdentity.sharesPerContract,
   };
 }
 
@@ -580,8 +595,8 @@ function optionTaxOrder(input: {
       expirationDate: input.order.expiration,
       strike: input.order.strike,
       right: input.order.optionType.toLowerCase(),
-      multiplier: 100,
-      sharesPerContract: 100,
+      multiplier: input.order.multiplier,
+      sharesPerContract: input.order.sharesPerContract,
       providerContractId: input.order.occSymbol,
       brokerContractId: input.order.occSymbol,
     },

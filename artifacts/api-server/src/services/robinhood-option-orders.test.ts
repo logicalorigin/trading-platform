@@ -152,6 +152,9 @@ function baseOrder(
   overrides: Partial<RobinhoodOptionOrderInput> = {},
 ): RobinhoodOptionOrderInput {
   return {
+    contractSymbol: "O:AAPL260821C00210000",
+    multiplier: 100,
+    sharesPerContract: 100,
     chainSymbol: "aapl",
     expiration: "2026-08-21",
     strike: 210,
@@ -368,10 +371,15 @@ test("place submits the resolved leg after a matching option tax preflight", asy
             stopPrice: null,
             timeInForce: "day",
             optionContract: {
+              ticker: "AAPL  260821C00210000",
               underlying: "AAPL",
               expirationDate: "2026-08-21",
               strike: 210,
               right: "call",
+              multiplier: 100,
+              sharesPerContract: 100,
+              providerContractId: "AAPL  260821C00210000",
+              brokerContractId: "AAPL  260821C00210000",
             },
             route: "robinhood",
             intent: null,
@@ -441,10 +449,15 @@ test("place resolves with reconciliation required when the post-submit tax recor
             stopPrice: null,
             timeInForce: "day",
             optionContract: {
+              ticker: "AAPL  260821C00210000",
               underlying: "AAPL",
               expirationDate: "2026-08-21",
               strike: 210,
               right: "call",
+              multiplier: 100,
+              sharesPerContract: 100,
+              providerContractId: "AAPL  260821C00210000",
+              brokerContractId: "AAPL  260821C00210000",
             },
             route: "robinhood",
             intent: null,
@@ -508,6 +521,24 @@ test("rejects an invalid stop-market leg before account or MCP access", async ()
     (error: unknown) =>
       (error as { code?: string }).code ===
       "robinhood_option_order_leg_invalid",
+  );
+});
+
+test("rejects a contract ticker that disagrees with the selected tuple", async () => {
+  await assert.rejects(
+    reviewRobinhoodOptionOrder({
+      appUserId: "user-1",
+      accountId: "account-1",
+      input: baseOrder({ contractSymbol: "O:AAPL260821P00210000" }),
+    }),
+    (error: unknown) => {
+      assert.equal((error as { statusCode?: number }).statusCode, 422);
+      assert.equal(
+        (error as { code?: string }).code,
+        "option_contract_identity_mismatch",
+      );
+      return true;
+    },
   );
 });
 

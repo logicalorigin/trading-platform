@@ -159,6 +159,9 @@ test("SnapTrade option impact signs the documented account-scoped payload with i
         appUserId: auth.user.id,
         accountId: account.id,
         input: {
+          contractSymbol: "O:AAPL260821C00200000",
+          multiplier: 100,
+          sharesPerContract: 100,
           underlyingSymbol: "AAPL",
           expiration: "2026-08-21",
           strike: 200,
@@ -248,6 +251,9 @@ test("SnapTrade option submit requires explicit confirmation before provider acc
       appUserId: "unused-user",
       accountId: "unused-account",
       input: {
+        contractSymbol: "O:AAPL260821C00200000",
+        multiplier: 100,
+        sharesPerContract: 100,
         underlyingSymbol: "AAPL",
         expiration: "2026-08-21",
         strike: 200,
@@ -285,6 +291,9 @@ test("SnapTrade option submit requires and consumes a matching option tax prefli
       });
       const commonInput = {
         confirm: true,
+        contractSymbol: "O:MSFT260918P00450000",
+        multiplier: 100,
+        sharesPerContract: 100,
         underlyingSymbol: "MSFT",
         expiration: "2026-09-18",
         strike: 450,
@@ -469,6 +478,9 @@ test("SnapTrade option submit resolves with reconciliation required when the pos
         accountId: account.id,
         input: {
           confirm: true,
+          contractSymbol: "O:MSFT260918P00450000",
+          multiplier: 100,
+          sharesPerContract: 100,
           underlyingSymbol: "MSFT",
           expiration: "2026-09-18",
           strike: 450,
@@ -520,6 +532,9 @@ test("SnapTrade option submit resolves with reconciliation required when the pos
 
 test("SnapTrade option validation rejects malformed contracts and orders before access", async () => {
   const baseInput = {
+    contractSymbol: "O:AAPL260821C00200000",
+    multiplier: 100,
+    sharesPerContract: 100,
     underlyingSymbol: "AAPL",
     expiration: "2026-08-21",
     strike: 200,
@@ -549,6 +564,10 @@ test("SnapTrade option validation rejects malformed contracts and orders before 
     {
       input: { price: 1.25 },
       code: "snaptrade_option_order_price_unsupported",
+    },
+    {
+      input: { contractSymbol: "O:MSFT260821C00200000" },
+      code: "option_contract_identity_mismatch",
     },
   ];
 

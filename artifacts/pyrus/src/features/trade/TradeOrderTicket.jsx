@@ -2093,6 +2093,11 @@ export const TradeOrderTicket = ({
     ? buildBrokerOptionOrderDraft({
         broker: optionBroker,
         account: directOptionAccount,
+        contractSymbol:
+          selectedContractMeta?.ticker ||
+          selectedContractMeta?.providerContractId,
+        multiplier: selectedContractMeta?.multiplier,
+        sharesPerContract: selectedContractMeta?.sharesPerContract,
         underlyingSymbol:
           selectedContractMeta?.underlying ||
           selectedContractMeta?.ticker ||
@@ -2172,6 +2177,10 @@ export const TradeOrderTicket = ({
       expiration: "The selected option expiration is unavailable.",
       strike: "The selected option strike is invalid.",
       option_type: "The selected contract right is invalid.",
+      contract_identity:
+        "The selected option contract does not have an executable contract ticker.",
+      contract_economics:
+        "Mini and adjusted option contracts are not enabled for direct broker execution.",
       position_effect:
         "Non-IBKR option sells require broker-specific position context and are not enabled.",
       order_type: `${formatEnumLabel(optionBroker)} options do not support this order type.`,

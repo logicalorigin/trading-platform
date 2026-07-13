@@ -11,6 +11,9 @@ const orderType = z.enum(["Market", "Limit"]);
 const timeInForce = z.enum(["Day", "GTC", "FOK", "IOC"]);
 
 const optionOrderInput = z.object({
+  contractSymbol: z.string(),
+  multiplier: z.number(),
+  sharesPerContract: z.number(),
   underlyingSymbol: z.string(),
   expiration: z.string(),
   strike: z.number(),
@@ -54,6 +57,8 @@ const orderDetails = z.object({
   timeInForce,
   units: z.number(),
   price: z.number().nullable(),
+  multiplier: z.number(),
+  sharesPerContract: z.number(),
 });
 
 export const CheckSnapTradeOptionOrderImpactResponse = z.object({

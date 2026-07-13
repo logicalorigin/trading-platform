@@ -48,6 +48,9 @@ function baseInput(
   overrides: Partial<SchwabOptionOrderPreviewInput> = {},
 ): SchwabOptionOrderPreviewInput {
   return {
+    contractSymbol: "O:AAPL270115C00150000",
+    multiplier: 100,
+    sharesPerContract: 100,
     underlyingSymbol: "AAPL",
     expiration: "2027-01-15",
     strike: 150,
@@ -285,6 +288,14 @@ test("validation requires whole contracts and a positive Limit price", () => {
       ),
     422,
     "schwab_option_order_limit_price_unsupported",
+  );
+  expectHttpError(
+    () =>
+      validateSchwabOptionOrderInput(
+        baseInput({ contractSymbol: "O:AAPL270115P00150000" }),
+      ),
+    422,
+    "option_contract_identity_mismatch",
   );
 });
 

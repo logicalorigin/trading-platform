@@ -11,6 +11,9 @@ const READY_ACCOUNT = { id: "account/id", executionReady: true, agentic: true };
 
 const baseInput = {
   account: READY_ACCOUNT,
+  contractSymbol: "O:MSFT260918C00450000",
+  multiplier: 100,
+  sharesPerContract: 100,
   underlyingSymbol: "msft",
   expiration: new Date("2026-09-18T00:00:00.000Z"),
   strike: 450,
@@ -29,6 +32,9 @@ test("maps buy-to-open ticket fields for every direct option broker", () => {
     broker: "robinhood",
   });
   assert.deepEqual(robinhood.body, {
+    contractSymbol: "O:MSFT260918C00450000",
+    multiplier: 100,
+    sharesPerContract: 100,
     chainSymbol: "MSFT",
     expiration: "2026-09-18",
     strike: 450,
@@ -48,6 +54,9 @@ test("maps buy-to-open ticket fields for every direct option broker", () => {
     broker: "snaptrade",
   });
   assert.deepEqual(snaptrade.body, {
+    contractSymbol: "O:MSFT260918C00450000",
+    multiplier: 100,
+    sharesPerContract: 100,
     underlyingSymbol: "MSFT",
     expiration: "2026-09-18",
     strike: 450,
@@ -64,6 +73,9 @@ test("maps buy-to-open ticket fields for every direct option broker", () => {
     broker: "schwab",
   });
   assert.deepEqual(schwab.body, {
+    contractSymbol: "O:MSFT260918C00450000",
+    multiplier: 100,
+    sharesPerContract: 100,
     underlyingSymbol: "MSFT",
     expiration: "2026-09-18",
     strike: 450,
@@ -121,6 +133,34 @@ test("rejects unready accounts and unsupported provider controls", () => {
       tif: "IOC",
     }).reason,
     "time_in_force",
+  );
+});
+
+test("rejects missing, mini, and adjusted contract identity before request construction", () => {
+  assert.equal(
+    buildBrokerOptionOrderDraft({
+      ...baseInput,
+      broker: "snaptrade",
+      contractSymbol: null,
+    }).reason,
+    "contract_identity",
+  );
+  assert.equal(
+    buildBrokerOptionOrderDraft({
+      ...baseInput,
+      broker: "snaptrade",
+      multiplier: 10,
+      sharesPerContract: 10,
+    }).reason,
+    "contract_economics",
+  );
+  assert.equal(
+    buildBrokerOptionOrderDraft({
+      ...baseInput,
+      broker: "snaptrade",
+      sharesPerContract: 5,
+    }).reason,
+    "contract_economics",
   );
 });
 

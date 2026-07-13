@@ -12,6 +12,9 @@ import {
   recordTaxPreflightOrderSubmitted,
 } from "./tax-planning";
 import type { TaxOrderLike } from "./tax-planning-model";
+import {
+  requireStandardOptionContractIdentity,
+} from "./standard-option-contract-identity";
 
 export const ROBINHOOD_OPTION_TYPES = ["Call", "Put"] as const;
 export const ROBINHOOD_OPTION_ORDER_SIDES = ["Buy", "Sell"] as const;
@@ -45,6 +48,9 @@ export type RobinhoodOptionUnderlyingType =
   (typeof ROBINHOOD_OPTION_UNDERLYING_TYPES)[number];
 
 export type RobinhoodOptionOrderInput = {
+  contractSymbol: string;
+  multiplier: number;
+  sharesPerContract: number;
   chainSymbol: string;
   underlyingType?: RobinhoodOptionUnderlyingType | null;
   expiration: string;
@@ -82,6 +88,9 @@ export type RobinhoodOptionOrderAccount = {
 
 export type RobinhoodOptionOrderDetails = {
   optionId: string;
+  occSymbol: string;
+  multiplier: number;
+  sharesPerContract: number;
   chainSymbol: string;
   underlyingType: RobinhoodOptionUnderlyingType;
   expiration: string;
@@ -204,6 +213,9 @@ type LocalRobinhoodAccount = RobinhoodOptionOrderAccount & {
 
 type NormalizedOrder = {
   chainSymbol: string;
+  occSymbol: string;
+  multiplier: number;
+  sharesPerContract: number;
   underlyingType: RobinhoodOptionUnderlyingType | null;
   expiration: string;
   strike: number;
@@ -679,10 +691,25 @@ function normalizeOrder(input: RobinhoodOptionOrderInput): NormalizedOrder {
     );
   }
 
+  const chainSymbol = requireChainSymbol(input.chainSymbol);
+  const expiration = requireExpiration(input.expiration);
+  const contractIdentity = requireStandardOptionContractIdentity({
+    contractSymbol: input.contractSymbol,
+    multiplier: input.multiplier,
+    sharesPerContract: input.sharesPerContract,
+    underlyingSymbol: chainSymbol,
+    expiration,
+    strike,
+    optionType,
+  });
+
   return {
-    chainSymbol: requireChainSymbol(input.chainSymbol),
+    chainSymbol,
+    occSymbol: contractIdentity.occSymbol,
+    multiplier: contractIdentity.multiplier,
+    sharesPerContract: contractIdentity.sharesPerContract,
     underlyingType,
-    expiration: requireExpiration(input.expiration),
+    expiration,
     strike,
     optionType,
     side,
@@ -848,6 +875,9 @@ function orderDetails(
 ): RobinhoodOptionOrderDetails {
   return {
     optionId: instrument.optionId,
+    occSymbol: order.occSymbol,
+    multiplier: order.multiplier,
+    sharesPerContract: order.sharesPerContract,
     chainSymbol: order.chainSymbol,
     underlyingType: instrument.underlyingType,
     expiration: order.expiration,
@@ -880,10 +910,15 @@ function robinhoodToTaxOrder(input: {
     stopPrice: input.order.stopPrice,
     timeInForce: TAX_TIF_BY_ROBINHOOD[input.order.timeInForce],
     optionContract: {
+      ticker: input.order.occSymbol,
       underlying: input.order.chainSymbol,
       expirationDate: input.order.expiration,
       strike: input.order.strike,
       right: OPTION_TYPE_TO_MCP[input.order.optionType],
+      multiplier: input.order.multiplier,
+      sharesPerContract: input.order.sharesPerContract,
+      providerContractId: input.order.occSymbol,
+      brokerContractId: input.order.occSymbol,
     },
     route: "robinhood",
     intent: null,
