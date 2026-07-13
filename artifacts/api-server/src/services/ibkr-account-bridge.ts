@@ -1,4 +1,7 @@
+import { createHash } from "node:crypto";
+
 import type { RuntimeMode } from "../lib/runtime";
+import { getIbkrRuntimeConfig } from "../lib/runtime";
 import { HttpError } from "../lib/errors";
 import { IbkrClient } from "../providers/ibkr/client";
 import type {
@@ -8,7 +11,13 @@ import type {
   BrokerPositionSnapshot,
 } from "../providers/ibkr/client";
 import { runGovernedWork, type WorkGovernorCategory } from "./work-governor";
-import { getIbkrClientPortalClient } from "./ibkr-client-runtime";
+import {
+  assertIbkrClientPortalGatewaySnapshot,
+  getIbkrClientPortalClient,
+  getIbkrClientPortalGatewaySnapshot,
+  type IbkrClientPortalGatewaySnapshot,
+} from "./ibkr-client-runtime";
+import { getIbkrPortalUserId } from "./ibkr-portal-context";
 import { readPositiveIntegerEnv } from "../lib/env";
 
 type CacheEntry<T> = {
@@ -73,6 +82,41 @@ function stableStringify(value: unknown): string {
   return JSON.stringify(value);
 }
 
+type AccountBridgeScope = {
+  gateway: IbkrClientPortalGatewaySnapshot | null;
+  key: string;
+};
+
+function resolveAccountBridgeScope(): AccountBridgeScope {
+  const appUserId = getIbkrPortalUserId();
+  if (appUserId) {
+    const gateway = getIbkrClientPortalGatewaySnapshot();
+    if (!gateway) {
+      throw new HttpError(503, "IBKR Client Portal is not configured.", {
+        code: "ibkr_client_portal_not_configured",
+        expose: true,
+      });
+    }
+    return { gateway, key: stableStringify({ scope: "user", ...gateway }) };
+  }
+
+  // Keep global/background reads stable without placing runtime credentials in
+  // process-wide cache keys.
+  const fingerprint = createHash("sha256")
+    .update(stableStringify(getIbkrRuntimeConfig()))
+    .digest("base64url");
+  return { gateway: null, key: `global:${fingerprint}` };
+}
+
+function clientForAccountBridgeScope(
+  scope: AccountBridgeScope,
+): AccountBridgeClient {
+  if (scope.gateway) {
+    assertIbkrClientPortalGatewaySnapshot(scope.gateway);
+  }
+  return accountClientFactory();
+}
+
 async function runCachedAccountRead<T extends unknown[]>({
   cache,
   inflight,
@@ -114,15 +158,31 @@ async function runCachedAccountRead<T extends unknown[]>({
   return promise;
 }
 
+async function runScopedCachedAccountRead<T extends unknown[]>({
+  requestKey,
+  work,
+  ...options
+}: Omit<Parameters<typeof runCachedAccountRead<T>>[0], "key" | "work"> & {
+  requestKey: unknown;
+  work: (client: AccountBridgeClient) => Promise<T>;
+}): Promise<T> {
+  const scope = resolveAccountBridgeScope();
+  return runCachedAccountRead({
+    ...options,
+    key: stableStringify({ scope: scope.key, request: requestKey }),
+    work: () => work(clientForAccountBridgeScope(scope)),
+  });
+}
+
 export function listIbkrAccounts(
   mode: RuntimeMode,
 ): Promise<BrokerAccountSnapshot[]> {
-  return runCachedAccountRead({
+  return runScopedCachedAccountRead({
     cache: accountListCache,
     inflight: accountListInflight,
-    key: mode,
+    requestKey: mode,
     freshTtlMs: accountFreshTtlMs(),
-    work: () => accountClientFactory().listAccounts(mode),
+    work: (client) => client.listAccounts(mode),
   });
 }
 
@@ -130,17 +190,17 @@ export function listIbkrPositions(input: {
   accountId?: string;
   mode: RuntimeMode;
 }): Promise<BrokerPositionSnapshot[]> {
-  const key = stableStringify({
+  const requestKey = {
     accountId: input.accountId ?? null,
     mode: input.mode,
-  });
-  return runCachedAccountRead({
+  };
+  return runScopedCachedAccountRead({
     cache: positionCache,
     inflight: positionInflight,
-    key,
+    requestKey,
     freshTtlMs: accountFreshTtlMs(),
-    work: async () =>
-      (await accountClientFactory().listPositions(input)).filter(
+    work: async (client) =>
+      (await client.listPositions(input)).filter(
         (position) => Math.abs(Number(position.quantity)) > 1e-9,
       ),
   });
@@ -154,20 +214,20 @@ export function listIbkrExecutions(input: {
   symbol?: string;
   providerContractId?: string | null;
 }): Promise<BrokerExecutionSnapshot[]> {
-  const key = stableStringify({
+  const requestKey = {
     accountId: input.accountId ?? null,
     mode: input.mode ?? null,
     days: input.days ?? null,
     limit: input.limit ?? null,
     symbol: input.symbol ?? null,
     providerContractId: input.providerContractId ?? null,
-  });
-  return runCachedAccountRead({
+  };
+  return runScopedCachedAccountRead({
     cache: executionCache,
     inflight: executionInflight,
-    key,
+    requestKey,
     freshTtlMs: executionsFreshTtlMs(),
-    work: () => accountClientFactory().listExecutions(input),
+    work: (client) => client.listExecutions(input),
   });
 }
 
@@ -176,19 +236,18 @@ export function listIbkrOrders(input: {
   mode: RuntimeMode;
   status?: BrokerOrderSnapshot["status"];
 }): Promise<BrokerOrderSnapshot[]> {
-  const key = stableStringify({
+  const requestKey = {
     accountId: input.accountId ?? null,
     mode: input.mode,
     status: input.status ?? null,
-  });
-  return runCachedAccountRead({
+  };
+  return runScopedCachedAccountRead({
     cache: orderCache,
     inflight: orderInflight,
-    key,
+    requestKey,
     freshTtlMs: accountFreshTtlMs(),
     workCategory: "orders",
-    work: async () => {
-      const client = accountClientFactory();
+    work: async (client) => {
       if (!client.listOrders) {
         throw new HttpError(503, "IBKR orders are unavailable.", {
           code: "ibkr_orders_unavailable",

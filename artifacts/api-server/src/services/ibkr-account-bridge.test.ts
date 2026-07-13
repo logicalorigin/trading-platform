@@ -2,13 +2,21 @@ import assert from "node:assert/strict";
 import test, { afterEach } from "node:test";
 
 import { HttpError } from "../lib/errors";
+import { getCurrentAppUserId, runAsAppUser } from "./app-user-context";
 import {
+  __resetIbkrAccountBridgeCacheForTests,
   __setIbkrAccountBridgeDependenciesForTests,
   listIbkrAccounts,
   listIbkrExecutions,
   listIbkrOrders,
   listIbkrPositions,
 } from "./ibkr-account-bridge";
+import {
+  ensureGateway,
+  markGatewayPaperAccountVerified,
+  refreshGateway,
+  stopGateway,
+} from "./ibkr-portal-gateway-manager";
 import { __resetWorkGovernorForTests } from "./work-governor";
 
 afterEach(() => {
@@ -45,6 +53,200 @@ test("account list reads through broker client without bridge health", async () 
 
   assert.deepEqual(accounts, []);
   assert.equal(accountCalls, 1);
+});
+
+test("a user without a verified gateway cannot consume the global account cache", async () => {
+  let accountCalls = 0;
+
+  __setIbkrAccountBridgeDependenciesForTests({
+    bridgeClient: {
+      async listAccounts() {
+        accountCalls += 1;
+        return [];
+      },
+      async listPositions() {
+        return [];
+      },
+      async listExecutions() {
+        return [];
+      },
+      async listOrders() {
+        return [];
+      },
+    },
+  });
+
+  await listIbkrAccounts("shadow");
+
+  await assert.rejects(
+    runAsAppUser("bridge-cache-user-without-gateway", () =>
+      listIbkrAccounts("shadow"),
+    ),
+    (error: unknown) =>
+      error instanceof HttpError &&
+      error.code === "ibkr_client_portal_not_configured",
+  );
+  assert.equal(accountCalls, 1);
+});
+
+test("all account bridge caches and singleflights are isolated by user and gateway login generation", async () => {
+  const previousEnabled = process.env["IBKR_SESSION_HOST_ENABLED"];
+  const previousToken = process.env["IBKR_SESSION_HOST_CONTROL_TOKEN"];
+  const previousAccountConcurrency =
+    process.env["WORK_GOVERNOR_ACCOUNT_CONCURRENCY"];
+  const previousOrderConcurrency =
+    process.env["WORK_GOVERNOR_ORDERS_CONCURRENCY"];
+  const previousFetch = globalThis.fetch;
+  const userA = "bridge-cache-user-a";
+  const userB = "bridge-cache-user-b";
+  const loginCompletions = new Map([
+    [userA, 0],
+    [userB, 0],
+  ]);
+  const calls = { accounts: 0, positions: 0, executions: 0, orders: 0 };
+  let blockedRead: keyof typeof calls | null = null;
+  let releaseBlockedReads = () => {};
+  let blockedReads = Promise.resolve();
+  const block = async (read: keyof typeof calls): Promise<void> => {
+    calls[read] += 1;
+    assert.ok(getCurrentAppUserId());
+    if (blockedRead === read) await blockedReads;
+  };
+
+  process.env["IBKR_SESSION_HOST_ENABLED"] = "1";
+  process.env["IBKR_SESSION_HOST_CONTROL_TOKEN"] = "host-token";
+  process.env["WORK_GOVERNOR_ACCOUNT_CONCURRENCY"] = "8";
+  process.env["WORK_GOVERNOR_ORDERS_CONCURRENCY"] = "8";
+  globalThis.fetch = (async (input) => {
+    const url = String(input);
+    if (url.endsWith("/release")) return Response.json({ released: true });
+    const appUserId = [...loginCompletions.keys()].find((candidate) =>
+      url.includes(`/sessions/${candidate}/`),
+    );
+    assert.ok(appUserId);
+    const capsule = {
+      loginCompletions: loginCompletions.get(appUserId),
+      name: `pyrus-${appUserId}`,
+      status: "ready" as const,
+    };
+    if (url.endsWith("/status")) return Response.json({ capsule });
+    return Response.json({
+      capsule,
+      targets: {
+        cpg: { host: "127.0.0.1", port: 15000 },
+        console: { host: "127.0.0.1", port: 16080 },
+      },
+    });
+  }) as typeof fetch;
+
+  __setIbkrAccountBridgeDependenciesForTests({
+    bridgeClient: {
+      async listAccounts() {
+        await block("accounts");
+        return [];
+      },
+      async listPositions() {
+        await block("positions");
+        return [];
+      },
+      async listExecutions() {
+        await block("executions");
+        return [];
+      },
+      async listOrders() {
+        await block("orders");
+        return [];
+      },
+    },
+  });
+
+  const reads = {
+    accounts: () => listIbkrAccounts("shadow"),
+    positions: () =>
+      listIbkrPositions({ accountId: "DU123", mode: "shadow" }),
+    executions: () =>
+      listIbkrExecutions({ accountId: "DU123", mode: "shadow" }),
+    orders: () => listIbkrOrders({ accountId: "DU123", mode: "shadow" }),
+  };
+  const readAll = (appUserId: string) =>
+    runAsAppUser(appUserId, () => Promise.all(Object.values(reads).map((read) => read())));
+
+  try {
+    await ensureGateway(userA);
+    await ensureGateway(userB);
+    assert.equal(markGatewayPaperAccountVerified(userA), true);
+    assert.equal(markGatewayPaperAccountVerified(userB), true);
+
+    await readAll(userA);
+    await readAll(userA);
+    await readAll(userB);
+    assert.deepEqual(calls, {
+      accounts: 2,
+      positions: 2,
+      executions: 2,
+      orders: 2,
+    });
+
+    loginCompletions.set(userA, 1);
+    await refreshGateway(userA);
+    await readAll(userA);
+    assert.deepEqual(calls, {
+      accounts: 3,
+      positions: 3,
+      executions: 3,
+      orders: 3,
+    });
+
+    for (const [name, read] of Object.entries(reads) as Array<
+      [keyof typeof reads, () => Promise<unknown[]>]
+    >) {
+      __resetIbkrAccountBridgeCacheForTests();
+      blockedRead = name;
+      blockedReads = new Promise<void>((resolve) => {
+        releaseBlockedReads = resolve;
+      });
+      const before = calls[name];
+      const pending = [
+        runAsAppUser(userA, read),
+        runAsAppUser(userA, read),
+        runAsAppUser(userB, read),
+      ];
+      try {
+        await delay(20);
+        assert.equal(calls[name] - before, 2, name);
+      } finally {
+        releaseBlockedReads();
+        await Promise.allSettled(pending);
+        blockedRead = null;
+      }
+    }
+  } finally {
+    releaseBlockedReads();
+    await stopGateway(userA);
+    await stopGateway(userB);
+    globalThis.fetch = previousFetch;
+    if (previousEnabled === undefined) {
+      delete process.env["IBKR_SESSION_HOST_ENABLED"];
+    } else {
+      process.env["IBKR_SESSION_HOST_ENABLED"] = previousEnabled;
+    }
+    if (previousToken === undefined) {
+      delete process.env["IBKR_SESSION_HOST_CONTROL_TOKEN"];
+    } else {
+      process.env["IBKR_SESSION_HOST_CONTROL_TOKEN"] = previousToken;
+    }
+    if (previousAccountConcurrency === undefined) {
+      delete process.env["WORK_GOVERNOR_ACCOUNT_CONCURRENCY"];
+    } else {
+      process.env["WORK_GOVERNOR_ACCOUNT_CONCURRENCY"] =
+        previousAccountConcurrency;
+    }
+    if (previousOrderConcurrency === undefined) {
+      delete process.env["WORK_GOVERNOR_ORDERS_CONCURRENCY"];
+    } else {
+      process.env["WORK_GOVERNOR_ORDERS_CONCURRENCY"] = previousOrderConcurrency;
+    }
+  }
 });
 
 test("missing broker order reads reject instead of fabricating an empty snapshot", async () => {
