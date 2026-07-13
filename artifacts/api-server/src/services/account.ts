@@ -262,6 +262,7 @@ const accountPositionOpenedOnCurrentMarketDay = (
 
 type AccountUniverse = {
   appUserId?: string | null;
+  allowDirectIbkr: boolean;
   requestedAccountId: string;
   accountIds: string[];
   isCombined: boolean;
@@ -767,6 +768,7 @@ function calculateLatestMarketDayPnlFromHistory(
 async function resolveAccountSummaryReturnMetrics(input: {
   accountId: string;
   appUserId: string | null;
+  allowDirectIbkr: boolean;
   mode: RuntimeMode;
   source?: string | null;
 }) {
@@ -774,6 +776,7 @@ async function resolveAccountSummaryReturnMetrics(input: {
     getAccountEquityHistory({
       accountId: input.accountId,
       appUserId: input.appUserId,
+      allowDirectIbkr: input.allowDirectIbkr,
       range,
       mode: input.mode,
       source: input.source,
@@ -1249,25 +1252,45 @@ function liveAccountUniverseCacheKey(
   accountId: string,
   mode: RuntimeMode,
   appUserId: string | null,
+  allowDirectIbkr = directIbkrReadsAllowed(appUserId, undefined),
 ): string {
   return JSON.stringify({
     accountId: accountId || COMBINED_ACCOUNT_ID,
+    allowDirectIbkr,
     appUserId,
     mode,
   });
+}
+
+function directIbkrReadsAllowed(
+  appUserId: string | null,
+  allowDirectIbkr: boolean | undefined,
+): boolean {
+  return appUserId === null || allowDirectIbkr === true;
 }
 
 async function getLiveAccountUniverse(
   accountId: string,
   mode: RuntimeMode,
   appUserId: string | null = getCurrentAppUserId(),
+  allowDirectIbkr?: boolean,
 ): Promise<AccountUniverse> {
+  const effectiveAllowDirectIbkr = directIbkrReadsAllowed(
+    appUserId,
+    allowDirectIbkr,
+  );
   return readShortLivedAccountCache(
     liveAccountUniverseReadCache,
-    liveAccountUniverseCacheKey(accountId, mode, appUserId),
+    liveAccountUniverseCacheKey(
+      accountId,
+      mode,
+      appUserId,
+      effectiveAllowDirectIbkr,
+    ),
     () =>
       readLiveAccountUniverseUncached(accountId, mode, {
         appUserId,
+        allowDirectIbkr: effectiveAllowDirectIbkr,
       }),
   );
 }
@@ -1278,6 +1301,7 @@ async function readLiveAccountUniverseUncached(
   options: Pick<
     ListAccountsOptions,
     | "appUserId"
+    | "allowDirectIbkr"
     | "listLiveAccounts"
     | "getSnapTradeAccounts"
     | "getRobinhoodAccounts"
@@ -1285,13 +1309,19 @@ async function readLiveAccountUniverseUncached(
 ): Promise<AccountUniverse> {
   const appUserId =
     options.appUserId === undefined ? getCurrentAppUserId() : options.appUserId;
+  const allowDirectIbkr = directIbkrReadsAllowed(
+    appUserId,
+    options.allowDirectIbkr,
+  );
   let liveReadError: unknown = null;
-  const accounts = await (options.listLiveAccounts ?? listIbkrAccounts)(
-    mode,
-  ).catch((error) => {
-    liveReadError = error;
-    return [] as BrokerAccountSnapshot[];
-  });
+  const accounts = allowDirectIbkr
+    ? await (options.listLiveAccounts ?? listIbkrAccounts)(mode).catch(
+        (error) => {
+          liveReadError = error;
+          return [] as BrokerAccountSnapshot[];
+        },
+      )
+    : [];
   const requestedAccountId = accountId || COMBINED_ACCOUNT_ID;
   const isCombined = requestedAccountId === COMBINED_ACCOUNT_ID;
   const selectedAccounts = isCombined
@@ -1334,6 +1364,7 @@ async function readLiveAccountUniverseUncached(
     );
     return {
       appUserId,
+      allowDirectIbkr,
       requestedAccountId,
       accountIds: combinedAccounts.map((account) => account.id),
       isCombined,
@@ -1366,6 +1397,7 @@ async function readLiveAccountUniverseUncached(
             : "broker";
       return {
         appUserId,
+        allowDirectIbkr,
         requestedAccountId,
         accountIds: selectedProviderBackedAccounts.map((account) => account.id),
         isCombined,
@@ -1388,6 +1420,7 @@ async function readLiveAccountUniverseUncached(
 
   return {
     appUserId,
+    allowDirectIbkr,
     requestedAccountId,
     accountIds: selectedAccounts.map((account) => account.id),
     isCombined,
@@ -1406,6 +1439,7 @@ function accountUniverseReadCacheKey(
 ): string {
   return JSON.stringify({
     accountIds: [...universe.accountIds].sort(),
+    allowDirectIbkr: universe.allowDirectIbkr,
     appUserId: universe.appUserId ?? null,
     ...Object.fromEntries(
       Object.entries(extra).sort(([left], [right]) =>
@@ -1587,12 +1621,21 @@ async function readPositionsForUniverseUncached(
 
 export async function getAccountPositionVisibilityProbe(input: {
   accountId: string;
+  appUserId?: string | null;
+  allowDirectIbkr?: boolean;
   assetClass?: string | null;
   mode?: RuntimeMode;
   source?: string | null;
 }) {
   const mode = input.mode ?? getRuntimeMode();
-  const universe = await getLiveAccountUniverse(input.accountId, mode);
+  const appUserId =
+    input.appUserId === undefined ? getCurrentAppUserId() : input.appUserId;
+  const universe = await getLiveAccountUniverse(
+    input.accountId,
+    mode,
+    appUserId,
+    input.allowDirectIbkr,
+  );
   const positions = await listPositionsForUniverse(universe, mode);
   const filter = resolveAccountPositionTypeFilter(input.assetClass);
   const filteredPositions = positions.filter((position) =>
@@ -4359,6 +4402,7 @@ export async function recordAccountSnapshots(
 
 type ListAccountsOptions = {
   appUserId?: string | null;
+  allowDirectIbkr?: boolean;
   listLiveAccounts?: (mode: RuntimeMode) => Promise<BrokerAccountSnapshot[]>;
   hydrateDayPnl?: (
     accounts: BrokerAccountSnapshot[],
@@ -5166,6 +5210,10 @@ export async function listAccounts(
   const mode = input.mode ?? getRuntimeMode();
   const appUserId =
     options.appUserId === undefined ? getCurrentAppUserId() : options.appUserId;
+  const allowDirectIbkr = directIbkrReadsAllowed(
+    appUserId,
+    options.allowDirectIbkr,
+  );
   const hasDependencyOverrides = Boolean(
     options.listLiveAccounts ||
       options.hydrateDayPnl ||
@@ -5176,12 +5224,19 @@ export async function listAccounts(
   if (!hasDependencyOverrides) {
     return readAccountRouteResponseCache(
       "accounts",
-      { appUserId, mode },
-      () => listAccountsUncached({ mode }, { ...options, appUserId }),
+      { allowDirectIbkr, appUserId, mode },
+      () =>
+        listAccountsUncached(
+          { mode },
+          { ...options, allowDirectIbkr, appUserId },
+        ),
       ACCOUNT_LIST_RESPONSE_CACHE_TTL_MS,
     );
   }
-  return listAccountsUncached({ mode }, { ...options, appUserId });
+  return listAccountsUncached(
+    { mode },
+    { ...options, allowDirectIbkr, appUserId },
+  );
 }
 
 async function listAccountsUncached(
@@ -5190,6 +5245,10 @@ async function listAccountsUncached(
 ) {
   const mode = input.mode;
   const appUserId = options.appUserId ?? null;
+  const allowDirectIbkr = directIbkrReadsAllowed(
+    appUserId,
+    options.allowDirectIbkr,
+  );
   const listLiveAccounts = options.listLiveAccounts ?? listIbkrAccounts;
   const hydrateDayPnl = options.hydrateDayPnl ?? withAccountListDayPnl;
   const recordSnapshots =
@@ -5235,10 +5294,12 @@ async function listAccountsUncached(
 
   let liveAccounts: BrokerAccountSnapshot[] = [];
   let liveReadError: unknown = null;
-  try {
-    liveAccounts = await listLiveAccounts(mode);
-  } catch (error) {
-    liveReadError = error;
+  if (allowDirectIbkr) {
+    try {
+      liveAccounts = await listLiveAccounts(mode);
+    } catch (error) {
+      liveReadError = error;
+    }
   }
   if (liveAccounts.length) {
     void recordSnapshots(liveAccounts).catch((error) => {
@@ -5266,6 +5327,7 @@ async function listAccountsUncached(
 export async function getAccountSummary(input: {
   accountId: string;
   appUserId?: string | null;
+  allowDirectIbkr?: boolean;
   mode?: RuntimeMode;
   source?: string | null;
 }) {
@@ -5276,15 +5338,26 @@ export async function getAccountSummary(input: {
   const mode = input.mode ?? getRuntimeMode();
   const appUserId =
     input.appUserId === undefined ? getCurrentAppUserId() : input.appUserId;
+  const allowDirectIbkr = directIbkrReadsAllowed(
+    appUserId,
+    input.allowDirectIbkr,
+  );
   return readAccountRouteResponseCache(
     "summary",
     {
       accountId: input.accountId,
+      allowDirectIbkr,
       appUserId,
       mode,
       source: input.source ?? null,
     },
-    () => getAccountSummaryUncached({ ...input, appUserId, mode }),
+    () =>
+      getAccountSummaryUncached({
+        ...input,
+        allowDirectIbkr,
+        appUserId,
+        mode,
+      }),
     ACCOUNT_PAGE_SHARED_LIVE_READ_CACHE_TTL_MS,
   );
 }
@@ -5292,6 +5365,7 @@ export async function getAccountSummary(input: {
 async function getAccountSummaryUncached(input: {
   accountId: string;
   appUserId: string | null;
+  allowDirectIbkr: boolean;
   mode: RuntimeMode;
   source?: string | null;
 }) {
@@ -5300,6 +5374,7 @@ async function getAccountSummaryUncached(input: {
     input.accountId,
     mode,
     input.appUserId,
+    input.allowDirectIbkr,
   );
   const positions = await listPositionsForUniverse(universe, mode);
   const marketHydration = await hydratePositionMarkets(positions);
@@ -5311,6 +5386,7 @@ async function getAccountSummaryUncached(input: {
   const returnMetrics = await resolveAccountSummaryReturnMetrics({
     accountId: input.accountId,
     appUserId: input.appUserId,
+    allowDirectIbkr: input.allowDirectIbkr,
     mode,
     source: input.source,
   });
@@ -5563,6 +5639,7 @@ async function resolveBenchmarkPercents(input: {
 export async function getAccountEquityHistory(input: {
   accountId: string;
   appUserId?: string | null;
+  allowDirectIbkr?: boolean;
   range?: AccountRange;
   benchmark?: string | null;
   mode?: RuntimeMode;
@@ -5579,18 +5656,30 @@ export async function getAccountEquityHistory(input: {
   const mode = input.mode ?? getRuntimeMode();
   const appUserId =
     input.appUserId === undefined ? getCurrentAppUserId() : input.appUserId;
+  const allowDirectIbkr = directIbkrReadsAllowed(
+    appUserId,
+    input.allowDirectIbkr,
+  );
   const range = normalizeAccountRange(input.range);
   return readAccountRouteResponseCache(
     "equity-history",
     {
       accountId: input.accountId,
+      allowDirectIbkr,
       appUserId,
       benchmark: input.benchmark || null,
       mode,
       range,
       source: input.source ?? null,
     },
-    () => getAccountEquityHistoryUncached({ ...input, appUserId, mode, range }),
+    () =>
+      getAccountEquityHistoryUncached({
+        ...input,
+        allowDirectIbkr,
+        appUserId,
+        mode,
+        range,
+      }),
     input.benchmark
       ? ACCOUNT_ROUTE_DERIVED_RESPONSE_CACHE_TTL_MS
       : ACCOUNT_ROUTE_EQUITY_HISTORY_RESPONSE_CACHE_TTL_MS,
@@ -5651,6 +5740,7 @@ async function readProviderEquitySeedPointsForUniverse(
 async function getAccountEquityHistoryUncached(input: {
   accountId: string;
   appUserId: string | null;
+  allowDirectIbkr: boolean;
   range: AccountRange;
   benchmark?: string | null;
   mode: RuntimeMode;
@@ -5662,6 +5752,7 @@ async function getAccountEquityHistoryUncached(input: {
     input.accountId,
     mode,
     input.appUserId,
+    input.allowDirectIbkr,
   );
   const start = accountRangeStart(range);
   const flexConditions = [
@@ -6003,6 +6094,8 @@ async function getAccountEquityHistoryUncached(input: {
 
 export async function getAccountAllocation(input: {
   accountId: string;
+  appUserId?: string | null;
+  allowDirectIbkr?: boolean;
   mode?: RuntimeMode;
   source?: string | null;
 }) {
@@ -6011,16 +6104,34 @@ export async function getAccountAllocation(input: {
   }
 
   const mode = input.mode ?? getRuntimeMode();
-  return getAccountAllocationUncached({ ...input, mode });
+  const appUserId =
+    input.appUserId === undefined ? getCurrentAppUserId() : input.appUserId;
+  const allowDirectIbkr = directIbkrReadsAllowed(
+    appUserId,
+    input.allowDirectIbkr,
+  );
+  return getAccountAllocationUncached({
+    ...input,
+    allowDirectIbkr,
+    appUserId,
+    mode,
+  });
 }
 
 async function getAccountAllocationUncached(input: {
   accountId: string;
+  appUserId: string | null;
+  allowDirectIbkr: boolean;
   mode: RuntimeMode;
   source?: string | null;
 }) {
   const mode = input.mode;
-  const universe = await getLiveAccountUniverse(input.accountId, mode);
+  const universe = await getLiveAccountUniverse(
+    input.accountId,
+    mode,
+    input.appUserId,
+    input.allowDirectIbkr,
+  );
   const positions = await listPositionsForUniverse(universe, mode);
   const marketHydration = await hydratePositionMarkets(positions);
   const nav = sumAccounts(universe.accounts, "netLiquidation") ?? 0;
@@ -6105,6 +6216,7 @@ function accountPositionMarketDataSymbol(input: {
 export async function getAccountPositions(input: {
   accountId: string;
   appUserId?: string | null;
+  allowDirectIbkr?: boolean;
   assetClass?: string | null;
   mode?: RuntimeMode;
   source?: string | null;
@@ -6123,9 +6235,14 @@ export async function getAccountPositions(input: {
   const mode = input.mode ?? getRuntimeMode();
   const appUserId =
     input.appUserId === undefined ? getCurrentAppUserId() : input.appUserId;
+  const allowDirectIbkr = directIbkrReadsAllowed(
+    appUserId,
+    input.allowDirectIbkr,
+  );
   const detail = normalizeAccountPositionsDetail(input.detail);
   return getAccountPositionsUncached({
     ...input,
+    allowDirectIbkr,
     appUserId,
     mode,
     detail,
@@ -6324,6 +6441,7 @@ function foldRealPositionAttribution(
 async function getAccountPositionsUncached(input: {
   accountId: string;
   appUserId: string | null;
+  allowDirectIbkr: boolean;
   assetClass?: string | null;
   mode: RuntimeMode;
   source?: string | null;
@@ -6332,7 +6450,12 @@ async function getAccountPositionsUncached(input: {
 }) {
   const mode = input.mode;
   const universe = applyLatestSnapTradeBalancesToUniverse(
-    await getLiveAccountUniverse(input.accountId, mode, input.appUserId),
+    await getLiveAccountUniverse(
+      input.accountId,
+      mode,
+      input.appUserId,
+      input.allowDirectIbkr,
+    ),
   );
   const assetClassFilter = resolveAccountPositionTypeFilter(input.assetClass);
   const allPositions = await listPositionsForUniverse(universe, mode);
@@ -6770,6 +6893,7 @@ async function getAccountPositionsUncached(input: {
 export async function getAccountPositionsAtDate(input: {
   accountId: string;
   appUserId?: string | null;
+  allowDirectIbkr?: boolean;
   date: string | Date;
   assetClass?: string | null;
   mode?: RuntimeMode;
@@ -6788,10 +6912,15 @@ export async function getAccountPositionsAtDate(input: {
   const mode = input.mode ?? getRuntimeMode();
   const appUserId =
     input.appUserId === undefined ? getCurrentAppUserId() : input.appUserId;
+  const allowDirectIbkr = directIbkrReadsAllowed(
+    appUserId,
+    input.allowDirectIbkr,
+  );
   const universe = await getLiveAccountUniverse(
     input.accountId,
     mode,
     appUserId,
+    allowDirectIbkr,
   );
   const positionConditions = [
     inArray(flexOpenPositionsTable.providerAccountId, universe.accountIds),
@@ -8523,6 +8652,7 @@ async function listClosedTradesForUniverse(
 export async function getAccountClosedTrades(input: {
   accountId: string;
   appUserId?: string | null;
+  allowDirectIbkr?: boolean;
   from?: Date | null;
   to?: Date | null;
   symbol?: string | null;
@@ -8546,10 +8676,15 @@ export async function getAccountClosedTrades(input: {
   const mode = input.mode ?? getRuntimeMode();
   const appUserId =
     input.appUserId === undefined ? getCurrentAppUserId() : input.appUserId;
+  const allowDirectIbkr = directIbkrReadsAllowed(
+    appUserId,
+    input.allowDirectIbkr,
+  );
   return readAccountRouteResponseCache(
     "closed-trades",
     {
       accountId: input.accountId,
+      allowDirectIbkr,
       appUserId,
       assetClass: input.assetClass ?? null,
       from: input.from?.toISOString() ?? null,
@@ -8560,7 +8695,13 @@ export async function getAccountClosedTrades(input: {
       symbol: input.symbol ? normalizeSymbol(input.symbol) : null,
       to: input.to?.toISOString() ?? null,
     },
-    () => getAccountClosedTradesUncached({ ...input, appUserId, mode }),
+    () =>
+      getAccountClosedTradesUncached({
+        ...input,
+        allowDirectIbkr,
+        appUserId,
+        mode,
+      }),
     ACCOUNT_ROUTE_CLOSED_TRADES_RESPONSE_CACHE_TTL_MS,
   );
 }
@@ -8568,6 +8709,7 @@ export async function getAccountClosedTrades(input: {
 async function getAccountClosedTradesUncached(input: {
   accountId: string;
   appUserId: string | null;
+  allowDirectIbkr: boolean;
   from?: Date | null;
   to?: Date | null;
   symbol?: string | null;
@@ -8582,6 +8724,7 @@ async function getAccountClosedTradesUncached(input: {
     input.accountId,
     mode,
     input.appUserId,
+    input.allowDirectIbkr,
   );
   const [flexTrades, providerTrades, executions, orderResult] = await Promise.all([
     listClosedTradesForUniverse(universe, input, mode),
@@ -8627,6 +8770,8 @@ async function getAccountClosedTradesUncached(input: {
 
 export async function getAccountOrders(input: {
   accountId: string;
+  appUserId?: string | null;
+  allowDirectIbkr?: boolean;
   tab?: OrderTab;
   mode?: RuntimeMode;
   source?: string | null;
@@ -8639,8 +8784,19 @@ export async function getAccountOrders(input: {
   }
 
   const mode = input.mode ?? getRuntimeMode();
+  const appUserId =
+    input.appUserId === undefined ? getCurrentAppUserId() : input.appUserId;
+  const allowDirectIbkr = directIbkrReadsAllowed(
+    appUserId,
+    input.allowDirectIbkr,
+  );
   const tab = normalizeOrderTab(input.tab);
-  const universe = await getLiveAccountUniverse(input.accountId, mode);
+  const universe = await getLiveAccountUniverse(
+    input.accountId,
+    mode,
+    appUserId,
+    allowDirectIbkr,
+  );
   const [orderResult, executions] = await Promise.all([
     listOrdersForUniverse(universe, mode),
     tab === "history"
@@ -8688,6 +8844,7 @@ function normalizeAccountRiskDetail(detail?: AccountRiskDetail): AccountRiskDeta
 export async function getAccountRisk(input: {
   accountId: string;
   appUserId?: string | null;
+  allowDirectIbkr?: boolean;
   mode?: RuntimeMode;
   source?: string | null;
   detail?: AccountRiskDetail;
@@ -8700,15 +8857,31 @@ export async function getAccountRisk(input: {
   const mode = input.mode ?? getRuntimeMode();
   const appUserId =
     input.appUserId === undefined ? getCurrentAppUserId() : input.appUserId;
+  const allowDirectIbkr = directIbkrReadsAllowed(
+    appUserId,
+    input.allowDirectIbkr,
+  );
   if (detail === "full") {
-    return getAccountRiskWithNonBlockingFullDetail({ ...input, appUserId, mode });
+    return getAccountRiskWithNonBlockingFullDetail({
+      ...input,
+      allowDirectIbkr,
+      appUserId,
+      mode,
+    });
   }
-  return getAccountRiskUncached({ ...input, appUserId, mode, detail });
+  return getAccountRiskUncached({
+    ...input,
+    allowDirectIbkr,
+    appUserId,
+    mode,
+    detail,
+  });
 }
 
 async function getAccountRiskUncached(input: {
   accountId: string;
   appUserId: string | null;
+  allowDirectIbkr: boolean;
   mode: RuntimeMode;
   source?: string | null;
   detail?: AccountRiskDetail;
@@ -8719,6 +8892,7 @@ async function getAccountRiskUncached(input: {
     input.accountId,
     mode,
     input.appUserId,
+    input.allowDirectIbkr,
   );
   const [positions, closedTrades] = await Promise.all([
     listPositionsForUniverse(universe, mode),
@@ -8985,11 +9159,13 @@ type AccountFullRiskDetailMetadata = {
 function accountFullRiskCacheKey(input: {
   accountId: string;
   appUserId: string | null;
+  allowDirectIbkr: boolean;
   mode: RuntimeMode;
   source?: string | null;
 }): string {
   return stableAccountReadCacheKey("full-risk", {
     accountId: input.accountId,
+    allowDirectIbkr: input.allowDirectIbkr,
     appUserId: input.appUserId,
     mode: input.mode,
     source: input.source ?? null,
@@ -9035,6 +9211,7 @@ function markAccountRiskFullRefreshPending(
 function refreshAccountFullRiskCache(input: {
   accountId: string;
   appUserId: string | null;
+  allowDirectIbkr: boolean;
   mode: RuntimeMode;
   source?: string | null;
 }): Promise<AccountRiskPayload> {
@@ -9070,6 +9247,7 @@ function refreshAccountFullRiskCache(input: {
 function scheduleAccountFullRiskRefresh(input: {
   accountId: string;
   appUserId: string | null;
+  allowDirectIbkr: boolean;
   mode: RuntimeMode;
   source?: string | null;
 }): Promise<AccountRiskPayload> {
@@ -9086,6 +9264,7 @@ function scheduleAccountFullRiskRefresh(input: {
 async function getAccountRiskWithNonBlockingFullDetail(input: {
   accountId: string;
   appUserId: string | null;
+  allowDirectIbkr: boolean;
   mode: RuntimeMode;
   source?: string | null;
 }) {
@@ -9159,6 +9338,7 @@ function buildPendingAccountGreekScenarios(): AccountGreekScenarios {
 export async function getAccountCashActivity(input: {
   accountId: string;
   appUserId?: string | null;
+  allowDirectIbkr?: boolean;
   from?: Date | null;
   to?: Date | null;
   mode?: RuntimeMode;
@@ -9171,12 +9351,22 @@ export async function getAccountCashActivity(input: {
   const mode = input.mode ?? getRuntimeMode();
   const appUserId =
     input.appUserId === undefined ? getCurrentAppUserId() : input.appUserId;
-  return getAccountCashActivityUncached({ ...input, appUserId, mode });
+  const allowDirectIbkr = directIbkrReadsAllowed(
+    appUserId,
+    input.allowDirectIbkr,
+  );
+  return getAccountCashActivityUncached({
+    ...input,
+    allowDirectIbkr,
+    appUserId,
+    mode,
+  });
 }
 
 async function getAccountCashActivityUncached(input: {
   accountId: string;
   appUserId: string | null;
+  allowDirectIbkr: boolean;
   from?: Date | null;
   to?: Date | null;
   mode: RuntimeMode;
@@ -9187,6 +9377,7 @@ async function getAccountCashActivityUncached(input: {
     input.accountId,
     mode,
     input.appUserId,
+    input.allowDirectIbkr,
   );
   const conditions = [
     inArray(flexCashActivityTable.providerAccountId, universe.accountIds),

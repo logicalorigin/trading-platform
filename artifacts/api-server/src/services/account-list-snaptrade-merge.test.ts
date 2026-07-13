@@ -98,6 +98,8 @@ test("listAccounts merges SnapTrade accounts onto the live IBKR branch", async (
   const result = await listAccounts(
     { mode: "live" },
     {
+      appUserId: "user-1",
+      allowDirectIbkr: true,
       listLiveAccounts: async () => [snapshot("U1", "ibkr")],
       hydrateDayPnl: passthroughDayPnl,
       recordSnapshots: noopRecordSnapshots,
@@ -116,6 +118,32 @@ test("listAccounts merges SnapTrade accounts onto the live IBKR branch", async (
   assert.deepEqual(
     result.accounts.map((a) => a.provider),
     ["ibkr", "snaptrade", "snaptrade"],
+  );
+});
+
+test("listAccounts omits direct IBKR for an app user without direct read authorization", async () => {
+  let directIbkrReads = 0;
+  const result = await listAccounts(
+    { mode: "live" },
+    {
+      appUserId: "user-1",
+      listLiveAccounts: async () => {
+        directIbkrReads += 1;
+        return [snapshot("U1", "ibkr")];
+      },
+      hydrateDayPnl: passthroughDayPnl,
+      recordSnapshots: noopRecordSnapshots,
+      getSnapTradeAccounts: async () => [snapshot("etrade-a", "snaptrade")],
+      getRobinhoodAccounts: async () => [
+        snapshot("robinhood-a", "robinhood"),
+      ],
+    },
+  );
+
+  assert.equal(directIbkrReads, 0);
+  assert.deepEqual(
+    result.accounts.map((account) => account.provider),
+    ["snaptrade", "robinhood"],
   );
 });
 
@@ -538,6 +566,56 @@ test("account detail resolver treats a healthy provider as independent of IBKR",
   assert.equal(universe.source, "snaptrade");
 });
 
+test("account universe resolves combined provider accounts without reading direct IBKR", async () => {
+  let directIbkrReads = 0;
+  const universe =
+    await __accountUniverseInternalsForTests.readLiveAccountUniverseUncached(
+      "combined",
+      "live",
+      {
+        appUserId: "user-1",
+        allowDirectIbkr: false,
+        listLiveAccounts: async () => {
+          directIbkrReads += 1;
+          return [snapshot("U1", "ibkr")];
+        },
+        getSnapTradeAccounts: async () => [snapshot("etrade-a", "snaptrade")],
+        getRobinhoodAccounts: async () => [
+          snapshot("robinhood-a", "robinhood"),
+        ],
+      },
+    );
+
+  assert.equal(directIbkrReads, 0);
+  assert.deepEqual(
+    universe.accounts.map((account) => account.provider),
+    ["snaptrade", "robinhood"],
+  );
+});
+
+test("account universe resolves one provider account without reading direct IBKR", async () => {
+  let directIbkrReads = 0;
+  const universe =
+    await __accountUniverseInternalsForTests.readLiveAccountUniverseUncached(
+      "etrade-a",
+      "live",
+      {
+        appUserId: "user-1",
+        allowDirectIbkr: false,
+        listLiveAccounts: async () => {
+          directIbkrReads += 1;
+          return [snapshot("U1", "ibkr")];
+        },
+        getSnapTradeAccounts: async () => [snapshot("etrade-a", "snaptrade")],
+        getRobinhoodAccounts: async () => [],
+      },
+    );
+
+  assert.equal(directIbkrReads, 0);
+  assert.equal(universe.source, "snaptrade");
+  assert.deepEqual(universe.accountIds, ["etrade-a"]);
+});
+
 test("account universe cache keys include the request app user", () => {
   const first = __accountUniverseInternalsForTests.liveAccountUniverseCacheKey(
     "combined",
@@ -553,11 +631,30 @@ test("account universe cache keys include the request app user", () => {
   assert.notEqual(first, second);
 });
 
+test("account universe cache keys separate direct IBKR read authorization", () => {
+  const authorized = __accountUniverseInternalsForTests.liveAccountUniverseCacheKey(
+    "combined",
+    "live",
+    "user-1",
+    true,
+  );
+  const unauthorized =
+    __accountUniverseInternalsForTests.liveAccountUniverseCacheKey(
+      "combined",
+      "live",
+      "user-1",
+      false,
+    );
+
+  assert.notEqual(authorized, unauthorized);
+});
+
 test("combined account positions include normalized SnapTrade portfolio rows", async () => {
   const snapTradeAccount = snapshot("etrade-a", "snaptrade");
   const ibkrAccount = snapshot("U1", "ibkr");
   const positions = await __accountPositionInternalsForTests.readPositionsForUniverseUncached(
     {
+      allowDirectIbkr: true,
       requestedAccountId: "combined",
       accountIds: [ibkrAccount.id, snapTradeAccount.id],
       isCombined: true,
@@ -649,6 +746,7 @@ test("SnapTrade-only positions do not call the IBKR position reader", async () =
 
   const positions = await __accountPositionInternalsForTests.readPositionsForUniverseUncached(
     {
+      allowDirectIbkr: false,
       requestedAccountId: snapTradeAccount.id,
       accountIds: [snapTradeAccount.id],
       isCombined: false,
@@ -709,6 +807,7 @@ test("generic positions consume the latest user-scoped SnapTrade portfolio", asy
     value: latestPortfolio,
   });
   const universe = {
+    allowDirectIbkr: false,
     requestedAccountId: snapTradeAccount.id,
     accountIds: [snapTradeAccount.id],
     isCombined: false,
