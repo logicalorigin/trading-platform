@@ -1728,6 +1728,18 @@ export const GetIbkrPortalReadinessResponse = zod.object({
   "maskedAccountId": zod.string(),
   "selected": zod.boolean()
 })),
+  "controlledOrder": zod.object({
+  "status": zod.enum(['none', 'active', 'reconciliation_required']),
+  "accountId": zod.string().nullable(),
+  "orderId": zod.string().nullable(),
+  "symbol": zod.string().nullable(),
+  "side": zod.string().nullable(),
+  "quantity": zod.number().nullable(),
+  "limitPrice": zod.number().nullable(),
+  "replacementUsed": zod.boolean(),
+  "cancelAttempted": zod.boolean(),
+  "reason": zod.string().nullable()
+}).describe('Durable server-owned state for the bounded direct-IBKR order lifecycle. Never includes raw warning reply identifiers.'),
   "loginPath": zod.string().nullable(),
   "message": zod.string()
 }).describe('IBKR Client Portal browser-login gateway and session readiness. Reflects the per-user gateway pool state, not an OAuth token.')
@@ -1750,6 +1762,18 @@ export const GetIbkrPortalStatusResponse = zod.object({
   "maskedAccountId": zod.string(),
   "selected": zod.boolean()
 })),
+  "controlledOrder": zod.object({
+  "status": zod.enum(['none', 'active', 'reconciliation_required']),
+  "accountId": zod.string().nullable(),
+  "orderId": zod.string().nullable(),
+  "symbol": zod.string().nullable(),
+  "side": zod.string().nullable(),
+  "quantity": zod.number().nullable(),
+  "limitPrice": zod.number().nullable(),
+  "replacementUsed": zod.boolean(),
+  "cancelAttempted": zod.boolean(),
+  "reason": zod.string().nullable()
+}).describe('Durable server-owned state for the bounded direct-IBKR order lifecycle. Never includes raw warning reply identifiers.'),
   "loginPath": zod.string().nullable(),
   "message": zod.string()
 }).describe('IBKR Client Portal browser-login gateway and session readiness. Reflects the per-user gateway pool state, not an OAuth token.')
@@ -3629,9 +3653,7 @@ export const CancelOrderParams = zod.object({
 export const CancelOrderBody = zod.object({
   "accountId": zod.string(),
   "mode": zod.enum(['shadow', 'live']),
-  "confirm": zod.boolean().optional(),
-  "manualIndicator": zod.boolean().nullish(),
-  "extOperator": zod.string().nullish()
+  "confirm": zod.boolean().optional()
 })
 
 export const CancelOrderResponse = zod.object({

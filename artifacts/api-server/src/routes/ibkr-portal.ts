@@ -51,6 +51,7 @@ import {
   revokeIbkrPortalEmbedSessions,
 } from "../services/ibkr-portal-embed-session";
 import { findRepoRoot } from "../services/runtime-flight-recorder";
+import { getControlledIbkrOrderLifecycle } from "../services/tax-planning";
 
 const router: IRouter = Router();
 
@@ -261,16 +262,24 @@ async function requireIbkrPortalAccessCsrf(
 
 router.get("/broker-execution/ibkr-portal/readiness", async (req, res) => {
   const session = await requireIbkrPortalAccess(req);
+  const [readiness, controlledOrder] = await Promise.all([
+    readPortalReadiness(session.user.id),
+    getControlledIbkrOrderLifecycle({ appUserId: session.user.id }),
+  ]);
   const data = GetIbkrPortalReadinessResponse.parse(
-    await readPortalReadiness(session.user.id),
+    { ...readiness, controlledOrder },
   );
   res.json(data);
 });
 
 router.get("/broker-execution/ibkr-portal/status", async (req, res) => {
   const session = await requireIbkrPortalAccess(req);
+  const [status, controlledOrder] = await Promise.all([
+    getPortalStatus(session.user.id),
+    getControlledIbkrOrderLifecycle({ appUserId: session.user.id }),
+  ]);
   const data = GetIbkrPortalStatusResponse.parse(
-    await getPortalStatus(session.user.id),
+    { ...status, controlledOrder },
   );
   if (data.status === "connected" || data.status === "disconnected") {
     revokeIbkrPortalEmbedSessions(session.user.id);

@@ -394,6 +394,8 @@ export * from './ibkrBridgeRemoteShutdown';
 export * from './ibkrBridgeRemoteShutdownAction';
 export * from './ibkrBridgeRemoteShutdownMode';
 export * from './ibkrBridgeRemoteShutdownResponse';
+export * from './ibkrControlledOrderLifecycle';
+export * from './ibkrControlledOrderLifecycleStatus';
 export * from './ibkrOAuthCredentialReadiness';
 export * from './ibkrOAuthHostedConnectRequirements';
 export * from './ibkrOAuthHostedConnectRequirementsOauthVersion';

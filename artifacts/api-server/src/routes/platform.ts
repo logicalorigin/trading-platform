@@ -2183,14 +2183,6 @@ router.post("/orders/:orderId/cancel", async (req, res) => {
     orderId: req.params.orderId,
     mode: body.mode,
     confirm: body.confirm ?? false,
-    manualIndicator:
-      typeof body.manualIndicator === "boolean"
-        ? body.manualIndicator
-        : null,
-    extOperator:
-      typeof body.extOperator === "string"
-        ? body.extOperator
-        : null,
   }));
 });
 

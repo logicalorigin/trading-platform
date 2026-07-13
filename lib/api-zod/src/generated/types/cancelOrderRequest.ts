@@ -11,8 +11,4 @@ export interface CancelOrderRequest {
   accountId: string;
   mode: EnvironmentMode;
   confirm?: boolean;
-  /** @nullable */
-  manualIndicator?: boolean | null;
-  /** @nullable */
-  extOperator?: string | null;
 }

@@ -7073,6 +7073,8 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/IbkrPortalExecutionTarget"
+        controlledOrder:
+          $ref: "#/components/schemas/IbkrControlledOrderLifecycle"
         loginPath:
           type: string
           nullable: true
@@ -7088,8 +7090,46 @@ components:
         - selectedAccountId
         - accounts
         - executionTargets
+        - controlledOrder
         - loginPath
         - message
+
+    IbkrControlledOrderLifecycle:
+      type: object
+      description: Durable server-owned state for the bounded direct-IBKR order lifecycle. Never includes raw warning reply identifiers.
+      properties:
+        status:
+          type: string
+          enum: [none, active, reconciliation_required]
+        accountId:
+          type: [string, "null"]
+        orderId:
+          type: [string, "null"]
+        symbol:
+          type: [string, "null"]
+        side:
+          type: [string, "null"]
+        quantity:
+          type: [number, "null"]
+        limitPrice:
+          type: [number, "null"]
+        replacementUsed:
+          type: boolean
+        cancelAttempted:
+          type: boolean
+        reason:
+          type: [string, "null"]
+      required:
+        - status
+        - accountId
+        - orderId
+        - symbol
+        - side
+        - quantity
+        - limitPrice
+        - replacementUsed
+        - cancelAttempted
+        - reason
 
     IbkrPortalExecutionTarget:
       type: object
@@ -11041,10 +11081,6 @@ components:
           $ref: "#/components/schemas/EnvironmentMode"
         confirm:
           type: boolean
-        manualIndicator:
-          type: [boolean, "null"]
-        extOperator:
-          type: [string, "null"]
       required:
         - accountId
         - mode

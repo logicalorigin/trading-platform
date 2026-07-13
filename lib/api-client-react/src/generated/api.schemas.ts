@@ -1894,6 +1894,38 @@ export interface IbkrPortalExecutionTarget {
   selected: boolean;
 }
 
+export type IbkrControlledOrderLifecycleStatus = typeof IbkrControlledOrderLifecycleStatus[keyof typeof IbkrControlledOrderLifecycleStatus];
+
+
+export const IbkrControlledOrderLifecycleStatus = {
+  none: 'none',
+  active: 'active',
+  reconciliation_required: 'reconciliation_required',
+} as const;
+
+/**
+ * Durable server-owned state for the bounded direct-IBKR order lifecycle. Never includes raw warning reply identifiers.
+ */
+export interface IbkrControlledOrderLifecycle {
+  status: IbkrControlledOrderLifecycleStatus;
+  /** @nullable */
+  accountId: string | null;
+  /** @nullable */
+  orderId: string | null;
+  /** @nullable */
+  symbol: string | null;
+  /** @nullable */
+  side: string | null;
+  /** @nullable */
+  quantity: number | null;
+  /** @nullable */
+  limitPrice: number | null;
+  replacementUsed: boolean;
+  cancelAttempted: boolean;
+  /** @nullable */
+  reason: string | null;
+}
+
 /**
  * IBKR Client Portal browser-login gateway and session readiness. Reflects the per-user gateway pool state, not an OAuth token.
  */
@@ -1908,6 +1940,7 @@ export interface IbkrPortalReadinessResponse {
   selectedAccountId: string | null;
   accounts: string[];
   executionTargets: IbkrPortalExecutionTarget[];
+  controlledOrder: IbkrControlledOrderLifecycle;
   loginPath: string | null;
   message: string;
 }
@@ -4381,10 +4414,6 @@ export interface CancelOrderRequest {
   accountId: string;
   mode: EnvironmentMode;
   confirm?: boolean;
-  /** @nullable */
-  manualIndicator?: boolean | null;
-  /** @nullable */
-  extOperator?: string | null;
 }
 
 export interface CancelOrderResponse {

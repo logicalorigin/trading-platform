@@ -5,6 +5,7 @@
  * Internal trading platform API for Massive market data and IBKR execution.
  * OpenAPI spec version: 0.2.0
  */
+import type { IbkrControlledOrderLifecycle } from './ibkrControlledOrderLifecycle';
 import type { IbkrPortalConnectionStatus } from './ibkrPortalConnectionStatus';
 import type { IbkrPortalExecutionTarget } from './ibkrPortalExecutionTarget';
 
@@ -22,6 +23,7 @@ export interface IbkrPortalReadinessResponse {
   selectedAccountId: string | null;
   accounts: string[];
   executionTargets: IbkrPortalExecutionTarget[];
+  controlledOrder: IbkrControlledOrderLifecycle;
   loginPath: string | null;
   message: string;
 }
