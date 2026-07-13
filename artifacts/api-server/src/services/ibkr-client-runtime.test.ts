@@ -8,11 +8,13 @@ import {
   stopGateway,
 } from "./ibkr-portal-gateway-manager";
 import {
+  assertIbkrClientPortalGatewaySnapshot,
+  getIbkrClientPortalGatewaySnapshot,
   getIbkrClientPortalClient,
   isIbkrClientPortalConfigured,
 } from "./ibkr-client-runtime";
 
-test("an unverified hosted gateway cannot fall back to the global IBKR runtime", async () => {
+test("an authenticated user without the same verified gateway cannot use the global IBKR runtime", async () => {
   const previousEnabled = process.env["IBKR_SESSION_HOST_ENABLED"];
   const previousToken = process.env["IBKR_SESSION_HOST_CONTROL_TOKEN"];
   const previousGlobalUrl = process.env["IBKR_CLIENT_PORTAL_BASE_URL"];
@@ -36,7 +38,6 @@ test("an unverified hosted gateway cannot fall back to the global IBKR runtime",
   }) as typeof fetch;
 
   try {
-    await ensureGateway(appUserId);
     assert.equal(isIbkrClientPortalConfigured(), true);
     assert.equal(
       runWithIbkrPortalUser(appUserId, isIbkrClientPortalConfigured),
@@ -51,10 +52,43 @@ test("an unverified hosted gateway cannot fall back to the global IBKR runtime",
         error.code === "ibkr_client_portal_not_configured",
     );
 
+    await ensureGateway(appUserId);
+    assert.equal(
+      runWithIbkrPortalUser(appUserId, isIbkrClientPortalConfigured),
+      false,
+    );
+
     assert.equal(markGatewayPaperAccountVerified(appUserId), true);
     assert.equal(
       runWithIbkrPortalUser(appUserId, isIbkrClientPortalConfigured),
       true,
+    );
+    const snapshot = runWithIbkrPortalUser(
+      appUserId,
+      getIbkrClientPortalGatewaySnapshot,
+    );
+    assert.ok(snapshot);
+    assert.equal(snapshot.appUserId, appUserId);
+    assert.equal(snapshot.baseUrl, "http://127.0.0.1:15000/v1/api");
+    assert.equal(
+      runWithIbkrPortalUser(appUserId, () =>
+        assertIbkrClientPortalGatewaySnapshot(snapshot),
+      ).startedAt,
+      snapshot.startedAt,
+    );
+    assert.throws(
+      () =>
+        runWithIbkrPortalUser(appUserId, () =>
+          assertIbkrClientPortalGatewaySnapshot({
+            ...snapshot,
+            startedAt: snapshot.startedAt - 1,
+          }),
+        ),
+      (error: unknown) =>
+        typeof error === "object" &&
+        error !== null &&
+        "code" in error &&
+        error.code === "ibkr_client_portal_gateway_changed",
     );
   } finally {
     await stopGateway(appUserId);

@@ -93,9 +93,9 @@ mock.module(new URL("../services/account-page-streams.ts", import.meta.url).href
 mock.module(new URL("../services/bridge-streams.ts", import.meta.url).href, {
   namedExports: {
     fetchAccountSnapshotPayload: countedService("fetchAccountSnapshotPayload"),
-    fetchExecutionSnapshotPayload: inertService({}),
+    fetchExecutionSnapshotPayload: countedInertService("fetchExecutionSnapshotPayload"),
     fetchOptionQuoteSnapshotPayload: inertService({}),
-    fetchOrderSnapshotPayload: inertService({}),
+    fetchOrderSnapshotPayload: countedInertService("fetchOrderSnapshotPayload"),
     fetchQuoteSnapshotPayload: inertService({}),
     readOptionQuoteDemandSnapshotPayload: inertService({}),
     resolveQuoteStreamSource: () => "ibkr-bridge",
@@ -133,7 +133,7 @@ mock.module(new URL("../services/platform.ts", import.meta.url).href, {
     batchOptionChains: inertService({}),
     benchmarkOptionsFlowScannerTickerPass: inertService({}),
     cancelOrder: countedInertService("cancelOrder"),
-    continueIbkrOrderReply: inertService({}),
+    continueIbkrOrderReply: countedInertService("continueIbkrOrderReply"),
     createWatchlist: inertService({}),
     deleteWatchlist: inertService({}),
     getBarsWithDebug: inertService({}),
@@ -150,19 +150,19 @@ mock.module(new URL("../services/platform.ts", import.meta.url).href, {
     getUniverseLogos: inertService({}),
     listAggregateFlowEvents: inertService({}),
     listBrokerConnections: inertService({}),
-    listExecutions: inertService({}),
+    listExecutions: countedInertService("listExecutions"),
     listFlowEvents: inertService({}),
-    listOrders: inertService({}),
+    listOrders: countedInertService("listOrders"),
     listWatchlistsForCurrentUser: inertService({}),
-    placeOrder: inertService({}),
-    previewOrder: inertService({}),
-    previewOrderReplacement: inertService({}),
+    placeOrder: countedInertService("placeOrder"),
+    previewOrder: countedInertService("previewOrder"),
+    previewOrderReplacement: countedInertService("previewOrderReplacement"),
     removeWatchlistSymbol: inertService({}),
     reorderWatchlistSymbols: inertService({}),
     replaceOrder: countedInertService("replaceOrder"),
     resolveOptionContractWithDebug: inertService({}),
     searchUniverseTickers: inertService({}),
-    submitRawOrders: inertService({}),
+    submitRawOrders: countedInertService("submitRawOrders"),
     updateWatchlist: inertService({}),
   },
 });
@@ -326,6 +326,58 @@ const liveOrderMutationCases = [
       mode: "shadow",
       confirm: true,
     },
+  },
+] as const;
+
+const directIbkrOrderRouteCases = [
+  { method: "GET", path: "/orders", service: "listOrders" },
+  {
+    method: "GET",
+    path: "/streams/orders",
+    service: "fetchOrderSnapshotPayload",
+  },
+  { method: "GET", path: "/executions", service: "listExecutions" },
+  {
+    method: "GET",
+    path: "/streams/executions",
+    service: "fetchExecutionSnapshotPayload",
+  },
+  { method: "POST", path: "/orders", service: "placeOrder", body: {} },
+  {
+    method: "POST",
+    path: "/orders/preview",
+    service: "previewOrder",
+    body: {},
+  },
+  {
+    method: "POST",
+    path: "/orders/reply",
+    service: "continueIbkrOrderReply",
+    body: {},
+  },
+  {
+    method: "POST",
+    path: "/orders/submit",
+    service: "submitRawOrders",
+    body: { ibkrOrders: [] },
+  },
+  {
+    method: "POST",
+    path: "/orders/order-1/replace",
+    service: "replaceOrder",
+    body: {},
+  },
+  {
+    method: "POST",
+    path: "/orders/order-1/replace/preview",
+    service: "previewOrderReplacement",
+    body: {},
+  },
+  {
+    method: "POST",
+    path: "/orders/order-1/cancel",
+    service: "cancelOrder",
+    body: {},
   },
 ] as const;
 
@@ -606,6 +658,57 @@ test("live order mutation routes reject members without broker_connect before br
   );
 });
 
+test("direct IBKR routes reject members without IBKR authorization before broker services", async () => {
+  await withTestDb(async () =>
+    withServer(async (baseUrl) => {
+      const previousFlag = process.env["IBKR_MEMBER_CONNECT_ENABLED"];
+      process.env["IBKR_MEMBER_CONNECT_ENABLED"] = "true";
+      serviceCalls.clear();
+      try {
+        const auth = await seedMemberAuth({
+          email: "direct-ibkr-order-unentitled@example.com",
+          entitlements: ["broker_connect"],
+        });
+
+        for (const route of directIbkrOrderRouteCases) {
+          const response = await fetch(`${baseUrl}${route.path}`, {
+            method: route.method,
+            headers: {
+              cookie: auth.cookie,
+              ...(route.method === "POST"
+                ? {
+                    "content-type": "application/json",
+                    [AUTH_CSRF_HEADER]: auth.csrfToken,
+                  }
+                : {}),
+            },
+            ...(route.method === "POST"
+              ? { body: JSON.stringify(route.body) }
+              : {}),
+          });
+
+          assert.equal(response.status, 403, `${route.path} should be blocked`);
+          assert.equal(
+            ((await response.json()) as { code?: string }).code,
+            "ibkr_member_connect_disabled",
+          );
+          assert.equal(
+            serviceCalls.get(route.service) ?? 0,
+            0,
+            `${route.service} should not run before IBKR admission`,
+          );
+        }
+      } finally {
+        if (previousFlag === undefined) {
+          delete process.env["IBKR_MEMBER_CONNECT_ENABLED"];
+        } else {
+          process.env["IBKR_MEMBER_CONNECT_ENABLED"] = previousFlag;
+        }
+      }
+    }),
+  );
+});
+
 test("Flex test route rejects missing CSRF before refreshing", async () => {
   await withTestDb(async () =>
     withServer(async (baseUrl) => {
@@ -668,32 +771,42 @@ test("live order mutation routes reject missing CSRF before broker services", as
   );
 });
 
-test("live order mutation routes with broker_connect and CSRF reach handlers", async () => {
+test("authorized live order mutation routes with CSRF reach handlers", async () => {
   await withTestDb(async () =>
     withServer(async (baseUrl) => {
+      const previousFlag = process.env["IBKR_MEMBER_CONNECT_ENABLED"];
+      process.env["IBKR_MEMBER_CONNECT_ENABLED"] = "true";
       serviceCalls.clear();
-      const auth = await seedMemberAuth({
-        email: "wo-sec-entitled@example.com",
-        entitlements: ["broker_connect"],
-      });
-
-      for (const route of liveOrderMutationCases) {
-        const response = await fetch(`${baseUrl}${route.path}`, {
-          method: "POST",
-          headers: {
-            cookie: auth.cookie,
-            "content-type": "application/json",
-            [AUTH_CSRF_HEADER]: auth.csrfToken,
-          },
-          body: JSON.stringify(route.body),
+      try {
+        const auth = await seedMemberAuth({
+          email: "wo-sec-entitled@example.com",
+          entitlements: ["broker_connect", "ibkr_access"],
         });
 
-        assert.equal(response.status, 200, `${route.path} should pass guard`);
-        assert.equal(
-          serviceCalls.get(route.service) ?? 0,
-          1,
-          `${route.service} should run after entitlement and CSRF admission`,
-        );
+        for (const route of liveOrderMutationCases) {
+          const response = await fetch(`${baseUrl}${route.path}`, {
+            method: "POST",
+            headers: {
+              cookie: auth.cookie,
+              "content-type": "application/json",
+              [AUTH_CSRF_HEADER]: auth.csrfToken,
+            },
+            body: JSON.stringify(route.body),
+          });
+
+          assert.equal(response.status, 200, `${route.path} should pass guard`);
+          assert.equal(
+            serviceCalls.get(route.service) ?? 0,
+            1,
+            `${route.service} should run after entitlement and CSRF admission`,
+          );
+        }
+      } finally {
+        if (previousFlag === undefined) {
+          delete process.env["IBKR_MEMBER_CONNECT_ENABLED"];
+        } else {
+          process.env["IBKR_MEMBER_CONNECT_ENABLED"] = previousFlag;
+        }
       }
     }),
   );

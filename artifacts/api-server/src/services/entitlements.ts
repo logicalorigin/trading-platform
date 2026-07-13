@@ -1,3 +1,4 @@
+import { HttpError } from "../lib/errors";
 import type { AuthenticatedSession } from "./auth";
 
 // Slice 7: entitlement policy. The launch token (Slice 6) carries an optional
@@ -80,4 +81,17 @@ export function isIbkrMemberConnectEnabled(): boolean {
     (process.env["IBKR_MEMBER_CONNECT_ENABLED"] ?? "").trim().toLowerCase() ===
     "true"
   );
+}
+
+export function assertIbkrPortalAccess(session: AuthenticatedSession): void {
+  if (session.user.role === "admin") return;
+  if (
+    isIbkrMemberConnectEnabled() &&
+    sessionHasEntitlement(session, ENTITLEMENTS.IBKR_ACCESS)
+  ) {
+    return;
+  }
+  throw new HttpError(403, "IBKR connections are not available.", {
+    code: "ibkr_member_connect_disabled",
+  });
 }

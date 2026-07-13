@@ -178,6 +178,7 @@ import {
 } from "../services/shadow-account";
 import { runWithShadowAccountId } from "../services/shadow-account-context";
 import { requireEntitlementCsrf, requireUser } from "./auth";
+import { assertIbkrPortalAccess } from "../services/entitlements";
 
 const router: IRouter = Router();
 let nextOptionQuoteSseDemandId = 1;
@@ -190,6 +191,16 @@ type ParsedGexDashboardResponse = ReturnType<typeof GetGexDashboardResponse.pars
 const parsedGexDashboardResponses = new WeakMap<object, ParsedGexDashboardResponse>();
 
 const ibkrConfiguredForRealAccounts = () => getProviderConfiguration().ibkr;
+
+async function requireDirectIbkrReadAccess(req: Request): Promise<void> {
+  assertIbkrPortalAccess(await requireUser(req));
+}
+
+async function requireDirectIbkrOrderMutationAccess(
+  req: Request,
+): Promise<void> {
+  assertIbkrPortalAccess(await requireEntitlementCsrf("broker_connect")(req));
+}
 
 const admitAccountRoute = async (
   res: Response,
@@ -2047,6 +2058,7 @@ router.get("/positions", async (req, res) => {
 });
 
 router.get("/orders", async (req, res) => {
+  await requireDirectIbkrReadAccess(req);
   const query = ListOrdersQueryParams.parse(req.query);
   const data = ListOrdersResponse.parse(await listOrders(query));
 
@@ -2084,26 +2096,26 @@ router.post("/shadow/orders", async (req, res) => {
 });
 
 router.post("/orders", async (req, res) => {
-  await requireEntitlementCsrf("broker_connect")(req);
+  await requireDirectIbkrOrderMutationAccess(req);
   const body = PlaceOrderBody.parse(req.body);
   res.status(201).json(await placeOrder(body));
 });
 
 router.post("/orders/preview", async (req, res) => {
-  await requireEntitlementCsrf("broker_connect")(req);
+  await requireDirectIbkrOrderMutationAccess(req);
   const body = PlaceOrderBody.parse(req.body);
 
   res.json(await previewOrder(body));
 });
 
 router.post("/orders/reply", async (req, res) => {
-  await requireEntitlementCsrf("broker_connect")(req);
+  await requireDirectIbkrOrderMutationAccess(req);
   const body = ContinueIbkrOrderReplyBody.parse(req.body);
   res.json(await continueIbkrOrderReply(body));
 });
 
 router.post("/orders/submit", async (req, res) => {
-  await requireEntitlementCsrf("broker_connect")(req);
+  await requireDirectIbkrOrderMutationAccess(req);
   if (Array.isArray(req.body?.ibkrOrders)) {
     res.status(201).json(await submitRawOrders({
       accountId:
@@ -2138,7 +2150,7 @@ router.post("/orders/submit", async (req, res) => {
 });
 
 router.post("/orders/:orderId/replace", async (req, res) => {
-  await requireEntitlementCsrf("broker_connect")(req);
+  await requireDirectIbkrOrderMutationAccess(req);
   const body = ReplaceOrderBody.parse(req.body);
   res.json(await replaceOrder({
     accountId: body.accountId,
@@ -2153,7 +2165,7 @@ router.post("/orders/:orderId/replace", async (req, res) => {
 });
 
 router.post("/orders/:orderId/replace/preview", async (req, res) => {
-  await requireEntitlementCsrf("broker_connect")(req);
+  await requireDirectIbkrOrderMutationAccess(req);
   const body = PreviewOrderReplacementBody.parse(req.body);
   res.json(await previewOrderReplacement({
     accountId: body.accountId,
@@ -2164,7 +2176,7 @@ router.post("/orders/:orderId/replace/preview", async (req, res) => {
 });
 
 router.post("/orders/:orderId/cancel", async (req, res) => {
-  await requireEntitlementCsrf("broker_connect")(req);
+  await requireDirectIbkrOrderMutationAccess(req);
   const body = CancelOrderBody.parse(req.body);
   res.json(await cancelOrder({
     accountId: body.accountId,
@@ -2183,6 +2195,7 @@ router.post("/orders/:orderId/cancel", async (req, res) => {
 });
 
 router.get("/executions", async (req, res) => {
+  await requireDirectIbkrReadAccess(req);
   const query = req.query as Record<string, unknown>;
   const mode =
     query.mode === "live" ? "live" : query.mode === "shadow" ? "shadow" : undefined;
@@ -3119,6 +3132,7 @@ router.get("/streams/options/quotes", async (req, res) => {
 });
 
 router.get("/streams/orders", async (req, res) => {
+  await requireDirectIbkrReadAccess(req);
   const mode = req.query.mode === "live" ? "live" : "shadow";
   const accountId = typeof req.query.accountId === "string" ? req.query.accountId : undefined;
   const status = typeof req.query.status === "string" ? req.query.status as Parameters<typeof subscribeOrderSnapshots>[0]["status"] : undefined;
@@ -3154,6 +3168,7 @@ router.get("/streams/orders", async (req, res) => {
 });
 
 router.get("/streams/executions", async (req, res) => {
+  await requireDirectIbkrReadAccess(req);
   const mode =
     req.query.mode === "live"
       ? "live"

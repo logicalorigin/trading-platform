@@ -30,12 +30,8 @@ import {
   requireUserCsrf,
 } from "./auth";
 import { HttpError } from "../lib/errors";
+import { assertIbkrPortalAccess } from "../services/entitlements";
 import type { AuthenticatedSession } from "../services/auth";
-import {
-  ENTITLEMENTS,
-  isIbkrMemberConnectEnabled,
-  sessionHasEntitlement,
-} from "../services/entitlements";
 import { recordAuditEvent } from "../services/audit-events";
 import {
   beginPortalReadinessQuietWindow,
@@ -245,22 +241,6 @@ function trace(entry: Record<string, unknown>): void {
     JSON.stringify({ ts: new Date().toISOString(), ...entry }) + "\n",
     () => undefined,
   );
-}
-
-// Slice 7 (SPEC §6): the IBKR Client Portal stays OFF for members until the IBKR
-// ToS/OAuth-approval question clears. Admins bypass; a member needs BOTH the
-// kill-switch flag (IBKR_MEMBER_CONNECT_ENABLED) AND the `ibkr_access` entitlement.
-function assertIbkrPortalAccess(session: AuthenticatedSession): void {
-  if (session.user.role === "admin") return;
-  if (
-    isIbkrMemberConnectEnabled() &&
-    sessionHasEntitlement(session, ENTITLEMENTS.IBKR_ACCESS)
-  ) {
-    return;
-  }
-  throw new HttpError(403, "IBKR connections are not available.", {
-    code: "ibkr_member_connect_disabled",
-  });
 }
 
 async function requireIbkrPortalAccess(
