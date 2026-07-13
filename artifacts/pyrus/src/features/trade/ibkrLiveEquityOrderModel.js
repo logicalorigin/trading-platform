@@ -71,6 +71,9 @@ export const readIbkrOrderWarning = (error) => {
 export const isIbkrOrderRejected = (error) =>
   error?.data?.code === "ibkr_order_rejected";
 
+export const isIbkrOrderReconciliationError = (error) =>
+  String(error?.data?.code || "").includes("reconciliation_required");
+
 export const buildPreparedIbkrReplacementPreview = ({
   accountId,
   limitPrice,

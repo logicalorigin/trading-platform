@@ -9,6 +9,7 @@ import {
   buildPreparedIbkrReplacementPreview,
   ibkrCancelToast,
   ibkrLifecycleRequiresReconciliation,
+  isIbkrOrderReconciliationError,
   isIbkrOrderRejected,
   isIbkrLiveReadinessReady,
   readIbkrOrderWarning,
@@ -146,6 +147,18 @@ test("warning challenge is read from the generated ApiError problem payload", ()
     }),
     false,
   );
+  assert.equal(
+    isIbkrOrderReconciliationError({
+      data: { code: "ibkr_order_reply_reconciliation_required" },
+    }),
+    true,
+  );
+  assert.equal(
+    isIbkrOrderReconciliationError({
+      data: { code: "ibkr_order_rejected" },
+    }),
+    false,
+  );
 });
 
 test("price-only replacement uses the prepared fingerprint and preflight", () => {
@@ -250,6 +263,7 @@ test("ticket wires generated direct IBKR lifecycle hooks", () => {
   assert.match(source, /"CHANGE USED"/);
   assert.match(source, /ibkrLifecyclePending \|\| ibkrWarningDecisionOpen/);
   assert.match(source, /isIbkrOrderRejected/);
+  assert.match(source, /trackedIbkrOrderRequiresReconciliation \|\|/);
 });
 
 test("warning dialog exposes an explicit decline action", () => {
