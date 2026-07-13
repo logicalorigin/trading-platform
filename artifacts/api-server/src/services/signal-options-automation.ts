@@ -3066,6 +3066,13 @@ function withSignalOptionsSignalSnapshotsCache(input: {
   nowMs?: number;
 }): Promise<SignalOptionsSignalSnapshot[]> {
   const nowMs = input.nowMs ?? Date.now();
+  // ponytail: scan the small deployment-key map on access; add an LRU only if
+  // measured deployment counts make this linear expiry sweep material.
+  for (const [key, cached] of signalOptionsSignalSnapshotCache) {
+    if (cached.expiresAt <= nowMs) {
+      signalOptionsSignalSnapshotCache.delete(key);
+    }
+  }
   const key = signalOptionsSignalSnapshotCacheKey(
     input.deploymentId,
     input.options,
@@ -3074,7 +3081,6 @@ function withSignalOptionsSignalSnapshotsCache(input: {
   if (cached && cached.expiresAt > nowMs) {
     return Promise.resolve(cached.value);
   }
-  signalOptionsSignalSnapshotCache.delete(key);
   const pending = signalOptionsSignalSnapshotInFlight.get(key);
   if (pending) {
     return pending;
@@ -6657,12 +6663,14 @@ function shouldUseStoredMonitorStateForWorkerReadiness(input: {
   return Boolean(input.source === "worker" && input.readinessReason);
 }
 
-function shouldUseScopedSignalOptionsWorkerStoredState(input: {
+function shouldUseScopedSignalOptionsStoredState(input: {
   source?: "manual" | "worker";
   preferStoredMonitorState?: boolean;
+  requireDecisionFreshState?: boolean;
 }) {
   return (
-    input.source === "worker" && input.preferStoredMonitorState === true
+    input.requireDecisionFreshState === true ||
+    (input.source === "worker" && input.preferStoredMonitorState === true)
   );
 }
 
@@ -6671,9 +6679,10 @@ async function readSignalOptionsStoredMonitorState(input: {
   universe: Set<string>;
   profile: SignalMonitorProfileRow;
   preferStoredMonitorState?: boolean;
+  requireDecisionFreshState?: boolean;
   source?: "manual" | "worker";
 }) {
-  if (shouldUseScopedSignalOptionsWorkerStoredState(input)) {
+  if (shouldUseScopedSignalOptionsStoredState(input)) {
     return listSignalOptionsStoredSignalStatesFast({
       deployment: input.deployment,
       universe: input.universe,
@@ -6691,6 +6700,7 @@ async function loadSignalOptionsMonitorState(input: {
   universe: Set<string>;
   forceEvaluate?: boolean;
   preferStoredMonitorState?: boolean;
+  requireDecisionFreshState?: boolean;
   requireLiveEdgeRefresh?: boolean;
   source?: "manual" | "worker";
   readinessReason?: AlgoGatewayReadiness["reason"];
@@ -6718,6 +6728,7 @@ async function loadSignalOptionsMonitorState(input: {
         universe: input.universe,
         profile,
         preferStoredMonitorState: input.preferStoredMonitorState,
+        requireDecisionFreshState: input.requireDecisionFreshState,
         source: input.source,
       });
       throwIfSignalOptionsScanAborted(input.signal);
@@ -6739,6 +6750,7 @@ async function loadSignalOptionsMonitorState(input: {
       universe: input.universe,
       profile,
       preferStoredMonitorState: input.preferStoredMonitorState,
+      requireDecisionFreshState: input.requireDecisionFreshState,
       source: input.source,
     });
     throwIfSignalOptionsScanAborted(input.signal);
@@ -20901,6 +20913,7 @@ async function runSignalOptionsShadowScanUnlocked(input: {
     forceEvaluate: input.forceEvaluate,
     preferStoredMonitorState:
       input.preferStoredMonitorState ?? source === "worker",
+    requireDecisionFreshState: input.skipActionWork !== true,
     requireLiveEdgeRefresh: false,
     source,
     readinessReason: readiness.reason,
@@ -21878,6 +21891,9 @@ export const __signalOptionsAutomationInternalsForTests = {
     withSignalOptionsSignalSnapshotsCache,
   getSignalOptionsSignalSnapshotCacheTtlMsForTests: () =>
     SIGNAL_OPTIONS_SIGNAL_SNAPSHOT_CACHE_TTL_MS,
+  getSignalOptionsSignalSnapshotCacheSizeForTests: () =>
+    signalOptionsSignalSnapshotCache.size,
+  shouldUseScopedSignalOptionsStoredState,
   compareSignalOptionsCandidatesForDisplay,
   candidateFromEvent,
   eventTimelineItem,

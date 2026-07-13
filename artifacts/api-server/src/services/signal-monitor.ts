@@ -10571,12 +10571,14 @@ async function persistSignalMonitorMatrixStatesBestEffort(input: {
       offset < rows.length;
       offset += SIGNAL_MONITOR_STATE_UPSERT_MAX_ROWS
     ) {
+      const chunk = rows.slice(
+        offset,
+        offset + SIGNAL_MONITOR_STATE_UPSERT_MAX_ROWS,
+      );
       await runSignalMonitorBulkDbWrite("bulk", async () => {
         await db
           .insert(signalMonitorSymbolStatesTable)
-          .values(
-            rows.slice(offset, offset + SIGNAL_MONITOR_STATE_UPSERT_MAX_ROWS),
-          )
+          .values(chunk)
           .onConflictDoUpdate({
             target: [
               signalMonitorSymbolStatesTable.profileId,
@@ -10586,8 +10588,8 @@ async function persistSignalMonitorMatrixStatesBestEffort(input: {
             set: signalMonitorSymbolStateUpsertSet,
           });
       });
+      invalidateSignalMonitorStateRowsCacheForWrittenCells(chunk);
     }
-    invalidateSignalMonitorStateRowsCacheForWrittenCells(rows);
   } catch (error) {
     const diagnostic = recordSignalMonitorDbFallback(error, {
       operation: "persist_signal_monitor_matrix_states",

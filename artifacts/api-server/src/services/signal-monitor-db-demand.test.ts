@@ -100,7 +100,7 @@ test("every in-process signal-state producer invalidates the raw row cache", () 
   );
   assert.match(
     signalMonitorSource.slice(bulkStart, bulkEnd),
-    /\.insert\(signalMonitorSymbolStatesTable\)[\s\S]*invalidateSignalMonitorStateRowsCacheForWrittenCells\(rows\)/,
+    /const chunk = rows\.slice\([\s\S]*\.insert\(signalMonitorSymbolStatesTable\)[\s\S]*\.values\(chunk\)[\s\S]*invalidateSignalMonitorStateRowsCacheForWrittenCells\(chunk\)/,
   );
   assert.match(
     signalMonitorSource.slice(profileStart, profileEnd),

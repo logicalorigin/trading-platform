@@ -105,6 +105,99 @@ test("Signal Options signal shaping single-flights, reuses for 5s, and invalidat
   invalidateSignalOptionsDashboardCaches();
 });
 
+test("Signal Options signal shaping sweeps expired dormant deployment entries", async () => {
+  const {
+    getSignalOptionsSignalSnapshotCacheSizeForTests,
+    withSignalOptionsSignalSnapshotsCacheForTests,
+  } = __signalOptionsAutomationInternalsForTests;
+  const options = { includeEventMetadata: true };
+
+  invalidateSignalOptionsDashboardCaches();
+  await withSignalOptionsSignalSnapshotsCacheForTests({
+    deploymentId: "00000000-0000-4000-8000-000000000006",
+    options,
+    nowMs: 1_000,
+    load: async () => [],
+  });
+  assert.equal(getSignalOptionsSignalSnapshotCacheSizeForTests(), 1);
+
+  await withSignalOptionsSignalSnapshotsCacheForTests({
+    deploymentId: "00000000-0000-4000-8000-000000000007",
+    options,
+    nowMs: 6_000,
+    load: async () => [],
+  });
+  assert.equal(
+    getSignalOptionsSignalSnapshotCacheSizeForTests(),
+    1,
+    "reading another deployment removes the expired dormant entry",
+  );
+  invalidateSignalOptionsDashboardCaches();
+});
+
+test("action-bearing Signal Options scans require the scoped direct stored-state read", () => {
+  const { shouldUseScopedSignalOptionsStoredState } =
+    __signalOptionsAutomationInternalsForTests;
+
+  assert.equal(
+    shouldUseScopedSignalOptionsStoredState({
+      source: "manual",
+      preferStoredMonitorState: false,
+      requireDecisionFreshState: true,
+    }),
+    true,
+  );
+  assert.equal(
+    shouldUseScopedSignalOptionsStoredState({
+      source: "manual",
+      preferStoredMonitorState: true,
+      requireDecisionFreshState: true,
+    }),
+    true,
+  );
+  assert.equal(
+    shouldUseScopedSignalOptionsStoredState({
+      source: "manual",
+      preferStoredMonitorState: true,
+      requireDecisionFreshState: false,
+    }),
+    false,
+  );
+  assert.equal(
+    shouldUseScopedSignalOptionsStoredState({
+      source: "worker",
+      preferStoredMonitorState: true,
+      requireDecisionFreshState: false,
+    }),
+    true,
+    "the existing worker direct-read policy is preserved",
+  );
+
+  const source = readFileSync(
+    new URL("./signal-options-automation.ts", import.meta.url),
+    "utf8",
+  );
+  const runStart = source.indexOf(
+    "async function runSignalOptionsShadowScanUnlocked",
+  );
+  const runEnd = source.indexOf("\n  const signalScanCompletedAt", runStart);
+  assert.ok(runStart >= 0 && runEnd > runStart);
+  assert.match(
+    source.slice(runStart, runEnd),
+    /loadSignalOptionsMonitorState\(\{[\s\S]*requireDecisionFreshState:\s*input\.skipActionWork !== true/,
+  );
+
+  const routeSource = readFileSync(
+    new URL("../routes/automation.ts", import.meta.url),
+    "utf8",
+  );
+  assert.match(
+    routeSource,
+    /runSignalOptionsShadowScan\(\{[\s\S]*skipActionWork:\s*runActions !== true/,
+    "the manual route maps runActions=true to an action-bearing scan",
+  );
+});
+
 test("resolveSameScanEntryAction: a symbol opened earlier this scan defers (no duplicate entry); block/flip/proceed preserved", () => {
   const { resolveSameScanEntryAction } = __signalOptionsAutomationInternalsForTests;
   const pos = (direction: "buy" | "sell") =>
