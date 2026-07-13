@@ -111,10 +111,66 @@ test("Python compute runtime enforces the checked-in uv lock", async () => {
     assert.deepEqual(spawnedArgs, [
       "run",
       "--locked",
+      "--no-env-file",
       "python",
       "-m",
       "pyrus_compute.service",
     ]);
+  } finally {
+    runtime.stop();
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("Python compute runtime launches with its configured environment", async () => {
+  const cwd = mkdtempSync(join(tmpdir(), "pyrus-python-compute-"));
+  writeFileSync(join(cwd, "pyproject.toml"), '[project]\nname = "test"\n');
+  let spawned = false;
+  let spawnedEnv: NodeJS.ProcessEnv | undefined;
+  const runtime = new PythonComputeRuntime({
+    env: { PYRUS_TEST_CONFIG: "present" },
+    laneDefinition: {
+      id: "research",
+      label: "Research compute",
+      config: {
+        enabled: true,
+        cwd,
+        host: "127.0.0.2",
+        port: 18_770,
+        startupTimeoutMs: 1,
+      },
+      jobTypes: ["benchmark_matrix", "signal_matrix"],
+    },
+    spawnProcess: ((_command: string, _args: readonly string[], options: { env?: NodeJS.ProcessEnv }) => {
+      spawned = true;
+      spawnedEnv = options.env;
+      return fakeSpawnedChild();
+    }) as typeof spawn,
+    fetch: (async () => {
+      if (!spawned) {
+        throw new Error("not started");
+      }
+      return new Response(
+        JSON.stringify({ ok: true, service: "pyrus-compute", lane: "research" }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    }) as typeof fetch,
+    delay: async () => {},
+    probePortOpen: async () => false,
+  });
+
+  try {
+    const diagnostics = await runtime.start();
+    assert.equal(diagnostics.status, "healthy");
+    assert.equal(spawnedEnv?.PYRUS_TEST_CONFIG, "present");
+    assert.equal(spawnedEnv?.HOME, undefined);
+    assert.equal(spawnedEnv?.PYRUS_PYTHON_COMPUTE_HOST, "127.0.0.2");
+    assert.equal(spawnedEnv?.PYRUS_PYTHON_COMPUTE_PORT, "18770");
+    assert.equal(spawnedEnv?.PYRUS_PYTHON_COMPUTE_LANE, "research");
+    assert.equal(
+      spawnedEnv?.PYRUS_PYTHON_COMPUTE_ALLOWED_JOB_TYPES,
+      "benchmark_matrix,signal_matrix",
+    );
   } finally {
     runtime.stop();
     rmSync(cwd, { recursive: true, force: true });

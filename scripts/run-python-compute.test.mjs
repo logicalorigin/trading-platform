@@ -46,6 +46,7 @@ test("Python compute runner enforces the checked-in uv lock", () => {
     assert.deepEqual(readFileSync(capturePath, "utf8").trim().split("\n"), [
       "run",
       "--locked",
+      "--no-env-file",
       "python",
       "-m",
       "pyrus_compute.doctor",

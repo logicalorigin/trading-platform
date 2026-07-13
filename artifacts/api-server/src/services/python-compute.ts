@@ -296,6 +296,7 @@ export class PythonComputeRuntime implements PythonComputeRuntimeLike {
   private stopping = false;
   private reprobing = false;
   private readonly config: RuntimeConfig;
+  private readonly environment: NodeJS.ProcessEnv;
   private readonly spawnProcess: typeof spawn;
   private readonly fetchFn: typeof fetch;
   private readonly delayFn: (ms: number) => Promise<void>;
@@ -310,6 +311,7 @@ export class PythonComputeRuntime implements PythonComputeRuntimeLike {
 
   constructor(deps: RuntimeDeps = {}) {
     const laneDefinition = deps.laneDefinition;
+    this.environment = { ...(deps.env ?? process.env) };
     this.config = laneDefinition?.config ?? resolvePythonComputeConfig(deps);
     this.spawnProcess = deps.spawnProcess ?? spawn;
     this.fetchFn = deps.fetch ?? fetch;
@@ -402,12 +404,12 @@ export class PythonComputeRuntime implements PythonComputeRuntimeLike {
     this.diagnostics.startedAt = new Date().toISOString();
     const child = this.spawnProcess(
       "uv",
-      ["run", "--locked", "python", "-m", "pyrus_compute.service"],
+      ["run", "--locked", "--no-env-file", "python", "-m", "pyrus_compute.service"],
       {
         cwd: this.config.cwd,
         detached: process.platform !== "win32",
         env: {
-          ...process.env,
+          ...this.environment,
           PYRUS_PYTHON_COMPUTE_HOST: this.config.host,
           PYRUS_PYTHON_COMPUTE_PORT: String(this.config.port),
           PYRUS_PYTHON_COMPUTE_LANE: this.laneId,
