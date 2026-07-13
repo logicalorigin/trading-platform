@@ -104,9 +104,9 @@ directory to define separate Replit app runners.
 
 - The legacy Windows-side IBKR bridge bundle has been retired; do not add bridge
   packaging or helper-launch scripts back to startup.
-- `start-local-postgres.sh`, `wait-for-local-postgres.sh`, and
-  `run-local-postgres.sh` support manual workspace-local Postgres fallback
-  diagnosis. They are not part of normal Replit app bring-up.
+- `start-local-postgres.sh` and `wait-for-local-postgres.sh` support manual
+  workspace-local Postgres fallback diagnosis. They are not part of normal
+  Replit app bring-up.
 - `reap-dev-port.mjs` clears same-cgroup dev processes before package dev
   scripts start. A verified Replit artifact workflow (`REPLIT_MODE=workflow`
   plus the exact Pyrus artifact runner directly below platform-rooted pid2)

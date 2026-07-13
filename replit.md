@@ -121,7 +121,7 @@ The API server uses a `pino-http` `customLogLevel` policy (`artifacts/api-server
 
 Replit's managed Postgres is the normal dev DB. Config resolution order: `LOCAL_DATABASE_URL` only when `PYRUS_DATABASE_SOURCE=local`; Replit's `PG*` env when a stale workspace-local socket `DATABASE_URL` is also present; otherwise `DATABASE_URL`, then `PG*` (`PGHOST`, `PGDATABASE`, `PGUSER`, `PGPASSWORD`, `PGPORT`). This keeps **Run Replit App** self-contained without starting Postgres in the API workflow cgroup.
 
-Workspace-local Postgres scripts remain only as fallback/diagnostic tools: `scripts/start-local-postgres.sh`, `scripts/wait-for-local-postgres.sh`, `scripts/run-local-postgres.sh`.
+Workspace-local Postgres scripts remain only as fallback/diagnostic tools: `scripts/start-local-postgres.sh` and `scripts/wait-for-local-postgres.sh`.
 
 If an API-side `pg` disconnect (`Connection terminated unexpectedly`) coincides with a `container-replaced` classification, treat the container replacement as platform context and the unhandled `pg` disconnect as the app-level hardening target. Do not add Replit workflows, local Postgres startup, or root runners for this class of incident.
 
