@@ -2235,18 +2235,144 @@ async function getDeploymentOrThrow(
   return normalizeSignalOptionsDeploymentAccount(brandNormalized);
 }
 
-async function listDeploymentEvents(deploymentId: string, limit = 500) {
-  return db
-    .select()
-    .from(executionEventsTable)
-    .where(
-      and(
-        eq(executionEventsTable.deploymentId, deploymentId),
-        sql`${executionEventsTable.eventType} LIKE 'signal_options_%'`,
-      ),
+type DeploymentEventIdentity = Pick<
+  ExecutionEvent,
+  "id" | "occurredAt" | "updatedAt"
+>;
+type DeploymentEventRowCache<T> = Map<string, { version: string; value: T }>;
+// ponytail: one shared row LRU covers the 10k day window plus overlap; switch
+// to a byte budget only if measured payload variance makes row count misleading.
+const DEPLOYMENT_EVENT_ROW_CACHE_MAX_ROWS = 12_000;
+const deploymentEventRowCache: DeploymentEventRowCache<ExecutionEvent> =
+  new Map();
+
+function normalizeDeploymentEventLimit(limit: number, fallback: number) {
+  const normalized = Number.isFinite(limit) ? Math.trunc(limit) : fallback;
+  return Math.min(Math.max(normalized, 1), 10_000);
+}
+
+function deploymentEventIdentityVersion(identity: DeploymentEventIdentity) {
+  return `${identity.occurredAt.getTime()}:${identity.updatedAt.getTime()}`;
+}
+
+function setDeploymentEventRowCacheEntry<T>(
+  cache: DeploymentEventRowCache<T>,
+  id: string,
+  entry: { version: string; value: T },
+) {
+  cache.delete(id);
+  cache.set(id, entry);
+}
+
+function trimDeploymentEventRowCache<T>(
+  cache: DeploymentEventRowCache<T>,
+  maxRows: number,
+) {
+  while (cache.size > maxRows) {
+    const oldestId = cache.keys().next().value;
+    if (oldestId === undefined) break;
+    cache.delete(oldestId);
+  }
+}
+
+async function materializeDeploymentEventRows<T>(input: {
+  identities: DeploymentEventIdentity[];
+  cache?: DeploymentEventRowCache<T>;
+  visibleLimit?: number;
+  maxRows?: number;
+  load: (ids: string[]) => Promise<Map<string, T>>;
+  versionOf?: (value: T) => string;
+}) {
+  const cache = input.cache ?? new Map<string, { version: string; value: T }>();
+  const visibleLimit = input.visibleLimit ?? input.identities.length;
+  const visibleIdentities = input.identities.slice(0, visibleLimit);
+  const changedIds = visibleIdentities
+    .filter(
+      (identity) =>
+        cache.get(identity.id)?.version !==
+        deploymentEventIdentityVersion(identity),
     )
-    .orderBy(desc(executionEventsTable.occurredAt))
-    .limit(Math.min(Math.max(limit, 1), 10_000));
+    .map((identity) => identity.id);
+  const loaded = changedIds.length ? await input.load(changedIds) : new Map();
+  const rows: T[] = [];
+  for (const identity of visibleIdentities) {
+    const version = deploymentEventIdentityVersion(identity);
+    const previous = cache.get(identity.id);
+    const loadedValue = loaded.get(identity.id);
+    const value =
+      loadedValue !== undefined &&
+      (input.versionOf === undefined || input.versionOf(loadedValue) === version)
+        ? loadedValue
+        : previous?.version === version
+          ? previous.value
+          : undefined;
+    if (value === undefined) continue;
+    setDeploymentEventRowCacheEntry(
+      cache,
+      identity.id,
+      { version, value },
+    );
+    rows.push(value);
+  }
+  trimDeploymentEventRowCache(
+    cache,
+    input.maxRows ?? Number.POSITIVE_INFINITY,
+  );
+  return {
+    rows,
+    cache,
+    overflow: input.identities.length > visibleLimit,
+  };
+}
+
+async function readCachedDeploymentEventQuery(input: {
+  conditions: SQL[];
+  order: "asc" | "desc";
+  identityLimit: number;
+  visibleLimit?: number;
+}) {
+  const identities = await db
+    .select({
+      id: executionEventsTable.id,
+      occurredAt: executionEventsTable.occurredAt,
+      updatedAt: executionEventsTable.updatedAt,
+    })
+    .from(executionEventsTable)
+    .where(and(...input.conditions))
+    .orderBy(
+      input.order === "asc"
+        ? asc(executionEventsTable.occurredAt)
+        : desc(executionEventsTable.occurredAt),
+    )
+    .limit(input.identityLimit);
+  const materialized = await materializeDeploymentEventRows<ExecutionEvent>({
+    identities,
+    cache: deploymentEventRowCache,
+    visibleLimit: input.visibleLimit,
+    maxRows: DEPLOYMENT_EVENT_ROW_CACHE_MAX_ROWS,
+    versionOf: deploymentEventIdentityVersion,
+    load: async (ids) => {
+      const rows = await db
+        .select()
+        .from(executionEventsTable)
+        .where(inArray(executionEventsTable.id, ids));
+      return new Map(rows.map((row) => [row.id, row]));
+    },
+  });
+  return materialized;
+}
+
+async function listDeploymentEvents(deploymentId: string, limit = 500) {
+  const cappedLimit = normalizeDeploymentEventLimit(limit, 500);
+  const { rows } = await readCachedDeploymentEventQuery({
+    conditions: [
+      eq(executionEventsTable.deploymentId, deploymentId),
+      sql`${executionEventsTable.eventType} LIKE 'signal_options_%'`,
+    ],
+    order: "desc",
+    identityLimit: cappedLimit,
+  });
+  return rows;
 }
 
 async function listDeploymentEventsSince(
@@ -2274,7 +2400,10 @@ async function listDeploymentEventsSinceWithOverflow(
   limit = SIGNAL_OPTIONS_DASHBOARD_DAY_EVENT_LIMIT,
   options: { excludeFirehose?: boolean } = {},
 ) {
-  const cappedLimit = Math.min(Math.max(limit, 1), 10_000);
+  const cappedLimit = normalizeDeploymentEventLimit(
+    limit,
+    SIGNAL_OPTIONS_DASHBOARD_DAY_EVENT_LIMIT,
+  );
   const conditions: SQL[] = [
     eq(executionEventsTable.deploymentId, deploymentId),
     sql`${executionEventsTable.eventType} LIKE 'signal_options_%'`,
@@ -2283,15 +2412,15 @@ async function listDeploymentEventsSinceWithOverflow(
   if (options.excludeFirehose) {
     conditions.push(sql`not (${signalOptionsSeenSignalStoreCandidateSql()})`);
   }
-  const rows = await db
-    .select()
-    .from(executionEventsTable)
-    .where(and(...conditions))
-    .orderBy(asc(executionEventsTable.occurredAt))
-    .limit(cappedLimit + 1);
+  const materialized = await readCachedDeploymentEventQuery({
+    conditions,
+    order: "asc",
+    identityLimit: cappedLimit + 1,
+    visibleLimit: cappedLimit,
+  });
   return {
-    events: rows.slice(0, cappedLimit),
-    overflow: rows.length > cappedLimit,
+    events: materialized.rows,
+    overflow: materialized.overflow,
   };
 }
 
@@ -2360,18 +2489,17 @@ async function listDeploymentEventsExcludingFirehose(
   deploymentId: string,
   limit = 500,
 ) {
-  return db
-    .select()
-    .from(executionEventsTable)
-    .where(
-      and(
-        eq(executionEventsTable.deploymentId, deploymentId),
-        sql`${executionEventsTable.eventType} LIKE 'signal_options_%'`,
-        sql`not (${signalOptionsSeenSignalStoreCandidateSql()})`,
-      ),
-    )
-    .orderBy(desc(executionEventsTable.occurredAt))
-    .limit(Math.min(Math.max(limit, 1), 10_000));
+  const cappedLimit = normalizeDeploymentEventLimit(limit, 500);
+  const { rows } = await readCachedDeploymentEventQuery({
+    conditions: [
+      eq(executionEventsTable.deploymentId, deploymentId),
+      sql`${executionEventsTable.eventType} LIKE 'signal_options_%'`,
+      sql`not (${signalOptionsSeenSignalStoreCandidateSql()})`,
+    ],
+    order: "desc",
+    identityLimit: cappedLimit,
+  });
+  return rows;
 }
 
 async function listDeploymentEntryCandidateSkipEvents(
@@ -21854,6 +21982,39 @@ export const __signalOptionsAutomationInternalsForTests = {
   resolveSameScanEntryAction,
   signalOptionsContractMultiplier,
   signalOptionsRealizedPnl,
+  materializeDeploymentEventRowsForTests: materializeDeploymentEventRows,
+  materializeSharedDeploymentEventRowsForTests(input: {
+    identities: DeploymentEventIdentity[];
+    visibleLimit?: number;
+    load: (ids: string[]) => Promise<Map<string, ExecutionEvent>>;
+  }) {
+    return materializeDeploymentEventRows<ExecutionEvent>({
+      ...input,
+      cache: deploymentEventRowCache,
+      maxRows: DEPLOYMENT_EVENT_ROW_CACHE_MAX_ROWS,
+      versionOf: deploymentEventIdentityVersion,
+    });
+  },
+  normalizeDeploymentEventLimitForTests: normalizeDeploymentEventLimit,
+  clearDeploymentEventRowCacheForTests() {
+    deploymentEventRowCache.clear();
+  },
+  getDeploymentEventRowCacheMaxRowsForTests: () =>
+    DEPLOYMENT_EVENT_ROW_CACHE_MAX_ROWS,
+  setDeploymentEventRowCacheForTests(id: string) {
+    setDeploymentEventRowCacheEntry(
+      deploymentEventRowCache,
+      id,
+      { version: "test", value: { id } as ExecutionEvent },
+    );
+    trimDeploymentEventRowCache(
+      deploymentEventRowCache,
+      DEPLOYMENT_EVENT_ROW_CACHE_MAX_ROWS,
+    );
+  },
+  hasDeploymentEventRowCacheIdForTests: (id: string) =>
+    deploymentEventRowCache.has(id),
+  getDeploymentEventRowCacheSizeForTests: () => deploymentEventRowCache.size,
   tryClaimSignalOptionsPositionExit,
   __resetSignalOptionsClaimedExitsForTests: () =>
     signalOptionsClaimedExits.clear(),
