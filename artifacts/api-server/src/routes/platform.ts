@@ -222,11 +222,11 @@ async function requireDirectIbkrOrderMutationAccess(
 
 const admitAccountRoute = async (
   res: Response,
-  accountId?: unknown,
-  scope?: AccountReadScope,
+  accountId: unknown,
+  scope: AccountReadScope,
 ): Promise<boolean> => {
   const ibkrConfigured =
-    ibkrConfiguredForRealAccounts() && (scope?.allowDirectIbkr ?? true);
+    ibkrConfiguredForRealAccounts() && scope?.allowDirectIbkr === true;
   // Only pay the (cached) provider presence lookups when IBKR alone would
   // reject the route. Connected SnapTrade OR Robinhood accounts also admit
   // real account routes under the multi-broker model, so a provider-only
