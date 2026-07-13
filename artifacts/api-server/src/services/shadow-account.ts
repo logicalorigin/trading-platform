@@ -12192,7 +12192,8 @@ async function getShadowTradeEquityEvents(input: {
   end?: Date | null;
   sources?: string[];
 }) {
-  if (!input.sources?.length) {
+  const sources = input.sources;
+  if (!sources?.length) {
     const { events } = await readShadowAnalysisLedgerFold({
       scope: null,
     });
@@ -12224,7 +12225,7 @@ async function getShadowTradeEquityEvents(input: {
     const order = ordersById.get(fill.orderId);
     return Boolean(
       order &&
-        input.sources.some((source) =>
+        sources.some((source) =>
           shadowOrderMatchesSource(order, source),
         ),
     );
