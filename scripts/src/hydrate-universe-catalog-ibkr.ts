@@ -1,5 +1,7 @@
-import { and, asc, eq, gt, inArray, ne, notInArray, sql } from "drizzle-orm";
-import { db } from "@workspace/db";
+import { pathToFileURL } from "node:url";
+import { parseArgs, stripVTControlCharacters } from "node:util";
+import { and, asc, eq, gt, inArray, ne, sql } from "drizzle-orm";
+import { db, pool } from "@workspace/db";
 import {
   universeCatalogListingsTable,
   universeCatalogSyncStatesTable,
@@ -10,11 +12,25 @@ import { hydrateUniverseCatalogListingWithIbkr } from "../../artifacts/api-serve
 import {
   loadWatchlistUniversePrioritySymbols,
   normalizeUniversePrioritySymbol,
-  parseUniversePrioritySymbolList,
   uniqueUniversePrioritySymbols,
 } from "./universe-priority";
 
 const DEFAULT_MARKETS: UniverseMarket[] = ["stocks", "etf", "otc"];
+const UNIVERSE_MARKETS: readonly UniverseMarket[] = [
+  "stocks",
+  "etf",
+  "indices",
+  "futures",
+  "fx",
+  "crypto",
+  "otc",
+];
+const DEFAULT_PREVIEW_LIMIT = 100;
+const DEFAULT_EXECUTE_LIMIT = 1_000_000;
+const MAX_BATCH_SIZE = 250;
+const MAX_DIAGNOSTIC_LENGTH = 400;
+const UNSAFE_OUTPUT_PATTERN =
+  /[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/gu;
 const DEFAULT_PRIORITY_LANES = [
   "symbols",
   "watchlists",
@@ -32,10 +48,29 @@ const BROAD_SOURCE_IDS = ["sp500", "nasdaq_listed", "other_listed"] as const;
 type HydrationMode = "priority" | "broad" | "priority-then-broad";
 type PriorityLane = (typeof DEFAULT_PRIORITY_LANES)[number];
 type HydrationPhase = "priority" | "broad";
+type HydrationArgs = {
+  execute: boolean;
+  activeOnly: boolean;
+  resume: boolean;
+  reset: boolean;
+  force: boolean;
+  mode: HydrationMode;
+  priorityLanes: PriorityLane[];
+  explicitSymbols: string[];
+  batchSize: number;
+  maxRowsPerMarket: number;
+  markets: UniverseMarket[];
+};
 type HydrationRow = {
   listingKey: string;
   symbol: string;
   source: string;
+};
+type HydrationProgress = {
+  processedThisMarket: number;
+  phaseProcessedRows: number;
+  totalProcessedRows: number;
+  lastProcessedListingKey: string | null;
 };
 type SymbolListingRow = {
   listingKey: string;
@@ -59,31 +94,47 @@ const PRIORITY_EXCHANGE_SCORE: Record<string, number> = {
   XNCM: 680,
 };
 
-function parseArg(name: string) {
-  const prefix = `--${name}=`;
-  const match = process.argv.slice(2).find((arg) => arg.startsWith(prefix));
-  return match ? match.slice(prefix.length) : null;
+const USAGE =
+  "Usage: pnpm --filter @workspace/scripts run universe:hydrate:ibkr -- [--execute] [--markets=stocks,etf,otc] [--mode=priority|broad|priority-then-broad] [--priority=LANES] [--symbols=SYMBOLS] [--active=true|false] [--resume=true|false] [--reset=true|false] [--force=true|false] [--batch=1..250] [--limit=POSITIVE_INTEGER]";
+
+function parseBooleanValue(
+  name: string,
+  raw: string | undefined,
+  defaultValue: boolean,
+): boolean {
+  if (raw === undefined) return defaultValue;
+  if (raw === "true") return true;
+  if (raw === "false") return false;
+  throw new Error(`--${name} must be true or false.`);
 }
 
-function parseBooleanArg(name: string, defaultValue: boolean) {
-  const raw = parseArg(name);
-  if (raw === null) return defaultValue;
-  return raw !== "false";
+function parsePositiveInteger(
+  name: string,
+  raw: string | undefined,
+  defaultValue: number,
+  maximum = Number.MAX_SAFE_INTEGER,
+): number {
+  if (raw === undefined) return defaultValue;
+  if (!/^[1-9]\d*$/.test(raw)) {
+    throw new Error(`--${name} must be a canonical positive integer.`);
+  }
+  const parsed = Number(raw);
+  if (!Number.isSafeInteger(parsed) || parsed > maximum) {
+    throw new Error(`--${name} is outside the supported range.`);
+  }
+  return parsed;
 }
 
-function parseMarkets(): UniverseMarket[] {
-  const raw = parseArg("markets");
-  if (!raw) return DEFAULT_MARKETS;
-
-  const requested = raw
-    .split(",")
-    .map((value) => value.trim())
-    .filter(Boolean) as UniverseMarket[];
-  return requested.length ? requested : DEFAULT_MARKETS;
+function parseCsv(name: string, raw: string): string[] {
+  const values = raw.split(",").map((value) => value.trim());
+  if (!values.length || values.some((value) => !value)) {
+    throw new Error(`--${name} must contain non-empty comma-separated values.`);
+  }
+  return values;
 }
 
-function parseMode(): HydrationMode {
-  const raw = (parseArg("mode") ?? "priority-then-broad").trim();
+function parseMode(raw = "priority-then-broad"): HydrationMode {
+  raw = raw.trim();
   if (raw === "priority" || raw === "broad" || raw === "priority-then-broad") {
     return raw;
   }
@@ -92,20 +143,147 @@ function parseMode(): HydrationMode {
   );
 }
 
-function parsePriorityLanes(): PriorityLane[] {
-  const raw = parseArg("priority") ?? parseArg("priority-lanes");
-  if (!raw) return [...DEFAULT_PRIORITY_LANES];
-  const lanes = raw
-    .split(",")
-    .map((lane) => lane.trim())
-    .filter(Boolean);
+function parsePriorityLanes(raw: string | undefined): PriorityLane[] {
+  if (raw === undefined) return [...DEFAULT_PRIORITY_LANES];
+  const lanes = parseCsv("priority", raw);
   const invalid = lanes.filter(
     (lane) => !DEFAULT_PRIORITY_LANES.includes(lane as PriorityLane),
   );
   if (invalid.length) {
     throw new Error(`Invalid priority lanes: ${invalid.join(", ")}`);
   }
-  return lanes.length ? (lanes as PriorityLane[]) : [...DEFAULT_PRIORITY_LANES];
+  return [...new Set(lanes)] as PriorityLane[];
+}
+
+function parseHydrationArgs(args = process.argv.slice(2)): HydrationArgs {
+  const normalizedArgs = args[0] === "--" ? args.slice(1) : args;
+  try {
+    const parsed = parseArgs({
+      args: normalizedArgs,
+      allowPositionals: false,
+      strict: true,
+      tokens: true,
+      options: {
+        execute: { type: "boolean" },
+        active: { type: "string" },
+        resume: { type: "string" },
+        reset: { type: "string" },
+        force: { type: "string" },
+        mode: { type: "string" },
+        priority: { type: "string" },
+        "priority-lanes": { type: "string" },
+        symbols: { type: "string" },
+        batch: { type: "string" },
+        limit: { type: "string" },
+        markets: { type: "string" },
+      },
+    });
+    const optionCounts = new Map<string, number>();
+    for (const token of parsed.tokens) {
+      if (token.kind !== "option") continue;
+      optionCounts.set(token.name, (optionCounts.get(token.name) ?? 0) + 1);
+    }
+    if ([...optionCounts.values()].some((count) => count > 1)) {
+      throw new Error("Duplicate options are not allowed.");
+    }
+    if (
+      parsed.values.priority !== undefined &&
+      parsed.values["priority-lanes"] !== undefined
+    ) {
+      throw new Error("Use only one of --priority or --priority-lanes.");
+    }
+
+    const execute = parsed.values.execute ?? false;
+    const rawMarkets = parsed.values.markets;
+    const markets = rawMarkets
+      ? parseCsv("markets", rawMarkets).map((market) => market.toLowerCase())
+      : [...DEFAULT_MARKETS];
+    const invalidMarkets = markets.filter(
+      (market) => !UNIVERSE_MARKETS.includes(market as UniverseMarket),
+    );
+    if (invalidMarkets.length) {
+      throw new Error(`Invalid markets: ${invalidMarkets.join(", ")}`);
+    }
+
+    const rawSymbols = parsed.values.symbols;
+    const symbolValues = rawSymbols ? parseCsv("symbols", rawSymbols) : [];
+    if (
+      symbolValues.some(
+        (symbol) =>
+          normalizeUniversePrioritySymbol(symbol) !== symbol.toUpperCase(),
+      )
+    ) {
+      throw new Error("--symbols contains an invalid symbol.");
+    }
+    const mode = parseMode(parsed.values.mode);
+    const rawPriority =
+      parsed.values.priority ?? parsed.values["priority-lanes"];
+    const priorityLanes =
+      mode === "broad" ? [] : parsePriorityLanes(rawPriority);
+    if (
+      mode === "broad" &&
+      (rawPriority !== undefined || rawSymbols !== undefined)
+    ) {
+      throw new Error("Broad mode cannot use priority lanes or symbols.");
+    }
+    if (rawSymbols !== undefined && !priorityLanes.includes("symbols")) {
+      throw new Error("--symbols requires the symbols priority lane.");
+    }
+
+    return {
+      execute,
+      activeOnly: parseBooleanValue("active", parsed.values.active, true),
+      resume: parseBooleanValue("resume", parsed.values.resume, true),
+      reset: parseBooleanValue("reset", parsed.values.reset, false),
+      force: parseBooleanValue("force", parsed.values.force, false),
+      mode,
+      priorityLanes,
+      explicitSymbols: uniqueUniversePrioritySymbols(symbolValues),
+      batchSize: parsePositiveInteger(
+        "batch",
+        parsed.values.batch,
+        50,
+        MAX_BATCH_SIZE,
+      ),
+      maxRowsPerMarket: parsePositiveInteger(
+        "limit",
+        parsed.values.limit,
+        execute ? DEFAULT_EXECUTE_LIMIT : DEFAULT_PREVIEW_LIMIT,
+      ),
+      markets: [...new Set(markets)] as UniverseMarket[],
+    };
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(`${USAGE}\n${detail}`);
+  }
+}
+
+function safeOutput(value: unknown, fallback: string): string {
+  const withoutCredentials = String(value ?? "")
+    .replace(/([a-z][a-z0-9+.-]*:\/\/)[^@\s]+@/giu, "$1[redacted]@")
+    .replace(/\s+/gu, " ");
+  const cleaned = stripVTControlCharacters(withoutCredentials)
+    .replace(UNSAFE_OUTPUT_PATTERN, " ")
+    .replace(/\s+/gu, " ")
+    .trim();
+  const diagnostic = cleaned || fallback;
+  if (diagnostic.length <= MAX_DIAGNOSTIC_LENGTH) return diagnostic;
+  return `${diagnostic.slice(0, MAX_DIAGNOSTIC_LENGTH - 1)}…`;
+}
+
+function safeDiagnostic(error: unknown): string {
+  return safeOutput(
+    error instanceof Error ? error.message : error,
+    "Unknown hydration error",
+  );
+}
+
+function safeHydrationRowForOutput(row: HydrationRow): HydrationRow {
+  return {
+    listingKey: safeOutput(row.listingKey, "-"),
+    symbol: safeOutput(row.symbol, "-"),
+    source: safeOutput(row.source, "-"),
+  };
 }
 
 function buildScopeKey(
@@ -193,14 +371,14 @@ function listingHydrationFilters(input: {
       ne(universeCatalogListingsTable.ibkrHydrationStatus, "hydrated"),
     );
   }
-  if (input.excludeListingKeys?.length) {
-    filters.push(
-      notInArray(universeCatalogListingsTable.listingKey, [
-        ...input.excludeListingKeys,
-      ]),
-    );
-  }
+  const exclusionFilter = listingKeyExclusionFilter(input.excludeListingKeys);
+  if (exclusionFilter) filters.push(exclusionFilter);
   return filters;
+}
+
+function listingKeyExclusionFilter(listingKeys?: readonly string[]) {
+  if (!listingKeys?.length) return null;
+  return sql`${universeCatalogListingsTable.listingKey} <> all(${sql.param([...listingKeys])}::text[])`;
 }
 
 function appendRows(
@@ -234,13 +412,8 @@ async function loadRowsForSymbols(input: {
   if (input.activeOnly) {
     filters.push(eq(universeCatalogListingsTable.active, true));
   }
-  if (input.excludeListingKeys?.length) {
-    filters.push(
-      notInArray(universeCatalogListingsTable.listingKey, [
-        ...input.excludeListingKeys,
-      ]),
-    );
-  }
+  const exclusionFilter = listingKeyExclusionFilter(input.excludeListingKeys);
+  if (exclusionFilter) filters.push(exclusionFilter);
   const rows = await db
     .select({
       listingKey: universeCatalogListingsTable.listingKey,
@@ -435,7 +608,6 @@ async function loadBroadRows(input: {
   force: boolean;
   lastProcessedListingKey: string | null;
   limit: number;
-  excludeListingKeys?: readonly string[];
 }): Promise<HydrationRow[]> {
   const filters = listingHydrationFilters(input);
   if (input.lastProcessedListingKey) {
@@ -464,9 +636,7 @@ async function loadBroadRows(input: {
       and(
         ...filters,
         eq(universeSourceMembershipsTable.active, true),
-        inArray(universeSourceMembershipsTable.sourceId, [
-          ...BROAD_SOURCE_IDS,
-        ]),
+        inArray(universeSourceMembershipsTable.sourceId, [...BROAD_SOURCE_IDS]),
       ),
     )
     .groupBy(
@@ -483,21 +653,49 @@ async function loadBroadRows(input: {
   }));
 }
 
+async function hydrateAndCheckpointRow<Result, Checkpoint>(input: {
+  row: HydrationRow;
+  phase: HydrationPhase;
+  progress: HydrationProgress;
+  hydrate: () => Promise<Result>;
+  checkpoint: (
+    progress: HydrationProgress,
+    result: Result,
+  ) => Promise<Checkpoint>;
+}): Promise<{
+  progress: HydrationProgress;
+  result: Result;
+  checkpoint: Checkpoint;
+}> {
+  const result = await input.hydrate();
+  const progress = {
+    processedThisMarket: input.progress.processedThisMarket + 1,
+    phaseProcessedRows: input.progress.phaseProcessedRows + 1,
+    totalProcessedRows: input.progress.totalProcessedRows + 1,
+    lastProcessedListingKey:
+      input.phase === "broad"
+        ? input.row.listingKey
+        : input.progress.lastProcessedListingKey,
+  };
+  const checkpoint = await input.checkpoint(progress, result);
+  return { progress, result, checkpoint };
+}
+
 async function main() {
-  const activeOnly = parseBooleanArg("active", true);
-  const resume = parseBooleanArg("resume", true);
-  const reset = parseBooleanArg("reset", false);
-  const force = parseBooleanArg("force", false);
-  const dryRun = parseBooleanArg("dry-run", false);
-  const mode = parseMode();
-  const priorityLanes = parsePriorityLanes();
-  const explicitSymbols = parseUniversePrioritySymbolList(parseArg("symbols"));
-  const batchSize = Math.max(
-    1,
-    Math.min(Number(parseArg("batch") ?? "50"), 250),
-  );
-  const maxRowsPerMarket = Math.max(1, Number(parseArg("limit") ?? "1000000"));
-  const markets = parseMarkets();
+  const {
+    execute,
+    activeOnly,
+    resume,
+    reset,
+    force,
+    mode,
+    priorityLanes,
+    explicitSymbols,
+    batchSize,
+    maxRowsPerMarket,
+    markets,
+  } = parseHydrationArgs();
+  const dryRun = !execute;
   const watchlistSymbols = priorityLanes.includes("watchlists")
     ? await loadWatchlistUniversePrioritySymbols()
     : [];
@@ -542,16 +740,25 @@ async function main() {
         reset || !existingState?.startedAt
           ? new Date()
           : new Date(existingState.startedAt);
+      let lastSuccessAt = existingState?.lastSuccessAt
+        ? new Date(existingState.lastSuccessAt)
+        : null;
       let phaseSelectedRows = 0;
       let phaseProcessedRows = 0;
       let phaseComplete = false;
       let phaseLimitReached = false;
       const phaseSample: HydrationRow[] = [];
+      // ponytail: priority ordering has no stable cursor, so it keeps the
+      // current catalog's attempted keys in one array parameter. If this lane
+      // grows beyond the current US-catalog scale, move the set to run-scoped
+      // database state. Broad mode already uses its durable listing-key cursor.
       const attemptedListingKeys = new Set<string>();
 
       console.log(
         `hydrating ${market} catalog rows with IBKR mappings (${phase}) from ${
-          lastProcessedListingKey ? lastProcessedListingKey : "start"
+          lastProcessedListingKey
+            ? safeOutput(lastProcessedListingKey, "-")
+            : "start"
         }...`,
       );
 
@@ -564,9 +771,7 @@ async function main() {
           rowsSynced: totalProcessedRows,
           startedAt,
           finishedAt: null,
-          lastSuccessAt: existingState?.lastSuccessAt
-            ? new Date(existingState.lastSuccessAt)
-            : null,
+          lastSuccessAt,
           lastError: null,
           metadata: {
             batchSize,
@@ -606,7 +811,6 @@ async function main() {
                   force,
                   lastProcessedListingKey,
                   limit: remaining,
-                  excludeListingKeys: [...attemptedListingKeys],
                 });
 
           if (!rows.length) {
@@ -616,56 +820,85 @@ async function main() {
 
           phaseSelectedRows += rows.length;
           phaseSample.push(
-            ...rows.slice(0, Math.max(0, 20 - phaseSample.length)),
+            ...rows
+              .slice(0, Math.max(0, 20 - phaseSample.length))
+              .map(safeHydrationRowForOutput),
           );
 
           for (const row of rows) {
-            processedThisMarket += 1;
-            phaseProcessedRows += 1;
-            totalProcessedRows += 1;
-            attemptedListingKeys.add(row.listingKey);
-            if (phase === "broad") {
-              lastProcessedListingKey = row.listingKey;
-            }
-
+            const outputRow = safeHydrationRowForOutput(row);
             if (dryRun) {
+              processedThisMarket += 1;
+              phaseProcessedRows += 1;
+              totalProcessedRows += 1;
+              if (phase === "priority") {
+                attemptedListingKeys.add(row.listingKey);
+              }
+              if (phase === "broad") {
+                lastProcessedListingKey = row.listingKey;
+              }
               console.log(
-                `${market}: dry-run ${processedThisMarket} selected (${row.listingKey} ${row.symbol} via ${row.source})`,
+                `${market}: dry-run ${processedThisMarket} selected (${outputRow.listingKey} ${outputRow.symbol} via ${outputRow.source})`,
               );
             } else {
-              const result = await hydrateUniverseCatalogListingWithIbkr({
-                listingKey: row.listingKey,
-                force,
-              });
-              await writeSyncState({
-                scopeKey,
-                market,
-                activeOnly,
-                lastProcessedListingKey,
-                rowsSynced: totalProcessedRows,
-                startedAt,
-                finishedAt: null,
-                lastSuccessAt: new Date(),
-                lastError: null,
-                metadata: {
-                  batchSize,
-                  maxRowsPerMarket,
-                  force,
-                  dryRun,
-                  mode,
-                  phase,
-                  priorityLanes,
-                  explicitSymbolCount: explicitSymbols.length,
-                  watchlistSymbolCount: watchlistSymbols.length,
-                  lastStatus: result.status,
-                  lastProviderContractId: result.providerContractId,
-                  lastSource: row.source,
+              const completed = await hydrateAndCheckpointRow({
+                row,
+                phase,
+                progress: {
+                  processedThisMarket,
+                  phaseProcessedRows,
+                  totalProcessedRows,
+                  lastProcessedListingKey,
+                },
+                hydrate: () =>
+                  hydrateUniverseCatalogListingWithIbkr({
+                    listingKey: row.listingKey,
+                    force,
+                  }),
+                checkpoint: async (progress, result) => {
+                  const checkpointAt = new Date();
+                  await writeSyncState({
+                    scopeKey,
+                    market,
+                    activeOnly,
+                    lastProcessedListingKey: progress.lastProcessedListingKey,
+                    rowsSynced: progress.totalProcessedRows,
+                    startedAt,
+                    finishedAt: null,
+                    lastSuccessAt: checkpointAt,
+                    lastError: null,
+                    metadata: {
+                      batchSize,
+                      maxRowsPerMarket,
+                      force,
+                      dryRun,
+                      mode,
+                      phase,
+                      priorityLanes,
+                      explicitSymbolCount: explicitSymbols.length,
+                      watchlistSymbolCount: watchlistSymbols.length,
+                      lastStatus: result.status,
+                      lastProviderContractId: result.providerContractId,
+                      lastSource: row.source,
+                    },
+                  });
+                  return checkpointAt;
                 },
               });
+              ({
+                processedThisMarket,
+                phaseProcessedRows,
+                totalProcessedRows,
+                lastProcessedListingKey,
+              } = completed.progress);
+              lastSuccessAt = completed.checkpoint;
+              if (phase === "priority") {
+                attemptedListingKeys.add(row.listingKey);
+              }
               console.log(
-                `${market}: ${processedThisMarket} hydrated (${row.listingKey} ${row.symbol} via ${row.source} -> ${result.status}${
-                  result.providerContractId
-                    ? ` ${result.providerContractId}`
+                `${market}: ${processedThisMarket} hydrated (${outputRow.listingKey} ${outputRow.symbol} via ${outputRow.source} -> ${completed.result.status}${
+                  completed.result.providerContractId
+                    ? ` ${safeOutput(completed.result.providerContractId, "-")}`
                     : ""
                 })`,
               );
@@ -681,6 +914,7 @@ async function main() {
         phaseLimitReached =
           phaseLimitReached || processedThisMarket >= maxRowsPerMarket;
         if (!dryRun) {
+          const completedAt = new Date();
           await writeSyncState({
             scopeKey,
             market,
@@ -688,8 +922,9 @@ async function main() {
             lastProcessedListingKey,
             rowsSynced: totalProcessedRows,
             startedAt,
-            finishedAt: phaseComplete && !phaseLimitReached ? new Date() : null,
-            lastSuccessAt: new Date(),
+            finishedAt:
+              phaseComplete && !phaseLimitReached ? completedAt : null,
+            lastSuccessAt: completedAt,
             lastError: null,
             metadata: {
               batchSize,
@@ -707,6 +942,7 @@ async function main() {
               limitReached: phaseLimitReached,
             },
           });
+          lastSuccessAt = completedAt;
         }
         console.log(
           phaseLimitReached
@@ -724,30 +960,34 @@ async function main() {
           sample: phaseSample,
         });
       } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
+        const message = safeDiagnostic(error);
         if (!dryRun) {
-          await writeSyncState({
-            scopeKey,
-            market,
-            activeOnly,
-            lastProcessedListingKey,
-            rowsSynced: totalProcessedRows,
-            startedAt,
-            finishedAt: null,
-            lastSuccessAt: existingState?.lastSuccessAt
-              ? new Date(existingState.lastSuccessAt)
-              : null,
-            lastError: message,
-            metadata: {
-              batchSize,
-              maxRowsPerMarket,
-              force,
-              dryRun,
-              mode,
-              phase,
-              failed: true,
-            },
-          });
+          try {
+            await writeSyncState({
+              scopeKey,
+              market,
+              activeOnly,
+              lastProcessedListingKey,
+              rowsSynced: totalProcessedRows,
+              startedAt,
+              finishedAt: null,
+              lastSuccessAt,
+              lastError: message,
+              metadata: {
+                batchSize,
+                maxRowsPerMarket,
+                force,
+                dryRun,
+                mode,
+                phase,
+                failed: true,
+              },
+            });
+          } catch (checkpointError) {
+            console.error(
+              `Failed to record hydration failure: ${safeDiagnostic(checkpointError)}`,
+            );
+          }
         }
         throw error;
       }
@@ -774,7 +1014,32 @@ async function main() {
   );
 }
 
-void main().catch((error) => {
-  console.error(error);
-  process.exit(1);
-});
+export const __hydrateUniverseCatalogIbkrInternalsForTests = {
+  hydrateAndCheckpointRow,
+  listingHydrationFilters,
+  parseHydrationArgs,
+  safeDiagnostic,
+};
+
+async function runCli(): Promise<void> {
+  try {
+    await main();
+  } catch (error) {
+    console.error(safeDiagnostic(error));
+    process.exitCode = 1;
+  } finally {
+    try {
+      await pool.end();
+    } catch (error) {
+      console.error(`Failed to close database pool: ${safeDiagnostic(error)}`);
+      process.exitCode = 1;
+    }
+  }
+}
+
+if (
+  process.argv[1] &&
+  import.meta.url === pathToFileURL(process.argv[1]).href
+) {
+  void runCli();
+}
