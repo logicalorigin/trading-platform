@@ -289,6 +289,8 @@ test("ticket wires generated direct IBKR lifecycle hooks", () => {
   assert.match(source, /ibkrLifecyclePending \|\| ibkrWarningDecisionOpen/);
   assert.match(source, /isIbkrOrderRejected/);
   assert.match(source, /trackedIbkrOrderRequiresReconciliation \|\|/);
+  assert.match(source, /controlledIbkrOrder\.status === "reconciliation_required"/);
+  assert.match(source, /recoveredIbkrLifecycleKeyRef/);
 });
 
 test("warning dialog exposes an explicit decline action", () => {

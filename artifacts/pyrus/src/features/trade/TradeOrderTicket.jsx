@@ -1,6 +1,7 @@
 import {
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -793,6 +794,7 @@ export const TradeOrderTicket = ({
   const [ibkrSubmitLocked, setIbkrSubmitLocked] = useState(false);
   const [ibkrReplacementLocked, setIbkrReplacementLocked] = useState(false);
   const [ibkrCancelAttempted, setIbkrCancelAttempted] = useState(false);
+  const recoveredIbkrLifecycleKeyRef = useRef("");
   const [shadowExposureAcknowledged, setShadowExposureAcknowledged] =
     useState(false);
   const recordAutomationDeviationMutation = useMutation({
@@ -1035,6 +1037,42 @@ export const TradeOrderTicket = ({
     continueIbkrOrderReplyMutation.isPending ||
     trackedIbkrOrderReadPending;
   const ibkrWarningDecisionOpen = liveConfirmState?.kind === "ibkr_warning";
+  const controlledIbkrOrder = ibkrReadinessQuery.data?.controlledOrder;
+  useEffect(() => {
+    if (!liveUsesIbkrEquity || !controlledIbkrOrder) return;
+    const recoveryKey = [
+      controlledIbkrOrder.status,
+      controlledIbkrOrder.accountId,
+      controlledIbkrOrder.orderId,
+      controlledIbkrOrder.limitPrice,
+      controlledIbkrOrder.replacementUsed,
+      controlledIbkrOrder.cancelAttempted,
+      controlledIbkrOrder.reason,
+    ].join(":");
+    if (recoveredIbkrLifecycleKeyRef.current === recoveryKey) return;
+    recoveredIbkrLifecycleKeyRef.current = recoveryKey;
+    if (controlledIbkrOrder.status === "none") return;
+
+    setSelectedIbkrAccountId(controlledIbkrOrder.accountId || "");
+    setActiveIbkrOrder({
+      id: controlledIbkrOrder.orderId || null,
+      accountId: controlledIbkrOrder.accountId || null,
+      symbol: controlledIbkrOrder.symbol || slot.ticker,
+      side: controlledIbkrOrder.side || "buy",
+      quantity: controlledIbkrOrder.quantity || 1,
+      limitPrice: controlledIbkrOrder.limitPrice,
+      filledQuantity: 0,
+      status:
+        controlledIbkrOrder.status === "active"
+          ? "pending_submit"
+          : "unknown",
+      reconciliationRequired:
+        controlledIbkrOrder.status === "reconciliation_required",
+    });
+    setIbkrSubmitLocked(true);
+    setIbkrReplacementLocked(controlledIbkrOrder.replacementUsed === true);
+    setIbkrCancelAttempted(controlledIbkrOrder.cancelAttempted === true);
+  }, [controlledIbkrOrder, liveUsesIbkrEquity, slot.ticker]);
   useEffect(() => {
     if (
       !activeIbkrOrder?.id ||
@@ -4152,7 +4190,6 @@ export const TradeOrderTicket = ({
               accountId: selectedIbkrAccount.accountId,
               mode: "live",
               confirm: true,
-              manualIndicator: true,
             },
           });
           setActiveIbkrOrder((current) => ({
