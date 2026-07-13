@@ -229,34 +229,44 @@ server.once("error", (err) => {
 
 let shuttingDown = false;
 
-function shutdownApi(signal: NodeJS.Signals): void {
+async function shutdownApi(signal: NodeJS.Signals): Promise<void> {
   if (shuttingDown) {
     return;
   }
   shuttingDown = true;
   appendRuntimeFlightRecorderEvent("api-shutdown-start", { signal });
-  stopPythonComputeRuntime();
-  server.close(async (error) => {
-    if (error) {
-      logger.warn({ err: error }, "API server shutdown close failed");
-    }
-    await closeDatabaseConnections().catch((databaseError) => {
-      logger.warn(
-        { err: databaseError },
-        "Database connection shutdown failed",
-      );
-    });
-    appendRuntimeFlightRecorderEvent("api-shutdown-complete", { signal });
-    process.exit(signal === "SIGINT" ? 130 : 143);
-  });
   setTimeout(() => {
     appendRuntimeFlightRecorderEvent("api-shutdown-forced", { signal });
     process.exit(signal === "SIGINT" ? 130 : 143);
   }, 5_000).unref();
+
+  const serverClosed = new Promise<void>((resolveClose) => {
+    server.close((error) => {
+      if (error) {
+        logger.warn({ err: error }, "API server shutdown close failed");
+      }
+      resolveClose();
+    });
+  });
+
+  await Promise.all([
+    serverClosed,
+    stopPythonComputeRuntime().catch((pythonError) => {
+      logger.warn({ err: pythonError }, "Python compute shutdown failed");
+    }),
+  ]);
+  await closeDatabaseConnections().catch((databaseError) => {
+    logger.warn(
+      { err: databaseError },
+      "Database connection shutdown failed",
+    );
+  });
+  appendRuntimeFlightRecorderEvent("api-shutdown-complete", { signal });
+  process.exit(signal === "SIGINT" ? 130 : 143);
 }
 
-process.once("SIGINT", () => shutdownApi("SIGINT"));
-process.once("SIGTERM", () => shutdownApi("SIGTERM"));
+process.once("SIGINT", () => void shutdownApi("SIGINT"));
+process.once("SIGTERM", () => void shutdownApi("SIGTERM"));
 
 const DEFAULT_SIGNAL_OPTIONS_SEED_RETRY_MS = 15_000;
 const DEFAULT_SIGNAL_OPTIONS_SEED_MAX_RETRY_MS = 120_000;

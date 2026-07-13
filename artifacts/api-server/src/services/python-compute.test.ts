@@ -26,15 +26,18 @@ const fakeChild = (pid = 1234) => {
   return { child, calls };
 };
 
-const fakeSpawnedChild = (pid = 1234) =>
-  Object.assign(new EventEmitter(), {
+const fakeSpawnedChild = (pid = 1234) => {
+  const child = Object.assign(new EventEmitter(), {
     pid,
     stdout: new EventEmitter(),
     stderr: new EventEmitter(),
-    kill() {
+    kill(signal: NodeJS.Signals = "SIGTERM") {
+      queueMicrotask(() => child.emit("exit", null, signal));
       return true;
     },
-  }) as unknown as ChildProcess;
+  });
+  return child as unknown as ChildProcess;
+};
 
 test("Python compute process identity parses commands containing parentheses", () => {
   const fields = Array.from({ length: 20 }, () => "0");
@@ -103,6 +106,46 @@ test("Python compute stop refuses a reused process-group leader", () => {
   assert.deepEqual(calls, [{ signal: "SIGTERM" }]);
 });
 
+test("Python compute stop drains descendants after the group leader exits", () => {
+  const { child, calls } = fakeChild(1234);
+  const killCalls: Array<{ pid: number; signal: NodeJS.Signals }> = [];
+
+  stopPythonComputeChildProcess(child, {
+    allowMissingLeader: true,
+    expectedIdentity: { pid: 1234, startTimeTicks: "1" },
+    platform: "linux",
+    readIdentity: () => null,
+    signal: "SIGKILL",
+    kill(pid, signal) {
+      killCalls.push({ pid, signal: signal as NodeJS.Signals });
+      return true;
+    },
+  });
+
+  assert.deepEqual(killCalls, [{ pid: -1234, signal: "SIGKILL" }]);
+  assert.deepEqual(calls, []);
+});
+
+test("Python compute stop does not drain a missing leader with another child's identity", () => {
+  const { child, calls } = fakeChild(1234);
+  const killCalls: Array<{ pid: number; signal: NodeJS.Signals }> = [];
+
+  stopPythonComputeChildProcess(child, {
+    allowMissingLeader: true,
+    expectedIdentity: { pid: 9999, startTimeTicks: "1" },
+    platform: "linux",
+    readIdentity: () => null,
+    signal: "SIGKILL",
+    kill(pid, signal) {
+      killCalls.push({ pid, signal: signal as NodeJS.Signals });
+      return true;
+    },
+  });
+
+  assert.deepEqual(killCalls, []);
+  assert.deepEqual(calls, [{ signal: "SIGKILL" }]);
+});
+
 test("Python compute runtime enforces the checked-in uv lock", async () => {
   const cwd = mkdtempSync(join(tmpdir(), "pyrus-python-compute-"));
   writeFileSync(join(cwd, "pyproject.toml"), '[project]\nname = "test"\n');
@@ -154,7 +197,7 @@ test("Python compute runtime enforces the checked-in uv lock", async () => {
       "pyrus_compute.service",
     ]);
   } finally {
-    runtime.stop();
+    await runtime.stop();
     rmSync(cwd, { recursive: true, force: true });
   }
 });
@@ -194,7 +237,7 @@ test("Python compute runtime refuses unsupported host platforms before spawn", a
     assert.equal(diagnostics.status, "degraded");
     assert.match(diagnostics.lastError ?? "", /requires Linux/i);
   } finally {
-    runtime.stop();
+    await runtime.stop();
     rmSync(cwd, { recursive: true, force: true });
   }
 });
@@ -249,7 +292,7 @@ test("Python compute runtime launches with its configured environment", async ()
       "benchmark_matrix,signal_matrix",
     );
   } finally {
-    runtime.stop();
+    await runtime.stop();
     rmSync(cwd, { recursive: true, force: true });
   }
 });
@@ -295,7 +338,7 @@ test("Python compute stop prevents a pending start from spawning", async () => {
   try {
     const start = runtime.start();
     await probeEntered;
-    runtime.stop();
+    await runtime.stop();
     releaseProbe();
     const diagnostics = await start;
 
@@ -303,8 +346,72 @@ test("Python compute stop prevents a pending start from spawning", async () => {
     assert.equal(diagnostics.status, "stopped");
     assert.equal(diagnostics.pid, null);
   } finally {
-    runtime.stop();
+    await runtime.stop();
     releaseProbe();
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("Python compute stop waits and escalates a resistant child group", async () => {
+  const cwd = mkdtempSync(join(tmpdir(), "pyrus-python-compute-"));
+  writeFileSync(join(cwd, "pyproject.toml"), '[project]\nname = "test"\n');
+  const child = fakeSpawnedChild(4321);
+  const identity = { pid: 4321, startTimeTicks: "1" };
+  const killCalls: Array<{ pid: number; signal: NodeJS.Signals }> = [];
+  let spawned = false;
+  const runtime = new PythonComputeRuntime({
+    shutdownGraceMs: 10,
+    readProcessIdentity: () => identity,
+    killProcess(pid, signal) {
+      const normalizedSignal = signal as NodeJS.Signals;
+      killCalls.push({ pid, signal: normalizedSignal });
+      if (normalizedSignal === "SIGKILL") {
+        queueMicrotask(() => child.emit("exit", null, "SIGKILL"));
+      }
+      return true;
+    },
+    laneDefinition: {
+      id: "risk",
+      label: "Risk compute",
+      config: {
+        enabled: true,
+        cwd,
+        host: "127.0.0.1",
+        port: 18_768,
+        startupTimeoutMs: 1,
+      },
+      jobTypes: ["portfolio_risk"],
+    },
+    spawnProcess: (() => {
+      spawned = true;
+      return child;
+    }) as typeof spawn,
+    fetch: (async () => {
+      if (!spawned) throw new Error("not started");
+      return new Response(
+        JSON.stringify({ ok: true, service: "pyrus-compute", lane: "risk" }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    }) as typeof fetch,
+    delay: async () => {},
+    probePortOpen: async () => false,
+  });
+
+  try {
+    const started = await runtime.start();
+    assert.equal(started.status, "healthy");
+
+    await runtime.stop();
+
+    assert.deepEqual(killCalls, [
+      { pid: -4321, signal: "SIGTERM" },
+      { pid: -4321, signal: "SIGKILL" },
+    ]);
+    assert.equal(runtime.getDiagnostics().status, "stopped");
+    assert.equal(runtime.getDiagnostics().pid, null);
+  } finally {
+    child.emit("exit", null, "SIGKILL");
+    await runtime.stop();
     rmSync(cwd, { recursive: true, force: true });
   }
 });
@@ -356,7 +463,7 @@ test("Python compute diagnostics re-probes a degraded live child", async () => {
     assert.equal(recovered.lastError, null);
     assert.ok(fetchCalls >= 2);
   } finally {
-    runtime.stop();
+    await runtime.stop();
     rmSync(cwd, { recursive: true, force: true });
   }
 });
@@ -425,7 +532,7 @@ test("Python compute concurrent jobs coalesce into a single spawn", async () => 
     }
     assert.equal(runtime.getDiagnostics().status, "healthy");
   } finally {
-    runtime.stop();
+    await runtime.stop();
     rmSync(cwd, { recursive: true, force: true });
   }
 });
@@ -466,7 +573,7 @@ test("Python compute request-path startup wait is bounded by the caller budget",
     );
     assert.ok(Date.now() - startedAt < 5_000);
   } finally {
-    runtime.stop();
+    await runtime.stop();
     rmSync(cwd, { recursive: true, force: true });
   }
 });
@@ -506,7 +613,7 @@ test("Python compute startup wait fails fast when the child exits", async () => 
     assert.match(diagnostics.lastError ?? "", /exited during startup/);
     assert.ok(Date.now() - startedAt < 5_000);
   } finally {
-    runtime.stop();
+    await runtime.stop();
     rmSync(cwd, { recursive: true, force: true });
   }
 });

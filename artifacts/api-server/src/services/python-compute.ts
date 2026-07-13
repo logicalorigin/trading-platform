@@ -86,6 +86,7 @@ type RuntimeDeps = {
   platform?: NodeJS.Platform;
   readProcessIdentity?: typeof readPythonComputeProcessIdentity;
   killProcess?: typeof process.kill;
+  shutdownGraceMs?: number;
   laneDefinition?: PythonComputeLaneDefinition;
 };
 
@@ -98,6 +99,8 @@ const DEFAULT_PORT = 18_768;
 const DEFAULT_STARTUP_TIMEOUT_MS = 15_000;
 const DEFAULT_GLOBAL_MAX_ACTIVE_JOBS = 6;
 const MAX_CONSECUTIVE_RESTARTS = 10;
+const DEFAULT_CHILD_SHUTDOWN_GRACE_MS = 4_000;
+const POST_KILL_WAIT_MS = 100;
 
 type PythonComputeLaneTemplate = {
   id: PythonComputeLaneId;
@@ -139,7 +142,7 @@ export type PythonComputeRouterDiagnostics = PythonComputeDiagnostics & {
 
 export type PythonComputeRuntimeLike = {
   start(): Promise<PythonComputeDiagnostics>;
-  stop(): void;
+  stop(): Promise<void>;
   getDiagnostics(): PythonComputeDiagnostics;
   submitJob(
     request: PythonComputeJobRequest,
@@ -300,6 +303,7 @@ export class PythonComputeRuntime implements PythonComputeRuntimeLike {
   private child: ChildProcess | null = null;
   private childIdentity: PythonComputeProcessIdentity | null = null;
   private startPromise: Promise<PythonComputeDiagnostics> | null = null;
+  private stopPromise: Promise<void> | null = null;
   private lifecycleGeneration = 0;
   private restartTimer: ReturnType<typeof setTimeout> | null = null;
   private diagnostics: PythonComputeDiagnostics;
@@ -310,6 +314,7 @@ export class PythonComputeRuntime implements PythonComputeRuntimeLike {
   private readonly platform: NodeJS.Platform;
   private readonly readProcessIdentity: typeof readPythonComputeProcessIdentity;
   private readonly killProcess: typeof process.kill;
+  private readonly shutdownGraceMs: number;
   private readonly spawnProcess: typeof spawn;
   private readonly fetchFn: typeof fetch;
   private readonly delayFn: (ms: number) => Promise<void>;
@@ -328,6 +333,14 @@ export class PythonComputeRuntime implements PythonComputeRuntimeLike {
     this.platform = deps.platform ?? process.platform;
     this.readProcessIdentity = deps.readProcessIdentity ?? readPythonComputeProcessIdentity;
     this.killProcess = deps.killProcess ?? process.kill;
+    this.shutdownGraceMs = deps.shutdownGraceMs ?? DEFAULT_CHILD_SHUTDOWN_GRACE_MS;
+    if (
+      !Number.isSafeInteger(this.shutdownGraceMs) ||
+      this.shutdownGraceMs <= 0 ||
+      this.shutdownGraceMs > DEFAULT_CHILD_SHUTDOWN_GRACE_MS
+    ) {
+      throw new Error("Python compute shutdown grace must be 1-4000ms");
+    }
     this.config = laneDefinition?.config ?? resolvePythonComputeConfig(deps);
     this.spawnProcess = deps.spawnProcess ?? spawn;
     this.fetchFn = deps.fetch ?? fetch;
@@ -582,7 +595,20 @@ export class PythonComputeRuntime implements PythonComputeRuntimeLike {
     throw new Error(`Python compute job ${accepted.jobId} timed out after ${timeoutMs}ms.`);
   }
 
-  stop(): void {
+  stop(): Promise<void> {
+    if (this.stopPromise) {
+      return this.stopPromise;
+    }
+    const stopPromise = this.stopInner().finally(() => {
+      if (this.stopPromise === stopPromise) {
+        this.stopPromise = null;
+      }
+    });
+    this.stopPromise = stopPromise;
+    return stopPromise;
+  }
+
+  private async stopInner(): Promise<void> {
     this.stopping = true;
     this.lifecycleGeneration += 1;
     if (this.restartTimer) {
@@ -590,12 +616,40 @@ export class PythonComputeRuntime implements PythonComputeRuntimeLike {
       this.restartTimer = null;
     }
     if (this.child) {
-      stopPythonComputeChildProcess(this.child, {
-        expectedIdentity: this.childIdentity,
+      const child = this.child;
+      const expectedIdentity = this.childIdentity;
+      const settled = waitForPythonComputeChild(child);
+      const termination = stopPythonComputeChildProcess(child, {
+        expectedIdentity,
         platform: this.platform,
         readIdentity: this.readProcessIdentity,
         kill: this.killProcess,
       });
+      if (termination !== "missing") {
+        const exitedAfterTerm = await waitForPythonComputeChildOrTimeout(
+          settled,
+          this.shutdownGraceMs,
+        );
+        if (exitedAfterTerm && termination === "group") {
+          stopPythonComputeChildProcess(child, {
+            allowMissingLeader: true,
+            expectedIdentity,
+            platform: this.platform,
+            readIdentity: this.readProcessIdentity,
+            kill: this.killProcess,
+            signal: "SIGKILL",
+          });
+        } else if (!exitedAfterTerm) {
+          stopPythonComputeChildProcess(child, {
+            expectedIdentity,
+            platform: this.platform,
+            readIdentity: this.readProcessIdentity,
+            kill: this.killProcess,
+            signal: "SIGKILL",
+          });
+          await waitForPythonComputeChildOrTimeout(settled, POST_KILL_WAIT_MS);
+        }
+      }
       this.child = null;
       this.childIdentity = null;
     }
@@ -833,7 +887,39 @@ type StopPythonComputeChildProcessDeps = {
   kill?: typeof process.kill;
   readIdentity?: typeof readPythonComputeProcessIdentity;
   expectedIdentity?: PythonComputeProcessIdentity | null;
+  signal?: NodeJS.Signals;
+  allowMissingLeader?: boolean;
 };
+
+type PythonComputeStopMode = "group" | "child" | "missing";
+
+function waitForPythonComputeChild(child: ChildProcess): Promise<void> {
+  return new Promise((resolveWait) => {
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      child.removeListener("error", finish);
+      child.removeListener("exit", finish);
+      resolveWait();
+    };
+    child.once("error", finish);
+    child.once("exit", finish);
+  });
+}
+
+function waitForPythonComputeChildOrTimeout(
+  settled: Promise<void>,
+  timeoutMs: number,
+): Promise<boolean> {
+  return new Promise((resolveWait) => {
+    const timeout = setTimeout(() => resolveWait(false), timeoutMs);
+    settled.then(() => {
+      clearTimeout(timeout);
+      resolveWait(true);
+    });
+  });
+}
 
 export function readPythonComputeProcessIdentity(
   pid: number,
@@ -870,28 +956,38 @@ function processIdentityMatches(
 export function stopPythonComputeChildProcess(
   child: ChildProcess,
   deps: StopPythonComputeChildProcessDeps = {},
-): void {
+): PythonComputeStopMode {
   const platform = deps.platform ?? process.platform;
   const killProcess = deps.kill ?? process.kill;
   const readIdentity = deps.readIdentity ?? readPythonComputeProcessIdentity;
-  if (
-    child.pid &&
-    platform === "linux" &&
-    processIdentityMatches(deps.expectedIdentity, readIdentity(child.pid))
-  ) {
+  const signal = deps.signal ?? "SIGTERM";
+  const currentIdentity = child.pid ? readIdentity(child.pid) : null;
+  // ponytail: Node exposes no process-group fd. After this exact child emitted
+  // exit, a missing leader is the platform ceiling for draining its survivors;
+  // move this boundary to pidfd/cgroup ownership when the runtime provides it.
+  const missingLeaderCanBeDrained =
+    deps.allowMissingLeader === true &&
+    currentIdentity === null &&
+    Number.isSafeInteger(deps.expectedIdentity?.pid) &&
+    deps.expectedIdentity?.pid === child.pid &&
+    typeof deps.expectedIdentity?.startTimeTicks === "string";
+  const groupIdentityIsSafe =
+    processIdentityMatches(deps.expectedIdentity, currentIdentity) ||
+    missingLeaderCanBeDrained;
+  if (child.pid && platform === "linux" && groupIdentityIsSafe) {
     try {
-      killProcess(-child.pid, "SIGTERM");
-      return;
+      killProcess(-child.pid, signal);
+      return "group";
     } catch (error) {
       const code = (error as { code?: unknown })?.code;
       if (code === "ESRCH") {
-        return;
+        return "missing";
       }
     }
   }
   // ponytail: a direct uv-child signal is the safe ceiling when /proc cannot
   // prove the detached group leader; add a pidfd/cgroup owner before widening it.
-  child.kill("SIGTERM");
+  return child.kill(signal) ? "child" : "missing";
 }
 
 function terminalJobStatus(status: PythonComputeJobResult["status"]): boolean {
@@ -979,8 +1075,8 @@ export class PythonComputeRouter {
     return this.getDiagnostics();
   }
 
-  stop(): void {
-    Object.values(this.runtimes).forEach((runtime) => runtime.stop());
+  async stop(): Promise<void> {
+    await Promise.all(Object.values(this.runtimes).map((runtime) => runtime.stop()));
     this.activeJobs.clear();
   }
 
@@ -1125,8 +1221,8 @@ export async function startPythonComputeRuntime(): Promise<PythonComputeRouterDi
   return pythonComputeRouter.start();
 }
 
-export function stopPythonComputeRuntime(): void {
-  pythonComputeRouter.stop();
+export function stopPythonComputeRuntime(): Promise<void> {
+  return pythonComputeRouter.stop();
 }
 
 export function getPythonComputeDiagnostics(): PythonComputeRouterDiagnostics {
