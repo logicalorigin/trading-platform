@@ -24,6 +24,7 @@ import {
   recordTaxPreflightIbkrReplyRequired,
   recordTaxPreflightOrderSubmitted,
   recordSubmittedIbkrOrderCancellation,
+  recordSubmittedIbkrOrderReconciliationRequired,
 } from "./tax-planning";
 import type { TaxOrderLike } from "./tax-planning-model";
 import { fingerprintIbkrOrderBody } from "./ibkr-order-intent";
@@ -822,6 +823,107 @@ test("controlled IBKR lifecycle recovers active state and resolves after termina
   });
 });
 
+test("submitted IBKR reconciliation preserves the broker order and blocks new placement", async () => {
+  await withTestDb(async () => {
+    const appUserId = await createUser(
+      "tax-preflight-ibkr-submitted-reconciliation@example.com",
+    );
+    await runAsAppUser(appUserId, async () => {
+      const order = baseOrder({ quantity: 1, limitPrice: 100 });
+      const orderBody = {
+        orders: [
+          {
+            acctId: "U1234567",
+            conid: 265598,
+            cOID: "submitted-reconciliation-intent",
+            orderType: "LMT",
+            outsideRTH: false,
+            side: "BUY",
+            tif: "DAY",
+            quantity: 1,
+            price: 100,
+          },
+        ],
+      };
+      const preflight = await createTaxOrderPreflight(
+        { order },
+        {
+          ibkrPreparedIntent: {
+            version: 1,
+            accountId: "U1234567",
+            clientOrderId: "submitted-reconciliation-intent",
+            orderFingerprint: fingerprintIbkrOrderBody(orderBody),
+            orderBody,
+            preparedAt: new Date().toISOString(),
+            whatIf: { error: null, warnings: [] },
+          },
+        },
+      );
+      await assertTaxPreflightForOrderSubmission({
+        order,
+        taxPreflightToken: preflight.preflightToken,
+        requireIbkrPreparedIntent: true,
+        expectedIbkrIntentKind: "place",
+      });
+      await recordTaxPreflightOrderSubmitted({
+        preflightToken: preflight.preflightToken,
+        submittedOrderId: "1234567890",
+      });
+
+      await recordSubmittedIbkrOrderReconciliationRequired({
+        accountId: "U1234567",
+        submittedOrderId: "1234567890",
+        reason: "placement_record_failed",
+      });
+
+      assert.deepEqual(await getControlledIbkrOrderLifecycle(), {
+        status: "reconciliation_required",
+        accountId: "U1234567",
+        orderId: "1234567890",
+        symbol: "AAPL",
+        side: "buy",
+        quantity: 1,
+        limitPrice: 100,
+        replacementUsed: false,
+        cancelAttempted: false,
+        reason: "placement_record_failed",
+      });
+
+      const nextBody = structuredClone(orderBody);
+      nextBody.orders[0].cOID = "submitted-reconciliation-next";
+      const next = await createTaxOrderPreflight(
+        { order },
+        {
+          ibkrPreparedIntent: {
+            version: 1,
+            accountId: "U1234567",
+            clientOrderId: "submitted-reconciliation-next",
+            orderFingerprint: fingerprintIbkrOrderBody(nextBody),
+            orderBody: nextBody,
+            preparedAt: new Date().toISOString(),
+            whatIf: { error: null, warnings: [] },
+          },
+        },
+      );
+      await assert.rejects(
+        assertTaxPreflightForOrderSubmission({
+          order,
+          taxPreflightToken: next.preflightToken,
+          requireIbkrPreparedIntent: true,
+          expectedIbkrIntentKind: "place",
+        }),
+        (error: unknown) => {
+          assert.equal(
+            (error as { code?: string }).code,
+            "ibkr_order_mutation_in_progress",
+          );
+          return true;
+        },
+      );
+    });
+  });
+});
+
 test("IBKR warning challenge expires after thirty seconds without exposing reply id", async () => {
   await withTestDb(async () => {
     const appUserId = await createUser(
@@ -1005,6 +1107,74 @@ test("submitted IBKR cancellation is claimed once and records terminal outcome",
         status: "canceled",
         filledQuantity: 0,
       });
+    });
+  });
+});
+
+test("partial-fill cancellation remains reconciliation-required", async () => {
+  await withTestDb(async () => {
+    const appUserId = await createUser(
+      "tax-preflight-ibkr-partial-cancel@example.com",
+    );
+    await runAsAppUser(appUserId, async () => {
+      const order = baseOrder({ quantity: 1, limitPrice: 100 });
+      const orderBody = {
+        orders: [
+          {
+            acctId: "U1234567",
+            conid: 265598,
+            cOID: "partial-cancel-intent",
+            orderType: "LMT",
+            outsideRTH: false,
+            side: "BUY",
+            tif: "DAY",
+            quantity: 1,
+            price: 100,
+          },
+        ],
+      };
+      const preflight = await createTaxOrderPreflight(
+        { order },
+        {
+          ibkrPreparedIntent: {
+            version: 1,
+            accountId: "U1234567",
+            clientOrderId: "partial-cancel-intent",
+            orderFingerprint: fingerprintIbkrOrderBody(orderBody),
+            orderBody,
+            preparedAt: new Date().toISOString(),
+            whatIf: { error: null, warnings: [] },
+          },
+        },
+      );
+      await assertTaxPreflightForOrderSubmission({
+        order,
+        taxPreflightToken: preflight.preflightToken,
+        requireIbkrPreparedIntent: true,
+        expectedIbkrIntentKind: "place",
+      });
+      await recordTaxPreflightOrderSubmitted({
+        preflightToken: preflight.preflightToken,
+        submittedOrderId: "1234567890",
+      });
+      await claimSubmittedIbkrOrderCancellation({
+        accountId: "U1234567",
+        submittedOrderId: "1234567890",
+      });
+
+      await recordSubmittedIbkrOrderCancellation({
+        accountId: "U1234567",
+        submittedOrderId: "1234567890",
+        cancelConfirmed: true,
+        status: "canceled",
+        filledQuantity: 0.5,
+      });
+
+      const lifecycle = await getControlledIbkrOrderLifecycle();
+      assert.equal(lifecycle.status, "reconciliation_required");
+      assert.equal(lifecycle.orderId, "1234567890");
+      assert.equal(lifecycle.reason, "cancel_outcome_unknown");
+      assert.equal(lifecycle.cancelAttempted, true);
     });
   });
 });
