@@ -66,6 +66,61 @@ test("Python compute stop falls back to direct child termination when group kill
   assert.deepEqual(calls, [{ signal: "SIGTERM" }]);
 });
 
+test("Python compute runtime enforces the checked-in uv lock", async () => {
+  const cwd = mkdtempSync(join(tmpdir(), "pyrus-python-compute-"));
+  writeFileSync(join(cwd, "pyproject.toml"), '[project]\nname = "test"\n');
+  let spawned = false;
+  let spawnedCommand: string | null = null;
+  let spawnedArgs: readonly string[] = [];
+  const runtime = new PythonComputeRuntime({
+    laneDefinition: {
+      id: "risk",
+      label: "Risk compute",
+      config: {
+        enabled: true,
+        cwd,
+        host: "127.0.0.1",
+        port: 18_768,
+        startupTimeoutMs: 1,
+      },
+      jobTypes: ["portfolio_risk"],
+    },
+    spawnProcess: ((command: string, args: readonly string[]) => {
+      spawned = true;
+      spawnedCommand = command;
+      spawnedArgs = args;
+      return fakeSpawnedChild();
+    }) as typeof spawn,
+    fetch: (async () => {
+      if (!spawned) {
+        throw new Error("not started");
+      }
+      return new Response(
+        JSON.stringify({ ok: true, service: "pyrus-compute", lane: "risk" }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    }) as typeof fetch,
+    delay: async () => {},
+    probePortOpen: async () => false,
+  });
+
+  try {
+    const diagnostics = await runtime.start();
+    assert.equal(diagnostics.status, "healthy");
+    assert.equal(spawnedCommand, "uv");
+    assert.deepEqual(spawnedArgs, [
+      "run",
+      "--locked",
+      "python",
+      "-m",
+      "pyrus_compute.service",
+    ]);
+  } finally {
+    runtime.stop();
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
 test("Python compute diagnostics re-probes a degraded live child", async () => {
   const cwd = mkdtempSync(join(tmpdir(), "pyrus-python-compute-"));
   writeFileSync(join(cwd, "pyproject.toml"), "[project]\nname = \"test\"\n");

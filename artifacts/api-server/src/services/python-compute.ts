@@ -402,7 +402,7 @@ export class PythonComputeRuntime implements PythonComputeRuntimeLike {
     this.diagnostics.startedAt = new Date().toISOString();
     const child = this.spawnProcess(
       "uv",
-      ["run", "python", "-m", "pyrus_compute.service"],
+      ["run", "--locked", "python", "-m", "pyrus_compute.service"],
       {
         cwd: this.config.cwd,
         detached: process.platform !== "win32",

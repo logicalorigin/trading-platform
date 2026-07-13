@@ -8,12 +8,12 @@ const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const pythonRoot = resolve(repoRoot, "python/pyrus_compute");
 
 const commands = {
-  doctor: ["run", "python", "-m", "pyrus_compute.doctor"],
-  benchmark: ["run", "python", "-m", "pyrus_compute.benchmark"],
-  service: ["run", "python", "-m", "pyrus_compute.service"],
-  lint: ["run", "ruff", "check"],
-  typecheck: ["run", "mypy", "src"],
-  test: ["run", "pytest"],
+  doctor: ["run", "--locked", "python", "-m", "pyrus_compute.doctor"],
+  benchmark: ["run", "--locked", "python", "-m", "pyrus_compute.benchmark"],
+  service: ["run", "--locked", "python", "-m", "pyrus_compute.service"],
+  lint: ["run", "--locked", "ruff", "check"],
+  typecheck: ["run", "--locked", "mypy", "src"],
+  test: ["run", "--locked", "pytest"],
 };
 
 const command = process.argv[2] ?? "doctor";
