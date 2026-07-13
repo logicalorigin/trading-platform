@@ -312,11 +312,36 @@ test("marketing dashboard default snapshots share cache and in-flight work", () 
 
   const block = source.slice(start, end);
   assert.match(block, /Object\.keys\(dependencies\)\.length === 0/);
-  assert.match(block, /marketingSnapshotCache\.get\(cacheKey\)/);
+  assert.match(block, /readMarketingSnapshotCache\(cacheKey, Date\.now\(\)\)/);
   assert.match(block, /marketingSnapshotInFlight\.get\(cacheKey\)/);
   assert.match(block, /marketingSnapshotInFlight\.set\(cacheKey, inFlight\)/);
   assert.match(block, /marketingSnapshotInFlight\.delete\(cacheKey\)/);
+  assert.match(block, /setMarketingSnapshotCache\(cacheKey/);
   assert.match(block, /MARKETING_SHADOW_DASHBOARD_SNAPSHOT_CACHE_MS/);
+});
+
+test("marketing snapshot cache evicts the oldest retained payload", () => {
+  const internals = __marketingShadowDashboardInternalsForTests;
+  internals.clearSnapshotCacheForTests();
+  const maxKeys = internals.getSnapshotCacheMaxKeysForTests();
+
+  try {
+    for (let index = 0; index <= maxKeys; index += 1) {
+      internals.setSnapshotCacheForTests(
+        `snapshot-${index}`,
+        marketingPayload(index),
+      );
+    }
+
+    assert.equal(internals.hasSnapshotCacheKeyForTests("snapshot-0"), false);
+    assert.equal(
+      internals.hasSnapshotCacheKeyForTests(`snapshot-${maxKeys}`),
+      true,
+    );
+    assert.equal(internals.getSnapshotCacheSizeForTests(), maxKeys);
+  } finally {
+    internals.clearSnapshotCacheForTests();
+  }
 });
 
 test("marketing dashboard resolves deployments without P&L decoration", () => {

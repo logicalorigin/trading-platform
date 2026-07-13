@@ -41,6 +41,9 @@ export const MARKETING_SHADOW_DASHBOARD_DEFAULT_EQUITY_RANGE: AccountRange = "1D
 export const MARKETING_SHADOW_DASHBOARD_STREAM_INTERVAL_MS = 5_000;
 export const MARKETING_SHADOW_DASHBOARD_STREAM_COALESCE_MS = 1_000;
 export const MARKETING_SHADOW_DASHBOARD_SNAPSHOT_CACHE_MS = 5_000;
+// ponytail: bound retained snapshots by key; switch to a byte budget only if
+// bounded payload sizes later vary enough for key count to stop being predictive.
+const MARKETING_SHADOW_DASHBOARD_SNAPSHOT_CACHE_MAX_KEYS = 16;
 export const MARKETING_SHADOW_DASHBOARD_STALE_MS = 24 * 60 * 60_000;
 export const MARKETING_SHADOW_DASHBOARD_LABEL = "Shadow trading";
 
@@ -176,6 +179,38 @@ const marketingSnapshotInFlight = new Map<
   string,
   Promise<MarketingShadowDashboardPayload>
 >();
+
+function readMarketingSnapshotCache(
+  key: string,
+  nowMs: number,
+): MarketingShadowDashboardPayload | null {
+  const cached = marketingSnapshotCache.get(key);
+  if (!cached || cached.expiresAt <= nowMs) {
+    marketingSnapshotCache.delete(key);
+    return null;
+  }
+  marketingSnapshotCache.delete(key);
+  marketingSnapshotCache.set(key, cached);
+  return cached.payload;
+}
+
+function setMarketingSnapshotCache(
+  key: string,
+  entry: { payload: MarketingShadowDashboardPayload; expiresAt: number },
+) {
+  if (
+    !marketingSnapshotCache.has(key) &&
+    marketingSnapshotCache.size >=
+      MARKETING_SHADOW_DASHBOARD_SNAPSHOT_CACHE_MAX_KEYS
+  ) {
+    const oldestKey = marketingSnapshotCache.keys().next().value;
+    if (oldestKey !== undefined) {
+      marketingSnapshotCache.delete(oldestKey);
+    }
+  }
+  marketingSnapshotCache.delete(key);
+  marketingSnapshotCache.set(key, entry);
+}
 
 function resolveDependencies(
   dependencies: Partial<MarketingShadowDashboardDependencies> = {},
@@ -601,6 +636,27 @@ export const __marketingShadowDashboardInternalsForTests = {
   readGenuineDegraded,
   readGenuineStale,
   buildWarnings,
+  clearSnapshotCacheForTests() {
+    marketingSnapshotCache.clear();
+  },
+  getSnapshotCacheMaxKeysForTests() {
+    return MARKETING_SHADOW_DASHBOARD_SNAPSHOT_CACHE_MAX_KEYS;
+  },
+  setSnapshotCacheForTests(
+    key: string,
+    payload: MarketingShadowDashboardPayload,
+  ) {
+    setMarketingSnapshotCache(key, {
+      payload,
+      expiresAt: Number.POSITIVE_INFINITY,
+    });
+  },
+  hasSnapshotCacheKeyForTests(key: string) {
+    return marketingSnapshotCache.has(key);
+  },
+  getSnapshotCacheSizeForTests() {
+    return marketingSnapshotCache.size;
+  },
 };
 
 export async function fetchMarketingShadowDashboardSnapshot(
@@ -610,9 +666,9 @@ export async function fetchMarketingShadowDashboardSnapshot(
   const normalized = normalizeMarketingShadowDashboardInput(input);
   if (Object.keys(dependencies).length === 0) {
     const cacheKey = marketingShadowDashboardCacheKey(normalized);
-    const cached = marketingSnapshotCache.get(cacheKey);
-    if (cached && cached.expiresAt > Date.now()) {
-      return cached.payload;
+    const cached = readMarketingSnapshotCache(cacheKey, Date.now());
+    if (cached) {
+      return cached;
     }
     let inFlight = marketingSnapshotInFlight.get(cacheKey);
     if (!inFlight) {
@@ -621,9 +677,10 @@ export async function fetchMarketingShadowDashboardSnapshot(
         defaultDependencies,
       )
         .then((payload) => {
-          marketingSnapshotCache.set(cacheKey, {
+          setMarketingSnapshotCache(cacheKey, {
             payload,
-            expiresAt: Date.now() + MARKETING_SHADOW_DASHBOARD_SNAPSHOT_CACHE_MS,
+            expiresAt:
+              Date.now() + MARKETING_SHADOW_DASHBOARD_SNAPSHOT_CACHE_MS,
           });
           return payload;
         })
