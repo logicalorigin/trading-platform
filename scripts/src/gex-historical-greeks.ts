@@ -65,7 +65,9 @@ type GexLookupRow = {
 };
 
 function finiteNumber(value: unknown): number | null {
-  const parsed = typeof value === "number" ? value : Number(value);
+  if (typeof value !== "number" && typeof value !== "string") return null;
+  if (typeof value === "string" && !value.trim()) return null;
+  const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
 }
 
@@ -138,7 +140,20 @@ function optionGreekSnapshotFromGexRow(input: {
   const row = asRecord(input.optionRow);
   const delta = finiteNumber(row["delta"]);
   const gamma = finiteNumber(row["gamma"]);
-  if (delta == null || gamma == null) return null;
+  const theta = finiteNumber(row["theta"]);
+  const vega = finiteNumber(row["vega"]);
+  const impliedVolatility =
+    finiteNumber(row["impliedVol"]) ?? finiteNumber(row["impliedVolatility"]);
+  if (
+    delta == null ||
+    gamma == null ||
+    theta == null ||
+    vega == null ||
+    impliedVolatility == null ||
+    impliedVolatility <= 0
+  ) {
+    return null;
+  }
 
   const bid = finiteNumber(row["bid"]);
   const ask = finiteNumber(row["ask"]);
@@ -154,12 +169,9 @@ function optionGreekSnapshotFromGexRow(input: {
     price,
     delta,
     gamma,
-    theta: finiteNumber(row["theta"]) ?? 0,
-    vega: finiteNumber(row["vega"]) ?? 0,
-    impliedVolatility:
-      finiteNumber(row["impliedVol"]) ??
-      finiteNumber(row["impliedVolatility"]) ??
-      0,
+    theta,
+    vega,
+    impliedVolatility,
     timeToExpirationYears: timeToExpirationYears(input),
   };
 }
@@ -206,7 +218,8 @@ with nearby_snapshots as (
     nearby_snapshots.computed_at,
     nearby_snapshots.spot,
     nearby_snapshots.source_status,
-    option_row
+    option_row,
+    parsed.option_strike
   from nearby_snapshots
   join lateral jsonb_array_elements(
     case
@@ -215,17 +228,23 @@ with nearby_snapshots as (
       else '[]'::jsonb
     end
   ) as option_row on true
+  cross join lateral (
+    select case
+      when jsonb_typeof(option_row->'strike') = 'number'
+        then (option_row->>'strike')::double precision
+    end as option_strike
+  ) parsed
   where jsonb_typeof(option_row) = 'object'
     and option_row->>'expirationDate' = $2
     and option_row->>'cp' = $4
-    and abs((option_row->>'strike')::double precision - $3::double precision)
+    and abs(parsed.option_strike - $3::double precision)
       <= $7::double precision
 )
 select id, symbol, computed_at, spot::double precision as spot, source_status, option_row
 from option_rows
 order by
   abs(extract(epoch from (computed_at - $5::timestamptz)) * 1000),
-  abs((option_row->>'strike')::double precision - $3::double precision),
+  abs(option_strike - $3::double precision),
   computed_at desc
 limit 1
       `,
