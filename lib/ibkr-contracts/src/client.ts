@@ -186,6 +186,8 @@ export type PositionQuoteSnapshot = {
 export type BrokerOrderSnapshot = {
   id: string;
   accountId: string;
+  clientOrderId?: string | null;
+  providerContractId?: string | null;
   mode: RuntimeMode;
   symbol: string;
   assetClass: AssetClass;

@@ -138,6 +138,108 @@ test("IBKR what-if and submission use the identical prepared order", async () =>
   }
 });
 
+test("IBKR market submission omits price and confirms an immediate fill", async () => {
+  const previousFetch = globalThis.fetch;
+  const paths: string[] = [];
+  let whatIfBody: Record<string, unknown> | null = null;
+  let submittedBody: Record<string, unknown> | null = null;
+  globalThis.fetch = (async (input, init) => {
+    const path = new URL(String(input)).pathname;
+    paths.push(path);
+    if (path.endsWith("/iserver/accounts")) {
+      return Response.json({
+        accounts: ["U1234567"],
+        selectedAccount: "U1234567",
+        isPaper: false,
+      });
+    }
+    if (path.endsWith("/iserver/secdef/search")) {
+      return Response.json([
+        { symbol: "AAPL", conid: 265598, description: "NASDAQ" },
+      ]);
+    }
+    if (path.endsWith("/iserver/marketdata/snapshot")) {
+      return Response.json([]);
+    }
+    if (path.endsWith("/iserver/account/U1234567/orders/whatif")) {
+      whatIfBody = JSON.parse(String(init?.body));
+      return Response.json({
+        amount: { amount: "101.25", commission: "1.00", total: "102.25" },
+        equity: { change: "-102.25" },
+        initial: { change: "101.25" },
+        maintenance: { change: "101.25" },
+      });
+    }
+    if (
+      path.endsWith("/iserver/account/U1234567/orders") &&
+      init?.method === "POST"
+    ) {
+      submittedBody = JSON.parse(String(init?.body));
+      return Response.json([
+        { order_id: "order-market-1", order_status: "Submitted" },
+      ]);
+    }
+    if (path.endsWith("/iserver/account/orders")) {
+      return Response.json({
+        orders: [
+          {
+            acct: "U1234567",
+            orderId: "order-market-1",
+            conid: 265598,
+            ticker: "AAPL",
+            filledQuantity: 1,
+            remainingQuantity: 0,
+            totalSize: 1,
+            status: "Filled",
+            origOrderType: "MARKET",
+            orderType: "Market",
+            order_ref: "intent-market-123",
+            timeInForce: "CLOSE",
+            side: "BUY",
+            avgPrice: "101.25",
+          },
+        ],
+      });
+    }
+    throw new Error(`unexpected IBKR request: ${path}`);
+  }) as typeof fetch;
+
+  try {
+    const marketOrder = {
+      ...order,
+      clientOrderId: "intent-market-123",
+      type: "market",
+      limitPrice: null,
+    } satisfies PlaceOrderInput & { clientOrderId: string };
+    const client = new IbkrClient(config());
+    const preview = await client.previewOrder(marketOrder);
+    const placed = await client.placeOrder(marketOrder);
+    const preparedOrder = (
+      (whatIfBody as { orders?: Record<string, unknown>[] } | null)?.orders ?? []
+    )[0];
+
+    assert.deepEqual(whatIfBody, submittedBody);
+    assert.equal(preparedOrder?.orderType, "MKT");
+    assert.equal(Object.hasOwn(preparedOrder ?? {}, "price"), false);
+    assert.equal(placed.id, "order-market-1");
+    assert.equal(placed.type, "market");
+    assert.equal(placed.status, "filled");
+    assert.equal(placed.filledQuantity, 1);
+    assert.equal(placed.limitPrice, null);
+    assert.equal(placed.clientOrderId, "intent-market-123");
+    assert.equal(placed.providerContractId, "265598");
+    assert.equal(placed.placementConfirmed, true);
+    assert.equal(placed.reconciliationRequired, false);
+    assert.equal(
+      paths.some((path) => path.includes("/iserver/account/order/status/")),
+      false,
+    );
+    assert.equal(preview.clientOrderId, "intent-market-123");
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
 test("IBKR what-if fails closed for empty and unrecognized responses", async () => {
   const previousFetch = globalThis.fetch;
   const responses: unknown[] = [{}, { status: "ok" }];

@@ -123,6 +123,73 @@ test("IBKR cancel waits through PendingCancel until terminal Cancelled", async (
   }
 });
 
+test("IBKR can cancel an unfilled prepared market order", async () => {
+  const previousFetch = globalThis.fetch;
+  let cancelSubmitted = false;
+  const { price: _preparedPrice, ...preparedMarketOrder } =
+    preparedOrderBody.orders[0]!;
+  const marketBody = {
+    orders: [
+      {
+        ...preparedMarketOrder,
+        cOID: "intent-cancel-market",
+        orderType: "MKT",
+      },
+    ],
+  };
+  const { price: _livePrice, ...activeMarketOrder } = activeLiveOrder;
+  const marketLiveOrder = {
+    ...activeMarketOrder,
+    orderRef: "intent-cancel-market",
+    origOrderType: "MARKET",
+  };
+  const marketOrderStatus = {
+    ...activeOrderStatus,
+    order_type: "MARKET",
+  };
+  globalThis.fetch = (async (input, init) => {
+    const path = new URL(String(input)).pathname;
+    if (path.endsWith("/iserver/accounts")) {
+      return Response.json({ accounts: ["U1234567"], isPaper: false });
+    }
+    if (path.endsWith("/iserver/account/orders")) {
+      return Response.json({ orders: [marketLiveOrder] });
+    }
+    if (
+      path.endsWith("/iserver/account/U1234567/order/order-1") &&
+      init?.method === "DELETE"
+    ) {
+      cancelSubmitted = true;
+      return Response.json({ msg: "Request was submitted", order_id: "order-1" });
+    }
+    if (path.endsWith("/iserver/account/order/status/order-1")) {
+      if (!cancelSubmitted) return Response.json(marketOrderStatus);
+      return Response.json({
+        order_status: "Cancelled",
+        cum_fill: 0,
+        size: 0,
+        total_size: 1,
+      });
+    }
+    throw new Error(`unexpected IBKR request: ${path}`);
+  }) as typeof fetch;
+
+  try {
+    const result = await new IbkrClient(config()).cancelOrder({
+      accountId: "U1234567",
+      orderId: "order-1",
+      mode: "live",
+      preparedOrderBody: marketBody,
+    });
+    assert.equal(cancelSubmitted, true);
+    assert.equal(result.status, "canceled");
+    assert.equal(result.cancelConfirmed, true);
+    assert.equal(result.reconciliationRequired, false);
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
 test("IBKR cancel does not confirm without explicit fill and remaining evidence", async () => {
   const previousFetch = globalThis.fetch;
   let cancelSubmitted = false;
@@ -645,6 +712,8 @@ test("IBKR unknown order status stays pending instead of appearing submitted", a
           {
             orderId: "order-unknown",
             acct: "U1234567",
+            conid: 265598,
+            order_ref: "intent-unknown",
             ticker: "AAPL",
             secType: "STK",
             side: "BUY",
@@ -668,6 +737,8 @@ test("IBKR unknown order status stays pending instead of appearing submitted", a
       mode: "live",
     });
     assert.equal(order?.status, "pending_submit");
+    assert.equal(order?.clientOrderId, "intent-unknown");
+    assert.equal(order?.providerContractId, "265598");
   } finally {
     globalThis.fetch = previousFetch;
   }
