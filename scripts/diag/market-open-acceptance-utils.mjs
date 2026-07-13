@@ -128,8 +128,40 @@ export async function cleanupHeapProfiler(inspector, samplingStarted) {
 }
 
 export function psqlEnvironment(databaseUrl, env = process.env) {
-  const childEnv = { ...env, PGDATABASE: databaseUrl };
+  const connection = new URL(databaseUrl);
+  if (!["postgres:", "postgresql:"].includes(connection.protocol)) {
+    throw new Error(
+      `unsupported PostgreSQL URL protocol: ${connection.protocol}`,
+    );
+  }
+  const childEnv = { ...env };
   delete childEnv.DATABASE_URL;
+  for (const key of [
+    "PGDATABASE",
+    "PGHOST",
+    "PGHOSTADDR",
+    "PGPASSWORD",
+    "PGPORT",
+    "PGSERVICE",
+    "PGSERVICEFILE",
+    "PGSSLMODE",
+    "PGUSER",
+  ]) {
+    delete childEnv[key];
+  }
+  childEnv.PGDATABASE = decodeURIComponent(connection.pathname.slice(1));
+  childEnv.PGHOST = connection.hostname;
+  childEnv.PGPORT = connection.port || "5432";
+  if (connection.username) {
+    childEnv.PGUSER = decodeURIComponent(connection.username);
+  }
+  if (connection.password) {
+    childEnv.PGPASSWORD = decodeURIComponent(connection.password);
+  }
+  const sslMode = connection.searchParams.get("sslmode");
+  if (sslMode) {
+    childEnv.PGSSLMODE = sslMode;
+  }
   return childEnv;
 }
 

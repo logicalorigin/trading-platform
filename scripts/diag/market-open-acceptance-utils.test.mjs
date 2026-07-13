@@ -211,11 +211,24 @@ test("supervisor discovery requires the canonical Node script argument", () => {
 
 test("psql receives its connection string outside the process arguments", () => {
   assert.deepEqual(
-    psqlEnvironment("postgres://secret", {
-      DATABASE_URL: "postgres://secret",
+    psqlEnvironment(
+      "postgresql://agent%40user:p%40ss%3Aword@db.internal:6543/app%2Ddb?sslmode=require",
+      {
+        DATABASE_URL: "redacted",
+        PATH: "/bin",
+        PGDATABASE: "stale-db",
+        PGHOST: "stale-host",
+      },
+    ),
+    {
       PATH: "/bin",
-    }),
-    { PGDATABASE: "postgres://secret", PATH: "/bin" },
+      PGDATABASE: "app-db",
+      PGHOST: "db.internal",
+      PGPASSWORD: "p@ss:word",
+      PGPORT: "6543",
+      PGSSLMODE: "require",
+      PGUSER: "agent@user",
+    },
   );
 });
 
