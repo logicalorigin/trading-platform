@@ -80,11 +80,15 @@ directory to define separate Replit app runners.
   It intentionally skips historical audit and handoff notes.
 - `run-validation-command.mjs` wraps broad validation commands so they are
   serialized and recorded. Root `typecheck:libs` runs through this wrapper, which
-  writes a JSONL ledger to `.pyrus-runtime/validation/commands.jsonl` and holds a
-  single-validation lock. It does not inspect the live PYRUS supervisor and does
-  not refuse rebuilds/checks because the app is running. Use targeted package
-  tests during live app work when they are faster, but the wrapper itself is no
-  longer a live-runtime admission gate.
+  writes `.pyrus-runtime/validation/commands.jsonl` as a private, size-capped
+  JSONL ledger without persisting command arguments and holds a
+  PID/start-time-bound single-validation lock. Interrupt signals are forwarded
+  to the validation process group before lock cleanup.
+  It does not inspect the live PYRUS supervisor or refuse checks because the app
+  is running. Use targeted package tests during live app work when they are
+  faster; the wrapper is not a live-runtime admission gate. Malformed, unreadable,
+  or different-host locks are preserved for manual inspection instead of being
+  guessed stale.
 - `diagnose-agent-restarts.mjs` is observe-only restart attribution. It
   correlates `.pyrus-runtime/flight-recorder` incidents with surviving Codex
   session JSONL, Codex SQLite logs, Replit runtime file mtimes, and workflow log
