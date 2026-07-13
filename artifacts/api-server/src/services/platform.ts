@@ -4011,6 +4011,7 @@ export async function placeOrder(input: PlaceOrderInput) {
         preflightToken: taxPreflight.preflightToken,
         replyId,
         messages: data.messages,
+        requestEpoch: Number(data.requestEpoch),
       });
       throw new HttpError(409, "IBKR requires explicit review of an order warning.", {
         code: "ibkr_order_warning_confirmation_required",
@@ -4107,6 +4108,7 @@ export async function continueIbkrOrderReply(input: {
     result = await client.replyOrderWarning({
       replyId: claimed.replyId,
       confirmed: input.confirmed,
+      expectedRequestEpoch: claimed.requestEpoch,
     });
   } catch (error) {
     if (isHttpError(error) && error.code === "ibkr_order_rejected") {
@@ -4158,6 +4160,7 @@ export async function continueIbkrOrderReply(input: {
       preflightToken: input.taxPreflightToken,
       replyId: result.replyId,
       messages: result.messages,
+      requestEpoch: result.requestEpoch,
     });
     return {
       status: "warning" as const,
@@ -4560,6 +4563,7 @@ export async function replaceOrder(input: {
         preflightToken: input.taxPreflightToken,
         replyId,
         messages: data.messages,
+        requestEpoch: Number(data.requestEpoch),
       });
       throw new HttpError(409, "IBKR requires explicit review of a replacement warning.", {
         code: "ibkr_order_warning_confirmation_required",
@@ -4619,7 +4623,7 @@ export async function cancelOrder(input: {
   const mode = requireExplicitOrderActionMode(input.mode, "Order cancellation");
   assertLiveOrderConfirmed(mode, input.confirm);
   await assertIbkrGatewayTradingAvailable(input.accountId);
-  await claimSubmittedIbkrOrderCancellation({
+  const preparedIntent = await claimSubmittedIbkrOrderCancellation({
     accountId: input.accountId,
     submittedOrderId: input.orderId,
   });
@@ -4629,6 +4633,7 @@ export async function cancelOrder(input: {
       accountId: input.accountId,
       orderId: input.orderId,
       mode,
+      preparedOrderBody: preparedIntent.orderBody,
     });
     await recordSubmittedIbkrOrderCancellation({
       accountId: input.accountId,

@@ -242,6 +242,7 @@ test("tax preflight binds and atomically claims the prepared IBKR order", async 
         preflightToken: preflight.preflightToken,
         replyId: "raw-broker-reply-id",
         messages: ["Review broker warning."],
+        requestEpoch: 17,
       });
       assert.notEqual(challenge.challengeId, "raw-broker-reply-id");
       assert.deepEqual(challenge.messages, ["Review broker warning."]);
@@ -269,6 +270,7 @@ test("tax preflight binds and atomically claims the prepared IBKR order", async 
           claim.status === "fulfilled",
       );
       assert.equal(claimed?.value.replyId, "raw-broker-reply-id");
+      assert.equal(claimed?.value.requestEpoch, 17);
     });
   });
 });
@@ -392,6 +394,7 @@ test("prepared IBKR replacement is bound to its predecessor and cannot be placed
         preflightToken: replacementPreflight.preflightToken,
         replyId: "replacement-reply-id",
         messages: ["Review replacement warning."],
+        requestEpoch: 21,
       });
       await assert.rejects(
         claimSubmittedIbkrOrderCancellation({
@@ -872,8 +875,8 @@ test("submitted IBKR reconciliation preserves the broker order and blocks new pl
 
       await recordSubmittedIbkrOrderReconciliationRequired({
         accountId: "U1234567",
-        submittedOrderId: "1234567890",
-        reason: "placement_record_failed",
+        submittedOrderId: "9999999999",
+        reason: "replacement_preview_target_unknown",
       });
 
       assert.deepEqual(await getControlledIbkrOrderLifecycle(), {
@@ -886,7 +889,7 @@ test("submitted IBKR reconciliation preserves the broker order and blocks new pl
         limitPrice: 100,
         replacementUsed: false,
         cancelAttempted: false,
-        reason: "placement_record_failed",
+        reason: "replacement_preview_target_unknown",
       });
 
       const nextBody = structuredClone(orderBody);
@@ -971,6 +974,7 @@ test("IBKR warning challenge expires after thirty seconds without exposing reply
         preflightToken: preflight.preflightToken,
         replyId: "raw-warning-reply-id",
         messages: ["Review broker warning."],
+        requestEpoch: 25,
         now,
       });
       assert.equal(
@@ -1095,6 +1099,20 @@ test("submitted IBKR cancellation is claimed once and records terminal outcome",
         }),
       ]);
       assert.equal(claims.filter((claim) => claim.status === "fulfilled").length, 1);
+      const fulfilled = claims.find(
+        (
+          claim,
+        ): claim is PromiseFulfilledResult<
+          Awaited<ReturnType<typeof claimSubmittedIbkrOrderCancellation>>
+        > => claim.status === "fulfilled",
+      );
+      assert.equal(fulfilled?.value.kind, "replace");
+      const claimedOrders = fulfilled?.value.orderBody["orders"];
+      assert.ok(Array.isArray(claimedOrders));
+      assert.equal(
+        (claimedOrders[0] as Record<string, unknown>)["price"],
+        99,
+      );
       const rejected = claims.find(
         (claim): claim is PromiseRejectedResult => claim.status === "rejected",
       );

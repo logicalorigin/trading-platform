@@ -1696,7 +1696,7 @@ export async function recordSubmittedIbkrOrderReconciliationRequired(input: {
   }
   const reason =
     String(input.reason || "").trim().slice(0, 128) || "broker_outcome_unknown";
-  await db.transaction(async (tx) => {
+  return db.transaction(async (tx) => {
     await tx.execute(
       sql`SELECT pg_advisory_xact_lock(hashtext(${`ibkr-order-mutation:${appUserId}`}))`,
     );
@@ -1708,7 +1708,8 @@ export async function recordSubmittedIbkrOrderReconciliationRequired(input: {
           eq(taxPreflightChecksTable.appUserId, appUserId),
           eq(taxPreflightChecksTable.accountId, accountId),
         ),
-      );
+      )
+      .orderBy(desc(taxPreflightChecksTable.updatedAt));
     const parsed = rows.map((row) => ({
       row,
       prepared: tryReadIbkrPreparedOrderIntent(
@@ -1716,50 +1717,80 @@ export async function recordSubmittedIbkrOrderReconciliationRequired(input: {
         accountId,
       ),
     }));
-    const protectedState = parsed.some(({ row, prepared }) => {
+    const protectedState = parsed.some(({ row }) => {
       const marker = row.submittedOrderId || "";
-      const belongsToOrder =
-        ibkrOrderIdFromCancelMarker(marker) === submittedOrderId ||
-        (prepared?.kind === "replace" && prepared.orderId === submittedOrderId);
       return (
-        belongsToOrder &&
-        (marker.startsWith(IBKR_CANCEL_INFLIGHT_PREFIX) ||
-          marker.startsWith(IBKR_CANCEL_RECONCILIATION_PREFIX) ||
-          marker.startsWith(IBKR_CANCELLED_PREFIX) ||
-          marker === TAX_PREFLIGHT_ORDER_SUBMISSION_CONSUMED_MARKER ||
-          marker === IBKR_RECONCILIATION_REQUIRED_MARKER ||
-          marker.startsWith(IBKR_REPLY_PENDING_PREFIX) ||
-          marker.startsWith(IBKR_REPLY_CLAIMED_PREFIX))
+        marker.startsWith(IBKR_CANCEL_INFLIGHT_PREFIX) ||
+        marker.startsWith(IBKR_CANCEL_RECONCILIATION_PREFIX) ||
+        marker === TAX_PREFLIGHT_ORDER_SUBMISSION_CONSUMED_MARKER ||
+        marker === IBKR_RECONCILIATION_REQUIRED_MARKER ||
+        marker.startsWith(IBKR_REPLY_PENDING_PREFIX) ||
+        marker.startsWith(IBKR_REPLY_CLAIMED_PREFIX)
       );
     });
     if (protectedState) return;
+    if (
+      parsed.some(
+        ({ row }) =>
+          ibkrCancelledOrderId(row.submittedOrderId || "") ===
+          submittedOrderId,
+      )
+    ) {
+      return;
+    }
+
+    const target =
+      parsed.find(
+        ({ row, prepared }) =>
+          Boolean(prepared) && row.submittedOrderId === submittedOrderId,
+      ) ??
+      parsed.find(
+        ({ row, prepared }) =>
+          Boolean(prepared) &&
+          isIbkrBrokerOrderId(row.submittedOrderId || ""),
+      );
+    const trackedOrderId = target?.row.submittedOrderId || "";
+    if (!target?.prepared || !isIbkrBrokerOrderId(trackedOrderId)) {
+      throw new HttpError(
+        409,
+        "A tracked IBKR order is required for reconciliation.",
+        {
+          code: "ibkr_submitted_order_intent_unavailable",
+          expose: true,
+        },
+      );
+    }
 
     const now = new Date();
-    for (const { row, prepared } of parsed) {
-      if (!prepared || row.submittedOrderId !== submittedOrderId) continue;
-      await tx
-        .update(taxPreflightChecksTable)
-        .set({
-          submittedOrderId: IBKR_RECONCILIATION_REQUIRED_MARKER,
-          metadata: {
-            ...readJsonRecord(row.metadata),
-            ibkrReconciliation: {
-              ...readJsonRecord(
-                readJsonRecord(row.metadata).ibkrReconciliation,
-              ),
-              orderId: submittedOrderId,
-              reason,
-              recordedAt: now.toISOString(),
-            },
+    const updated = await tx
+      .update(taxPreflightChecksTable)
+      .set({
+        submittedOrderId: IBKR_RECONCILIATION_REQUIRED_MARKER,
+        metadata: {
+          ...readJsonRecord(target.row.metadata),
+          ibkrReconciliation: {
+            ...readJsonRecord(
+              readJsonRecord(target.row.metadata).ibkrReconciliation,
+            ),
+            orderId: trackedOrderId,
+            reason,
+            recordedAt: now.toISOString(),
           },
-          updatedAt: now,
-        })
-        .where(
-          and(
-            eq(taxPreflightChecksTable.id, row.id),
-            eq(taxPreflightChecksTable.submittedOrderId, submittedOrderId),
-          ),
-        );
+        },
+        updatedAt: now,
+      })
+      .where(
+        and(
+          eq(taxPreflightChecksTable.id, target.row.id),
+          eq(taxPreflightChecksTable.submittedOrderId, trackedOrderId),
+        ),
+      )
+      .returning({ id: taxPreflightChecksTable.id });
+    if (!updated.length) {
+      throw new HttpError(409, "The IBKR order changed during reconciliation.", {
+        code: "ibkr_order_reconciliation_required",
+        expose: true,
+      });
     }
   });
 }
@@ -1768,7 +1799,7 @@ export async function claimSubmittedIbkrOrderCancellation(input: {
   appUserId?: string;
   accountId: string;
   submittedOrderId: string;
-}): Promise<void> {
+}): Promise<IbkrPreparedOrderIntent> {
   const appUserId = input.appUserId ?? requireCurrentAppUserId();
   const accountId = String(input.accountId || "").trim();
   const submittedOrderId = String(input.submittedOrderId || "").trim();
@@ -1781,7 +1812,7 @@ export async function claimSubmittedIbkrOrderCancellation(input: {
       expose: true,
     });
   }
-  await db.transaction(async (tx) => {
+  return db.transaction(async (tx) => {
     await tx.execute(
       sql`SELECT pg_advisory_xact_lock(hashtext(${`ibkr-order-mutation:${appUserId}`}))`,
     );
@@ -1819,6 +1850,10 @@ export async function claimSubmittedIbkrOrderCancellation(input: {
         },
       );
     }
+    const prepared = readIbkrPreparedOrderIntent(
+      readJsonRecord(target.metadata).ibkrPreparedIntent,
+      accountId,
+    );
     const now = new Date();
     for (const preflight of preflights) {
       if (preflight.id === target.id) continue;
@@ -1878,6 +1913,7 @@ export async function claimSubmittedIbkrOrderCancellation(input: {
         expose: true,
       });
     }
+    return prepared;
   });
 }
 
@@ -1941,12 +1977,20 @@ export async function recordTaxPreflightIbkrReplyRequired(input: {
   preflightToken: string;
   replyId: string;
   messages: unknown;
+  requestEpoch: number;
   now?: Date;
 }) {
   const appUserId = input.appUserId ?? requireCurrentAppUserId();
   const replyId = String(input.replyId || "").trim();
   if (!replyId || replyId.length > 256) {
     throw new HttpError(409, "The IBKR order warning reply is invalid.", {
+      code: "ibkr_order_reply_invalid",
+      expose: true,
+    });
+  }
+  const requestEpoch = Number(input.requestEpoch);
+  if (!Number.isSafeInteger(requestEpoch) || requestEpoch < 1) {
+    throw new HttpError(409, "The IBKR order warning epoch is invalid.", {
       code: "ibkr_order_reply_invalid",
       expose: true,
     });
@@ -2001,6 +2045,7 @@ export async function recordTaxPreflightIbkrReplyRequired(input: {
       challengeId,
       replyId,
       messages,
+      requestEpoch,
       replyCount,
       issuedAt: issuedAt.toISOString(),
       expiresAt: expiresAt.toISOString(),
@@ -2061,6 +2106,7 @@ export async function claimTaxPreflightIbkrReply(input: {
     const pendingMarker = `${IBKR_REPLY_PENDING_PREFIX}${challengeId}`;
     const reply = readJsonRecord(readJsonRecord(preflight.metadata).ibkrReply);
     const challengeExpiresAt = Date.parse(String(reply.expiresAt || ""));
+    const requestEpoch = Number(reply.requestEpoch);
     const preparedValue = readJsonRecord(preflight.metadata).ibkrPreparedIntent;
     const preparedIntent = preparedValue
       ? readIbkrPreparedOrderIntent(preparedValue, preflight.accountId)
@@ -2068,6 +2114,8 @@ export async function claimTaxPreflightIbkrReply(input: {
     if (
       preflight.submittedOrderId !== pendingMarker ||
       String(reply.challengeId || "") !== challengeId ||
+      !Number.isSafeInteger(requestEpoch) ||
+      requestEpoch < 1 ||
       !Number.isFinite(challengeExpiresAt) ||
       challengeExpiresAt <= now.getTime()
     ) {
@@ -2106,6 +2154,7 @@ export async function claimTaxPreflightIbkrReply(input: {
     return {
       replyId: String(reply.replyId || ""),
       messages: stringList(reply.messages),
+      requestEpoch,
       ibkrPreparedIntent: preparedIntent,
     };
   });
