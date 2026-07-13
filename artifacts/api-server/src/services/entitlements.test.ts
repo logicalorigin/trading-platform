@@ -8,6 +8,7 @@ import {
   isIbkrMemberConnectEnabled,
   normalizeEntitlements,
   resolveLaunchEntitlements,
+  sessionCanAccessIbkrPortal,
   sessionHasEntitlement,
 } from "./entitlements";
 
@@ -146,6 +147,35 @@ test("isIbkrMemberConnectEnabled: only literal 'true' enables", () => {
     assert.equal(isIbkrMemberConnectEnabled(), true);
     process.env["IBKR_MEMBER_CONNECT_ENABLED"] = "true";
     assert.equal(isIbkrMemberConnectEnabled(), true);
+  } finally {
+    if (previous === undefined) {
+      delete process.env["IBKR_MEMBER_CONNECT_ENABLED"];
+    } else {
+      process.env["IBKR_MEMBER_CONNECT_ENABLED"] = previous;
+    }
+  }
+});
+
+test("sessionCanAccessIbkrPortal: admins bypass while members require flag and entitlement", () => {
+  const previous = process.env["IBKR_MEMBER_CONNECT_ENABLED"];
+  try {
+    delete process.env["IBKR_MEMBER_CONNECT_ENABLED"];
+    assert.equal(sessionCanAccessIbkrPortal(sessionWith("admin", [])), true);
+    assert.equal(
+      sessionCanAccessIbkrPortal(
+        sessionWith("member", [ENTITLEMENTS.IBKR_ACCESS]),
+      ),
+      false,
+    );
+
+    process.env["IBKR_MEMBER_CONNECT_ENABLED"] = "true";
+    assert.equal(sessionCanAccessIbkrPortal(sessionWith("member", [])), false);
+    assert.equal(
+      sessionCanAccessIbkrPortal(
+        sessionWith("member", [ENTITLEMENTS.IBKR_ACCESS]),
+      ),
+      true,
+    );
   } finally {
     if (previous === undefined) {
       delete process.env["IBKR_MEMBER_CONNECT_ENABLED"];

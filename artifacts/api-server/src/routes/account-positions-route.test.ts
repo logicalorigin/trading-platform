@@ -342,6 +342,11 @@ const directIbkrOrderRouteCases = [
     path: "/streams/executions",
     service: "fetchExecutionSnapshotPayload",
   },
+  {
+    method: "GET",
+    path: "/streams/accounts?accountId=real-account",
+    service: "fetchAccountSnapshotPayload",
+  },
   { method: "POST", path: "/orders", service: "placeOrder", body: {} },
   {
     method: "POST",
@@ -511,18 +516,21 @@ test("account detail routes thread the requesting user and preserve scoped 404s"
         route: "summary" | "positions";
         accountId: string;
         appUserId: string | null;
+        allowDirectIbkr: boolean;
       }> = [];
       const detailResponse =
         (route: "summary" | "positions") => async (rawInput: unknown) => {
           const input = rawInput as {
             accountId?: unknown;
             appUserId?: unknown;
+            allowDirectIbkr?: unknown;
           };
           const observed = {
             route,
             accountId: String(input.accountId ?? ""),
             appUserId:
               typeof input.appUserId === "string" ? input.appUserId : null,
+            allowDirectIbkr: input.allowDirectIbkr === true,
           };
           observedCalls.push(observed);
           if (
@@ -572,12 +580,32 @@ test("account detail routes thread the requesting user and preserve scoped 404s"
         }
 
         assert.deepEqual(
-          observedCalls.map(({ route, appUserId }) => ({ route, appUserId })),
+          observedCalls.map(({ route, appUserId, allowDirectIbkr }) => ({
+            route,
+            appUserId,
+            allowDirectIbkr,
+          })),
           [
-            { route: "summary", appUserId: owner.userId },
-            { route: "summary", appUserId: otherUser.userId },
-            { route: "positions", appUserId: owner.userId },
-            { route: "positions", appUserId: otherUser.userId },
+            {
+              route: "summary",
+              appUserId: owner.userId,
+              allowDirectIbkr: false,
+            },
+            {
+              route: "summary",
+              appUserId: otherUser.userId,
+              allowDirectIbkr: false,
+            },
+            {
+              route: "positions",
+              appUserId: owner.userId,
+              allowDirectIbkr: false,
+            },
+            {
+              route: "positions",
+              appUserId: otherUser.userId,
+              allowDirectIbkr: false,
+            },
           ],
         );
 
@@ -854,10 +882,6 @@ test("real account routes and streams short-circuit account services when admiss
         {
           path: "/streams/accounts/page?accountId=real-account",
           service: "fetchAccountPagePrimaryPayload",
-        },
-        {
-          path: "/streams/accounts?accountId=real-account",
-          service: "fetchAccountSnapshotPayload",
         },
       ];
 

@@ -38,6 +38,7 @@ export const ACCOUNT_PAGE_PRIMARY_CACHE_TTL_MS = 2_000;
 type AccountPageSnapshotInput = {
   accountId: string;
   appUserId: string;
+  allowDirectIbkr?: boolean;
   mode: RuntimeMode;
   range?: AccountRange;
   orderTab?: OrderTab;
@@ -452,6 +453,7 @@ function normalizeInput(input: AccountPageSnapshotInput): Required<AccountPageSn
   return {
     accountId: input.accountId || "combined",
     appUserId: input.appUserId,
+    allowDirectIbkr: input.allowDirectIbkr === true,
     mode: input.mode,
     range: input.range ?? "ALL",
     orderTab: input.orderTab ?? "working",
@@ -545,7 +547,12 @@ export async function fetchAccountPageLivePayload(
     mode: normalized.mode,
     orderTab: normalized.orderTab,
     assetClass: normalized.assetClass,
-    ...(isShadow ? {} : { appUserId: normalized.appUserId }),
+    ...(isShadow
+      ? {}
+      : {
+          appUserId: normalized.appUserId,
+          allowDirectIbkr: normalized.allowDirectIbkr,
+        }),
     shadowAccountId: shadowAccountIdForCache(normalized.accountId),
   });
   const inFlight = accountPageLiveInflight.get(cacheKey);
@@ -560,6 +567,7 @@ export async function fetchAccountPageLivePayload(
       const common = {
         accountId: normalized.accountId,
         appUserId: normalized.appUserId,
+        allowDirectIbkr: normalized.allowDirectIbkr,
         mode: normalized.mode,
       };
 
@@ -666,7 +674,12 @@ export async function fetchAccountPagePrimaryPayload(
     mode: normalized.mode,
     orderTab: normalized.orderTab,
     assetClass: normalized.assetClass,
-    ...(isShadow ? {} : { appUserId: normalized.appUserId }),
+    ...(isShadow
+      ? {}
+      : {
+          appUserId: normalized.appUserId,
+          allowDirectIbkr: normalized.allowDirectIbkr,
+        }),
     shadowAccountId: shadowAccountIdForCache(normalized.accountId),
   });
   const now = Date.now();
@@ -693,6 +706,7 @@ export async function fetchAccountPagePrimaryPayload(
       const common = {
         accountId: normalized.accountId,
         appUserId: normalized.appUserId,
+        allowDirectIbkr: normalized.allowDirectIbkr,
         mode: normalized.mode,
       };
       let summary: AccountPagePrimaryPayload["summary"];
@@ -782,6 +796,7 @@ export async function fetchAccountPagePrimaryPayload(
 async function fetchAccountPageBenchmarkEquityHistory(input: {
   accountId: string;
   appUserId: string;
+  allowDirectIbkr: boolean;
   mode: RuntimeMode;
   range?: AccountRange;
   benchmark: BenchmarkSymbol;
@@ -792,7 +807,12 @@ async function fetchAccountPageBenchmarkEquityHistory(input: {
     mode: input.mode,
     range: input.range ?? null,
     benchmark: input.benchmark,
-    ...(isShadowAccountId(input.accountId) ? {} : { appUserId: input.appUserId }),
+    ...(isShadowAccountId(input.accountId)
+      ? {}
+      : {
+          appUserId: input.appUserId,
+          allowDirectIbkr: input.allowDirectIbkr,
+        }),
     shadowAccountId: shadowAccountIdForCache(input.accountId),
   });
   const cached = accountPageBenchmarkEquityCache.get(cacheKey);
@@ -805,6 +825,8 @@ async function fetchAccountPageBenchmarkEquityHistory(input: {
 
   const value = await getAccountEquityHistory({
     accountId: input.accountId,
+    appUserId: input.appUserId,
+    allowDirectIbkr: input.allowDirectIbkr,
     mode: input.mode,
     range: input.range,
     benchmark: input.benchmark,
@@ -843,6 +865,7 @@ export async function fetchAccountPageDerivedPayload(
       const common = {
         accountId: normalized.accountId,
         appUserId: normalized.appUserId,
+        allowDirectIbkr: normalized.allowDirectIbkr,
         mode: normalized.mode,
       };
       const closedTradeInput = {

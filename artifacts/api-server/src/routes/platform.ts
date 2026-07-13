@@ -178,7 +178,10 @@ import {
 } from "../services/shadow-account";
 import { runWithShadowAccountId } from "../services/shadow-account-context";
 import { requireEntitlementCsrf, requireUser } from "./auth";
-import { assertIbkrPortalAccess } from "../services/entitlements";
+import {
+  assertIbkrPortalAccess,
+  sessionCanAccessIbkrPortal,
+} from "../services/entitlements";
 
 const router: IRouter = Router();
 let nextOptionQuoteSseDemandId = 1;
@@ -192,8 +195,23 @@ const parsedGexDashboardResponses = new WeakMap<object, ParsedGexDashboardRespon
 
 const ibkrConfiguredForRealAccounts = () => getProviderConfiguration().ibkr;
 
-async function requireDirectIbkrReadAccess(req: Request): Promise<void> {
-  assertIbkrPortalAccess(await requireUser(req));
+type AccountReadScope = {
+  appUserId: string;
+  allowDirectIbkr: boolean;
+};
+
+async function requireAccountReadScope(req: Request): Promise<AccountReadScope> {
+  const session = await requireUser(req);
+  return {
+    appUserId: session.user.id,
+    allowDirectIbkr: sessionCanAccessIbkrPortal(session),
+  };
+}
+
+async function requireDirectIbkrReadAccess(req: Request) {
+  const session = await requireUser(req);
+  assertIbkrPortalAccess(session);
+  return session;
 }
 
 async function requireDirectIbkrOrderMutationAccess(
@@ -205,8 +223,10 @@ async function requireDirectIbkrOrderMutationAccess(
 const admitAccountRoute = async (
   res: Response,
   accountId?: unknown,
+  scope?: AccountReadScope,
 ): Promise<boolean> => {
-  const ibkrConfigured = ibkrConfiguredForRealAccounts();
+  const ibkrConfigured =
+    ibkrConfiguredForRealAccounts() && (scope?.allowDirectIbkr ?? true);
   // Only pay the (cached) provider presence lookups when IBKR alone would
   // reject the route. Connected SnapTrade OR Robinhood accounts also admit
   // real account routes under the multi-broker model, so a provider-only
@@ -214,8 +234,8 @@ const admitAccountRoute = async (
   // `||` short-circuits, so Robinhood is only probed when SnapTrade is absent.
   const providerAccountsPresent =
     !shouldAdmitAccountRoute({ accountId, ibkrConfigured }) &&
-    ((await hasSnapTradeBackedAccounts()) ||
-      (await hasRobinhoodBackedAccounts()));
+    ((await hasSnapTradeBackedAccounts({ appUserId: scope?.appUserId })) ||
+      (await hasRobinhoodBackedAccounts({ appUserId: scope?.appUserId })));
   if (
     shouldAdmitAccountRoute({
       accountId,
@@ -1722,11 +1742,11 @@ router.get("/broker-connections", async (req, res) => {
 });
 
 router.get("/accounts", async (req, res) => {
-  const { user } = await requireUser(req);
-  if (!(await admitAccountRoute(res))) return;
+  const scope = await requireAccountReadScope(req);
+  if (!(await admitAccountRoute(res, undefined, scope))) return;
   const query = ListAccountsQueryParams.parse(req.query);
   const data = ListAccountsResponse.parse(
-    await listAccounts(query, { appUserId: user.id }),
+    await listAccounts(query, scope),
   );
 
   res.json(data);
@@ -1742,14 +1762,14 @@ router.post("/accounts/flex/test", async (req, res) => {
 });
 
 router.get("/accounts/:accountId/summary", async (req, res) => {
-  const { user } = await requireUser(req);
-  if (!(await admitAccountRoute(res, req.params.accountId))) return;
+  const scope = await requireAccountReadScope(req);
+  if (!(await admitAccountRoute(res, req.params.accountId, scope))) return;
   const mode = req.query.mode === "live" ? "live" : req.query.mode === "shadow" ? "shadow" : undefined;
   res.json(
     await withCallerShadowScope(req.params.accountId, () =>
       getAccountSummary({
         accountId: req.params.accountId,
-        appUserId: user.id,
+        ...scope,
         mode,
         source: readOptionalString(req.query.source, 80),
       }),
@@ -1758,12 +1778,14 @@ router.get("/accounts/:accountId/summary", async (req, res) => {
 });
 
 router.get("/accounts/:accountId/equity-history", async (req, res) => {
-  if (!(await admitAccountRoute(res, req.params.accountId))) return;
+  const scope = await requireAccountReadScope(req);
+  if (!(await admitAccountRoute(res, req.params.accountId, scope))) return;
   const mode = req.query.mode === "live" ? "live" : req.query.mode === "shadow" ? "shadow" : undefined;
   res.json(
     await withCallerShadowScope(req.params.accountId, () =>
       getAccountEquityHistory({
         accountId: req.params.accountId,
+        ...scope,
         range:
           typeof req.query.range === "string"
             ? (req.query.range as AccountRange)
@@ -1778,12 +1800,14 @@ router.get("/accounts/:accountId/equity-history", async (req, res) => {
 });
 
 router.get("/accounts/:accountId/allocation", async (req, res) => {
-  if (!(await admitAccountRoute(res, req.params.accountId))) return;
+  const scope = await requireAccountReadScope(req);
+  if (!(await admitAccountRoute(res, req.params.accountId, scope))) return;
   const mode = req.query.mode === "live" ? "live" : req.query.mode === "shadow" ? "shadow" : undefined;
   res.json(
     await withCallerShadowScope(req.params.accountId, () =>
       getAccountAllocation({
         accountId: req.params.accountId,
+        ...scope,
         mode,
         source: readOptionalString(req.query.source, 80),
       }),
@@ -1792,8 +1816,8 @@ router.get("/accounts/:accountId/allocation", async (req, res) => {
 });
 
 router.get("/accounts/:accountId/positions", async (req, res) => {
-  const { user } = await requireUser(req);
-  if (!(await admitAccountRoute(res, req.params.accountId))) return;
+  const scope = await requireAccountReadScope(req);
+  if (!(await admitAccountRoute(res, req.params.accountId, scope))) return;
   const mode = req.query.mode === "live" ? "live" : req.query.mode === "shadow" ? "shadow" : undefined;
   const liveQuotes =
     req.query.liveQuotes === "true"
@@ -1806,7 +1830,7 @@ router.get("/accounts/:accountId/positions", async (req, res) => {
     await withCallerShadowScope(req.params.accountId, () =>
       getAccountPositions({
         accountId: req.params.accountId,
-        appUserId: user.id,
+        ...scope,
         assetClass:
           typeof req.query.assetClass === "string" ? req.query.assetClass : null,
         mode,
@@ -1819,12 +1843,14 @@ router.get("/accounts/:accountId/positions", async (req, res) => {
 });
 
 router.get("/accounts/:accountId/positions-at-date", async (req, res) => {
-  if (!(await admitAccountRoute(res, req.params.accountId))) return;
+  const scope = await requireAccountReadScope(req);
+  if (!(await admitAccountRoute(res, req.params.accountId, scope))) return;
   const mode = req.query.mode === "live" ? "live" : req.query.mode === "shadow" ? "shadow" : undefined;
   res.json(
     await withCallerShadowScope(req.params.accountId, () =>
       getAccountPositionsAtDate({
         accountId: req.params.accountId,
+        ...scope,
         date:
           typeof req.query.date === "string" && req.query.date.trim()
             ? req.query.date
@@ -1839,12 +1865,14 @@ router.get("/accounts/:accountId/positions-at-date", async (req, res) => {
 });
 
 router.get("/accounts/:accountId/closed-trades", async (req, res) => {
-  if (!(await admitAccountRoute(res, req.params.accountId))) return;
+  const scope = await requireAccountReadScope(req);
+  if (!(await admitAccountRoute(res, req.params.accountId, scope))) return;
   const mode = req.query.mode === "live" ? "live" : req.query.mode === "shadow" ? "shadow" : undefined;
   res.json(
     await withCallerShadowScope(req.params.accountId, () =>
       getAccountClosedTrades({
         accountId: req.params.accountId,
+        ...scope,
         from:
           typeof req.query.from === "string" && req.query.from.trim()
             ? new Date(req.query.from)
@@ -1869,12 +1897,14 @@ router.get("/accounts/:accountId/closed-trades", async (req, res) => {
 });
 
 router.get("/accounts/:accountId/orders", async (req, res) => {
-  if (!(await admitAccountRoute(res, req.params.accountId))) return;
+  const scope = await requireAccountReadScope(req);
+  if (!(await admitAccountRoute(res, req.params.accountId, scope))) return;
   const mode = req.query.mode === "live" ? "live" : req.query.mode === "shadow" ? "shadow" : undefined;
   res.json(
     await withCallerShadowScope(req.params.accountId, () =>
       getAccountOrders({
         accountId: req.params.accountId,
+        ...scope,
         tab:
           req.query.tab === "history" || req.query.tab === "working"
             ? req.query.tab
@@ -1892,7 +1922,11 @@ router.post("/accounts/:accountId/orders/:orderId/cancel", async (req, res) => {
   if (body.mode !== "shadow") {
     assertIbkrPortalAccess(session);
   }
-  if (!(await admitAccountRoute(res, req.params.accountId))) return;
+  const scope = {
+    appUserId: session.user.id,
+    allowDirectIbkr: sessionCanAccessIbkrPortal(session),
+  };
+  if (!(await admitAccountRoute(res, req.params.accountId, scope))) return;
   res.json(
     await withCallerShadowScope(
       req.params.accountId,
@@ -1909,7 +1943,8 @@ router.post("/accounts/:accountId/orders/:orderId/cancel", async (req, res) => {
 });
 
 router.get("/accounts/:accountId/risk", async (req, res) => {
-  if (!(await admitAccountRoute(res, req.params.accountId))) return;
+  const scope = await requireAccountReadScope(req);
+  if (!(await admitAccountRoute(res, req.params.accountId, scope))) return;
   const mode = req.query.mode === "live" ? "live" : req.query.mode === "shadow" ? "shadow" : undefined;
   const detail =
     req.query.detail === "fast" ? "fast" : req.query.detail === "full" ? "full" : undefined;
@@ -1918,6 +1953,7 @@ router.get("/accounts/:accountId/risk", async (req, res) => {
       await withCallerShadowScope(req.params.accountId, () =>
         getAccountRisk({
           accountId: req.params.accountId,
+          ...scope,
           mode,
           source: readOptionalString(req.query.source, 80),
           detail,
@@ -1935,12 +1971,14 @@ router.get("/accounts/:accountId/risk", async (req, res) => {
 });
 
 router.get("/accounts/:accountId/cash-activity", async (req, res) => {
-  if (!(await admitAccountRoute(res, req.params.accountId))) return;
+  const scope = await requireAccountReadScope(req);
+  if (!(await admitAccountRoute(res, req.params.accountId, scope))) return;
   const mode = req.query.mode === "live" ? "live" : req.query.mode === "shadow" ? "shadow" : undefined;
   res.json(
     await withCallerShadowScope(req.params.accountId, () =>
       getAccountCashActivity({
         accountId: req.params.accountId,
+        ...scope,
         from:
           typeof req.query.from === "string" && req.query.from.trim()
             ? new Date(req.query.from)
@@ -2044,12 +2082,16 @@ router.put("/watchlists/:watchlistId/items/reorder", async (req, res) => {
 });
 
 router.get("/positions", async (req, res) => {
+  const scope = await requireAccountReadScope(req);
   const query = ListPositionsQueryParams.parse(req.query);
+  const accountId = legacyPositionsAccountId(query.accountId);
+  if (!(await admitAccountRoute(res, accountId, scope))) return;
   const data = ListPositionsResponse.parse(
     mapAccountPositionsToLegacyPositions(
-      await withCallerShadowScope(legacyPositionsAccountId(query.accountId), () =>
+      await withCallerShadowScope(accountId, () =>
         getAccountPositions({
-          accountId: legacyPositionsAccountId(query.accountId),
+          accountId,
+          ...scope,
           mode: query.mode,
           liveQuotes: false,
         }),
@@ -3287,16 +3329,16 @@ router.get("/streams/footprints", async (req, res) => {
 });
 
 router.get("/streams/accounts/page", async (req, res) => {
-  const { user } = await requireUser(req);
+  const scope = await requireAccountReadScope(req);
   const mode: RuntimeMode = req.query.mode === "live" ? "live" : "shadow";
   const accountId =
     typeof req.query.accountId === "string" && req.query.accountId.trim()
       ? req.query.accountId.trim()
       : "combined";
-  if (!(await admitAccountRoute(res, accountId))) return;
+  if (!(await admitAccountRoute(res, accountId, scope))) return;
   const input = {
     accountId,
-    appUserId: user.id,
+    ...scope,
     mode,
     range:
       typeof req.query.range === "string"
@@ -3383,9 +3425,14 @@ router.get("/streams/accounts/page", async (req, res) => {
 });
 
 router.get("/streams/accounts", async (req, res) => {
+  const session = await requireDirectIbkrReadAccess(req);
   const mode = req.query.mode === "live" ? "live" : "shadow";
   const accountId = typeof req.query.accountId === "string" ? req.query.accountId : undefined;
-  if (!(await admitAccountRoute(res, accountId))) return;
+  const scope = {
+    appUserId: session.user.id,
+    allowDirectIbkr: true,
+  };
+  if (!(await admitAccountRoute(res, accountId, scope))) return;
 
   await startSse(req, res, "accounts", async ({ writeEvent }) => {
     await writeEvent(

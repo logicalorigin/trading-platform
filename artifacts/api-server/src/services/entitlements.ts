@@ -83,14 +83,18 @@ export function isIbkrMemberConnectEnabled(): boolean {
   );
 }
 
+export function sessionCanAccessIbkrPortal(
+  session: AuthenticatedSession,
+): boolean {
+  return (
+    session.user.role === "admin" ||
+    (isIbkrMemberConnectEnabled() &&
+      sessionHasEntitlement(session, ENTITLEMENTS.IBKR_ACCESS))
+  );
+}
+
 export function assertIbkrPortalAccess(session: AuthenticatedSession): void {
-  if (session.user.role === "admin") return;
-  if (
-    isIbkrMemberConnectEnabled() &&
-    sessionHasEntitlement(session, ENTITLEMENTS.IBKR_ACCESS)
-  ) {
-    return;
-  }
+  if (sessionCanAccessIbkrPortal(session)) return;
   throw new HttpError(403, "IBKR connections are not available.", {
     code: "ibkr_member_connect_disabled",
   });

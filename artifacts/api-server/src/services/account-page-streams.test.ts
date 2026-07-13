@@ -355,6 +355,20 @@ test("account-page caches isolate real accounts by authenticated user", () => {
       mode: "live",
     }),
   );
+  assert.notEqual(
+    cacheKeyForInput({
+      accountId: "combined",
+      appUserId: "app-user-1",
+      allowDirectIbkr: false,
+      mode: "live",
+    }),
+    cacheKeyForInput({
+      accountId: "combined",
+      appUserId: "app-user-1",
+      allowDirectIbkr: true,
+      mode: "live",
+    }),
+  );
 });
 
 test("real account-page custom cache keys include authenticated user scope", () => {
@@ -373,7 +387,29 @@ test("real account-page custom cache keys include authenticated user scope", () 
       /appUserId/,
       `${functionName} cache key must include appUserId`,
     );
+    assert.match(
+      body.slice(keyStart, keyEnd),
+      /allowDirectIbkr/,
+      `${functionName} cache key must include direct IBKR access`,
+    );
   }
+});
+
+test("account-page service calls propagate direct IBKR access", () => {
+  for (const functionName of [
+    "fetchAccountPageLivePayload",
+    "fetchAccountPagePrimaryPayload",
+    "fetchAccountPageDerivedPayload",
+  ]) {
+    assert.match(
+      functionSource(functionName),
+      /allowDirectIbkr:\s*normalized\.allowDirectIbkr/,
+    );
+  }
+  assert.match(
+    functionSource("fetchAccountPageBenchmarkEquityHistory"),
+    /allowDirectIbkr:\s*input\.allowDirectIbkr/,
+  );
 });
 
 test("account-page payload identity ignores build stamps but keeps source changes", () => {
