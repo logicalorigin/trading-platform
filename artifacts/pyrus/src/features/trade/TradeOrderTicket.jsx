@@ -97,9 +97,11 @@ import {
   buildPreparedIbkrReplacementSubmission,
   ibkrCancelToast,
   ibkrLifecycleRequiresReconciliation,
+  ibkrOrderHasAnyFill,
   isIbkrOrderReconciliationError,
   isIbkrOrderRejected,
   isIbkrLiveReadinessReady,
+  isIbkrReplacementStateError,
   readIbkrOrderWarning,
   resolveExplicitIbkrAccount,
 } from "./ibkrLiveEquityOrderModel.js";
@@ -1009,15 +1011,48 @@ export const TradeOrderTicket = ({
   const trackedIbkrOrderTerminal = IBKR_TERMINAL_ORDER_STATUSES.has(
     trackedIbkrOrderStatus,
   );
+  const trackedIbkrOrderReadPending = Boolean(
+    activeIbkrOrder?.id && activeIbkrOrdersQuery.isPending,
+  );
+  const trackedIbkrOrderReadMissing = Boolean(
+    activeIbkrOrder?.id &&
+      activeIbkrOrdersQuery.isSuccess &&
+      !queriedIbkrOrder,
+  );
+  const trackedIbkrOrderReadFailed = Boolean(
+    activeIbkrOrder?.id && activeIbkrOrdersQuery.isError,
+  );
   const trackedIbkrOrderRequiresReconciliation = Boolean(
-    trackedIbkrOrder?.reconciliationRequired,
+    trackedIbkrOrder?.reconciliationRequired ||
+      ibkrOrderHasAnyFill(trackedIbkrOrder) ||
+      trackedIbkrOrderReadMissing ||
+      trackedIbkrOrderReadFailed,
   );
   const ibkrLifecyclePending =
     previewOrderReplacementMutation.isPending ||
     replaceOrderMutation.isPending ||
     cancelOrderMutation.isPending ||
-    continueIbkrOrderReplyMutation.isPending;
+    continueIbkrOrderReplyMutation.isPending ||
+    trackedIbkrOrderReadPending;
   const ibkrWarningDecisionOpen = liveConfirmState?.kind === "ibkr_warning";
+  useEffect(() => {
+    if (
+      !activeIbkrOrder?.id ||
+      (!trackedIbkrOrderReadMissing &&
+        !trackedIbkrOrderReadFailed &&
+        !ibkrOrderHasAnyFill(queriedIbkrOrder))
+    ) {
+      return;
+    }
+    setActiveIbkrOrder((current) =>
+      current ? { ...current, reconciliationRequired: true } : current,
+    );
+  }, [
+    activeIbkrOrder?.id,
+    queriedIbkrOrder,
+    trackedIbkrOrderReadFailed,
+    trackedIbkrOrderReadMissing,
+  ]);
   const directOptionCsrfToken = liveUsesBrokerOption
     ? authSession.csrfToken || ""
     : "";
@@ -3059,11 +3094,27 @@ export const TradeOrderTicket = ({
       confirmLabel: "ACCEPT WARNING",
       cancelLabel: "DECLINE ORDER",
       confirmTone: CSS_COLOR.amber,
-      lines: (challenge.messages || []).map((message, index) => ({
-        label: `WARNING ${index + 1}`,
-        value: message,
-        valueColor: CSS_COLOR.amber,
-      })),
+      lines: [
+        {
+          label: "ACCOUNT",
+          value: selectedIbkrAccount?.maskedAccountId || MISSING_VALUE,
+        },
+        { label: "SYMBOL", value: trackedIbkrOrder?.symbol || slot.ticker },
+        { label: "SIDE / SIZE", value: "BUY 1 SHARE" },
+        {
+          label: operation === "replace" ? "NEW LIMIT" : "LIMIT",
+          value: formatTicketMoney(
+            operation === "replace"
+              ? nextLimitPrice
+              : trackedIbkrOrder?.limitPrice || orderRequest?.limitPrice,
+          ),
+        },
+        ...(challenge.messages || []).map((message, index) => ({
+          label: `WARNING ${index + 1}`,
+          value: message,
+          valueColor: CSS_COLOR.amber,
+        })),
+      ],
       onConfirm: () =>
         continueIbkrWarning({
           challenge,
@@ -4018,13 +4069,34 @@ export const TradeOrderTicket = ({
       });
       return;
     }
-    const preview = await previewOrderReplacementMutation.mutateAsync({
-      orderId: trackedIbkrOrder.id,
-      data: buildPreparedIbkrReplacementPreview({
-        accountId: selectedIbkrAccount.accountId,
-        limitPrice: nextLimitPrice,
-      }),
-    });
+    let preview;
+    try {
+      preview = await previewOrderReplacementMutation.mutateAsync({
+        orderId: trackedIbkrOrder.id,
+        data: buildPreparedIbkrReplacementPreview({
+          accountId: selectedIbkrAccount.accountId,
+          limitPrice: nextLimitPrice,
+        }),
+      });
+    } catch (error) {
+      const requiresReconciliation = isIbkrReplacementStateError(error);
+      if (requiresReconciliation) {
+        setActiveIbkrOrder((current) => ({
+          ...current,
+          reconciliationRequired: true,
+        }));
+      }
+      toast.push({
+        kind: requiresReconciliation ? "warn" : "error",
+        title: requiresReconciliation
+          ? "STOP / RECONCILE"
+          : "Price-change preview unavailable",
+        body:
+          error?.message ||
+          "IBKR could not prepare the price-only replacement.",
+      });
+      return;
+    }
     setLiveConfirmError(null);
     setLiveConfirmState({
       title: `Change ${trackedIbkrOrder.symbol} limit price`,

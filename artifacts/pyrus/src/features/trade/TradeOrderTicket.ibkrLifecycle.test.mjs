@@ -9,9 +9,11 @@ import {
   buildPreparedIbkrReplacementPreview,
   ibkrCancelToast,
   ibkrLifecycleRequiresReconciliation,
+  ibkrOrderHasAnyFill,
   isIbkrOrderReconciliationError,
   isIbkrOrderRejected,
   isIbkrLiveReadinessReady,
+  isIbkrReplacementStateError,
   readIbkrOrderWarning,
   resolveExplicitIbkrAccount,
 } from "./ibkrLiveEquityOrderModel.js";
@@ -159,6 +161,18 @@ test("warning challenge is read from the generated ApiError problem payload", ()
     }),
     false,
   );
+  assert.equal(
+    isIbkrReplacementStateError({
+      data: { code: "ibkr_replace_order_has_fills" },
+    }),
+    true,
+  );
+  assert.equal(
+    isIbkrReplacementStateError({
+      data: { code: "ibkr_replace_price_unchanged" },
+    }),
+    false,
+  );
 });
 
 test("price-only replacement uses the prepared fingerprint and preflight", () => {
@@ -239,6 +253,17 @@ test("ambiguous lifecycle responses require reconciliation before another action
   assert.equal(
     ibkrLifecycleRequiresReconciliation("cancel", {
       cancelConfirmed: false,
+      reconciliationRequired: false,
+    }),
+    true,
+  );
+  assert.equal(ibkrOrderHasAnyFill({ filledQuantity: 0.25 }), true);
+  assert.equal(ibkrOrderHasAnyFill({ status: "filled" }), true);
+  assert.equal(
+    ibkrLifecycleRequiresReconciliation("cancel", {
+      status: "canceled",
+      filledQuantity: 0.25,
+      cancelConfirmed: true,
       reconciliationRequired: false,
     }),
     true,

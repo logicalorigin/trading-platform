@@ -74,6 +74,18 @@ export const isIbkrOrderRejected = (error) =>
 export const isIbkrOrderReconciliationError = (error) =>
   String(error?.data?.code || "").includes("reconciliation_required");
 
+const IBKR_REPLACEMENT_STATE_ERROR_CODES = new Set([
+  "ibkr_replace_intent_mismatch",
+  "ibkr_replace_order_has_fills",
+  "ibkr_replace_order_not_active",
+  "ibkr_replace_order_not_editable",
+  "ibkr_replace_verification_conflict",
+  "ibkr_replace_verification_incomplete",
+]);
+
+export const isIbkrReplacementStateError = (error) =>
+  IBKR_REPLACEMENT_STATE_ERROR_CODES.has(String(error?.data?.code || ""));
+
 export const buildPreparedIbkrReplacementPreview = ({
   accountId,
   limitPrice,
@@ -111,7 +123,18 @@ export const ibkrCancelToast = (result) =>
           `IBKR reports ${String(result?.status || "unknown").toUpperCase()}; reconcile before another action.`,
       };
 
+export const ibkrOrderHasAnyFill = (order) => {
+  const status = String(order?.status || "").trim().toLowerCase();
+  return (
+    Number(order?.filledQuantity || 0) > 0 ||
+    status === "filled" ||
+    status === "partially_filled" ||
+    status === "partiallyfilled"
+  );
+};
+
 export const ibkrLifecycleRequiresReconciliation = (operation, result) =>
+  ibkrOrderHasAnyFill(result) ||
   result?.reconciliationRequired === true ||
   (operation === "place" && result?.placementConfirmed !== true) ||
   (operation === "replace" && result?.replacementConfirmed !== true) ||
