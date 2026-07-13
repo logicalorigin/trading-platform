@@ -261,6 +261,7 @@ test("prepared IBKR replacement is bound to its predecessor and cannot be placed
   await withTestDb(async () => {
     const appUserId = await createUser("tax-preflight-ibkr-replace@example.com");
     await runAsAppUser(appUserId, async () => {
+      const brokerOrderId = "1234567890";
       const originalOrder = baseOrder({ quantity: 1, limitPrice: 100 });
       const originalBody = {
         orders: [
@@ -300,12 +301,12 @@ test("prepared IBKR replacement is bound to its predecessor and cannot be placed
       });
       await recordTaxPreflightOrderSubmitted({
         preflightToken: originalPreflight.preflightToken,
-        submittedOrderId: "order-1",
+        submittedOrderId: brokerOrderId,
       });
 
       const acknowledged = await loadSubmittedIbkrPreparedOrderIntent({
         accountId: "U1234567",
-        submittedOrderId: "order-1",
+        submittedOrderId: brokerOrderId,
       });
       assert.equal(acknowledged.kind, "place");
       assert.equal(acknowledged.orderFingerprint, originalFingerprint);
@@ -320,7 +321,7 @@ test("prepared IBKR replacement is bound to its predecessor and cannot be placed
           ibkrPreparedIntent: {
             version: 2,
             kind: "replace",
-            orderId: "order-1",
+            orderId: brokerOrderId,
             previousOrderFingerprint: originalFingerprint,
             accountId: "U1234567",
             clientOrderId: "replace-intent-123",
@@ -349,12 +350,63 @@ test("prepared IBKR replacement is bound to its predecessor and cannot be placed
         taxPreflightToken: replacementPreflight.preflightToken,
         requireIbkrPreparedIntent: true,
         expectedIbkrIntentKind: "replace",
-        expectedBrokerOrderId: "order-1",
+        expectedBrokerOrderId: brokerOrderId,
       });
       assert.equal(replacement?.ibkrPreparedIntent?.kind, "replace");
       assert.equal(
         replacement?.ibkrPreparedIntent?.previousOrderFingerprint,
         originalFingerprint,
+      );
+
+      await assert.rejects(
+        claimSubmittedIbkrOrderCancellation({
+          accountId: "U1234567",
+          submittedOrderId: brokerOrderId,
+        }),
+        (error: unknown) => {
+          assert.equal(
+            (error as { code?: string }).code,
+            "ibkr_order_mutation_in_progress",
+          );
+          return true;
+        },
+      );
+
+      const challenge = await recordTaxPreflightIbkrReplyRequired({
+        preflightToken: replacementPreflight.preflightToken,
+        replyId: "replacement-reply-id",
+        messages: ["Review replacement warning."],
+      });
+      await assert.rejects(
+        claimSubmittedIbkrOrderCancellation({
+          accountId: "U1234567",
+          submittedOrderId: brokerOrderId,
+        }),
+        (error: unknown) => {
+          assert.equal(
+            (error as { code?: string }).code,
+            "ibkr_order_mutation_in_progress",
+          );
+          return true;
+        },
+      );
+      await claimTaxPreflightIbkrReply({
+        preflightToken: replacementPreflight.preflightToken,
+        challengeId: challenge.challengeId,
+      });
+
+      await assert.rejects(
+        claimSubmittedIbkrOrderCancellation({
+          accountId: "U1234567",
+          submittedOrderId: brokerOrderId,
+        }),
+        (error: unknown) => {
+          assert.equal(
+            (error as { code?: string }).code,
+            "ibkr_order_mutation_in_progress",
+          );
+          return true;
+        },
       );
     });
   });

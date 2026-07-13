@@ -1420,13 +1420,16 @@ export async function claimSubmittedIbkrOrderCancellation(input: {
         marker.startsWith(IBKR_REPLY_PENDING_PREFIX) ||
         marker.startsWith(IBKR_REPLY_CLAIMED_PREFIX)
       ) {
-        await tx
-          .update(taxPreflightChecksTable)
-          .set({
-            submittedOrderId: "__ibkr_replace_invalidated_by_cancel__",
-            updatedAt: now,
-          })
-          .where(eq(taxPreflightChecksTable.id, preflight.id));
+        throw new HttpError(409, "Another IBKR order action is in progress.", {
+          code: "ibkr_order_mutation_in_progress",
+          expose: true,
+        });
+      }
+      if (marker === IBKR_RECONCILIATION_REQUIRED_MARKER) {
+        throw new HttpError(409, "The IBKR order requires reconciliation.", {
+          code: "ibkr_order_reconciliation_required",
+          expose: true,
+        });
       }
     }
     const metadata = {
@@ -1596,63 +1599,68 @@ export async function claimTaxPreflightIbkrReply(input: {
   now?: Date;
 }) {
   const appUserId = input.appUserId ?? requireCurrentAppUserId();
-  const [preflight] = await db
-    .select()
-    .from(taxPreflightChecksTable)
-    .where(
-      and(
-        eq(taxPreflightChecksTable.appUserId, appUserId),
-        eq(taxPreflightChecksTable.preflightToken, input.preflightToken),
-      ),
-    )
-    .limit(1);
-  const now = input.now ?? new Date();
-  if (!preflight || preflight.expiresAt.getTime() <= now.getTime()) {
-    throw new HttpError(409, "The IBKR order reply has expired.", {
-      code: "ibkr_order_reply_expired",
-      expose: true,
-    });
-  }
-  const challengeId = String(input.challengeId || "").trim();
-  const pendingMarker = `${IBKR_REPLY_PENDING_PREFIX}${challengeId}`;
-  const reply = readJsonRecord(readJsonRecord(preflight.metadata).ibkrReply);
-  const preparedValue = readJsonRecord(preflight.metadata).ibkrPreparedIntent;
-  const preparedIntent = preparedValue
-    ? readIbkrPreparedOrderIntent(preparedValue, preflight.accountId)
-    : null;
-  if (
-    preflight.submittedOrderId !== pendingMarker ||
-    String(reply.challengeId || "") !== challengeId
-  ) {
-    throw new HttpError(409, "The IBKR order reply was already used.", {
-      code: "ibkr_order_reply_already_used",
-      expose: true,
-    });
-  }
-  const claimed = await db
-    .update(taxPreflightChecksTable)
-    .set({
-      submittedOrderId: `${IBKR_REPLY_CLAIMED_PREFIX}${challengeId}`,
-      updatedAt: now,
-    })
-    .where(
-      and(
-        eq(taxPreflightChecksTable.id, preflight.id),
-        eq(taxPreflightChecksTable.submittedOrderId, pendingMarker),
-      ),
-    )
-    .returning({ id: taxPreflightChecksTable.id });
-  if (!claimed.length) {
-    throw new HttpError(409, "The IBKR order reply was already used.", {
-      code: "ibkr_order_reply_already_used",
-      expose: true,
-    });
-  }
-  return {
-    replyId: String(reply.replyId || ""),
-    messages: stringList(reply.messages),
-    ibkrPreparedIntent: preparedIntent,
-  };
+  return db.transaction(async (tx) => {
+    await tx.execute(
+      sql`SELECT pg_advisory_xact_lock(hashtext(${`ibkr-order-mutation:${appUserId}`}))`,
+    );
+    const [preflight] = await tx
+      .select()
+      .from(taxPreflightChecksTable)
+      .where(
+        and(
+          eq(taxPreflightChecksTable.appUserId, appUserId),
+          eq(taxPreflightChecksTable.preflightToken, input.preflightToken),
+        ),
+      )
+      .limit(1);
+    const now = input.now ?? new Date();
+    if (!preflight || preflight.expiresAt.getTime() <= now.getTime()) {
+      throw new HttpError(409, "The IBKR order reply has expired.", {
+        code: "ibkr_order_reply_expired",
+        expose: true,
+      });
+    }
+    const challengeId = String(input.challengeId || "").trim();
+    const pendingMarker = `${IBKR_REPLY_PENDING_PREFIX}${challengeId}`;
+    const reply = readJsonRecord(readJsonRecord(preflight.metadata).ibkrReply);
+    const preparedValue = readJsonRecord(preflight.metadata).ibkrPreparedIntent;
+    const preparedIntent = preparedValue
+      ? readIbkrPreparedOrderIntent(preparedValue, preflight.accountId)
+      : null;
+    if (
+      preflight.submittedOrderId !== pendingMarker ||
+      String(reply.challengeId || "") !== challengeId
+    ) {
+      throw new HttpError(409, "The IBKR order reply was already used.", {
+        code: "ibkr_order_reply_already_used",
+        expose: true,
+      });
+    }
+    const claimed = await tx
+      .update(taxPreflightChecksTable)
+      .set({
+        submittedOrderId: `${IBKR_REPLY_CLAIMED_PREFIX}${challengeId}`,
+        updatedAt: now,
+      })
+      .where(
+        and(
+          eq(taxPreflightChecksTable.id, preflight.id),
+          eq(taxPreflightChecksTable.submittedOrderId, pendingMarker),
+        ),
+      )
+      .returning({ id: taxPreflightChecksTable.id });
+    if (!claimed.length) {
+      throw new HttpError(409, "The IBKR order reply was already used.", {
+        code: "ibkr_order_reply_already_used",
+        expose: true,
+      });
+    }
+    return {
+      replyId: String(reply.replyId || ""),
+      messages: stringList(reply.messages),
+      ibkrPreparedIntent: preparedIntent,
+    };
+  });
 }
 
 async function getOrCreateReserveBucket() {
