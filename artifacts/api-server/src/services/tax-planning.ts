@@ -42,10 +42,19 @@ const IBKR_CANCEL_INFLIGHT_PREFIX = "__ibkr_cancel_inflight__:";
 const IBKR_CANCEL_RECONCILIATION_PREFIX =
   "__ibkr_cancel_reconciliation_required__:";
 const IBKR_CANCELLED_PREFIX = "__ibkr_cancelled__:";
+const IBKR_REPLY_CHALLENGE_TTL_MS = 30_000;
 const LEGACY_SHADOW_ACCOUNT_ID = "shadow";
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const PROVIDER_ACCOUNT_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/u;
+
+export type IbkrPreparedGatewaySnapshot = {
+  appUserId: string;
+  baseUrl: string;
+  hosted: boolean;
+  loginCompletions: number;
+  startedAt: number;
+};
 
 export type IbkrPreparedPlaceOrderIntent = {
   version: 1;
@@ -56,6 +65,7 @@ export type IbkrPreparedPlaceOrderIntent = {
   orderBody: Record<string, unknown>;
   preparedAt: string;
   whatIf: Record<string, unknown>;
+  gatewaySnapshot?: IbkrPreparedGatewaySnapshot;
 };
 
 export type IbkrPreparedReplaceOrderIntent = {
@@ -69,11 +79,25 @@ export type IbkrPreparedReplaceOrderIntent = {
   orderBody: Record<string, unknown>;
   preparedAt: string;
   whatIf: Record<string, unknown>;
+  gatewaySnapshot?: IbkrPreparedGatewaySnapshot;
 };
 
 export type IbkrPreparedOrderIntent =
   | IbkrPreparedPlaceOrderIntent
   | IbkrPreparedReplaceOrderIntent;
+
+export type ControlledIbkrOrderLifecycle = {
+  status: "none" | "active" | "reconciliation_required";
+  accountId: string | null;
+  orderId: string | null;
+  symbol: string | null;
+  side: string | null;
+  quantity: number | null;
+  limitPrice: number | null;
+  replacementUsed: boolean;
+  cancelAttempted: boolean;
+  reason: string | null;
+};
 
 function readIbkrPreparedOrderIntent(
   value: unknown,
@@ -118,6 +142,28 @@ function readIbkrPreparedOrderIntent(
       expose: true,
     });
   }
+  const gatewaySnapshotValue = record.gatewaySnapshot;
+  const gatewaySnapshot =
+    gatewaySnapshotValue == null ? null : readJsonRecord(gatewaySnapshotValue);
+  if (
+    gatewaySnapshot &&
+    (typeof gatewaySnapshot.appUserId !== "string" ||
+      !UUID_PATTERN.test(gatewaySnapshot.appUserId) ||
+      typeof gatewaySnapshot.baseUrl !== "string" ||
+      !/^https?:\/\/\S{1,2048}$/u.test(gatewaySnapshot.baseUrl) ||
+      typeof gatewaySnapshot.hosted !== "boolean" ||
+      typeof gatewaySnapshot.loginCompletions !== "number" ||
+      !Number.isInteger(gatewaySnapshot.loginCompletions) ||
+      gatewaySnapshot.loginCompletions < 0 ||
+      typeof gatewaySnapshot.startedAt !== "number" ||
+      !Number.isFinite(gatewaySnapshot.startedAt) ||
+      gatewaySnapshot.startedAt <= 0)
+  ) {
+    throw new HttpError(409, "The prepared IBKR gateway snapshot is invalid.", {
+      code: "ibkr_order_intent_invalid",
+      expose: true,
+    });
+  }
   const common = {
     accountId,
     clientOrderId,
@@ -125,6 +171,9 @@ function readIbkrPreparedOrderIntent(
     orderBody,
     preparedAt: String(record.preparedAt || ""),
     whatIf,
+    ...(gatewaySnapshot
+      ? { gatewaySnapshot: gatewaySnapshot as IbkrPreparedGatewaySnapshot }
+      : {}),
   };
   return replaceIntent
     ? {
@@ -169,6 +218,36 @@ const readJsonRecord = (value: unknown): Record<string, unknown> =>
   value && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : {};
+
+const isIbkrBrokerOrderId = (value: string): boolean =>
+  !value.startsWith("__") && PROVIDER_ACCOUNT_ID_PATTERN.test(value);
+
+const ibkrCancelledOrderId = (value: string): string | null =>
+  value.startsWith(IBKR_CANCELLED_PREFIX)
+    ? value.slice(IBKR_CANCELLED_PREFIX.length)
+    : null;
+
+const ibkrOrderIdFromCancelMarker = (value: string): string | null => {
+  for (const prefix of [
+    IBKR_CANCEL_INFLIGHT_PREFIX,
+    IBKR_CANCEL_RECONCILIATION_PREFIX,
+    IBKR_CANCELLED_PREFIX,
+  ]) {
+    if (value.startsWith(prefix)) return value.slice(prefix.length) || null;
+  }
+  return null;
+};
+
+const tryReadIbkrPreparedOrderIntent = (
+  value: unknown,
+  expectedAccountId: string,
+): IbkrPreparedOrderIntent | null => {
+  try {
+    return readIbkrPreparedOrderIntent(value, expectedAccountId);
+  } catch {
+    return null;
+  }
+};
 
 const taxYearWindow = (taxYear: number): { start: Date; end: Date } => ({
   start: new Date(Date.UTC(taxYear, 0, 1)),
@@ -947,6 +1026,33 @@ export async function createTaxOrderPreflight(
   const ibkrPreparedIntent = options.ibkrPreparedIntent
     ? readIbkrPreparedOrderIntent(options.ibkrPreparedIntent, order.accountId)
     : null;
+  if (ibkrPreparedIntent?.kind === "replace") {
+    const priorIntents = await db
+      .select({
+        accountId: taxPreflightChecksTable.accountId,
+        submittedOrderId: taxPreflightChecksTable.submittedOrderId,
+        metadata: taxPreflightChecksTable.metadata,
+      })
+      .from(taxPreflightChecksTable)
+      .where(eq(taxPreflightChecksTable.appUserId, appUserId));
+    const replacementAlreadyUsed = priorIntents.some((candidate) => {
+      if (!candidate.submittedOrderId) return false;
+      const prepared = tryReadIbkrPreparedOrderIntent(
+        readJsonRecord(candidate.metadata).ibkrPreparedIntent,
+        candidate.accountId,
+      );
+      return (
+        prepared?.kind === "replace" &&
+        prepared.orderId === ibkrPreparedIntent.orderId
+      );
+    });
+    if (replacementAlreadyUsed) {
+      throw new HttpError(409, "The IBKR order replacement was already used.", {
+        code: "ibkr_replace_already_used",
+        expose: true,
+      });
+    }
+  }
   const whatIfWarnings = ibkrPreparedIntent
     ? stringList(ibkrPreparedIntent.whatIf.warnings)
     : [];
@@ -1059,26 +1165,189 @@ export async function loadSubmittedIbkrPreparedOrderIntent(input: {
       expose: true,
     });
   }
-  const [preflight] = await db
-    .select({ metadata: taxPreflightChecksTable.metadata })
+  const preflights = await db
+    .select({
+      submittedOrderId: taxPreflightChecksTable.submittedOrderId,
+      metadata: taxPreflightChecksTable.metadata,
+    })
     .from(taxPreflightChecksTable)
     .where(
       and(
         eq(taxPreflightChecksTable.appUserId, appUserId),
         eq(taxPreflightChecksTable.accountId, accountId),
-        eq(taxPreflightChecksTable.submittedOrderId, submittedOrderId),
       ),
     )
-    .orderBy(desc(taxPreflightChecksTable.updatedAt))
-    .limit(1);
-  const prepared = readJsonRecord(preflight?.metadata).ibkrPreparedIntent;
-  if (!prepared) {
+    .orderBy(desc(taxPreflightChecksTable.updatedAt));
+  if (
+    preflights.some(
+      (preflight) =>
+        ibkrCancelledOrderId(preflight.submittedOrderId || "") ===
+        submittedOrderId,
+    )
+  ) {
     throw new HttpError(409, "The acknowledged IBKR order intent is unavailable.", {
       code: "ibkr_submitted_order_intent_unavailable",
       expose: true,
     });
   }
-  return readIbkrPreparedOrderIntent(prepared, accountId);
+  for (const preflight of preflights) {
+    if (preflight.submittedOrderId !== submittedOrderId) continue;
+    const prepared = tryReadIbkrPreparedOrderIntent(
+      readJsonRecord(preflight.metadata).ibkrPreparedIntent,
+      accountId,
+    );
+    if ((prepared?.kind ?? "place") === "place" && prepared) {
+      return prepared;
+    }
+  }
+  throw new HttpError(
+    409,
+    "The acknowledged IBKR order intent is unavailable.",
+    {
+      code: "ibkr_submitted_order_intent_unavailable",
+      expose: true,
+    },
+  );
+}
+
+const emptyControlledIbkrOrderLifecycle = (): ControlledIbkrOrderLifecycle => ({
+  status: "none",
+  accountId: null,
+  orderId: null,
+  symbol: null,
+  side: null,
+  quantity: null,
+  limitPrice: null,
+  replacementUsed: false,
+  cancelAttempted: false,
+  reason: null,
+});
+
+export async function getControlledIbkrOrderLifecycle(
+  input: {
+    appUserId?: string;
+  } = {},
+): Promise<ControlledIbkrOrderLifecycle> {
+  const appUserId = input.appUserId ?? requireCurrentAppUserId();
+  const rows = await db
+    .select()
+    .from(taxPreflightChecksTable)
+    .where(eq(taxPreflightChecksTable.appUserId, appUserId))
+    .orderBy(desc(taxPreflightChecksTable.updatedAt));
+  const parsed = rows.flatMap((row) => {
+    const intent = tryReadIbkrPreparedOrderIntent(
+      readJsonRecord(row.metadata).ibkrPreparedIntent,
+      row.accountId,
+    );
+    return intent ? [{ row, intent }] : [];
+  });
+  const cancelledOrderIds = new Set(
+    parsed
+      .map(({ row }) => ibkrCancelledOrderId(row.submittedOrderId || ""))
+      .filter((orderId): orderId is string => Boolean(orderId)),
+  );
+  const originals = parsed.filter(
+    ({ row, intent }) =>
+      (intent.kind ?? "place") === "place" && Boolean(row.submittedOrderId),
+  );
+  const groups = originals.flatMap((original) => {
+    const marker = original.row.submittedOrderId || "";
+    const orderId = isIbkrBrokerOrderId(marker)
+      ? marker
+      : ibkrOrderIdFromCancelMarker(marker);
+    if (orderId && cancelledOrderIds.has(orderId)) return [];
+    if (
+      marker === "__ibkr_order_rejected__" ||
+      marker === "__ibkr_order_reply_rejected__" ||
+      marker === "__ibkr_order_reply_declined__"
+    ) {
+      return [];
+    }
+    const replacements = orderId
+      ? parsed.filter(
+          ({ intent }) =>
+            intent.kind === "replace" && intent.orderId === orderId,
+        )
+      : [];
+    return [{ original, replacements, orderId }];
+  });
+  if (!groups.length) return emptyControlledIbkrOrderLifecycle();
+
+  const group = groups[0];
+  const usedReplacements = group.replacements.filter(({ row }) =>
+    Boolean(row.submittedOrderId),
+  );
+  const effectiveReplacement = usedReplacements.find(({ row }) => {
+    const marker = row.submittedOrderId || "";
+    return (
+      isIbkrBrokerOrderId(marker) ||
+      marker === TAX_PREFLIGHT_ORDER_SUBMISSION_CONSUMED_MARKER ||
+      marker === IBKR_RECONCILIATION_REQUIRED_MARKER ||
+      marker.startsWith(IBKR_REPLY_PENDING_PREFIX) ||
+      marker.startsWith(IBKR_REPLY_CLAIMED_PREFIX)
+    );
+  });
+  const facts = readJsonRecord(
+    (effectiveReplacement ?? group.original).row.metadata,
+  ).order;
+  const order = readJsonRecord(facts);
+  const allRows = [group.original, ...usedReplacements];
+  const cancelAttempted = allRows.some(({ row }) => {
+    const marker = row.submittedOrderId || "";
+    return (
+      Boolean(readJsonRecord(row.metadata).ibkrCancellation) ||
+      marker.startsWith(IBKR_CANCEL_INFLIGHT_PREFIX) ||
+      marker.startsWith(IBKR_CANCEL_RECONCILIATION_PREFIX)
+    );
+  });
+  const reconciliationRow = allRows.find(({ row }) => {
+    const marker = row.submittedOrderId || "";
+    return (
+      marker === TAX_PREFLIGHT_ORDER_SUBMISSION_CONSUMED_MARKER ||
+      marker === IBKR_RECONCILIATION_REQUIRED_MARKER ||
+      marker.startsWith(IBKR_REPLY_PENDING_PREFIX) ||
+      marker.startsWith(IBKR_REPLY_CLAIMED_PREFIX) ||
+      marker.startsWith(IBKR_CANCEL_INFLIGHT_PREFIX) ||
+      marker.startsWith(IBKR_CANCEL_RECONCILIATION_PREFIX)
+    );
+  });
+  const reconciliationMarker = reconciliationRow?.row.submittedOrderId || "";
+  const recordedReason = String(
+    readJsonRecord(
+      readJsonRecord(reconciliationRow?.row.metadata).ibkrReconciliation,
+    ).reason || "",
+  ).trim();
+  const reason =
+    groups.length > 1
+      ? "multiple_active_order_ledger_entries"
+      : recordedReason ||
+        (reconciliationMarker.startsWith(IBKR_REPLY_PENDING_PREFIX)
+          ? "broker_warning_response_pending"
+          : reconciliationMarker.startsWith(IBKR_REPLY_CLAIMED_PREFIX)
+            ? "broker_warning_outcome_unknown"
+            : reconciliationMarker.startsWith(IBKR_CANCEL_INFLIGHT_PREFIX) ||
+                reconciliationMarker.startsWith(
+                  IBKR_CANCEL_RECONCILIATION_PREFIX,
+                )
+              ? "cancel_outcome_unknown"
+              : reconciliationRow
+                ? "broker_outcome_unknown"
+                : null);
+  return {
+    status:
+      groups.length > 1 || reconciliationRow
+        ? "reconciliation_required"
+        : "active",
+    accountId: group.original.row.accountId,
+    orderId: group.orderId,
+    symbol: String(order.symbol || "").trim() || null,
+    side: String(order.side || "").trim() || null,
+    quantity: numberOrNull(order.quantity),
+    limitPrice: numberOrNull(order.limitPrice),
+    replacementUsed: usedReplacements.length > 0,
+    cancelAttempted,
+    reason,
+  };
 }
 
 export async function assertTaxPreflightForOrderSubmission(input: {
@@ -1233,15 +1502,65 @@ export async function assertTaxPreflightForOrderSubmission(input: {
         const candidates = await tx
           .select({
             id: taxPreflightChecksTable.id,
+            accountId: taxPreflightChecksTable.accountId,
             submittedOrderId: taxPreflightChecksTable.submittedOrderId,
             metadata: taxPreflightChecksTable.metadata,
           })
           .from(taxPreflightChecksTable)
           .where(eq(taxPreflightChecksTable.appUserId, appUserId));
-        const unresolved = candidates.some((candidate) => {
-          if (candidate.id === preflight.id) return false;
-          if (!readJsonRecord(candidate.metadata).ibkrPreparedIntent) return false;
+        const parsedCandidates = candidates.map((candidate) => ({
+          ...candidate,
+          prepared: tryReadIbkrPreparedOrderIntent(
+            readJsonRecord(candidate.metadata).ibkrPreparedIntent,
+            candidate.accountId,
+          ),
+        }));
+        const cancelledOrderIds = new Set(
+          candidates
+            .map((candidate) =>
+              ibkrCancelledOrderId(candidate.submittedOrderId || ""),
+            )
+            .filter((orderId): orderId is string => Boolean(orderId)),
+        );
+        if (ibkrPreparedIntent.kind === "replace") {
+          const replacementAlreadyUsed = parsedCandidates.some(
+            (candidate) =>
+              candidate.id !== preflight.id &&
+              Boolean(candidate.submittedOrderId) &&
+              candidate.prepared?.kind === "replace" &&
+              candidate.prepared.orderId === ibkrPreparedIntent.orderId,
+          );
+          if (replacementAlreadyUsed) {
+            throw new HttpError(
+              409,
+              "The IBKR order replacement was already used.",
+              {
+                code: "ibkr_replace_already_used",
+                expose: true,
+              },
+            );
+          }
+        }
+        const unresolved = parsedCandidates.some((candidate) => {
+          if (candidate.id === preflight.id || !candidate.prepared)
+            return false;
           const marker = candidate.submittedOrderId || "";
+          const candidateOrderId =
+            candidate.prepared.kind === "replace"
+              ? candidate.prepared.orderId
+              : isIbkrBrokerOrderId(marker)
+                ? marker
+                : ibkrOrderIdFromCancelMarker(marker);
+          if (candidateOrderId && cancelledOrderIds.has(candidateOrderId)) {
+            return false;
+          }
+          if (isIbkrBrokerOrderId(marker)) {
+            return !(
+              ibkrPreparedIntent.kind === "replace" &&
+              candidate.prepared.kind !== "replace" &&
+              marker === ibkrPreparedIntent.orderId
+            );
+          }
           return (
             marker === TAX_PREFLIGHT_ORDER_SUBMISSION_CONSUMED_MARKER ||
             marker === IBKR_RECONCILIATION_REQUIRED_MARKER ||
@@ -1561,6 +1880,19 @@ export async function recordTaxPreflightIbkrReplyRequired(input: {
       expose: true,
     });
   }
+  const issuedAt = input.now ?? new Date();
+  const expiresAt = new Date(
+    Math.min(
+      issuedAt.getTime() + IBKR_REPLY_CHALLENGE_TTL_MS,
+      preflight.expiresAt.getTime(),
+    ),
+  );
+  if (expiresAt.getTime() <= issuedAt.getTime()) {
+    throw new HttpError(409, "The IBKR order reply has expired.", {
+      code: "ibkr_order_reply_expired",
+      expose: true,
+    });
+  }
   const metadata = {
     ...readJsonRecord(preflight.metadata),
     ibkrReply: {
@@ -1568,7 +1900,8 @@ export async function recordTaxPreflightIbkrReplyRequired(input: {
       replyId,
       messages,
       replyCount,
-      createdAt: (input.now ?? new Date()).toISOString(),
+      issuedAt: issuedAt.toISOString(),
+      expiresAt: expiresAt.toISOString(),
     },
   };
   const updated = await db
@@ -1576,7 +1909,7 @@ export async function recordTaxPreflightIbkrReplyRequired(input: {
     .set({
       submittedOrderId: `${IBKR_REPLY_PENDING_PREFIX}${challengeId}`,
       metadata,
-      updatedAt: input.now ?? new Date(),
+      updatedAt: issuedAt,
     })
     .where(
       and(
@@ -1591,7 +1924,7 @@ export async function recordTaxPreflightIbkrReplyRequired(input: {
       expose: true,
     });
   }
-  return { challengeId, messages, expiresAt: preflight.expiresAt.toISOString() };
+  return { challengeId, messages, expiresAt: expiresAt.toISOString() };
 }
 
 export async function claimTaxPreflightIbkrReply(input: {
@@ -1625,18 +1958,29 @@ export async function claimTaxPreflightIbkrReply(input: {
     const challengeId = String(input.challengeId || "").trim();
     const pendingMarker = `${IBKR_REPLY_PENDING_PREFIX}${challengeId}`;
     const reply = readJsonRecord(readJsonRecord(preflight.metadata).ibkrReply);
+    const challengeExpiresAt = Date.parse(String(reply.expiresAt || ""));
     const preparedValue = readJsonRecord(preflight.metadata).ibkrPreparedIntent;
     const preparedIntent = preparedValue
       ? readIbkrPreparedOrderIntent(preparedValue, preflight.accountId)
       : null;
     if (
       preflight.submittedOrderId !== pendingMarker ||
-      String(reply.challengeId || "") !== challengeId
+      String(reply.challengeId || "") !== challengeId ||
+      !Number.isFinite(challengeExpiresAt) ||
+      challengeExpiresAt <= now.getTime()
     ) {
-      throw new HttpError(409, "The IBKR order reply was already used.", {
-        code: "ibkr_order_reply_already_used",
-        expose: true,
-      });
+      throw new HttpError(
+        409,
+        "The IBKR order reply has expired or was already used.",
+        {
+          code:
+            Number.isFinite(challengeExpiresAt) &&
+            challengeExpiresAt > now.getTime()
+              ? "ibkr_order_reply_already_used"
+              : "ibkr_order_reply_expired",
+          expose: true,
+        },
+      );
     }
     const claimed = await tx
       .update(taxPreflightChecksTable)

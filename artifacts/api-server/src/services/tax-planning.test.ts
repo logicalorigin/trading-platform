@@ -13,6 +13,7 @@ import { runAsAppUser } from "./app-user-context";
 import {
   assertTaxPreflightForOrderSubmission,
   createTaxOrderPreflight,
+  getControlledIbkrOrderLifecycle,
   getAccountTaxOverview,
   listAccountTaxEvents,
   listAccountTaxLots,
@@ -185,6 +186,13 @@ test("tax preflight binds and atomically claims the prepared IBKR order", async 
               error: null,
               warnings: ["Review broker estimate."],
             },
+            gatewaySnapshot: {
+              appUserId,
+              baseUrl: "https://localhost:5050",
+              hosted: false,
+              loginCompletions: 1,
+              startedAt: 1_752_364_800_000,
+            },
           },
         },
       );
@@ -221,6 +229,13 @@ test("tax preflight binds and atomically claims the prepared IBKR order", async 
       });
       assert.equal(accepted?.ibkrPreparedIntent?.clientOrderId, "intent-123");
       assert.deepEqual(accepted?.ibkrPreparedIntent?.orderBody, orderBody);
+      assert.deepEqual(accepted?.ibkrPreparedIntent?.gatewaySnapshot, {
+        appUserId,
+        baseUrl: "https://localhost:5050",
+        hosted: false,
+        loginCompletions: 1,
+        startedAt: 1_752_364_800_000,
+      });
 
       const challenge = await recordTaxPreflightIbkrReplyRequired({
         preflightToken: preflight.preflightToken,
@@ -472,6 +487,419 @@ test("different prepared IBKR tokens cannot enter broker mutation concurrently",
         (claim): claim is PromiseRejectedResult => claim.status === "rejected",
       );
       assert.equal(rejected?.reason?.code, "ibkr_order_mutation_in_progress");
+    });
+  });
+});
+
+test("a submitted controlled IBKR order blocks a second live placement", async () => {
+  await withTestDb(async () => {
+    const appUserId = await createUser(
+      "tax-preflight-ibkr-active-order@example.com",
+    );
+    await runAsAppUser(appUserId, async () => {
+      const order = baseOrder({ quantity: 1, limitPrice: 100 });
+      const prepare = async (clientOrderId: string) => {
+        const orderBody = {
+          orders: [
+            {
+              acctId: "U1234567",
+              conid: 265598,
+              cOID: clientOrderId,
+              orderType: "LMT",
+              outsideRTH: false,
+              side: "BUY",
+              tif: "DAY",
+              quantity: 1,
+              price: 100,
+            },
+          ],
+        };
+        return createTaxOrderPreflight(
+          { order },
+          {
+            ibkrPreparedIntent: {
+              version: 1,
+              accountId: "U1234567",
+              clientOrderId,
+              orderFingerprint: fingerprintIbkrOrderBody(orderBody),
+              orderBody,
+              preparedAt: new Date().toISOString(),
+              whatIf: { error: null, warnings: [] },
+            },
+          },
+        );
+      };
+      const first = await prepare("active-first");
+      await assertTaxPreflightForOrderSubmission({
+        order,
+        taxPreflightToken: first.preflightToken,
+        requireIbkrPreparedIntent: true,
+        expectedIbkrIntentKind: "place",
+      });
+      await recordTaxPreflightOrderSubmitted({
+        preflightToken: first.preflightToken,
+        submittedOrderId: "1234567890",
+      });
+
+      const second = await prepare("active-second");
+      await assert.rejects(
+        assertTaxPreflightForOrderSubmission({
+          order,
+          taxPreflightToken: second.preflightToken,
+          requireIbkrPreparedIntent: true,
+          expectedIbkrIntentKind: "place",
+        }),
+        (error: unknown) => {
+          assert.equal(
+            (error as { code?: string }).code,
+            "ibkr_order_mutation_in_progress",
+          );
+          return true;
+        },
+      );
+    });
+  });
+});
+
+test("a broker order permits at most one submitted IBKR replacement", async () => {
+  await withTestDb(async () => {
+    const appUserId = await createUser(
+      "tax-preflight-ibkr-one-replace@example.com",
+    );
+    await runAsAppUser(appUserId, async () => {
+      const brokerOrderId = "1234567890";
+      const originalOrder = baseOrder({ quantity: 1, limitPrice: 100 });
+      const originalBody = {
+        orders: [
+          {
+            acctId: "U1234567",
+            conid: 265598,
+            cOID: "one-replace-intent",
+            orderType: "LMT",
+            outsideRTH: false,
+            side: "BUY",
+            tif: "DAY",
+            quantity: 1,
+            price: 100,
+          },
+        ],
+      };
+      const originalFingerprint = fingerprintIbkrOrderBody(originalBody);
+      const original = await createTaxOrderPreflight(
+        { order: originalOrder },
+        {
+          ibkrPreparedIntent: {
+            version: 1,
+            accountId: "U1234567",
+            clientOrderId: "one-replace-intent",
+            orderFingerprint: originalFingerprint,
+            orderBody: originalBody,
+            preparedAt: new Date().toISOString(),
+            whatIf: { error: null, warnings: [] },
+          },
+        },
+      );
+      await assertTaxPreflightForOrderSubmission({
+        order: originalOrder,
+        taxPreflightToken: original.preflightToken,
+        requireIbkrPreparedIntent: true,
+        expectedIbkrIntentKind: "place",
+      });
+      await recordTaxPreflightOrderSubmitted({
+        preflightToken: original.preflightToken,
+        submittedOrderId: brokerOrderId,
+      });
+
+      const prepareReplacement = async (limitPrice: number) => {
+        const order = baseOrder({ quantity: 1, limitPrice });
+        const orderBody = structuredClone(originalBody);
+        orderBody.orders[0].price = limitPrice;
+        return {
+          order,
+          preflight: await createTaxOrderPreflight(
+            { order },
+            {
+              ibkrPreparedIntent: {
+                version: 2,
+                kind: "replace",
+                orderId: brokerOrderId,
+                previousOrderFingerprint: originalFingerprint,
+                accountId: "U1234567",
+                clientOrderId: "one-replace-intent",
+                orderFingerprint: fingerprintIbkrOrderBody(orderBody),
+                orderBody,
+                preparedAt: new Date().toISOString(),
+                whatIf: { error: null, warnings: [] },
+              },
+            },
+          ),
+        };
+      };
+      const first = await prepareReplacement(99);
+      const second = await prepareReplacement(98);
+      await assertTaxPreflightForOrderSubmission({
+        order: first.order,
+        taxPreflightToken: first.preflight.preflightToken,
+        requireIbkrPreparedIntent: true,
+        expectedIbkrIntentKind: "replace",
+        expectedBrokerOrderId: brokerOrderId,
+      });
+      await recordTaxPreflightOrderSubmitted({
+        preflightToken: first.preflight.preflightToken,
+        submittedOrderId: brokerOrderId,
+      });
+
+      assert.deepEqual(await getControlledIbkrOrderLifecycle(), {
+        status: "active",
+        accountId: "U1234567",
+        orderId: brokerOrderId,
+        symbol: "AAPL",
+        side: "buy",
+        quantity: 1,
+        limitPrice: 99,
+        replacementUsed: true,
+        cancelAttempted: false,
+        reason: null,
+      });
+
+      const originalAfterReplacement =
+        await loadSubmittedIbkrPreparedOrderIntent({
+          accountId: "U1234567",
+          submittedOrderId: brokerOrderId,
+        });
+      assert.equal(originalAfterReplacement.kind ?? "place", "place");
+      await assert.rejects(prepareReplacement(97), (error: unknown) => {
+        assert.equal(
+          (error as { code?: string }).code,
+          "ibkr_replace_already_used",
+        );
+        return true;
+      });
+      await assert.rejects(
+        assertTaxPreflightForOrderSubmission({
+          order: second.order,
+          taxPreflightToken: second.preflight.preflightToken,
+          requireIbkrPreparedIntent: true,
+          expectedIbkrIntentKind: "replace",
+          expectedBrokerOrderId: brokerOrderId,
+        }),
+        (error: unknown) => {
+          assert.equal(
+            (error as { code?: string }).code,
+            "ibkr_replace_already_used",
+          );
+          return true;
+        },
+      );
+    });
+  });
+});
+
+test("controlled IBKR lifecycle recovers active state and resolves after terminal cancel", async () => {
+  await withTestDb(async () => {
+    const appUserId = await createUser(
+      "tax-preflight-ibkr-lifecycle@example.com",
+    );
+    await runAsAppUser(appUserId, async () => {
+      const order = baseOrder({ quantity: 1, limitPrice: 100 });
+      const orderBody = {
+        orders: [
+          {
+            acctId: "U1234567",
+            conid: 265598,
+            cOID: "lifecycle-intent",
+            orderType: "LMT",
+            outsideRTH: false,
+            side: "BUY",
+            tif: "DAY",
+            quantity: 1,
+            price: 100,
+          },
+        ],
+      };
+      const preflight = await createTaxOrderPreflight(
+        { order },
+        {
+          ibkrPreparedIntent: {
+            version: 1,
+            accountId: "U1234567",
+            clientOrderId: "lifecycle-intent",
+            orderFingerprint: fingerprintIbkrOrderBody(orderBody),
+            orderBody,
+            preparedAt: new Date().toISOString(),
+            whatIf: { error: null, warnings: [] },
+          },
+        },
+      );
+      await assertTaxPreflightForOrderSubmission({
+        order,
+        taxPreflightToken: preflight.preflightToken,
+        requireIbkrPreparedIntent: true,
+        expectedIbkrIntentKind: "place",
+      });
+      await recordTaxPreflightOrderSubmitted({
+        preflightToken: preflight.preflightToken,
+        submittedOrderId: "1234567890",
+      });
+
+      assert.deepEqual(await getControlledIbkrOrderLifecycle(), {
+        status: "active",
+        accountId: "U1234567",
+        orderId: "1234567890",
+        symbol: "AAPL",
+        side: "buy",
+        quantity: 1,
+        limitPrice: 100,
+        replacementUsed: false,
+        cancelAttempted: false,
+        reason: null,
+      });
+
+      await claimSubmittedIbkrOrderCancellation({
+        accountId: "U1234567",
+        submittedOrderId: "1234567890",
+      });
+      await recordSubmittedIbkrOrderCancellation({
+        accountId: "U1234567",
+        submittedOrderId: "1234567890",
+        cancelConfirmed: true,
+        status: "canceled",
+        filledQuantity: 0,
+      });
+      assert.deepEqual(await getControlledIbkrOrderLifecycle(), {
+        status: "none",
+        accountId: null,
+        orderId: null,
+        symbol: null,
+        side: null,
+        quantity: null,
+        limitPrice: null,
+        replacementUsed: false,
+        cancelAttempted: false,
+        reason: null,
+      });
+      await assert.rejects(
+        loadSubmittedIbkrPreparedOrderIntent({
+          accountId: "U1234567",
+          submittedOrderId: "1234567890",
+        }),
+        (error: unknown) => {
+          assert.equal(
+            (error as { code?: string }).code,
+            "ibkr_submitted_order_intent_unavailable",
+          );
+          return true;
+        },
+      );
+
+      const nextBody = structuredClone(orderBody);
+      nextBody.orders[0].cOID = "lifecycle-next";
+      const next = await createTaxOrderPreflight(
+        { order },
+        {
+          ibkrPreparedIntent: {
+            version: 1,
+            accountId: "U1234567",
+            clientOrderId: "lifecycle-next",
+            orderFingerprint: fingerprintIbkrOrderBody(nextBody),
+            orderBody: nextBody,
+            preparedAt: new Date().toISOString(),
+            whatIf: { error: null, warnings: [] },
+          },
+        },
+      );
+      const accepted = await assertTaxPreflightForOrderSubmission({
+        order,
+        taxPreflightToken: next.preflightToken,
+        requireIbkrPreparedIntent: true,
+        expectedIbkrIntentKind: "place",
+      });
+      assert.equal(
+        accepted?.ibkrPreparedIntent?.clientOrderId,
+        "lifecycle-next",
+      );
+    });
+  });
+});
+
+test("IBKR warning challenge expires after thirty seconds without exposing reply id", async () => {
+  await withTestDb(async () => {
+    const appUserId = await createUser(
+      "tax-preflight-ibkr-warning-expiry@example.com",
+    );
+    await runAsAppUser(appUserId, async () => {
+      const now = new Date();
+      const order = baseOrder({ quantity: 1, limitPrice: 100 });
+      const orderBody = {
+        orders: [
+          {
+            acctId: "U1234567",
+            conid: 265598,
+            cOID: "warning-expiry-intent",
+            orderType: "LMT",
+            outsideRTH: false,
+            side: "BUY",
+            tif: "DAY",
+            quantity: 1,
+            price: 100,
+          },
+        ],
+      };
+      const preflight = await createTaxOrderPreflight(
+        { order },
+        {
+          ibkrPreparedIntent: {
+            version: 1,
+            accountId: "U1234567",
+            clientOrderId: "warning-expiry-intent",
+            orderFingerprint: fingerprintIbkrOrderBody(orderBody),
+            orderBody,
+            preparedAt: now.toISOString(),
+            whatIf: { error: null, warnings: [] },
+          },
+        },
+      );
+      await assertTaxPreflightForOrderSubmission({
+        order,
+        taxPreflightToken: preflight.preflightToken,
+        requireIbkrPreparedIntent: true,
+        expectedIbkrIntentKind: "place",
+      });
+      const challenge = await recordTaxPreflightIbkrReplyRequired({
+        preflightToken: preflight.preflightToken,
+        replyId: "raw-warning-reply-id",
+        messages: ["Review broker warning."],
+        now,
+      });
+      assert.equal(
+        challenge.expiresAt,
+        new Date(now.getTime() + 30_000).toISOString(),
+      );
+      assert.equal(
+        JSON.stringify(challenge).includes("raw-warning-reply-id"),
+        false,
+      );
+      await assert.rejects(
+        claimTaxPreflightIbkrReply({
+          preflightToken: preflight.preflightToken,
+          challengeId: challenge.challengeId,
+          now: new Date(now.getTime() + 31_000),
+        }),
+        (error: unknown) => {
+          assert.equal(
+            (error as { code?: string }).code,
+            "ibkr_order_reply_expired",
+          );
+          return true;
+        },
+      );
+      const lifecycle = await getControlledIbkrOrderLifecycle();
+      assert.equal(lifecycle.status, "reconciliation_required");
+      assert.equal(lifecycle.reason, "broker_warning_response_pending");
+      assert.equal(
+        JSON.stringify(lifecycle).includes("raw-warning-reply-id"),
+        false,
+      );
     });
   });
 });
