@@ -7374,6 +7374,9 @@ async function upsertSymbolState(input: SignalMonitorSymbolStateUpsertInput) {
     })
     .returning();
 
+  invalidateSignalMonitorStateRowsCacheForWrittenCells([
+    { profileId: input.profileId, timeframe: input.timeframe },
+  ]);
   return state;
 }
 
@@ -13600,6 +13603,12 @@ export async function evaluateSignalMonitorProfileUniverse(input: {
             )
           : eq(signalMonitorSymbolStatesTable.profileId, universe.profile.id),
       );
+    invalidateSignalMonitorStateRowsCacheForWrittenCells(
+      timeframes.map((timeframe) => ({
+        profileId: universe.profile.id,
+        timeframe,
+      })),
+    );
   }
   const updatedProfile = await updateSignalMonitorProfileEvaluationMetadata({
     profile: universe.profile,
@@ -15144,6 +15153,16 @@ export const __signalMonitorInternalsForTests = {
   shouldWriteSignalMonitorProfileEvaluationMetadata,
   recordSignalMonitorProfileEvaluationMetadataWrite,
   resetSignalMonitorProfileHeartbeatForTests,
+  loadSignalMonitorActiveStateRowsForTests: loadSignalMonitorActiveStateRows,
+  invalidateSignalMonitorStateRowsCacheForWrittenCellsForTests:
+    invalidateSignalMonitorStateRowsCacheForWrittenCells,
+  clearSignalMonitorStateRowsCacheForTests() {
+    signalMonitorStateRowsCache.clear();
+    signalMonitorStateRowsInFlight.clear();
+  },
+  getSignalMonitorStateRowsCacheTtlMsForTests() {
+    return SIGNAL_MONITOR_STATE_ROWS_CACHE_TTL_MS;
+  },
   resolveSignalMonitorBreadthHistoryRange,
   resolveSignalMonitorBreadthHistoryWindow,
   buildSignalMonitorBreadthHistoryResponse,
@@ -15203,12 +15222,13 @@ function resolveSignalMonitorSnapshotEvaluatedAt(
 // select: the /state route (on its own 15s cache miss), every matrix-stream
 // bootstrap (per SSE connect), and the signal-options worker/cockpit readers.
 // At a 2000-symbol universe that is a ~12k-row decode against the hard-capped
-// 12-connection pool per caller. Rows change at bar cadence (>=1m) and the
-// bulk persist busts on write, so the TTL only collapses concurrent readers —
-// a snapshot can never trail the last persisted evaluation by more than the
-// TTL. Rows are shared by reference and treated as immutable, matching the
-// other snapshot read paths.
-const SIGNAL_MONITOR_STATE_ROWS_CACHE_TTL_MS = 5_000;
+// 12-connection pool per caller. Rows change at bar cadence (>=1m); every
+// in-process single, bulk, and deactivation write busts the affected cells.
+// The 60s TTL aligns reuse with the shortest producer cadence while bounding
+// external-writer staleness. Rows are shared by reference and treated as
+// immutable, matching the other snapshot read paths.
+const SIGNAL_MONITOR_STATE_ROWS_CACHE_TTL_MS = 60_000;
+const SIGNAL_MONITOR_EVENTS_LIST_CACHE_TTL_MS = 5_000;
 const signalMonitorStateRowsCache = new Map<
   string,
   { rows: DbSignalMonitorSymbolState[]; at: number }
@@ -15345,7 +15365,7 @@ async function loadSignalMonitorEventRows(input: {
   const cached = signalMonitorEventsListCache.get(input.key);
   if (
     cached &&
-    Date.now() - cached.at < SIGNAL_MONITOR_STATE_ROWS_CACHE_TTL_MS
+    Date.now() - cached.at < SIGNAL_MONITOR_EVENTS_LIST_CACHE_TTL_MS
   ) {
     return cached.rows;
   }

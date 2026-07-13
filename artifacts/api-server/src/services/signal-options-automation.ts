@@ -3031,13 +3031,96 @@ function buildCanonicalSignalOptionsSignalSnapshot(input: {
   });
 }
 
-async function listSignalOptionsSignalSnapshots(
+type SignalOptionsSignalSnapshotReadOptions = {
+  preferStoredMonitorState?: boolean;
+  includeEventMetadata?: boolean;
+  requireEventMetadata?: boolean;
+};
+
+const SIGNAL_OPTIONS_SIGNAL_SNAPSHOT_CACHE_TTL_MS = 5_000;
+const signalOptionsSignalSnapshotCache = new Map<
+  string,
+  { value: SignalOptionsSignalSnapshot[]; expiresAt: number }
+>();
+const signalOptionsSignalSnapshotInFlight = new Map<
+  string,
+  Promise<SignalOptionsSignalSnapshot[]>
+>();
+
+function signalOptionsSignalSnapshotCacheKey(
+  deploymentId: string,
+  options: SignalOptionsSignalSnapshotReadOptions,
+) {
+  return [
+    deploymentId,
+    options.preferStoredMonitorState === true ? "stored" : "state",
+    options.includeEventMetadata === false ? "no-metadata" : "metadata",
+    shouldRequireSignalOptionsEventMetadata(options) ? "required" : "optional",
+  ].join("|");
+}
+
+function withSignalOptionsSignalSnapshotsCache(input: {
+  deploymentId: string;
+  options: SignalOptionsSignalSnapshotReadOptions;
+  load: () => Promise<SignalOptionsSignalSnapshot[]>;
+  nowMs?: number;
+}): Promise<SignalOptionsSignalSnapshot[]> {
+  const nowMs = input.nowMs ?? Date.now();
+  const key = signalOptionsSignalSnapshotCacheKey(
+    input.deploymentId,
+    input.options,
+  );
+  const cached = signalOptionsSignalSnapshotCache.get(key);
+  if (cached && cached.expiresAt > nowMs) {
+    return Promise.resolve(cached.value);
+  }
+  signalOptionsSignalSnapshotCache.delete(key);
+  const pending = signalOptionsSignalSnapshotInFlight.get(key);
+  if (pending) {
+    return pending;
+  }
+
+  let work!: Promise<SignalOptionsSignalSnapshot[]>;
+  work = Promise.resolve()
+    .then(input.load)
+    .then((value) => {
+      if (signalOptionsSignalSnapshotInFlight.get(key) === work) {
+        signalOptionsSignalSnapshotCache.set(key, {
+          value,
+          expiresAt: nowMs + SIGNAL_OPTIONS_SIGNAL_SNAPSHOT_CACHE_TTL_MS,
+        });
+      }
+      return value;
+    })
+    .finally(() => {
+      if (signalOptionsSignalSnapshotInFlight.get(key) === work) {
+        signalOptionsSignalSnapshotInFlight.delete(key);
+      }
+    });
+  signalOptionsSignalSnapshotInFlight.set(key, work);
+  return work;
+}
+
+function invalidateSignalOptionsSignalSnapshotCache(deploymentId?: string) {
+  if (!deploymentId) {
+    signalOptionsSignalSnapshotCache.clear();
+    signalOptionsSignalSnapshotInFlight.clear();
+    return;
+  }
+  const prefix = `${deploymentId}|`;
+  // ponytail: option variants are a tiny bounded set; prefix-scan until measured
+  // deployment counts justify maintaining a second invalidation index.
+  for (const key of signalOptionsSignalSnapshotCache.keys()) {
+    if (key.startsWith(prefix)) signalOptionsSignalSnapshotCache.delete(key);
+  }
+  for (const key of signalOptionsSignalSnapshotInFlight.keys()) {
+    if (key.startsWith(prefix)) signalOptionsSignalSnapshotInFlight.delete(key);
+  }
+}
+
+async function listSignalOptionsSignalSnapshotsUncached(
   deployment: AlgoDeployment,
-  options: {
-    preferStoredMonitorState?: boolean;
-    includeEventMetadata?: boolean;
-    requireEventMetadata?: boolean;
-  } = {},
+  options: SignalOptionsSignalSnapshotReadOptions = {},
 ) {
   const universe = new Set(
     deployment.symbolUniverse
@@ -3124,6 +3207,17 @@ async function listSignalOptionsSignalSnapshots(
       String(left.direction ?? "").localeCompare(String(right.direction ?? "")) ||
       String(left.signalKey ?? "").localeCompare(String(right.signalKey ?? ""))
     );
+  });
+}
+
+function listSignalOptionsSignalSnapshots(
+  deployment: AlgoDeployment,
+  options: SignalOptionsSignalSnapshotReadOptions = {},
+) {
+  return withSignalOptionsSignalSnapshotsCache({
+    deploymentId: deployment.id,
+    options,
+    load: () => listSignalOptionsSignalSnapshotsUncached(deployment, options),
   });
 }
 
@@ -12802,6 +12896,7 @@ const signalOptionsPerformanceInFlight = new Map<
 >();
 
 export function invalidateSignalOptionsDashboardCaches(deploymentId?: string) {
+  invalidateSignalOptionsSignalSnapshotCache(deploymentId);
   if (!deploymentId) {
     signalOptionsDashboardCache.clear();
     signalOptionsSummaryDashboardCache.clear();
@@ -21779,6 +21874,10 @@ export const __signalOptionsAutomationInternalsForTests = {
   buildSignalOptionsSignalSnapshot,
   buildCanonicalSignalOptionsSignalSnapshot,
   shouldRequireSignalOptionsEventMetadata,
+  withSignalOptionsSignalSnapshotsCacheForTests:
+    withSignalOptionsSignalSnapshotsCache,
+  getSignalOptionsSignalSnapshotCacheTtlMsForTests: () =>
+    SIGNAL_OPTIONS_SIGNAL_SNAPSHOT_CACHE_TTL_MS,
   compareSignalOptionsCandidatesForDisplay,
   candidateFromEvent,
   eventTimelineItem,

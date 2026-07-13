@@ -15,6 +15,7 @@ import { sql } from "drizzle-orm";
 import {
   __signalOptionsAutomationInternalsForTests,
   evaluateMtfPatternGate,
+  invalidateSignalOptionsDashboardCaches,
   runSignalOptionsShadowBackfill,
   selectSignalOptionsExpiration,
   SIGNAL_OPTIONS_EXIT_EVENT,
@@ -29,6 +30,80 @@ import { __signalMonitorInternalsForTests } from "./signal-monitor";
 __signalMonitorInternalsForTests.setSignalMonitorQuietMarketSessionNowForTests(
   false,
 );
+
+test("Signal Options signal shaping single-flights, reuses for 5s, and invalidates with dashboard caches", async () => {
+  const {
+    getSignalOptionsSignalSnapshotCacheTtlMsForTests,
+    withSignalOptionsSignalSnapshotsCacheForTests,
+  } = __signalOptionsAutomationInternalsForTests;
+  const deploymentId = "00000000-0000-4000-8000-000000000005";
+  const options = { includeEventMetadata: true };
+  let loads = 0;
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const load = async () => {
+    loads += 1;
+    await gate;
+    return [];
+  };
+
+  invalidateSignalOptionsDashboardCaches();
+  const first = withSignalOptionsSignalSnapshotsCacheForTests({
+    deploymentId,
+    options,
+    nowMs: 1_000,
+    load,
+  });
+  const joined = withSignalOptionsSignalSnapshotsCacheForTests({
+    deploymentId,
+    options,
+    nowMs: 1_001,
+    load,
+  });
+  await Promise.resolve();
+  assert.equal(loads, 1, "concurrent shaping joins one read");
+  release();
+  assert.equal(await joined, await first);
+
+  const reused = await withSignalOptionsSignalSnapshotsCacheForTests({
+    deploymentId,
+    options,
+    nowMs: 5_999,
+    load: async () => {
+      loads += 1;
+      return [];
+    },
+  });
+  assert.equal(reused, await first);
+  assert.equal(loads, 1, "fresh shaping is reused for the full visible window");
+  assert.equal(getSignalOptionsSignalSnapshotCacheTtlMsForTests(), 5_000);
+
+  await withSignalOptionsSignalSnapshotsCacheForTests({
+    deploymentId,
+    options,
+    nowMs: 6_000,
+    load: async () => {
+      loads += 1;
+      return [];
+    },
+  });
+  assert.equal(loads, 2, "the 5s boundary forces fresh shaping");
+
+  invalidateSignalOptionsDashboardCaches(deploymentId);
+  await withSignalOptionsSignalSnapshotsCacheForTests({
+    deploymentId,
+    options,
+    nowMs: 6_001,
+    load: async () => {
+      loads += 1;
+      return [];
+    },
+  });
+  assert.equal(loads, 3, "dashboard invalidation clears signal shaping");
+  invalidateSignalOptionsDashboardCaches();
+});
 
 test("resolveSameScanEntryAction: a symbol opened earlier this scan defers (no duplicate entry); block/flip/proceed preserved", () => {
   const { resolveSameScanEntryAction } = __signalOptionsAutomationInternalsForTests;

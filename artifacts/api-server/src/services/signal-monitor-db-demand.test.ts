@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import { withTestDb } from "@workspace/db/testing";
@@ -21,6 +22,95 @@ import {
 //   pnpm --filter @workspace/api-server exec tsx --test --test-force-exit \
 //     src/services/signal-monitor-db-demand.test.ts
 const I = __signalMonitorInternalsForTests;
+const signalMonitorSource = readFileSync(
+  new URL("./signal-monitor.ts", import.meta.url),
+  "utf8",
+);
+
+test("state-row reads reuse one producer-cadence cache and invalidate written cells", async () => {
+  await withTestDb(async ({ db }) => {
+    const profileId = "00000000-0000-4000-8000-000000000060";
+    await db.execute(sql`
+      INSERT INTO signal_monitor_profiles (id, environment, enabled, fresh_window_bars)
+      VALUES (${profileId}, 'shadow', true, 3)
+    `);
+    await db.execute(sql`
+      INSERT INTO signal_monitor_symbol_states
+        (profile_id, symbol, timeframe, latest_bar_close, fresh, status, active)
+      VALUES (${profileId}, 'AAPL', '1m', 100, true, 'ok', true)
+    `);
+
+    I.clearSignalMonitorStateRowsCacheForTests();
+    const first = await I.loadSignalMonitorActiveStateRowsForTests({
+      profileId,
+      timeframes: ["1m"],
+    });
+    const reused = await I.loadSignalMonitorActiveStateRowsForTests({
+      profileId,
+      timeframes: ["1m"],
+    });
+    assert.equal(reused, first, "unchanged state rows reuse the cached array");
+    assert.equal(I.getSignalMonitorStateRowsCacheTtlMsForTests(), 60_000);
+
+    await db.execute(sql`
+      UPDATE signal_monitor_symbol_states
+      SET latest_bar_close = 101
+      WHERE profile_id = ${profileId} AND symbol = 'AAPL' AND timeframe = '1m'
+    `);
+    I.invalidateSignalMonitorStateRowsCacheForWrittenCellsForTests([
+      { profileId, timeframe: "1m" },
+    ]);
+    const refreshed = await I.loadSignalMonitorActiveStateRowsForTests({
+      profileId,
+      timeframes: ["1m"],
+    });
+    assert.notEqual(refreshed, first, "a written cell forces a fresh row read");
+    assert.equal(refreshed[0]?.latestBarClose, "101.000000");
+    I.clearSignalMonitorStateRowsCacheForTests();
+  });
+});
+
+test("every in-process signal-state producer invalidates the raw row cache", () => {
+  const upsertStart = signalMonitorSource.indexOf("async function upsertSymbolState");
+  const upsertEnd = signalMonitorSource.indexOf(
+    "\nasync function readStoredSignalMonitorSymbolState",
+    upsertStart,
+  );
+  const bulkStart = signalMonitorSource.indexOf(
+    "async function persistSignalMonitorMatrixStatesBestEffort",
+  );
+  const bulkEnd = signalMonitorSource.indexOf(
+    "\nconst signalMonitorPersistInFlight",
+    bulkStart,
+  );
+  const profileStart = signalMonitorSource.indexOf(
+    "export async function evaluateSignalMonitorProfileUniverse",
+  );
+  const profileEnd = signalMonitorSource.indexOf(
+    "\nfunction resolveExplicitSignalMonitorSymbols",
+    profileStart,
+  );
+
+  assert.ok(upsertStart >= 0 && upsertEnd > upsertStart);
+  assert.ok(bulkStart >= 0 && bulkEnd > bulkStart);
+  assert.ok(profileStart >= 0 && profileEnd > profileStart);
+  assert.match(
+    signalMonitorSource.slice(upsertStart, upsertEnd),
+    /\.insert\(signalMonitorSymbolStatesTable\)[\s\S]*invalidateSignalMonitorStateRowsCacheForWrittenCells\(/,
+  );
+  assert.match(
+    signalMonitorSource.slice(bulkStart, bulkEnd),
+    /\.insert\(signalMonitorSymbolStatesTable\)[\s\S]*invalidateSignalMonitorStateRowsCacheForWrittenCells\(rows\)/,
+  );
+  assert.match(
+    signalMonitorSource.slice(profileStart, profileEnd),
+    /\.update\(signalMonitorSymbolStatesTable\)[\s\S]*invalidateSignalMonitorStateRowsCacheForWrittenCells\(/,
+  );
+  assert.match(
+    signalMonitorSource,
+    /const SIGNAL_MONITOR_STATE_ROWS_CACHE_TTL_MS = 60_000;/,
+  );
+});
 
 // ── B1: universe-expansion JOIN memo ────────────────────────────────────────
 test("B1: catalog expansion JOIN is memoized per effective limit and re-reads after invalidation", async () => {
