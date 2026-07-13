@@ -698,9 +698,6 @@ function classifyIbkrOrderResponse(payload: unknown): {
       ]),
     ),
   );
-  const warningIds = new Set(
-    compact(warnings.map((result) => asString(result["id"]))),
-  );
   const malformed =
     rawResults.length === 0 || results.length !== rawResults.length;
 
@@ -712,10 +709,8 @@ function classifyIbkrOrderResponse(payload: unknown): {
     warning: warnings[0] ?? null,
     ambiguous:
       malformed ||
-      acknowledgements.length > 1 ||
-      warnings.length > 1 ||
+      results.length !== 1 ||
       orderIds.size > 1 ||
-      warningIds.size > 1 ||
       (acknowledgements.length > 0 && warnings.length > 0),
   };
 }

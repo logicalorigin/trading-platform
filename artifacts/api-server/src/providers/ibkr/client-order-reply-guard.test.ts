@@ -414,6 +414,8 @@ test("IBKR initial order acknowledgement cardinality is fail-closed", async () =
     [{ order_id: "order-1" }, { order_id: "order-2" }],
     [{ id: "reply-1" }, { id: "reply-2" }],
     [{ order_id: "order-1" }, { id: "reply-1" }],
+    [{ order_id: "order-1" }, { unrecognized: "outcome" }],
+    [{ id: "reply-1" }, { unrecognized: "outcome" }],
   ];
   let payloadIndex = 0;
   globalThis.fetch = (async (input) => {
@@ -534,6 +536,14 @@ test("IBKR continued reply acknowledgement cardinality is fail-closed", async ()
     orders: [{ order_id: "order-1" }, { order_id: "order-2" }],
     warnings: [{ id: "reply-1" }, { id: "reply-2" }],
     combined: [{ order_id: "order-1" }, { id: "reply-1" }],
+    orderAndUnknown: [
+      { order_id: "order-1" },
+      { unrecognized: "outcome" },
+    ],
+    warningAndUnknown: [
+      { id: "reply-1" },
+      { unrecognized: "outcome" },
+    ],
   };
   globalThis.fetch = (async (input) => {
     const replyId = new URL(String(input)).pathname.split("/").at(-1) ?? "";
