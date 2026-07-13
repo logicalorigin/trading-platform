@@ -1,13 +1,19 @@
 #!/usr/bin/env node
 import {
+  closeSync,
   existsSync,
+  fstatSync,
+  openSync,
   readFileSync,
+  readSync,
   readdirSync,
 } from "node:fs";
 import path from "node:path";
+import { stripVTControlCharacters } from "node:util";
 import { fileURLToPath } from "node:url";
 
 const repoRoot = path.resolve(fileURLToPath(new URL("..", import.meta.url)));
+const JSONL_TAIL_BYTES = 256 * 1024;
 
 function usage() {
   console.log(`Usage: node scripts/inspect-replit-flight-recorder.mjs [--json] [--dir PATH]
@@ -60,11 +66,24 @@ function safeReadJson(filePath) {
   }
 }
 
-function readJsonlTail(filePath, limit) {
+export function readJsonlTail(filePath, limit, maxBytes = JSONL_TAIL_BYTES) {
+  let fd;
   try {
-    return readFileSync(filePath, "utf8")
+    fd = openSync(filePath, "r");
+    const size = fstatSync(fd).size;
+    if (size === 0) return [];
+    const length = Math.min(size, maxBytes);
+    const start = size - length;
+    const buffer = Buffer.alloc(length);
+    const bytesRead = readSync(fd, buffer, 0, length, start);
+    let text = buffer.subarray(0, bytesRead).toString("utf8");
+    if (start > 0) {
+      const firstNewline = text.indexOf("\n");
+      text = firstNewline === -1 ? "" : text.slice(firstNewline + 1);
+    }
+    return text
       .trim()
-      .split("\n")
+      .split(/\r?\n/)
       .filter(Boolean)
       .slice(-limit)
       .map((line) => {
@@ -76,6 +95,14 @@ function readJsonlTail(filePath, limit) {
       });
   } catch {
     return [];
+  } finally {
+    if (fd !== undefined) {
+      try {
+        closeSync(fd);
+      } catch {
+        // The evidence read has already completed or failed.
+      }
+    }
   }
 }
 
@@ -136,11 +163,16 @@ function collectEvidence(dir) {
   };
 }
 
-function value(input) {
-  return input === null || input === undefined || input === "" ? "unknown" : String(input);
+export function value(input) {
+  if (input === null || input === undefined || input === "") return "unknown";
+  const rendered = stripVTControlCharacters(String(input))
+    .replace(/[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return rendered || "unknown";
 }
 
-function incidentAttribution(incident) {
+export function incidentAttribution(incident) {
   if (!incident) {
     return "none";
   }
@@ -161,6 +193,9 @@ function incidentAttribution(incident) {
   }
   if (incident.classification === "same-container-supervisor-abrupt") {
     return "supervisor stopped without clean shutdown in the same container";
+  }
+  if (incident.classification === "controlled-handoff") {
+    return "controlled supervisor handoff recorded inside the workspace";
   }
   return "classification-specific attribution unavailable";
 }
@@ -193,7 +228,7 @@ function printEventTail(title, events) {
   for (const event of events.slice(-8)) {
     const name = value(event.event);
     const pid = value(event.pid);
-    const child = event.childName ? ` child=${event.childName}` : "";
+    const child = event.childName ? ` child=${value(event.childName)}` : "";
     const code = event.code !== undefined ? ` code=${value(event.code)}` : "";
     const signal = event.signal !== undefined ? ` signal=${value(event.signal)}` : "";
     console.log(`  ${value(event.time)} ${name} pid=${pid}${child}${code}${signal}`);
@@ -213,7 +248,7 @@ function printPostgresDisconnects(events) {
       typeof event.stack === "string"
         ? event.stack.split("\n").slice(1, 2).join("").trim()
         : "";
-    const stackSuffix = stackFirstFrame ? ` (${stackFirstFrame})` : "";
+    const stackSuffix = stackFirstFrame ? ` (${value(stackFirstFrame)})` : "";
     console.log(
       `  ${value(event.time)} ${value(event.event)} pid=${value(event.pid)} ${message}${stackSuffix}`,
     );
@@ -222,7 +257,7 @@ function printPostgresDisconnects(events) {
 
 function printEvidence(evidence) {
   console.log("PYRUS Replit Flight Recorder");
-  console.log(`Directory: ${evidence.recorderDir}`);
+  console.log(`Directory: ${value(evidence.recorderDir)}`);
   if (!evidence.exists) {
     console.log("Status: no recorder directory yet");
     return;
@@ -278,16 +313,25 @@ function printEvidence(evidence) {
   printEventTail("Recent API Events", evidence.recentApiEvents);
 }
 
-try {
-  const args = parseArgs(process.argv.slice(2));
-  const evidence = collectEvidence(args.dir);
-  if (args.json) {
-    console.log(JSON.stringify(evidence, null, 2));
-  } else {
-    printEvidence(evidence);
+function main() {
+  try {
+    const args = parseArgs(process.argv.slice(2));
+    const evidence = collectEvidence(args.dir);
+    if (args.json) {
+      console.log(JSON.stringify(evidence, null, 2));
+    } else {
+      printEvidence(evidence);
+    }
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    usage();
+    process.exit(1);
   }
-} catch (error) {
-  console.error(error instanceof Error ? error.message : String(error));
-  usage();
-  process.exit(1);
+}
+
+if (
+  process.argv[1] &&
+  path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)
+) {
+  main();
 }
