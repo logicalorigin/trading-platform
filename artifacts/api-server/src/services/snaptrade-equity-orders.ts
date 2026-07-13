@@ -760,6 +760,17 @@ function normalizePrices(input: {
     "SnapTrade order stop must be positive",
   );
 
+  if (input.orderType === "Market" && price != null) {
+    throw new HttpError(422, "SnapTrade market orders must omit the price", {
+      code: "snaptrade_market_order_price_unsupported",
+    });
+  }
+  if (input.orderType === "Market" && stop != null) {
+    throw new HttpError(422, "SnapTrade market orders must omit the stop price", {
+      code: "snaptrade_market_order_stop_unsupported",
+    });
+  }
+
   if ((input.orderType === "Limit" || input.orderType === "StopLimit") && price == null) {
     throw new HttpError(422, "SnapTrade limit orders require a price", {
       code: "snaptrade_order_price_required",

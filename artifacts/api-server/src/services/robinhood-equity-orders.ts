@@ -556,6 +556,16 @@ function normalizeOrder(input: RobinhoodEquityOrderInput): NormalizedOrder {
     "robinhood_order_stop_price_invalid",
     "Robinhood order stop price must be positive",
   );
+  if (orderType === "Market" && limitPrice != null) {
+    throw new HttpError(422, "Robinhood market orders must omit the limit price", {
+      code: "robinhood_order_market_limit_price_unsupported",
+    });
+  }
+  if (orderType === "Market" && stopPrice != null) {
+    throw new HttpError(422, "Robinhood market orders must omit the stop price", {
+      code: "robinhood_order_market_stop_price_unsupported",
+    });
+  }
   if ((orderType === "Limit" || orderType === "StopLimit") && limitPrice == null) {
     throw new HttpError(422, "Robinhood limit orders require a limit price", {
       code: "robinhood_order_limit_price_required",

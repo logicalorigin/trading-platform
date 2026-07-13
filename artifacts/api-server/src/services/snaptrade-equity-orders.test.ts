@@ -299,6 +299,33 @@ test("SnapTrade equity submit requires an execution-ready account and explicit c
   );
 });
 
+test("SnapTrade market orders reject price fields before any provider call", async () => {
+  for (const [field, code] of [
+    ["price", "snaptrade_market_order_price_unsupported"],
+    ["stop", "snaptrade_market_order_stop_unsupported"],
+  ] as const) {
+    await assert.rejects(
+      submitSnapTradeEquityOrder({
+        appUserId: "missing-user",
+        accountId: "missing-account",
+        input: {
+          confirm: true,
+          action: "BUY",
+          symbol: "PLUG",
+          orderType: "Market",
+          timeInForce: "Day",
+          units: 1,
+          [field]: 2.22,
+        },
+      }),
+      (error: unknown) => {
+        assert.equal((error as { code?: string }).code, code);
+        return true;
+      },
+    );
+  }
+});
+
 test("SnapTrade equity submit places a documented direct equity order and returns sanitized status", async () => {
   await withBootstrapToken(async () =>
     withTestDb(async () => {

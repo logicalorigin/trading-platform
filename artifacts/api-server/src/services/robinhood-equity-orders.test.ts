@@ -225,6 +225,32 @@ test("review serializes a $5 notional buy as string tool params and passes alert
   );
 });
 
+test("Robinhood market orders reject price fields before any MCP call", async () => {
+  for (const [field, code] of [
+    ["limitPrice", "robinhood_order_market_limit_price_unsupported"],
+    ["stopPrice", "robinhood_order_market_stop_price_unsupported"],
+  ] as const) {
+    await assert.rejects(
+      reviewRobinhoodEquityOrder({
+        appUserId: "missing-user",
+        accountId: "missing-account",
+        input: {
+          symbol: "PLUG",
+          side: "BUY",
+          orderType: "Market",
+          timeInForce: "Day",
+          quantity: 1,
+          [field]: 2.22,
+        },
+      }),
+      (error: unknown) => {
+        assert.equal((error as { code?: string }).code, code);
+        return true;
+      },
+    );
+  }
+});
+
 test("place requires explicit confirmation", async () => {
   await withBootstrapToken(async () =>
     withTestDb(async () => {

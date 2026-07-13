@@ -53,6 +53,23 @@ test("buildSnapTradeEquityOrderDraft creates a confirmed direct equity order bod
   });
 });
 
+test("buildSnapTradeEquityOrderDraft keeps market orders price-less", () => {
+  const draft = buildSnapTradeEquityOrderDraft({
+    account: READY_ACCOUNT,
+    symbol: "plug",
+    side: "BUY",
+    orderType: "MKT",
+    tif: "DAY",
+    quantity: 1,
+    orderPrices: { limitPrice: 2.22, stopPrice: 2.1 },
+  });
+
+  assert.equal(draft.ready, true);
+  assert.equal(draft.body.orderType, "Market");
+  assert.equal(draft.body.price, null);
+  assert.equal(draft.body.stop, null);
+});
+
 test("buildSnapTradeEquityOrderDraft requires an execution-ready account", () => {
   const draft = buildSnapTradeEquityOrderDraft({
     account: {
