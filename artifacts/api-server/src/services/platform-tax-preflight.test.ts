@@ -3,7 +3,7 @@ import test from "node:test";
 import type { PlaceOrderInput } from "@workspace/ibkr-contracts";
 
 import { runAsAppUser } from "./app-user-context";
-import { placeOrder, submitRawOrders } from "./platform";
+import { placeOrder, previewOrder, submitRawOrders } from "./platform";
 
 const baseIbkrOrder = (
   overrides: Partial<PlaceOrderInput> = {},
@@ -81,5 +81,12 @@ test("IBKR raw live submission remains disabled", async () => {
       ],
     }),
     rejectsWithCode("ibkr_raw_live_orders_disabled"),
+  );
+});
+
+test("IBKR broker-backed preview rejects shadow mode before any provider call", async () => {
+  await assert.rejects(
+    previewOrder(baseIbkrOrder()),
+    rejectsWithCode("ibkr_order_preview_live_mode_required"),
   );
 });

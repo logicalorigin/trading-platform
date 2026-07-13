@@ -4191,6 +4191,16 @@ export async function continueIbkrOrderReply(input: {
 }
 
 export async function previewOrder(input: PlaceOrderInput) {
+  if (input.mode !== "live") {
+    throw new HttpError(
+      409,
+      "Direct IBKR broker previews require explicit live mode. Use the shadow-order preview route for simulation.",
+      {
+        code: "ibkr_order_preview_live_mode_required",
+        expose: true,
+      },
+    );
+  }
   assertControlledIbkrManualEquityOrder(input);
   const client = getIbkrClientPortalClient();
   const preparedInput = {
