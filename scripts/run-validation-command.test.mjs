@@ -11,7 +11,7 @@ import {
   symlinkSync,
   writeFileSync,
 } from "node:fs";
-import { hostname, tmpdir } from "node:os";
+import { constants as osConstants, hostname, tmpdir } from "node:os";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import test from "node:test";
@@ -497,6 +497,46 @@ test("spawn failure is ledgered and releases the lock", async () => {
   }
 });
 
+test("a child SIGPIPE is a nonzero validation exit", async () => {
+  const root = mkdtempSync(path.join(tmpdir(), "validation-sigpipe-"));
+  const ledger = path.join(root, "commands.jsonl");
+  const lockFile = path.join(root, "validation.lock");
+  try {
+    const child = spawn(
+      process.execPath,
+      [
+        scriptPath,
+        "--label",
+        "sigpipe",
+        "--ledger",
+        ledger,
+        "--lock-file",
+        lockFile,
+        "--",
+        "sh",
+        "-c",
+        'trap - PIPE; kill -PIPE "$$"; exit 99',
+      ],
+      { stdio: "ignore" },
+    );
+
+    assert.deepEqual(await waitForExit(child), {
+      code: 128 + osConstants.signals.SIGPIPE,
+      signal: null,
+    });
+    const finalEvent = readFileSync(ledger, "utf8")
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line))
+      .at(-1);
+    assert.equal(finalEvent.exit.signal, "SIGPIPE");
+    assert.equal(finalEvent.exit.wrapperSignal, null);
+    assert.equal(existsSync(lockFile), false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("a second wrapper signal immediately kills the validation group", async () => {
   const root = mkdtempSync(path.join(tmpdir(), "validation-signal-"));
   const ledger = path.join(root, "commands.jsonl");
@@ -696,17 +736,29 @@ test("signal after the finishing ledger is folded before lock cleanup", async ()
   const root = mkdtempSync(path.join(tmpdir(), "validation-final-signal-"));
   const ledgerPath = path.join(root, "commands.jsonl");
   const lockFile = path.join(root, "validation.lock");
+  const descendantFile = path.join(root, "descendant");
+  let descendantPid = null;
   try {
+    const leaderCode = [
+      'const {spawn}=require("node:child_process");',
+      'const {writeFileSync}=require("node:fs");',
+      'const child=spawn(process.execPath,["-e","process.on(\'SIGTERM\',()=>{});setInterval(()=>{},1000)"],{stdio:"ignore"});',
+      "child.unref();",
+      `writeFileSync(${JSON.stringify(descendantFile)},String(child.pid));`,
+    ].join("");
     const outcome = await runValidationCommand(
       {
-        command: [process.execPath, "-e", "process.exit(0)"],
+        command: [process.execPath, "-e", leaderCode],
         label: "final-signal",
         ledgerPath,
         lockFile,
       },
       { afterFinishingLedger: () => process.emit("SIGTERM") },
     );
+    descendantPid = Number(readFileSync(descendantFile, "utf8"));
     assert.equal(outcome.signal, "SIGTERM");
+    assert.equal(outcome.escalated, true);
+    await waitForPidGone(descendantPid);
     const events = readFileSync(ledgerPath, "utf8")
       .trim()
       .split("\n")
@@ -718,6 +770,13 @@ test("signal after the finishing ledger is folded before lock cleanup", async ()
     assert.equal(events.at(-1).exit.signal, "SIGTERM");
     assert.equal(existsSync(lockFile), false);
   } finally {
+    if (descendantPid) {
+      try {
+        process.kill(descendantPid, "SIGKILL");
+      } catch {
+        // Already gone.
+      }
+    }
     rmSync(root, { recursive: true, force: true });
   }
 });

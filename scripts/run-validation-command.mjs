@@ -11,7 +11,6 @@ import {
   linkSync,
   mkdirSync,
   openSync,
-  readFileSync,
   readSync,
   realpathSync,
   rmSync,
@@ -23,9 +22,11 @@ import { performance } from "node:perf_hooks";
 import { fileURLToPath } from "node:url";
 
 import {
-  parseProcStat,
-  readProcIdentity,
-} from "./replit-process-authority.mjs";
+  createProcessGroupShutdownController,
+  normalizeProcessErrorCode,
+  waitForProcessGroupChild,
+} from "./process-group-child.mjs";
+import { readProcIdentity } from "./replit-process-authority.mjs";
 
 const repoRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -47,8 +48,6 @@ const DEFAULT_NODE_OPTIONS = "--max-old-space-size=3072";
 const MAX_LOCK_BYTES = 16 * 1024;
 const MAX_LEDGER_EVENT_BYTES = 16 * 1024;
 const CHILD_SHUTDOWN_GRACE_MS = 5_000;
-const FORWARDED_SIGNALS = ["SIGINT", "SIGTERM", "SIGHUP"];
-const SIGNAL_EXIT_CODES = { SIGHUP: 129, SIGINT: 130, SIGTERM: 143 };
 const TERMINAL_CONTROLS =
   /[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/gu;
 
@@ -437,167 +436,6 @@ export function writeValidationLedger(ledgerPath, event) {
   }
 }
 
-function normalizedErrorCode(error) {
-  const code = String(error?.code ?? "ERROR");
-  return /^[A-Z0-9_]{1,64}$/u.test(code) ? code : "ERROR";
-}
-
-function processStartTime(pid) {
-  if (!Number.isSafeInteger(pid) || pid <= 0) return null;
-  try {
-    return parseProcStat(readFileSync(`/proc/${pid}/stat`, "utf8"))
-      ?.startTimeTicks;
-  } catch {
-    return null;
-  }
-}
-
-function signalChildGroup(
-  child,
-  expectedStartTime,
-  signal,
-  { allowMissingLeader = false } = {},
-) {
-  if (!Number.isSafeInteger(child?.pid) || child.pid <= 0) return false;
-  const currentStartTime = processStartTime(child.pid);
-  if (
-    (currentStartTime && currentStartTime !== expectedStartTime) ||
-    (!currentStartTime && !allowMissingLeader)
-  ) {
-    return false;
-  }
-  try {
-    if (process.platform === "win32") child.kill(signal);
-    else process.kill(-child.pid, signal);
-    return true;
-  } catch (error) {
-    if (error?.code !== "ESRCH") {
-      console.error(
-        `Could not forward ${signal} to validation child: ${safeDisplay(error?.message || error)}`,
-      );
-    }
-    return false;
-  }
-}
-
-function createShutdownController(shutdownGraceMs) {
-  let child = null;
-  let childStartTime = null;
-  let requestedSignal = null;
-  let escalationTimer = null;
-  let forceSent = false;
-  let closed = false;
-  let finalOutcome = null;
-  const handlers = new Map();
-
-  const forceShutdown = (allowMissingLeader = false) => {
-    if (!child) return;
-    forceSent =
-      signalChildGroup(child, childStartTime, "SIGKILL", {
-        allowMissingLeader,
-      }) || forceSent;
-  };
-  const armShutdown = () => {
-    if (!child || !requestedSignal || escalationTimer) return;
-    signalChildGroup(child, childStartTime, requestedSignal);
-    escalationTimer = setTimeout(() => forceShutdown(false), shutdownGraceMs);
-  };
-  const requestShutdown = (signal) => {
-    if (requestedSignal) {
-      forceShutdown(false);
-      return;
-    }
-    requestedSignal = signal;
-    armShutdown();
-  };
-  const cleanup = () => {
-    if (closed) return;
-    closed = true;
-    if (escalationTimer) clearTimeout(escalationTimer);
-    for (const [signal, handler] of handlers) {
-      process.removeListener(signal, handler);
-    }
-  };
-
-  for (const signal of FORWARDED_SIGNALS) {
-    const handler = () => requestShutdown(signal);
-    handlers.set(signal, handler);
-    process.on(signal, handler);
-  }
-
-  return {
-    attach(spawnedChild) {
-      child = spawnedChild;
-      childStartTime = processStartTime(spawnedChild.pid);
-      if (!childStartTime) {
-        throw new Error("Cannot establish validation child process identity");
-      }
-      armShutdown();
-    },
-    finish(code, childSignal, errorCode) {
-      if (requestedSignal) {
-        // ponytail: Node has no process-group fd. After the observed leader exit,
-        // a missing leader is the required ceiling for draining surviving group
-        // descendants without trusting a potentially reused live leader PID.
-        forceShutdown(true);
-      }
-      const finalSignal = requestedSignal ?? childSignal;
-      const outcome = {
-        code: code ?? (finalSignal ? (SIGNAL_EXIT_CODES[finalSignal] ?? 1) : 1),
-        signal: finalSignal,
-        childSignal,
-        escalated:
-          forceSent || Boolean(requestedSignal && childSignal === "SIGKILL"),
-        errorCode,
-      };
-      if (escalationTimer) clearTimeout(escalationTimer);
-      escalationTimer = null;
-      child = null;
-      childStartTime = null;
-      return outcome;
-    },
-    complete(outcome) {
-      if (finalOutcome) return finalOutcome;
-      const finalSignal = requestedSignal ?? outcome.signal;
-      finalOutcome = {
-        ...outcome,
-        code:
-          outcome.code ??
-          (finalSignal ? (SIGNAL_EXIT_CODES[finalSignal] ?? 1) : 1),
-        signal: finalSignal,
-      };
-      cleanup();
-      return finalOutcome;
-    },
-  };
-}
-
-function waitForChild(child, shutdown) {
-  return new Promise((resolve) => {
-    let settled = false;
-    const finish = (outcome) => {
-      if (settled) return;
-      settled = true;
-      resolve(outcome);
-    };
-    child.once("error", (error) => {
-      if (settled) return;
-      finish(shutdown.finish(127, null, normalizedErrorCode(error)));
-    });
-    child.once("exit", (code, signal) => {
-      if (settled) return;
-      finish(shutdown.finish(code, signal, null));
-    });
-    if (!Number.isSafeInteger(child.pid) || child.pid <= 0) return;
-    try {
-      shutdown.attach(child);
-    } catch (error) {
-      child.kill("SIGKILL");
-      finish(shutdown.finish(127, null, normalizedErrorCode(error)));
-    }
-  });
-}
-
 function assertValidationOptions(options) {
   if (
     !Array.isArray(options?.command) ||
@@ -687,7 +525,14 @@ export async function runValidationCommand(
     ...inputOptions,
     ...resolveValidationStatePaths(inputOptions),
   };
-  const shutdown = createShutdownController(shutdownGraceMs);
+  const shutdown = createProcessGroupShutdownController({
+    graceMs: shutdownGraceMs,
+    onSignalError(signal, signalError) {
+      error(
+        `Could not forward ${signal} to validation child: ${safeDisplay(signalError?.message || signalError)}`,
+      );
+    },
+  });
   const startedAt = new Date();
   const startedMonotonic = performance.now();
   const baseEvent = {
@@ -723,14 +568,18 @@ export async function runValidationCommand(
       };
       const child = spawnChild(options.command[0], options.command.slice(1), {
         cwd: process.cwd(),
-        detached: process.platform !== "win32",
+        detached: true,
         env,
         stdio: "inherit",
       });
-      outcome = await waitForChild(child, shutdown);
+      outcome = await waitForProcessGroupChild(child, shutdown);
     }
   } catch (caughtError) {
-    outcome = shutdown.finish(127, null, normalizedErrorCode(caughtError));
+    outcome = shutdown.finish(
+      127,
+      null,
+      normalizeProcessErrorCode(caughtError),
+    );
     error(
       `Validation ${options.label} failed: ${safeDisplay(caughtError?.message || caughtError)}`,
     );
@@ -829,8 +678,8 @@ async function main(argv = process.argv.slice(2)) {
     return;
   }
   const outcome = await runValidationCommand(options);
-  if (outcome.signal) {
-    process.kill(process.pid, outcome.signal);
+  if (outcome.wrapperSignal) {
+    process.kill(process.pid, outcome.wrapperSignal);
     return;
   }
   process.exitCode = outcome.code;
