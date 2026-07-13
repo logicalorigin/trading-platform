@@ -2,10 +2,18 @@
 
 import { spawn } from "node:child_process";
 import { dirname, resolve } from "node:path";
+import { setImmediate as waitImmediate } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
+
+import {
+  createProcessGroupShutdownController,
+  normalizeProcessErrorCode,
+  waitForProcessGroupChild,
+} from "./process-group-child.mjs";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const pythonRoot = resolve(repoRoot, "python/pyrus_compute");
+const SHUTDOWN_GRACE_MS = 5_000;
 
 const commands = {
   doctor: [
@@ -46,21 +54,41 @@ if (!args) {
   process.exit(1);
 }
 
-const child = spawn("uv", args, {
-  cwd: pythonRoot,
-  env: process.env,
-  stdio: "inherit",
+const shutdown = createProcessGroupShutdownController({
+  graceMs: SHUTDOWN_GRACE_MS,
+  onSignalError(signal, error) {
+    console.error(
+      `Could not forward ${signal} to Python compute: ${normalizeProcessErrorCode(error)}`,
+    );
+  },
 });
+let outcome;
+try {
+  const child = spawn("uv", args, {
+    cwd: pythonRoot,
+    detached: true,
+    env: process.env,
+    stdio: "inherit",
+  });
+  outcome = await waitForProcessGroupChild(child, shutdown);
+} catch (error) {
+  outcome = shutdown.finish(127, null, normalizeProcessErrorCode(error));
+} finally {
+  await waitImmediate();
+  outcome = shutdown.complete(
+    outcome ?? {
+      code: 127,
+      signal: null,
+      errorCode: "PYTHON_COMPUTE_START_FAILED",
+    },
+  );
+}
 
-child.on("error", (error) => {
-  console.error(error);
-  process.exit(1);
-});
-
-child.on("exit", (code, signal) => {
-  if (signal) {
-    process.kill(process.pid, signal);
-    return;
-  }
-  process.exit(code ?? 1);
-});
+if (outcome.errorCode) {
+  console.error(`Could not start Python compute (${outcome.errorCode})`);
+}
+if (outcome.wrapperSignal) {
+  process.kill(process.pid, outcome.wrapperSignal);
+} else {
+  process.exitCode = outcome.code;
+}

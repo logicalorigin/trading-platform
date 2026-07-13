@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
+import { once } from "node:events";
 import {
   chmodSync,
   mkdtempSync,
@@ -10,12 +11,32 @@ import {
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 
 const repoRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   "..",
 );
+
+async function waitFor(check, timeoutMs = 5_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (check()) return;
+    await delay(20);
+  }
+  throw new Error("Timed out waiting for Python runner fixture");
+}
+
+function pidIsLive(pid) {
+  if (!Number.isSafeInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return error?.code !== "ESRCH";
+  }
+}
 
 test("Python compute runner enforces the checked-in uv lock", () => {
   const directory = mkdtempSync(path.join(tmpdir(), "pyrus-python-runner-"));
@@ -55,3 +76,59 @@ test("Python compute runner enforces the checked-in uv lock", () => {
     rmSync(directory, { recursive: true, force: true });
   }
 });
+
+test(
+  "Python compute runner forwards wrapper shutdown to its child",
+  { timeout: 10_000 },
+  async () => {
+    const directory = mkdtempSync(path.join(tmpdir(), "pyrus-python-runner-"));
+    const childPidPath = path.join(directory, "child-pid");
+    const uvPath = path.join(directory, "uv");
+    writeFileSync(
+      uvPath,
+      `#!/usr/bin/env node
+require("node:fs").writeFileSync(process.env.PYRUS_TEST_CHILD_PID, String(process.pid));
+for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) {
+  process.on(signal, () => process.exit(0));
+}
+setInterval(() => {}, 1000);
+`,
+    );
+    chmodSync(uvPath, 0o755);
+
+    let childPid = null;
+    const runner = spawn(
+      process.execPath,
+      ["scripts/run-python-compute.mjs", "doctor"],
+      {
+        cwd: repoRoot,
+        env: {
+          ...process.env,
+          PATH: `${directory}:${process.env.PATH ?? ""}`,
+          PYRUS_TEST_CHILD_PID: childPidPath,
+        },
+        stdio: "ignore",
+      },
+    );
+
+    try {
+      await waitFor(() => {
+        try {
+          childPid = Number(readFileSync(childPidPath, "utf8"));
+          return Number.isSafeInteger(childPid) && childPid > 0;
+        } catch {
+          return false;
+        }
+      });
+      process.kill(runner.pid, "SIGTERM");
+      const [code, signal] = await once(runner, "exit");
+      assert.equal(code, null);
+      assert.equal(signal, "SIGTERM");
+      await waitFor(() => !pidIsLive(childPid));
+    } finally {
+      if (pidIsLive(runner.pid)) process.kill(runner.pid, "SIGKILL");
+      if (pidIsLive(childPid)) process.kill(childPid, "SIGKILL");
+      rmSync(directory, { recursive: true, force: true });
+    }
+  },
+);
