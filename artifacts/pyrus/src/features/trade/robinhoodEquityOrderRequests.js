@@ -110,12 +110,14 @@ async function postRobinhoodOrder({
   if (!response.ok) {
     const error = new Error(
       payload?.detail ||
+        payload?.title ||
         payload?.message ||
         payload?.error ||
         `Robinhood request failed (${response.status})`,
     );
     error.status = response.status;
     error.code = payload?.code || null;
+    error.data = payload?.data || null;
     throw error;
   }
   return payload;

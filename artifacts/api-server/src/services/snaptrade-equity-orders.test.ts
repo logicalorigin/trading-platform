@@ -106,6 +106,49 @@ async function createSnapTradeAccount(input: {
   return account;
 }
 
+async function createSnapTradeEquitySubmitFixture(email: string) {
+  const auth = await createUser(email);
+  await createSnapTradeCredential(auth.user.id);
+  const account = await createSnapTradeAccount({
+    appUserId: auth.user.id,
+    providerAccountId: `snaptrade:${email}`,
+  });
+  const preflight = await runAsAppUser(auth.user.id, () =>
+    createTaxOrderPreflight({
+      order: {
+        accountId: account.id,
+        mode: "live",
+        symbol: "PLUG",
+        assetClass: "equity",
+        side: "buy",
+        type: "market",
+        quantity: 1,
+        limitPrice: null,
+        stopPrice: null,
+        timeInForce: "day",
+        optionContract: null,
+        route: "snaptrade",
+        intent: null,
+      },
+    }),
+  );
+  return {
+    appUserId: auth.user.id,
+    accountId: account.id,
+    input: {
+      confirm: true,
+      action: "BUY" as const,
+      symbol: "PLUG",
+      orderType: "Market" as const,
+      timeInForce: "Day" as const,
+      units: 1,
+      clientOrderId: "55555555-5555-4555-8555-555555555555",
+      taxPreflightToken: preflight.preflightToken,
+      taxAcknowledgements: preflight.requiredAcknowledgements,
+    },
+  };
+}
+
 test("SnapTrade equity impact signs the documented order-impact payload and sanitizes response data", async () => {
   await withBootstrapToken(async () =>
     withTestDb(async () => {
@@ -446,6 +489,118 @@ test("SnapTrade equity submit places a documented direct equity order and return
       assert.doesNotMatch(
         JSON.stringify(result),
         /snaptrade-user-secret|consumer-secret|client-123|U7654321|pyrus-/,
+      );
+    }),
+  );
+});
+
+test("SnapTrade equity submit requires reconciliation when success has no broker order id", async () => {
+  await withBootstrapToken(async () =>
+    withTestDb(async () => {
+      const fixture = await createSnapTradeEquitySubmitFixture(
+        "equity-submit-missing-id@example.com",
+      );
+      await assert.rejects(
+        submitSnapTradeEquityOrder({
+          ...fixture,
+          env: {
+            SNAPTRADE_CLIENTID: "client-123",
+            SNAPTRADE_API_KEY: "consumer-secret",
+          },
+          encryptionKey: TEST_ENCRYPTION_KEY,
+          fetchImpl: async () =>
+            Response.json({ status: "ACCEPTED" }, { status: 200 }),
+        }),
+        (error: unknown) => {
+          const candidate = error as {
+            statusCode?: number;
+            code?: string;
+            data?: Record<string, unknown>;
+          };
+          assert.equal(candidate.statusCode, 409);
+          assert.equal(
+            candidate.code,
+            "snaptrade_order_submit_reconcile_required",
+          );
+          assert.equal(candidate.data?.["reason"], "missing_order_id");
+          assert.equal(candidate.data?.["retryable"], false);
+          return true;
+        },
+      );
+    }),
+  );
+});
+
+test("SnapTrade equity submit requires reconciliation when the POST loses its response", async () => {
+  await withBootstrapToken(async () =>
+    withTestDb(async () => {
+      const fixture = await createSnapTradeEquitySubmitFixture(
+        "equity-submit-network@example.com",
+      );
+      await assert.rejects(
+        submitSnapTradeEquityOrder({
+          ...fixture,
+          env: {
+            SNAPTRADE_CLIENTID: "client-123",
+            SNAPTRADE_API_KEY: "consumer-secret",
+          },
+          encryptionKey: TEST_ENCRYPTION_KEY,
+          fetchImpl: async () => {
+            throw new TypeError("connection reset");
+          },
+        }),
+        (error: unknown) => {
+          const candidate = error as {
+            statusCode?: number;
+            code?: string;
+            data?: Record<string, unknown>;
+          };
+          assert.equal(candidate.statusCode, 409);
+          assert.equal(
+            candidate.code,
+            "snaptrade_order_submit_reconcile_required",
+          );
+          assert.equal(candidate.data?.["reason"], "network_error");
+          assert.equal(candidate.data?.["retryable"], false);
+          return true;
+        },
+      );
+    }),
+  );
+});
+
+test("SnapTrade equity submit reports reconciliation when the post-submit tax record fails", async (t) => {
+  await withBootstrapToken(async () =>
+    withTestDb(async (testDb) => {
+      const fixture = await createSnapTradeEquitySubmitFixture(
+        "equity-submit-tax-record@example.com",
+      );
+      const result = await submitSnapTradeEquityOrder({
+        ...fixture,
+        env: {
+          SNAPTRADE_CLIENTID: "client-123",
+          SNAPTRADE_API_KEY: "consumer-secret",
+        },
+        encryptionKey: TEST_ENCRYPTION_KEY,
+        fetchImpl: async () => {
+          t.mock.method(testDb.db, "update", () => {
+            throw new Error("tax preflight submit record failed");
+          });
+          return Response.json(
+            {
+              brokerage_order_id: "equity-order-tax-record",
+              status: "ACCEPTED",
+              symbol: "PLUG",
+            },
+            { status: 200 },
+          );
+        },
+      });
+      assert.equal(result.order.brokerageOrderId, "equity-order-tax-record");
+      assert.equal(result.reconcileRequired, true);
+      assert.equal(
+        result.reconciliationReason,
+        "tax_preflight_order_submit_record_failed",
       );
     }),
   );

@@ -83,6 +83,14 @@ test("passes exact chain identity and contract economics to direct option broker
   );
 });
 
+test("locks every direct broker submission after an unknown outcome", () => {
+  assert.match(source, /directBrokerReconciliationLock/);
+  assert.match(source, /const result = await confirmingState\.onConfirm\(\)/);
+  assert.match(source, /readBrokerSubmitReconciliation\(error\)/);
+  assert.match(source, /confirmLabel: "STOP \/ RECONCILE"/);
+  assert.match(source, /onConfirm: null/);
+});
+
 test("wires Schwab readiness, sync, equity preview, and equity submit", () => {
   assert.match(source, /useGetSchwabReadiness/);
   assert.match(source, /useSyncSchwabConnections/);

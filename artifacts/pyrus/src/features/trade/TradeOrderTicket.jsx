@@ -89,6 +89,7 @@ import {
 import {
   buildBrokerOptionOrderDraft,
   placeBrokerOptionOrderRequest,
+  readBrokerSubmitReconciliation,
   reviewBrokerOptionOrderRequest,
 } from "./brokerOptionOrderRequests.js";
 import {
@@ -792,6 +793,8 @@ export const TradeOrderTicket = ({
   const [activeIbkrOrder, setActiveIbkrOrder] = useState(null);
   const [replacementLimitPrice, setReplacementLimitPrice] = useState("");
   const [ibkrSubmitLocked, setIbkrSubmitLocked] = useState(false);
+  const [directBrokerReconciliationLock, setDirectBrokerReconciliationLock] =
+    useState(null);
   const [ibkrReplacementLocked, setIbkrReplacementLocked] = useState(false);
   const [ibkrCancelAttempted, setIbkrCancelAttempted] = useState(false);
   const recoveredIbkrLifecycleKeyRef = useRef("");
@@ -892,6 +895,7 @@ export const TradeOrderTicket = ({
     request: { headers: snapTradeCsrfHeaders },
     mutation: {
       onSuccess: (result, variables) => {
+        const reconciliationRequired = result?.reconcileRequired === true;
         const submittedAccountId = variables?.accountId;
         if (submittedAccountId) {
           void queryClient.invalidateQueries({
@@ -902,8 +906,10 @@ export const TradeOrderTicket = ({
           });
         }
         toast.push({
-          kind: "success",
-          title: `Submitted ${ticketInstrumentLabel}`,
+          kind: reconciliationRequired ? "warn" : "success",
+          title: reconciliationRequired
+            ? "Submitted; reconciliation required"
+            : `Submitted ${ticketInstrumentLabel}`,
           body: [
             result?.order?.action,
             result?.order?.units,
@@ -983,6 +989,11 @@ export const TradeOrderTicket = ({
     !executionIsShadow && ticketIsShares && liveBrokerRoute === "ibkr";
   const liveUsesBrokerOption =
     !executionIsShadow && ticketIsOptions && optionBroker !== "ibkr";
+  const liveUsesDirectBroker =
+    liveUsesSnapTrade ||
+    liveUsesRobinhood ||
+    liveUsesSchwab ||
+    liveUsesBrokerOption;
   const activeIbkrOrdersQuery = useListOrders(
     { accountId: selectedIbkrAccount?.accountId, mode: "live" },
     {
@@ -1996,12 +2007,37 @@ export const TradeOrderTicket = ({
     setLiveConfirmError(null);
     setLiveConfirmPending(true);
     const confirmingState = liveConfirmState;
+    const lockDirectBrokerSubmission = (reconciliation) => {
+      setDirectBrokerReconciliationLock(reconciliation);
+      setLiveConfirmState((current) =>
+        current === confirmingState
+          ? {
+              ...current,
+              confirmLabel: "STOP / RECONCILE",
+              cancelLabel: "Close",
+              onConfirm: null,
+            }
+          : current,
+      );
+    };
     try {
-      await confirmingState.onConfirm();
+      const result = await confirmingState.onConfirm();
+      const reconciliation = readBrokerSubmitReconciliation(result);
+      if (liveUsesDirectBroker && reconciliation) {
+        lockDirectBrokerSubmission(reconciliation);
+        setLiveConfirmError(
+          "The broker accepted the order, but local reconciliation is required before another action.",
+        );
+        return;
+      }
       setLiveConfirmState((current) =>
         current === confirmingState ? null : current,
       );
     } catch (error) {
+      const reconciliation = readBrokerSubmitReconciliation(error);
+      if (liveUsesDirectBroker && reconciliation) {
+        lockDirectBrokerSubmission(reconciliation);
+      }
       setLiveConfirmError(formatLiveBrokerActionError(error));
     } finally {
       setLiveConfirmPending(false);
@@ -2701,6 +2737,15 @@ export const TradeOrderTicket = ({
   };
 
   const previewOrder = async () => {
+    if (liveUsesDirectBroker && directBrokerReconciliationLock) {
+      toast.push({
+        kind: "warn",
+        title: "Broker outcome unknown",
+        body: "Reconcile the prior submission with the broker before sending or previewing another order.",
+      });
+      return;
+    }
+
     if (!validateTicket()) {
       return;
     }
@@ -3317,14 +3362,13 @@ export const TradeOrderTicket = ({
         return;
       }
 
-      await submitSnapTradeOrderMutation.mutateAsync({
+      return submitSnapTradeOrderMutation.mutateAsync({
         accountId: snapTradeAccount.id,
         data: {
           ...snapTradeOrderDraft.body,
           ...taxSubmissionFields,
         },
       });
-      return;
     }
 
     if (liveUsesRobinhood) {
@@ -3344,6 +3388,7 @@ export const TradeOrderTicket = ({
           ...taxSubmissionFields,
         },
       });
+      const reconciliationRequired = result?.reconcileRequired === true;
       setPreviewSnapshot((current) => ({
         ...(current?.provider === "robinhood" ? current : {}),
         ...result,
@@ -3362,8 +3407,10 @@ export const TradeOrderTicket = ({
         },
       }));
       toast.push({
-        kind: "success",
-        title: `Submitted ${ticketInstrumentLabel}`,
+        kind: reconciliationRequired ? "warn" : "success",
+        title: reconciliationRequired
+          ? "Submitted; reconciliation required"
+          : `Submitted ${ticketInstrumentLabel}`,
         body: [
           result?.order?.side,
           result?.order?.quantity,
@@ -3374,7 +3421,7 @@ export const TradeOrderTicket = ({
           .filter(Boolean)
           .join(" · "),
       });
-      return;
+      return result;
     }
 
     if (liveUsesSchwab) {
@@ -3394,6 +3441,7 @@ export const TradeOrderTicket = ({
           ...taxSubmissionFields,
         },
       });
+      const reconciliationRequired = result?.reconcileRequired === true;
       setPreviewSnapshot((current) => ({
         ...(current?.provider === "schwab" && current?.assetClass === "equity"
           ? current
@@ -3414,13 +3462,15 @@ export const TradeOrderTicket = ({
         },
       }));
       toast.push({
-        kind: "success",
-        title: `Submitted ${ticketInstrumentLabel}`,
+        kind: reconciliationRequired ? "warn" : "success",
+        title: reconciliationRequired
+          ? "Submitted; reconciliation required"
+          : `Submitted ${ticketInstrumentLabel}`,
         body: [side, qtyNum, slot.ticker, result?.status, result?.orderId]
           .filter(Boolean)
           .join(" · "),
       });
-      return;
+      return result;
     }
 
     if (liveUsesBrokerOption) {
@@ -3441,6 +3491,7 @@ export const TradeOrderTicket = ({
           ...taxSubmissionFields,
         },
       });
+      const reconciliationRequired = result?.reconcileRequired === true;
       const resultOrder = result?.order || brokerOptionOrderDraft.body;
       setPreviewSnapshot((current) => ({
         ...(current?.provider === optionBroker && current?.assetClass === "option"
@@ -3475,8 +3526,10 @@ export const TradeOrderTicket = ({
         },
       }));
       toast.push({
-        kind: "success",
-        title: `Submitted ${ticketInstrumentLabel}`,
+        kind: reconciliationRequired ? "warn" : "success",
+        title: reconciliationRequired
+          ? "Submitted; reconciliation required"
+          : `Submitted ${ticketInstrumentLabel}`,
         body: [
           resultOrder?.action || resultOrder?.instruction || resultOrder?.side,
           resultOrder?.quantity ?? resultOrder?.units,
@@ -3487,7 +3540,7 @@ export const TradeOrderTicket = ({
           .filter(Boolean)
           .join(" · "),
       });
-      return;
+      return result;
     }
 
     if (!orderRequest) {
@@ -3589,6 +3642,15 @@ export const TradeOrderTicket = ({
   };
 
   const submitOrder = async () => {
+    if (liveUsesDirectBroker && directBrokerReconciliationLock) {
+      toast.push({
+        kind: "warn",
+        title: "Broker outcome unknown",
+        body: "Reconcile the prior submission with the broker before sending or previewing another order.",
+      });
+      return;
+    }
+
     if (!validateTicket({ requireAttachedExits: hasAttachedExits })) {
       return;
     }
@@ -4367,18 +4429,23 @@ export const TradeOrderTicket = ({
   const primarySubmitPending = executionIsShadow
     ? placeShadowOrderMutation.isPending
     : liveUsesSnapTrade
-      ? submitSnapTradeOrderMutation.isPending || taxPreflightPending
+      ? submitSnapTradeOrderMutation.isPending ||
+        Boolean(directBrokerReconciliationLock) ||
+        taxPreflightPending
       : liveUsesRobinhood
         ? robinhoodSyncMutation.isPending ||
           submitRobinhoodOrderMutation.isPending ||
+          Boolean(directBrokerReconciliationLock) ||
           taxPreflightPending
       : liveUsesSchwab
         ? schwabSyncMutation.isPending ||
           submitSchwabEquityOrderMutation.isPending ||
+          Boolean(directBrokerReconciliationLock) ||
           taxPreflightPending
       : liveUsesBrokerOption
         ? directOptionAccountSyncPending ||
           submitBrokerOptionMutation.isPending ||
+          Boolean(directBrokerReconciliationLock) ||
           taxPreflightPending
       : ibkrSubmitPending || taxPreflightPending;
   const sellCallSubmitBlocked = sellCallIntent.applies && !sellCallIntent.allowed;
@@ -4438,6 +4505,7 @@ export const TradeOrderTicket = ({
       sellCallSubmitBlocked
     : liveUsesSnapTrade
       ? submitSnapTradeOrderMutation.isPending ||
+        Boolean(directBrokerReconciliationLock) ||
         taxPreflightPending ||
         snapTradeAuthLoading ||
         !snapTradeCsrfToken ||
@@ -4446,6 +4514,7 @@ export const TradeOrderTicket = ({
       : liveUsesRobinhood
         ? robinhoodSyncMutation.isPending ||
           submitRobinhoodOrderMutation.isPending ||
+          Boolean(directBrokerReconciliationLock) ||
           taxPreflightPending ||
           robinhoodAuthLoading ||
           !robinhoodCsrfToken ||
@@ -4454,6 +4523,7 @@ export const TradeOrderTicket = ({
       : liveUsesSchwab
         ? schwabSyncMutation.isPending ||
           submitSchwabEquityOrderMutation.isPending ||
+          Boolean(directBrokerReconciliationLock) ||
           taxPreflightPending ||
           schwabAuthLoading ||
           !schwabCsrfToken ||
@@ -4462,6 +4532,7 @@ export const TradeOrderTicket = ({
       : liveUsesBrokerOption
         ? directOptionAccountSyncPending ||
           submitBrokerOptionMutation.isPending ||
+          Boolean(directBrokerReconciliationLock) ||
           taxPreflightPending ||
           brokerOptionAuthLoading ||
           !directOptionCsrfToken ||
@@ -4481,6 +4552,7 @@ export const TradeOrderTicket = ({
         sellCallSubmitBlocked;
   const previewDisabled =
     previewIsPending ||
+    (liveUsesDirectBroker && Boolean(directBrokerReconciliationLock)) ||
     (liveUsesRobinhood &&
       (!robinhoodCsrfToken || !robinhoodOrderDraft.ready)) ||
     (liveUsesSchwab &&
@@ -4512,6 +4584,8 @@ export const TradeOrderTicket = ({
         ? "CHECKING TAX..."
         : submitSnapTradeOrderMutation.isPending
         ? "SUBMITTING..."
+        : directBrokerReconciliationLock
+          ? "STOP / RECONCILE"
         : !snapTradeAccountReady
           ? "SNAPTRADE ACCOUNT REQUIRED"
           : snapTradeAuthLoading
@@ -4528,6 +4602,8 @@ export const TradeOrderTicket = ({
           ? "CHECKING TAX..."
           : submitRobinhoodOrderMutation.isPending
             ? "SUBMITTING..."
+            : directBrokerReconciliationLock
+              ? "STOP / RECONCILE"
             : !robinhoodAccountReady
               ? "ROBINHOOD ACCOUNT REQUIRED"
               : robinhoodAuthLoading
@@ -4544,6 +4620,8 @@ export const TradeOrderTicket = ({
           ? "CHECKING TAX..."
           : submitSchwabEquityOrderMutation.isPending
             ? "SUBMITTING..."
+            : directBrokerReconciliationLock
+              ? "STOP / RECONCILE"
             : !schwabAccountReady
               ? "SCHWAB ACCOUNT REQUIRED"
               : schwabAuthLoading
@@ -4560,6 +4638,8 @@ export const TradeOrderTicket = ({
           ? "CHECKING TAX..."
           : submitBrokerOptionMutation.isPending
             ? "SUBMITTING..."
+            : directBrokerReconciliationLock
+              ? "STOP / RECONCILE"
             : !directOptionAccountReady
               ? `${optionBroker.toUpperCase()} ACCOUNT REQUIRED`
               : brokerOptionAuthLoading

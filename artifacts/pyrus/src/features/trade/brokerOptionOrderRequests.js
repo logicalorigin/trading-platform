@@ -59,6 +59,21 @@ function positionEffectLabel(value) {
   return null;
 }
 
+export function readBrokerSubmitReconciliation(value) {
+  const data = value?.data;
+  const reconciliation = data?.data || data || value;
+  const unknownOutcome =
+    reconciliation?.outcome === "unknown" &&
+    reconciliation?.retryable === false;
+  const submittedButUnrecorded =
+    typeof reconciliation?.reconciliationReason === "string" &&
+    reconciliation.reconciliationReason.length > 0;
+  return reconciliation?.reconcileRequired === true &&
+    (unknownOutcome || submittedButUnrecorded)
+    ? reconciliation
+    : null;
+}
+
 export function buildBrokerOptionOrderDraft({
   broker,
   account,
@@ -250,12 +265,14 @@ async function postBrokerOptionOrder({
   if (!response.ok) {
     const error = new Error(
       payload?.detail ||
+        payload?.title ||
         payload?.message ||
         payload?.error ||
         `${broker} option request failed (${response.status})`,
     );
     error.status = response.status;
     error.code = payload?.code || null;
+    error.data = payload?.data || null;
     throw error;
   }
   return payload;

@@ -157,6 +157,45 @@ function mcpFetch(toolResult: (name: string, args: Record<string, unknown>) => u
   return { fetchImpl, calls };
 }
 
+async function createRobinhoodEquitySubmitFixture(email: string, refId: string) {
+  const appUserId = await seedConnectedUser(email);
+  const accountId = await seedRobinhoodAccount({ appUserId });
+  const preflight = await runAsAppUser(appUserId, () =>
+    createTaxOrderPreflight({
+      order: {
+        accountId,
+        mode: "live",
+        symbol: "PLUG",
+        assetClass: "equity",
+        side: "buy",
+        type: "market",
+        quantity: 0,
+        limitPrice: null,
+        stopPrice: null,
+        timeInForce: "day",
+        optionContract: null,
+        route: "robinhood",
+        intent: null,
+      },
+    }),
+  );
+  return {
+    appUserId,
+    accountId,
+    input: {
+      confirm: true,
+      symbol: "PLUG",
+      side: "BUY" as const,
+      orderType: "Market" as const,
+      timeInForce: "Day" as const,
+      notionalValue: 5,
+      refId,
+      taxPreflightToken: preflight.preflightToken,
+      taxAcknowledgements: preflight.requiredAcknowledgements,
+    },
+  };
+}
+
 test("review serializes a $5 notional buy as string tool params and passes alerts through", async () => {
   await withBootstrapToken(async () =>
     withTestDb(async () => {
@@ -427,6 +466,86 @@ test("place resolves with reconciliation required when the post-submit tax recor
       assert.equal(
         result.reconciliationReason,
         "tax_preflight_order_submit_record_failed",
+      );
+    }),
+  );
+});
+
+test("equity place requires reconciliation when the broker response has no order id", async () => {
+  await withBootstrapToken(async () =>
+    withTestDb(async () => {
+      const refId = "33333333-3333-4333-8333-333333333333";
+      const fixture = await createRobinhoodEquitySubmitFixture(
+        "rh-equity-missing-id@example.com",
+        refId,
+      );
+      const { fetchImpl } = mcpFetch((name) => {
+        assert.equal(name, "place_equity_order");
+        return { data: { state: "confirmed" } };
+      });
+
+      await assert.rejects(
+        placeRobinhoodEquityOrder({
+          ...fixture,
+          encryptionKey: TEST_ENCRYPTION_KEY,
+          fetchImpl,
+        }),
+        (error: unknown) => {
+          const candidate = error as {
+            statusCode?: number;
+            code?: string;
+            data?: Record<string, unknown>;
+          };
+          assert.equal(candidate.statusCode, 409);
+          assert.equal(
+            candidate.code,
+            "robinhood_order_submit_reconcile_required",
+          );
+          assert.equal(candidate.data?.["reason"], "missing_order_id");
+          assert.equal(candidate.data?.["refId"], refId);
+          assert.equal(candidate.data?.["retryable"], false);
+          return true;
+        },
+      );
+    }),
+  );
+});
+
+test("equity place requires reconciliation when the mutation loses its MCP response", async () => {
+  await withBootstrapToken(async () =>
+    withTestDb(async () => {
+      const refId = "44444444-4444-4444-8444-444444444444";
+      const fixture = await createRobinhoodEquitySubmitFixture(
+        "rh-equity-network@example.com",
+        refId,
+      );
+      const { fetchImpl } = mcpFetch((name) => {
+        assert.equal(name, "place_equity_order");
+        throw new TypeError("connection reset");
+      });
+
+      await assert.rejects(
+        placeRobinhoodEquityOrder({
+          ...fixture,
+          encryptionKey: TEST_ENCRYPTION_KEY,
+          fetchImpl,
+        }),
+        (error: unknown) => {
+          const candidate = error as {
+            statusCode?: number;
+            code?: string;
+            data?: Record<string, unknown>;
+          };
+          assert.equal(candidate.statusCode, 409);
+          assert.equal(
+            candidate.code,
+            "robinhood_order_submit_reconcile_required",
+          );
+          assert.equal(candidate.data?.["reason"], "network_error");
+          assert.equal(candidate.data?.["refId"], refId);
+          assert.equal(candidate.data?.["retryable"], false);
+          return true;
+        },
       );
     }),
   );

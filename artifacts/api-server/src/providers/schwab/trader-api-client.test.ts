@@ -91,10 +91,34 @@ test("placeOrder POSTs the JSON order and returns the id from the Location heade
   assert.deepEqual(JSON.parse(String(calls[0]!.init.body)), MARKET_BUY);
 });
 
-test("placeOrder returns orderId null when no Location header is present", async () => {
+test("placeOrder requires reconciliation when a success response has no Location id", async () => {
   const { client: c } = client(() => new Response("", { status: 201 }));
   const result = await c.placeOrder("HASH", MARKET_BUY);
-  assert.equal(result.orderId, null);
+  assert.deepEqual(result, {
+    status: "unknown",
+    orderId: null,
+    reconcileRequired: true,
+    reason: "missing_order_id",
+    timeoutMs: null,
+    sourceCode: "schwab_trader_api_missing_order_id_reconcile_required",
+  });
+});
+
+test("placeOrder requires reconciliation when the POST loses its response", async () => {
+  const c = new SchwabTraderApiClient({
+    accessToken: TOKEN,
+    fetchImpl: (async () => {
+      throw new TypeError("connection reset");
+    }) as typeof fetch,
+  });
+  assert.deepEqual(await c.placeOrder("HASH", MARKET_BUY), {
+    status: "unknown",
+    orderId: null,
+    reconcileRequired: true,
+    reason: "network_error",
+    timeoutMs: null,
+    sourceCode: "schwab_trader_api_network_error",
+  });
 });
 
 test("replaceOrder PUTs to the order id and prefers the new Location id", async () => {

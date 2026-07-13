@@ -71,17 +71,22 @@ export type SchwabUnknownOrderOutcome = {
   status: "unknown";
   orderId: null;
   reconcileRequired: true;
-  reason: "request_timeout";
-  timeoutMs: number;
+  reason: "request_timeout" | "network_error" | "missing_order_id";
+  timeoutMs: number | null;
+  sourceCode: string;
 };
 
 export type SchwabPlaceOrderResult =
-  | { orderId: string | null }
+  | { orderId: string }
   | SchwabUnknownOrderOutcome;
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 15_000;
 export const SCHWAB_TRADER_API_TIMEOUT_CODE =
   "schwab_trader_api_timeout_reconcile_required";
+export const SCHWAB_TRADER_API_NETWORK_CODE =
+  "schwab_trader_api_network_error";
+export const SCHWAB_TRADER_API_MISSING_ORDER_ID_CODE =
+  "schwab_trader_api_missing_order_id_reconcile_required";
 
 export class SchwabTraderApiTimeoutError extends HttpError {
   readonly timeoutMs: number;
@@ -211,7 +216,7 @@ export class SchwabTraderApiClient {
         throw error;
       }
       throw new HttpError(502, "Schwab Trader API request failed", {
-        code: "schwab_trader_api_network_error",
+        code: SCHWAB_TRADER_API_NETWORK_CODE,
         expose: false,
       });
     } finally {
@@ -291,11 +296,36 @@ export class SchwabTraderApiClient {
           reconcileRequired: true,
           reason: "request_timeout",
           timeoutMs: error.timeoutMs,
+          sourceCode: SCHWAB_TRADER_API_TIMEOUT_CODE,
+        };
+      }
+      if (
+        error instanceof HttpError &&
+        error.code === SCHWAB_TRADER_API_NETWORK_CODE
+      ) {
+        return {
+          status: "unknown",
+          orderId: null,
+          reconcileRequired: true,
+          reason: "network_error",
+          timeoutMs: null,
+          sourceCode: SCHWAB_TRADER_API_NETWORK_CODE,
         };
       }
       throw error;
     }
-    return { orderId: extractOrderIdFromLocation(headers.get("location")) };
+    const orderId = extractOrderIdFromLocation(headers.get("location"));
+    if (!orderId) {
+      return {
+        status: "unknown",
+        orderId: null,
+        reconcileRequired: true,
+        reason: "missing_order_id",
+        timeoutMs: null,
+        sourceCode: SCHWAB_TRADER_API_MISSING_ORDER_ID_CODE,
+      };
+    }
+    return { orderId };
   }
 
   // Dry-run an order (returns the order impact / balance projection).

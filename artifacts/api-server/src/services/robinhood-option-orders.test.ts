@@ -188,6 +188,52 @@ function instrumentPayload() {
   };
 }
 
+async function createRobinhoodSubmitFixture(email: string, refId: string) {
+  const appUserId = await seedConnectedUser(email);
+  const accountId = await seedRobinhoodAccount(appUserId);
+  const occSymbol = "AAPL  260821C00210000";
+  const preflight = await runAsAppUser(appUserId, () =>
+    createTaxOrderPreflight({
+      order: {
+        accountId,
+        mode: "live",
+        symbol: "AAPL",
+        assetClass: "option",
+        side: "buy",
+        type: "limit",
+        quantity: 1,
+        limitPrice: 2.45,
+        stopPrice: null,
+        timeInForce: "day",
+        optionContract: {
+          ticker: occSymbol,
+          underlying: "AAPL",
+          expirationDate: "2026-08-21",
+          strike: 210,
+          right: "call",
+          multiplier: 100,
+          sharesPerContract: 100,
+          providerContractId: occSymbol,
+          brokerContractId: occSymbol,
+        },
+        route: "robinhood",
+        intent: null,
+      },
+    }),
+  );
+  return {
+    appUserId,
+    accountId,
+    input: {
+      ...baseOrder(),
+      confirm: true,
+      refId,
+      taxPreflightToken: preflight.preflightToken,
+      taxAcknowledgements: preflight.requiredAcknowledgements,
+    },
+  };
+}
+
 test("resolves one option and reviews with string params and verbatim broker context", async () => {
   await withBootstrapToken(async () =>
     withTestDb(async () => {
@@ -500,6 +546,88 @@ test("place resolves with reconciliation required when the post-submit tax recor
       assert.equal(
         result.reconciliationReason,
         "tax_preflight_order_submit_record_failed",
+      );
+    }),
+  );
+});
+
+test("place requires reconciliation when the broker response has no order id", async () => {
+  await withBootstrapToken(async () =>
+    withTestDb(async () => {
+      const refId = "33333333-3333-4333-8333-333333333333";
+      const fixture = await createRobinhoodSubmitFixture(
+        "rh-option-missing-id@example.com",
+        refId,
+      );
+      const { fetchImpl } = mcpFetch((name) => {
+        if (name === "get_option_instruments") return instrumentPayload();
+        assert.equal(name, "place_option_order");
+        return { data: { order: { state: "confirmed" } } };
+      });
+
+      await assert.rejects(
+        placeRobinhoodOptionOrder({
+          ...fixture,
+          encryptionKey: TEST_ENCRYPTION_KEY,
+          fetchImpl,
+        }),
+        (error: unknown) => {
+          const candidate = error as {
+            statusCode?: number;
+            code?: string;
+            data?: Record<string, unknown>;
+          };
+          assert.equal(candidate.statusCode, 409);
+          assert.equal(
+            candidate.code,
+            "robinhood_option_order_submit_reconcile_required",
+          );
+          assert.equal(candidate.data?.["reason"], "missing_order_id");
+          assert.equal(candidate.data?.["refId"], refId);
+          assert.equal(candidate.data?.["retryable"], false);
+          return true;
+        },
+      );
+    }),
+  );
+});
+
+test("place requires reconciliation when the mutation loses its MCP response", async () => {
+  await withBootstrapToken(async () =>
+    withTestDb(async () => {
+      const refId = "44444444-4444-4444-8444-444444444444";
+      const fixture = await createRobinhoodSubmitFixture(
+        "rh-option-network@example.com",
+        refId,
+      );
+      const { fetchImpl } = mcpFetch((name) => {
+        if (name === "get_option_instruments") return instrumentPayload();
+        assert.equal(name, "place_option_order");
+        throw new TypeError("connection reset");
+      });
+
+      await assert.rejects(
+        placeRobinhoodOptionOrder({
+          ...fixture,
+          encryptionKey: TEST_ENCRYPTION_KEY,
+          fetchImpl,
+        }),
+        (error: unknown) => {
+          const candidate = error as {
+            statusCode?: number;
+            code?: string;
+            data?: Record<string, unknown>;
+          };
+          assert.equal(candidate.statusCode, 409);
+          assert.equal(
+            candidate.code,
+            "robinhood_option_order_submit_reconcile_required",
+          );
+          assert.equal(candidate.data?.["reason"], "network_error");
+          assert.equal(candidate.data?.["refId"], refId);
+          assert.equal(candidate.data?.["retryable"], false);
+          return true;
+        },
       );
     }),
   );

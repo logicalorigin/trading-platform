@@ -96,3 +96,38 @@ test("sends Schwab equity preview and submit requests with CSRF", async () => {
     confirm: true,
   });
 });
+
+test("preserves reconciliation metadata from an unknown submit outcome", async () => {
+  const data = {
+    outcome: "unknown",
+    reconcileRequired: true,
+    retryable: false,
+    reason: "request_timeout",
+  };
+
+  await assert.rejects(
+    submitSchwabEquityOrderRequest({
+      accountId: READY_ACCOUNT.id,
+      csrfToken: "csrf-token",
+      body: { symbol: "MSFT" },
+      fetchImpl: async () => ({
+        ok: false,
+        status: 409,
+        json: async () => ({
+          title: "Outcome unknown; reconcile before retrying",
+          code: "schwab_order_submit_reconcile_required",
+          data,
+        }),
+      }),
+    }),
+    (error) => {
+      assert.equal(
+        error.message,
+        "Outcome unknown; reconcile before retrying",
+      );
+      assert.equal(error.code, "schwab_order_submit_reconcile_required");
+      assert.deepEqual(error.data, data);
+      return true;
+    },
+  );
+});

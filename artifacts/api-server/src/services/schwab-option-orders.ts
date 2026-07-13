@@ -8,7 +8,6 @@ import {
 import { HttpError } from "../lib/errors";
 import { logger } from "../lib/logger";
 import {
-  SCHWAB_TRADER_API_TIMEOUT_CODE,
   SchwabTraderApiClient,
   type SchwabOrderRequest,
   type SchwabUnknownOrderOutcome,
@@ -574,7 +573,7 @@ function reconcileRequiredError(input: {
         timeoutMs: input.outcome.timeoutMs,
         reconcileRequired: true,
         retryable: false,
-        sourceCode: SCHWAB_TRADER_API_TIMEOUT_CODE,
+        sourceCode: input.outcome.sourceCode,
       },
     },
   );

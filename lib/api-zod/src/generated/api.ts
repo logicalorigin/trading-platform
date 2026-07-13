@@ -1406,9 +1406,11 @@ export const SubmitSnapTradeEquityOrderResponse = zod.object({
   "stop": zod.number().nullable(),
   "clientOrderId": zod.string().nullable()
 }).describe('Sanitized order details accepted by PYRUS and translated to SnapTrade upstream fields.').and(zod.object({
-  "brokerageOrderId": zod.string().nullable(),
+  "brokerageOrderId": zod.string(),
   "status": zod.string()
-}))
+})),
+  "reconcileRequired": zod.literal(true).optional(),
+  "reconciliationReason": zod.enum(['tax_preflight_order_submit_record_failed']).optional()
 }).describe('Sanitized response from SnapTrade\'s direct equity order endpoint. Never includes SnapTrade userSecret, client credentials, account numbers, or raw upstream payloads.')
 
 

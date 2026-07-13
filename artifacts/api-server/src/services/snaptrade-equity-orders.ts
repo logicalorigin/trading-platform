@@ -6,6 +6,7 @@ import {
   db,
 } from "@workspace/db";
 import { HttpError } from "../lib/errors";
+import { logger } from "../lib/logger";
 import {
   buildSnapTradeSignature,
   SNAPTRADE_API_BASE_URL,
@@ -122,9 +123,11 @@ export type SnapTradeEquityOrderSubmitResponse = {
   submittedAt: string;
   account: SnapTradeEquityOrderAccount;
   order: SnapTradeEquityOrderDetails & {
-    brokerageOrderId: string | null;
+    brokerageOrderId: string;
     status: string;
   };
+  reconcileRequired?: true;
+  reconciliationReason?: "tax_preflight_order_submit_record_failed";
 };
 
 export type SnapTradeEquityOrderReplaceInput = Omit<
@@ -299,6 +302,8 @@ const SNAPTRADE_REPLACE_ORDER_PATH = "/trading/replace";
 const SNAPTRADE_TRADE_EXPIRY_MS = 5 * 60 * 1000;
 const SNAPTRADE_MIN_ORDER_INTERVAL_MS = 1000;
 const SNAPTRADE_SYMBOL_SEARCH_MAX_LENGTH = 80;
+const SNAPTRADE_ORDER_SUBMIT_RECONCILE_CODE =
+  "snaptrade_order_submit_reconcile_required";
 const SYMBOL_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$/;
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -1020,6 +1025,16 @@ function parseSubmitResponse(
 ): Omit<SnapTradeEquityOrderSubmitResponse, "provider" | "submittedAt" | "account"> {
   const record = Array.isArray(payload) ? asRecord(payload[0]) : asRecord(payload);
   const status = readString(record, ["status"]);
+  const brokerageOrderId = readString(record, [
+    "brokerage_order_id",
+    "brokerageOrderId",
+  ]);
+  if (!brokerageOrderId) {
+    throw new HttpError(502, "SnapTrade equity order returned no order id", {
+      code: "snaptrade_order_submit_missing_order_id",
+      expose: false,
+    });
+  }
   if (!status) {
     throw new HttpError(502, "SnapTrade equity order returned invalid data", {
       code: "snaptrade_order_submit_invalid_response",
@@ -1038,13 +1053,42 @@ function parseSubmitResponse(
         readNestedString(record, ["universal_symbol", "id"]) ??
           readNestedString(record, ["universalSymbol", "id"]),
       ),
-      brokerageOrderId: readString(record, [
-        "brokerage_order_id",
-        "brokerageOrderId",
-      ]),
+      brokerageOrderId,
       status,
     },
   };
+}
+
+function submitReconcileRequiredError(input: {
+  now: Date;
+  account: LocalSnapTradeAccount;
+  order: NormalizedSubmitInput;
+  reason: "network_error" | "invalid_response" | "missing_order_id";
+  sourceCode: string;
+}): HttpError {
+  return new HttpError(
+    409,
+    "SnapTrade equity order outcome is unknown; reconcile before retrying",
+    {
+      code: SNAPTRADE_ORDER_SUBMIT_RECONCILE_CODE,
+      expose: true,
+      data: {
+        provider: "snaptrade",
+        submittedAt: input.now.toISOString(),
+        account: publicAccount(input.account),
+        order: {
+          ...orderDetails(input.order, input.order.symbol, null),
+          brokerageOrderId: null,
+        },
+        status: "reconcile_required",
+        outcome: "unknown",
+        reason: input.reason,
+        reconcileRequired: true,
+        retryable: false,
+        sourceCode: input.sourceCode,
+      },
+    },
+  );
 }
 
 function parseRecentOrdersPayload(payload: unknown): SnapTradeRecentOrder[] {
@@ -1326,22 +1370,85 @@ export async function submitSnapTradeEquityOrder(
     snapTradeUserId: credential.snapTradeUserId,
     userSecret: credential.userSecret,
   });
-  const payload = await postSnapTradeJson({
-    path: SNAPTRADE_PLACE_EQUITY_ORDER_PATH,
-    query,
-    content: submitContent(account, normalizedInput),
-    consumerKey: credentials.consumerKey,
-    fetchImpl,
-    message: "SnapTrade equity order submission failed",
-    networkCode: "snaptrade_order_submit_network_error",
-    failedCode: "snaptrade_order_submit_failed",
-  });
-  const parsed = parseSubmitResponse(payload, normalizedInput);
-  await recordTaxPreflightOrderSubmitted({
-    appUserId: options.appUserId,
-    preflightToken: taxPreflight?.preflightToken,
-    submittedOrderId: parsed.order.brokerageOrderId,
-  });
+  const networkCode = "snaptrade_order_submit_network_error";
+  let payload: unknown;
+  try {
+    payload = await postSnapTradeJson({
+      path: SNAPTRADE_PLACE_EQUITY_ORDER_PATH,
+      query,
+      content: submitContent(account, normalizedInput),
+      consumerKey: credentials.consumerKey,
+      fetchImpl,
+      message: "SnapTrade equity order submission failed",
+      networkCode,
+      failedCode: "snaptrade_order_submit_failed",
+    });
+  } catch (error) {
+    if (error instanceof HttpError && error.code === networkCode) {
+      throw submitReconcileRequiredError({
+        now,
+        account,
+        order: normalizedInput,
+        reason: "network_error",
+        sourceCode: networkCode,
+      });
+    }
+    throw error;
+  }
+
+  let parsed: Omit<
+    SnapTradeEquityOrderSubmitResponse,
+    "provider" | "submittedAt" | "account"
+  >;
+  try {
+    parsed = parseSubmitResponse(payload, normalizedInput);
+  } catch (error) {
+    if (error instanceof HttpError) {
+      const reason =
+        error.code === "snaptrade_order_submit_missing_order_id"
+          ? "missing_order_id"
+          : error.code === "snaptrade_order_submit_invalid_response"
+            ? "invalid_response"
+            : null;
+      if (reason) {
+        throw submitReconcileRequiredError({
+          now,
+          account,
+          order: normalizedInput,
+          reason,
+          sourceCode: error.code!,
+        });
+      }
+    }
+    throw error;
+  }
+  try {
+    await recordTaxPreflightOrderSubmitted({
+      appUserId: options.appUserId,
+      preflightToken: taxPreflight?.preflightToken,
+      submittedOrderId: parsed.order.brokerageOrderId,
+      provider: "snaptrade",
+    });
+  } catch (error) {
+    logger.warn(
+      {
+        err: error,
+        appUserId: options.appUserId,
+        accountId: options.accountId,
+        snapTradeAccountId: account.id,
+        orderId: parsed.order.brokerageOrderId,
+      },
+      "SnapTrade equity order placed but tax preflight submit record failed; reconciliation required",
+    );
+    return {
+      provider: "snaptrade",
+      submittedAt: now.toISOString(),
+      account: publicAccount(account),
+      ...parsed,
+      reconcileRequired: true,
+      reconciliationReason: "tax_preflight_order_submit_record_failed",
+    };
+  }
 
   return {
     provider: "snaptrade",

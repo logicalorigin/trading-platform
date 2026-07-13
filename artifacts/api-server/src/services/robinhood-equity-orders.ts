@@ -12,6 +12,10 @@ import { logger } from "../lib/logger";
 import { RobinhoodMcpSession } from "../providers/robinhood/mcp-client";
 import { getRobinhoodAccessToken } from "./robinhood-oauth";
 import {
+  robinhoodSubmitReconciliationFailure,
+  type RobinhoodSubmitReconciliationReason,
+} from "./robinhood-order-submit-reconciliation";
+import {
   assertTaxPreflightForOrderSubmission,
   recordTaxPreflightOrderSubmitted,
 } from "./tax-planning";
@@ -107,7 +111,7 @@ export type RobinhoodEquityOrderPlaceResponse = {
   submittedAt: string;
   account: RobinhoodEquityOrderAccount;
   order: RobinhoodEquityOrderDetails & {
-    brokerageOrderId: string | null;
+    brokerageOrderId: string;
     state: string | null;
     refId: string;
   };
@@ -208,6 +212,8 @@ const ROBINHOOD_MIN_ORDER_INTERVAL_MS = 1000;
 const SYMBOL_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$/;
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const ROBINHOOD_ORDER_SUBMIT_RECONCILE_CODE =
+  "robinhood_order_submit_reconcile_required";
 
 const SIDES = new Set<string>(ROBINHOOD_EQUITY_ORDER_SIDES);
 const ORDER_TYPES = new Set<string>(ROBINHOOD_EQUITY_ORDER_TYPES);
@@ -607,6 +613,42 @@ function orderDetails(order: NormalizedOrder): RobinhoodEquityOrderDetails {
   };
 }
 
+function submitReconcileRequiredError(input: {
+  now: Date;
+  account: LocalRobinhoodAccount;
+  order: NormalizedOrder;
+  refId: string;
+  reason: RobinhoodSubmitReconciliationReason;
+  sourceCode: string;
+}): HttpError {
+  return new HttpError(
+    409,
+    "Robinhood equity order outcome is unknown; reconcile before retrying",
+    {
+      code: ROBINHOOD_ORDER_SUBMIT_RECONCILE_CODE,
+      expose: true,
+      data: {
+        provider: "robinhood",
+        submittedAt: input.now.toISOString(),
+        account: publicAccount(input.account),
+        order: {
+          ...orderDetails(input.order),
+          brokerageOrderId: null,
+          state: null,
+          refId: input.refId,
+        },
+        refId: input.refId,
+        status: "reconcile_required",
+        outcome: "unknown",
+        reason: input.reason,
+        reconcileRequired: true,
+        retryable: false,
+        sourceCode: input.sourceCode,
+      },
+    },
+  );
+}
+
 // Every numeric tool parameter is serialized as a string per the Robinhood MCP
 // equity-order schema.
 function toolArguments(
@@ -810,10 +852,25 @@ export async function placeRobinhoodEquityOrder(
     encryptionKey: options.encryptionKey,
     mcpUrl: options.mcpUrl,
   });
-  const payload = await session.callTool({
-    name: "place_equity_order",
-    arguments: toolArguments(account.accountNumber, order, { ref_id: refId }),
-  });
+  let payload: unknown;
+  try {
+    payload = await session.callTool({
+      name: "place_equity_order",
+      arguments: toolArguments(account.accountNumber, order, { ref_id: refId }),
+    });
+  } catch (error) {
+    const failure = robinhoodSubmitReconciliationFailure(error);
+    if (failure) {
+      throw submitReconcileRequiredError({
+        now,
+        account,
+        order,
+        refId,
+        ...failure,
+      });
+    }
+    throw error;
+  }
   const record = orderRecordFrom(payload);
   const brokerageOrderId = readString(record, [
     "id",
@@ -821,6 +878,16 @@ export async function placeRobinhoodEquityOrder(
     "orderId",
     "brokerage_order_id",
   ]);
+  if (!brokerageOrderId) {
+    throw submitReconcileRequiredError({
+      now,
+      account,
+      order,
+      refId,
+      reason: "missing_order_id",
+      sourceCode: "robinhood_order_submit_invalid_response",
+    });
+  }
 
   try {
     await recordTaxPreflightOrderSubmitted({

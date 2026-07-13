@@ -8,6 +8,10 @@ import { logger } from "../lib/logger";
 import { RobinhoodMcpSession } from "../providers/robinhood/mcp-client";
 import { getRobinhoodAccessToken } from "./robinhood-oauth";
 import {
+  robinhoodSubmitReconciliationFailure,
+  type RobinhoodSubmitReconciliationReason,
+} from "./robinhood-order-submit-reconciliation";
+import {
   assertTaxPreflightForOrderSubmission,
   recordTaxPreflightOrderSubmitted,
 } from "./tax-planning";
@@ -146,7 +150,7 @@ export type RobinhoodOptionOrderPlaceResponse = {
   submittedAt: string;
   account: RobinhoodOptionOrderAccount;
   order: RobinhoodOptionOrderDetails & {
-    brokerageOrderId: string | null;
+    brokerageOrderId: string;
     state: string | null;
     refId: string;
   };
@@ -242,6 +246,8 @@ const SYMBOL_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$/;
 const EXPIRATION_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const ROBINHOOD_OPTION_SUBMIT_RECONCILE_CODE =
+  "robinhood_option_order_submit_reconcile_required";
 
 const OPTION_TYPES = new Set<string>(ROBINHOOD_OPTION_TYPES);
 const SIDES = new Set<string>(ROBINHOOD_OPTION_ORDER_SIDES);
@@ -925,6 +931,43 @@ function robinhoodToTaxOrder(input: {
   };
 }
 
+function submitReconcileRequiredError(input: {
+  now: Date;
+  account: LocalRobinhoodAccount;
+  order: NormalizedOrder;
+  instrument: ResolvedInstrument;
+  refId: string;
+  reason: RobinhoodSubmitReconciliationReason;
+  sourceCode: string;
+}): HttpError {
+  return new HttpError(
+    409,
+    "Robinhood option order outcome is unknown; reconcile before retrying",
+    {
+      code: ROBINHOOD_OPTION_SUBMIT_RECONCILE_CODE,
+      expose: true,
+      data: {
+        provider: "robinhood",
+        submittedAt: input.now.toISOString(),
+        account: publicAccount(input.account),
+        order: {
+          ...orderDetails(input.order, input.instrument),
+          brokerageOrderId: null,
+          state: null,
+          refId: input.refId,
+        },
+        refId: input.refId,
+        status: "reconcile_required",
+        outcome: "unknown",
+        reason: input.reason,
+        reconcileRequired: true,
+        retryable: false,
+        sourceCode: input.sourceCode,
+      },
+    },
+  );
+}
+
 function assertSubmitRateLimit(accountKey: string, now: Date): void {
   const previous = lastSubmitAtByAccountKey.get(accountKey);
   if (
@@ -1132,16 +1175,32 @@ export async function placeRobinhoodOptionOrder(
   const instrument = await resolveOptionInstrument(session, order);
   assertSubmitRateLimit(`${options.appUserId}:${account.id}`, now);
 
-  const payload = await session.callTool({
-    name: "place_option_order",
-    arguments: toolArguments(
-      account.accountNumber,
-      order,
-      instrument,
-      false,
-      refId,
-    ),
-  });
+  let payload: unknown;
+  try {
+    payload = await session.callTool({
+      name: "place_option_order",
+      arguments: toolArguments(
+        account.accountNumber,
+        order,
+        instrument,
+        false,
+        refId,
+      ),
+    });
+  } catch (error) {
+    const failure = robinhoodSubmitReconciliationFailure(error);
+    if (failure) {
+      throw submitReconcileRequiredError({
+        now,
+        account,
+        order,
+        instrument,
+        refId,
+        ...failure,
+      });
+    }
+    throw error;
+  }
   const record = orderRecordFrom(payload);
   const sanitizedPayload = asRecord(sanitizeBrokerValue(payload, account));
   const alertRecord =
@@ -1154,6 +1213,17 @@ export async function placeRobinhoodOptionOrder(
     "orderId",
     "brokerage_order_id",
   ]);
+  if (!brokerageOrderId) {
+    throw submitReconcileRequiredError({
+      now,
+      account,
+      order,
+      instrument,
+      refId,
+      reason: "missing_order_id",
+      sourceCode: "robinhood_option_order_submit_invalid_response",
+    });
+  }
 
   try {
     await recordTaxPreflightOrderSubmitted({

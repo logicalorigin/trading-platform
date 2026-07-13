@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   buildBrokerOptionOrderDraft,
   placeBrokerOptionOrderRequest,
+  readBrokerSubmitReconciliation,
   reviewBrokerOptionOrderRequest,
 } from "./brokerOptionOrderRequests.js";
 
@@ -209,4 +210,76 @@ test("uses each option review route and confirms place requests", async () => {
   for (const call of calls.filter((_, index) => index % 2 === 1)) {
     assert.equal(JSON.parse(call.init.body).confirm, true);
   }
+});
+
+test("preserves reconcile metadata from an unknown submit outcome", async () => {
+  const data = {
+    outcome: "unknown",
+    reconcileRequired: true,
+    retryable: false,
+    refId: "44444444-4444-4444-8444-444444444444",
+  };
+  await assert.rejects(
+    placeBrokerOptionOrderRequest({
+      broker: "robinhood",
+      accountId: READY_ACCOUNT.id,
+      csrfToken: "csrf-token",
+      body: { order: "option" },
+      fetchImpl: async () => ({
+        ok: false,
+        status: 409,
+        json: async () => ({
+          title: "Outcome unknown; reconcile before retrying",
+          code: "robinhood_option_order_submit_reconcile_required",
+          data,
+        }),
+      }),
+    }),
+    (error) => {
+      assert.equal(error.status, 409);
+      assert.equal(
+        error.code,
+        "robinhood_option_order_submit_reconcile_required",
+      );
+      assert.deepEqual(error.data, data);
+      return true;
+    },
+  );
+});
+
+test("classifies only explicit unknown or submitted-but-unrecorded outcomes as locks", () => {
+  const reconciliation = {
+    outcome: "unknown",
+    reconcileRequired: true,
+    retryable: false,
+  };
+  assert.deepEqual(
+    readBrokerSubmitReconciliation({ data: reconciliation }),
+    reconciliation,
+  );
+  assert.deepEqual(
+    readBrokerSubmitReconciliation({
+      data: {
+        title: "Outcome unknown",
+        data: reconciliation,
+      },
+    }),
+    reconciliation,
+  );
+  const submittedButUnrecorded = {
+    reconcileRequired: true,
+    reconciliationReason: "tax_preflight_order_submit_record_failed",
+    order: { brokerageOrderId: "broker-order-123" },
+  };
+  assert.deepEqual(
+    readBrokerSubmitReconciliation(submittedButUnrecorded),
+    submittedButUnrecorded,
+  );
+  assert.equal(
+    readBrokerSubmitReconciliation({
+      data: { reconcileRequired: true, retryable: true },
+    }),
+    null,
+  );
+  assert.equal(readBrokerSubmitReconciliation(new Error("failed")), null);
 });

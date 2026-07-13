@@ -6066,7 +6066,6 @@ components:
           properties:
             brokerageOrderId:
               type: string
-              nullable: true
             status:
               type: string
           required:
@@ -6087,6 +6086,12 @@ components:
           $ref: "#/components/schemas/SnapTradeEquityOrderAccount"
         order:
           $ref: "#/components/schemas/SnapTradeEquitySubmittedOrder"
+        reconcileRequired:
+          type: boolean
+          enum: [true]
+        reconciliationReason:
+          type: string
+          enum: [tax_preflight_order_submit_record_failed]
       required:
         - provider
         - submittedAt

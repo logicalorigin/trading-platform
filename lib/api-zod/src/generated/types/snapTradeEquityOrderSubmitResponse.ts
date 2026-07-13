@@ -7,6 +7,7 @@
  */
 import type { SnapTradeEquityOrderAccount } from './snapTradeEquityOrderAccount';
 import type { SnapTradeEquityOrderSubmitResponseProvider } from './snapTradeEquityOrderSubmitResponseProvider';
+import type { SnapTradeEquityOrderSubmitResponseReconciliationReason } from './snapTradeEquityOrderSubmitResponseReconciliationReason';
 import type { SnapTradeEquitySubmittedOrder } from './snapTradeEquitySubmittedOrder';
 
 /**
@@ -17,4 +18,6 @@ export interface SnapTradeEquityOrderSubmitResponse {
   submittedAt: Date;
   account: SnapTradeEquityOrderAccount;
   order: SnapTradeEquitySubmittedOrder;
+  reconcileRequired?: boolean;
+  reconciliationReason?: SnapTradeEquityOrderSubmitResponseReconciliationReason;
 }

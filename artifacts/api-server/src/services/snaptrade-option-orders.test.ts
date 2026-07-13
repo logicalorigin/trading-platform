@@ -97,6 +97,68 @@ async function createSnapTradeAccount(input: {
   return account;
 }
 
+async function createSnapTradeSubmitFixture(email: string) {
+  const auth = await createUser(email);
+  await createSnapTradeCredential(auth.user.id);
+  const account = await createSnapTradeAccount({
+    appUserId: auth.user.id,
+    providerAccountId: `snaptrade:${email}`,
+  });
+  const input = {
+    confirm: true,
+    contractSymbol: "O:AAPL260821C00200000",
+    multiplier: 100,
+    sharesPerContract: 100,
+    underlyingSymbol: "AAPL",
+    expiration: "2026-08-21",
+    strike: 200,
+    optionType: "Call" as const,
+    action: "BUY_TO_OPEN" as const,
+    orderType: "Market" as const,
+    timeInForce: "Day" as const,
+    units: 1,
+  };
+  const occSymbol = "AAPL  260821C00200000";
+  const preflight = await runAsAppUser(auth.user.id, () =>
+    createTaxOrderPreflight({
+      order: {
+        accountId: account.id,
+        mode: "live",
+        symbol: "AAPL",
+        assetClass: "option",
+        side: "buy",
+        type: "market",
+        quantity: 1,
+        limitPrice: null,
+        stopPrice: null,
+        timeInForce: "day",
+        optionContract: {
+          ticker: occSymbol,
+          underlying: "AAPL",
+          expirationDate: "2026-08-21",
+          strike: 200,
+          right: "call",
+          multiplier: 100,
+          sharesPerContract: 100,
+          providerContractId: occSymbol,
+          brokerContractId: occSymbol,
+        },
+        route: "snaptrade",
+        intent: null,
+      },
+    }),
+  );
+  return {
+    appUserId: auth.user.id,
+    accountId: account.id,
+    input: {
+      ...input,
+      taxPreflightToken: preflight.preflightToken,
+      taxAcknowledgements: preflight.requiredAcknowledgements,
+    },
+  };
+}
+
 test("buildOccSymbol builds documented 21-character OCC option symbols", () => {
   const cases = [
     {
@@ -525,6 +587,81 @@ test("SnapTrade option submit resolves with reconciliation required when the pos
       assert.equal(
         result.reconciliationReason,
         "tax_preflight_order_submit_record_failed",
+      );
+    }),
+  );
+});
+
+test("SnapTrade option submit requires reconciliation when success has no broker order id", async () => {
+  await withBootstrapToken(async () =>
+    withTestDb(async () => {
+      const fixture = await createSnapTradeSubmitFixture(
+        "option-submit-missing-id@example.com",
+      );
+      await assert.rejects(
+        submitSnapTradeOptionOrder({
+          ...fixture,
+          env: {
+            SNAPTRADE_CLIENTID: "client-option-123",
+            SNAPTRADE_API_KEY: "consumer-option-secret",
+          },
+          encryptionKey: TEST_ENCRYPTION_KEY,
+          fetchImpl: async () =>
+            Response.json({ status: "ACCEPTED" }, { status: 200 }),
+        }),
+        (error: unknown) => {
+          const candidate = error as {
+            statusCode?: number;
+            code?: string;
+            data?: Record<string, unknown>;
+          };
+          assert.equal(candidate.statusCode, 409);
+          assert.equal(
+            candidate.code,
+            "snaptrade_option_order_submit_reconcile_required",
+          );
+          assert.equal(candidate.data?.["reason"], "missing_order_id");
+          assert.equal(candidate.data?.["retryable"], false);
+          return true;
+        },
+      );
+    }),
+  );
+});
+
+test("SnapTrade option submit requires reconciliation when the POST loses its response", async () => {
+  await withBootstrapToken(async () =>
+    withTestDb(async () => {
+      const fixture = await createSnapTradeSubmitFixture(
+        "option-submit-network@example.com",
+      );
+      await assert.rejects(
+        submitSnapTradeOptionOrder({
+          ...fixture,
+          env: {
+            SNAPTRADE_CLIENTID: "client-option-123",
+            SNAPTRADE_API_KEY: "consumer-option-secret",
+          },
+          encryptionKey: TEST_ENCRYPTION_KEY,
+          fetchImpl: async () => {
+            throw new TypeError("connection reset");
+          },
+        }),
+        (error: unknown) => {
+          const candidate = error as {
+            statusCode?: number;
+            code?: string;
+            data?: Record<string, unknown>;
+          };
+          assert.equal(candidate.statusCode, 409);
+          assert.equal(
+            candidate.code,
+            "snaptrade_option_order_submit_reconcile_required",
+          );
+          assert.equal(candidate.data?.["reason"], "network_error");
+          assert.equal(candidate.data?.["retryable"], false);
+          return true;
+        },
       );
     }),
   );

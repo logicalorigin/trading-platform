@@ -138,6 +138,10 @@ type LocalSnapTradeAccount = SnapTradeEquityOrderAccount & {
 
 type NormalizedOptionOrderInput = SnapTradeOptionOrderDetails;
 
+type SnapTradeOptionSubmitReconciliationReason =
+  | "network_error"
+  | "missing_order_id";
+
 const LOCAL_ID_PREFIX = "snaptrade:";
 const SNAPTRADE_MIN_ORDER_INTERVAL_MS = 1000;
 const OCC_UNDERLYING_PATTERN = /^[A-Z0-9]{1,6}$/u;
@@ -149,6 +153,8 @@ const TIME_IN_FORCE_VALUES = new Set<string>(
 );
 const OPTION_TYPES = new Set<string>(SNAPTRADE_OPTION_TYPES);
 const lastSubmitAtByAccountKey = new Map<string, number>();
+const SNAPTRADE_OPTION_SUBMIT_RECONCILE_CODE =
+  "snaptrade_option_order_submit_reconcile_required";
 
 const SNAPTRADE_ORDER_TYPE: Record<SnapTradeOptionOrderType, string> = {
   Market: "MARKET",
@@ -662,6 +668,35 @@ function parseSubmitResponse(
   };
 }
 
+function submitReconcileRequiredError(input: {
+  now: Date;
+  account: LocalSnapTradeAccount;
+  order: NormalizedOptionOrderInput;
+  reason: SnapTradeOptionSubmitReconciliationReason;
+  sourceCode: string;
+}): HttpError {
+  return new HttpError(
+    409,
+    "SnapTrade option order outcome is unknown; reconcile before retrying",
+    {
+      code: SNAPTRADE_OPTION_SUBMIT_RECONCILE_CODE,
+      expose: true,
+      data: {
+        provider: "snaptrade",
+        submittedAt: input.now.toISOString(),
+        account: publicAccount(input.account),
+        order: { ...input.order, brokerageOrderId: null },
+        status: "reconcile_required",
+        outcome: "unknown",
+        reason: input.reason,
+        reconcileRequired: true,
+        retryable: false,
+        sourceCode: input.sourceCode,
+      },
+    },
+  );
+}
+
 function assertSubmitRateLimit(accountKey: string, now: Date): void {
   const previous = lastSubmitAtByAccountKey.get(accountKey);
   if (
@@ -783,17 +818,50 @@ export async function submitSnapTradeOptionOrder(
     snapTradeUserId: credential.snapTradeUserId,
     userSecret: credential.userSecret,
   });
-  const payload = await postSnapTradeJson({
-    path,
-    query,
-    content: orderContent(normalizedInput),
-    consumerKey: credentials.consumerKey,
-    fetchImpl,
-    message: "SnapTrade option order submission failed",
-    networkCode: "snaptrade_option_order_submit_network_error",
-    failedCode: "snaptrade_option_order_submit_failed",
-  });
-  const parsed = parseSubmitResponse(payload, normalizedInput);
+  const networkCode = "snaptrade_option_order_submit_network_error";
+  let payload: unknown;
+  try {
+    payload = await postSnapTradeJson({
+      path,
+      query,
+      content: orderContent(normalizedInput),
+      consumerKey: credentials.consumerKey,
+      fetchImpl,
+      message: "SnapTrade option order submission failed",
+      networkCode,
+      failedCode: "snaptrade_option_order_submit_failed",
+    });
+  } catch (error) {
+    if (error instanceof HttpError && error.code === networkCode) {
+      throw submitReconcileRequiredError({
+        now,
+        account,
+        order: normalizedInput,
+        reason: "network_error",
+        sourceCode: networkCode,
+      });
+    }
+    throw error;
+  }
+
+  let parsed: Pick<SnapTradeOptionOrderSubmitResponse, "order">;
+  try {
+    parsed = parseSubmitResponse(payload, normalizedInput);
+  } catch (error) {
+    if (
+      error instanceof HttpError &&
+      error.code === "snaptrade_option_order_submit_invalid_response"
+    ) {
+      throw submitReconcileRequiredError({
+        now,
+        account,
+        order: normalizedInput,
+        reason: "missing_order_id",
+        sourceCode: error.code,
+      });
+    }
+    throw error;
+  }
   try {
     await recordTaxPreflightOrderSubmitted({
       appUserId: options.appUserId,

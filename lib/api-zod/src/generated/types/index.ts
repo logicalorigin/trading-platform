@@ -776,6 +776,7 @@ export * from './snapTradeEquityOrderImpactTrade';
 export * from './snapTradeEquityOrderSubmitBody';
 export * from './snapTradeEquityOrderSubmitResponse';
 export * from './snapTradeEquityOrderSubmitResponseProvider';
+export * from './snapTradeEquityOrderSubmitResponseReconciliationReason';
 export * from './snapTradeEquityOrderType';
 export * from './snapTradeEquitySubmittedOrder';
 export * from './snapTradeEquityTimeInForce';

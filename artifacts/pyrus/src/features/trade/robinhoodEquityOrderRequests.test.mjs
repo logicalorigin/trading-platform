@@ -129,3 +129,38 @@ test("requires an execution-ready Agentic account", () => {
     body: null,
   });
 });
+
+test("preserves reconciliation metadata from an unknown submit outcome", async () => {
+  const data = {
+    outcome: "unknown",
+    reconcileRequired: true,
+    retryable: false,
+    refId: "44444444-4444-4444-8444-444444444444",
+  };
+
+  await assert.rejects(
+    placeRobinhoodEquityOrderRequest({
+      accountId: READY_ACCOUNT.id,
+      csrfToken: "csrf-token",
+      body: { symbol: "MSFT" },
+      fetchImpl: async () => ({
+        ok: false,
+        status: 409,
+        json: async () => ({
+          title: "Outcome unknown; reconcile before retrying",
+          code: "robinhood_order_submit_reconcile_required",
+          data,
+        }),
+      }),
+    }),
+    (error) => {
+      assert.equal(
+        error.message,
+        "Outcome unknown; reconcile before retrying",
+      );
+      assert.equal(error.code, "robinhood_order_submit_reconcile_required");
+      assert.deepEqual(error.data, data);
+      return true;
+    },
+  );
+});

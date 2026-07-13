@@ -112,7 +112,7 @@ export const PlaceRobinhoodOptionOrderResponse = z.object({
   submittedAt: z.string(),
   account,
   order: orderDetails.extend({
-    brokerageOrderId: z.string().nullable(),
+    brokerageOrderId: z.string(),
     state: z.string().nullable(),
     refId: z.string(),
   }),

@@ -1191,16 +1191,23 @@ export interface SnapTradeEquityOrderImpactResponse {
   impact: SnapTradeEquityOrderImpact;
 }
 
-export type SnapTradeEquitySubmittedOrder = SnapTradeEquityOrderDetails & ({
-  brokerageOrderId: string | null;
+export type SnapTradeEquitySubmittedOrder = SnapTradeEquityOrderDetails & {
+  brokerageOrderId: string;
   status: string;
-});
+};
 
 export type SnapTradeEquityOrderSubmitResponseProvider = typeof SnapTradeEquityOrderSubmitResponseProvider[keyof typeof SnapTradeEquityOrderSubmitResponseProvider];
 
 
 export const SnapTradeEquityOrderSubmitResponseProvider = {
   snaptrade: 'snaptrade',
+} as const;
+
+export type SnapTradeEquityOrderSubmitResponseReconciliationReason = typeof SnapTradeEquityOrderSubmitResponseReconciliationReason[keyof typeof SnapTradeEquityOrderSubmitResponseReconciliationReason];
+
+
+export const SnapTradeEquityOrderSubmitResponseReconciliationReason = {
+  tax_preflight_order_submit_record_failed: 'tax_preflight_order_submit_record_failed',
 } as const;
 
 /**
@@ -1211,6 +1218,8 @@ export interface SnapTradeEquityOrderSubmitResponse {
   submittedAt: string;
   account: SnapTradeEquityOrderAccount;
   order: SnapTradeEquitySubmittedOrder;
+  reconcileRequired?: boolean;
+  reconciliationReason?: SnapTradeEquityOrderSubmitResponseReconciliationReason;
 }
 
 /**

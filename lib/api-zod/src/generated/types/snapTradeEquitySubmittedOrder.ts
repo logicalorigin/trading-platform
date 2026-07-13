@@ -7,7 +7,7 @@
  */
 import type { SnapTradeEquityOrderDetails } from './snapTradeEquityOrderDetails';
 
-export type SnapTradeEquitySubmittedOrder = SnapTradeEquityOrderDetails & ({
-  brokerageOrderId: string | null;
+export type SnapTradeEquitySubmittedOrder = SnapTradeEquityOrderDetails & {
+  brokerageOrderId: string;
   status: string;
-});
+};
