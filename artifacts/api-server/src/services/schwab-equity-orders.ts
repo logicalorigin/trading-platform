@@ -225,6 +225,25 @@ export function validateSchwabEquityOrderInput(
     "Schwab order quantity must be a positive whole number of shares",
   );
 
+  if (orderType === "Market" && input.limitPrice != null) {
+    throw new HttpError(
+      422,
+      "Schwab market orders do not accept a limit price",
+      {
+        code: "schwab_order_market_limit_price_unsupported",
+      },
+    );
+  }
+  if (orderType === "Market" && input.stopPrice != null) {
+    throw new HttpError(
+      422,
+      "Schwab market orders do not accept a stop price",
+      {
+        code: "schwab_order_market_stop_price_unsupported",
+      },
+    );
+  }
+
   const needsLimit = orderType === "Limit" || orderType === "StopLimit";
   const needsStop = orderType === "Stop" || orderType === "StopLimit";
   const limitPrice = needsLimit

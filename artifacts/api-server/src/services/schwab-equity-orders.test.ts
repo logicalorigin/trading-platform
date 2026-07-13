@@ -95,6 +95,35 @@ test("validate accepts a market buy and defaults session to Normal", () => {
   });
 });
 
+test("validate rejects price fields on market orders", () => {
+  expectHttpError(
+    () =>
+      validateSchwabEquityOrderInput({
+        symbol: "XYZ",
+        action: "BUY",
+        quantity: 15,
+        orderType: "Market",
+        timeInForce: "Day",
+        limitPrice: 45.97,
+      }),
+    422,
+    "schwab_order_market_limit_price_unsupported",
+  );
+  expectHttpError(
+    () =>
+      validateSchwabEquityOrderInput({
+        symbol: "XYZ",
+        action: "BUY",
+        quantity: 15,
+        orderType: "Market",
+        timeInForce: "Day",
+        stopPrice: 45.97,
+      }),
+    422,
+    "schwab_order_market_stop_price_unsupported",
+  );
+});
+
 test("validate requires limit/stop prices for the relevant order types", () => {
   expectHttpError(
     () =>
