@@ -104,27 +104,33 @@ BEGIN;
 UPDATE execution_events SET payload = jsonb_set(jsonb_set(
     payload,
     '{backfill}', '{"source":"signal_options_backfill"}'::jsonb),
-    '{voided}', '{"reason":"invalid_entry_degenerate_quote_gates_failed_open","audit":"docs/plans/phantom-fills-audit-2026-07-09.md"}'::jsonb)
+    '{voided}', '{"reason":"invalid_entry_degenerate_quote_gates_failed_open","audit":"docs/plans/phantom-fills-audit-2026-07-09.md"}'::jsonb),
+    updated_at = now()
   WHERE id = 'f334df29-2953-4905-acee-627efbdab8cd';
 UPDATE execution_events SET payload = jsonb_set(jsonb_set(jsonb_set(
     payload,
     '{backfill}', '{"source":"signal_options_backfill"}'::jsonb),
     '{voided}', '{"reason":"invalid_entry_degenerate_quote_gates_failed_open","audit":"docs/plans/phantom-fills-audit-2026-07-09.md"}'::jsonb),
-    '{pnl}', '0'::jsonb)
+    '{pnl}', '0'::jsonb),
+    updated_at = now()
   WHERE id = '4a935ebc-9b42-4782-9ec4-95eeba023270';
 
 -- Re-priced exits: align event payload pnl/exitPrice with the corrected fills
 -- (KTOS and MULL each emitted duplicate exit events; patch all in the window).
-UPDATE execution_events SET payload = jsonb_set(jsonb_set(payload,'{pnl}','105.31'::jsonb),'{exitPrice}','3.92'::jsonb)
+UPDATE execution_events SET payload = jsonb_set(jsonb_set(payload,'{pnl}','105.31'::jsonb),'{exitPrice}','3.92'::jsonb),
+    updated_at = now()
   WHERE event_type='signal_options_shadow_exit' AND payload->'position'->>'symbol'='BRKR'
     AND occurred_at BETWEEN '2026-07-09T13:00:00Z' AND '2026-07-09T15:00:00Z';
-UPDATE execution_events SET payload = jsonb_set(jsonb_set(payload,'{pnl}','-96.73'::jsonb),'{exitPrice}','0.95'::jsonb)
+UPDATE execution_events SET payload = jsonb_set(jsonb_set(payload,'{pnl}','-96.73'::jsonb),'{exitPrice}','0.95'::jsonb),
+    updated_at = now()
   WHERE event_type='signal_options_shadow_exit' AND payload->'position'->>'symbol'='ZETA'
     AND occurred_at BETWEEN '2026-07-09T13:00:00Z' AND '2026-07-09T15:00:00Z';
-UPDATE execution_events SET payload = jsonb_set(jsonb_set(payload,'{pnl}','-582.06'::jsonb),'{exitPrice}','1.00'::jsonb)
+UPDATE execution_events SET payload = jsonb_set(jsonb_set(payload,'{pnl}','-582.06'::jsonb),'{exitPrice}','1.00'::jsonb),
+    updated_at = now()
   WHERE event_type='signal_options_shadow_exit' AND payload->'position'->>'symbol'='KTOS'
     AND occurred_at BETWEEN '2026-07-09T13:00:00Z' AND '2026-07-09T15:00:00Z';
-UPDATE execution_events SET payload = jsonb_set(jsonb_set(payload,'{pnl}','-713.02'::jsonb),'{exitPrice}','2.05'::jsonb)
+UPDATE execution_events SET payload = jsonb_set(jsonb_set(payload,'{pnl}','-713.02'::jsonb),'{exitPrice}','2.05'::jsonb),
+    updated_at = now()
   WHERE event_type='signal_options_shadow_exit' AND payload->'position'->>'symbol'='MULL'
     AND occurred_at BETWEEN '2026-07-09T13:00:00Z' AND '2026-07-09T15:00:00Z';
 

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import {
@@ -105,6 +106,79 @@ test("listExecutionEvents cache keys include deployment, limit, and payload flag
   } finally {
     internals.setListExecutionEventsReaderForTests(null);
     internals.clearExecutionEventsListCacheForTests();
+  }
+});
+
+test("listExecutionEvents canonicalizes fractional limits before caching", async () => {
+  internals.clearExecutionEventsListCacheForTests();
+  const observedLimits: number[] = [];
+  internals.setListExecutionEventsReaderForTests(async (input) => {
+    observedLimits.push(input.limit);
+    return { events: [] };
+  });
+
+  try {
+    const first = await listExecutionEvents({ limit: 20.1 });
+    const second = await listExecutionEvents({ limit: 20.9 });
+
+    assert.deepEqual(observedLimits, [20]);
+    assert.equal(first, second);
+  } finally {
+    internals.setListExecutionEventsReaderForTests(null);
+    internals.clearExecutionEventsListCacheForTests();
+  }
+});
+
+test("completed event caches evict the oldest aligned key at 33", async () => {
+  internals.clearExecutionEventsListCacheForTests();
+  internals.setListExecutionEventsReaderForTests(async (input) => {
+    internals.setExecutionEventRowsCacheForTests(input);
+    return { events: [] };
+  });
+
+  try {
+    for (let index = 1; index <= 33; index += 1) {
+      await listExecutionEvents({
+        deploymentId: `dep-${index}`,
+        limit: 20,
+      });
+    }
+
+    assert.deepEqual(
+      internals.getExecutionEventsCompletedCacheStateForTests({
+        deploymentId: "dep-1",
+        limit: 20,
+      }),
+      { listHasKey: false, rowsHasKey: false, listSize: 32, rowsSize: 32 },
+    );
+    assert.deepEqual(
+      internals.getExecutionEventsCompletedCacheStateForTests({
+        deploymentId: "dep-33",
+        limit: 20,
+      }),
+      { listHasKey: true, rowsHasKey: true, listSize: 32, rowsSize: 32 },
+    );
+  } finally {
+    internals.setListExecutionEventsReaderForTests(null);
+    internals.clearExecutionEventsListCacheForTests();
+  }
+});
+
+test("operator execution-event payload surgery advances updated_at", () => {
+  const source = readFileSync(
+    new URL(
+      "../../../../docs/plans/phantom-fill-surgery-2026-07-09.sql",
+      import.meta.url,
+    ),
+    "utf8",
+  );
+  const payloadUpdates = source.match(
+    /UPDATE execution_events SET payload =[\s\S]*?;/gi,
+  );
+
+  assert.equal(payloadUpdates?.length, 6);
+  for (const statement of payloadUpdates ?? []) {
+    assert.match(statement, /updated_at\s*=\s*now\(\)/i);
   }
 });
 

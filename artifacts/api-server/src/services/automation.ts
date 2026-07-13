@@ -85,6 +85,8 @@ const deploymentListInFlight = new Map<
   Promise<AlgoDeploymentMetadataListResponse>
 >();
 const EXECUTION_EVENTS_LIST_CACHE_TTL_MS = 2_000;
+// ponytail: cap by key; use a byte budget only if payload-size variance proves this insufficient.
+const EXECUTION_EVENTS_COMPLETED_CACHE_MAX_KEYS = 32;
 type ListExecutionEventsResult = {
   events: ReturnType<typeof executionEventToResponse>[];
 };
@@ -1128,7 +1130,7 @@ function normalizeListExecutionEventsInput(
 ): NormalizedListExecutionEventsInput {
   return {
     deploymentId: input.deploymentId,
-    limit: Math.min(Math.max(input.limit ?? 100, 1), 500),
+    limit: Math.min(Math.max(Math.trunc(input.limit ?? 100), 1), 500),
     includePayload: input.includePayload === true,
   };
 }
@@ -1141,6 +1143,45 @@ function executionEventsListCacheKey(
     input.limit,
     input.includePayload ? "payload" : "summary",
   ].join("|");
+}
+
+function setExecutionEventRowsCache(
+  key: string,
+  value: ExecutionEventRowCache<ListExecutionEventsResult["events"][number]>,
+) {
+  executionEventRowsCache.delete(key);
+  executionEventRowsCache.set(key, value);
+}
+
+function setExecutionEventsListCache(
+  key: string,
+  value: { expiresAt: number; value: ListExecutionEventsResult },
+) {
+  if (
+    !executionEventsListCache.has(key) &&
+    executionEventsListCache.size >= EXECUTION_EVENTS_COMPLETED_CACHE_MAX_KEYS
+  ) {
+    const oldestKey = executionEventsListCache.keys().next().value;
+    if (oldestKey !== undefined) {
+      executionEventsListCache.delete(oldestKey);
+      executionEventRowsCache.delete(oldestKey);
+    }
+  }
+  executionEventsListCache.delete(key);
+  executionEventsListCache.set(key, value);
+}
+
+function touchExecutionEventsCompletedCacheKey(key: string) {
+  const listEntry = executionEventsListCache.get(key);
+  if (listEntry) {
+    executionEventsListCache.delete(key);
+    executionEventsListCache.set(key, listEntry);
+  }
+  const rowsEntry = executionEventRowsCache.get(key);
+  if (rowsEntry) {
+    executionEventRowsCache.delete(key);
+    executionEventRowsCache.set(key, rowsEntry);
+  }
 }
 
 async function readExecutionEventsUncached(
@@ -1156,7 +1197,7 @@ async function readExecutionEventsUncached(
     executionEventRowsCache.get(cacheKey),
     (changed) => readExecutionEventRows(input, changed),
   );
-  executionEventRowsCache.set(cacheKey, materialized.cache);
+  setExecutionEventRowsCache(cacheKey, materialized.cache);
   return { events: materialized.rows };
 }
 
@@ -1337,10 +1378,8 @@ export async function listExecutionEvents(
   const now = Date.now();
   const cached = executionEventsListCache.get(key);
   if (cached && cached.expiresAt > now) {
+    touchExecutionEventsCompletedCacheKey(key);
     return cached.value;
-  }
-  if (cached) {
-    executionEventsListCache.delete(key);
   }
   const existing = executionEventsListInFlight.get(key);
   if (existing) {
@@ -1351,7 +1390,7 @@ export async function listExecutionEvents(
     listExecutionEventsReaderForTests ?? readExecutionEventsUncached;
   const request = reader(normalized)
     .then((value) => {
-      executionEventsListCache.set(key, {
+      setExecutionEventsListCache(key, {
         value,
         expiresAt: Date.now() + EXECUTION_EVENTS_LIST_CACHE_TTL_MS,
       });
@@ -1377,6 +1416,26 @@ export const __algoAutomationInternalsForTests = {
   readSignalTimeframe,
   mergeExecutionEventRows,
   materializeExecutionEventRows,
+  setExecutionEventRowsCacheForTests(input: ListExecutionEventsInput) {
+    const normalized = normalizeListExecutionEventsInput(input);
+    setExecutionEventRowsCache(
+      executionEventsListCacheKey(normalized),
+      new Map(),
+    );
+  },
+  getExecutionEventsCompletedCacheStateForTests(
+    input: ListExecutionEventsInput,
+  ) {
+    const key = executionEventsListCacheKey(
+      normalizeListExecutionEventsInput(input),
+    );
+    return {
+      listHasKey: executionEventsListCache.has(key),
+      rowsHasKey: executionEventRowsCache.has(key),
+      listSize: executionEventsListCache.size,
+      rowsSize: executionEventRowsCache.size,
+    };
+  },
   clearExecutionEventsListCacheForTests() {
     executionEventsListCache.clear();
     executionEventsListInFlight.clear();
