@@ -4353,15 +4353,31 @@ export async function previewOrderReplacement(input: {
       expose: true,
     });
   }
-  await assertIbkrGatewayTradingAvailable(input.accountId);
-  const gatewaySnapshot = assertIbkrClientPortalGatewaySnapshot();
-  const previousIntent = await loadSubmittedIbkrPreparedOrderIntent({
-    accountId: input.accountId,
-    submittedOrderId: input.orderId,
-  });
-  const client = getIbkrClientPortalClient();
-  let preview: Awaited<ReturnType<typeof client.previewOrderReplacement>>;
+  if (
+    !/^\d+$/u.test(input.orderId) ||
+    !Number.isFinite(input.limitPrice) ||
+    input.limitPrice <= 0
+  ) {
+    throw new HttpError(409, "The IBKR replacement request is invalid.", {
+      code: "ibkr_replace_request_invalid",
+      expose: true,
+    });
+  }
+  let gatewaySnapshot: IbkrClientPortalGatewaySnapshot;
+  let previousIntent: IbkrPreparedOrderIntent;
+  let preview: Awaited<
+    ReturnType<
+      ReturnType<typeof getIbkrClientPortalClient>["previewOrderReplacement"]
+    >
+  >;
   try {
+    await assertIbkrGatewayTradingAvailable(input.accountId);
+    gatewaySnapshot = assertIbkrClientPortalGatewaySnapshot();
+    previousIntent = await loadSubmittedIbkrPreparedOrderIntent({
+      accountId: input.accountId,
+      submittedOrderId: input.orderId,
+    });
+    const client = getIbkrClientPortalClient();
     preview = await client.previewOrderReplacement({
       accountId: input.accountId,
       orderId: input.orderId,

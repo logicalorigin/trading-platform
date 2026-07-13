@@ -148,6 +148,18 @@ test("direct IBKR order visibility cache isolates app users and gateway generati
 });
 
 test("replacement preview persists reconciliation for ambiguous state evidence only", () => {
+  const replacementPreviewSource = platformSource.slice(
+    platformSource.indexOf("export async function previewOrderReplacement"),
+    platformSource.indexOf("export async function replaceOrder"),
+  );
+  assert.ok(
+    replacementPreviewSource.indexOf("try {") <
+      replacementPreviewSource.indexOf("await assertIbkrGatewayTradingAvailable"),
+  );
+  assert.match(
+    replacementPreviewSource,
+    /recordSubmittedIbkrOrderReconciliationRequired\(/,
+  );
   assert.equal(
     replacementPreviewRequiresReconciliation(
       new HttpError(409, "filled", { code: "ibkr_replace_order_has_fills" }),
