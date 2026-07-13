@@ -137,3 +137,41 @@ test("IBKR what-if and submission use the identical prepared order", async () =>
     globalThis.fetch = previousFetch;
   }
 });
+
+test("IBKR what-if fails closed for empty and unrecognized responses", async () => {
+  const previousFetch = globalThis.fetch;
+  const responses: unknown[] = [{}, { status: "ok" }];
+  globalThis.fetch = (async (input) => {
+    const path = new URL(String(input)).pathname;
+    if (path.endsWith("/iserver/accounts")) {
+      return Response.json({
+        accounts: ["U1234567"],
+        selectedAccount: "U1234567",
+        isPaper: false,
+      });
+    }
+    if (path.endsWith("/iserver/secdef/search")) {
+      return Response.json([
+        { symbol: "AAPL", conid: 265598, description: "NASDAQ" },
+      ]);
+    }
+    if (path.endsWith("/iserver/marketdata/snapshot")) {
+      return Response.json([]);
+    }
+    if (path.endsWith("/iserver/account/U1234567/orders/whatif")) {
+      return Response.json(responses.shift());
+    }
+    throw new Error(`unexpected IBKR request: ${path}`);
+  }) as typeof fetch;
+
+  try {
+    const client = new IbkrClient(config());
+    const empty = await client.previewOrder(order);
+    const unrecognized = await client.previewOrder(order);
+
+    assert.match(empty.whatIf.error ?? "", /did not verify/i);
+    assert.match(unrecognized.whatIf.error ?? "", /did not verify/i);
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});

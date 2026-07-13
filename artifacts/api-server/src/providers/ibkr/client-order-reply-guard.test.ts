@@ -177,3 +177,76 @@ test("IBKR object acknowledgement errors fail closed as broker rejection", async
     globalThis.fetch = previousFetch;
   }
 });
+
+test("IBKR mixed order acknowledgement and error requires reconciliation", async () => {
+  const previousFetch = globalThis.fetch;
+  globalThis.fetch = (async (input) => {
+    const path = new URL(String(input)).pathname;
+    if (path.endsWith("/iserver/accounts")) {
+      return Response.json({ accounts: ["U1234567"], isPaper: false });
+    }
+    if (path.endsWith("/iserver/secdef/search")) {
+      return Response.json([
+        { symbol: "AAPL", conid: 265598, description: "NASDAQ" },
+      ]);
+    }
+    if (path.endsWith("/iserver/account/U1234567/orders")) {
+      return Response.json({
+        order_id: "order-1",
+        order_status: "Submitted",
+        error: "Broker also reported an error",
+      });
+    }
+    throw new Error(`unexpected IBKR request: ${path}`);
+  }) as typeof fetch;
+
+  try {
+    await assert.rejects(
+      new IbkrClient(config()).placeOrder(order),
+      (error: unknown) => {
+        assert.equal(
+          (error as { code?: string }).code,
+          "ibkr_ambiguous_order_ack",
+        );
+        return true;
+      },
+    );
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
+test("IBKR mixed reply acknowledgement and error requires reconciliation", async () => {
+  const previousFetch = globalThis.fetch;
+  globalThis.fetch = (async (input) => {
+    const path = new URL(String(input)).pathname;
+    if (path.endsWith("/iserver/reply/reply-mixed")) {
+      return Response.json([
+        {
+          order_id: "order-1",
+          order_status: "Submitted",
+          error: "Broker also reported an error",
+        },
+      ]);
+    }
+    throw new Error(`unexpected IBKR request: ${path}`);
+  }) as typeof fetch;
+
+  try {
+    await assert.rejects(
+      new IbkrClient(config()).replyOrderWarning({
+        replyId: "reply-mixed",
+        confirmed: true,
+      }),
+      (error: unknown) => {
+        assert.equal(
+          (error as { code?: string }).code,
+          "ibkr_ambiguous_order_ack",
+        );
+        return true;
+      },
+    );
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});

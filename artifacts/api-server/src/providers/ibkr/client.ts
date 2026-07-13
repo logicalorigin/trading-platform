@@ -693,7 +693,7 @@ function parseIbkrWhatIf(payload: unknown): OrderPreviewSnapshot["whatIf"] {
   const initial = asRecord(whatIf["initial"]);
   const maintenance = asRecord(whatIf["maintenance"]);
   const position = asRecord(whatIf["position"]);
-  return {
+  const result = {
     amount: asString(amount?.["amount"]),
     commission: asString(amount?.["commission"]),
     total: asString(amount?.["total"]),
@@ -708,6 +708,19 @@ function parseIbkrWhatIf(payload: unknown): OrderPreviewSnapshot["whatIf"] {
     ]),
     error: asString(whatIf["error"]),
   };
+  if (
+    !result.error &&
+    result.amount === null &&
+    result.commission === null &&
+    result.total === null &&
+    result.equityChange === null &&
+    result.initialMarginChange === null &&
+    result.maintenanceMarginChange === null &&
+    result.positionChange === null
+  ) {
+    result.error = "IBKR did not verify the what-if request.";
+  }
+  return result;
 }
 
 function parseOptionDetails(
@@ -3259,6 +3272,18 @@ export class IbkrClient {
       ? [directResult]
       : compact(asArray(responsePayload).map(asRecord));
     const brokerError = results.find((result) => asString(result["error"]));
+    const successfulOrder = results.find(
+      (result) =>
+        asString(result["order_id"]) !== null ||
+        asString(result["orderId"]) !== null,
+    );
+    if (brokerError && successfulOrder) {
+      throw new HttpError(
+        502,
+        "IBKR returned both an order acknowledgement and an error.",
+        { code: "ibkr_ambiguous_order_ack" },
+      );
+    }
     if (brokerError) {
       throw new HttpError(409, "IBKR rejected the order request.", {
         code: "ibkr_order_rejected",
@@ -3266,12 +3291,6 @@ export class IbkrClient {
         expose: true,
       });
     }
-    const successfulOrder = results.find(
-      (result) =>
-        asString(result["order_id"]) !== null ||
-        asString(result["orderId"]) !== null,
-    );
-
     if (successfulOrder) {
       return successfulOrder;
     }
@@ -3329,11 +3348,26 @@ export class IbkrClient {
       return { kind: "declined" };
     }
     const results = compact(asArray(payload).map(asRecord));
+    const brokerError = results.find((result) => asString(result["error"]));
     const acknowledgement = results.find(
       (result) =>
         asString(result["order_id"]) !== null ||
         asString(result["orderId"]) !== null,
     );
+    if (brokerError && acknowledgement) {
+      throw new HttpError(
+        502,
+        "IBKR returned both an order acknowledgement and an error.",
+        { code: "ibkr_ambiguous_order_ack" },
+      );
+    }
+    if (brokerError) {
+      throw new HttpError(409, "IBKR rejected the order request.", {
+        code: "ibkr_order_rejected",
+        detail: asString(brokerError["error"]) ?? undefined,
+        expose: true,
+      });
+    }
     if (acknowledgement) {
       return { kind: "acknowledged", acknowledgement };
     }
@@ -4260,14 +4294,15 @@ export class IbkrClient {
         method: "DELETE",
       },
       {
-        manualIndicator: input.manualIndicator ?? true,
-        extOperator: input.extOperator ?? this.config.extOperator,
+        manualIndicator: true,
+        extOperator: this.config.extOperator,
       },
     );
     const record = asRecord(payload);
     let status: OrderStatus = "pending_cancel";
     let filledQuantity = 0;
     let reconciliationRequired = true;
+    let cancellationEvidenceComplete = false;
     // ponytail: bounded polling is enough for one manual order; use the order
     // websocket before enabling concurrent automated mutations.
     for (let attempt = 0; attempt < 8; attempt += 1) {
@@ -4279,25 +4314,31 @@ export class IbkrClient {
           asRecord(statusPayload) ??
           compact(asArray(statusPayload).map(asRecord))[0] ??
           {};
-        filledQuantity =
-          firstDefined(
-            asNumber(statusRecord["filledQuantity"]),
-            asNumber(statusRecord["filled_quantity"]),
-            asNumber(statusRecord["cum_fill"]),
-          ) ?? 0;
-        const remainingQuantity =
-          firstDefined(
-            asNumber(statusRecord["remainingQuantity"]),
-            asNumber(statusRecord["remaining_quantity"]),
-            asNumber(statusRecord["size"]),
-          ) ?? 0;
+        const observedFilledQuantity = firstDefined(
+          asNumber(statusRecord["filledQuantity"]),
+          asNumber(statusRecord["filled_quantity"]),
+          asNumber(statusRecord["cum_fill"]),
+        );
+        const observedRemainingQuantity = firstDefined(
+          asNumber(statusRecord["remainingQuantity"]),
+          asNumber(statusRecord["remaining_quantity"]),
+          asNumber(statusRecord["size"]),
+        );
+        cancellationEvidenceComplete =
+          observedFilledQuantity !== null &&
+          observedFilledQuantity >= 0 &&
+          observedRemainingQuantity !== null &&
+          observedRemainingQuantity >= 0;
+        if (observedFilledQuantity !== null && observedFilledQuantity >= 0) {
+          filledQuantity = Math.max(filledQuantity, observedFilledQuantity);
+        }
         status = normalizeOrderStatus(
           firstDefined(
             asString(statusRecord["order_status"]),
             asString(statusRecord["status"]),
           ),
           filledQuantity,
-          remainingQuantity,
+          observedRemainingQuantity ?? 0,
         );
         if (
           status === "canceled" ||
@@ -4305,7 +4346,10 @@ export class IbkrClient {
           status === "rejected" ||
           status === "expired"
         ) {
-          reconciliationRequired = status !== "canceled";
+          reconciliationRequired =
+            status !== "canceled" ||
+            !cancellationEvidenceComplete ||
+            filledQuantity > 0;
           break;
         }
       } catch {
@@ -4344,7 +4388,7 @@ export class IbkrClient {
       status,
       filledQuantity,
       terminal,
-      cancelConfirmed: status === "canceled",
+      cancelConfirmed: status === "canceled" && cancellationEvidenceComplete,
       reconciliationRequired,
     };
   }
