@@ -189,13 +189,13 @@ function snapshotDependencies(input: {
   };
   const events = { events: input.events ?? [] };
   const dependencies = {
-    getSummary: async () => summary,
+    getSummaryFromPositions: async () => summary,
     getEquityHistory: async () => equityHistory,
     getPositions: async () => positions,
     getClosedTrades: async () => closedTrades,
     getOrders: async ({ tab }: { tab?: string }) =>
       tab === "working" ? workingOrders : historyOrders,
-    getAllocation: async () => allocation,
+    getAllocationFromPositions: () => allocation,
     getRisk: async () => risk,
     listDeployments: async () => deployments,
     getCockpit: async () => cockpit,
@@ -274,6 +274,25 @@ test("marketing dashboard snapshot stages cold DB reads", () => {
 
   const block = source.slice(start, end);
   assert.doesNotMatch(block, /Promise\.all/);
+});
+
+test("marketing dashboard derives summary and allocation from its positions read", () => {
+  const source = readFileSync(
+    new URL("./marketing-shadow-dashboard.ts", import.meta.url),
+    "utf8",
+  );
+  const start = source.indexOf(
+    "async function fetchMarketingShadowDashboardSnapshotUncached",
+  );
+  const end = source.indexOf("const marketingPayloadSignatureMemo", start);
+  assert.notEqual(start, -1);
+  assert.notEqual(end, -1);
+  const block = source.slice(start, end);
+
+  assert.match(block, /deps\.getSummaryFromPositions\(\{\s*positionsResponse: positions/);
+  assert.match(block, /deps\.getAllocationFromPositions\(\{\s*positionsResponse: positions/);
+  assert.doesNotMatch(block, /deps\.getSummary\(\)/);
+  assert.doesNotMatch(block, /deps\.getAllocation\(\)/);
 });
 
 test("marketing dashboard default snapshots share cache and in-flight work", () => {

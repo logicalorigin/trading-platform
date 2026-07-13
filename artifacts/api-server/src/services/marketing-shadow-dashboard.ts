@@ -6,25 +6,27 @@ import {
 } from "./automation";
 import { subscribeAlgoCockpitChanges } from "./algo-cockpit-events";
 import {
-  getShadowAccountAllocation,
+  getShadowAccountAllocationFromPositions,
   getShadowAccountClosedTrades,
   getShadowAccountEquityHistory,
   getShadowAccountOrders,
   getShadowAccountPositions,
   getShadowAccountRisk,
-  getShadowAccountSummary,
+  getShadowAccountSummaryFromPositions,
 } from "./shadow-account";
 import { subscribeShadowAccountChanges } from "./shadow-account-events";
 import { getAlgoDeploymentCockpit } from "./signal-options-automation";
 import { logger } from "../lib/logger";
 
 type AsyncReturn<T extends (...args: any[]) => unknown> = Awaited<ReturnType<T>>;
-type ShadowSummary = AsyncReturn<typeof getShadowAccountSummary>;
+type ShadowSummary = AsyncReturn<typeof getShadowAccountSummaryFromPositions>;
 type ShadowEquityHistory = AsyncReturn<typeof getShadowAccountEquityHistory>;
 type ShadowPositions = AsyncReturn<typeof getShadowAccountPositions>;
 type ShadowClosedTrades = AsyncReturn<typeof getShadowAccountClosedTrades>;
 type ShadowOrders = AsyncReturn<typeof getShadowAccountOrders>;
-type ShadowAllocation = AsyncReturn<typeof getShadowAccountAllocation>;
+type ShadowAllocation = AsyncReturn<
+  typeof getShadowAccountAllocationFromPositions
+>;
 type ShadowRisk = AsyncReturn<typeof getShadowAccountRisk>;
 type AlgoDeployments = AsyncReturn<typeof listAlgoDeployments>;
 type AlgoDeployment = AlgoDeployments["deployments"][number];
@@ -139,12 +141,12 @@ export type MarketingShadowDashboardPayload = {
 };
 
 export type MarketingShadowDashboardDependencies = {
-  getSummary: typeof getShadowAccountSummary;
+  getSummaryFromPositions: typeof getShadowAccountSummaryFromPositions;
   getEquityHistory: typeof getShadowAccountEquityHistory;
   getPositions: typeof getShadowAccountPositions;
   getClosedTrades: typeof getShadowAccountClosedTrades;
   getOrders: typeof getShadowAccountOrders;
-  getAllocation: typeof getShadowAccountAllocation;
+  getAllocationFromPositions: typeof getShadowAccountAllocationFromPositions;
   getRisk: typeof getShadowAccountRisk;
   listDeployments: typeof listAlgoDeployments;
   getCockpit: typeof getAlgoDeploymentCockpit;
@@ -153,12 +155,12 @@ export type MarketingShadowDashboardDependencies = {
 };
 
 const defaultDependencies: MarketingShadowDashboardDependencies = {
-  getSummary: getShadowAccountSummary,
+  getSummaryFromPositions: getShadowAccountSummaryFromPositions,
   getEquityHistory: getShadowAccountEquityHistory,
   getPositions: getShadowAccountPositions,
   getClosedTrades: getShadowAccountClosedTrades,
   getOrders: getShadowAccountOrders,
-  getAllocation: getShadowAccountAllocation,
+  getAllocationFromPositions: getShadowAccountAllocationFromPositions,
   getRisk: getShadowAccountRisk,
   listDeployments: listAlgoDeployments,
   getCockpit: getAlgoDeploymentCockpit,
@@ -644,7 +646,6 @@ async function fetchMarketingShadowDashboardSnapshotUncached(
   // The first dashboard snapshot often lands during app warmup. These reads are
   // cached below the service layer, but cold parallel fan-out can occupy the
   // entire shared DB pool alongside signal-monitor bar-cache warmup.
-  const summary = await deps.getSummary();
   const equityHistory = await deps.getEquityHistory({
     range: normalized.equityRange,
   });
@@ -652,7 +653,12 @@ async function fetchMarketingShadowDashboardSnapshotUncached(
   const closedTrades = await deps.getClosedTrades({});
   const workingOrders = await deps.getOrders({ tab: "working" });
   const historyOrders = await deps.getOrders({ tab: "history" });
-  const allocation = await deps.getAllocation();
+  const summary = await deps.getSummaryFromPositions({
+    positionsResponse: positions,
+  });
+  const allocation = deps.getAllocationFromPositions({
+    positionsResponse: positions,
+  });
   const deployments = await deps.listDeployments({ mode: "shadow" });
   const risk = await deps.getRisk({
     positionsResponse: positions,
