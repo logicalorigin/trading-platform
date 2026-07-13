@@ -3,8 +3,11 @@ import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import {
   __marketingShadowDashboardInternalsForTests,
+  fetchMarketingShadowDashboardSnapshot,
+  MARKETING_SHADOW_DASHBOARD_HISTORY_LIMIT,
   normalizeMarketingShadowDashboardInput,
   subscribeMarketingShadowDashboardSnapshots,
+  type MarketingShadowDashboardDependencies,
   type MarketingShadowDashboardPayload,
 } from "./marketing-shadow-dashboard";
 import {
@@ -44,6 +47,7 @@ function createFakeTimers() {
     clearTimeout: ((handle: TimerHandle) => {
       timeouts.delete(handle);
     }) as unknown as typeof clearTimeout,
+    intervalCount: () => intervals.size,
     fireIntervals: () => {
       for (const handle of [...intervals]) handle.callback();
     },
@@ -83,7 +87,12 @@ function marketingPayload(cash: number): MarketingShadowDashboardPayload {
       equityHistory: [],
       positions: [],
       closedTrades: [],
-      orders: { working: [], history: [] },
+      closedTradesMeta: { total: 0, truncated: false },
+      orders: {
+        working: [],
+        history: [],
+        historyMeta: { total: 0, truncated: false },
+      },
       risk: {} as never,
       allocation: {} as never,
       tradeStats: {
@@ -106,7 +115,95 @@ function marketingPayload(cash: number): MarketingShadowDashboardPayload {
       activePositions: [],
       events: [],
     },
+  } as MarketingShadowDashboardPayload;
+}
+
+function snapshotDependencies(input: {
+  closedTrades?: Array<Record<string, unknown>>;
+  workingOrders?: Array<Record<string, unknown>>;
+  historyOrders?: Array<Record<string, unknown>>;
+  positions?: Array<Record<string, unknown>>;
+  equityPoints?: Array<{ timestamp: Date; netLiquidation: number }>;
+  events?: Array<Record<string, unknown>>;
+}) {
+  const timestamp = new Date("2026-07-07T00:00:00.000Z");
+  const summary = {
+    currency: "USD",
+    metrics: {},
+    updatedAt: timestamp,
   };
+  const equityHistory = {
+    points: input.equityPoints ?? [],
+    asOf: timestamp,
+    latestSnapshotAt: timestamp,
+    isStale: false,
+  };
+  const positions = {
+    positions: input.positions ?? [],
+    updatedAt: timestamp,
+  };
+  const closedTrades = {
+    trades: input.closedTrades ?? [],
+    summary: {
+      count: input.closedTrades?.length ?? 0,
+      winners: input.closedTrades?.length ?? 0,
+      losers: 0,
+      realizedPnl: input.closedTrades?.length ?? 0,
+      commissions: 0,
+    },
+    updatedAt: timestamp,
+  };
+  const workingOrders = {
+    orders: input.workingOrders ?? [],
+    updatedAt: timestamp,
+  };
+  const historyOrders = {
+    orders: input.historyOrders ?? [],
+    updatedAt: timestamp,
+  };
+  const allocation = { updatedAt: timestamp };
+  const risk = { updatedAt: timestamp };
+  const deployments = input.events?.length
+    ? {
+        deployments: [
+          {
+            id: "deployment-1",
+            name: "Shadow deployment",
+            enabled: true,
+            mode: "shadow",
+            lastEvaluatedAt: timestamp,
+            lastSignalAt: timestamp,
+          },
+        ],
+      }
+    : { deployments: [] };
+  const cockpit = {
+    generatedAt: timestamp,
+    readiness: null,
+    kpis: null,
+    pipelineStages: [],
+    attentionItems: [],
+    signals: [],
+    candidates: [],
+    activePositions: [],
+  };
+  const events = { events: input.events ?? [] };
+  const dependencies = {
+    getSummary: async () => summary,
+    getEquityHistory: async () => equityHistory,
+    getPositions: async () => positions,
+    getClosedTrades: async () => closedTrades,
+    getOrders: async ({ tab }: { tab?: string }) =>
+      tab === "working" ? workingOrders : historyOrders,
+    getAllocation: async () => allocation,
+    getRisk: async () => risk,
+    listDeployments: async () => deployments,
+    getCockpit: async () => cockpit,
+    listEvents: async () => events,
+    now: () => timestamp,
+  } as unknown as Partial<MarketingShadowDashboardDependencies>;
+
+  return dependencies;
 }
 
 test("pool-contention markers do not count as degraded or stale", () => {
@@ -201,6 +298,169 @@ test("marketing dashboard default snapshots share cache and in-flight work", () 
   assert.match(block, /marketingSnapshotInFlight\.set\(cacheKey, inFlight\)/);
   assert.match(block, /marketingSnapshotInFlight\.delete\(cacheKey\)/);
   assert.match(block, /MARKETING_SHADOW_DASHBOARD_SNAPSHOT_CACHE_MS/);
+});
+
+test("marketing snapshot bounds histories but keeps full trade stats and working orders", async () => {
+  const closedTrades = Array.from(
+    { length: MARKETING_SHADOW_DASHBOARD_HISTORY_LIMIT + 5 },
+    (_, index) => ({ id: `trade-${index}`, realizedPnl: 1 }),
+  );
+  const historyOrders = Array.from(
+    { length: MARKETING_SHADOW_DASHBOARD_HISTORY_LIMIT + 5 },
+    (_, index) => ({ id: `history-${index}` }),
+  );
+  const workingOrders = Array.from(
+    { length: MARKETING_SHADOW_DASHBOARD_HISTORY_LIMIT + 5 },
+    (_, index) => ({ id: `working-${index}` }),
+  );
+  const dependencies = snapshotDependencies({
+    closedTrades,
+    historyOrders,
+    workingOrders,
+  });
+
+  const payload = await fetchMarketingShadowDashboardSnapshot({}, dependencies);
+
+  assert.equal(
+    payload.account.closedTrades.length,
+    MARKETING_SHADOW_DASHBOARD_HISTORY_LIMIT,
+  );
+  assert.equal(
+    (payload.account.closedTrades.at(-1) as { id: string }).id,
+    `trade-${MARKETING_SHADOW_DASHBOARD_HISTORY_LIMIT - 1}`,
+  );
+  assert.deepEqual(payload.account.closedTradesMeta, {
+    total: closedTrades.length,
+    truncated: true,
+  });
+  assert.equal(payload.account.tradeStats.count, closedTrades.length);
+  assert.equal(payload.account.tradeStats.realizedPnl, closedTrades.length);
+  assert.equal(
+    payload.account.orders.history.length,
+    MARKETING_SHADOW_DASHBOARD_HISTORY_LIMIT,
+  );
+  assert.deepEqual(payload.account.orders.historyMeta, {
+    total: historyOrders.length,
+    truncated: true,
+  });
+  assert.equal(payload.account.orders.working.length, workingOrders.length);
+});
+
+test("marketing snapshot reuses projections when cached source responses retain identity", async () => {
+  const dependencies = snapshotDependencies({
+    closedTrades: [{ id: "trade-1", realizedPnl: 1 }],
+    workingOrders: [{ id: "working-1" }],
+    historyOrders: [{ id: "history-1" }],
+    positions: [{ id: "position-1" }],
+    equityPoints: [
+      {
+        timestamp: new Date("2026-07-07T00:00:00.000Z"),
+        netLiquidation: 100,
+      },
+    ],
+    events: [
+      {
+        id: "event-1",
+        deploymentId: "deployment-1",
+        symbol: "SPY",
+        eventType: "signal",
+        summary: "Signal",
+        payload: { score: 1 },
+        occurredAt: new Date("2026-07-07T00:00:00.000Z"),
+        createdAt: new Date("2026-07-07T00:00:00.000Z"),
+        updatedAt: new Date("2026-07-07T00:00:00.000Z"),
+      },
+    ],
+  });
+
+  const first = await fetchMarketingShadowDashboardSnapshot({}, dependencies);
+  const second = await fetchMarketingShadowDashboardSnapshot({}, dependencies);
+
+  assert.equal(second.account.equityHistory, first.account.equityHistory);
+  assert.equal(second.account.positions, first.account.positions);
+  assert.equal(second.account.closedTrades, first.account.closedTrades);
+  assert.equal(second.account.orders.working, first.account.orders.working);
+  assert.equal(second.account.orders.history, first.account.orders.history);
+  assert.equal(second.algo.events, first.algo.events);
+});
+
+test("marketing subscribers with the same normalized input share one poller", async () => {
+  const timers = createFakeTimers();
+  const initialPayload = marketingPayload(50);
+  const changedPayload = marketingPayload(51);
+  let signatureSerializations = 0;
+  Object.defineProperty(changedPayload.account, "toJSON", {
+    value() {
+      signatureSerializations += 1;
+      return { ...changedPayload.account };
+    },
+  });
+  let fetchCount = 0;
+  const delivered = [0, 0];
+  const pollSuccess = [0, 0];
+  const options = {
+    initialPayload,
+    fetchSnapshot: async () => {
+      fetchCount += 1;
+      return changedPayload;
+    },
+    subscribeShadowChanges: () => () => {},
+    subscribeAlgoChanges: () => () => {},
+    setInterval: timers.setInterval,
+    clearInterval: timers.clearInterval,
+    setTimeout: timers.setTimeout,
+    clearTimeout: timers.clearTimeout,
+  };
+  const unsubscribeA = subscribeMarketingShadowDashboardSnapshots(
+    { equityRange: "1d", eventLimit: "50" },
+    () => {
+      delivered[0] += 1;
+    },
+    {
+      ...options,
+      onPollSuccess: () => {
+        pollSuccess[0] += 1;
+      },
+    },
+  );
+  const unsubscribeB = subscribeMarketingShadowDashboardSnapshots(
+    { equityRange: "1D", eventLimit: 50.9 },
+    () => {
+      delivered[1] += 1;
+    },
+    {
+      ...options,
+      onPollSuccess: () => {
+        pollSuccess[1] += 1;
+      },
+    },
+  );
+
+  try {
+    assert.equal(timers.intervalCount(), 1);
+    timers.fireIntervals();
+    await flushAsyncWork();
+
+    assert.equal(fetchCount, 1);
+    assert.equal(signatureSerializations, 1);
+    assert.deepEqual(delivered, [1, 1]);
+    assert.deepEqual(pollSuccess, [1, 1]);
+
+    timers.fireIntervals();
+    await flushAsyncWork();
+    assert.equal(fetchCount, 2);
+    assert.equal(signatureSerializations, 1);
+    assert.deepEqual(delivered, [1, 1]);
+    assert.deepEqual(pollSuccess, [2, 2]);
+
+    unsubscribeA();
+    assert.equal(timers.intervalCount(), 1);
+    unsubscribeB();
+    assert.equal(timers.intervalCount(), 0);
+  } finally {
+    unsubscribeA();
+    unsubscribeB();
+  }
 });
 
 test("marketing dashboard skips identical payload serialization and emits one change", async () => {

@@ -34,6 +34,7 @@ type Unsubscribe = () => void;
 
 export const MARKETING_SHADOW_DASHBOARD_DEFAULT_EVENT_LIMIT = 50;
 export const MARKETING_SHADOW_DASHBOARD_MAX_EVENT_LIMIT = 100;
+export const MARKETING_SHADOW_DASHBOARD_HISTORY_LIMIT = 100;
 export const MARKETING_SHADOW_DASHBOARD_DEFAULT_EQUITY_RANGE: AccountRange = "1D";
 export const MARKETING_SHADOW_DASHBOARD_STREAM_INTERVAL_MS = 5_000;
 export const MARKETING_SHADOW_DASHBOARD_STREAM_COALESCE_MS = 1_000;
@@ -94,9 +95,17 @@ export type MarketingShadowDashboardPayload = {
     }>;
     positions: unknown[];
     closedTrades: unknown[];
+    closedTradesMeta: {
+      total: number;
+      truncated: boolean;
+    };
     orders: {
       working: unknown[];
       history: unknown[];
+      historyMeta: {
+        total: number;
+        truncated: boolean;
+      };
     };
     risk: ShadowRisk;
     allocation: ShadowAllocation;
@@ -330,8 +339,22 @@ function pickMarketingFields(
   }, {});
 }
 
+const marketingPositionsMemo = new WeakMap<object, unknown[]>();
+const marketingClosedTradesMemo = new WeakMap<object, unknown[]>();
+const marketingOrdersMemo = new WeakMap<object, unknown[]>();
+const marketingHistoryOrdersMemo = new WeakMap<object, unknown[]>();
+const marketingEquityHistoryMemo = new WeakMap<
+  object,
+  Array<{ t: string; nav: number }>
+>();
+const marketingAlgoEventsMemo = new WeakMap<object, MarketingAlgoEvent[]>();
+
 function marketingAccountPositions(positions: ShadowPositions): unknown[] {
-  return (positions.positions ?? []).map((position) =>
+  const cached = marketingPositionsMemo.get(positions);
+  if (cached) {
+    return cached;
+  }
+  const projected = (positions.positions ?? []).map((position) =>
     pickMarketingFields(position, [
       "id",
       "accountId",
@@ -359,46 +382,68 @@ function marketingAccountPositions(positions: ShadowPositions): unknown[] {
       "attributionStatus",
     ]),
   );
+  marketingPositionsMemo.set(positions, projected);
+  return projected;
 }
 
 function marketingClosedTrades(closedTrades: ShadowClosedTrades): unknown[] {
-  return (closedTrades.trades ?? []).map((trade) =>
-    pickMarketingFields(trade, [
-      "id",
-      "source",
-      "accountId",
-      "symbol",
-      "side",
-      "assetClass",
-      "quantity",
-      "openDate",
-      "closeDate",
-      "avgOpen",
-      "avgClose",
-      "realizedPnl",
-      "realizedPnlPercent",
-      "holdDurationMinutes",
-      "fees",
-      "commissions",
-      "currency",
-      "sourceType",
-      "strategyLabel",
-      "exitReason",
-      "optionRight",
-      "expirationDate",
-      "dte",
-      "strike",
-      "signalPrice",
-      "peakPrice",
-      "mfePercent",
-      "givebackPercent",
-      "premiumAtRisk",
-    ]),
-  );
+  const cached = marketingClosedTradesMemo.get(closedTrades);
+  if (cached) {
+    return cached;
+  }
+  const projected = (closedTrades.trades ?? [])
+    .slice(0, MARKETING_SHADOW_DASHBOARD_HISTORY_LIMIT)
+    .map((trade) =>
+      pickMarketingFields(trade, [
+        "id",
+        "source",
+        "accountId",
+        "symbol",
+        "side",
+        "assetClass",
+        "quantity",
+        "openDate",
+        "closeDate",
+        "avgOpen",
+        "avgClose",
+        "realizedPnl",
+        "realizedPnlPercent",
+        "holdDurationMinutes",
+        "fees",
+        "commissions",
+        "currency",
+        "sourceType",
+        "strategyLabel",
+        "exitReason",
+        "optionRight",
+        "expirationDate",
+        "dte",
+        "strike",
+        "signalPrice",
+        "peakPrice",
+        "mfePercent",
+        "givebackPercent",
+        "premiumAtRisk",
+      ]),
+    );
+  marketingClosedTradesMemo.set(closedTrades, projected);
+  return projected;
 }
 
-function marketingOrders(orders: ShadowOrders): unknown[] {
-  return (orders.orders ?? []).map((order) =>
+function marketingOrders(
+  orders: ShadowOrders,
+  historyOnly: boolean = false,
+): unknown[] {
+  const memo = historyOnly ? marketingHistoryOrdersMemo : marketingOrdersMemo;
+  const cached = memo.get(orders);
+  if (cached) {
+    return cached;
+  }
+  const projected = (
+    historyOnly
+      ? (orders.orders ?? []).slice(0, MARKETING_SHADOW_DASHBOARD_HISTORY_LIMIT)
+      : (orders.orders ?? [])
+  ).map((order) =>
     pickMarketingFields(order, [
       "id",
       "accountId",
@@ -422,6 +467,8 @@ function marketingOrders(orders: ShadowOrders): unknown[] {
       "strategyLabel",
     ]),
   );
+  memo.set(orders, projected);
+  return projected;
 }
 
 function selectMarketingDeployment(deployments: AlgoDeployment[]) {
@@ -476,7 +523,11 @@ function stripInternalAlgoPayload(value: unknown): unknown {
 }
 
 function marketingAlgoEvents(events: ExecutionEvents): MarketingAlgoEvent[] {
-  return events.events.map((event) => ({
+  const cached = marketingAlgoEventsMemo.get(events);
+  if (cached) {
+    return cached;
+  }
+  const projected = events.events.map((event) => ({
     id: event.id,
     deploymentId: event.deploymentId ?? null,
     symbol: event.symbol ?? null,
@@ -487,15 +538,26 @@ function marketingAlgoEvents(events: ExecutionEvents): MarketingAlgoEvent[] {
     createdAt: event.createdAt,
     updatedAt: event.updatedAt,
   }));
+  marketingAlgoEventsMemo.set(events, projected);
+  return projected;
 }
 
 function buildEquityHistory(equityHistory: ShadowEquityHistory) {
-  return equityHistory.points
+  const cached = marketingEquityHistoryMemo.get(equityHistory);
+  if (cached) {
+    return cached;
+  }
+  const projected = equityHistory.points
     .map((point) => ({
       t: isoOrNull(point.timestamp),
       nav: numberOrNull(point.netLiquidation),
     }))
-    .filter((point): point is { t: string; nav: number } => Boolean(point.t) && point.nav !== null);
+    .filter(
+      (point): point is { t: string; nav: number } =>
+        Boolean(point.t) && point.nav !== null,
+    );
+  marketingEquityHistoryMemo.set(equityHistory, projected);
+  return projected;
 }
 
 // These markers describe transient local conditions on fresh data — a read served
@@ -693,9 +755,21 @@ async function fetchMarketingShadowDashboardSnapshotUncached(
       equityHistory: buildEquityHistory(equityHistory),
       positions: marketingAccountPositions(positions),
       closedTrades: marketingClosedTrades(closedTrades),
+      closedTradesMeta: {
+        total: closedTrades.trades?.length ?? 0,
+        truncated:
+          (closedTrades.trades?.length ?? 0) >
+          MARKETING_SHADOW_DASHBOARD_HISTORY_LIMIT,
+      },
       orders: {
         working: marketingOrders(workingOrders),
-        history: marketingOrders(historyOrders),
+        history: marketingOrders(historyOrders, true),
+        historyMeta: {
+          total: historyOrders.orders?.length ?? 0,
+          truncated:
+            (historyOrders.orders?.length ?? 0) >
+            MARKETING_SHADOW_DASHBOARD_HISTORY_LIMIT,
+        },
       },
       risk,
       allocation,
@@ -715,14 +789,188 @@ async function fetchMarketingShadowDashboardSnapshotUncached(
   };
 }
 
+const marketingPayloadSignatureMemo = new WeakMap<
+  MarketingShadowDashboardPayload,
+  string
+>();
+
 function signatureForPayload(payload: MarketingShadowDashboardPayload): string {
-  return JSON.stringify({
-    ...payload,
-    status: {
-      ...payload.status,
-      generatedAt: null,
+  let signature = marketingPayloadSignatureMemo.get(payload);
+  if (signature === undefined) {
+    signature = JSON.stringify({
+      ...payload,
+      status: {
+        ...payload.status,
+        generatedAt: null,
+      },
+    });
+    marketingPayloadSignatureMemo.set(payload, signature);
+  }
+  return signature;
+}
+
+type MarketingShadowDashboardSubscriber = {
+  active: boolean;
+  lastSignature: string;
+  onSnapshot: (payload: MarketingShadowDashboardPayload) => void;
+  onPollSuccess?: (input: {
+    payload: MarketingShadowDashboardPayload;
+    changed: boolean;
+  }) => void | Promise<void>;
+};
+
+type MarketingShadowDashboardSharedPoller = {
+  key: string;
+  input: NormalizedMarketingShadowDashboardInput;
+  subscribers: Set<MarketingShadowDashboardSubscriber>;
+  active: boolean;
+  inFlight: boolean;
+  queued: boolean;
+  queuedTimer: ReturnType<typeof setTimeout> | null;
+  timer: ReturnType<typeof setInterval> | null;
+  unsubscribeShadow: Unsubscribe;
+  unsubscribeAlgo: Unsubscribe;
+  tick: () => Promise<void>;
+  start: () => void;
+  stop: () => void;
+};
+
+const marketingShadowDashboardSharedPollers = new Map<
+  string,
+  MarketingShadowDashboardSharedPoller
+>();
+
+function createMarketingShadowDashboardSharedPoller(
+  key: string,
+  input: NormalizedMarketingShadowDashboardInput,
+  options: {
+    fetchSnapshot: (
+      input: MarketingShadowDashboardInput,
+    ) => Promise<MarketingShadowDashboardPayload>;
+    subscribeShadowChanges: typeof subscribeShadowAccountChanges;
+    subscribeAlgoChanges: typeof subscribeAlgoCockpitChanges;
+    setInterval: typeof setInterval;
+    clearInterval: typeof clearInterval;
+    setTimeout: typeof setTimeout;
+    clearTimeout: typeof clearTimeout;
+    intervalMs: number;
+    coalescedPollDelayMs: number;
+  },
+): MarketingShadowDashboardSharedPoller {
+  const poller: MarketingShadowDashboardSharedPoller = {
+    key,
+    input,
+    subscribers: new Set(),
+    active: true,
+    inFlight: false,
+    queued: false,
+    queuedTimer: null,
+    timer: null,
+    unsubscribeShadow: () => {},
+    unsubscribeAlgo: () => {},
+    tick: async () => {
+      if (!poller.active) {
+        return;
+      }
+      if (poller.inFlight || poller.queuedTimer) {
+        poller.queued = true;
+        return;
+      }
+
+      poller.inFlight = true;
+      try {
+        poller.queued = false;
+        const payload = await options.fetchSnapshot(poller.input);
+        if (!poller.active) {
+          return;
+        }
+        const signature = signatureForPayload(payload);
+        for (const subscriber of [...poller.subscribers]) {
+          if (!subscriber.active) {
+            continue;
+          }
+          const changed = signature !== subscriber.lastSignature;
+          if (changed) {
+            subscriber.lastSignature = signature;
+            try {
+              subscriber.onSnapshot(payload);
+            } catch (error) {
+              logger.warn(
+                { err: error },
+                "Marketing shadow dashboard subscriber write failed",
+              );
+              continue;
+            }
+          }
+          if (!subscriber.active) {
+            continue;
+          }
+          try {
+            await subscriber.onPollSuccess?.({ payload, changed });
+          } catch (error) {
+            logger.warn(
+              { err: error },
+              "Marketing shadow dashboard freshness write failed",
+            );
+          }
+        }
+      } catch (error) {
+        logger.warn(
+          { err: error },
+          "Marketing shadow dashboard polling failed",
+        );
+      } finally {
+        poller.inFlight = false;
+        if (poller.active && poller.queued) {
+          poller.queued = false;
+          if (!poller.queuedTimer) {
+            poller.queuedTimer = options.setTimeout(() => {
+              poller.queuedTimer = null;
+              if (!poller.active) {
+                return;
+              }
+              void poller.tick();
+            }, options.coalescedPollDelayMs);
+            poller.queuedTimer.unref?.();
+          }
+        }
+      }
     },
-  });
+    start: () => {
+      poller.timer = options.setInterval(() => {
+        void poller.tick();
+      }, options.intervalMs);
+      poller.timer.unref?.();
+      poller.unsubscribeShadow = options.subscribeShadowChanges((change) => {
+        if (change.reason !== "mark_refresh") {
+          void poller.tick();
+        }
+      });
+      poller.unsubscribeAlgo = options.subscribeAlgoChanges((change) => {
+        if (!change.mode || change.mode === "shadow") {
+          void poller.tick();
+        }
+      });
+    },
+    stop: () => {
+      poller.active = false;
+      if (poller.timer) {
+        options.clearInterval(poller.timer);
+        poller.timer = null;
+      }
+      if (poller.queuedTimer) {
+        options.clearTimeout(poller.queuedTimer);
+        poller.queuedTimer = null;
+      }
+      poller.unsubscribeShadow();
+      poller.unsubscribeAlgo();
+      if (marketingShadowDashboardSharedPollers.get(poller.key) === poller) {
+        marketingShadowDashboardSharedPollers.delete(poller.key);
+      }
+    },
+  };
+
+  return poller;
 }
 
 export function subscribeMarketingShadowDashboardSnapshots(
@@ -747,14 +995,6 @@ export function subscribeMarketingShadowDashboardSnapshots(
     coalescedPollDelayMs?: number;
   } = {},
 ): Unsubscribe {
-  let active = true;
-  let inFlight = false;
-  let queued = false;
-  let queuedTimer: ReturnType<typeof setTimeout> | null = null;
-  let lastPayload = options.initialPayload ?? null;
-  let lastSignature = options.initialPayload
-    ? signatureForPayload(options.initialPayload)
-    : "";
   const fetchSnapshot =
     options.fetchSnapshot ?? fetchMarketingShadowDashboardSnapshot;
   const subscribeShadowChanges =
@@ -770,89 +1010,48 @@ export function subscribeMarketingShadowDashboardSnapshots(
   const coalescedPollDelayMs =
     options.coalescedPollDelayMs ??
     MARKETING_SHADOW_DASHBOARD_STREAM_COALESCE_MS;
-
-  const scheduleQueuedPoll = () => {
-    if (!active || queuedTimer) {
-      return;
-    }
-    queuedTimer = setPollTimeout(() => {
-      queuedTimer = null;
-      if (!active) {
-        return;
-      }
-      queued = false;
-      void tick();
-    }, coalescedPollDelayMs);
-    queuedTimer.unref?.();
+  const subscriber: MarketingShadowDashboardSubscriber = {
+    active: true,
+    lastSignature: options.initialPayload
+      ? signatureForPayload(options.initialPayload)
+      : "",
+    onSnapshot,
+    onPollSuccess: options.onPollSuccess,
   };
+  const normalized = normalizeMarketingShadowDashboardInput(input);
+  const key = marketingShadowDashboardCacheKey(normalized);
+  let poller = marketingShadowDashboardSharedPollers.get(key);
+  if (!poller) {
+    poller = createMarketingShadowDashboardSharedPoller(key, normalized, {
+      fetchSnapshot,
+      subscribeShadowChanges,
+      subscribeAlgoChanges,
+      setInterval: setPollInterval,
+      clearInterval: clearPollInterval,
+      setTimeout: setPollTimeout,
+      clearTimeout: clearPollTimeout,
+      intervalMs,
+      coalescedPollDelayMs,
+    });
+    marketingShadowDashboardSharedPollers.set(key, poller);
+    poller.subscribers.add(subscriber);
+    poller.start();
+  } else {
+    poller.subscribers.add(subscriber);
+  }
 
-  const tick = async () => {
-    if (!active) {
-      return;
-    }
-    if (inFlight || queuedTimer) {
-      queued = true;
-      return;
-    }
-
-    inFlight = true;
-    try {
-      queued = false;
-      const payload = await fetchSnapshot(input);
-      if (!active) {
-        return;
-      }
-      let changed = false;
-      if (payload !== lastPayload) {
-        const signature = signatureForPayload(payload);
-        changed = signature !== lastSignature;
-        lastSignature = signature;
-        lastPayload = payload;
-      }
-      if (changed) {
-        onSnapshot(payload);
-      }
-      await options.onPollSuccess?.({ payload, changed });
-    } catch (error) {
-      logger.warn({ err: error }, "Marketing shadow dashboard polling failed");
-    } finally {
-      inFlight = false;
-      if (active && queued) {
-        queued = false;
-        scheduleQueuedPoll();
-      }
-    }
-  };
-
-  const timer = setPollInterval(() => {
-    void tick();
-  }, intervalMs);
-  timer.unref?.();
-  const unsubscribeShadow = subscribeShadowChanges((change) => {
-    if (change.reason === "mark_refresh") {
-      return;
-    }
-    void tick();
-  });
-  const unsubscribeAlgo = subscribeAlgoChanges((change) => {
-    if (change.mode && change.mode !== "shadow") {
-      return;
-    }
-    void tick();
-  });
-
-  if (!options.initialPayload) {
-    void tick();
+  if (!options.initialPayload && !poller.inFlight) {
+    void poller.tick();
   }
 
   return () => {
-    active = false;
-    clearPollInterval(timer);
-    if (queuedTimer) {
-      clearPollTimeout(queuedTimer);
-      queuedTimer = null;
+    if (!subscriber.active) {
+      return;
     }
-    unsubscribeShadow();
-    unsubscribeAlgo();
+    subscriber.active = false;
+    poller?.subscribers.delete(subscriber);
+    if (poller && poller.subscribers.size === 0) {
+      poller.stop();
+    }
   };
 }
