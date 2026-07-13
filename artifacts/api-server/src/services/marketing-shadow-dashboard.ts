@@ -7,12 +7,12 @@ import {
 import { subscribeAlgoCockpitChanges } from "./algo-cockpit-events";
 import {
   getShadowAccountAllocationFromPositions,
-  getShadowAccountClosedTrades,
-  getShadowAccountEquityHistory,
-  getShadowAccountOrders,
-  getShadowAccountPositions,
   getShadowAccountRisk,
   getShadowAccountSummaryFromPositions,
+  getShadowMarketingClosedTrades,
+  getShadowMarketingEquityHistory,
+  getShadowMarketingOrders,
+  getShadowMarketingPositions,
 } from "./shadow-account";
 import { subscribeShadowAccountChanges } from "./shadow-account-events";
 import { getAlgoDeploymentCockpit } from "./signal-options-automation";
@@ -20,10 +20,10 @@ import { logger } from "../lib/logger";
 
 type AsyncReturn<T extends (...args: any[]) => unknown> = Awaited<ReturnType<T>>;
 type ShadowSummary = AsyncReturn<typeof getShadowAccountSummaryFromPositions>;
-type ShadowEquityHistory = AsyncReturn<typeof getShadowAccountEquityHistory>;
-type ShadowPositions = AsyncReturn<typeof getShadowAccountPositions>;
-type ShadowClosedTrades = AsyncReturn<typeof getShadowAccountClosedTrades>;
-type ShadowOrders = AsyncReturn<typeof getShadowAccountOrders>;
+type ShadowEquityHistory = AsyncReturn<typeof getShadowMarketingEquityHistory>;
+type ShadowPositions = AsyncReturn<typeof getShadowMarketingPositions>;
+type ShadowClosedTrades = AsyncReturn<typeof getShadowMarketingClosedTrades>;
+type ShadowOrders = AsyncReturn<typeof getShadowMarketingOrders>;
 type ShadowAllocation = AsyncReturn<
   typeof getShadowAccountAllocationFromPositions
 >;
@@ -145,10 +145,10 @@ export type MarketingShadowDashboardPayload = {
 
 export type MarketingShadowDashboardDependencies = {
   getSummaryFromPositions: typeof getShadowAccountSummaryFromPositions;
-  getEquityHistory: typeof getShadowAccountEquityHistory;
-  getPositions: typeof getShadowAccountPositions;
-  getClosedTrades: typeof getShadowAccountClosedTrades;
-  getOrders: typeof getShadowAccountOrders;
+  getMarketingEquityHistory: typeof getShadowMarketingEquityHistory;
+  getMarketingPositions: typeof getShadowMarketingPositions;
+  getMarketingClosedTrades: typeof getShadowMarketingClosedTrades;
+  getMarketingOrders: typeof getShadowMarketingOrders;
   getAllocationFromPositions: typeof getShadowAccountAllocationFromPositions;
   getRisk: typeof getShadowAccountRisk;
   listDeployments: typeof listAlgoDeploymentMetadata;
@@ -159,10 +159,10 @@ export type MarketingShadowDashboardDependencies = {
 
 const defaultDependencies: MarketingShadowDashboardDependencies = {
   getSummaryFromPositions: getShadowAccountSummaryFromPositions,
-  getEquityHistory: getShadowAccountEquityHistory,
-  getPositions: getShadowAccountPositions,
-  getClosedTrades: getShadowAccountClosedTrades,
-  getOrders: getShadowAccountOrders,
+  getMarketingEquityHistory: getShadowMarketingEquityHistory,
+  getMarketingPositions: getShadowMarketingPositions,
+  getMarketingClosedTrades: getShadowMarketingClosedTrades,
+  getMarketingOrders: getShadowMarketingOrders,
   getAllocationFromPositions: getShadowAccountAllocationFromPositions,
   getRisk: getShadowAccountRisk,
   listDeployments: listAlgoDeploymentMetadata,
@@ -476,11 +476,7 @@ function marketingOrders(
   if (cached) {
     return cached;
   }
-  const projected = (
-    historyOnly
-      ? (orders.orders ?? []).slice(0, MARKETING_SHADOW_DASHBOARD_HISTORY_LIMIT)
-      : (orders.orders ?? [])
-  ).map((order) =>
+  const projected = (historyOnly ? orders.history : orders.working).map((order) =>
     pickMarketingFields(order, [
       "id",
       "accountId",
@@ -703,15 +699,15 @@ async function fetchMarketingShadowDashboardSnapshotUncached(
   // The first dashboard snapshot often lands during app warmup. These reads are
   // cached below the service layer, but cold parallel fan-out can occupy the
   // entire shared DB pool alongside signal-monitor bar-cache warmup.
-  const equityHistory = await deps.getEquityHistory({
+  const equityHistory = await deps.getMarketingEquityHistory({
     range: normalized.equityRange,
   });
-  const positions = await deps.getPositions({});
-  const closedTrades = await deps.getClosedTrades({});
-  const workingOrders = await deps.getOrders({ tab: "working" });
-  const historyOrders = await deps.getOrders({ tab: "history" });
+  const positions = await deps.getMarketingPositions();
+  const closedTrades = await deps.getMarketingClosedTrades();
+  const orders = await deps.getMarketingOrders();
   const summary = await deps.getSummaryFromPositions({
     positionsResponse: positions,
+    detail: "marketing",
   });
   const allocation = deps.getAllocationFromPositions({
     positionsResponse: positions,
@@ -743,8 +739,7 @@ async function fetchMarketingShadowDashboardSnapshotUncached(
     equityHistory.latestSnapshotAt,
     positions.updatedAt,
     closedTrades.updatedAt,
-    workingOrders.updatedAt,
-    historyOrders.updatedAt,
+    orders.updatedAt,
     allocation.updatedAt,
     risk.updatedAt,
   );
@@ -765,15 +760,13 @@ async function fetchMarketingShadowDashboardSnapshotUncached(
     staleByAge ||
       equityHistory.isStale ||
       readGenuineStale(positions) ||
-      readGenuineStale(workingOrders) ||
-      readGenuineStale(historyOrders),
+      readGenuineStale(orders),
   );
   const degraded = Boolean(
     readGenuineDegraded(summary) ||
       readGenuineDegraded(positions) ||
       readGenuineDegraded(closedTrades) ||
-      readGenuineDegraded(workingOrders) ||
-      readGenuineDegraded(historyOrders) ||
+      readGenuineDegraded(orders) ||
       readGenuineDegraded(allocation) ||
       readGenuineDegraded(risk),
   );
@@ -782,8 +775,7 @@ async function fetchMarketingShadowDashboardSnapshotUncached(
     equityHistory,
     positions,
     closedTrades,
-    workingOrders,
-    historyOrders,
+    orders,
     allocation,
     risk,
   ]);
@@ -818,21 +810,11 @@ async function fetchMarketingShadowDashboardSnapshotUncached(
       equityHistory: buildEquityHistory(equityHistory),
       positions: marketingAccountPositions(positions),
       closedTrades: marketingClosedTrades(closedTrades),
-      closedTradesMeta: {
-        total: closedTrades.trades?.length ?? 0,
-        truncated:
-          (closedTrades.trades?.length ?? 0) >
-          MARKETING_SHADOW_DASHBOARD_HISTORY_LIMIT,
-      },
+      closedTradesMeta: closedTrades.tradesMeta,
       orders: {
-        working: marketingOrders(workingOrders),
-        history: marketingOrders(historyOrders, true),
-        historyMeta: {
-          total: historyOrders.orders?.length ?? 0,
-          truncated:
-            (historyOrders.orders?.length ?? 0) >
-            MARKETING_SHADOW_DASHBOARD_HISTORY_LIMIT,
-        },
+        working: marketingOrders(orders),
+        history: marketingOrders(orders, true),
+        historyMeta: orders.historyMeta,
       },
       risk,
       allocation,

@@ -143,7 +143,16 @@ function snapshotDependencies(input: {
     updatedAt: timestamp,
   };
   const closedTrades = {
-    trades: input.closedTrades ?? [],
+    trades: (input.closedTrades ?? []).slice(
+      0,
+      MARKETING_SHADOW_DASHBOARD_HISTORY_LIMIT,
+    ),
+    tradesMeta: {
+      total: input.closedTrades?.length ?? 0,
+      truncated:
+        (input.closedTrades?.length ?? 0) >
+        MARKETING_SHADOW_DASHBOARD_HISTORY_LIMIT,
+    },
     summary: {
       count: input.closedTrades?.length ?? 0,
       winners: input.closedTrades?.length ?? 0,
@@ -153,12 +162,18 @@ function snapshotDependencies(input: {
     },
     updatedAt: timestamp,
   };
-  const workingOrders = {
-    orders: input.workingOrders ?? [],
-    updatedAt: timestamp,
-  };
-  const historyOrders = {
-    orders: input.historyOrders ?? [],
+  const orders = {
+    working: input.workingOrders ?? [],
+    history: (input.historyOrders ?? []).slice(
+      0,
+      MARKETING_SHADOW_DASHBOARD_HISTORY_LIMIT,
+    ),
+    historyMeta: {
+      total: input.historyOrders?.length ?? 0,
+      truncated:
+        (input.historyOrders?.length ?? 0) >
+        MARKETING_SHADOW_DASHBOARD_HISTORY_LIMIT,
+    },
     updatedAt: timestamp,
   };
   const allocation = { updatedAt: timestamp };
@@ -190,11 +205,10 @@ function snapshotDependencies(input: {
   const events = { events: input.events ?? [] };
   const dependencies = {
     getSummaryFromPositions: async () => summary,
-    getEquityHistory: async () => equityHistory,
-    getPositions: async () => positions,
-    getClosedTrades: async () => closedTrades,
-    getOrders: async ({ tab }: { tab?: string }) =>
-      tab === "working" ? workingOrders : historyOrders,
+    getMarketingEquityHistory: async () => equityHistory,
+    getMarketingPositions: async () => positions,
+    getMarketingClosedTrades: async () => closedTrades,
+    getMarketingOrders: async () => orders,
     getAllocationFromPositions: () => allocation,
     getRisk: async () => risk,
     listDeployments: async () => deployments,
@@ -290,9 +304,33 @@ test("marketing dashboard derives summary and allocation from its positions read
   const block = source.slice(start, end);
 
   assert.match(block, /deps\.getSummaryFromPositions\(\{\s*positionsResponse: positions/);
+  assert.match(
+    block,
+    /deps\.getSummaryFromPositions\(\{\s*positionsResponse: positions,\s*detail: "marketing"/,
+  );
   assert.match(block, /deps\.getAllocationFromPositions\(\{\s*positionsResponse: positions/);
   assert.doesNotMatch(block, /deps\.getSummary\(\)/);
   assert.doesNotMatch(block, /deps\.getAllocation\(\)/);
+});
+
+test("marketing dashboard uses only compact marketing shadow reads", () => {
+  const source = readFileSync(
+    new URL("./marketing-shadow-dashboard.ts", import.meta.url),
+    "utf8",
+  );
+  const start = source.indexOf(
+    "async function fetchMarketingShadowDashboardSnapshotUncached",
+  );
+  const end = source.indexOf("const marketingPayloadSignatureMemo", start);
+  const block = source.slice(start, end);
+
+  assert.match(block, /deps\.getMarketingEquityHistory/);
+  assert.match(block, /deps\.getMarketingPositions/);
+  assert.match(block, /deps\.getMarketingClosedTrades/);
+  assert.match(block, /deps\.getMarketingOrders/);
+  assert.doesNotMatch(block, /deps\.getEquityHistory/);
+  assert.doesNotMatch(block, /deps\.getClosedTrades/);
+  assert.doesNotMatch(block, /deps\.getOrders/);
 });
 
 test("marketing dashboard default snapshots share cache and in-flight work", () => {

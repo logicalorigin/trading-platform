@@ -103,6 +103,124 @@ test("shadow mark refresh single-flight is partitioned by account", () => {
   assert.match(body, /shadowPositionMarkRefreshInFlight\.delete\(accountId\)/);
 });
 
+test("marketing shadow ledger reads use compact projected orders and one fill bundle", () => {
+  const compactStart = shadowAccountSource.indexOf(
+    "type ShadowMarketingOrderRow",
+  );
+  const compactEnd = shadowAccountSource.indexOf(
+    "async function readShadowOrdersForAccountUncached",
+    compactStart,
+  );
+  assert.notEqual(compactStart, -1, "Missing marketing order projection");
+  assert.notEqual(compactEnd, -1, "Missing canonical order reader marker");
+  const compactBlock = shadowAccountSource.slice(compactStart, compactEnd);
+
+  assert.match(compactBlock, /readShadowMarketingFillsWithOrders/);
+  assert.match(compactBlock, /withShadowReadCache\(/);
+  assert.doesNotMatch(compactBlock, /\.select\(\)/);
+  assert.doesNotMatch(
+    compactBlock,
+    /payload\.(profile|signal|orderPlan|quote|diagnostics)/,
+  );
+
+  const canonicalStart = shadowAccountSource.indexOf(
+    "async function readShadowOrdersForAccountUncached",
+  );
+  const canonicalEnd = shadowAccountSource.indexOf(
+    "async function readShadowOrdersForAccount()",
+    canonicalStart,
+  );
+  assert.match(
+    shadowAccountSource.slice(canonicalStart, canonicalEnd),
+    /\.select\(\)/,
+  );
+});
+
+test("marketing shadow APIs share the compact bundle and bound only returned histories", () => {
+  assert.match(
+    shadowAccountSource,
+    /export async function getShadowMarketingOrders/,
+  );
+  assert.match(
+    shadowAccountSource,
+    /export async function getShadowMarketingClosedTrades/,
+  );
+  assert.match(
+    shadowAccountSource,
+    /readShadowMarketingLedgerBundle\(\)/,
+  );
+  assert.match(
+    shadowAccountSource,
+    /history:\s*history\.slice\(0, SHADOW_MARKETING_HISTORY_LIMIT\)/,
+  );
+  assert.match(
+    shadowAccountSource,
+    /trades:\s*trades\.slice\(0, SHADOW_MARKETING_HISTORY_LIMIT\)/,
+  );
+  assert.match(
+    shadowAccountSource,
+    /summary:\s*buildShadowClosedTradeSummary\(trades\)/,
+  );
+});
+
+test("marketing positions retain canonical quote valuation and day-change semantics", () => {
+  const wrapperStart = shadowAccountSource.indexOf(
+    "export function getShadowMarketingPositions",
+  );
+  const wrapperEnd = shadowAccountSource.indexOf(
+    "function dateFromShadowPositionResponse",
+    wrapperStart,
+  );
+  const positionsStart = shadowAccountSource.indexOf(
+    "export async function getShadowAccountPositions",
+  );
+  const positionsEnd = wrapperEnd;
+  assert.notEqual(wrapperStart, -1);
+  assert.notEqual(positionsStart, -1);
+
+  const wrapper = shadowAccountSource.slice(wrapperStart, wrapperEnd);
+  const positions = shadowAccountSource.slice(positionsStart, positionsEnd);
+  assert.match(
+    wrapper,
+    /getShadowAccountPositions\(\{ detail: "marketing" \}\)/,
+  );
+  assert.match(positions, /await readShadowMarketingLedgerBundle\(\)/);
+  assert.match(positions, /fetchShadowEquityPositionQuotes\(filtered\)/);
+  assert.match(positions, /fetchShadowOptionUnderlyingMarkets\(filtered\)/);
+  assert.match(positions, /fetchVisibleShadowOptionQuotes/);
+  assert.match(positions, /readShadowPositionDayChanges/);
+  assert.match(positions, /buildShadowOptionPricingPolicy/);
+});
+
+test("mark refresh invalidates marketing valuation caches but not compact ledger identity", () => {
+  const isExpired =
+    internals.isShadowReadCacheKeyExpiredByMarkRefreshForTests;
+  assert.equal(isExpired("shadow ledger-bundle:marketing"), true);
+  assert.equal(
+    isExpired("shadow positions:all:ledger:live-quotes:marketing"),
+    true,
+  );
+  assert.equal(
+    isExpired("shadow marketing:compact-fills-with-orders"),
+    false,
+  );
+});
+
+test("summary day P&L reads only its explicitly selected equity-history cache", () => {
+  const helperStart = shadowAccountSource.indexOf(
+    "function readFreshCachedShadowEquityHistoryReturnMetrics",
+  );
+  const helperEnd = shadowAccountSource.indexOf(
+    "export function getShadowAccountSummaryFromPositions",
+    helperStart,
+  );
+  const helper = shadowAccountSource.slice(helperStart, helperEnd);
+
+  assert.match(helper, /input\.detail === "marketing"/);
+  assert.match(helper, /`\$\{cachePrefix\}:\$\{cacheSuffix\}`/);
+  assert.doesNotMatch(helper, /\) \?\?/);
+});
+
 test("mark refresh writes mark history to the current shadow account", async () => {
   const testDb = await createTestDb();
   const accountId = "shadow-user-mark-test";

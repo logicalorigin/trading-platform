@@ -194,6 +194,7 @@ const WATCHLIST_BACKTEST_REGIME_EXPIRATIONS = [
 const WATCHLIST_BACKTEST_SCALE_DOWN_FRACTION = 0.5;
 const WATCHLIST_BACKTEST_FIXED_REGIME_BARS = 12;
 const SHADOW_ORDER_HISTORY_LIMIT = 5_000;
+const SHADOW_MARKETING_HISTORY_LIMIT = 100;
 const SHADOW_STATE_REFRESH_TTL_MS = 2_000;
 const SHADOW_BENCHMARK_BARS_CACHE_TTL_MS = 60_000;
 const SHADOW_BENCHMARK_BARS_MAX_WAIT_MS = 750;
@@ -3705,6 +3706,163 @@ async function readShadowFillsForOrderIds(
   return rows.flat();
 }
 
+// Marketing reads need ledger identity and trade attribution, but not the
+// multi-kilobyte execution diagnostics retained in the canonical order payload.
+// Keep this projection structurally compatible with ShadowOrderRow so the
+// existing source/FIFO helpers remain the single source of truth.
+type ShadowMarketingOrderRow = ShadowOrderRow;
+type ShadowMarketingFillRow = ShadowFillRow;
+
+const shadowMarketingOrderPayload = sql<Record<string, unknown>>`
+  jsonb_strip_nulls(jsonb_build_object(
+    'forwardTest', ${shadowOrdersTable.payload}->'forwardTest',
+    'source', ${shadowOrdersTable.payload}->'source',
+    'sourceType', ${shadowOrdersTable.payload}->'sourceType',
+    'runSource', ${shadowOrdersTable.payload}->'runSource',
+    'positionKey', ${shadowOrdersTable.payload}->'positionKey',
+    'candidateId', ${shadowOrdersTable.payload}->'candidateId',
+    'deploymentId', ${shadowOrdersTable.payload}->'deploymentId',
+    'deploymentName', ${shadowOrdersTable.payload}->'deploymentName',
+    'reason', ${shadowOrdersTable.payload}->'reason',
+    'selectedContract', ${shadowOrdersTable.payload}->'selectedContract',
+    'selectedExpiration', jsonb_strip_nulls(jsonb_build_object(
+      'dte', ${shadowOrdersTable.payload}->'selectedExpiration'->'dte'
+    )),
+    'metadata', jsonb_strip_nulls(jsonb_build_object(
+      'source', ${shadowOrdersTable.payload}->'metadata'->'source',
+      'sourceType', ${shadowOrdersTable.payload}->'metadata'->'sourceType',
+      'runSource', ${shadowOrdersTable.payload}->'metadata'->'runSource',
+      'positionKey', ${shadowOrdersTable.payload}->'metadata'->'positionKey',
+      'runId', ${shadowOrdersTable.payload}->'metadata'->'runId',
+      'deploymentId', ${shadowOrdersTable.payload}->'metadata'->'deploymentId',
+      'deploymentName', ${shadowOrdersTable.payload}->'metadata'->'deploymentName',
+      'reason', ${shadowOrdersTable.payload}->'metadata'->'reason'
+    )),
+    'replay', jsonb_strip_nulls(jsonb_build_object(
+      'source', ${shadowOrdersTable.payload}->'replay'->'source'
+    )),
+    'backfill', jsonb_strip_nulls(jsonb_build_object(
+      'source', ${shadowOrdersTable.payload}->'backfill'->'source'
+    )),
+    'candidate', jsonb_strip_nulls(jsonb_build_object(
+      'id', coalesce(
+        ${shadowOrdersTable.payload}->'candidate'->'id',
+        ${shadowOrdersTable.payload}->'automationCandidate'->'id'
+      ),
+      'deploymentId', coalesce(
+        ${shadowOrdersTable.payload}->'candidate'->'deploymentId',
+        ${shadowOrdersTable.payload}->'automationCandidate'->'deploymentId'
+      ),
+      'deploymentName', coalesce(
+        ${shadowOrdersTable.payload}->'candidate'->'deploymentName',
+        ${shadowOrdersTable.payload}->'automationCandidate'->'deploymentName'
+      ),
+      'signalPrice', coalesce(
+        ${shadowOrdersTable.payload}->'candidate'->'signalPrice',
+        ${shadowOrdersTable.payload}->'automationCandidate'->'signalPrice'
+      ),
+      'optionRight', coalesce(
+        ${shadowOrdersTable.payload}->'candidate'->'optionRight',
+        ${shadowOrdersTable.payload}->'automationCandidate'->'optionRight'
+      ),
+      'selectedContract', coalesce(
+        ${shadowOrdersTable.payload}->'candidate'->'selectedContract',
+        ${shadowOrdersTable.payload}->'automationCandidate'->'selectedContract'
+      )
+    )),
+    'position', jsonb_strip_nulls(jsonb_build_object(
+      'positionKey', ${shadowOrdersTable.payload}->'position'->'positionKey',
+      'candidateId', ${shadowOrdersTable.payload}->'position'->'candidateId',
+      'selectedContract', ${shadowOrdersTable.payload}->'position'->'selectedContract',
+      'peakPrice', ${shadowOrdersTable.payload}->'position'->'peakPrice',
+      'premiumAtRisk', ${shadowOrdersTable.payload}->'position'->'premiumAtRisk'
+    ))
+  ))
+`;
+
+const SHADOW_MARKETING_ORDER_COLUMNS = {
+  id: shadowOrdersTable.id,
+  accountId: shadowOrdersTable.accountId,
+  source: shadowOrdersTable.source,
+  sourceEventId: shadowOrdersTable.sourceEventId,
+  clientOrderId: shadowOrdersTable.clientOrderId,
+  symbol: shadowOrdersTable.symbol,
+  assetClass: shadowOrdersTable.assetClass,
+  positionType: shadowOrdersTable.positionType,
+  side: shadowOrdersTable.side,
+  type: shadowOrdersTable.type,
+  timeInForce: shadowOrdersTable.timeInForce,
+  status: shadowOrdersTable.status,
+  quantity: shadowOrdersTable.quantity,
+  filledQuantity: shadowOrdersTable.filledQuantity,
+  limitPrice: shadowOrdersTable.limitPrice,
+  stopPrice: shadowOrdersTable.stopPrice,
+  averageFillPrice: shadowOrdersTable.averageFillPrice,
+  fees: shadowOrdersTable.fees,
+  rejectionReason: shadowOrdersTable.rejectionReason,
+  optionContract: shadowOrdersTable.optionContract,
+  payload: shadowMarketingOrderPayload,
+  placedAt: shadowOrdersTable.placedAt,
+  filledAt: shadowOrdersTable.filledAt,
+  createdAt: shadowOrdersTable.createdAt,
+  updatedAt: shadowOrdersTable.updatedAt,
+};
+
+const SHADOW_MARKETING_FILL_COLUMNS = {
+  id: shadowFillsTable.id,
+  accountId: shadowFillsTable.accountId,
+  orderId: shadowFillsTable.orderId,
+  sourceEventId: shadowFillsTable.sourceEventId,
+  symbol: shadowFillsTable.symbol,
+  assetClass: shadowFillsTable.assetClass,
+  positionType: shadowFillsTable.positionType,
+  side: shadowFillsTable.side,
+  quantity: shadowFillsTable.quantity,
+  price: shadowFillsTable.price,
+  grossAmount: shadowFillsTable.grossAmount,
+  fees: shadowFillsTable.fees,
+  realizedPnl: shadowFillsTable.realizedPnl,
+  cashDelta: shadowFillsTable.cashDelta,
+  optionContract: shadowFillsTable.optionContract,
+  occurredAt: shadowFillsTable.occurredAt,
+  createdAt: shadowFillsTable.createdAt,
+  updatedAt: shadowFillsTable.updatedAt,
+};
+
+type ShadowMarketingFillsWithOrders = {
+  fills: ShadowMarketingFillRow[];
+  orders: ShadowMarketingOrderRow[];
+  ordersById: Map<string, ShadowMarketingOrderRow>;
+};
+
+function readShadowMarketingFillsWithOrders(): Promise<ShadowMarketingFillsWithOrders> {
+  return withShadowReadCache(
+    "marketing:compact-fills-with-orders",
+    async () => {
+      const [fills, orders] = await Promise.all([
+        db
+          .select(SHADOW_MARKETING_FILL_COLUMNS)
+          .from(shadowFillsTable)
+          .where(eq(shadowFillsTable.accountId, currentShadowAccountId()))
+          .orderBy(asc(shadowFillsTable.occurredAt)),
+        db
+          .select(SHADOW_MARKETING_ORDER_COLUMNS)
+          .from(shadowOrdersTable)
+          .where(eq(shadowOrdersTable.accountId, currentShadowAccountId()))
+          .orderBy(desc(shadowOrdersTable.placedAt)),
+      ]);
+      const compactFills = fills as ShadowMarketingFillRow[];
+      const compactOrders = orders as ShadowMarketingOrderRow[];
+      return {
+        fills: compactFills,
+        orders: compactOrders,
+        ordersById: new Map(compactOrders.map((order) => [order.id, order])),
+      };
+    },
+    { ttlMs: SHADOW_DERIVED_READ_CACHE_TTL_MS },
+  );
+}
+
 async function readShadowOrdersForAccountUncached(
   limit = shadowLedgerDashboardReadLimit(),
 ): Promise<ShadowOrderRow[]> {
@@ -3955,6 +4113,64 @@ async function readShadowLedgerBundleForSource(
     {
       ttlMs: SHADOW_DERIVED_READ_CACHE_TTL_MS,
     },
+  );
+}
+
+type ShadowMarketingLedgerBundle = {
+  account: ShadowAccountRow;
+  fills: ShadowMarketingFillRow[];
+  orders: ShadowMarketingOrderRow[];
+  ordersById: Map<string, ShadowMarketingOrderRow>;
+  selectedFills: ShadowMarketingFillRow[];
+  selectedOrders: ShadowMarketingOrderRow[];
+  selectedOrdersByPositionKey: Map<string, ShadowMarketingOrderRow>;
+  positions: ShadowPositionRow[];
+  totals: ShadowTotals;
+};
+
+async function readShadowMarketingLedgerBundle(): Promise<ShadowMarketingLedgerBundle> {
+  return withShadowReadCache(
+    "ledger-bundle:marketing",
+    async () => {
+      const account =
+        (await readShadowAccount()) ?? (await ensureShadowAccount());
+      const { fills, orders, ordersById } =
+        await readShadowMarketingFillsWithOrders();
+      const selectedFills = fills.filter((fill) =>
+        isDefaultShadowLedgerAnalyticsOrder(ordersById.get(fill.orderId)),
+      );
+      const selectedOrders = selectedFills
+        .map((fill) => ordersById.get(fill.orderId))
+        .filter((order): order is ShadowMarketingOrderRow => Boolean(order));
+      const selectedPositionKeys = shadowPositionKeysForOrders(selectedOrders);
+      const selectedOrdersByPositionKey =
+        shadowOrdersByPositionKey(selectedOrders);
+      const positions = (await readOpenShadowPositions()).filter(
+        (position) =>
+          selectedPositionKeys.has(position.positionKey) &&
+          isDefaultShadowLedgerAnalyticsPosition(position) &&
+          !isExpiredHistoricalShadowOptionPosition(
+            position,
+            selectedOrdersByPositionKey.get(position.positionKey),
+          ),
+      );
+      return {
+        account,
+        fills,
+        orders,
+        ordersById,
+        selectedFills,
+        selectedOrders,
+        selectedOrdersByPositionKey,
+        positions,
+        totals: buildShadowTotalsFromLedger({
+          account,
+          fills: selectedFills,
+          positions,
+        }),
+      };
+    },
+    { ttlMs: SHADOW_DERIVED_READ_CACHE_TTL_MS },
   );
 }
 
@@ -9386,17 +9602,21 @@ export async function getShadowAccountEquityHistory(input: {
   range?: AccountRange;
   benchmark?: string | null;
   source?: string | null;
+  detail?: "marketing";
 }): Promise<ShadowAccountEquityHistory> {
   const range = normalizeAccountRange(input.range);
   const source = normalizeShadowSourceScope(input.source);
   const benchmark = normalizeShadowBenchmarkSymbol(input.benchmark);
+  const marketing = input.detail === "marketing";
+  const cachePrefix = marketing ? "marketing-equity-history" : "equity-history";
   if (benchmark) {
     return withShadowReadCache(
-      `equity-history:${range}:${benchmark}:${shadowSourceCacheKey(source)}`,
+      `${cachePrefix}:${range}:${benchmark}:${shadowSourceCacheKey(source)}`,
       async () => {
         const base = await getShadowAccountEquityHistory({
           range,
           source,
+          detail: input.detail,
         });
         const benchmarkPercents = await resolveShadowBenchmarkPercents({
           benchmark,
@@ -9422,12 +9642,13 @@ export async function getShadowAccountEquityHistory(input: {
   const reusableBaseRange = shadowReusableEquityHistoryRange(range);
   if (reusableBaseRange) {
     return withShadowReadCache(
-      `equity-history:${range}::${shadowSourceCacheKey(source)}`,
+      `${cachePrefix}:${range}::${shadowSourceCacheKey(source)}`,
       async () =>
         sliceShadowAccountEquityHistoryToRange(
           await getShadowAccountEquityHistory({
             range: reusableBaseRange,
             source,
+            detail: input.detail,
           }),
           range,
         ),
@@ -9437,14 +9658,19 @@ export async function getShadowAccountEquityHistory(input: {
     );
   }
   return withShadowReadCache(
-    `equity-history:${range}::${shadowSourceCacheKey(source)}`,
+    `${cachePrefix}:${range}::${shadowSourceCacheKey(source)}`,
     async () => {
       if (isShadowAccountDbBackoffActive()) {
         throw createShadowAccountDbUnavailableError();
       }
       try {
+        const marketingBundle = marketing
+          ? await readShadowMarketingLedgerBundle()
+          : null;
         const account =
-          (await readShadowAccount()) ?? (await ensureShadowAccount());
+          marketingBundle?.account ??
+          (await readShadowAccount()) ??
+          (await ensureShadowAccount());
         const start = accountRangeStart(range);
         const rows = await readShadowEquityHistorySnapshotRowsBucketed({
           accountId: currentShadowAccountId(),
@@ -9453,10 +9679,15 @@ export async function getShadowAccountEquityHistory(input: {
         });
         const selection = selectShadowEquityHistoryRows(rows, { source });
         const totals = selection.includeLiveTerminal
-          ? await computeShadowEquityHistoryTerminalTotals(source)
+          ? marketingBundle
+            ? withCurrentOpenPositionTerminalTimestamp(
+                marketingBundle.totals,
+                marketingBundle.positions.length,
+              )
+            : await computeShadowEquityHistoryTerminalTotals(source)
           : null;
         const { fills, ordersById } =
-          await readShadowDashboardFillsWithOrders();
+          marketingBundle ?? (await readShadowDashboardFillsWithOrders());
         const ledgerFills = source
           ? fills.filter((fill) =>
               shadowOrderMatchesSource(ordersById.get(fill.orderId), source),
@@ -9569,11 +9800,20 @@ export async function getShadowAccountEquityHistory(input: {
         const adjustedReturns =
           calculateTransferAdjustedReturnSeries(seedPoints);
         const lastPoint = seedPoints[seedPoints.length - 1] ?? null;
-        const tradeEvents = await getShadowTradeEquityEvents({
-          start,
-          end: lastPoint?.timestamp ?? new Date(),
-          sources: source ? [source] : undefined,
-        });
+        const tradeEvents = marketing
+          ? buildShadowEquityAnnotations(
+              (await readShadowMarketingAnalysisFold()).events.filter(
+                (event) =>
+                  (!start || event.occurredAtDate >= start) &&
+                  event.occurredAtDate <=
+                    (lastPoint?.timestamp ?? new Date()),
+              ),
+            )
+          : await getShadowTradeEquityEvents({
+              start,
+              end: lastPoint?.timestamp ?? new Date(),
+              sources: source ? [source] : undefined,
+            });
         const benchmarkPercents = await resolveShadowBenchmarkPercents({
           benchmark: null,
           range,
@@ -9629,6 +9869,12 @@ export async function getShadowAccountEquityHistory(input: {
       ttlMs: SHADOW_DERIVED_READ_CACHE_TTL_MS,
     },
   );
+}
+
+export function getShadowMarketingEquityHistory(input: {
+  range?: AccountRange;
+}) {
+  return getShadowAccountEquityHistory({ ...input, detail: "marketing" });
 }
 
 function buildShadowAccountAllocationResponse(input: {
@@ -10015,10 +10261,12 @@ export async function getShadowAccountPositions(input: {
   assetClass?: string | null;
   source?: string | null;
   liveQuotes?: boolean;
+  detail?: "marketing";
 }): Promise<ShadowAccountPositionsResponseShape> {
   const source = normalizeShadowSourceScope(input.source);
   const assetClassFilter = normalizePositionAssetClass(input.assetClass);
   const includeLiveQuotes = input.liveQuotes !== false;
+  const marketing = input.detail === "marketing";
   const reusableLiveQuoted = readReusableLiveQuotedShadowPositionsResponse({
     assetClassFilter,
     source,
@@ -10035,19 +10283,23 @@ export async function getShadowAccountPositions(input: {
   if (reusableFiltered) {
     return reusableFiltered;
   }
-  const cacheKey = shadowPositionsReadCacheKey({
+  const cacheKey = `${shadowPositionsReadCacheKey({
     assetClassFilter,
     source,
     includeLiveQuotes,
-  });
+  })}${marketing ? ":marketing" : ""}`;
   const readFullPositions = async () => {
     try {
       if (isShadowAccountDbBackoffActive()) {
         throw createShadowAccountDbUnavailableError();
       }
-      kickSignalOptionsAutomationMirrorRepairForRead(source);
+      if (!marketing) {
+        kickSignalOptionsAutomationMirrorRepairForRead(source);
+      }
       void kickShadowPositionMarkRefresh();
-      const ledgerBundle = await readShadowLedgerBundleForSource(source);
+      const ledgerBundle = marketing
+        ? await readShadowMarketingLedgerBundle()
+        : await readShadowLedgerBundleForSource(source);
       const totals = ledgerBundle.totals;
       const accountTotals = source
         ? (await readShadowLedgerBundleForSource(null)).totals
@@ -10070,11 +10322,12 @@ export async function getShadowAccountPositions(input: {
             )
           : positions;
       const ordersByPositionKey = shadowOrdersByPositionKey(orders);
-      const automationManagementEvents =
-        await latestShadowAutomationManagementEvents(
-          filtered,
-          ordersByPositionKey,
-        );
+      const automationManagementEvents = marketing
+        ? new Map<string, ExecutionEvent>()
+        : await latestShadowAutomationManagementEvents(
+            filtered,
+            ordersByPositionKey,
+          );
       const cachedOptionQuotes = readCachedShadowOptionQuotes(filtered);
       const hasOptionPositions = filtered.some(
         (position) =>
@@ -10140,8 +10393,9 @@ export async function getShadowAccountPositions(input: {
             : undefined,
         },
       );
-      const peakMarkByPositionId =
-        await readShadowPositionPeakMarkPrices(filtered);
+      const peakMarkByPositionId = marketing
+        ? new Map<string, number>()
+        : await readShadowPositionPeakMarkPrices(filtered);
       const rows = filtered.map((position) => {
         const quantity = toNumber(position.quantity) ?? 0;
         const averageCost = toNumber(position.averageCost) ?? 0;
@@ -10190,12 +10444,16 @@ export async function getShadowAccountPositions(input: {
           requireTwoSidedQuote: contract ? undefined : false,
         });
         const mark = pricing.valuationMark ?? toNumber(position.mark) ?? 0;
-        const automationContext = buildShadowAutomationContext({
-          position,
-          sourceOrder: ordersByPositionKey.get(position.positionKey),
-          latestEvent: automationManagementEvents.get(position.positionKey),
-          peakMarkPrice: peakMarkByPositionId.get(position.id) ?? null,
-        });
+        const automationContext = marketing
+          ? null
+          : buildShadowAutomationContext({
+              position,
+              sourceOrder: ordersByPositionKey.get(position.positionKey),
+              latestEvent: automationManagementEvents.get(
+                position.positionKey,
+              ),
+              peakMarkPrice: peakMarkByPositionId.get(position.id) ?? null,
+            });
         const displayOptionQuote =
           responseProviderContractId &&
           rawOptionQuote &&
@@ -10453,6 +10711,10 @@ export async function getShadowAccountPositions(input: {
   });
 }
 
+export function getShadowMarketingPositions() {
+  return getShadowAccountPositions({ detail: "marketing" });
+}
+
 function dateFromShadowPositionResponse(value: unknown): Date {
   if (value instanceof Date && Number.isFinite(value.getTime())) {
     return value;
@@ -10502,10 +10764,17 @@ function shadowTotalsFromPositionsResponse(input: {
 
 function readFreshCachedShadowEquityHistoryReturnMetrics(input: {
   source?: string | null;
+  detail?: "marketing";
 }): ShadowAccountSummaryReturnMetrics | undefined {
   const source = normalizeShadowSourceScope(input.source);
-  const cacheKey = `equity-history:1D::${shadowSourceCacheKey(source)}`;
-  const cached = shadowReadCache.get(shadowReadCacheAccountKey(cacheKey));
+  const cacheSuffix = `1D::${shadowSourceCacheKey(source)}`;
+  const cachePrefix =
+    input.detail === "marketing"
+      ? "marketing-equity-history"
+      : "equity-history";
+  const cached = shadowReadCache.get(
+    shadowReadCacheAccountKey(`${cachePrefix}:${cacheSuffix}`),
+  );
   if (!cached || cached.expiresAt <= Date.now()) {
     return undefined;
   }
@@ -10526,6 +10795,7 @@ function readFreshCachedShadowEquityHistoryReturnMetrics(input: {
 export function getShadowAccountSummaryFromPositions(input: {
   positionsResponse: Awaited<ReturnType<typeof getShadowAccountPositions>>;
   source?: string | null;
+  detail?: "marketing";
 }) {
   return buildShadowAccountSummaryResponse({
     totals: shadowTotalsFromPositionsResponse({
@@ -10533,6 +10803,7 @@ export function getShadowAccountSummaryFromPositions(input: {
     }),
     returnMetrics: readFreshCachedShadowEquityHistoryReturnMetrics({
       source: input.source,
+      detail: input.detail,
     }),
     degraded: Boolean(input.positionsResponse.degraded),
   });
@@ -10926,6 +11197,64 @@ function shadowClosedTradesReadCacheKey(input: {
   ].join(":");
 }
 
+function buildShadowClosedTradeSummary(
+  trades: Array<{ realizedPnl?: number | null; commissions?: number | null }>,
+) {
+  return {
+    count: trades.length,
+    winners: trades.filter((trade) => (trade.realizedPnl ?? 0) > 0).length,
+    losers: trades.filter((trade) => (trade.realizedPnl ?? 0) < 0).length,
+    realizedPnl: trades.reduce(
+      (sum, trade) => sum + (trade.realizedPnl ?? 0),
+      0,
+    ),
+    commissions: trades.reduce(
+      (sum, trade) => sum + (trade.commissions ?? 0),
+      0,
+    ),
+  };
+}
+
+export async function getShadowMarketingClosedTrades() {
+  return withShadowReadCache(
+    "marketing:closed-trades",
+    async () => {
+      const { events, roundTrips } = await readShadowMarketingAnalysisFold();
+      const closedTrades = roundTrips
+        .map(shadowRoundTripToClosedTrade)
+        .sort((left, right) => {
+          const leftTime = left.closeDate
+            ? new Date(left.closeDate).getTime()
+            : 0;
+          const rightTime = right.closeDate
+            ? new Date(right.closeDate).getTime()
+            : 0;
+          return rightTime - leftTime;
+        });
+      const trades = mergeShadowActivityTrades(
+        closedTrades,
+        events,
+        roundTrips,
+        { assetClassFilter: "all" },
+      );
+      return {
+        accountId: SHADOW_ACCOUNT_ID,
+        currency: SHADOW_CURRENCY,
+        degraded: false,
+        reason: null,
+        trades: trades.slice(0, SHADOW_MARKETING_HISTORY_LIMIT),
+        tradesMeta: {
+          total: trades.length,
+          truncated: trades.length > SHADOW_MARKETING_HISTORY_LIMIT,
+        },
+        summary: buildShadowClosedTradeSummary(trades),
+        updatedAt: new Date(),
+      };
+    },
+    { ttlMs: SHADOW_DERIVED_READ_CACHE_TTL_MS },
+  );
+}
+
 export async function getShadowAccountClosedTrades(input: {
   from?: Date | null;
   to?: Date | null;
@@ -10994,21 +11323,7 @@ export async function getShadowAccountClosedTrades(input: {
           degraded: false,
           reason: null,
           trades,
-          summary: {
-            count: trades.length,
-            winners: trades.filter((trade) => (trade.realizedPnl ?? 0) > 0)
-              .length,
-            losers: trades.filter((trade) => (trade.realizedPnl ?? 0) < 0)
-              .length,
-            realizedPnl: trades.reduce(
-              (sum, trade) => sum + (trade.realizedPnl ?? 0),
-              0,
-            ),
-            commissions: trades.reduce(
-              (sum, trade) => sum + (trade.commissions ?? 0),
-              0,
-            ),
-          },
+          summary: buildShadowClosedTradeSummary(trades),
           updatedAt: new Date(),
         };
       } catch (error) {
@@ -11864,6 +12179,25 @@ async function readShadowAnalysisLedgerFold(
   );
 }
 
+function readShadowMarketingAnalysisFold() {
+  return withShadowReadCache(
+    "marketing:analysis-fold",
+    async () => {
+      const bundle = await readShadowMarketingLedgerBundle();
+      const events = bundle.selectedFills.map((fill) =>
+        shadowAnalysisTradeEvent(fill, bundle.ordersById.get(fill.orderId)),
+      );
+      return {
+        fills: bundle.selectedFills,
+        ordersById: bundle.ordersById,
+        events,
+        ...buildShadowAnalysisRoundTrips(events),
+      };
+    },
+    { ttlMs: SHADOW_DERIVED_READ_CACHE_TTL_MS },
+  );
+}
+
 export type ShadowTaxFoldFill = {
   fillId: ShadowFillRow["id"];
   orderId: ShadowFillRow["orderId"];
@@ -12234,6 +12568,44 @@ async function getShadowTradeEquityEvents(input: {
     selectedFills.map((fill) =>
       shadowAnalysisTradeEvent(fill, ordersById.get(fill.orderId)),
     ),
+  );
+}
+
+export async function getShadowMarketingOrders() {
+  return withShadowReadCache(
+    "marketing:orders",
+    async () => {
+      const bundle = await readShadowMarketingLedgerBundle();
+      const terminalStatuses = new Set([
+        "filled",
+        "canceled",
+        "rejected",
+        "expired",
+      ]);
+      const liveOrders = bundle.orders.filter(isLiveShadowOrder);
+      const working = liveOrders
+        .filter((order) => !terminalStatuses.has(order.status))
+        .map(orderRowToResponse);
+      const history = liveOrders.filter((order) =>
+        terminalStatuses.has(order.status),
+      );
+      return {
+        accountId: SHADOW_ACCOUNT_ID,
+        currency: SHADOW_CURRENCY,
+        degraded: false,
+        reason: null,
+        stale: false,
+        debug: null,
+        working,
+        history: history.slice(0, SHADOW_MARKETING_HISTORY_LIMIT).map(orderRowToResponse),
+        historyMeta: {
+          total: history.length,
+          truncated: history.length > SHADOW_MARKETING_HISTORY_LIMIT,
+        },
+        updatedAt: new Date(),
+      };
+    },
+    { ttlMs: SHADOW_DERIVED_READ_CACHE_TTL_MS },
   );
 }
 
@@ -16655,6 +17027,8 @@ export const __shadowWatchlistBacktestInternalsForTests = {
     shadowInjectedFastRiskReadCacheKey,
   invalidateShadowFreshStateCache,
   invalidateShadowReadCachesAfterBackgroundMarkRefresh,
+  isShadowReadCacheKeyExpiredByMarkRefreshForTests:
+    isShadowReadCacheKeyExpiredByMarkRefresh,
   setShadowReadCacheWindowsForTests(input: { ttlMs?: number | null }) {
     shadowReadCacheTtlMsForTests =
       typeof input.ttlMs === "number" ? Math.max(0, input.ttlMs) : null;
