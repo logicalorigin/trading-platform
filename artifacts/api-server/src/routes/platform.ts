@@ -1887,9 +1887,12 @@ router.get("/accounts/:accountId/orders", async (req, res) => {
 });
 
 router.post("/accounts/:accountId/orders/:orderId/cancel", async (req, res) => {
-  await requireEntitlementCsrf("broker_connect")(req);
-  if (!(await admitAccountRoute(res, req.params.accountId))) return;
+  const session = await requireEntitlementCsrf("broker_connect")(req);
   const body = CancelAccountOrderBody.parse(req.body);
+  if (body.mode !== "shadow") {
+    assertIbkrPortalAccess(session);
+  }
+  if (!(await admitAccountRoute(res, req.params.accountId))) return;
   res.json(
     await withCallerShadowScope(
       req.params.accountId,

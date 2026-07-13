@@ -379,6 +379,12 @@ const directIbkrOrderRouteCases = [
     service: "cancelOrder",
     body: {},
   },
+  {
+    method: "POST",
+    path: "/accounts/DU123456/orders/order-1/cancel",
+    service: "cancelAccountOrder",
+    body: { mode: "live", confirm: true },
+  },
 ] as const;
 
 test("logo proxy serves only bounded raster images with defensive headers", { concurrency: false }, async () => {
