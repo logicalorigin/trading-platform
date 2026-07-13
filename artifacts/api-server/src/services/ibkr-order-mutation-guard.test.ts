@@ -145,7 +145,7 @@ test("direct live IBKR placement stays inside the first manual equity lane", asy
       ...baseOrder({ type: "market", limitPrice: null }),
       clientOrderId: "intent-market",
     }),
-    rejectsWithCode("ibkr_live_order_scope_restricted"),
+    rejectsWithCode("ibkr_gateway_trading_unavailable"),
   );
   await assert.rejects(
     placeOrder({

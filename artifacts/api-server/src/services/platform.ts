@@ -57,10 +57,13 @@ import {
   createTaxOrderPreflight,
   getControlledIbkrOrderLifecycle,
   loadSubmittedIbkrPreparedOrderIntent,
+  recordTaxPreflightIbkrOrderFilled,
   recordTaxPreflightIbkrReconciliationRequired,
   recordTaxPreflightIbkrReplyRequired,
   recordTaxPreflightOrderSubmitted,
   recordSubmittedIbkrOrderCancellation,
+  recordSubmittedIbkrExecutionFilled,
+  recordSubmittedIbkrOrderFilled,
   recordSubmittedIbkrOrderReconciliationRequired,
   type IbkrPreparedOrderIntent,
 } from "./tax-planning";
@@ -93,6 +96,7 @@ import {
 import {
   assertIbkrClientPortalGatewaySnapshot,
   getIbkrClientPortalClient,
+  isIbkrClientPortalConfigured,
   type IbkrClientPortalGatewaySnapshot,
 } from "./ibkr-client-runtime";
 import {
@@ -2259,12 +2263,122 @@ async function readCurrentOrders(
   input: OrderReadInput,
 ): Promise<OrderVisibilityResponse> {
   const client = getIbkrClientPortalClient();
+  const mode = input.mode ?? getRuntimeMode();
+  const orders = await client.listOrders({
+    accountId: input.accountId,
+    mode,
+    status: input.status,
+  });
+  for (const order of orders) {
+    if (
+      order.mode !== "live" ||
+      order.status !== "filled" ||
+      order.quantity <= 0 ||
+      order.filledQuantity !== order.quantity
+    ) {
+      continue;
+    }
+    await recordSubmittedIbkrOrderFilled({
+      accountId: order.accountId,
+      submittedOrderId: order.id,
+      status: order.status,
+      quantity: order.quantity,
+      filledQuantity: order.filledQuantity,
+      clientOrderId: order.clientOrderId,
+      providerContractId: order.providerContractId,
+      symbol: order.symbol,
+      side: order.side,
+      orderType: order.type,
+      timeInForce: order.timeInForce,
+    }).catch((error: unknown) => {
+      logger.warn(
+        {
+          action: "ibkr_order_fill_reconciliation",
+          errorType: error instanceof Error ? error.name : "unknown",
+        },
+        "IBKR full fill could not be reconciled to the controlled order lifecycle",
+      );
+    });
+  }
+  if (mode === "live") {
+    try {
+      const lifecycle = await getControlledIbkrOrderLifecycle();
+      const activeOrderStillVisible =
+        lifecycle.status === "active" &&
+        Boolean(
+          lifecycle.orderId &&
+            orders.some((order) => order.id === lifecycle.orderId),
+        );
+      if (
+        (lifecycle.status === "reconciliation_required" ||
+          (lifecycle.status === "active" && !activeOrderStillVisible)) &&
+        lifecycle.accountId &&
+        lifecycle.symbol &&
+        lifecycle.side &&
+        lifecycle.quantity === 1 &&
+        (!input.accountId || input.accountId === lifecycle.accountId)
+      ) {
+        const executions = await client.listExecutions({
+          accountId: lifecycle.accountId,
+          mode,
+          days: 1,
+          symbol: lifecycle.symbol,
+        });
+        const byOrderRef = new Map<string, typeof executions>();
+        for (const execution of executions) {
+          const orderRef = execution.orderRef?.trim();
+          if (!orderRef) continue;
+          const group = byOrderRef.get(orderRef) ?? [];
+          group.push(execution);
+          byOrderRef.set(orderRef, group);
+        }
+        for (const group of byOrderRef.values()) {
+          const first = group[0];
+          if (
+            !first?.orderRef ||
+            !first.providerContractId ||
+            first.accountId !== lifecycle.accountId ||
+            first.symbol !== lifecycle.symbol ||
+            first.side !== lifecycle.side ||
+            !group.every(
+              (execution) =>
+                execution.accountId === first.accountId &&
+                execution.symbol === first.symbol &&
+                execution.side === first.side &&
+                execution.providerContractId === first.providerContractId &&
+                execution.quantity > 0 &&
+                execution.price > 0,
+            )
+          ) {
+            continue;
+          }
+          const quantity = group.reduce(
+            (sum, execution) => sum + execution.quantity,
+            0,
+          );
+          if (quantity !== lifecycle.quantity) continue;
+          await recordSubmittedIbkrExecutionFilled({
+            accountId: first.accountId,
+            clientOrderId: first.orderRef,
+            providerContractId: first.providerContractId,
+            symbol: first.symbol,
+            side: first.side,
+            quantity,
+          });
+        }
+      }
+    } catch (error) {
+      logger.warn(
+        {
+          action: "ibkr_execution_fill_reconciliation",
+          errorType: error instanceof Error ? error.name : "unknown",
+        },
+        "IBKR execution fill could not be reconciled to the controlled order lifecycle",
+      );
+    }
+  }
   return {
-    orders: await client.listOrders({
-      accountId: input.accountId,
-      mode: input.mode ?? getRuntimeMode(),
-      status: input.status,
-    }),
+    orders,
   };
 }
 
@@ -3710,7 +3824,7 @@ function throwGatewayTradingUnavailable(
 }
 
 export async function assertIbkrGatewayTradingAvailable(accountId: string) {
-  if (!getProviderConfiguration().ibkr) {
+  if (!isIbkrClientPortalConfigured()) {
     throwGatewayTradingUnavailable(
       resolveIbkrGatewayTradingReadinessForTests({
         configured: false,
@@ -3891,16 +4005,20 @@ function assertControlledIbkrManualEquityOrder(input: PlaceOrderInput): void {
     source?: unknown;
   };
   const payload = asRecord(extended.payload);
+  const controlledOrderType =
+    (input.type === "market" && input.limitPrice == null) ||
+    (input.type === "limit" &&
+      Number.isFinite(input.limitPrice) &&
+      (input.limitPrice ?? 0) > 0);
   if (
     input.assetClass !== "equity" ||
     input.side !== "buy" ||
-    input.type !== "limit" ||
+    !controlledOrderType ||
     input.quantity !== 1 ||
-    !Number.isFinite(input.limitPrice) ||
-    (input.limitPrice ?? 0) <= 0 ||
     input.stopPrice != null ||
     input.timeInForce !== "day" ||
     input.optionContract != null ||
+    (input.tradingSession != null && input.tradingSession !== "regular") ||
     input.includeOvernight === true ||
     extended.source === "automation" ||
     extended.automationContext != null ||
@@ -3908,7 +4026,7 @@ function assertControlledIbkrManualEquityOrder(input: PlaceOrderInput): void {
   ) {
     throw new HttpError(
       409,
-      "Direct IBKR live trading is limited to one manual BUY LMT DAY share in regular hours.",
+      "Direct IBKR live trading is limited to one manual BUY MKT or LMT DAY share in regular hours.",
       {
         code: "ibkr_live_order_scope_restricted",
         expose: true,
@@ -4057,10 +4175,21 @@ export async function placeOrder(input: PlaceOrderInput) {
   // DUPLICATE live order (SYS-DUP-ORDER). Mirror the overnight/Schwab fix: log and
   // return the accepted order with a reconcile marker so the caller does not retry.
   try {
-    await recordTaxPreflightOrderSubmitted({
-      preflightToken: taxPreflight?.preflightToken,
-      submittedOrderId: order.id,
-    });
+    if (
+      order.status === "filled" &&
+      order.quantity > 0 &&
+      order.filledQuantity === order.quantity
+    ) {
+      await recordTaxPreflightIbkrOrderFilled({
+        preflightToken: taxPreflight.preflightToken,
+        submittedOrderId: order.id,
+      });
+    } else {
+      await recordTaxPreflightOrderSubmitted({
+        preflightToken: taxPreflight.preflightToken,
+        submittedOrderId: order.id,
+      });
+    }
   } catch (error) {
     logger.warn(
       {
@@ -4099,6 +4228,7 @@ export async function continueIbkrOrderReply(input: {
   const replacementOrderId =
     preparedIntent?.kind === "replace" ? preparedIntent.orderId : null;
   const client = getIbkrClientPortalClient();
+  let placementFilled = false;
   let result: Awaited<ReturnType<typeof client.replyOrderWarning>>;
   try {
     // IBKR requires the warning reply to be the very next broker request. Check
@@ -4229,11 +4359,22 @@ export async function continueIbkrOrderReply(input: {
         reconciliationRequired: true,
       };
     }
+    placementFilled =
+      verification.status === "filled" &&
+      verification.quantity > 0 &&
+      verification.filledQuantity === verification.quantity;
   }
-  await recordTaxPreflightOrderSubmitted({
-    preflightToken: input.taxPreflightToken,
-    submittedOrderId: orderId,
-  });
+  if (operation === "place" && placementFilled) {
+    await recordTaxPreflightIbkrOrderFilled({
+      preflightToken: input.taxPreflightToken,
+      submittedOrderId: orderId,
+    });
+  } else {
+    await recordTaxPreflightOrderSubmitted({
+      preflightToken: input.taxPreflightToken,
+      submittedOrderId: orderId,
+    });
+  }
   return {
     status: "acknowledged" as const,
     operation,

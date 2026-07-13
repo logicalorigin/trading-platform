@@ -42,6 +42,7 @@ const IBKR_CANCEL_INFLIGHT_PREFIX = "__ibkr_cancel_inflight__:";
 const IBKR_CANCEL_RECONCILIATION_PREFIX =
   "__ibkr_cancel_reconciliation_required__:";
 const IBKR_CANCELLED_PREFIX = "__ibkr_cancelled__:";
+const IBKR_FILLED_PREFIX = "__ibkr_filled__:";
 const IBKR_REPLY_CHALLENGE_TTL_MS = 30_000;
 const LEGACY_SHADOW_ACCOUNT_ID = "shadow";
 const UUID_PATTERN =
@@ -225,6 +226,11 @@ const isIbkrBrokerOrderId = (value: string): boolean =>
 const ibkrCancelledOrderId = (value: string): string | null =>
   value.startsWith(IBKR_CANCELLED_PREFIX)
     ? value.slice(IBKR_CANCELLED_PREFIX.length)
+    : null;
+
+const ibkrFilledOrderId = (value: string): string | null =>
+  value.startsWith(IBKR_FILLED_PREFIX)
+    ? value.slice(IBKR_FILLED_PREFIX.length)
     : null;
 
 const ibkrOrderIdFromCancelMarker = (value: string): string | null => {
@@ -1186,8 +1192,11 @@ export async function loadSubmittedIbkrPreparedOrderIntent(input: {
   if (
     preflights.some(
       (preflight) =>
-        ibkrCancelledOrderId(preflight.submittedOrderId || "") ===
-        submittedOrderId,
+        [ibkrCancelledOrderId, ibkrFilledOrderId].some(
+          (readOrderId) =>
+            readOrderId(preflight.submittedOrderId || "") ===
+            submittedOrderId,
+        ),
     )
   ) {
     throw new HttpError(409, "The acknowledged IBKR order intent is unavailable.", {
@@ -1251,6 +1260,11 @@ export async function getControlledIbkrOrderLifecycle(
       .map(({ row }) => ibkrCancelledOrderId(row.submittedOrderId || ""))
       .filter((orderId): orderId is string => Boolean(orderId)),
   );
+  const filledOrderIds = new Set(
+    parsed
+      .map(({ row }) => ibkrFilledOrderId(row.submittedOrderId || ""))
+      .filter((orderId): orderId is string => Boolean(orderId)),
+  );
   const originals = parsed.filter(
     ({ row, intent }) =>
       (intent.kind ?? "place") === "place" && Boolean(row.submittedOrderId),
@@ -1260,12 +1274,18 @@ export async function getControlledIbkrOrderLifecycle(
     const orderId = isIbkrBrokerOrderId(marker)
       ? marker
       : ibkrOrderIdFromCancelMarker(marker) ??
+        ibkrFilledOrderId(marker) ??
         (marker === IBKR_RECONCILIATION_REQUIRED_MARKER
           ? ibkrReconciliationOrderId(
               readJsonRecord(original.row.metadata).ibkrReconciliation,
             )
           : null);
-    if (orderId && cancelledOrderIds.has(orderId)) return [];
+    if (
+      orderId &&
+      (cancelledOrderIds.has(orderId) || filledOrderIds.has(orderId))
+    ) {
+      return [];
+    }
     if (
       marker === "__ibkr_order_rejected__" ||
       marker === "__ibkr_order_reply_rejected__" ||
@@ -1628,6 +1648,311 @@ export async function recordTaxPreflightOrderSubmitted(input: {
         eq(taxPreflightChecksTable.preflightToken, input.preflightToken),
       ),
     );
+}
+
+export async function recordTaxPreflightIbkrOrderFilled(input: {
+  appUserId?: string;
+  preflightToken: string;
+  submittedOrderId: string;
+}): Promise<void> {
+  const submittedOrderId = String(input.submittedOrderId || "").trim();
+  if (!isIbkrBrokerOrderId(submittedOrderId)) {
+    throw new HttpError(409, "The filled IBKR order reference is invalid.", {
+      code: "ibkr_submitted_order_intent_invalid",
+      expose: true,
+    });
+  }
+  await recordTaxPreflightOrderSubmitted({
+    appUserId: input.appUserId,
+    preflightToken: input.preflightToken,
+    submittedOrderId: `${IBKR_FILLED_PREFIX}${submittedOrderId}`,
+  });
+}
+
+function exactPreparedIbkrPlaceFill(input: {
+  metadata: unknown;
+  accountId: string;
+  clientOrderId: string;
+  providerContractId: string;
+  symbol: string;
+  side: string;
+  quantity: number;
+}): Record<string, unknown> | null {
+  const prepared = tryReadIbkrPreparedOrderIntent(
+    readJsonRecord(input.metadata).ibkrPreparedIntent,
+    input.accountId,
+  );
+  if (!prepared || prepared.kind !== "place") return null;
+  const preparedOrders = readJsonRecord(prepared.orderBody).orders;
+  if (!Array.isArray(preparedOrders) || preparedOrders.length !== 1) return null;
+  const order = readJsonRecord(preparedOrders[0]);
+  return prepared.clientOrderId === input.clientOrderId &&
+    String(order.acctId || "").trim() === input.accountId &&
+    String(order.cOID || "").trim() === input.clientOrderId &&
+    String(order.conid || "").trim() === input.providerContractId &&
+    String(order.ticker || "").trim().toUpperCase() === input.symbol &&
+    String(order.side || "").trim().toLowerCase() === input.side &&
+    numberOrNull(order.quantity) === input.quantity
+    ? order
+    : null;
+}
+
+export async function recordSubmittedIbkrExecutionFilled(input: {
+  appUserId?: string;
+  accountId: string;
+  clientOrderId: string;
+  providerContractId: string;
+  symbol: string;
+  side: string;
+  quantity: number;
+}): Promise<void> {
+  const appUserId = input.appUserId ?? requireCurrentAppUserId();
+  const accountId = String(input.accountId || "").trim();
+  const clientOrderId = String(input.clientOrderId || "").trim();
+  const providerContractId = String(input.providerContractId || "").trim();
+  const symbol = String(input.symbol || "").trim().toUpperCase();
+  const side = String(input.side || "").trim().toLowerCase();
+  const quantity = Number(input.quantity);
+  if (
+    !PROVIDER_ACCOUNT_ID_PATTERN.test(accountId) ||
+    !PROVIDER_ACCOUNT_ID_PATTERN.test(clientOrderId) ||
+    !PROVIDER_ACCOUNT_ID_PATTERN.test(providerContractId)
+  ) {
+    throw new HttpError(409, "The filled IBKR execution identity is invalid.", {
+      code: "ibkr_submitted_order_intent_invalid",
+      expose: true,
+    });
+  }
+  if (!symbol || side !== "buy" || quantity !== 1) return;
+
+  await db.transaction(async (tx) => {
+    await tx.execute(
+      sql`SELECT pg_advisory_xact_lock(hashtext(${`ibkr-order-mutation:${appUserId}`}))`,
+    );
+    const rows = await tx
+      .select()
+      .from(taxPreflightChecksTable)
+      .where(
+        and(
+          eq(taxPreflightChecksTable.appUserId, appUserId),
+          eq(taxPreflightChecksTable.accountId, accountId),
+        ),
+      )
+      .orderBy(desc(taxPreflightChecksTable.updatedAt));
+    const matchingRows = rows.filter((row) => {
+      const order = exactPreparedIbkrPlaceFill({
+        metadata: row.metadata,
+        accountId,
+        clientOrderId,
+        providerContractId,
+        symbol,
+        side,
+        quantity,
+      });
+      if (!order) return false;
+      const orderType = String(order.orderType || "").trim().toUpperCase();
+      return (
+        (orderType === "MKT" || orderType === "LMT") &&
+        String(order.tif || "").trim().toUpperCase() === "DAY" &&
+        order.manualIndicator === true &&
+        order.outsideRTH === false &&
+        String(order.secType || "").trim().toUpperCase().endsWith(":STK") &&
+        (orderType === "MKT"
+          ? !Object.hasOwn(order, "price")
+          : (numberOrNull(order.price) ?? 0) > 0)
+      );
+    });
+    if (matchingRows.length !== 1) return;
+    const target = matchingRows[0];
+    if (!target) return;
+    const currentMarker = target.submittedOrderId;
+    if (
+      !currentMarker ||
+      (currentMarker !== IBKR_RECONCILIATION_REQUIRED_MARKER &&
+        !isIbkrBrokerOrderId(currentMarker))
+    ) {
+      return;
+    }
+
+    const now = new Date();
+    await tx
+      .update(taxPreflightChecksTable)
+      .set({
+        submittedOrderId: `${IBKR_FILLED_PREFIX}${clientOrderId}`,
+        metadata: {
+          ...readJsonRecord(target.metadata),
+          ibkrFill: {
+            evidence: "execution",
+            clientOrderId,
+            providerContractId,
+            status: "filled",
+            quantity,
+            filledQuantity: quantity,
+            recordedAt: now.toISOString(),
+          },
+        },
+        updatedAt: now,
+      })
+      .where(
+        and(
+          eq(taxPreflightChecksTable.id, target.id),
+          eq(taxPreflightChecksTable.submittedOrderId, currentMarker),
+        ),
+      );
+  });
+}
+
+export async function recordSubmittedIbkrOrderFilled(input: {
+  appUserId?: string;
+  accountId: string;
+  submittedOrderId: string;
+  status: string;
+  quantity: number;
+  filledQuantity: number;
+  clientOrderId?: string | null;
+  providerContractId?: string | null;
+  symbol?: string | null;
+  side?: string | null;
+  orderType?: string | null;
+  timeInForce?: string | null;
+}): Promise<void> {
+  const appUserId = input.appUserId ?? requireCurrentAppUserId();
+  const accountId = String(input.accountId || "").trim();
+  const submittedOrderId = String(input.submittedOrderId || "").trim();
+  if (
+    !PROVIDER_ACCOUNT_ID_PATTERN.test(accountId) ||
+    !isIbkrBrokerOrderId(submittedOrderId)
+  ) {
+    throw new HttpError(409, "The filled IBKR order reference is invalid.", {
+      code: "ibkr_submitted_order_intent_invalid",
+      expose: true,
+    });
+  }
+  const quantity = Number(input.quantity);
+  const filledQuantity = Number(input.filledQuantity);
+  if (
+    String(input.status || "").trim().toLowerCase() !== "filled" ||
+    !Number.isFinite(quantity) ||
+    quantity <= 0 ||
+    !Number.isFinite(filledQuantity) ||
+    filledQuantity !== quantity
+  ) {
+    return;
+  }
+
+  await db.transaction(async (tx) => {
+    await tx.execute(
+      sql`SELECT pg_advisory_xact_lock(hashtext(${`ibkr-order-mutation:${appUserId}`}))`,
+    );
+    const submittedRows = await tx
+      .select()
+      .from(taxPreflightChecksTable)
+      .where(
+        and(
+          eq(taxPreflightChecksTable.appUserId, appUserId),
+          eq(taxPreflightChecksTable.accountId, accountId),
+          eq(taxPreflightChecksTable.submittedOrderId, submittedOrderId),
+        ),
+      )
+      .orderBy(desc(taxPreflightChecksTable.updatedAt));
+    let currentMarker = submittedOrderId;
+    let target = submittedRows.find((row) =>
+      Boolean(
+        tryReadIbkrPreparedOrderIntent(
+          readJsonRecord(row.metadata).ibkrPreparedIntent,
+          accountId,
+        ),
+      ),
+    );
+
+    if (!target) {
+      const clientOrderId = String(input.clientOrderId || "").trim();
+      const providerContractId = String(
+        input.providerContractId || "",
+      ).trim();
+      const symbol = String(input.symbol || "").trim().toUpperCase();
+      const side = String(input.side || "").trim().toLowerCase();
+      const orderType = String(input.orderType || "").trim().toLowerCase();
+      const timeInForce = String(input.timeInForce || "")
+        .trim()
+        .toLowerCase();
+      if (
+        !clientOrderId ||
+        !providerContractId ||
+        !symbol ||
+        (side !== "buy" && side !== "sell") ||
+        (orderType !== "market" && orderType !== "limit") ||
+        timeInForce !== "day"
+      ) {
+        return;
+      }
+      const candidateRows = await tx
+        .select()
+        .from(taxPreflightChecksTable)
+        .where(
+          and(
+            eq(taxPreflightChecksTable.appUserId, appUserId),
+            eq(taxPreflightChecksTable.accountId, accountId),
+          ),
+        )
+        .orderBy(desc(taxPreflightChecksTable.updatedAt));
+      const matchingRows = candidateRows.filter((row) => {
+        const preparedOrder = exactPreparedIbkrPlaceFill({
+          metadata: row.metadata,
+          accountId,
+          clientOrderId,
+          providerContractId,
+          symbol,
+          side,
+          quantity,
+        });
+        if (!preparedOrder) return false;
+        const preparedOrderType = String(preparedOrder.orderType || "")
+          .trim()
+          .toUpperCase();
+        return (
+          ((preparedOrderType === "MKT" && orderType === "market") ||
+            (preparedOrderType === "LMT" && orderType === "limit")) &&
+          String(preparedOrder.tif || "").trim().toLowerCase() === timeInForce
+        );
+      });
+      if (matchingRows.length !== 1) return;
+      target = matchingRows[0];
+      currentMarker = target?.submittedOrderId || "";
+      if (currentMarker !== IBKR_RECONCILIATION_REQUIRED_MARKER) return;
+    }
+    if (!target) return;
+
+    const now = new Date();
+    await tx
+      .update(taxPreflightChecksTable)
+      .set({
+        submittedOrderId: `${IBKR_FILLED_PREFIX}${submittedOrderId}`,
+        metadata: {
+          ...readJsonRecord(target.metadata),
+          ibkrFill: {
+            orderId: submittedOrderId,
+            ...(input.clientOrderId
+              ? { clientOrderId: input.clientOrderId }
+              : {}),
+            ...(input.providerContractId
+              ? { providerContractId: input.providerContractId }
+              : {}),
+            status: "filled",
+            quantity,
+            filledQuantity,
+            recordedAt: now.toISOString(),
+          },
+        },
+        updatedAt: now,
+      })
+      .where(
+        and(
+          eq(taxPreflightChecksTable.id, target.id),
+          eq(taxPreflightChecksTable.submittedOrderId, currentMarker),
+        ),
+      );
+  });
 }
 
 export async function recordTaxPreflightIbkrReconciliationRequired(input: {

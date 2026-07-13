@@ -147,6 +147,44 @@ test("direct IBKR order visibility cache isolates app users and gateway generati
   );
 });
 
+test("live full-fill visibility reconciles the controlled IBKR lifecycle", () => {
+  const readOrdersSource = platformSource.slice(
+    platformSource.indexOf("async function readCurrentOrders"),
+    platformSource.indexOf("async function listOrdersForVisibility"),
+  );
+  assert.match(readOrdersSource, /order\.mode !== "live"/);
+  assert.match(readOrdersSource, /order\.status !== "filled"/);
+  assert.match(
+    readOrdersSource,
+    /order\.filledQuantity !== order\.quantity/,
+  );
+  assert.match(readOrdersSource, /recordSubmittedIbkrOrderFilled\(/);
+  assert.match(readOrdersSource, /clientOrderId: order\.clientOrderId/);
+  assert.match(
+    readOrdersSource,
+    /providerContractId: order\.providerContractId/,
+  );
+  assert.match(readOrdersSource, /client\.listExecutions\(/);
+  assert.match(readOrdersSource, /lifecycle\.status === "active"/);
+  assert.match(readOrdersSource, /activeOrderStillVisible/);
+  assert.match(readOrdersSource, /!activeOrderStillVisible/);
+  assert.match(
+    readOrdersSource,
+    /lifecycle\.status === "reconciliation_required"/,
+  );
+  assert.match(readOrdersSource, /recordSubmittedIbkrExecutionFilled\(/);
+  assert.match(readOrdersSource, /clientOrderId: first\.orderRef/);
+});
+
+test("the live trading guard accepts a verified request-scoped portal gateway", () => {
+  const guardSource = platformSource.slice(
+    platformSource.indexOf("export async function assertIbkrGatewayTradingAvailable"),
+    platformSource.indexOf("async function validateOrderIntentForRouting"),
+  );
+  assert.match(guardSource, /isIbkrClientPortalConfigured\(\)/);
+  assert.doesNotMatch(guardSource, /getProviderConfiguration\(\)\.ibkr/);
+});
+
 test("replacement preview persists reconciliation for ambiguous state evidence only", () => {
   const replacementPreviewSource = platformSource.slice(
     platformSource.indexOf("export async function previewOrderReplacement"),

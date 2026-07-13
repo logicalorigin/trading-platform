@@ -21,9 +21,13 @@ import {
   claimTaxPreflightIbkrReply,
   claimSubmittedIbkrOrderCancellation,
   loadSubmittedIbkrPreparedOrderIntent,
+  recordTaxPreflightIbkrOrderFilled,
+  recordTaxPreflightIbkrReconciliationRequired,
   recordTaxPreflightIbkrReplyRequired,
   recordTaxPreflightOrderSubmitted,
   recordSubmittedIbkrOrderCancellation,
+  recordSubmittedIbkrExecutionFilled,
+  recordSubmittedIbkrOrderFilled,
   recordSubmittedIbkrOrderReconciliationRequired,
 } from "./tax-planning";
 import type { TaxOrderLike } from "./tax-planning-model";
@@ -822,6 +826,440 @@ test("controlled IBKR lifecycle recovers active state and resolves after termina
         accepted?.ibkrPreparedIntent?.clientOrderId,
         "lifecycle-next",
       );
+    });
+  });
+});
+
+test("a confirmed IBKR market fill resolves the controlled lifecycle", async () => {
+  await withTestDb(async () => {
+    const appUserId = await createUser(
+      "tax-preflight-ibkr-market-filled@example.com",
+    );
+    await runAsAppUser(appUserId, async () => {
+      const order = baseOrder({
+        type: "market",
+        quantity: 1,
+        limitPrice: null,
+      });
+      const orderBody = {
+        orders: [
+          {
+            acctId: "U1234567",
+            conid: 265598,
+            cOID: "market-filled-intent",
+            manualIndicator: true,
+            orderType: "MKT",
+            outsideRTH: false,
+            quantity: 1,
+            secType: "265598:STK",
+            side: "BUY",
+            ticker: "AAPL",
+            tif: "DAY",
+          },
+        ],
+      };
+      const preflight = await createTaxOrderPreflight(
+        { order },
+        {
+          ibkrPreparedIntent: {
+            version: 1,
+            accountId: "U1234567",
+            clientOrderId: "market-filled-intent",
+            orderFingerprint: fingerprintIbkrOrderBody(orderBody),
+            orderBody,
+            preparedAt: new Date().toISOString(),
+            whatIf: { error: null, warnings: [] },
+          },
+        },
+      );
+      await assertTaxPreflightForOrderSubmission({
+        order,
+        taxPreflightToken: preflight.preflightToken,
+        requireIbkrPreparedIntent: true,
+        expectedIbkrIntentKind: "place",
+      });
+      await recordTaxPreflightIbkrOrderFilled({
+        preflightToken: preflight.preflightToken,
+        submittedOrderId: "1234567890",
+      });
+
+      assert.deepEqual(await getControlledIbkrOrderLifecycle(), {
+        status: "none",
+        accountId: null,
+        orderId: null,
+        symbol: null,
+        side: null,
+        quantity: null,
+        limitPrice: null,
+        replacementUsed: false,
+        cancelAttempted: false,
+        reason: null,
+      });
+      await assert.rejects(
+        loadSubmittedIbkrPreparedOrderIntent({
+          accountId: "U1234567",
+          submittedOrderId: "1234567890",
+        }),
+        (error: unknown) => {
+          assert.equal(
+            (error as { code?: string }).code,
+            "ibkr_submitted_order_intent_unavailable",
+          );
+          return true;
+        },
+      );
+    });
+  });
+});
+
+test("a delayed IBKR market fill resolves the submitted controlled lifecycle", async () => {
+  await withTestDb(async () => {
+    const appUserId = await createUser(
+      "tax-preflight-ibkr-market-delayed-fill@example.com",
+    );
+    await runAsAppUser(appUserId, async () => {
+      const order = baseOrder({
+        type: "market",
+        quantity: 1,
+        limitPrice: null,
+      });
+      const orderBody = {
+        orders: [
+          {
+            acctId: "U1234567",
+            conid: 265598,
+            cOID: "market-delayed-fill-intent",
+            manualIndicator: true,
+            orderType: "MKT",
+            outsideRTH: false,
+            quantity: 1,
+            secType: "265598:STK",
+            side: "BUY",
+            ticker: "AAPL",
+            tif: "DAY",
+          },
+        ],
+      };
+      const preflight = await createTaxOrderPreflight(
+        { order },
+        {
+          ibkrPreparedIntent: {
+            version: 1,
+            accountId: "U1234567",
+            clientOrderId: "market-delayed-fill-intent",
+            orderFingerprint: fingerprintIbkrOrderBody(orderBody),
+            orderBody,
+            preparedAt: new Date().toISOString(),
+            whatIf: { error: null, warnings: [] },
+          },
+        },
+      );
+      await assertTaxPreflightForOrderSubmission({
+        order,
+        taxPreflightToken: preflight.preflightToken,
+        requireIbkrPreparedIntent: true,
+        expectedIbkrIntentKind: "place",
+      });
+      await recordTaxPreflightOrderSubmitted({
+        preflightToken: preflight.preflightToken,
+        submittedOrderId: "1234567890",
+      });
+
+      assert.equal((await getControlledIbkrOrderLifecycle()).status, "active");
+      await recordSubmittedIbkrOrderFilled({
+        accountId: "U1234567",
+        submittedOrderId: "1234567890",
+        status: "filled",
+        quantity: 1,
+        filledQuantity: 0,
+      });
+      assert.equal((await getControlledIbkrOrderLifecycle()).status, "active");
+      await recordSubmittedIbkrOrderFilled({
+        accountId: "U1234567",
+        submittedOrderId: "1234567890",
+        status: "filled",
+        quantity: 1,
+        filledQuantity: 1,
+      });
+
+      assert.equal((await getControlledIbkrOrderLifecycle()).status, "none");
+      await assert.rejects(
+        loadSubmittedIbkrPreparedOrderIntent({
+          accountId: "U1234567",
+          submittedOrderId: "1234567890",
+        }),
+        (error: unknown) => {
+          assert.equal(
+            (error as { code?: string }).code,
+            "ibkr_submitted_order_intent_unavailable",
+          );
+          return true;
+        },
+      );
+    });
+  });
+});
+
+test("an exact delayed market fill resolves a placement reconciliation marker", async () => {
+  await withTestDb(async () => {
+    const appUserId = await createUser(
+      "tax-preflight-ibkr-market-reconciled-fill@example.com",
+    );
+    await runAsAppUser(appUserId, async () => {
+      const order = baseOrder({
+        type: "market",
+        quantity: 1,
+        limitPrice: null,
+      });
+      const orderBody = {
+        orders: [
+          {
+            acctId: "U1234567",
+            conid: 265598,
+            cOID: "market-reconciled-fill-intent",
+            manualIndicator: true,
+            orderType: "MKT",
+            outsideRTH: false,
+            quantity: 1,
+            secType: "265598:STK",
+            side: "BUY",
+            ticker: "AAPL",
+            tif: "DAY",
+          },
+        ],
+      };
+      const preflight = await createTaxOrderPreflight(
+        { order },
+        {
+          ibkrPreparedIntent: {
+            version: 1,
+            accountId: "U1234567",
+            clientOrderId: "market-reconciled-fill-intent",
+            orderFingerprint: fingerprintIbkrOrderBody(orderBody),
+            orderBody,
+            preparedAt: new Date().toISOString(),
+            whatIf: { error: null, warnings: [] },
+          },
+        },
+      );
+      await assertTaxPreflightForOrderSubmission({
+        order,
+        taxPreflightToken: preflight.preflightToken,
+        requireIbkrPreparedIntent: true,
+        expectedIbkrIntentKind: "place",
+      });
+      await recordTaxPreflightIbkrReconciliationRequired({
+        preflightToken: preflight.preflightToken,
+        reason: "place_post_ack_verification_incomplete",
+      });
+
+      assert.equal(
+        (await getControlledIbkrOrderLifecycle()).status,
+        "reconciliation_required",
+      );
+      const fillEvidence = {
+        accountId: "U1234567",
+        submittedOrderId: "1234567890",
+        status: "filled",
+        quantity: 1,
+        filledQuantity: 1,
+        clientOrderId: "wrong-intent",
+        providerContractId: "265598",
+        symbol: "AAPL",
+        side: "buy",
+        orderType: "market",
+        timeInForce: "day",
+      };
+      await recordSubmittedIbkrOrderFilled(fillEvidence);
+      assert.equal(
+        (await getControlledIbkrOrderLifecycle()).status,
+        "reconciliation_required",
+      );
+      await recordSubmittedIbkrOrderFilled({
+        ...fillEvidence,
+        clientOrderId: "market-reconciled-fill-intent",
+      });
+
+      assert.equal((await getControlledIbkrOrderLifecycle()).status, "none");
+
+      const reusedPreflight = await createTaxOrderPreflight(
+        { order },
+        {
+          ibkrPreparedIntent: {
+            version: 1,
+            accountId: "U1234567",
+            clientOrderId: "market-reconciled-fill-intent",
+            orderFingerprint: fingerprintIbkrOrderBody(orderBody),
+            orderBody,
+            preparedAt: new Date().toISOString(),
+            whatIf: { error: null, warnings: [] },
+          },
+        },
+      );
+      await assertTaxPreflightForOrderSubmission({
+        order,
+        taxPreflightToken: reusedPreflight.preflightToken,
+        requireIbkrPreparedIntent: true,
+        expectedIbkrIntentKind: "place",
+      });
+      await recordTaxPreflightIbkrReconciliationRequired({
+        preflightToken: reusedPreflight.preflightToken,
+        reason: "place_post_ack_verification_incomplete",
+      });
+      await recordSubmittedIbkrOrderFilled({
+        ...fillEvidence,
+        clientOrderId: "market-reconciled-fill-intent",
+      });
+      assert.equal(
+        (await getControlledIbkrOrderLifecycle()).status,
+        "reconciliation_required",
+      );
+    });
+  });
+});
+
+test("exact execution fills resolve reconciliation and active lifecycle markers", async () => {
+  await withTestDb(async () => {
+    const appUserId = await createUser(
+      "tax-preflight-ibkr-market-execution-fill@example.com",
+    );
+    await runAsAppUser(appUserId, async () => {
+      const order = baseOrder({
+        type: "market",
+        quantity: 1,
+        limitPrice: null,
+      });
+      const orderBody = {
+        orders: [
+          {
+            acctId: "U1234567",
+            conid: 265598,
+            cOID: "market-execution-fill-intent",
+            manualIndicator: true,
+            orderType: "MKT",
+            outsideRTH: false,
+            quantity: 1,
+            secType: "265598:STK",
+            side: "BUY",
+            ticker: "AAPL",
+            tif: "DAY",
+          },
+        ],
+      };
+      const preflight = await createTaxOrderPreflight(
+        { order },
+        {
+          ibkrPreparedIntent: {
+            version: 1,
+            accountId: "U1234567",
+            clientOrderId: "market-execution-fill-intent",
+            orderFingerprint: fingerprintIbkrOrderBody(orderBody),
+            orderBody,
+            preparedAt: new Date().toISOString(),
+            whatIf: { error: null, warnings: [] },
+          },
+        },
+      );
+      await assertTaxPreflightForOrderSubmission({
+        order,
+        taxPreflightToken: preflight.preflightToken,
+        requireIbkrPreparedIntent: true,
+        expectedIbkrIntentKind: "place",
+      });
+      await recordTaxPreflightIbkrReconciliationRequired({
+        preflightToken: preflight.preflightToken,
+        reason: "place_post_ack_verification_incomplete",
+      });
+
+      const fillEvidence = {
+        accountId: "U1234567",
+        clientOrderId: "wrong-intent",
+        providerContractId: "265598",
+        symbol: "AAPL",
+        side: "buy",
+        quantity: 1,
+      };
+      await recordSubmittedIbkrExecutionFilled(fillEvidence);
+      assert.equal(
+        (await getControlledIbkrOrderLifecycle()).status,
+        "reconciliation_required",
+      );
+      await recordSubmittedIbkrExecutionFilled({
+        ...fillEvidence,
+        clientOrderId: "market-execution-fill-intent",
+      });
+
+      assert.equal((await getControlledIbkrOrderLifecycle()).status, "none");
+
+      const activeOrderBody = {
+        orders: [
+          {
+            ...orderBody.orders[0],
+            cOID: "market-active-execution-fill-intent",
+          },
+        ],
+      };
+      const activePreflight = await createTaxOrderPreflight(
+        { order },
+        {
+          ibkrPreparedIntent: {
+            version: 1,
+            accountId: "U1234567",
+            clientOrderId: "market-active-execution-fill-intent",
+            orderFingerprint: fingerprintIbkrOrderBody(activeOrderBody),
+            orderBody: activeOrderBody,
+            preparedAt: new Date().toISOString(),
+            whatIf: { error: null, warnings: [] },
+          },
+        },
+      );
+      await assertTaxPreflightForOrderSubmission({
+        order,
+        taxPreflightToken: activePreflight.preflightToken,
+        requireIbkrPreparedIntent: true,
+        expectedIbkrIntentKind: "place",
+      });
+      await recordTaxPreflightOrderSubmitted({
+        preflightToken: activePreflight.preflightToken,
+        submittedOrderId: "active-broker-order-id",
+      });
+
+      assert.equal((await getControlledIbkrOrderLifecycle()).status, "active");
+      await recordSubmittedIbkrExecutionFilled({
+        ...fillEvidence,
+        clientOrderId: "market-active-execution-fill-intent",
+      });
+      assert.equal((await getControlledIbkrOrderLifecycle()).status, "none");
+
+      const reusedPreflight = await createTaxOrderPreflight(
+        { order },
+        {
+          ibkrPreparedIntent: {
+            version: 1,
+            accountId: "U1234567",
+            clientOrderId: "market-active-execution-fill-intent",
+            orderFingerprint: fingerprintIbkrOrderBody(activeOrderBody),
+            orderBody: activeOrderBody,
+            preparedAt: new Date().toISOString(),
+            whatIf: { error: null, warnings: [] },
+          },
+        },
+      );
+      await assertTaxPreflightForOrderSubmission({
+        order,
+        taxPreflightToken: reusedPreflight.preflightToken,
+        requireIbkrPreparedIntent: true,
+        expectedIbkrIntentKind: "place",
+      });
+      await recordTaxPreflightOrderSubmitted({
+        preflightToken: reusedPreflight.preflightToken,
+        submittedOrderId: "reused-client-id-broker-order",
+      });
+      await recordSubmittedIbkrExecutionFilled({
+        ...fillEvidence,
+        clientOrderId: "market-active-execution-fill-intent",
+      });
+      assert.equal((await getControlledIbkrOrderLifecycle()).status, "active");
     });
   });
 });
