@@ -12,8 +12,6 @@
     "universe:sync:sp500": "tsx ./src/sync-sp500-universe.ts",
     "universe:hydrate:ibkr": "tsx ./src/hydrate-universe-catalog-ibkr.ts",
     "universe:verify:optionability": "tsx ./src/verify-flow-universe-optionability.ts",
-    "db:storage:audit": "tsx ./src/db-storage.ts audit",
-    "db:storage:cleanup": "tsx ./src/db-storage.ts cleanup",
     "db:market-data:audit": "tsx ./src/market-data-schema-audit.ts",
     "db:phase0:audit": "tsx ./src/db-phase0-audit.ts",
     "db:snapshot-retention:audit": "tsx ./src/db-snapshot-retention.ts audit",
