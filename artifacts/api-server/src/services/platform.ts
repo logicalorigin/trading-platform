@@ -61,6 +61,7 @@ import {
   recordTaxPreflightIbkrReplyRequired,
   recordTaxPreflightOrderSubmitted,
   recordSubmittedIbkrOrderCancellation,
+  recordSubmittedIbkrOrderReconciliationRequired,
   type IbkrPreparedOrderIntent,
 } from "./tax-planning";
 import type { TaxOrderLike } from "./tax-planning-model";
@@ -4324,6 +4325,21 @@ export async function submitRawOrders(input: {
   });
 }
 
+const SAFE_IBKR_REPLACEMENT_PREVIEW_ERROR_CODES = new Set([
+  "ibkr_replace_request_invalid",
+  "ibkr_replace_price_unchanged",
+  "ibkr_replace_rules_rejected",
+]);
+
+export function replacementPreviewRequiresReconciliation(
+  error: unknown,
+): boolean {
+  return !(
+    isHttpError(error) &&
+    SAFE_IBKR_REPLACEMENT_PREVIEW_ERROR_CODES.has(error.code ?? "")
+  );
+}
+
 export async function previewOrderReplacement(input: {
   accountId: string;
   orderId: string;
@@ -4344,13 +4360,30 @@ export async function previewOrderReplacement(input: {
     submittedOrderId: input.orderId,
   });
   const client = getIbkrClientPortalClient();
-  const preview = await client.previewOrderReplacement({
-    accountId: input.accountId,
-    orderId: input.orderId,
-    mode,
-    originalOrderBody: previousIntent.orderBody,
-    limitPrice: input.limitPrice,
-  });
+  let preview: Awaited<ReturnType<typeof client.previewOrderReplacement>>;
+  try {
+    preview = await client.previewOrderReplacement({
+      accountId: input.accountId,
+      orderId: input.orderId,
+      mode,
+      originalOrderBody: previousIntent.orderBody,
+      limitPrice: input.limitPrice,
+    });
+  } catch (error) {
+    if (!replacementPreviewRequiresReconciliation(error)) throw error;
+    await recordSubmittedIbkrOrderReconciliationRequired({
+      accountId: input.accountId,
+      submittedOrderId: input.orderId,
+      reason: isHttpError(error)
+        ? error.code ?? "replace_preview_state_unknown"
+        : "replace_preview_transport_unknown",
+    });
+    throw new HttpError(409, "IBKR replacement preview requires reconciliation.", {
+      code: "ibkr_replace_reconciliation_required",
+      expose: true,
+      cause: error,
+    });
+  }
   if (preview.whatIf.error) {
     throw new HttpError(409, "IBKR what-if rejected the prepared replacement.", {
       code: "ibkr_replace_what_if_rejected",

@@ -8,8 +8,10 @@ import {
   buildOrderVisibilityCacheKey,
   placeOrder,
   previewOrder,
+  replacementPreviewRequiresReconciliation,
   submitRawOrders,
 } from "./platform";
+import { HttpError } from "../lib/errors";
 
 const baseIbkrOrder = (
   overrides: Partial<PlaceOrderInput> = {},
@@ -143,4 +145,29 @@ test("direct IBKR order visibility cache isolates app users and gateway generati
       gatewaySnapshot: { ...gateway, startedAt: 124 },
     }),
   );
+});
+
+test("replacement preview persists reconciliation for ambiguous state evidence only", () => {
+  assert.equal(
+    replacementPreviewRequiresReconciliation(
+      new HttpError(409, "filled", { code: "ibkr_replace_order_has_fills" }),
+    ),
+    true,
+  );
+  assert.equal(
+    replacementPreviewRequiresReconciliation(new Error("transport unknown")),
+    true,
+  );
+  for (const code of [
+    "ibkr_replace_request_invalid",
+    "ibkr_replace_price_unchanged",
+    "ibkr_replace_rules_rejected",
+  ]) {
+    assert.equal(
+      replacementPreviewRequiresReconciliation(
+        new HttpError(409, "safe rejection", { code }),
+      ),
+      false,
+    );
+  }
 });
