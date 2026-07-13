@@ -1088,7 +1088,10 @@ test("default equity annotations reuse the shared analysis fold", () => {
   assert.notEqual(end, -1, "Missing trade equity-event reader boundary");
   const block = shadowAccountSource.slice(start, end);
 
-  assert.match(block, /if \(!input\.sources\?\.length\)/);
+  assert.match(
+    block,
+    /const sources = input\.sources;\s*if \(!sources\?\.length\)/,
+  );
   assert.match(
     block,
     /readShadowAnalysisLedgerFold\(\{\s*scope: null,\s*\}\)/,
