@@ -174,6 +174,10 @@ test("live full-fill visibility reconciles the controlled IBKR lifecycle", () =>
   );
   assert.match(readOrdersSource, /recordSubmittedIbkrExecutionFilled\(/);
   assert.match(readOrdersSource, /clientOrderId: first\.orderRef/);
+  assert.match(readOrdersSource, /days: 7/);
+  assert.match(readOrdersSource, /Number\.isFinite\(lifecycle\.quantity\)/);
+  assert.match(readOrdersSource, /lifecycle\.quantity > 0/);
+  assert.doesNotMatch(readOrdersSource, /lifecycle\.quantity === 1/);
 });
 
 test("the live trading guard accepts a verified request-scoped portal gateway", () => {

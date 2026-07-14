@@ -139,7 +139,7 @@ test("live submission requires a prepared order intent", async () => {
   );
 });
 
-test("direct live IBKR placement stays inside the first manual equity lane", async () => {
+test("direct live IBKR placement admits the approved manual single-leg lane", async () => {
   await assert.rejects(
     placeOrder({
       ...baseOrder({ type: "market", limitPrice: null }),
@@ -151,6 +151,61 @@ test("direct live IBKR placement stays inside the first manual equity lane", asy
     placeOrder({
       ...baseOrder({ quantity: 2 }),
       clientOrderId: "intent-two-shares",
+    }),
+    rejectsWithCode("ibkr_gateway_trading_unavailable"),
+  );
+  await assert.rejects(
+    placeOrder({
+      ...baseOrder({ side: "sell", quantity: 2 }),
+      clientOrderId: "intent-sell-held-shares",
+    }),
+    rejectsWithCode("ibkr_gateway_trading_unavailable"),
+  );
+  await assert.rejects(
+    placeOrder({
+      ...baseOrder({
+        symbol: "AAPL",
+        assetClass: "option",
+        quantity: 2,
+        optionContract: {
+          ticker: "AAPL260821C00200000",
+          underlying: "AAPL",
+          expirationDate: new Date("2026-08-21T00:00:00.000Z"),
+          strike: 200,
+          right: "call",
+          multiplier: 100,
+          sharesPerContract: 100,
+          providerContractId: "700001",
+        },
+        optionAction: "buy_to_open",
+        positionEffect: "open",
+        strategyIntent: "long_option",
+      }),
+      clientOrderId: "intent-option-bto",
+    }),
+    rejectsWithCode("ibkr_gateway_trading_unavailable"),
+  );
+});
+
+test("direct live IBKR placement rejects unsupported order shapes", async () => {
+  await assert.rejects(
+    placeOrder({
+      ...baseOrder({ quantity: 0 }),
+      clientOrderId: "intent-zero",
+    }),
+    rejectsWithCode("ibkr_live_order_scope_restricted"),
+  );
+  await assert.rejects(
+    placeOrder({
+      ...baseOrder({ quantity: 1.5 }),
+      clientOrderId: "intent-fractional-shares",
+    }),
+    rejectsWithCode("ibkr_live_order_scope_restricted"),
+  );
+  await assert.rejects(
+    placeOrder({
+      ...baseOrder({ type: "stop", limitPrice: null, stopPrice: 99 }),
+      clientOrderId: "intent-stop",
     }),
     rejectsWithCode("ibkr_live_order_scope_restricted"),
   );

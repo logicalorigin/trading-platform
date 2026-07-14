@@ -279,6 +279,148 @@ test("tax preflight binds and atomically claims the prepared IBKR order", async 
   });
 });
 
+test("prepared IBKR option semantics survive the tax-preflight round trip", async () => {
+  await withTestDb(async () => {
+    const appUserId = await createUser("tax-preflight-ibkr-option@example.com");
+    await runAsAppUser(appUserId, async () => {
+      const optionContract = {
+        ticker: "AAPL260821C00200000",
+        underlying: "AAPL",
+        expirationDate: "2026-08-21T00:00:00.000Z",
+        strike: 200,
+        right: "call",
+        multiplier: 100,
+        sharesPerContract: 100,
+        providerContractId: "700001",
+      };
+      const order = baseOrder({
+        assetClass: "option",
+        quantity: 2,
+        limitPrice: 4.5,
+        optionContract,
+        intent: "long_option",
+      });
+      const orderBody = {
+        orders: [
+          {
+            acctId: "U1234567",
+            conid: 700001,
+            cOID: "option-intent-1",
+            manualIndicator: true,
+            orderType: "LMT",
+            outsideRTH: false,
+            price: 4.5,
+            quantity: 2,
+            secType: "700001:OPT",
+            side: "BUY",
+            ticker: "AAPL",
+            tif: "DAY",
+          },
+        ],
+      };
+      const preflight = await createTaxOrderPreflight(
+        { order },
+        {
+          ibkrPreparedIntent: {
+            version: 1,
+            accountId: "U1234567",
+            clientOrderId: "option-intent-1",
+            orderFingerprint: fingerprintIbkrOrderBody(orderBody),
+            orderBody,
+            preparedAt: new Date().toISOString(),
+            whatIf: { error: null, warnings: [] },
+            optionContract,
+            optionAction: "buy_to_open",
+            positionEffect: "open",
+            strategyIntent: "long_option",
+          },
+        },
+      );
+
+      const accepted = await assertTaxPreflightForOrderSubmission({
+        order,
+        taxPreflightToken: preflight.preflightToken,
+        requireIbkrPreparedIntent: true,
+      });
+
+      assert.deepEqual(
+        accepted?.ibkrPreparedIntent?.optionContract,
+        optionContract,
+      );
+      assert.equal(accepted?.ibkrPreparedIntent?.optionAction, "buy_to_open");
+      assert.equal(accepted?.ibkrPreparedIntent?.positionEffect, "open");
+      assert.equal(accepted?.ibkrPreparedIntent?.strategyIntent, "long_option");
+    });
+  });
+});
+
+test("prepared IBKR option bodies require explicit option semantics", async () => {
+  await withTestDb(async () => {
+    const appUserId = await createUser(
+      "tax-preflight-ibkr-option-semantics-required@example.com",
+    );
+    await runAsAppUser(appUserId, async () => {
+      const order = baseOrder({
+        assetClass: "option",
+        quantity: 2,
+        limitPrice: 4.5,
+        optionContract: {
+          ticker: "AAPL260821C00200000",
+          underlying: "AAPL",
+          expirationDate: "2026-08-21T00:00:00.000Z",
+          strike: 200,
+          right: "call",
+          multiplier: 100,
+          sharesPerContract: 100,
+          providerContractId: "700001",
+        },
+        intent: "long_option",
+      });
+      const orderBody = {
+        orders: [
+          {
+            acctId: "U1234567",
+            conid: 700001,
+            cOID: "option-intent-without-semantics",
+            manualIndicator: true,
+            orderType: "LMT",
+            outsideRTH: false,
+            price: 4.5,
+            quantity: 2,
+            secType: "700001:OPT",
+            side: "BUY",
+            ticker: "AAPL",
+            tif: "DAY",
+          },
+        ],
+      };
+      await assert.rejects(
+        createTaxOrderPreflight(
+          { order },
+          {
+            ibkrPreparedIntent: {
+              version: 1,
+              accountId: "U1234567",
+              clientOrderId: "option-intent-without-semantics",
+              orderFingerprint: fingerprintIbkrOrderBody(orderBody),
+              orderBody,
+              preparedAt: new Date().toISOString(),
+              whatIf: { error: null, warnings: [] },
+            },
+          },
+        ),
+        (error: unknown) => {
+          assert.equal(
+            (error as { code?: string }).code,
+            "ibkr_order_intent_invalid",
+          );
+          return true;
+        },
+      );
+    });
+  });
+});
+
 test("prepared IBKR replacement is bound to its predecessor and cannot be placed", async () => {
   await withTestDb(async () => {
     const appUserId = await createUser("tax-preflight-ibkr-replace@example.com");
@@ -1260,6 +1402,157 @@ test("exact execution fills resolve reconciliation and active lifecycle markers"
         clientOrderId: "market-active-execution-fill-intent",
       });
       assert.equal((await getControlledIbkrOrderLifecycle()).status, "active");
+    });
+  });
+});
+
+test("exact multi-share equity sell executions resolve reconciliation", async () => {
+  await withTestDb(async () => {
+    const appUserId = await createUser(
+      "tax-preflight-ibkr-equity-sell-execution-fill@example.com",
+    );
+    await runAsAppUser(appUserId, async () => {
+      const order = baseOrder({
+        type: "market",
+        side: "sell",
+        quantity: 2,
+        limitPrice: null,
+      });
+      const orderBody = {
+        orders: [
+          {
+            acctId: "U1234567",
+            conid: 265598,
+            cOID: "equity-sell-execution-fill-intent",
+            manualIndicator: true,
+            orderType: "MKT",
+            outsideRTH: false,
+            quantity: 2,
+            secType: "265598:STK",
+            side: "SELL",
+            ticker: "AAPL",
+            tif: "DAY",
+          },
+        ],
+      };
+      const preflight = await createTaxOrderPreflight(
+        { order },
+        {
+          ibkrPreparedIntent: {
+            version: 1,
+            accountId: "U1234567",
+            clientOrderId: "equity-sell-execution-fill-intent",
+            orderFingerprint: fingerprintIbkrOrderBody(orderBody),
+            orderBody,
+            preparedAt: new Date().toISOString(),
+            whatIf: { error: null, warnings: [] },
+          },
+        },
+      );
+      await assertTaxPreflightForOrderSubmission({
+        order,
+        taxPreflightToken: preflight.preflightToken,
+        taxAcknowledgements: preflight.requiredAcknowledgements,
+        requireIbkrPreparedIntent: true,
+      });
+      await recordTaxPreflightIbkrReconciliationRequired({
+        preflightToken: preflight.preflightToken,
+        reason: "place_post_ack_verification_incomplete",
+      });
+
+      await recordSubmittedIbkrExecutionFilled({
+        accountId: "U1234567",
+        clientOrderId: "equity-sell-execution-fill-intent",
+        providerContractId: "265598",
+        symbol: "AAPL",
+        side: "sell",
+        quantity: 2,
+      });
+
+      assert.equal((await getControlledIbkrOrderLifecycle()).status, "none");
+    });
+  });
+});
+
+test("exact option executions resolve reconciliation", async () => {
+  await withTestDb(async () => {
+    const appUserId = await createUser(
+      "tax-preflight-ibkr-option-execution-fill@example.com",
+    );
+    await runAsAppUser(appUserId, async () => {
+      const optionContract = {
+        ticker: "AAPL260821C00200000",
+        underlying: "AAPL",
+        expirationDate: "2026-08-21T00:00:00.000Z",
+        strike: 200,
+        right: "call",
+        multiplier: 100,
+        sharesPerContract: 100,
+        providerContractId: "700001",
+      };
+      const order = baseOrder({
+        assetClass: "option",
+        type: "market",
+        quantity: 2,
+        limitPrice: null,
+        optionContract,
+        intent: "long_option",
+      });
+      const orderBody = {
+        orders: [
+          {
+            acctId: "U1234567",
+            conid: 700001,
+            cOID: "option-execution-fill-intent",
+            manualIndicator: true,
+            orderType: "MKT",
+            outsideRTH: false,
+            quantity: 2,
+            secType: "700001:OPT",
+            side: "BUY",
+            ticker: "AAPL",
+            tif: "DAY",
+          },
+        ],
+      };
+      const preflight = await createTaxOrderPreflight(
+        { order },
+        {
+          ibkrPreparedIntent: {
+            version: 1,
+            accountId: "U1234567",
+            clientOrderId: "option-execution-fill-intent",
+            orderFingerprint: fingerprintIbkrOrderBody(orderBody),
+            orderBody,
+            preparedAt: new Date().toISOString(),
+            whatIf: { error: null, warnings: [] },
+            optionContract,
+            optionAction: "buy_to_open",
+            positionEffect: "open",
+            strategyIntent: "long_option",
+          },
+        },
+      );
+      await assertTaxPreflightForOrderSubmission({
+        order,
+        taxPreflightToken: preflight.preflightToken,
+        requireIbkrPreparedIntent: true,
+      });
+      await recordTaxPreflightIbkrReconciliationRequired({
+        preflightToken: preflight.preflightToken,
+        reason: "place_post_ack_verification_incomplete",
+      });
+
+      await recordSubmittedIbkrExecutionFilled({
+        accountId: "U1234567",
+        clientOrderId: "option-execution-fill-intent",
+        providerContractId: "700001",
+        symbol: "AAPL",
+        side: "buy",
+        quantity: 2,
+      });
+
+      assert.equal((await getControlledIbkrOrderLifecycle()).status, "none");
     });
   });
 });

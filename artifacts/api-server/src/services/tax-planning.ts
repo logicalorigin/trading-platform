@@ -1,6 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { db } from "@workspace/db";
+import type {
+  OptionOrderAction,
+  OptionOrderPositionEffect,
+  OptionOrderStrategyIntent,
+} from "@workspace/ibkr-contracts";
 import {
   brokerAccountsTable,
   brokerOrdersTable,
@@ -57,7 +62,14 @@ export type IbkrPreparedGatewaySnapshot = {
   startedAt: number;
 };
 
-export type IbkrPreparedPlaceOrderIntent = {
+type IbkrPreparedOptionIntentFields = {
+  optionContract?: Record<string, unknown> | null;
+  optionAction?: OptionOrderAction | null;
+  positionEffect?: OptionOrderPositionEffect | null;
+  strategyIntent?: OptionOrderStrategyIntent | null;
+};
+
+export type IbkrPreparedPlaceOrderIntent = IbkrPreparedOptionIntentFields & {
   version: 1;
   kind?: "place";
   accountId: string;
@@ -69,7 +81,7 @@ export type IbkrPreparedPlaceOrderIntent = {
   gatewaySnapshot?: IbkrPreparedGatewaySnapshot;
 };
 
-export type IbkrPreparedReplaceOrderIntent = {
+export type IbkrPreparedReplaceOrderIntent = IbkrPreparedOptionIntentFields & {
   version: 2;
   kind: "replace";
   orderId: string;
@@ -118,6 +130,69 @@ function readIbkrPreparedOrderIntent(
   const previousOrderFingerprint = String(
     record.previousOrderFingerprint || "",
   ).trim();
+  const optionContract =
+    record.optionContract == null
+      ? null
+      : readJsonRecord(record.optionContract);
+  const optionAction = String(record.optionAction || "").trim() || null;
+  const positionEffect = String(record.positionEffect || "").trim() || null;
+  const strategyIntent = String(record.strategyIntent || "").trim() || null;
+  const hasOptionSemantics =
+    optionContract !== null ||
+    optionAction !== null ||
+    positionEffect !== null ||
+    strategyIntent !== null;
+  const secType = String(order.secType || "").trim().toUpperCase();
+  const optionOrder = secType.endsWith(":OPT");
+  const expectedOptionSide =
+    optionAction === "buy_to_open" || optionAction === "buy_to_close"
+      ? "BUY"
+      : optionAction === "sell_to_close" || optionAction === "sell_to_open"
+        ? "SELL"
+        : null;
+  const expectedPositionEffect =
+    optionAction === "buy_to_open" || optionAction === "sell_to_open"
+      ? "open"
+      : optionAction === "buy_to_close" || optionAction === "sell_to_close"
+        ? "close"
+        : null;
+  const optionRight = String(optionContract?.right || "").trim().toLowerCase();
+  const allowedStrategy =
+    optionAction === "buy_to_open"
+      ? "long_option"
+      : optionAction === "sell_to_close"
+        ? "sell_to_close"
+        : null;
+  const requiredSellStrategy =
+    optionRight === "call"
+      ? "covered_call"
+      : optionRight === "put"
+        ? "cash_secured_put"
+        : null;
+  const optionSemanticsValid =
+    (!optionOrder && !hasOptionSemantics) ||
+    (optionOrder &&
+      optionContract !== null &&
+      Object.keys(optionContract).length > 0 &&
+      [
+        "buy_to_open",
+        "buy_to_close",
+        "sell_to_close",
+        "sell_to_open",
+      ].includes(optionAction ?? "") &&
+      ["open", "close"].includes(positionEffect ?? "") &&
+      (optionRight === "call" || optionRight === "put") &&
+      expectedOptionSide === String(order.side || "").trim().toUpperCase() &&
+      expectedPositionEffect === positionEffect &&
+      String(optionContract.providerContractId || "").trim() ===
+        String(order.conid || "").trim() &&
+      String(optionContract.underlying || "").trim().toUpperCase() ===
+        String(order.ticker || "").trim().toUpperCase() &&
+      strategyIntent !== "uncovered_short_call" &&
+      strategyIntent !== "uncovered_short_put" &&
+      (optionAction === "sell_to_open"
+        ? strategyIntent === requiredSellStrategy
+        : strategyIntent === null || strategyIntent === allowedStrategy));
   if (
     (!placeIntent && !replaceIntent) ||
     orders.length !== 1 ||
@@ -127,6 +202,7 @@ function readIbkrPreparedOrderIntent(
     !/^[A-Za-z0-9._:-]{1,64}$/u.test(clientOrderId) ||
     !/^[a-f0-9]{64}$/u.test(orderFingerprint) ||
     actualFingerprint !== orderFingerprint ||
+    !optionSemanticsValid ||
     (replaceIntent &&
       (!PROVIDER_ACCOUNT_ID_PATTERN.test(orderId) ||
         !/^[a-f0-9]{64}$/u.test(previousOrderFingerprint)))
@@ -172,6 +248,14 @@ function readIbkrPreparedOrderIntent(
     orderBody,
     preparedAt: String(record.preparedAt || ""),
     whatIf,
+    ...(hasOptionSemantics
+      ? {
+          optionContract,
+          optionAction: optionAction as OptionOrderAction,
+          positionEffect: positionEffect as OptionOrderPositionEffect,
+          strategyIntent: strategyIntent as OptionOrderStrategyIntent | null,
+        }
+      : {}),
     ...(gatewaySnapshot
       ? { gatewaySnapshot: gatewaySnapshot as IbkrPreparedGatewaySnapshot }
       : {}),
@@ -1723,7 +1807,14 @@ export async function recordSubmittedIbkrExecutionFilled(input: {
       expose: true,
     });
   }
-  if (!symbol || side !== "buy" || quantity !== 1) return;
+  if (
+    !symbol ||
+    (side !== "buy" && side !== "sell") ||
+    !Number.isFinite(quantity) ||
+    quantity <= 0
+  ) {
+    return;
+  }
 
   await db.transaction(async (tx) => {
     await tx.execute(
@@ -1751,12 +1842,16 @@ export async function recordSubmittedIbkrExecutionFilled(input: {
       });
       if (!order) return false;
       const orderType = String(order.orderType || "").trim().toUpperCase();
+      const secType = String(order.secType || "").trim().toUpperCase();
+      const equityOrder = secType === `${providerContractId}:STK`;
+      const optionOrder = secType === `${providerContractId}:OPT`;
       return (
         (orderType === "MKT" || orderType === "LMT") &&
         String(order.tif || "").trim().toUpperCase() === "DAY" &&
         order.manualIndicator === true &&
         order.outsideRTH === false &&
-        String(order.secType || "").trim().toUpperCase().endsWith(":STK") &&
+        !Object.hasOwn(order, "auxPrice") &&
+        (equityOrder || (optionOrder && Number.isInteger(quantity))) &&
         (orderType === "MKT"
           ? !Object.hasOwn(order, "price")
           : (numberOrNull(order.price) ?? 0) > 0)

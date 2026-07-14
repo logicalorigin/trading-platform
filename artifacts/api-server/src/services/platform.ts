@@ -2315,13 +2315,15 @@ async function readCurrentOrders(
         lifecycle.accountId &&
         lifecycle.symbol &&
         lifecycle.side &&
-        lifecycle.quantity === 1 &&
+        typeof lifecycle.quantity === "number" &&
+        Number.isFinite(lifecycle.quantity) &&
+        lifecycle.quantity > 0 &&
         (!input.accountId || input.accountId === lifecycle.accountId)
       ) {
         const executions = await client.listExecutions({
           accountId: lifecycle.accountId,
           mode,
-          days: 1,
+          days: 7,
           symbol: lifecycle.symbol,
         });
         const byOrderRef = new Map<string, typeof executions>();
@@ -3880,8 +3882,10 @@ export async function assertIbkrGatewayTradingAvailable(accountId: string) {
 async function validateOrderIntentForRouting(
   input: PlaceOrderInput,
   client: ReturnType<typeof getIbkrClientPortalClient>,
+  options: { replacingOrderId?: string } = {},
 ) {
   const requiresRiskState =
+    Boolean(options.replacingOrderId) ||
     (input.assetClass === "equity" && input.side === "sell") ||
     (input.assetClass === "option" && input.optionAction !== "buy_to_open");
   const selectedOptionContractId =
@@ -3916,9 +3920,25 @@ async function validateOrderIntentForRouting(
     }
   }
 
+  const validationState = state
+    ? {
+        ...state,
+        orders: state.orders.map((order) =>
+          order.id === options.replacingOrderId &&
+          input.assetClass === "option"
+            ? {
+                ...order,
+                optionAction: input.optionAction ?? null,
+                positionEffect: input.positionEffect ?? null,
+                strategyIntent: input.strategyIntent ?? null,
+              }
+            : order,
+        ),
+      }
+    : null;
   validateSingleLegOrderIntent({
     order: input,
-    state: state ?? {
+    state: validationState ?? {
       positions: null,
       orders: null,
       positionsObservedAt: null,
@@ -3926,6 +3946,7 @@ async function validateOrderIntentForRouting(
     },
     now: new Date(),
     maxStateAgeMs: IBKR_RISK_STATE_MAX_AGE_MS,
+    replacingOrderId: options.replacingOrderId,
     standardOptionDeliverableVerified:
       selectedOptionContractId !== null &&
       state?.verifiedStandardOptionContractIds.includes(
@@ -3955,7 +3976,7 @@ function ibkrOrderToTaxOrder(
   };
 }
 
-function preparedIbkrEquityOrderInput(
+export function preparedIbkrOrderInput(
   intent: IbkrPreparedOrderIntent,
 ): PlaceOrderInput {
   const orders = asArray(intent.orderBody.orders);
@@ -3965,44 +3986,205 @@ function preparedIbkrEquityOrderInput(
   const tif = asString(order?.tif)?.trim().toUpperCase();
   const quantity = asNumber(order?.quantity);
   const limitPrice = asNumber(order?.price);
+  const conid = asNumber(order?.conid);
+  const symbol = normalizeSymbol(asString(order?.ticker) ?? "");
+  const secType = String(order?.secType || "").trim().toUpperCase();
+  const assetClass = secType.endsWith(":OPT")
+    ? "option"
+    : secType.endsWith(":STK")
+      ? "equity"
+      : null;
+  const type = orderType === "MKT" ? "market" : "limit";
   if (
     orders.length !== 1 ||
     !order ||
     (side !== "BUY" && side !== "SELL") ||
-    orderType !== "LMT" ||
+    (orderType !== "MKT" && orderType !== "LMT") ||
     tif !== "DAY" ||
-    quantity !== 1 ||
-    limitPrice === null ||
-    limitPrice <= 0 ||
+    quantity === null ||
+    !Number.isFinite(quantity) ||
+    quantity <= 0 ||
+    !Number.isInteger(quantity) ||
+    (orderType === "LMT" && (limitPrice === null || limitPrice <= 0)) ||
+    (orderType === "MKT" && Object.hasOwn(order, "price")) ||
+    Object.hasOwn(order, "auxPrice") ||
     asString(order.acctId) !== intent.accountId ||
     asString(order.cOID) !== intent.clientOrderId ||
-    String(order.secType || "").toUpperCase().endsWith(":STK") !== true ||
+    conid === null ||
+    !Number.isSafeInteger(conid) ||
+    conid <= 0 ||
+    !symbol ||
+    !assetClass ||
+    secType !== `${conid}:${assetClass === "option" ? "OPT" : "STK"}` ||
     order.outsideRTH !== false ||
     order.manualIndicator !== true
   ) {
-    throw new HttpError(409, "The prepared IBKR equity intent is invalid.", {
+    throw new HttpError(409, "The prepared IBKR order intent is invalid.", {
+      code: "ibkr_order_intent_invalid",
+      expose: true,
+    });
+  }
+  const common = {
+    accountId: intent.accountId,
+    mode: "live",
+    confirm: true,
+    clientOrderId: intent.clientOrderId,
+    symbol,
+    side: side === "BUY" ? "buy" : "sell",
+    type,
+    quantity,
+    limitPrice: type === "limit" ? limitPrice : null,
+    stopPrice: null,
+    timeInForce: "day",
+  } as const;
+  if (assetClass === "equity") {
+    if (
+      intent.optionContract != null ||
+      intent.optionAction != null ||
+      intent.positionEffect != null ||
+      intent.strategyIntent != null
+    ) {
+      throw new HttpError(409, "The prepared IBKR order intent is invalid.", {
+        code: "ibkr_order_intent_invalid",
+        expose: true,
+      });
+    }
+    return { ...common, assetClass, optionContract: null };
+  }
+
+  const contract = asRecord(intent.optionContract);
+  const expirationValue = contract?.expirationDate;
+  const expirationDate =
+    expirationValue instanceof Date
+      ? expirationValue
+      : new Date(asString(expirationValue) ?? "");
+  const optionAction = intent.optionAction ?? null;
+  const positionEffect = intent.positionEffect ?? null;
+  const strategyIntent = intent.strategyIntent ?? null;
+  const right = contract?.right;
+  const strike = asNumber(contract?.strike);
+  const multiplier = asNumber(contract?.multiplier);
+  const sharesPerContract = asNumber(contract?.sharesPerContract);
+  const actionFields = {
+    buy_to_open: { side: "BUY", positionEffect: "open" },
+    buy_to_close: { side: "BUY", positionEffect: "close" },
+    sell_to_close: { side: "SELL", positionEffect: "close" },
+    sell_to_open: { side: "SELL", positionEffect: "open" },
+  } as const;
+  const expectedAction = optionAction ? actionFields[optionAction] : null;
+  const allowedStrategy =
+    optionAction === "buy_to_open"
+      ? "long_option"
+      : optionAction === "sell_to_close"
+        ? "sell_to_close"
+        : null;
+  const requiredSellStrategy =
+    right === "call"
+      ? "covered_call"
+      : right === "put"
+        ? "cash_secured_put"
+        : null;
+  if (
+    !contract ||
+    !asString(contract.ticker)?.trim() ||
+    normalizeSymbol(asString(contract.underlying) ?? "") !== symbol ||
+    !Number.isFinite(expirationDate.getTime()) ||
+    strike === null ||
+    strike <= 0 ||
+    (right !== "call" && right !== "put") ||
+    !Number.isInteger(multiplier) ||
+    (multiplier ?? 0) <= 0 ||
+    !Number.isInteger(sharesPerContract) ||
+    (sharesPerContract ?? 0) <= 0 ||
+    asString(contract.providerContractId)?.trim() !== String(conid) ||
+    !expectedAction ||
+    expectedAction.side !== side ||
+    expectedAction.positionEffect !== positionEffect ||
+    strategyIntent === "uncovered_short_call" ||
+    strategyIntent === "uncovered_short_put" ||
+    (optionAction === "sell_to_open"
+      ? strategyIntent !== requiredSellStrategy
+      : strategyIntent !== null && strategyIntent !== allowedStrategy)
+  ) {
+    throw new HttpError(409, "The prepared IBKR option intent is invalid.", {
       code: "ibkr_order_intent_invalid",
       expose: true,
     });
   }
   return {
-    accountId: intent.accountId,
-    mode: "live",
-    confirm: true,
-    clientOrderId: intent.clientOrderId,
-    symbol: normalizeSymbol(asString(order.ticker) ?? ""),
-    assetClass: "equity",
-    side: side === "BUY" ? "buy" : "sell",
-    type: "limit",
-    quantity,
-    limitPrice,
-    stopPrice: null,
-    timeInForce: "day",
-    optionContract: null,
+    ...common,
+    assetClass,
+    optionContract: {
+      ticker: asString(contract.ticker)!.trim(),
+      underlying: symbol,
+      expirationDate,
+      strike,
+      right,
+      multiplier: multiplier!,
+      sharesPerContract: sharesPerContract!,
+      providerContractId: String(conid),
+      brokerContractId: asString(contract.brokerContractId)?.trim() || null,
+      standardDeliverableVerified:
+        contract.standardDeliverableVerified === true,
+    },
+    optionAction: optionAction!,
+    positionEffect: positionEffect!,
+    ...(strategyIntent ? { strategyIntent } : {}),
   };
 }
 
-function assertControlledIbkrManualEquityOrder(input: PlaceOrderInput): void {
+function assertPreparedIbkrOrderMatchesRequest(
+  intent: IbkrPreparedOrderIntent,
+  requested: PlaceOrderInput,
+): PlaceOrderInput {
+  const prepared = preparedIbkrOrderInput(intent);
+  const preparedContract = prepared.optionContract;
+  const requestedContract = requested.optionContract;
+  const contractsMatch =
+    prepared.assetClass === "equity"
+      ? preparedContract === null && requestedContract === null
+      : Boolean(
+          preparedContract &&
+            requestedContract &&
+            preparedContract.ticker === requestedContract.ticker &&
+            preparedContract.underlying ===
+              normalizeSymbol(requestedContract.underlying) &&
+            preparedContract.expirationDate.toISOString().slice(0, 10) ===
+              requestedContract.expirationDate.toISOString().slice(0, 10) &&
+            preparedContract.strike === requestedContract.strike &&
+            preparedContract.right === requestedContract.right &&
+            preparedContract.multiplier === requestedContract.multiplier &&
+            preparedContract.sharesPerContract ===
+              requestedContract.sharesPerContract &&
+            (!requestedContract.providerContractId ||
+              preparedContract.providerContractId ===
+                requestedContract.providerContractId),
+        );
+  if (
+    prepared.accountId !== requested.accountId ||
+    prepared.clientOrderId !== requested.clientOrderId ||
+    prepared.symbol !== normalizeSymbol(requested.symbol) ||
+    prepared.assetClass !== requested.assetClass ||
+    prepared.side !== requested.side ||
+    prepared.type !== requested.type ||
+    prepared.quantity !== requested.quantity ||
+    prepared.limitPrice !== (requested.limitPrice ?? null) ||
+    prepared.stopPrice !== (requested.stopPrice ?? null) ||
+    prepared.timeInForce !== requested.timeInForce ||
+    prepared.optionAction !== requested.optionAction ||
+    prepared.positionEffect !== requested.positionEffect ||
+    prepared.strategyIntent !== requested.strategyIntent ||
+    !contractsMatch
+  ) {
+    throw new HttpError(409, "The prepared IBKR order intent does not match.", {
+      code: "ibkr_order_intent_mismatch",
+      expose: true,
+    });
+  }
+  return prepared;
+}
+
+function assertControlledIbkrManualSingleLegOrder(input: PlaceOrderInput): void {
   const extended = input as PlaceOrderInput & {
     automationContext?: unknown;
     payload?: unknown;
@@ -4014,14 +4196,27 @@ function assertControlledIbkrManualEquityOrder(input: PlaceOrderInput): void {
     (input.type === "limit" &&
       Number.isFinite(input.limitPrice) &&
       (input.limitPrice ?? 0) > 0);
+  const validQuantity =
+    Number.isFinite(input.quantity) &&
+    input.quantity > 0 &&
+    Number.isInteger(input.quantity);
+  const validAsset =
+    (input.assetClass === "equity" &&
+      input.optionContract === null &&
+      input.optionAction === undefined &&
+      input.positionEffect === undefined &&
+      input.strategyIntent === undefined) ||
+    (input.assetClass === "option" &&
+      input.optionContract !== null &&
+      input.optionAction !== undefined &&
+      input.positionEffect !== undefined);
   if (
-    input.assetClass !== "equity" ||
-    input.side !== "buy" ||
+    !validAsset ||
+    (input.side !== "buy" && input.side !== "sell") ||
     !controlledOrderType ||
-    input.quantity !== 1 ||
+    !validQuantity ||
     input.stopPrice != null ||
     input.timeInForce !== "day" ||
-    input.optionContract != null ||
     (input.tradingSession != null && input.tradingSession !== "regular") ||
     input.includeOvernight === true ||
     extended.source === "automation" ||
@@ -4030,7 +4225,7 @@ function assertControlledIbkrManualEquityOrder(input: PlaceOrderInput): void {
   ) {
     throw new HttpError(
       409,
-      "Direct IBKR live trading is limited to one manual BUY MKT or LMT DAY share in regular hours.",
+      "Direct IBKR live trading is limited to manual single-leg equity or option MKT/LMT DAY orders in regular hours.",
       {
         code: "ibkr_live_order_scope_restricted",
         expose: true,
@@ -4070,7 +4265,7 @@ export async function placeOrder(input: PlaceOrderInput) {
       expose: true,
     });
   }
-  assertControlledIbkrManualEquityOrder(input);
+  assertControlledIbkrManualSingleLegOrder(input);
   await assertIbkrGatewayTradingAvailable(input.accountId);
   const client = getIbkrClientPortalClient();
   await validateOrderIntentForRouting(input, client);
@@ -4090,6 +4285,7 @@ export async function placeOrder(input: PlaceOrderInput) {
       expose: true,
     });
   }
+  assertPreparedIbkrOrderMatchesRequest(preparedIntent, input);
   try {
     assertPreparedIbkrGatewayBinding(preparedIntent);
   } catch (error) {
@@ -4322,11 +4518,13 @@ export async function continueIbkrOrderReply(input: {
     });
   }
   if (preparedIntent?.kind === "replace") {
+    const expectedOrder = preparedIbkrOrderInput(preparedIntent);
     const verification = await client.verifyPreparedOrderReplacement({
       accountId: preparedIntent.accountId,
       orderId: preparedIntent.orderId,
       mode: "live",
       preparedOrderBody: preparedIntent.orderBody,
+      expectedOrder,
     });
     if (verification.reconciliationRequired || !verification.replacementConfirmed) {
       await recordTaxPreflightIbkrReconciliationRequired({
@@ -4343,11 +4541,13 @@ export async function continueIbkrOrderReply(input: {
       };
     }
   } else if (preparedIntent) {
+    const expectedOrder = preparedIbkrOrderInput(preparedIntent);
     const verification = await client.verifyPreparedOrderPlacement({
       accountId: preparedIntent.accountId,
       orderId,
       mode: "live",
       preparedOrderBody: preparedIntent.orderBody,
+      expectedOrder,
     });
     if (verification.reconciliationRequired || !verification.placementConfirmed) {
       await recordTaxPreflightIbkrReconciliationRequired({
@@ -4401,7 +4601,7 @@ export async function previewOrder(input: PlaceOrderInput) {
       },
     );
   }
-  assertControlledIbkrManualEquityOrder(input);
+  assertControlledIbkrManualSingleLegOrder(input);
   const controlledLifecycle = await getControlledIbkrOrderLifecycle();
   if (controlledLifecycle.status !== "none") {
     throw new HttpError(
@@ -4444,6 +4644,14 @@ export async function previewOrder(input: PlaceOrderInput) {
     preparedAt,
     whatIf: preview.whatIf,
     gatewaySnapshot,
+    ...(preparedInput.assetClass === "option"
+      ? {
+          optionContract: preview.optionContract as Record<string, unknown>,
+          optionAction: preparedInput.optionAction ?? null,
+          positionEffect: preparedInput.positionEffect ?? null,
+          strategyIntent: preparedInput.strategyIntent ?? null,
+        }
+      : {}),
   };
   const taxPreflight = await createTaxOrderPreflight(
     { order: ibkrOrderToTaxOrder(preparedInput, { taxMode: "live" }) },
@@ -4526,12 +4734,17 @@ export async function previewOrderReplacement(input: {
       submittedOrderId: input.orderId,
     });
     const client = getIbkrClientPortalClient();
+    const previousOrder = preparedIbkrOrderInput(previousIntent);
+    await validateOrderIntentForRouting(previousOrder, client, {
+      replacingOrderId: input.orderId,
+    });
     preview = await client.previewOrderReplacement({
       accountId: input.accountId,
       orderId: input.orderId,
       mode,
       originalOrderBody: previousIntent.orderBody,
       limitPrice: input.limitPrice,
+      expectedOrder: previousOrder,
     });
   } catch (error) {
     if (!replacementPreviewRequiresReconciliation(error)) throw error;
@@ -4568,8 +4781,16 @@ export async function previewOrderReplacement(input: {
     preparedAt,
     whatIf: preview.whatIf,
     gatewaySnapshot,
+    ...(previousIntent.optionContract
+      ? {
+          optionContract: previousIntent.optionContract,
+          optionAction: previousIntent.optionAction ?? null,
+          positionEffect: previousIntent.positionEffect ?? null,
+          strategyIntent: previousIntent.strategyIntent ?? null,
+        }
+      : {}),
   };
-  const preparedOrder = preparedIbkrEquityOrderInput(ibkrPreparedIntent);
+  const preparedOrder = preparedIbkrOrderInput(ibkrPreparedIntent);
   const taxPreflight = await createTaxOrderPreflight(
     { order: ibkrOrderToTaxOrder(preparedOrder, { taxMode: "live" }) },
     { ibkrPreparedIntent },
@@ -4639,9 +4860,22 @@ export async function replaceOrder(input: {
     orderBody: expectedBody,
     preparedAt: new Date().toISOString(),
     whatIf: {},
+    ...(previousBeforeClaim.optionContract
+      ? {
+          optionContract: previousBeforeClaim.optionContract,
+          optionAction: previousBeforeClaim.optionAction ?? null,
+          positionEffect: previousBeforeClaim.positionEffect ?? null,
+          strategyIntent: previousBeforeClaim.strategyIntent ?? null,
+        }
+      : {}),
   };
+  const expectedOrderInput = preparedIbkrOrderInput(expectedIntent);
+  const client = getIbkrClientPortalClient();
+  await validateOrderIntentForRouting(expectedOrderInput, client, {
+    replacingOrderId: input.orderId,
+  });
   const taxPreflight = await assertTaxPreflightForOrderSubmission({
-    order: ibkrOrderToTaxOrder(preparedIbkrEquityOrderInput(expectedIntent), {
+    order: ibkrOrderToTaxOrder(expectedOrderInput, {
       taxMode: "live",
     }),
     taxPreflightToken: input.taxPreflightToken,
@@ -4675,7 +4909,6 @@ export async function replaceOrder(input: {
       expose: true,
     });
   }
-  const client = getIbkrClientPortalClient();
   let result: Awaited<ReturnType<typeof client.replacePreparedOrder>>;
   try {
     assertPreparedIbkrGatewayBinding(replacementIntent);
@@ -4685,6 +4918,7 @@ export async function replaceOrder(input: {
       mode,
       previousOrderBody: previousIntent.orderBody,
       preparedOrderBody: replacementIntent.orderBody,
+      expectedOrder: preparedIbkrOrderInput(replacementIntent),
     });
   } catch (error) {
     if (
