@@ -34,6 +34,31 @@ const order = {
   optionContract: null,
 } satisfies PlaceOrderInput & { clientOrderId: string };
 
+test("IBKR rejects fractional share quantities before broker discovery", async () => {
+  const previousFetch = globalThis.fetch;
+  let brokerCalled = false;
+  globalThis.fetch = (async () => {
+    brokerCalled = true;
+    throw new Error("broker should not be called");
+  }) as typeof fetch;
+
+  try {
+    await assert.rejects(
+      new IbkrClient(config()).previewOrder({ ...order, quantity: 1.5 }),
+      (error: unknown) => {
+        assert.equal(
+          (error as { code?: string }).code,
+          "ibkr_order_quantity_invalid",
+        );
+        return true;
+      },
+    );
+    assert.equal(brokerCalled, false);
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
 test("IBKR what-if and submission use the identical prepared order", async () => {
   const previousFetch = globalThis.fetch;
   const paths: string[] = [];

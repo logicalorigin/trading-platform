@@ -629,7 +629,8 @@ function normalizeOptionRight(value: string | null): OptionRight | null {
 }
 
 function normalizeOrderSide(value: string | null): OrderSide {
-  return value?.trim().toUpperCase() === "SELL" ? "sell" : "buy";
+  const normalized = value?.trim().toUpperCase();
+  return normalized === "SELL" || normalized === "S" ? "sell" : "buy";
 }
 
 function normalizeOrderType(value: string | null): OrderType {
@@ -829,7 +830,7 @@ function requirePreparedIbkrOrder(
     quantity === null ||
     !Number.isFinite(quantity) ||
     quantity <= 0 ||
-    (assetClass === "option" && !Number.isInteger(quantity)) ||
+    !Number.isInteger(quantity) ||
     !assetClass ||
     secType !== `${conid}:${assetClass === "option" ? "OPT" : "STK"}` ||
     strictBoolean(raw["outsideRTH"]) !== false ||
@@ -4319,6 +4320,16 @@ export class IbkrClient {
     body: Record<string, unknown>;
     resolvedContractId: number;
   }> {
+    if (!Number.isInteger(input.quantity) || input.quantity <= 0) {
+      throw new HttpError(
+        409,
+        "IBKR share and contract quantities must be whole numbers.",
+        {
+          code: "ibkr_order_quantity_invalid",
+          expose: true,
+        },
+      );
+    }
     const tradingAccounts = await this.getTradingAccountsInfo();
     const accountId = input.accountId.trim();
 
