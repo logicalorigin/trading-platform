@@ -31,3 +31,15 @@ test("retired database storage CLI stays absent", () => {
   assert.equal(manifest.scripts["db:storage:cleanup"], undefined);
   assert.equal(existsSync(path.join(packageRoot, "src/db-storage.ts")), false);
 });
+
+test("retired flow-scanner benchmark CLI stays absent", () => {
+  const manifest = JSON.parse(
+    readFileSync(path.join(packageRoot, "package.json"), "utf8"),
+  );
+
+  assert.equal(manifest.scripts["ibkr:flow-scanner-bench"], undefined);
+  assert.equal(
+    existsSync(path.join(packageRoot, "src/ibkr-flow-scanner-line-bench.ts")),
+    false,
+  );
+});

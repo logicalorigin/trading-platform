@@ -4,7 +4,6 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "ibkr:flow-scanner-bench": "tsx ./src/ibkr-flow-scanner-line-bench.ts",
     "ibkr:soak": "tsx ./src/ibkr-connection-soak.ts",
     "universe:sync": "tsx ./src/sync-universe-catalog.ts",
     "universe:sync:nasdaq": "tsx ./src/sync-nasdaq-listed-universe.ts",
