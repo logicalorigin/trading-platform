@@ -5,6 +5,7 @@ import {
   watchlistItemsTable,
   watchlistsTable,
 } from "@workspace/db/schema";
+import { normalizeSymbol } from "../../artifacts/api-server/src/lib/values";
 
 type UniversePriorityDb = {
   select: typeof db.select;
@@ -13,10 +14,13 @@ type UniversePriorityDb = {
 export function normalizeUniversePrioritySymbol(
   symbol: string | null | undefined,
 ) {
-  return String(symbol ?? "")
-    .trim()
-    .toUpperCase()
-    .replace(/[^A-Z0-9./_-]/g, "");
+  const raw = String(symbol ?? "").trim();
+  if (!raw) return "";
+  const normalized = normalizeSymbol(raw);
+  if (!/^[A-Z0-9./_-]+$/.test(normalized)) {
+    throw new Error("Invalid universe priority symbol.");
+  }
+  return normalized;
 }
 
 export function uniqueUniversePrioritySymbols(
@@ -32,13 +36,12 @@ export function uniqueUniversePrioritySymbols(
 }
 
 export function parseUniversePrioritySymbolList(raw: string | null): string[] {
-  if (!raw) return [];
-  return uniqueUniversePrioritySymbols(
-    raw
-      .split(",")
-      .map((symbol) => symbol.trim())
-      .filter(Boolean),
-  );
+  if (raw === null) return [];
+  const symbols = raw.split(",").map((symbol) => symbol.trim());
+  if (symbols.some((symbol) => !symbol)) {
+    throw new Error("Symbol list must contain non-empty values.");
+  }
+  return uniqueUniversePrioritySymbols(symbols);
 }
 
 export async function loadWatchlistUniversePrioritySymbols(

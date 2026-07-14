@@ -206,15 +206,9 @@ function parseHydrationArgs(args = process.argv.slice(2)): HydrationArgs {
     }
 
     const rawSymbols = parsed.values.symbols;
-    const symbolValues = rawSymbols ? parseCsv("symbols", rawSymbols) : [];
-    if (
-      symbolValues.some(
-        (symbol) =>
-          normalizeUniversePrioritySymbol(symbol) !== symbol.toUpperCase(),
-      )
-    ) {
-      throw new Error("--symbols contains an invalid symbol.");
-    }
+    const symbolValues =
+      rawSymbols === undefined ? [] : parseCsv("symbols", rawSymbols);
+    const explicitSymbols = uniqueUniversePrioritySymbols(symbolValues);
     const mode = parseMode(parsed.values.mode);
     const rawPriority =
       parsed.values.priority ?? parsed.values["priority-lanes"];
@@ -238,7 +232,7 @@ function parseHydrationArgs(args = process.argv.slice(2)): HydrationArgs {
       force: parseBooleanValue("force", parsed.values.force, false),
       mode,
       priorityLanes,
-      explicitSymbols: uniqueUniversePrioritySymbols(symbolValues),
+      explicitSymbols,
       batchSize: parsePositiveInteger(
         "batch",
         parsed.values.batch,
@@ -473,7 +467,7 @@ async function loadRowsForSymbols(input: {
 }
 
 function scorePrioritySymbolListing(row: SymbolListingRow): number {
-  const exchange = normalizeUniversePrioritySymbol(
+  const exchange = normalizePriorityExchange(
     row.normalizedExchangeMic ?? row.primaryExchange ?? row.exchangeDisplay,
   );
   let score = 0;
@@ -484,6 +478,13 @@ function scorePrioritySymbolListing(row: SymbolListingRow): number {
     score += 10;
   }
   return score;
+}
+
+function normalizePriorityExchange(value: string | null | undefined): string {
+  return String(value ?? "")
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9./_-]/g, "");
 }
 
 async function loadRowsForSource(input: {
