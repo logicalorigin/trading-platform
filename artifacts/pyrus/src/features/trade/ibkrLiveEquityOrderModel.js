@@ -1,3 +1,5 @@
+import { resolveOptionOrderIntent } from "./optionOrderIntentModel.js";
+
 export const resolveExplicitIbkrAccount = (accounts, selectedAccountId) => {
   const selected = String(selectedAccountId || "").trim();
   if (!selected) return null;
@@ -17,30 +19,67 @@ export const isIbkrLiveReadinessReady = (readiness, selectedTarget) =>
       readiness?.isPaper === false,
   );
 
-export const buildManualIbkrEquityOrderRequest = ({
+export const buildManualIbkrSingleLegOrderRequest = ({
   accountId,
   symbol,
+  assetClass,
+  side,
+  quantity,
   orderType,
   limitPrice,
+  optionAction,
+  optionContract,
 }) => {
   const market = String(orderType || "").trim().toUpperCase() === "MKT";
+  const normalizedAssetClass = assetClass === "option" ? "option" : "equity";
+  const optionIntent =
+    normalizedAssetClass === "option"
+      ? resolveOptionOrderIntent({
+          action: optionAction,
+          right: optionContract?.right,
+        })
+      : null;
+  if (normalizedAssetClass === "option" && !optionIntent) {
+    throw new TypeError("A valid canonical option action and contract are required.");
+  }
+  const normalizedSide = optionIntent?.side || String(side || "").toUpperCase();
+  if (normalizedSide !== "BUY" && normalizedSide !== "SELL") {
+    throw new TypeError("IBKR orders require an explicit buy or sell side.");
+  }
+
   return {
     accountId: String(accountId || "").trim(),
     mode: "live",
     symbol: String(symbol || "").trim().toUpperCase(),
-    assetClass: "equity",
-    side: "buy",
+    assetClass: normalizedAssetClass,
+    side: normalizedSide.toLowerCase(),
     type: market ? "market" : "limit",
-    quantity: 1,
+    quantity: Number(quantity),
     limitPrice: market ? null : Number(limitPrice),
     stopPrice: null,
     timeInForce: "day",
-    optionContract: null,
+    optionContract: normalizedAssetClass === "option" ? optionContract : null,
+    ...(optionIntent
+      ? {
+          optionAction: optionIntent.action,
+          positionEffect: optionIntent.positionEffect,
+          ...(optionIntent.strategyIntent
+            ? { strategyIntent: optionIntent.strategyIntent }
+            : {}),
+        }
+      : {}),
     tradingSession: "regular",
     includeOvernight: false,
     source: "manual",
   };
 };
+
+export const buildManualIbkrEquityOrderRequest = (input) =>
+  buildManualIbkrSingleLegOrderRequest({
+    ...input,
+    assetClass: "equity",
+    quantity: input?.quantity ?? 1,
+  });
 
 const preparedTaxFields = (preview) => ({
   taxPreflightToken: String(preview?.taxPreflight?.preflightToken || ""),
@@ -51,12 +90,26 @@ const preparedTaxFields = (preview) => ({
     : [],
 });
 
-export const buildPreparedIbkrEquityOrderSubmission = (order, preview) => ({
+export const buildPreparedIbkrOrderSubmission = (order, preview) => ({
   ...order,
+  ...(order?.assetClass === "option" && preview?.optionContract
+    ? {
+        optionContract: {
+          ...order.optionContract,
+          providerContractId: preview.optionContract.providerContractId,
+          ...(preview.optionContract.brokerContractId
+            ? { brokerContractId: preview.optionContract.brokerContractId }
+            : {}),
+        },
+      }
+    : {}),
   confirm: true,
   clientOrderId: String(preview?.clientOrderId || ""),
   ...preparedTaxFields(preview),
 });
+
+export const buildPreparedIbkrEquityOrderSubmission =
+  buildPreparedIbkrOrderSubmission;
 
 export const readIbkrOrderWarning = (error) => {
   if (error?.data?.code !== "ibkr_order_warning_confirmation_required") {

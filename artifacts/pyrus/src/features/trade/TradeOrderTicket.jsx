@@ -56,7 +56,11 @@ import {
   resolveTicketOrderPrices,
   validateTicketBracket,
 } from "./ibkrOrderTicketModel";
-import { resolveSellCallTicketIntent } from "./optionSellCallIntent.js";
+import {
+  OPTION_ORDER_ACTIONS,
+  resolveOptionActionAvailability,
+  resolveOptionOrderIntent,
+} from "./optionOrderIntentModel.js";
 import {
   BrokerActionConfirmDialog,
   formatLiveBrokerActionError,
@@ -93,8 +97,8 @@ import {
   reviewBrokerOptionOrderRequest,
 } from "./brokerOptionOrderRequests.js";
 import {
-  buildManualIbkrEquityOrderRequest,
-  buildPreparedIbkrEquityOrderSubmission,
+  buildManualIbkrSingleLegOrderRequest,
+  buildPreparedIbkrOrderSubmission,
   buildPreparedIbkrReplacementPreview,
   buildPreparedIbkrReplacementSubmission,
   ibkrCancelToast,
@@ -413,15 +417,19 @@ export const TradeOrderTicket = ({
   const [ticketAssetMode, setTicketAssetMode] = useState("option");
   const [equityBroker, setEquityBroker] = useState("snaptrade");
   const [optionBroker, setOptionBroker] = useState("ibkr");
+  const [optionAction, setOptionAction] = useState("buy_to_open");
   const [selectedIbkrAccountId, setSelectedIbkrAccountId] = useState("");
   const [selectedRobinhoodAccountId, setSelectedRobinhoodAccountId] =
     useState("");
   const [selectedSchwabAccountId, setSelectedSchwabAccountId] = useState("");
+  const normalizedTicketAssetMode = normalizeTicketAssetMode(ticketAssetMode);
+  const ibkrRouteSelected =
+    normalizedTicketAssetMode === "equity"
+      ? equityBroker === "ibkr"
+      : optionBroker === "ibkr";
   const ibkrReadinessQuery = useGetIbkrPortalReadiness({
     query: {
-      enabled:
-        normalizeTicketAssetMode(ticketAssetMode) === "equity" &&
-        equityBroker === "ibkr",
+      enabled: ibkrRouteSelected,
       staleTime: 5_000,
       retry: false,
     },
@@ -439,7 +447,6 @@ export const TradeOrderTicket = ({
     ibkrReadinessQuery.data,
     selectedIbkrAccount,
   );
-  const normalizedTicketAssetMode = normalizeTicketAssetMode(ticketAssetMode);
   const ticketIsShares = normalizedTicketAssetMode === "equity";
   const ticketIsOptions = !ticketIsShares;
   const equityPrice = isFiniteNumber(info?.price) ? info.price : null;
@@ -486,6 +493,10 @@ export const TradeOrderTicket = ({
     : `${expInfo.label || slot.exp} · ${expInfo.dte}d`;
   const ticketQuantityUnit = ticketIsShares ? "shares" : "contracts";
   const ticketAssetClass = ticketIsShares ? "equity" : "option";
+  const optionOrderIntent = resolveOptionOrderIntent({
+    action: optionAction,
+    right: selectedContractMeta?.right || slot.cp,
+  });
   const ticketMultiplier = ticketIsShares ? 1 : 100;
   const automationTicketContext = ticketIsOptions ? automationContext : null;
   const contractDateKey = (value) => {
@@ -672,11 +683,16 @@ export const TradeOrderTicket = ({
           : liveBrokerRoute === "schwab"
             ? schwabAccountReady
             : liveBrokerRoute === "ibkr"
-              ? ibkrLiveReadinessReady
+              ? ibkrLiveReadinessReady && selectedIbkrAccount
               : snapTradeAccountReady) && slot.ticker,
       )
     : optionBroker === "ibkr"
-      ? Boolean(accountId && selectedContractMeta && expInfo.actualDate)
+      ? Boolean(
+          ibkrLiveReadinessReady &&
+            selectedIbkrAccount &&
+            selectedContractMeta &&
+            expInfo.actualDate,
+        )
       : Boolean(
           directOptionAccountReady && selectedContractMeta && expInfo.actualDate,
         );
@@ -690,7 +706,7 @@ export const TradeOrderTicket = ({
       onSuccess: (order) => {
         queryClient.invalidateQueries({ queryKey: ["/api/orders"] });
         queryClient.invalidateQueries({ queryKey: ["/api/positions"] });
-        if (liveUsesIbkrEquity) {
+        if (liveUsesIbkr) {
           setActiveIbkrOrder({
             ...order,
             reconciliationRequired: ibkrLifecycleRequiresReconciliation(
@@ -704,7 +720,7 @@ export const TradeOrderTicket = ({
           setIbkrReplacementLocked(false);
         }
         const placementConfirmed =
-          !liveUsesIbkrEquity ||
+          !liveUsesIbkr ||
           !ibkrLifecycleRequiresReconciliation("place", order);
         toast.push({
           kind: placementConfirmed ? "success" : "warn",
@@ -719,7 +735,7 @@ export const TradeOrderTicket = ({
       onError: (error) => {
         if (readIbkrOrderWarning(error)) return;
         if (
-          liveUsesIbkrEquity &&
+          liveUsesIbkr &&
           isIbkrOrderReconciliationError(error)
         ) {
           return;
@@ -823,7 +839,7 @@ export const TradeOrderTicket = ({
     mutation: {
       onSuccess: (preview, variables) => {
         setPreviewSnapshot(preview);
-        if (liveUsesIbkrEquity) {
+        if (liveUsesIbkr) {
           setTaxPreflightState(preview.taxPreflight || null);
           setIbkrSubmitLocked(false);
           setIbkrReplacementLocked(false);
@@ -842,8 +858,8 @@ export const TradeOrderTicket = ({
         toast.push({
           kind: "success",
           title: "IBKR preview ready",
-          body: liveUsesIbkrEquity
-            ? `${preview.symbol} · 1 share · LMT DAY · regular hours`
+          body: liveUsesIbkr
+            ? `${preview.symbol} · ${variables?.data?.quantity ?? qtyNum} ${ticketQuantityUnit} · ${String(variables?.data?.type ?? normalizeTicketOrderType(orderType)).toUpperCase()} DAY · regular hours`
             : `${preview.symbol} · ${ticketIsShares ? "stock" : "contract"} ${preview.resolvedContractId}`,
         });
       },
@@ -985,8 +1001,8 @@ export const TradeOrderTicket = ({
     !executionIsShadow && ticketIsShares && liveBrokerRoute === "robinhood";
   const liveUsesSchwab =
     !executionIsShadow && ticketIsShares && liveBrokerRoute === "schwab";
-  const liveUsesIbkrEquity =
-    !executionIsShadow && ticketIsShares && liveBrokerRoute === "ibkr";
+  const liveUsesIbkr =
+    !executionIsShadow && liveBrokerRoute === "ibkr";
   const liveUsesBrokerOption =
     !executionIsShadow && ticketIsOptions && optionBroker !== "ibkr";
   const liveUsesDirectBroker =
@@ -998,7 +1014,7 @@ export const TradeOrderTicket = ({
     { accountId: selectedIbkrAccount?.accountId, mode: "live" },
     {
       query: {
-        enabled: Boolean(liveUsesIbkrEquity && activeIbkrOrder?.id),
+        enabled: Boolean(liveUsesIbkr && activeIbkrOrder?.id),
         staleTime: 1_000,
         refetchInterval: activeIbkrOrder?.id ? 2_000 : false,
         retry: false,
@@ -1053,7 +1069,7 @@ export const TradeOrderTicket = ({
   const ibkrWarningDecisionOpen = liveConfirmState?.kind === "ibkr_warning";
   const controlledIbkrOrder = ibkrReadinessQuery.data?.controlledOrder;
   useEffect(() => {
-    if (!liveUsesIbkrEquity || !controlledIbkrOrder) return;
+    if (!liveUsesIbkr || !controlledIbkrOrder) return;
     const recoveryKey = [
       controlledIbkrOrder.status,
       controlledIbkrOrder.accountId,
@@ -1087,7 +1103,7 @@ export const TradeOrderTicket = ({
     setIbkrSubmitLocked(true);
     setIbkrReplacementLocked(controlledIbkrOrder.replacementUsed === true);
     setIbkrCancelAttempted(controlledIbkrOrder.cancelAttempted === true);
-  }, [controlledIbkrOrder, liveUsesIbkrEquity, slot.ticker]);
+  }, [controlledIbkrOrder, liveUsesIbkr, slot.ticker]);
   useEffect(() => {
     if (
       !activeIbkrOrder?.id ||
@@ -1191,7 +1207,7 @@ export const TradeOrderTicket = ({
       ? schwabAccountReady
         ? "SCHWAB LIVE"
         : "SCHWAB SETUP"
-    : liveUsesIbkrEquity
+    : liveUsesIbkr
       ? ibkrLiveReadinessReady
         ? "IBKR LIVE"
         : selectedIbkrAccount
@@ -1216,7 +1232,7 @@ export const TradeOrderTicket = ({
       ? robinhoodExecutionAccountLabel
     : liveUsesSchwab
       ? schwabExecutionAccountLabel
-    : liveUsesIbkrEquity
+    : liveUsesIbkr
       ? selectedIbkrAccount?.maskedAccountId || "Select an IBKR account"
     : liveUsesBrokerOption
       ? directOptionExecutionAccountLabel
@@ -1237,7 +1253,7 @@ export const TradeOrderTicket = ({
       ? schwabAccountReady
         ? CSS_COLOR.green
         : CSS_COLOR.amber
-    : liveUsesIbkrEquity
+    : liveUsesIbkr
       ? ibkrLiveReadinessReady
         ? CSS_COLOR.green
         : CSS_COLOR.amber
@@ -1260,9 +1276,27 @@ export const TradeOrderTicket = ({
         : ticketReferencePrice
     : ticketReferencePrice;
   const selectSide = (nextSide) => {
-    setSide(liveUsesIbkrEquity ? "BUY" : nextSide);
-    if (ticketIsOptions && slot.cp === "C" && nextSide === "SELL") {
+    if (ticketIsOptions) {
+      const nextAction = nextSide === "SELL" ? "sell_to_close" : "buy_to_open";
+      const nextIntent = resolveOptionOrderIntent({
+        action: nextAction,
+        right: selectedContractMeta?.right || slot.cp,
+      });
+      if (nextIntent) {
+        setOptionAction(nextAction);
+        setSide(nextIntent.side);
+      }
+    } else {
+      setSide(nextSide);
+    }
+    if (ticketIsOptions && nextSide === "SELL") {
       setOrderType("LMT");
+    }
+  };
+  const selectTicketAssetMode = (nextMode) => {
+    setTicketAssetMode(nextMode);
+    if (normalizeTicketAssetMode(nextMode) === "option" && optionOrderIntent) {
+      setSide(optionOrderIntent.side);
     }
   };
   // Preselect side when the docked collapsed bar requests it (BUY/SELL pills).
@@ -1284,8 +1318,6 @@ export const TradeOrderTicket = ({
       nextBroker === "ibkr" && Boolean(activeIbkrOrder?.id),
     );
     if (nextBroker === "ibkr") {
-      setSide("BUY");
-      setQty(1);
       setOrderType("LMT");
       setTif("DAY");
       setAttachStopLoss(false);
@@ -1310,12 +1342,25 @@ export const TradeOrderTicket = ({
       : "ibkr";
     setOptionBroker(nextBroker);
     setPreviewSnapshot(null);
+    setTaxPreflightState(null);
+    setIbkrSubmitLocked(
+      nextBroker === "ibkr" && Boolean(activeIbkrOrder?.id),
+    );
+    if (nextBroker !== "ibkr" && optionAction !== "buy_to_open") {
+      setOptionAction("buy_to_open");
+      setSide("BUY");
+    }
     if (
-      ["snaptrade", "schwab"].includes(nextBroker) &&
+      ["ibkr", "snaptrade", "schwab"].includes(nextBroker) &&
       orderType !== "MKT" &&
       orderType !== "LMT"
     ) {
       setOrderType("LMT");
+    }
+    if (nextBroker === "ibkr") {
+      setTif("DAY");
+      setAttachStopLoss(false);
+      setAttachTakeProfit(false);
     }
     if (
       (nextBroker === "robinhood" && tif !== "DAY" && tif !== "GTC") ||
@@ -1339,7 +1384,7 @@ export const TradeOrderTicket = ({
           label: mode === "equity" ? "SHARES" : "OPTIONS",
         }))}
         value={normalizedTicketAssetMode}
-        onChange={setTicketAssetMode}
+        onChange={selectTicketAssetMode}
         buttonTestId="trade-ticket-asset-mode"
       />
     </div>
@@ -1410,7 +1455,7 @@ export const TradeOrderTicket = ({
           onChange={selectOptionBroker}
         />
       ) : null}
-      {liveUsesIbkrEquity ? (
+      {liveUsesIbkr ? (
         <select
           aria-label="IBKR execution account"
           value={selectedIbkrAccount?.accountId || ""}
@@ -1562,7 +1607,9 @@ export const TradeOrderTicket = ({
           Settings before submitting options.
         </div>
       ) : null}
-      {!executionIsShadow && liveUsesBrokerOption && side === "SELL" ? (
+      {!executionIsShadow &&
+      liveUsesBrokerOption &&
+      optionAction !== "buy_to_open" ? (
         <div
           style={{
             background: `${cssColorMix(CSS_COLOR.amber, 7)}`,
@@ -1575,12 +1622,13 @@ export const TradeOrderTicket = ({
             lineHeight: 1.35,
           }}
         >
-          Non-IBKR option sells stay blocked until this ticket has
-          broker-specific position and open-order context.
+          Non-IBKR option closing and short-opening actions stay blocked until
+          this ticket has account-scoped position and working-order context.
         </div>
       ) : null}
       {!executionIsShadow && !liveUsesSnapTrade && !gatewayTradingReady &&
-        !liveUsesRobinhood && !liveUsesSchwab && !liveUsesBrokerOption && (
+        !liveUsesRobinhood && !liveUsesSchwab && !liveUsesBrokerOption &&
+        !liveUsesIbkr && (
         <div
           style={{
             background: `${cssColorMix(CSS_COLOR.amber, 7)}`,
@@ -1599,12 +1647,12 @@ export const TradeOrderTicket = ({
     </>
   );
   const ticketOrderTypes =
-    liveUsesIbkrEquity
+    liveUsesIbkr
       ? ["MKT", "LMT"]
       : ticketIsOptions && ["snaptrade", "schwab"].includes(optionBroker)
       ? ["MKT", "LMT"]
       : TICKET_ORDER_TYPES;
-  const ticketTimeInForceOptions = liveUsesIbkrEquity
+  const ticketTimeInForceOptions = liveUsesIbkr
     ? ["DAY"]
     : robinhoodRouteSelected
     ? ["DAY", "GTC"]
@@ -1859,6 +1907,7 @@ export const TradeOrderTicket = ({
   }, [
     normalizedTicketAssetMode,
     side,
+    optionAction,
     slot.ticker,
     slot.strike,
     slot.cp,
@@ -1872,7 +1921,7 @@ export const TradeOrderTicket = ({
   useEffect(() => {
     if (
       executionMode === "shadow" ||
-      liveUsesIbkrEquity ||
+      liveUsesIbkr ||
       liveUsesSnapTrade ||
       liveUsesRobinhood ||
       liveUsesSchwab ||
@@ -1883,7 +1932,7 @@ export const TradeOrderTicket = ({
     }
   }, [
     executionMode,
-    liveUsesIbkrEquity,
+    liveUsesIbkr,
     liveUsesBrokerOption,
     liveUsesRobinhood,
     liveUsesSchwab,
@@ -1893,11 +1942,12 @@ export const TradeOrderTicket = ({
   useEffect(() => {
     setPreviewSnapshot(null);
     setShadowExposureAcknowledged(false);
-    if (liveUsesIbkrEquity) {
+    if (liveUsesIbkr) {
       setTaxPreflightState(null);
     }
   }, [
     side,
+    optionAction,
     orderType,
     tif,
     qty,
@@ -1927,7 +1977,7 @@ export const TradeOrderTicket = ({
     brokerAuthenticated,
     automationTicketContext,
     liveBrokerRoute,
-    liveUsesIbkrEquity,
+    liveUsesIbkr,
     robinhoodAccount?.id,
     robinhoodAccountReady,
     schwabAccount?.id,
@@ -1967,14 +2017,14 @@ export const TradeOrderTicket = ({
       liveUsesRobinhood || liveUsesSchwab || liveUsesBrokerOption
         ? "snaptrade"
         : liveBrokerRoute,
-    gatewayTradingReady: liveUsesIbkrEquity ? true : gatewayTradingReady,
-    brokerConfigured: liveUsesIbkrEquity
+    gatewayTradingReady: liveUsesIbkr ? true : gatewayTradingReady,
+    brokerConfigured: liveUsesIbkr
       ? ibkrLiveReadinessReady
       : brokerConfigured,
-    brokerAuthenticated: liveUsesIbkrEquity
+    brokerAuthenticated: liveUsesIbkr
       ? ibkrLiveReadinessReady
       : brokerAuthenticated,
-    accountId: liveUsesIbkrEquity
+    accountId: liveUsesIbkr
       ? selectedIbkrAccount?.accountId || null
       : accountId,
     snapTradeExecutionReady: liveUsesRobinhood
@@ -2085,7 +2135,7 @@ export const TradeOrderTicket = ({
 
   const isLong = side === "BUY";
   const selectedSideColor = isLong ? TRADE_BUY_TONE : TRADE_SELL_TONE;
-  const qtyNum = liveUsesIbkrEquity ? 1 : Number(qty) || 0;
+  const qtyNum = Number(qty) || 0;
   const orderPrices = resolveTicketOrderPrices({
     orderType,
     limitPrice,
@@ -2142,7 +2192,7 @@ export const TradeOrderTicket = ({
         strike: selectedContractMeta?.strike ?? slot.strike,
         right: selectedContractMeta?.right || slot.cp,
         side,
-        positionEffect: side === "BUY" ? "open" : null,
+        positionEffect: optionOrderIntent?.positionEffect,
         orderType,
         tif,
         quantity: qtyNum,
@@ -2328,43 +2378,65 @@ export const TradeOrderTicket = ({
     ticketIsOptions &&
     matchingShadowOptionPositions.length > 0 &&
     matchingShadowQuantity > 0;
-  const sellCallIntent = resolveSellCallTicketIntent({
-    side,
-    assetMode: normalizedTicketAssetMode,
-    selectedContract: optionOrderContract,
-    symbol: slot.ticker,
-    quantity: qtyNum,
-    positions: brokerPositions,
-    orders: brokerOrders,
-    executionMode,
-    brokerPositionContextReady,
-    brokerOrderContextReady,
-    shadowPositionContextReady: Boolean(shadowExposureQuery.data),
-    shadowMatchingQuantity: matchingShadowQuantity,
-  });
-  const ticketActionLabel =
-    side === "BUY"
-      ? ticketIsOptions
-        ? "BUY TO OPEN"
-        : "BUY"
-      : sellCallIntent.applies
-        ? sellCallIntent.actionLabel
-        : "SELL";
-  const includeSellCallIntentFields =
-    sellCallIntent.applies && sellCallIntent.allowed;
-  const optionOrderIntentFields = {
-    ...(includeSellCallIntentFields && sellCallIntent.positionEffect
-      ? { positionEffect: sellCallIntent.positionEffect }
-      : {}),
-    ...(includeSellCallIntentFields && sellCallIntent.strategyIntent
-      ? { strategyIntent: sellCallIntent.strategyIntent }
-      : {}),
+  const optionActionAvailabilityByAction = Object.fromEntries(
+    OPTION_ORDER_ACTIONS.map((action) => [
+      action,
+      resolveOptionActionAvailability({
+        action,
+        executionMode,
+        broker: liveBrokerRoute,
+        positionContextReady: Boolean(shadowExposureQuery.data),
+        matchingLongQuantity: matchingShadowQuantity,
+        quantity: qtyNum,
+      }),
+    ]),
+  );
+  const optionActionAvailability =
+    optionActionAvailabilityByAction[optionAction] || {
+      enabled: false,
+      reason: "Choose a valid option action.",
+    };
+  const optionActionChoices = OPTION_ORDER_ACTIONS.map((action) => ({
+    action,
+    ...(resolveOptionOrderIntent({
+      action,
+      right: selectedContractMeta?.right || slot.cp,
+    }) || {}),
+    availability: optionActionAvailabilityByAction[action],
+  }));
+  const optionActionBlocked =
+    ticketIsOptions && !optionActionAvailability.enabled;
+  const selectOptionOrderAction = (nextAction) => {
+    if (!optionActionAvailabilityByAction[nextAction]?.enabled) return;
+    const nextIntent = resolveOptionOrderIntent({
+      action: nextAction,
+      right: selectedContractMeta?.right || slot.cp,
+    });
+    if (!nextIntent) return;
+    setOptionAction(nextAction);
+    setSide(nextIntent.side);
+    if (nextIntent.side === "SELL") setOrderType("LMT");
   };
+  const ticketActionLabel = ticketIsOptions
+    ? optionOrderIntent?.actionLabel || "OPTION ACTION REQUIRED"
+    : side === "BUY"
+      ? "BUY"
+      : "SELL";
+  const optionOrderIntentFields =
+    ticketIsOptions && optionOrderIntent
+      ? {
+          optionAction: optionOrderIntent.action,
+          positionEffect: optionOrderIntent.positionEffect,
+          ...(optionOrderIntent.strategyIntent
+            ? { strategyIntent: optionOrderIntent.strategyIntent }
+            : {}),
+        }
+      : {};
   const shadowSellToCloseIntent =
-    sellCallIntent.applies && sellCallIntent.strategyIntent === "sell_to_close";
+    ticketIsOptions && optionAction === "sell_to_close";
   const shadowAddExposureWarningActive =
     sameShadowContractExposure && !shadowSellToCloseIntent;
-  const ibkrOrderAccountId = liveUsesIbkrEquity
+  const ibkrOrderAccountId = liveUsesIbkr
     ? selectedIbkrAccount?.accountId || ""
     : accountId;
   const orderRequest =
@@ -2373,10 +2445,15 @@ export const TradeOrderTicket = ({
     !liveUsesSchwab &&
     !liveUsesBrokerOption &&
     liveOrderPayloadReady
-    ? liveUsesIbkrEquity
-      ? buildManualIbkrEquityOrderRequest({
+    ? liveUsesIbkr
+      ? buildManualIbkrSingleLegOrderRequest({
           accountId: ibkrOrderAccountId,
           symbol: slot.ticker,
+          assetClass: ticketAssetClass,
+          side,
+          quantity: qtyNum,
+          optionAction,
+          optionContract: optionOrderContract,
           orderType,
           limitPrice: orderPrices.limitPrice,
         })
@@ -2438,10 +2515,11 @@ export const TradeOrderTicket = ({
     stopPrice: orderPrices.stopPrice,
     timeInForce: tif.toLowerCase(),
     optionContract: optionOrderContract,
+    ...optionOrderIntentFields,
     route,
     intent:
-      sellCallIntent.strategyIntent ||
-      sellCallIntent.positionEffect ||
+      optionOrderIntent?.strategyIntent ||
+      optionOrderIntent?.positionEffect ||
       null,
   });
   const runTaxPreflight = async (route, targetAccountId) => {
@@ -2585,7 +2663,7 @@ export const TradeOrderTicket = ({
       : MISSING_VALUE;
   const hasAttachedExits =
     !executionIsShadow &&
-    !liveUsesIbkrEquity &&
+    !liveUsesIbkr &&
     !liveUsesSnapTrade &&
     !liveUsesRobinhood &&
     !liveUsesSchwab &&
@@ -2608,7 +2686,7 @@ export const TradeOrderTicket = ({
     .join(" / ");
   const attachedExitTogglesDisabled =
     executionIsShadow ||
-    liveUsesIbkrEquity ||
+    liveUsesIbkr ||
     liveUsesSnapTrade ||
     liveUsesRobinhood ||
     liveUsesSchwab ||
@@ -2622,6 +2700,7 @@ export const TradeOrderTicket = ({
       return;
     }
     setSide("BUY");
+    setOptionAction("buy_to_open");
     setOrderType("LMT");
     setTif("DAY");
     setAttachStopLoss(false);
@@ -2659,6 +2738,14 @@ export const TradeOrderTicket = ({
       });
       return false;
     }
+    if ((ticketIsOptions || liveUsesIbkr) && !Number.isInteger(qtyNum)) {
+      toast.push({
+        kind: "error",
+        title: "Whole quantity required",
+        body: `Enter a positive whole number of ${ticketQuantityUnit}.`,
+      });
+      return false;
+    }
     if (ticketIsOptions && !optionTicketReady) {
       toast.push({
         kind: "info",
@@ -2667,15 +2754,11 @@ export const TradeOrderTicket = ({
       });
       return false;
     }
-    if (sellCallIntent.applies && !sellCallIntent.allowed) {
+    if (optionActionBlocked) {
       toast.push({
-        kind: sellCallIntent.contextPending ? "info" : "warn",
-        title: sellCallIntent.contextPending
-          ? "Call coverage loading"
-          : "Call sale blocked",
-        body:
-          sellCallIntent.blockedReason ||
-          "This call sale cannot be routed with the current account coverage.",
+        kind: "warn",
+        title: "Option action blocked",
+        body: optionActionAvailability.reason,
       });
       return false;
     }
@@ -3141,7 +3224,7 @@ export const TradeOrderTicket = ({
     }
 
     if (!brokerConfigured) {
-      if (!liveUsesIbkrEquity) {
+      if (!liveUsesIbkr) {
         toast.push({
           kind: "info",
           title: "IBKR required",
@@ -3552,7 +3635,7 @@ export const TradeOrderTicket = ({
       return;
     }
 
-    if (liveUsesIbkrEquity) {
+    if (liveUsesIbkr) {
       if (ibkrSubmitLocked) {
         throw new Error(
           "This prepared IBKR order has already been submitted. Reconcile it before another attempt.",
@@ -3569,7 +3652,7 @@ export const TradeOrderTicket = ({
       setIbkrSubmitLocked(true);
       try {
         await placeOrderMutation.mutateAsync({
-          data: buildPreparedIbkrEquityOrderSubmission(
+          data: buildPreparedIbkrOrderSubmission(
             orderRequest,
             previewSnapshot,
           ),
@@ -3974,10 +4057,10 @@ export const TradeOrderTicket = ({
     }
 
     await submitIbkrLiveOrderAfterGate({
-      brokerConfigured: liveUsesIbkrEquity
+      brokerConfigured: liveUsesIbkr
         ? ibkrLiveReadinessReady
         : brokerConfigured,
-      gatewayTradingBlocked: liveUsesIbkrEquity ? false : gatewayTradingBlocked,
+      gatewayTradingBlocked: liveUsesIbkr ? false : gatewayTradingBlocked,
       gatewayTradingMessage,
       accountId: ibkrOrderAccountId,
       liveOrderPayloadReady,
@@ -3985,11 +4068,11 @@ export const TradeOrderTicket = ({
       ticketIsShares,
       toast,
       submit: async () => {
-        const taxPreflight = liveUsesIbkrEquity
+        const taxPreflight = liveUsesIbkr
           ? previewSnapshot?.taxPreflight || null
           : await runTaxPreflight("ibkr", ibkrOrderAccountId);
         if (!taxPreflight || taxPreflight.action === "block") {
-          if (liveUsesIbkrEquity && !previewSnapshot) {
+          if (liveUsesIbkr && !previewSnapshot) {
             toast.push({
               kind: "warn",
               title: "Fresh preview required",
@@ -4003,7 +4086,7 @@ export const TradeOrderTicket = ({
 
         setLiveConfirmError(null);
         if (
-          !liveUsesIbkrEquity &&
+          !liveUsesIbkr &&
           !confirmBrokerOrders &&
           environment !== "live" &&
           !taxRequiresAcknowledgement
@@ -4016,7 +4099,7 @@ export const TradeOrderTicket = ({
           title: `${ticketActionLabel} ${ticketInstrumentLabel}`,
           detail: hasAttachedExits
             ? `Submit this ${environment.toUpperCase()} IBKR parent order with ${attachedExitCount} attached exit order${attachedExitCount === 1 ? "" : "s"}.`
-            : `Submit this ${liveUsesIbkrEquity ? "LIVE" : environment.toUpperCase()} broker order to Interactive Brokers for immediate routing.`,
+            : `Submit this ${liveUsesIbkr ? "LIVE" : environment.toUpperCase()} broker order to Interactive Brokers for immediate routing.`,
           confirmLabel: hasAttachedExits
             ? `${ticketActionLabel} IBKR + ${attachedExitLabel}`
             : `${ticketActionLabel} IBKR ORDER`,
@@ -4024,7 +4107,7 @@ export const TradeOrderTicket = ({
           lines: [
             {
               label: "ACCOUNT",
-              value: liveUsesIbkrEquity
+              value: liveUsesIbkr
                 ? selectedIbkrAccount?.maskedAccountId || MISSING_VALUE
                 : inheritedIbkrAccount?.maskedAccountId || "IBKR account",
             },
@@ -4080,15 +4163,11 @@ export const TradeOrderTicket = ({
                   },
                 ]
               : []),
-            ...(sellCallIntent.applies
+            ...(ticketIsOptions && optionOrderIntent
               ? [
-                  { label: "INTENT", value: sellCallIntent.intentLabel },
                   {
-                    label: "COVERAGE",
-                    value:
-                      sellCallIntent.strategyIntent === "covered_call"
-                        ? `${sellCallIntent.coverage.coveredCallCapacity} covered / ${sellCallIntent.coverage.reservedShares} reserved sh`
-                        : `${sellCallIntent.coverage.availableMatchingLongCallContracts} available long call(s)`,
+                    label: "ACTION",
+                    value: `${optionOrderIntent.abbreviation} · ${optionOrderIntent.intentLabel}`,
                   },
                 ]
               : []),
@@ -4406,11 +4485,9 @@ export const TradeOrderTicket = ({
         ? stopPrice
         : limitPrice;
   const parentPriceDisabled = orderType === "MKT";
-  const qtyPresets = liveUsesIbkrEquity
-    ? [1]
-    : ticketIsShares
-      ? [1, 10, 25, 50, 100]
-      : [1, 3, 5, 10];
+  const qtyPresets = ticketIsShares
+    ? [1, 10, 25, 50, 100]
+    : [1, 3, 5, 10];
   const ibkrSubmitPending =
     placeOrderMutation.isPending ||
     submitOrdersMutation.isPending ||
@@ -4448,7 +4525,7 @@ export const TradeOrderTicket = ({
           Boolean(directBrokerReconciliationLock) ||
           taxPreflightPending
       : ibkrSubmitPending || taxPreflightPending;
-  const sellCallSubmitBlocked = sellCallIntent.applies && !sellCallIntent.allowed;
+  const optionActionSubmitBlocked = optionActionBlocked;
   const snapTradeAuthLoading =
     liveUsesSnapTrade &&
     snapTradeAccountReady &&
@@ -4466,14 +4543,14 @@ export const TradeOrderTicket = ({
   const baseTicketReadinessModel = buildTicketReadinessModel({
     executionMode,
     brokerRoute: readinessUsesDirectAccount ? "snaptrade" : liveBrokerRoute,
-    gatewayTradingReady: liveUsesIbkrEquity ? true : gatewayTradingReady,
-    brokerConfigured: liveUsesIbkrEquity
+    gatewayTradingReady: liveUsesIbkr ? true : gatewayTradingReady,
+    brokerConfigured: liveUsesIbkr
       ? ibkrLiveReadinessReady
       : brokerConfigured,
-    brokerAuthenticated: liveUsesIbkrEquity
+    brokerAuthenticated: liveUsesIbkr
       ? ibkrLiveReadinessReady
       : brokerAuthenticated,
-    accountId: liveUsesIbkrEquity
+    accountId: liveUsesIbkr
       ? selectedIbkrAccount?.accountId || null
       : accountId,
     snapTradeExecutionReady: readinessUsesDirectAccount
@@ -4487,7 +4564,7 @@ export const TradeOrderTicket = ({
     spreadPct,
     previewPending: previewIsPending,
     submitPending: primarySubmitPending,
-    sellCallBlocked: sellCallSubmitBlocked,
+    sellCallBlocked: optionActionSubmitBlocked,
     shadowExposureWarning: shadowAddExposureWarningActive,
     automationDeviationCount: liveDeviationFields.length,
   });
@@ -4502,7 +4579,7 @@ export const TradeOrderTicket = ({
   const primarySubmitDisabled = executionIsShadow
     ? placeShadowOrderMutation.isPending ||
       automationAlreadyShadowFilled ||
-      sellCallSubmitBlocked
+      optionActionSubmitBlocked
     : liveUsesSnapTrade
       ? submitSnapTradeOrderMutation.isPending ||
         Boolean(directBrokerReconciliationLock) ||
@@ -4510,7 +4587,7 @@ export const TradeOrderTicket = ({
         snapTradeAuthLoading ||
         !snapTradeCsrfToken ||
         !snapTradeOrderDraft.ready ||
-        sellCallSubmitBlocked
+        optionActionSubmitBlocked
       : liveUsesRobinhood
         ? robinhoodSyncMutation.isPending ||
           submitRobinhoodOrderMutation.isPending ||
@@ -4519,7 +4596,7 @@ export const TradeOrderTicket = ({
           robinhoodAuthLoading ||
           !robinhoodCsrfToken ||
           !robinhoodOrderDraft.ready ||
-          sellCallSubmitBlocked
+          optionActionSubmitBlocked
       : liveUsesSchwab
         ? schwabSyncMutation.isPending ||
           submitSchwabEquityOrderMutation.isPending ||
@@ -4528,7 +4605,7 @@ export const TradeOrderTicket = ({
           schwabAuthLoading ||
           !schwabCsrfToken ||
           !schwabEquityOrderDraft.ready ||
-          sellCallSubmitBlocked
+          optionActionSubmitBlocked
       : liveUsesBrokerOption
         ? directOptionAccountSyncPending ||
           submitBrokerOptionMutation.isPending ||
@@ -4537,8 +4614,8 @@ export const TradeOrderTicket = ({
           brokerOptionAuthLoading ||
           !directOptionCsrfToken ||
           !brokerOptionOrderDraft.ready ||
-          sellCallSubmitBlocked
-      : liveUsesIbkrEquity
+          optionActionSubmitBlocked
+      : liveUsesIbkr
         ? ibkrSubmitPending ||
           !selectedIbkrAccount ||
           !ibkrLiveReadinessReady ||
@@ -4549,7 +4626,7 @@ export const TradeOrderTicket = ({
         : ibkrSubmitPending ||
         taxPreflightPending ||
         gatewayTradingBlocked ||
-        sellCallSubmitBlocked;
+        optionActionSubmitBlocked;
   const previewDisabled =
     previewIsPending ||
     (liveUsesDirectBroker && Boolean(directBrokerReconciliationLock)) ||
@@ -4559,21 +4636,21 @@ export const TradeOrderTicket = ({
       (!schwabCsrfToken || !schwabEquityOrderDraft.ready)) ||
     (liveUsesBrokerOption &&
       (!directOptionCsrfToken || !brokerOptionOrderDraft.ready)) ||
-    (liveUsesIbkrEquity &&
+    (liveUsesIbkr &&
       (!selectedIbkrAccount ||
         !ibkrLiveReadinessReady ||
         (ibkrSubmitLocked &&
           ((Boolean(trackedIbkrOrder?.id) && !trackedIbkrOrderTerminal) ||
             trackedIbkrOrderRequiresReconciliation)))) ||
-    sellCallSubmitBlocked;
+    optionActionSubmitBlocked;
   const primarySubmitColor = executionIsShadow ? CSS_COLOR.pink : selectedSideColor;
   const primarySubmitLabel = executionIsShadow
     ? placeShadowOrderMutation.isPending
       ? "FILLING..."
       : automationAlreadyShadowFilled
         ? "SHADOW FILLED"
-        : sellCallSubmitBlocked
-          ? sellCallIntent.actionLabel
+        : optionActionSubmitBlocked
+          ? "OPTION ACTION BLOCKED"
 	        : shadowAddExposureWarningActive && !shadowExposureAcknowledged
 	          ? "ADD EXPOSURE?"
 	        : shadowAddExposureWarningActive
@@ -4649,7 +4726,7 @@ export const TradeOrderTicket = ({
                   : !brokerOptionOrderDraft.ready
                     ? brokerOptionDraftButtonLabel
                     : `${ticketActionLabel} ${optionBroker.toUpperCase()} ${qtyNum || 0} ct × ${fillPriceDisplay} · ${signedCostDisplay}`
-    : liveUsesIbkrEquity
+    : liveUsesIbkr
       ? !selectedIbkrAccount
           ? "SELECT IBKR ACCOUNT"
           : !ibkrLiveReadinessReady
@@ -4665,16 +4742,16 @@ export const TradeOrderTicket = ({
                   ? "PREVIEW NEXT ORDER"
                   : "ACTIVE ORDER LOCKED"
                 : orderType === "MKT"
-                  ? `${ticketActionLabel} IBKR 1 sh · MARKET`
-                  : `${ticketActionLabel} IBKR 1 sh × ${fillPriceDisplay} · ${signedCostDisplay}`
+                  ? `${ticketActionLabel} IBKR ${qtyNum || 0} ${ticketIsShares ? "sh" : "ct"} · MARKET`
+                  : `${ticketActionLabel} IBKR ${qtyNum || 0} ${ticketIsShares ? "sh" : "ct"} × ${fillPriceDisplay} · ${signedCostDisplay}`
     : gatewayTradingBlocked
       ? gatewayTradingBlockedLabel
       : taxPreflightPending
         ? "CHECKING TAX..."
       : ibkrSubmitPending
       ? "SUBMITTING..."
-      : sellCallSubmitBlocked
-        ? sellCallIntent.actionLabel
+      : optionActionSubmitBlocked
+        ? "OPTION ACTION BLOCKED"
       : `${ticketActionLabel} ${hasAttachedExits ? `${attachedExitLabel} ` : ""}${qtyNum || 0} ${ticketIsShares ? "sh" : "ct"} × ${fillPriceDisplay} · ${signedCostDisplay}`;
 	  const previewIsTwsStructured =
 	    isTwsStructuredOrderPayload(previewOrderPayload);
@@ -4712,35 +4789,9 @@ export const TradeOrderTicket = ({
     "SUBMITTED";
   const robinhoodEstimateIsCredit =
     String(previewDisplayOrder?.side || side).toUpperCase() === "SELL";
-  const sellCallStatusColor = !sellCallIntent.applies
-    ? CSS_COLOR.textDim
-    : sellCallIntent.allowed
-      ? sellCallIntent.strategyIntent === "covered_call"
-        ? CSS_COLOR.cyan
-        : CSS_COLOR.green
-      : sellCallIntent.contextPending
-        ? CSS_COLOR.amber
-        : CSS_COLOR.red;
-  const sellCallCoverageRows = sellCallIntent.applies
-    ? [
-        [
-          "AVAIL CALLS",
-          `${sellCallIntent.coverage.availableMatchingLongCallContracts.toFixed(2)} ct`,
-        ],
-        [
-          "SHARES",
-          `${Math.floor(sellCallIntent.coverage.longUnderlyingShares)} sh`,
-        ],
-        [
-          "RESERVED",
-          `${Math.floor(sellCallIntent.coverage.reservedShares)} sh`,
-        ],
-        [
-          "COVERAGE",
-          `${sellCallIntent.coverage.coveredCallCapacity.toFixed(2)} ct`,
-        ],
-      ]
-    : [];
+  const optionActionStatusColor = optionActionSubmitBlocked
+    ? CSS_COLOR.amber
+    : selectedSideColor;
 
   return (
     <>
@@ -5202,47 +5253,88 @@ export const TradeOrderTicket = ({
       )}
       {/* Side + Order type */}
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: sp(3) }}>
-        <div style={{ display: "flex", gap: sp(2) }}>
-          <button
-            onClick={() => selectSide("BUY")}
-            disabled={liveUsesIbkrEquity}
-            style={{
-              flex: 1,
-              padding: sp("4px 0"),
-              background: isLong ? TRADE_BUY_TONE : "transparent",
-              border: `1px solid ${isLong ? TRADE_BUY_TONE : CSS_COLOR.border}`,
-              borderRadius: dim(RADII.xs),
-              color: isLong ? CSS_COLOR.onAccent : CSS_COLOR.textSec,
-              fontSize: fs(ticketIsOptions ? 8 : 10),
-              fontFamily: T.sans,
-              fontWeight: FONT_WEIGHTS.regular,
-              lineHeight: 1.15,
-              cursor: liveUsesIbkrEquity ? "not-allowed" : "pointer",
-            }}
+        {ticketIsOptions ? (
+          <div
+            role="group"
+            aria-label="Option action"
+            data-testid="trade-ticket-option-actions"
+            style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: sp(2) }}
           >
-            {ticketIsOptions ? "BUY TO OPEN" : "BUY"}
-          </button>
-          <button
-            onClick={() => selectSide("SELL")}
-            disabled={liveUsesIbkrEquity}
-            style={{
-              flex: 1,
-              padding: sp("4px 0"),
-              background: !isLong ? CSS_COLOR.red : "transparent",
-              border: `1px solid ${!isLong ? CSS_COLOR.red : CSS_COLOR.border}`,
-              borderRadius: dim(RADII.xs),
-              color: !isLong ? CSS_COLOR.onAccent : CSS_COLOR.textSec,
-              fontSize: fs(ticketIsOptions ? 8 : 10),
-              fontFamily: T.sans,
-              fontWeight: FONT_WEIGHTS.regular,
-              lineHeight: 1.15,
-              cursor: liveUsesIbkrEquity ? "not-allowed" : "pointer",
-              opacity: liveUsesIbkrEquity ? 0.45 : 1,
-            }}
-          >
-            {sellCallIntent.applies ? sellCallIntent.actionLabel : "SELL"}
-          </button>
-        </div>
+            {optionActionChoices.map((choice) => {
+              const selected = choice.action === optionAction;
+              const tone = choice.side === "BUY" ? TRADE_BUY_TONE : TRADE_SELL_TONE;
+              const enabled = choice.availability?.enabled === true;
+              return (
+                <button
+                  key={choice.action}
+                  type="button"
+                  aria-label={choice.actionLabel}
+                  aria-pressed={selected}
+                  disabled={!enabled}
+                  title={enabled ? choice.actionLabel : choice.availability?.reason}
+                  onClick={() => selectOptionOrderAction(choice.action)}
+                  style={{
+                    minWidth: 0,
+                    padding: sp("4px 2px"),
+                    background: selected ? tone : "transparent",
+                    border: `1px solid ${selected ? tone : CSS_COLOR.border}`,
+                    borderRadius: dim(RADII.xs),
+                    color: selected ? CSS_COLOR.onAccent : CSS_COLOR.textSec,
+                    fontSize: fs(8),
+                    fontFamily: T.sans,
+                    fontWeight: FONT_WEIGHTS.regular,
+                    lineHeight: 1.15,
+                    cursor: enabled ? "pointer" : "not-allowed",
+                    opacity: enabled || selected ? 1 : 0.4,
+                  }}
+                >
+                  {choice.abbreviation}
+                </button>
+              );
+            })}
+          </div>
+        ) : (
+          <div style={{ display: "flex", gap: sp(2) }}>
+            <button
+              type="button"
+              onClick={() => selectSide("BUY")}
+              style={{
+                flex: 1,
+                padding: sp("4px 0"),
+                background: isLong ? TRADE_BUY_TONE : "transparent",
+                border: `1px solid ${isLong ? TRADE_BUY_TONE : CSS_COLOR.border}`,
+                borderRadius: dim(RADII.xs),
+                color: isLong ? CSS_COLOR.onAccent : CSS_COLOR.textSec,
+                fontSize: fs(10),
+                fontFamily: T.sans,
+                fontWeight: FONT_WEIGHTS.regular,
+                lineHeight: 1.15,
+                cursor: "pointer",
+              }}
+            >
+              BUY
+            </button>
+            <button
+              type="button"
+              onClick={() => selectSide("SELL")}
+              style={{
+                flex: 1,
+                padding: sp("4px 0"),
+                background: !isLong ? TRADE_SELL_TONE : "transparent",
+                border: `1px solid ${!isLong ? TRADE_SELL_TONE : CSS_COLOR.border}`,
+                borderRadius: dim(RADII.xs),
+                color: !isLong ? CSS_COLOR.onAccent : CSS_COLOR.textSec,
+                fontSize: fs(10),
+                fontFamily: T.sans,
+                fontWeight: FONT_WEIGHTS.regular,
+                lineHeight: 1.15,
+                cursor: "pointer",
+              }}
+            >
+              SELL
+            </button>
+          </div>
+        )}
         <SegmentedControl
           ariaLabel="Order type"
           options={ticketTypeOptions.map(([value, label]) => ({ value, label }))}
@@ -5250,15 +5342,16 @@ export const TradeOrderTicket = ({
           onChange={setOrderType}
         />
       </div>
-      {sellCallIntent.applies ? (
+      {ticketIsOptions && optionOrderIntent ? (
         <div
+          data-testid="trade-ticket-option-intent"
           style={{
-            border: `1px solid ${cssColorAlpha(sellCallStatusColor, "55")}`,
-            background: cssColorAlpha(sellCallStatusColor, "12"),
+            border: `1px solid ${cssColorAlpha(optionActionStatusColor, "55")}`,
+            background: cssColorAlpha(optionActionStatusColor, "12"),
             borderRadius: dim(RADII.xs),
             padding: sp("6px 7px"),
             display: "grid",
-            gap: sp(5),
+            gap: sp(3),
             fontFamily: T.sans,
           }}
         >
@@ -5272,75 +5365,28 @@ export const TradeOrderTicket = ({
           >
             <span
               style={{
-                color: sellCallStatusColor,
+                color: optionActionStatusColor,
                 fontSize: textSize("body"),
                 fontWeight: FONT_WEIGHTS.regular,
               }}
             >
-              {sellCallIntent.intentLabel}
+              {optionOrderIntent.intentLabel}
             </span>
             <span style={{ color: CSS_COLOR.textDim, fontSize: textSize("caption"), fontWeight: FONT_WEIGHTS.regular }}>
-              {sellCallIntent.coverage.underlying || slot.ticker}
+              {optionOrderIntent.abbreviation} · {optionOrderIntent.positionEffect.toUpperCase()}
             </span>
           </div>
           <div
-            className="ra-hide-scrollbar"
             style={{
-              display: "flex",
-              flexWrap: "nowrap",
-              overflowX: "auto",
-              border: `1px solid ${CSS_COLOR.border}`,
-              background: CSS_COLOR.bg0,
-              borderRadius: dim(RADII.xs),
-              minWidth: 0,
+              color: optionActionStatusColor,
+              fontSize: textSize("caption"),
+              lineHeight: 1.35,
             }}
           >
-            {sellCallCoverageRows.map(([label, value], index) => (
-              <div
-                key={label}
-                style={{
-                  flex: "1 1 auto",
-                  minWidth: dim(70),
-                  padding: sp("4px 8px"),
-                  borderLeft: index === 0 ? "none" : `1px solid ${CSS_COLOR.border}`,
-                }}
-              >
-                <div
-                  style={{
-                    color: CSS_COLOR.textMuted,
-                    fontSize: fs(6),
-                    fontWeight: FONT_WEIGHTS.regular,
-                  }}
-                >
-                  {label}
-                </div>
-                <div
-                  style={{
-                    color: CSS_COLOR.text,
-                    fontSize: textSize("body"),
-                    fontWeight: FONT_WEIGHTS.regular,
-                    marginTop: sp(1),
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                    whiteSpace: "nowrap",
-                  }}
-                >
-                  {value}
-                </div>
-              </div>
-            ))}
+            {optionActionSubmitBlocked
+              ? optionActionAvailability.reason
+              : optionOrderIntent.detail}
           </div>
-          {!sellCallIntent.allowed ? (
-            <div
-              style={{
-                color: sellCallStatusColor,
-                fontSize: textSize("caption"),
-                lineHeight: 1.35,
-              }}
-            >
-              {sellCallIntent.blockedReason}
-            </div>
-          ) : null}
         </div>
       ) : null}
       {/* QTY presets + input + LIMIT */}
@@ -5357,8 +5403,8 @@ export const TradeOrderTicket = ({
           {qtyPresets.map((n) => (
             <button
               key={n}
+              type="button"
               onClick={() => setQty(n)}
-              disabled={liveUsesIbkrEquity}
               style={{
                 padding: sp("4px 7px"),
                 background: qtyNum === n ? CSS_COLOR.accent : "transparent",
@@ -5368,7 +5414,7 @@ export const TradeOrderTicket = ({
                 fontSize: textSize("caption"),
                 fontFamily: T.sans,
                 fontWeight: FONT_WEIGHTS.regular,
-                cursor: liveUsesIbkrEquity ? "not-allowed" : "pointer",
+                cursor: "pointer",
               }}
             >
               {n}
@@ -5389,9 +5435,9 @@ export const TradeOrderTicket = ({
           <input
             type="number"
             min="1"
+            step={ticketIsOptions || liveUsesIbkr ? "1" : "any"}
             aria-label={`${ticketQuantityUnit} quantity`}
             value={qty}
-            disabled={liveUsesIbkrEquity}
             onChange={(e) =>
               setQty(e.target.value === "" ? "" : Math.max(0, +e.target.value))
             }
@@ -5748,7 +5794,7 @@ export const TradeOrderTicket = ({
                 : "PREVIEW"}
             </span>{" "}
             <span style={{ color: CSS_COLOR.text, fontWeight: FONT_WEIGHTS.regular }}>
-              {liveUsesIbkrEquity
+              {liveUsesIbkr
                 ? selectedIbkrAccount?.maskedAccountId || "IBKR account"
                 : ticketIsOptions && optionBroker === "ibkr"
                   ? inheritedIbkrAccount?.maskedAccountId || "IBKR account"
@@ -5792,7 +5838,7 @@ export const TradeOrderTicket = ({
                 : ""}
             </span>
           </div>
-          {liveUsesIbkrEquity && previewSnapshot.whatIf ? (
+          {liveUsesIbkr && previewSnapshot.whatIf ? (
             <>
               <div>
                 <span style={{ color: CSS_COLOR.textMuted }}>WHAT-IF COMM</span>{" "}
@@ -5974,7 +6020,7 @@ export const TradeOrderTicket = ({
           ) : null}
         </div>
       )}
-      {liveUsesIbkrEquity &&
+      {liveUsesIbkr &&
       (trackedIbkrOrder?.id || trackedIbkrOrderRequiresReconciliation) ? (
         <div
           data-testid="trade-ticket-ibkr-live-order"
@@ -6005,7 +6051,7 @@ export const TradeOrderTicket = ({
             </span>
           </div>
           <div style={{ color: CSS_COLOR.textSec }}>
-            {trackedIbkrOrder.symbol || slot.ticker} · {trackedIbkrOrder.side?.toUpperCase() || "BUY"} 1 share ·{" "}
+            {trackedIbkrOrder.symbol || slot.ticker} · {trackedIbkrOrder.side?.toUpperCase() || "BUY"} {trackedIbkrOrder.quantity || 0} {trackedIbkrOrder.assetClass === "option" ? "contract(s)" : "share(s)"} ·{" "}
             {trackedIbkrOrderIsMarket
               ? "MKT"
               : `LMT ${formatTicketMoney(trackedIbkrOrder.limitPrice)}`} · filled {trackedIbkrOrder.filledQuantity || 0}

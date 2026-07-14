@@ -110,6 +110,45 @@ test("maps an explicit sell-to-close intent for every direct option broker", () 
   }
 });
 
+test("preserves buy-to-close and sell-to-open adapter semantics for future account-aware routing", () => {
+  const cases = [
+    {
+      side: "BUY",
+      positionEffect: "close",
+      expected: {
+        robinhood: ["side", "Buy", "positionEffect", "Close"],
+        snaptrade: ["action", "BUY_TO_CLOSE"],
+        schwab: ["instruction", "BuyToClose"],
+      },
+    },
+    {
+      side: "SELL",
+      positionEffect: "open",
+      expected: {
+        robinhood: ["side", "Sell", "positionEffect", "Open"],
+        snaptrade: ["action", "SELL_TO_OPEN"],
+        schwab: ["instruction", "SellToOpen"],
+      },
+    },
+  ];
+
+  for (const testCase of cases) {
+    for (const broker of Object.keys(testCase.expected)) {
+      const draft = buildBrokerOptionOrderDraft({
+        ...baseInput,
+        broker,
+        side: testCase.side,
+        positionEffect: testCase.positionEffect,
+      });
+      assert.equal(draft.ready, true);
+      const [firstKey, firstValue, secondKey, secondValue] =
+        testCase.expected[broker];
+      assert.equal(draft.body[firstKey], firstValue);
+      if (secondKey) assert.equal(draft.body[secondKey], secondValue);
+    }
+  }
+});
+
 test("rejects unready accounts and unsupported provider controls", () => {
   assert.equal(
     buildBrokerOptionOrderDraft({

@@ -3,8 +3,8 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import {
-  buildManualIbkrEquityOrderRequest,
-  buildPreparedIbkrEquityOrderSubmission,
+  buildManualIbkrSingleLegOrderRequest,
+  buildPreparedIbkrOrderSubmission,
   buildPreparedIbkrReplacementSubmission,
   buildPreparedIbkrReplacementPreview,
   ibkrCancelToast,
@@ -68,23 +68,25 @@ test("live readiness is strict and fail-closed", () => {
   assert.equal(isIbkrLiveReadinessReady(ready, null), false);
 });
 
-test("manual direct IBKR limit intent is exactly one-share DAY regular-hours live", () => {
+test("manual direct IBKR equity intent preserves side and whole quantity", () => {
   assert.deepEqual(
-    buildManualIbkrEquityOrderRequest({
+    buildManualIbkrSingleLegOrderRequest({
       accountId: "ibkr-one",
       symbol: "aapl",
+      assetClass: "equity",
       side: "SELL",
       orderType: "LMT",
       limitPrice: 100.25,
+      quantity: 25,
     }),
     {
       accountId: "ibkr-one",
       mode: "live",
       symbol: "AAPL",
       assetClass: "equity",
-      side: "buy",
+      side: "sell",
       type: "limit",
-      quantity: 1,
+      quantity: 25,
       limitPrice: 100.25,
       stopPrice: null,
       timeInForce: "day",
@@ -96,27 +98,43 @@ test("manual direct IBKR limit intent is exactly one-share DAY regular-hours liv
   );
 });
 
-test("manual direct IBKR market intent is one share with no price cap", () => {
+test("manual direct IBKR option intent derives canonical action fields", () => {
+  const optionContract = {
+    ticker: "AAPL  260918P00150000",
+    underlying: "AAPL",
+    expirationDate: new Date("2026-09-18T00:00:00.000Z"),
+    strike: 150,
+    right: "put",
+    multiplier: 100,
+    sharesPerContract: 100,
+    providerContractId: "700001",
+  };
   assert.deepEqual(
-    buildManualIbkrEquityOrderRequest({
+    buildManualIbkrSingleLegOrderRequest({
       accountId: "ibkr-one",
-      symbol: "plug",
-      side: "SELL",
+      symbol: "aapl",
+      assetClass: "option",
+      optionAction: "sell_to_open",
+      optionContract,
       orderType: "MKT",
       limitPrice: 2.22,
+      quantity: 2,
     }),
     {
       accountId: "ibkr-one",
       mode: "live",
-      symbol: "PLUG",
-      assetClass: "equity",
-      side: "buy",
+      symbol: "AAPL",
+      assetClass: "option",
+      side: "sell",
       type: "market",
-      quantity: 1,
+      quantity: 2,
       limitPrice: null,
       stopPrice: null,
       timeInForce: "day",
-      optionContract: null,
+      optionContract,
+      optionAction: "sell_to_open",
+      positionEffect: "open",
+      strategyIntent: "cash_secured_put",
       tradingSession: "regular",
       includeOvernight: false,
       source: "manual",
@@ -125,10 +143,12 @@ test("manual direct IBKR market intent is one share with no price cap", () => {
 });
 
 test("submit reuses the exact preview intent and tax preflight", () => {
-  const order = buildManualIbkrEquityOrderRequest({
+  const order = buildManualIbkrSingleLegOrderRequest({
     accountId: "ibkr-one",
     symbol: "AAPL",
+    assetClass: "equity",
     side: "BUY",
+    quantity: 10,
     limitPrice: 100.25,
   });
   const preview = {
@@ -140,13 +160,51 @@ test("submit reuses the exact preview intent and tax preflight", () => {
     },
   };
 
-  assert.deepEqual(buildPreparedIbkrEquityOrderSubmission(order, preview), {
+  assert.deepEqual(buildPreparedIbkrOrderSubmission(order, preview), {
     ...order,
     confirm: true,
     clientOrderId: "intent-123",
     taxPreflightToken: "tax-123",
     taxAcknowledgements: ["what_if_warning_reviewed"],
   });
+});
+
+test("submit reuses the IBKR-resolved option contract identity", () => {
+  const order = buildManualIbkrSingleLegOrderRequest({
+    accountId: "ibkr-one",
+    symbol: "AAPL",
+    assetClass: "option",
+    optionAction: "sell_to_close",
+    optionContract: {
+      ticker: "AAPL260918C00150000",
+      underlying: "AAPL",
+      expirationDate: new Date("2026-09-18T00:00:00.000Z"),
+      strike: 150,
+      right: "call",
+      multiplier: 100,
+      sharesPerContract: 100,
+      providerContractId: null,
+    },
+    orderType: "LMT",
+    limitPrice: 4.25,
+    quantity: 1,
+  });
+  const submission = buildPreparedIbkrOrderSubmission(order, {
+    clientOrderId: "intent-option-1",
+    optionContract: {
+      ...order.optionContract,
+      providerContractId: "700001",
+    },
+    taxPreflight: {
+      preflightToken: "tax-option-1",
+      requiredAcknowledgements: [],
+    },
+  });
+
+  assert.equal(submission.optionContract.providerContractId, "700001");
+  assert.equal(submission.optionAction, "sell_to_close");
+  assert.equal(submission.positionEffect, "close");
+  assert.equal(submission.strategyIntent, "sell_to_close");
 });
 
 test("warning challenge is read from the generated ApiError problem payload", () => {
@@ -338,16 +396,22 @@ test("ticket wires generated direct IBKR lifecycle hooks", () => {
   assert.match(source, /useReplaceOrder/);
   assert.match(source, /useCancelOrder/);
   assert.match(source, /mode: "live"/);
-  assert.match(source, /liveUsesIbkrEquity\s*\? \["MKT", "LMT"\]/);
+  assert.match(source, /liveUsesIbkr\s*\? \["MKT", "LMT"\]/);
   assert.match(
     source,
-    /buildManualIbkrEquityOrderRequest\(\{[\s\S]*?orderType,[\s\S]*?limitPrice:/,
+    /buildManualIbkrSingleLegOrderRequest\(\{[\s\S]*?optionAction,[\s\S]*?orderType,[\s\S]*?quantity:/,
   );
+  assert.match(source, /variables\?\.data\?\.quantity \?\? qtyNum/);
+  assert.match(
+    source,
+    /variables\?\.data\?\.type \?\? normalizeTicketOrderType\(orderType\)/,
+  );
+  assert.doesNotMatch(source, /preview\.quantity/);
   assert.match(source, /STOP \/ RECONCILE/);
   assert.match(source, /setIbkrCancelAttempted\(true\)/);
   assert.match(
     source,
-    /gatewayTradingBlocked: liveUsesIbkrEquity \? false : gatewayTradingBlocked/,
+    /gatewayTradingBlocked: liveUsesIbkr \? false : gatewayTradingBlocked/,
   );
   assert.match(source, /"CHANGE USED"/);
   assert.match(source, /ibkrLifecyclePending \|\| ibkrWarningDecisionOpen/);

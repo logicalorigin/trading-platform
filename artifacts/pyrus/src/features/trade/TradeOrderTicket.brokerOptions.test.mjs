@@ -60,15 +60,16 @@ test("routes direct option review and submit before the unchanged IBKR gates", (
   assert.match(source, /placeBrokerOptionOrderRequest/);
 });
 
-test("blocks non-IBKR option sells without broker-specific position context", () => {
+test("blocks non-IBKR option closes and short opens without account context", () => {
   assert.match(
     source,
-    /positionEffect: side === "BUY" \? "open" : null/,
+    /positionEffect: optionOrderIntent\?\.positionEffect/,
   );
   assert.match(
     source,
-    /Non-IBKR option sells require broker-specific position context and are not enabled\./,
+    /Non-IBKR option closing and short-opening actions stay blocked until[\s\S]*?account-scoped position and working-order context\./,
   );
+  assert.match(source, /optionAction !== "buy_to_open"/);
 });
 
 test("passes exact chain identity and contract economics to direct option brokers", () => {
