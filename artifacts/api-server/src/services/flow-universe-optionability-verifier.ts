@@ -247,19 +247,14 @@ async function loadCandidateRows(
       sql`case when exists (
         select 1 from ${universeSourceMembershipsTable}
         where ${universeSourceMembershipsTable.normalizedTicker} = ${universeCatalogListingsTable.normalizedTicker}
-          and ${universeSourceMembershipsTable.sourceId} = 'sp500'
+          and ${universeSourceMembershipsTable.sourceId} = 'nasdaq_listed'
           and ${universeSourceMembershipsTable.active} = true
       ) then 0 when exists (
         select 1 from ${universeSourceMembershipsTable}
         where ${universeSourceMembershipsTable.normalizedTicker} = ${universeCatalogListingsTable.normalizedTicker}
-          and ${universeSourceMembershipsTable.sourceId} = 'nasdaq_listed'
-          and ${universeSourceMembershipsTable.active} = true
-      ) then 1 when exists (
-        select 1 from ${universeSourceMembershipsTable}
-        where ${universeSourceMembershipsTable.normalizedTicker} = ${universeCatalogListingsTable.normalizedTicker}
           and ${universeSourceMembershipsTable.sourceId} = 'other_listed'
           and ${universeSourceMembershipsTable.active} = true
-      ) then 2 else 3 end`,
+      ) then 1 else 2 end`,
       asc(universeCatalogListingsTable.normalizedTicker),
     )
     .limit(input.limit);

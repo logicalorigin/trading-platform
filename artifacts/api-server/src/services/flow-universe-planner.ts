@@ -13,7 +13,7 @@ export type FlowUniversePlannerPrioritySource =
   | "watchlists"
   | "built-in";
 
-export type FlowUniversePlannerPoolId = "priority" | "hot" | "core" | "broad";
+export type FlowUniversePlannerPoolId = "priority" | "hot" | "broad";
 
 export type FlowUniversePlannerCandidate = {
   symbol: string;
@@ -59,7 +59,6 @@ export type FlowUniverseScanPlan = {
   nextScanBatch: string[];
   prioritySymbols: string[];
   hotSymbols: string[];
-  coreSymbols: string[];
   broadSymbols: string[];
   verificationSymbols: string[];
   prioritySymbolsBySource: Record<FlowUniversePlannerPrioritySource, string[]>;
@@ -101,7 +100,6 @@ type FlowUniversePlannerRuntimeInput = Omit<
   "candidates" | "generatedAt"
 >;
 
-const SOURCE_ID_SP500 = "sp500";
 const SOURCE_ID_LISTED = new Set(["nasdaq_listed", "other_listed"]);
 const DEFAULT_HOT_LOOKBACK_MS = 60 * 60_000;
 const PLANNER_PRIORITY_ORDER: FlowUniversePlannerPrioritySource[] = [
@@ -170,13 +168,6 @@ function sortedByHeat(
       normalizeSymbol(right.symbol),
     );
   });
-}
-
-function hasSource(
-  candidate: FlowUniversePlannerCandidate,
-  sourceId: string,
-): boolean {
-  return Boolean(candidate.sourceIds?.includes(sourceId));
 }
 
 function hasListedSource(candidate: FlowUniversePlannerCandidate): boolean {
@@ -305,16 +296,8 @@ export function buildFlowUniverseScanPlan(
       ),
     ),
   );
-  const coreCandidates = sortedByOldestScan(
-    [...candidateBySymbol.values()].filter((candidate) =>
-      hasSource(candidate, SOURCE_ID_SP500),
-    ),
-  );
   const broadCandidates = sortedByOldestScan(
-    [...candidateBySymbol.values()].filter(
-      (candidate) =>
-        !hasSource(candidate, SOURCE_ID_SP500) && hasListedSource(candidate),
-    ),
+    [...candidateBySymbol.values()].filter(hasListedSource),
   );
 
   const orderedSymbols: string[] = [];
@@ -328,8 +311,13 @@ export function buildFlowUniverseScanPlan(
     cooldownSymbols,
   );
   appendCandidateSymbols(orderedSymbols, hotCandidates, seen, generatedAt, cooldownSymbols);
-  appendCandidateSymbols(orderedSymbols, coreCandidates, seen, generatedAt, cooldownSymbols);
-  appendCandidateSymbols(orderedSymbols, broadCandidates, seen, generatedAt, cooldownSymbols);
+  appendCandidateSymbols(
+    orderedSymbols,
+    broadCandidates,
+    seen,
+    generatedAt,
+    cooldownSymbols,
+  );
   const uncategorizedCandidates = sortedByOldestScan(
     [...candidateBySymbol.values()].filter((candidate) => {
       const symbol = normalizeSymbol(candidate.symbol);
@@ -355,9 +343,6 @@ export function buildFlowUniverseScanPlan(
     hot: hotCandidates.filter((candidate) =>
       selectedSet.has(normalizeSymbol(candidate.symbol)),
     ).length,
-    core: coreCandidates.filter((candidate) =>
-      selectedSet.has(normalizeSymbol(candidate.symbol)),
-    ).length,
     broad: broadCandidates.filter((candidate) =>
       selectedSet.has(normalizeSymbol(candidate.symbol)),
     ).length,
@@ -370,7 +355,6 @@ export function buildFlowUniverseScanPlan(
       normalizeSymbol(candidate.symbol),
     ),
     hotSymbols: hotCandidates.map((candidate) => normalizeSymbol(candidate.symbol)),
-    coreSymbols: coreCandidates.map((candidate) => normalizeSymbol(candidate.symbol)),
     broadSymbols: broadCandidates.map((candidate) => normalizeSymbol(candidate.symbol)),
     verificationSymbols: unverifiedPrioritySymbols,
     prioritySymbolsBySource: Object.fromEntries(
@@ -385,7 +369,6 @@ export function buildFlowUniverseScanPlan(
     pools: {
       priority: poolDiagnostics(priorityCandidates, nextScanBatch, generatedAt),
       hot: poolDiagnostics(hotCandidates, nextScanBatch, generatedAt),
-      core: poolDiagnostics(coreCandidates, nextScanBatch, generatedAt),
       broad: poolDiagnostics(broadCandidates, nextScanBatch, generatedAt),
     },
     skipped: {
@@ -478,6 +461,7 @@ async function loadPlannerCandidates(
           universeCatalogListingsTable.normalizedTicker,
         ),
         eq(universeSourceMembershipsTable.active, true),
+        inArray(universeSourceMembershipsTable.sourceId, [...SOURCE_ID_LISTED]),
       ),
     )
     .where(and(...catalogEligibilityFilters(options)))

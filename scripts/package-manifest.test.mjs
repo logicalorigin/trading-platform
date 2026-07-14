@@ -90,3 +90,44 @@ test("retired legacy Nasdaq-only universe CLI stays absent", () => {
     "tsx ./src/hydrate-universe-catalog-ibkr.ts",
   );
 });
+
+test("retired S&P universe priority source stays absent", () => {
+  const manifest = JSON.parse(
+    readFileSync(path.join(packageRoot, "package.json"), "utf8"),
+  );
+  const repoRoot = path.resolve(packageRoot, "..");
+  const runtimeFiles = [
+    "artifacts/api-server/src/services/flow-universe-planner.ts",
+    "artifacts/api-server/src/services/flow-universe-optionability-verifier.ts",
+    "scripts/src/hydrate-universe-catalog-ibkr.ts",
+  ];
+
+  assert.equal(manifest.scripts["universe:sync:sp500"], undefined);
+  assert.equal(
+    existsSync(path.join(packageRoot, "src/sync-sp500-universe.ts")),
+    false,
+  );
+  assert.equal(
+    existsSync(path.join(packageRoot, "src/sync-sp500-universe.test.ts")),
+    false,
+  );
+  assert.equal(
+    existsSync(
+      path.join(
+        repoRoot,
+        "artifacts/api-server/src/services/sp500-constituents.ts",
+      ),
+    ),
+    false,
+  );
+  assert.doesNotMatch(
+    readFileSync(path.join(repoRoot, ".env.example"), "utf8"),
+    /SP500_CONSTITUENTS_URL/u,
+  );
+  for (const file of runtimeFiles) {
+    assert.doesNotMatch(
+      readFileSync(path.join(repoRoot, file), "utf8"),
+      /sp500/iu,
+    );
+  }
+});

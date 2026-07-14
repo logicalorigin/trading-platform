@@ -34,16 +34,11 @@ const UNSAFE_OUTPUT_PATTERN =
 const DEFAULT_PRIORITY_LANES = [
   "symbols",
   "watchlists",
-  "sp500",
   "nasdaq_listed",
   "other_listed",
 ] as const;
-const SOURCE_PRIORITY_LANES = new Set([
-  "sp500",
-  "nasdaq_listed",
-  "other_listed",
-]);
-const BROAD_SOURCE_IDS = ["sp500", "nasdaq_listed", "other_listed"] as const;
+const SOURCE_PRIORITY_LANES = new Set(["nasdaq_listed", "other_listed"]);
+const BROAD_SOURCE_IDS = ["nasdaq_listed", "other_listed"] as const;
 
 type HydrationMode = "priority" | "broad" | "priority-then-broad";
 type PriorityLane = (typeof DEFAULT_PRIORITY_LANES)[number];

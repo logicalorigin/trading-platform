@@ -7,7 +7,6 @@
     "ibkr:soak": "tsx ./src/ibkr-connection-soak.ts",
     "universe:sync": "tsx ./src/sync-universe-catalog.ts",
     "universe:sync:listings": "tsx ./src/sync-listed-universe.ts",
-    "universe:sync:sp500": "tsx ./src/sync-sp500-universe.ts",
     "universe:hydrate:ibkr": "tsx ./src/hydrate-universe-catalog-ibkr.ts",
     "universe:verify:optionability": "tsx ./src/verify-flow-universe-optionability.ts",
     "db:market-data:audit": "tsx ./src/market-data-schema-audit.ts",
