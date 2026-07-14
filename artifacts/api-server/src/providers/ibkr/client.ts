@@ -769,6 +769,136 @@ type IbkrOrderMutationEvidence = {
   cancellable: boolean;
 };
 
+type PreparedIbkrOrder = {
+  raw: Record<string, unknown>;
+  accountId: string;
+  clientOrderId: string;
+  conid: number;
+  symbol: string;
+  assetClass: AssetClass;
+  side: OrderSide;
+  ibkrSide: "BUY" | "SELL";
+  type: "market" | "limit";
+  ibkrOrderType: "mkt" | "lmt";
+  timeInForce: TimeInForce;
+  quantity: number;
+  limitPrice: number | null;
+};
+
+function requirePreparedIbkrOrder(
+  body: Record<string, unknown>,
+  expectedAccountId: string,
+  code = "ibkr_order_intent_invalid",
+): PreparedIbkrOrder {
+  const orders = asArray(body["orders"]);
+  const raw = asRecord(orders[0]);
+  const accountId = asString(raw?.["acctId"])?.trim() ?? "";
+  const clientOrderId = validatedClientOrderId(raw?.["cOID"]);
+  const conid = asNumber(raw?.["conid"]);
+  const symbol = normalizeSymbol(asString(raw?.["ticker"]) ?? "");
+  const ibkrSide = parseIbkrOrderSide(asString(raw?.["side"]));
+  const ibkrOrderType = normalizeIbkrOrderTypeKey(
+    asString(raw?.["orderType"]) ?? "",
+  );
+  const tifValue = asString(raw?.["tif"])?.trim().toUpperCase() ?? "";
+  const quantity = asNumber(raw?.["quantity"]);
+  const limitPrice = asNumber(raw?.["price"]);
+  const secType = asString(raw?.["secType"])?.trim().toUpperCase() ?? "";
+  const assetClass = secType.endsWith(":OPT")
+    ? "option"
+    : secType.endsWith(":STK")
+      ? "equity"
+      : null;
+  const isLimit = ibkrOrderType === "lmt";
+  const isMarket = ibkrOrderType === "mkt";
+  if (
+    orders.length !== 1 ||
+    !raw ||
+    accountId !== expectedAccountId ||
+    !clientOrderId ||
+    conid === null ||
+    !Number.isSafeInteger(conid) ||
+    conid <= 0 ||
+    !symbol ||
+    !ibkrSide ||
+    (!isLimit && !isMarket) ||
+    (isLimit && (limitPrice === null || limitPrice <= 0)) ||
+    (isMarket && Object.hasOwn(raw, "price")) ||
+    Object.hasOwn(raw, "auxPrice") ||
+    !Object.hasOwn(IBKR_TO_INTERNAL_TIF, tifValue) ||
+    quantity === null ||
+    !Number.isFinite(quantity) ||
+    quantity <= 0 ||
+    (assetClass === "option" && !Number.isInteger(quantity)) ||
+    !assetClass ||
+    secType !== `${conid}:${assetClass === "option" ? "OPT" : "STK"}` ||
+    strictBoolean(raw["outsideRTH"]) !== false ||
+    strictBoolean(raw["manualIndicator"]) !== true
+  ) {
+    throw new HttpError(409, "The prepared IBKR order intent is invalid.", {
+      code,
+      expose: true,
+    });
+  }
+  return {
+    raw,
+    accountId,
+    clientOrderId,
+    conid,
+    symbol,
+    assetClass,
+    side: ibkrSide === "BUY" ? "buy" : "sell",
+    ibkrSide,
+    type: isLimit ? "limit" : "market",
+    ibkrOrderType: isLimit ? "lmt" : "mkt",
+    timeInForce: IBKR_TO_INTERNAL_TIF[tifValue]!,
+    quantity,
+    limitPrice: isLimit ? limitPrice : null,
+  };
+}
+
+function preparedIbkrOrderMatchesInput(
+  prepared: PreparedIbkrOrder,
+  input: PlaceOrderInput,
+): boolean {
+  const inputContractId = asNumber(input.optionContract?.providerContractId);
+  return (
+    input.accountId === prepared.accountId &&
+    validatedClientOrderId(input.clientOrderId) === prepared.clientOrderId &&
+    normalizeSymbol(input.symbol) === prepared.symbol &&
+    input.assetClass === prepared.assetClass &&
+    input.side === prepared.side &&
+    input.type === prepared.type &&
+    input.quantity === prepared.quantity &&
+    input.timeInForce === prepared.timeInForce &&
+    (prepared.type === "limit"
+      ? input.limitPrice === prepared.limitPrice && input.stopPrice == null
+      : input.limitPrice == null && input.stopPrice == null) &&
+    (prepared.assetClass === "option"
+      ? Boolean(input.optionContract) &&
+        (inputContractId === null || inputContractId === prepared.conid)
+      : input.optionContract === null)
+  );
+}
+
+function sameOptionContractEconomics(
+  expected: NonNullable<PlaceOrderInput["optionContract"]>,
+  actual: NonNullable<BrokerPositionSnapshot["optionContract"]>,
+): boolean {
+  return (
+    normalizeSymbol(expected.underlying) ===
+      normalizeSymbol(actual.underlying) &&
+    expected.expirationDate.toISOString().slice(0, 10) ===
+      actual.expirationDate.toISOString().slice(0, 10) &&
+    expected.strike === actual.strike &&
+    expected.right === actual.right &&
+    expected.multiplier === actual.multiplier &&
+    expected.sharesPerContract === actual.sharesPerContract &&
+    (!expected.providerContractId ||
+      expected.providerContractId === actual.providerContractId)
+  );
+}
+
 function classifyIbkrOrderResponse(payload: unknown): {
   results: Record<string, unknown>[];
   brokerError: Record<string, unknown> | null;
@@ -2239,6 +2369,34 @@ export class IbkrClient {
     });
     cache.set(conid, pending);
     return pending;
+  }
+
+  private async getPreparedOrderOptionContract(
+    prepared: PreparedIbkrOrder,
+    expectedOrder?: PlaceOrderInput,
+  ): Promise<BrokerPositionSnapshot["optionContract"]> {
+    if (prepared.assetClass !== "option") {
+      return null;
+    }
+    const hydrated = await this.getRiskOptionContract(prepared.conid, new Map());
+    if (
+      expectedOrder?.optionContract &&
+      !sameOptionContractEconomics(expectedOrder.optionContract, hydrated)
+    ) {
+      throw new HttpError(
+        409,
+        "The prepared IBKR option contract does not match its broker identifier.",
+        {
+          code: "ibkr_option_contract_identity_mismatch",
+          expose: true,
+        },
+      );
+    }
+    return {
+      ...(expectedOrder?.optionContract ?? hydrated),
+      providerContractId: String(prepared.conid),
+      standardDeliverableVerified: hydrated.standardDeliverableVerified,
+    };
   }
 
   private async hydrateRiskOptionContracts(
@@ -3858,9 +4016,37 @@ export class IbkrClient {
     secType: string;
     listingExchange: string;
   }> {
+    const providedContractId = asString(
+      optionContract.providerContractId,
+    )?.trim();
     const providedConid = asNumber(optionContract.providerContractId);
 
     if (providedConid !== null) {
+      if (
+        !providedContractId ||
+        String(providedConid) !== providedContractId ||
+        !Number.isSafeInteger(providedConid) ||
+        providedConid <= 0
+      ) {
+        throw new HttpError(409, "The selected IBKR option contract is invalid.", {
+          code: "ibkr_option_contract_id_invalid",
+          expose: true,
+        });
+      }
+      const verified = await this.getRiskOptionContract(
+        providedConid,
+        new Map(),
+      );
+      if (!sameOptionContractEconomics(optionContract, verified)) {
+        throw new HttpError(
+          409,
+          "The selected IBKR option contract does not match its broker identifier.",
+          {
+            code: "ibkr_option_contract_identity_mismatch",
+            expose: true,
+          },
+        );
+      }
       return {
         conid: providedConid,
         secType: "OPT",
@@ -3891,18 +4077,21 @@ export class IbkrClient {
       .toISOString()
       .slice(0, 10)
       .replace(/-/g, "");
-    const match =
-      results.find((result) => {
-        const maturity = asString(result["maturityDate"]);
-        const strike = asNumber(result["strike"]);
-        const right = normalizeOptionRight(asString(result["right"]));
+    const match = results.find((result) => {
+      const maturity = firstDefined(
+        asString(result["maturityDate"]),
+        asString(result["maturity_date"]),
+        asString(result["expiry"]),
+      );
+      const strike = asNumber(result["strike"]);
+      const right = normalizeOptionRight(asString(result["right"]));
 
-        return (
-          maturity === expectedExpiration &&
-          strike === optionContract.strike &&
-          right === optionContract.right
-        );
-      }) ?? results[0];
+      return (
+        maturity === expectedExpiration &&
+        strike === optionContract.strike &&
+        right === optionContract.right
+      );
+    });
 
     if (!match) {
       throw new HttpError(
@@ -3914,7 +4103,10 @@ export class IbkrClient {
       );
     }
 
-    const conid = asNumber(match["conid"]);
+    const conid = firstDefined(
+      asNumber(match["conid"]),
+      asNumber(match["con_id"]),
+    );
 
     if (conid === null) {
       throw new HttpError(
@@ -3922,6 +4114,17 @@ export class IbkrClient {
         "IBKR returned an invalid option contract identifier.",
         {
           code: "ibkr_invalid_option_conid",
+        },
+      );
+    }
+    const verified = await this.getRiskOptionContract(conid, new Map());
+    if (!sameOptionContractEconomics(optionContract, verified)) {
+      throw new HttpError(
+        409,
+        "The resolved IBKR option contract does not match the selected contract.",
+        {
+          code: "ibkr_option_contract_identity_mismatch",
+          expose: true,
         },
       );
     }
@@ -4268,7 +4471,7 @@ export class IbkrClient {
       optionContract: input.optionContract
         ? {
             ...input.optionContract,
-            providerContractId: input.optionContract.providerContractId ?? null,
+            providerContractId: String(resolvedContractId),
           }
         : null,
     };
@@ -4302,19 +4505,19 @@ export class IbkrClient {
     }
   > {
     const clientOrderId = validatedClientOrderId(input.clientOrderId);
-    const order = asRecord(asArray(prepared.body["orders"])[0]);
+    const order = requirePreparedIbkrOrder(prepared.body, prepared.accountId);
     if (
       !clientOrderId ||
-      asArray(prepared.body["orders"]).length !== 1 ||
       prepared.accountId !== input.accountId ||
-      asString(order?.["acctId"]) !== input.accountId ||
-      asString(order?.["cOID"]) !== clientOrderId
+      order.clientOrderId !== clientOrderId ||
+      !preparedIbkrOrderMatchesInput(order, input)
     ) {
       throw new HttpError(409, "The prepared IBKR order intent is invalid.", {
         code: "ibkr_order_intent_invalid",
         expose: true,
       });
     }
+    await this.getPreparedOrderOptionContract(order, input);
     const tradingAccounts = await this.getTradingAccountsInfo();
     if (!tradingAccounts.accounts.includes(prepared.accountId)) {
       throw new HttpError(409, "The selected IBKR account is not tradable.", {
@@ -4347,6 +4550,7 @@ export class IbkrClient {
       orderId: acknowledged.id,
       mode: input.mode,
       preparedOrderBody: prepared.body,
+      expectedOrder: input,
     });
   }
 
@@ -4355,48 +4559,40 @@ export class IbkrClient {
     orderId: string;
     mode: RuntimeMode;
     preparedOrderBody: Record<string, unknown>;
+    expectedOrder?: PlaceOrderInput;
   }): Promise<
     BrokerOrderSnapshot & {
       placementConfirmed: boolean;
       reconciliationRequired: boolean;
     }
   > {
-    const preparedOrders = asArray(input.preparedOrderBody["orders"]);
-    const preparedOrder = asRecord(preparedOrders[0]);
-    const preparedOrderType = normalizeIbkrOrderTypeKey(
-      asString(preparedOrder?.["orderType"]) ?? "",
+    const prepared = requirePreparedIbkrOrder(
+      input.preparedOrderBody,
+      input.accountId,
     );
-    const preparedPrice = asNumber(preparedOrder?.["price"]);
-    const preparedQuantity = asNumber(preparedOrder?.["quantity"]);
-    const preparedSide = parseIbkrOrderSide(asString(preparedOrder?.["side"]));
-    const preparedTif = normalizeMetricKey(
-      asString(preparedOrder?.["tif"]) ?? "",
-    );
-    const preparedConid = asNumber(preparedOrder?.["conid"]);
-    const preparedClientOrderId = asString(preparedOrder?.["cOID"]);
-    const preparedIsLimit = preparedOrderType === "lmt";
-    const preparedIsMarket = preparedOrderType === "mkt";
     if (
-      preparedOrders.length !== 1 ||
-      !preparedOrder ||
-      (!preparedIsLimit && !preparedIsMarket) ||
-      (preparedIsLimit && (preparedPrice === null || preparedPrice <= 0)) ||
-      (preparedIsMarket && Object.hasOwn(preparedOrder, "price")) ||
-      asString(preparedOrder["acctId"]) !== input.accountId ||
-      !preparedClientOrderId ||
-      preparedConid === null ||
-      preparedQuantity !== 1 ||
-      preparedSide !== "BUY" ||
-      preparedTif !== "day" ||
-      strictBoolean(preparedOrder["outsideRTH"]) !== false ||
-      strictBoolean(preparedOrder["manualIndicator"]) !== true ||
-      !String(preparedOrder["secType"] || "").toUpperCase().endsWith(":STK")
+      input.expectedOrder &&
+      !preparedIbkrOrderMatchesInput(prepared, input.expectedOrder)
     ) {
       throw new HttpError(409, "The prepared IBKR order intent is invalid.", {
         code: "ibkr_order_intent_invalid",
         expose: true,
       });
     }
+    const preparedOrder = prepared.raw;
+    const preparedOrderType = prepared.ibkrOrderType;
+    const preparedPrice = prepared.limitPrice;
+    const preparedQuantity = prepared.quantity;
+    const preparedSide = prepared.ibkrSide;
+    const preparedTif = prepared.timeInForce;
+    const preparedConid = prepared.conid;
+    const preparedClientOrderId = prepared.clientOrderId;
+    const preparedIsLimit = prepared.type === "limit";
+    const preparedIsMarket = prepared.type === "market";
+    const optionContract = await this.getPreparedOrderOptionContract(
+      prepared,
+      input.expectedOrder,
+    );
     let lastOrder: BrokerOrderSnapshot | null = null;
     for (let attempt = 0; attempt < 8; attempt += 1) {
       try {
@@ -4524,10 +4720,10 @@ export class IbkrClient {
               "UNKNOWN",
             ) ?? "UNKNOWN",
           ),
-          assetClass: "equity",
-          side: liveSide === "BUY" ? "buy" : "sell",
-          type: preparedIsMarket ? "market" : "limit",
-          timeInForce: "day",
+          assetClass: prepared.assetClass,
+          side: prepared.side,
+          type: prepared.type,
+          timeInForce: prepared.timeInForce,
           status: normalizeOrderStatus(liveStatus, liveFilled, liveRemaining),
           quantity: liveQuantity,
           filledQuantity: liveFilled,
@@ -4535,7 +4731,10 @@ export class IbkrClient {
           stopPrice: null,
           placedAt: new Date(),
           updatedAt: new Date(),
-          optionContract: null,
+          optionContract,
+          optionAction: input.expectedOrder?.optionAction ?? null,
+          positionEffect: input.expectedOrder?.positionEffect ?? null,
+          strategyIntent: input.expectedOrder?.strategyIntent ?? null,
         };
         return {
           ...lastOrder,
@@ -4558,10 +4757,10 @@ export class IbkrClient {
       symbol:
         lastOrder?.symbol ??
         normalizeSymbol(asString(preparedOrder["ticker"]) ?? "UNKNOWN"),
-      assetClass: "equity",
-      side: "buy",
-      type: preparedIsMarket ? "market" : "limit",
-      timeInForce: "day",
+      assetClass: prepared.assetClass,
+      side: prepared.side,
+      type: prepared.type,
+      timeInForce: prepared.timeInForce,
       status: lastOrder?.status ?? "pending_submit",
       quantity: preparedQuantity,
       filledQuantity: lastOrder?.filledQuantity ?? 0,
@@ -4569,7 +4768,10 @@ export class IbkrClient {
       stopPrice: null,
       placedAt: new Date(),
       updatedAt: new Date(),
-      optionContract: null,
+      optionContract,
+      optionAction: input.expectedOrder?.optionAction ?? null,
+      positionEffect: input.expectedOrder?.positionEffect ?? null,
+      strategyIntent: input.expectedOrder?.strategyIntent ?? null,
       placementConfirmed: false,
       reconciliationRequired: true,
     };
@@ -4821,55 +5023,43 @@ export class IbkrClient {
       orderBody: Record<string, unknown>;
     },
   ): Record<string, unknown> {
-    const orders = asArray(input.orderBody["orders"]);
-    const order = asRecord(orders[0]);
-    const conid = asNumber(order?.["conid"]);
-    const quantity = asNumber(order?.["quantity"]);
-    const price = asNumber(order?.["price"]);
-    const side = parseIbkrOrderSide(asString(order?.["side"]));
-    const orderType = normalizeIbkrOrderTypeKey(
-      asString(order?.["orderType"]) ?? "",
+    const prepared = requirePreparedIbkrOrder(
+      input.orderBody,
+      input.accountId,
+      "ibkr_replace_intent_mismatch",
     );
     const priceMatches =
-      (orderType === "lmt" &&
+      (prepared.ibkrOrderType === "lmt" &&
         evidence.orderType === "lmt" &&
-        price !== null &&
-        price === evidence.limitPrice) ||
-      (orderType === "mkt" &&
+        prepared.limitPrice === evidence.limitPrice) ||
+      (prepared.ibkrOrderType === "mkt" &&
         evidence.orderType === "mkt" &&
-        !Object.hasOwn(order ?? {}, "price") &&
         evidence.limitPrice === null);
     if (
-      orders.length !== 1 ||
-      !order ||
-      input.accountId !== asString(order["acctId"]) ||
       input.orderId !== evidence.orderId ||
-      asString(order["cOID"]) !== evidence.clientOrderId ||
-      conid === null ||
-      conid !== evidence.conid ||
-      quantity !== 1 ||
-      quantity !== evidence.quantity ||
+      prepared.clientOrderId !== evidence.clientOrderId ||
+      prepared.conid !== evidence.conid ||
+      prepared.quantity !== evidence.quantity ||
       !priceMatches ||
-      side !== evidence.side ||
-      side !== "BUY" ||
-      normalizeMetricKey(asString(order["tif"]) ?? "") !== "day" ||
-      evidence.tif !== "day" ||
-      strictBoolean(order["outsideRTH"]) !== false ||
-      strictBoolean(order["manualIndicator"]) !== true ||
-      !String(order["secType"] || "").toUpperCase().endsWith(":STK")
+      prepared.ibkrSide !== evidence.side ||
+      normalizeMetricKey(INTERNAL_TO_IBKR_TIF[prepared.timeInForce]) !==
+        evidence.tif
     ) {
       throw new HttpError(409, "The live order does not match its prepared intent.", {
         code: "ibkr_replace_intent_mismatch",
         expose: true,
       });
     }
-    return order;
+    return prepared.raw;
   }
 
   private requireUnfilledCancellableOrder(
     evidence: IbkrOrderMutationEvidence,
   ): void {
-    if (evidence.filledQuantity !== 0 || evidence.remainingQuantity !== 1) {
+    if (
+      evidence.filledQuantity !== 0 ||
+      evidence.remainingQuantity !== evidence.quantity
+    ) {
       throw new HttpError(409, "Only a fully unfilled IBKR order can be modified.", {
         code: "ibkr_replace_order_has_fills",
         expose: true,
@@ -4918,6 +5108,7 @@ export class IbkrClient {
     mode: RuntimeMode;
     originalOrderBody: Record<string, unknown>;
     limitPrice: number;
+    expectedOrder?: PlaceOrderInput;
   }): Promise<OrderPreviewSnapshot> {
     if (!/^\d+$/u.test(input.orderId) || !Number.isFinite(input.limitPrice) || input.limitPrice <= 0) {
       throw new HttpError(409, "The IBKR replacement request is invalid.", {
@@ -4931,6 +5122,20 @@ export class IbkrClient {
       orderId: input.orderId,
       orderBody: input.originalOrderBody,
     });
+    const preparedOriginal = requirePreparedIbkrOrder(
+      input.originalOrderBody,
+      input.accountId,
+      "ibkr_replace_intent_mismatch",
+    );
+    if (
+      input.expectedOrder &&
+      !preparedIbkrOrderMatchesInput(preparedOriginal, input.expectedOrder)
+    ) {
+      throw new HttpError(409, "The live order does not match its prepared intent.", {
+        code: "ibkr_replace_intent_mismatch",
+        expose: true,
+      });
+    }
     if (input.limitPrice === evidence.limitPrice) {
       throw new HttpError(409, "The replacement price must change.", {
         code: "ibkr_replace_price_unchanged",
@@ -4977,17 +5182,21 @@ export class IbkrClient {
       { method: "POST", body: JSON.stringify(body) },
     );
     const whatIf = parseIbkrWhatIf(whatIfPayload);
+    const optionContract = await this.getPreparedOrderOptionContract(
+      preparedOriginal,
+      input.expectedOrder,
+    );
     return {
       accountId: input.accountId,
       mode: input.mode,
       symbol: evidence.symbol,
-      assetClass: "equity",
+      assetClass: preparedOriginal.assetClass,
       resolvedContractId: evidence.conid,
       clientOrderId: evidence.clientOrderId,
       orderFingerprint: fingerprintIbkrOrderBody(body),
       orderPayload: modifiedOrder,
       whatIf,
-      optionContract: null,
+      optionContract,
     };
   }
 
@@ -4997,6 +5206,7 @@ export class IbkrClient {
     mode: RuntimeMode;
     previousOrderBody: Record<string, unknown>;
     preparedOrderBody: Record<string, unknown>;
+    expectedOrder?: PlaceOrderInput;
   }): Promise<ReplaceOrderSnapshot> {
     const previousEvidence = await this.readOrderMutationEvidence(input);
     const previousOrder = this.requirePriceOnlyReplacement(previousEvidence, {
@@ -5022,6 +5232,21 @@ export class IbkrClient {
         expose: true,
       });
     }
+    const prepared = requirePreparedIbkrOrder(
+      input.preparedOrderBody,
+      input.accountId,
+      "ibkr_replace_intent_invalid",
+    );
+    if (
+      input.expectedOrder &&
+      !preparedIbkrOrderMatchesInput(prepared, input.expectedOrder)
+    ) {
+      throw new HttpError(409, "The prepared IBKR replacement is invalid.", {
+        code: "ibkr_replace_intent_mismatch",
+        expose: true,
+      });
+    }
+    await this.getPreparedOrderOptionContract(prepared, input.expectedOrder);
     expectedOrder["price"] = preparedPrice;
     if (
       fingerprintIbkrOrderBody(expectedBody) !==
@@ -5044,6 +5269,7 @@ export class IbkrClient {
       orderId: input.orderId,
       mode: input.mode,
       preparedOrderBody: input.preparedOrderBody,
+      expectedOrder: input.expectedOrder,
     });
   }
 
@@ -5052,15 +5278,30 @@ export class IbkrClient {
     orderId: string;
     mode: RuntimeMode;
     preparedOrderBody: Record<string, unknown>;
+    expectedOrder?: PlaceOrderInput;
   }): Promise<ReplaceOrderSnapshot> {
-    const preparedOrder = asRecord(asArray(input.preparedOrderBody["orders"])[0]);
-    const preparedPrice = asNumber(preparedOrder?.["price"]);
-    if (!preparedOrder || preparedPrice === null) {
+    const prepared = requirePreparedIbkrOrder(
+      input.preparedOrderBody,
+      input.accountId,
+      "ibkr_replace_intent_invalid",
+    );
+    const preparedOrder = prepared.raw;
+    const preparedPrice = prepared.limitPrice;
+    if (
+      prepared.type !== "limit" ||
+      preparedPrice === null ||
+      (input.expectedOrder &&
+        !preparedIbkrOrderMatchesInput(prepared, input.expectedOrder))
+    ) {
       throw new HttpError(409, "The prepared IBKR replacement is invalid.", {
         code: "ibkr_replace_intent_invalid",
         expose: true,
       });
     }
+    const optionContract = await this.getPreparedOrderOptionContract(
+      prepared,
+      input.expectedOrder,
+    );
     let lastEvidence: IbkrOrderMutationEvidence | null = null;
     for (let attempt = 0; attempt < 8; attempt += 1) {
       try {
@@ -5076,10 +5317,10 @@ export class IbkrClient {
           accountId: evidence.accountId,
           mode: input.mode,
           symbol: evidence.symbol,
-          assetClass: "equity",
-          side: evidence.side === "BUY" ? "buy" : "sell",
+          assetClass: prepared.assetClass,
+          side: prepared.side,
           type: "limit",
-          timeInForce: "day",
+          timeInForce: prepared.timeInForce,
           status: normalizeOrderStatus(
             evidence.status,
             evidence.filledQuantity,
@@ -5091,7 +5332,10 @@ export class IbkrClient {
           stopPrice: null,
           placedAt: new Date(),
           updatedAt: new Date(),
-          optionContract: null,
+          optionContract,
+          optionAction: input.expectedOrder?.optionAction ?? null,
+          positionEffect: input.expectedOrder?.positionEffect ?? null,
+          strategyIntent: input.expectedOrder?.strategyIntent ?? null,
           replacementConfirmed: true,
           reconciliationRequired: false,
         };
@@ -5105,10 +5349,10 @@ export class IbkrClient {
       accountId: input.accountId,
       mode: input.mode,
       symbol: lastEvidence?.symbol ?? normalizeSymbol(asString(preparedOrder["ticker"]) ?? "UNKNOWN"),
-      assetClass: "equity",
-      side: parseIbkrOrderSide(asString(preparedOrder["side"])) === "SELL" ? "sell" : "buy",
+      assetClass: prepared.assetClass,
+      side: prepared.side,
       type: "limit",
-      timeInForce: "day",
+      timeInForce: prepared.timeInForce,
       status: lastEvidence
         ? normalizeOrderStatus(
             lastEvidence.status,
@@ -5116,13 +5360,16 @@ export class IbkrClient {
             lastEvidence.remainingQuantity,
           )
         : "pending_submit",
-      quantity: asNumber(preparedOrder["quantity"]) ?? 1,
+      quantity: prepared.quantity,
       filledQuantity: lastEvidence?.filledQuantity ?? 0,
       limitPrice: preparedPrice,
       stopPrice: null,
       placedAt: new Date(),
       updatedAt: new Date(),
-      optionContract: null,
+      optionContract,
+      optionAction: input.expectedOrder?.optionAction ?? null,
+      positionEffect: input.expectedOrder?.positionEffect ?? null,
+      strategyIntent: input.expectedOrder?.strategyIntent ?? null,
       replacementConfirmed: false,
       reconciliationRequired: true,
     };
@@ -5247,10 +5494,11 @@ export class IbkrClient {
         cancellationEvidenceComplete =
           observedFilledQuantity !== null &&
           observedFilledQuantity >= 0 &&
+          observedFilledQuantity <= evidence.quantity &&
           observedRemainingQuantity !== null &&
           (observedRemainingQuantity === 0 ||
-            observedRemainingQuantity === 1) &&
-          observedTotalQuantity === 1;
+            observedRemainingQuantity === evidence.quantity) &&
+          observedTotalQuantity === evidence.quantity;
         if (observedFilledQuantity !== null && observedFilledQuantity >= 0) {
           filledQuantity = Math.max(filledQuantity, observedFilledQuantity);
         }

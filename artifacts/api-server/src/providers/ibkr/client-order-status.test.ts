@@ -278,7 +278,7 @@ test("IBKR cancel does not submit DELETE when pre-cancel evidence is incomplete"
   }
 });
 
-test("IBKR cancel does not submit DELETE for a non-BUY prepared order", async () => {
+test("IBKR can cancel an exact unfilled prepared SELL order", async () => {
   const previousFetch = globalThis.fetch;
   let deleteSubmitted = false;
   const sellBody = structuredClone(preparedOrderBody);
@@ -294,7 +294,16 @@ test("IBKR cancel does not submit DELETE for a non-BUY prepared order", async ()
       });
     }
     if (path.endsWith("/iserver/account/order/status/order-1")) {
-      return Response.json({ ...activeOrderStatus, side: "SELL" });
+      return Response.json(
+        deleteSubmitted
+          ? {
+              order_status: "Cancelled",
+              cum_fill: 0,
+              size: 0,
+              total_size: 1,
+            }
+          : { ...activeOrderStatus, side: "SELL" },
+      );
     }
     if (
       path.endsWith("/iserver/account/U1234567/order/order-1") &&
@@ -307,22 +316,15 @@ test("IBKR cancel does not submit DELETE for a non-BUY prepared order", async ()
   }) as typeof fetch;
 
   try {
-    await assert.rejects(
-      new IbkrClient(config()).cancelOrder({
-        accountId: "U1234567",
-        orderId: "order-1",
-        mode: "live",
-        preparedOrderBody: sellBody,
-      }),
-      (error: unknown) => {
-        assert.equal(
-          (error as { code?: string }).code,
-          "ibkr_replace_intent_mismatch",
-        );
-        return true;
-      },
-    );
-    assert.equal(deleteSubmitted, false);
+    const result = await new IbkrClient(config()).cancelOrder({
+      accountId: "U1234567",
+      orderId: "order-1",
+      mode: "live",
+      preparedOrderBody: sellBody,
+    });
+    assert.equal(deleteSubmitted, true);
+    assert.equal(result.cancelConfirmed, true);
+    assert.equal(result.reconciliationRequired, false);
   } finally {
     globalThis.fetch = previousFetch;
   }
