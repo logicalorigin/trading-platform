@@ -70,3 +70,23 @@ test("retired legacy signal-scoring calibration CLIs stay absent", () => {
     "tsx ./signal-calibration/calibration-fit.ts",
   );
 });
+
+test("retired legacy Nasdaq-only universe CLI stays absent", () => {
+  const manifest = JSON.parse(
+    readFileSync(path.join(packageRoot, "package.json"), "utf8"),
+  );
+
+  assert.equal(manifest.scripts["universe:sync:nasdaq"], undefined);
+  assert.equal(
+    existsSync(path.join(packageRoot, "src/sync-nasdaq-listed-universe.ts")),
+    false,
+  );
+  assert.equal(
+    manifest.scripts["universe:sync:listings"],
+    "tsx ./src/sync-listed-universe.ts",
+  );
+  assert.equal(
+    manifest.scripts["universe:hydrate:ibkr"],
+    "tsx ./src/hydrate-universe-catalog-ibkr.ts",
+  );
+});

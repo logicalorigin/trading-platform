@@ -6,7 +6,6 @@
   "scripts": {
     "ibkr:soak": "tsx ./src/ibkr-connection-soak.ts",
     "universe:sync": "tsx ./src/sync-universe-catalog.ts",
-    "universe:sync:nasdaq": "tsx ./src/sync-nasdaq-listed-universe.ts",
     "universe:sync:listings": "tsx ./src/sync-listed-universe.ts",
     "universe:sync:sp500": "tsx ./src/sync-sp500-universe.ts",
     "universe:hydrate:ibkr": "tsx ./src/hydrate-universe-catalog-ibkr.ts",
