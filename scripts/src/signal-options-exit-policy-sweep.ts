@@ -1,24 +1,20 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { pathToFileURL } from "node:url";
+import { stripVTControlCharacters } from "node:util";
 import {
   aggressiveSignalOptionsProgressiveTrailSteps,
   signalOptionsDefaultWireTrailRungs,
   tunedSignalOptionsStrategySettings,
 } from "@workspace/backtest-core";
-import { pool } from "@workspace/db";
+import {
+  closeDatabaseConnections,
+  pool,
+  sharedAdvisoryLockHolder,
+} from "@workspace/db";
 import { runSignalOptionsShadowBackfill } from "../../artifacts/api-server/src/services/signal-options-automation";
 import { SIGNAL_OPTIONS_WORKER_ADVISORY_LOCK_KEY } from "../../artifacts/api-server/src/services/signal-options-worker";
-
-// The shadow backfill replays historical bars and refuses to run unless bar
-// evaluation is opted in (signal-options-automation.ts:15997). That gate is
-// deliberately OFF for the live api-server (the SSE producer is the live signal
-// source). This sweep is a historical replay, so enable it for THIS process
-// only. Without it every sweep variant fails with "Signal Options backfill
-// requires explicit Signal Monitor bar-evaluation opt-in". Read at call time, so
-// setting it before the backfill runs is sufficient. `??=` lets a caller override.
-process.env["PYRUS_SIGNAL_MONITOR_BAR_EVALUATION_ENABLED"] ??= "1";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -55,6 +51,11 @@ export type SweepResult = {
 type DeploymentRow = {
   id: string;
   name: string;
+  mode: "shadow";
+  symbolUniverse: string[];
+};
+
+type RawDeploymentRow = Omit<DeploymentRow, "mode" | "symbolUniverse"> & {
   mode: "shadow" | "live";
   symbolUniverse: unknown[];
 };
@@ -72,22 +73,45 @@ type SweepConfig = {
   symbols: string[];
   replayWinner: boolean;
   replayVariant: string | null;
+  variantIds: string[];
+  families: string[];
+  maxPremiumPerEntry: number;
+  wireGreekTrailMaxAgeMs: number;
 };
 
-type VariantBackfillInput = Parameters<typeof runSignalOptionsShadowBackfill>[0];
+type VariantBackfillInput = Parameters<
+  typeof runSignalOptionsShadowBackfill
+>[0];
 
 const MIN_CLOSED_TRADES = 20;
 const ACCOUNT_SIZE = 30_000;
 const DEFAULT_VARIANT_HEARTBEAT_MS = 60_000;
 const DEFAULT_VARIANT_TIMEOUT_MS = 20 * 60_000;
 const DEFAULT_WIRE_GREEK_TRAIL_MAX_AGE_MS = 45_000;
+const DEFAULT_MAX_PREMIUM_PER_ENTRY = ACCOUNT_SIZE * 0.05;
+const MAX_TIMER_DELAY_MS = 2_147_483_647;
+// ponytail: human-facing diagnostics stop at 400 characters; move full sanitized
+// detail into a separate structured artifact if operators need deeper failures.
+const MAX_DIAGNOSTIC_LENGTH = 400;
+const USAGE =
+  "Usage: pnpm --filter @workspace/scripts run signal-options:exit-policy-sweep (configure with SIGNAL_OPTIONS_EXIT_SWEEP_* env vars)";
+const SIGNAL_TIMEFRAMES = ["1m", "2m", "5m", "15m", "1h", "1d"] as const;
+const EXIT_POLICY_FAMILIES = [
+  "core",
+  "early-grid",
+  "trail-grid",
+  "wire-trail",
+  "control",
+  "all",
+] as const;
+const UNSAFE_OUTPUT_PATTERN =
+  /[\u0000-\u001f\u007f-\u009f\u2028-\u202e\u2066-\u2069]/gu;
+const UNSAFE_JSON_OUTPUT_PATTERN =
+  /[\u007f-\u009f\u2028-\u202e\u2066-\u2069]/gu;
 const RISK_CAP_PATCH = {
   riskCaps: {
     maxOpenSymbols: 10,
-    maxPremiumPerEntry: readIntegerEnv(
-      "SIGNAL_OPTIONS_EXIT_SWEEP_MAX_PREMIUM_PER_ENTRY",
-      ACCOUNT_SIZE * 0.05,
-    ),
+    maxPremiumPerEntry: DEFAULT_MAX_PREMIUM_PER_ENTRY,
   },
 };
 const WINNING_COMBO_EXIT_POLICY = {
@@ -100,14 +124,13 @@ const WINNING_COMBO_EXIT_POLICY = {
   overnightRunnerGivebackPct: 15,
 } as const;
 const EARLY_INVALIDATION_BAR_GRID = [2, 3, 4, 5, 6, 8, 10, 12] as const;
-const EARLY_INVALIDATION_LOSS_GRID = [12.5, 15, 17.5, 20, 22.5, 25, 30] as const;
+const EARLY_INVALIDATION_LOSS_GRID = [
+  12.5, 15, 17.5, 20, 22.5, 25, 30,
+] as const;
 const WIRE_GREEK_TRAIL_POLICY_PATCH = {
   enabled: true,
   requireFreshGreeks: true,
-  greekMaxAgeMs: readIntegerEnv(
-    "SIGNAL_OPTIONS_EXIT_SWEEP_GREEK_MAX_AGE_MS",
-    DEFAULT_WIRE_GREEK_TRAIL_MAX_AGE_MS,
-  ),
+  greekMaxAgeMs: DEFAULT_WIRE_GREEK_TRAIL_MAX_AGE_MS,
   deltaSizingEnabled: false,
   runnerPollIntervalSeconds: 20,
   rungByProfit: [...signalOptionsDefaultWireTrailRungs],
@@ -133,69 +156,254 @@ function asArray(value: unknown): unknown[] {
 }
 
 function finiteNumber(value: unknown): number | null {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : null;
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
-function readIntegerEnv(name: string, fallback: number): number {
-  const value = Number(process.env[name]);
-  return Number.isFinite(value) && value >= 0 ? Math.floor(value) : fallback;
+function nonEmptyEnv(env: NodeJS.ProcessEnv, name: string): string | undefined {
+  return env[name]?.trim() || undefined;
 }
 
-function readBooleanEnv(name: string, fallback: boolean): boolean {
-  const value = process.env[name]?.trim().toLowerCase();
+function readIntegerEnv(
+  name: string,
+  fallback: number,
+  env: NodeJS.ProcessEnv = process.env,
+  max = Number.MAX_SAFE_INTEGER,
+): number {
+  const raw = nonEmptyEnv(env, name);
+  if (!raw) return fallback;
+  if (!/^(?:0|[1-9]\d*)$/.test(raw)) {
+    throw new Error(`${name} must be a non-negative integer.`);
+  }
+  const value = Number(raw);
+  if (!Number.isSafeInteger(value) || value > max) {
+    throw new Error(`${name} must be a non-negative integer at most ${max}.`);
+  }
+  return value;
+}
+
+function readBooleanEnv(
+  name: string,
+  fallback: boolean,
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  const value = nonEmptyEnv(env, name)?.toLowerCase();
   if (!value) return fallback;
   if (["1", "true", "yes", "on"].includes(value)) return true;
   if (["0", "false", "no", "off"].includes(value)) return false;
-  return fallback;
+  throw new Error(
+    `${name} must be true or false (also accepts 1/0, yes/no, on/off).`,
+  );
 }
 
-function readBoundedIntegerEnv(name: string, fallback: number, min: number, max: number): number {
-  const value = Number(process.env[name]);
-  if (!Number.isFinite(value)) return fallback;
-  return Math.min(max, Math.max(min, Math.round(value)));
+function readBoundedIntegerEnv(
+  name: string,
+  fallback: number,
+  min: number,
+  max: number,
+  env: NodeJS.ProcessEnv,
+): number {
+  const value = readIntegerEnv(name, fallback, env, max);
+  if (value < min || value > max) {
+    throw new Error(`${name} must be between ${min} and ${max}.`);
+  }
+  return value;
+}
+
+function parseSweepArgs(args = process.argv.slice(2)): void {
+  const normalizedArgs = args[0] === "--" ? args.slice(1) : args;
+  if (normalizedArgs.length > 0) {
+    throw new Error(USAGE);
+  }
+}
+
+function safeDiagnostic(error: unknown): string {
+  const raw = error instanceof Error ? error.message : String(error);
+  const cleaned = stripVTControlCharacters(
+    (raw || "Unknown sweep error")
+      .replace(/([a-z][a-z0-9+.-]*:\/\/)[^@\s]+@/giu, "$1[redacted]@")
+      .replace(
+        /([a-z][a-z0-9+.-]*:\/\/[^\s?#]+)[?#][^\s]*/giu,
+        "$1?[redacted]",
+      ),
+  )
+    .replace(UNSAFE_OUTPUT_PATTERN, " ")
+    .replace(/\s+/gu, " ")
+    .trim();
+  const diagnostic = cleaned || "Unknown sweep error";
+  return diagnostic.length <= MAX_DIAGNOSTIC_LENGTH
+    ? diagnostic
+    : `${diagnostic.slice(0, MAX_DIAGNOSTIC_LENGTH - 1)}…`;
+}
+
+function canonicalDate(
+  name: string,
+  value: string | undefined,
+): string | undefined {
+  if (!value) return undefined;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    throw new Error(`${name} must use YYYY-MM-DD.`);
+  }
+  const parsed = new Date(`${value}T00:00:00.000Z`);
+  if (
+    Number.isNaN(parsed.getTime()) ||
+    parsed.toISOString().slice(0, 10) !== value
+  ) {
+    throw new Error(`${name} must be a real YYYY-MM-DD date.`);
+  }
+  return value;
+}
+
+function csvEnvValues(
+  env: NodeJS.ProcessEnv,
+  name: string,
+  uppercase = false,
+): string[] {
+  const raw = nonEmptyEnv(env, name);
+  if (!raw) return [];
+  return Array.from(
+    new Set(
+      raw
+        .split(",")
+        .map((value) => value.trim())
+        .filter(Boolean)
+        .map((value) => (uppercase ? value.toUpperCase() : value)),
+    ),
+  );
+}
+
+function enableHistoricalBarEvaluation(
+  env: NodeJS.ProcessEnv = process.env,
+): void {
+  const primaryName = "PYRUS_SIGNAL_MONITOR_BAR_EVALUATION_ENABLED";
+  const aliasName = "SIGNAL_MONITOR_BAR_EVALUATION_ENABLED";
+  const primary = nonEmptyEnv(env, primaryName)
+    ? readBooleanEnv(primaryName, false, env)
+    : undefined;
+  const alias = nonEmptyEnv(env, aliasName)
+    ? readBooleanEnv(aliasName, false, env)
+    : undefined;
+  if (primary !== undefined && alias !== undefined && primary !== alias) {
+    throw new Error(`Conflicting ${primaryName} and ${aliasName} values.`);
+  }
+  env[primaryName] = (primary ?? alias ?? true) ? "1" : "0";
 }
 
 function slug(): string {
   return new Date().toISOString().replace(/[:.]/g, "-");
 }
 
-function readSweepConfig(): SweepConfig {
+function readSweepConfig(
+  env: NodeJS.ProcessEnv = process.env,
+  cwd = process.cwd(),
+): SweepConfig {
   const reportRoot =
-    process.env["SIGNAL_OPTIONS_EXIT_SWEEP_REPORT_DIR"] ??
+    nonEmptyEnv(env, "SIGNAL_OPTIONS_EXIT_SWEEP_REPORT_DIR") ??
     path.join("reports", "signal-options-exit-policy-sweeps", slug());
-  const end = process.env["SIGNAL_OPTIONS_EXIT_SWEEP_END"];
+  const start =
+    canonicalDate(
+      "SIGNAL_OPTIONS_EXIT_SWEEP_START",
+      nonEmptyEnv(env, "SIGNAL_OPTIONS_EXIT_SWEEP_START"),
+    ) ?? "2026-04-01";
+  const end = canonicalDate(
+    "SIGNAL_OPTIONS_EXIT_SWEEP_END",
+    nonEmptyEnv(env, "SIGNAL_OPTIONS_EXIT_SWEEP_END"),
+  );
+  if (end && start > end) {
+    throw new Error("Sweep start must be on or before end.");
+  }
+  const signalTimeframe =
+    nonEmptyEnv(env, "SIGNAL_OPTIONS_EXIT_SWEEP_TIMEFRAME") ??
+    tunedSignalOptionsStrategySettings.signalTimeframe;
+  if (
+    !SIGNAL_TIMEFRAMES.includes(
+      signalTimeframe as (typeof SIGNAL_TIMEFRAMES)[number],
+    )
+  ) {
+    throw new Error(
+      `SIGNAL_OPTIONS_EXIT_SWEEP_TIMEFRAME must be one of ${SIGNAL_TIMEFRAMES.join(", ")}.`,
+    );
+  }
+  const session =
+    nonEmptyEnv(env, "SIGNAL_OPTIONS_EXIT_SWEEP_SESSION") ?? "regular";
+  if (session !== "regular" && session !== "all") {
+    throw new Error(
+      "SIGNAL_OPTIONS_EXIT_SWEEP_SESSION must be regular or all.",
+    );
+  }
+  const replayWinner = readBooleanEnv(
+    "SIGNAL_OPTIONS_EXIT_SWEEP_REPLAY_WINNER",
+    false,
+    env,
+  );
+  const replayVariant =
+    nonEmptyEnv(env, "SIGNAL_OPTIONS_EXIT_SWEEP_REPLAY_VARIANT") ?? null;
+  if (replayVariant && !replayWinner) {
+    throw new Error(
+      "SIGNAL_OPTIONS_EXIT_SWEEP_REPLAY_VARIANT requires SIGNAL_OPTIONS_EXIT_SWEEP_REPLAY_WINNER=true.",
+    );
+  }
+  const variantIds = csvEnvValues(env, "SIGNAL_OPTIONS_EXIT_SWEEP_VARIANTS");
+  const explicitFamilies = csvEnvValues(
+    env,
+    "SIGNAL_OPTIONS_EXIT_SWEEP_FAMILIES",
+  );
+  if (variantIds.length > 0 && explicitFamilies.length > 0) {
+    throw new Error(
+      "SIGNAL_OPTIONS_EXIT_SWEEP_VARIANTS and SIGNAL_OPTIONS_EXIT_SWEEP_FAMILIES cannot both be set.",
+    );
+  }
   return {
-    start: process.env["SIGNAL_OPTIONS_EXIT_SWEEP_START"] ?? "2026-04-01",
+    start,
     ...(end ? { end } : {}),
-    signalTimeframe:
-      process.env["SIGNAL_OPTIONS_EXIT_SWEEP_TIMEFRAME"] ??
-      tunedSignalOptionsStrategySettings.signalTimeframe,
-    session: process.env["SIGNAL_OPTIONS_EXIT_SWEEP_SESSION"] ?? "regular",
-    reportDir: path.resolve(process.cwd(), reportRoot),
-    lockWaitMs: readIntegerEnv("SIGNAL_OPTIONS_EXIT_SWEEP_LOCK_WAIT_MS", 0),
+    signalTimeframe,
+    session,
+    reportDir: path.resolve(cwd, reportRoot),
+    lockWaitMs: readIntegerEnv(
+      "SIGNAL_OPTIONS_EXIT_SWEEP_LOCK_WAIT_MS",
+      0,
+      env,
+      MAX_TIMER_DELAY_MS,
+    ),
     heartbeatMs: readIntegerEnv(
       "SIGNAL_OPTIONS_EXIT_SWEEP_HEARTBEAT_MS",
       DEFAULT_VARIANT_HEARTBEAT_MS,
+      env,
+      MAX_TIMER_DELAY_MS,
     ),
     variantTimeoutMs: readIntegerEnv(
       "SIGNAL_OPTIONS_EXIT_SWEEP_VARIANT_TIMEOUT_MS",
       DEFAULT_VARIANT_TIMEOUT_MS,
+      env,
+      MAX_TIMER_DELAY_MS,
     ),
     timeHorizon: readBoundedIntegerEnv(
       "SIGNAL_OPTIONS_EXIT_SWEEP_HORIZON",
       tunedSignalOptionsStrategySettings.pyrusSignalsSettings.timeHorizon,
       2,
       50,
+      env,
     ),
-    symbols:
-      process.env["SIGNAL_OPTIONS_EXIT_SWEEP_SYMBOLS"]
-        ?.split(",")
-        .map((symbol) => symbol.trim().toUpperCase())
-        .filter(Boolean) ?? [],
-    replayWinner: readBooleanEnv("SIGNAL_OPTIONS_EXIT_SWEEP_REPLAY_WINNER", false),
-    replayVariant:
-      process.env["SIGNAL_OPTIONS_EXIT_SWEEP_REPLAY_VARIANT"]?.trim() || null,
+    symbols: csvEnvValues(env, "SIGNAL_OPTIONS_EXIT_SWEEP_SYMBOLS", true),
+    replayWinner,
+    replayVariant,
+    variantIds,
+    families:
+      variantIds.length > 0
+        ? []
+        : explicitFamilies.length
+          ? explicitFamilies
+          : ["core"],
+    maxPremiumPerEntry: readIntegerEnv(
+      "SIGNAL_OPTIONS_EXIT_SWEEP_MAX_PREMIUM_PER_ENTRY",
+      DEFAULT_MAX_PREMIUM_PER_ENTRY,
+      env,
+    ),
+    wireGreekTrailMaxAgeMs: readIntegerEnv(
+      "SIGNAL_OPTIONS_EXIT_SWEEP_GREEK_MAX_AGE_MS",
+      DEFAULT_WIRE_GREEK_TRAIL_MAX_AGE_MS,
+      env,
+      MAX_TIMER_DELAY_MS,
+    ),
   };
 }
 
@@ -221,7 +429,8 @@ export function buildVariants(): ExitPolicyVariant[] {
   return [
     {
       id: "baseline-current-exits",
-      description: "Current exit policy, configured horizon, 5m, 10 symbols max, 5% premium cap.",
+      description:
+        "Current exit policy, configured horizon, 5m, 10 symbols max, 5% premium cap.",
       profilePatch: withProfilePatch(),
     },
     {
@@ -302,7 +511,8 @@ export function buildVariants(): ExitPolicyVariant[] {
     },
     {
       id: "combo-hard30-trail35-early6",
-      description: "Hard stop -30%, trail 35/15/20, early loss exit after 6 bars.",
+      description:
+        "Hard stop -30%, trail 35/15/20, early loss exit after 6 bars.",
       profilePatch: withProfilePatch({
         hardStopPct: -30,
         trailActivationPct: 35,
@@ -567,7 +777,9 @@ export function buildControlVariants(): ExitPolicyVariant[] {
   ];
 }
 
-export function buildPyrusSignalsSettingsPatch(config: Pick<SweepConfig, "timeHorizon">) {
+export function buildPyrusSignalsSettingsPatch(
+  config: Pick<SweepConfig, "timeHorizon">,
+) {
   return {
     ...tunedSignalOptionsStrategySettings.pyrusSignalsSettings,
     timeHorizon: config.timeHorizon,
@@ -584,60 +796,126 @@ function buildVariantUniverse() {
   ];
 }
 
-function selectVariants(variants: ExitPolicyVariant[]): ExitPolicyVariant[] {
-  const requested = process.env["SIGNAL_OPTIONS_EXIT_SWEEP_VARIANTS"]
-    ?.split(",")
-    .map((value) => value.trim())
-    .filter(Boolean);
-  if (requested?.length) {
-    const requestedIds = new Set(requested);
-    const selected = variants.filter((variant) => requestedIds.has(variant.id));
-    const missing = requested.filter(
+function selectVariants(
+  variants: ExitPolicyVariant[],
+  config: Pick<SweepConfig, "variantIds" | "families" | "replayVariant">,
+): ExitPolicyVariant[] {
+  let selected: ExitPolicyVariant[];
+  if (config.variantIds.length > 0) {
+    const requestedIds = new Set(config.variantIds);
+    const selectedVariants = variants.filter((variant) =>
+      requestedIds.has(variant.id),
+    );
+    const missing = config.variantIds.filter(
       (variantId) => !variants.some((variant) => variant.id === variantId),
     );
     if (missing.length) {
       throw new Error(`Unknown exit-policy variants: ${missing.join(", ")}`);
     }
-    return selected;
+    selected = selectedVariants;
+  } else {
+    const unknownFamilies = config.families.filter(
+      (family) =>
+        !EXIT_POLICY_FAMILIES.includes(
+          family as (typeof EXIT_POLICY_FAMILIES)[number],
+        ),
+    );
+    if (unknownFamilies.length > 0) {
+      throw new Error(
+        `Unknown exit-policy families: ${unknownFamilies.join(", ")}`,
+      );
+    }
+    if (config.families.includes("all")) {
+      selected = variants;
+    } else {
+      const selectedFamilies = new Set(config.families);
+      selected = variants.filter((variant) => {
+        if (variant.id.startsWith("early-grid-")) {
+          return selectedFamilies.has("early-grid");
+        }
+        if (variant.id.startsWith("trail-ladder-")) {
+          return selectedFamilies.has("trail-grid");
+        }
+        if (variant.id.startsWith("wire-trail-")) {
+          return selectedFamilies.has("wire-trail");
+        }
+        if (variant.id.startsWith("control-")) {
+          return selectedFamilies.has("control");
+        }
+        return selectedFamilies.has("core");
+      });
+    }
   }
-
-  const families = (
-    process.env["SIGNAL_OPTIONS_EXIT_SWEEP_FAMILIES"] ?? "core"
-  )
-    .split(",")
-    .map((value) => value.trim())
-    .filter(Boolean);
-  if (families.includes("all")) {
-    return variants;
+  if (selected.length === 0) {
+    throw new Error("Exit-policy selection resolved to zero variants.");
   }
-
-  const selectedFamilies = new Set(families);
-  return variants.filter((variant) => {
-    if (variant.id.startsWith("early-grid-")) {
-      return selectedFamilies.has("early-grid");
-    }
-    if (variant.id.startsWith("trail-ladder-")) {
-      return selectedFamilies.has("trail-grid");
-    }
-    if (variant.id.startsWith("wire-trail-")) {
-      return selectedFamilies.has("wire-trail");
-    }
-    if (variant.id.startsWith("control-")) {
-      return selectedFamilies.has("control");
-    }
-    return selectedFamilies.has("core");
-  });
+  if (
+    config.replayVariant &&
+    !selected.some((variant) => variant.id === config.replayVariant)
+  ) {
+    throw new Error(
+      `Replay variant ${config.replayVariant} is not in the selected sweep variants.`,
+    );
+  }
+  return selected;
 }
 
-function computeMaxRealizedDrawdown(closedTrades: readonly unknown[]): number {
+function resolveVariantForConfig(
+  variant: ExitPolicyVariant,
+  config: Pick<SweepConfig, "maxPremiumPerEntry" | "wireGreekTrailMaxAgeMs">,
+): ExitPolicyVariant {
+  const profilePatch = asRecord(variant.profilePatch);
+  const exitPolicy = asRecord(profilePatch["exitPolicy"]);
+  const wireGreekTrail = asRecord(exitPolicy["wireGreekTrail"]);
+  const hasWireGreekTrail = Object.keys(wireGreekTrail).length > 0;
+  return {
+    ...variant,
+    profilePatch: {
+      ...profilePatch,
+      riskCaps: {
+        ...asRecord(profilePatch["riskCaps"]),
+        maxPremiumPerEntry: config.maxPremiumPerEntry,
+      },
+      ...(hasWireGreekTrail
+        ? {
+            exitPolicy: {
+              ...exitPolicy,
+              wireGreekTrail: {
+                ...wireGreekTrail,
+                greekMaxAgeMs: config.wireGreekTrailMaxAgeMs,
+              },
+            },
+          }
+        : {}),
+    },
+  };
+}
+
+type ClosedTradeEvidence = { day: string; pnl: number };
+
+function closedTradeEvidence(trade: unknown): ClosedTradeEvidence | null {
+  const record = asRecord(trade);
+  const closedAt = record["closedAt"];
+  const pnl = finiteNumber(record["pnl"]);
+  if (
+    typeof closedAt !== "string" ||
+    pnl === null ||
+    Number.isNaN(Date.parse(closedAt))
+  ) {
+    return null;
+  }
+  const day = closedAt.slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return null;
+  const parsedDay = new Date(`${day}T00:00:00.000Z`);
+  return parsedDay.toISOString().slice(0, 10) === day ? { day, pnl } : null;
+}
+
+function computeMaxRealizedDrawdown(
+  closedTrades: readonly ClosedTradeEvidence[],
+): number {
   const pnlByDay = new Map<string, number>();
   for (const trade of closedTrades) {
-    const record = asRecord(trade);
-    const day = String(record["closedAt"] ?? "").slice(0, 10);
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) {
-      continue;
-    }
-    pnlByDay.set(day, (pnlByDay.get(day) ?? 0) + (finiteNumber(record["pnl"]) ?? 0));
+    pnlByDay.set(trade.day, (pnlByDay.get(trade.day) ?? 0) + trade.pnl);
   }
 
   let cumulative = 0;
@@ -645,6 +923,11 @@ function computeMaxRealizedDrawdown(closedTrades: readonly unknown[]): number {
   let maxDrawdown = 0;
   for (const day of Array.from(pnlByDay.keys()).sort()) {
     cumulative += pnlByDay.get(day) ?? 0;
+    if (!Number.isFinite(cumulative)) {
+      throw new Error(
+        "Sweep metrics require finite aggregate financial evidence.",
+      );
+    }
     peak = Math.max(peak, cumulative);
     maxDrawdown = Math.max(maxDrawdown, peak - cumulative);
   }
@@ -654,38 +937,38 @@ function computeMaxRealizedDrawdown(closedTrades: readonly unknown[]): number {
 function computeMetrics(result: unknown): SweepMetrics {
   const record = asRecord(result);
   const summary = asRecord(record["summary"]);
-  const closedTrades = asArray(summary["closedTrades"]);
-  const realizedPnl =
-    finiteNumber(summary["realizedPnl"]) ??
-    closedTrades.reduce<number>(
-      (total, trade) => total + (finiteNumber(asRecord(trade)["pnl"]) ?? 0),
-      0,
-    );
-  const wins =
-    finiteNumber(summary["winningTrades"]) ??
-    closedTrades.filter((trade) => (finiteNumber(asRecord(trade)["pnl"]) ?? 0) > 0)
-      .length;
-  const losses =
-    finiteNumber(summary["losingTrades"]) ??
-    closedTrades.filter((trade) => (finiteNumber(asRecord(trade)["pnl"]) ?? 0) < 0)
-      .length;
+  const closedTrades = asArray(summary["closedTrades"])
+    .map(closedTradeEvidence)
+    .filter((trade): trade is ClosedTradeEvidence => trade !== null);
+  const realizedPnl = closedTrades.reduce<number>(
+    (total, trade) => total + trade.pnl,
+    0,
+  );
+  const wins = closedTrades.filter((trade) => trade.pnl > 0).length;
   const grossProfit = closedTrades.reduce<number>((total, trade) => {
-    const pnl = finiteNumber(asRecord(trade)["pnl"]) ?? 0;
-    return pnl > 0 ? total + pnl : total;
+    return trade.pnl > 0 ? total + trade.pnl : total;
   }, 0);
   const grossLossAbs = Math.abs(
     closedTrades.reduce<number>((total, trade) => {
-      const pnl = finiteNumber(asRecord(trade)["pnl"]) ?? 0;
-      return pnl < 0 ? total + pnl : total;
+      return trade.pnl < 0 ? total + trade.pnl : total;
     }, 0),
   );
+  if (![realizedPnl, grossProfit, grossLossAbs].every(Number.isFinite)) {
+    throw new Error(
+      "Sweep metrics require finite aggregate financial evidence.",
+    );
+  }
   const maxDrawdownAbs = computeMaxRealizedDrawdown(closedTrades);
-  const closedTradeCount = closedTrades.length || wins + losses;
+  const closedTradeCount = closedTrades.length;
   return {
     realizedPnl: Number(realizedPnl.toFixed(2)),
     winRate: closedTradeCount ? wins / closedTradeCount : 0,
     profitFactor:
-      grossLossAbs === 0 ? (grossProfit > 0 ? Infinity : 0) : grossProfit / grossLossAbs,
+      grossLossAbs === 0
+        ? grossProfit > 0
+          ? Infinity
+          : 0
+        : grossProfit / grossLossAbs,
     closedTrades: closedTradeCount,
     maxDrawdownAbs,
     openPositions: asArray(record["openPositions"]).length,
@@ -729,12 +1012,36 @@ function emptyMetrics(): SweepMetrics {
   };
 }
 
+function validateSweepDeployment(deployment: RawDeploymentRow): DeploymentRow {
+  if (deployment.mode !== "shadow") {
+    throw new Error(`Deployment ${deployment.id} must be shadow, not live.`);
+  }
+  const symbolUniverse = Array.from(
+    new Set(
+      (Array.isArray(deployment.symbolUniverse)
+        ? deployment.symbolUniverse
+        : []
+      )
+        .filter((symbol): symbol is string => typeof symbol === "string")
+        .map((symbol) => symbol.trim().toUpperCase())
+        .filter(Boolean),
+    ),
+  );
+  if (symbolUniverse.length < 8) {
+    throw new Error(
+      `Deployment ${deployment.id} has ${symbolUniverse.length} valid symbols; expected at least 8.`,
+    );
+  }
+  return { ...deployment, mode: "shadow", symbolUniverse };
+}
+
 async function readSignalOptionsDeployment(): Promise<DeploymentRow> {
-  const result = await pool.query<DeploymentRow>(
+  const result = await pool.query<RawDeploymentRow>(
     `
       select id, name, mode, symbol_universe as "symbolUniverse"
       from algo_deployments
       where enabled = true
+        and mode = 'shadow'
         and provider_account_id = 'shadow'
         and (
           name = 'Pyrus Signals Options Shadow'
@@ -750,47 +1057,20 @@ async function readSignalOptionsDeployment(): Promise<DeploymentRow> {
   if (!deployment) {
     throw new Error("No enabled shadow signal-options deployment found.");
   }
-  if (!Array.isArray(deployment.symbolUniverse) || deployment.symbolUniverse.length < 8) {
-    throw new Error(
-      `Deployment ${deployment.id} has ${deployment.symbolUniverse.length} symbols; expected at least 8.`,
-    );
-  }
-  return deployment;
-}
-
-async function tryAcquireSignalOptionsWorkerLock() {
-  const client = await pool.connect();
-  try {
-    const result = await client.query<{ locked: boolean }>(
-      "select pg_try_advisory_lock($1) as locked",
-      [SIGNAL_OPTIONS_WORKER_ADVISORY_LOCK_KEY],
-    );
-    if (result.rows[0]?.locked !== true) {
-      client.release();
-      return null;
-    }
-    return async () => {
-      try {
-        await client.query("select pg_advisory_unlock($1)", [
-          SIGNAL_OPTIONS_WORKER_ADVISORY_LOCK_KEY,
-        ]);
-      } finally {
-        client.release();
-      }
-    };
-  } catch (error) {
-    client.release();
-    throw error;
-  }
+  return validateSweepDeployment(deployment);
 }
 
 async function acquireSignalOptionsWorkerLock(waitMs: number) {
   const deadline = Date.now() + waitMs;
-  let release = await tryAcquireSignalOptionsWorkerLock();
+  let release = await sharedAdvisoryLockHolder.acquire(
+    SIGNAL_OPTIONS_WORKER_ADVISORY_LOCK_KEY,
+  );
   while (!release && Date.now() < deadline) {
     console.log("waiting for signal-options worker advisory lock");
     await delay(Math.min(5_000, Math.max(0, deadline - Date.now())));
-    release = await tryAcquireSignalOptionsWorkerLock();
+    release = await sharedAdvisoryLockHolder.acquire(
+      SIGNAL_OPTIONS_WORKER_ADVISORY_LOCK_KEY,
+    );
   }
   return release;
 }
@@ -812,16 +1092,16 @@ async function withVariantHeartbeat<T>(input: {
           if (timeoutExceeded && !warnedAboutTimeout) {
             warnedAboutTimeout = true;
             console.warn(
-              JSON.stringify({
+              jsonText({
                 variant: input.variantId,
                 status: "timeout_threshold_exceeded",
                 elapsedMs,
                 variantTimeoutMs: input.config.variantTimeoutMs,
               }),
             );
-          } else {
+          } else if (!timeoutExceeded) {
             console.log(
-              JSON.stringify({
+              jsonText({
                 variant: input.variantId,
                 status: "running",
                 elapsedMs,
@@ -838,6 +1118,23 @@ async function withVariantHeartbeat<T>(input: {
       clearInterval(heartbeat);
     }
   }
+}
+
+function sanitizeBackfillSummary(value: unknown): JsonRecord {
+  const summary = asRecord(value);
+  const errors = asArray(summary["errors"]).map((error) => {
+    const record = asRecord(error);
+    return {
+      ...(typeof record["symbol"] === "string"
+        ? { symbol: record["symbol"] }
+        : {}),
+      message: safeDiagnostic(record["message"] ?? "Backfill error"),
+    };
+  });
+  return {
+    ...summary,
+    ...(Object.hasOwn(summary, "errors") ? { errors } : {}),
+  };
 }
 
 async function runVariant(input: {
@@ -857,6 +1154,7 @@ async function runVariant(input: {
     });
     const finished = new Date();
     const metrics = computeMetrics(result);
+    const summary = sanitizeBackfillSummary(result.summary);
     return {
       variant: input.variant,
       status: "succeeded",
@@ -870,7 +1168,7 @@ async function runVariant(input: {
       durationMs: finished.getTime() - started.getTime(),
       metrics,
       window: asRecord(result.window),
-      summary: asRecord(result.summary),
+      summary,
       error: null,
     };
   } catch (error) {
@@ -886,7 +1184,7 @@ async function runVariant(input: {
       metrics: emptyMetrics(),
       window: null,
       summary: null,
-      error: error instanceof Error ? error.message : String(error),
+      error: safeDiagnostic(error),
     };
   }
 }
@@ -894,7 +1192,10 @@ async function runVariant(input: {
 export function buildVariantBackfillInput(input: {
   deployment: Pick<DeploymentRow, "id" | "name" | "symbolUniverse">;
   variant: ExitPolicyVariant;
-  config: Pick<SweepConfig, "start" | "end" | "session" | "signalTimeframe" | "timeHorizon">;
+  config: Pick<
+    SweepConfig,
+    "start" | "end" | "session" | "signalTimeframe" | "timeHorizon"
+  >;
   commit?: boolean;
   replay?: boolean;
   replayRunSlug?: string;
@@ -933,11 +1234,81 @@ export function buildVariantBackfillInput(input: {
 }
 
 function csvValue(value: unknown): string {
-  const text =
+  const raw =
     typeof value === "number" && !Number.isFinite(value)
       ? String(value)
       : String(value ?? "");
-  return /[",\n]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text;
+  const text =
+    typeof value === "string" && /^[\t ]*[=+@-]/.test(value)
+      ? `'${value}`
+      : raw;
+  return /[",\r\n]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text;
+}
+
+function markdownText(value: unknown): string {
+  return String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replace(/[\r\n\u2028\u2029]+/gu, " ")
+    .replace(/([\\`*_[\]{}()#+.!|~>-])/gu, "\\$1");
+}
+
+function jsonText(value: unknown, space?: number): string {
+  return (
+    JSON.stringify(
+      value,
+      (_key, item) =>
+        typeof item === "number" && !Number.isFinite(item)
+          ? String(item)
+          : item,
+      space,
+    ) ?? "null"
+  ).replace(
+    UNSAFE_JSON_OUTPUT_PATTERN,
+    (character) =>
+      `\\u${character.codePointAt(0)?.toString(16).padStart(4, "0") ?? "fffd"}`,
+  );
+}
+
+function markdownJson(value: unknown): string {
+  return jsonText(value, 2).replaceAll("`", "\\u0060");
+}
+
+type ReportFiles = Record<"results.json" | "results.csv" | "report.md", string>;
+
+async function assertReportDestinationAvailable(
+  reportDir: string,
+): Promise<void> {
+  try {
+    await lstat(reportDir);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+    throw error;
+  }
+  throw new Error(`Report destination already exists: ${reportDir}`);
+}
+
+async function publishReportFiles(
+  reportDir: string,
+  files: ReportFiles,
+): Promise<void> {
+  const parent = path.dirname(reportDir);
+  await mkdir(parent, { recursive: true });
+  const temporaryDir = await mkdtemp(
+    path.join(parent, `.${path.basename(reportDir)}.tmp-`),
+  );
+  try {
+    await Promise.all(
+      Object.entries(files).map(([name, contents]) =>
+        writeFile(path.join(temporaryDir, name), contents),
+      ),
+    );
+    await rename(temporaryDir, reportDir);
+  } catch (error) {
+    await rm(temporaryDir, { recursive: true, force: true }).catch(() => {});
+    throw error;
+  }
 }
 
 function earlyInvalidationOutcomeStats(summary: JsonRecord | null) {
@@ -954,7 +1325,8 @@ function earlyInvalidationOutcomeStats(summary: JsonRecord | null) {
   for (const trade of earlyTrades) {
     const outcome = asRecord(asRecord(trade)["postExitOutcome"]);
     if (outcome["recoveredEntry"] === true) recoveredEntry += 1;
-    if (outcome["reachedTwentyFivePctGain"] === true) reachedTwentyFivePctGain += 1;
+    if (outcome["reachedTwentyFivePctGain"] === true)
+      reachedTwentyFivePctGain += 1;
     if (outcome["reachedFiftyPctGain"] === true) reachedFiftyPctGain += 1;
     if (outcome["finalAboveExit"] === true) finalAboveExit += 1;
     if (outcome["finalAboveEntry"] === true) finalAboveEntry += 1;
@@ -981,10 +1353,10 @@ function countByKey(record: Record<string, number>, value: unknown) {
 
 export function wireTrailOutcomeStats(summary: JsonRecord | null) {
   const closedTrades = asArray(asRecord(summary)["closedTrades"]);
-  const baselineRungs: Record<string, number> = {};
-  const selectedRungs: Record<string, number> = {};
-  const greekFallbackReasons: Record<string, number> = {};
-  const greekAdjustmentReasons: Record<string, number> = {};
+  const baselineRungs = Object.create(null) as Record<string, number>;
+  const selectedRungs = Object.create(null) as Record<string, number>;
+  const greekFallbackReasons = Object.create(null) as Record<string, number>;
+  const greekAdjustmentReasons = Object.create(null) as Record<string, number>;
   let snapshots = 0;
   let enabled = 0;
   let active = 0;
@@ -1057,7 +1429,7 @@ function reportRows(results: readonly SweepResult[]) {
       eligible: result.eligible,
       ineligibleReason: result.ineligibleReason ?? "",
       description: result.variant.description,
-      profilePatch: JSON.stringify(result.variant.profilePatch),
+      profilePatch: jsonText(result.variant.profilePatch),
       realizedPnl: result.metrics.realizedPnl,
       winRate: result.metrics.winRate,
       profitFactor: result.metrics.profitFactor,
@@ -1081,20 +1453,20 @@ function reportRows(results: readonly SweepResult[]) {
       wireGreekFresh: wireStats.wireGreekFresh,
       wireGreekUnavailable: wireStats.wireGreekUnavailable,
       wireDeltaSizedGiveback: wireStats.wireDeltaSizedGiveback,
-      wireBaselineRungs: JSON.stringify(wireStats.wireBaselineRungs),
-      wireSelectedRungs: JSON.stringify(wireStats.wireSelectedRungs),
-      wireGreekFallbackReasons: JSON.stringify(
-        wireStats.wireGreekFallbackReasons,
-      ),
-      wireGreekAdjustmentReasons: JSON.stringify(
+      wireBaselineRungs: jsonText(wireStats.wireBaselineRungs),
+      wireSelectedRungs: jsonText(wireStats.wireSelectedRungs),
+      wireGreekFallbackReasons: jsonText(wireStats.wireGreekFallbackReasons),
+      wireGreekAdjustmentReasons: jsonText(
         wireStats.wireGreekAdjustmentReasons,
       ),
-      symbolsEvaluated: finiteNumber(result.summary?.["symbolsEvaluated"]) ?? "",
-      signalsEvaluated: finiteNumber(result.summary?.["signalsEvaluated"]) ?? "",
+      symbolsEvaluated:
+        finiteNumber(result.summary?.["symbolsEvaluated"]) ?? "",
+      signalsEvaluated:
+        finiteNumber(result.summary?.["signalsEvaluated"]) ?? "",
       entriesOpened: finiteNumber(result.summary?.["entriesOpened"]) ?? "",
       exitsClosed: finiteNumber(result.summary?.["exitsClosed"]) ?? "",
-      exitReasons: JSON.stringify(result.summary?.["exitReasons"] ?? {}),
-      skippedReasons: JSON.stringify(result.summary?.["skippedReasons"] ?? {}),
+      exitReasons: jsonText(result.summary?.["exitReasons"] ?? {}),
+      skippedReasons: jsonText(result.summary?.["skippedReasons"] ?? {}),
       durationMs: result.durationMs,
       error: result.error ?? "",
     };
@@ -1110,9 +1482,25 @@ async function writeReports(input: {
   replayResult?: SweepResult | null;
   verification?: JsonRecord | null;
 }) {
-  await mkdir(input.reportDir, { recursive: true });
   const rows = reportRows(input.results);
-  const headers = Object.keys(rows[0] ?? {});
+  const headers = Object.keys(
+    rows[0] ?? {
+      variantId: "",
+      status: "",
+      eligible: "",
+      ineligibleReason: "",
+      description: "",
+      profilePatch: "",
+      realizedPnl: "",
+      winRate: "",
+      profitFactor: "",
+      closedTrades: "",
+      maxDrawdownAbs: "",
+      openPositions: "",
+      riskAdjustedScore: "",
+      error: "",
+    },
+  );
   const csv = [
     headers.join(","),
     ...rows.map((row) => {
@@ -1123,18 +1511,16 @@ async function writeReports(input: {
   const markdown = [
     "# Signal Options Exit Policy Sweep",
     "",
-    `- Deployment: ${input.deployment.name} (${input.deployment.id})`,
+    `- Deployment: ${markdownText(input.deployment.name)} (${markdownText(input.deployment.id)})`,
     `- Symbols: ${input.deployment.symbolUniverse.length}`,
-    `- Window: ${input.config.start} through ${input.config.end ?? "latest completed trading day"}`,
-    `- Signal timeframe: ${input.config.signalTimeframe}`,
-    `- Pyrus Signals patch: \`${JSON.stringify(buildPyrusSignalsSettingsPatch(input.config))}\``,
-    `- Risk caps: \`${JSON.stringify(RISK_CAP_PATCH.riskCaps)}\``,
+    `- Window: ${markdownText(input.config.start)} through ${markdownText(input.config.end ?? "latest completed trading day")}`,
+    `- Signal timeframe: ${markdownText(input.config.signalTimeframe)}`,
+    `- Pyrus Signals patch: \`${markdownText(jsonText(buildPyrusSignalsSettingsPatch(input.config)))}\``,
+    `- Risk caps: \`${markdownText(jsonText({ maxOpenSymbols: 10, maxPremiumPerEntry: input.config.maxPremiumPerEntry }))}\``,
     `- Premium-bucket variants: excluded`,
     `- Dry variants: ${input.results.length}`,
     `- Eligible variants: ${input.ranked.length}`,
-    input.replayResult
-      ? `- Replay committed: ${input.replayResult.variant.id}`
-      : "- Replay committed: no",
+    `- ${replayReportLine(input.replayResult)}`,
     "",
     "| Rank | Variant | PnL | Score | Trades | Win % | PF | Max DD | Open | Early | Early Recovered Entry | Early Final > Exit | Exit Reasons |",
     "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |",
@@ -1142,7 +1528,7 @@ async function writeReports(input: {
       const earlyStats = earlyInvalidationOutcomeStats(result.summary);
       return [
         index + 1,
-        result.variant.id,
+        markdownText(result.variant.id),
         result.metrics.realizedPnl.toFixed(2),
         result.metrics.riskAdjustedScore.toFixed(6),
         result.metrics.closedTrades,
@@ -1155,7 +1541,7 @@ async function writeReports(input: {
         earlyStats.earlyInvalidations,
         earlyStats.earlyRecoveredEntry,
         earlyStats.earlyFinalAboveExit,
-        `\`${JSON.stringify(result.summary?.["exitReasons"] ?? {})}\``,
+        `\`${markdownText(jsonText(result.summary?.["exitReasons"] ?? {}))}\``,
       ].join(" | ");
     }),
     "",
@@ -1164,26 +1550,39 @@ async function writeReports(input: {
     ...input.ranked.map((result) => {
       const wireStats = wireTrailOutcomeStats(result.summary);
       return [
-        result.variant.id,
+        markdownText(result.variant.id),
         wireStats.wireTrailSnapshots,
         wireStats.wireTrailActive,
         wireStats.wireStructureBreaks,
         wireStats.wireStructureBreakExits,
         wireStats.wireGreekFresh,
         wireStats.wireGreekUnavailable,
-        `\`${JSON.stringify(wireStats.wireSelectedRungs)}\``,
-        `\`${JSON.stringify(wireStats.wireGreekFallbackReasons)}\``,
-        `\`${JSON.stringify(wireStats.wireGreekAdjustmentReasons)}\``,
+        `\`${markdownText(jsonText(wireStats.wireSelectedRungs))}\``,
+        `\`${markdownText(jsonText(wireStats.wireGreekFallbackReasons))}\``,
+        `\`${markdownText(jsonText(wireStats.wireGreekAdjustmentReasons))}\``,
       ].join(" | ");
     }),
     input.verification
-      ? `\n\`\`\`json\n${JSON.stringify(input.verification, null, 2)}\n\`\`\``
+      ? `\n\`\`\`json\n${markdownJson(input.verification)}\n\`\`\``
       : "",
   ].join("\n");
 
-  await writeFile(path.join(input.reportDir, "results.json"), `${JSON.stringify(input, null, 2)}\n`);
-  await writeFile(path.join(input.reportDir, "results.csv"), `${csv}\n`);
-  await writeFile(path.join(input.reportDir, "report.md"), `${markdown}\n`);
+  await publishReportFiles(input.reportDir, {
+    "results.json": `${jsonText(input, 2)}\n`,
+    "results.csv": `${csv}\n`,
+    "report.md": `${markdown}\n`,
+  });
+}
+
+function replayReportLine(result?: SweepResult | null): string {
+  if (!result) return "Replay committed: no";
+  if (result.status !== "succeeded") {
+    return `Replay failed: ${markdownText(safeDiagnostic(result.error ?? "unknown error"))}`;
+  }
+  if (!result.eligible) {
+    return `Replay completed but is no longer eligible: ${markdownText(result.variant.id)}`;
+  }
+  return `Replay committed: ${markdownText(result.variant.id)}`;
 }
 
 export function selectReplayVariant(
@@ -1193,13 +1592,45 @@ export function selectReplayVariant(
   if (!requestedVariantId) {
     return ranked[0] ?? null;
   }
-  const selected = ranked.find((result) => result.variant.id === requestedVariantId);
+  const selected = ranked.find(
+    (result) => result.variant.id === requestedVariantId,
+  );
   if (!selected) {
     throw new Error(
       `Replay variant ${requestedVariantId} is not an eligible ranked result.`,
     );
   }
   return selected;
+}
+
+function assertSweepCompletion(input: {
+  results: SweepResult[];
+  replayRequired?: boolean;
+  replayResult?: SweepResult | null;
+}): void {
+  if (
+    input.results.length === 0 ||
+    input.results.every((result) => result.status === "failed")
+  ) {
+    throw new Error("Every sweep variant failed; inspect the written report.");
+  }
+  if (input.replayRequired && !input.replayResult) {
+    throw new Error(
+      "Winner replay was requested but no eligible winner was available.",
+    );
+  }
+  if (!input.replayResult) return;
+  if (input.replayResult.status !== "succeeded") {
+    throw new Error(
+      `Winner replay failed: ${input.replayResult.error ?? "unknown error"}`,
+    );
+  }
+  if (
+    !input.replayResult.eligible ||
+    input.replayResult.metrics.closedTrades < MIN_CLOSED_TRADES
+  ) {
+    throw new Error("Winner replay completed but is no longer eligible.");
+  }
 }
 
 async function verifyReplayLedger(input: {
@@ -1247,13 +1678,21 @@ async function verifyReplayLedger(input: {
 }
 
 async function main() {
+  parseSweepArgs();
   const config = readSweepConfig();
-  const releaseLock = await acquireSignalOptionsWorkerLock(config.lockWaitMs);
-  if (!releaseLock) {
-    throw new Error("Signal-options worker advisory lock is already held.");
-  }
+  const variants = selectVariants(buildVariantUniverse(), config).map(
+    (variant) => resolveVariantForConfig(variant, config),
+  );
+  await assertReportDestinationAvailable(config.reportDir);
+  enableHistoricalBarEvaluation();
+  let releaseLock: (() => Promise<void>) | null = null;
+  let failed = false;
 
   try {
+    releaseLock = await acquireSignalOptionsWorkerLock(config.lockWaitMs);
+    if (!releaseLock) {
+      throw new Error("Signal-options worker advisory lock is already held.");
+    }
     const deployment = await readSignalOptionsDeployment();
     if (config.symbols.length) {
       const requested = new Set(config.symbols);
@@ -1266,10 +1705,9 @@ async function main() {
         );
       }
     }
-    const variants = selectVariants(buildVariantUniverse());
     const results: SweepResult[] = [];
     console.log(
-      JSON.stringify({
+      jsonText({
         deployment: {
           id: deployment.id,
           name: deployment.name,
@@ -1278,7 +1716,10 @@ async function main() {
         config,
         variants: variants.length,
         pyrusSignalsSettingsPatch: buildPyrusSignalsSettingsPatch(config),
-        riskCaps: RISK_CAP_PATCH.riskCaps,
+        riskCaps: {
+          maxOpenSymbols: 10,
+          maxPremiumPerEntry: config.maxPremiumPerEntry,
+        },
       }),
     );
 
@@ -1287,7 +1728,7 @@ async function main() {
       const result = await runVariant({ deployment, variant, config });
       results.push(result);
       console.log(
-        JSON.stringify({
+        jsonText({
           variant: variant.id,
           status: result.status,
           metrics: result.metrics,
@@ -1301,22 +1742,28 @@ async function main() {
     let replayResult: SweepResult | null = null;
     let verification: JsonRecord | null = null;
     if (config.replayWinner) {
-      const selectedReplay = selectReplayVariant(ranked, config.replayVariant);
-      if (!selectedReplay) {
-        throw new Error("No eligible replay variant found.");
+      let selectedReplay: SweepResult | null = null;
+      try {
+        selectedReplay = selectReplayVariant(ranked, config.replayVariant);
+      } catch (error) {
+        console.warn(safeDiagnostic(error));
       }
-      console.log(`replay ${selectedReplay.variant.id}`);
-      replayResult = await runVariant({
-        deployment,
-        variant: selectedReplay.variant,
-        config,
-        commit: true,
-        replay: true,
-      });
-      verification = await verifyReplayLedger({
-        deploymentId: deployment.id,
-        window: replayResult.window,
-      });
+      if (selectedReplay) {
+        console.log(`replay ${selectedReplay.variant.id}`);
+        replayResult = await runVariant({
+          deployment,
+          variant: selectedReplay.variant,
+          config,
+          commit: true,
+          replay: true,
+        });
+        if (replayResult.status === "succeeded") {
+          verification = await verifyReplayLedger({
+            deploymentId: deployment.id,
+            window: replayResult.window,
+          });
+        }
+      }
     }
 
     await writeReports({
@@ -1328,9 +1775,14 @@ async function main() {
       replayResult,
       verification,
     });
+    assertSweepCompletion({
+      results,
+      replayRequired: config.replayWinner,
+      replayResult,
+    });
 
     console.log(
-      JSON.stringify(
+      jsonText(
         {
           reportDir: config.reportDir,
           dryVariants: results.length,
@@ -1341,19 +1793,66 @@ async function main() {
           replayVariant: replayResult?.variant.id ?? null,
           verification,
         },
-        null,
         2,
       ),
     );
+  } catch (error) {
+    failed = true;
+    throw error;
   } finally {
-    await releaseLock();
-    await pool.end();
+    const cleanupErrors: unknown[] = [];
+    if (releaseLock) {
+      try {
+        await releaseLock();
+      } catch (error) {
+        cleanupErrors.push(error);
+      }
+    }
+    try {
+      await closeDatabaseConnections();
+    } catch (error) {
+      cleanupErrors.push(error);
+    }
+    if (cleanupErrors.length > 0 && !failed) {
+      throw new AggregateError(
+        cleanupErrors,
+        "Failed to close exit-policy sweep database resources.",
+      );
+    }
+    if (cleanupErrors.length > 0) {
+      console.error(
+        `Sweep cleanup also failed (${cleanupErrors.length} error(s)).`,
+      );
+    }
   }
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+export const __signalOptionsExitPolicySweepInternalsForTests = {
+  assertReportDestinationAvailable,
+  assertSweepCompletion,
+  buildVariantUniverse,
+  computeMetrics,
+  csvValue,
+  enableHistoricalBarEvaluation,
+  jsonText,
+  markdownJson,
+  markdownText,
+  parseSweepArgs,
+  publishReportFiles,
+  readSweepConfig,
+  replayReportLine,
+  resolveVariantForConfig,
+  safeDiagnostic,
+  selectVariants,
+  validateSweepDeployment,
+};
+
+if (
+  process.argv[1] &&
+  import.meta.url === pathToFileURL(process.argv[1]).href
+) {
   main().catch((error) => {
-    console.error(error);
+    console.error(safeDiagnostic(error));
     process.exitCode = 1;
   });
 }
