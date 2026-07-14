@@ -13,5 +13,7 @@ export const OptionOrderStrategyIntent = {
   long_option: 'long_option',
   sell_to_close: 'sell_to_close',
   covered_call: 'covered_call',
+  cash_secured_put: 'cash_secured_put',
   uncovered_short_call: 'uncovered_short_call',
+  uncovered_short_put: 'uncovered_short_put',
 } as const;

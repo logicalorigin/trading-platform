@@ -213,7 +213,7 @@ import {
   loadDurableOptionExpirations,
   persistDurableOptionChain,
 } from "./option-metadata-store";
-import { validateSellCallOrderIntent } from "./option-order-intent";
+import { validateSingleLegOrderIntent } from "./option-order-intent";
 import {
   getRuntimeMarketDataDiagnostics,
   getRuntimeMassiveProviderDiagnostics,
@@ -3704,6 +3704,8 @@ type GatewayTradingReadiness = {
   message: string;
 };
 
+const IBKR_RISK_STATE_MAX_AGE_MS = 30_000;
+
 function gatewayTradingUnavailable(
   reason: string,
   message: string,
@@ -3879,54 +3881,56 @@ async function validateOrderIntentForRouting(
   input: PlaceOrderInput,
   client: ReturnType<typeof getIbkrClientPortalClient>,
 ) {
-  if (
-    input.assetClass !== "option" ||
-    input.side !== "sell" ||
-    input.optionContract?.right !== "call"
-  ) {
-    return;
-  }
-
-  let positions: BrokerPositionSnapshot[];
-  try {
-    positions = await client.listPositions({
-      accountId: input.accountId,
-      mode: input.mode,
-    });
-  } catch (error) {
-    throw new HttpError(
-      409,
-      "Cannot validate the call sale until IBKR positions are available.",
-      {
-        code: "ibkr_option_order_position_check_unavailable",
+  const requiresRiskState =
+    (input.assetClass === "equity" && input.side === "sell") ||
+    (input.assetClass === "option" && input.optionAction !== "buy_to_open");
+  const selectedOptionContractId =
+    input.assetClass === "option"
+      ? input.optionContract?.providerContractId ?? null
+      : null;
+  let state: Awaited<ReturnType<typeof client.readAccountRiskState>> | null =
+    null;
+  if (requiresRiskState) {
+    try {
+      state = await client.readAccountRiskState({
+        accountId: input.accountId,
+        mode: input.mode,
+        selectedOptionContractId,
+      });
+    } catch (error) {
+      throw new HttpError(
+        409,
+        "Cannot validate this order until fresh IBKR account risk state is available.",
+        {
+          code: "ibkr_trading_risk_state_unavailable",
+          expose: true,
+          cause: error,
+        },
+      );
+    }
+    if (state.accountId !== input.accountId || state.mode !== input.mode) {
+      throw new HttpError(409, "IBKR returned risk state for another account.", {
+        code: "ibkr_trading_risk_state_mismatch",
         expose: true,
-        cause: error,
-      },
-    );
+      });
+    }
   }
 
-  let orders: OrderVisibilityResponse;
-  try {
-    orders = await readCurrentOrders({
-      accountId: input.accountId,
-      mode: input.mode,
-    });
-  } catch (error) {
-    throw new HttpError(
-      409,
-      "Cannot validate the call sale until open IBKR orders are available.",
-      {
-        code: "ibkr_option_order_open_orders_unavailable",
-        expose: true,
-        cause: error,
-      },
-    );
-  }
-
-  validateSellCallOrderIntent({
+  validateSingleLegOrderIntent({
     order: input,
-    positions,
-    orders: orders.orders,
+    state: state ?? {
+      positions: null,
+      orders: null,
+      positionsObservedAt: null,
+      ordersObservedAt: null,
+    },
+    now: new Date(),
+    maxStateAgeMs: IBKR_RISK_STATE_MAX_AGE_MS,
+    standardOptionDeliverableVerified:
+      selectedOptionContractId !== null &&
+      state?.verifiedStandardOptionContractIds.includes(
+        selectedOptionContractId,
+      ),
   });
 }
 

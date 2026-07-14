@@ -78,3 +78,18 @@ test("Client Portal trading guard requires the explicit tradable target", () => 
     "account_required",
   );
 });
+
+test("Client Portal order routing validates a fresh complete risk snapshot", () => {
+  const start = source.indexOf("async function validateOrderIntentForRouting");
+  const end = source.indexOf("function ibkrOrderToTaxOrder", start);
+
+  assert.ok(start >= 0, "order routing guard source must exist");
+  assert.ok(end > start, "order routing guard source boundary must exist");
+
+  const guardSource = source.slice(start, end);
+  assert.match(guardSource, /client\.readAccountRiskState\(/);
+  assert.match(guardSource, /validateSingleLegOrderIntent\(/);
+  assert.match(guardSource, /maxStateAgeMs:\s*IBKR_RISK_STATE_MAX_AGE_MS/);
+  assert.doesNotMatch(guardSource, /readCurrentOrders\(/);
+  assert.doesNotMatch(guardSource, /validateSellCallOrderIntent\(/);
+});

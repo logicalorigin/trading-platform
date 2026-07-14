@@ -7224,9 +7224,19 @@ components:
       type: string
       enum: [open, close]
 
+    OptionOrderAction:
+      type: string
+      enum: [buy_to_open, buy_to_close, sell_to_close, sell_to_open]
+
     OptionOrderStrategyIntent:
       type: string
-      enum: [long_option, sell_to_close, covered_call, uncovered_short_call]
+      enum:
+        - long_option
+        - sell_to_close
+        - covered_call
+        - cash_secured_put
+        - uncovered_short_call
+        - uncovered_short_put
 
     OrderType:
       type: string
@@ -10753,6 +10763,8 @@ components:
           oneOf:
             - $ref: "#/components/schemas/OptionContract"
             - type: "null"
+        optionAction:
+          $ref: "#/components/schemas/OptionOrderAction"
         positionEffect:
           $ref: "#/components/schemas/OptionOrderPositionEffect"
         strategyIntent:

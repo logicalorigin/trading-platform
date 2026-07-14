@@ -9,6 +9,7 @@ import type { AssetClass } from './assetClass';
 import type { EnvironmentMode } from './environmentMode';
 import type { JsonObject } from './jsonObject';
 import type { OptionContract } from './optionContract';
+import type { OptionOrderAction } from './optionOrderAction';
 import type { OptionOrderPositionEffect } from './optionOrderPositionEffect';
 import type { OptionOrderStrategyIntent } from './optionOrderStrategyIntent';
 import type { OrderSide } from './orderSide';
@@ -30,6 +31,7 @@ export interface PlaceOrderRequest {
   stopPrice?: number | null;
   timeInForce: TimeInForce;
   optionContract: OptionContract | null;
+  optionAction?: OptionOrderAction;
   positionEffect?: OptionOrderPositionEffect;
   strategyIntent?: OptionOrderStrategyIntent;
   tradingSession?: TradingSession;

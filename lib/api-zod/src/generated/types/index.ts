@@ -468,6 +468,7 @@ export * from './optionContractResolutionResponse';
 export * from './optionContractResolutionStatus';
 export * from './optionExpirationsResponse';
 export * from './optionExpirationSummary';
+export * from './optionOrderAction';
 export * from './optionOrderPositionEffect';
 export * from './optionOrderStrategyIntent';
 export * from './optionQuoteSnapshotsRequest';

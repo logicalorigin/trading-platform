@@ -2067,6 +2067,16 @@ export const OptionOrderPositionEffect = {
   close: 'close',
 } as const;
 
+export type OptionOrderAction = typeof OptionOrderAction[keyof typeof OptionOrderAction];
+
+
+export const OptionOrderAction = {
+  buy_to_open: 'buy_to_open',
+  buy_to_close: 'buy_to_close',
+  sell_to_close: 'sell_to_close',
+  sell_to_open: 'sell_to_open',
+} as const;
+
 export type OptionOrderStrategyIntent = typeof OptionOrderStrategyIntent[keyof typeof OptionOrderStrategyIntent];
 
 
@@ -2074,7 +2084,9 @@ export const OptionOrderStrategyIntent = {
   long_option: 'long_option',
   sell_to_close: 'sell_to_close',
   covered_call: 'covered_call',
+  cash_secured_put: 'cash_secured_put',
   uncovered_short_call: 'uncovered_short_call',
+  uncovered_short_put: 'uncovered_short_put',
 } as const;
 
 export type OrderType = typeof OrderType[keyof typeof OrderType];
@@ -4265,6 +4277,7 @@ export interface PlaceOrderRequest {
   stopPrice?: number | null;
   timeInForce: TimeInForce;
   optionContract: OptionContract | null;
+  optionAction?: OptionOrderAction;
   positionEffect?: OptionOrderPositionEffect;
   strategyIntent?: OptionOrderStrategyIntent;
   tradingSession?: TradingSession;

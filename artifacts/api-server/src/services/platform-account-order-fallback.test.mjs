@@ -24,9 +24,13 @@ function functionSource(name, exported = false) {
 test("platform order reads cache only fresh successful payloads and join in-flight reads", () => {
   const read = functionSource("readCurrentOrders");
   const visibility = functionSource("listOrdersForVisibility");
+  const brokerRead = read.slice(0, read.indexOf("for (const order"));
 
-  assert.match(read, /orders:\s*await client\.listOrders\(/);
-  assert.doesNotMatch(read, /withTimeout|catch\s*\(|orders:\s*\[\]|degraded/);
+  assert.match(brokerRead, /const orders = await client\.listOrders\(/);
+  assert.doesNotMatch(
+    brokerRead,
+    /withTimeout|catch\s*\(|orders:\s*\[\]|degraded/,
+  );
   assert.match(visibility, /if \(pending\) \{\s*return pending;\s*\}/);
   assert.doesNotMatch(
     visibility,
@@ -79,13 +83,15 @@ test("account order responses do not emit retired fallback metadata", () => {
   assert.doesNotMatch(accountOrders, /degraded|reason|stale|debug/);
 });
 
-test("covered-call validation still fails closed when current orders are unavailable", () => {
+test("risk-increasing IBKR orders use one fresh complete account snapshot", () => {
   const guard = functionSource("validateOrderIntentForRouting");
 
-  assert.match(guard, /try\s*\{[\s\S]*await readCurrentOrders\(/);
+  assert.match(guard, /await client\.readAccountRiskState\(/);
   assert.match(
     guard,
-    /catch \(error\)[\s\S]*ibkr_option_order_open_orders_unavailable/,
+    /catch \(error\)[\s\S]*ibkr_trading_risk_state_unavailable/,
   );
+  assert.match(guard, /validateSingleLegOrderIntent\(/);
+  assert.match(guard, /verifiedStandardOptionContractIds\.includes/);
   assert.match(guard, /cause:\s*error/);
 });
