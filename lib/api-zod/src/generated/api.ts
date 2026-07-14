@@ -2217,6 +2217,9 @@ export const GetAccountPositionsResponse = zod.object({
   "providerContractId": zod.string().nullish(),
   "brokerContractId": zod.string().nullish()
 }),zod.null()]),
+  "optionAction": zod.union([zod.enum(['buy_to_open', 'buy_to_close', 'sell_to_close', 'sell_to_open']),zod.null()]).optional(),
+  "positionEffect": zod.union([zod.enum(['open', 'close']),zod.null()]).optional(),
+  "strategyIntent": zod.union([zod.enum(['long_option', 'sell_to_close', 'covered_call', 'cash_secured_put', 'uncovered_short_call', 'uncovered_short_put']),zod.null()]).optional(),
   "tradingSession": zod.union([zod.enum(['default', 'regular', 'extended', 'overnight', 'overnight_plus_day']),zod.null()]).optional(),
   "resolvedExchange": zod.string().nullish(),
   "primaryExchange": zod.string().nullish(),
@@ -2438,6 +2441,9 @@ export const GetAccountPositionsAtDateResponse = zod.object({
   "providerContractId": zod.string().nullish(),
   "brokerContractId": zod.string().nullish()
 }),zod.null()]),
+  "optionAction": zod.union([zod.enum(['buy_to_open', 'buy_to_close', 'sell_to_close', 'sell_to_open']),zod.null()]).optional(),
+  "positionEffect": zod.union([zod.enum(['open', 'close']),zod.null()]).optional(),
+  "strategyIntent": zod.union([zod.enum(['long_option', 'sell_to_close', 'covered_call', 'cash_secured_put', 'uncovered_short_call', 'uncovered_short_put']),zod.null()]).optional(),
   "tradingSession": zod.union([zod.enum(['default', 'regular', 'extended', 'overnight', 'overnight_plus_day']),zod.null()]).optional(),
   "resolvedExchange": zod.string().nullish(),
   "primaryExchange": zod.string().nullish(),
@@ -3173,6 +3179,9 @@ export const ListOrdersResponse = zod.object({
   "providerContractId": zod.string().nullish(),
   "brokerContractId": zod.string().nullish()
 }),zod.null()]),
+  "optionAction": zod.union([zod.enum(['buy_to_open', 'buy_to_close', 'sell_to_close', 'sell_to_open']),zod.null()]).optional(),
+  "positionEffect": zod.union([zod.enum(['open', 'close']),zod.null()]).optional(),
+  "strategyIntent": zod.union([zod.enum(['long_option', 'sell_to_close', 'covered_call', 'cash_secured_put', 'uncovered_short_call', 'uncovered_short_put']),zod.null()]).optional(),
   "tradingSession": zod.union([zod.enum(['default', 'regular', 'extended', 'overnight', 'overnight_plus_day']),zod.null()]).optional(),
   "resolvedExchange": zod.string().nullish(),
   "primaryExchange": zod.string().nullish(),
@@ -3574,6 +3583,9 @@ export const ReplaceOrderResponse = zod.object({
   "providerContractId": zod.string().nullish(),
   "brokerContractId": zod.string().nullish()
 }),zod.null()]),
+  "optionAction": zod.union([zod.enum(['buy_to_open', 'buy_to_close', 'sell_to_close', 'sell_to_open']),zod.null()]).optional(),
+  "positionEffect": zod.union([zod.enum(['open', 'close']),zod.null()]).optional(),
+  "strategyIntent": zod.union([zod.enum(['long_option', 'sell_to_close', 'covered_call', 'cash_secured_put', 'uncovered_short_call', 'uncovered_short_put']),zod.null()]).optional(),
   "tradingSession": zod.union([zod.enum(['default', 'regular', 'extended', 'overnight', 'overnight_plus_day']),zod.null()]).optional(),
   "resolvedExchange": zod.string().nullish(),
   "primaryExchange": zod.string().nullish(),

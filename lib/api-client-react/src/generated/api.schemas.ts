@@ -4246,6 +4246,9 @@ export interface Order {
   placedAt: string;
   updatedAt: string;
   optionContract: OptionContract | null;
+  optionAction?: OptionOrderAction | null;
+  positionEffect?: OptionOrderPositionEffect | null;
+  strategyIntent?: OptionOrderStrategyIntent | null;
   tradingSession?: TradingSession | null;
   resolvedExchange?: string | null;
   primaryExchange?: string | null;

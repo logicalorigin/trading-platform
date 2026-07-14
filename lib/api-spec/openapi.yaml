@@ -10692,6 +10692,18 @@ components:
           oneOf:
             - $ref: "#/components/schemas/OptionContract"
             - type: "null"
+        optionAction:
+          oneOf:
+            - $ref: "#/components/schemas/OptionOrderAction"
+            - type: "null"
+        positionEffect:
+          oneOf:
+            - $ref: "#/components/schemas/OptionOrderPositionEffect"
+            - type: "null"
+        strategyIntent:
+          oneOf:
+            - $ref: "#/components/schemas/OptionOrderStrategyIntent"
+            - type: "null"
         tradingSession:
           oneOf:
             - $ref: "#/components/schemas/TradingSession"

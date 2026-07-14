@@ -8,6 +8,9 @@
 import type { AssetClass } from './assetClass';
 import type { EnvironmentMode } from './environmentMode';
 import type { OptionContract } from './optionContract';
+import type { OptionOrderAction } from './optionOrderAction';
+import type { OptionOrderPositionEffect } from './optionOrderPositionEffect';
+import type { OptionOrderStrategyIntent } from './optionOrderStrategyIntent';
 import type { OrderSide } from './orderSide';
 import type { OrderStatus } from './orderStatus';
 import type { OrderType } from './orderType';
@@ -32,6 +35,9 @@ export interface Order {
   placedAt: Date;
   updatedAt: Date;
   optionContract: OptionContract | null;
+  optionAction?: OptionOrderAction | null;
+  positionEffect?: OptionOrderPositionEffect | null;
+  strategyIntent?: OptionOrderStrategyIntent | null;
   tradingSession?: TradingSession | null;
   resolvedExchange?: string | null;
   primaryExchange?: string | null;
