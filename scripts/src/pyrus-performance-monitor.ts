@@ -3,6 +3,10 @@ export {};
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import {
+  parseArgs as parseNodeArgs,
+  stripVTControlCharacters,
+} from "node:util";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -138,6 +142,19 @@ const currentFile = fileURLToPath(import.meta.url);
 const scriptsRoot = path.resolve(path.dirname(currentFile), "..");
 const repoRoot = path.resolve(scriptsRoot, "..");
 const endpointStats = new Map<string, EndpointStats>();
+const DEFAULT_FRONTEND_URL = "http://127.0.0.1:18747/";
+const DEFAULT_API_BASE_URL = "http://127.0.0.1:8080/api";
+// ponytail: 16 MiB bounds untrusted remote JSON in memory. If measured payload
+// growth reaches it, stream the required fields before raising this ceiling.
+const MAX_JSON_RESPONSE_BYTES = 16 * 1024 * 1024;
+// ponytail: 1,000 characters keeps untrusted diagnostics terminal-safe. If
+// truncation hides useful detail, upgrade the sink to structured error fields.
+const MAX_LOG_STRING_LENGTH = 1_000;
+const MAX_TIMER_DELAY_MS = 2_147_483_647;
+const UNSAFE_OUTPUT_PATTERN =
+  /[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/gu;
+const USAGE =
+  "Usage: pnpm --filter @workspace/scripts run pyrus:performance-monitor -- [--seconds=POSITIVE_INTEGER] [--interval-ms=POSITIVE_INTEGER] [--deep-interval-ms=POSITIVE_INTEGER] [--frontend-url=HTTP_URL] [--api-base-url=HTTP_URL] [--output-dir=PATH] [--json-only]";
 
 function asRecord(value: unknown): JsonRecord {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -159,28 +176,145 @@ function stringValue(value: unknown): string | null {
   return typeof value === "string" && value.trim() ? value.trim() : null;
 }
 
-function safeError(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+function safeText(value: unknown): string {
+  const cleaned = stripVTControlCharacters(
+    String(value ?? "").replace(
+      /([a-z][a-z0-9+.-]*:\/\/)[^@\s]+@/giu,
+      "$1[redacted]@",
+    ),
+  )
+    .replace(UNSAFE_OUTPUT_PATTERN, " ")
+    .replace(/\s+/gu, " ")
+    .trim();
+  return cleaned.length <= MAX_LOG_STRING_LENGTH
+    ? cleaned
+    : `${cleaned.slice(0, MAX_LOG_STRING_LENGTH - 1)}…`;
+}
+
+function errorMessage(error: unknown): string {
+  return (
+    safeText(error instanceof Error ? error.message : error) ||
+    "Unknown monitor error"
+  );
+}
+
+function markdownText(value: unknown): string {
+  return safeText(value)
+    .replace(/&/gu, "&amp;")
+    .replace(/</gu, "&lt;")
+    .replace(/>/gu, "&gt;")
+    .replace(/\\/gu, "\\\\")
+    .replace(/([`*_[\]{}()|~])/gu, "\\$1");
 }
 
 function nowIso(): string {
   return new Date().toISOString();
 }
 
-function parseArg(name: string): string | null {
-  const prefix = `--${name}=`;
-  const match = process.argv.slice(2).find((arg) => arg.startsWith(prefix));
-  return match ? match.slice(prefix.length) : null;
-}
-
-function hasFlag(name: string): boolean {
-  return process.argv.slice(2).includes(`--${name}`);
-}
-
-function parsePositiveInteger(raw: string | null, fallback: number): number {
-  if (!raw) return fallback;
+function parsePositiveInteger(
+  label: string,
+  raw: string | undefined,
+  fallback: number,
+  maximum = Number.MAX_SAFE_INTEGER,
+): number {
+  if (raw === undefined) return fallback;
+  if (!/^[1-9]\d*$/u.test(raw)) {
+    throw new Error(`--${label} must be a positive integer.`);
+  }
   const parsed = Number(raw);
-  return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : fallback;
+  if (!Number.isSafeInteger(parsed) || parsed > maximum) {
+    throw new Error(`--${label} is too large.`);
+  }
+  return parsed;
+}
+
+function parseHttpUrl(label: string, raw: string): string {
+  const url = new URL(raw);
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    throw new Error(`--${label} must use HTTP or HTTPS.`);
+  }
+  if (url.username || url.password || url.search || url.hash) {
+    throw new Error(
+      `--${label} must not include credentials, a query, or a fragment.`,
+    );
+  }
+  return raw;
+}
+
+function parseOptions(
+  argv: string[],
+  env: NodeJS.ProcessEnv = process.env,
+  now = new Date(),
+): MonitorOptions {
+  try {
+    const parsed = parseNodeArgs({
+      args: argv[0] === "--" ? argv.slice(1) : argv,
+      allowPositionals: false,
+      strict: true,
+      tokens: true,
+      options: {
+        seconds: { type: "string" },
+        "interval-ms": { type: "string" },
+        "deep-interval-ms": { type: "string" },
+        "frontend-url": { type: "string" },
+        "api-base-url": { type: "string" },
+        "output-dir": { type: "string" },
+        "json-only": { type: "boolean" },
+        help: { type: "boolean", short: "h" },
+      },
+    });
+    const counts = new Map<string, number>();
+    for (const token of parsed.tokens) {
+      if (token.kind !== "option") continue;
+      counts.set(token.name, (counts.get(token.name) ?? 0) + 1);
+    }
+    if ([...counts.values()].some((count) => count > 1)) {
+      throw new Error("Duplicate options are not allowed.");
+    }
+
+    const outputDir = parsed.values["output-dir"]?.trim();
+    if (parsed.values["output-dir"] !== undefined && !outputDir) {
+      throw new Error("--output-dir must not be empty.");
+    }
+    const timestamp = now.toISOString().replace(/[:.]/g, "-");
+    return {
+      seconds: parsePositiveInteger("seconds", parsed.values.seconds, 900),
+      intervalMs: parsePositiveInteger(
+        "interval-ms",
+        parsed.values["interval-ms"],
+        5_000,
+        MAX_TIMER_DELAY_MS,
+      ),
+      deepIntervalMs: parsePositiveInteger(
+        "deep-interval-ms",
+        parsed.values["deep-interval-ms"],
+        30_000,
+        MAX_TIMER_DELAY_MS,
+      ),
+      frontendUrl: parseHttpUrl(
+        "frontend-url",
+        parsed.values["frontend-url"] ??
+          stringValue(env["PYRUS_MONITOR_FRONTEND_URL"]) ??
+          DEFAULT_FRONTEND_URL,
+      ),
+      apiBaseUrl: parseHttpUrl(
+        "api-base-url",
+        parsed.values["api-base-url"] ??
+          stringValue(env["PYRUS_MONITOR_API_BASE_URL"]) ??
+          DEFAULT_API_BASE_URL,
+      ),
+      outputDir: outputDir
+        ? path.resolve(repoRoot, outputDir)
+        : path.join(
+            repoRoot,
+            "scripts/reports/pyrus-performance-monitor",
+            timestamp,
+          ),
+      jsonOnly: parsed.values["json-only"] ?? false,
+    };
+  } catch (error) {
+    throw new Error(`${USAGE}\n${errorMessage(error)}`);
+  }
 }
 
 export function buildUrl(baseUrl: string, requestPath: string): string {
@@ -212,6 +346,39 @@ function recordEndpoint(pathKey: string, ok: boolean, latencyMs: number): void {
   endpointStats.set(pathKey, stats);
 }
 
+async function readResponseText(
+  response: Response,
+  maximumBytes = MAX_JSON_RESPONSE_BYTES,
+): Promise<string> {
+  const contentLength = Number(response.headers.get("content-length"));
+  if (Number.isFinite(contentLength) && contentLength > maximumBytes) {
+    await response.body?.cancel().catch(() => {});
+    throw new Error(`JSON response exceeded the ${maximumBytes}-byte limit.`);
+  }
+  if (!response.body) return "";
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let bytes = 0;
+  const chunks: string[] = [];
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      bytes += value.byteLength;
+      if (bytes > maximumBytes) {
+        await reader.cancel().catch(() => {});
+        throw new Error(`JSON response exceeded the ${maximumBytes}-byte limit.`);
+      }
+      chunks.push(decoder.decode(value, { stream: true }));
+    }
+    chunks.push(decoder.decode());
+    return chunks.join("");
+  } finally {
+    reader.releaseLock();
+  }
+}
+
 async function fetchJson(
   baseUrl: string,
   requestPath: string,
@@ -221,30 +388,46 @@ async function fetchJson(
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   const startedAt = Date.now();
+  let status: number | null = null;
   try {
     const response = await fetch(buildUrl(baseUrl, requestPath), {
       signal: controller.signal,
       headers: { Accept: "application/json" },
     });
-    const latencyMs = Date.now() - startedAt;
-    recordEndpoint(pathKey, response.ok, latencyMs);
+    status = response.status;
     if (!response.ok) {
+      await response.body?.cancel().catch(() => {});
+      const latencyMs = Date.now() - startedAt;
+      recordEndpoint(pathKey, false, latencyMs);
       return {
         path: pathKey,
         ok: false,
-        status: response.status,
+        status,
         latencyMs,
         value: null,
-        error: `HTTP ${response.status}`,
+        error: `HTTP ${status}`,
       };
     }
-    const value = (await response.json()) as JsonRecord;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(await readResponseText(response)) as unknown;
+    } catch (error) {
+      if (error instanceof SyntaxError) {
+        throw new Error("Invalid JSON response.");
+      }
+      throw error;
+    }
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw new Error("Expected a JSON object response.");
+    }
+    const latencyMs = Date.now() - startedAt;
+    recordEndpoint(pathKey, true, latencyMs);
     return {
       path: pathKey,
       ok: true,
-      status: response.status,
+      status,
       latencyMs,
-      value,
+      value: parsed as JsonRecord,
       error: null,
     };
   } catch (error) {
@@ -253,13 +436,13 @@ async function fetchJson(
     return {
       path: pathKey,
       ok: false,
-      status: null,
+      status,
       latencyMs,
       value: null,
       error:
         error instanceof Error && error.name === "AbortError"
           ? `timeout after ${timeoutMs}ms`
-          : safeError(error),
+          : errorMessage(error),
     };
   } finally {
     clearTimeout(timer);
@@ -415,29 +598,39 @@ function processSummary(samples: MonitorSample[]): MonitorReport["processes"] {
 
 function reportStatus(samples: MonitorSample[]): MonitorReport["verdict"] {
   const reasons: string[] = [];
+  let warning = false;
   const latest = samples.at(-1);
   const latestSeverity = stringValue(latest?.diagnostics.value?.["severity"]);
   if (latestSeverity === "warning") {
     reasons.push("Latest diagnostics severity is warning.");
-  } else if (latestSeverity === "warning") {
-    reasons.push("Latest diagnostics severity is warning.");
+    warning = true;
   }
 
-  const failedEndpoints = Object.entries(endpointSummary()).filter(([, stats]) => stats.fail > 0);
+  const failedEndpoints = Object.entries(endpointSummary()).filter(
+    ([, stats]) => stats.fail > 0,
+  );
   if (failedEndpoints.length) {
     reasons.push(`${failedEndpoints.length} sampled endpoint(s) had failures.`);
   }
-  if (collectResourceLevels(samples).includes("warning")) {
-    reasons.push("Resource pressure reached warning.");
+  const resourceLevels = collectResourceLevels(samples);
+  if (resourceLevels.includes("high")) {
+    reasons.push("Resource pressure reached high.");
+    warning = true;
+  } else if (resourceLevels.includes("watch")) {
+    reasons.push("Resource pressure reached watch.");
+    warning = true;
   }
 
-  if (reasons.some((reason) => /warning/i.test(reason))) {
+  if (warning) {
     return { status: "warning", reasons };
   }
   if (reasons.length) {
     return { status: "degraded", reasons };
   }
-  return { status: "healthy", reasons: ["No sampled warning or degraded signals."] };
+  return {
+    status: "healthy",
+    reasons: ["No sampled warning or degraded signals."],
+  };
 }
 
 function buildOptimizationCandidates(report: Omit<MonitorReport, "optimizationCandidates">): string[] {
@@ -528,8 +721,8 @@ function formatRange(range: RangeSummary, suffix = ""): string {
 
 function markdownTable(rows: string[][]): string {
   if (!rows.length) return "";
-  const header = rows[0]!;
-  const body = rows.slice(1);
+  const header = rows[0]!.map(markdownText);
+  const body = rows.slice(1).map((row) => row.map(markdownText));
   return [
     `| ${header.join(" | ")} |`,
     `| ${header.map(() => "---").join(" | ")} |`,
@@ -570,7 +763,7 @@ export function renderMarkdownReport(report: MonitorReport): string {
   ];
 
   return [
-    "# PYRUS 15-Minute Performance Monitor",
+    "# PYRUS Performance Monitor",
     "",
     `- Window: ${report.window.startedAt ?? "n/a"} to ${report.window.endedAt ?? "n/a"}`,
     `- Samples: ${report.window.samples}`,
@@ -578,7 +771,9 @@ export function renderMarkdownReport(report: MonitorReport): string {
     `- Reasons: ${report.verdict.reasons.join(" ")}`,
     "",
     "## Optimization Candidates",
-    ...report.optimizationCandidates.map((candidate) => `- ${candidate}`),
+    ...report.optimizationCandidates.map(
+      (candidate) => `- ${markdownText(candidate)}`,
+    ),
     "",
     "## API Runtime",
     `- API p95 latency min/avg/max: ${formatRange(report.api.p95LatencyMs, "ms")}`,
@@ -593,7 +788,7 @@ export function renderMarkdownReport(report: MonitorReport): string {
     "",
     "## Browser Observer",
     `- Enabled: ${report.browser.enabled ? "yes" : "no"}`,
-    `- Launch error: ${report.browser.launchError ?? "none"}`,
+    `- Launch error: ${markdownText(report.browser.launchError ?? "none")}`,
     `- JS heap min/avg/max: ${formatRange(report.browser.jsHeapUsedMb, " MB")}`,
     `- API timing count min/avg/max: ${formatRange(report.browser.apiTimingCount)}`,
     `- Long task count min/avg/max: ${formatRange(report.browser.longTaskCount)}`,
@@ -602,7 +797,7 @@ export function renderMarkdownReport(report: MonitorReport): string {
     `- Request failures: ${report.browser.requestFailures.length}`,
     "",
     "## Resource Pressure",
-    `- Levels observed: ${report.resourcePressure.levels.join(", ") || "none"}`,
+    `- Levels observed: ${report.resourcePressure.levels.map(markdownText).join(", ") || "none"}`,
     `- Cgroup memory current min/avg/max: ${formatRange(report.cgroup.memoryCurrentMb, " MB")}`,
     `- Cgroup memory max: ${report.cgroup.memoryMaxMb === null ? "n/a" : `${report.cgroup.memoryMaxMb} MB`}`,
     "",
@@ -616,7 +811,10 @@ export function renderMarkdownReport(report: MonitorReport): string {
     report.diagnosticsEvents.length
       ? report.diagnosticsEvents
           .slice(0, 12)
-          .map((event) => `- ${String(event["subsystem"] ?? "unknown")} ${String(event["severity"] ?? "info")}: ${String(event["message"] ?? event["summary"] ?? "no message")}`)
+          .map(
+            (event) =>
+              `- ${markdownText(event["subsystem"] ?? "unknown")} ${markdownText(event["severity"] ?? "info")}: ${markdownText(event["message"] ?? event["summary"] ?? "no message")}`,
+          )
           .join("\n")
       : "- No open diagnostics events captured.",
     "",
@@ -717,39 +915,24 @@ async function readCgroupSnapshot(): Promise<JsonRecord> {
   };
 }
 
-function parseOptions(): MonitorOptions {
-  const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
-  return {
-    seconds: parsePositiveInteger(parseArg("seconds"), 900),
-    intervalMs: parsePositiveInteger(parseArg("interval-ms"), 5_000),
-    deepIntervalMs: parsePositiveInteger(parseArg("deep-interval-ms"), 30_000),
-    frontendUrl:
-      parseArg("frontend-url") ??
-      process.env["PYRUS_MONITOR_FRONTEND_URL"] ??
-      "http://127.0.0.1:18747/",
-    apiBaseUrl:
-      parseArg("api-base-url") ??
-      process.env["PYRUS_MONITOR_API_BASE_URL"] ??
-      "http://127.0.0.1:8080/api",
-    outputDir:
-      parseArg("output-dir") ??
-      path.join(repoRoot, "scripts/reports/pyrus-performance-monitor", timestamp),
-    jsonOnly: hasFlag("json-only"),
-  };
+function isDeepSample(
+  index: number,
+  intervalMs: number,
+  deepIntervalMs: number,
+): boolean {
+  if (index === 0) return true;
+  return (
+    Math.floor((index * intervalMs) / deepIntervalMs) >
+    Math.floor(((index - 1) * intervalMs) / deepIntervalMs)
+  );
 }
 
-async function collectDiagnosticsEvents(apiBaseUrl: string, startedAt: string): Promise<JsonRecord[]> {
-  const to = encodeURIComponent(nowIso());
-  const from = encodeURIComponent(startedAt);
-  const response = await fetchJson(
-    apiBaseUrl,
-    `/diagnostics/events?from=${from}&to=${to}&limit=200`,
-    5_000,
-    "/diagnostics/events",
-  );
-  return asArray(response.value?.["events"] ?? response.value)
-    .map(asRecord)
-    .map(sanitizeDiagnosticEvent);
+function runtimeDiagnosticsPath(deep: boolean): string {
+  // ponytail: routine polls use the native compact view; deep samples retain
+  // the full payload, and can move to a streamed artifact if that grows costly.
+  return deep
+    ? "/diagnostics/runtime"
+    : "/diagnostics/runtime?detail=compact";
 }
 
 async function collectSample(
@@ -758,7 +941,7 @@ async function collectSample(
   index: number,
   processes: Array<{ pid: number; role: string }>,
 ): Promise<MonitorSample> {
-  const deep = index === 0 || index * options.intervalMs % options.deepIntervalMs === 0;
+  const deep = isDeepSample(index, options.intervalMs, options.deepIntervalMs);
   const frontendApiBase = buildUrl(options.frontendUrl, "/api");
   const [
     health,
@@ -772,7 +955,12 @@ async function collectSample(
     fetchJson(options.apiBaseUrl, "/healthz", 2_500),
     fetchJson(frontendApiBase, "/healthz", 2_500, "frontend:/api/healthz"),
     fetchJson(options.apiBaseUrl, "/diagnostics/latest", 5_000),
-    fetchJson(options.apiBaseUrl, "/diagnostics/runtime", 8_000),
+    fetchJson(
+      options.apiBaseUrl,
+      runtimeDiagnosticsPath(deep),
+      8_000,
+      "/diagnostics/runtime",
+    ),
     deep
       ? fetchJson(options.apiBaseUrl, "/session", 5_000)
       : Promise.resolve(null),
@@ -822,24 +1010,31 @@ async function writeArtifacts(
   return { jsonPath, markdownPath };
 }
 
-async function main(): Promise<void> {
-  if (hasFlag("help")) {
-    console.log([
-      "Usage: pnpm --filter @workspace/scripts run pyrus:performance-monitor -- [options]",
+function printUsage(): void {
+  console.log(
+    [
+      USAGE,
       "",
       "Options:",
       "  --seconds=900",
       "  --interval-ms=5000",
       "  --deep-interval-ms=30000",
-      "  --frontend-url=http://127.0.0.1:18747/",
-      "  --api-base-url=http://127.0.0.1:8080/api",
+      `  --frontend-url=${DEFAULT_FRONTEND_URL}`,
+      `  --api-base-url=${DEFAULT_API_BASE_URL}`,
       "  --output-dir=scripts/reports/pyrus-performance-monitor/<timestamp>",
       "  --json-only",
-    ].join("\n"));
+    ].join("\n"),
+  );
+}
+
+async function main(): Promise<void> {
+  const argv = process.argv.slice(2);
+  const options = parseOptions(argv);
+  if (argv.includes("--help") || argv.includes("-h")) {
+    printUsage();
     return;
   }
 
-  const options = parseOptions();
   endpointStats.clear();
   const processes = await discoverProcesses();
   const startedAtMs = Date.now();
@@ -855,9 +1050,9 @@ async function main(): Promise<void> {
       [
         `[monitor] ${Math.round(sample.elapsedMs / 1_000)}s`,
         `samples=${samples.length}`,
-        `apiP95=${String(apiMetrics["p95LatencyMs"] ?? "n/a")}ms`,
-        `rss=${String(apiMetrics["rssMb"] ?? "n/a")}MB`,
-        `pressure=${String(resourceMetrics["pressureLevel"] ?? "n/a")}`,
+        `apiP95=${safeText(apiMetrics["p95LatencyMs"] ?? "n/a")}ms`,
+        `rss=${safeText(apiMetrics["rssMb"] ?? "n/a")}MB`,
+        `pressure=${safeText(resourceMetrics["pressureLevel"] ?? "n/a")}`,
       ].join(" "),
     );
     const waitMs = dueAt + options.intervalMs - Date.now();
@@ -866,10 +1061,7 @@ async function main(): Promise<void> {
     }
   }
 
-  const events = samples[0]?.at
-    ? await collectDiagnosticsEvents(options.apiBaseUrl, samples[0].at).catch(() => [])
-    : [];
-  const report = buildReport(samples, events);
+  const report = buildReport(samples);
   const artifacts = await writeArtifacts(options, samples, report);
   console.log(JSON.stringify({
     verdict: report.verdict,
@@ -879,10 +1071,22 @@ async function main(): Promise<void> {
   }, null, 2));
 }
 
-const invokedPath = process.argv[1] ? pathToFileURL(path.resolve(process.argv[1])).href : "";
+const invokedPath = process.argv[1]
+  ? pathToFileURL(path.resolve(process.argv[1])).href
+  : "";
+export const __pyrusPerformanceMonitorInternalsForTests = {
+  errorMessage,
+  fetchJson,
+  isDeepSample,
+  parseOptions,
+  readResponseText,
+  resetEndpointStats: () => endpointStats.clear(),
+  runtimeDiagnosticsPath,
+};
+
 if (import.meta.url === invokedPath) {
   main().catch((error) => {
-    console.error(error);
+    console.error(errorMessage(error));
     process.exitCode = 1;
   });
 }
