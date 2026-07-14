@@ -1,3 +1,11 @@
+import path from "node:path";
+import { pathToFileURL } from "node:url";
+import {
+  isDeepStrictEqual,
+  parseArgs as parseNodeArgs,
+  stripVTControlCharacters,
+} from "node:util";
+
 import { pool } from "@workspace/db";
 
 import {
@@ -21,8 +29,6 @@ type ExitRow = {
   event_payload: unknown;
   order_id: string | null;
   order_payload: unknown;
-  event_has_outcome: boolean;
-  order_has_outcome: boolean | null;
 };
 
 type OptionContractIdentity = {
@@ -33,33 +39,100 @@ type OptionContractIdentity = {
   optionTicker: string | null;
 };
 
-function argValue(name: string): string | null {
-  const prefix = `${name}=`;
-  const inline = process.argv.slice(2).find((arg) => arg.startsWith(prefix));
-  if (inline) return inline.slice(prefix.length);
-  const index = process.argv.indexOf(name);
-  return index >= 0 ? process.argv[index + 1] ?? null : null;
+const DEFAULT_FROM = "2026-05-22";
+const DEFAULT_TO = "2026-07-07";
+const OPTION_BAR_LIMIT = 5_000;
+// ponytail: keep this one-shot utility bounded; keyset-page by occurred_at/id
+// if bulk-history enrichment becomes a requirement.
+const MAX_EXIT_ROWS = 10_000;
+const MAX_DIAGNOSTIC_LENGTH = 500;
+const UNSAFE_OUTPUT_PATTERN =
+  /[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/gu;
+const USAGE = `Usage:
+  pnpm --filter @workspace/scripts exec tsx ./src/shadow-options-post-exit-enrich.ts [--from=YYYY-MM-DD] [--to=YYYY-MM-DD]`;
+const POST_EXIT_OUTCOME_NUMBER_FIELDS = [
+  "highPrice",
+  "lowPrice",
+  "lastClose",
+  "highVsExitPct",
+  "lastVsExitPct",
+] as const;
+const POST_EXIT_OUTCOME_DATE_FIELDS = ["highAt", "lowAt", "lastAt"] as const;
+const POST_EXIT_OUTCOME_BOOLEAN_FIELDS = [
+  "recoveredEntry",
+  "reachedTwentyFivePctGain",
+  "reachedFiftyPctGain",
+  "finalAboveExit",
+  "finalAboveEntry",
+] as const;
+
+function errorMessage(error: unknown): string {
+  const raw = error instanceof Error ? error.message : String(error);
+  const withoutCredentials = raw
+    .replace(/([a-z][a-z0-9+.-]*:\/\/)[^@\s]+@/giu, "$1[redacted]@")
+    .replace(
+      /([?&](?:api[_-]?key|access[_-]?token|token|password|secret)=)[^&#\s]*/giu,
+      "$1[redacted]",
+    );
+  const cleaned = stripVTControlCharacters(withoutCredentials)
+    .replace(UNSAFE_OUTPUT_PATTERN, " ")
+    .replace(/\s+/gu, " ")
+    .trim();
+  const diagnostic = cleaned || "Unknown post-exit enrichment error";
+  if (diagnostic.length <= MAX_DIAGNOSTIC_LENGTH) return diagnostic;
+  return `${diagnostic.slice(0, MAX_DIAGNOSTIC_LENGTH - 1)}…`;
 }
 
-function parseBoundary(value: string | null, fallback: string, endOfDay: boolean) {
+function parseBoundary(
+  value: string | undefined,
+  fallback: string,
+  endOfDay: boolean,
+) {
   const source = value ?? fallback;
-  const normalized = /^\d{4}-\d{2}-\d{2}$/.test(source)
-    ? `${source}T${endOfDay ? "23:59:59.999" : "00:00:00.000"}Z`
-    : source;
+  if (!/^\d{4}-\d{2}-\d{2}$/u.test(source)) {
+    throw new Error("Date boundaries must use canonical YYYY-MM-DD values.");
+  }
+  const normalized = `${source}T${endOfDay ? "23:59:59.999" : "00:00:00.000"}Z`;
   const parsed = new Date(normalized);
-  if (Number.isNaN(parsed.getTime())) {
+  if (
+    Number.isNaN(parsed.getTime()) ||
+    parsed.toISOString().slice(0, 10) !== source
+  ) {
     throw new Error(`Invalid date boundary: ${source}`);
   }
   return parsed;
 }
 
-function readConfig(): Config {
-  const from = parseBoundary(argValue("--from"), "2026-05-22", false);
-  const to = parseBoundary(argValue("--to"), "2026-07-07", true);
-  if (from.getTime() > to.getTime()) {
-    throw new Error("--from must be at or before --to");
+function readConfig(argv: string[] = process.argv.slice(2)): Config {
+  try {
+    const parsed = parseNodeArgs({
+      args: argv[0] === "--" ? argv.slice(1) : argv,
+      allowPositionals: false,
+      strict: true,
+      tokens: true,
+      options: {
+        from: { type: "string" },
+        to: { type: "string" },
+      },
+    });
+    const counts = new Map<string, number>();
+    for (const token of parsed.tokens) {
+      if (token.kind !== "option") continue;
+      counts.set(token.name, (counts.get(token.name) ?? 0) + 1);
+    }
+    if ([...counts.values()].some((count) => count > 1)) {
+      throw new Error("Duplicate options are not allowed.");
+    }
+
+    const from = parseBoundary(parsed.values.from, DEFAULT_FROM, false);
+    const to = parseBoundary(parsed.values.to, DEFAULT_TO, true);
+    if (from.getTime() > to.getTime()) {
+      throw new Error("--from must be at or before --to");
+    }
+    return { from, to };
+  } catch (error) {
+    throw new Error(`${USAGE}\n${errorMessage(error)}`);
   }
-  return { from, to };
 }
 
 function asRecord(value: unknown): JsonRecord {
@@ -73,8 +146,7 @@ function compactString(value: unknown): string | null {
 }
 
 function finiteNumber(value: unknown): number | null {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : null;
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
 function dateOrNull(value: unknown): Date | null {
@@ -94,8 +166,81 @@ function firstRecord(...values: unknown[]): JsonRecord {
   return {};
 }
 
-function optionRight(value: unknown): "call" | "put" {
-  return String(value ?? "").toLowerCase() === "put" ? "put" : "call";
+function isPostExitOutcome(value: unknown): value is JsonRecord {
+  const outcome = asRecord(value);
+  if (
+    typeof outcome.bars !== "number" ||
+    !Number.isSafeInteger(outcome.bars) ||
+    outcome.bars <= 0
+  ) {
+    return false;
+  }
+  for (const field of POST_EXIT_OUTCOME_NUMBER_FIELDS) {
+    const fieldValue = outcome[field];
+    if (
+      fieldValue !== null &&
+      (typeof fieldValue !== "number" || !Number.isFinite(fieldValue))
+    ) {
+      return false;
+    }
+  }
+  for (const field of POST_EXIT_OUTCOME_DATE_FIELDS) {
+    const fieldValue = outcome[field];
+    if (fieldValue === null) continue;
+    if (typeof fieldValue !== "string") return false;
+    const parsed = new Date(fieldValue);
+    if (Number.isNaN(parsed.getTime()) || parsed.toISOString() !== fieldValue) {
+      return false;
+    }
+  }
+  return POST_EXIT_OUTCOME_BOOLEAN_FIELDS.every(
+    (field) => typeof outcome[field] === "boolean",
+  );
+}
+
+function existingOutcome(
+  payload: unknown,
+  label: "event" | "order",
+): JsonRecord | null {
+  const record = asRecord(payload);
+  if (
+    !Object.hasOwn(record, "postExitOutcome") ||
+    record.postExitOutcome == null
+  ) {
+    return null;
+  }
+  const outcome = record.postExitOutcome;
+  if (!isPostExitOutcome(outcome)) {
+    throw new Error(`Invalid existing post-exit outcome in ${label} payload.`);
+  }
+  return outcome;
+}
+
+function selectExistingOutcome(row: ExitRow) {
+  const eventOutcome = existingOutcome(row.event_payload, "event");
+  const orderOutcome = row.order_id
+    ? existingOutcome(row.order_payload, "order")
+    : null;
+  if (
+    eventOutcome &&
+    orderOutcome &&
+    !isDeepStrictEqual(eventOutcome, orderOutcome)
+  ) {
+    throw new Error(
+      `Conflicting post-exit outcomes for event ${row.event_id} and order ${row.order_id}.`,
+    );
+  }
+  return {
+    outcome: eventOutcome ?? orderOutcome,
+    eventPresent: Boolean(eventOutcome),
+    orderPresent: Boolean(orderOutcome),
+  };
+}
+
+function optionRight(value: unknown): "call" | "put" | null {
+  if (typeof value !== "string") return null;
+  const normalized = value.trim().toLowerCase();
+  return normalized === "call" || normalized === "put" ? normalized : null;
 }
 
 function resolveOptionContract(row: ExitRow): OptionContractIdentity | null {
@@ -114,14 +259,21 @@ function resolveOptionContract(row: ExitRow): OptionContractIdentity | null {
     compactString(row.symbol);
   const expirationDate = dateOrNull(contract.expirationDate ?? contract.expiry);
   const strike = finiteNumber(contract.strike);
-  if (!underlying || !expirationDate || strike == null || strike <= 0) {
+  const right = optionRight(contract.right ?? contract.optionRight);
+  if (
+    !underlying ||
+    !expirationDate ||
+    strike == null ||
+    strike <= 0 ||
+    !right
+  ) {
     return null;
   }
   return {
     underlying,
     expirationDate,
     strike,
-    right: optionRight(contract.right ?? contract.optionRight),
+    right,
     optionTicker:
       compactString(contract.ticker) ??
       compactString(contract.optionTicker) ??
@@ -138,8 +290,19 @@ function exitPriceFromPayload(payload: JsonRecord): number | null {
   return finiteNumber(payload.exitPrice ?? payload.price);
 }
 
-async function loadExitRows(config: Config): Promise<ExitRow[]> {
-  const result = await pool.query<ExitRow>(
+type ExitRowsQuery = (
+  text: string,
+  values: unknown[],
+) => Promise<{ rows: ExitRow[] }>;
+
+const queryExitRows: ExitRowsQuery = async (text, values) =>
+  pool.query<ExitRow>(text, values);
+
+async function loadExitRows(
+  config: Config,
+  query: ExitRowsQuery = queryExitRows,
+): Promise<ExitRow[]> {
+  const result = await query(
     `
       select e.id as event_id,
              e.deployment_id,
@@ -147,64 +310,142 @@ async function loadExitRows(config: Config): Promise<ExitRow[]> {
              e.occurred_at,
              e.payload as event_payload,
              o.id as order_id,
-             o.payload as order_payload,
-             (e.payload ? 'postExitOutcome') as event_has_outcome,
-             case when o.id is null then null else (o.payload ? 'postExitOutcome') end as order_has_outcome
+             o.payload as order_payload
       from execution_events e
       left join shadow_orders o on o.source_event_id = e.id
       where e.event_type = 'signal_options_shadow_exit'
         and e.occurred_at >= $1::timestamptz
         and e.occurred_at <= $2::timestamptz
       order by e.occurred_at asc, e.id asc
+      limit $3
     `,
-    [config.from.toISOString(), config.to.toISOString()],
+    [config.from.toISOString(), config.to.toISOString(), MAX_EXIT_ROWS + 1],
   );
+  if (result.rows.length > MAX_EXIT_ROWS) {
+    throw new Error(
+      `Exit scan exceeded the ${MAX_EXIT_ROWS.toLocaleString("en-US")}-row safety ceiling; narrow --from/--to and retry.`,
+    );
+  }
   return result.rows;
 }
 
-async function updateMissingOutcome(row: ExitRow, outcome: JsonRecord) {
-  const json = JSON.stringify(outcome);
-  const eventUpdate = row.event_has_outcome
-    ? { rowCount: 0 }
-    : await pool.query(
-        `
+async function updateMissingOutcome(
+  row: ExitRow,
+  outcome: JsonRecord,
+  transactionPool: Pick<typeof pool, "connect"> = pool,
+) {
+  const client = await transactionPool.connect();
+  try {
+    await client.query("begin");
+    const lockedEvent = await client.query<{ payload: unknown }>(
+      `
+        select payload
+        from execution_events
+        where id = $1
+        for update
+      `,
+      [row.event_id],
+    );
+    if (lockedEvent.rows.length !== 1) {
+      throw new Error(`Exit event ${row.event_id} no longer exists.`);
+    }
+    const lockedOrder = row.order_id
+      ? await client.query<{ payload: unknown }>(
+          `
+            select payload
+            from shadow_orders
+            where id = $1
+            for update
+          `,
+          [row.order_id],
+        )
+      : null;
+    if (row.order_id && lockedOrder?.rows.length !== 1) {
+      throw new Error(`Shadow order ${row.order_id} no longer exists.`);
+    }
+
+    const existing = selectExistingOutcome({
+      ...row,
+      event_payload: lockedEvent.rows[0]?.payload,
+      order_payload: lockedOrder?.rows[0]?.payload ?? null,
+    });
+    const authoritativeOutcome = existing.outcome ?? outcome;
+    if (!isPostExitOutcome(authoritativeOutcome)) {
+      throw new Error("Refusing to store an invalid post-exit outcome.");
+    }
+    const json = JSON.stringify(authoritativeOutcome);
+    const eventUpdate = existing.eventPresent
+      ? { rowCount: 0 }
+      : await client.query(
+          `
           update execution_events
           set payload = jsonb_set(coalesce(payload, '{}'::jsonb), '{postExitOutcome}', $2::jsonb, true),
               updated_at = now()
           where id = $1
-            and payload->'postExitOutcome' is null
+            and (
+              payload->'postExitOutcome' is null
+              or payload->'postExitOutcome' = 'null'::jsonb
+            )
         `,
-        [row.event_id, json],
-      );
-  const orderUpdate =
-    !row.order_id || row.order_has_outcome
-      ? { rowCount: 0 }
-      : await pool.query(
-          `
+          [row.event_id, json],
+        );
+    if (!existing.eventPresent && eventUpdate.rowCount !== 1) {
+      throw new Error(`Exit event ${row.event_id} changed during enrichment.`);
+    }
+    const orderUpdate =
+      row.order_id && !existing.orderPresent
+        ? await client.query(
+            `
             update shadow_orders
             set payload = jsonb_set(coalesce(payload, '{}'::jsonb), '{postExitOutcome}', $2::jsonb, true),
                 updated_at = now()
             where id = $1
-              and payload->'postExitOutcome' is null
+              and (
+                payload->'postExitOutcome' is null
+                or payload->'postExitOutcome' = 'null'::jsonb
+              )
           `,
-          [row.order_id, json],
-        );
-  return {
-    eventUpdated: eventUpdate.rowCount ?? 0,
-    orderUpdated: orderUpdate.rowCount ?? 0,
-  };
+            [row.order_id, json],
+          )
+        : { rowCount: 0 };
+    if (row.order_id && !existing.orderPresent && orderUpdate.rowCount !== 1) {
+      throw new Error(
+        `Shadow order ${row.order_id} changed during enrichment.`,
+      );
+    }
+    await client.query("commit");
+    return {
+      eventUpdated: eventUpdate.rowCount ?? 0,
+      orderUpdated: orderUpdate.rowCount ?? 0,
+    };
+  } catch (error) {
+    await client.query("rollback").catch(() => undefined);
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
-async function computeOutcomeForRow(row: ExitRow, config: Config) {
+async function computeOutcomeForRow(
+  row: ExitRow,
+  config: Config,
+  getBars: typeof getOptionChartBarsWithDebug = getOptionChartBarsWithDebug,
+) {
   const payload = asRecord(row.event_payload);
   const contract = resolveOptionContract(row);
   const entryPrice = entryPriceFromPayload(payload);
   const exitPrice = exitPriceFromPayload(payload);
-  if (!contract || entryPrice == null || exitPrice == null || exitPrice <= 0) {
+  if (
+    !contract ||
+    entryPrice == null ||
+    entryPrice <= 0 ||
+    exitPrice == null ||
+    exitPrice <= 0
+  ) {
     return { outcome: null, reason: "missing_contract_or_price" };
   }
 
-  const bars = await getOptionChartBarsWithDebug({
+  const bars = await getBars({
     underlying: contract.underlying,
     expirationDate: contract.expirationDate,
     strike: contract.strike,
@@ -214,11 +455,21 @@ async function computeOutcomeForRow(row: ExitRow, config: Config) {
     timeframe: "1m",
     from: row.occurred_at,
     to: config.to,
-    limit: 5_000,
+    limit: OPTION_BAR_LIMIT,
     outsideRth: false,
   });
   if (!bars.bars.length) {
     return { outcome: null, reason: bars.emptyReason ?? "no_option_bars" };
+  }
+  // ponytail: fail closed at the single-page ceiling; paginate with historyCursor
+  // before publishing an outcome when exact long-window coverage is required.
+  if (
+    bars.bars.length >= OPTION_BAR_LIMIT ||
+    bars.debug.capped === true ||
+    bars.debug.complete === false ||
+    bars.historyPage.providerPageLimitReached
+  ) {
+    return { outcome: null, reason: "incomplete_option_bar_coverage" };
   }
 
   const outcome = computeSignalOptionsPostExitOutcomeFromBars({
@@ -249,14 +500,17 @@ async function main() {
   };
 
   for (const row of rows) {
-    if (row.event_has_outcome && (row.order_id == null || row.order_has_outcome)) {
+    const existing = selectExistingOutcome(row);
+    if (
+      existing.eventPresent &&
+      (row.order_id == null || existing.orderPresent)
+    ) {
       summary.alreadyPresent += 1;
       continue;
     }
 
-    const existingOutcome = asRecord(asRecord(row.event_payload).postExitOutcome);
-    const outcomeResult = Object.keys(existingOutcome).length
-      ? { outcome: existingOutcome, reason: null }
+    const outcomeResult = existing.outcome
+      ? { outcome: existing.outcome, reason: null }
       : await computeOutcomeForRow(row, config);
 
     if (!outcomeResult.outcome) {
@@ -279,11 +533,33 @@ async function main() {
   console.log(JSON.stringify(summary, null, 2));
 }
 
-main()
-  .catch((error) => {
-    console.error(error instanceof Error ? error.stack ?? error.message : String(error));
-    process.exitCode = 1;
-  })
-  .finally(async () => {
-    await pool.end();
-  });
+const invokedPath = process.argv[1]
+  ? pathToFileURL(path.resolve(process.argv[1])).href
+  : "";
+
+export const __shadowOptionsPostExitEnrichInternalsForTests = {
+  computeOutcomeForRow,
+  errorMessage,
+  finiteNumber,
+  loadExitRows,
+  optionRight,
+  readConfig,
+  selectExistingOutcome,
+  updateMissingOutcome,
+};
+
+if (import.meta.url === invokedPath) {
+  void main()
+    .catch((error) => {
+      console.error(errorMessage(error));
+      process.exitCode = 1;
+    })
+    .finally(async () => {
+      try {
+        await pool.end();
+      } catch (error) {
+        console.error(errorMessage(error));
+        process.exitCode = 1;
+      }
+    });
+}
