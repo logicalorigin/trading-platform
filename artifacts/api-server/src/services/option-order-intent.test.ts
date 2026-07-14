@@ -27,6 +27,7 @@ const CALL_CONTRACT = {
   sharesPerContract: 100,
   providerContractId: "call-200",
   brokerContractId: "broker-call-200",
+  standardDeliverableVerified: true,
 };
 
 const PUT_CONTRACT = {
@@ -347,6 +348,39 @@ test("equity sells cannot exceed unreserved shares or uncover short calls", () =
     () => validate(sell, state),
     "equity_sell_quantity_exceeds_position",
   );
+  expectHttpCode(
+    () =>
+      validate(
+        equityOrder({ side: "sell", quantity: 1 }),
+        accountState({
+          positions: [
+            equityPosition(200),
+            optionPosition(-1, {
+              ...CALL_CONTRACT,
+              standardDeliverableVerified: false,
+            }),
+          ],
+        }),
+      ),
+    "trading_share_reservation_unverified",
+  );
+  expectHttpCode(
+    () =>
+      validate(
+        equityOrder({ side: "sell", quantity: 1 }),
+        accountState({
+          positions: [
+            equityPosition(200),
+            optionPosition(-1, {
+              ...CALL_CONTRACT,
+              multiplier: 10,
+              sharesPerContract: 10,
+            }),
+          ],
+        }),
+      ),
+    "trading_share_reservation_unverified",
+  );
   assert.doesNotThrow(() => validate({ ...sell, quantity: 40 }, state));
 
   expectHttpCode(
@@ -637,6 +671,22 @@ test("covered-call STO requires explicit intent and unreserved underlying shares
         }),
       ),
     "option_covered_call_insufficient_shares",
+  );
+  expectHttpCode(
+    () =>
+      validate(
+        sto,
+        accountState({
+          positions: [
+            equityPosition(300),
+            optionPosition(-1, {
+              ...CALL_CONTRACT,
+              standardDeliverableVerified: false,
+            }),
+          ],
+        }),
+      ),
+    "trading_share_reservation_unverified",
   );
 });
 

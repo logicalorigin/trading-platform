@@ -73,6 +73,8 @@ export type OptionContractSnapshot = {
   sharesPerContract: number;
   providerContractId?: string | null;
   brokerContractId?: string | null;
+  /** Provider-owned proof that this is an unadjusted 100-share deliverable. */
+  standardDeliverableVerified?: boolean;
 };
 
 export type BrokerAccountSnapshot = {

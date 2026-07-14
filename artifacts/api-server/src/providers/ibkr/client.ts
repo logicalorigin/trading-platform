@@ -123,6 +123,31 @@ export type BrokerageSessionFailure = Readonly<{
   httpStatus?: number;
 }>;
 
+export type IbkrAccountRiskStateSnapshot = {
+  accountId: string;
+  mode: RuntimeMode;
+  positions: BrokerPositionSnapshot[];
+  positionsComplete: true;
+  positionsObservedAt: Date;
+  orders: BrokerOrderSnapshot[];
+  ordersComplete: true;
+  ordersObservedAt: Date;
+  settledCashUsd: number | null;
+  settledCashObservedAt: Date;
+  optionCollateralContractsVerified: boolean;
+  verifiedStandardOptionContractIds: string[];
+};
+
+type IbkrListOrdersInput = {
+  accountId?: string;
+  mode: RuntimeMode;
+  status?: OrderStatus;
+};
+
+type IbkrListOrdersInternalInput = IbkrListOrdersInput & {
+  requireComplete?: boolean;
+};
+
 const IBKR_TO_INTERNAL_TIF: Record<string, TimeInForce> = {
   DAY: "day",
   GTC: "gtc",
@@ -143,6 +168,26 @@ const INTERNAL_TO_IBKR_ORDER_TYPE: Record<OrderType, string> = {
   stop: "STP",
   stop_limit: "STP LMT",
 };
+
+const IBKR_POSITION_PAGE_SIZE = 100;
+const IBKR_MAX_POSITION_PAGES = 100;
+const IBKR_MAX_ORDER_SNAPSHOT_SIZE = 1_000;
+const IBKR_RISK_OPTION_INFO_CONCURRENCY = 4;
+const RISK_WORKING_ORDER_STATUSES = new Set<OrderStatus>([
+  "pending_submit",
+  "pending_cancel",
+  "submitted",
+  "accepted",
+  "partially_filled",
+]);
+
+type IbkrRiskOptionContract = NonNullable<
+  BrokerPositionSnapshot["optionContract"]
+>;
+type IbkrRiskOptionContractCache = Map<
+  number,
+  Promise<IbkrRiskOptionContract>
+>;
 
 export const SNAPSHOT_FIELDS = [
   "31", // last price
@@ -624,6 +669,14 @@ function normalizeOrderStatus(
     return "pending_cancel";
   }
 
+  if (remainingQuantity > 0 && normalized.includes("filled")) {
+    return filledQuantity > 0 ? "partially_filled" : "pending_submit";
+  }
+
+  if (filledQuantity > 0 && remainingQuantity > 0) {
+    return "partially_filled";
+  }
+
   if (normalized.includes("filled")) {
     return "filled";
   }
@@ -640,10 +693,6 @@ function normalizeOrderStatus(
     return "rejected";
   }
 
-  if (filledQuantity > 0 && remainingQuantity > 0) {
-    return "partially_filled";
-  }
-
   if (normalized.includes("pendingsubmit")) {
     return "pending_submit";
   }
@@ -657,6 +706,49 @@ function normalizeOrderStatus(
   }
 
   return "pending_submit";
+}
+
+function hasRecognizedOrderStatus(
+  value: string | null,
+  filledQuantity: number,
+  remainingQuantity: number,
+): boolean {
+  if (filledQuantity > 0 && remainingQuantity > 0) {
+    return true;
+  }
+  const normalized = normalizeMetricKey(value ?? "");
+  return [
+    "pendingcancel",
+    "precancelled",
+    "filled",
+    "cancel",
+    "expire",
+    "reject",
+    "inactive",
+    "pendingsubmit",
+    "apipending",
+    "accepted",
+    "working",
+    "submitted",
+    "presubmitted",
+  ].some((status) => normalized.includes(status));
+}
+
+function hasRecognizedOrderType(value: string | null): boolean {
+  return [
+    "mkt",
+    "market",
+    "lmt",
+    "limit",
+    "stp",
+    "stop",
+    "stplmt",
+    "stoplimit",
+  ].includes(normalizeMetricKey(value ?? ""));
+}
+
+function hasRecognizedTimeInForce(value: string | null): boolean {
+  return Object.hasOwn(IBKR_TO_INTERNAL_TIF, value?.trim().toUpperCase() ?? "");
 }
 
 type IbkrOrderMutationEvidence = {
@@ -773,7 +865,10 @@ function parseIbkrWhatIf(payload: unknown): OrderPreviewSnapshot["whatIf"] {
 function parseOptionDetails(
   record: Record<string, unknown>,
 ): BrokerPositionSnapshot["optionContract"] {
-  const providerContractId = asString(record["conid"]);
+  const providerContractId = firstDefined(
+    asString(record["conid"]),
+    asString(record["con_id"]),
+  );
   const underlying =
     firstDefined(
       asString(record["ticker"]),
@@ -781,7 +876,11 @@ function parseOptionDetails(
       asString(record["symbol"]),
     ) ?? null;
   const expirationDate = toDate(
-    firstDefined(record["expiry"], record["maturityDate"]),
+    firstDefined(
+      record["expiry"],
+      record["maturityDate"],
+      record["maturity_date"],
+    ),
   );
   const strike =
     firstDefined(asNumber(record["strike"]), asNumber(record["strikePrice"])) ??
@@ -795,16 +894,23 @@ function parseOptionDetails(
     return null;
   }
 
-  const description = asString(record["contractDesc"]);
+  const description = firstDefined(
+    asString(record["contractDesc"]),
+    asString(record["contract_desc"]),
+  );
   const bracketMatch = description?.match(
     /\[([A-Z0-9 ]+\d{6}[CP]\d+)\s+\d+\]$/,
   );
+  const localSymbol = firstDefined(
+    asString(record["localSymbol"]),
+    asString(record["local_symbol"]),
+  );
   const ticker =
     bracketMatch?.[1]?.replace(/\s+/g, "") ??
-    asString(record["localSymbol"]) ??
+    localSymbol ??
     `${underlying}-${expirationDate.toISOString().slice(0, 10)}-${right}-${strike}`;
 
-  return {
+  const contract = {
     ticker,
     underlying: normalizeSymbol(underlying),
     expirationDate,
@@ -814,6 +920,70 @@ function parseOptionDetails(
     sharesPerContract: multiplier,
     providerContractId,
   };
+  return {
+    ...contract,
+    standardDeliverableVerified: isStandardIbkrOptionDeliverable(
+      record,
+      contract,
+    ),
+  };
+}
+
+function isStandardIbkrOptionDeliverable(
+  record: Record<string, unknown>,
+  contract: NonNullable<BrokerPositionSnapshot["optionContract"]>,
+): boolean {
+  // ponytail: this proof deliberately stops at exact, unadjusted OCC
+  // 100-share metadata. Replace it with explicit deliverable components if
+  // IBKR exposes cash/stock deliverables for adjusted contracts.
+  const localSymbol = firstDefined(
+    asString(record["localSymbol"]),
+    asString(record["local_symbol"]),
+  )?.toUpperCase();
+  const occ = localSymbol?.match(/^([A-Z0-9. ]{1,6})(\d{6})([CP])(\d{8})$/u);
+  const tradingClass = normalizeSymbol(
+    firstDefined(
+      asString(record["tradingClass"]),
+      asString(record["trading_class"]),
+    ) ?? "",
+  );
+  const securityType = firstDefined(
+    asString(record["secType"]),
+    asString(record["assetClass"]),
+    asString(record["instrument_type"]),
+  )?.toUpperCase();
+  const currency = asString(record["currency"])?.toUpperCase();
+  const clarificationKeys = [
+    "contractClarificationType",
+    "contract_clarification_type",
+  ] as const;
+  const unadjusted = clarificationKeys.some(
+    (key) => Object.hasOwn(record, key) && record[key] === null,
+  );
+  if (
+    !occ ||
+    securityType !== "OPT" ||
+    currency !== "USD" ||
+    !unadjusted ||
+    asNumber(record["multiplier"]) !== 100 ||
+    contract.multiplier !== 100 ||
+    contract.sharesPerContract !== 100 ||
+    !contract.providerContractId
+  ) {
+    return false;
+  }
+
+  const occUnderlying = normalizeSymbol(occ[1].replace(/\s+/gu, ""));
+  const occExpiration = `20${occ[2].slice(0, 2)}-${occ[2].slice(2, 4)}-${occ[2].slice(4, 6)}`;
+  const occRight = occ[3] === "C" ? "call" : "put";
+  const occStrike = Number(occ[4]) / 1_000;
+  return (
+    occUnderlying === contract.underlying &&
+    tradingClass === contract.underlying &&
+    occExpiration === contract.expirationDate.toISOString().slice(0, 10) &&
+    occRight === contract.right &&
+    occStrike === contract.strike
+  );
 }
 
 function normalizeIvFromPercent(value: unknown): number | null {
@@ -2008,113 +2178,288 @@ export class IbkrClient {
     );
   }
 
+  private getRiskOptionContract(
+    conid: number,
+    cache: IbkrRiskOptionContractCache,
+  ): Promise<IbkrRiskOptionContract> {
+    const cached = cache.get(conid);
+    if (cached) {
+      return cached;
+    }
+
+    const pending = this.request<unknown>(
+      `/iserver/contract/${encodeURIComponent(String(conid))}/info`,
+    ).then((payload) => {
+      const record = asRecord(payload);
+      const returnedConid = firstDefined(
+        asNumber(record?.["conid"]),
+        asNumber(record?.["con_id"]),
+      );
+      const assetClass = normalizeAssetClass(
+        firstDefined(
+          asString(record?.["secType"]),
+          asString(record?.["assetClass"]),
+          asString(record?.["instrument_type"]),
+        ),
+      );
+      const maturity = firstDefined(
+        asString(record?.["expiry"]),
+        asString(record?.["maturityDate"]),
+        asString(record?.["maturity_date"]),
+      );
+      const multiplier = asNumber(record?.["multiplier"]);
+      const optionContract = record ? parseOptionDetails(record) : null;
+      const expectedExpiration = maturity?.match(/^\d{8}$/u)
+        ? `${maturity.slice(0, 4)}-${maturity.slice(4, 6)}-${maturity.slice(6, 8)}`
+        : null;
+
+      if (
+        returnedConid !== conid ||
+        !Number.isSafeInteger(returnedConid) ||
+        assetClass !== "option" ||
+        multiplier === null ||
+        multiplier <= 0 ||
+        !expectedExpiration ||
+        !optionContract ||
+        optionContract.providerContractId !== String(conid) ||
+        optionContract.expirationDate.toISOString().slice(0, 10) !==
+          expectedExpiration
+      ) {
+        throw new HttpError(
+          502,
+          "IBKR returned invalid option contract details.",
+          {
+            code: "ibkr_option_contract_info_invalid",
+            expose: false,
+          },
+        );
+      }
+
+      return optionContract;
+    });
+    cache.set(conid, pending);
+    return pending;
+  }
+
+  private async hydrateRiskOptionContracts(
+    records: Record<string, unknown>[],
+    cache: IbkrRiskOptionContractCache,
+  ): Promise<Map<number, IbkrRiskOptionContract>> {
+    const conids = Array.from(
+      new Set(
+        records.flatMap((record) => {
+          const assetClass = normalizeAssetClass(
+            firstDefined(
+              asString(record["secType"]),
+              asString(record["assetClass"]),
+            ),
+          );
+          const conid = firstDefined(
+            asNumber(record["conid"]),
+            asNumber(record["con_id"]),
+            asNumber(record["conidex"]),
+          );
+          return assetClass === "option" &&
+            conid !== null &&
+            conid > 0 &&
+            Number.isSafeInteger(conid)
+            ? [conid]
+            : [];
+        }),
+      ),
+    );
+    const contracts = await mapWithConcurrency(
+      conids,
+      IBKR_RISK_OPTION_INFO_CONCURRENCY,
+      async (conid) =>
+        [conid, await this.getRiskOptionContract(conid, cache)] as const,
+    );
+    return new Map(contracts);
+  }
+
   private async listAccountPositions(
     accountId: string,
+    requireComplete = false,
+    riskOptionContractCache: IbkrRiskOptionContractCache = new Map(),
   ): Promise<BrokerPositionSnapshot[]> {
     this.assertPaperAccounts([accountId]);
     const positions: BrokerPositionSnapshot[] = [];
+    const seenPositionIds = new Set<string>();
     let pageId = 0;
 
-    while (pageId < 20) {
+    while (pageId < IBKR_MAX_POSITION_PAGES) {
       const payload = await this.request<unknown>(
-        `/portfolio/${encodeURIComponent(accountId)}/positions/${pageId}`,
+        requireComplete
+          ? `/portfolio2/${encodeURIComponent(accountId)}/positions`
+          : `/portfolio/${encodeURIComponent(accountId)}/positions/${pageId}`,
       );
+      const rawPage = Array.isArray(payload) ? payload : null;
       const page = compact(asArray(payload).map(asRecord));
 
-      if (page.length === 0) {
-        break;
+      if (
+        requireComplete &&
+        (!rawPage || rawPage.length !== page.length)
+      ) {
+        throw new HttpError(502, "IBKR returned invalid position evidence.", {
+          code: "ibkr_positions_snapshot_invalid",
+          expose: false,
+        });
       }
 
-      positions.push(
-        ...compact(
-          page.map((position) => {
-            const providerSecurityType =
-              firstDefined(
-                asString(position["secType"]),
-                asString(position["assetClass"]),
-              ) ?? null;
-            const assetClass = normalizeAssetClass(
-              firstDefined(
-                asString(position["assetClass"]),
-                asString(position["secType"]),
-              ),
-            );
-            const quantity = asNumber(position["position"]);
+      if (page.length === 0) {
+        return positions;
+      }
 
-            if (!assetClass || quantity === null) {
-              return null;
-            }
+      const riskOptionContracts = requireComplete
+        ? await this.hydrateRiskOptionContracts(
+            page,
+            riskOptionContractCache,
+          )
+        : new Map<number, IbkrRiskOptionContract>();
 
-            const optionContract =
-              assetClass === "option" ? parseOptionDetails(position) : null;
-            const symbol =
-              assetClass === "option"
-                ? (optionContract?.underlying ??
-                  normalizeSymbol(asString(position["ticker"]) ?? ""))
-                : normalizeSymbol(
-                    firstDefined(
-                      asString(position["ticker"]),
-                      asString(position["contractDesc"]),
-                      asString(position["description"]),
-                    ) ?? "",
-                  );
+      const normalizedPage = compact(
+        page.map((position) => {
+          const providerConid = firstDefined(
+            asNumber(position["conid"]),
+            asNumber(position["con_id"]),
+          );
+          const providerContractId =
+            providerConid === null ? null : String(providerConid);
+          const positionAccountId = firstDefined(
+            asString(position["acctId"]),
+            asString(position["accountId"]),
+          );
+          const providerSecurityType =
+            firstDefined(
+              asString(position["secType"]),
+              asString(position["assetClass"]),
+            ) ?? null;
+          const assetClass = normalizeAssetClass(
+            firstDefined(
+              asString(position["assetClass"]),
+              asString(position["secType"]),
+            ),
+          );
+          const quantity = asNumber(position["position"]);
 
-            if (!symbol) {
-              return null;
-            }
+          if (
+            !assetClass ||
+            quantity === null ||
+            (requireComplete &&
+              (!providerContractId ||
+                providerConid === null ||
+                providerConid <= 0 ||
+                !Number.isSafeInteger(providerConid) ||
+                (positionAccountId !== null &&
+                  positionAccountId !== accountId)))
+          ) {
+            return null;
+          }
 
-            const averagePrice =
-              firstDefined(
-                asNumber(position["avgPrice"]),
-                asNumber(position["avgCost"]),
-              ) ?? 0;
-            const marketPrice =
-              firstDefined(
-                asNumber(position["mktPrice"]),
-                asNumber(position["marketPrice"]),
-              ) ?? averagePrice;
-            const multiplier = optionContract?.sharesPerContract ?? 1;
-            const marketValue =
-              firstDefined(
-                asNumber(position["mktValue"]),
-                asNumber(position["marketValue"]),
-              ) ?? marketPrice * quantity * multiplier;
-            const unrealizedPnl =
-              firstDefined(
-                asNumber(position["unrealizedPnl"]),
-                asNumber(position["unrealized_pnl"]),
-              ) ?? 0;
-            const denominator =
-              Math.abs(averagePrice * quantity * multiplier) ||
-              Math.abs(marketValue) ||
-              1;
+          const optionContract =
+            assetClass === "option"
+              ? requireComplete
+                ? providerConid === null
+                  ? null
+                  : riskOptionContracts.get(providerConid) ?? null
+                : parseOptionDetails(position)
+              : null;
+          if (requireComplete && assetClass === "option" && !optionContract) {
+            return null;
+          }
+          const symbol =
+            assetClass === "option"
+              ? (optionContract?.underlying ??
+                normalizeSymbol(asString(position["ticker"]) ?? ""))
+              : normalizeSymbol(
+                  firstDefined(
+                    asString(position["ticker"]),
+                    asString(position["contractDesc"]),
+                    asString(position["description"]),
+                  ) ?? "",
+                );
 
-            return {
-              id: `${accountId}:${asString(position["conid"]) ?? symbol}`,
-              accountId,
-              symbol,
-              assetClass,
-              providerSecurityType,
-              quantity,
-              averagePrice,
-              marketPrice,
-              marketValue,
-              unrealizedPnl,
-              unrealizedPnlPercent: (unrealizedPnl / denominator) * 100,
-              optionContract,
-            };
-          }),
-        ),
+          if (!symbol) {
+            return null;
+          }
+
+          const averagePrice =
+            firstDefined(
+              asNumber(position["avgPrice"]),
+              asNumber(position["avgCost"]),
+            ) ?? 0;
+          const marketPrice =
+            firstDefined(
+              asNumber(position["mktPrice"]),
+              asNumber(position["marketPrice"]),
+            ) ?? averagePrice;
+          const multiplier = optionContract?.sharesPerContract ?? 1;
+          const marketValue =
+            firstDefined(
+              asNumber(position["mktValue"]),
+              asNumber(position["marketValue"]),
+            ) ?? marketPrice * quantity * multiplier;
+          const unrealizedPnl =
+            firstDefined(
+              asNumber(position["unrealizedPnl"]),
+              asNumber(position["unrealized_pnl"]),
+            ) ?? 0;
+          const denominator =
+            Math.abs(averagePrice * quantity * multiplier) ||
+            Math.abs(marketValue) ||
+            1;
+
+          return {
+            id: `${accountId}:${providerContractId ?? symbol}`,
+            accountId,
+            symbol,
+            assetClass,
+            providerSecurityType,
+            quantity,
+            averagePrice,
+            marketPrice,
+            marketValue,
+            unrealizedPnl,
+            unrealizedPnlPercent: (unrealizedPnl / denominator) * 100,
+            optionContract,
+          };
+        }),
       );
+      if (requireComplete && normalizedPage.length !== page.length) {
+        throw new HttpError(502, "IBKR returned invalid position evidence.", {
+          code: "ibkr_positions_snapshot_invalid",
+          expose: false,
+        });
+      }
+      if (
+        requireComplete &&
+        (new Set(normalizedPage.map((position) => position.id)).size !==
+          normalizedPage.length ||
+          normalizedPage.some((position) => seenPositionIds.has(position.id)))
+      ) {
+        throw new HttpError(502, "IBKR returned duplicate position evidence.", {
+          code: "ibkr_positions_snapshot_invalid",
+          expose: false,
+        });
+      }
+      normalizedPage.forEach((position) => seenPositionIds.add(position.id));
+      positions.push(...normalizedPage);
 
-      if (page.length < 100) {
-        break;
+      if (requireComplete) {
+        return positions;
+      }
+
+      if (page.length < IBKR_POSITION_PAGE_SIZE) {
+        return positions;
       }
 
       pageId += 1;
     }
 
-    return positions;
+    throw new HttpError(502, "IBKR position paging did not terminate.", {
+      code: "ibkr_positions_snapshot_incomplete",
+      expose: false,
+    });
   }
 
   async listPositions(input: {
@@ -2140,11 +2485,14 @@ export class IbkrClient {
     return positions.flat();
   }
 
-  async listOrders(input: {
-    accountId?: string;
-    mode: RuntimeMode;
-    status?: OrderStatus;
-  }): Promise<BrokerOrderSnapshot[]> {
+  async listOrders(input: IbkrListOrdersInput): Promise<BrokerOrderSnapshot[]> {
+    return this.listOrdersInternal(input, new Map());
+  }
+
+  private async listOrdersInternal(
+    input: IbkrListOrdersInternalInput,
+    riskOptionContractCache: IbkrRiskOptionContractCache,
+  ): Promise<BrokerOrderSnapshot[]> {
     const tradingAccounts = await this.getTradingAccountsInfo();
     const accountIds = input.accountId
       ? [input.accountId]
@@ -2175,10 +2523,71 @@ export class IbkrClient {
         },
       );
       const record = asRecord(payload);
+      const rawOrders = Array.isArray(record?.["orders"])
+        ? (record["orders"] as unknown[])
+        : null;
+      if (
+        input.requireComplete === true &&
+        (strictBoolean(record?.["snapshot"]) !== true ||
+          !rawOrders ||
+          rawOrders.length >= IBKR_MAX_ORDER_SNAPSHOT_SIZE)
+      ) {
+        throw new HttpError(502, "IBKR order evidence is incomplete.", {
+          code: "ibkr_orders_snapshot_incomplete",
+          expose: false,
+        });
+      }
+      // IBKR calls this its live-order snapshot and documents working orders
+      // as members, while the same reference also describes the response as
+      // day-scoped. A forced snapshot below the hard 1000-row cap is the
+      // provider proof used here; capped or non-snapshot evidence fails shut.
+      const orderRows = rawOrders ?? asArray(record?.["orders"]);
+      const riskOrderRecords = compact(orderRows.map(asRecord)).filter(
+        (order) => {
+          const filledQuantity = firstDefined(
+            asNumber(order["filledQuantity"]),
+            asNumber(order["filled_quantity"]),
+          );
+          const remainingQuantity = firstDefined(
+            asNumber(order["remainingQuantity"]),
+            asNumber(order["remaining_quantity"]),
+          );
+          const statusValue = firstDefined(
+            asString(order["order_ccp_status"]),
+            asString(order["status"]),
+          );
+          return (
+            filledQuantity !== null &&
+            remainingQuantity !== null &&
+            hasRecognizedOrderStatus(
+              statusValue,
+              filledQuantity,
+              remainingQuantity,
+            ) &&
+            RISK_WORKING_ORDER_STATUSES.has(
+              normalizeOrderStatus(
+                statusValue,
+                filledQuantity,
+                remainingQuantity,
+              ),
+            )
+          );
+        },
+      );
+      const riskOptionContracts =
+        input.requireComplete === true
+          ? await this.hydrateRiskOptionContracts(
+              riskOrderRecords,
+              riskOptionContractCache,
+            )
+          : new Map<number, IbkrRiskOptionContract>();
+      let invalidOrderEvidence = false;
+      const seenOrderIds = new Set<string>();
       const orders = compact(
-        asArray(record?.["orders"]).map((order) => {
+        orderRows.map((order) => {
           const raw = asRecord(order);
           if (!raw) {
+            invalidOrderEvidence = true;
             return null;
           }
 
@@ -2196,33 +2605,110 @@ export class IbkrClient {
             remainingQuantity === null ||
             remainingQuantity < 0
           ) {
+            invalidOrderEvidence = true;
             return null;
           }
+          const statusValue = firstDefined(
+            asString(raw["order_ccp_status"]),
+            asString(raw["status"]),
+          );
           const status = normalizeOrderStatus(
-            firstDefined(
-              asString(raw["order_ccp_status"]),
-              asString(raw["status"]),
-            ),
+            statusValue,
             filledQuantity,
             remainingQuantity,
           );
+          const recognizedStatus = hasRecognizedOrderStatus(
+            statusValue,
+            filledQuantity,
+            remainingQuantity,
+          );
+          if (input.requireComplete === true && !recognizedStatus) {
+            invalidOrderEvidence = true;
+            return null;
+          }
+          if (
+            input.requireComplete === true &&
+            !RISK_WORKING_ORDER_STATUSES.has(status)
+          ) {
+            return null;
+          }
           const providerConid = firstDefined(
             asNumber(raw["conid"]),
             asNumber(raw["conidex"]),
           );
+          const orderId = firstDefined(
+            asString(raw["orderId"]),
+            asString(raw["order_id"]),
+          );
+          const orderAccountId = firstDefined(
+            asString(raw["acct"]),
+            asString(raw["account"]),
+            accountId,
+          );
+          const rawSide = asString(raw["side"]);
+          const rawOrderType = firstDefined(
+            asString(raw["origOrderType"]),
+            asString(raw["orderType"]),
+          );
+          const orderType = normalizeOrderType(rawOrderType);
+          const rawTimeInForce = asString(raw["timeInForce"]);
+          const quantity = firstDefined(
+            asNumber(raw["totalSize"]),
+            asNumber(raw["size"]),
+            asNumber(raw["quantity"]),
+          );
+          const assetClass = normalizeAssetClass(
+            firstDefined(asString(raw["secType"]), asString(raw["assetClass"])),
+          );
+          const rawSymbol = normalizeSymbol(
+            firstDefined(
+              asString(raw["ticker"]),
+              asString(raw["description1"]),
+              asString(raw["description"]),
+              "",
+            ) ?? "",
+          );
+          const optionContract =
+            assetClass === "option"
+              ? input.requireComplete === true
+                ? providerConid === null
+                  ? null
+                  : riskOptionContracts.get(providerConid) ?? null
+                : parseOptionDetails(raw)
+              : null;
+          const symbol =
+            assetClass === "option"
+              ? (optionContract?.underlying ?? rawSymbol)
+              : rawSymbol;
+
+          if (
+            input.requireComplete === true &&
+            (!orderId ||
+              seenOrderIds.has(orderId) ||
+              orderAccountId !== accountId ||
+              providerConid === null ||
+              providerConid <= 0 ||
+              !Number.isSafeInteger(providerConid) ||
+              !symbol ||
+              !assetClass ||
+              (rawSide?.trim().toUpperCase() !== "BUY" &&
+                rawSide?.trim().toUpperCase() !== "SELL") ||
+              !hasRecognizedOrderType(rawOrderType) ||
+              !hasRecognizedTimeInForce(rawTimeInForce) ||
+              !recognizedStatus ||
+              quantity === null ||
+              quantity <= 0 ||
+              filledQuantity + remainingQuantity > quantity + 1e-9 ||
+              (assetClass === "option" && !optionContract))
+          ) {
+            invalidOrderEvidence = true;
+            return null;
+          }
+          if (orderId) seenOrderIds.add(orderId);
 
           const mapped: BrokerOrderSnapshot = {
-            id:
-              firstDefined(
-                asString(raw["orderId"]),
-                asString(raw["order_id"]),
-              ) ?? randomUUID(),
-            accountId:
-              firstDefined(
-                asString(raw["acct"]),
-                asString(raw["account"]),
-                accountId,
-              ) ?? accountId,
+            id: orderId ?? randomUUID(),
+            accountId: orderAccountId ?? accountId,
             clientOrderId:
               firstDefined(
                 asString(raw["order_ref"]),
@@ -2231,50 +2717,24 @@ export class IbkrClient {
             providerContractId:
               providerConid === null ? null : String(providerConid),
             mode: input.mode,
-            symbol: normalizeSymbol(
-              firstDefined(
-                asString(raw["ticker"]),
-                asString(raw["description1"]),
-                asString(raw["description"]),
-                "UNKNOWN",
-              ) ?? "UNKNOWN",
-            ),
-            assetClass:
-              normalizeAssetClass(asString(raw["secType"])) ?? "equity",
-            side: normalizeOrderSide(asString(raw["side"])),
-            type: normalizeOrderType(
-              firstDefined(
-                asString(raw["origOrderType"]),
-                asString(raw["orderType"]),
-              ),
-            ),
-            timeInForce: normalizeTimeInForce(asString(raw["timeInForce"])),
+            symbol: symbol || "UNKNOWN",
+            assetClass: assetClass ?? "equity",
+            side: normalizeOrderSide(rawSide),
+            type: orderType,
+            timeInForce: normalizeTimeInForce(rawTimeInForce),
             status,
-            quantity:
-              firstDefined(
-                asNumber(raw["totalSize"]),
-                asNumber(raw["size"]),
-                asNumber(raw["quantity"]),
-              ) ?? 0,
+            quantity: quantity ?? 0,
             filledQuantity,
             limitPrice:
-              normalizeOrderType(
-                firstDefined(
-                  asString(raw["origOrderType"]),
-                  asString(raw["orderType"]),
-                ),
-              ) === "limit"
+              orderType === "limit" || orderType === "stop_limit"
                 ? asNumber(raw["price"])
                 : null,
             stopPrice:
-              normalizeOrderType(
-                firstDefined(
-                  asString(raw["origOrderType"]),
-                  asString(raw["orderType"]),
-                ),
-              ) === "stop"
+              orderType === "stop"
                 ? asNumber(raw["price"])
-                : asNumber(raw["auxPrice"]),
+                : orderType === "stop_limit"
+                  ? asNumber(raw["auxPrice"])
+                  : null,
             placedAt:
               firstDefined(
                 toDate(raw["lastExecutionTime_r"]),
@@ -2285,20 +2745,168 @@ export class IbkrClient {
                 toDate(raw["lastExecutionTime_r"]),
                 toDate(raw["updated_at"]),
               ) ?? new Date(),
-            optionContract:
-              normalizeAssetClass(asString(raw["secType"])) === "option"
-                ? parseOptionDetails(raw)
-                : null,
+            optionContract,
           };
 
           return input.status && mapped.status !== input.status ? null : mapped;
         }),
       );
 
+      if (input.requireComplete === true && invalidOrderEvidence) {
+        throw new HttpError(502, "IBKR returned invalid order evidence.", {
+          code: "ibkr_orders_snapshot_invalid",
+          expose: false,
+        });
+      }
+
       orderLists.push(orders);
     }
 
     return orderLists.flat();
+  }
+
+  async readAccountRiskState(input: {
+    accountId: string;
+    mode: RuntimeMode;
+    selectedOptionContractId?: string | null;
+  }): Promise<IbkrAccountRiskStateSnapshot> {
+    const accountId = input.accountId.trim();
+    if (!accountId) {
+      throw new HttpError(400, "An IBKR account is required.", {
+        code: "ibkr_missing_account_id",
+      });
+    }
+    this.assertPaperAccounts([accountId]);
+    const selectedOptionContractId =
+      asString(input.selectedOptionContractId)?.trim() ?? null;
+    const selectedOptionConid = asNumber(selectedOptionContractId);
+    if (
+      selectedOptionContractId !== null &&
+      (selectedOptionConid === null ||
+        selectedOptionConid <= 0 ||
+        !Number.isSafeInteger(selectedOptionConid) ||
+        String(selectedOptionConid) !== selectedOptionContractId)
+    ) {
+      throw new HttpError(400, "The selected IBKR option contract is invalid.", {
+        code: "ibkr_option_contract_id_invalid",
+        expose: true,
+      });
+    }
+
+    // The portfolio accounts request is the documented preflight for every
+    // /portfolio/{accountId} read and also proves the selected account exists.
+    const portfolioAccounts = await this.getPortfolioAccounts();
+    const portfolioAccount = portfolioAccounts.find(
+      (account) =>
+        firstDefined(
+          asString(account["accountId"]),
+          asString(account["id"]),
+        ) === accountId,
+    );
+    if (!portfolioAccount) {
+      throw new HttpError(404, "The IBKR account was not found.", {
+        code: "ibkr_account_not_found",
+        expose: true,
+      });
+    }
+
+    // Keep these reads sequential so option-contract hydration never exceeds
+    // IBKR's documented five-concurrent-request ceiling. The per-read cache
+    // also makes a conid shared by a position and order hydrate only once.
+    const riskOptionContractCache: IbkrRiskOptionContractCache = new Map();
+    const positionsObservedAt = new Date();
+    const positions = await this.listAccountPositions(
+      accountId,
+      true,
+      riskOptionContractCache,
+    );
+    const positionRead = { positions, observedAt: positionsObservedAt };
+    const ordersObservedAt = new Date();
+    const orders = await this.listOrdersInternal(
+      {
+        accountId,
+        mode: input.mode,
+        requireComplete: true,
+      },
+      riskOptionContractCache,
+    );
+    const orderRead = { orders, observedAt: ordersObservedAt };
+    const selectedOptionContract =
+      selectedOptionConid === null
+        ? null
+        : await this.getRiskOptionContract(
+            selectedOptionConid,
+            riskOptionContractCache,
+          );
+    const settledCashObservedAt = new Date();
+    const cashRead = await Promise.all([
+      this.getAccountSummary(accountId),
+      this.getAccountLedger(accountId),
+    ]).then(([summary, ledger]) => {
+      const usdLedger = asRecord(findCaseInsensitiveValue(ledger ?? {}, "USD"));
+      const baseCurrency = firstDefined(
+        asString(portfolioAccount["currency"]),
+        asString(this.getBaseLedger(ledger)?.["currency"]),
+      )?.toUpperCase();
+      const settledCashUsd = firstDefined(
+        findMetric(usdLedger, ["settledcash"]),
+        baseCurrency === "USD" ? findMetric(summary, ["settledcash"]) : null,
+      );
+      return { settledCashUsd, observedAt: settledCashObservedAt };
+    });
+    const allOptionContracts = [
+      ...(selectedOptionContract ? [selectedOptionContract] : []),
+      ...positionRead.positions.flatMap((position) =>
+        position.optionContract ? [position.optionContract] : [],
+      ),
+      ...orderRead.orders.flatMap((order) =>
+        order.optionContract ? [order.optionContract] : [],
+      ),
+    ];
+    const verifiedStandardOptionContractIds = Array.from(
+      new Set(
+        allOptionContracts.flatMap((contract) =>
+          contract.standardDeliverableVerified === true &&
+          contract.providerContractId
+            ? [contract.providerContractId]
+            : [],
+        ),
+      ),
+    );
+    const collateralContracts = [
+      ...positionRead.positions.flatMap((position) =>
+        position.assetClass === "option" &&
+        position.optionContract?.right === "put" &&
+        position.quantity < 0
+          ? [position.optionContract]
+          : [],
+      ),
+      ...orderRead.orders.flatMap((order) =>
+        RISK_WORKING_ORDER_STATUSES.has(order.status) &&
+        order.assetClass === "option" &&
+        order.side === "sell" &&
+        order.optionContract?.right === "put"
+          ? [order.optionContract]
+          : [],
+      ),
+    ];
+
+    return {
+      accountId,
+      mode: input.mode,
+      positions: positionRead.positions,
+      positionsComplete: true,
+      positionsObservedAt: positionRead.observedAt,
+      orders: orderRead.orders,
+      ordersComplete: true,
+      ordersObservedAt: orderRead.observedAt,
+      settledCashUsd: cashRead.settledCashUsd,
+      settledCashObservedAt: cashRead.observedAt,
+      optionCollateralContractsVerified: collateralContracts.every(
+        (contract) => contract.standardDeliverableVerified === true,
+      ),
+      verifiedStandardOptionContractIds,
+    };
   }
 
   async listExecutions(input: {

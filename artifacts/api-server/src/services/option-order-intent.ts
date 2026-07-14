@@ -22,13 +22,13 @@ export type SingleLegAccountState = {
   positionsComplete?: boolean;
   /** True only after all open-order pages/scopes were read. */
   ordersComplete?: boolean;
-  /** Local completion time of a non-cached broker position read. */
+  /** Conservative local observation bound for a non-cached position read. */
   positionsObservedAt: Date | null;
-  /** Local completion time of a non-cached broker open-order read. */
+  /** Conservative local observation bound for a non-cached open-order read. */
   ordersObservedAt: Date | null;
   /** Raw settled USD cash before this validator's conservative reservations. */
   settledCashUsd?: number | null;
-  /** Local completion time of the broker cash read. */
+  /** Conservative local observation bound for the broker cash read. */
   settledCashObservedAt?: Date | null;
   /** True only when every collateral-bearing put in this exact snapshot was verified. */
   optionCollateralContractsVerified?: boolean;
@@ -208,8 +208,10 @@ function requireValidOptionContract(
     !Number.isFinite(contract.strike) ||
     contract.strike <= 0 ||
     (contract.right !== "call" && contract.right !== "put") ||
+    typeof multiplier !== "number" ||
     !Number.isInteger(multiplier) ||
     multiplier <= 0 ||
+    typeof deliverableShares !== "number" ||
     !Number.isInteger(deliverableShares) ||
     deliverableShares <= 0
   ) {
@@ -609,6 +611,33 @@ function buildEquityShareCapacity(input: {
   workingOrders: readonly BrokerOrderSnapshot[];
 }) {
   const underlying = normalizeSymbol(input.underlying);
+  const unverifiedShortCall = input.positions.some(
+    (position) =>
+      position.assetClass === "option" &&
+      position.optionContract?.right === "call" &&
+      normalizeSymbol(position.optionContract.underlying) === underlying &&
+      Number(position.quantity) < 0 &&
+      (position.optionContract.standardDeliverableVerified !== true ||
+        position.optionContract.multiplier !== 100 ||
+        position.optionContract.sharesPerContract !== 100),
+  );
+  const unverifiedSellCall = input.workingOrders.some(
+    (order) =>
+      order.assetClass === "option" &&
+      order.side === "sell" &&
+      order.optionContract?.right === "call" &&
+      normalizeSymbol(order.optionContract.underlying) === underlying &&
+      (order.optionContract.standardDeliverableVerified !== true ||
+        order.optionContract.multiplier !== 100 ||
+        order.optionContract.sharesPerContract !== 100),
+  );
+  if (unverifiedShortCall || unverifiedSellCall) {
+    rejectIntent(
+      "trading_share_reservation_unverified",
+      "Every call reserving underlying shares must have verified standard deliverables.",
+      { underlying },
+    );
+  }
   const netUnderlyingShares = input.positions
     .filter(
       (position) =>
@@ -981,7 +1010,11 @@ export function validateSingleLegOrderIntent(input: {
   }
 
   const settledCashUsd = input.state.settledCashUsd;
-  if (!Number.isFinite(settledCashUsd) || settledCashUsd < 0) {
+  if (
+    typeof settledCashUsd !== "number" ||
+    !Number.isFinite(settledCashUsd) ||
+    settledCashUsd < 0
+  ) {
     rejectIntent(
       "trading_cash_unavailable",
       "Fresh settled USD cash is required for a cash-secured put.",
