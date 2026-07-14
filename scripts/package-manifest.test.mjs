@@ -43,3 +43,30 @@ test("retired flow-scanner benchmark CLI stays absent", () => {
     false,
   );
 });
+
+test("retired legacy signal-scoring calibration CLIs stay absent", () => {
+  const manifest = JSON.parse(
+    readFileSync(path.join(packageRoot, "package.json"), "utf8"),
+  );
+
+  assert.equal(manifest.scripts["signal-scoring:observation-dump"], undefined);
+  assert.equal(manifest.scripts["signal-scoring:recall-report"], undefined);
+  assert.equal(
+    existsSync(
+      path.join(packageRoot, "src/signal-scoring-observation-dump.ts"),
+    ),
+    false,
+  );
+  assert.equal(
+    existsSync(path.join(packageRoot, "src/signal-scoring-recall-report.ts")),
+    false,
+  );
+  assert.equal(
+    manifest.scripts["signal-calibration:dump"],
+    "tsx ./signal-calibration/observation-dump.ts",
+  );
+  assert.equal(
+    manifest.scripts["signal-calibration:fit"],
+    "tsx ./signal-calibration/calibration-fit.ts",
+  );
+});

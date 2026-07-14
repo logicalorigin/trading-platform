@@ -1,6 +1,6 @@
 # Implementation Plan: Signal Scoring Calibration Rework (score → expected-move mapping)
 
-Status: DRAFT — awaiting user review (Checkpoint 0)
+Status: HISTORICAL — the Task 1/2 `signal-scoring:*` CLIs were retired on 2026-07-14 after the validated `signal-calibration:*` replacement superseded them. See `scripts/signal-calibration/README.md` for current commands.
 Author session: `f890fb57-c850-401d-adab-49ac7c281b3a` (2026-07-03), continuing workstream from `ce6a2d36-08b0-418b-b0b3-9995c8071769`
 Audit source: Fable outside audit (agent `ad4adbe046ad415d6`), verdict "partially on-track" — findings recorded in `SESSION_HANDOFF_2026-07-03_f890fb57-c850-401d-adab-49ac7c281b3a.md`
 

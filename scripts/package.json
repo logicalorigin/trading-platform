@@ -23,8 +23,6 @@
     "pyrus-signals:signal-options-sweep": "tsx ./src/pyrus-signals-options-sweep.ts",
     "signal-options:greek-selector-smoke": "tsx ./src/signal-options-greek-selector-smoke.ts",
     "signal-options:greek-position-diagnostics": "tsx ./src/signal-options-greek-position-diagnostics.ts",
-    "signal-scoring:observation-dump": "tsx ./src/signal-scoring-observation-dump.ts",
-    "signal-scoring:recall-report": "tsx ./src/signal-scoring-recall-report.ts",
     "signal-calibration:dump": "tsx ./signal-calibration/observation-dump.ts",
     "signal-calibration:fit": "tsx ./signal-calibration/calibration-fit.ts",
     "signal-monitor:events-backfill": "tsx ./src/backfill-signal-monitor-events.ts",
