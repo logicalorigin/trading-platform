@@ -1,9 +1,17 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { pathToFileURL } from "node:url";
+import {
+  parseArgs as parseNodeArgs,
+  stripVTControlCharacters,
+} from "node:util";
 import { scoreOptionGreekCandidate } from "@workspace/backtest-core";
-import { pool } from "@workspace/db";
+import {
+  closeDatabaseConnections,
+  pool,
+  sharedAdvisoryLockHolder,
+} from "@workspace/db";
 import {
   runSignalOptionsGreekSelectorSmoke,
   type SignalOptionsGreekSelectorSmokeCandidate,
@@ -11,28 +19,26 @@ import {
 } from "../../artifacts/api-server/src/services/signal-options-automation";
 import { SIGNAL_OPTIONS_WORKER_ADVISORY_LOCK_KEY } from "../../artifacts/api-server/src/services/signal-options-worker";
 import {
+  DEFAULT_GEX_HISTORICAL_GREEKS_TOLERANCE_MS,
   lookupHistoricalGreeks,
-  readGexHistoricalGreeksToleranceMs,
   type GexHistoricalGreeksMatch,
   type HistoricalGreeksLookupResult,
 } from "./gex-historical-greeks";
 
-// The shadow backfill replays historical bars and refuses to run unless bar
-// evaluation is opted in. This smoke is a historical replay, so enable it for
-// this process only. `??=` lets a caller override.
-process.env["PYRUS_SIGNAL_MONITOR_BAR_EVALUATION_ENABLED"] ??= "1";
-
 type DeploymentRow = {
   id: string;
   name: string;
-  mode: "shadow" | "live";
-  symbolUniverse: unknown[];
+  mode: "shadow";
+  enabled: true;
+  providerAccountId: "shadow";
+  config: unknown;
+  symbolUniverse: string[];
 };
 
 type Config = {
   date: string;
-  session: string;
-  signalTimeframe: string;
+  session: "regular" | "all";
+  signalTimeframe: "1m" | "2m" | "5m" | "15m" | "1h" | "1d";
   reportDir: string;
   maxSignals: number | null;
   maxCandidatesPerSignal: number;
@@ -42,6 +48,26 @@ type Config = {
   gexToleranceMs: number;
   lockWaitMs: number;
   progress: boolean;
+  help: boolean;
+};
+
+type RawDeploymentRow = Omit<
+  DeploymentRow,
+  "mode" | "enabled" | "providerAccountId" | "symbolUniverse"
+> & {
+  mode: unknown;
+  enabled: unknown;
+  providerAccountId: unknown;
+  symbolUniverse: unknown;
+};
+
+type SmokeDependencies = {
+  acquireLock: (waitMs: number) => Promise<(() => Promise<void>) | null>;
+  readDeployment: () => Promise<DeploymentRow>;
+  runSmoke: typeof runSignalOptionsGreekSelectorSmoke;
+  applyGex: typeof applyGexHistoricalGreeks;
+  writeReport: typeof writeReport;
+  log: (message: string) => void;
 };
 
 type GreekSourceMetadata =
@@ -54,122 +80,448 @@ type GreekSourceMetadata =
     }
   | {
       source: "bs_reconstruction";
-      reason: Exclude<HistoricalGreeksLookupResult, GexHistoricalGreeksMatch>["reason"];
+      reason: Exclude<
+        HistoricalGreeksLookupResult,
+        GexHistoricalGreeksMatch
+      >["reason"];
     };
 
-type SmokeCandidateWithGreekSource = SignalOptionsGreekSelectorSmokeCandidate & {
-  greekSource?: GreekSourceMetadata;
-};
+type SmokeCandidateWithGreekSource =
+  SignalOptionsGreekSelectorSmokeCandidate & {
+    greekSource?: GreekSourceMetadata;
+  };
 
-function argValue(name: string): string | null {
-  const prefix = `--${name}=`;
-  const match = process.argv.slice(2).find((arg) => arg.startsWith(prefix));
-  return match ? match.slice(prefix.length) : null;
+const DEFAULT_DATE = "2026-05-29";
+const DEFAULT_MAX_CANDIDATES = 24;
+const MAX_SIGNALS = 1_000;
+const MAX_CANDIDATES = 200;
+const MAX_GEX_TOLERANCE_MS = 24 * 60 * 60_000;
+const MAX_LOCK_WAIT_MS = 30 * 60_000;
+// ponytail: keep terminal failures compact; add a structured failure artifact
+// before increasing this ceiling if operators need more diagnostic context.
+const MAX_DIAGNOSTIC_LENGTH = 400;
+const SIGNAL_TIMEFRAMES = ["1m", "2m", "5m", "15m", "1h", "1d"] as const;
+const SYMBOL_PATTERN = /^[A-Z0-9][A-Z0-9./_-]{0,63}$/u;
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;
+const DECIMAL_PATTERN = /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/iu;
+const UNSAFE_OUTPUT_PATTERN =
+  /[\u0000-\u001f\u007f-\u009f\u2028-\u202e\u2066-\u2069]/gu;
+const UNSAFE_JSON_OUTPUT_PATTERN =
+  /[\u007f-\u009f\u2028-\u202e\u2066-\u2069]/gu;
+const USAGE = `Usage: pnpm --filter @workspace/scripts run signal-options:greek-selector-smoke -- [options]
+
+Historical Greek-selector smoke report for one shadow signal-options deployment.
+
+Options:
+  --date=<YYYY-MM-DD>                 Historical market date (default: ${DEFAULT_DATE}).
+  --session=<regular|all>             Historical session (default: regular).
+  --signal-timeframe=<timeframe>      One of ${SIGNAL_TIMEFRAMES.join(", ")} (default: 5m).
+  --report-dir=<path>                 New destination directory for report.md.
+  --max-signals=<1-${MAX_SIGNALS}>              Optional action-signal cap (default: all).
+  --max-candidates-per-signal=<1-${MAX_CANDIDATES}> Candidate cap (default: ${DEFAULT_MAX_CANDIDATES}).
+  --risk-free-rate=<decimal>          Black-Scholes rate (default: 0.05).
+  --dividend-yield=<decimal>          Black-Scholes dividend yield (default: 0).
+  --symbols=<CSV>                     Restrict to deployment symbols.
+  --gex-tolerance-ms=<0-${MAX_GEX_TOLERANCE_MS}> Historical GEX lookup tolerance.
+  --lock-wait-ms=<0-${MAX_LOCK_WAIT_MS}>          Worker-lock wait (default: 0).
+  -h, --help                          Show this help without database work.`;
+
+function configError(message: string): Error {
+  return new Error(`${message}\n\n${USAGE}`);
 }
 
-function readBooleanEnv(name: string, fallback: boolean): boolean {
-  const value = process.env[name]?.trim().toLowerCase();
-  if (!value) return fallback;
-  if (["1", "true", "yes", "on"].includes(value)) return true;
-  if (["0", "false", "no", "off"].includes(value)) return false;
-  return fallback;
+function nonEmptyEnv(env: NodeJS.ProcessEnv, name: string): string | undefined {
+  return env[name]?.trim() || undefined;
 }
 
-function readNumber(value: string | undefined | null, fallback: number): number {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : fallback;
+function parseArguments(args: string[]) {
+  const normalizedArgs = args[0] === "--" ? args.slice(1) : args;
+  try {
+    const parsed = parseNodeArgs({
+      args: normalizedArgs,
+      options: {
+        date: { type: "string" },
+        session: { type: "string" },
+        "signal-timeframe": { type: "string" },
+        "report-dir": { type: "string" },
+        "max-signals": { type: "string" },
+        "max-candidates-per-signal": { type: "string" },
+        "risk-free-rate": { type: "string" },
+        "dividend-yield": { type: "string" },
+        symbols: { type: "string" },
+        "gex-tolerance-ms": { type: "string" },
+        "lock-wait-ms": { type: "string" },
+        help: { type: "boolean", short: "h" },
+      },
+      strict: true,
+      allowPositionals: false,
+      tokens: true,
+    });
+    const names = [
+      "date",
+      "session",
+      "signal-timeframe",
+      "report-dir",
+      "max-signals",
+      "max-candidates-per-signal",
+      "risk-free-rate",
+      "dividend-yield",
+      "symbols",
+      "gex-tolerance-ms",
+      "lock-wait-ms",
+      "help",
+    ] as const;
+    for (const name of names) {
+      if (
+        parsed.tokens.filter(
+          (token) => token.kind === "option" && token.name === name,
+        ).length > 1
+      ) {
+        throw new Error(`Duplicate argument: --${name}`);
+      }
+    }
+    return parsed.values;
+  } catch (error) {
+    throw configError(
+      error instanceof Error ? error.message : "Invalid command arguments.",
+    );
+  }
 }
 
-function finiteNumber(value: unknown): number | null {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : null;
+function optionOrEnv(
+  options: ReturnType<typeof parseArguments>,
+  optionName: keyof ReturnType<typeof parseArguments>,
+  env: NodeJS.ProcessEnv,
+  envName: string,
+): string | undefined {
+  const option = options[optionName];
+  if (typeof option === "string") {
+    const value = option.trim();
+    if (!value) throw configError(`--${String(optionName)} cannot be blank.`);
+    return value;
+  }
+  return nonEmptyEnv(env, envName);
 }
 
-function readPositiveInteger(
-  value: string | undefined | null,
-  fallback: number | null,
-  max: number,
-): number | null {
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed) || parsed < 1) return fallback;
-  return Math.min(max, Math.floor(parsed));
+function canonicalDate(name: string, value: string): string {
+  if (!/^\d{4}-\d{2}-\d{2}$/u.test(value)) {
+    throw configError(`${name} must use YYYY-MM-DD.`);
+  }
+  const parsed = new Date(`${value}T00:00:00.000Z`);
+  if (
+    Number.isNaN(parsed.getTime()) ||
+    parsed.toISOString().slice(0, 10) !== value
+  ) {
+    throw configError(`${name} must be a real YYYY-MM-DD date.`);
+  }
+  return value;
 }
 
-function readNonNegativeInteger(
-  value: string | undefined | null,
+function boundedInteger(
+  name: string,
+  value: string | undefined,
   fallback: number,
+  min: number,
   max: number,
 ): number {
+  if (value === undefined) return fallback;
+  if (!/^(?:0|[1-9]\d*)$/u.test(value)) {
+    throw configError(
+      `${name} must be a canonical integer from ${min} to ${max}.`,
+    );
+  }
   const parsed = Number(value);
-  if (!Number.isFinite(parsed) || parsed < 0) return fallback;
-  return Math.min(max, Math.floor(parsed));
+  if (!Number.isSafeInteger(parsed) || parsed < min || parsed > max) {
+    throw configError(`${name} must be an integer from ${min} to ${max}.`);
+  }
+  return parsed;
 }
 
-function readConfig(): Config {
-  const date =
-    argValue("date") ??
-    process.env["SIGNAL_OPTIONS_GREEK_SMOKE_DATE"] ??
-    "2026-05-29";
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
-    throw new Error("Use --date=YYYY-MM-DD or SIGNAL_OPTIONS_GREEK_SMOKE_DATE=YYYY-MM-DD.");
+function finiteDecimal(
+  name: string,
+  value: string | undefined,
+  fallback: number,
+): number {
+  // ponytail: preserve the service's finite-only rate contract; define shared
+  // economic bounds in the scorer/service before narrowing this command.
+  if (value === undefined) return fallback;
+  if (!DECIMAL_PATTERN.test(value)) {
+    throw configError(`${name} must be a finite decimal number.`);
   }
-  const reportRoot =
-    argValue("report-dir") ??
-    process.env["SIGNAL_OPTIONS_GREEK_SMOKE_REPORT_DIR"] ??
-    path.join("reports", "signal-options-greek-selector-smoke", date);
-  return {
-    date,
-    session:
-      argValue("session") ??
-      process.env["SIGNAL_OPTIONS_GREEK_SMOKE_SESSION"] ??
-      "regular",
-    signalTimeframe:
-      argValue("signal-timeframe") ??
-      process.env["SIGNAL_OPTIONS_GREEK_SMOKE_TIMEFRAME"] ??
-      "5m",
-    reportDir: path.resolve(process.cwd(), reportRoot),
-    maxSignals: readPositiveInteger(
-      argValue("max-signals") ?? process.env["SIGNAL_OPTIONS_GREEK_SMOKE_MAX_SIGNALS"],
-      null,
-      1_000,
-    ),
-    maxCandidatesPerSignal:
-      readPositiveInteger(
-        argValue("max-candidates-per-signal") ??
-          process.env["SIGNAL_OPTIONS_GREEK_SMOKE_MAX_CANDIDATES_PER_SIGNAL"],
-        24,
-        200,
-      ) ?? 24,
-    riskFreeRate: readNumber(
-      argValue("risk-free-rate") ?? process.env["SIGNAL_OPTIONS_GREEK_SMOKE_RISK_FREE_RATE"],
-      0.05,
-    ),
-    dividendYield: readNumber(
-      argValue("dividend-yield") ?? process.env["SIGNAL_OPTIONS_GREEK_SMOKE_DIVIDEND_YIELD"],
-      0,
-    ),
-    symbols:
-      (argValue("symbols") ?? process.env["SIGNAL_OPTIONS_GREEK_SMOKE_SYMBOLS"])
-        ?.split(",")
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    throw configError(`${name} must be a finite decimal number.`);
+  }
+  return parsed;
+}
+
+function booleanValue(name: string, value: string): boolean {
+  const normalized = value.trim().toLowerCase();
+  if (["1", "true", "yes", "on"].includes(normalized)) return true;
+  if (["0", "false", "no", "off"].includes(normalized)) return false;
+  throw configError(
+    `${name} must be true or false (also accepts 1/0, yes/no, on/off).`,
+  );
+}
+
+function readBooleanEnv(
+  env: NodeJS.ProcessEnv,
+  name: string,
+  fallback: boolean,
+): boolean {
+  const value = nonEmptyEnv(env, name);
+  return value === undefined ? fallback : booleanValue(name, value);
+}
+
+function symbolsValue(name: string, value: string | undefined): string[] {
+  if (value === undefined) return [];
+  const symbols = Array.from(
+    new Set(
+      value
+        .split(",")
         .map((symbol) => symbol.trim().toUpperCase())
-        .filter(Boolean) ?? [],
-    gexToleranceMs: readNonNegativeInteger(
-      argValue("gex-tolerance-ms") ??
-        process.env["SIGNAL_OPTIONS_GEX_GREEKS_TOLERANCE_MS"],
-      readGexHistoricalGreeksToleranceMs(),
-      24 * 60 * 60_000,
+        .filter(Boolean),
     ),
-    lockWaitMs: readPositiveInteger(
-      argValue("lock-wait-ms") ?? process.env["SIGNAL_OPTIONS_GREEK_SMOKE_LOCK_WAIT_MS"],
-      0,
-      30 * 60_000,
-    ) ?? 0,
-    progress: readBooleanEnv("SIGNAL_OPTIONS_GREEK_SMOKE_PROGRESS", true),
+  );
+  if (
+    !symbols.length ||
+    symbols.some((symbol) => !SYMBOL_PATTERN.test(symbol))
+  ) {
+    throw configError(
+      `${name} must be a comma-separated list of valid symbols.`,
+    );
+  }
+  return symbols;
+}
+
+function defaultConfig(cwd: string): Config {
+  return {
+    date: DEFAULT_DATE,
+    session: "regular",
+    signalTimeframe: "5m",
+    reportDir: path.resolve(
+      cwd,
+      "reports",
+      "signal-options-greek-selector-smoke",
+      DEFAULT_DATE,
+    ),
+    maxSignals: null,
+    maxCandidatesPerSignal: DEFAULT_MAX_CANDIDATES,
+    riskFreeRate: 0.05,
+    dividendYield: 0,
+    symbols: [],
+    gexToleranceMs: DEFAULT_GEX_HISTORICAL_GREEKS_TOLERANCE_MS,
+    lockWaitMs: 0,
+    progress: true,
+    help: false,
   };
 }
 
+function readConfig(
+  args: string[] = process.argv.slice(2),
+  env: NodeJS.ProcessEnv = process.env,
+  cwd = process.cwd(),
+): Config {
+  const options = parseArguments(args);
+  if (options.help === true) return { ...defaultConfig(cwd), help: true };
+  const date = canonicalDate(
+    "--date / SIGNAL_OPTIONS_GREEK_SMOKE_DATE",
+    optionOrEnv(options, "date", env, "SIGNAL_OPTIONS_GREEK_SMOKE_DATE") ??
+      DEFAULT_DATE,
+  );
+  const session =
+    optionOrEnv(
+      options,
+      "session",
+      env,
+      "SIGNAL_OPTIONS_GREEK_SMOKE_SESSION",
+    ) ?? "regular";
+  if (session !== "regular" && session !== "all") {
+    throw configError(
+      "--session / SIGNAL_OPTIONS_GREEK_SMOKE_SESSION must be regular or all.",
+    );
+  }
+  const signalTimeframe =
+    optionOrEnv(
+      options,
+      "signal-timeframe",
+      env,
+      "SIGNAL_OPTIONS_GREEK_SMOKE_TIMEFRAME",
+    ) ?? "5m";
+  if (
+    !SIGNAL_TIMEFRAMES.includes(
+      signalTimeframe as (typeof SIGNAL_TIMEFRAMES)[number],
+    )
+  ) {
+    throw configError(
+      `--signal-timeframe / SIGNAL_OPTIONS_GREEK_SMOKE_TIMEFRAME must be one of ${SIGNAL_TIMEFRAMES.join(", ")}.`,
+    );
+  }
+  const reportRoot =
+    optionOrEnv(
+      options,
+      "report-dir",
+      env,
+      "SIGNAL_OPTIONS_GREEK_SMOKE_REPORT_DIR",
+    ) ?? path.join("reports", "signal-options-greek-selector-smoke", date);
+  const maxSignalsValue = optionOrEnv(
+    options,
+    "max-signals",
+    env,
+    "SIGNAL_OPTIONS_GREEK_SMOKE_MAX_SIGNALS",
+  );
+  return {
+    date,
+    session,
+    signalTimeframe: signalTimeframe as Config["signalTimeframe"],
+    reportDir: path.resolve(cwd, reportRoot),
+    maxSignals:
+      maxSignalsValue === undefined
+        ? null
+        : boundedInteger("--max-signals", maxSignalsValue, 1, 1, MAX_SIGNALS),
+    maxCandidatesPerSignal: boundedInteger(
+      "--max-candidates-per-signal",
+      optionOrEnv(
+        options,
+        "max-candidates-per-signal",
+        env,
+        "SIGNAL_OPTIONS_GREEK_SMOKE_MAX_CANDIDATES_PER_SIGNAL",
+      ),
+      DEFAULT_MAX_CANDIDATES,
+      1,
+      MAX_CANDIDATES,
+    ),
+    riskFreeRate: finiteDecimal(
+      "--risk-free-rate",
+      optionOrEnv(
+        options,
+        "risk-free-rate",
+        env,
+        "SIGNAL_OPTIONS_GREEK_SMOKE_RISK_FREE_RATE",
+      ),
+      0.05,
+    ),
+    dividendYield: finiteDecimal(
+      "--dividend-yield",
+      optionOrEnv(
+        options,
+        "dividend-yield",
+        env,
+        "SIGNAL_OPTIONS_GREEK_SMOKE_DIVIDEND_YIELD",
+      ),
+      0,
+    ),
+    symbols: symbolsValue(
+      "--symbols / SIGNAL_OPTIONS_GREEK_SMOKE_SYMBOLS",
+      optionOrEnv(
+        options,
+        "symbols",
+        env,
+        "SIGNAL_OPTIONS_GREEK_SMOKE_SYMBOLS",
+      ),
+    ),
+    gexToleranceMs: boundedInteger(
+      "--gex-tolerance-ms",
+      optionOrEnv(
+        options,
+        "gex-tolerance-ms",
+        env,
+        "SIGNAL_OPTIONS_GEX_GREEKS_TOLERANCE_MS",
+      ),
+      DEFAULT_GEX_HISTORICAL_GREEKS_TOLERANCE_MS,
+      0,
+      MAX_GEX_TOLERANCE_MS,
+    ),
+    lockWaitMs: boundedInteger(
+      "--lock-wait-ms",
+      optionOrEnv(
+        options,
+        "lock-wait-ms",
+        env,
+        "SIGNAL_OPTIONS_GREEK_SMOKE_LOCK_WAIT_MS",
+      ),
+      0,
+      0,
+      MAX_LOCK_WAIT_MS,
+    ),
+    progress: readBooleanEnv(env, "SIGNAL_OPTIONS_GREEK_SMOKE_PROGRESS", true),
+    help: false,
+  };
+}
+
+function enableHistoricalBarEvaluation(
+  env: NodeJS.ProcessEnv = process.env,
+): void {
+  const primaryName = "PYRUS_SIGNAL_MONITOR_BAR_EVALUATION_ENABLED";
+  const aliasName = "SIGNAL_MONITOR_BAR_EVALUATION_ENABLED";
+  const primaryValue = nonEmptyEnv(env, primaryName);
+  const aliasValue = nonEmptyEnv(env, aliasName);
+  const primary =
+    primaryValue === undefined
+      ? undefined
+      : booleanValue(primaryName, primaryValue);
+  const alias =
+    aliasValue === undefined ? undefined : booleanValue(aliasName, aliasValue);
+  if (primary !== undefined && alias !== undefined && primary !== alias) {
+    throw configError(`Conflicting ${primaryName} and ${aliasName} values.`);
+  }
+  env[primaryName] = (primary ?? alias ?? true) ? "1" : "0";
+}
+
+function safeDiagnostic(error: unknown): string {
+  const raw = error instanceof Error ? error.message : String(error);
+  const cleaned = stripVTControlCharacters(
+    (raw || "Unknown Greek-selector smoke error")
+      .replace(/([a-z][a-z0-9+.-]*:\/\/)[^@\s]+@/giu, "$1[redacted]@")
+      .replace(
+        /([a-z][a-z0-9+.-]*:\/\/[^\s?#]+)[?#][^\s]*/giu,
+        "$1?[redacted]",
+      ),
+  )
+    .replace(UNSAFE_OUTPUT_PATTERN, " ")
+    .replace(/\s+/gu, " ")
+    .trim();
+  const diagnostic = cleaned || "Unknown Greek-selector smoke error";
+  return diagnostic.length <= MAX_DIAGNOSTIC_LENGTH
+    ? diagnostic
+    : `${diagnostic.slice(0, MAX_DIAGNOSTIC_LENGTH - 1)}…`;
+}
+
+function markdownText(value: unknown): string {
+  return String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replace(UNSAFE_OUTPUT_PATTERN, " ")
+    .replace(/([\\`*_[\]{}()#+!|~])/gu, "\\$1");
+}
+
+function jsonText(value: unknown, space?: number): string {
+  return (
+    JSON.stringify(
+      value,
+      (_key, item) =>
+        typeof item === "number" && !Number.isFinite(item)
+          ? String(item)
+          : item,
+      space,
+    ) ?? "null"
+  ).replace(
+    UNSAFE_JSON_OUTPUT_PATTERN,
+    (character) =>
+      `\\u${character.codePointAt(0)?.toString(16).padStart(4, "0") ?? "fffd"}`,
+  );
+}
+
+function finiteNumber(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
 function money(value: number | null | undefined): string {
-  return value == null || !Number.isFinite(value) ? "-" : `$${value.toFixed(2)}`;
+  return value == null || !Number.isFinite(value)
+    ? "-"
+    : `$${value.toFixed(2)}`;
 }
 
 function numberCell(value: number | null | undefined, digits = 2): string {
@@ -177,18 +529,28 @@ function numberCell(value: number | null | undefined, digits = 2): string {
 }
 
 function percentCell(value: number | null | undefined, digits = 1): string {
-  return value == null || !Number.isFinite(value) ? "-" : `${(value * 100).toFixed(digits)}%`;
+  return value == null || !Number.isFinite(value)
+    ? "-"
+    : `${(value * 100).toFixed(digits)}%`;
 }
 
 function minutesCell(value: number | null | undefined): string {
-  return value == null || !Number.isFinite(value) ? "-" : `${(value / 60_000).toFixed(1)}m`;
+  return value == null || !Number.isFinite(value)
+    ? "-"
+    : `${(value / 60_000).toFixed(1)}m`;
 }
 
 function cell(value: unknown): string {
-  return String(value ?? "-").replaceAll("|", "\\|").replace(/\s+/g, " ").trim() || "-";
+  return (
+    markdownText(value ?? "-")
+      .replace(/\s+/gu, " ")
+      .trim() || "-"
+  );
 }
 
-function contractLabel(candidate: SignalOptionsGreekSelectorSmokeCandidate | null): string {
+function contractLabel(
+  candidate: SignalOptionsGreekSelectorSmokeCandidate | null,
+): string {
   if (!candidate) return "-";
   return `${candidate.expirationDate} ${candidate.right.toUpperCase()} ${candidate.strike}`;
 }
@@ -196,7 +558,8 @@ function contractLabel(candidate: SignalOptionsGreekSelectorSmokeCandidate | nul
 function legacyContractLabel(
   legacy: SignalOptionsGreekSelectorSmokeResult["rows"][number]["legacy"],
 ): string {
-  if (!legacy.expirationDate || !legacy.right || legacy.strike == null) return "-";
+  if (!legacy.expirationDate || !legacy.right || legacy.strike == null)
+    return "-";
   return `${legacy.expirationDate} ${legacy.right.toUpperCase()} ${legacy.strike}`;
 }
 
@@ -211,7 +574,9 @@ function outcomeLabel(
 function candidateGreekSource(
   candidate: SignalOptionsGreekSelectorSmokeCandidate | null,
 ): GreekSourceMetadata | null {
-  return (candidate as SmokeCandidateWithGreekSource | null)?.greekSource ?? null;
+  return (
+    (candidate as SmokeCandidateWithGreekSource | null)?.greekSource ?? null
+  );
 }
 
 function greekSourceLabel(
@@ -227,13 +592,17 @@ function greekSourceAgeMs(
   return source?.source === "gex_snapshot" ? source.ageMs : null;
 }
 
-function selectedGexSnapshotCount(result: SignalOptionsGreekSelectorSmokeResult): number {
+function selectedGexSnapshotCount(
+  result: SignalOptionsGreekSelectorSmokeResult,
+): number {
   return result.rows.filter(
     (row) => candidateGreekSource(row.selected)?.source === "gex_snapshot",
   ).length;
 }
 
-function candidateGexSnapshotCount(result: SignalOptionsGreekSelectorSmokeResult): number {
+function candidateGexSnapshotCount(
+  result: SignalOptionsGreekSelectorSmokeResult,
+): number {
   const seen = new Set<string>();
   let count = 0;
   for (const row of result.rows) {
@@ -242,13 +611,16 @@ function candidateGexSnapshotCount(result: SignalOptionsGreekSelectorSmokeResult
       const key = `${row.candidateId}:${candidate.ticker}`;
       if (seen.has(key)) continue;
       seen.add(key);
-      if (candidateGreekSource(candidate)?.source === "gex_snapshot") count += 1;
+      if (candidateGreekSource(candidate)?.source === "gex_snapshot")
+        count += 1;
     }
   }
   return count;
 }
 
-function noteCounts(result: SignalOptionsGreekSelectorSmokeResult): Array<[string, number]> {
+function noteCounts(
+  result: SignalOptionsGreekSelectorSmokeResult,
+): Array<[string, number]> {
   const counts = new Map<string, number>();
   for (const row of result.rows) {
     for (const note of row.notes) {
@@ -270,7 +642,9 @@ function skipReasonCounts(
 ): Array<[string, number]> {
   return Object.entries(result.summary.skipReasons)
     .filter(([, count]) => Number.isFinite(count) && count > 0)
-    .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]));
+    .sort(
+      (left, right) => right[1] - left[1] || left[0].localeCompare(right[0]),
+    );
 }
 
 export function renderGreekSelectorSmokeMarkdown(
@@ -302,11 +676,11 @@ export function renderGreekSelectorSmokeMarkdown(
   const lines = [
     "# Signal Options Greek Selector Smoke Test",
     "",
-    `- Generated: ${result.generatedAt}`,
-    `- Date: ${result.date}`,
-    `- Deployment: ${result.deployment.name} (${result.deployment.id})`,
-    `- Window: ${String(result.window["from"] ?? "-")} to ${String(result.window["to"] ?? "-")}`,
-    `- Timeframe: ${result.timeframe}`,
+    `- Generated: ${markdownText(result.generatedAt)}`,
+    `- Date: ${markdownText(result.date)}`,
+    `- Deployment: ${markdownText(result.deployment.name)} (${markdownText(result.deployment.id)})`,
+    `- Window: ${markdownText(result.window["from"] ?? "-")} to ${markdownText(result.window["to"] ?? "-")}`,
+    `- Timeframe: ${markdownText(result.timeframe)}`,
     `- Max signals: ${result.config.maxSignals ?? "all"}`,
     `- Max candidates per signal: ${result.config.maxCandidatesPerSignal}`,
     `- Risk-free rate: ${percentCell(result.config.riskFreeRate)}`,
@@ -339,7 +713,9 @@ export function renderGreekSelectorSmokeMarkdown(
     "",
     skipReasons.length
       ? "| Reason | Count |\n| --- | ---: |\n" +
-          skipReasons.map(([reason, count]) => `| ${cell(reason)} | ${count} |`).join("\n")
+        skipReasons
+          .map(([reason, count]) => `| ${cell(reason)} | ${count} |`)
+          .join("\n")
       : "No skipped candidates.",
     "",
     "## Per-Signal Results",
@@ -352,7 +728,7 @@ export function renderGreekSelectorSmokeMarkdown(
     "",
     notes.length
       ? "| Note | Count |\n| --- | ---: |\n" +
-          notes.map(([note, count]) => `| ${cell(note)} | ${count} |`).join("\n")
+        notes.map(([note, count]) => `| ${cell(note)} | ${count} |`).join("\n")
       : "No recurring notes.",
   ];
   if (result.errors.length) {
@@ -364,7 +740,10 @@ export function renderGreekSelectorSmokeMarkdown(
       "| --- | --- |",
       ...result.errors
         .slice(0, 50)
-        .map((error) => `| ${cell(error.symbol ?? "-")} | ${cell(error.message)} |`),
+        .map(
+          (error) =>
+            `| ${cell(error.symbol ?? "-")} | ${cell(error.message)} |`,
+        ),
     );
   }
   return `${lines.join("\n")}\n`;
@@ -397,20 +776,29 @@ function summarizeGreekSelectorSmokeRows(
     changedSelections: rows.filter((row) => {
       const legacyTicker = row.legacy.ticker;
       const selectedTicker = row.selected?.ticker ?? null;
-      return Boolean(legacyTicker && selectedTicker && legacyTicker !== selectedTicker);
+      return Boolean(
+        legacyTicker && selectedTicker && legacyTicker !== selectedTicker,
+      );
     }).length,
     totalLegacyPnl: Number(totalLegacyPnl.toFixed(2)),
     totalSelectedPnl: Number(totalSelectedPnl.toFixed(2)),
     totalPnlDelta: Number((totalSelectedPnl - totalLegacyPnl).toFixed(2)),
     totalSelectedMarkedPnl: Number(totalSelectedMarkedPnl.toFixed(2)),
     candidatesScored: rows.reduce((sum, row) => sum + row.candidatesScored, 0),
-    candidatesSkipped: rows.reduce((sum, row) => sum + row.candidatesSkipped, 0),
-    skipReasons: rows.reduce<Record<string, number>>((counts, row) => {
-      for (const [reason, count] of Object.entries(row.skipReasons)) {
-        counts[reason] = (counts[reason] ?? 0) + count;
-      }
-      return counts;
-    }, {}),
+    candidatesSkipped: rows.reduce(
+      (sum, row) => sum + row.candidatesSkipped,
+      0,
+    ),
+    skipReasons: Object.fromEntries(
+      rows.reduce<Map<string, number>>((counts, row) => {
+        for (const [reason, count] of Object.entries(row.skipReasons)) {
+          if (Number.isFinite(count)) {
+            counts.set(reason, (counts.get(reason) ?? 0) + count);
+          }
+        }
+        return counts;
+      }, new Map()),
+    ),
     rowsWithSelection: rows.filter((row) => row.selected).length,
     rowsWithMarkedPnl: markedRows.length,
     rowsWithoutSelection: rows.filter((row) => !row.selected).length,
@@ -470,13 +858,14 @@ function applyGreekLookupToCandidate(input: {
 async function applyGexHistoricalGreeks(
   result: SignalOptionsGreekSelectorSmokeResult,
   config: Pick<Config, "gexToleranceMs" | "progress">,
+  lookupGreeks: typeof lookupHistoricalGreeks = lookupHistoricalGreeks,
 ) {
   let lookupCount = 0;
   let matchCount = 0;
   for (const row of result.rows) {
     for (const candidate of uniqueVisibleCandidates(row)) {
       lookupCount += 1;
-      const lookup = await lookupHistoricalGreeks({
+      const lookup = await lookupGreeks({
         symbol: row.symbol,
         expirationDate: candidate.expirationDate,
         strike: candidate.strike,
@@ -518,12 +907,75 @@ async function applyGexHistoricalGreeks(
   }
 }
 
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+function validateDeployment(value: unknown): DeploymentRow {
+  const row = asRecord(value);
+  const id =
+    typeof row["id"] === "string" ? row["id"].trim().toLowerCase() : "";
+  const name = typeof row["name"] === "string" ? row["name"].trim() : "";
+  if (!UUID_PATTERN.test(id) || !name) {
+    throw new Error(
+      "Invalid deployment row: expected a valid deployment ID and name.",
+    );
+  }
+  if (
+    row["mode"] !== "shadow" ||
+    row["enabled"] !== true ||
+    row["providerAccountId"] !== "shadow" ||
+    (name !== "Pyrus Signals Options Shadow" &&
+      asRecord(asRecord(row["config"])["parameters"])["executionMode"] !==
+        "signal_options")
+  ) {
+    throw new Error(
+      `Deployment ${id} is not an enabled shadow signal-options deployment.`,
+    );
+  }
+  const rawSymbols = row["symbolUniverse"];
+  if (!Array.isArray(rawSymbols) || !rawSymbols.length) {
+    throw new Error(`Deployment ${id} has no symbols.`);
+  }
+  const symbolUniverse: string[] = [];
+  const seen = new Set<string>();
+  for (const value of rawSymbols) {
+    const symbol = typeof value === "string" ? value.trim().toUpperCase() : "";
+    if (!SYMBOL_PATTERN.test(symbol)) {
+      throw new Error(`Deployment ${id} has invalid symbols.`);
+    }
+    if (!seen.has(symbol)) {
+      seen.add(symbol);
+      symbolUniverse.push(symbol);
+    }
+  }
+  return {
+    id,
+    name,
+    mode: "shadow",
+    enabled: true,
+    providerAccountId: "shadow",
+    config: row["config"],
+    symbolUniverse,
+  };
+}
+
 async function readSignalOptionsDeployment(): Promise<DeploymentRow> {
-  const result = await pool.query<DeploymentRow>(
+  const result = await pool.query<RawDeploymentRow>(
     `
-      select id, name, mode, symbol_universe as "symbolUniverse"
+      select
+        id,
+        name,
+        mode,
+        enabled,
+        provider_account_id as "providerAccountId",
+        config,
+        symbol_universe as "symbolUniverse"
       from algo_deployments
       where enabled = true
+        and mode = 'shadow'
         and provider_account_id = 'shadow'
         and (
           name = 'Pyrus Signals Options Shadow'
@@ -539,97 +991,190 @@ async function readSignalOptionsDeployment(): Promise<DeploymentRow> {
   if (!deployment) {
     throw new Error("No enabled shadow signal-options deployment found.");
   }
-  if (!Array.isArray(deployment.symbolUniverse) || deployment.symbolUniverse.length < 1) {
-    throw new Error(`Deployment ${deployment.id} has no symbols.`);
-  }
-  return deployment;
+  return validateDeployment(deployment);
 }
 
-async function tryAcquireSignalOptionsWorkerLock() {
-  const client = await pool.connect();
-  try {
-    const result = await client.query<{ locked: boolean }>(
-      "select pg_try_advisory_lock($1) as locked",
-      [SIGNAL_OPTIONS_WORKER_ADVISORY_LOCK_KEY],
+function selectSymbolUniverse(
+  deploymentSymbols: readonly string[],
+  requestedSymbols: readonly string[],
+): string[] {
+  if (!requestedSymbols.length) return [...deploymentSymbols];
+  const requested = new Set(
+    requestedSymbols.map((symbol) => symbol.toUpperCase()),
+  );
+  const selected = deploymentSymbols.filter((symbol) => requested.has(symbol));
+  if (!selected.length) {
+    throw new Error(
+      `No deployment symbols matched ${requestedSymbols.join(",")}.`,
     );
-    if (result.rows[0]?.locked !== true) {
-      client.release();
-      return null;
-    }
-    return async () => {
-      try {
-        await client.query("select pg_advisory_unlock($1)", [
-          SIGNAL_OPTIONS_WORKER_ADVISORY_LOCK_KEY,
-        ]);
-      } finally {
-        client.release();
-      }
-    };
-  } catch (error) {
-    client.release();
-    throw error;
   }
+  return selected;
 }
 
 async function acquireSignalOptionsWorkerLock(waitMs: number) {
   const deadline = Date.now() + waitMs;
-  let release = await tryAcquireSignalOptionsWorkerLock();
+  let release = await sharedAdvisoryLockHolder.acquire(
+    SIGNAL_OPTIONS_WORKER_ADVISORY_LOCK_KEY,
+  );
   while (!release && Date.now() < deadline) {
     await delay(Math.min(5_000, Math.max(0, deadline - Date.now())));
-    release = await tryAcquireSignalOptionsWorkerLock();
+    release = await sharedAdvisoryLockHolder.acquire(
+      SIGNAL_OPTIONS_WORKER_ADVISORY_LOCK_KEY,
+    );
   }
   return release;
 }
 
-async function main() {
-  const config = readConfig();
-  const releaseLock = await acquireSignalOptionsWorkerLock(config.lockWaitMs);
+async function assertReportDestinationAvailable(
+  reportDir: string,
+): Promise<void> {
+  try {
+    await lstat(reportDir);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+    throw error;
+  }
+  throw new Error(`Report destination already exists: ${reportDir}`);
+}
+
+async function writeReport(
+  result: SignalOptionsGreekSelectorSmokeResult,
+  reportDir: string,
+): Promise<string> {
+  await assertReportDestinationAvailable(reportDir);
+  const parent = path.dirname(reportDir);
+  await mkdir(parent, { recursive: true });
+  const temporaryDir = await mkdtemp(
+    path.join(parent, `.${path.basename(reportDir)}.tmp-`),
+  );
+  try {
+    await writeFile(
+      path.join(temporaryDir, "report.md"),
+      renderGreekSelectorSmokeMarkdown(result),
+    );
+    await rename(temporaryDir, reportDir);
+  } catch (error) {
+    await rm(temporaryDir, { recursive: true, force: true }).catch(() => {});
+    throw error;
+  }
+  return path.join(reportDir, "report.md");
+}
+
+const defaultSmokeDependencies: SmokeDependencies = {
+  acquireLock: acquireSignalOptionsWorkerLock,
+  readDeployment: readSignalOptionsDeployment,
+  runSmoke: runSignalOptionsGreekSelectorSmoke,
+  applyGex: applyGexHistoricalGreeks,
+  writeReport,
+  log: (message) => console.error(message),
+};
+
+async function executeSmoke(
+  config: Config,
+  dependencies: SmokeDependencies = defaultSmokeDependencies,
+): Promise<string> {
+  const releaseLock = await dependencies.acquireLock(config.lockWaitMs);
   if (!releaseLock) {
     throw new Error("Signal-options worker advisory lock is already held.");
   }
 
+  let failed = false;
   try {
-    const deployment = await readSignalOptionsDeployment();
-    const requestedSymbols = new Set(config.symbols);
-    const symbolUniverse = requestedSymbols.size
-      ? deployment.symbolUniverse.filter((symbol) =>
-          requestedSymbols.has(String(symbol).toUpperCase()),
-        )
-      : deployment.symbolUniverse;
-    if (!symbolUniverse.length) {
-      throw new Error(`No deployment symbols matched ${config.symbols.join(",")}.`);
-    }
-
-    const result = await runSignalOptionsGreekSelectorSmoke({
+    const deployment = await dependencies.readDeployment();
+    const symbolUniverse = selectSymbolUniverse(
+      deployment.symbolUniverse,
+      config.symbols,
+    );
+    const result = await dependencies.runSmoke({
       deploymentId: deployment.id,
       date: config.date,
       session: config.session,
       signalTimeframe: config.signalTimeframe,
       forceDeploymentUniverse: true,
-      symbolUniverseOverride: symbolUniverse.map((symbol) =>
-        String(symbol).toUpperCase(),
-      ),
+      symbolUniverseOverride: symbolUniverse,
       maxSignals: config.maxSignals,
       maxCandidatesPerSignal: config.maxCandidatesPerSignal,
       riskFreeRate: config.riskFreeRate,
       dividendYield: config.dividendYield,
       progress: config.progress,
     });
-    (result.config as Record<string, unknown>)["gexToleranceMs"] = config.gexToleranceMs;
-    await applyGexHistoricalGreeks(result, config);
-    await mkdir(config.reportDir, { recursive: true });
-    const reportPath = path.join(config.reportDir, "report.md");
-    await writeFile(reportPath, renderGreekSelectorSmokeMarkdown(result));
-    console.log(`wrote ${reportPath}`);
+    (result.config as Record<string, unknown>)["gexToleranceMs"] =
+      config.gexToleranceMs;
+    await dependencies.applyGex(result, config);
+    return await dependencies.writeReport(result, config.reportDir);
+  } catch (error) {
+    failed = true;
+    throw error;
   } finally {
-    await releaseLock();
-    await pool.end();
+    try {
+      await releaseLock();
+    } catch (error) {
+      if (!failed) throw error;
+      try {
+        dependencies.log("Signal-options worker lock cleanup failed.");
+      } catch {
+        // Preserve the primary smoke failure even if a custom logger fails.
+      }
+    }
   }
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  main().catch((error) => {
-    console.error(error);
-    process.exitCode = 1;
-  });
+async function main(
+  args: string[] = process.argv.slice(2),
+  env: NodeJS.ProcessEnv = process.env,
+  cwd = process.cwd(),
+  dependencies: SmokeDependencies = defaultSmokeDependencies,
+): Promise<number> {
+  const config = readConfig(args, env, cwd);
+  if (config.help) {
+    console.log(USAGE);
+    return 0;
+  }
+  await assertReportDestinationAvailable(config.reportDir);
+  enableHistoricalBarEvaluation(env);
+  const reportPath = await executeSmoke(config, dependencies);
+  console.log(jsonText({ reportPath }));
+  return 0;
+}
+
+async function runCli(): Promise<void> {
+  let exitCode = 0;
+  let failed = false;
+  try {
+    exitCode = await main();
+  } catch (error) {
+    failed = true;
+    console.error(safeDiagnostic(error));
+    exitCode = 1;
+  }
+  try {
+    await closeDatabaseConnections();
+  } catch (error) {
+    console.error(
+      failed
+        ? "Database cleanup also failed."
+        : `Database cleanup failed: ${safeDiagnostic(error)}`,
+    );
+    exitCode = 1;
+  }
+  process.exitCode = exitCode;
+}
+
+export const __signalOptionsGreekSelectorSmokeInternalsForTests = {
+  applyGexHistoricalGreeks,
+  assertReportDestinationAvailable,
+  enableHistoricalBarEvaluation,
+  executeSmoke,
+  readConfig,
+  safeDiagnostic,
+  selectSymbolUniverse,
+  validateDeployment,
+  writeReport,
+};
+
+if (
+  process.argv[1] &&
+  import.meta.url === pathToFileURL(process.argv[1]).href
+) {
+  void runCli();
 }
