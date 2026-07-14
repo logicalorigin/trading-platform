@@ -50,7 +50,7 @@ test("IBKR trade executions normalize documented B and S sides", async () => {
           price: "4.50",
           sec_type: "OPT",
           conid: 700001,
-          conidEx: "700001",
+          conidEx: "700001@SMART",
           order_ref: "option-sell-intent",
           trade_time_r: 1_721_000_001_000,
         },
@@ -82,6 +82,11 @@ test("IBKR trade executions normalize documented B and S sides", async () => {
     assert.equal(
       executions.find((execution) => execution.id === "sell-execution")?.side,
       "sell",
+    );
+    assert.equal(
+      executions.find((execution) => execution.id === "sell-execution")
+        ?.providerContractId,
+      "700001",
     );
     assert.equal(
       executions.find((execution) => execution.id === "buy-execution")?.side,

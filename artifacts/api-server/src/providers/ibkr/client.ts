@@ -3105,7 +3105,7 @@ export class IbkrClient {
         }
 
         const providerContractId =
-          firstDefined(asString(raw["conidEx"]), asString(raw["conid"])) ??
+          firstDefined(asString(raw["conid"]), asString(raw["conidEx"])) ??
           null;
         const symbol = normalizeSymbol(
           firstDefined(
