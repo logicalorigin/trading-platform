@@ -19,7 +19,11 @@ import {
   assertTaxPreflightForOrderSubmission,
   recordTaxPreflightOrderSubmitted,
 } from "./tax-planning";
-import type { TaxOrderLike } from "./tax-planning-model";
+import {
+  canonicalOptionTaxSemantics,
+  type TaxOptionOrderAction,
+  type TaxOrderLike,
+} from "./tax-planning-model";
 import {
   requireStandardOptionContractIdentity,
 } from "./standard-option-contract-identity";
@@ -172,6 +176,15 @@ const TAX_TIME_IN_FORCE: Record<
   GTC: "gtc",
   FOK: "fok",
   IOC: "ioc",
+};
+const TAX_OPTION_ACTION: Record<
+  SnapTradeOptionOrderAction,
+  TaxOptionOrderAction
+> = {
+  BUY_TO_OPEN: "buy_to_open",
+  BUY_TO_CLOSE: "buy_to_close",
+  SELL_TO_CLOSE: "sell_to_close",
+  SELL_TO_OPEN: "sell_to_open",
 };
 
 function configuredSnapTradeCredentials(
@@ -584,6 +597,11 @@ function optionTaxOrder(input: {
   accountId: string;
   order: NormalizedOptionOrderInput;
 }): TaxOrderLike {
+  const right = input.order.optionType.toLowerCase() as "call" | "put";
+  const semantics = canonicalOptionTaxSemantics(
+    TAX_OPTION_ACTION[input.order.action],
+    right,
+  );
   return {
     accountId: input.accountId,
     mode: "live",
@@ -600,15 +618,24 @@ function optionTaxOrder(input: {
       underlying: input.order.underlyingSymbol,
       expirationDate: input.order.expiration,
       strike: input.order.strike,
-      right: input.order.optionType.toLowerCase(),
+      right,
       multiplier: input.order.multiplier,
       sharesPerContract: input.order.sharesPerContract,
       providerContractId: input.order.occSymbol,
       brokerContractId: input.order.occSymbol,
     },
     route: "snaptrade",
-    intent: null,
+    ...semantics,
   };
+}
+
+function assertDirectPositionContext(order: NormalizedOptionOrderInput): void {
+  if (order.action === "BUY_TO_OPEN") return;
+  throw new HttpError(
+    409,
+    "SnapTrade direct option orders require account-scoped position and working-order context for this action",
+    { code: "snaptrade_option_position_context_required" },
+  );
 }
 
 function parseImpactResponse(
@@ -743,6 +770,7 @@ export async function checkSnapTradeOptionOrderImpact(
   const fetchImpl = options.fetchImpl ?? fetch;
   const now = options.now ?? new Date();
   const normalizedInput = normalizeInput(options.input);
+  assertDirectPositionContext(normalizedInput);
   const { credential, account, credentials } = await loadOrderContext({
     appUserId: options.appUserId,
     accountId: options.accountId,
@@ -792,6 +820,7 @@ export async function submitSnapTradeOptionOrder(
   const fetchImpl = options.fetchImpl ?? fetch;
   const now = options.now ?? new Date();
   const normalizedInput = normalizeInput(options.input);
+  assertDirectPositionContext(normalizedInput);
   const { credential, account, credentials } = await loadOrderContext({
     appUserId: options.appUserId,
     accountId: options.accountId,

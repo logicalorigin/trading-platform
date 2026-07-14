@@ -3971,6 +3971,9 @@ function ibkrOrderToTaxOrder(
     stopPrice: input.stopPrice ?? null,
     timeInForce: input.timeInForce,
     optionContract: input.optionContract as Record<string, unknown> | null,
+    optionAction: input.optionAction ?? null,
+    positionEffect: input.positionEffect ?? null,
+    strategyIntent: input.strategyIntent ?? null,
     route: "ibkr",
     intent: input.strategyIntent ?? input.positionEffect ?? null,
   };
@@ -4619,11 +4622,20 @@ export async function previewOrder(input: PlaceOrderInput) {
     );
   }
   const client = getIbkrClientPortalClient();
-  const preparedInput = {
+  const preparedInputBase = {
     ...input,
     clientOrderId: input.clientOrderId?.trim() || randomUUID(),
   };
-  await assertIbkrGatewayTradingAvailable(preparedInput.accountId);
+  await assertIbkrGatewayTradingAvailable(preparedInputBase.accountId);
+  const preparedInput =
+    preparedInputBase.assetClass === "option" && preparedInputBase.optionContract
+      ? {
+          ...preparedInputBase,
+          optionContract: await client.resolveOptionOrderContract(
+            preparedInputBase.optionContract,
+          ),
+        }
+      : preparedInputBase;
   const gatewaySnapshot = assertIbkrClientPortalGatewaySnapshot();
   await validateOrderIntentForRouting(preparedInput, client);
   const preview = await client.previewOrder(preparedInput);

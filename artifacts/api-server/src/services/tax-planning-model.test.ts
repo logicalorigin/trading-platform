@@ -3,10 +3,40 @@ import test from "node:test";
 import {
   US_TAX_JURISDICTIONS,
   buildStateRuleStatus,
+  canonicalOptionTaxSemantics,
   evaluateTaxOrderPreflight,
   fingerprintTaxOrder,
   normalizeTaxProfileConfig,
 } from "./tax-planning-model";
+
+test("canonical option tax semantics distinguish all four actions", () => {
+  assert.deepEqual(canonicalOptionTaxSemantics("buy_to_open", "call"), {
+    optionAction: "buy_to_open",
+    positionEffect: "open",
+    strategyIntent: "long_option",
+    intent: "long_option",
+  });
+  assert.deepEqual(canonicalOptionTaxSemantics("buy_to_close", "put"), {
+    optionAction: "buy_to_close",
+    positionEffect: "close",
+    strategyIntent: null,
+    intent: "close",
+  });
+  assert.deepEqual(canonicalOptionTaxSemantics("sell_to_close", "call"), {
+    optionAction: "sell_to_close",
+    positionEffect: "close",
+    strategyIntent: "sell_to_close",
+    intent: "sell_to_close",
+  });
+  assert.equal(
+    canonicalOptionTaxSemantics("sell_to_open", "call").strategyIntent,
+    "covered_call",
+  );
+  assert.equal(
+    canonicalOptionTaxSemantics("sell_to_open", "put").strategyIntent,
+    "cash_secured_put",
+  );
+});
 
 test("state rule status fails closed for every US jurisdiction", () => {
   const status = buildStateRuleStatus({ taxYear: 2026, rows: [] });
@@ -236,6 +266,94 @@ test("option order fingerprint is stable across raw JSON dates and parsed Date o
   });
 
   assert.equal(parsedFingerprint, rawFingerprint);
+});
+
+test("option order fingerprint ignores route-specific contract identifiers", () => {
+  const baseOrder = {
+    accountId: "acct-1",
+    mode: "live" as const,
+    symbol: "AAPL",
+    assetClass: "option",
+    side: "buy",
+    type: "limit",
+    quantity: 1,
+    limitPrice: 2.25,
+    timeInForce: "day",
+    optionAction: "buy_to_open" as const,
+    positionEffect: "open" as const,
+    strategyIntent: "long_option" as const,
+    intent: "long_option",
+  };
+  const tuple = {
+    underlying: "AAPL",
+    expirationDate: "2026-08-21",
+    strike: 210,
+    right: "call",
+    multiplier: 100,
+    sharesPerContract: 100,
+  };
+
+  assert.equal(
+    fingerprintTaxOrder({
+      ...baseOrder,
+      route: "massive",
+      optionContract: {
+        ...tuple,
+        ticker: "O:AAPL260821C00210000",
+        providerContractId: null,
+        brokerContractId: null,
+      },
+    }),
+    fingerprintTaxOrder({
+      ...baseOrder,
+      route: "ibkr",
+      optionContract: {
+        ...tuple,
+        ticker: "AAPL  260821C00210000",
+        providerContractId: "123456789",
+        brokerContractId: "AAPL  260821C00210000",
+      },
+    }),
+  );
+});
+
+test("option order fingerprint distinguishes buy-to-open from buy-to-close", () => {
+  const baseOrder = {
+    accountId: "acct-1",
+    mode: "live" as const,
+    symbol: "AAPL",
+    assetClass: "option",
+    side: "buy",
+    type: "limit",
+    quantity: 1,
+    limitPrice: 2.25,
+    timeInForce: "day",
+    optionContract: {
+      underlying: "AAPL",
+      expirationDate: "2026-08-21",
+      strike: 210,
+      right: "call",
+      multiplier: 100,
+      sharesPerContract: 100,
+    },
+  };
+
+  assert.notEqual(
+    fingerprintTaxOrder({
+      ...baseOrder,
+      optionAction: "buy_to_open",
+      positionEffect: "open",
+      strategyIntent: "long_option",
+      intent: "long_option",
+    }),
+    fingerprintTaxOrder({
+      ...baseOrder,
+      optionAction: "buy_to_close",
+      positionEffect: "close",
+      strategyIntent: null,
+      intent: "close",
+    }),
+  );
 });
 
 test("tax order fingerprint ignores provider route for broker-agnostic preflight", () => {

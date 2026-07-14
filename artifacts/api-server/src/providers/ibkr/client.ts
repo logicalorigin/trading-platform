@@ -4010,6 +4010,16 @@ export class IbkrClient {
     );
   }
 
+  async resolveOptionOrderContract(
+    optionContract: NonNullable<PlaceOrderInput["optionContract"]>,
+  ): Promise<NonNullable<PlaceOrderInput["optionContract"]>> {
+    const resolved = await this.resolveOptionContract(optionContract);
+    return {
+      ...optionContract,
+      providerContractId: String(resolved.conid),
+    };
+  }
+
   private async resolveOptionContract(
     optionContract: NonNullable<PlaceOrderInput["optionContract"]>,
   ): Promise<{

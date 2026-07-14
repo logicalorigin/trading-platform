@@ -95,6 +95,20 @@ export type TaxStateRuleSetRow = {
   verifiedAt?: Date | string | null;
 };
 
+export type TaxOptionOrderAction =
+  | "buy_to_open"
+  | "buy_to_close"
+  | "sell_to_close"
+  | "sell_to_open";
+export type TaxOptionPositionEffect = "open" | "close";
+export type TaxOptionStrategyIntent =
+  | "long_option"
+  | "sell_to_close"
+  | "covered_call"
+  | "cash_secured_put"
+  | "uncovered_short_call"
+  | "uncovered_short_put";
+
 export type TaxOrderLike = {
   accountId: string;
   mode: "live" | "shadow";
@@ -107,9 +121,55 @@ export type TaxOrderLike = {
   stopPrice?: number | null;
   timeInForce: string;
   optionContract?: Record<string, unknown> | null;
+  optionAction?: TaxOptionOrderAction | null;
+  positionEffect?: TaxOptionPositionEffect | null;
+  strategyIntent?: TaxOptionStrategyIntent | null;
   route?: string | null;
   intent?: string | null;
 };
+
+export function canonicalOptionTaxSemantics(
+  action: TaxOptionOrderAction,
+  right: "call" | "put",
+): {
+  optionAction: TaxOptionOrderAction;
+  positionEffect: TaxOptionPositionEffect;
+  strategyIntent: TaxOptionStrategyIntent | null;
+  intent: string;
+} {
+  if (action === "buy_to_open") {
+    return {
+      optionAction: action,
+      positionEffect: "open",
+      strategyIntent: "long_option",
+      intent: "long_option",
+    };
+  }
+  if (action === "buy_to_close") {
+    return {
+      optionAction: action,
+      positionEffect: "close",
+      strategyIntent: null,
+      intent: "close",
+    };
+  }
+  if (action === "sell_to_close") {
+    return {
+      optionAction: action,
+      positionEffect: "close",
+      strategyIntent: "sell_to_close",
+      intent: "sell_to_close",
+    };
+  }
+  const strategyIntent =
+    right === "call" ? "covered_call" : "cash_secured_put";
+  return {
+    optionAction: action,
+    positionEffect: "open",
+    strategyIntent,
+    intent: strategyIntent,
+  };
+}
 
 export type TaxPreflightEvaluation = {
   action: TaxPreflightAction;
@@ -295,21 +355,12 @@ const normalizeOptionContractForFingerprint = (
   const multiplier = numericOrNull(contract.multiplier);
   const sharesPerContract = numericOrNull(contract.sharesPerContract);
   return {
-    ticker: String(contract.ticker ?? "").trim().toUpperCase() || null,
     underlying: String(contract.underlying ?? "").trim().toUpperCase() || null,
     expirationDate,
     strike,
     right: normalizeOptionRight(contract.right ?? contract.cp) || null,
     multiplier,
     sharesPerContract,
-    providerContractId:
-      contract.providerContractId == null
-        ? null
-        : String(contract.providerContractId).trim() || null,
-    brokerContractId:
-      contract.brokerContractId == null
-        ? null
-        : String(contract.brokerContractId).trim() || null,
   };
 };
 
@@ -329,7 +380,13 @@ export function fingerprintTaxOrder(order: TaxOrderLike): string {
       String(order.assetClass || "").toLowerCase() === "option"
         ? normalizeOptionContractForFingerprint(order.optionContract)
         : null,
-    intent: order.intent ?? null,
+    optionAction:
+      String(order.optionAction || "").trim().toLowerCase() || null,
+    positionEffect:
+      String(order.positionEffect || "").trim().toLowerCase() || null,
+    strategyIntent:
+      String(order.strategyIntent || "").trim().toLowerCase() || null,
+    intent: String(order.intent || "").trim().toLowerCase() || null,
   });
   return createHash("sha256")
     .update(JSON.stringify(normalized))

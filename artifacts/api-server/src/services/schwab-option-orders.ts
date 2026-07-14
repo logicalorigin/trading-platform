@@ -21,7 +21,11 @@ import {
   assertTaxPreflightForOrderSubmission,
   recordTaxPreflightOrderSubmitted,
 } from "./tax-planning";
-import type { TaxOrderLike } from "./tax-planning-model";
+import {
+  canonicalOptionTaxSemantics,
+  type TaxOptionOrderAction,
+  type TaxOrderLike,
+} from "./tax-planning-model";
 import {
   requireStandardOptionContractIdentity,
 } from "./standard-option-contract-identity";
@@ -165,6 +169,15 @@ const TAX_DURATION: Record<SchwabOptionDuration, string> = {
   Day: "day",
   GoodTillCancel: "gtc",
   FillOrKill: "fok",
+};
+const TAX_OPTION_ACTION: Record<
+  SchwabOptionInstruction,
+  TaxOptionOrderAction
+> = {
+  BuyToOpen: "buy_to_open",
+  BuyToClose: "buy_to_close",
+  SellToClose: "sell_to_close",
+  SellToOpen: "sell_to_open",
 };
 const lastSubmitAtByAccountKey = new Map<string, number>();
 
@@ -383,7 +396,11 @@ function schwabOptionSubmitToTaxOrder(input: {
   accountId: string;
   order: NormalizedSchwabOptionOrder;
 }): TaxOrderLike {
-  const right = input.order.optionType.toLowerCase();
+  const right = input.order.optionType.toLowerCase() as "call" | "put";
+  const semantics = canonicalOptionTaxSemantics(
+    TAX_OPTION_ACTION[input.order.instruction],
+    right,
+  );
   return {
     accountId: input.accountId,
     mode: "live",
@@ -407,8 +424,17 @@ function schwabOptionSubmitToTaxOrder(input: {
       brokerContractId: input.order.optionSymbol,
     },
     route: "schwab",
-    intent: null,
+    ...semantics,
   };
+}
+
+function assertDirectPositionContext(order: NormalizedSchwabOptionOrder): void {
+  if (order.instruction === "BuyToOpen") return;
+  throw new HttpError(
+    409,
+    "Schwab direct option orders require account-scoped position and working-order context for this action",
+    { code: "schwab_option_position_context_required" },
+  );
 }
 
 function executionReady(input: {
@@ -621,9 +647,9 @@ export async function previewSchwabOptionOrder(
   options: PreviewSchwabOptionOrderOptions,
 ): Promise<SchwabOptionOrderPreviewResponse> {
   const now = options.now ?? new Date();
-  const order = buildSchwabOptionOrderRequest(
-    validateSchwabOptionOrderInput(options.input),
-  );
+  const normalizedInput = validateSchwabOptionOrderInput(options.input);
+  assertDirectPositionContext(normalizedInput);
+  const order = buildSchwabOptionOrderRequest(normalizedInput);
   const account = await loadLocalSchwabAccount(options.appUserId, options.accountId);
   assertExecutionReady(account);
   const client = await loadOrderClient(account, options);
@@ -655,6 +681,7 @@ export async function submitSchwabOptionOrder(
   }
   const now = options.now ?? new Date();
   const normalizedInput = validateSchwabOptionOrderInput(options.input);
+  assertDirectPositionContext(normalizedInput);
   const order = buildSchwabOptionOrderRequest(normalizedInput);
   const account = await loadLocalSchwabAccount(options.appUserId, options.accountId);
   assertExecutionReady(account);

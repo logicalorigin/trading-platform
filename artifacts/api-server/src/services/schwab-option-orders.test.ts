@@ -409,6 +409,39 @@ test("submit requires explicit confirmation before any account or provider work"
   );
 });
 
+test("Schwab direct option orders reject position-dependent actions before account access", async () => {
+  const input = baseInput({ instruction: "SellToClose" });
+  const assertBoundary = (error: unknown) => {
+    const candidate = error as { statusCode?: number; code?: string };
+    assert.equal(candidate.statusCode, 409);
+    assert.equal(candidate.code, "schwab_option_position_context_required");
+    return true;
+  };
+
+  for (const instruction of [
+    "SellToClose",
+    "BuyToClose",
+    "SellToOpen",
+  ] as const) {
+    await assert.rejects(
+      previewSchwabOptionOrder({
+        appUserId: "missing-user",
+        accountId: "missing-account",
+        input: baseInput({ instruction }),
+      }),
+      assertBoundary,
+    );
+  }
+  await assert.rejects(
+    submitSchwabOptionOrder({
+      appUserId: "missing-user",
+      accountId: "missing-account",
+      input: { ...input, confirm: true },
+    }),
+    assertBoundary,
+  );
+});
+
 test("submit requires an option tax preflight, places the order, and records submission", async () => {
   await withTestDb(async () => {
     resetSubmitRateLimit();
@@ -460,8 +493,11 @@ test("submit requires an option tax preflight, places the order, and records sub
         providerContractId: "AAPL  270115C00150000",
         brokerContractId: "AAPL  270115C00150000",
       },
+      optionAction: "buy_to_open",
+      positionEffect: "open",
+      strategyIntent: "long_option",
       route: "schwab",
-      intent: null,
+      intent: "long_option",
     });
     const preflight = await runAsAppUser(appUserId, () =>
       createTaxOrderPreflight({ order: taxOrder }),

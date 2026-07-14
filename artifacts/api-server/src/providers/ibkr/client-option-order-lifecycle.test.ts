@@ -62,6 +62,43 @@ const contractInfo = (overrides: Record<string, unknown> = {}) => ({
   ...overrides,
 });
 
+test("IBKR resolves a selected option tuple to a verified canonical conid", async () => {
+  const previousFetch = globalThis.fetch;
+  globalThis.fetch = (async (input) => {
+    const url = new URL(String(input));
+    if (url.pathname.endsWith("/iserver/secdef/search")) {
+      return Response.json([{ conid: 265598, symbol: "AAPL", sections: [] }]);
+    }
+    if (url.pathname.endsWith("/iserver/secdef/info")) {
+      return Response.json([
+        {
+          conid: 700001,
+          maturityDate: "20260821",
+          strike: 200,
+          right: "C",
+          exchange: "SMART",
+        },
+      ]);
+    }
+    if (url.pathname.endsWith("/iserver/contract/700001/info")) {
+      return Response.json(contractInfo());
+    }
+    throw new Error(`unexpected IBKR request: ${url.pathname}`);
+  }) as typeof fetch;
+
+  try {
+    const resolved = await new IbkrClient(config()).resolveOptionOrderContract({
+      ...contract,
+      providerContractId: null,
+    });
+    assert.equal(resolved.providerContractId, "700001");
+    assert.equal(resolved.ticker, contract.ticker);
+    assert.equal(resolved.strike, contract.strike);
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
 test("IBKR previews and verifies an exact prepared option order", async () => {
   const previousFetch = globalThis.fetch;
   let submittedBody: Record<string, unknown> | null = null;

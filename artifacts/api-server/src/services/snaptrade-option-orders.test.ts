@@ -143,8 +143,11 @@ async function createSnapTradeSubmitFixture(email: string) {
           providerContractId: occSymbol,
           brokerContractId: occSymbol,
         },
+        optionAction: "buy_to_open",
+        positionEffect: "open",
+        strategyIntent: "long_option",
         route: "snaptrade",
-        intent: null,
+        intent: "long_option",
       },
     }),
   );
@@ -342,6 +345,51 @@ test("SnapTrade option submit requires explicit confirmation before provider acc
   assert.equal(called, false);
 });
 
+test("SnapTrade direct option orders reject position-dependent actions before account access", async () => {
+  const input = {
+    contractSymbol: "O:AAPL260821C00200000",
+    multiplier: 100,
+    sharesPerContract: 100,
+    underlyingSymbol: "AAPL",
+    expiration: "2026-08-21",
+    strike: 200,
+    optionType: "Call" as const,
+    action: "SELL_TO_CLOSE" as const,
+    orderType: "Market" as const,
+    timeInForce: "Day" as const,
+    units: 1,
+  };
+  const assertBoundary = (error: unknown) => {
+    const candidate = error as { statusCode?: number; code?: string };
+    assert.equal(candidate.statusCode, 409);
+    assert.equal(candidate.code, "snaptrade_option_position_context_required");
+    return true;
+  };
+
+  for (const action of [
+    "SELL_TO_CLOSE",
+    "BUY_TO_CLOSE",
+    "SELL_TO_OPEN",
+  ] as const) {
+    await assert.rejects(
+      checkSnapTradeOptionOrderImpact({
+        appUserId: "missing-user",
+        accountId: "missing-account",
+        input: { ...input, action },
+      }),
+      assertBoundary,
+    );
+  }
+  await assert.rejects(
+    submitSnapTradeOptionOrder({
+      appUserId: "missing-user",
+      accountId: "missing-account",
+      input: { ...input, confirm: true },
+    }),
+    assertBoundary,
+  );
+});
+
 test("SnapTrade option submit requires and consumes a matching option tax preflight", async () => {
   await withBootstrapToken(async () =>
     withTestDb(async () => {
@@ -360,7 +408,7 @@ test("SnapTrade option submit requires and consumes a matching option tax prefli
         expiration: "2026-09-18",
         strike: 450,
         optionType: "Put" as const,
-        action: "SELL_TO_OPEN" as const,
+        action: "BUY_TO_OPEN" as const,
         orderType: "Limit" as const,
         timeInForce: "GTC" as const,
         units: 1,
@@ -402,7 +450,7 @@ test("SnapTrade option submit requires and consumes a matching option tax prefli
             mode: "live",
             symbol: "MSFT",
             assetClass: "option",
-            side: "sell",
+            side: "buy",
             type: "limit",
             quantity: 1,
             limitPrice: 3.25,
@@ -419,8 +467,11 @@ test("SnapTrade option submit requires and consumes a matching option tax prefli
               providerContractId: occSymbol,
               brokerContractId: occSymbol,
             },
+            optionAction: "buy_to_open",
+            positionEffect: "open",
+            strategyIntent: "long_option",
             route: "snaptrade",
-            intent: null,
+            intent: "long_option",
           },
         }),
       );
@@ -475,11 +526,11 @@ test("SnapTrade option submit requires and consumes a matching option tax prefli
         order_type: "LIMIT",
         time_in_force: "GTC",
         limit_price: "3.25",
-        price_effect: "CREDIT",
+        price_effect: "DEBIT",
         legs: [
           {
             instrument: { symbol: occSymbol, instrument_type: "OPTION" },
-            action: "SELL_TO_OPEN",
+            action: "BUY_TO_OPEN",
             units: 1,
           },
         ],
@@ -512,7 +563,7 @@ test("SnapTrade option submit resolves with reconciliation required when the pos
             mode: "live",
             symbol: "MSFT",
             assetClass: "option",
-            side: "sell",
+            side: "buy",
             type: "limit",
             quantity: 1,
             limitPrice: 3.25,
@@ -529,8 +580,11 @@ test("SnapTrade option submit resolves with reconciliation required when the pos
               providerContractId: occSymbol,
               brokerContractId: occSymbol,
             },
+            optionAction: "buy_to_open",
+            positionEffect: "open",
+            strategyIntent: "long_option",
             route: "snaptrade",
-            intent: null,
+            intent: "long_option",
           },
         }),
       );
@@ -547,7 +601,7 @@ test("SnapTrade option submit resolves with reconciliation required when the pos
           expiration: "2026-09-18",
           strike: 450,
           optionType: "Put",
-          action: "SELL_TO_OPEN",
+          action: "BUY_TO_OPEN",
           orderType: "Limit",
           timeInForce: "GTC",
           units: 1,

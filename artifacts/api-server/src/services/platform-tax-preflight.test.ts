@@ -110,6 +110,32 @@ test("prepared IBKR mutations remain bound to one owned gateway lifecycle", () =
   );
 });
 
+test("IBKR option preview resolves contract identity before risk validation and what-if", () => {
+  const previewSource = platformSource.slice(
+    platformSource.indexOf("export async function previewOrder(input"),
+    platformSource.indexOf("export async function previewOrderReplacement"),
+  );
+  const gatewayCheck = previewSource.indexOf(
+    "await assertIbkrGatewayTradingAvailable",
+  );
+  const contractResolution = previewSource.indexOf(
+    "await client.resolveOptionOrderContract",
+  );
+  const gatewaySnapshot = previewSource.indexOf(
+    "assertIbkrClientPortalGatewaySnapshot()",
+  );
+  const riskValidation = previewSource.indexOf(
+    "await validateOrderIntentForRouting",
+  );
+  const whatIf = previewSource.indexOf("await client.previewOrder");
+
+  assert.ok(gatewayCheck >= 0);
+  assert.ok(gatewayCheck < contractResolution);
+  assert.ok(contractResolution < gatewaySnapshot);
+  assert.ok(gatewaySnapshot < riskValidation);
+  assert.ok(riskValidation < whatIf);
+});
+
 test("direct IBKR order visibility cache isolates app users and gateway generations", () => {
   const input = { accountId: "U1234567", mode: "live" as const };
   const gateway = {

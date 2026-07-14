@@ -216,8 +216,11 @@ async function createRobinhoodSubmitFixture(email: string, refId: string) {
           providerContractId: occSymbol,
           brokerContractId: occSymbol,
         },
+        optionAction: "buy_to_open",
+        positionEffect: "open",
+        strategyIntent: "long_option",
         route: "robinhood",
-        intent: null,
+        intent: "long_option",
       },
     }),
   );
@@ -427,8 +430,11 @@ test("place submits the resolved leg after a matching option tax preflight", asy
               providerContractId: "AAPL  260821C00210000",
               brokerContractId: "AAPL  260821C00210000",
             },
+            optionAction: "buy_to_open",
+            positionEffect: "open",
+            strategyIntent: "long_option",
             route: "robinhood",
-            intent: null,
+            intent: "long_option",
           },
         }),
       );
@@ -505,8 +511,11 @@ test("place resolves with reconciliation required when the post-submit tax recor
               providerContractId: "AAPL  260821C00210000",
               brokerContractId: "AAPL  260821C00210000",
             },
+            optionAction: "buy_to_open",
+            positionEffect: "open",
+            strategyIntent: "long_option",
             route: "robinhood",
-            intent: null,
+            intent: "long_option",
           },
         }),
       );
@@ -649,6 +658,39 @@ test("rejects an invalid stop-market leg before account or MCP access", async ()
     (error: unknown) =>
       (error as { code?: string }).code ===
       "robinhood_option_order_leg_invalid",
+  );
+});
+
+test("Robinhood direct option orders reject position-dependent actions before account access", async () => {
+  const input = baseOrder({ side: "Sell", positionEffect: "Close" });
+  const assertBoundary = (error: unknown) => {
+    const candidate = error as { statusCode?: number; code?: string };
+    assert.equal(candidate.statusCode, 409);
+    assert.equal(candidate.code, "robinhood_option_position_context_required");
+    return true;
+  };
+
+  for (const action of [
+    { side: "Sell", positionEffect: "Close" },
+    { side: "Buy", positionEffect: "Close" },
+    { side: "Sell", positionEffect: "Open" },
+  ] as const) {
+    await assert.rejects(
+      reviewRobinhoodOptionOrder({
+        appUserId: "missing-user",
+        accountId: "missing-account",
+        input: baseOrder(action),
+      }),
+      assertBoundary,
+    );
+  }
+  await assert.rejects(
+    placeRobinhoodOptionOrder({
+      appUserId: "missing-user",
+      accountId: "missing-account",
+      input: { ...input, confirm: true },
+    }),
+    assertBoundary,
   );
 });
 

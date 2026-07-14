@@ -15,7 +15,11 @@ import {
   assertTaxPreflightForOrderSubmission,
   recordTaxPreflightOrderSubmitted,
 } from "./tax-planning";
-import type { TaxOrderLike } from "./tax-planning-model";
+import {
+  canonicalOptionTaxSemantics,
+  type TaxOptionOrderAction,
+  type TaxOrderLike,
+} from "./tax-planning-model";
 import {
   requireStandardOptionContractIdentity,
 } from "./standard-option-contract-identity";
@@ -259,7 +263,7 @@ const TIME_IN_FORCE_VALUES = new Set<string>(
 const MARKET_HOURS = new Set<string>(ROBINHOOD_OPTION_MARKET_HOURS);
 const UNDERLYING_TYPES = new Set<string>(ROBINHOOD_OPTION_UNDERLYING_TYPES);
 
-const OPTION_TYPE_TO_MCP: Record<RobinhoodOptionType, string> = {
+const OPTION_TYPE_TO_MCP: Record<RobinhoodOptionType, "call" | "put"> = {
   Call: "call",
   Put: "put",
 };
@@ -296,6 +300,15 @@ const TAX_TIF_BY_ROBINHOOD: Record<
 > = {
   Day: "day",
   GTC: "gtc",
+};
+const TAX_OPTION_ACTION: Record<
+  `${RobinhoodOptionOrderSide}:${RobinhoodOptionPositionEffect}`,
+  TaxOptionOrderAction
+> = {
+  "Buy:Open": "buy_to_open",
+  "Buy:Close": "buy_to_close",
+  "Sell:Close": "sell_to_close",
+  "Sell:Open": "sell_to_open",
 };
 
 const lastSubmitAtByAccountKey = new Map<string, number>();
@@ -904,6 +917,11 @@ function robinhoodToTaxOrder(input: {
   accountId: string;
   order: NormalizedOrder;
 }): TaxOrderLike {
+  const right = OPTION_TYPE_TO_MCP[input.order.optionType];
+  const semantics = canonicalOptionTaxSemantics(
+    TAX_OPTION_ACTION[`${input.order.side}:${input.order.positionEffect}`],
+    right,
+  );
   return {
     accountId: input.accountId,
     mode: "live",
@@ -920,15 +938,24 @@ function robinhoodToTaxOrder(input: {
       underlying: input.order.chainSymbol,
       expirationDate: input.order.expiration,
       strike: input.order.strike,
-      right: OPTION_TYPE_TO_MCP[input.order.optionType],
+      right,
       multiplier: input.order.multiplier,
       sharesPerContract: input.order.sharesPerContract,
       providerContractId: input.order.occSymbol,
       brokerContractId: input.order.occSymbol,
     },
     route: "robinhood",
-    intent: null,
+    ...semantics,
   };
+}
+
+function assertDirectPositionContext(order: NormalizedOrder): void {
+  if (order.side === "Buy" && order.positionEffect === "Open") return;
+  throw new HttpError(
+    409,
+    "Robinhood direct option orders require account-scoped position and working-order context for this action",
+    { code: "robinhood_option_position_context_required" },
+  );
 }
 
 function submitReconcileRequiredError(input: {
@@ -1067,6 +1094,7 @@ export async function reviewRobinhoodOptionOrder(
   const fetchImpl = options.fetchImpl ?? fetch;
   const now = options.now ?? new Date();
   const order = normalizeOrder(options.input);
+  assertDirectPositionContext(order);
   const account = await loadLocalRobinhoodAccount(
     options.appUserId,
     options.accountId,
@@ -1139,6 +1167,7 @@ export async function placeRobinhoodOptionOrder(
   const fetchImpl = options.fetchImpl ?? fetch;
   const now = options.now ?? new Date();
   const order = normalizeOrder(options.input);
+  assertDirectPositionContext(order);
   const account = await loadLocalRobinhoodAccount(
     options.appUserId,
     options.accountId,
