@@ -375,6 +375,10 @@ function listingKeyExclusionFilter(listingKeys?: readonly string[]) {
   return sql`${universeCatalogListingsTable.listingKey} <> all(${sql.param([...listingKeys])}::text[])`;
 }
 
+function prioritySymbolFilter(symbols: readonly string[]) {
+  return sql`${universeCatalogListingsTable.normalizedTicker} = any(${sql.param([...symbols])}::text[])`;
+}
+
 function appendRows(
   target: HydrationRow[],
   rows: readonly HydrationRow[],
@@ -401,7 +405,7 @@ async function loadRowsForSymbols(input: {
   if (!symbols.length) return [];
   const filters = [
     eq(universeCatalogListingsTable.market, input.market),
-    inArray(universeCatalogListingsTable.normalizedTicker, symbols),
+    prioritySymbolFilter(symbols),
   ];
   if (input.activeOnly) {
     filters.push(eq(universeCatalogListingsTable.active, true));
@@ -1019,6 +1023,7 @@ export const __hydrateUniverseCatalogIbkrInternalsForTests = {
   hydrateAndCheckpointRow,
   listingHydrationFilters,
   parseHydrationArgs,
+  prioritySymbolFilter,
   safeDiagnostic,
 };
 

@@ -11,13 +11,18 @@ type UniversePriorityDb = {
   select: typeof db.select;
 };
 
+const UNIVERSE_PRIORITY_SYMBOL_PATTERN = /^[A-Z0-9][A-Z0-9./_-]{0,63}$/u;
+
 export function normalizeUniversePrioritySymbol(
   symbol: string | null | undefined,
 ) {
   const raw = String(symbol ?? "").trim();
   if (!raw) return "";
+  if (/[^\x00-\x7f]/u.test(raw)) {
+    throw new Error("Invalid universe priority symbol.");
+  }
   const normalized = normalizeSymbol(raw);
-  if (!/^[A-Z0-9./_-]+$/.test(normalized)) {
+  if (!UNIVERSE_PRIORITY_SYMBOL_PATTERN.test(normalized)) {
     throw new Error("Invalid universe priority symbol.");
   }
   return normalized;

@@ -240,6 +240,19 @@ test("large same-run exclusion sets use one PostgreSQL array parameter", () => {
   assert.match(query.sql, /<> all\(\$4::text\[\]\)/);
 });
 
+test("large explicit symbol sets use one PostgreSQL array parameter", () => {
+  const symbols = Array.from({ length: 65_536 }, (_, index) => `SYM${index}`);
+  const query = db
+    .select({ listingKey: universeCatalogListingsTable.listingKey })
+    .from(universeCatalogListingsTable)
+    .where(hydrateCli.prioritySymbolFilter(symbols))
+    .toSQL();
+
+  assert.equal(query.params.length, 1);
+  assert.deepEqual(query.params[0], symbols);
+  assert.match(query.sql, /= any\(\$1::text\[\]\)/);
+});
+
 test("importing the IBKR catalog hydrator does not run database or provider work", () => {
   const moduleUrl = pathToFileURL(
     resolve(import.meta.dirname, "hydrate-universe-catalog-ibkr.ts"),

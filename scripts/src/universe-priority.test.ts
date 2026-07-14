@@ -28,6 +28,12 @@ test("explicit symbol scope rejects empty or malformed entries", () => {
   );
 });
 
+test("priority symbols reject Unicode retargeting and invalid catalog shape", () => {
+  for (const raw of ["ſ", ".", "A".repeat(65)]) {
+    assert.throws(() => parseUniversePrioritySymbolList(raw), /invalid/i);
+  }
+});
+
 test("canonical priority symbols preserve first-seen order and deduplicate", () => {
   assert.deepEqual(
     parseUniversePrioritySymbolList("spy,brk-b,BRK.B,aapl,SPY"),
