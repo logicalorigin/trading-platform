@@ -7,6 +7,7 @@ import {
   buildPreparedIbkrOrderSubmission,
   buildPreparedIbkrReplacementSubmission,
   buildPreparedIbkrReplacementPreview,
+  formatIbkrOrderSideSize,
   ibkrCancelToast,
   ibkrLifecycleRequiresReconciliation,
   ibkrOrderHasAnyFill,
@@ -262,6 +263,33 @@ test("warning challenge is read from the generated ApiError problem payload", ()
   );
 });
 
+test("IBKR warning side and size reflects the exact prepared instrument", () => {
+  assert.equal(
+    formatIbkrOrderSideSize({
+      assetClass: "equity",
+      side: "sell",
+      quantity: 25,
+    }),
+    "SELL 25 SHARES",
+  );
+  assert.equal(
+    formatIbkrOrderSideSize({
+      assetClass: "option",
+      side: "buy",
+      quantity: 1,
+    }),
+    "BUY 1 CONTRACT",
+  );
+  assert.equal(
+    formatIbkrOrderSideSize({
+      assetClass: "option",
+      side: "sell",
+      quantity: 2,
+    }),
+    "SELL 2 CONTRACTS",
+  );
+});
+
 test("price-only replacement uses the prepared fingerprint and preflight", () => {
   assert.deepEqual(
     buildPreparedIbkrReplacementPreview({
@@ -419,6 +447,9 @@ test("ticket wires generated direct IBKR lifecycle hooks", () => {
   assert.match(source, /trackedIbkrOrderRequiresReconciliation \|\|/);
   assert.match(source, /controlledIbkrOrder\.status === "reconciliation_required"/);
   assert.match(source, /recoveredIbkrLifecycleKeyRef/);
+  assert.match(source, /formatIbkrOrderSideSize\(warningOrder\)/);
+  assert.doesNotMatch(source, /BUY 1 SHARE/);
+  assert.doesNotMatch(source, /one-share limit order/);
 });
 
 test("warning dialog exposes an explicit decline action", () => {

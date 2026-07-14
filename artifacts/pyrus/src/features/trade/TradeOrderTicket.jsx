@@ -101,6 +101,7 @@ import {
   buildPreparedIbkrOrderSubmission,
   buildPreparedIbkrReplacementPreview,
   buildPreparedIbkrReplacementSubmission,
+  formatIbkrOrderSideSize,
   ibkrCancelToast,
   ibkrLifecycleRequiresReconciliation,
   ibkrOrderNeedsFillReconciliation,
@@ -3263,6 +3264,8 @@ export const TradeOrderTicket = ({
     operation,
     nextLimitPrice = null,
   }) {
+    const warningOrder =
+      operation === "replace" ? trackedIbkrOrder : orderRequest;
     setLiveConfirmError(null);
     setLiveConfirmState({
       kind: "ibkr_warning",
@@ -3280,7 +3283,7 @@ export const TradeOrderTicket = ({
           value: selectedIbkrAccount?.maskedAccountId || MISSING_VALUE,
         },
         { label: "SYMBOL", value: trackedIbkrOrder?.symbol || slot.ticker },
-        { label: "SIDE / SIZE", value: "BUY 1 SHARE" },
+        { label: "SIDE / SIZE", value: formatIbkrOrderSideSize(warningOrder) },
         {
           label:
             operation === "replace"
@@ -4268,7 +4271,7 @@ export const TradeOrderTicket = ({
       toast.push({
         kind: "warn",
         title: "Price change blocked",
-        body: "A live, completely unfilled one-share limit order and positive new price are required.",
+        body: "A live, completely unfilled limit order and positive new price are required.",
       });
       return;
     }

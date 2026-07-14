@@ -111,6 +111,24 @@ export const buildPreparedIbkrOrderSubmission = (order, preview) => ({
 export const buildPreparedIbkrEquityOrderSubmission =
   buildPreparedIbkrOrderSubmission;
 
+export const formatIbkrOrderSideSize = (order) => {
+  const side = String(order?.side || "").trim().toUpperCase() || "UNKNOWN";
+  const numericQuantity = Number(order?.quantity);
+  const quantity =
+    Number.isFinite(numericQuantity) && numericQuantity > 0
+      ? numericQuantity
+      : "?";
+  const option = order?.assetClass === "option";
+  const unit = option
+    ? numericQuantity === 1
+      ? "CONTRACT"
+      : "CONTRACTS"
+    : numericQuantity === 1
+      ? "SHARE"
+      : "SHARES";
+  return `${side} ${quantity} ${unit}`;
+};
+
 export const readIbkrOrderWarning = (error) => {
   if (error?.data?.code !== "ibkr_order_warning_confirmation_required") {
     return null;
