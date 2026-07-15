@@ -5,7 +5,9 @@ import {
   buildWalkForwardWindows,
   calculateBacktestMetrics,
   calculateBenchmarkMetrics,
+  getBacktestOptionPreset,
   rankCandidateResults,
+  resolveBacktestOptionContract as selectBacktestOptionContract,
   signalOptionsRightForDirection,
   runBacktest,
   type BacktestBar,
@@ -13,6 +15,8 @@ import {
   type BacktestPoint,
   type BacktestRiskRules,
   type BacktestTrade,
+  type HistoricalBacktestOptionContract,
+  type ResolvedBacktestOptionContract,
   type SignalOptionsExecutionProfile,
   type StudyDefinition,
 } from "@workspace/backtest-core";
@@ -109,21 +113,6 @@ type ApiBarsResponse = {
   } | null;
 };
 
-type ApiResolvedOptionContractResponse = {
-  contract: {
-    ticker: string;
-    underlying: string;
-    expirationDate: string;
-    strike: number;
-    right: "call" | "put";
-    multiplier: number;
-    sharesPerContract: number;
-    providerContractId: string | null;
-    contractPresetId: string;
-    dte: number;
-  } | null;
-};
-
 type StudyRow = typeof backtestStudiesTable.$inferSelect;
 type RunRow = typeof backtestRunsTable.$inferSelect;
 type SweepRow = typeof backtestSweepsTable.$inferSelect;
@@ -158,19 +147,6 @@ type HistoricalBarsRequest = {
   directMassive?: boolean;
 };
 
-type ResolvedOptionContract = {
-  ticker: string;
-  underlying: string;
-  expirationDate: Date;
-  strike: number;
-  right: "call" | "put";
-  multiplier: number;
-  sharesPerContract: number;
-  providerContractId: string | null;
-  contractPresetId: string;
-  dte: number;
-};
-
 type OptionPositionState = {
   symbol: string;
   right: "call" | "put";
@@ -178,7 +154,7 @@ type OptionPositionState = {
   bars: BacktestBar[];
   entryBarIndex: number;
   lastRiskBarIndex: number;
-  contract: ResolvedOptionContract;
+  contract: ResolvedBacktestOptionContract;
   entryAt: Date;
   entryPrice: number;
   quantity: number;
@@ -191,7 +167,7 @@ type OptionPositionState = {
 type SimulatedOptionTrade = BacktestTrade & {
   dataset: DatasetRow;
   bars: BacktestBar[];
-  contract: ResolvedOptionContract;
+  contract: ResolvedBacktestOptionContract;
   entryCommissionPaid: number;
   exitCommissionPaid: number;
 };
@@ -210,6 +186,8 @@ const OVERNIGHT_SYMBOL_CONCURRENCY = Math.max(
 );
 const MASSIVE_DIRECT_MAX_RETRIES = 3;
 const MASSIVE_DIRECT_RETRY_DELAY_MS = 1_000;
+const MASSIVE_OPTION_CONTRACT_MAX_PAGES = 100;
+const OPTION_CONTRACT_LOOKAHEAD_DAYS = 60;
 
 const MASSIVE_API_KEY_ENV_NAMES = [
   "MASSIVE_API_KEY",
@@ -268,15 +246,30 @@ export function buildMassiveDirectUrl(
   params: Record<string, string | number | boolean>,
 ): URL {
   const config = getMassiveDirectConfig();
-  const baseUrl = new URL(`${config.baseUrl}/`);
-  const url = new URL(
-    pathOrUrl.startsWith("/") && !pathOrUrl.startsWith("//")
-      ? `.${pathOrUrl}`
-      : pathOrUrl,
-    baseUrl,
-  );
+  let baseUrl: URL;
+  let url: URL;
+  try {
+    baseUrl = new URL(`${config.baseUrl}/`);
+    url = new URL(
+      pathOrUrl.startsWith("/") && !pathOrUrl.startsWith("//")
+        ? `.${pathOrUrl}`
+        : pathOrUrl,
+      baseUrl,
+    );
+  } catch {
+    throw new Error("Massive returned an invalid URL.");
+  }
   if (url.origin !== baseUrl.origin) {
     throw new Error("Massive pagination URL changed origin.");
+  }
+  const basePath = baseUrl.pathname;
+  const baseRoot = basePath === "/" ? "/" : basePath.slice(0, -1);
+  if (
+    basePath !== "/" &&
+    url.pathname !== baseRoot &&
+    !url.pathname.startsWith(basePath)
+  ) {
+    throw new Error("Massive pagination URL left configured base path.");
   }
   for (const [key, value] of Object.entries(params)) {
     url.searchParams.set(key, String(value));
@@ -295,9 +288,18 @@ function readRetryAfterMs(response: Response, attempt: number): number {
 
 export async function fetchMassiveDirectJson(url: URL): Promise<unknown> {
   for (let attempt = 0; attempt <= MASSIVE_DIRECT_MAX_RETRIES; attempt += 1) {
-    const response = await fetch(url, { redirect: "error" });
+    let response: Response;
+    try {
+      response = await fetch(url, { redirect: "error" });
+    } catch {
+      throw new Error("Massive request failed.");
+    }
     if (response.ok) {
-      return response.json();
+      try {
+        return await response.json();
+      } catch {
+        throw new Error("Massive request returned invalid JSON.");
+      }
     }
 
     if (
@@ -308,10 +310,10 @@ export async function fetchMassiveDirectJson(url: URL): Promise<unknown> {
       continue;
     }
 
-    throw new Error(`Massive aggregate fetch failed with ${response.status}.`);
+    throw new Error(`Massive request failed with ${response.status}.`);
   }
 
-  throw new Error("Massive aggregate fetch exhausted retries.");
+  throw new Error("Massive request exhausted retries.");
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -325,12 +327,139 @@ function asArray(value: unknown): unknown[] {
 }
 
 function asNumber(value: unknown): number | null {
-  const numeric = typeof value === "number" ? value : Number(value);
-  return Number.isFinite(numeric) ? numeric : null;
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? value : null;
+  }
+  if (typeof value === "string" && value.trim()) {
+    const numeric = Number(value);
+    return Number.isFinite(numeric) ? numeric : null;
+  }
+  return null;
 }
 
 function asString(value: unknown): string | null {
   return typeof value === "string" ? value : null;
+}
+
+function normalizeMassiveDirectSymbol(symbol: string): string {
+  const normalized = symbol.trim().toUpperCase();
+  return /^[A-Z]{1,5}[ -][A-Z]{1,2}$/.test(normalized)
+    ? normalized.replace(/[ -]/, ".")
+    : normalized;
+}
+
+function normalizeMassiveDirectOptionRight(
+  value: unknown,
+): "call" | "put" | null {
+  const normalized = asString(value)?.trim().toLowerCase();
+  if (normalized === "call" || normalized === "c") return "call";
+  if (normalized === "put" || normalized === "p") return "put";
+  return null;
+}
+
+function parseMassiveDirectDate(value: unknown): Date | null {
+  const text = asString(value)?.trim();
+  if (!text) return null;
+  const date = new Date(text);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function mapMassiveDirectOptionContract(
+  underlying: string,
+  value: unknown,
+): HistoricalBacktestOptionContract | null {
+  const record = asRecord(value);
+  if (!record) return null;
+
+  const details = asRecord(record.details) ?? record;
+  const ticker = asString(details.ticker)?.trim();
+  const expirationDate = parseMassiveDirectDate(details.expiration_date);
+  const strike = asNumber(details.strike_price);
+  const right = normalizeMassiveDirectOptionRight(details.contract_type);
+  if (!ticker || !expirationDate || strike == null || strike <= 0 || !right) {
+    return null;
+  }
+  const providerContractSize = asNumber(details.shares_per_contract);
+  const contractSize =
+    providerContractSize != null && providerContractSize > 0
+      ? providerContractSize
+      : 100;
+  const providerUnderlying = asString(details.underlying_ticker)?.trim();
+
+  return {
+    ticker,
+    underlying: normalizeMassiveDirectSymbol(providerUnderlying || underlying),
+    expirationDate,
+    strike,
+    right,
+    multiplier: contractSize,
+    sharesPerContract: contractSize,
+    providerContractId: asString(details.provider_contract_id)?.trim() || null,
+  };
+}
+
+function isHistoricalBacktestOptionContract(
+  value: HistoricalBacktestOptionContract | null,
+): value is HistoricalBacktestOptionContract {
+  return value !== null;
+}
+
+async function fetchMassiveDirectOptionContracts(input: {
+  underlying: string;
+  occurredAt: Date;
+  right: "call" | "put";
+  expirationDateLte: Date;
+}): Promise<HistoricalBacktestOptionContract[]> {
+  const fetchContracts = async (
+    expired: boolean,
+  ): Promise<HistoricalBacktestOptionContract[]> => {
+    let nextUrl: string | null = buildMassiveDirectUrl(
+      "/v3/reference/options/contracts",
+      {
+        underlying_ticker: input.underlying,
+        as_of: input.occurredAt.toISOString().slice(0, 10),
+        contract_type: input.right,
+        expired,
+        order: "asc",
+        sort: "expiration_date",
+        limit: 1_000,
+        "expiration_date.gte": input.occurredAt.toISOString().slice(0, 10),
+        "expiration_date.lte": input.expirationDateLte
+          .toISOString()
+          .slice(0, 10),
+      },
+    ).toString();
+    const contracts: HistoricalBacktestOptionContract[] = [];
+    let pageCount = 0;
+
+    while (nextUrl && pageCount < MASSIVE_OPTION_CONTRACT_MAX_PAGES) {
+      const payload = asRecord(await fetchMassiveDirectJson(new URL(nextUrl)));
+      contracts.push(
+        ...asArray(payload?.results)
+          .map((value) =>
+            mapMassiveDirectOptionContract(input.underlying, value),
+          )
+          .filter(isHistoricalBacktestOptionContract),
+      );
+      const providerNextUrl = asString(payload?.next_url);
+      nextUrl = providerNextUrl
+        ? buildMassiveDirectUrl(providerNextUrl, {}).toString()
+        : null;
+      pageCount += 1;
+    }
+
+    return contracts;
+  };
+
+  const combined = [
+    ...(await fetchContracts(false)),
+    ...(await fetchContracts(true)),
+  ];
+  return [
+    ...new Map(
+      combined.map((contract) => [contract.ticker, contract]),
+    ).values(),
+  ];
 }
 
 function mapMassiveDirectBar(value: unknown): BacktestBar | null {
@@ -1212,35 +1341,65 @@ function closeOptionTrade(
   };
 }
 
-async function resolveOptionContractForSignal(input: {
+export async function resolveOptionContractForSignal(input: {
   underlying: string;
   occurredAt: Date;
   right: "call" | "put";
   spotPrice: number;
   contractPresetId?: string | null;
   signalOptionsProfile?: SignalOptionsExecutionProfile | null;
-}): Promise<ResolvedOptionContract | null> {
-  const url = new URL(`${API_BASE_URL}/backtests/internal/resolve-option-contract`);
-  const payload = await fetchJson<ApiResolvedOptionContractResponse>(url.toString(), {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-    },
-    body: JSON.stringify({
-      ...input,
-      occurredAt: input.occurredAt.toISOString(),
-      signalOptionsProfile: input.signalOptionsProfile ?? null,
-    }),
-  });
-
-  if (!payload.contract) {
-    return null;
+}): Promise<ResolvedBacktestOptionContract | null> {
+  const underlying = normalizeMassiveDirectSymbol(input.underlying);
+  const occurredAt = new Date(input.occurredAt.getTime());
+  if (!underlying) {
+    throw new Error("A valid underlying symbol is required.");
+  }
+  if (Number.isNaN(occurredAt.getTime())) {
+    throw new Error("A valid occurrence date is required.");
+  }
+  if (input.right !== "call" && input.right !== "put") {
+    throw new Error("A valid option right is required.");
+  }
+  if (!Number.isFinite(input.spotPrice) || input.spotPrice <= 0) {
+    throw new Error("A positive spot reference price is required.");
   }
 
-  return {
-    ...payload.contract,
-    expirationDate: new Date(payload.contract.expirationDate),
-  };
+  const preset = getBacktestOptionPreset(input.contractPresetId);
+  const signalOptionsProfile = input.signalOptionsProfile ?? null;
+  const startOfDay = new Date(
+    Date.UTC(
+      occurredAt.getUTCFullYear(),
+      occurredAt.getUTCMonth(),
+      occurredAt.getUTCDate(),
+    ),
+  );
+  const expirationDateLte = new Date(
+    startOfDay.getTime() +
+      (Math.max(
+        signalOptionsProfile?.optionSelection.maxDte ?? preset.maxDte,
+        signalOptionsProfile?.optionSelection.targetDte ?? preset.targetDte,
+      ) +
+        OPTION_CONTRACT_LOOKAHEAD_DAYS) *
+        24 *
+        60 *
+        60 *
+        1_000,
+  );
+  const contracts = await fetchMassiveDirectOptionContracts({
+    underlying,
+    occurredAt,
+    right: input.right,
+    expirationDateLte,
+  });
+
+  return selectBacktestOptionContract({
+    contracts,
+    occurredAt,
+    right: input.right,
+    spotPrice: input.spotPrice,
+    preset,
+    signalOptionsProfile,
+  });
 }
 
 function buildOptionPoints(
