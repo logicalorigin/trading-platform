@@ -47,6 +47,8 @@ let getAccountPositionsImpl: (...args: unknown[]) => Promise<unknown> =
   countedService("getAccountPositions");
 let getAccountRiskImpl: (...args: unknown[]) => Promise<unknown> =
   countedService("getAccountRisk");
+let resolveOptionContractWithDebugImpl: (...args: unknown[]) => Promise<unknown> =
+  inertService({});
 let snapTradeBackedAccountsPresent = false;
 let robinhoodBackedAccountsPresent = false;
 
@@ -160,7 +162,8 @@ mock.module(new URL("../services/platform.ts", import.meta.url).href, {
     removeWatchlistSymbol: inertService({}),
     reorderWatchlistSymbols: inertService({}),
     replaceOrder: countedInertService("replaceOrder"),
-    resolveOptionContractWithDebug: inertService({}),
+    resolveOptionContractWithDebug: (...args: unknown[]) =>
+      resolveOptionContractWithDebugImpl(...args),
     searchUniverseTickers: inertService({}),
     submitRawOrders: countedInertService("submitRawOrders"),
     updateWatchlist: inertService({}),
@@ -971,6 +974,58 @@ test("public Trade option-chain routes avoid artificial metadata waits", () => {
   assert.match(batchHandler, /allowDelayedSnapshotHydration:\s*false/);
   assert.match(batchHandler, /emptyRetryDelaysMs:\s*\[\]/);
   assert.match(batchHandler, /timeoutMs:\s*OPTION_CHAIN_PUBLIC_METADATA_TIMEOUT_MS/);
+});
+
+test("resolve-contract coerces its HTTP date before generated validation", async () => {
+  const calls: Array<Record<string, unknown>> = [];
+  resolveOptionContractWithDebugImpl = async (input: unknown) => {
+    const query = input as {
+      underlying: string;
+      expirationDate: Date;
+      strike: number;
+      right: "call" | "put";
+    };
+    calls.push(input as Record<string, unknown>);
+    return {
+      ...query,
+      status: "not_found",
+      providerContractId: null,
+      contract: null,
+      errorMessage: null,
+      debug: { cacheStatus: "miss", totalMs: 0, upstreamMs: null },
+    };
+  };
+
+  try {
+    await withServer(async (baseUrl) => {
+      const valid = await fetch(
+        `${baseUrl}/options/resolve-contract?underlying=SPY&expirationDate=2026-07-17&strike=500&right=call&ignored=x`,
+      );
+      assert.equal(valid.status, 200);
+      assert.equal(calls.length, 1);
+      assert.equal(calls[0]?.expirationDate instanceof Date, true);
+      assert.equal(
+        (calls[0]?.expirationDate as Date).toISOString(),
+        "2026-07-17T00:00:00.000Z",
+      );
+      assert.equal(calls[0]?.strike, 500);
+      assert.equal(Object.hasOwn(calls[0] ?? {}, "ignored"), false);
+
+      const invalid = await fetch(
+        `${baseUrl}/options/resolve-contract?underlying=SPY&expirationDate=not-a-date&strike=500&right=call`,
+      );
+      assert.notEqual(invalid.status, 200);
+      assert.equal(calls.length, 1);
+
+      const repeated = await fetch(
+        `${baseUrl}/options/resolve-contract?underlying=SPY&expirationDate=2026-07-17&expirationDate=2026-07-18&strike=500&right=call`,
+      );
+      assert.notEqual(repeated.status, 200);
+      assert.equal(calls.length, 1);
+    });
+  } finally {
+    resolveOptionContractWithDebugImpl = inertService({});
+  }
 });
 
 test("option-chain stream announces readiness before background snapshots", () => {

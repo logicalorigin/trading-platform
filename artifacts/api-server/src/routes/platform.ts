@@ -2615,7 +2615,7 @@ router.get("/options/expirations", async (req, res) => {
 
 router.get("/options/resolve-contract", async (req, res) => {
   const query = ResolveOptionContractQueryParams.parse(
-    req.query as Record<string, unknown>,
+    coerceDateQueryFields(req.query as Record<string, unknown>, ["expirationDate"]),
   );
   const raw = await resolveOptionContractWithDebug(query);
   setRequestDebugHeaders(res, raw.debug);
