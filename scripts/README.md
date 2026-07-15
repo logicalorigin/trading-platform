@@ -9,7 +9,9 @@ directory to define separate Replit app runners.
 - `pyrus-signals:signal-options-sweep` runs the Pyrus Signals signal-options
   `timeHorizon`/structure sensitivity sweep through the existing shadow backfill
   path, holds the signal-options worker advisory lock, writes JSON/CSV/Markdown
-  reports, and can replay the top eligible variant into the shadow ledger.
+  reports, and by default replays the top eligible variant for a full non-MTF
+  run. Set `PYRUS_SIGNALS_SWEEP_REPLAY_WINNER=false` for a report-only run;
+  smoke and MTF sweeps remain report-only by default.
 - `signal-options:exit-policy-sweep` runs the exit-policy variant sweep for the
   enabled Pyrus Signals signal-options shadow deployment. By default it is a dry
   run only and writes JSON/CSV/Markdown reports under
