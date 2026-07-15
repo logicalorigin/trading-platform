@@ -1,3 +1,5 @@
+import { isIP } from "node:net";
+
 export type DatabaseRuntimeSource =
   | "workspace-local-postgres"
   | "replit-internal-dev-db"
@@ -26,12 +28,19 @@ export type DatabaseRuntimeDescription = DatabaseRuntimeConfig & {
   parseError: string | null;
 };
 
+function getLastSearchParam(url: URL, name: string): string | null {
+  const values = url.searchParams.getAll(name);
+  return values.length > 0 ? values[values.length - 1] || null : null;
+}
+
 function classifyDatabaseRuntimeSource(url: URL): DatabaseRuntimeSource {
-  const host = url.hostname || url.searchParams.get("host") || "";
-  if (!url.hostname || host.includes(".local/postgres")) {
+  const host =
+    getLastSearchParam(url, "host") ||
+    (url.hostname ? decodeURIComponent(url.hostname) : "");
+  if (!host || host.startsWith("/") || host.includes(".local/postgres")) {
     return "workspace-local-postgres";
   }
-  if (url.hostname === "helium") {
+  if (host === "helium") {
     return "replit-internal-dev-db";
   }
   return "external-postgres";
@@ -83,16 +92,47 @@ function buildPostgresEnvDatabaseUrl(env: NodeJS.ProcessEnv): string | null {
     return null;
   }
 
-  const url = new URL("postgres://localhost");
-  url.hostname = host;
-  url.username = user;
-  if (env["PGPASSWORD"]) {
-    url.password = env["PGPASSWORD"];
+  const port = env["PGPORT"];
+  if (
+    port &&
+    (!/^\d+$/u.test(port) || Number(port) < 1 || Number(port) > 65_535)
+  ) {
+    return null;
   }
-  if (env["PGPORT"]) {
-    url.port = env["PGPORT"];
+
+  const url = new URL("postgres://pghost.invalid");
+  const unbracketedHost =
+    host.startsWith("[") && host.endsWith("]") ? host.slice(1, -1) : host;
+  const ipv6Host = isIP(unbracketedHost) === 6;
+  if (!host.startsWith("/") && !ipv6Host) {
+    if (
+      /[%/\\@?#:\s]/u.test(host) ||
+      host.includes("[") ||
+      host.includes("]")
+    ) {
+      return null;
+    }
+  }
+  url.searchParams.set("host", ipv6Host ? unbracketedHost : host);
+  if (port) {
+    url.searchParams.set("port", port);
+  }
+  try {
+    url.username = encodeURIComponent(user);
+    if (env["PGPASSWORD"]) {
+      url.password = encodeURIComponent(env["PGPASSWORD"]);
+    }
+  } catch {
+    return null;
   }
   url.pathname = `/${database}`;
+  try {
+    if (decodeURI(url.pathname.slice(1)) !== database) {
+      return null;
+    }
+  } catch {
+    return null;
+  }
   if (env["PGSSLMODE"]) {
     url.searchParams.set("sslmode", normalizeNodePgSslMode(env["PGSSLMODE"]));
   }
@@ -190,21 +230,24 @@ export function describeDatabaseRuntimeConnection(
 
   try {
     const url = new URL(config.url);
-    const user = url.username || url.searchParams.get("user") || null;
+    const host =
+      getLastSearchParam(url, "host") ||
+      (url.hostname ? decodeURIComponent(url.hostname) : null);
+    const user =
+      getLastSearchParam(url, "user") ||
+      (url.username ? decodeURIComponent(url.username) : null);
     return {
       ...config,
       configured: true,
       protocol: url.protocol.replace(/:$/, "") || null,
-      host: url.hostname || url.searchParams.get("host") || null,
+      host,
       port:
-        url.port ||
-        url.searchParams.get("port") ||
-        (url.hostname ? "5432" : null),
-      database: url.pathname.replace(/^\//, "") || null,
+        getLastSearchParam(url, "port") || url.port || (host ? "5432" : null),
+      database: decodeURI(url.pathname.replace(/^\//, "")) || null,
       user: user ? `${user.slice(0, 2)}***` : null,
       sslMode:
-        url.searchParams.get("sslmode") ||
-        url.searchParams.get("ssl") ||
+        getLastSearchParam(url, "sslmode") ||
+        getLastSearchParam(url, "ssl") ||
         env["PGSSLMODE"] ||
         null,
       parseError: null,

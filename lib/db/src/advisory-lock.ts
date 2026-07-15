@@ -284,12 +284,7 @@ function defaultLockClient(context: string): ClientLike {
       `Database connection env must be set to acquire the ${context}.`,
     );
   }
-  let heliumDatabase = false;
-  try {
-    heliumDatabase = new URL(config.url).hostname === "helium";
-  } catch {
-    heliumDatabase = false;
-  }
+  const heliumDatabase = config.source === "replit-internal-dev-db";
   // A standalone Client (NOT the shared pool) so the lock never consumes one of
   // the 12 pooled connections. `ssl: false` for helium mirrors the shared pool.
   // Duplicates index.ts's DB_IDLE_TX_TIMEOUT_MS read because importing from

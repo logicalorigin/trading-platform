@@ -215,6 +215,8 @@ function emitPostgresPoolDiagnostic(input: {
 
 const databaseRuntimeConfig = resolveDatabaseRuntimeConfig();
 const resolvedDatabaseUrl = databaseRuntimeConfig.url;
+const heliumDatabase =
+  databaseRuntimeConfig.source === "replit-internal-dev-db";
 
 if (!resolvedDatabaseUrl) {
   throw new Error(
@@ -231,32 +233,18 @@ const defaultPoolMax = (): number => {
   if (profile && profile !== "api") {
     return 2;
   }
-  try {
-    // A single dashboard request fans out into ~10 concurrent shadow sub-reads
-    // alongside background mark-refresh writers; a pool of 6 saturates and the
-    // resulting acquire timeouts get misread as a DB outage. 12 is a DELIBERATE
-    // self-imposed policy, NOT a provider hard cap: helium's max_connections is
-    // 112 and the role connection limit is unlimited (verified 2026-07-05 — 38+
-    // concurrent connections succeed). Keep it low anyway, but for the right
-    // reason: the binding constraint is single-thread result parsing on the event
-    // loop, not connection count, so a bigger pool only piles more result sets
-    // onto that one thread and lets bar-read storms crowd out other writers.
-    // Relief comes from reducing demand, not raising this.
-    return new URL(resolvedDatabaseUrl).hostname === "helium" ? 12 : 10;
-  } catch {
-    return 10;
-  }
+  // A single dashboard request fans out into ~10 concurrent shadow sub-reads
+  // alongside background mark-refresh writers; a pool of 6 saturates and the
+  // resulting acquire timeouts get misread as a DB outage. 12 is a DELIBERATE
+  // self-imposed policy, NOT a provider hard cap: helium's max_connections is
+  // 112 and the role connection limit is unlimited (verified 2026-07-05 — 38+
+  // concurrent connections succeed). Keep it low anyway, but for the right
+  // reason: the binding constraint is single-thread result parsing on the event
+  // loop, not connection count, so a bigger pool only piles more result sets
+  // onto that one thread and lets bar-read storms crowd out other writers.
+  // Relief comes from reducing demand, not raising this.
+  return heliumDatabase ? 12 : 10;
 };
-
-const isHeliumDatabase = (): boolean => {
-  try {
-    return new URL(resolvedDatabaseUrl).hostname === "helium";
-  } catch {
-    return false;
-  }
-};
-
-const heliumDatabase = isHeliumDatabase();
 const ConnectionExhaustionGatedClient =
   createPostgresConnectionExhaustionGatedClient(
     pg.Client,
