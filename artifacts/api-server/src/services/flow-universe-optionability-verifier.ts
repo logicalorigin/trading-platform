@@ -91,6 +91,7 @@ type FlowUniverseOptionabilityDb = {
   select: typeof import("@workspace/db").db.select;
   update: typeof import("@workspace/db").db.update;
   insert: typeof import("@workspace/db").db.insert;
+  transaction: typeof import("@workspace/db").db.transaction;
 };
 
 type LoadCandidatesInput = {
@@ -346,35 +347,37 @@ export async function markFlowUniverseOptionability(
     },
   };
 
-  await input.db
-    .update(universeCatalogListingsTable)
-    .set({
-      contractMeta: sql`coalesce(${universeCatalogListingsTable.contractMeta}, '{}'::jsonb) || ${JSON.stringify(optionability)}::jsonb`,
-      updatedAt: input.verifiedAt,
-    })
-    .where(eq(universeCatalogListingsTable.listingKey, input.listingKey));
+  await input.db.transaction(async (tx) => {
+    await tx
+      .update(universeCatalogListingsTable)
+      .set({
+        contractMeta: sql`coalesce(${universeCatalogListingsTable.contractMeta}, '{}'::jsonb) || ${JSON.stringify(optionability)}::jsonb`,
+        updatedAt: input.verifiedAt,
+      })
+      .where(eq(universeCatalogListingsTable.listingKey, input.listingKey));
 
-  await input.db
-    .insert(flowUniverseRankingsTable)
-    .values({
-      symbol,
-      market: input.market,
-      source: "massive",
-      eligible: input.status === "verified",
-      reason: input.reason,
-      metadata: optionability,
-      updatedAt: input.verifiedAt,
-    })
-    .onConflictDoUpdate({
-      target: flowUniverseRankingsTable.symbol,
-      set: {
+    await tx
+      .insert(flowUniverseRankingsTable)
+      .values({
+        symbol,
+        market: input.market,
+        source: "massive",
         eligible: input.status === "verified",
         reason: input.reason,
-        source: "massive",
-        metadata: sql`coalesce(${flowUniverseRankingsTable.metadata}, '{}'::jsonb) || ${JSON.stringify(optionability)}::jsonb`,
+        metadata: optionability,
         updatedAt: input.verifiedAt,
-      },
-    });
+      })
+      .onConflictDoUpdate({
+        target: flowUniverseRankingsTable.symbol,
+        set: {
+          eligible: input.status === "verified",
+          reason: input.reason,
+          source: "massive",
+          metadata: sql`coalesce(${flowUniverseRankingsTable.metadata}, '{}'::jsonb) || ${JSON.stringify(optionability)}::jsonb`,
+          updatedAt: input.verifiedAt,
+        },
+      });
+  });
 }
 
 export function classifyFlowUniverseOptionabilityProbeResult(

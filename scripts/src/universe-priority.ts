@@ -1,5 +1,4 @@
 import { and, asc, desc, eq } from "drizzle-orm";
-import { db } from "@workspace/db";
 import {
   instrumentsTable,
   watchlistItemsTable,
@@ -8,7 +7,7 @@ import {
 import { normalizeSymbol } from "../../artifacts/api-server/src/lib/values";
 
 type UniversePriorityDb = {
-  select: typeof db.select;
+  select: typeof import("@workspace/db").db.select;
 };
 
 const UNIVERSE_PRIORITY_SYMBOL_PATTERN = /^[A-Z0-9][A-Z0-9./_-]{0,63}$/u;
@@ -50,9 +49,10 @@ export function parseUniversePrioritySymbolList(raw: string | null): string[] {
 }
 
 export async function loadWatchlistUniversePrioritySymbols(
-  database: UniversePriorityDb = db,
+  database?: UniversePriorityDb,
 ): Promise<string[]> {
-  const rows = await database
+  const resolvedDatabase = database ?? (await import("@workspace/db")).db;
+  const rows = await resolvedDatabase
     .select({
       symbol: instrumentsTable.symbol,
     })
