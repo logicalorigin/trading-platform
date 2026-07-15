@@ -20,6 +20,10 @@ export default defineConfig({
   "api-client-react": {
     input: {
       target: "./openapi.yaml",
+      filters: {
+        mode: "exclude",
+        tags: ["client-streaming"],
+      },
       override: {
         transformer: titleTransformer,
       },

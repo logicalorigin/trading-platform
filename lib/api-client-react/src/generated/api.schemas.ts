@@ -8867,38 +8867,6 @@ preferCursor?: boolean;
 outsideRth?: boolean;
 };
 
-export type StreamQuoteSnapshotsParams = {
-/**
- * Comma-separated ticker symbols.
- */
-symbols: string;
-};
-
-export type StreamOptionChainsParams = {
-/**
- * Comma-separated underlying symbols.
- */
-underlyings: string;
-};
-
-export type StreamOptionQuoteSnapshotsParams = {
-/**
- * Comma-separated option provider contract IDs.
- */
-contracts?: string;
-/**
- * Alias for contracts.
- */
-providerContractIds?: string;
-underlying?: string;
-};
-
-export type StreamOrdersParams = {
-accountId?: string;
-mode?: EnvironmentMode;
-status?: OrderStatus;
-};
-
 export type ListExecutionsParams = {
 accountId?: string;
 mode?: EnvironmentMode;
@@ -8916,20 +8884,6 @@ providerContractId?: string | null;
 
 export type ListExecutions200 = {
   executions: JsonObject[];
-};
-
-export type StreamExecutionsParams = {
-accountId?: string;
-/**
- * @minimum 1
- */
-days?: number;
-/**
- * @minimum 1
- */
-limit?: number;
-symbol?: string;
-providerContractId?: string | null;
 };
 
 export type GetFootprintsParams = {
@@ -8957,87 +8911,6 @@ imbalancePercent?: number;
  */
 maxBars?: number;
 sourcePreference?: FootprintSourcePreference;
-};
-
-export type StreamAccountsParams = {
-accountId?: string;
-mode?: EnvironmentMode;
-};
-
-export type StreamFootprintsParams = {
-symbol: string;
-assetClass?: AssetClass;
-timeframe: FootprintTimeframe;
-from?: string;
-to?: string;
-providerContractId?: string | null;
-optionTicker?: string | null;
-outsideRth?: boolean;
-/**
- * @minimum 1
- * @maximum 20
- */
-ticksPerRow?: number;
-/**
- * @minimum 100
- * @maximum 10000
- */
-imbalancePercent?: number;
-/**
- * @minimum 1
- * @maximum 80
- */
-maxBars?: number;
-sourcePreference?: FootprintSourcePreference;
-};
-
-export type StreamAccountPageParams = {
-accountId?: string;
-mode?: EnvironmentMode;
-range?: AccountHistoryRange;
-orderTab?: StreamAccountPageOrderTab;
-/**
- * Asset-class filter for live positions.
- */
-assetClass?: string;
-from?: string;
-to?: string;
-symbol?: string;
-/**
- * Asset-class filter for closed trades.
- */
-tradeAssetClass?: string;
-pnlSign?: StreamAccountPagePnlSign;
-holdDuration?: string;
-performanceCalendarFrom?: string;
-};
-
-export type StreamAccountPageOrderTab = typeof StreamAccountPageOrderTab[keyof typeof StreamAccountPageOrderTab];
-
-
-export const StreamAccountPageOrderTab = {
-  working: 'working',
-  history: 'history',
-} as const;
-
-export type StreamAccountPagePnlSign = typeof StreamAccountPagePnlSign[keyof typeof StreamAccountPagePnlSign];
-
-
-export const StreamAccountPagePnlSign = {
-  all: 'all',
-  winners: 'winners',
-  losers: 'losers',
-} as const;
-
-export type StreamStockAggregatesParams = {
-/**
- * Comma-separated ticker symbols.
- */
-symbols: string;
-/**
- * Optional mutable stream session id used to update symbols for an open stream.
- */
-sessionId?: string;
 };
 
 export type UpdateStockAggregateStreamSymbolsBody = {
@@ -9210,55 +9083,6 @@ export type BenchmarkFlowScannerBody = {
 export type GetSignalMonitorProfileParams = {
 environment?: EnvironmentMode;
 };
-
-export type StreamSignalMonitorMatrixParams = {
-environment?: EnvironmentMode;
-/**
- * Comma-separated ticker symbols to stream when exact cells are not supplied.
- */
-symbols?: string;
-/**
- * Server-resolved symbol universe to stream when exact cells and explicit symbols are not supplied.
- */
-universe?: StreamSignalMonitorMatrixUniverse;
-/**
- * Comma-separated Signal Matrix timeframes to stream.
- */
-timeframes?: string;
-/**
- * Comma-separated exact cells in SYMBOL:timeframe form. When non-empty, cells are authoritative over symbols/timeframes.
- */
-cells?: string;
-clientRole?: StreamSignalMonitorMatrixClientRole;
-requestOrigin?: StreamSignalMonitorMatrixRequestOrigin;
-};
-
-export type StreamSignalMonitorMatrixUniverse = typeof StreamSignalMonitorMatrixUniverse[keyof typeof StreamSignalMonitorMatrixUniverse];
-
-
-export const StreamSignalMonitorMatrixUniverse = {
-  profile: 'profile',
-} as const;
-
-export type StreamSignalMonitorMatrixClientRole = typeof StreamSignalMonitorMatrixClientRole[keyof typeof StreamSignalMonitorMatrixClientRole];
-
-
-export const StreamSignalMonitorMatrixClientRole = {
-  leader: 'leader',
-  follower: 'follower',
-  manual: 'manual',
-  test: 'test',
-} as const;
-
-export type StreamSignalMonitorMatrixRequestOrigin = typeof StreamSignalMonitorMatrixRequestOrigin[keyof typeof StreamSignalMonitorMatrixRequestOrigin];
-
-
-export const StreamSignalMonitorMatrixRequestOrigin = {
-  startup: 'startup',
-  poll: 'poll',
-  manual: 'manual',
-  test: 'test',
-} as const;
 
 export type GetSignalMonitorStateParams = {
 environment?: EnvironmentMode;

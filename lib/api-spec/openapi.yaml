@@ -36,6 +36,8 @@ tags:
     description: Backtest studies, runs, sweeps, and draft strategy promotion
   - name: diagnostics
     description: Real-time and historical operator diagnostics
+  - name: client-streaming
+    description: Server streaming operations excluded from buffered React Query client generation
 paths:
   /healthz:
     get:
@@ -541,7 +543,7 @@ paths:
   /diagnostics/stream:
     get:
       operationId: streamDiagnostics
-      tags: [diagnostics]
+      tags: [diagnostics, client-streaming]
       summary: Stream live diagnostic snapshots and events
       responses:
         "200":
@@ -2456,7 +2458,7 @@ paths:
   /streams/quotes:
     get:
       operationId: streamQuoteSnapshots
-      tags: [market-data]
+      tags: [market-data, client-streaming]
       summary: Stream quote snapshots over server-sent events
       parameters:
         - name: symbols
@@ -2476,7 +2478,7 @@ paths:
   /streams/options/chains:
     get:
       operationId: streamOptionChains
-      tags: [market-data]
+      tags: [market-data, client-streaming]
       summary: Stream option chain snapshots over server-sent events
       parameters:
         - name: underlyings
@@ -2496,7 +2498,7 @@ paths:
   /streams/options/quotes:
     get:
       operationId: streamOptionQuoteSnapshots
-      tags: [market-data]
+      tags: [market-data, client-streaming]
       summary: Stream option quote snapshots over server-sent events
       parameters:
         - name: contracts
@@ -2527,7 +2529,7 @@ paths:
   /streams/orders:
     get:
       operationId: streamOrders
-      tags: [orders]
+      tags: [orders, client-streaming]
       summary: Stream order snapshots over server-sent events
       parameters:
         - name: accountId
@@ -2610,7 +2612,7 @@ paths:
   /streams/executions:
     get:
       operationId: streamExecutions
-      tags: [orders]
+      tags: [orders, client-streaming]
       summary: Stream execution snapshots over server-sent events
       parameters:
         - name: accountId
@@ -2736,7 +2738,7 @@ paths:
   /streams/accounts:
     get:
       operationId: streamAccounts
-      tags: [accounts]
+      tags: [accounts, client-streaming]
       summary: Stream account and position snapshots over server-sent events
       parameters:
         - name: accountId
@@ -2760,7 +2762,7 @@ paths:
   /streams/accounts/shadow:
     get:
       operationId: streamShadowAccount
-      tags: [accounts]
+      tags: [accounts, client-streaming]
       summary: Stream Shadow account snapshots over server-sent events
       responses:
         "200":
@@ -2773,7 +2775,7 @@ paths:
   /streams/footprints:
     get:
       operationId: streamFootprints
-      tags: [market-data]
+      tags: [market-data, client-streaming]
       summary: Stream volume footprint candle snapshots over server-sent events
       parameters:
         - name: symbol
@@ -2857,7 +2859,7 @@ paths:
   /streams/accounts/page:
     get:
       operationId: streamAccountPage
-      tags: [accounts]
+      tags: [accounts, client-streaming]
       summary: Stream visible Account page snapshots over server-sent events
       parameters:
         - name: accountId
@@ -2938,7 +2940,7 @@ paths:
   /streams/stocks/aggregates:
     get:
       operationId: streamStockAggregates
-      tags: [market-data]
+      tags: [market-data, client-streaming]
       summary: Stream broker-derived stock minute aggregates over server-sent events
       parameters:
         - name: symbols
@@ -3306,7 +3308,7 @@ paths:
   /signal-monitor/matrix/stream:
     get:
       operationId: streamSignalMonitorMatrix
-      tags: [signal-monitor]
+      tags: [signal-monitor, client-streaming]
       summary: Stream Pyrus Signals signal matrix state deltas
       parameters:
         - name: environment
