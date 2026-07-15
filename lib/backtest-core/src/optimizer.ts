@@ -78,6 +78,24 @@ export function buildWalkForwardWindows(
   testMonths: number,
   stepMonths: number,
 ): WalkForwardWindow[] {
+  if (
+    !Number.isFinite(from.getTime()) ||
+    !Number.isFinite(to.getTime()) ||
+    ![trainingMonths, testMonths, stepMonths].every(
+      (months) => Number.isSafeInteger(months) && months > 0,
+    )
+  ) {
+    throw new RangeError(
+      "Walk-forward dates must be valid and month values must be positive safe integers.",
+    );
+  }
+  const firstStep = addMonths(from, stepMonths);
+  if (!Number.isFinite(firstStep.getTime()) || firstStep <= from) {
+    throw new RangeError(
+      "Walk-forward step must advance within the Date domain.",
+    );
+  }
+
   const windows: WalkForwardWindow[] = [];
   let trainingFrom = new Date(from.getTime());
   let index = 0;
@@ -86,6 +104,13 @@ export function buildWalkForwardWindows(
     const trainingTo = addMonths(trainingFrom, trainingMonths);
     const testFrom = new Date(trainingTo.getTime());
     const testTo = addMonths(testFrom, testMonths);
+
+    if (
+      !Number.isFinite(trainingTo.getTime()) ||
+      !Number.isFinite(testTo.getTime())
+    ) {
+      throw new RangeError("Walk-forward window exceeds the Date domain.");
+    }
 
     if (testTo > to) {
       break;
@@ -99,7 +124,16 @@ export function buildWalkForwardWindows(
       testTo,
     });
 
-    trainingFrom = addMonths(trainingFrom, stepMonths);
+    const nextTrainingFrom = addMonths(trainingFrom, stepMonths);
+    if (
+      !Number.isFinite(nextTrainingFrom.getTime()) ||
+      nextTrainingFrom <= trainingFrom
+    ) {
+      throw new RangeError(
+        "Walk-forward step must advance within the Date domain.",
+      );
+    }
+    trainingFrom = nextTrainingFrom;
     index += 1;
   }
 

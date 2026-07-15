@@ -7754,11 +7754,20 @@ export interface CreateBacktestSweepRequest {
   dimensions: BacktestSweepDimension[];
   /** @nullable */
   randomCandidateBudget: number | null;
-  /** @nullable */
+  /**
+   * @minimum 1
+   * @nullable
+   */
   walkForwardTrainingMonths: number | null;
-  /** @nullable */
+  /**
+   * @minimum 1
+   * @nullable
+   */
   walkForwardTestMonths: number | null;
-  /** @nullable */
+  /**
+   * @minimum 1
+   * @nullable
+   */
   walkForwardStepMonths: number | null;
 }
 

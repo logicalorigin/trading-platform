@@ -16960,10 +16960,17 @@ components:
           type: [integer, "null"]
         walkForwardTrainingMonths:
           type: [integer, "null"]
+          minimum: 1
+          # ponytail: Orval 8 maps integer to zod.number(); multipleOf preserves runtime integer validation until the generator emits .int().
+          multipleOf: 1
         walkForwardTestMonths:
           type: [integer, "null"]
+          minimum: 1
+          multipleOf: 1
         walkForwardStepMonths:
           type: [integer, "null"]
+          minimum: 1
+          multipleOf: 1
       required:
         - studyId
         - mode

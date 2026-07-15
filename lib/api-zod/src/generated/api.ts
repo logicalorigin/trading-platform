@@ -7843,6 +7843,14 @@ export const PromoteBacktestRunBody = zod.object({
 /**
  * @summary Queue a backtest optimizer sweep
  */
+export const createBacktestSweepBodyWalkForwardTrainingMonthsMultipleOf = 1;
+
+export const createBacktestSweepBodyWalkForwardTestMonthsMultipleOf = 1;
+
+export const createBacktestSweepBodyWalkForwardStepMonthsMultipleOf = 1;
+
+
+
 export const CreateBacktestSweepBody = zod.object({
   "studyId": zod.string(),
   "mode": zod.enum(['grid', 'random', 'walk_forward']),
@@ -7852,9 +7860,9 @@ export const CreateBacktestSweepBody = zod.object({
   "values": zod.array(zod.unknown())
 })),
   "randomCandidateBudget": zod.number().nullable(),
-  "walkForwardTrainingMonths": zod.number().nullable(),
-  "walkForwardTestMonths": zod.number().nullable(),
-  "walkForwardStepMonths": zod.number().nullable()
+  "walkForwardTrainingMonths": zod.number().min(1).multipleOf(createBacktestSweepBodyWalkForwardTrainingMonthsMultipleOf).nullable(),
+  "walkForwardTestMonths": zod.number().min(1).multipleOf(createBacktestSweepBodyWalkForwardTestMonthsMultipleOf).nullable(),
+  "walkForwardStepMonths": zod.number().min(1).multipleOf(createBacktestSweepBodyWalkForwardStepMonthsMultipleOf).nullable()
 })
 
 
