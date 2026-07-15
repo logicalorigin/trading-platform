@@ -1,5 +1,7 @@
 import { pathToFileURL } from "node:url";
-import { pool } from "@workspace/db";
+import { parseArgs, stripVTControlCharacters } from "node:util";
+
+let analysisPool: typeof import("@workspace/db").pool | null = null;
 
 type Config = {
   start: string;
@@ -53,6 +55,11 @@ type GexOptionRow = {
   expiration_date: string;
   cp: "C" | "P";
   strike: number | string;
+  delta: number | string | null;
+  gamma: number | string | null;
+  theta: number | string | null;
+  vega: number | string | null;
+  implied_vol: number | string | null;
 };
 
 type GexOptionMatchRow = {
@@ -61,49 +68,145 @@ type GexOptionMatchRow = {
   localStep: number;
 };
 
-function argValue(name: string): string | null {
-  const prefix = `--${name}=`;
-  const match = process.argv.slice(2).find((arg) => arg.startsWith(prefix));
-  return match ? match.slice(prefix.length) : null;
+const DEFAULT_START = "2026-05-29";
+const DEFAULT_END = "2026-07-07";
+const DEFAULT_MAX_EVENTS_PER_SCOPE = 1_000;
+const MAX_EVENTS_PER_SCOPE = 200_000;
+const DEFAULT_CORE_SYMBOLS = "SPY,QQQ,IWM,DIA";
+const MAX_DIAGNOSTIC_LENGTH = 500;
+// ponytail: 64 characters is the persisted decimal-text ceiling; raise it only
+// with a wider contract format and an overflow regression test.
+const MAX_PERSISTED_DECIMAL_TEXT_LENGTH = 64;
+const UNSAFE_OUTPUT_PATTERN =
+  /[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/u;
+const USAGE =
+  "Usage: pnpm --filter @workspace/scripts exec tsx ./src/signal-options-gex-match-rate-analysis.ts [--start=YYYY-MM-DD] [--end=YYYY-MM-DD] [--max-events-per-scope=COUNT] [--core-symbols=SYMBOL,...]";
+
+function pool() {
+  if (!analysisPool)
+    throw new Error("GEX analysis database is not configured.");
+  return analysisPool;
 }
 
-function readInteger(value: string | undefined | null, fallback: number, max: number): number {
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed) || parsed < 1) return fallback;
-  return Math.min(max, Math.floor(parsed));
+function safeDiagnostic(error: unknown): string {
+  const raw = error instanceof Error ? error.message : String(error);
+  const redacted = raw
+    .replace(/([a-z][a-z0-9+.-]*:\/\/)[^@\s]+@/giu, "$1[redacted]@")
+    .replace(
+      /([?&](?:api[_-]?key|access[_-]?token|token|password|secret)=)[^&#\s]*/giu,
+      "$1[redacted]",
+    );
+  const cleaned = stripVTControlCharacters(redacted)
+    .replace(/[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/gu, " ")
+    .replace(/\s+/gu, " ")
+    .trim();
+  const diagnostic = cleaned || "Unknown GEX analysis error";
+  return diagnostic.length <= MAX_DIAGNOSTIC_LENGTH
+    ? diagnostic
+    : `${diagnostic.slice(0, MAX_DIAGNOSTIC_LENGTH - 1)}…`;
 }
 
-function readConfig(): Config {
-  const start =
-    argValue("start") ??
-    process.env["SIGNAL_OPTIONS_GEX_ANALYSIS_START"] ??
-    "2026-05-29";
-  const end =
-    argValue("end") ??
-    process.env["SIGNAL_OPTIONS_GEX_ANALYSIS_END"] ??
-    "2026-07-07";
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(start) || !/^\d{4}-\d{2}-\d{2}$/.test(end)) {
-    throw new Error("Use --start=YYYY-MM-DD and --end=YYYY-MM-DD.");
+function canonicalDate(value: string, name: "start" | "end"): string {
+  if (!/^\d{4}-\d{2}-\d{2}$/u.test(value)) {
+    throw new Error(`--${name} must use YYYY-MM-DD.`);
   }
-  const coreSymbols = (
-    argValue("core-symbols") ??
-    process.env["SIGNAL_OPTIONS_GEX_ANALYSIS_CORE_SYMBOLS"] ??
-    "SPY,QQQ,IWM,DIA"
-  )
-    .split(",")
-    .map((symbol) => symbol.trim().toUpperCase())
-    .filter(Boolean);
-  return {
-    start,
-    end,
-    maxEventsPerScope: readInteger(
-      argValue("max-events-per-scope") ??
-        process.env["SIGNAL_OPTIONS_GEX_ANALYSIS_MAX_EVENTS_PER_SCOPE"],
-      1_000,
-      200_000,
-    ),
-    coreSymbols,
-  };
+  const parsed = new Date(`${value}T00:00:00.000Z`);
+  if (
+    Number.isNaN(parsed.getTime()) ||
+    parsed.toISOString().slice(0, 10) !== value
+  ) {
+    throw new Error(`--${name} is not a calendar date.`);
+  }
+  return value;
+}
+
+function positiveInteger(value: string | undefined): number {
+  if (value === undefined) return DEFAULT_MAX_EVENTS_PER_SCOPE;
+  if (!/^[1-9]\d*$/u.test(value)) {
+    throw new Error(
+      "--max-events-per-scope must be a positive decimal integer.",
+    );
+  }
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed > MAX_EVENTS_PER_SCOPE) {
+    throw new Error(
+      `--max-events-per-scope must be at most ${MAX_EVENTS_PER_SCOPE}.`,
+    );
+  }
+  return parsed;
+}
+
+function readConfig(
+  argv: string[] = process.argv.slice(2),
+  env: NodeJS.ProcessEnv = process.env,
+): Config {
+  try {
+    const parsed = parseArgs({
+      args: argv[0] === "--" ? argv.slice(1) : argv,
+      allowPositionals: false,
+      strict: true,
+      tokens: true,
+      options: {
+        start: { type: "string" },
+        end: { type: "string" },
+        "max-events-per-scope": { type: "string" },
+        "core-symbols": { type: "string" },
+      },
+    });
+    const optionCounts = new Map<string, number>();
+    for (const token of parsed.tokens) {
+      if (token.kind !== "option") continue;
+      optionCounts.set(token.name, (optionCounts.get(token.name) ?? 0) + 1);
+    }
+    if ([...optionCounts.values()].some((count) => count > 1)) {
+      throw new Error("Duplicate options are not allowed.");
+    }
+
+    const start = canonicalDate(
+      parsed.values.start ??
+        env["SIGNAL_OPTIONS_GEX_ANALYSIS_START"] ??
+        DEFAULT_START,
+      "start",
+    );
+    const end = canonicalDate(
+      parsed.values.end ??
+        env["SIGNAL_OPTIONS_GEX_ANALYSIS_END"] ??
+        DEFAULT_END,
+      "end",
+    );
+    if (start >= end)
+      throw new Error("--start must be before the exclusive --end.");
+
+    const rawSymbols =
+      parsed.values["core-symbols"] ??
+      env["SIGNAL_OPTIONS_GEX_ANALYSIS_CORE_SYMBOLS"] ??
+      DEFAULT_CORE_SYMBOLS;
+    const symbolParts = rawSymbols.split(",").map((symbol) => symbol.trim());
+    if (!symbolParts.length || symbolParts.some((symbol) => !symbol)) {
+      throw new Error(
+        "--core-symbols must contain non-empty comma-separated symbols.",
+      );
+    }
+    if (symbolParts.some((symbol) => UNSAFE_OUTPUT_PATTERN.test(symbol))) {
+      throw new Error("--core-symbols contains unsafe control characters.");
+    }
+    const coreSymbols = symbolParts.map((symbol) => symbol.toUpperCase());
+    if (new Set(coreSymbols).size !== coreSymbols.length) {
+      throw new Error("--core-symbols must not contain duplicates.");
+    }
+
+    return {
+      start,
+      end,
+      maxEventsPerScope: positiveInteger(
+        parsed.values["max-events-per-scope"] ??
+          env["SIGNAL_OPTIONS_GEX_ANALYSIS_MAX_EVENTS_PER_SCOPE"],
+      ),
+      coreSymbols,
+    };
+  } catch (error) {
+    throw new Error(`${USAGE}\n${safeDiagnostic(error)}`);
+  }
 }
 
 function numberValue(value: number | string | null): number | null {
@@ -128,7 +231,13 @@ function numberCell(value: number | string | null, digits = 1): string {
 }
 
 function cell(value: unknown): string {
-  return String(value ?? "-").replaceAll("|", "\\|").replace(/\s+/g, " ").trim() || "-";
+  return (
+    stripVTControlCharacters(String(value ?? "-"))
+      .replace(/[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/gu, " ")
+      .replaceAll("|", "\\|")
+      .replace(/\s+/gu, " ")
+      .trim() || "-"
+  );
 }
 
 function renderTable(headers: string[], rows: string[][]): string {
@@ -196,7 +305,8 @@ with event_scopes(event_scope, event_type) as (
     nullif(selected_contract->>'expirationDate', '') as expiration_date,
     case
       when selected_contract->>'strike' ~ '^-?[0-9]+(\\.[0-9]+)?$'
-        then (selected_contract->>'strike')::double precision
+        and length(selected_contract->>'strike') <= ${MAX_PERSISTED_DECIMAL_TEXT_LENGTH}
+        then selected_contract->>'strike'
       else null
     end as strike,
     case lower(coalesce(selected_contract->>'right', ''))
@@ -209,8 +319,16 @@ with event_scopes(event_scope, event_type) as (
   from bounded_events
 )`;
 
+function eventQueryParameters(config: Config): [Date, Date, number] {
+  return [
+    new Date(`${config.start}T00:00:00.000Z`),
+    new Date(`${config.end}T00:00:00.000Z`),
+    config.maxEventsPerScope,
+  ];
+}
+
 async function loadCensus(config: Config): Promise<CensusRow[]> {
-  const result = await pool.query<CensusRow>(
+  const result = await pool().query<CensusRow>(
     `
 ${EVENTS_CTE}
 select
@@ -232,13 +350,13 @@ from parsed_events
 group by event_scope
 order by event_scope
     `,
-    [config.start, config.end, config.maxEventsPerScope],
+    eventQueryParameters(config),
   );
   return result.rows;
 }
 
 async function loadEligibleEvents(config: Config): Promise<AnalysisEvent[]> {
-  const result = await pool.query<AnalysisEvent>(
+  const result = await pool().query<AnalysisEvent>(
     `
 ${EVENTS_CTE}
 select
@@ -256,7 +374,7 @@ where selected_contract is not null
   and cp is not null
 order by occurred_at, symbol, id
     `,
-    [config.start, config.end, config.maxEventsPerScope],
+    eventQueryParameters(config),
   );
   return result.rows;
 }
@@ -267,14 +385,19 @@ async function loadGexOptionsForSlice(input: {
   symbols: string[];
 }): Promise<GexOptionRow[]> {
   if (!input.symbols.length) return [];
-  const result = await pool.query<GexOptionRow>(
+  const result = await pool().query<GexOptionRow>(
     `
 select distinct
   upper(g.symbol) as symbol,
   g.computed_at,
   option_row->>'expirationDate' as expiration_date,
   option_row->>'cp' as cp,
-  (option_row->>'strike')::double precision as strike
+  option_row->>'strike' as strike,
+  option_row->>'delta' as delta,
+  option_row->>'gamma' as gamma,
+  option_row->>'theta' as theta,
+  option_row->>'vega' as vega,
+  coalesce(option_row->>'impliedVol', option_row->>'impliedVolatility') as implied_vol
 from gex_snapshots g
 join lateral jsonb_array_elements(
   case
@@ -290,6 +413,7 @@ where g.computed_at >= $1::timestamptz
   and option_row->>'expirationDate' is not null
   and option_row->>'cp' in ('C', 'P')
   and option_row->>'strike' ~ '^-?[0-9]+(\\.[0-9]+)?$'
+  and length(option_row->>'strike') <= ${MAX_PERSISTED_DECIMAL_TEXT_LENGTH}
     `,
     [input.from, input.to, input.symbols],
   );
@@ -320,16 +444,27 @@ function dateRangeDays(start: string, end: string): Date[] {
 }
 
 function finiteNumber(value: unknown): number | null {
+  if (typeof value !== "number" && typeof value !== "string") return null;
+  if (typeof value === "string" && !value.trim()) return null;
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-function gexKey(input: { symbol: string; expirationDate: string; cp: string }): string {
+function gexKey(input: {
+  symbol: string;
+  expirationDate: string;
+  cp: string;
+}): string {
   return `${input.symbol}|${input.expirationDate}|${input.cp}`;
 }
 
-function buildGexOptionIndex(rows: GexOptionRow[]): Map<string, GexOptionMatchRow[]> {
-  const grouped = new Map<string, Map<number, Set<number>>>();
+function buildGexOptionIndex(
+  rows: GexOptionRow[],
+): Map<string, GexOptionMatchRow[]> {
+  const grouped = new Map<
+    string,
+    Map<number, { listed: Set<number>; usable: Set<number> }>
+  >();
   for (const row of rows) {
     const strike = finiteNumber(row.strike);
     const computedAtMs = new Date(row.computed_at).getTime();
@@ -341,26 +476,40 @@ function buildGexOptionIndex(rows: GexOptionRow[]): Map<string, GexOptionMatchRo
     });
     let bySnapshot = grouped.get(key);
     if (!bySnapshot) {
-      bySnapshot = new Map<number, Set<number>>();
+      bySnapshot = new Map();
       grouped.set(key, bySnapshot);
     }
     let strikes = bySnapshot.get(computedAtMs);
     if (!strikes) {
-      strikes = new Set<number>();
+      strikes = { listed: new Set(), usable: new Set() };
       bySnapshot.set(computedAtMs, strikes);
     }
-    strikes.add(strike);
+    strikes.listed.add(strike);
+    const impliedVolatility = finiteNumber(row.implied_vol);
+    if (
+      finiteNumber(row.delta) != null &&
+      finiteNumber(row.gamma) != null &&
+      finiteNumber(row.theta) != null &&
+      finiteNumber(row.vega) != null &&
+      impliedVolatility != null &&
+      impliedVolatility > 0
+    ) {
+      strikes.usable.add(strike);
+    }
   }
 
   const index = new Map<string, GexOptionMatchRow[]>();
   for (const [key, bySnapshot] of grouped.entries()) {
     const options: GexOptionMatchRow[] = [];
-    for (const [computedAtMs, strikeSet] of bySnapshot.entries()) {
-      const strikes = Array.from(strikeSet).sort((left, right) => left - right);
-      for (let index = 0; index < strikes.length; index += 1) {
-        const strike = strikes[index]!;
-        const prevStrike = strikes[index - 1] ?? null;
-        const nextStrike = strikes[index + 1] ?? null;
+    for (const [computedAtMs, strikeSets] of bySnapshot.entries()) {
+      const listed = Array.from(strikeSets.listed).sort(
+        (left, right) => left - right,
+      );
+      for (let strikeIndex = 0; strikeIndex < listed.length; strikeIndex += 1) {
+        const strike = listed[strikeIndex]!;
+        if (!strikeSets.usable.has(strike)) continue;
+        const prevStrike = listed[strikeIndex - 1] ?? null;
+        const nextStrike = listed[strikeIndex + 1] ?? null;
         const localStep =
           prevStrike == null && nextStrike == null
             ? 0.001
@@ -369,7 +518,11 @@ function buildGexOptionIndex(rows: GexOptionRow[]): Map<string, GexOptionMatchRo
               : nextStrike == null
                 ? strike - prevStrike
                 : Math.min(strike - prevStrike, nextStrike - strike);
-        options.push({ computedAtMs, strike, localStep: Math.max(localStep, 0.001) });
+        options.push({
+          computedAtMs,
+          strike,
+          localStep: Math.max(localStep, 0.001),
+        });
       }
     }
     index.set(key, options);
@@ -445,14 +598,19 @@ async function buildDailySlicedAnalysis(config: Config): Promise<{
   }
 
   const aggregates = new Map<string, ReturnType<typeof emptyMatchAggregate>>();
-  const suggestions = new Map<string, { matched30: number; eligible: number }>();
+  const suggestions = new Map<
+    string,
+    { matched30: number; eligible: number }
+  >();
   const coreSymbols = new Set(config.coreSymbols);
 
   for (const day of dateRangeDays(config.start, config.end)) {
     const dayKey = day.toISOString().slice(0, 10);
     const dayEvents = eventsByDay.get(dayKey) ?? [];
     if (!dayEvents.length) continue;
-    const symbols = Array.from(new Set(dayEvents.map((event) => event.symbol))).sort();
+    const symbols = Array.from(
+      new Set(dayEvents.map((event) => event.symbol)),
+    ).sort();
     const gexRows = await loadGexOptionsForSlice({
       from: new Date(day.getTime() - 60 * 60_000),
       to: new Date(addDays(day, 1).getTime() + 60 * 60_000),
@@ -517,9 +675,15 @@ async function buildDailySlicedAnalysis(config: Config): Promise<{
         matched_15m: aggregate.matched15,
         matched_30m: aggregate.matched30,
         matched_60m: aggregate.matched60,
-        pct_15m: aggregate.eligible ? aggregate.matched15 / aggregate.eligible : null,
-        pct_30m: aggregate.eligible ? aggregate.matched30 / aggregate.eligible : null,
-        pct_60m: aggregate.eligible ? aggregate.matched60 / aggregate.eligible : null,
+        pct_15m: aggregate.eligible
+          ? aggregate.matched15 / aggregate.eligible
+          : null,
+        pct_30m: aggregate.eligible
+          ? aggregate.matched30 / aggregate.eligible
+          : null,
+        pct_60m: aggregate.eligible
+          ? aggregate.matched60 / aggregate.eligible
+          : null,
         nearest_match_p50_min: percentile(aggregate.nearestMinutes, 0.5),
         nearest_match_p90_min: percentile(aggregate.nearestMinutes, 0.9),
       } satisfies MatchRateRow;
@@ -554,187 +718,9 @@ async function buildDailySlicedAnalysis(config: Config): Promise<{
   return { matchRates, suggestions: suggestionRows };
 }
 
-async function loadMatchRates(config: Config): Promise<MatchRateRow[]> {
-  const result = await pool.query<MatchRateRow>(
-    `
-${EVENTS_CTE}, eligible_events as (
-  select *
-  from parsed_events
-  where selected_contract is not null
-    and expiration_date is not null
-    and strike is not null
-    and cp is not null
-), gex_option_rows as materialized (
-  select distinct
-    upper(g.symbol) as symbol,
-    g.computed_at,
-    option_row->>'expirationDate' as expiration_date,
-    option_row->>'cp' as cp,
-    (option_row->>'strike')::double precision as strike
-  from gex_snapshots g
-  join lateral jsonb_array_elements(
-    case
-      when jsonb_typeof(g.payload->'options') = 'array'
-        then g.payload->'options'
-      else '[]'::jsonb
-    end
-  ) as option_row on true
-  where g.computed_at >= $1::timestamptz - interval '60 minutes'
-    and g.computed_at < $2::timestamptz + interval '60 minutes'
-    and jsonb_typeof(option_row) = 'object'
-    and option_row->>'expirationDate' is not null
-    and option_row->>'cp' in ('C', 'P')
-    and option_row->>'strike' ~ '^-?[0-9]+(\\.[0-9]+)?$'
-), gex_option_steps as (
-  select
-    symbol,
-    computed_at,
-    expiration_date,
-    cp,
-    strike,
-    lag(strike) over (
-      partition by symbol, computed_at, expiration_date, cp
-      order by strike
-    ) as prev_strike,
-    lead(strike) over (
-      partition by symbol, computed_at, expiration_date, cp
-      order by strike
-    ) as next_strike
-  from gex_option_rows
-), gex_options as materialized (
-  select
-    symbol,
-    computed_at,
-    expiration_date,
-    cp,
-    strike,
-    case
-      when prev_strike is null and next_strike is null then 0.001
-      when prev_strike is null then next_strike - strike
-      when next_strike is null then strike - prev_strike
-      else least(strike - prev_strike, next_strike - strike)
-    end as local_step
-  from gex_option_steps
-), matched_events as (
-  select
-    eligible_events.*,
-    min(abs(extract(epoch from (gex_options.computed_at - eligible_events.occurred_at)) * 1000)) as nearest_match_ms
-  from eligible_events
-  left join gex_options on gex_options.symbol = eligible_events.symbol
-    and gex_options.expiration_date = eligible_events.expiration_date
-    and gex_options.cp = eligible_events.cp
-    and gex_options.computed_at between
-      eligible_events.occurred_at - interval '60 minutes'
-      and eligible_events.occurred_at + interval '60 minutes'
-    and abs(gex_options.strike - eligible_events.strike)
-      <= greatest(coalesce(gex_options.local_step, 0), 0.001)
-  group by
-    eligible_events.event_scope,
-    eligible_events.id,
-    eligible_events.symbol,
-    eligible_events.occurred_at,
-    eligible_events.selected_contract,
-    eligible_events.expiration_date,
-    eligible_events.strike,
-    eligible_events.cp
-)
-select
-  event_scope,
-  to_char(date_trunc('month', occurred_at), 'YYYY-MM') as month,
-  case when symbol = any($4::text[]) then 'SPY_QQQ_like' else 'long_tail' end as symbol_tier,
-  count(*)::int as eligible_events,
-  count(*) filter (where nearest_match_ms <= 15 * 60 * 1000)::int as matched_15m,
-  count(*) filter (where nearest_match_ms <= 30 * 60 * 1000)::int as matched_30m,
-  count(*) filter (where nearest_match_ms <= 60 * 60 * 1000)::int as matched_60m,
-  (count(*) filter (where nearest_match_ms <= 15 * 60 * 1000))::double precision / nullif(count(*), 0) as pct_15m,
-  (count(*) filter (where nearest_match_ms <= 30 * 60 * 1000))::double precision / nullif(count(*), 0) as pct_30m,
-  (count(*) filter (where nearest_match_ms <= 60 * 60 * 1000))::double precision / nullif(count(*), 0) as pct_60m,
-  percentile_cont(0.5) within group (order by nearest_match_ms / 60000.0)
-    filter (where nearest_match_ms is not null) as nearest_match_p50_min,
-  percentile_cont(0.9) within group (order by nearest_match_ms / 60000.0)
-    filter (where nearest_match_ms is not null) as nearest_match_p90_min
-from matched_events
-group by event_scope, month, symbol_tier
-order by event_scope, month, symbol_tier
-    `,
-    [config.start, config.end, config.maxEventsPerScope, config.coreSymbols],
-  );
-  return result.rows;
-}
-
-async function loadSmokeSuggestions(config: Config): Promise<SuggestionRow[]> {
-  const result = await pool.query<SuggestionRow>(
-    `
-${EVENTS_CTE}, eligible_events as (
-  select *
-  from parsed_events
-  where event_scope = 'entry'
-    and selected_contract is not null
-    and expiration_date is not null
-    and strike is not null
-    and cp is not null
-), gex_option_rows as materialized (
-  select distinct
-    upper(g.symbol) as symbol,
-    g.computed_at,
-    option_row->>'expirationDate' as expiration_date,
-    option_row->>'cp' as cp,
-    (option_row->>'strike')::double precision as strike
-  from gex_snapshots g
-  join lateral jsonb_array_elements(
-    case
-      when jsonb_typeof(g.payload->'options') = 'array'
-        then g.payload->'options'
-      else '[]'::jsonb
-    end
-  ) as option_row on true
-  where g.computed_at >= $1::timestamptz - interval '30 minutes'
-    and g.computed_at < $2::timestamptz + interval '30 minutes'
-    and jsonb_typeof(option_row) = 'object'
-    and option_row->>'expirationDate' is not null
-    and option_row->>'cp' in ('C', 'P')
-    and option_row->>'strike' ~ '^-?[0-9]+(\\.[0-9]+)?$'
-), matched_events as (
-  select
-    eligible_events.*,
-    min(abs(extract(epoch from (gex_option_rows.computed_at - eligible_events.occurred_at)) * 1000)) as nearest_match_ms
-  from eligible_events
-  left join gex_option_rows on gex_option_rows.symbol = eligible_events.symbol
-    and gex_option_rows.expiration_date = eligible_events.expiration_date
-    and gex_option_rows.cp = eligible_events.cp
-    and gex_option_rows.computed_at between
-      eligible_events.occurred_at - interval '30 minutes'
-      and eligible_events.occurred_at + interval '30 minutes'
-    and abs(gex_option_rows.strike - eligible_events.strike) <= 0.001
-  group by
-    eligible_events.event_scope,
-    eligible_events.id,
-    eligible_events.symbol,
-    eligible_events.occurred_at,
-    eligible_events.selected_contract,
-    eligible_events.expiration_date,
-    eligible_events.strike,
-    eligible_events.cp
-)
-select
-  occurred_at::date::text as event_date,
-  symbol,
-  count(*) filter (where nearest_match_ms is not null)::int as matched_30m,
-  count(*)::int as eligible_events
-from matched_events
-group by event_date, symbol
-having count(*) filter (where nearest_match_ms is not null) > 0
-order by matched_30m desc, eligible_events desc, event_date desc, symbol
-limit 12
-    `,
-    [config.start, config.end, config.maxEventsPerScope],
-  );
-  return result.rows;
-}
-
 function renderCensus(rows: CensusRow[]): string {
   return renderTable(
-    ["Scope", "Total Events", "Eligible", "Missing Contract"],
+    ["Scope", "Analyzed Events (capped)", "Eligible", "Missing Contract"],
     rows.map((row) => [
       row.event_scope,
       integerCell(row.total_events),
@@ -742,6 +728,15 @@ function renderCensus(rows: CensusRow[]): string {
       integerCell(row.missing_contract_events),
     ]),
   );
+}
+
+function censusCapWarning(rows: CensusRow[], limit: number): string | null {
+  const scopes = rows
+    .filter((row) => (numberValue(row.total_events) ?? -1) >= limit)
+    .map((row) => row.event_scope);
+  return scopes.length
+    ? `Cap warning: ${scopes.join(", ")} reached ${limit} analyzed events; its census and match rates may be truncated.`
+    : null;
 }
 
 function renderMatchRates(rows: MatchRateRow[]): string {
@@ -790,16 +785,29 @@ function renderSuggestions(rows: SuggestionRow[]): string {
   );
 }
 
+export const __signalOptionsGexMatchRateAnalysisInternalsForTests = {
+  buildGexOptionIndex,
+  censusCapWarning,
+  eventQueryParameters,
+  finiteNumber,
+  nearestGexMatchMs,
+  readConfig,
+};
+
 async function main() {
   const config = readConfig();
+  analysisPool = (await import("@workspace/db")).pool;
   const census = await loadCensus(config);
   const { matchRates, suggestions } = await buildDailySlicedAnalysis(config);
+  const capWarning = censusCapWarning(census, config.maxEventsPerScope);
   const lines = [
     "# Signal Options GEX Match-Rate Analysis",
     "",
     `- Window: ${config.start} inclusive to ${config.end} exclusive`,
     `- Max events per scope: ${config.maxEventsPerScope}`,
+    ...(capWarning ? [`- ${capWarning}`] : []),
     `- SPY/QQQ-like tier symbols: ${config.coreSymbols.join(", ")}`,
+    `- GEX evidence rule: matching contract row with finite delta/gamma/theta/vega and positive implied volatility`,
     `- Strike rule: matching expiration/right and nearest listed GEX strike within one local strike step`,
     "",
     "## Event Census",
@@ -817,13 +825,21 @@ async function main() {
   console.log(`${lines.join("\n")}\n`);
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (
+  process.argv[1] &&
+  import.meta.url === pathToFileURL(process.argv[1]).href
+) {
   main()
     .catch((error) => {
-      console.error(error);
+      console.error(safeDiagnostic(error));
       process.exitCode = 1;
     })
     .finally(async () => {
-      await pool.end();
+      try {
+        await analysisPool?.end();
+      } catch (error) {
+        console.error(safeDiagnostic(error));
+        process.exitCode = 1;
+      }
     });
 }
