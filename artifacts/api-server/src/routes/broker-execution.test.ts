@@ -3430,7 +3430,7 @@ test("Schwab equity order routes delegate to existing services when ready", asyn
               provider: "schwab",
               checkedAt: "2026-07-07T20:01:00.000Z",
               account: schwabOrderAccountFixture(),
-              preview: { accepted: true },
+              preview: { accepted: true, accessToken: "must-not-cross-route" },
             };
           };
         __brokerExecutionRouteInternalsForTests.schwabOrders.submitSchwabEquityOrder =
@@ -3471,7 +3471,7 @@ test("Schwab equity order routes delegate to existing services when ready", asyn
           },
         );
         assert.equal(preview.status, 200);
-        assert.equal(((await preview.json()) as { preview?: unknown }).preview != null, true);
+        assert.equal(Object.hasOwn((await preview.json()) as object, "preview"), false);
 
         const submit = await fetch(
           `${baseUrl}/broker-execution/schwab/accounts/acct-1/orders`,

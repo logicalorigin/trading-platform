@@ -90,7 +90,6 @@ export type SchwabEquityOrderPreviewResponse = {
   provider: "schwab";
   checkedAt: string;
   account: SchwabEquityOrderAccount;
-  preview: unknown;
 };
 
 type NormalizedSchwabOrder = {
@@ -563,12 +562,11 @@ export async function previewSchwabEquityOrder(
   const account = await loadLocalSchwabAccount(options.appUserId, options.accountId);
   assertExecutionReady(account);
   const client = await loadOrderClient(account, options);
-  const preview = await client.previewOrder(account.accountHash, order);
+  await client.previewOrder(account.accountHash, order);
   return {
     provider: "schwab",
     checkedAt: now.toISOString(),
     account: publicAccount(account),
-    preview,
   };
 }
 

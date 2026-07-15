@@ -1822,8 +1822,6 @@ export const SchwabEquityOrderPreviewResponseProvider = {
   schwab: 'schwab',
 } as const;
 
-export type SchwabEquityOrderPreviewResponsePreview = { [key: string]: unknown } | null;
-
 /**
  * Sanitized response from Schwab's order preview endpoint. Never includes OAuth tokens, full account numbers, or raw credentials.
  */
@@ -1831,7 +1829,6 @@ export interface SchwabEquityOrderPreviewResponse {
   provider: SchwabEquityOrderPreviewResponseProvider;
   checkedAt: string;
   account: SchwabEquityOrderAccount;
-  preview: SchwabEquityOrderPreviewResponsePreview;
 }
 
 export type SchwabEquityOrderSubmitResponseProvider = typeof SchwabEquityOrderSubmitResponseProvider[keyof typeof SchwabEquityOrderSubmitResponseProvider];

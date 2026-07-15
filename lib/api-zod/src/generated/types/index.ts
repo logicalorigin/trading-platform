@@ -619,7 +619,6 @@ export * from './schwabEquityOrderCancelResponseProvider';
 export * from './schwabEquityOrderCancelResponseStatus';
 export * from './schwabEquityOrderPreviewBody';
 export * from './schwabEquityOrderPreviewResponse';
-export * from './schwabEquityOrderPreviewResponsePreview';
 export * from './schwabEquityOrderPreviewResponseProvider';
 export * from './schwabEquityOrderSubmitBody';
 export * from './schwabEquityOrderSubmitResponse';

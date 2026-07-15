@@ -6,7 +6,6 @@
  * OpenAPI spec version: 0.2.0
  */
 import type { SchwabEquityOrderAccount } from './schwabEquityOrderAccount';
-import type { SchwabEquityOrderPreviewResponsePreview } from './schwabEquityOrderPreviewResponsePreview';
 import type { SchwabEquityOrderPreviewResponseProvider } from './schwabEquityOrderPreviewResponseProvider';
 
 /**
@@ -16,5 +15,4 @@ export interface SchwabEquityOrderPreviewResponse {
   provider: SchwabEquityOrderPreviewResponseProvider;
   checkedAt: Date;
   account: SchwabEquityOrderAccount;
-  preview: SchwabEquityOrderPreviewResponsePreview;
 }

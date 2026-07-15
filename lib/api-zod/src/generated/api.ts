@@ -1635,8 +1635,7 @@ export const PreviewSchwabEquityOrderResponse = zod.object({
   "executionReady": zod.boolean(),
   "executionBlockers": zod.array(zod.string()),
   "lastSyncedAt": zod.coerce.date().nullable()
-}).describe('Sanitized local account metadata for a Schwab order operation.'),
-  "preview": zod.record(zod.string(), zod.unknown()).nullable()
+}).describe('Sanitized local account metadata for a Schwab order operation.')
 }).describe('Sanitized response from Schwab\'s order preview endpoint. Never includes OAuth tokens, full account numbers, or raw credentials.')
 
 

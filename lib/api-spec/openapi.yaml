@@ -6981,15 +6981,10 @@ components:
           format: date-time
         account:
           $ref: "#/components/schemas/SchwabEquityOrderAccount"
-        preview:
-          type: object
-          nullable: true
-          additionalProperties: true
       required:
         - provider
         - checkedAt
         - account
-        - preview
 
     SchwabEquityOrderSubmitResponse:
       type: object
