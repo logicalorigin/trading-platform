@@ -1678,7 +1678,9 @@ export const SubmitSchwabEquityOrderResponse = zod.object({
   "lastSyncedAt": zod.coerce.date().nullable()
 }).describe('Sanitized local account metadata for a Schwab order operation.'),
   "orderId": zod.string().nullable(),
-  "status": zod.enum(['submitted'])
+  "status": zod.enum(['submitted']),
+  "reconcileRequired": zod.literal(true).optional(),
+  "reconciliationReason": zod.enum(['tax_preflight_order_submit_record_failed']).optional()
 }).describe('Sanitized response from Schwab\'s order placement endpoint. Never includes OAuth tokens, full account numbers, or raw credentials.')
 
 

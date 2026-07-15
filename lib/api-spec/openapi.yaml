@@ -7007,6 +7007,12 @@ components:
         status:
           type: string
           enum: [submitted]
+        reconcileRequired:
+          type: boolean
+          enum: [true]
+        reconciliationReason:
+          type: string
+          enum: [tax_preflight_order_submit_record_failed]
       required:
         - provider
         - submittedAt

@@ -624,6 +624,7 @@ export * from './schwabEquityOrderPreviewResponseProvider';
 export * from './schwabEquityOrderSubmitBody';
 export * from './schwabEquityOrderSubmitResponse';
 export * from './schwabEquityOrderSubmitResponseProvider';
+export * from './schwabEquityOrderSubmitResponseReconciliationReason';
 export * from './schwabEquityOrderSubmitResponseStatus';
 export * from './schwabEquityOrderType';
 export * from './schwabEquityTimeInForce';

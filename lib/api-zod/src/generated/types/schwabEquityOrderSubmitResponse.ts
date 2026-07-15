@@ -7,6 +7,7 @@
  */
 import type { SchwabEquityOrderAccount } from './schwabEquityOrderAccount';
 import type { SchwabEquityOrderSubmitResponseProvider } from './schwabEquityOrderSubmitResponseProvider';
+import type { SchwabEquityOrderSubmitResponseReconciliationReason } from './schwabEquityOrderSubmitResponseReconciliationReason';
 import type { SchwabEquityOrderSubmitResponseStatus } from './schwabEquityOrderSubmitResponseStatus';
 
 /**
@@ -18,4 +19,6 @@ export interface SchwabEquityOrderSubmitResponse {
   account: SchwabEquityOrderAccount;
   orderId: string | null;
   status: SchwabEquityOrderSubmitResponseStatus;
+  reconcileRequired?: boolean;
+  reconciliationReason?: SchwabEquityOrderSubmitResponseReconciliationReason;
 }

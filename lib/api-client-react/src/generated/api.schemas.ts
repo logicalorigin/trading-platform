@@ -1848,6 +1848,13 @@ export const SchwabEquityOrderSubmitResponseStatus = {
   submitted: 'submitted',
 } as const;
 
+export type SchwabEquityOrderSubmitResponseReconciliationReason = typeof SchwabEquityOrderSubmitResponseReconciliationReason[keyof typeof SchwabEquityOrderSubmitResponseReconciliationReason];
+
+
+export const SchwabEquityOrderSubmitResponseReconciliationReason = {
+  tax_preflight_order_submit_record_failed: 'tax_preflight_order_submit_record_failed',
+} as const;
+
 /**
  * Sanitized response from Schwab's order placement endpoint. Never includes OAuth tokens, full account numbers, or raw credentials.
  */
@@ -1857,6 +1864,8 @@ export interface SchwabEquityOrderSubmitResponse {
   account: SchwabEquityOrderAccount;
   orderId: string | null;
   status: SchwabEquityOrderSubmitResponseStatus;
+  reconcileRequired?: boolean;
+  reconciliationReason?: SchwabEquityOrderSubmitResponseReconciliationReason;
 }
 
 export type SchwabEquityOrderCancelResponseProvider = typeof SchwabEquityOrderCancelResponseProvider[keyof typeof SchwabEquityOrderCancelResponseProvider];
