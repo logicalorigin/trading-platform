@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import pg from "pg";
+
 const runtimeEnvKeys = [
   "DATABASE_URL",
   "LOCAL_DATABASE_URL",
@@ -30,6 +32,7 @@ test("PGHOST Helium classification preserves Helium pool options", async () => {
     PGUSER: "runner",
     PGPASSWORD: "runtime-test-only",
     PGPORT: "5432",
+    PGSSLMODE: "require",
   });
 
   let pools: Awaited<typeof import("./index")> | null = null;
@@ -40,6 +43,8 @@ test("PGHOST Helium classification preserves Helium pool options", async () => {
     assert.equal(pools.pool.options.keepAlive, true);
     assert.equal(pools.pool.options.connectionTimeoutMillis, 30_000);
     assert.equal(pools.pool.options.statement_timeout, 15_000);
+    const client = new pg.Client(pools.pool.options);
+    assert.equal(client.ssl, false);
   } finally {
     if (pools) {
       await Promise.all([

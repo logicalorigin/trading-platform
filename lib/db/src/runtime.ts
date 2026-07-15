@@ -1,5 +1,7 @@
 import { isIP } from "node:net";
 
+import pg from "pg";
+
 export type DatabaseRuntimeSource =
   | "workspace-local-postgres"
   | "replit-internal-dev-db"
@@ -34,29 +36,109 @@ function getLastSearchParam(url: URL, name: string): string | null {
 }
 
 function classifyDatabaseRuntimeSource(url: URL): DatabaseRuntimeSource {
+  if (url.protocol === "socket:") {
+    return "workspace-local-postgres";
+  }
   const host =
     getLastSearchParam(url, "host") ||
     (url.hostname ? decodeURIComponent(url.hostname) : "");
   if (!host || host.startsWith("/") || host.includes(".local/postgres")) {
     return "workspace-local-postgres";
   }
-  if (host === "helium") {
+  if (host.toLowerCase() === "helium") {
     return "replit-internal-dev-db";
   }
   return "external-postgres";
 }
 
-function classifyDatabaseRuntimeSourceFromUrl(
-  url: string | null,
-): DatabaseRuntimeSource | null {
-  if (!url) {
+function isValidPostgresPort(port: string | null | undefined): boolean {
+  return (
+    !port ||
+    (/^\d+$/u.test(port) && Number(port) >= 1 && Number(port) <= 65_535)
+  );
+}
+
+function isValidPostgresHost(host: string): boolean {
+  if (!host) {
+    return true;
+  }
+  if (/[\u0000-\u001f\u007f]/u.test(host)) {
+    return false;
+  }
+  if (host.startsWith("/")) {
+    return true;
+  }
+  const unbracketedHost =
+    host.startsWith("[") && host.endsWith("]") ? host.slice(1, -1) : host;
+  return (
+    isIP(unbracketedHost) === 6 ||
+    (!/[%/\\@?#:\s]/u.test(host) && !host.includes("[") && !host.includes("]"))
+  );
+}
+
+function parseDatabaseRuntimeUrl(value: string | null): URL | null {
+  if (
+    !value ||
+    /[\u0000-\u001f\u007f]/u.test(value) ||
+    /%(?![\da-f]{2})/iu.test(value)
+  ) {
     return null;
   }
   try {
-    return classifyDatabaseRuntimeSource(new URL(url));
+    const url = new URL(value);
+    if (
+      url.protocol !== "postgres:" &&
+      url.protocol !== "postgresql:" &&
+      url.protocol !== "socket:"
+    ) {
+      return null;
+    }
+    const decodedPathname = decodeURI(url.pathname);
+    if (
+      url.protocol === "socket:" &&
+      (!decodedPathname.startsWith("/") ||
+        !isValidPostgresHost(decodedPathname))
+    ) {
+      return null;
+    }
+    if (!isValidPostgresPort(getLastSearchParam(url, "port") || url.port)) {
+      return null;
+    }
+    decodeURIComponent(url.username);
+    decodeURIComponent(url.password);
+    if (url.protocol !== "socket:") {
+      const host =
+        getLastSearchParam(url, "host") ||
+        (url.hostname ? decodeURIComponent(url.hostname) : "");
+      if (!host || !isValidPostgresHost(host)) {
+        return null;
+      }
+    }
+    return url;
   } catch {
     return null;
   }
+}
+
+function disableHeliumSsl(url: URL): string {
+  for (const name of [
+    "ssl",
+    "sslcert",
+    "sslkey",
+    "sslrootcert",
+    "uselibpqcompat",
+  ]) {
+    url.searchParams.delete(name);
+  }
+  url.searchParams.set("sslmode", "disable");
+  return url.toString();
+}
+
+function classifyDatabaseRuntimeSourceFromUrl(
+  url: string | null,
+): DatabaseRuntimeSource | null {
+  const parsed = parseDatabaseRuntimeUrl(url);
+  return parsed ? classifyDatabaseRuntimeSource(parsed) : null;
 }
 
 function normalizeDatabaseSourceOverride(
@@ -93,10 +175,7 @@ function buildPostgresEnvDatabaseUrl(env: NodeJS.ProcessEnv): string | null {
   }
 
   const port = env["PGPORT"];
-  if (
-    port &&
-    (!/^\d+$/u.test(port) || Number(port) < 1 || Number(port) > 65_535)
-  ) {
+  if (!isValidPostgresPort(port)) {
     return null;
   }
 
@@ -104,14 +183,8 @@ function buildPostgresEnvDatabaseUrl(env: NodeJS.ProcessEnv): string | null {
   const unbracketedHost =
     host.startsWith("[") && host.endsWith("]") ? host.slice(1, -1) : host;
   const ipv6Host = isIP(unbracketedHost) === 6;
-  if (!host.startsWith("/") && !ipv6Host) {
-    if (
-      /[%/\\@?#:\s]/u.test(host) ||
-      host.includes("[") ||
-      host.includes("]")
-    ) {
-      return null;
-    }
+  if (!isValidPostgresHost(host)) {
+    return null;
   }
   url.searchParams.set("host", ipv6Host ? unbracketedHost : host);
   if (port) {
@@ -155,7 +228,7 @@ export function resolveDatabaseRuntimeConfig(
   const localDatabaseUrl = env["LOCAL_DATABASE_URL"] || null;
   const postgresEnvDatabaseUrl = buildPostgresEnvDatabaseUrl(env);
   const override = normalizeDatabaseSourceOverride(
-    env["PYRUS_DATABASE_SOURCE"] ?? env["PYRUS_DATABASE_SOURCE"],
+    env["PYRUS_DATABASE_SOURCE"],
   );
   const useLocalOverride = override === "local" && Boolean(localDatabaseUrl);
   const databaseUrlSource = classifyDatabaseRuntimeSourceFromUrl(databaseUrl);
@@ -193,21 +266,25 @@ export function resolveDatabaseRuntimeConfig(
     };
   }
 
-  try {
+  const parsedUrl = parseDatabaseRuntimeUrl(url);
+  if (!parsedUrl) {
     return {
-      url,
-      source: classifyDatabaseRuntimeSource(new URL(url)),
-      sourceEnv,
-      overrideActive: useLocalOverride,
-    };
-  } catch {
-    return {
-      url,
+      url: null,
       source: null,
-      sourceEnv,
-      overrideActive: useLocalOverride,
+      sourceEnv: null,
+      overrideActive: false,
     };
   }
+  const source = classifyDatabaseRuntimeSource(parsedUrl);
+  return {
+    url:
+      source === "replit-internal-dev-db"
+        ? disableHeliumSsl(parsedUrl)
+        : parsedUrl.toString(),
+    source,
+    sourceEnv,
+    overrideActive: useLocalOverride,
+  };
 }
 
 export function describeDatabaseRuntimeConnection(
@@ -230,20 +307,35 @@ export function describeDatabaseRuntimeConnection(
 
   try {
     const url = new URL(config.url);
-    const host =
-      getLastSearchParam(url, "host") ||
-      (url.hostname ? decodeURIComponent(url.hostname) : null);
+    const socketUrl = url.protocol === "socket:";
+    const host = socketUrl
+      ? decodeURI(url.pathname)
+      : getLastSearchParam(url, "host") ||
+        (url.hostname ? decodeURIComponent(url.hostname) : null);
     const user =
       getLastSearchParam(url, "user") ||
-      (url.username ? decodeURIComponent(url.username) : null);
+      (url.username ? decodeURIComponent(url.username) : null) ||
+      env["PGUSER"] ||
+      pg.defaults.user ||
+      null;
+    const configuredPort =
+      getLastSearchParam(url, "port") ||
+      url.port ||
+      env["PGPORT"] ||
+      (host ? "5432" : null);
+    const database =
+      (socketUrl
+        ? url.searchParams.get("db") || null
+        : decodeURI(url.pathname.replace(/^\//, "")) || null) ||
+      env["PGDATABASE"] ||
+      user;
     return {
       ...config,
       configured: true,
       protocol: url.protocol.replace(/:$/, "") || null,
       host,
-      port:
-        getLastSearchParam(url, "port") || url.port || (host ? "5432" : null),
-      database: decodeURI(url.pathname.replace(/^\//, "")) || null,
+      port: configuredPort ? String(Number.parseInt(configuredPort, 10)) : null,
+      database,
       user: user ? `${user.slice(0, 2)}***` : null,
       sslMode:
         getLastSearchParam(url, "sslmode") ||
