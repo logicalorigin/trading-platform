@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { createAdvisoryLockHolder } from "./advisory-lock";
+import pg from "pg";
+import {
+  createAdvisoryLockHolder,
+  sharedAdvisoryLockHolder,
+} from "./advisory-lock";
 
 /**
  * In-memory stand-in for a single dedicated `pg.Client`. Models a Postgres
@@ -482,4 +486,70 @@ test("close fences an advisory-lock query already in flight", async () => {
     /closed/i,
     "an acquire must not report success after permanent close",
   );
+});
+
+test("default Helium advisory client has a bounded connection attempt", async () => {
+  const runtimeEnvKeys = [
+    "DATABASE_URL",
+    "LOCAL_DATABASE_URL",
+    "PGHOST",
+    "PGDATABASE",
+    "PGUSER",
+    "PGPASSWORD",
+    "PGPORT",
+    "PGSSLMODE",
+    "PYRUS_DATABASE_SOURCE",
+    "DB_CONNECTION_TIMEOUT_MS",
+  ] as const;
+  const previousEnv = new Map(
+    runtimeEnvKeys.map((key) => [key, process.env[key]] as const),
+  );
+  for (const key of runtimeEnvKeys) {
+    delete process.env[key];
+  }
+  Object.assign(process.env, {
+    PGHOST: "helium",
+    PGDATABASE: "pyrus_advisory_timeout_test",
+    PGUSER: "runner",
+    PGPASSWORD: "test-only",
+    PGPORT: "5432",
+    PGSSLMODE: "require",
+  });
+
+  const clientPrototype = pg.Client.prototype as unknown as {
+    connect: (callback?: unknown) => Promise<unknown> | void;
+  };
+  const originalConnect = clientPrototype.connect;
+  const connectionFailure = new Error("network disabled for timeout test");
+  let capturedClient: pg.Client | null = null;
+  clientPrototype.connect = function (this: pg.Client) {
+    capturedClient = this;
+    return Promise.reject(connectionFailure);
+  };
+
+  try {
+    await assert.rejects(
+      sharedAdvisoryLockHolder.acquire(1_930_514_099),
+      (error) => error === connectionFailure,
+    );
+    assert.equal(
+      (
+        capturedClient as unknown as {
+          _connectionTimeoutMillis?: number;
+        }
+      )?._connectionTimeoutMillis,
+      30_000,
+      "the dedicated Helium lock socket must share the pool connect ceiling",
+    );
+  } finally {
+    clientPrototype.connect = originalConnect;
+    await sharedAdvisoryLockHolder.close();
+    for (const [key, value] of previousEnv) {
+      if (value === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = value;
+      }
+    }
+  }
 });
