@@ -22,16 +22,12 @@ const HEAVY_GET_PATHS = new Set([
   "/api/options/chains",
   "/api/flow/events",
 ]);
-const HEAVY_GET_PATH_MATCHERS = [
-  /^\/api\/algo\/deployments\/[^/]+\/signal-quality-kpis$/u,
-] as const;
 const HEAVY_GET_CONCURRENCY = 6;
 const HEAVY_GET_PRIORITY: Record<string, number> = {
   "/api/bars": 8,
   "/api/options/chart-bars": 12,
   "/api/options/chains": 10,
 };
-const DYNAMIC_HEAVY_GET_PRIORITY = 2;
 
 // Safety-net timeouts for idempotent GETs. An unresponsive backend otherwise
 // holds browser connections open indefinitely; under the per-origin connection
@@ -301,20 +297,11 @@ function getHeavyGetPriority(input: RequestInfo | URL, method: string): number {
     return 0;
   }
 
-  if (HEAVY_GET_PRIORITY[normalizedUrl.pathname] !== undefined) {
-    return HEAVY_GET_PRIORITY[normalizedUrl.pathname];
-  }
-  return isDynamicHeavyGetPath(normalizedUrl.pathname)
-    ? DYNAMIC_HEAVY_GET_PRIORITY
-    : 0;
-}
-
-function isDynamicHeavyGetPath(pathname: string): boolean {
-  return HEAVY_GET_PATH_MATCHERS.some((pattern) => pattern.test(pathname));
+  return HEAVY_GET_PRIORITY[normalizedUrl.pathname] ?? 0;
 }
 
 function isHeavyGetPath(pathname: string): boolean {
-  return HEAVY_GET_PATHS.has(pathname) || isDynamicHeavyGetPath(pathname);
+  return HEAVY_GET_PATHS.has(pathname);
 }
 
 function shouldDetachCallerAbort(
@@ -990,8 +977,6 @@ export function resetCustomFetchDedupeForTests(): void {
 
 export const __customFetchInternalsForTests = {
   applyBaseUrl,
-  getHeavyGetPriority,
-  isHeavyGetPath,
 };
 
 export async function customFetch<T = unknown>(
