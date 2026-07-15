@@ -38,13 +38,13 @@ const DEFAULT_LEDGER = path.join(
   "validation",
   "commands.jsonl",
 );
-const DEFAULT_LOCK_FILE = path.join(
+export const DEFAULT_VALIDATION_LOCK_FILE = path.join(
   repoRoot,
   ".pyrus-runtime",
   "validation",
   "validation.lock",
 );
-const DEFAULT_NODE_OPTIONS = "--max-old-space-size=3072";
+export const DEFAULT_VALIDATION_NODE_OPTIONS = "--max-old-space-size=3072";
 const MAX_LOCK_BYTES = 16 * 1024;
 const MAX_LEDGER_EVENT_BYTES = 16 * 1024;
 const CHILD_SHUTDOWN_GRACE_MS = 5_000;
@@ -73,7 +73,7 @@ Options:
   --lock-file PATH          Single-validation lock file.
 
 Environment overrides:
-  NODE_OPTIONS              Defaults to ${DEFAULT_NODE_OPTIONS} when unset.
+  NODE_OPTIONS              Defaults to ${DEFAULT_VALIDATION_NODE_OPTIONS} when unset.
 `);
 }
 
@@ -97,7 +97,7 @@ export function parseValidationArgs(argv) {
   const parsed = {
     label: null,
     ledgerPath: DEFAULT_LEDGER,
-    lockFile: DEFAULT_LOCK_FILE,
+    lockFile: DEFAULT_VALIDATION_LOCK_FILE,
     command: [],
   };
   const seen = new Set();
@@ -564,7 +564,8 @@ export async function runValidationCommand(
       startedLogged = true;
       const env = {
         ...process.env,
-        NODE_OPTIONS: process.env.NODE_OPTIONS ?? DEFAULT_NODE_OPTIONS,
+        NODE_OPTIONS:
+          process.env.NODE_OPTIONS ?? DEFAULT_VALIDATION_NODE_OPTIONS,
       };
       const child = spawnChild(options.command[0], options.command.slice(1), {
         cwd: process.cwd(),

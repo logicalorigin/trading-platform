@@ -3,7 +3,8 @@
   "version": "0.0.0",
   "private": true,
   "scripts": {
-    "codegen": "node ./run-codegen.mjs"
+    "codegen": "node ./run-codegen.mjs",
+    "test": "node --test ./run-codegen.test.mjs"
   },
   "devDependencies": {
     "orval": "^8.5.2"
