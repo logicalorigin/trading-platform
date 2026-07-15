@@ -6,9 +6,9 @@ import {
   getBacktestOptionPreset,
   getStrategyCatalogItem,
   listStrategies,
+  resolveBacktestOptionContract as selectBacktestOptionContract,
   resolveSignalOptionsExecutionProfile,
-  resolveSignalOptionsStrike,
-  signalOptionsStrikeSlotsForRight,
+  type ResolvedBacktestOptionContract,
   type SignalOptionsExecutionProfile,
   type BacktestBar,
   type BacktestTimeframe,
@@ -45,7 +45,6 @@ import type {
   BacktestSweep,
   HistoricalBarDataset,
 } from "@workspace/db";
-import { tradingDaysBetween } from "@workspace/market-calendar";
 import { and, asc, desc, eq, gte, lte, sql, type SQL } from "drizzle-orm";
 import { HttpError } from "../lib/errors";
 import { getMassiveRuntimeConfig } from "../lib/runtime";
@@ -54,10 +53,7 @@ import {
   normalizeLegacyAlgoBranding,
   normalizeLegacyAlgoBrandText,
 } from "./algo-branding";
-import {
-  MassiveMarketDataClient,
-  type HistoricalOptionContract,
-} from "../providers/massive/market-data";
+import { MassiveMarketDataClient } from "../providers/massive/market-data";
 
 type NumberLike = number | string | null | undefined;
 
@@ -115,19 +111,6 @@ export type ResolveBacktestOptionContractInput = {
   spotPrice: number;
   contractPresetId?: string | null;
   signalOptionsProfile?: unknown;
-};
-
-export type ResolvedBacktestOptionContract = {
-  ticker: string;
-  underlying: string;
-  expirationDate: Date;
-  strike: number;
-  right: "call" | "put";
-  multiplier: number;
-  sharesPerContract: number;
-  providerContractId: string | null;
-  contractPresetId: string;
-  dte: number;
 };
 
 type PromoteRunInput = {
@@ -238,108 +221,6 @@ function addUtcDays(value: Date, days: number): Date {
   return new Date(value.getTime() + days * 24 * 60 * 60 * 1_000);
 }
 
-function calculateDte(occurredAt: Date, expirationDate: Date): number {
-  // Wave-2 C1 (trading-day DTE, product ruling 2026-07-07): NY trading days
-  // from the signal's NY date to the expiry's calendar date (its UTC date is
-  // the expiry key — Massive/IBKR store expiries at UTC midnight), not UTC
-  // calendar days. Matches the live automation lane and fixes weekend/holiday
-  // window shrinkage in backtest tenor selection.
-  return tradingDaysBetween(
-    occurredAt,
-    expirationDate.toISOString().slice(0, 10),
-  );
-}
-
-function selectExpiryWindow(
-  contracts: HistoricalOptionContract[],
-  occurredAt: Date,
-  targetDte: number,
-  minDte: number,
-  maxDte: number,
-): HistoricalOptionContract[] {
-  const inWindow = contracts.filter((contract) => {
-    const dte = calculateDte(occurredAt, contract.expirationDate);
-    return dte >= minDte && dte <= maxDte;
-  });
-
-  const candidates = inWindow.length > 0 ? inWindow : contracts;
-  const expirations = [
-    ...new Set(
-      candidates.map((contract) => contract.expirationDate.toISOString()),
-    ),
-  ]
-    .map((iso) => new Date(iso))
-    .sort((left, right) => left.getTime() - right.getTime());
-
-  const selectedExpiration =
-    expirations.sort((left, right) => {
-      const leftDte = calculateDte(occurredAt, left);
-      const rightDte = calculateDte(occurredAt, right);
-      const dteDelta = Math.abs(leftDte - targetDte) - Math.abs(rightDte - targetDte);
-
-      if (dteDelta !== 0) {
-        return dteDelta;
-      }
-
-      return left.getTime() - right.getTime();
-    })[0] ?? null;
-
-  if (!selectedExpiration) {
-    return [];
-  }
-
-  const selectedIso = selectedExpiration.toISOString();
-  return candidates.filter(
-    (contract) => contract.expirationDate.toISOString() === selectedIso,
-  );
-}
-
-function selectSignalOptionsExpiryWindow(
-  contracts: HistoricalOptionContract[],
-  occurredAt: Date,
-  profile: SignalOptionsExecutionProfile,
-): HistoricalOptionContract[] {
-  const minDte = profile.optionSelection.allowZeroDte
-    ? profile.optionSelection.minDte
-    : Math.max(1, profile.optionSelection.minDte);
-  const maxDte = Math.max(minDte, profile.optionSelection.maxDte);
-  const targetDte = Math.min(
-    maxDte,
-    Math.max(minDte, profile.optionSelection.targetDte),
-  );
-
-  return selectExpiryWindow(contracts, occurredAt, targetDte, minDte, maxDte);
-}
-
-function scoreContractStrike(
-  contract: HistoricalOptionContract,
-  spotPrice: number,
-  right: "call" | "put",
-  strikeTarget: ReturnType<typeof getBacktestOptionPreset>["strikeTarget"],
-): number {
-  const distance = contract.strike - spotPrice;
-  const absoluteDistance = Math.abs(distance);
-  const percentDistance = spotPrice > 0 ? absoluteDistance / spotPrice : absoluteDistance;
-  const callOtm = distance >= 0;
-  const putOtm = distance <= 0;
-  const isOtm = right === "call" ? callOtm : putOtm;
-  const isItm = right === "call" ? !callOtm : !putOtm;
-  const stepTarget =
-    strikeTarget === "otm_step_2" ? 0.02 : strikeTarget === "itm_step_1" ? 0.015 : 0.01;
-
-  switch (strikeTarget) {
-    case "atm":
-      return absoluteDistance;
-    case "otm_step_1":
-    case "otm_step_2":
-      return isOtm ? Math.abs(percentDistance - stepTarget) : 10 + percentDistance;
-    case "itm_step_1":
-      return isItm ? Math.abs(percentDistance - stepTarget) : 10 + percentDistance;
-    default:
-      return absoluteDistance;
-  }
-}
-
 export async function resolveBacktestOptionContract(
   input: ResolveBacktestOptionContractInput,
 ): Promise<ResolvedBacktestOptionContract | null> {
@@ -378,79 +259,14 @@ export async function resolveBacktestOptionContract(
     limit: 1_000,
   });
 
-  if (contracts.length === 0) {
-    return null;
-  }
-
-  const filteredByExpiry = signalOptionsProfile
-    ? selectSignalOptionsExpiryWindow(contracts, occurredAt, signalOptionsProfile)
-    : selectExpiryWindow(
-        contracts,
-        occurredAt,
-        preset.targetDte,
-        preset.minDte,
-        preset.maxDte,
-      );
-
-  const selected =
-    signalOptionsProfile
-      ? (() => {
-          const strikes = filteredByExpiry.map((contract) => contract.strike);
-          const attemptedStrikes = new Set<number>();
-          for (const slot of signalOptionsStrikeSlotsForRight(
-            signalOptionsProfile,
-            input.right,
-          )) {
-            const selectedStrike = resolveSignalOptionsStrike({
-              strikes,
-              spotPrice: input.spotPrice,
-              slot,
-            });
-            if (selectedStrike == null || attemptedStrikes.has(selectedStrike)) {
-              continue;
-            }
-            attemptedStrikes.add(selectedStrike);
-            const contract =
-              filteredByExpiry.find(
-                (item) => item.strike === selectedStrike,
-              ) ?? null;
-            if (contract) {
-              return contract;
-            }
-          }
-          return null;
-        })()
-      : [...filteredByExpiry].sort((left, right) => {
-          const strikeDelta =
-            scoreContractStrike(
-              left,
-              input.spotPrice,
-              input.right,
-              preset.strikeTarget,
-            ) -
-            scoreContractStrike(
-              right,
-              input.spotPrice,
-              input.right,
-              preset.strikeTarget,
-            );
-
-          if (strikeDelta !== 0) {
-            return strikeDelta;
-          }
-
-          return left.strike - right.strike;
-        })[0] ?? null;
-
-  if (!selected) {
-    return null;
-  }
-
-  return {
-    ...selected,
-    contractPresetId: preset.id,
-    dte: calculateDte(occurredAt, selected.expirationDate),
-  };
+  return selectBacktestOptionContract({
+    contracts,
+    occurredAt,
+    right: input.right,
+    spotPrice: input.spotPrice,
+    preset,
+    signalOptionsProfile,
+  });
 }
 
 function numericValue(value: NumberLike): number {
@@ -3407,9 +3223,6 @@ export async function listBacktestDraftStrategies() {
   };
 }
 
-// Wave-2 C1 (2026-07-07): expose the trading-day DTE math for unit tests
-// (backtesting.ts previously had no test seam).
 export const __backtestingInternalsForTests = {
-  calculateDte,
   loadPreviewSeries,
 };
