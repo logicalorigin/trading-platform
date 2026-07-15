@@ -1,5 +1,7 @@
 import { createInsertSchema } from "drizzle-zod";
+import { sql } from "drizzle-orm";
 import {
+  check,
   index,
   jsonb,
   pgTable,
@@ -31,6 +33,14 @@ export const auditEventsTable = pgTable(
       .notNull(),
   },
   (table) => [
+    check(
+      "audit_events_payload_object_chk",
+      sql`jsonb_typeof(${table.payload}) = 'object'`,
+    ),
+    check(
+      "audit_events_payload_size_chk",
+      sql`octet_length(${table.payload}::text) <= 8192`,
+    ),
     index("audit_events_app_user_created_at_idx").on(
       table.appUserId,
       table.createdAt,
