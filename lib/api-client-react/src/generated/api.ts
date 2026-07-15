@@ -69,7 +69,6 @@ import type {
   DiagnosticThresholdsUpdateRequest,
   DiagnosticsLatestResponse,
   EnableAlgoDeploymentParams,
-  EnsureDefaultSignalOptionsPaperDeploymentBody,
   EvaluateSignalMonitorRequest,
   ExecutionEventsResponse,
   ExportDiagnosticsParams,
@@ -89,7 +88,6 @@ import type {
   GetAccountPositionsParams,
   GetAccountRiskParams,
   GetAccountSummaryParams,
-  GetAlgoDeploymentSignalQualityKpisParams,
   GetBacktestRunChartParams,
   GetBarsParams,
   GetFlowPremiumDistributionParams,
@@ -105,7 +103,6 @@ import type {
   GetResearchEarningsCalendarParams,
   GetResearchFinancialsParams,
   GetResearchFundamentalsParams,
-  GetResearchHighBetaUniverseParams,
   GetResearchSecFilingsParams,
   GetResearchSnapshotsParams,
   GetResearchTranscriptParams,
@@ -178,17 +175,13 @@ import type {
   ResearchFilingsResponse,
   ResearchFinancialsResponse,
   ResearchFundamentalsResponse,
-  ResearchHighBetaUniverseResponse,
   ResearchSnapshotsResponse,
   ResearchStatus,
   ResearchTranscriptResponse,
   ResearchTranscriptsResponse,
-  ResolveBacktestOptionContract200,
-  ResolveBacktestOptionContractBody,
   ResolveOptionContractParams,
   RobinhoodConnectResponse,
   RobinhoodReadinessResponse,
-  RunSignalOptionsShadowBackfillBody,
   RuntimeDiagnosticsResponse,
   SchwabConnectResponse,
   SchwabEquityOrderCancelBody,
@@ -210,10 +203,7 @@ import type {
   SignalMonitorStateResponse,
   SignalOptionsAutomationState,
   SignalOptionsExecutionProfile,
-  SignalOptionsManualDeviationRequest,
-  SignalOptionsManualDeviationResponse,
   SignalOptionsPerformanceResponse,
-  SignalQualityKpiResponse,
   SnapTradeBrokerageListResponse,
   SnapTradeConnectionPortalResponse,
   SnapTradeEquityOrderImpactBody,
@@ -9606,89 +9596,6 @@ export function useGetResearchStatus<TData = Awaited<ReturnType<typeof getResear
 
 
 /**
- * Builds a dry-run high-beta universe from the existing FMP screener integration and validates candidates through Massive market-data/reference/options coverage.
- * @summary Preview the high-beta STA universe
- */
-export const getGetResearchHighBetaUniverseUrl = (params?: GetResearchHighBetaUniverseParams,) => {
-  const normalizedParams = new URLSearchParams();
-
-  Object.entries(params || {}).forEach(([key, value]) => {
-
-    if (value !== undefined) {
-      normalizedParams.append(key, value === null ? 'null' : value.toString())
-    }
-  });
-
-  const stringifiedParams = normalizedParams.toString();
-
-  return stringifiedParams.length > 0 ? `/api/research/high-beta-universe?${stringifiedParams}` : `/api/research/high-beta-universe`
-}
-
-export const getResearchHighBetaUniverse = async (params?: GetResearchHighBetaUniverseParams, options?: RequestInit): Promise<ResearchHighBetaUniverseResponse> => {
-
-  return customFetch<ResearchHighBetaUniverseResponse>(getGetResearchHighBetaUniverseUrl(params),
-  {
-    ...options,
-    method: 'GET'
-
-
-  }
-);}
-
-
-
-
-
-export const getGetResearchHighBetaUniverseQueryKey = (params?: GetResearchHighBetaUniverseParams,) => {
-    return [
-    `/api/research/high-beta-universe`, ...(params ? [params] : [])
-    ] as const;
-    }
-
-
-export const getGetResearchHighBetaUniverseQueryOptions = <TData = Awaited<ReturnType<typeof getResearchHighBetaUniverse>>, TError = ErrorType<unknown>>(params?: GetResearchHighBetaUniverseParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getResearchHighBetaUniverse>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
-) => {
-
-const {query: queryOptions, request: requestOptions} = options ?? {};
-
-  const queryKey =  queryOptions?.queryKey ?? getGetResearchHighBetaUniverseQueryKey(params);
-
-
-
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof getResearchHighBetaUniverse>>> = ({ signal }) => getResearchHighBetaUniverse(params, { signal, ...requestOptions });
-
-
-
-
-
-   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getResearchHighBetaUniverse>>, TError, TData> & { queryKey: QueryKey }
-}
-
-export type GetResearchHighBetaUniverseQueryResult = NonNullable<Awaited<ReturnType<typeof getResearchHighBetaUniverse>>>
-export type GetResearchHighBetaUniverseQueryError = ErrorType<unknown>
-
-
-/**
- * @summary Preview the high-beta STA universe
- */
-
-export function useGetResearchHighBetaUniverse<TData = Awaited<ReturnType<typeof getResearchHighBetaUniverse>>, TError = ErrorType<unknown>>(
- params?: GetResearchHighBetaUniverseParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getResearchHighBetaUniverse>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
-
- ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
-
-  const queryOptions = getGetResearchHighBetaUniverseQueryOptions(params,options)
-
-  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
-
-  return { ...query, queryKey: queryOptions.queryKey };
-}
-
-
-
-
-
-/**
  * @summary Get research fundamentals for a symbol
  */
 export const getGetResearchFundamentalsUrl = (params: GetResearchFundamentalsParams,) => {
@@ -10265,77 +10172,6 @@ export function useGetResearchTranscript<TData = Awaited<ReturnType<typeof getRe
 
 
 /**
- * @summary Ensure the default signal-options paper deployment exists
- */
-export const getEnsureDefaultSignalOptionsPaperDeploymentUrl = () => {
-
-
-
-
-  return `/api/algo/signal-options/default-paper-deployment`
-}
-
-export const ensureDefaultSignalOptionsPaperDeployment = async (ensureDefaultSignalOptionsPaperDeploymentBody?: EnsureDefaultSignalOptionsPaperDeploymentBody, options?: RequestInit): Promise<AlgoDeployment> => {
-
-  return customFetch<AlgoDeployment>(getEnsureDefaultSignalOptionsPaperDeploymentUrl(),
-  {
-    ...options,
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...options?.headers },
-    body: JSON.stringify(
-      ensureDefaultSignalOptionsPaperDeploymentBody,)
-  }
-);}
-
-
-
-
-export const getEnsureDefaultSignalOptionsPaperDeploymentMutationOptions = <TError = ErrorType<unknown>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof ensureDefaultSignalOptionsPaperDeployment>>, TError,{data: BodyType<EnsureDefaultSignalOptionsPaperDeploymentBody>}, TContext>, request?: SecondParameter<typeof customFetch>}
-): UseMutationOptions<Awaited<ReturnType<typeof ensureDefaultSignalOptionsPaperDeployment>>, TError,{data: BodyType<EnsureDefaultSignalOptionsPaperDeploymentBody>}, TContext> => {
-
-const mutationKey = ['ensureDefaultSignalOptionsPaperDeployment'];
-const {mutation: mutationOptions, request: requestOptions} = options ?
-      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
-      options
-      : {...options, mutation: {...options.mutation, mutationKey}}
-      : {mutation: { mutationKey, }, request: undefined};
-
-
-
-
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof ensureDefaultSignalOptionsPaperDeployment>>, {data: BodyType<EnsureDefaultSignalOptionsPaperDeploymentBody>}> = (props) => {
-          const {data} = props ?? {};
-
-          return  ensureDefaultSignalOptionsPaperDeployment(data,requestOptions)
-        }
-
-
-
-
-
-
-  return  { mutationFn, ...mutationOptions }}
-
-    export type EnsureDefaultSignalOptionsPaperDeploymentMutationResult = NonNullable<Awaited<ReturnType<typeof ensureDefaultSignalOptionsPaperDeployment>>>
-    export type EnsureDefaultSignalOptionsPaperDeploymentMutationBody = BodyType<EnsureDefaultSignalOptionsPaperDeploymentBody>
-    export type EnsureDefaultSignalOptionsPaperDeploymentMutationError = ErrorType<unknown>
-
-    /**
- * @summary Ensure the default signal-options paper deployment exists
- */
-export const useEnsureDefaultSignalOptionsPaperDeployment = <TError = ErrorType<unknown>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof ensureDefaultSignalOptionsPaperDeployment>>, TError,{data: BodyType<EnsureDefaultSignalOptionsPaperDeploymentBody>}, TContext>, request?: SecondParameter<typeof customFetch>}
- ): UseMutationResult<
-        Awaited<ReturnType<typeof ensureDefaultSignalOptionsPaperDeployment>>,
-        TError,
-        {data: BodyType<EnsureDefaultSignalOptionsPaperDeploymentBody>},
-        TContext
-      > => {
-      return useMutation(getEnsureDefaultSignalOptionsPaperDeploymentMutationOptions(options));
-    }
-
-/**
  * @summary List saved algo deployments
  */
 export const getListAlgoDeploymentsUrl = (params?: ListAlgoDeploymentsParams,) => {
@@ -10791,94 +10627,6 @@ export const useUpdateAlgoDeploymentStrategySettings = <TError = ErrorType<unkno
     }
 
 /**
- * Computes signal-INDICATOR quality KPIs (not trading P&L) for a deployment from a rolling stored-bar backtest of its signals under the current control-panel settings. Optional draft strategy-settings fields may be passed as query parameters to preview unsaved settings; an omitted field falls back to the saved deployment config, then the signal-monitor profile defaults.
- * @summary Get per-deployment signal-quality KPIs from a rolling signal backtest
- */
-export const getGetAlgoDeploymentSignalQualityKpisUrl = (deploymentId: string,
-    params?: GetAlgoDeploymentSignalQualityKpisParams,) => {
-  const normalizedParams = new URLSearchParams();
-
-  Object.entries(params || {}).forEach(([key, value]) => {
-
-    if (value !== undefined) {
-      normalizedParams.append(key, value === null ? 'null' : value.toString())
-    }
-  });
-
-  const stringifiedParams = normalizedParams.toString();
-
-  return stringifiedParams.length > 0 ? `/api/algo/deployments/${deploymentId}/signal-quality-kpis?${stringifiedParams}` : `/api/algo/deployments/${deploymentId}/signal-quality-kpis`
-}
-
-export const getAlgoDeploymentSignalQualityKpis = async (deploymentId: string,
-    params?: GetAlgoDeploymentSignalQualityKpisParams, options?: RequestInit): Promise<SignalQualityKpiResponse> => {
-
-  return customFetch<SignalQualityKpiResponse>(getGetAlgoDeploymentSignalQualityKpisUrl(deploymentId,params),
-  {
-    ...options,
-    method: 'GET'
-
-
-  }
-);}
-
-
-
-
-
-export const getGetAlgoDeploymentSignalQualityKpisQueryKey = (deploymentId: string,
-    params?: GetAlgoDeploymentSignalQualityKpisParams,) => {
-    return [
-    `/api/algo/deployments/${deploymentId}/signal-quality-kpis`, ...(params ? [params] : [])
-    ] as const;
-    }
-
-
-export const getGetAlgoDeploymentSignalQualityKpisQueryOptions = <TData = Awaited<ReturnType<typeof getAlgoDeploymentSignalQualityKpis>>, TError = ErrorType<unknown>>(deploymentId: string,
-    params?: GetAlgoDeploymentSignalQualityKpisParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getAlgoDeploymentSignalQualityKpis>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
-) => {
-
-const {query: queryOptions, request: requestOptions} = options ?? {};
-
-  const queryKey =  queryOptions?.queryKey ?? getGetAlgoDeploymentSignalQualityKpisQueryKey(deploymentId,params);
-
-
-
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof getAlgoDeploymentSignalQualityKpis>>> = ({ signal }) => getAlgoDeploymentSignalQualityKpis(deploymentId,params, { signal, ...requestOptions });
-
-
-
-
-
-   return  { queryKey, queryFn, enabled: !!(deploymentId), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getAlgoDeploymentSignalQualityKpis>>, TError, TData> & { queryKey: QueryKey }
-}
-
-export type GetAlgoDeploymentSignalQualityKpisQueryResult = NonNullable<Awaited<ReturnType<typeof getAlgoDeploymentSignalQualityKpis>>>
-export type GetAlgoDeploymentSignalQualityKpisQueryError = ErrorType<unknown>
-
-
-/**
- * @summary Get per-deployment signal-quality KPIs from a rolling signal backtest
- */
-
-export function useGetAlgoDeploymentSignalQualityKpis<TData = Awaited<ReturnType<typeof getAlgoDeploymentSignalQualityKpis>>, TError = ErrorType<unknown>>(
- deploymentId: string,
-    params?: GetAlgoDeploymentSignalQualityKpisParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getAlgoDeploymentSignalQualityKpis>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
-
- ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
-
-  const queryOptions = getGetAlgoDeploymentSignalQualityKpisQueryOptions(deploymentId,params,options)
-
-  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
-
-  return { ...query, queryKey: queryOptions.queryKey };
-}
-
-
-
-
-
-/**
  * @summary Get signal-options shadow automation state for a deployment
  */
 export const getGetSignalOptionsAutomationStateUrl = (deploymentId: string,) => {
@@ -11104,76 +10852,6 @@ export function useGetSignalOptionsPerformance<TData = Awaited<ReturnType<typeof
 
 
 /**
- * @summary Run a signal-options shadow scan
- */
-export const getRunSignalOptionsShadowScanUrl = (deploymentId: string,) => {
-
-
-
-
-  return `/api/algo/deployments/${deploymentId}/signal-options/shadow-scan`
-}
-
-export const runSignalOptionsShadowScan = async (deploymentId: string, options?: RequestInit): Promise<SignalOptionsAutomationState> => {
-
-  return customFetch<SignalOptionsAutomationState>(getRunSignalOptionsShadowScanUrl(deploymentId),
-  {
-    ...options,
-    method: 'POST'
-
-
-  }
-);}
-
-
-
-
-export const getRunSignalOptionsShadowScanMutationOptions = <TError = ErrorType<unknown>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof runSignalOptionsShadowScan>>, TError,{deploymentId: string}, TContext>, request?: SecondParameter<typeof customFetch>}
-): UseMutationOptions<Awaited<ReturnType<typeof runSignalOptionsShadowScan>>, TError,{deploymentId: string}, TContext> => {
-
-const mutationKey = ['runSignalOptionsShadowScan'];
-const {mutation: mutationOptions, request: requestOptions} = options ?
-      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
-      options
-      : {...options, mutation: {...options.mutation, mutationKey}}
-      : {mutation: { mutationKey, }, request: undefined};
-
-
-
-
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof runSignalOptionsShadowScan>>, {deploymentId: string}> = (props) => {
-          const {deploymentId} = props ?? {};
-
-          return  runSignalOptionsShadowScan(deploymentId,requestOptions)
-        }
-
-
-
-
-
-
-  return  { mutationFn, ...mutationOptions }}
-
-    export type RunSignalOptionsShadowScanMutationResult = NonNullable<Awaited<ReturnType<typeof runSignalOptionsShadowScan>>>
-
-    export type RunSignalOptionsShadowScanMutationError = ErrorType<unknown>
-
-    /**
- * @summary Run a signal-options shadow scan
- */
-export const useRunSignalOptionsShadowScan = <TError = ErrorType<unknown>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof runSignalOptionsShadowScan>>, TError,{deploymentId: string}, TContext>, request?: SecondParameter<typeof customFetch>}
- ): UseMutationResult<
-        Awaited<ReturnType<typeof runSignalOptionsShadowScan>>,
-        TError,
-        {deploymentId: string},
-        TContext
-      > => {
-      return useMutation(getRunSignalOptionsShadowScanMutationOptions(options));
-    }
-
-/**
  * @summary Track or execute overnight spot signals for an algo deployment
  */
 export const getRunOvernightSpotSignalScanUrl = (deploymentId: string,) => {
@@ -11243,150 +10921,6 @@ export const useRunOvernightSpotSignalScan = <TError = ErrorType<unknown>,
         TContext
       > => {
       return useMutation(getRunOvernightSpotSignalScanMutationOptions(options));
-    }
-
-/**
- * @summary Run a signal-options shadow backfill
- */
-export const getRunSignalOptionsShadowBackfillUrl = (deploymentId: string,) => {
-
-
-
-
-  return `/api/algo/deployments/${deploymentId}/signal-options/backfill`
-}
-
-export const runSignalOptionsShadowBackfill = async (deploymentId: string,
-    runSignalOptionsShadowBackfillBody?: RunSignalOptionsShadowBackfillBody, options?: RequestInit): Promise<JsonObject> => {
-
-  return customFetch<JsonObject>(getRunSignalOptionsShadowBackfillUrl(deploymentId),
-  {
-    ...options,
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...options?.headers },
-    body: JSON.stringify(
-      runSignalOptionsShadowBackfillBody,)
-  }
-);}
-
-
-
-
-export const getRunSignalOptionsShadowBackfillMutationOptions = <TError = ErrorType<unknown>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof runSignalOptionsShadowBackfill>>, TError,{deploymentId: string;data: BodyType<RunSignalOptionsShadowBackfillBody>}, TContext>, request?: SecondParameter<typeof customFetch>}
-): UseMutationOptions<Awaited<ReturnType<typeof runSignalOptionsShadowBackfill>>, TError,{deploymentId: string;data: BodyType<RunSignalOptionsShadowBackfillBody>}, TContext> => {
-
-const mutationKey = ['runSignalOptionsShadowBackfill'];
-const {mutation: mutationOptions, request: requestOptions} = options ?
-      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
-      options
-      : {...options, mutation: {...options.mutation, mutationKey}}
-      : {mutation: { mutationKey, }, request: undefined};
-
-
-
-
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof runSignalOptionsShadowBackfill>>, {deploymentId: string;data: BodyType<RunSignalOptionsShadowBackfillBody>}> = (props) => {
-          const {deploymentId,data} = props ?? {};
-
-          return  runSignalOptionsShadowBackfill(deploymentId,data,requestOptions)
-        }
-
-
-
-
-
-
-  return  { mutationFn, ...mutationOptions }}
-
-    export type RunSignalOptionsShadowBackfillMutationResult = NonNullable<Awaited<ReturnType<typeof runSignalOptionsShadowBackfill>>>
-    export type RunSignalOptionsShadowBackfillMutationBody = BodyType<RunSignalOptionsShadowBackfillBody>
-    export type RunSignalOptionsShadowBackfillMutationError = ErrorType<unknown>
-
-    /**
- * @summary Run a signal-options shadow backfill
- */
-export const useRunSignalOptionsShadowBackfill = <TError = ErrorType<unknown>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof runSignalOptionsShadowBackfill>>, TError,{deploymentId: string;data: BodyType<RunSignalOptionsShadowBackfillBody>}, TContext>, request?: SecondParameter<typeof customFetch>}
- ): UseMutationResult<
-        Awaited<ReturnType<typeof runSignalOptionsShadowBackfill>>,
-        TError,
-        {deploymentId: string;data: BodyType<RunSignalOptionsShadowBackfillBody>},
-        TContext
-      > => {
-      return useMutation(getRunSignalOptionsShadowBackfillMutationOptions(options));
-    }
-
-/**
- * @summary Record a manual Trade preview deviation from a signal-options plan
- */
-export const getRecordSignalOptionsManualDeviationUrl = (deploymentId: string,) => {
-
-
-
-
-  return `/api/algo/deployments/${deploymentId}/signal-options/deviation`
-}
-
-export const recordSignalOptionsManualDeviation = async (deploymentId: string,
-    signalOptionsManualDeviationRequest: SignalOptionsManualDeviationRequest, options?: RequestInit): Promise<SignalOptionsManualDeviationResponse> => {
-
-  return customFetch<SignalOptionsManualDeviationResponse>(getRecordSignalOptionsManualDeviationUrl(deploymentId),
-  {
-    ...options,
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...options?.headers },
-    body: JSON.stringify(
-      signalOptionsManualDeviationRequest,)
-  }
-);}
-
-
-
-
-export const getRecordSignalOptionsManualDeviationMutationOptions = <TError = ErrorType<unknown>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof recordSignalOptionsManualDeviation>>, TError,{deploymentId: string;data: BodyType<SignalOptionsManualDeviationRequest>}, TContext>, request?: SecondParameter<typeof customFetch>}
-): UseMutationOptions<Awaited<ReturnType<typeof recordSignalOptionsManualDeviation>>, TError,{deploymentId: string;data: BodyType<SignalOptionsManualDeviationRequest>}, TContext> => {
-
-const mutationKey = ['recordSignalOptionsManualDeviation'];
-const {mutation: mutationOptions, request: requestOptions} = options ?
-      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
-      options
-      : {...options, mutation: {...options.mutation, mutationKey}}
-      : {mutation: { mutationKey, }, request: undefined};
-
-
-
-
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof recordSignalOptionsManualDeviation>>, {deploymentId: string;data: BodyType<SignalOptionsManualDeviationRequest>}> = (props) => {
-          const {deploymentId,data} = props ?? {};
-
-          return  recordSignalOptionsManualDeviation(deploymentId,data,requestOptions)
-        }
-
-
-
-
-
-
-  return  { mutationFn, ...mutationOptions }}
-
-    export type RecordSignalOptionsManualDeviationMutationResult = NonNullable<Awaited<ReturnType<typeof recordSignalOptionsManualDeviation>>>
-    export type RecordSignalOptionsManualDeviationMutationBody = BodyType<SignalOptionsManualDeviationRequest>
-    export type RecordSignalOptionsManualDeviationMutationError = ErrorType<unknown>
-
-    /**
- * @summary Record a manual Trade preview deviation from a signal-options plan
- */
-export const useRecordSignalOptionsManualDeviation = <TError = ErrorType<unknown>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof recordSignalOptionsManualDeviation>>, TError,{deploymentId: string;data: BodyType<SignalOptionsManualDeviationRequest>}, TContext>, request?: SecondParameter<typeof customFetch>}
- ): UseMutationResult<
-        Awaited<ReturnType<typeof recordSignalOptionsManualDeviation>>,
-        TError,
-        {deploymentId: string;data: BodyType<SignalOptionsManualDeviationRequest>},
-        TContext
-      > => {
-      return useMutation(getRecordSignalOptionsManualDeviationMutationOptions(options));
     }
 
 /**
@@ -11983,81 +11517,6 @@ export const useCreateBacktestStudy = <TError = ErrorType<unknown>,
     }
 
 /**
- * @summary Get one backtest study
- */
-export const getGetBacktestStudyUrl = (studyId: string,) => {
-
-
-
-
-  return `/api/backtests/studies/${studyId}`
-}
-
-export const getBacktestStudy = async (studyId: string, options?: RequestInit): Promise<BacktestStudyRecord> => {
-
-  return customFetch<BacktestStudyRecord>(getGetBacktestStudyUrl(studyId),
-  {
-    ...options,
-    method: 'GET'
-
-
-  }
-);}
-
-
-
-
-
-export const getGetBacktestStudyQueryKey = (studyId: string,) => {
-    return [
-    `/api/backtests/studies/${studyId}`
-    ] as const;
-    }
-
-
-export const getGetBacktestStudyQueryOptions = <TData = Awaited<ReturnType<typeof getBacktestStudy>>, TError = ErrorType<unknown>>(studyId: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getBacktestStudy>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
-) => {
-
-const {query: queryOptions, request: requestOptions} = options ?? {};
-
-  const queryKey =  queryOptions?.queryKey ?? getGetBacktestStudyQueryKey(studyId);
-
-
-
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof getBacktestStudy>>> = ({ signal }) => getBacktestStudy(studyId, { signal, ...requestOptions });
-
-
-
-
-
-   return  { queryKey, queryFn, enabled: !!(studyId), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getBacktestStudy>>, TError, TData> & { queryKey: QueryKey }
-}
-
-export type GetBacktestStudyQueryResult = NonNullable<Awaited<ReturnType<typeof getBacktestStudy>>>
-export type GetBacktestStudyQueryError = ErrorType<unknown>
-
-
-/**
- * @summary Get one backtest study
- */
-
-export function useGetBacktestStudy<TData = Awaited<ReturnType<typeof getBacktestStudy>>, TError = ErrorType<unknown>>(
- studyId: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getBacktestStudy>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
-
- ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
-
-  const queryOptions = getGetBacktestStudyQueryOptions(studyId,options)
-
-  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
-
-  return { ...query, queryKey: queryOptions.queryKey };
-}
-
-
-
-
-
-/**
  * @summary Get the latest-vs-best completed study preview chart
  */
 export const getGetBacktestStudyPreviewChartUrl = (studyId: string,) => {
@@ -12531,77 +11990,6 @@ export const useCreateBacktestRun = <TError = ErrorType<unknown>,
     }
 
 /**
- * @summary Resolve an option contract for backtest internals
- */
-export const getResolveBacktestOptionContractUrl = () => {
-
-
-
-
-  return `/api/backtests/internal/resolve-option-contract`
-}
-
-export const resolveBacktestOptionContract = async (resolveBacktestOptionContractBody: ResolveBacktestOptionContractBody, options?: RequestInit): Promise<ResolveBacktestOptionContract200> => {
-
-  return customFetch<ResolveBacktestOptionContract200>(getResolveBacktestOptionContractUrl(),
-  {
-    ...options,
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...options?.headers },
-    body: JSON.stringify(
-      resolveBacktestOptionContractBody,)
-  }
-);}
-
-
-
-
-export const getResolveBacktestOptionContractMutationOptions = <TError = ErrorType<unknown>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof resolveBacktestOptionContract>>, TError,{data: BodyType<ResolveBacktestOptionContractBody>}, TContext>, request?: SecondParameter<typeof customFetch>}
-): UseMutationOptions<Awaited<ReturnType<typeof resolveBacktestOptionContract>>, TError,{data: BodyType<ResolveBacktestOptionContractBody>}, TContext> => {
-
-const mutationKey = ['resolveBacktestOptionContract'];
-const {mutation: mutationOptions, request: requestOptions} = options ?
-      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
-      options
-      : {...options, mutation: {...options.mutation, mutationKey}}
-      : {mutation: { mutationKey, }, request: undefined};
-
-
-
-
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof resolveBacktestOptionContract>>, {data: BodyType<ResolveBacktestOptionContractBody>}> = (props) => {
-          const {data} = props ?? {};
-
-          return  resolveBacktestOptionContract(data,requestOptions)
-        }
-
-
-
-
-
-
-  return  { mutationFn, ...mutationOptions }}
-
-    export type ResolveBacktestOptionContractMutationResult = NonNullable<Awaited<ReturnType<typeof resolveBacktestOptionContract>>>
-    export type ResolveBacktestOptionContractMutationBody = BodyType<ResolveBacktestOptionContractBody>
-    export type ResolveBacktestOptionContractMutationError = ErrorType<unknown>
-
-    /**
- * @summary Resolve an option contract for backtest internals
- */
-export const useResolveBacktestOptionContract = <TError = ErrorType<unknown>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof resolveBacktestOptionContract>>, TError,{data: BodyType<ResolveBacktestOptionContractBody>}, TContext>, request?: SecondParameter<typeof customFetch>}
- ): UseMutationResult<
-        Awaited<ReturnType<typeof resolveBacktestOptionContract>>,
-        TError,
-        {data: BodyType<ResolveBacktestOptionContractBody>},
-        TContext
-      > => {
-      return useMutation(getResolveBacktestOptionContractMutationOptions(options));
-    }
-
-/**
  * @summary Get one backtest run
  */
 export const getGetBacktestRunUrl = (runId: string,) => {
@@ -12905,81 +12293,6 @@ export const useCreateBacktestSweep = <TError = ErrorType<unknown>,
       > => {
       return useMutation(getCreateBacktestSweepMutationOptions(options));
     }
-
-/**
- * @summary Get one optimizer sweep
- */
-export const getGetBacktestSweepUrl = (sweepId: string,) => {
-
-
-
-
-  return `/api/backtests/sweeps/${sweepId}`
-}
-
-export const getBacktestSweep = async (sweepId: string, options?: RequestInit): Promise<BacktestSweepDetail> => {
-
-  return customFetch<BacktestSweepDetail>(getGetBacktestSweepUrl(sweepId),
-  {
-    ...options,
-    method: 'GET'
-
-
-  }
-);}
-
-
-
-
-
-export const getGetBacktestSweepQueryKey = (sweepId: string,) => {
-    return [
-    `/api/backtests/sweeps/${sweepId}`
-    ] as const;
-    }
-
-
-export const getGetBacktestSweepQueryOptions = <TData = Awaited<ReturnType<typeof getBacktestSweep>>, TError = ErrorType<unknown>>(sweepId: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getBacktestSweep>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
-) => {
-
-const {query: queryOptions, request: requestOptions} = options ?? {};
-
-  const queryKey =  queryOptions?.queryKey ?? getGetBacktestSweepQueryKey(sweepId);
-
-
-
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof getBacktestSweep>>> = ({ signal }) => getBacktestSweep(sweepId, { signal, ...requestOptions });
-
-
-
-
-
-   return  { queryKey, queryFn, enabled: !!(sweepId), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getBacktestSweep>>, TError, TData> & { queryKey: QueryKey }
-}
-
-export type GetBacktestSweepQueryResult = NonNullable<Awaited<ReturnType<typeof getBacktestSweep>>>
-export type GetBacktestSweepQueryError = ErrorType<unknown>
-
-
-/**
- * @summary Get one optimizer sweep
- */
-
-export function useGetBacktestSweep<TData = Awaited<ReturnType<typeof getBacktestSweep>>, TError = ErrorType<unknown>>(
- sweepId: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getBacktestSweep>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
-
- ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
-
-  const queryOptions = getGetBacktestSweepQueryOptions(sweepId,options)
-
-  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
-
-  return { ...query, queryKey: queryOptions.queryKey };
-}
-
-
-
-
 
 /**
  * @summary List backtest jobs

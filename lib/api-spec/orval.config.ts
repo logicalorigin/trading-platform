@@ -22,7 +22,7 @@ export default defineConfig({
       target: "./openapi.yaml",
       filters: {
         mode: "exclude",
-        tags: ["client-streaming"],
+        tags: ["client-streaming", "react-client-excluded"],
       },
       override: {
         transformer: titleTransformer,

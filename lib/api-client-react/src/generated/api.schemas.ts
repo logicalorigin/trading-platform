@@ -9113,30 +9113,6 @@ to?: string;
 cursor?: string;
 };
 
-export type GetResearchHighBetaUniverseParams = {
-/**
- * @minimum 1
- * @maximum 500
- */
-limit?: number;
-/**
- * @minimum 1
- * @maximum 5000
- */
-candidateLimit?: number;
-minBeta?: number;
-minPrice?: number;
-minVolume?: number;
-minDollarVolume?: number;
-minMarketCap?: number;
-/**
- * Comma-separated FMP exchanges to query. Defaults to NASDAQ, NYSE, and AMEX.
- */
-exchanges?: string;
-dryRun?: boolean;
-refresh?: boolean;
-};
-
 export type GetResearchFundamentalsParams = {
 symbol: string;
 };
@@ -9177,10 +9153,6 @@ quarter?: number;
 year?: number;
 };
 
-export type EnsureDefaultSignalOptionsPaperDeploymentBody = {
-  enabled?: boolean;
-};
-
 export type ListAlgoDeploymentsParams = {
 mode?: EnvironmentMode;
 };
@@ -9209,48 +9181,6 @@ export const PauseAlgoDeploymentView = {
   full: 'full',
 } as const;
 
-export type GetAlgoDeploymentSignalQualityKpisParams = {
-signalTimeframe?: GetAlgoDeploymentSignalQualityKpisSignalTimeframe;
-timeHorizon?: number;
-bosConfirmation?: GetAlgoDeploymentSignalQualityKpisBosConfirmation;
-chochAtrBuffer?: number;
-chochBodyExpansionAtr?: number;
-chochVolumeGate?: number;
-};
-
-export type GetAlgoDeploymentSignalQualityKpisSignalTimeframe = typeof GetAlgoDeploymentSignalQualityKpisSignalTimeframe[keyof typeof GetAlgoDeploymentSignalQualityKpisSignalTimeframe];
-
-
-export const GetAlgoDeploymentSignalQualityKpisSignalTimeframe = {
-  '1m': '1m',
-  '2m': '2m',
-  '5m': '5m',
-  '15m': '15m',
-  '1h': '1h',
-  '1d': '1d',
-} as const;
-
-export type GetAlgoDeploymentSignalQualityKpisBosConfirmation = typeof GetAlgoDeploymentSignalQualityKpisBosConfirmation[keyof typeof GetAlgoDeploymentSignalQualityKpisBosConfirmation];
-
-
-export const GetAlgoDeploymentSignalQualityKpisBosConfirmation = {
-  close: 'close',
-  wicks: 'wicks',
-} as const;
-
-export type RunSignalOptionsShadowBackfillBody = {
-  start?: string;
-  end?: string;
-  session?: string;
-  commit?: boolean;
-  profilePatch?: JsonObject;
-  pyrusSignalsSettingsPatch?: JsonObject;
-  signalTimeframe?: SignalMonitorTimeframe;
-  forceDeploymentUniverse?: boolean;
-  replay?: boolean | JsonObject;
-  replaceReplayRows?: boolean;
-};
-
 export type ListExecutionEventsParams = {
 deploymentId?: string;
 /**
@@ -9274,28 +9204,6 @@ export type ListBacktestRunsParams = {
 studyId?: string;
 sweepId?: string;
 status?: BacktestJobStatus;
-};
-
-export type ResolveBacktestOptionContractBodyRight = typeof ResolveBacktestOptionContractBodyRight[keyof typeof ResolveBacktestOptionContractBodyRight];
-
-
-export const ResolveBacktestOptionContractBodyRight = {
-  call: 'call',
-  put: 'put',
-} as const;
-
-export type ResolveBacktestOptionContractBody = {
-  underlying: string;
-  occurredAt: string;
-  right: ResolveBacktestOptionContractBodyRight;
-  spotPrice: number | string;
-  /** @nullable */
-  contractPresetId?: string | null;
-  signalOptionsProfile?: JsonObject | null;
-};
-
-export type ResolveBacktestOptionContract200 = {
-  contract: JsonObject;
 };
 
 export type GetBacktestRunChartParams = {

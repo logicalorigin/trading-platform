@@ -38,6 +38,8 @@ tags:
     description: Real-time and historical operator diagnostics
   - name: client-streaming
     description: Server streaming operations excluded from buffered React Query client generation
+  - name: react-client-excluded
+    description: Operations intentionally excluded from React Query client generation; endpoints and server validators remain
 paths:
   /healthz:
     get:
@@ -3472,7 +3474,7 @@ paths:
   /research/high-beta-universe:
     get:
       operationId: getResearchHighBetaUniverse
-      tags: [research]
+      tags: [research, react-client-excluded]
       summary: Preview the high-beta STA universe
       description: Builds a dry-run high-beta universe from the existing FMP screener integration and validates candidates through Massive market-data/reference/options coverage.
       parameters:
@@ -3712,7 +3714,7 @@ paths:
   /algo/signal-options/default-paper-deployment:
     post:
       operationId: ensureDefaultSignalOptionsPaperDeployment
-      tags: [automation]
+      tags: [automation, react-client-excluded]
       summary: Ensure the default signal-options paper deployment exists
       requestBody:
         required: false
@@ -3870,7 +3872,7 @@ paths:
   /algo/deployments/{deploymentId}/signal-quality-kpis:
     get:
       operationId: getAlgoDeploymentSignalQualityKpis
-      tags: [automation]
+      tags: [automation, react-client-excluded]
       summary: Get per-deployment signal-quality KPIs from a rolling signal backtest
       description: >-
         Computes signal-INDICATOR quality KPIs (not trading P&L) for a deployment
@@ -3985,7 +3987,7 @@ paths:
   /algo/deployments/{deploymentId}/signal-options/shadow-scan:
     post:
       operationId: runSignalOptionsShadowScan
-      tags: [automation]
+      tags: [automation, react-client-excluded]
       summary: Run a signal-options shadow scan
       parameters:
         - name: deploymentId
@@ -4029,7 +4031,7 @@ paths:
   /algo/deployments/{deploymentId}/signal-options/backfill:
     post:
       operationId: runSignalOptionsShadowBackfill
-      tags: [automation]
+      tags: [automation, react-client-excluded]
       summary: Run a signal-options shadow backfill
       parameters:
         - name: deploymentId
@@ -4077,7 +4079,7 @@ paths:
   /algo/deployments/{deploymentId}/signal-options/deviation:
     post:
       operationId: recordSignalOptionsManualDeviation
-      tags: [automation]
+      tags: [automation, react-client-excluded]
       summary: Record a manual Trade preview deviation from a signal-options plan
       parameters:
         - name: deploymentId
@@ -4256,7 +4258,7 @@ paths:
   /backtests/studies/{studyId}:
     get:
       operationId: getBacktestStudy
-      tags: [backtests]
+      tags: [backtests, react-client-excluded]
       summary: Get one backtest study
       parameters:
         - name: studyId
@@ -4412,7 +4414,7 @@ paths:
   /backtests/internal/resolve-option-contract:
     post:
       operationId: resolveBacktestOptionContract
-      tags: [backtests]
+      tags: [backtests, react-client-excluded]
       summary: Resolve an option contract for backtest internals
       requestBody:
         required: true
@@ -4552,7 +4554,7 @@ paths:
   /backtests/sweeps/{sweepId}:
     get:
       operationId: getBacktestSweep
-      tags: [backtests]
+      tags: [backtests, react-client-excluded]
       summary: Get one optimizer sweep
       parameters:
         - name: sweepId
