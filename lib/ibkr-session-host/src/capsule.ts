@@ -141,7 +141,11 @@ export async function checkCapsuleRuntime(
 
   let daemon: CommandResult;
   try {
-    daemon = await runner(config.dockerBinary, ["info", "--format", "{{json .}}"]);
+    daemon = await runner(config.dockerBinary, [
+      "info",
+      "--format",
+      "{{json .}}",
+    ]);
   } catch {
     return { ready: false, code: "docker_unavailable" };
   }
@@ -237,14 +241,12 @@ const UUID_PATTERN =
 const SESSION_HASH_PATTERN = /^[a-f0-9]{24}$/;
 const MAX_HOST_CAPACITY = 20;
 const CAPSULE_NETWORK_LABEL = "pyrus.ibkr.network";
-const CAPSULE_NETWORK_ICC_OPTION =
-  "com.docker.network.bridge.enable_icc";
+const CAPSULE_NETWORK_ICC_OPTION = "com.docker.network.bridge.enable_icc";
 const CAPSULE_NETWORK_GATEWAY_OPTION =
   "com.docker.network.bridge.gateway_mode_ipv4";
 const DOCKER_ID_PATTERN = /^[a-f0-9]{64}$/;
 const CAPSULE_READY_MARKER = "PYRUS_IBKR_CAPSULE_READY_V1";
-const CAPSULE_LOGIN_COMPLETE_MARKER =
-  "PYRUS_IBKR_CAPSULE_LOGIN_COMPLETE_V1";
+const CAPSULE_LOGIN_COMPLETE_MARKER = "PYRUS_IBKR_CAPSULE_LOGIN_COMPLETE_V1";
 // 1s granularity: CPG takes tens of seconds to boot, and every extra poll
 // interval after the ready marker appears is dead time the user spends staring
 // at the "starting session" screen. Same overall 90s budget as before.
@@ -258,14 +260,16 @@ const CAPSULE_INTERNAL_PORTS = {
   cpg: 15000,
   console: 16080,
 } as const satisfies Record<CapsuleTargetKind, 15000 | 16080>;
-const DIGEST_IMAGE_PATTERN =
-  /^[a-z0-9][a-z0-9._:/-]*@sha256:[a-f0-9]{64}$/;
+const DIGEST_IMAGE_PATTERN = /^[a-z0-9][a-z0-9._:/-]*@sha256:[a-f0-9]{64}$/;
 const LOCAL_IMAGE_ID_PATTERN = /^sha256:[a-f0-9]{64}$/;
 type CapsuleInspection =
   | {
+      fenceHash: string;
+      generation: number;
       status: "current";
       networkAddress: string | null;
       sessionHash: string;
+      slotNumber: number;
     }
   | { status: "stale_image"; containerId: string };
 
@@ -300,7 +304,8 @@ function isPrivateIpv4(value: unknown): value is string {
 function isEmptyRecordOrNull(value: unknown): boolean {
   return (
     value === null ||
-    (asRecord(value) !== null && Object.keys(asRecord(value) ?? {}).length === 0)
+    (asRecord(value) !== null &&
+      Object.keys(asRecord(value) ?? {}).length === 0)
   );
 }
 
@@ -345,6 +350,20 @@ function validateSlotNumber(slotNumber: number): number {
   return slotNumber;
 }
 
+function validateGeneration(generation: number): number {
+  if (
+    !Number.isSafeInteger(generation) ||
+    generation < 0 ||
+    generation > 2_147_483_647
+  ) {
+    throw new CapsuleError(
+      "invalid_generation",
+      "IBKR session generation must be an integer from 0 to 2147483647.",
+    );
+  }
+  return generation;
+}
+
 function capsuleSlotName(slotNumber: number): string {
   return `pyrus-ibkr-slot-${validateSlotNumber(slotNumber)}`;
 }
@@ -369,7 +388,8 @@ function parseCapsuleImage(value: string | undefined): string {
   if (
     !value ||
     value.length > 512 ||
-    (!DIGEST_IMAGE_PATTERN.test(value) && !LOCAL_IMAGE_ID_PATTERN.test(value)) ||
+    (!DIGEST_IMAGE_PATTERN.test(value) &&
+      !LOCAL_IMAGE_ID_PATTERN.test(value)) ||
     /[\s\x00-\x1f\x7f]/.test(value)
   ) {
     throw new CapsuleError(
@@ -420,6 +440,17 @@ function sessionHashForSession(sessionId: string): string {
   return createHash("sha256").update(sessionId).digest("hex").slice(0, 24);
 }
 
+function fenceHashForSession(sessionId: string, generation: number): string {
+  const sessionHash = sessionHashForSession(sessionId);
+  const validGeneration = validateGeneration(generation);
+  return validGeneration === 0
+    ? sessionHash
+    : createHash("sha256")
+        .update(`${sessionId}\0${validGeneration}`)
+        .digest("hex")
+        .slice(0, 24);
+}
+
 export function capsuleNameForSession(
   sessionId: string,
   slotNumber = 1,
@@ -432,9 +463,11 @@ export function buildCreateCapsuleInvocation(
   config: SessionHostConfig,
   sessionId: string,
   slotNumber = 1,
+  generation = 0,
 ): DockerInvocation {
   const name = capsuleNameForSession(sessionId, slotNumber);
   const sessionHash = sessionHashForSession(sessionId);
+  const fenceHash = fenceHashForSession(sessionId, generation);
   return {
     command: config.dockerBinary,
     args: [
@@ -445,6 +478,12 @@ export function buildCreateCapsuleInvocation(
       "pyrus.ibkr.capsule=1",
       "--label",
       `pyrus.ibkr.session_hash=${sessionHash}`,
+      "--label",
+      `pyrus.ibkr.fence_hash=${fenceHash}`,
+      "--label",
+      `pyrus.ibkr.generation=${generation}`,
+      "--label",
+      `pyrus.ibkr.slot=${validateSlotNumber(slotNumber)}`,
       "--pull",
       "never",
       "--restart",
@@ -504,25 +543,32 @@ async function runChecked(
   try {
     result = await runner(invocation.command, invocation.args);
   } catch {
-    throw new CapsuleError(failureCode, "IBKR capsule Docker operation failed.");
+    throw new CapsuleError(
+      failureCode,
+      "IBKR capsule Docker operation failed.",
+    );
   }
   if (result.code !== 0) {
-    throw new CapsuleError(failureCode, "IBKR capsule Docker operation failed.");
+    throw new CapsuleError(
+      failureCode,
+      "IBKR capsule Docker operation failed.",
+    );
   }
 }
 
 export class CapsuleManager {
   private active: {
+    fenceHash: string;
+    generation: number;
     networkAddress: string | null;
     sessionHash: string;
     record: CapsuleRecord;
   } | null = null;
   private pending: {
-    sessionHash: string;
+    fenceHash: string;
     promise: Promise<CapsuleRecord>;
-  } | null =
-    null;
-  private releasing: { sessionHash: string; promise: Promise<void> } | null =
+  } | null = null;
+  private releasing: { fenceHash: string; promise: Promise<void> } | null =
     null;
   private poisoned = false;
   private reconciled = false;
@@ -551,8 +597,9 @@ export class CapsuleManager {
     return capsuleNetworkName(this.slotNumber);
   }
 
-  ensure(sessionId: string): Promise<CapsuleRecord> {
+  ensure(sessionId: string, generation = 0): Promise<CapsuleRecord> {
     const sessionHash = sessionHashForSession(sessionId);
+    const fenceHash = fenceHashForSession(sessionId, generation);
     if (this.poisoned) {
       return Promise.reject(this.cleanupUnconfirmed());
     }
@@ -564,10 +611,10 @@ export class CapsuleManager {
         ),
       );
     }
-    if (this.active?.sessionHash === sessionHash) {
-      return this.refreshActive(sessionHash);
+    if (this.active?.fenceHash === fenceHash) {
+      return this.refreshActive(fenceHash);
     }
-    if (this.pending?.sessionHash === sessionHash) {
+    if (this.pending?.fenceHash === fenceHash) {
       return this.pending.promise;
     }
     if (this.active || this.pending) {
@@ -579,9 +626,56 @@ export class CapsuleManager {
       );
     }
 
-    const promise = this.ensureAfterReconcile(sessionId, sessionHash);
-    this.pending = { sessionHash, promise };
+    const promise = this.ensureAfterReconcile(
+      sessionId,
+      generation,
+      sessionHash,
+      fenceHash,
+    );
+    this.pending = { fenceHash, promise };
     return promise;
+  }
+
+  async identityForSession(
+    sessionId: string,
+  ): Promise<{ generation: number } | null> {
+    const sessionHash = sessionHashForSession(sessionId);
+    if (this.poisoned) throw this.cleanupUnconfirmed();
+    if (!this.active) await this.reconcile();
+    return this.active?.sessionHash === sessionHash
+      ? { generation: this.active.generation }
+      : null;
+  }
+
+  async replace(sessionId: string, generation: number): Promise<CapsuleRecord> {
+    const sessionHash = sessionHashForSession(sessionId);
+    const fenceHash = fenceHashForSession(sessionId, generation);
+    if (this.poisoned) throw this.cleanupUnconfirmed();
+    if (this.pending || this.releasing) {
+      throw new CapsuleError(
+        "capacity_exhausted",
+        "The IBKR session host is already in use.",
+      );
+    }
+    if (!this.active) await this.reconcile();
+    if (!this.active) return this.ensure(sessionId, generation);
+    if (this.active.fenceHash === fenceHash) {
+      return this.refreshActive(fenceHash);
+    }
+    if (this.active.sessionHash !== sessionHash) {
+      throw new CapsuleError(
+        "capacity_exhausted",
+        "The IBKR session host is already in use.",
+      );
+    }
+    if (this.active.generation > generation) {
+      throw new CapsuleError(
+        "stale_generation",
+        "The IBKR session generation is stale.",
+      );
+    }
+    await this.release(sessionId, this.active.generation);
+    return this.ensure(sessionId, generation);
   }
 
   async reconcile(): Promise<CapsuleRecord | null> {
@@ -606,26 +700,33 @@ export class CapsuleManager {
     }
   }
 
-  async status(sessionId: string): Promise<CapsuleRecord | null> {
-    const sessionHash = sessionHashForSession(sessionId);
+  async status(
+    sessionId: string,
+    generation = 0,
+  ): Promise<CapsuleRecord | null> {
+    const fenceHash = fenceHashForSession(sessionId, generation);
     if (this.poisoned) {
       throw this.cleanupUnconfirmed();
     }
-    if (this.releasing?.sessionHash === sessionHash) return null;
-    if (this.pending?.sessionHash === sessionHash) {
+    if (this.releasing?.fenceHash === fenceHash) return null;
+    if (this.pending?.fenceHash === fenceHash) {
       return this.pending.promise;
     }
     if (!this.active) {
       await this.reconcile();
     }
-    return this.active?.sessionHash === sessionHash
-      ? this.refreshActive(sessionHash)
+    return this.active?.fenceHash === fenceHash
+      ? this.refreshActive(fenceHash)
       : null;
   }
 
-  getTarget(sessionId: string, kind: CapsuleTargetKind): CapsuleTarget {
-    const sessionHash = sessionHashForSession(sessionId);
-    if (this.active?.sessionHash !== sessionHash) {
+  getTarget(
+    sessionId: string,
+    kind: CapsuleTargetKind,
+    generation = 0,
+  ): CapsuleTarget {
+    const fenceHash = fenceHashForSession(sessionId, generation);
+    if (this.active?.fenceHash !== fenceHash) {
       throw new CapsuleError("session_not_found", "IBKR session not found.");
     }
     return capsuleTargetForSlot(this.slotNumber, kind);
@@ -639,17 +740,17 @@ export class CapsuleManager {
       : null;
   }
 
-  release(sessionId: string): Promise<void> {
-    let sessionHash: string;
+  release(sessionId: string, generation = 0): Promise<void> {
+    let fenceHash: string;
     try {
-      sessionHash = sessionHashForSession(sessionId);
+      fenceHash = fenceHashForSession(sessionId, generation);
     } catch (error) {
       return Promise.reject(error);
     }
     if (this.poisoned) {
       return Promise.reject(this.cleanupUnconfirmed());
     }
-    if (this.releasing?.sessionHash === sessionHash) {
+    if (this.releasing?.fenceHash === fenceHash) {
       return this.releasing.promise;
     }
     if (this.releasing) {
@@ -657,8 +758,8 @@ export class CapsuleManager {
         new CapsuleError("session_not_found", "IBKR session not found."),
       );
     }
-    const promise = this.releaseActive(sessionHash);
-    this.releasing = { sessionHash, promise };
+    const promise = this.releaseActive(fenceHash);
+    this.releasing = { fenceHash, promise };
     const clear = (): void => {
       if (this.releasing?.promise === promise) this.releasing = null;
     };
@@ -666,14 +767,14 @@ export class CapsuleManager {
     return promise;
   }
 
-  private async releaseActive(sessionHash: string): Promise<void> {
-    if (this.pending?.sessionHash === sessionHash) {
+  private async releaseActive(fenceHash: string): Promise<void> {
+    if (this.pending?.fenceHash === fenceHash) {
       await this.pending.promise;
     }
     if (!this.active) {
       await this.reconcile();
     }
-    if (this.active?.sessionHash !== sessionHash) {
+    if (this.active?.fenceHash !== fenceHash) {
       throw new CapsuleError("session_not_found", "IBKR session not found.");
     }
 
@@ -722,9 +823,9 @@ export class CapsuleManager {
     );
   }
 
-  private async refreshActive(sessionHash: string): Promise<CapsuleRecord> {
+  private async refreshActive(fenceHash: string): Promise<CapsuleRecord> {
     const active = this.active;
-    if (!active || active.sessionHash !== sessionHash) {
+    if (!active || active.fenceHash !== fenceHash) {
       throw new CapsuleError(
         "capacity_exhausted",
         "The IBKR session host is already in use.",
@@ -749,7 +850,7 @@ export class CapsuleManager {
       }
       if (
         identity?.status !== "current" ||
-        identity.sessionHash !== active.sessionHash
+        identity.fenceHash !== active.fenceHash
       ) {
         throw this.cleanupUnconfirmed();
       }
@@ -832,6 +933,8 @@ export class CapsuleManager {
       status: probe.ready && identity.networkAddress ? "ready" : "occupied",
     };
     this.active = {
+      fenceHash: identity.fenceHash,
+      generation: identity.generation,
       networkAddress: identity.networkAddress,
       sessionHash: identity.sessionHash,
       record,
@@ -842,12 +945,14 @@ export class CapsuleManager {
 
   private async ensureAfterReconcile(
     sessionId: string,
+    generation: number,
     sessionHash: string,
+    fenceHash: string,
   ): Promise<CapsuleRecord> {
     try {
       await this.reconcile();
       if (this.active) {
-        if (this.active.sessionHash === sessionHash) {
+        if (this.active.fenceHash === fenceHash) {
           return this.active.record;
         }
         throw new CapsuleError(
@@ -855,9 +960,14 @@ export class CapsuleManager {
           "The IBKR session host is already in use.",
         );
       }
-      return await this.provision(sessionId, sessionHash);
+      return await this.provision(
+        sessionId,
+        generation,
+        sessionHash,
+        fenceHash,
+      );
     } finally {
-      if (this.pending?.sessionHash === sessionHash) {
+      if (this.pending?.fenceHash === fenceHash) {
         this.pending = null;
       }
     }
@@ -878,7 +988,8 @@ export class CapsuleManager {
     } catch {
       return { ready: false, loginCompletions: 0 };
     }
-    const state = inspected.code === 0 ? parseJsonRecord(inspected.stdout) : null;
+    const state =
+      inspected.code === 0 ? parseJsonRecord(inspected.stdout) : null;
     const startedAt = state?.["StartedAt"];
     const startedAtMs =
       typeof startedAt === "string" ? Date.parse(startedAt) : Number.NaN;
@@ -960,7 +1071,9 @@ export class CapsuleManager {
 
   private async provision(
     sessionId: string,
+    generation: number,
     sessionHash: string,
+    fenceHash: string,
   ): Promise<CapsuleRecord> {
     const name = capsuleNameForSession(sessionId, this.slotNumber);
     let created = false;
@@ -968,7 +1081,12 @@ export class CapsuleManager {
       const networkId = await this.ensureCapsuleNetwork(true);
       await runChecked(
         this.runner,
-        buildCreateCapsuleInvocation(this.config, sessionId, this.slotNumber),
+        buildCreateCapsuleInvocation(
+          this.config,
+          sessionId,
+          this.slotNumber,
+          generation,
+        ),
         "docker_create_failed",
       );
       created = true;
@@ -982,7 +1100,8 @@ export class CapsuleManager {
       if (
         identity?.status !== "current" ||
         !identity.networkAddress ||
-        identity.sessionHash !== sessionHash
+        identity.sessionHash !== sessionHash ||
+        identity.fenceHash !== fenceHash
       ) {
         throw new CapsuleError(
           "capsule_identity_invalid",
@@ -995,6 +1114,8 @@ export class CapsuleManager {
         status: "ready",
       };
       this.active = {
+        fenceHash: identity.fenceHash,
+        generation: identity.generation,
         networkAddress: identity.networkAddress,
         sessionHash: identity.sessionHash,
         record,
@@ -1022,8 +1143,7 @@ export class CapsuleManager {
   }
 
   private async inspectCapsuleNetwork(): Promise<
-    | { status: "missing" | "invalid" }
-    | { status: "valid"; networkId: string }
+    { status: "missing" | "invalid" } | { status: "valid"; networkId: string }
   > {
     let inspected: CommandResult;
     try {
@@ -1093,6 +1213,25 @@ export class CapsuleManager {
     const endpoint = asRecord(networks?.[this.networkName]);
     const state = asRecord(container?.["State"]);
     const sessionHash = labels?.["pyrus.ibkr.session_hash"];
+    const rawFenceHash = labels?.["pyrus.ibkr.fence_hash"];
+    const rawGeneration = labels?.["pyrus.ibkr.generation"];
+    const rawSlotNumber = labels?.["pyrus.ibkr.slot"];
+    const legacyIdentity =
+      rawFenceHash === undefined &&
+      rawGeneration === undefined &&
+      rawSlotNumber === undefined;
+    const generation = legacyIdentity ? 0 : Number(rawGeneration);
+    const slotNumber = legacyIdentity ? this.slotNumber : Number(rawSlotNumber);
+    const fenceHash = legacyIdentity ? sessionHash : rawFenceHash;
+    const generationIsValid =
+      Number.isSafeInteger(generation) &&
+      generation >= 0 &&
+      generation <= 2_147_483_647 &&
+      String(generation) === rawGeneration;
+    const slotNumberIsValid =
+      Number.isInteger(slotNumber) &&
+      slotNumber === this.slotNumber &&
+      String(slotNumber) === rawSlotNumber;
     const image = containerConfig?.["Image"];
     const rawNetworkAddress = endpoint?.["IPAddress"];
     const networkAddress = isPrivateIpv4(rawNetworkAddress)
@@ -1104,6 +1243,9 @@ export class CapsuleManager {
       labels?.["pyrus.ibkr.capsule"] === "1" &&
       typeof sessionHash === "string" &&
       SESSION_HASH_PATTERN.test(sessionHash) &&
+      typeof fenceHash === "string" &&
+      SESSION_HASH_PATTERN.test(fenceHash) &&
+      (legacyIdentity || (generationIsValid && slotNumberIsValid)) &&
       hostConfig?.["NetworkMode"] === this.networkName &&
       isEmptyRecordOrNull(hostConfig["PortBindings"]) &&
       networkNames.length === 1 &&
@@ -1113,7 +1255,14 @@ export class CapsuleManager {
       networkAddress !== undefined;
     if (!ownedAndIsolated) return null;
     if (image === this.config.capsuleImage) {
-      return { status: "current", networkAddress, sessionHash };
+      return {
+        fenceHash,
+        generation,
+        status: "current",
+        networkAddress,
+        sessionHash,
+        slotNumber,
+      };
     }
     const containerId = container?.["Id"];
     return typeof containerId === "string" &&

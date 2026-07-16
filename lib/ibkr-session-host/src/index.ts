@@ -7,10 +7,7 @@ import {
   loadSessionHostConfig,
 } from "./capsule";
 import { CapsuleFleetManager } from "./fleet";
-import {
-  createCapsuleRelayServer,
-  listenCapsuleRelay,
-} from "./relay";
+import { createCapsuleRelayServer, listenCapsuleRelay } from "./relay";
 import { createSessionHostServer } from "./server";
 
 async function main(): Promise<void> {
@@ -18,12 +15,7 @@ async function main(): Promise<void> {
   const fleet = new CapsuleFleetManager(
     config.capacity,
     (slotNumber) =>
-      new CapsuleManager(
-        config,
-        execFileCommandRunner,
-        undefined,
-        slotNumber,
-      ),
+      new CapsuleManager(config, execFileCommandRunner, undefined, slotNumber),
   );
   const readiness = await checkCapsuleRuntime(execFileCommandRunner, config);
   const relays = Array.from({ length: config.capacity }, (_, index) => {
@@ -38,24 +30,21 @@ async function main(): Promise<void> {
   }).flat();
   const server = createSessionHostServer({
     controlToken: process.env["IBKR_SESSION_HOST_CONTROL_TOKEN"],
-    ensureSession: (sessionId, slotNumber) =>
-      fleet.ensure(sessionId, slotNumber),
-    releaseSession: (sessionId, slotNumber) =>
-      fleet.release(sessionId, slotNumber),
+    ensureSession: (sessionId, generation, slotNumber) =>
+      fleet.ensure(sessionId, generation, slotNumber),
+    releaseSession: (sessionId, generation, slotNumber) =>
+      fleet.release(sessionId, generation, slotNumber),
     readiness: () => checkCapsuleRuntime(execFileCommandRunner, config),
     snapshot: () => fleet.snapshot(),
-    statusSession: (sessionId, slotNumber) =>
-      fleet.status(sessionId, slotNumber),
-    target: (sessionId, kind, slotNumber) =>
-      fleet.getTarget(sessionId, slotNumber, kind),
+    statusSession: (sessionId, generation, slotNumber) =>
+      fleet.status(sessionId, generation, slotNumber),
+    target: (sessionId, generation, kind, slotNumber) =>
+      fleet.getTarget(sessionId, generation, slotNumber, kind),
   });
 
   await Promise.all([
     ...relays.map(({ kind, server: relay, slotNumber }) =>
-      listenCapsuleRelay(
-        relay,
-        capsuleTargetForSlot(slotNumber, kind).port,
-      ),
+      listenCapsuleRelay(relay, capsuleTargetForSlot(slotNumber, kind).port),
     ),
     new Promise<void>((resolve, reject) => {
       server.once("error", reject);

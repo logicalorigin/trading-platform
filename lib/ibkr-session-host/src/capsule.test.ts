@@ -15,8 +15,7 @@ import {
   type CommandRunner,
 } from "./capsule";
 
-const IMAGE =
-  "ghcr.io/pyrus/ibkr-session-capsule@sha256:" + "a".repeat(64);
+const IMAGE = "ghcr.io/pyrus/ibkr-session-capsule@sha256:" + "a".repeat(64);
 const SESSION_ID = "11111111-1111-4111-8111-111111111111";
 const OTHER_SESSION_ID = "22222222-2222-4222-8222-222222222222";
 const SESSION_HASH = "bd7662a5eeb41614e720d477";
@@ -42,6 +41,7 @@ const noExistingSlot = (): CommandResult => ({
 const capsuleProbeResult = (
   args: string[],
   sessionHash = SESSION_HASH,
+  identity?: { fenceHash: string; generation: number; slotNumber: number },
 ): CommandResult | null => {
   if (args[0] === "network" && args[1] === "inspect") {
     return {
@@ -79,6 +79,13 @@ const capsuleProbeResult = (
           Labels: {
             "pyrus.ibkr.capsule": "1",
             "pyrus.ibkr.session_hash": sessionHash,
+            ...(identity
+              ? {
+                  "pyrus.ibkr.fence_hash": identity.fenceHash,
+                  "pyrus.ibkr.generation": String(identity.generation),
+                  "pyrus.ibkr.slot": String(identity.slotNumber),
+                }
+              : {}),
           },
         },
         HostConfig: { NetworkMode: NETWORK_NAME, PortBindings: null },
@@ -233,6 +240,12 @@ test("builds a fixed hardened Docker create invocation without secret-bearing in
       "pyrus.ibkr.capsule=1",
       "--label",
       `pyrus.ibkr.session_hash=${SESSION_HASH}`,
+      "--label",
+      `pyrus.ibkr.fence_hash=${SESSION_HASH}`,
+      "--label",
+      "pyrus.ibkr.generation=0",
+      "--label",
+      "pyrus.ibkr.slot=1",
       "--pull",
       "never",
       "--restart",
@@ -281,6 +294,48 @@ test("builds a fixed hardened Docker create invocation without secret-bearing in
   assert(!serialized.includes(SESSION_ID));
   assert(!invocation.args.includes("bridge"));
   assert.equal(invocation.args.at(-1), IMAGE, "image is the final argument");
+});
+
+test("binds capsule identity to an opaque generation fence", () => {
+  const config = loadSessionHostConfig({
+    IBKR_SESSION_CAPSULE_IMAGE: IMAGE,
+    IBKR_SESSION_HOST_CAPACITY: "2",
+  });
+  const generationSeven = buildCreateCapsuleInvocation(
+    config,
+    SESSION_ID,
+    2,
+    7,
+  );
+  const generationEight = buildCreateCapsuleInvocation(
+    config,
+    SESSION_ID,
+    2,
+    8,
+  );
+  const label = (
+    invocation: ReturnType<typeof buildCreateCapsuleInvocation>,
+    prefix: string,
+  ) => invocation.args.find((argument) => argument.startsWith(prefix));
+
+  assert.equal(
+    label(generationSeven, "pyrus.ibkr.session_hash="),
+    `pyrus.ibkr.session_hash=${SESSION_HASH}`,
+  );
+  assert.equal(
+    label(generationSeven, "pyrus.ibkr.generation="),
+    "pyrus.ibkr.generation=7",
+  );
+  assert.equal(label(generationSeven, "pyrus.ibkr.slot="), "pyrus.ibkr.slot=2");
+  assert.match(
+    label(generationSeven, "pyrus.ibkr.fence_hash=") ?? "",
+    /^pyrus\.ibkr\.fence_hash=[a-f0-9]{24}$/,
+  );
+  assert.notEqual(
+    label(generationSeven, "pyrus.ibkr.fence_hash="),
+    label(generationEight, "pyrus.ibkr.fence_hash="),
+  );
+  assert(!JSON.stringify(generationSeven).includes(SESSION_ID));
 });
 
 test("creates and verifies an ICC-disabled capsule network before use", async () => {
@@ -386,8 +441,7 @@ test("fails closed when an existing capsule network cannot be recreated", async 
   await assert.rejects(
     () => manager.ensure(SESSION_ID),
     (error) =>
-      error instanceof CapsuleError &&
-      error.code === "capsule_network_invalid",
+      error instanceof CapsuleError && error.code === "capsule_network_invalid",
   );
   assert(!calls.some((args) => args[0] === "create"));
 });
@@ -416,8 +470,7 @@ test("fails closed when a fresh network cannot be proven newly created", async (
   await assert.rejects(
     () => manager.ensure(SESSION_ID),
     (error) =>
-      error instanceof CapsuleError &&
-      error.code === "capsule_network_invalid",
+      error instanceof CapsuleError && error.code === "capsule_network_invalid",
   );
   assert(!calls.some((args) => args[0] === "create"));
 });
@@ -613,7 +666,8 @@ test("returns session-owned loopback targets and releases the fixed slot", async
 
   assert.throws(
     () => manager.getTarget(SESSION_ID, "cpg"),
-    (error) => error instanceof CapsuleError && error.code === "session_not_found",
+    (error) =>
+      error instanceof CapsuleError && error.code === "session_not_found",
   );
   assert.equal(manager.getRelayTarget("cpg"), null);
   await manager.ensure(SESSION_ID);
@@ -635,7 +689,8 @@ test("returns session-owned loopback targets and releases the fixed slot", async
   });
   assert.throws(
     () => manager.getTarget(OTHER_SESSION_ID, "cpg"),
-    (error) => error instanceof CapsuleError && error.code === "session_not_found",
+    (error) =>
+      error instanceof CapsuleError && error.code === "session_not_found",
   );
 
   await manager.release(SESSION_ID);
@@ -946,10 +1001,7 @@ test("does not certify readiness when the capsule restarts during a probe", asyn
         code: 0,
         stdout: JSON.stringify({
           Running: true,
-          StartedAt:
-            stateReads === 1
-              ? STARTED_AT
-              : "2026-07-09T22:00:02.000Z",
+          StartedAt: stateReads === 1 ? STARTED_AT : "2026-07-09T22:00:02.000Z",
         }),
         stderr: "",
       };
@@ -1190,7 +1242,11 @@ test("poisons capacity when partial-capsule cleanup cannot be confirmed", async 
     (error) =>
       error instanceof CapsuleError && error.code === "cleanup_unconfirmed",
   );
-  assert.equal(calls.length, callCount, "poisoned capacity blocks Docker calls");
+  assert.equal(
+    calls.length,
+    callCount,
+    "poisoned capacity blocks Docker calls",
+  );
 });
 
 test("reconciles the fixed daemon slot and preserves capacity across host restart", async () => {
@@ -1244,52 +1300,132 @@ test("reconciles the fixed daemon slot and preserves capacity across host restar
       "--format",
       "{{.Names}}",
     ],
-    [
-      "network",
-      "inspect",
-      "--format",
-      "{{json .}}",
-      NETWORK_NAME,
-    ],
-    [
-      "container",
-      "inspect",
-      "--format",
-      "{{json .}}",
-      SLOT_NAME,
-    ],
-    [
-      "container",
-      "inspect",
-      "--format",
-      "{{json .State}}",
-      SLOT_NAME,
-    ],
+    ["network", "inspect", "--format", "{{json .}}", NETWORK_NAME],
+    ["container", "inspect", "--format", "{{json .}}", SLOT_NAME],
+    ["container", "inspect", "--format", "{{json .State}}", SLOT_NAME],
     ["logs", "--timestamps", "--tail", "1000", SLOT_NAME],
-    [
-      "container",
-      "inspect",
-      "--format",
-      "{{json .State}}",
-      SLOT_NAME,
-    ],
-    [
-      "container",
-      "inspect",
-      "--format",
-      "{{json .State}}",
-      SLOT_NAME,
-    ],
+    ["container", "inspect", "--format", "{{json .State}}", SLOT_NAME],
+    ["container", "inspect", "--format", "{{json .State}}", SLOT_NAME],
     ["logs", "--timestamps", "--tail", "1000", SLOT_NAME],
-    [
-      "container",
-      "inspect",
-      "--format",
-      "{{json .State}}",
-      SLOT_NAME,
-    ],
+    ["container", "inspect", "--format", "{{json .State}}", SLOT_NAME],
   ]);
   assert(!calls.some((args) => args[0] === "exec"));
+});
+
+test("reconciles and enforces a persisted capsule generation fence", async () => {
+  const invocation = buildCreateCapsuleInvocation(
+    loadSessionHostConfig({ IBKR_SESSION_CAPSULE_IMAGE: IMAGE }),
+    SESSION_ID,
+    1,
+    7,
+  );
+  const fenceHash = invocation.args
+    .find((argument) => argument.startsWith("pyrus.ibkr.fence_hash="))!
+    .split("=", 2)[1]!;
+  const runner: CommandRunner = async (_command, args) => {
+    if (args[0] === "container" && args[1] === "ls") {
+      return { code: 0, stdout: `${SLOT_NAME}\n`, stderr: "" };
+    }
+    return (
+      capsuleProbeResult(args, SESSION_HASH, {
+        fenceHash,
+        generation: 7,
+        slotNumber: 1,
+      }) ?? { code: 0, stdout: "", stderr: "" }
+    );
+  };
+  const manager = new CapsuleManager(
+    loadSessionHostConfig({ IBKR_SESSION_CAPSULE_IMAGE: IMAGE }),
+    runner,
+  );
+
+  assert.deepEqual(await manager.identityForSession(SESSION_ID), {
+    generation: 7,
+  });
+  assert.equal(await manager.status(SESSION_ID, 6), null);
+  assert.equal((await manager.status(SESSION_ID, 7))?.status, "ready");
+  assert.throws(
+    () => manager.getTarget(SESSION_ID, "cpg", 6),
+    (error: unknown) =>
+      error instanceof CapsuleError && error.code === "session_not_found",
+  );
+  await assert.rejects(
+    () => manager.release(SESSION_ID, 6),
+    (error: unknown) =>
+      error instanceof CapsuleError && error.code === "session_not_found",
+  );
+});
+
+test("replaces an older capsule generation in place", async () => {
+  const config = loadSessionHostConfig({ IBKR_SESSION_CAPSULE_IMAGE: IMAGE });
+  const fenceHash = (generation: number): string =>
+    buildCreateCapsuleInvocation(config, SESSION_ID, 1, generation)
+      .args.find((argument) => argument.startsWith("pyrus.ibkr.fence_hash="))!
+      .split("=", 2)[1]!;
+  let identity = {
+    fenceHash: fenceHash(7),
+    generation: 7,
+    slotNumber: 1,
+  };
+  let hasContainer = true;
+  const calls: string[][] = [];
+  const runner: CommandRunner = async (_command, args) => {
+    calls.push(args);
+    if (args[0] === "container" && args[1] === "ls") {
+      return {
+        code: 0,
+        stdout: hasContainer ? `${SLOT_NAME}\n` : "",
+        stderr: "",
+      };
+    }
+    if (args[0] === "rm") {
+      hasContainer = false;
+      return { code: 0, stdout: "", stderr: "" };
+    }
+    if (args[0] === "create") {
+      identity = {
+        fenceHash: args
+          .find((argument) => argument.startsWith("pyrus.ibkr.fence_hash="))!
+          .split("=", 2)[1]!,
+        generation: Number(
+          args
+            .find((argument) => argument.startsWith("pyrus.ibkr.generation="))!
+            .split("=", 2)[1],
+        ),
+        slotNumber: 1,
+      };
+      hasContainer = true;
+    }
+    return (
+      capsuleProbeResult(args, SESSION_HASH, identity) ?? {
+        code: 0,
+        stdout: "",
+        stderr: "",
+      }
+    );
+  };
+  const manager = new CapsuleManager(config, runner);
+
+  assert.deepEqual(await manager.identityForSession(SESSION_ID), {
+    generation: 7,
+  });
+  assert.equal((await manager.replace(SESSION_ID, 8)).status, "ready");
+  assert.deepEqual(await manager.identityForSession(SESSION_ID), {
+    generation: 8,
+  });
+  assert.equal(await manager.status(SESSION_ID, 7), null);
+  assert.equal(
+    calls.filter((args) => args[0] === "rm" && args[1] === "--force").length,
+    1,
+  );
+  assert(
+    calls.some(
+      (args) =>
+        args[0] === "create" &&
+        args.includes("pyrus.ibkr.generation=8") &&
+        args.includes(`pyrus.ibkr.fence_hash=${fenceHash(8)}`),
+    ),
+  );
 });
 
 test("reconciliation keeps an unproven existing slot occupied, not ready", async () => {
@@ -1622,7 +1758,9 @@ test("refuses to adopt persisted slots with unsafe networks or ports", async () 
   for (const { networkMode, networks, portBindings, ports } of [
     {
       networkMode: "bridge",
-      networks: { bridge: { IPAddress: NETWORK_IP, NetworkID: "d".repeat(64) } },
+      networks: {
+        bridge: { IPAddress: NETWORK_IP, NetworkID: "d".repeat(64) },
+      },
       portBindings: null,
       ports: {},
     },
@@ -1724,7 +1862,11 @@ test("Docker preflight requires a successful server version response", async () 
   assert.equal(await checkDocker(success, "docker"), true);
   assert.deepEqual(calls, [["version", "--format", "{{.Server.Version}}"]]);
 
-  const empty: CommandRunner = async () => ({ code: 0, stdout: "", stderr: "" });
+  const empty: CommandRunner = async () => ({
+    code: 0,
+    stdout: "",
+    stderr: "",
+  });
   const failed: CommandRunner = async () => ({
     code: 1,
     stdout: "",
@@ -1932,10 +2074,7 @@ test("runtime preflight fails closed on missing or incompatible capabilities", a
             OSType: "linux",
             Architecture: "x86_64",
             CgroupVersion: "2",
-            SecurityOptions: [
-              "name=seccomp,profile=builtin",
-              "name=cgroupns",
-            ],
+            SecurityOptions: ["name=seccomp,profile=builtin", "name=cgroupns"],
             MemoryLimit: true,
             SwapLimit: true,
             PidsLimit: true,

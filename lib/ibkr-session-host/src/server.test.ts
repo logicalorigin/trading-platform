@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import type { AddressInfo } from "node:net";
 import test from "node:test";
 
+import { CapsuleError } from "./capsule";
 import { createSessionHostServer } from "./server";
 
 const SESSION_ID = "11111111-1111-4111-8111-111111111111";
@@ -30,7 +31,7 @@ async function withServer(
       sessionId === SESSION_ID
         ? { name: "pyrus-ibkr-slot-1", status: "ready" }
         : null,
-    target: (_sessionId, kind) =>
+    target: (_sessionId, _generation, kind) =>
       kind === "cpg"
         ? { host: "127.0.0.1", port: 15000 }
         : { host: "127.0.0.1", port: 16080 },
@@ -62,7 +63,10 @@ test("serves a minimal redacted liveness response with security headers", async 
       capacity: { max: 1, active: 0 },
     });
     assert.equal(response.headers.get("cache-control"), "no-store");
-    assert.equal(response.headers.get("content-security-policy"), "default-src 'none'");
+    assert.equal(
+      response.headers.get("content-security-policy"),
+      "default-src 'none'",
+    );
     assert.equal(response.headers.get("x-content-type-options"), "nosniff");
     assert.equal(response.headers.get("x-frame-options"), "DENY");
     for (const forbidden of [
@@ -174,10 +178,13 @@ test("serves authenticated ensure/status/release responses without secrets", asy
         capsule: { name: "pyrus-ibkr-slot-1", status: "ready" },
       });
 
-      const released = await fetch(`${baseUrl}/sessions/${SESSION_ID}/release`, {
-        method: "POST",
-        headers,
-      });
+      const released = await fetch(
+        `${baseUrl}/sessions/${SESSION_ID}/release`,
+        {
+          method: "POST",
+          headers,
+        },
+      );
       assert.equal(released.status, 200);
       assert.deepEqual(await released.json(), {
         sessionId: SESSION_ID,
@@ -188,27 +195,27 @@ test("serves authenticated ensure/status/release responses without secrets", asy
   );
 });
 
-test("routes an explicit durable host-slot placement without local allocation", async () => {
-  const calls: Array<[string, string, number]> = [];
+test("routes an explicit generation-fenced host-slot placement", async () => {
+  const calls: Array<[string, string, number, number]> = [];
   const server = createSessionHostServer({
     controlToken: "test-control-token",
-    ensureSession: async (sessionId, slotNumber) => {
-      calls.push(["ensure", sessionId, slotNumber]);
+    ensureSession: async (sessionId, generation, slotNumber) => {
+      calls.push(["ensure", sessionId, generation, slotNumber]);
       return { name: `pyrus-ibkr-slot-${slotNumber}`, status: "ready" };
     },
-    releaseSession: async (sessionId, slotNumber) => {
-      calls.push(["release", sessionId, slotNumber]);
+    releaseSession: async (sessionId, generation, slotNumber) => {
+      calls.push(["release", sessionId, generation, slotNumber]);
     },
     readiness: () => ({ ready: true }),
     snapshot: () => ({
       mode: "paper",
       capacity: { max: 2, active: 1 },
     }),
-    statusSession: async (sessionId, slotNumber) => {
-      calls.push(["status", sessionId, slotNumber]);
+    statusSession: async (sessionId, generation, slotNumber) => {
+      calls.push(["status", sessionId, generation, slotNumber]);
       return { name: `pyrus-ibkr-slot-${slotNumber}`, status: "ready" };
     },
-    target: (_sessionId, kind, slotNumber) => ({
+    target: (_sessionId, _generation, kind, slotNumber) => ({
       host: "127.0.0.1",
       port: kind === "cpg" ? 15000 + slotNumber - 1 : 16080 + slotNumber - 1,
     }),
@@ -216,11 +223,12 @@ test("routes an explicit durable host-slot placement without local allocation", 
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   try {
     const { port } = server.address() as AddressInfo;
-    const base = `http://127.0.0.1:${port}/sessions/${SESSION_ID}/slots/2`;
+    const base = `http://127.0.0.1:${port}/sessions/${SESSION_ID}/generations/7/slots/2`;
     const headers = { authorization: "Bearer test-control-token" };
     const ensured = await fetch(`${base}/ensure`, { method: "POST", headers });
     assert.deepEqual(await ensured.json(), {
       sessionId: SESSION_ID,
+      generation: 7,
       slotNumber: 2,
       capsule: { name: "pyrus-ibkr-slot-2", status: "ready" },
       targets: {
@@ -230,16 +238,50 @@ test("routes an explicit durable host-slot placement without local allocation", 
     });
     assert.equal((await fetch(`${base}/status`, { headers })).status, 200);
     assert.equal(
-      (
-        await fetch(`${base}/release`, { method: "POST", headers })
-      ).status,
+      (await fetch(`${base}/release`, { method: "POST", headers })).status,
       200,
     );
     assert.deepEqual(calls, [
-      ["ensure", SESSION_ID, 2],
-      ["status", SESSION_ID, 2],
-      ["release", SESSION_ID, 2],
+      ["ensure", SESSION_ID, 7, 2],
+      ["status", SESSION_ID, 7, 2],
+      ["release", SESSION_ID, 7, 2],
     ]);
+  } finally {
+    await new Promise<void>((resolve, reject) => {
+      server.close((error) => (error ? reject(error) : resolve()));
+    });
+  }
+});
+
+test("returns a redacted conflict for a stale generation", async () => {
+  const server = createSessionHostServer({
+    controlToken: "test-control-token",
+    ensureSession: async () => {
+      throw new CapsuleError("stale_generation", "sensitive detail");
+    },
+    readiness: () => ({ ready: true }),
+    snapshot: () => ({
+      mode: "paper",
+      capacity: { max: 1, active: 1 },
+    }),
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const { port } = server.address() as AddressInfo;
+    const response = await fetch(
+      `http://127.0.0.1:${port}/sessions/${SESSION_ID}/generations/7/slots/1/ensure`,
+      {
+        method: "POST",
+        headers: { authorization: "Bearer test-control-token" },
+      },
+    );
+    assert.equal(response.status, 409);
+    assert.deepEqual(await response.json(), {
+      error: {
+        code: "stale_generation",
+        message: "IBKR session control failed.",
+      },
+    });
   } finally {
     await new Promise<void>((resolve, reject) => {
       server.close((error) => (error ? reject(error) : resolve()));

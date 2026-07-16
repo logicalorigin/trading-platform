@@ -7,18 +7,56 @@ import {
 } from "./capsule";
 
 export type CapsuleSlotController = {
-  ensure: (sessionId: string) => Promise<CapsuleRecord>;
+  ensure: (sessionId: string, generation: number) => Promise<CapsuleRecord>;
   getRelayTarget: (kind: CapsuleTargetKind) => CapsuleRelayTarget | null;
-  getTarget: (sessionId: string, kind: CapsuleTargetKind) => CapsuleTarget;
-  release: (sessionId: string) => Promise<void>;
+  getTarget: (
+    sessionId: string,
+    kind: CapsuleTargetKind,
+    generation: number,
+  ) => CapsuleTarget;
+  identityForSession: (
+    sessionId: string,
+  ) => Promise<{ generation: number } | null>;
+  release: (sessionId: string, generation: number) => Promise<void>;
+  replace: (sessionId: string, generation: number) => Promise<CapsuleRecord>;
   snapshot: () => { capacity: { active: number } };
-  status: (sessionId: string) => Promise<CapsuleRecord | null>;
+  status: (
+    sessionId: string,
+    generation: number,
+  ) => Promise<CapsuleRecord | null>;
 };
+
+type SessionPlacement = {
+  generation: number;
+  sessionId: string;
+  slotNumber: number;
+};
+
+function validateGeneration(generation: number): number {
+  if (
+    !Number.isSafeInteger(generation) ||
+    generation < 0 ||
+    generation > 2_147_483_647
+  ) {
+    throw new CapsuleError(
+      "invalid_generation",
+      "IBKR session generation must be an integer from 0 to 2147483647.",
+    );
+  }
+  return generation;
+}
+
+function staleGeneration(): CapsuleError {
+  return new CapsuleError(
+    "stale_generation",
+    "The IBKR session generation is stale.",
+  );
+}
 
 export class CapsuleFleetManager {
   private readonly slots: CapsuleSlotController[];
-  private readonly sessionSlots = new Map<string, number>();
-  private readonly slotSessions = new Map<number, string>();
+  private readonly sessionSlots = new Map<string, SessionPlacement>();
+  private readonly slotSessions = new Map<number, SessionPlacement>();
 
   constructor(
     readonly capacity: number,
@@ -51,38 +89,56 @@ export class CapsuleFleetManager {
 
   async ensure(
     sessionId: string,
+    generation: number,
     slotNumber: number,
   ): Promise<CapsuleRecord> {
+    validateGeneration(generation);
     const slot = this.slot(slotNumber);
-    const existingSlot = this.sessionSlots.get(sessionId);
-    const existingSession = this.slotSessions.get(slotNumber);
+    const existingPlacement = this.sessionSlots.get(sessionId);
+    const existingOccupant = this.slotSessions.get(slotNumber);
+    if (existingPlacement && existingPlacement.generation > generation) {
+      throw staleGeneration();
+    }
     if (
-      (existingSlot !== undefined && existingSlot !== slotNumber) ||
-      (existingSession !== undefined && existingSession !== sessionId)
+      (existingPlacement && existingPlacement.slotNumber !== slotNumber) ||
+      (existingOccupant && existingOccupant.sessionId !== sessionId)
     ) {
       throw new CapsuleError(
         "session_placement_conflict",
         "IBKR session placement conflicts with the current host slot.",
       );
     }
-    this.sessionSlots.set(sessionId, slotNumber);
-    this.slotSessions.set(slotNumber, sessionId);
+    const placement = { generation, sessionId, slotNumber };
+    this.sessionSlots.set(sessionId, placement);
+    this.slotSessions.set(slotNumber, placement);
     try {
+      let replace =
+        existingPlacement?.slotNumber === slotNumber &&
+        existingPlacement.generation < generation;
       for (let index = 0; index < this.slots.length; index += 1) {
-        if (index + 1 === slotNumber) continue;
-        if (await this.slots[index]!.status(sessionId)) {
+        const identity = await this.slots[index]!.identityForSession(sessionId);
+        if (!identity) continue;
+        if (identity.generation > generation) throw staleGeneration();
+        if (index + 1 !== slotNumber) {
           throw new CapsuleError(
             "session_placement_conflict",
             "IBKR session is already present in another host slot.",
           );
         }
+        if (identity.generation < generation) replace = true;
       }
-      return await slot.ensure(sessionId);
+      return await (replace
+        ? slot.replace(sessionId, generation)
+        : slot.ensure(sessionId, generation));
     } catch (error) {
-      if (this.sessionSlots.get(sessionId) === slotNumber) {
+      if (existingPlacement && this.sessionSlots.get(sessionId) === placement) {
+        this.sessionSlots.set(sessionId, existingPlacement);
+      } else if (this.sessionSlots.get(sessionId) === placement) {
         this.sessionSlots.delete(sessionId);
       }
-      if (this.slotSessions.get(slotNumber) === sessionId) {
+      if (existingOccupant && this.slotSessions.get(slotNumber) === placement) {
+        this.slotSessions.set(slotNumber, existingOccupant);
+      } else if (this.slotSessions.get(slotNumber) === placement) {
         this.slotSessions.delete(slotNumber);
       }
       throw error;
@@ -91,42 +147,79 @@ export class CapsuleFleetManager {
 
   async status(
     sessionId: string,
+    generation: number,
     slotNumber: number,
   ): Promise<CapsuleRecord | null> {
-    const existingSlot = this.sessionSlots.get(sessionId);
-    if (existingSlot !== undefined && existingSlot !== slotNumber) return null;
+    validateGeneration(generation);
+    const existingPlacement = this.sessionSlots.get(sessionId);
+    if (
+      existingPlacement &&
+      (existingPlacement.slotNumber !== slotNumber ||
+        existingPlacement.generation !== generation)
+    ) {
+      return null;
+    }
     const slot = this.slot(slotNumber);
-    const record = await slot.status(sessionId);
+    const record = await slot.status(sessionId, generation);
     if (record) {
-      const existingSession = this.slotSessions.get(slotNumber);
-      if (existingSession !== undefined && existingSession !== sessionId) {
+      const existingOccupant = this.slotSessions.get(slotNumber);
+      if (existingOccupant && existingOccupant.sessionId !== sessionId) {
         throw new CapsuleError(
           "session_placement_conflict",
           "IBKR session placement conflicts with the current host slot.",
         );
       }
-      this.sessionSlots.set(sessionId, slotNumber);
-      this.slotSessions.set(slotNumber, sessionId);
+      const placement = { generation, sessionId, slotNumber };
+      this.sessionSlots.set(sessionId, placement);
+      this.slotSessions.set(slotNumber, placement);
     }
     return record;
   }
 
-  async release(sessionId: string, slotNumber: number): Promise<void> {
-    await this.slot(slotNumber).release(sessionId);
-    if (this.sessionSlots.get(sessionId) === slotNumber) {
+  async release(
+    sessionId: string,
+    generation: number,
+    slotNumber: number,
+  ): Promise<void> {
+    validateGeneration(generation);
+    const placement = this.sessionSlots.get(sessionId);
+    if (
+      placement?.generation !== undefined &&
+      placement.generation > generation
+    ) {
+      throw staleGeneration();
+    }
+    await this.slot(slotNumber).release(sessionId, generation);
+    if (
+      this.sessionSlots.get(sessionId)?.generation === generation &&
+      this.sessionSlots.get(sessionId)?.slotNumber === slotNumber
+    ) {
       this.sessionSlots.delete(sessionId);
     }
-    if (this.slotSessions.get(slotNumber) === sessionId) {
+    const occupant = this.slotSessions.get(slotNumber);
+    if (
+      occupant?.sessionId === sessionId &&
+      occupant.generation === generation
+    ) {
       this.slotSessions.delete(slotNumber);
     }
   }
 
   getTarget(
     sessionId: string,
+    generation: number,
     slotNumber: number,
     kind: CapsuleTargetKind,
   ): CapsuleTarget {
-    return this.slot(slotNumber).getTarget(sessionId, kind);
+    validateGeneration(generation);
+    const placement = this.sessionSlots.get(sessionId);
+    if (
+      placement?.generation !== undefined &&
+      placement.generation > generation
+    ) {
+      throw staleGeneration();
+    }
+    return this.slot(slotNumber).getTarget(sessionId, kind, generation);
   }
 
   getRelayTarget(
