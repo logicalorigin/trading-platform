@@ -23,6 +23,7 @@ import {
   releaseIbkrGatewayLease,
   renewIbkrGatewayLease,
   resolveCurrentIbkrGatewayPlacement,
+  transitionIbkrGatewayLifecycle,
   tryAcquireIbkrGatewayLease,
 } from "./ibkr-gateway-session-store";
 
@@ -431,5 +432,136 @@ test("expired leases free host slots and every takeover advances the generation 
     assert.equal(replacement.fence.generation, first.fence.generation + 1);
     assert.notEqual(replacement.fence.leaseHolderId, first.fence.leaseHolderId);
     assert.equal(await assertCurrentIbkrGatewayFence(first.fence), false);
+  });
+});
+
+test("lifecycle transitions are ordered, idempotent, and exact-generation fenced", async () => {
+  await withTestDb(async () => {
+    await registerAndApproveHost({
+      hostId: HOST_A,
+      workloadIdentityDigest: WORKLOAD_A,
+      sha: SHA_A,
+      admissionSlotCapacity: 1,
+    });
+    const [identity] = await seedIdentities(1);
+    assert.ok(identity);
+    const session = await ensureIbkrGatewaySessionIdentity(identity);
+    assert.ok(session);
+    const first = await tryAcquireIbkrGatewayLease(identity);
+    assert.equal(first.status, "acquired");
+    if (first.status !== "acquired") return;
+
+    assert.equal(
+      await transitionIbkrGatewayLifecycle(first.fence, "authenticated"),
+      false,
+    );
+    for (const state of [
+      "login_required",
+      "verifying",
+      "authenticated",
+    ] as const) {
+      assert.equal(
+        await transitionIbkrGatewayLifecycle(first.fence, state),
+        true,
+      );
+    }
+    const [authenticatedBeforeRetry] = await db
+      .select()
+      .from(ibkrGatewaySessionsTable)
+      .where(eq(ibkrGatewaySessionsTable.id, session.id))
+      .limit(1);
+    assert.ok(authenticatedBeforeRetry);
+    assert.equal(authenticatedBeforeRetry.lifecycleState, "authenticated");
+    assert.equal(
+      await transitionIbkrGatewayLifecycle(first.fence, "authenticated"),
+      true,
+    );
+    const [authenticatedAfterRetry] = await db
+      .select()
+      .from(ibkrGatewaySessionsTable)
+      .where(eq(ibkrGatewaySessionsTable.id, session.id))
+      .limit(1);
+    assert.ok(authenticatedAfterRetry);
+    assert.equal(
+      authenticatedAfterRetry.lastActivityAt.getTime(),
+      authenticatedBeforeRetry.lastActivityAt.getTime(),
+    );
+    assert.equal(
+      authenticatedAfterRetry.updatedAt.getTime(),
+      authenticatedBeforeRetry.updatedAt.getTime(),
+    );
+    assert.equal(
+      await transitionIbkrGatewayLifecycle(first.fence, "degraded"),
+      true,
+    );
+    assert.equal(
+      await transitionIbkrGatewayLifecycle(first.fence, "authenticated"),
+      false,
+    );
+    for (const state of ["reauth_required", "draining"] as const) {
+      assert.equal(
+        await transitionIbkrGatewayLifecycle(first.fence, state),
+        true,
+      );
+    }
+    assert.equal(await assertCurrentIbkrGatewayFence(first.fence), false);
+    assert.equal(await renewIbkrGatewayLease(first.fence), null);
+
+    assert.equal(await releaseIbkrGatewayLease(first.fence), true);
+    const replacement = await tryAcquireIbkrGatewayLease(identity);
+    assert.equal(replacement.status, "acquired");
+    if (replacement.status !== "acquired") return;
+    const [replacementBefore] = await db
+      .select()
+      .from(ibkrGatewaySessionsTable)
+      .where(eq(ibkrGatewaySessionsTable.id, session.id))
+      .limit(1);
+    assert.ok(replacementBefore);
+    assert.equal(replacementBefore.lifecycleState, "provisioning");
+
+    assert.equal(
+      await transitionIbkrGatewayLifecycle(first.fence, "login_required"),
+      false,
+    );
+    assert.equal(
+      await transitionIbkrGatewayLifecycle(first.fence, "login_required"),
+      false,
+    );
+    const [replacementAfter] = await db
+      .select()
+      .from(ibkrGatewaySessionsTable)
+      .where(eq(ibkrGatewaySessionsTable.id, session.id))
+      .limit(1);
+    assert.deepEqual(replacementAfter, replacementBefore);
+    assert.deepEqual(
+      await readCurrentIbkrGatewayFence(identity),
+      replacement.fence,
+    );
+
+    await db
+      .update(ibkrGatewaySessionsTable)
+      .set({ leaseExpiresAt: new Date(Date.now() - 1_000) })
+      .where(eq(ibkrGatewaySessionsTable.id, session.id));
+    assert.equal(
+      await transitionIbkrGatewayLifecycle(
+        replacement.fence,
+        "login_required",
+      ),
+      false,
+    );
+    assert.equal(
+      await transitionIbkrGatewayLifecycle(replacement.fence, "draining"),
+      true,
+    );
+    assert.equal(await releaseIbkrGatewayLease(replacement.fence), false);
+    const [expiredDraining] = await db
+      .select()
+      .from(ibkrGatewaySessionsTable)
+      .where(eq(ibkrGatewaySessionsTable.id, session.id))
+      .limit(1);
+    assert.ok(expiredDraining);
+    assert.equal(expiredDraining.lifecycleState, "draining");
+    assert.equal(expiredDraining.hostId, replacement.fence.hostId);
+    assert.equal(expiredDraining.slotNumber, replacement.fence.slotNumber);
   });
 });

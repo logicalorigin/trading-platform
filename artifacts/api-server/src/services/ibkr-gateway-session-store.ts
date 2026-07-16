@@ -7,6 +7,7 @@ import {
   ibkrGatewaySessionsTable,
   type BrokerConnection,
   type IbkrGatewayHost,
+  type IbkrGatewayLifecycleState,
   type IbkrGatewaySession,
 } from "@workspace/db";
 import {
@@ -36,6 +37,25 @@ const sha256DigestSchema = z.string().regex(/^sha256:[0-9a-f]{64}$/);
 const fleetCapacitySchema = z.number().int().min(1).max(GLOBAL_FLEET_CAPACITY);
 const environmentModeSchema = z.enum(["shadow", "live"]);
 const IBKR_BROKER_CONNECTION_NAME = "Interactive Brokers Bridge";
+const ROUTABLE_LIFECYCLE_STATES: IbkrGatewayLifecycleState[] = [
+  "provisioning",
+  "login_required",
+  "verifying",
+  "authenticated",
+  "degraded",
+  "reauth_required",
+];
+const LIFECYCLE_PREDECESSORS: Partial<
+  Record<IbkrGatewayLifecycleState, IbkrGatewayLifecycleState[]>
+> = {
+  login_required: ["provisioning", "reauth_required", "login_required"],
+  verifying: ["login_required", "verifying"],
+  authenticated: ["verifying", "authenticated"],
+  degraded: ["authenticated", "degraded"],
+  reauth_required: ["authenticated", "degraded", "reauth_required"],
+  draining: [...ROUTABLE_LIFECYCLE_STATES, "draining"],
+  quarantined: ["draining", "quarantined"],
+};
 
 const hostRegistrationSchema = z.object({
   hostId: uuidSchema,
@@ -599,7 +619,7 @@ export function isValidIbkrGatewayFence(
   );
 }
 
-export function currentIbkrGatewayFenceWhere(fence: IbkrGatewayFence) {
+function exactIbkrGatewayFenceWhere(fence: IbkrGatewayFence) {
   return and(
     eq(ibkrGatewaySessionsTable.id, fence.sessionId),
     eq(ibkrGatewaySessionsTable.appUserId, fence.appUserId),
@@ -611,10 +631,62 @@ export function currentIbkrGatewayFenceWhere(fence: IbkrGatewayFence) {
     eq(ibkrGatewaySessionsTable.hostId, fence.hostId),
     eq(ibkrGatewaySessionsTable.slotNumber, fence.slotNumber),
     eq(ibkrGatewaySessionsTable.leaseHolderId, fence.leaseHolderId),
-    gt(ibkrGatewaySessionsTable.leaseExpiresAt, sql`now()`),
     eligibleIbkrConnectionWhere(fence),
+  );
+}
+
+function liveIbkrGatewayFenceWhere(fence: IbkrGatewayFence) {
+  return and(
+    exactIbkrGatewayFenceWhere(fence),
+    gt(ibkrGatewaySessionsTable.leaseExpiresAt, sql`now()`),
     healthyAssignedHostWhere(),
   );
+}
+
+export function currentIbkrGatewayFenceWhere(fence: IbkrGatewayFence) {
+  return and(
+    liveIbkrGatewayFenceWhere(fence),
+    inArray(
+      ibkrGatewaySessionsTable.lifecycleState,
+      ROUTABLE_LIFECYCLE_STATES,
+    ),
+  );
+}
+
+export async function transitionIbkrGatewayLifecycle(
+  fence: IbkrGatewayFence,
+  target: IbkrGatewayLifecycleState,
+): Promise<boolean> {
+  if (!isValidIbkrGatewayFence(fence)) return false;
+  const predecessors = LIFECYCLE_PREDECESSORS[target];
+  if (!predecessors) return false;
+  const exactSafetyTransition =
+    target === "draining" || target === "quarantined";
+  const [transitioned] = await db
+    .update(ibkrGatewaySessionsTable)
+    .set({
+      lifecycleState: target,
+      lastActivityAt: sql`CASE
+        WHEN ${ibkrGatewaySessionsTable.lifecycleState} = ${target}
+          THEN ${ibkrGatewaySessionsTable.lastActivityAt}
+        ELSE now()
+      END`,
+      updatedAt: sql`CASE
+        WHEN ${ibkrGatewaySessionsTable.lifecycleState} = ${target}
+          THEN ${ibkrGatewaySessionsTable.updatedAt}
+        ELSE now()
+      END`,
+    })
+    .where(
+      and(
+        exactSafetyTransition
+          ? exactIbkrGatewayFenceWhere(fence)
+          : currentIbkrGatewayFenceWhere(fence),
+        inArray(ibkrGatewaySessionsTable.lifecycleState, predecessors),
+      ),
+    )
+    .returning({ id: ibkrGatewaySessionsTable.id });
+  return Boolean(transitioned);
 }
 
 export async function assertCurrentIbkrGatewayFence(
@@ -719,7 +791,12 @@ export async function releaseIbkrGatewayLease(
     })
     .where(
       and(
-        currentIbkrGatewayFenceWhere(fence),
+        liveIbkrGatewayFenceWhere(fence),
+        inArray(ibkrGatewaySessionsTable.lifecycleState, [
+          ...ROUTABLE_LIFECYCLE_STATES,
+          "draining",
+          "quarantined",
+        ]),
         lt(ibkrGatewaySessionsTable.generation, POSTGRES_INTEGER_MAX),
       ),
     )
