@@ -25,6 +25,7 @@ import {
   getIbkrGatewayReanchorLocation,
   IBKR_PORTAL_CLIENT_MOUNT,
 } from "./routes/ibkr-portal";
+import { mountIbkrGatewayHostLifecycleRoutes } from "./routes/ibkr-gateway-hosts";
 import { readAuthSessionFromToken } from "./services/auth";
 import { runAsAppUser } from "./services/app-user-context";
 import { runWithIbkrPortalUser } from "./services/ibkr-portal-context";
@@ -208,6 +209,9 @@ app.use(
     },
   }),
 );
+// Host lifecycle requests are HMAC-authenticated over their exact raw bytes.
+// Keep this terminal internal boundary ahead of browser CORS and JSON parsing.
+mountIbkrGatewayHostLifecycleRoutes(app);
 app.use(cors());
 
 // Re-anchor the Client Portal's root-absolute credential POST before any body
