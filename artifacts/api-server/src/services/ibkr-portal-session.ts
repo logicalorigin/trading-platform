@@ -13,10 +13,10 @@ import { findRepoRoot } from "./runtime-flight-recorder";
 import {
   ensureGateway,
   isPortalRuntimeAvailable,
-  markGatewayPaperAccountVerified,
   prepareGatewayClientRequest,
   refreshGateway,
   stopGateway,
+  transitionGatewayLifecycle,
 } from "./ibkr-portal-gateway-manager";
 import { revokeIbkrPortalEmbedSessions } from "./ibkr-portal-embed-session";
 
@@ -122,6 +122,13 @@ function clearPortalReadinessQuietWindow(appUserId: string): void {
   const timer = readinessQuietWindows.get(appUserId);
   if (timer) clearTimeout(timer);
   readinessQuietWindows.delete(appUserId);
+}
+
+export function __expirePortalReadinessQuietWindowForTests(
+  appUserId: string,
+): void {
+  clearPortalReadinessQuietWindow(appUserId);
+  stopLoginMonitor(appUserId);
 }
 
 function setPortalReadinessQuietWindow(
@@ -302,6 +309,15 @@ function needsLoginMessage(
     : "IBKR browser login completed. Waiting for IBKR's API session; this connection is not active yet.";
 }
 
+async function enterPortalVerification(appUserId: string): Promise<boolean> {
+  if (await transitionGatewayLifecycle(appUserId, "verifying")) return true;
+  await transitionGatewayLifecycle(appUserId, "reauth_required");
+  if (!(await transitionGatewayLifecycle(appUserId, "login_required"))) {
+    return false;
+  }
+  return transitionGatewayLifecycle(appUserId, "verifying");
+}
+
 export async function readPortalReadiness(
   appUserId: string,
 ): Promise<PortalReadiness> {
@@ -333,7 +349,6 @@ export async function readPortalReadiness(
   }
 
   if (gateway.status === "starting") {
-    markGatewayPaperAccountVerified(appUserId, false);
     return base({
       status: "gateway_starting",
       gatewayRunning: true,
@@ -343,7 +358,7 @@ export async function readPortalReadiness(
   }
 
   if (readinessQuietWindows.has(appUserId)) {
-    markGatewayPaperAccountVerified(appUserId, false);
+    await transitionGatewayLifecycle(appUserId, "login_required");
     return base({
       status: "needs_login",
       gatewayRunning: true,
@@ -354,6 +369,14 @@ export async function readPortalReadiness(
 
   let stagedFailureTraced = false;
   try {
+    if (
+      !gateway.paperAccountVerified &&
+      !(await enterPortalVerification(appUserId))
+    ) {
+      throw new HttpError(409, "The IBKR session state changed.", {
+        code: "ibkr_gateway_lifecycle_stale",
+      });
+    }
     const status = await clientFor(appUserId, gateway.baseUrl, (stage, failure) => {
       stagedFailureTraced = true;
       traceReadinessFailure(failure, stage);
@@ -362,7 +385,7 @@ export async function readPortalReadiness(
     });
     stagedFailureTraced = false;
     if (status.competing) {
-      markGatewayPaperAccountVerified(appUserId, false);
+      await transitionGatewayLifecycle(appUserId, "reauth_required");
       return base({
         status: "competing",
         gatewayRunning: true,
@@ -372,7 +395,7 @@ export async function readPortalReadiness(
       });
     }
     if (status.authenticated) {
-      if (!markGatewayPaperAccountVerified(appUserId)) {
+      if (!(await transitionGatewayLifecycle(appUserId, "authenticated"))) {
         throw new HttpError(503, "The IBKR session could not be verified.", {
           code: "ibkr_paper_session_verification_failed",
         });
@@ -394,7 +417,7 @@ export async function readPortalReadiness(
         message: "Connected to IBKR.",
       });
     }
-    markGatewayPaperAccountVerified(appUserId, false);
+    await transitionGatewayLifecycle(appUserId, "reauth_required");
     return base({
       status: "needs_login",
       gatewayRunning: true,
@@ -402,7 +425,6 @@ export async function readPortalReadiness(
       message: needsLoginMessage(loginObservation.browserLoginComplete),
     });
   } catch (error) {
-    markGatewayPaperAccountVerified(appUserId, false);
     if (!stagedFailureTraced) {
       traceReadinessFailure({
         code: error instanceof HttpError ? error.code : undefined,
@@ -413,6 +435,7 @@ export async function readPortalReadiness(
       error instanceof HttpError &&
       error.code === "ibkr_paper_account_required"
     ) {
+      await transitionGatewayLifecycle(appUserId, "draining");
       await disconnectPortal(appUserId);
       return base({
         status: "disconnected",
@@ -422,6 +445,7 @@ export async function readPortalReadiness(
           "Only IBKR Paper Trading accounts are allowed. This connection was closed. Sign in with the separate username assigned to your Paper Trading account.",
       });
     }
+    await transitionGatewayLifecycle(appUserId, "degraded");
     return base({
       status: "needs_login",
       gatewayRunning: true,

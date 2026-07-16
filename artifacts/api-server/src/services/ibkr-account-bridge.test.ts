@@ -174,8 +174,8 @@ test("all account bridge caches and singleflights are isolated by user and gatew
   try {
     await ensureGateway(userA);
     await ensureGateway(userB);
-    assert.equal(markGatewayPaperAccountVerified(userA), true);
-    assert.equal(markGatewayPaperAccountVerified(userB), true);
+    assert.equal(await markGatewayPaperAccountVerified(userA), true);
+    assert.equal(await markGatewayPaperAccountVerified(userB), true);
 
     await readAll(userA);
     await readAll(userA);

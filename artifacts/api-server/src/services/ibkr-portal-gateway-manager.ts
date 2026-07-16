@@ -19,12 +19,13 @@ import {
   decodeIbkrHostControlKey,
   signIbkrHostControlRequest,
 } from "@workspace/ibkr-contracts/control-auth";
+import type { IbkrGatewayLifecycleState } from "@workspace/db";
 
 import { HttpError } from "../lib/errors";
 import {
   type IbkrGatewayFence,
   releaseIbkrGatewayLease,
-  transitionIbkrGatewayLifecycle,
+  transitionIbkrGatewayLifecycle as transitionDurableIbkrGatewayLifecycle,
 } from "./ibkr-gateway-session-store";
 import {
   ensureIbkrGatewayFleetFence,
@@ -92,6 +93,9 @@ export type PortalGateway = {
 
 type Entry = PortalGateway & {
   fleetFence?: IbkrGatewayFence;
+  lifecycleTransitionConflictEpoch?: number;
+  lifecycleTransitionEpoch?: number;
+  lifecycleTransitionTarget?: IbkrGatewayLifecycleState;
   process?: ChildProcess;
 };
 
@@ -106,6 +110,22 @@ const hostedStops = new Map<string, Promise<void>>();
 const fleetEnsureRequests = new Map<string, Promise<PortalGateway>>();
 const fleetLeaseTimers = new Map<string, ReturnType<typeof setInterval>>();
 const FLEET_LEASE_RENEW_INTERVAL_MS = 10_000;
+
+function sameFleetFence(
+  left: IbkrGatewayFence | undefined,
+  right: IbkrGatewayFence,
+): boolean {
+  return Boolean(
+    left &&
+      left.appUserId === right.appUserId &&
+      left.brokerConnectionId === right.brokerConnectionId &&
+      left.generation === right.generation &&
+      left.hostId === right.hostId &&
+      left.leaseHolderId === right.leaseHolderId &&
+      left.sessionId === right.sessionId &&
+      left.slotNumber === right.slotNumber,
+  );
+}
 
 function gatewayEpoch(appUserId: string): number {
   return gatewayEpochs.get(appUserId) ?? 0;
@@ -213,7 +233,14 @@ export function isPortalRuntimeAvailable(): boolean {
 }
 
 function toPublic(entry: Entry): PortalGateway {
-  const { fleetFence: _fleetFence, process: _process, ...rest } = entry;
+  const {
+    fleetFence: _fleetFence,
+    lifecycleTransitionConflictEpoch: _lifecycleTransitionConflictEpoch,
+    lifecycleTransitionEpoch: _lifecycleTransitionEpoch,
+    lifecycleTransitionTarget: _lifecycleTransitionTarget,
+    process: _process,
+    ...rest
+  } = entry;
   return { ...rest };
 }
 
@@ -820,16 +847,56 @@ export function getGateway(appUserId: string): PortalGateway | null {
   return toPublic(entry);
 }
 
-export function markGatewayPaperAccountVerified(
+export async function transitionGatewayLifecycle(
   appUserId: string,
-  verified = true,
-): boolean {
+  target: IbkrGatewayLifecycleState,
+): Promise<boolean> {
   const entry = gateways.get(appUserId);
-  if (!entry || !isAlive(entry) || entry.status !== "ready") {
+  if (!entry || !isAlive(entry)) return false;
+  const transitionEpoch = (entry.lifecycleTransitionEpoch ?? 0) + 1;
+  entry.lifecycleTransitionEpoch = transitionEpoch;
+  if (entry.lifecycleTransitionTarget !== target) {
+    entry.lifecycleTransitionConflictEpoch = transitionEpoch;
+  }
+  entry.lifecycleTransitionTarget = target;
+  const transitionConflictEpoch =
+    entry.lifecycleTransitionConflictEpoch ?? transitionEpoch;
+  entry.paperAccountVerified = false;
+  const fence = entry.fleetFence;
+  if (!fence) {
+    if (target === "authenticated" && entry.status !== "ready") return false;
+    entry.paperAccountVerified = target === "authenticated";
+    return true;
+  }
+  if (!(await transitionDurableIbkrGatewayLifecycle(fence, target))) {
     return false;
   }
-  entry.paperAccountVerified = verified;
-  return entry.paperAccountVerified;
+  if (
+    gateways.get(appUserId) !== entry ||
+    !isAlive(entry) ||
+    !sameFleetFence(entry.fleetFence, fence) ||
+    (target === "authenticated" && entry.status !== "ready")
+  ) {
+    return false;
+  }
+  if (entry.lifecycleTransitionEpoch !== transitionEpoch) {
+    return (
+      entry.lifecycleTransitionTarget === target &&
+      entry.lifecycleTransitionConflictEpoch === transitionConflictEpoch
+    );
+  }
+  entry.paperAccountVerified = target === "authenticated";
+  return true;
+}
+
+export async function markGatewayPaperAccountVerified(
+  appUserId: string,
+  verified = true,
+): Promise<boolean> {
+  return transitionGatewayLifecycle(
+    appUserId,
+    verified ? "authenticated" : "reauth_required",
+  );
 }
 
 export async function refreshGateway(
@@ -935,7 +1002,7 @@ export async function stopGateway(appUserId: string): Promise<void> {
       const fence =
         entry?.fleetFence ?? (await readIbkrGatewayFleetFence(appUserId));
       if (!fence) return;
-      if (!(await transitionIbkrGatewayLifecycle(fence, "draining"))) {
+      if (!(await transitionDurableIbkrGatewayLifecycle(fence, "draining"))) {
         throw new HttpError(
           409,
           "The IBKR gateway placement is no longer current.",
@@ -965,11 +1032,11 @@ export async function stopGateway(appUserId: string): Promise<void> {
         }
         currentFence = released.fence;
       } catch (error) {
-        await transitionIbkrGatewayLifecycle(fence, "quarantined");
+        await transitionDurableIbkrGatewayLifecycle(fence, "quarantined");
         throw error;
       }
       if (!(await releaseIbkrGatewayLease(currentFence))) {
-        await transitionIbkrGatewayLifecycle(fence, "quarantined");
+        await transitionDurableIbkrGatewayLifecycle(fence, "quarantined");
         throw new HttpError(
           409,
           "The IBKR gateway cleanup could not be committed.",

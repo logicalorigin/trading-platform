@@ -51,8 +51,13 @@ const LIFECYCLE_PREDECESSORS: Partial<
   login_required: ["provisioning", "reauth_required", "login_required"],
   verifying: ["login_required", "verifying"],
   authenticated: ["verifying", "authenticated"],
-  degraded: ["authenticated", "degraded"],
-  reauth_required: ["authenticated", "degraded", "reauth_required"],
+  degraded: ["verifying", "authenticated", "degraded"],
+  reauth_required: [
+    "verifying",
+    "authenticated",
+    "degraded",
+    "reauth_required",
+  ],
   draining: [...ROUTABLE_LIFECYCLE_STATES, "draining"],
   quarantined: ["draining", "quarantined"],
 };

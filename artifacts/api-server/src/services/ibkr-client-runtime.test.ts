@@ -72,7 +72,7 @@ test("the portal runtime stays owner-scoped and paper-only after verification", 
       false,
     );
 
-    assert.equal(markGatewayPaperAccountVerified(appUserId), true);
+    assert.equal(await markGatewayPaperAccountVerified(appUserId), true);
     assert.equal(
       runWithIbkrPortalUser(appUserId, isIbkrClientPortalConfigured),
       true,

@@ -203,7 +203,7 @@ test("fleet mode routes every operation through the current signed generation fe
           true,
         );
       }
-      assert.equal(markGatewayPaperAccountVerified(user.id), true);
+      assert.equal(await markGatewayPaperAccountVerified(user.id), true);
       await validateGatewayDataFence(user.id);
       await runWithIbkrPortalUser(user.id, () =>
         getIbkrClientPortalClient().tickleSession(),
@@ -494,7 +494,7 @@ test("hosted IBKR mode provisions through the loopback session host", async () =
     const readyGateway = await refreshGateway(appUserId);
     assert.equal(readyGateway?.status, "ready");
     assert.equal(readyGateway?.loginCompletions, 2);
-    assert.equal(markGatewayPaperAccountVerified(appUserId), true);
+    assert.equal(await markGatewayPaperAccountVerified(appUserId), true);
     assert.equal(getGateway(appUserId)?.paperAccountVerified, true);
     const staleGateway = await refreshGateway(appUserId);
     assert.equal(staleGateway?.loginCompletions, 2);
