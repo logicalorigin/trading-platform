@@ -147,11 +147,15 @@ function validIds(...ids: unknown[]): boolean {
   return ids.every((id) => uuidSchema.safeParse(id).success);
 }
 
-function normalizeHttpsOrigin(value: string): string | null {
+function normalizeControlOrigin(value: string): string | null {
   try {
     const url = new URL(value);
+    const secureOrigin = url.protocol === "https:";
+    const exactLoopbackOrigin =
+      url.protocol === "http:" &&
+      (url.hostname === "127.0.0.1" || url.hostname === "[::1]");
     if (
-      url.protocol !== "https:" ||
+      (!secureOrigin && !exactLoopbackOrigin) ||
       url.username ||
       url.password ||
       (url.pathname !== "/" && url.pathname !== "") ||
@@ -234,7 +238,7 @@ export async function registerIbkrGatewayHost(
 ): Promise<IbkrGatewayHost | null> {
   const parsed = hostRegistrationSchema.safeParse(value);
   if (!parsed.success) return null;
-  const controlOrigin = normalizeHttpsOrigin(parsed.data.controlOrigin);
+  const controlOrigin = normalizeControlOrigin(parsed.data.controlOrigin);
   if (!controlOrigin) return null;
   const input = { ...parsed.data, controlOrigin };
 

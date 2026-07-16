@@ -222,6 +222,47 @@ test("host registration is idempotent, quarantined by default, and attestation-b
   });
 });
 
+test("host registration permits only exact loopback HTTP control origins", async () => {
+  await withTestDb(async () => {
+    const registration = {
+      hostId: HOST_A,
+      workloadIdentityDigest: WORKLOAD_A,
+      imageDigest: SHA_A,
+      runtimeSpecDigest: SHA_A,
+      runtimeAttestationDigest: SHA_A,
+      failureDomain: "synthetic-loopback",
+      measuredSlotCapacity: 1,
+    };
+    for (const controlOrigin of [
+      "http://localhost:18748",
+      "http://127.0.0.2:18748",
+      "http://host-a.internal.invalid:18748",
+      "http://127.0.0.1:18748/control",
+      "http://user@127.0.0.1:18748",
+    ]) {
+      assert.equal(
+        await registerIbkrGatewayHost({ ...registration, controlOrigin }),
+        null,
+        controlOrigin,
+      );
+    }
+
+    const ipv4 = await registerIbkrGatewayHost({
+      ...registration,
+      controlOrigin: "http://127.0.0.1:18748/",
+    });
+    assert.equal(ipv4?.controlOrigin, "http://127.0.0.1:18748");
+
+    const ipv6 = await registerIbkrGatewayHost({
+      ...registration,
+      hostId: HOST_B,
+      workloadIdentityDigest: WORKLOAD_B,
+      controlOrigin: "http://[::1]:18748/",
+    });
+    assert.equal(ipv6?.controlOrigin, "http://[::1]:18748");
+  });
+});
+
 test("measured host slots and the global ceiling admit at most twenty distinct owner-bound sessions", async () => {
   await withTestDb(async () => {
     await registerAndApproveHost({

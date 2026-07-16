@@ -10,13 +10,21 @@ import {
   ibkrGatewaySessionsTable,
 } from "./broker";
 
-const migrationSource = readFileSync(
+const fleetMigrationSource = readFileSync(
   new URL(
     "../../migrations/20260716_ibkr_gateway_fleet.sql",
     import.meta.url,
   ),
   "utf8",
 );
+const loopbackOriginMigrationSource = readFileSync(
+  new URL(
+    "../../migrations/20260716_ibkr_gateway_loopback_control_origin.sql",
+    import.meta.url,
+  ),
+  "utf8",
+);
+const migrationSource = `${fleetMigrationSource}\n${loopbackOriginMigrationSource}`;
 const schemaSource = readFileSync(new URL("./broker.ts", import.meta.url), "utf8");
 
 const OWNER_A = "00000000-0000-4000-8000-000000000001";

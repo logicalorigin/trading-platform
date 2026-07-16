@@ -137,7 +137,9 @@ export const ibkrGatewayHostsTable = pgTable(
     ),
     check(
       "ibkr_gateway_hosts_control_origin_chk",
-      sql`${table.controlOrigin} ~ '^https://[^/?#]+/?$' AND ${table.controlOrigin} !~ '@'`,
+      sql`(${table.controlOrigin} ~ '^https://[^/?#]+/?$' AND ${table.controlOrigin} !~ '@')
+        OR ${table.controlOrigin} ~ '^http://127[.]0[.]0[.]1(:[0-9]{1,5})?$'
+        OR ${table.controlOrigin} ~ '^http://[[]::1[]](:[0-9]{1,5})?$'`,
     ),
     index("ibkr_gateway_hosts_admission_idx").on(
       table.status,
