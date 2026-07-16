@@ -9,25 +9,49 @@ import {
   readPortalReadiness,
 } from "./ibkr-portal-session";
 
-test("hosted portal connects any authenticated account (not paper-only)", async (t) => {
+test("hosted portal accepts only nonempty all-paper account sets", async (t) => {
   const previousEnabled = process.env["IBKR_SESSION_HOST_ENABLED"];
   const previousToken = process.env["IBKR_SESSION_HOST_CONTROL_TOKEN"];
   const previousUrl = process.env["IBKR_SESSION_HOST_URL"];
   const previousFetch = globalThis.fetch;
-  const liveUserId = "33333333-3333-4333-8333-333333333333";
+  const rejectedAccountCases = [
+    {
+      accountIds: ["U1234567"],
+      label: "live",
+      userId: "33333333-3333-4333-8333-333333333333",
+    },
+    {
+      accountIds: ["DU1234567", "U7654321"],
+      label: "mixed",
+      userId: "34343434-3434-4434-8434-343434343434",
+    },
+    {
+      accountIds: [],
+      label: "empty",
+      userId: "35353535-3535-4535-8535-353535353535",
+    },
+    {
+      accountIds: ["PAPER"],
+      label: "ambiguous",
+      userId: "36363636-3636-4636-8636-363636363636",
+    },
+  ] as const;
   const paperUserId = "44444444-4444-4444-8444-444444444444";
+  const releaseFailureUserId = "37373737-3737-4737-8737-373737373737";
   const needsLoginUserId = "55555555-5555-4555-8555-555555555555";
-  const delayedLiveUserId = "66666666-6666-4666-8666-666666666666";
+  const delayedPaperUserId = "66666666-6666-4666-8666-666666666666";
   const failedAfterLoginUserId = "67676767-6767-4767-8767-676767676767";
   const recoveredLoginUserId = "77777777-7777-4777-8777-777777777777";
   const recoveredStartingUserId = "88888888-8888-4888-8888-888888888888";
   const monitorRaceUserId = "99999999-9999-4999-8999-999999999999";
   const released = new Set<string>();
-  let accountId = "U1234567";
+  const releaseFailures = new Set<string>();
+  let accountIds: readonly string[] = rejectedAccountCases[0].accountIds;
   let authenticated = true;
   let forceBrokerageUnauthorized = false;
   let authStatusCalls = 0;
   let ssodhInitCalls = 0;
+  let tickleCalls = 0;
   const loginCompletions = new Map<string, number>();
   const capsuleStatuses = new Map<string, "ready" | "occupied">();
   const hostStatusCalls = new Map<string, number>();
@@ -43,6 +67,9 @@ test("hosted portal connects any authenticated account (not paper-only)", async 
       const sessionId = url.pathname.split("/")[2] ?? "";
       const completionCount = loginCompletions.get(sessionId) ?? 0;
       if (url.pathname.endsWith("/release")) {
+        if (releaseFailures.has(sessionId)) {
+          return new Response("unavailable", { status: 503 });
+        }
         released.add(sessionId);
         return Response.json({ released: true });
       }
@@ -82,7 +109,7 @@ test("hosted portal connects any authenticated account (not paper-only)", async 
       return Response.json({
         authenticated,
         connected: authenticated,
-        selectedAccount: accountId,
+        selectedAccount: accountIds[0],
       });
     }
     if (url.pathname.endsWith("/iserver/auth/ssodh/init")) {
@@ -93,24 +120,43 @@ test("hosted portal connects any authenticated account (not paper-only)", async 
       return Response.json({ authenticated });
     }
     if (url.pathname.endsWith("/iserver/accounts")) {
-      return Response.json({ accounts: [accountId] });
+      return Response.json({ accounts: accountIds });
     }
     if (url.pathname.endsWith("/tickle")) {
+      tickleCalls += 1;
       return Response.json({ session: "paper-session" });
     }
     throw new Error(`unexpected request: ${url}`);
   }) as typeof fetch;
 
   try {
-    // A live (non-DU) account is a first-class Client Portal connection.
-    await ensureGateway(liveUserId);
-    const liveReadiness = await readPortalReadiness(liveUserId);
-    assert.equal(liveReadiness.status, "connected");
-    assert.equal(liveReadiness.selectedAccountId, "U1234567");
-    assert.equal(getGateway(liveUserId)?.paperAccountVerified, true);
-    assert(!released.has(liveUserId));
+    t.mock.timers.enable({ apis: ["setInterval"] });
+    try {
+      for (const testCase of rejectedAccountCases) {
+        accountIds = testCase.accountIds;
+        await ensureGateway(testCase.userId);
+        const readiness = await readPortalReadiness(testCase.userId);
+        assert.equal(readiness.status, "disconnected", testCase.label);
+        assert.match(readiness.message, /sign in with.*Paper Trading/i);
+        assert.equal(getGateway(testCase.userId), null, testCase.label);
+        assert(released.has(testCase.userId), testCase.label);
+      }
+      t.mock.timers.tick(55_000);
+      await Promise.resolve();
+      assert.equal(tickleCalls, 0, "rejected accounts must never start keepalive");
+    } finally {
+      t.mock.timers.reset();
+    }
 
-    accountId = "DU1234567";
+    accountIds = ["U9876543"];
+    await ensureGateway(releaseFailureUserId);
+    releaseFailures.add(releaseFailureUserId);
+    await assert.rejects(() => readPortalReadiness(releaseFailureUserId));
+    assert(!released.has(releaseFailureUserId));
+    releaseFailures.delete(releaseFailureUserId);
+    await disconnectPortal(releaseFailureUserId);
+
+    accountIds = ["DU1234567"];
     await ensureGateway(paperUserId);
     const paperReadiness = await readPortalReadiness(paperUserId);
     assert.equal(paperReadiness.status, "connected");
@@ -250,10 +296,10 @@ test("hosted portal connects any authenticated account (not paper-only)", async 
     t.mock.timers.enable({ apis: ["setTimeout"] });
     try {
       const callsBeforeConnect = authStatusCalls;
-      loginCompletions.set(delayedLiveUserId, 7);
-      const delayedLiveStart = await connectPortal(delayedLiveUserId);
-      assert.equal(delayedLiveStart.status, "needs_login");
-      const duringLogin = await readPortalReadiness(delayedLiveUserId);
+      loginCompletions.set(delayedPaperUserId, 7);
+      const delayedPaperStart = await connectPortal(delayedPaperUserId);
+      assert.equal(delayedPaperStart.status, "needs_login");
+      const duringLogin = await readPortalReadiness(delayedPaperUserId);
       assert.equal(duringLogin.status, "needs_login");
       assert.equal(
         duringLogin.browserLoginComplete,
@@ -267,10 +313,10 @@ test("hosted portal connects any authenticated account (not paper-only)", async 
       );
 
       authenticated = true;
-      accountId = "U2468101";
+      accountIds = ["DU2468101"];
       const initCallsBeforeCompletion = ssodhInitCalls;
-      loginCompletions.set(delayedLiveUserId, 8);
-      const completionObserved = await readPortalReadiness(delayedLiveUserId);
+      loginCompletions.set(delayedPaperUserId, 8);
+      const completionObserved = await readPortalReadiness(delayedPaperUserId);
       assert.equal(completionObserved.status, "needs_login");
       assert.equal(
         completionObserved.browserLoginComplete,
@@ -280,7 +326,7 @@ test("hosted portal connects any authenticated account (not paper-only)", async 
       assert.equal(authStatusCalls, callsBeforeConnect);
 
       t.mock.timers.tick(19_999);
-      const stillQuiet = await readPortalReadiness(delayedLiveUserId);
+      const stillQuiet = await readPortalReadiness(delayedPaperUserId);
       assert.equal(stillQuiet.status, "needs_login");
       assert.equal(
         authStatusCalls,
@@ -289,7 +335,7 @@ test("hosted portal connects any authenticated account (not paper-only)", async 
       );
 
       t.mock.timers.tick(1);
-      const delayedReadiness = await readPortalReadiness(delayedLiveUserId);
+      const delayedReadiness = await readPortalReadiness(delayedPaperUserId);
       assert.equal(delayedReadiness.status, "connected");
       assert.equal(delayedReadiness.browserLoginComplete, true);
       assert.equal(authStatusCalls, callsBeforeConnect + 1);
@@ -298,9 +344,12 @@ test("hosted portal connects any authenticated account (not paper-only)", async 
         initCallsBeforeCompletion,
         "the hosted portal leaves the stateful SSO handshake to CPG",
       );
-      assert.equal(delayedReadiness.selectedAccountId, "U2468101");
-      assert.ok(getGateway(delayedLiveUserId), "live login keeps its gateway");
-      assert(!released.has(delayedLiveUserId));
+      assert.equal(delayedReadiness.selectedAccountId, "DU2468101");
+      assert.ok(
+        getGateway(delayedPaperUserId),
+        "paper login keeps its gateway",
+      );
+      assert(!released.has(delayedPaperUserId));
 
       loginCompletions.set(failedAfterLoginUserId, 0);
       await connectPortal(failedAfterLoginUserId);
@@ -334,10 +383,14 @@ test("hosted portal connects any authenticated account (not paper-only)", async 
       t.mock.timers.reset();
     }
   } finally {
-    await disconnectPortal(liveUserId).catch(() => undefined);
+    for (const testCase of rejectedAccountCases) {
+      await disconnectPortal(testCase.userId).catch(() => undefined);
+    }
+    releaseFailures.delete(releaseFailureUserId);
+    await disconnectPortal(releaseFailureUserId).catch(() => undefined);
     await disconnectPortal(paperUserId).catch(() => undefined);
     await disconnectPortal(needsLoginUserId).catch(() => undefined);
-    await disconnectPortal(delayedLiveUserId).catch(() => undefined);
+    await disconnectPortal(delayedPaperUserId).catch(() => undefined);
     await disconnectPortal(failedAfterLoginUserId).catch(() => undefined);
     await disconnectPortal(recoveredLoginUserId).catch(() => undefined);
     await disconnectPortal(recoveredStartingUserId).catch(() => undefined);

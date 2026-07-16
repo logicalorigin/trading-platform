@@ -192,9 +192,7 @@ function clientFor(
     username: null,
     password: null,
     allowInsecureTls: true,
-    // Any IBKR account may connect through the Client Portal login (user
-    // decision 2026-07-10: not paper-only).
-    paperAccountOnly: false,
+    paperAccountOnly: true,
   };
   return new IbkrClient(config, {
     onBrokerageSessionError,
@@ -409,6 +407,19 @@ export async function readPortalReadiness(
       traceReadinessFailure({
         code: error instanceof HttpError ? error.code : undefined,
         httpStatus: error instanceof HttpError ? error.statusCode : undefined,
+      });
+    }
+    if (
+      error instanceof HttpError &&
+      error.code === "ibkr_paper_account_required"
+    ) {
+      await disconnectPortal(appUserId);
+      return base({
+        status: "disconnected",
+        gatewayRunning: false,
+        browserLoginComplete: loginObservation.browserLoginComplete,
+        message:
+          "Only IBKR Paper Trading accounts are allowed. This connection was closed. Sign in with the separate username assigned to your Paper Trading account.",
       });
     }
     return base({
