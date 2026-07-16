@@ -3,7 +3,10 @@ import { getIbkrRuntimeConfig, type IbkrRuntimeConfig } from "../lib/runtime";
 import { IbkrClient } from "../providers/ibkr/client";
 
 import { getIbkrPortalUserId } from "./ibkr-portal-context";
-import { getGateway } from "./ibkr-portal-gateway-manager";
+import {
+  getGateway,
+  prepareGatewayClientRequest,
+} from "./ibkr-portal-gateway-manager";
 
 export type IbkrClientPortalGatewaySnapshot = Readonly<{
   appUserId: string;
@@ -100,5 +103,14 @@ export function getIbkrClientPortalClient(): IbkrClient {
     });
   }
 
-  return new IbkrClient(config);
+  const appUserId = getIbkrPortalUserId();
+  return new IbkrClient(
+    config,
+    appUserId
+      ? {
+          prepareRequest: (request) =>
+            prepareGatewayClientRequest(appUserId, request),
+        }
+      : {},
+  );
 }

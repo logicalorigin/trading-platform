@@ -14,6 +14,7 @@ import {
   ensureGateway,
   isPortalRuntimeAvailable,
   markGatewayPaperAccountVerified,
+  prepareGatewayClientRequest,
   refreshGateway,
   stopGateway,
 } from "./ibkr-portal-gateway-manager";
@@ -174,6 +175,7 @@ function observePortalLoginCompletions(
 }
 
 function clientFor(
+  appUserId: string,
   baseUrl: string,
   onBrokerageSessionError?: (
     stage: BrokerageSessionStage,
@@ -194,10 +196,11 @@ function clientFor(
     // decision 2026-07-10: not paper-only).
     paperAccountOnly: false,
   };
-  return new IbkrClient(
-    config,
-    onBrokerageSessionError ? { onBrokerageSessionError } : {},
-  );
+  return new IbkrClient(config, {
+    onBrokerageSessionError,
+    prepareRequest: (request) =>
+      prepareGatewayClientRequest(appUserId, request),
+  });
 }
 
 function startTickle(appUserId: string, baseUrl: string): void {
@@ -205,7 +208,7 @@ function startTickle(appUserId: string, baseUrl: string): void {
     return;
   }
   const timer = setInterval(() => {
-    void clientFor(baseUrl)
+    void clientFor(appUserId, baseUrl)
       .tickleSession()
       .catch(() => undefined);
   }, TICKLE_INTERVAL_MS);
@@ -353,7 +356,7 @@ export async function readPortalReadiness(
 
   let stagedFailureTraced = false;
   try {
-    const status = await clientFor(gateway.baseUrl, (stage, failure) => {
+    const status = await clientFor(appUserId, gateway.baseUrl, (stage, failure) => {
       stagedFailureTraced = true;
       traceReadinessFailure(failure, stage);
     }).ensureBrokerageSession({

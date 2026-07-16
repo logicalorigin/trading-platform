@@ -21,6 +21,19 @@ import {
 } from "@workspace/ibkr-contracts/control-auth";
 
 import { HttpError } from "../lib/errors";
+import {
+  type IbkrGatewayFence,
+  releaseIbkrGatewayLease,
+} from "./ibkr-gateway-session-store";
+import {
+  ensureIbkrGatewayFleetFence,
+  isIbkrGatewayFleetEnabled,
+  normalizeIbkrGatewayPath,
+  prepareIbkrGatewayFleetDataRequest,
+  readIbkrGatewayFleetFence,
+  renewIbkrGatewayFleetFence,
+  requestIbkrGatewayFleetHost,
+} from "./ibkr-gateway-fleet-runtime";
 import { findRepoRoot } from "./runtime-flight-recorder";
 
 // Self-hosted IBKR Client Portal Gateway (CPAPI) pool. Each connected app user
@@ -76,7 +89,10 @@ export type PortalGateway = {
   startedAt: number;
 };
 
-type Entry = PortalGateway & { process?: ChildProcess };
+type Entry = PortalGateway & {
+  fleetFence?: IbkrGatewayFence;
+  process?: ChildProcess;
+};
 
 const gateways = new Map<string, Entry>();
 const gatewayEpochs = new Map<string, number>();
@@ -86,6 +102,9 @@ const hostedStatusRequests = new Map<
   { epoch: number; request: Promise<HostStatusResponse | null> }
 >();
 const hostedStops = new Map<string, Promise<void>>();
+const fleetEnsureRequests = new Map<string, Promise<PortalGateway>>();
+const fleetLeaseTimers = new Map<string, ReturnType<typeof setInterval>>();
+const FLEET_LEASE_RENEW_INTERVAL_MS = 10_000;
 
 function gatewayEpoch(appUserId: string): number {
   return gatewayEpochs.get(appUserId) ?? 0;
@@ -93,6 +112,44 @@ function gatewayEpoch(appUserId: string): number {
 
 function bumpGatewayEpoch(appUserId: string): void {
   gatewayEpochs.set(appUserId, gatewayEpoch(appUserId) + 1);
+}
+
+function stopFleetLeaseKeepalive(appUserId: string): void {
+  const timer = fleetLeaseTimers.get(appUserId);
+  if (!timer) return;
+  clearInterval(timer);
+  fleetLeaseTimers.delete(appUserId);
+}
+
+function startFleetLeaseKeepalive(appUserId: string, entry: Entry): void {
+  stopFleetLeaseKeepalive(appUserId);
+  let renewing = false;
+  const timer = setInterval(() => {
+    if (renewing || gateways.get(appUserId) !== entry || !entry.fleetFence) {
+      return;
+    }
+    renewing = true;
+    void renewIbkrGatewayFleetFence(entry.fleetFence)
+      .then((fence) => {
+        if (gateways.get(appUserId) === entry) entry.fleetFence = fence;
+      })
+      .catch((error: unknown) => {
+        if (
+          error instanceof HttpError &&
+          error.code === "ibkr_gateway_fence_stale" &&
+          gateways.get(appUserId) === entry
+        ) {
+          entry.status = "stopped";
+          gateways.delete(appUserId);
+          stopFleetLeaseKeepalive(appUserId);
+        }
+      })
+      .finally(() => {
+        renewing = false;
+      });
+  }, FLEET_LEASE_RENEW_INTERVAL_MS);
+  timer.unref?.();
+  fleetLeaseTimers.set(appUserId, timer);
 }
 
 type HostedConfig = {
@@ -149,12 +206,13 @@ function hostedConfig(): HostedConfig | null {
 }
 
 export function isPortalRuntimeAvailable(): boolean {
+  if (isIbkrGatewayFleetEnabled()) return true;
   if (hostedConfig()) return true;
   return resolveJavaBin() !== null && existsSync(GATEWAY_JAR);
 }
 
 function toPublic(entry: Entry): PortalGateway {
-  const { process: _process, ...rest } = entry;
+  const { fleetFence: _fleetFence, process: _process, ...rest } = entry;
   return { ...rest };
 }
 
@@ -291,27 +349,27 @@ const HostCapsuleSchema = z.object({
   name: z.string().min(1).max(128),
   status: z.enum(["ready", "occupied"]),
 });
-// ponytail: capsule relay ports are a fixed private host contract; return
-// targets from status if they ever become configurable.
 const HOSTED_TARGETS = {
   cpg: { host: "127.0.0.1", port: 15000 },
   console: { host: "127.0.0.1", port: 16080 },
 } as const;
+const HostTargetsSchema = z.object({
+  cpg: z.object({
+    host: z.literal("127.0.0.1"),
+    port: z.number().int().min(1).max(65_535),
+  }),
+  console: z.object({
+    host: z.literal("127.0.0.1"),
+    port: z.number().int().min(1).max(65_535),
+  }),
+});
 const HostEnsureResponseSchema = z.object({
   capsule: HostCapsuleSchema,
-  targets: z.object({
-    cpg: z.object({
-      host: z.literal("127.0.0.1"),
-      port: z.number().int().min(1).max(65_535),
-    }),
-    console: z.object({
-      host: z.literal("127.0.0.1"),
-      port: z.number().int().min(1).max(65_535),
-    }),
-  }),
+  targets: HostTargetsSchema,
 });
 const HostStatusResponseSchema = z.object({
   capsule: HostCapsuleSchema.nullable(),
+  targets: HostTargetsSchema.optional(),
 });
 
 type HostEnsureResponse = z.infer<typeof HostEnsureResponseSchema>;
@@ -362,6 +420,103 @@ async function hostRequest<T>(
     );
   }
   return (await response.json()) as T;
+}
+
+export async function prepareGatewayDataRequest(input: {
+  appUserId: string;
+  body?: string | Uint8Array;
+  headers: Record<string, string | string[] | undefined>;
+  kind: "cpg" | "console";
+  method: string;
+  path: string;
+  transport: "http" | "websocket";
+}): Promise<{
+  headers: Record<string, string | string[]>;
+  url: URL;
+}> {
+  const entry = gateways.get(input.appUserId);
+  if (!entry || !isAlive(entry)) {
+    throw new HttpError(503, "IBKR Client Portal gateway is not running.", {
+      code: "ibkr_portal_gateway_not_running",
+      expose: true,
+    });
+  }
+  const upstreamPath = normalizeIbkrGatewayPath(input.path);
+  const headers = Object.fromEntries(
+    Object.entries(input.headers).filter(
+      (entry): entry is [string, string | string[]] => entry[1] !== undefined,
+    ),
+  );
+  if (entry.fleetFence) {
+    const prepared = await prepareIbkrGatewayFleetDataRequest({
+        body: input.body,
+        fence: entry.fleetFence,
+        headers,
+        kind: input.kind,
+        method: input.method,
+        path: upstreamPath,
+        transport: input.transport,
+      }).catch((error: unknown) => {
+        if (
+          error instanceof HttpError &&
+          error.code === "ibkr_gateway_fence_stale" &&
+          gateways.get(input.appUserId) === entry
+        ) {
+          entry.status = "stopped";
+          gateways.delete(input.appUserId);
+          stopFleetLeaseKeepalive(input.appUserId);
+        }
+        throw error;
+      });
+    if (gateways.get(input.appUserId) !== entry) {
+      throw new HttpError(409, "The IBKR gateway request was cancelled.", {
+        code: "ibkr_portal_request_cancelled",
+        expose: true,
+      });
+    }
+    entry.fleetFence = prepared.fence;
+    return { headers: prepared.headers, url: prepared.url };
+  }
+  const url = new URL(
+    upstreamPath,
+    input.kind === "cpg" ? entry.origin : entry.proxyOrigin,
+  );
+  if (input.transport === "websocket") {
+    url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+  }
+  headers.host = url.host;
+  return { headers, url };
+}
+
+export async function prepareGatewayClientRequest(
+  appUserId: string,
+  request: {
+    body: string | Uint8Array | undefined;
+    headers: Record<string, string>;
+    method: string;
+    transport: "http" | "websocket";
+    url: string;
+  },
+): Promise<{ headers: Record<string, string>; url: string }> {
+  const logicalUrl = new URL(request.url);
+  const prepared = await prepareGatewayDataRequest({
+    appUserId,
+    body: request.body,
+    headers: request.headers,
+    kind: "cpg",
+    method: request.method,
+    path: `${logicalUrl.pathname}${logicalUrl.search}`,
+    transport: request.transport,
+  });
+  return {
+    headers: Object.fromEntries(
+      Object.entries(prepared.headers).map(([name, value]) => [
+        name,
+        Array.isArray(value) ? value.join(", ") : value,
+      ]),
+    ),
+    url: prepared.url.toString(),
+  };
 }
 
 async function requestHostedGatewayStatus(
@@ -442,6 +597,39 @@ function rememberHostedGateway(
   return toPublic(entry);
 }
 
+function rememberFleetGateway(
+  appUserId: string,
+  fence: IbkrGatewayFence,
+  result: HostEnsureResponse,
+  recovered: boolean,
+): PortalGateway {
+  const existing = gateways.get(appUserId);
+  if (existing?.fleetFence && isAlive(existing)) {
+    existing.fleetFence = fence;
+    existing.recovered = existing.recovered && recovered;
+    startFleetLeaseKeepalive(appUserId, existing);
+    return updateHostedGateway(existing, result.capsule);
+  }
+  const entry: Entry = {
+    appUserId,
+    baseUrl: `http://${result.targets.cpg.host}:${result.targets.cpg.port}/v1/api`,
+    fleetFence: fence,
+    hosted: true,
+    loginCompletions: result.capsule.loginCompletions,
+    origin: `http://${result.targets.cpg.host}:${result.targets.cpg.port}`,
+    paperAccountVerified: false,
+    port: result.targets.cpg.port,
+    proxyOrigin: `http://${result.targets.console.host}:${result.targets.console.port}`,
+    proxyPort: result.targets.console.port,
+    recovered,
+    status: result.capsule.status === "ready" ? "ready" : "starting",
+    startedAt: Date.now(),
+  };
+  gateways.set(appUserId, entry);
+  startFleetLeaseKeepalive(appUserId, entry);
+  return toPublic(entry);
+}
+
 function updateHostedGateway(
   entry: Entry,
   capsule: NonNullable<HostStatusResponse["capsule"]>,
@@ -488,10 +676,52 @@ async function ensureHostedGateway(appUserId: string): Promise<PortalGateway> {
   return rememberHostedGateway(appUserId, result, false);
 }
 
+async function ensureFleetGateway(appUserId: string): Promise<PortalGateway> {
+  const stopping = hostedStops.get(appUserId);
+  if (stopping) await stopping;
+  const existingRequest = fleetEnsureRequests.get(appUserId);
+  if (existingRequest) return existingRequest;
+  const epoch = gatewayEpoch(appUserId);
+  const request = (async () => {
+    const fence = await ensureIbkrGatewayFleetFence(appUserId);
+    const response = await requestIbkrGatewayFleetHost<unknown>(
+      fence,
+      "ensure",
+      "POST",
+    );
+    if (gatewayEpoch(appUserId) !== epoch) {
+      throw new HttpError(
+        409,
+        "The IBKR Client Portal connection was cancelled.",
+        { code: "ibkr_portal_connect_cancelled", expose: true },
+      );
+    }
+    const result = parseHostResponse(HostEnsureResponseSchema, response.value);
+    return rememberFleetGateway(appUserId, response.fence, result, false);
+  })();
+  fleetEnsureRequests.set(appUserId, request);
+  const pending = hostedEnsureRequests.get(appUserId) ?? new Set();
+  pending.add(request);
+  hostedEnsureRequests.set(appUserId, pending);
+  try {
+    return await request;
+  } finally {
+    if (fleetEnsureRequests.get(appUserId) === request) {
+      fleetEnsureRequests.delete(appUserId);
+    }
+    pending.delete(request);
+    if (pending.size === 0) hostedEnsureRequests.delete(appUserId);
+  }
+}
+
 export async function ensureGateway(appUserId: string): Promise<PortalGateway> {
   const existing = gateways.get(appUserId);
   if (existing && isAlive(existing)) {
     return toPublic(existing);
+  }
+
+  if (isIbkrGatewayFleetEnabled()) {
+    return ensureFleetGateway(appUserId);
   }
 
   if (hostedConfig()) {
@@ -568,6 +798,49 @@ export async function refreshGateway(
   if (hostedStops.has(appUserId)) return null;
   const epoch = gatewayEpoch(appUserId);
   const entry = gateways.get(appUserId);
+  if (isIbkrGatewayFleetEnabled()) {
+    const fence = entry?.fleetFence ?? (await readIbkrGatewayFleetFence(appUserId));
+    if (!fence) return null;
+    let response: { fence: IbkrGatewayFence; value: unknown } | null = null;
+    try {
+      response = await requestIbkrGatewayFleetHost<unknown>(
+        fence,
+        "status",
+        "GET",
+      );
+    } catch (error) {
+      if (!(error instanceof HttpError) || error.statusCode !== 404) throw error;
+    }
+    if (gatewayEpoch(appUserId) !== epoch) return null;
+    if (!response) {
+      if (entry && gateways.get(appUserId) === entry) {
+        entry.status = "stopped";
+        gateways.delete(appUserId);
+        stopFleetLeaseKeepalive(appUserId);
+      }
+      return null;
+    }
+    const result = parseHostResponse(HostStatusResponseSchema, response.value);
+    if (!result.capsule) {
+      if (entry && gateways.get(appUserId) === entry) {
+        entry.status = "stopped";
+        gateways.delete(appUserId);
+        stopFleetLeaseKeepalive(appUserId);
+      }
+      return null;
+    }
+    const current = gateways.get(appUserId);
+    if (current?.fleetFence && isAlive(current)) {
+      current.fleetFence = response.fence;
+      return updateHostedGateway(current, result.capsule);
+    }
+    return rememberFleetGateway(
+      appUserId,
+      response.fence,
+      { capsule: result.capsule, targets: result.targets ?? HOSTED_TARGETS },
+      true,
+    );
+  }
   if ((!entry || !isAlive(entry)) && hostedConfig()) {
     const result = await readHostedGatewayStatus(appUserId);
     if (gatewayEpoch(appUserId) !== epoch) return null;
@@ -610,6 +883,40 @@ export async function stopGateway(appUserId: string): Promise<void> {
     return;
   }
   const entry = gateways.get(appUserId);
+  if (isIbkrGatewayFleetEnabled()) {
+    bumpGatewayEpoch(appUserId);
+    stopFleetLeaseKeepalive(appUserId);
+    if (entry) {
+      entry.status = "stopped";
+      if (gateways.get(appUserId) === entry) gateways.delete(appUserId);
+    }
+    const pending = [...(hostedEnsureRequests.get(appUserId) ?? [])];
+    const promise = (async () => {
+      await Promise.allSettled(pending);
+      const fence =
+        entry?.fleetFence ?? (await readIbkrGatewayFleetFence(appUserId));
+      if (!fence) return;
+      let currentFence = fence;
+      try {
+        const released = await requestIbkrGatewayFleetHost<unknown>(
+          fence,
+          "release",
+          "POST",
+        );
+        currentFence = released.fence;
+      } catch (error) {
+        if (!(error instanceof HttpError) || error.statusCode !== 404) throw error;
+      }
+      await releaseIbkrGatewayLease(currentFence);
+    })();
+    hostedStops.set(appUserId, promise);
+    const clear = (): void => {
+      if (hostedStops.get(appUserId) === promise) hostedStops.delete(appUserId);
+    };
+    void promise.then(clear, clear);
+    await promise;
+    return;
+  }
   if (entry?.hosted || (!entry && hostedConfig())) {
     bumpGatewayEpoch(appUserId);
     if (entry) {

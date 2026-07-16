@@ -3,16 +3,264 @@ import test from "node:test";
 
 import {
   decodeIbkrHostControlKey,
+  deriveIbkrHostControlKey,
   verifyIbkrHostControlRequest,
 } from "@workspace/ibkr-contracts/control-auth";
+import { db, usersTable } from "@workspace/db";
+import { withTestDb } from "@workspace/db/testing";
+
+import {
+  approveIbkrGatewayHost,
+  ensureIbkrGatewayBrokerConnection,
+  ensureIbkrGatewaySessionIdentity,
+  registerIbkrGatewayHost,
+  tryAcquireIbkrGatewayLease,
+} from "./ibkr-gateway-session-store";
+import { getIbkrClientPortalClient } from "./ibkr-client-runtime";
+import { runWithIbkrPortalUser } from "./ibkr-portal-context";
 
 import {
   ensureGateway,
   getGateway,
   markGatewayPaperAccountVerified,
+  prepareGatewayDataRequest,
   refreshGateway,
   stopGateway,
 } from "./ibkr-portal-gateway-manager";
+
+test("fleet mode routes every operation through the current signed generation fence", async () => {
+  await withTestDb(async () => {
+    const names = [
+      "IBKR_GATEWAY_FLEET_CONTROL_ROOT_KEY",
+      "IBKR_GATEWAY_FLEET_ENABLED",
+      "IBKR_SESSION_HOST_ENABLED",
+      "TRADING_MODE",
+    ] as const;
+    const previous = Object.fromEntries(
+      names.map((name) => [name, process.env[name]]),
+    );
+    const previousFetch = globalThis.fetch;
+    const hostId = "00000000-0000-4000-8000-000000000009";
+    const rootKey = Buffer.alloc(32, 19);
+    const hostKey = deriveIbkrHostControlKey(rootKey, hostId);
+    const sha = `sha256:${"9".repeat(64)}`;
+    const workloadIdentityDigest = "8".repeat(64);
+    const requests: Array<{
+      body: string;
+      headers: Record<string, string>;
+      method: string;
+      path: string;
+      redirect: RequestInit["redirect"];
+      signal: boolean;
+    }> = [];
+    let recoveryUserId: string | null = null;
+
+    process.env["IBKR_GATEWAY_FLEET_ENABLED"] = "1";
+    process.env["IBKR_GATEWAY_FLEET_CONTROL_ROOT_KEY"] =
+      rootKey.toString("base64url");
+    delete process.env["IBKR_SESSION_HOST_ENABLED"];
+    process.env["TRADING_MODE"] = "shadow";
+
+    const [user] = await db
+      .insert(usersTable)
+      .values({
+        email: "synthetic-manager-fleet@example.invalid",
+        passwordHash: "synthetic-unused-hash",
+      })
+      .returning({ id: usersTable.id });
+    assert.ok(user);
+    assert.ok(
+      await registerIbkrGatewayHost({
+        hostId,
+        workloadIdentityDigest,
+        controlOrigin: "https://host-nine.example.invalid",
+        imageDigest: sha,
+        runtimeSpecDigest: sha,
+        runtimeAttestationDigest: sha,
+        failureDomain: "synthetic-zone-nine",
+        measuredSlotCapacity: 1,
+      }),
+    );
+    assert.ok(
+      await approveIbkrGatewayHost({
+        hostId,
+        workloadIdentityDigest,
+        imageDigest: sha,
+        runtimeSpecDigest: sha,
+        runtimeAttestationDigest: sha,
+        admissionSlotCapacity: 1,
+      }),
+    );
+
+    globalThis.fetch = (async (input, init) => {
+      const url = new URL(String(input));
+      requests.push({
+        body: String(init?.body ?? ""),
+        headers: Object.fromEntries(new Headers(init?.headers).entries()),
+        method: String(init?.method ?? "GET"),
+        path: `${url.pathname}${url.search}`,
+        redirect: init?.redirect,
+        signal: init?.signal instanceof AbortSignal,
+      });
+      if (url.pathname.endsWith("/release")) {
+        return Response.json({ released: true });
+      }
+      if (url.pathname.endsWith("/status")) {
+        return Response.json({
+          capsule: {
+            loginCompletions: 2,
+            name: "pyrus-ibkr-slot-1",
+            status: "ready",
+          },
+          targets: {
+            cpg: { host: "127.0.0.1", port: 15009 },
+            console: { host: "127.0.0.1", port: 16089 },
+          },
+        });
+      }
+      if (url.pathname.endsWith("/data/cpg/v1/api/tickle")) {
+        return Response.json({ session: "synthetic-session" });
+      }
+      return Response.json({
+        capsule: {
+          loginCompletions: 1,
+          name: "pyrus-ibkr-slot-1",
+          status: "ready",
+        },
+        targets: {
+          cpg: { host: "127.0.0.1", port: 15000 },
+          console: { host: "127.0.0.1", port: 16080 },
+        },
+      });
+    }) as typeof fetch;
+
+    try {
+      const [gateway, concurrentGateway] = await Promise.all([
+        ensureGateway(user.id),
+        ensureGateway(user.id),
+      ]);
+      assert.deepEqual(concurrentGateway, gateway);
+      assert.equal(gateway.hosted, true);
+      assert.equal(gateway.recovered, false);
+      assert.equal("fleetFence" in gateway, false);
+      assert.equal(markGatewayPaperAccountVerified(user.id), true);
+      await runWithIbkrPortalUser(user.id, () =>
+        getIbkrClientPortalClient().tickleSession(),
+      );
+
+      const body = JSON.stringify({ synthetic: true });
+      const data = await prepareGatewayDataRequest({
+        appUserId: user.id,
+        body,
+        headers: { "content-type": "application/json" },
+        kind: "cpg",
+        method: "POST",
+        path: "/v1/api/tickle?probe=1",
+        transport: "http",
+      });
+      assert.equal(data.url.protocol, "https:");
+      assert.match(
+        data.url.pathname,
+        /^\/sessions\/[0-9a-f-]+\/generations\/1\/slots\/1\/data\/cpg\/v1\/api\/tickle$/,
+      );
+      assert.equal(data.url.search, "?probe=1");
+      assert.equal(
+        verifyIbkrHostControlRequest({
+          expectedHostId: hostId,
+          body,
+          headers: data.headers,
+          key: hostKey,
+          method: "POST",
+          path: `${data.url.pathname}${data.url.search}`,
+        }).valid,
+        true,
+      );
+
+      const websocket = await prepareGatewayDataRequest({
+        appUserId: user.id,
+        headers: {},
+        kind: "console",
+        method: "GET",
+        path: "/websockify?probe=2",
+        transport: "websocket",
+      });
+      assert.equal(websocket.url.protocol, "wss:");
+      assert.match(websocket.url.pathname, /\/data\/console\/websockify$/);
+
+      await stopGateway(user.id);
+      assert.equal(requests.length, 3);
+      for (const request of requests) {
+        assert.equal(
+          verifyIbkrHostControlRequest({
+            expectedHostId: hostId,
+            body: request.body,
+            headers: request.headers,
+            key: hostKey,
+            method: request.method,
+            path: request.path,
+          }).valid,
+          true,
+        );
+      }
+      assert.match(requests[0]!.path, /\/generations\/1\/slots\/1\/ensure$/);
+      assert.equal(requests[0]!.redirect, "error");
+      assert.equal(requests[0]!.signal, true);
+      assert.match(requests[1]!.path, /\/data\/cpg\/v1\/api\/tickle$/);
+      assert.equal(requests[1]!.body, "{}");
+      assert.equal(requests[1]!.redirect, "manual");
+      assert.match(requests[2]!.path, /\/generations\/1\/slots\/1\/release$/);
+      assert.equal(requests[2]!.redirect, "error");
+
+      const [recoveryUser] = await db
+        .insert(usersTable)
+        .values({
+          email: "synthetic-manager-recovery@example.invalid",
+          passwordHash: "synthetic-unused-hash",
+        })
+        .returning({ id: usersTable.id });
+      assert.ok(recoveryUser);
+      recoveryUserId = recoveryUser.id;
+      const connection = await ensureIbkrGatewayBrokerConnection({
+        appUserId: recoveryUser.id,
+        mode: "shadow",
+      });
+      assert.ok(connection);
+      assert.ok(
+        await ensureIbkrGatewaySessionIdentity({
+          appUserId: recoveryUser.id,
+          brokerConnectionId: connection.id,
+        }),
+      );
+      assert.equal(
+        (
+          await tryAcquireIbkrGatewayLease({
+            appUserId: recoveryUser.id,
+            brokerConnectionId: connection.id,
+          })
+        ).status,
+        "acquired",
+      );
+      const recovered = await refreshGateway(recoveryUser.id);
+      assert.equal(recovered?.recovered, true);
+      assert.equal(recovered?.port, 15009);
+      assert.equal(recovered?.proxyPort, 16089);
+      await stopGateway(recoveryUser.id);
+      assert.match(requests[3]!.path, /\/generations\/1\/slots\/1\/status$/);
+      assert.match(requests[4]!.path, /\/generations\/1\/slots\/1\/release$/);
+    } finally {
+      if (recoveryUserId) {
+        await stopGateway(recoveryUserId).catch(() => undefined);
+      }
+      await stopGateway(user.id).catch(() => undefined);
+      globalThis.fetch = previousFetch;
+      for (const name of names) {
+        const value = previous[name];
+        if (value === undefined) delete process.env[name];
+        else process.env[name] = value;
+      }
+    }
+  });
+});
 
 test("hosted IBKR mode provisions through the loopback session host", async () => {
   const previousEnabled = process.env["IBKR_SESSION_HOST_ENABLED"];
