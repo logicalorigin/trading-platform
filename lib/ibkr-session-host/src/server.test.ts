@@ -407,6 +407,10 @@ test("serves authenticated ensure/status/release responses without secrets", asy
       assert.deepEqual(await status.json(), {
         sessionId: SESSION_ID,
         capsule: { name: "pyrus-ibkr-slot-1", status: "ready" },
+        targets: {
+          cpg: { host: "127.0.0.1", port: 15000 },
+          console: { host: "127.0.0.1", port: 16080 },
+        },
       });
 
       const released = await fetch(

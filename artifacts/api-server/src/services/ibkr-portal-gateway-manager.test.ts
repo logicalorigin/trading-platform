@@ -26,6 +26,7 @@ import {
   prepareGatewayDataRequest,
   refreshGateway,
   stopGateway,
+  validateGatewayDataFence,
 } from "./ibkr-portal-gateway-manager";
 
 test("fleet mode routes every operation through the current signed generation fence", async () => {
@@ -144,6 +145,7 @@ test("fleet mode routes every operation through the current signed generation fe
       assert.equal(gateway.recovered, false);
       assert.equal("fleetFence" in gateway, false);
       assert.equal(markGatewayPaperAccountVerified(user.id), true);
+      await validateGatewayDataFence(user.id);
       await runWithIbkrPortalUser(user.id, () =>
         getIbkrClientPortalClient().tickleSession(),
       );

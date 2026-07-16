@@ -13,6 +13,7 @@ import {
   type IncomingMessage,
   type Server,
 } from "node:http";
+import { request as httpsRequest } from "node:https";
 import path from "node:path";
 import type { Duplex } from "node:stream";
 
@@ -41,7 +42,11 @@ import {
   IBKR_PORTAL_CLIENT_MOUNT,
   readPortalReadiness,
 } from "../services/ibkr-portal-session";
-import { getGateway } from "../services/ibkr-portal-gateway-manager";
+import {
+  getGateway,
+  prepareGatewayDataRequest,
+  validateGatewayDataFence,
+} from "../services/ibkr-portal-gateway-manager";
 import {
   IBKR_PORTAL_EMBED_COOKIE,
   issueIbkrPortalEmbedGrant,
@@ -535,6 +540,7 @@ async function proxyToGateway(req: Request, res: Response): Promise<void> {
 
 const GATEWAY_PROXY_MAX_RESPONSE_BYTES = 4 * 1024 * 1024;
 const GATEWAY_PROXY_TIMEOUT_MS = 15_000;
+const GATEWAY_WEBSOCKET_FENCE_INTERVAL_MS = 10_000;
 
 async function proxyToGatewayTarget(
   req: Request,
@@ -615,7 +621,6 @@ async function proxyToGatewayTarget(
     });
   }
   const outBody = encodeRequestBody(req);
-  const targetPort = target === "client" ? gateway.port : gateway.proxyPort;
   const targetOrigin =
     target === "client" ? gateway.origin : gateway.proxyOrigin;
 
@@ -627,7 +632,6 @@ async function proxyToGatewayTarget(
     tracePath === "client:/sso/Dispatcher"
       ? forwardedCookieNames(forwardHeaders)
       : undefined;
-  forwardHeaders["host"] = `127.0.0.1:${targetPort}`;
   if (target === "client") {
     if (req.headers.origin) forwardHeaders["origin"] = targetOrigin;
     if (req.headers.referer) {
@@ -645,6 +649,15 @@ async function proxyToGatewayTarget(
   if (outBody) {
     forwardHeaders["content-length"] = String(outBody.length);
   }
+  const prepared = await prepareGatewayDataRequest({
+    appUserId,
+    body: outBody,
+    headers: forwardHeaders,
+    kind: target === "client" ? "cpg" : "console",
+    method: req.method,
+    path: rest,
+    transport: "http",
+  });
 
   await new Promise<void>((resolve) => {
     // The response must be finalized exactly once. A client disconnect, an
@@ -672,14 +685,14 @@ async function proxyToGatewayTarget(
         }),
       );
 
-    const upstream = httpRequest(
+    const requestGateway =
+      prepared.url.protocol === "https:" ? httpsRequest : httpRequest;
+    const upstream = requestGateway(
+      prepared.url,
       {
         agent: false,
-        host: "127.0.0.1",
-        port: targetPort,
         method: req.method,
-        path: rest,
-        headers: forwardHeaders,
+        headers: prepared.headers,
       },
       (up) => {
         responseStarted = true;
@@ -953,28 +966,60 @@ async function proxyGatewayUpgrade(
   }
 
   const headers = filterIbkrGatewayRequestHeaders(request.headers);
-  headers["host"] = `127.0.0.1:${gateway.proxyPort}`;
   headers["connection"] = "Upgrade";
   headers["upgrade"] = "websocket";
+  const prepared = await prepareGatewayDataRequest({
+    appUserId: session.user.id,
+    headers,
+    kind: "console",
+    method: "GET",
+    path,
+    transport: "websocket",
+  });
 
   await new Promise<void>((resolve, reject) => {
-    const upstream = httpRequest({
-      host: "127.0.0.1",
-      port: gateway.proxyPort,
+    const upstreamUrl = new URL(prepared.url);
+    upstreamUrl.protocol =
+      prepared.url.protocol === "wss:" ? "https:" : "http:";
+    const requestGateway =
+      prepared.url.protocol === "wss:" ? httpsRequest : httpRequest;
+    const upstream = requestGateway(upstreamUrl, {
       method: "GET",
-      path,
-      headers,
+      headers: prepared.headers,
     });
     let upgraded = false;
     upstream.once("upgrade", (response, upstreamSocket, upstreamHead) => {
+      upstream.setTimeout(0);
       upgraded = true;
       writeUpgradeResponse(socket, response);
       if (upstreamHead.length > 0) socket.write(upstreamHead);
       if (clientHead.length > 0) upstreamSocket.write(clientHead);
       socket.on("error", () => upstreamSocket.destroy());
       upstreamSocket.on("error", () => socket.destroy());
-      socket.on("close", () => upstreamSocket.destroy());
-      upstreamSocket.on("close", () => socket.destroy());
+      let validatingFence = false;
+      const fenceTimer = setInterval(() => {
+        if (validatingFence) return;
+        validatingFence = true;
+        void validateGatewayDataFence(session.user.id)
+          .catch(() => {
+            upstreamSocket.destroy();
+            socket.destroy();
+          })
+          .finally(() => {
+            validatingFence = false;
+          });
+      }, GATEWAY_WEBSOCKET_FENCE_INTERVAL_MS);
+      fenceTimer.unref?.();
+      const closeClient = (): void => {
+        clearInterval(fenceTimer);
+        socket.destroy();
+      };
+      const closeUpstream = (): void => {
+        clearInterval(fenceTimer);
+        upstreamSocket.destroy();
+      };
+      socket.on("close", closeUpstream);
+      upstreamSocket.on("close", closeClient);
       socket.pipe(upstreamSocket).pipe(socket);
       resolve();
     });
@@ -986,6 +1031,9 @@ async function proxyGatewayUpgrade(
     socket.once("close", () => {
       if (!upgraded) upstream.destroy();
     });
+    upstream.setTimeout(GATEWAY_PROXY_TIMEOUT_MS, () =>
+      upstream.destroy(new Error("IBKR console WebSocket upgrade timed out.")),
+    );
     upstream.end();
   });
 }

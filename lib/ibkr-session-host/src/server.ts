@@ -408,6 +408,7 @@ async function proxyDataUpgrade(input: {
     });
     let upgraded = false;
     upstream.once("upgrade", (response, upstreamSocket, upstreamHead) => {
+      upstream.setTimeout(0);
       upgraded = true;
       writeDataUpgradeResponse(input.socket, response);
       if (upstreamHead.length > 0) input.socket.write(upstreamHead);
@@ -597,6 +598,24 @@ export function createSessionHostServer(
               : {}),
             ...(route.explicitSlot ? { slotNumber: route.slotNumber } : {}),
             capsule,
+            ...(capsule && options.target
+              ? {
+                  targets: {
+                    cpg: options.target(
+                      route.sessionId,
+                      route.generation,
+                      "cpg",
+                      route.slotNumber,
+                    ),
+                    console: options.target(
+                      route.sessionId,
+                      route.generation,
+                      "console",
+                      route.slotNumber,
+                    ),
+                  },
+                }
+              : {}),
           });
           return;
         }

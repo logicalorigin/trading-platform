@@ -519,6 +519,38 @@ export async function prepareGatewayClientRequest(
   };
 }
 
+export async function validateGatewayDataFence(appUserId: string): Promise<void> {
+  const entry = gateways.get(appUserId);
+  if (!entry || !isAlive(entry)) {
+    throw new HttpError(503, "IBKR Client Portal gateway is not running.", {
+      code: "ibkr_portal_gateway_not_running",
+      expose: true,
+    });
+  }
+  if (!entry.fleetFence) return;
+  const fence = await renewIbkrGatewayFleetFence(entry.fleetFence).catch(
+    (error: unknown) => {
+      if (
+        error instanceof HttpError &&
+        error.code === "ibkr_gateway_fence_stale" &&
+        gateways.get(appUserId) === entry
+      ) {
+        entry.status = "stopped";
+        gateways.delete(appUserId);
+        stopFleetLeaseKeepalive(appUserId);
+      }
+      throw error;
+    },
+  );
+  if (gateways.get(appUserId) !== entry) {
+    throw new HttpError(409, "The IBKR gateway request was cancelled.", {
+      code: "ibkr_portal_request_cancelled",
+      expose: true,
+    });
+  }
+  entry.fleetFence = fence;
+}
+
 async function requestHostedGatewayStatus(
   appUserId: string,
 ): Promise<HostStatusResponse | null> {
