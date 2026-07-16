@@ -643,6 +643,16 @@ function liveIbkrGatewayFenceWhere(fence: IbkrGatewayFence) {
   );
 }
 
+function cleanupIbkrGatewayFenceWhere(fence: IbkrGatewayFence) {
+  return and(
+    liveIbkrGatewayFenceWhere(fence),
+    inArray(ibkrGatewaySessionsTable.lifecycleState, [
+      "draining",
+      "quarantined",
+    ]),
+  );
+}
+
 export function currentIbkrGatewayFenceWhere(fence: IbkrGatewayFence) {
   return and(
     liveIbkrGatewayFenceWhere(fence),
@@ -757,6 +767,36 @@ export async function resolveCurrentIbkrGatewayPlacement(
   };
 }
 
+export async function resolveIbkrGatewayCleanupPlacement(
+  fence: IbkrGatewayFence,
+): Promise<IbkrGatewayPlacement | null> {
+  if (!isValidIbkrGatewayFence(fence)) return null;
+  const [placement] = await db
+    .select({
+      controlOrigin: ibkrGatewayHostsTable.controlOrigin,
+      hostId: ibkrGatewaySessionsTable.hostId,
+      imageDigest: ibkrGatewayHostsTable.imageDigest,
+      runtimeSpecDigest: ibkrGatewayHostsTable.runtimeSpecDigest,
+      sessionId: ibkrGatewaySessionsTable.id,
+      slotNumber: ibkrGatewaySessionsTable.slotNumber,
+    })
+    .from(ibkrGatewaySessionsTable)
+    .innerJoin(
+      ibkrGatewayHostsTable,
+      eq(ibkrGatewayHostsTable.id, ibkrGatewaySessionsTable.hostId),
+    )
+    .where(cleanupIbkrGatewayFenceWhere(fence))
+    .limit(1);
+  if (!placement || !placement.hostId || placement.slotNumber === null) {
+    return null;
+  }
+  return {
+    ...placement,
+    hostId: placement.hostId,
+    slotNumber: placement.slotNumber,
+  };
+}
+
 export async function renewIbkrGatewayLease(
   fence: IbkrGatewayFence,
 ): Promise<IbkrGatewayFence | null> {
@@ -769,6 +809,20 @@ export async function renewIbkrGatewayLease(
       updatedAt: sql`now()`,
     })
     .where(currentIbkrGatewayFenceWhere(fence))
+    .returning();
+  return renewed ? toFence(renewed) : null;
+}
+
+export async function renewIbkrGatewayCleanupLease(
+  fence: IbkrGatewayFence,
+): Promise<IbkrGatewayFence | null> {
+  if (!isValidIbkrGatewayFence(fence)) return null;
+  const [renewed] = await db
+    .update(ibkrGatewaySessionsTable)
+    .set({
+      leaseExpiresAt: SESSION_LEASE_INTERVAL_SQL,
+    })
+    .where(cleanupIbkrGatewayFenceWhere(fence))
     .returning();
   return renewed ? toFence(renewed) : null;
 }
@@ -791,12 +845,7 @@ export async function releaseIbkrGatewayLease(
     })
     .where(
       and(
-        liveIbkrGatewayFenceWhere(fence),
-        inArray(ibkrGatewaySessionsTable.lifecycleState, [
-          ...ROUTABLE_LIFECYCLE_STATES,
-          "draining",
-          "quarantined",
-        ]),
+        cleanupIbkrGatewayFenceWhere(fence),
         lt(ibkrGatewaySessionsTable.generation, POSTGRES_INTEGER_MAX),
       ),
     )

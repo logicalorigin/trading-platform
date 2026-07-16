@@ -24,6 +24,7 @@ import { HttpError } from "../lib/errors";
 import {
   type IbkrGatewayFence,
   releaseIbkrGatewayLease,
+  transitionIbkrGatewayLifecycle,
 } from "./ibkr-gateway-session-store";
 import {
   ensureIbkrGatewayFleetFence,
@@ -371,6 +372,14 @@ const HostStatusResponseSchema = z.object({
   capsule: HostCapsuleSchema.nullable(),
   targets: HostTargetsSchema.optional(),
 });
+const HostReleaseResponseSchema = z
+  .object({
+    sessionId: z.string().uuid(),
+    generation: z.number().int().min(0).max(2_147_483_647),
+    slotNumber: z.number().int().min(1).max(20),
+    released: z.literal(true),
+  })
+  .strict();
 
 type HostEnsureResponse = z.infer<typeof HostEnsureResponseSchema>;
 type HostStatusResponse = z.infer<typeof HostStatusResponseSchema>;
@@ -719,7 +728,6 @@ async function ensureFleetGateway(appUserId: string): Promise<PortalGateway> {
     const response = await requestIbkrGatewayFleetHost<unknown>(
       fence,
       "ensure",
-      "POST",
     );
     if (gatewayEpoch(appUserId) !== epoch) {
       throw new HttpError(
@@ -838,7 +846,6 @@ export async function refreshGateway(
       response = await requestIbkrGatewayFleetHost<unknown>(
         fence,
         "status",
-        "GET",
       );
     } catch (error) {
       if (!(error instanceof HttpError) || error.statusCode !== 404) throw error;
@@ -928,18 +935,47 @@ export async function stopGateway(appUserId: string): Promise<void> {
       const fence =
         entry?.fleetFence ?? (await readIbkrGatewayFleetFence(appUserId));
       if (!fence) return;
+      if (!(await transitionIbkrGatewayLifecycle(fence, "draining"))) {
+        throw new HttpError(
+          409,
+          "The IBKR gateway placement is no longer current.",
+          { code: "ibkr_gateway_fence_stale", expose: true },
+        );
+      }
       let currentFence = fence;
       try {
         const released = await requestIbkrGatewayFleetHost<unknown>(
           fence,
           "release",
-          "POST",
         );
+        const receipt = parseHostResponse(
+          HostReleaseResponseSchema,
+          released.value,
+        );
+        if (
+          receipt.sessionId !== released.fence.sessionId ||
+          receipt.generation !== released.fence.generation ||
+          receipt.slotNumber !== released.fence.slotNumber
+        ) {
+          throw new HttpError(
+            502,
+            "The IBKR session host returned an invalid response.",
+            { code: "ibkr_session_host_response_invalid", expose: false },
+          );
+        }
         currentFence = released.fence;
       } catch (error) {
-        if (!(error instanceof HttpError) || error.statusCode !== 404) throw error;
+        await transitionIbkrGatewayLifecycle(fence, "quarantined");
+        throw error;
       }
-      await releaseIbkrGatewayLease(currentFence);
+      if (!(await releaseIbkrGatewayLease(currentFence))) {
+        await transitionIbkrGatewayLifecycle(fence, "quarantined");
+        throw new HttpError(
+          409,
+          "The IBKR gateway cleanup could not be committed.",
+          { code: "ibkr_gateway_cleanup_uncommitted", expose: true },
+        );
+      }
     })();
     hostedStops.set(appUserId, promise);
     const clear = (): void => {

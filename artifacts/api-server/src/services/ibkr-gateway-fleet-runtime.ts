@@ -11,7 +11,9 @@ import {
   type IbkrGatewayFence,
   readCurrentIbkrGatewayFence,
   readIbkrGatewayBrokerConnection,
+  renewIbkrGatewayCleanupLease,
   renewIbkrGatewayLease,
+  resolveIbkrGatewayCleanupPlacement,
   resolveCurrentIbkrGatewayPlacement,
   tryAcquireIbkrGatewayLease,
 } from "./ibkr-gateway-session-store";
@@ -88,7 +90,10 @@ export async function ensureIbkrGatewayFleetFence(
   return acquired.fence;
 }
 
-async function currentFleetContext(fence: IbkrGatewayFence): Promise<{
+async function fleetContext(
+  fence: IbkrGatewayFence,
+  authority: "cleanup" | "traffic" = "traffic",
+): Promise<{
   fence: IbkrGatewayFence;
   origin: string;
   rootKey: Buffer;
@@ -100,7 +105,10 @@ async function currentFleetContext(fence: IbkrGatewayFence): Promise<{
       expose: true,
     });
   }
-  const renewed = await renewIbkrGatewayLease(fence);
+  const renewed =
+    authority === "cleanup"
+      ? await renewIbkrGatewayCleanupLease(fence)
+      : await renewIbkrGatewayLease(fence);
   if (!renewed) {
     throw new HttpError(
       409,
@@ -111,7 +119,10 @@ async function currentFleetContext(fence: IbkrGatewayFence): Promise<{
       },
     );
   }
-  const placement = await resolveCurrentIbkrGatewayPlacement(renewed);
+  const placement =
+    authority === "cleanup"
+      ? await resolveIbkrGatewayCleanupPlacement(renewed)
+      : await resolveCurrentIbkrGatewayPlacement(renewed);
   if (!placement || placement.hostId !== renewed.hostId) {
     throw new HttpError(
       409,
@@ -128,7 +139,7 @@ async function currentFleetContext(fence: IbkrGatewayFence): Promise<{
 export async function renewIbkrGatewayFleetFence(
   fence: IbkrGatewayFence,
 ): Promise<IbkrGatewayFence> {
-  return (await currentFleetContext(fence)).fence;
+  return (await fleetContext(fence)).fence;
 }
 
 function fleetRequestPath(fence: IbkrGatewayFence, suffix: string): string {
@@ -178,9 +189,12 @@ async function readFleetJson<T>(response: Response): Promise<T> {
 export async function requestIbkrGatewayFleetHost<T>(
   fence: IbkrGatewayFence,
   action: "ensure" | "release" | "status",
-  method: "GET" | "POST",
 ): Promise<{ fence: IbkrGatewayFence; value: T }> {
-  const current = await currentFleetContext(fence);
+  const method = action === "status" ? "GET" : "POST";
+  const current = await fleetContext(
+    fence,
+    action === "release" ? "cleanup" : "traffic",
+  );
   const path = fleetRequestPath(current.fence, `/${action}`);
   const key = deriveIbkrHostControlKey(current.rootKey, current.fence.hostId);
   let response: Response;
@@ -227,7 +241,7 @@ export async function prepareIbkrGatewayFleetDataRequest(input: {
   headers: Record<string, string | string[]>;
   url: URL;
 }> {
-  const current = await currentFleetContext(input.fence);
+  const current = await fleetContext(input.fence);
   const path = fleetRequestPath(
     current.fence,
     `/data/${input.kind}${normalizeIbkrGatewayPath(input.path)}`,

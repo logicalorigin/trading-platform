@@ -21,7 +21,9 @@ import {
   readCurrentIbkrGatewayFence,
   registerIbkrGatewayHost,
   releaseIbkrGatewayLease,
+  renewIbkrGatewayCleanupLease,
   renewIbkrGatewayLease,
+  resolveIbkrGatewayCleanupPlacement,
   resolveCurrentIbkrGatewayPlacement,
   transitionIbkrGatewayLifecycle,
   tryAcquireIbkrGatewayLease,
@@ -395,6 +397,10 @@ test("draining blocks new placement while quarantine synchronously fences existi
     assert.equal(await readCurrentIbkrGatewayFence(identityA), null);
     assert.equal(await renewIbkrGatewayLease(first.fence), null);
 
+    assert.equal(
+      await transitionIbkrGatewayLifecycle(second.fence, "draining"),
+      true,
+    );
     assert.equal(await releaseIbkrGatewayLease(second.fence), true);
     const replacement = await tryAcquireIbkrGatewayLease(identityA);
     assert.equal(replacement.status, "acquired");
@@ -455,6 +461,8 @@ test("lifecycle transitions are ordered, idempotent, and exact-generation fenced
       await transitionIbkrGatewayLifecycle(first.fence, "authenticated"),
       false,
     );
+    assert.equal(await renewIbkrGatewayCleanupLease(first.fence), null);
+    assert.equal(await releaseIbkrGatewayLease(first.fence), false);
     for (const state of [
       "login_required",
       "verifying",
@@ -506,6 +514,28 @@ test("lifecycle transitions are ordered, idempotent, and exact-generation fenced
     }
     assert.equal(await assertCurrentIbkrGatewayFence(first.fence), false);
     assert.equal(await renewIbkrGatewayLease(first.fence), null);
+    const [drainingBeforeCleanup] = await db
+      .select()
+      .from(ibkrGatewaySessionsTable)
+      .where(eq(ibkrGatewaySessionsTable.id, session.id))
+      .limit(1);
+    assert.ok(drainingBeforeCleanup);
+    assert.ok(await renewIbkrGatewayCleanupLease(first.fence));
+    assert.ok(await resolveIbkrGatewayCleanupPlacement(first.fence));
+    const [drainingAfterCleanup] = await db
+      .select()
+      .from(ibkrGatewaySessionsTable)
+      .where(eq(ibkrGatewaySessionsTable.id, session.id))
+      .limit(1);
+    assert.ok(drainingAfterCleanup);
+    assert.equal(
+      drainingAfterCleanup.lastActivityAt.getTime(),
+      drainingBeforeCleanup.lastActivityAt.getTime(),
+    );
+    assert.equal(
+      drainingAfterCleanup.updatedAt.getTime(),
+      drainingBeforeCleanup.updatedAt.getTime(),
+    );
 
     assert.equal(await releaseIbkrGatewayLease(first.fence), true);
     const replacement = await tryAcquireIbkrGatewayLease(identity);

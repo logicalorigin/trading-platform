@@ -6,14 +6,17 @@ import {
   deriveIbkrHostControlKey,
   verifyIbkrHostControlRequest,
 } from "@workspace/ibkr-contracts/control-auth";
-import { db, usersTable } from "@workspace/db";
+import { db, ibkrGatewaySessionsTable, usersTable } from "@workspace/db";
 import { withTestDb } from "@workspace/db/testing";
+import { eq } from "drizzle-orm";
 
 import {
   approveIbkrGatewayHost,
   ensureIbkrGatewayBrokerConnection,
   ensureIbkrGatewaySessionIdentity,
+  readCurrentIbkrGatewayFence,
   registerIbkrGatewayHost,
+  transitionIbkrGatewayLifecycle,
   tryAcquireIbkrGatewayLease,
 } from "./ibkr-gateway-session-store";
 import { getIbkrClientPortalClient } from "./ibkr-client-runtime";
@@ -58,6 +61,11 @@ test("fleet mode routes every operation through the current signed generation fe
       signal: boolean;
     }> = [];
     let recoveryUserId: string | null = null;
+    const releaseFailureModes = new Map<
+      string,
+      "mismatched_receipt" | "not_found" | "released_false"
+    >();
+    const releaseFailureUserIds: string[] = [];
 
     process.env["IBKR_GATEWAY_FLEET_ENABLED"] = "1";
     process.env["IBKR_GATEWAY_FLEET_CONTROL_ROOT_KEY"] =
@@ -84,7 +92,7 @@ test("fleet mode routes every operation through the current signed generation fe
         runtimeSpecDigest: sha,
         runtimeAttestationDigest: sha,
         failureDomain: "synthetic-zone-nine",
-        measuredSlotCapacity: 1,
+        measuredSlotCapacity: 3,
       }),
     );
     assert.ok(
@@ -94,7 +102,7 @@ test("fleet mode routes every operation through the current signed generation fe
         imageDigest: sha,
         runtimeSpecDigest: sha,
         runtimeAttestationDigest: sha,
-        admissionSlotCapacity: 1,
+        admissionSlotCapacity: 3,
       }),
     );
 
@@ -109,7 +117,33 @@ test("fleet mode routes every operation through the current signed generation fe
         signal: init?.signal instanceof AbortSignal,
       });
       if (url.pathname.endsWith("/release")) {
-        return Response.json({ released: true });
+        const releaseRoute = url.pathname.match(
+          /^\/sessions\/([^/]+)\/generations\/(\d+)\/slots\/(\d+)\/release$/,
+        );
+        assert.ok(releaseRoute);
+        const receipt = {
+          sessionId: releaseRoute[1]!,
+          generation: Number(releaseRoute[2]!),
+          slotNumber: Number(releaseRoute[3]!),
+        };
+        const failureMode = releaseFailureModes.get(receipt.sessionId);
+        if (failureMode === "released_false") {
+          return Response.json({ ...receipt, released: false });
+        }
+        if (failureMode === "mismatched_receipt") {
+          return Response.json({
+            ...receipt,
+            generation: receipt.generation + 1,
+            released: true,
+          });
+        }
+        if (failureMode === "not_found") {
+          return Response.json(
+            { error: { code: "not_found" } },
+            { status: 404 },
+          );
+        }
+        return Response.json({ ...receipt, released: true });
       }
       if (url.pathname.endsWith("/status")) {
         return Response.json({
@@ -149,6 +183,26 @@ test("fleet mode routes every operation through the current signed generation fe
       assert.equal(gateway.hosted, true);
       assert.equal(gateway.recovered, false);
       assert.equal("fleetFence" in gateway, false);
+      const primaryConnection = await ensureIbkrGatewayBrokerConnection({
+        appUserId: user.id,
+        mode: "shadow",
+      });
+      assert.ok(primaryConnection);
+      const primaryFence = await readCurrentIbkrGatewayFence({
+        appUserId: user.id,
+        brokerConnectionId: primaryConnection.id,
+      });
+      assert.ok(primaryFence);
+      for (const state of [
+        "login_required",
+        "verifying",
+        "authenticated",
+      ] as const) {
+        assert.equal(
+          await transitionIbkrGatewayLifecycle(primaryFence, state),
+          true,
+        );
+      }
       assert.equal(markGatewayPaperAccountVerified(user.id), true);
       await validateGatewayDataFence(user.id);
       await runWithIbkrPortalUser(user.id, () =>
@@ -206,6 +260,18 @@ test("fleet mode routes every operation through the current signed generation fe
       assert.match(websocket.url.pathname, /\/data\/console\/websockify$/);
 
       await stopGateway(user.id);
+      const [releasedSession] = await db
+        .select()
+        .from(ibkrGatewaySessionsTable)
+        .where(eq(ibkrGatewaySessionsTable.id, primaryFence.sessionId))
+        .limit(1);
+      assert.ok(releasedSession);
+      assert.equal(releasedSession.lifecycleState, "released");
+      assert.equal(releasedSession.generation, primaryFence.generation + 1);
+      assert.equal(releasedSession.hostId, null);
+      assert.equal(releasedSession.slotNumber, null);
+      assert.equal(releasedSession.leaseHolderId, null);
+      assert.equal(releasedSession.leaseExpiresAt, null);
       assert.equal(requests.length, 3);
       for (const request of requests) {
         assert.equal(
@@ -276,7 +342,79 @@ test("fleet mode routes every operation through the current signed generation fe
       await stopGateway(recoveryUser.id);
       assert.match(requests[3]!.path, /\/generations\/1\/slots\/1\/status$/);
       assert.match(requests[4]!.path, /\/generations\/1\/slots\/1\/release$/);
+
+      for (const [index, failureMode] of (
+        ["released_false", "mismatched_receipt", "not_found"] as const
+      ).entries()) {
+        const [releaseFailureUser] = await db
+          .insert(usersTable)
+          .values({
+            email: `synthetic-manager-release-failure-${index}@example.invalid`,
+            passwordHash: "synthetic-unused-hash",
+          })
+          .returning({ id: usersTable.id });
+        assert.ok(releaseFailureUser);
+        releaseFailureUserIds.push(releaseFailureUser.id);
+        await ensureGateway(releaseFailureUser.id);
+        const releaseFailureConnection =
+          await ensureIbkrGatewayBrokerConnection({
+            appUserId: releaseFailureUser.id,
+            mode: "shadow",
+          });
+        assert.ok(releaseFailureConnection);
+        const releaseFailureFence = await readCurrentIbkrGatewayFence({
+          appUserId: releaseFailureUser.id,
+          brokerConnectionId: releaseFailureConnection.id,
+        });
+        assert.ok(releaseFailureFence);
+        for (const state of [
+          "login_required",
+          "verifying",
+          "authenticated",
+        ] as const) {
+          assert.equal(
+            await transitionIbkrGatewayLifecycle(releaseFailureFence, state),
+            true,
+          );
+        }
+        releaseFailureModes.set(releaseFailureFence.sessionId, failureMode);
+        const expectedCode =
+          failureMode === "not_found"
+            ? "ibkr_session_host_control_failed"
+            : "ibkr_session_host_response_invalid";
+        await assert.rejects(
+          () => stopGateway(releaseFailureUser.id),
+          (error: unknown) =>
+            typeof error === "object" &&
+            error !== null &&
+            "code" in error &&
+            error.code === expectedCode,
+        );
+        const [quarantinedSession] = await db
+          .select()
+          .from(ibkrGatewaySessionsTable)
+          .where(eq(ibkrGatewaySessionsTable.id, releaseFailureFence.sessionId))
+          .limit(1);
+        assert.ok(quarantinedSession);
+        assert.equal(quarantinedSession.lifecycleState, "quarantined");
+        assert.equal(
+          quarantinedSession.generation,
+          releaseFailureFence.generation,
+        );
+        assert.equal(quarantinedSession.hostId, releaseFailureFence.hostId);
+        assert.equal(
+          quarantinedSession.slotNumber,
+          releaseFailureFence.slotNumber,
+        );
+        assert.equal(
+          quarantinedSession.leaseHolderId,
+          releaseFailureFence.leaseHolderId,
+        );
+      }
     } finally {
+      for (const releaseFailureUserId of releaseFailureUserIds) {
+        await stopGateway(releaseFailureUserId).catch(() => undefined);
+      }
       if (recoveryUserId) {
         await stopGateway(recoveryUserId).catch(() => undefined);
       }
