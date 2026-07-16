@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   decodeIbkrHostControlKey,
+  deriveIbkrHostControlKey,
   signIbkrHostControlRequest,
   verifyIbkrHostControlRequest,
 } from "@workspace/ibkr-contracts/control-auth";
@@ -116,4 +117,15 @@ test("loads only a complete canonical signed host identity", () => {
   ]) {
     assert.throws(() => loadIbkrHostControlIdentity(env), CapsuleError);
   }
+});
+
+test("derives a distinct control key for every registered host", () => {
+  const first = deriveIbkrHostControlKey(KEY, HOST_ID);
+  const repeated = deriveIbkrHostControlKey(KEY, HOST_ID);
+  const second = deriveIbkrHostControlKey(KEY, OTHER_HOST_ID);
+
+  assert.equal(first.byteLength, 32);
+  assert.deepEqual(first, repeated);
+  assert.notDeepEqual(first, second);
+  assert.notDeepEqual(first, KEY);
 });

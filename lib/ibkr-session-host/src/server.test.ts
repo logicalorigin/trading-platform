@@ -1,5 +1,10 @@
 import assert from "node:assert/strict";
+import {
+  createServer as createHttpServer,
+  request as httpRequest,
+} from "node:http";
 import type { AddressInfo } from "node:net";
+import type { Duplex } from "node:stream";
 import test from "node:test";
 
 import {
@@ -207,6 +212,168 @@ test("accepts one signed host-bound request and rejects its replay", async () =>
     await new Promise<void>((resolve, reject) => {
       server.close((error) => (error ? reject(error) : resolve()));
     });
+  }
+});
+
+test("proxies a signed generation-fenced CPG data request", async () => {
+  const key = decodeIbkrHostControlKey(
+    Buffer.alloc(32, 13).toString("base64url"),
+  )!;
+  const hostId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+  const upstream = createHttpServer((request, response) => {
+    const chunks: Buffer[] = [];
+    request.on("data", (chunk: Buffer) => chunks.push(chunk));
+    request.on("end", () => {
+      response.setHeader("content-type", "application/json");
+      response.end(
+        JSON.stringify({
+          authorization: request.headers.authorization ?? null,
+          body: Buffer.concat(chunks).toString("utf8"),
+          controlHost: request.headers["x-pyrus-control-host"] ?? null,
+          url: request.url,
+        }),
+      );
+    });
+  });
+  await new Promise<void>((resolve) =>
+    upstream.listen(0, "127.0.0.1", resolve),
+  );
+  const upstreamPort = (upstream.address() as AddressInfo).port;
+  const resolutions: Array<[string, number, number, string]> = [];
+  const server = createSessionHostServer({
+    controlIdentity: { hostId, key },
+    readiness: () => ({ ready: true }),
+    resolveTarget: async (sessionId, generation, slotNumber, kind) => {
+      resolutions.push([sessionId, generation, slotNumber, kind]);
+      return { host: "127.0.0.1", port: upstreamPort };
+    },
+    snapshot: () => ({
+      mode: "paper",
+      capacity: { max: 1, active: 1 },
+    }),
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const { port } = server.address() as AddressInfo;
+    const path =
+      `/sessions/${SESSION_ID}/generations/7/slots/1/data/cpg` +
+      "/v1/api/tickle?probe=1";
+    const body = JSON.stringify({ tickle: true });
+    const headers = signIbkrHostControlRequest({
+      body,
+      hostId,
+      key,
+      method: "POST",
+      path,
+    });
+    const response = await fetch(`http://127.0.0.1:${port}${path}`, {
+      body,
+      headers: { ...headers, "content-type": "application/json" },
+      method: "POST",
+    });
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), {
+      authorization: null,
+      body,
+      controlHost: null,
+      url: "/v1/api/tickle?probe=1",
+    });
+    assert.deepEqual(resolutions, [[SESSION_ID, 7, 1, "cpg"]]);
+  } finally {
+    await Promise.all([
+      new Promise<void>((resolve, reject) =>
+        server.close((error) => (error ? reject(error) : resolve())),
+      ),
+      new Promise<void>((resolve, reject) =>
+        upstream.close((error) => (error ? reject(error) : resolve())),
+      ),
+    ]);
+  }
+});
+
+test("proxies a signed generation-fenced console WebSocket", async () => {
+  const key = decodeIbkrHostControlKey(
+    Buffer.alloc(32, 15).toString("base64url"),
+  )!;
+  const hostId = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
+  let upstreamUrl = "";
+  let upstreamAuthorization: string | undefined;
+  const upgradedSockets: Duplex[] = [];
+  const upstream = createHttpServer();
+  upstream.on("upgrade", (request, socket) => {
+    upgradedSockets.push(socket);
+    upstreamUrl = request.url ?? "";
+    upstreamAuthorization = request.headers.authorization;
+    socket.write(
+      "HTTP/1.1 101 Switching Protocols\r\n" +
+        "Connection: Upgrade\r\nUpgrade: websocket\r\n\r\n",
+    );
+    socket.on("data", (chunk) => socket.write(chunk));
+  });
+  await new Promise<void>((resolve) =>
+    upstream.listen(0, "127.0.0.1", resolve),
+  );
+  const upstreamPort = (upstream.address() as AddressInfo).port;
+  const server = createSessionHostServer({
+    controlIdentity: { hostId, key },
+    readiness: () => ({ ready: true }),
+    resolveTarget: async () => ({ host: "127.0.0.1", port: upstreamPort }),
+    snapshot: () => ({
+      mode: "paper",
+      capacity: { max: 1, active: 1 },
+    }),
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const { port } = server.address() as AddressInfo;
+    const path =
+      `/sessions/${SESSION_ID}/generations/9/slots/1/data/console` +
+      "/websockify?probe=1";
+    const headers = signIbkrHostControlRequest({
+      hostId,
+      key,
+      method: "GET",
+      path,
+    });
+    await new Promise<void>((resolve, reject) => {
+      const request = httpRequest({
+        headers: {
+          ...headers,
+          connection: "Upgrade",
+          upgrade: "websocket",
+        },
+        host: "127.0.0.1",
+        method: "GET",
+        path,
+        port,
+      });
+      request.once("upgrade", (_response, socket) => {
+        socket.once("data", (chunk) => {
+          try {
+            assert.equal(chunk.toString(), "synthetic-frame");
+            socket.destroy();
+            resolve();
+          } catch (error) {
+            reject(error);
+          }
+        });
+        socket.write("synthetic-frame");
+      });
+      request.once("response", (response) => {
+        response.resume();
+        reject(new Error(`unexpected response ${response.statusCode}`));
+      });
+      request.once("error", reject);
+      request.end();
+    });
+    assert.equal(upstreamUrl, "/websockify?probe=1");
+    assert.equal(upstreamAuthorization, undefined);
+  } finally {
+    for (const socket of upgradedSockets) socket.destroy();
+    await Promise.all([
+      new Promise<void>((resolve) => server.close(() => resolve())),
+      new Promise<void>((resolve) => upstream.close(() => resolve())),
+    ]);
   }
 });
 

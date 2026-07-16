@@ -37,6 +37,12 @@ async function main(): Promise<void> {
     releaseSession: (sessionId, generation, slotNumber) =>
       fleet.release(sessionId, generation, slotNumber),
     readiness: () => checkCapsuleRuntime(execFileCommandRunner, config),
+    resolveTarget: async (sessionId, generation, slotNumber, kind) => {
+      if (!(await fleet.status(sessionId, generation, slotNumber))) {
+        throw new CapsuleError("session_not_found", "IBKR session not found.");
+      }
+      return fleet.getTarget(sessionId, generation, slotNumber, kind);
+    },
     snapshot: () => fleet.snapshot(),
     statusSession: (sessionId, generation, slotNumber) =>
       fleet.status(sessionId, generation, slotNumber),

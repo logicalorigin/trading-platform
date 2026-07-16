@@ -96,6 +96,18 @@ export function decodeIbkrHostControlKey(value: string): Buffer | null {
     : null;
 }
 
+export function deriveIbkrHostControlKey(
+  rootKey: Uint8Array,
+  hostId: string,
+): Buffer {
+  if (!isValidKey(rootKey) || !HOST_ID_PATTERN.test(hostId)) {
+    throw new Error("Invalid IBKR host control key derivation input.");
+  }
+  return createHmac("sha256", rootKey)
+    .update(`PYRUS-IBKR-HOST-CONTROL-KEY-V1\0${hostId}`)
+    .digest();
+}
+
 export function signIbkrHostControlRequest(
   input: SignInput,
 ): IbkrHostControlHeaders {
