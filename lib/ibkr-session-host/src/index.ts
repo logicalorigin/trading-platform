@@ -1,10 +1,12 @@
 import {
   CapsuleError,
   CapsuleManager,
+  capsuleTargetForSlot,
   checkCapsuleRuntime,
   execFileCommandRunner,
   loadSessionHostConfig,
 } from "./capsule";
+import { CapsuleFleetManager } from "./fleet";
 import {
   createCapsuleRelayServer,
   listenCapsuleRelay,
@@ -13,23 +15,48 @@ import { createSessionHostServer } from "./server";
 
 async function main(): Promise<void> {
   const config = loadSessionHostConfig();
-  const manager = new CapsuleManager(config, execFileCommandRunner);
+  const fleet = new CapsuleFleetManager(
+    config.capacity,
+    (slotNumber) =>
+      new CapsuleManager(
+        config,
+        execFileCommandRunner,
+        undefined,
+        slotNumber,
+      ),
+  );
   const readiness = await checkCapsuleRuntime(execFileCommandRunner, config);
-  const cpgRelay = createCapsuleRelayServer(() => manager.getRelayTarget("cpg"));
-  const consoleRelay = createCapsuleRelayServer(() => manager.getRelayTarget("console"));
+  const relays = Array.from({ length: config.capacity }, (_, index) => {
+    const slotNumber = index + 1;
+    return (["cpg", "console"] as const).map((kind) => ({
+      kind,
+      server: createCapsuleRelayServer(() =>
+        fleet.getRelayTarget(slotNumber, kind),
+      ),
+      slotNumber,
+    }));
+  }).flat();
   const server = createSessionHostServer({
     controlToken: process.env["IBKR_SESSION_HOST_CONTROL_TOKEN"],
-    ensureSession: (sessionId) => manager.ensure(sessionId),
-    releaseSession: (sessionId) => manager.release(sessionId),
+    ensureSession: (sessionId, slotNumber) =>
+      fleet.ensure(sessionId, slotNumber),
+    releaseSession: (sessionId, slotNumber) =>
+      fleet.release(sessionId, slotNumber),
     readiness: () => checkCapsuleRuntime(execFileCommandRunner, config),
-    snapshot: () => manager.snapshot(),
-    statusSession: (sessionId) => manager.status(sessionId),
-    target: (sessionId, kind) => manager.getTarget(sessionId, kind),
+    snapshot: () => fleet.snapshot(),
+    statusSession: (sessionId, slotNumber) =>
+      fleet.status(sessionId, slotNumber),
+    target: (sessionId, kind, slotNumber) =>
+      fleet.getTarget(sessionId, slotNumber, kind),
   });
 
   await Promise.all([
-    listenCapsuleRelay(cpgRelay, 15000),
-    listenCapsuleRelay(consoleRelay, 16080),
+    ...relays.map(({ kind, server: relay, slotNumber }) =>
+      listenCapsuleRelay(
+        relay,
+        capsuleTargetForSlot(slotNumber, kind).port,
+      ),
+    ),
     new Promise<void>((resolve, reject) => {
       server.once("error", reject);
       server.listen(config.port, config.bindHost, () => {
@@ -43,8 +70,7 @@ async function main(): Promise<void> {
   );
 
   const shutdown = (): void => {
-    cpgRelay.close();
-    consoleRelay.close();
+    for (const relay of relays) relay.server.close();
     server.close(() => process.exit(0));
   };
   process.once("SIGINT", shutdown);

@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 export type SessionHostConfig = {
   bindHost: "127.0.0.1";
   capsuleImage: string;
-  capacity: 1;
+  capacity: number;
   dockerBinary: "docker";
   mode: "paper";
   port: number;
@@ -40,7 +40,7 @@ export type CapsuleTargetKind = "cpg" | "console";
 
 export type CapsuleTarget = {
   host: "127.0.0.1";
-  port: 15000 | 16080;
+  port: number;
 };
 
 export type CapsuleRelayTarget = {
@@ -235,8 +235,7 @@ export class CapsuleError extends Error {
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const SESSION_HASH_PATTERN = /^[a-f0-9]{24}$/;
-const CAPSULE_SLOT_NAME = "pyrus-ibkr-slot-1";
-const CAPSULE_NETWORK_NAME = "pyrus-ibkr-capsule-net";
+const MAX_HOST_CAPACITY = 20;
 const CAPSULE_NETWORK_LABEL = "pyrus.ibkr.network";
 const CAPSULE_NETWORK_ICC_OPTION =
   "com.docker.network.bridge.enable_icc";
@@ -255,10 +254,10 @@ const CAPSULE_READY_INTERVAL_MS = 1_000;
 // hundreds of restart/login cycles. Persist a counter only if measured usage
 // can exceed this bounded Docker-log window.
 const CAPSULE_LOG_TAIL_LINES = 1_000;
-const CAPSULE_TARGETS = {
-  cpg: { host: "127.0.0.1", port: 15000 },
-  console: { host: "127.0.0.1", port: 16080 },
-} as const satisfies Record<CapsuleTargetKind, CapsuleTarget>;
+const CAPSULE_INTERNAL_PORTS = {
+  cpg: 15000,
+  console: 16080,
+} as const satisfies Record<CapsuleTargetKind, 15000 | 16080>;
 const DIGEST_IMAGE_PATTERN =
   /^[a-z0-9][a-z0-9._:/-]*@sha256:[a-f0-9]{64}$/;
 const LOCAL_IMAGE_ID_PATTERN = /^sha256:[a-f0-9]{64}$/;
@@ -317,6 +316,55 @@ function parsePort(value: string | undefined): number {
   return port;
 }
 
+function parseHostCapacity(value: string | undefined): number {
+  const capacity = Number(value ?? "1");
+  if (
+    !Number.isInteger(capacity) ||
+    capacity < 1 ||
+    capacity > MAX_HOST_CAPACITY
+  ) {
+    throw new CapsuleError(
+      "invalid_host_capacity",
+      "IBKR session host capacity must be an integer from 1 to 20.",
+    );
+  }
+  return capacity;
+}
+
+function validateSlotNumber(slotNumber: number): number {
+  if (
+    !Number.isInteger(slotNumber) ||
+    slotNumber < 1 ||
+    slotNumber > MAX_HOST_CAPACITY
+  ) {
+    throw new CapsuleError(
+      "invalid_slot_number",
+      "IBKR capsule slot must be an integer from 1 to 20.",
+    );
+  }
+  return slotNumber;
+}
+
+function capsuleSlotName(slotNumber: number): string {
+  return `pyrus-ibkr-slot-${validateSlotNumber(slotNumber)}`;
+}
+
+function capsuleNetworkName(slotNumber: number): string {
+  const slot = validateSlotNumber(slotNumber);
+  return slot === 1
+    ? "pyrus-ibkr-capsule-net"
+    : `pyrus-ibkr-capsule-net-${slot}`;
+}
+
+export function capsuleTargetForSlot(
+  slotNumber: number,
+  kind: CapsuleTargetKind,
+): CapsuleTarget {
+  const slot = validateSlotNumber(slotNumber);
+  const basePort = kind === "cpg" ? 15000 : 16080;
+  return { host: "127.0.0.1", port: basePort + slot - 1 };
+}
+
 function parseCapsuleImage(value: string | undefined): string {
   if (
     !value ||
@@ -341,12 +389,6 @@ export function loadSessionHostConfig(
       "The initial IBKR session host supports paper accounts only.",
     );
   }
-  if ((env["IBKR_SESSION_HOST_CAPACITY"] ?? "1") !== "1") {
-    throw new CapsuleError(
-      "unsupported_host_capacity",
-      "The initial IBKR session host capacity is fixed at one.",
-    );
-  }
   if (
     env["IBKR_SESSION_HOST_BIND"] !== undefined &&
     env["IBKR_SESSION_HOST_BIND"] !== "127.0.0.1"
@@ -360,7 +402,7 @@ export function loadSessionHostConfig(
   return {
     bindHost: "127.0.0.1",
     capsuleImage: parseCapsuleImage(env["IBKR_SESSION_CAPSULE_IMAGE"]),
-    capacity: 1,
+    capacity: parseHostCapacity(env["IBKR_SESSION_HOST_CAPACITY"]),
     dockerBinary: "docker",
     mode: "paper",
     port: parsePort(env["IBKR_SESSION_HOST_PORT"]),
@@ -378,16 +420,20 @@ function sessionHashForSession(sessionId: string): string {
   return createHash("sha256").update(sessionId).digest("hex").slice(0, 24);
 }
 
-export function capsuleNameForSession(sessionId: string): string {
+export function capsuleNameForSession(
+  sessionId: string,
+  slotNumber = 1,
+): string {
   sessionHashForSession(sessionId);
-  return CAPSULE_SLOT_NAME;
+  return capsuleSlotName(slotNumber);
 }
 
 export function buildCreateCapsuleInvocation(
   config: SessionHostConfig,
   sessionId: string,
+  slotNumber = 1,
 ): DockerInvocation {
-  const name = capsuleNameForSession(sessionId);
+  const name = capsuleNameForSession(sessionId, slotNumber);
   const sessionHash = sessionHashForSession(sessionId);
   return {
     command: config.dockerBinary,
@@ -414,7 +460,7 @@ export function buildCreateCapsuleInvocation(
       "--security-opt",
       `seccomp=${config.seccompProfilePath}`,
       "--network",
-      CAPSULE_NETWORK_NAME,
+      capsuleNetworkName(slotNumber),
       "--memory",
       "2g",
       "--memory-swap",
@@ -486,7 +532,24 @@ export class CapsuleManager {
     private readonly config: SessionHostConfig,
     private readonly runner: CommandRunner,
     private readonly delayFn: (ms: number) => Promise<void> = delay,
-  ) {}
+    private readonly slotNumber = 1,
+  ) {
+    validateSlotNumber(slotNumber);
+    if (slotNumber > config.capacity) {
+      throw new CapsuleError(
+        "invalid_slot_number",
+        "IBKR capsule slot exceeds the configured host capacity.",
+      );
+    }
+  }
+
+  private get capsuleName(): string {
+    return capsuleSlotName(this.slotNumber);
+  }
+
+  private get networkName(): string {
+    return capsuleNetworkName(this.slotNumber);
+  }
 
   ensure(sessionId: string): Promise<CapsuleRecord> {
     const sessionHash = sessionHashForSession(sessionId);
@@ -565,14 +628,14 @@ export class CapsuleManager {
     if (this.active?.sessionHash !== sessionHash) {
       throw new CapsuleError("session_not_found", "IBKR session not found.");
     }
-    return CAPSULE_TARGETS[kind];
+    return capsuleTargetForSlot(this.slotNumber, kind);
   }
 
   getRelayTarget(kind: CapsuleTargetKind): CapsuleRelayTarget | null {
     return this.active?.networkAddress &&
       this.active.record.status === "ready" &&
       !this.releasing
-      ? { host: this.active.networkAddress, port: CAPSULE_TARGETS[kind].port }
+      ? { host: this.active.networkAddress, port: CAPSULE_INTERNAL_PORTS[kind] }
       : null;
   }
 
@@ -712,7 +775,7 @@ export class CapsuleManager {
         "ls",
         "--all",
         "--filter",
-        `name=^/${CAPSULE_SLOT_NAME}$`,
+        `name=^/${this.capsuleName}$`,
         "--format",
         "{{.Names}}",
       ]);
@@ -731,14 +794,14 @@ export class CapsuleManager {
       this.reconciled = true;
       return null;
     }
-    if (names.length !== 1 || names[0] !== CAPSULE_SLOT_NAME) {
+    if (names.length !== 1 || names[0] !== this.capsuleName) {
       throw this.cleanupUnconfirmed();
     }
 
     const networkId = await this.ensureCapsuleNetwork();
 
     const identity = await this.inspectOwnedCapsule(
-      CAPSULE_SLOT_NAME,
+      this.capsuleName,
       networkId,
     );
     if (!identity) {
@@ -762,10 +825,10 @@ export class CapsuleManager {
       return null;
     }
 
-    const probe = await this.probeCapsule(CAPSULE_SLOT_NAME);
+    const probe = await this.probeCapsule(this.capsuleName);
     const record: CapsuleRecord = {
       loginCompletions: probe.loginCompletions,
-      name: CAPSULE_SLOT_NAME,
+      name: this.capsuleName,
       status: probe.ready && identity.networkAddress ? "ready" : "occupied",
     };
     this.active = {
@@ -899,13 +962,13 @@ export class CapsuleManager {
     sessionId: string,
     sessionHash: string,
   ): Promise<CapsuleRecord> {
-    const name = capsuleNameForSession(sessionId);
+    const name = capsuleNameForSession(sessionId, this.slotNumber);
     let created = false;
     try {
       const networkId = await this.ensureCapsuleNetwork(true);
       await runChecked(
         this.runner,
-        buildCreateCapsuleInvocation(this.config, sessionId),
+        buildCreateCapsuleInvocation(this.config, sessionId, this.slotNumber),
         "docker_create_failed",
       );
       created = true;
@@ -969,7 +1032,7 @@ export class CapsuleManager {
         "inspect",
         "--format",
         "{{json .}}",
-        CAPSULE_NETWORK_NAME,
+        this.networkName,
       ]);
     } catch {
       return { status: "missing" };
@@ -983,7 +1046,7 @@ export class CapsuleManager {
     const networkId = network?.["Id"];
     return typeof networkId === "string" &&
       DOCKER_ID_PATTERN.test(networkId) &&
-      network?.["Name"] === CAPSULE_NETWORK_NAME &&
+      network?.["Name"] === this.networkName &&
       network["Scope"] === "local" &&
       network["Driver"] === "bridge" &&
       network["EnableIPv6"] === false &&
@@ -1027,7 +1090,7 @@ export class CapsuleManager {
     );
     const ports = asRecord(container?.["NetworkSettings"])?.["Ports"];
     const networkNames = networks ? Object.keys(networks) : [];
-    const endpoint = asRecord(networks?.[CAPSULE_NETWORK_NAME]);
+    const endpoint = asRecord(networks?.[this.networkName]);
     const state = asRecord(container?.["State"]);
     const sessionHash = labels?.["pyrus.ibkr.session_hash"];
     const image = containerConfig?.["Image"];
@@ -1041,10 +1104,10 @@ export class CapsuleManager {
       labels?.["pyrus.ibkr.capsule"] === "1" &&
       typeof sessionHash === "string" &&
       SESSION_HASH_PATTERN.test(sessionHash) &&
-      hostConfig?.["NetworkMode"] === CAPSULE_NETWORK_NAME &&
+      hostConfig?.["NetworkMode"] === this.networkName &&
       isEmptyRecordOrNull(hostConfig["PortBindings"]) &&
       networkNames.length === 1 &&
-      networkNames[0] === CAPSULE_NETWORK_NAME &&
+      networkNames[0] === this.networkName &&
       endpoint?.["NetworkID"] === networkId &&
       isEmptyRecordOrNull(ports) &&
       networkAddress !== undefined;
@@ -1082,7 +1145,7 @@ export class CapsuleManager {
         this.runner,
         {
           command: this.config.dockerBinary,
-          args: ["network", "rm", CAPSULE_NETWORK_NAME],
+          args: ["network", "rm", this.networkName],
         },
         "capsule_network_invalid",
       );
@@ -1102,7 +1165,7 @@ export class CapsuleManager {
         `${CAPSULE_NETWORK_GATEWAY_OPTION}=nat`,
         "--label",
         `${CAPSULE_NETWORK_LABEL}=1`,
-        CAPSULE_NETWORK_NAME,
+        this.networkName,
       ],
     } satisfies DockerInvocation;
     if (recreateForFreshSlot) {

@@ -113,7 +113,7 @@ const capsuleProbeResult = (
   return null;
 };
 
-test("loads the capacity-one paper host configuration", () => {
+test("loads a measured paper-host capacity without assuming one VM can hold twenty", () => {
   assert.deepEqual(
     loadSessionHostConfig({
       IBKR_SESSION_CAPSULE_IMAGE: IMAGE,
@@ -127,6 +127,13 @@ test("loads the capacity-one paper host configuration", () => {
       port: 18748,
       seccompProfilePath: DEFAULT_SECCOMP_PROFILE_PATH,
     },
+  );
+  assert.equal(
+    loadSessionHostConfig({
+      IBKR_SESSION_CAPSULE_IMAGE: IMAGE,
+      IBKR_SESSION_HOST_CAPACITY: "2",
+    }).capacity,
+    2,
   );
 });
 
@@ -146,7 +153,9 @@ test("rejects unsafe or unsupported host configuration", () => {
     { IBKR_SESSION_CAPSULE_IMAGE: IMAGE, IBKR_SESSION_HOST_PORT: "0" },
     { IBKR_SESSION_CAPSULE_IMAGE: IMAGE, IBKR_SESSION_HOST_PORT: "12.5" },
     { IBKR_SESSION_CAPSULE_IMAGE: IMAGE, IBKR_SESSION_HOST_PORT: "garbage" },
-    { IBKR_SESSION_CAPSULE_IMAGE: IMAGE, IBKR_SESSION_HOST_CAPACITY: "2" },
+    { IBKR_SESSION_CAPSULE_IMAGE: IMAGE, IBKR_SESSION_HOST_CAPACITY: "0" },
+    { IBKR_SESSION_CAPSULE_IMAGE: IMAGE, IBKR_SESSION_HOST_CAPACITY: "1.5" },
+    { IBKR_SESSION_CAPSULE_IMAGE: IMAGE, IBKR_SESSION_HOST_CAPACITY: "21" },
     { IBKR_SESSION_CAPSULE_IMAGE: "ghcr.io/pyrus/capsule:latest" },
     { IBKR_SESSION_CAPSULE_IMAGE: "sha256:" + "a".repeat(63) },
     { IBKR_SESSION_CAPSULE_IMAGE: "sha256:" + "A".repeat(64) },
@@ -157,11 +166,16 @@ test("rejects unsafe or unsupported host configuration", () => {
   }
 });
 
-test("uses one daemon-wide slot name with an opaque session label", () => {
+test("uses host-scoped slot names with opaque session labels", () => {
   const name = capsuleNameForSession(SESSION_ID);
 
   assert.equal(name, SLOT_NAME);
   assert.equal(name, capsuleNameForSession(OTHER_SESSION_ID));
+  assert.equal(capsuleNameForSession(SESSION_ID, 2), "pyrus-ibkr-slot-2");
+  assert.notEqual(
+    capsuleNameForSession(SESSION_ID, 2),
+    capsuleNameForSession(OTHER_SESSION_ID, 1),
+  );
   const first = buildCreateCapsuleInvocation(
     loadSessionHostConfig({ IBKR_SESSION_CAPSULE_IMAGE: IMAGE }),
     SESSION_ID,
@@ -181,6 +195,26 @@ test("uses one daemon-wide slot name with an opaque session label", () => {
   assert.notEqual(firstLabel, secondLabel);
   assert(!JSON.stringify(first).includes(SESSION_ID));
   assert.throws(() => capsuleNameForSession("../../not-a-uuid"), CapsuleError);
+  assert.throws(() => capsuleNameForSession(SESSION_ID, 0), CapsuleError);
+});
+
+test("builds isolated names, networks, and loopback relays for every host slot", () => {
+  const config = loadSessionHostConfig({
+    IBKR_SESSION_CAPSULE_IMAGE: IMAGE,
+    IBKR_SESSION_HOST_CAPACITY: "2",
+  });
+  const invocation = buildCreateCapsuleInvocation(config, SESSION_ID, 2);
+
+  assert.deepEqual(invocation.args.slice(0, 4), [
+    "create",
+    "--name",
+    "pyrus-ibkr-slot-2",
+    "--label",
+  ]);
+  assert.equal(
+    invocation.args[invocation.args.indexOf("--network") + 1],
+    "pyrus-ibkr-capsule-net-2",
+  );
 });
 
 test("builds a fixed hardened Docker create invocation without secret-bearing inputs", () => {

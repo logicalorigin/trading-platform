@@ -23,17 +23,20 @@ test("the live PYRUS supervisor owns the enabled IBKR session host", async () =>
   assert.match(source, /watchFatalExit\("IBKR session host", ibkrHostExit\)/);
 });
 
-test("the session host owns both fixed loopback capsule relays", async () => {
+test("the session host owns the bounded host-scoped loopback relay fleet", async () => {
   const source = await readFile(sessionHostEntryPath, "utf8");
 
   assert.match(
     source,
-    /createCapsuleRelayServer\(\(\) =>\s*manager\.getRelayTarget\("cpg"\)\)/,
+    /new CapsuleFleetManager\(\s*config\.capacity/,
   );
   assert.match(
     source,
-    /createCapsuleRelayServer\(\(\) =>\s*manager\.getRelayTarget\("console"\)\)/,
+    /createCapsuleRelayServer\(\(\) =>\s*fleet\.getRelayTarget\(slotNumber, kind\)/,
   );
-  assert.match(source, /listenCapsuleRelay\(cpgRelay, 15000\)/);
-  assert.match(source, /listenCapsuleRelay\(consoleRelay, 16080\)/);
+  assert.match(
+    source,
+    /capsuleTargetForSlot\(slotNumber, kind\)\.port/,
+  );
+  assert.match(source, /Array\.from\(\{ length: config\.capacity \}/);
 });

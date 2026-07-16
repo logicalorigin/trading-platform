@@ -9,17 +9,27 @@ import {
 
 type HostSnapshot = {
   mode: "paper";
-  capacity: { max: 1; active: number };
+  capacity: { max: number; active: number };
 };
 
 export type SessionHostServerOptions = {
   controlToken?: string | undefined;
-  ensureSession?: (sessionId: string) => Promise<CapsuleRecord>;
-  releaseSession?: (sessionId: string) => Promise<void>;
+  ensureSession?: (
+    sessionId: string,
+    slotNumber: number,
+  ) => Promise<CapsuleRecord>;
+  releaseSession?: (sessionId: string, slotNumber: number) => Promise<void>;
   readiness: () => RuntimeReadiness | Promise<RuntimeReadiness>;
   snapshot: () => HostSnapshot;
-  statusSession?: (sessionId: string) => Promise<CapsuleRecord | null>;
-  target?: (sessionId: string, kind: "cpg" | "console") => CapsuleTarget;
+  statusSession?: (
+    sessionId: string,
+    slotNumber: number,
+  ) => Promise<CapsuleRecord | null>;
+  target?: (
+    sessionId: string,
+    kind: "cpg" | "console",
+    slotNumber: number,
+  ) => CapsuleTarget;
 };
 
 const RESPONSE_HEADERS = {
@@ -44,10 +54,30 @@ function sendJson(
   response.end(payload);
 }
 
-function sessionRoute(path: string): { sessionId: string; action: string } | null {
-  const match = /^\/sessions\/([^/]+)\/([^/]+)$/.exec(path);
-  return match
-    ? { sessionId: decodeURIComponent(match[1]), action: match[2] }
+function sessionRoute(path: string): {
+  action: string;
+  explicitSlot: boolean;
+  sessionId: string;
+  slotNumber: number;
+} | null {
+  const placed =
+    /^\/sessions\/([^/]+)\/slots\/([0-9]+)\/([^/]+)$/.exec(path);
+  if (placed) {
+    return {
+      action: placed[3],
+      explicitSlot: true,
+      sessionId: decodeURIComponent(placed[1]),
+      slotNumber: Number(placed[2]),
+    };
+  }
+  const legacy = /^\/sessions\/([^/]+)\/([^/]+)$/.exec(path);
+  return legacy
+    ? {
+        action: legacy[2],
+        explicitSlot: false,
+        sessionId: decodeURIComponent(legacy[1]),
+        slotNumber: 1,
+      }
     : null;
 }
 
@@ -114,7 +144,10 @@ export function createSessionHostServer(
       }
       try {
         if (request.method === "POST" && route.action === "ensure") {
-          const capsule = await options.ensureSession?.(route.sessionId);
+          const capsule = await options.ensureSession?.(
+            route.sessionId,
+            route.slotNumber,
+          );
           if (!capsule || !options.target) {
             sendJson(response, 503, {
               error: { code: "control_unavailable", message: "IBKR session control failed." },
@@ -123,18 +156,28 @@ export function createSessionHostServer(
           }
           sendJson(response, 200, {
             sessionId: route.sessionId,
+            ...(route.explicitSlot ? { slotNumber: route.slotNumber } : {}),
             capsule,
             targets: {
-              cpg: options.target(route.sessionId, "cpg"),
-              console: options.target(route.sessionId, "console"),
+              cpg: options.target(route.sessionId, "cpg", route.slotNumber),
+              console: options.target(
+                route.sessionId,
+                "console",
+                route.slotNumber,
+              ),
             },
           });
           return;
         }
         if (request.method === "GET" && route.action === "status") {
-          const capsule = (await options.statusSession?.(route.sessionId)) ?? null;
+          const capsule =
+            (await options.statusSession?.(
+              route.sessionId,
+              route.slotNumber,
+            )) ?? null;
           sendJson(response, capsule ? 200 : 404, {
             sessionId: route.sessionId,
+            ...(route.explicitSlot ? { slotNumber: route.slotNumber } : {}),
             capsule,
           });
           return;
@@ -146,9 +189,10 @@ export function createSessionHostServer(
             });
             return;
           }
-          await options.releaseSession(route.sessionId);
+          await options.releaseSession(route.sessionId, route.slotNumber);
           sendJson(response, 200, {
             sessionId: route.sessionId,
+            ...(route.explicitSlot ? { slotNumber: route.slotNumber } : {}),
             released: true,
           });
           return;

@@ -188,6 +188,65 @@ test("serves authenticated ensure/status/release responses without secrets", asy
   );
 });
 
+test("routes an explicit durable host-slot placement without local allocation", async () => {
+  const calls: Array<[string, string, number]> = [];
+  const server = createSessionHostServer({
+    controlToken: "test-control-token",
+    ensureSession: async (sessionId, slotNumber) => {
+      calls.push(["ensure", sessionId, slotNumber]);
+      return { name: `pyrus-ibkr-slot-${slotNumber}`, status: "ready" };
+    },
+    releaseSession: async (sessionId, slotNumber) => {
+      calls.push(["release", sessionId, slotNumber]);
+    },
+    readiness: () => ({ ready: true }),
+    snapshot: () => ({
+      mode: "paper",
+      capacity: { max: 2, active: 1 },
+    }),
+    statusSession: async (sessionId, slotNumber) => {
+      calls.push(["status", sessionId, slotNumber]);
+      return { name: `pyrus-ibkr-slot-${slotNumber}`, status: "ready" };
+    },
+    target: (_sessionId, kind, slotNumber) => ({
+      host: "127.0.0.1",
+      port: kind === "cpg" ? 15000 + slotNumber - 1 : 16080 + slotNumber - 1,
+    }),
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const { port } = server.address() as AddressInfo;
+    const base = `http://127.0.0.1:${port}/sessions/${SESSION_ID}/slots/2`;
+    const headers = { authorization: "Bearer test-control-token" };
+    const ensured = await fetch(`${base}/ensure`, { method: "POST", headers });
+    assert.deepEqual(await ensured.json(), {
+      sessionId: SESSION_ID,
+      slotNumber: 2,
+      capsule: { name: "pyrus-ibkr-slot-2", status: "ready" },
+      targets: {
+        cpg: { host: "127.0.0.1", port: 15001 },
+        console: { host: "127.0.0.1", port: 16081 },
+      },
+    });
+    assert.equal((await fetch(`${base}/status`, { headers })).status, 200);
+    assert.equal(
+      (
+        await fetch(`${base}/release`, { method: "POST", headers })
+      ).status,
+      200,
+    );
+    assert.deepEqual(calls, [
+      ["ensure", SESSION_ID, 2],
+      ["status", SESSION_ID, 2],
+      ["release", SESSION_ID, 2],
+    ]);
+  } finally {
+    await new Promise<void>((resolve, reject) => {
+      server.close((error) => (error ? reject(error) : resolve()));
+    });
+  }
+});
+
 test("reports missing session status as a redacted 404", async () => {
   await withServer(
     true,
