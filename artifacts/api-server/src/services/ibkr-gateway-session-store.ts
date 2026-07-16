@@ -5,6 +5,7 @@ import {
   db,
   ibkrGatewayHostsTable,
   ibkrGatewaySessionsTable,
+  type BrokerConnection,
   type IbkrGatewayHost,
   type IbkrGatewaySession,
 } from "@workspace/db";
@@ -33,6 +34,8 @@ const uuidSchema = z.string().uuid();
 const identityDigestSchema = z.string().regex(/^[0-9a-f]{64}$/);
 const sha256DigestSchema = z.string().regex(/^sha256:[0-9a-f]{64}$/);
 const fleetCapacitySchema = z.number().int().min(1).max(GLOBAL_FLEET_CAPACITY);
+const environmentModeSchema = z.enum(["shadow", "live"]);
+const IBKR_BROKER_CONNECTION_NAME = "Interactive Brokers Bridge";
 
 const hostRegistrationSchema = z.object({
   hostId: uuidSchema,
@@ -64,6 +67,45 @@ type IdentityInput = {
   appUserId: string;
   brokerConnectionId: string;
 };
+
+export async function ensureIbkrGatewayBrokerConnection(input: {
+  appUserId: string;
+  mode: "shadow" | "live";
+}): Promise<BrokerConnection | null> {
+  if (
+    !uuidSchema.safeParse(input.appUserId).success ||
+    !environmentModeSchema.safeParse(input.mode).success
+  ) {
+    return null;
+  }
+  await db
+    .insert(brokerConnectionsTable)
+    .values({
+      appUserId: input.appUserId,
+      name: IBKR_BROKER_CONNECTION_NAME,
+      connectionType: "broker",
+      brokerProvider: "ibkr",
+      mode: input.mode,
+      status: "configured",
+      capabilities: ["accounts", "positions", "orders", "executions"],
+      isDefault: true,
+    })
+    .onConflictDoNothing();
+  const [connection] = await db
+    .select()
+    .from(brokerConnectionsTable)
+    .where(
+      and(
+        eq(brokerConnectionsTable.appUserId, input.appUserId),
+        eq(brokerConnectionsTable.connectionType, "broker"),
+        eq(brokerConnectionsTable.brokerProvider, "ibkr"),
+        eq(brokerConnectionsTable.mode, input.mode),
+        eq(brokerConnectionsTable.name, IBKR_BROKER_CONNECTION_NAME),
+      ),
+    )
+    .limit(1);
+  return connection ?? null;
+}
 
 export type IbkrGatewayFence = {
   appUserId: string;

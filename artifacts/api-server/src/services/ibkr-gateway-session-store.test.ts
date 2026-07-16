@@ -13,6 +13,7 @@ import {
   approveIbkrGatewayHost,
   assertCurrentIbkrGatewayFence,
   disableIbkrGatewayHost,
+  ensureIbkrGatewayBrokerConnection,
   ensureIbkrGatewaySessionIdentity,
   heartbeatIbkrGatewayHost,
   registerIbkrGatewayHost,
@@ -28,6 +29,47 @@ const SHA_A = `sha256:${"a".repeat(64)}`;
 const SHA_B = `sha256:${"b".repeat(64)}`;
 const WORKLOAD_A = "c".repeat(64);
 const WORKLOAD_B = "d".repeat(64);
+
+test("creates one stable broker connection before gateway admission", async () => {
+  await withTestDb(async () => {
+    const [user] = await db
+      .insert(usersTable)
+      .values({
+        email: "synthetic-ibkr-identity@example.invalid",
+        passwordHash: "synthetic-unused-hash",
+      })
+      .returning({ id: usersTable.id });
+    assert.ok(user);
+
+    const first = await ensureIbkrGatewayBrokerConnection({
+      appUserId: user.id,
+      mode: "live",
+    });
+    const repeated = await ensureIbkrGatewayBrokerConnection({
+      appUserId: user.id,
+      mode: "live",
+    });
+    assert.ok(first);
+    assert.equal(repeated?.id, first.id);
+    assert.equal(first.name, "Interactive Brokers Bridge");
+    assert.equal(first.status, "configured");
+    assert.equal(first.brokerProvider, "ibkr");
+    assert.equal(first.connectionType, "broker");
+
+    const stored = await db
+      .select()
+      .from(brokerConnectionsTable)
+      .where(eq(brokerConnectionsTable.appUserId, user.id));
+    assert.equal(stored.length, 1);
+    assert.equal(
+      await ensureIbkrGatewayBrokerConnection({
+        appUserId: "not-a-user",
+        mode: "live",
+      }),
+      null,
+    );
+  });
+});
 
 type SyntheticIdentity = {
   appUserId: string;
