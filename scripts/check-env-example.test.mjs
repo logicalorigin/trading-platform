@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { collectReferencedEnvNames } from "./check-env-example.mjs";
+import {
+  collectReferencedEnvNames,
+  isAuditedSourceFile,
+} from "./check-env-example.mjs";
 
 test("finds indirect environment variable references", () => {
   const referenced = collectReferencedEnvNames(`
@@ -17,4 +20,10 @@ test("finds indirect environment variable references", () => {
     "PYRUS_PYTHON_RISK_COMPUTE_ENABLED",
     "VITE_API_BASE_URL",
   ]);
+});
+
+test("audits runtime sources but not test fixtures", () => {
+  assert.equal(isAuditedSourceFile("runtime.ts"), true);
+  assert.equal(isAuditedSourceFile("runtime.test.ts"), false);
+  assert.equal(isAuditedSourceFile("runtime.spec.mjs"), false);
 });

@@ -1,0 +1,88 @@
+import assert from "node:assert/strict";
+import {
+  mkdirSync,
+  mkdtempSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import test from "node:test";
+import {
+  auditPublishContext,
+  requiredPublishExclusions,
+} from "./publish-context-policy.mjs";
+
+function policyText(overrides = requiredPublishExclusions) {
+  return `${overrides.join("\n")}\n`;
+}
+
+test("publication policy excludes nested generated data and secret file types", () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "publish-context-policy-"));
+  const excluded = [
+    "artifacts/output/snapshot.bin",
+    "scripts/scripts/reports/runtime.json",
+    "nested/tmp/work.bin",
+    "nested/cache/.env",
+    "nested/keys/private.PeM",
+    "nested/keys/private.kEy",
+  ];
+  for (const relPath of excluded) {
+    const fullPath = path.join(root, relPath);
+    mkdirSync(path.dirname(fullPath), { recursive: true });
+    writeFileSync(fullPath, "private-data");
+  }
+  writeFileSync(path.join(root, ".env.example"), "PUBLIC_EXAMPLE=true\n");
+  writeFileSync(path.join(root, "package.json"), "{}\n");
+
+  const result = auditPublishContext({
+    root,
+    ignoreText: policyText(),
+    limitBytes: 1_000_000,
+  });
+
+  assert.deepEqual(result.failures, []);
+  assert.equal(result.includedFiles, 2);
+  assert.ok(result.includedBytes < 100);
+});
+
+test("publication policy fails closed for missing rules and unexpected re-includes", () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "publish-context-policy-"));
+  writeFileSync(path.join(root, "package.json"), "{}\n");
+  const missingRecursivePem = requiredPublishExclusions.filter(
+    (entry) => entry !== "**/*.[pP][eE][mM]",
+  );
+
+  const missing = auditPublishContext({
+    root,
+    ignoreText: policyText(missingRecursivePem),
+  });
+  assert.match(missing.failures.join("\n"), /missing:.*\[pP\].*\[eE\].*\[mM\]/);
+
+  const reinclude = auditPublishContext({
+    root,
+    ignoreText: `${policyText()}!nested/private.pem\n`,
+  });
+  assert.match(reinclude.failures.join("\n"), /unexpected rules/);
+});
+
+test("publication policy rejects included symlinks and special path ambiguity", () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "publish-context-policy-"));
+  writeFileSync(path.join(root, "outside.txt"), "safe");
+  symlinkSync("outside.txt", path.join(root, "included-link"));
+
+  const result = auditPublishContext({ root, ignoreText: policyText() });
+  assert.match(result.failures.join("\n"), /symbolic link.*included-link/);
+});
+
+test("publication policy enforces the configured context ceiling", () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "publish-context-policy-"));
+  writeFileSync(path.join(root, "large.bin"), Buffer.alloc(2_048));
+
+  const result = auditPublishContext({
+    root,
+    ignoreText: policyText(),
+    limitBytes: 1_024,
+  });
+  assert.match(result.failures.join("\n"), /above the 1024-byte release ceiling/);
+});

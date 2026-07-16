@@ -7,6 +7,7 @@ import {
   tomlSection,
   validateReplitStartupConfig,
 } from "./replit-config-clobber.mjs";
+import { auditPublishContext } from "./publish-context-policy.mjs";
 
 const repoRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -35,6 +36,17 @@ function findFiles(dirPath, fileName, results = []) {
 function check(condition, message) {
   if (!condition) failures.push(message);
 }
+
+const publishContextAudit = auditPublishContext({
+  root: repoRoot,
+  ignoreText: read(".replitignore"),
+});
+for (const failure of publishContextAudit.failures) {
+  check(false, failure);
+}
+console.log(
+  `[check-replit-startup-guards] publish context estimate: ${publishContextAudit.archiveEstimateBytes} bytes (${publishContextAudit.includedBytes} logical bytes across ${publishContextAudit.includedFiles} files)`,
+);
 
 const replit = read(".replit");
 const rootPackage = JSON.parse(read("package.json"));
@@ -181,8 +193,8 @@ check(
 
 check(
   rootScripts["build:pyrus-app"] ===
-    "pnpm --filter @workspace/pyrus run build && pnpm --filter @workspace/api-server run build",
-  "package.json must keep build:pyrus-app building web and API without the retired IBKR bridge bundle.",
+    "pnpm run audit:guards && pnpm --filter @workspace/pyrus run build && pnpm --filter @workspace/api-server run build",
+  "package.json must keep build:pyrus-app fail-closed on audit:guards before building web and API without the retired IBKR bridge bundle.",
 );
 check(
   rootScripts["typecheck:libs"] ===

@@ -6,7 +6,7 @@
     "preinstall": "sh -c 'case \"$npm_config_user_agent\" in pnpm/*) ;; *) echo \"Use pnpm instead\" >&2; exit 1 ;; esac'",
     "build:api-deployment": "pnpm --filter @workspace/api-server run build",
     "build:market-data-worker": "node scripts/run-market-data-worker.mjs build --release -p market-data-worker",
-    "build:pyrus-app": "pnpm --filter @workspace/pyrus run build && pnpm --filter @workspace/api-server run build",
+    "build:pyrus-app": "pnpm run audit:guards && pnpm --filter @workspace/pyrus run build && pnpm --filter @workspace/api-server run build",
     "build": "pnpm run typecheck && pnpm -r --if-present run build",
     "deadcode": "PORT=18747 BASE_PATH=/ knip --include files,dependencies,catalog --no-config-hints",
     "deadcode:prod": "PORT=18747 BASE_PATH=/ knip --production --include files,exports,types,duplicates --no-config-hints --workspace @workspace/pyrus --workspace @workspace/api-server --workspace @workspace/backtest-worker --workspace @workspace/mcp-server --workspace @workspace/api-client-react --workspace @workspace/account-math --workspace @workspace/api-zod --workspace @workspace/api-spec --workspace @workspace/db --workspace @workspace/market-calendar --workspace @workspace/backtest-core --workspace @workspace/pyrus-signals-core --workspace @workspace/ibkr-contracts",

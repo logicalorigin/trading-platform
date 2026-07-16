@@ -30,6 +30,10 @@ const uppercaseStringPattern = /["']([A-Z][A-Z0-9_]*)["']/g;
 
 const readText = (filePath) => fs.readFileSync(filePath, "utf8");
 
+export const isAuditedSourceFile = (fileName) =>
+  sourceExtensions.has(path.extname(fileName)) &&
+  !/(?:^|\.)(?:test|spec)\./.test(fileName);
+
 const walk = (dirPath, files = []) => {
   if (!fs.existsSync(dirPath)) {
     return files;
@@ -42,7 +46,7 @@ const walk = (dirPath, files = []) => {
     const entryPath = path.join(dirPath, entry.name);
     if (entry.isDirectory()) {
       walk(entryPath, files);
-    } else if (entry.isFile() && sourceExtensions.has(path.extname(entry.name))) {
+    } else if (entry.isFile() && isAuditedSourceFile(entry.name)) {
       files.push(entryPath);
     }
   }

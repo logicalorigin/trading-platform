@@ -1,5 +1,56 @@
 # The format of this file is identical to `.dockerignore`.
 # It is used to reduce the size of deployed images to make the process of publishing faster.
 
-# No need to store the pnpm store twice.
-.local
+# Private runtime, agent, and workspace state must never enter a published image.
+**/.git
+**/.agents
+**/.claude
+**/.codex
+**/.codex-watch*
+**/.codex-log-watch
+**/.pyrus-runtime
+**/.local
+**/.cache
+**/.config
+**/.gstack
+**/.pythonlibs
+**/.venv
+**/.vendor
+**/.mypy_cache
+**/.pytest_cache
+**/.ruff_cache
+
+# Dependencies and generated output are rebuilt for publication.
+**/node_modules
+**/target
+**/dist
+**/coverage
+**/tmp
+**/output
+**/reports
+**/.headless-shots
+**/test-results
+**/playwright-report
+**/attached_assets
+
+# Audit tooling and agent handoffs are not application runtime inputs.
+security/pentest
+**/SESSION_HANDOFF_*.md
+**/CODEX_HANDOFF_*.md
+**/CLAUDE_HANDOFF_*.md
+**/AGENT_CHAT*.md
+**/AGENT_CHAT*.jsonl
+**/AGENTS.md
+**/CLAUDE.md
+
+# Secrets and private-key containers are denied by name and type.
+**/.[eE][nN][vV]
+**/.[eE][nN][vV].*
+!.env.example
+**/*.[pP][eE][mM]
+**/*.[kK][eE][yY]
+**/*.[pP]12
+**/*.[pP][fF][xX]
+**/*.[jJ][kK][sS]
+**/*.[kK][eE][yY][sS][tT][oO][rR][eE]
+**/*.cpuprofile

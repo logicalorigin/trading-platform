@@ -23,6 +23,9 @@ const rootQualifiedPrefixes = [
   ".agents/",
   ".claude/",
 ];
+const generatedPathSources = new Map([
+  ["artifacts/api-server/dist/index.mjs", "artifacts/api-server/src/index.ts"],
+]);
 
 const extractCandidates = (markdown) => {
   const candidates = [];
@@ -80,13 +83,17 @@ export const normalizeCandidate = (candidate, docPath, root = repoRoot) => {
   return trimmed;
 };
 
-const candidateExists = (docPath, candidate) => {
+export const candidateExists = (docPath, candidate, root = repoRoot) => {
   const withoutLine = candidate.replace(/:\d+(?::\d+)?$/, "");
+  const generatedSource = generatedPathSources.get(withoutLine);
+  if (generatedSource && fs.existsSync(path.join(root, generatedSource))) {
+    return true;
+  }
   const candidates = path.isAbsolute(withoutLine)
     ? [withoutLine]
     : [
-        path.resolve(path.dirname(path.join(repoRoot, docPath)), withoutLine),
-        path.resolve(repoRoot, withoutLine),
+        path.resolve(path.dirname(path.join(root, docPath)), withoutLine),
+        path.resolve(root, withoutLine),
       ];
 
   return candidates.some((candidatePath) => fs.existsSync(candidatePath));
