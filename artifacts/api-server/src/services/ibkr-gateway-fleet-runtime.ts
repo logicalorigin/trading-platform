@@ -1,5 +1,4 @@
 import {
-  decodeIbkrHostControlKey,
   deriveIbkrHostControlKey,
   signIbkrHostControlRequest,
 } from "@workspace/ibkr-contracts/control-auth";
@@ -16,30 +15,13 @@ import {
   resolveCurrentIbkrGatewayPlacement,
   tryAcquireIbkrGatewayLease,
 } from "./ibkr-gateway-session-store";
+import { readIbkrGatewayFleetRootKey } from "./ibkr-gateway-fleet-config";
 
 const FLEET_CONTROL_TIMEOUT_MS = 20_000;
 const FLEET_CONTROL_MAX_RESPONSE_BYTES = 64 * 1024;
 
-function fleetRootKey(): Buffer | null {
-  if (process.env["IBKR_GATEWAY_FLEET_ENABLED"] !== "1") return null;
-  const rootKey = decodeIbkrHostControlKey(
-    process.env["IBKR_GATEWAY_FLEET_CONTROL_ROOT_KEY"]?.trim() ?? "",
-  );
-  if (!rootKey) {
-    throw new HttpError(
-      503,
-      "The IBKR gateway fleet configuration is invalid.",
-      {
-        code: "ibkr_gateway_fleet_config_invalid",
-        expose: true,
-      },
-    );
-  }
-  return rootKey;
-}
-
 export function isIbkrGatewayFleetEnabled(): boolean {
-  return Boolean(fleetRootKey());
+  return Boolean(readIbkrGatewayFleetRootKey());
 }
 
 export function normalizeIbkrGatewayPath(value: string): string {
@@ -111,7 +93,7 @@ async function currentFleetContext(fence: IbkrGatewayFence): Promise<{
   origin: string;
   rootKey: Buffer;
 }> {
-  const rootKey = fleetRootKey();
+  const rootKey = readIbkrGatewayFleetRootKey();
   if (!rootKey) {
     throw new HttpError(503, "The IBKR gateway fleet is not configured.", {
       code: "ibkr_gateway_fleet_not_configured",
