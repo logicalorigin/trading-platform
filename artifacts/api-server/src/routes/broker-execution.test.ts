@@ -693,7 +693,7 @@ test("IBKR portal re-anchors Authenticator-family root API escapes under the act
   });
 });
 
-test("IBKR gateway proxy strips PYRUS credentials and preserves gateway cookies", () => {
+test("IBKR gateway proxy strips every cookie unless the isolated login allowlists it", () => {
   const headers = filterIbkrGatewayRequestHeaders({
     authorization: "Bearer app-secret",
     cookie: "gateway_session=kept; pyrus_session=app-secret; theme=dark",
@@ -714,7 +714,7 @@ test("IBKR gateway proxy strips PYRUS credentials and preserves gateway cookies"
     "x-gateway-header": "kept",
   });
 
-  assert.equal(headers.cookie, "gateway_session=kept; theme=dark");
+  assert.equal(headers.cookie, undefined);
   assert.equal(headers["x-gateway-header"], "kept");
   assert.equal(headers.authorization, undefined);
   assert.equal(headers["proxy-authorization"], undefined);
@@ -739,6 +739,16 @@ test("IBKR gateway proxy strips PYRUS credentials and preserves gateway cookies"
     filterIbkrGatewayRequestHeaders({ cookie: "pyrus_session=app-secret" })
       .cookie,
     undefined,
+  );
+  assert.equal(
+    filterIbkrGatewayRequestHeaders(
+      {
+        cookie:
+          "gateway_session=kept; pyrus_session=app-secret; theme=dark",
+      },
+      ["gateway_session"],
+    ).cookie,
+    "gateway_session=kept",
   );
 });
 

@@ -480,9 +480,7 @@ export function filterIbkrGatewayRequestHeaders(
   headers: IncomingHttpHeaders,
   allowedCookieNames?: readonly string[],
 ): Record<string, string | string[]> {
-  const allowedCookies = allowedCookieNames
-    ? new Set(allowedCookieNames)
-    : null;
+  const allowedCookies = new Set(allowedCookieNames ?? []);
   const forwardHeaders: Record<string, string | string[]> = {};
   for (const [key, value] of Object.entries(headers)) {
     if (value === undefined) continue;
@@ -498,7 +496,7 @@ export function filterIbkrGatewayRequestHeaders(
           return (
             name !== AUTH_SESSION_COOKIE &&
             name !== IBKR_PORTAL_EMBED_COOKIE &&
-            (!allowedCookies || allowedCookies.has(name))
+            allowedCookies.has(name)
           );
         })
         .join("; ");

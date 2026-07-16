@@ -191,7 +191,7 @@ test("IBKR noVNC WebSocket proxy authenticates and preserves the binary tunnel",
 
       assert.deepEqual(toBuffer(data as RawData), payload);
       assert.equal(upstreamPath, "/websockify?token=test");
-      assert.equal(upstreamCookie, "gateway_session=kept");
+      assert.equal(upstreamCookie, "");
       assert.equal(upstreamAuthorization, undefined);
 
       const closed = once(client, "close");
