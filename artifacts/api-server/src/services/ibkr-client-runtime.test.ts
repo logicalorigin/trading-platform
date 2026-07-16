@@ -14,7 +14,7 @@ import {
   isIbkrClientPortalConfigured,
 } from "./ibkr-client-runtime";
 
-test("an authenticated user without the same verified gateway cannot use the global IBKR runtime", async () => {
+test("the portal runtime stays owner-scoped and paper-only after verification", async () => {
   const previousEnabled = process.env["IBKR_SESSION_HOST_ENABLED"];
   const previousToken = process.env["IBKR_SESSION_HOST_CONTROL_TOKEN"];
   const previousGlobalUrl = process.env["IBKR_CLIENT_PORTAL_BASE_URL"];
@@ -25,8 +25,22 @@ test("an authenticated user without the same verified gateway cannot use the glo
   process.env["IBKR_SESSION_HOST_CONTROL_TOKEN"] = "host-token";
   process.env["IBKR_CLIENT_PORTAL_BASE_URL"] = "http://127.0.0.1:5999/v1/api";
   globalThis.fetch = (async (input) => {
-    if (String(input).endsWith("/release")) {
+    const url = new URL(String(input));
+    if (url.pathname.endsWith("/release")) {
       return Response.json({ released: true });
+    }
+    if (url.pathname.endsWith("/iserver/auth/status")) {
+      return Response.json({
+        authenticated: true,
+        connected: true,
+        selectedAccount: "U1234567",
+      });
+    }
+    if (url.pathname.endsWith("/iserver/accounts")) {
+      return Response.json({
+        accounts: ["U1234567"],
+        selectedAccount: "U1234567",
+      });
     }
     return Response.json({
       capsule: { name: "pyrus-ibkr-slot-1", status: "ready" },
@@ -62,6 +76,18 @@ test("an authenticated user without the same verified gateway cannot use the glo
     assert.equal(
       runWithIbkrPortalUser(appUserId, isIbkrClientPortalConfigured),
       true,
+    );
+    await assert.rejects(
+      runWithIbkrPortalUser(appUserId, () =>
+        getIbkrClientPortalClient().ensureBrokerageSession({
+          initializeIfNeeded: false,
+        }),
+      ),
+      (error: unknown) =>
+        typeof error === "object" &&
+        error !== null &&
+        "code" in error &&
+        error.code === "ibkr_paper_account_required",
     );
     const snapshot = runWithIbkrPortalUser(
       appUserId,

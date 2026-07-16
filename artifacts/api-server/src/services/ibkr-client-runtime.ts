@@ -65,8 +65,7 @@ export function assertIbkrClientPortalGatewaySnapshot(
 // An authenticated per-user context always owns routing for that request.
 // Returning null when its gateway is absent or unverified prevents a fallback
 // to a separately configured global IBKR account. "Verified" means the gateway
-// reported an authenticated session (any account type — user decision
-// 2026-07-10: the Client Portal connection is not paper-only).
+// reported an authenticated all-paper session.
 function resolveClientPortalConfig(): IbkrRuntimeConfig | null {
   const appUserId = getIbkrPortalUserId();
   if (appUserId) {
@@ -82,7 +81,7 @@ function resolveClientPortalConfig(): IbkrRuntimeConfig | null {
       username: null,
       password: null,
       allowInsecureTls: true,
-      paperAccountOnly: false,
+      paperAccountOnly: true,
     };
   }
   return getIbkrRuntimeConfig();
