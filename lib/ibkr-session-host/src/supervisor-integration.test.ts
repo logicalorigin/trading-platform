@@ -40,3 +40,15 @@ test("the session host owns the bounded host-scoped loopback relay fleet", async
   );
   assert.match(source, /Array\.from\(\{ length: config\.capacity \}/);
 });
+
+test("the session host owns registration and heartbeat lifecycle", async () => {
+  const source = await readFile(sessionHostEntryPath, "utf8");
+
+  assert.match(source, /loadIbkrHostLifecycleConfig/);
+  assert.match(source, /createIbkrHostLifecycleClient/);
+  assert.match(source, /lifecycle\?\.start\(\)/);
+  assert.match(source, /lifecycle\?\.stop\(\)/);
+  assert.ok(
+    source.indexOf("lifecycle?.start()") > source.indexOf("await Promise.all"),
+  );
+});
