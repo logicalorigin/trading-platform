@@ -18,7 +18,12 @@ import {
 
 const HOST_ID = "11111111-1111-4111-8111-111111111111";
 const KEY = Buffer.alloc(32, 7);
-const IDENTITY: IbkrHostControlIdentity = { hostId: HOST_ID, key: KEY };
+const OVERLAP_KEY = Buffer.alloc(32, 8);
+const IDENTITY: IbkrHostControlIdentity = {
+  hostId: HOST_ID,
+  key: KEY,
+  overlapKey: OVERLAP_KEY,
+};
 const IMAGE_DIGEST = `sha256:${"a".repeat(64)}`;
 const IMAGE = `ghcr.io/pyrus/ibkr-capsule@${IMAGE_DIGEST}`;
 const RUNTIME_SPEC_DIGEST = `sha256:${"b".repeat(64)}`;

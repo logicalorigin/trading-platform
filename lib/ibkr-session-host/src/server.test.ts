@@ -160,12 +160,16 @@ test("accepts one signed host-bound request and rejects its replay", async () =>
   const key = decodeIbkrHostControlKey(
     Buffer.alloc(32, 9).toString("base64url"),
   )!;
+  const overlapKey = decodeIbkrHostControlKey(
+    Buffer.alloc(32, 10).toString("base64url"),
+  )!;
   const hostId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
   let ensures = 0;
   const server = createSessionHostServer({
     controlIdentity: {
       hostId,
       key,
+      overlapKey,
       nowSeconds: () => 1_784_200_000,
     },
     ensureSession: async () => {
@@ -188,7 +192,7 @@ test("accepts one signed host-bound request and rejects its replay", async () =>
     const path = `/sessions/${SESSION_ID}/generations/7/slots/1/ensure`;
     const headers = signIbkrHostControlRequest({
       hostId,
-      key,
+      key: overlapKey,
       method: "POST",
       nonce: "c".repeat(32),
       path,
@@ -199,6 +203,18 @@ test("accepts one signed host-bound request and rejects its replay", async () =>
       headers,
     });
     assert.equal(first.status, 200);
+    const primary = await fetch(`http://127.0.0.1:${port}${path}`, {
+      method: "POST",
+      headers: signIbkrHostControlRequest({
+        hostId,
+        key,
+        method: "POST",
+        nonce: "d".repeat(32),
+        path,
+        timestampSeconds: 1_784_200_000,
+      }),
+    });
+    assert.equal(primary.status, 200);
     const replay = await fetch(`http://127.0.0.1:${port}${path}`, {
       method: "POST",
       headers,
@@ -207,7 +223,7 @@ test("accepts one signed host-bound request and rejects its replay", async () =>
     assert.deepEqual(await replay.json(), {
       error: { code: "unauthorized", message: "Unauthorized." },
     });
-    assert.equal(ensures, 1);
+    assert.equal(ensures, 2);
   } finally {
     await new Promise<void>((resolve, reject) => {
       server.close((error) => (error ? reject(error) : resolve()));

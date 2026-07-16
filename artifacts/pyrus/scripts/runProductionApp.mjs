@@ -87,6 +87,15 @@ export function resolveProductionServices(
       "The production session host requires complete signed lifecycle configuration.",
     );
   }
+  if (
+    hostEnabled &&
+    nonEmpty(env.IBKR_GATEWAY_FLEET_CONTROL_OVERLAP_ROOT_KEY) !==
+      nonEmpty(env.IBKR_SESSION_HOST_OVERLAP_CONTROL_KEY)
+  ) {
+    throw new Error(
+      "The production fleet overlap keys must be configured together.",
+    );
+  }
 
   const services = [
     {

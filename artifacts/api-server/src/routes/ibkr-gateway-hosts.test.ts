@@ -87,7 +87,7 @@ async function withServer(
       })),
     verifyRequest: createIbkrGatewayHostRequestVerifier({
       nowSeconds: () => NOW_SECONDS,
-      rootKey: () => ROOT_KEY,
+      rootKeys: () => [ROOT_KEY],
     }),
   });
   app.use((_req, res, next) => {

@@ -10,6 +10,7 @@ import { createIbkrGatewayHostRequestVerifier } from "./ibkr-gateway-host-auth";
 const HOST_ID = "00000000-0000-4000-8000-000000000001";
 const OTHER_HOST_ID = "00000000-0000-4000-8000-000000000002";
 const ROOT_KEY = Buffer.alloc(32, 11);
+const OVERLAP_ROOT_KEY = Buffer.alloc(32, 12);
 const BODY = JSON.stringify({ status: "ready" });
 const PATH = `/api/internal/ibkr/gateway-hosts/${HOST_ID}/heartbeat`;
 
@@ -17,13 +18,14 @@ function signedHeaders(input: {
   body?: string;
   hostId?: string;
   nonce: string;
+  rootKey?: Buffer;
   timestampSeconds?: number;
 }) {
   const hostId = input.hostId ?? HOST_ID;
   return signIbkrHostControlRequest({
     body: input.body ?? BODY,
     hostId,
-    key: deriveIbkrHostControlKey(ROOT_KEY, hostId),
+    key: deriveIbkrHostControlKey(input.rootKey ?? ROOT_KEY, hostId),
     method: "POST",
     nonce: input.nonce,
     path: PATH,
@@ -34,7 +36,7 @@ function signedHeaders(input: {
 test("accepts one exact host-signed lifecycle request and rejects replay", () => {
   const verify = createIbkrGatewayHostRequestVerifier({
     nowSeconds: () => 1_000,
-    rootKey: () => ROOT_KEY,
+    rootKeys: () => [ROOT_KEY],
   });
   const request = {
     body: BODY,
@@ -48,10 +50,28 @@ test("accepts one exact host-signed lifecycle request and rejects replay", () =>
   assert.equal(verify(request), false);
 });
 
+test("accepts a verification-only overlap key with shared replay protection", () => {
+  const verify = createIbkrGatewayHostRequestVerifier({
+    nowSeconds: () => 1_000,
+    rootKeys: () => [ROOT_KEY, OVERLAP_ROOT_KEY],
+  });
+  const request = (rootKey: Buffer, nonce: string) => ({
+    body: BODY,
+    headers: signedHeaders({ nonce, rootKey }),
+    hostId: HOST_ID,
+    method: "POST",
+    path: PATH,
+  });
+
+  assert.equal(verify(request(OVERLAP_ROOT_KEY, "6".repeat(32))), true);
+  assert.equal(verify(request(ROOT_KEY, "7".repeat(32))), true);
+  assert.equal(verify(request(ROOT_KEY, "6".repeat(32))), false);
+});
+
 test("rejects altered, stale, and cross-host lifecycle requests", () => {
   const verify = createIbkrGatewayHostRequestVerifier({
     nowSeconds: () => 1_000,
-    rootKey: () => ROOT_KEY,
+    rootKeys: () => [ROOT_KEY],
   });
 
   assert.equal(
@@ -93,7 +113,7 @@ test("does not disguise missing server configuration as bad host credentials", (
   const configurationError = new Error("configuration unavailable");
   const verify = createIbkrGatewayHostRequestVerifier({
     nowSeconds: () => 1_000,
-    rootKey: () => {
+    rootKeys: () => {
       throw configurationError;
     },
   });
@@ -115,7 +135,7 @@ test("bounds accepted lifecycle nonces until old entries expire", () => {
   let nowSeconds = 1_000;
   const verify = createIbkrGatewayHostRequestVerifier({
     nowSeconds: () => nowSeconds,
-    rootKey: () => ROOT_KEY,
+    rootKeys: () => [ROOT_KEY],
   });
 
   for (let index = 0; index < 4_096; index += 1) {

@@ -27,6 +27,7 @@ export type SessionHostServerOptions = {
     | {
         hostId: string;
         key: Uint8Array;
+        overlapKey?: Uint8Array;
         nowSeconds?: () => number;
       }
     | undefined;
@@ -176,18 +177,24 @@ function authorized(
   replayNonces: Map<string, number>,
 ): boolean {
   if (options.controlIdentity) {
+    const identity = options.controlIdentity;
     const nowSeconds =
-      options.controlIdentity.nowSeconds?.() ?? Math.floor(Date.now() / 1_000);
-    const verification = verifyIbkrHostControlRequest({
-      expectedHostId: options.controlIdentity.hostId,
-      body: input.body,
-      headers: input.headers,
-      key: options.controlIdentity.key,
-      method: input.method,
-      nowSeconds,
-      path: input.path,
-    });
-    if (!verification.valid) return false;
+      identity.nowSeconds?.() ?? Math.floor(Date.now() / 1_000);
+    const verification = [identity.key, identity.overlapKey]
+      .filter((key): key is Uint8Array => key !== undefined)
+      .map((key) =>
+        verifyIbkrHostControlRequest({
+          expectedHostId: identity.hostId,
+          body: input.body,
+          headers: input.headers,
+          key,
+          method: input.method,
+          nowSeconds,
+          path: input.path,
+        }),
+      )
+      .find((result) => result.valid);
+    if (!verification?.valid) return false;
     for (const [nonce, expiresAt] of replayNonces) {
       if (expiresAt <= nowSeconds) replayNonces.delete(nonce);
     }

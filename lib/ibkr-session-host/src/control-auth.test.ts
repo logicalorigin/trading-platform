@@ -15,6 +15,8 @@ const HOST_ID = "11111111-1111-4111-8111-111111111111";
 const OTHER_HOST_ID = "22222222-2222-4222-8222-222222222222";
 const KEY_TEXT = Buffer.alloc(32, 7).toString("base64url");
 const KEY = decodeIbkrHostControlKey(KEY_TEXT)!;
+const OVERLAP_KEY_TEXT = Buffer.alloc(32, 8).toString("base64url");
+const OVERLAP_KEY = decodeIbkrHostControlKey(OVERLAP_KEY_TEXT)!;
 const NOW_SECONDS = 1_784_200_000;
 const PATH =
   "/sessions/33333333-3333-4333-8333-333333333333/generations/7/slots/2/ensure";
@@ -99,9 +101,10 @@ test("loads only a complete canonical signed host identity", () => {
   assert.deepEqual(
     loadIbkrHostControlIdentity({
       IBKR_SESSION_HOST_CONTROL_KEY: KEY_TEXT,
+      IBKR_SESSION_HOST_OVERLAP_CONTROL_KEY: OVERLAP_KEY_TEXT,
       IBKR_SESSION_HOST_ID: HOST_ID,
     }),
-    { hostId: HOST_ID, key: KEY },
+    { hostId: HOST_ID, key: KEY, overlapKey: OVERLAP_KEY },
   );
   for (const env of [
     { IBKR_SESSION_HOST_ID: HOST_ID },
@@ -113,6 +116,20 @@ test("loads only a complete canonical signed host identity", () => {
     {
       IBKR_SESSION_HOST_CONTROL_KEY: "short",
       IBKR_SESSION_HOST_ID: HOST_ID,
+    },
+    {
+      IBKR_SESSION_HOST_ID: HOST_ID,
+      IBKR_SESSION_HOST_OVERLAP_CONTROL_KEY: OVERLAP_KEY_TEXT,
+    },
+    {
+      IBKR_SESSION_HOST_CONTROL_KEY: KEY_TEXT,
+      IBKR_SESSION_HOST_ID: HOST_ID,
+      IBKR_SESSION_HOST_OVERLAP_CONTROL_KEY: "short",
+    },
+    {
+      IBKR_SESSION_HOST_CONTROL_KEY: KEY_TEXT,
+      IBKR_SESSION_HOST_ID: HOST_ID,
+      IBKR_SESSION_HOST_OVERLAP_CONTROL_KEY: KEY_TEXT,
     },
   ]) {
     assert.throws(() => loadIbkrHostControlIdentity(env), CapsuleError);

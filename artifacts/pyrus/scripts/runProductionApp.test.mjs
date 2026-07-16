@@ -53,6 +53,8 @@ test("enabled production starts a least-privilege co-located session host", () =
   const env = {
     ...enabledHostEnv(),
     DATABASE_URL: "postgres://sensitive.invalid/db",
+    IBKR_GATEWAY_FLEET_CONTROL_OVERLAP_ROOT_KEY: "api-overlap-secret",
+    IBKR_SESSION_HOST_OVERLAP_CONTROL_KEY: "derived-overlap-host-key",
     SNAPTRADE_API_KEY: "broker-secret",
   };
   const [api, host] = resolveProductionServices(env, repoRoot);
@@ -65,11 +67,19 @@ test("enabled production starts a least-privilege co-located session host", () =
     "/synthetic/repo/lib/ibkr-session-host/dist/index.mjs",
   );
   assert.equal(host.env.IBKR_SESSION_HOST_CONTROL_KEY, "derived-host-key");
+  assert.equal(
+    host.env.IBKR_SESSION_HOST_OVERLAP_CONTROL_KEY,
+    "derived-overlap-host-key",
+  );
   assert.equal(host.env.IBKR_SESSION_HOST_ID, env.IBKR_SESSION_HOST_ID);
   assert.equal(host.env.PYRUS_API_PORT, "18747");
   assert.equal(host.env.DOCKER_HOST, "unix:///var/run/docker.sock");
   assert.equal(host.env.DATABASE_URL, undefined);
   assert.equal(host.env.IBKR_GATEWAY_FLEET_CONTROL_ROOT_KEY, undefined);
+  assert.equal(
+    host.env.IBKR_GATEWAY_FLEET_CONTROL_OVERLAP_ROOT_KEY,
+    undefined,
+  );
   assert.equal(host.env.SNAPTRADE_API_KEY, undefined);
 });
 
@@ -110,6 +120,28 @@ test("production fails closed on an incoherent co-located topology", () => {
   assert.throws(
     () => resolveProductionServices(missingRoot, repoRoot),
     /complete signed lifecycle configuration/,
+  );
+  assert.throws(
+    () =>
+      resolveProductionServices(
+        {
+          ...enabledHostEnv(),
+          IBKR_GATEWAY_FLEET_CONTROL_OVERLAP_ROOT_KEY: "overlap-root",
+        },
+        repoRoot,
+      ),
+    /overlap keys must be configured together/,
+  );
+  assert.throws(
+    () =>
+      resolveProductionServices(
+        {
+          ...enabledHostEnv(),
+          IBKR_SESSION_HOST_OVERLAP_CONTROL_KEY: "overlap-host",
+        },
+        repoRoot,
+      ),
+    /overlap keys must be configured together/,
   );
 });
 

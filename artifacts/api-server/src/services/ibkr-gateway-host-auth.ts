@@ -3,7 +3,7 @@ import {
   verifyIbkrHostControlRequest,
 } from "@workspace/ibkr-contracts/control-auth";
 
-import { readIbkrGatewayFleetRootKey } from "./ibkr-gateway-fleet-config";
+import { readIbkrGatewayFleetRootKeys } from "./ibkr-gateway-fleet-config";
 
 const MAX_REPLAY_NONCES = 4_096;
 
@@ -18,34 +18,50 @@ type HostRequest = {
 export function createIbkrGatewayHostRequestVerifier(
   options: {
     nowSeconds?: () => number;
-    rootKey?: () => Uint8Array;
+    rootKeys?: () => readonly Uint8Array[];
   } = {},
 ): (request: HostRequest) => boolean {
   const nowSeconds = options.nowSeconds ?? (() => Math.floor(Date.now() / 1_000));
-  const rootKey =
-    options.rootKey ??
-    (() => readIbkrGatewayFleetRootKey({ requireEnabled: false })!);
+  const rootKeys =
+    options.rootKeys ??
+    (() => {
+      const configured = readIbkrGatewayFleetRootKeys({
+        requireEnabled: false,
+      })!;
+      return configured.overlap
+        ? [configured.primary, configured.overlap]
+        : [configured.primary];
+    });
   const replayNonces = new Map<string, number>();
 
   return (request) => {
     const now = nowSeconds();
-    const configuredRootKey = rootKey();
-    let key: Buffer;
+    const configuredRootKeys = rootKeys();
+    if (configuredRootKeys.length < 1 || configuredRootKeys.length > 2) {
+      return false;
+    }
+    let keys: Buffer[];
     try {
-      key = deriveIbkrHostControlKey(configuredRootKey, request.hostId);
+      keys = configuredRootKeys.map((rootKey) =>
+        deriveIbkrHostControlKey(rootKey, request.hostId),
+      );
     } catch {
       return false;
     }
-    const verification = verifyIbkrHostControlRequest({
-      body: request.body,
-      expectedHostId: request.hostId,
-      headers: request.headers,
-      key,
-      method: request.method,
-      nowSeconds: now,
-      path: request.path,
-    });
-    if (!verification.valid) return false;
+    const verification = keys
+      .map((key) =>
+        verifyIbkrHostControlRequest({
+          body: request.body,
+          expectedHostId: request.hostId,
+          headers: request.headers,
+          key,
+          method: request.method,
+          nowSeconds: now,
+          path: request.path,
+        }),
+      )
+      .find((result) => result.valid);
+    if (!verification?.valid) return false;
 
     for (const [nonce, expiresAt] of replayNonces) {
       if (expiresAt <= now) replayNonces.delete(nonce);

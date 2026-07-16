@@ -2,9 +2,13 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { HttpError } from "../lib/errors";
-import { readIbkrGatewayFleetRootKey } from "./ibkr-gateway-fleet-config";
+import {
+  readIbkrGatewayFleetRootKey,
+  readIbkrGatewayFleetRootKeys,
+} from "./ibkr-gateway-fleet-config";
 
 const ROOT_KEY = Buffer.alloc(32, 7).toString("base64url");
+const OVERLAP_ROOT_KEY = Buffer.alloc(32, 8).toString("base64url");
 
 test("host lifecycle can read the fleet root key before fleet routing is enabled", () => {
   const env = {
@@ -13,6 +17,26 @@ test("host lifecycle can read the fleet root key before fleet routing is enabled
   };
 
   assert.equal(readIbkrGatewayFleetRootKey({ env }), null);
+  assert.deepEqual(
+    readIbkrGatewayFleetRootKey({ env, requireEnabled: false }),
+    Buffer.alloc(32, 7),
+  );
+});
+
+test("loads one distinct verification-only overlap root key", () => {
+  const env = {
+    IBKR_GATEWAY_FLEET_CONTROL_OVERLAP_ROOT_KEY: OVERLAP_ROOT_KEY,
+    IBKR_GATEWAY_FLEET_CONTROL_ROOT_KEY: ROOT_KEY,
+    IBKR_GATEWAY_FLEET_ENABLED: "0",
+  };
+
+  assert.deepEqual(
+    readIbkrGatewayFleetRootKeys({ env, requireEnabled: false }),
+    {
+      primary: Buffer.alloc(32, 7),
+      overlap: Buffer.alloc(32, 8),
+    },
+  );
   assert.deepEqual(
     readIbkrGatewayFleetRootKey({ env, requireEnabled: false }),
     Buffer.alloc(32, 7),
@@ -34,9 +58,32 @@ test("an enabled or lifecycle fleet root key must be valid", () => {
       },
       requireEnabled: false,
     },
+    {
+      env: {
+        IBKR_GATEWAY_FLEET_CONTROL_OVERLAP_ROOT_KEY: OVERLAP_ROOT_KEY,
+        IBKR_GATEWAY_FLEET_ENABLED: "0",
+      },
+      requireEnabled: false,
+    },
+    {
+      env: {
+        IBKR_GATEWAY_FLEET_CONTROL_OVERLAP_ROOT_KEY: "invalid",
+        IBKR_GATEWAY_FLEET_CONTROL_ROOT_KEY: ROOT_KEY,
+        IBKR_GATEWAY_FLEET_ENABLED: "0",
+      },
+      requireEnabled: false,
+    },
+    {
+      env: {
+        IBKR_GATEWAY_FLEET_CONTROL_OVERLAP_ROOT_KEY: ROOT_KEY,
+        IBKR_GATEWAY_FLEET_CONTROL_ROOT_KEY: ROOT_KEY,
+        IBKR_GATEWAY_FLEET_ENABLED: "0",
+      },
+      requireEnabled: false,
+    },
   ]) {
     assert.throws(
-      () => readIbkrGatewayFleetRootKey(input),
+      () => readIbkrGatewayFleetRootKeys(input),
       (error: unknown) =>
         error instanceof HttpError &&
         error.statusCode === 503 &&

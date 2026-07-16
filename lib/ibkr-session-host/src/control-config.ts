@@ -8,6 +8,7 @@ const HOST_ID_PATTERN =
 export type IbkrHostControlIdentity = {
   hostId: string;
   key: Buffer;
+  overlapKey?: Buffer;
 };
 
 export function loadIbkrHostControlIdentity(
@@ -15,13 +16,24 @@ export function loadIbkrHostControlIdentity(
 ): IbkrHostControlIdentity | null {
   const hostId = env["IBKR_SESSION_HOST_ID"]?.trim();
   const encodedKey = env["IBKR_SESSION_HOST_CONTROL_KEY"]?.trim();
-  if (!hostId && !encodedKey) return null;
+  const encodedOverlapKey =
+    env["IBKR_SESSION_HOST_OVERLAP_CONTROL_KEY"]?.trim();
+  if (!hostId && !encodedKey && !encodedOverlapKey) return null;
   const key = encodedKey ? decodeIbkrHostControlKey(encodedKey) : null;
-  if (!hostId || !HOST_ID_PATTERN.test(hostId) || !key) {
+  const overlapKey = encodedOverlapKey
+    ? decodeIbkrHostControlKey(encodedOverlapKey)
+    : null;
+  if (
+    !hostId ||
+    !HOST_ID_PATTERN.test(hostId) ||
+    !key ||
+    (encodedOverlapKey && !overlapKey) ||
+    overlapKey?.equals(key)
+  ) {
     throw new CapsuleError(
       "invalid_host_control_identity",
       "IBKR session host signed control identity is invalid.",
     );
   }
-  return { hostId, key };
+  return overlapKey ? { hostId, key, overlapKey } : { hostId, key };
 }

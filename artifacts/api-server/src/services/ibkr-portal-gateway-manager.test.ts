@@ -32,6 +32,7 @@ import {
 test("fleet mode routes every operation through the current signed generation fence", async () => {
   await withTestDb(async () => {
     const names = [
+      "IBKR_GATEWAY_FLEET_CONTROL_OVERLAP_ROOT_KEY",
       "IBKR_GATEWAY_FLEET_CONTROL_ROOT_KEY",
       "IBKR_GATEWAY_FLEET_ENABLED",
       "IBKR_SESSION_HOST_ENABLED",
@@ -43,7 +44,9 @@ test("fleet mode routes every operation through the current signed generation fe
     const previousFetch = globalThis.fetch;
     const hostId = "00000000-0000-4000-8000-000000000009";
     const rootKey = Buffer.alloc(32, 19);
+    const overlapRootKey = Buffer.alloc(32, 20);
     const hostKey = deriveIbkrHostControlKey(rootKey, hostId);
+    const overlapHostKey = deriveIbkrHostControlKey(overlapRootKey, hostId);
     const sha = `sha256:${"9".repeat(64)}`;
     const workloadIdentityDigest = "8".repeat(64);
     const requests: Array<{
@@ -59,6 +62,8 @@ test("fleet mode routes every operation through the current signed generation fe
     process.env["IBKR_GATEWAY_FLEET_ENABLED"] = "1";
     process.env["IBKR_GATEWAY_FLEET_CONTROL_ROOT_KEY"] =
       rootKey.toString("base64url");
+    process.env["IBKR_GATEWAY_FLEET_CONTROL_OVERLAP_ROOT_KEY"] =
+      overlapRootKey.toString("base64url");
     delete process.env["IBKR_SESSION_HOST_ENABLED"];
     process.env["TRADING_MODE"] = "shadow";
 
@@ -177,6 +182,17 @@ test("fleet mode routes every operation through the current signed generation fe
         }).valid,
         true,
       );
+      assert.equal(
+        verifyIbkrHostControlRequest({
+          expectedHostId: hostId,
+          body,
+          headers: data.headers,
+          key: overlapHostKey,
+          method: "POST",
+          path: `${data.url.pathname}${data.url.search}`,
+        }).valid,
+        false,
+      );
 
       const websocket = await prepareGatewayDataRequest({
         appUserId: user.id,
@@ -202,6 +218,17 @@ test("fleet mode routes every operation through the current signed generation fe
             path: request.path,
           }).valid,
           true,
+        );
+        assert.equal(
+          verifyIbkrHostControlRequest({
+            expectedHostId: hostId,
+            body: request.body,
+            headers: request.headers,
+            key: overlapHostKey,
+            method: request.method,
+            path: request.path,
+          }).valid,
+          false,
         );
       }
       assert.match(requests[0]!.path, /\/generations\/1\/slots\/1\/ensure$/);
