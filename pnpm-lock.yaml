@@ -555,9 +555,17 @@ importers:
         specifier: 'catalog:'
         version: 4.21.0
 
-  lib/ibkr-contracts: {}
+  lib/ibkr-contracts:
+    devDependencies:
+      '@types/node':
+        specifier: 'catalog:'
+        version: 25.3.5
 
   lib/ibkr-session-host:
+    dependencies:
+      '@workspace/ibkr-contracts':
+        specifier: workspace:*
+        version: link:../ibkr-contracts
     devDependencies:
       '@types/node':
         specifier: 'catalog:'

@@ -2,6 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  decodeIbkrHostControlKey,
+  verifyIbkrHostControlRequest,
+} from "@workspace/ibkr-contracts/control-auth";
+
+import {
   ensureGateway,
   getGateway,
   markGatewayPaperAccountVerified,
@@ -119,6 +124,79 @@ test("hosted IBKR mode provisions through the loopback session host", async () =
       delete process.env["IBKR_SESSION_HOST_URL"];
     } else {
       process.env["IBKR_SESSION_HOST_URL"] = previousUrl;
+    }
+  }
+});
+
+test("hosted IBKR mode prefers signed host-bound control requests", async () => {
+  const names = [
+    "IBKR_SESSION_HOST_ENABLED",
+    "IBKR_SESSION_HOST_CONTROL_TOKEN",
+    "IBKR_SESSION_HOST_CONTROL_KEY",
+    "IBKR_SESSION_HOST_ID",
+    "IBKR_SESSION_HOST_URL",
+  ] as const;
+  const previous = Object.fromEntries(
+    names.map((name) => [name, process.env[name]]),
+  );
+  const previousFetch = globalThis.fetch;
+  const appUserId = "12121212-1212-4121-8121-121212121212";
+  const hostId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+  const encodedKey = Buffer.alloc(32, 11).toString("base64url");
+  const key = decodeIbkrHostControlKey(encodedKey)!;
+  const requests: Array<{
+    headers: Record<string, string>;
+    method: string;
+    path: string;
+  }> = [];
+
+  process.env["IBKR_SESSION_HOST_ENABLED"] = "1";
+  process.env["IBKR_SESSION_HOST_CONTROL_TOKEN"] = "legacy-token";
+  process.env["IBKR_SESSION_HOST_CONTROL_KEY"] = encodedKey;
+  process.env["IBKR_SESSION_HOST_ID"] = hostId;
+  process.env["IBKR_SESSION_HOST_URL"] = "http://127.0.0.1:18748";
+  globalThis.fetch = (async (input, init) => {
+    const url = new URL(String(input));
+    requests.push({
+      headers: Object.fromEntries(new Headers(init?.headers).entries()),
+      method: String(init?.method ?? "GET"),
+      path: url.pathname,
+    });
+    if (url.pathname.endsWith("/release")) {
+      return Response.json({ released: true });
+    }
+    return Response.json({
+      capsule: { name: "pyrus-ibkr-slot-1", status: "ready" },
+      targets: {
+        cpg: { host: "127.0.0.1", port: 15000 },
+        console: { host: "127.0.0.1", port: 16080 },
+      },
+    });
+  }) as typeof fetch;
+
+  try {
+    await ensureGateway(appUserId);
+    await stopGateway(appUserId);
+    assert.equal(requests.length, 2);
+    for (const request of requests) {
+      assert.equal(
+        verifyIbkrHostControlRequest({
+          expectedHostId: hostId,
+          headers: request.headers,
+          key,
+          method: request.method,
+          path: request.path,
+        }).valid,
+        true,
+      );
+      assert(!request.headers.authorization?.includes("legacy-token"));
+    }
+  } finally {
+    globalThis.fetch = previousFetch;
+    for (const name of names) {
+      const value = previous[name];
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
     }
   }
 });

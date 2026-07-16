@@ -1,5 +1,7 @@
 import { createServer, type Server, type ServerResponse } from "node:http";
 
+import { verifyIbkrHostControlRequest } from "@workspace/ibkr-contracts/control-auth";
+
 import {
   CapsuleError,
   type CapsuleRecord,
@@ -13,6 +15,13 @@ type HostSnapshot = {
 };
 
 export type SessionHostServerOptions = {
+  controlIdentity?:
+    | {
+        hostId: string;
+        key: Uint8Array;
+        nowSeconds?: () => number;
+      }
+    | undefined;
   controlToken?: string | undefined;
   ensureSession?: (
     sessionId: string,
@@ -108,13 +117,39 @@ function sessionRoute(path: string): {
 }
 
 function authorized(
-  authorization: string | undefined,
-  controlToken: string | undefined,
+  input: {
+    headers: Record<string, string | string[] | undefined>;
+    method: string;
+    path: string;
+  },
+  options: SessionHostServerOptions,
+  replayNonces: Map<string, number>,
 ): boolean {
+  if (options.controlIdentity) {
+    const nowSeconds =
+      options.controlIdentity.nowSeconds?.() ?? Math.floor(Date.now() / 1_000);
+    const verification = verifyIbkrHostControlRequest({
+      expectedHostId: options.controlIdentity.hostId,
+      headers: input.headers,
+      key: options.controlIdentity.key,
+      method: input.method,
+      nowSeconds,
+      path: input.path,
+    });
+    if (!verification.valid) return false;
+    for (const [nonce, expiresAt] of replayNonces) {
+      if (expiresAt <= nowSeconds) replayNonces.delete(nonce);
+    }
+    if (replayNonces.has(verification.nonce) || replayNonces.size >= 4_096) {
+      return false;
+    }
+    replayNonces.set(verification.nonce, verification.timestampSeconds + 31);
+    return true;
+  }
   return (
-    typeof controlToken === "string" &&
-    controlToken.length > 0 &&
-    authorization === `Bearer ${controlToken}`
+    typeof options.controlToken === "string" &&
+    options.controlToken.length > 0 &&
+    input.headers.authorization === `Bearer ${options.controlToken}`
   );
 }
 
@@ -140,6 +175,7 @@ function sendCapsuleError(response: ServerResponse, error: unknown): void {
 export function createSessionHostServer(
   options: SessionHostServerOptions,
 ): Server {
+  const replayNonces = new Map<string, number>();
   return createServer(async (request, response) => {
     const path = new URL(request.url ?? "/", "http://session-host.invalid")
       .pathname;
@@ -168,7 +204,17 @@ export function createSessionHostServer(
     }
     const route = sessionRoute(path);
     if (route) {
-      if (!authorized(request.headers.authorization, options.controlToken)) {
+      if (
+        !authorized(
+          {
+            headers: request.headers,
+            method: request.method ?? "",
+            path,
+          },
+          options,
+          replayNonces,
+        )
+      ) {
         sendJson(response, 401, {
           error: { code: "unauthorized", message: "Unauthorized." },
         });

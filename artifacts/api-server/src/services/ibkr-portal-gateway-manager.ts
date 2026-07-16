@@ -15,6 +15,11 @@ import { request as httpRequest } from "node:http";
 import path from "node:path";
 import { z } from "zod";
 
+import {
+  decodeIbkrHostControlKey,
+  signIbkrHostControlRequest,
+} from "@workspace/ibkr-contracts/control-auth";
+
 import { HttpError } from "../lib/errors";
 import { findRepoRoot } from "./runtime-flight-recorder";
 
@@ -90,9 +95,23 @@ function bumpGatewayEpoch(appUserId: string): void {
   gatewayEpochs.set(appUserId, gatewayEpoch(appUserId) + 1);
 }
 
-function hostedConfig(): { baseUrl: string; token: string } | null {
+type HostedConfig = {
+  auth:
+    | { kind: "bearer"; token: string }
+    | { hostId: string; key: Buffer; kind: "signed" };
+  baseUrl: string;
+};
+
+const HOST_ID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+
+function hostedConfig(): HostedConfig | null {
   if (process.env["IBKR_SESSION_HOST_ENABLED"] !== "1") return null;
   const token = process.env["IBKR_SESSION_HOST_CONTROL_TOKEN"]?.trim();
+  const hostId = process.env["IBKR_SESSION_HOST_ID"]?.trim();
+  const encodedKey = process.env["IBKR_SESSION_HOST_CONTROL_KEY"]?.trim();
+  const key = encodedKey ? decodeIbkrHostControlKey(encodedKey) : null;
+  const signed = Boolean(hostId || encodedKey);
   const rawUrl =
     process.env["IBKR_SESSION_HOST_URL"]?.trim() ??
     "http://127.0.0.1:18748";
@@ -106,7 +125,8 @@ function hostedConfig(): { baseUrl: string; token: string } | null {
     });
   }
   if (
-    !token ||
+    (!signed && !token) ||
+    (signed && (!hostId || !HOST_ID_PATTERN.test(hostId) || !key)) ||
     url.protocol !== "http:" ||
     url.hostname !== "127.0.0.1" ||
     url.username !== "" ||
@@ -121,8 +141,10 @@ function hostedConfig(): { baseUrl: string; token: string } | null {
     });
   }
   return {
+    auth: signed
+      ? { hostId: hostId!, key: key!, kind: "signed" }
+      : { kind: "bearer", token: token! },
     baseUrl: url.origin,
-    token,
   };
 }
 
@@ -322,7 +344,15 @@ async function hostRequest<T>(
   }
   const response = await fetch(`${config.baseUrl}${path}`, {
     method,
-    headers: { authorization: `Bearer ${config.token}` },
+    headers:
+      config.auth.kind === "signed"
+        ? signIbkrHostControlRequest({
+            hostId: config.auth.hostId,
+            key: config.auth.key,
+            method,
+            path,
+          })
+        : { authorization: `Bearer ${config.auth.token}` },
   });
   if (!response.ok) {
     throw new HttpError(

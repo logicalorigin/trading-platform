@@ -2,6 +2,11 @@ import assert from "node:assert/strict";
 import type { AddressInfo } from "node:net";
 import test from "node:test";
 
+import {
+  decodeIbkrHostControlKey,
+  signIbkrHostControlRequest,
+} from "@workspace/ibkr-contracts/control-auth";
+
 import { CapsuleError } from "./capsule";
 import { createSessionHostServer } from "./server";
 
@@ -144,6 +149,65 @@ test("keeps session control closed without the bearer token", async () => {
       error: { code: "unauthorized", message: "Unauthorized." },
     });
   });
+});
+
+test("accepts one signed host-bound request and rejects its replay", async () => {
+  const key = decodeIbkrHostControlKey(
+    Buffer.alloc(32, 9).toString("base64url"),
+  )!;
+  const hostId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+  let ensures = 0;
+  const server = createSessionHostServer({
+    controlIdentity: {
+      hostId,
+      key,
+      nowSeconds: () => 1_784_200_000,
+    },
+    ensureSession: async () => {
+      ensures += 1;
+      return { name: "pyrus-ibkr-slot-1", status: "ready" };
+    },
+    readiness: () => ({ ready: true }),
+    snapshot: () => ({
+      mode: "paper",
+      capacity: { max: 1, active: 1 },
+    }),
+    target: (_sessionId, _generation, kind) =>
+      kind === "cpg"
+        ? { host: "127.0.0.1", port: 15000 }
+        : { host: "127.0.0.1", port: 16080 },
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const { port } = server.address() as AddressInfo;
+    const path = `/sessions/${SESSION_ID}/generations/7/slots/1/ensure`;
+    const headers = signIbkrHostControlRequest({
+      hostId,
+      key,
+      method: "POST",
+      nonce: "c".repeat(32),
+      path,
+      timestampSeconds: 1_784_200_000,
+    });
+    const first = await fetch(`http://127.0.0.1:${port}${path}`, {
+      method: "POST",
+      headers,
+    });
+    assert.equal(first.status, 200);
+    const replay = await fetch(`http://127.0.0.1:${port}${path}`, {
+      method: "POST",
+      headers,
+    });
+    assert.equal(replay.status, 401);
+    assert.deepEqual(await replay.json(), {
+      error: { code: "unauthorized", message: "Unauthorized." },
+    });
+    assert.equal(ensures, 1);
+  } finally {
+    await new Promise<void>((resolve, reject) => {
+      server.close((error) => (error ? reject(error) : resolve()));
+    });
+  }
 });
 
 test("serves authenticated ensure/status/release responses without secrets", async () => {

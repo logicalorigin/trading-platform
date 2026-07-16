@@ -7,6 +7,7 @@ import {
   loadSessionHostConfig,
 } from "./capsule";
 import { CapsuleFleetManager } from "./fleet";
+import { loadIbkrHostControlIdentity } from "./control-config";
 import { createCapsuleRelayServer, listenCapsuleRelay } from "./relay";
 import { createSessionHostServer } from "./server";
 
@@ -29,6 +30,7 @@ async function main(): Promise<void> {
     }));
   }).flat();
   const server = createSessionHostServer({
+    controlIdentity: loadIbkrHostControlIdentity() ?? undefined,
     controlToken: process.env["IBKR_SESSION_HOST_CONTROL_TOKEN"],
     ensureSession: (sessionId, generation, slotNumber) =>
       fleet.ensure(sessionId, generation, slotNumber),
