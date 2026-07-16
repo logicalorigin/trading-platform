@@ -102,6 +102,77 @@ test("OAuth config signs IBKR requests with deterministic HMAC authorization", a
   });
 });
 
+test("request preparation reroutes HTTP and WebSocket operations at dispatch time", async () => {
+  const prepared: Array<{
+    body: string | Uint8Array | undefined;
+    method: string;
+    transport: "http" | "websocket";
+    url: string;
+  }> = [];
+  const client = new IbkrClient(baseConfig(), {
+    prepareRequest: async (request) => {
+      prepared.push({
+        body: request.body,
+        method: request.method,
+        transport: request.transport,
+        url: request.url,
+      });
+      const logical = new URL(request.url);
+      return {
+        headers: { ...request.headers, "x-synthetic-fence": "current" },
+        url:
+          request.transport === "websocket"
+            ? `wss://fleet.example.invalid/data${logical.pathname}`
+            : `https://fleet.example.invalid/data${logical.pathname}`,
+      };
+    },
+  });
+
+  await withFakeFetch(async (captures) => {
+    await client.tickleSession();
+    const websocket = await client.getWebSocketConnectionConfig();
+
+    assert.equal(captures.length, 2);
+    assert.equal(
+      String(captures[0]!.input),
+      "https://fleet.example.invalid/data/v1/api/tickle",
+    );
+    assert.equal(
+      new Headers(captures[0]!.init?.headers).get("x-synthetic-fence"),
+      "current",
+    );
+    assert.equal(captures[0]!.init?.redirect, "manual");
+    assert.equal(websocket.url, "wss://fleet.example.invalid/data/v1/api/ws");
+    assert.equal(websocket.headers["x-synthetic-fence"], "current");
+    assert.deepEqual(
+      prepared.map(({ body, ...request }) => ({
+        ...request,
+        body: typeof body === "string" ? body : body?.byteLength,
+      })),
+      [
+        {
+          body: "{}",
+          method: "POST",
+          transport: "http",
+          url: "https://api.ibkr.com/v1/api/tickle",
+        },
+        {
+          body: "{}",
+          method: "POST",
+          transport: "http",
+          url: "https://api.ibkr.com/v1/api/tickle",
+        },
+        {
+          body: undefined,
+          method: "GET",
+          transport: "websocket",
+          url: "wss://api.ibkr.com/v1/api/ws",
+        },
+      ],
+    );
+  });
+});
+
 test("unconfigured OAuth preserves bearer and cookie authorization behavior", async () => {
   const client = new IbkrClient(
     baseConfig({

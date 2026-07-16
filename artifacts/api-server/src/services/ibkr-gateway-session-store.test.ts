@@ -16,6 +16,7 @@ import {
   ensureIbkrGatewayBrokerConnection,
   ensureIbkrGatewaySessionIdentity,
   heartbeatIbkrGatewayHost,
+  readCurrentIbkrGatewayFence,
   registerIbkrGatewayHost,
   releaseIbkrGatewayLease,
   renewIbkrGatewayLease,
@@ -329,6 +330,7 @@ test("draining blocks new placement while quarantine synchronously fences existi
     assert.equal(first.status, "acquired");
     if (first.status !== "acquired") return;
     assert.equal(first.fence.hostId, HOST_A);
+    assert.deepEqual(await readCurrentIbkrGatewayFence(identityA), first.fence);
 
     assert.ok(await disableIbkrGatewayHost(HOST_A, "draining"));
     assert.equal(await assertCurrentIbkrGatewayFence(first.fence), true);
@@ -341,6 +343,7 @@ test("draining blocks new placement while quarantine synchronously fences existi
 
     assert.ok(await disableIbkrGatewayHost(HOST_A, "quarantined"));
     assert.equal(await assertCurrentIbkrGatewayFence(first.fence), false);
+    assert.equal(await readCurrentIbkrGatewayFence(identityA), null);
     assert.equal(await renewIbkrGatewayLease(first.fence), null);
 
     assert.equal(await releaseIbkrGatewayLease(second.fence), true);

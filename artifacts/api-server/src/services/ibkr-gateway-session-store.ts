@@ -91,6 +91,19 @@ export async function ensureIbkrGatewayBrokerConnection(input: {
       isDefault: true,
     })
     .onConflictDoNothing();
+  return readIbkrGatewayBrokerConnection(input);
+}
+
+export async function readIbkrGatewayBrokerConnection(input: {
+  appUserId: string;
+  mode: "shadow" | "live";
+}): Promise<BrokerConnection | null> {
+  if (
+    !uuidSchema.safeParse(input.appUserId).success ||
+    !environmentModeSchema.safeParse(input.mode).success
+  ) {
+    return null;
+  }
   const [connection] = await db
     .select()
     .from(brokerConnectionsTable)
@@ -582,6 +595,32 @@ export async function assertCurrentIbkrGatewayFence(
     .where(currentIbkrGatewayFenceWhere(fence))
     .limit(1);
   return Boolean(current);
+}
+
+export async function readCurrentIbkrGatewayFence(
+  input: IdentityInput,
+): Promise<IbkrGatewayFence | null> {
+  if (!validIds(input.appUserId, input.brokerConnectionId)) return null;
+  const [current] = await db
+    .select()
+    .from(ibkrGatewaySessionsTable)
+    .where(
+      and(
+        eq(ibkrGatewaySessionsTable.appUserId, input.appUserId),
+        eq(
+          ibkrGatewaySessionsTable.brokerConnectionId,
+          input.brokerConnectionId,
+        ),
+        isNotNull(ibkrGatewaySessionsTable.hostId),
+        isNotNull(ibkrGatewaySessionsTable.slotNumber),
+        isNotNull(ibkrGatewaySessionsTable.leaseHolderId),
+        gt(ibkrGatewaySessionsTable.leaseExpiresAt, sql`now()`),
+        eligibleIbkrConnectionWhere(input),
+        healthyAssignedHostWhere(),
+      ),
+    )
+    .limit(1);
+  return current ? toFence(current) : null;
 }
 
 export async function resolveCurrentIbkrGatewayPlacement(

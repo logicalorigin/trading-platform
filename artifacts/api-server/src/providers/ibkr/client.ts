@@ -111,6 +111,13 @@ export type IbkrClientOptions = {
     stage: BrokerageSessionStage,
     failure: BrokerageSessionFailure,
   ) => void;
+  prepareRequest?: (request: {
+    body: string | Uint8Array | undefined;
+    headers: Record<string, string>;
+    method: string;
+    transport: "http" | "websocket";
+    url: string;
+  }) => Promise<{ headers: Record<string, string>; url: string }>;
 };
 
 export type BrokerageSessionStage =
@@ -1580,6 +1587,49 @@ export class IbkrClient {
     return url.toString();
   }
 
+  private async prepareTransportRequest(input: {
+    body?: RequestInit["body"];
+    headers: Headers;
+    method: string;
+    transport: "http" | "websocket";
+    url: string;
+  }): Promise<{ headers: Headers; url: string }> {
+    const prepare = this.options.prepareRequest;
+    if (!prepare) return { headers: input.headers, url: input.url };
+    let body: string | Uint8Array | undefined;
+    if (input.body === null || input.body === undefined) {
+      body = undefined;
+    } else if (typeof input.body === "string") {
+      body = input.body;
+    } else if (input.body instanceof Uint8Array) {
+      body = input.body;
+    } else if (input.body instanceof ArrayBuffer) {
+      body = new Uint8Array(input.body);
+    } else {
+      throw new HttpError(500, "The IBKR request body cannot be transported.", {
+        code: "ibkr_request_body_unsupported",
+      });
+    }
+    const prepared = await prepare({
+      body,
+      headers: Object.fromEntries(input.headers.entries()),
+      method: input.method.toUpperCase(),
+      transport: input.transport,
+      url: input.url,
+    });
+    const url = new URL(prepared.url);
+    const validProtocol =
+      input.transport === "http"
+        ? url.protocol === "http:" || url.protocol === "https:"
+        : url.protocol === "ws:" || url.protocol === "wss:";
+    if (!validProtocol || url.username || url.password || url.hash) {
+      throw new HttpError(500, "The IBKR request transport is invalid.", {
+        code: "ibkr_request_transport_invalid",
+      });
+    }
+    return { headers: new Headers(prepared.headers), url: url.toString() };
+  }
+
   private async request<T>(
     path: string,
     init: RequestInit = {},
@@ -1619,6 +1669,15 @@ export class IbkrClient {
         expose: true,
       });
     }
+    const prepared = await this.prepareTransportRequest({
+      body: init.body,
+      headers,
+      method: init.method ?? "GET",
+      transport: "http",
+      url: url.toString(),
+    });
+    throwIfAborted(inputSignal ?? undefined);
+
     const requestEpoch = currentRequestEpoch + 1;
     requestEpochByBaseUrl.set(this.config.baseUrl, requestEpoch);
 
@@ -1636,9 +1695,10 @@ export class IbkrClient {
     }
 
     try {
-      const payload = await fetchJson<T>(url, {
+      const payload = await fetchJson<T>(prepared.url, {
         ...init,
-        headers,
+        headers: prepared.headers,
+        redirect: this.options.prepareRequest ? "manual" : init.redirect,
         signal: controller.signal,
       });
       return { payload, requestEpoch };
@@ -1807,9 +1867,15 @@ export class IbkrClient {
 
     headers.set("Origin", "interactivebrokers.github.io");
 
-    return {
+    const prepared = await this.prepareTransportRequest({
+      headers,
+      method: "GET",
+      transport: "websocket",
       url: this.buildWebSocketUrl(),
-      headers: Object.fromEntries(headers.entries()),
+    });
+    return {
+      url: prepared.url,
+      headers: Object.fromEntries(prepared.headers.entries()),
     };
   }
 
