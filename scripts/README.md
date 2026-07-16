@@ -111,6 +111,11 @@ directory to define separate Replit app runners.
 
 - The legacy Windows-side IBKR bridge bundle has been retired; do not add bridge
   packaging or helper-launch scripts back to startup.
+- `artifacts/pyrus/scripts/runProductionApp.mjs` owns the one-port production
+  API/session-host process tree on a Reserved VM. The host remains disabled by
+  default; when enabled, the runner requires signed lifecycle configuration,
+  passes only host-scoped environment values to it, forces loopback API/Docker
+  targets, and treats either child exit as fatal.
 - `start-local-postgres.sh` and `wait-for-local-postgres.sh` support manual
   workspace-local Postgres fallback diagnosis. They are not part of normal
   Replit app bring-up.

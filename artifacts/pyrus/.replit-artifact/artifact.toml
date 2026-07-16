@@ -26,7 +26,7 @@ args = ["pnpm", "run", "build:pyrus-app"]
 NODE_ENV = "production"
 
 [services.production.run]
-args = ["node", "--enable-source-maps", "artifacts/api-server/dist/index.mjs"]
+args = ["node", "--enable-source-maps", "artifacts/pyrus/scripts/runProductionApp.mjs"]
 
 [services.production.run.env]
 PORT = "18747"

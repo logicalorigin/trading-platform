@@ -179,22 +179,22 @@ check(
   /^\s*args\s*=\s*\["pnpm",\s*"run",\s*"build:pyrus-app"\]\s*$/m.test(
     artifactProductionBuild,
   ),
-  "PYRUS production build must use build:pyrus-app so web and API are built together.",
+  "PYRUS production build must use build:pyrus-app so web, API, and session host are built together.",
 );
 check(
-  /^\s*args\s*=\s*\["node",\s*"--enable-source-maps",\s*"artifacts\/api-server\/dist\/index\.mjs"\]\s*$/m.test(
+  /^\s*args\s*=\s*\["node",\s*"--enable-source-maps",\s*"artifacts\/pyrus\/scripts\/runProductionApp\.mjs"\]\s*$/m.test(
     artifactProductionRun,
   ) &&
     /^\s*PORT\s*=\s*"18747"\s*$/m.test(artifactProductionRunEnv) &&
     /^\s*PYRUS_SERVE_WEB\s*=\s*"1"\s*$/m.test(artifactProductionRunEnv) &&
     /^\s*path\s*=\s*"\/api\/healthz"\s*$/m.test(artifactProductionHealth),
-  "PYRUS production run must start the API server as the single fullstack web service on port 18747.",
+  "PYRUS production run must start the guarded fullstack supervisor as the single external web service on port 18747.",
 );
 
 check(
   rootScripts["build:pyrus-app"] ===
-    "pnpm run audit:guards && pnpm --filter @workspace/pyrus run build && pnpm --filter @workspace/api-server run build",
-  "package.json must keep build:pyrus-app fail-closed on audit:guards before building web and API without the retired IBKR bridge bundle.",
+    "pnpm run audit:guards && pnpm --filter @workspace/pyrus run build && pnpm --filter @workspace/api-server run build && pnpm --filter @workspace/ibkr-session-host run build",
+  "package.json must keep build:pyrus-app fail-closed on audit:guards before building web, API, and the co-located IBKR session host without the retired desktop bridge bundle.",
 );
 check(
   rootScripts["typecheck:libs"] ===
@@ -281,6 +281,14 @@ check(
     replitDocs.includes("targeted package checks"),
   "replit.md must document the root validation ledger, single-validation lock, retired supervisor hot guard, and targeted-check preference.",
 );
+check(
+  replitDocs.includes("runProductionApp.mjs") &&
+    replitDocs.includes("one web service/port") &&
+    replitDocs.includes("Reserved VM") &&
+    replitDocs.includes("Publishing tool") &&
+    replitDocs.includes("local Docker daemon/capabilities"),
+  "replit.md must document the single-port production supervisor, Publishing-tool Reserved VM requirement, and unproven production Docker preflight.",
+);
 const scriptsReadme = read("scripts/README.md");
 check(
   scriptsReadme.includes("REPLIT_MODE=workflow") &&
@@ -304,8 +312,32 @@ check(
     scriptsReadme.includes("artifact/env reconciliation"),
   "scripts/README.md must document the explicit control-plane maintenance opt-in required for Scribe artifact cleanup.",
 );
+check(
+  scriptsReadme.includes("runProductionApp.mjs") &&
+    scriptsReadme.includes("one-port production") &&
+    scriptsReadme.includes("signed lifecycle configuration") &&
+    scriptsReadme.includes("treats either child exit as fatal"),
+  "scripts/README.md must document production supervisor ownership and its fail-closed host boundary.",
+);
 
 const pyrusRunner = read("artifacts/pyrus/scripts/runDevApp.mjs");
+const pyrusProductionRunner = read(
+  "artifacts/pyrus/scripts/runProductionApp.mjs",
+);
+check(
+  pyrusProductionRunner.includes("resolveProductionServices") &&
+    pyrusProductionRunner.includes("IBKR_SESSION_HOST_ENABLED") &&
+    pyrusProductionRunner.includes("IBKR_GATEWAY_FLEET_ENABLED") &&
+    pyrusProductionRunner.includes("REQUIRED_SIGNED_HOST_ENV") &&
+    pyrusProductionRunner.includes('name.startsWith("IBKR_SESSION_")') &&
+    pyrusProductionRunner.includes(
+      'DOCKER_HOST: "unix:///var/run/docker.sock"',
+    ) &&
+    pyrusProductionRunner.includes("spawn(process.execPath") &&
+    pyrusProductionRunner.includes('child.kill("SIGTERM")') &&
+    pyrusProductionRunner.includes('child.kill("SIGKILL")'),
+  "runProductionApp.mjs must own the single-port API/session-host process tree, require signed host lifecycle configuration, minimize host env authority, and bound child shutdown.",
+);
 check(
   pyrusRunner.includes("apiPortOwnerStatus(apiRootPid)") &&
     pyrusRunner.includes("healthy response came from a previous API process"),

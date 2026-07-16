@@ -57,7 +57,22 @@ The API dev script does not start Postgres; it uses Replit's managed DB by defau
 - The PYRUS artifact TOML is the source of truth for dev/deploy service metadata.
 - `pnpm run audit:replit-startup` guards these invariants.
 
-Publishing: `pnpm run build:pyrus-app` builds the web app and API only. The retired IBKR desktop bridge bundle is not part of build or deploy output.
+Publishing: `pnpm run build:pyrus-app` builds the web app, API, and bounded
+IBKR session-host bundle. Production still exposes one web service/port: the
+artifact runs `artifacts/pyrus/scripts/runProductionApp.mjs`, which owns the
+fullstack API and optionally starts the session host on loopback. The host is
+disabled unless `IBKR_SESSION_HOST_ENABLED=1`, and the retired IBKR desktop
+bridge bundle is not part of build or deploy output.
+
+IBKR fleet production must use an always-on **Reserved VM** selected and
+verified in Replit's Publishing tool; the tracked `deploymentTarget` value is
+not proof that the live published app was switched. Replit documents deployment
+type as a Publishing-tool choice:
+<https://docs.replit.com/references/publishing/reserved-vm-deployments>.
+Do not use an Autoscale deployment for the stateful session host. Before host
+approval, runtime preflight must also prove that the published VM exposes the
+required local Docker daemon/capabilities; repository packaging alone does not
+establish that production-host fact.
 
 ## IBKR Broker Connectivity
 
