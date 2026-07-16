@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { createHmac } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -23,13 +24,26 @@ const HOST_SYSTEM_ENV = [
 const REQUIRED_SIGNED_HOST_ENV = [
   "IBKR_GATEWAY_FLEET_CONTROL_ROOT_KEY",
   "IBKR_SESSION_CAPSULE_IMAGE",
-  "IBKR_SESSION_HOST_CONTROL_KEY",
   "IBKR_SESSION_HOST_FAILURE_DOMAIN",
   "IBKR_SESSION_HOST_ID",
   "IBKR_SESSION_HOST_RUNTIME_ATTESTATION_DIGEST",
   "IBKR_SESSION_HOST_RUNTIME_SPEC_DIGEST",
   "IBKR_SESSION_HOST_WORKLOAD_IDENTITY_DIGEST",
 ];
+const HOST_RUNTIME_ENV = [
+  "IBKR_SESSION_CAPSULE_IMAGE",
+  "IBKR_SESSION_HOST_CAPACITY",
+  "IBKR_SESSION_HOST_FAILURE_DOMAIN",
+  "IBKR_SESSION_HOST_ID",
+  "IBKR_SESSION_HOST_MODE",
+  "IBKR_SESSION_HOST_PORT",
+  "IBKR_SESSION_HOST_RUNTIME_ATTESTATION_DIGEST",
+  "IBKR_SESSION_HOST_RUNTIME_SPEC_DIGEST",
+  "IBKR_SESSION_HOST_WORKLOAD_IDENTITY_DIGEST",
+];
+const CONTROL_KEY_PATTERN = /^[A-Za-z0-9_-]{43}$/;
+const HOST_ID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
 function nonEmpty(value) {
   return typeof value === "string" && value.trim().length > 0;
@@ -43,25 +57,59 @@ function parsePort(value, label) {
   return port;
 }
 
-function hostEnvironment(env, apiPort) {
+function decodeControlKey(value) {
+  if (!CONTROL_KEY_PATTERN.test(value)) return null;
+  const decoded = Buffer.from(value, "base64url");
+  return decoded.byteLength === 32 && decoded.toString("base64url") === value
+    ? decoded
+    : null;
+}
+
+function productionHostControlKeys(env) {
+  const hostId = env.IBKR_SESSION_HOST_ID?.trim() ?? "";
+  const primaryRoot = decodeControlKey(
+    env.IBKR_GATEWAY_FLEET_CONTROL_ROOT_KEY?.trim() ?? "",
+  );
+  const encodedOverlap =
+    env.IBKR_GATEWAY_FLEET_CONTROL_OVERLAP_ROOT_KEY?.trim() ?? "";
+  const overlapRoot = encodedOverlap ? decodeControlKey(encodedOverlap) : null;
+  if (
+    !HOST_ID_PATTERN.test(hostId) ||
+    !primaryRoot ||
+    (encodedOverlap && !overlapRoot) ||
+    overlapRoot?.equals(primaryRoot)
+  ) {
+    throw new Error("The production fleet control root keys are invalid.");
+  }
+  // ponytail: this runner is plain deployment JS while ibkr-contracts emits
+  // declarations only. Remove this duplicate when that package emits runtime JS.
+  const derive = (rootKey) =>
+    createHmac("sha256", rootKey)
+      .update(`PYRUS-IBKR-HOST-CONTROL-KEY-V1\0${hostId}`)
+      .digest("base64url");
+  return {
+    primary: derive(primaryRoot),
+    overlap: overlapRoot ? derive(overlapRoot) : null,
+  };
+}
+
+function hostEnvironment(env, apiPort, controlKeys) {
   const hostEnv = {};
   for (const name of HOST_SYSTEM_ENV) {
     if (typeof env[name] === "string") hostEnv[name] = env[name];
   }
-  for (const [name, value] of Object.entries(env)) {
-    if (
-      name.startsWith("IBKR_SESSION_") &&
-      name !== "IBKR_SESSION_HOST_CONTROL_TOKEN" &&
-      typeof value === "string"
-    ) {
-      hostEnv[name] = value;
-    }
+  for (const name of HOST_RUNTIME_ENV) {
+    if (typeof env[name] === "string") hostEnv[name] = env[name];
   }
   return {
     ...hostEnv,
     DOCKER_HOST: "unix:///var/run/docker.sock",
     IBKR_SESSION_HOST_API_ORIGIN: `http://127.0.0.1:${apiPort}`,
     IBKR_SESSION_HOST_BIND: "127.0.0.1",
+    IBKR_SESSION_HOST_CONTROL_KEY: controlKeys.primary,
+    ...(controlKeys.overlap
+      ? { IBKR_SESSION_HOST_OVERLAP_CONTROL_KEY: controlKeys.overlap }
+      : {}),
     NODE_ENV: "production",
     PYRUS_API_PORT: String(apiPort),
   };
@@ -87,15 +135,6 @@ export function resolveProductionServices(
       "The production session host requires complete signed lifecycle configuration.",
     );
   }
-  if (
-    hostEnabled &&
-    nonEmpty(env.IBKR_GATEWAY_FLEET_CONTROL_OVERLAP_ROOT_KEY) !==
-      nonEmpty(env.IBKR_SESSION_HOST_OVERLAP_CONTROL_KEY)
-  ) {
-    throw new Error(
-      "The production fleet overlap keys must be configured together.",
-    );
-  }
 
   const services = [
     {
@@ -105,6 +144,7 @@ export function resolveProductionServices(
     },
   ];
   if (!hostEnabled) return services;
+  const controlKeys = productionHostControlKeys(env);
 
   const hostPort = parsePort(
     env.IBKR_SESSION_HOST_PORT ?? "18748",
@@ -118,7 +158,7 @@ export function resolveProductionServices(
   services.push({
     name: "IBKR session host",
     entry: path.join(root, "lib/ibkr-session-host/dist/index.mjs"),
-    env: hostEnvironment(env, apiPort),
+    env: hostEnvironment(env, apiPort, controlKeys),
   });
   return services;
 }

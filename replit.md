@@ -64,6 +64,11 @@ fullstack API and optionally starts the session host on loopback. The host is
 disabled unless `IBKR_SESSION_HOST_ENABLED=1`, and the retired IBKR desktop
 bridge bundle is not part of build or deploy output.
 
+For co-located production, configure the API fleet root key and stable host ID,
+not a separate derived host secret. The supervisor derives the host-bound
+primary and optional rotation-overlap keys, overrides externally supplied host
+key values, and passes only the derivatives to the host child.
+
 IBKR fleet production must use an always-on **Reserved VM** selected and
 verified in Replit's Publishing tool; the tracked `deploymentTarget` value is
 not proof that the live published app was switched. Replit documents deployment

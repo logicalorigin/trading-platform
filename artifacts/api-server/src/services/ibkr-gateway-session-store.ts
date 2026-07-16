@@ -147,6 +147,34 @@ function validIds(...ids: unknown[]): boolean {
   return ids.every((id) => uuidSchema.safeParse(id).success);
 }
 
+export async function readIbkrGatewayHost(
+  hostId: string,
+): Promise<IbkrGatewayHost | null> {
+  if (!validIds(hostId)) return null;
+  const [host] = await db
+    .select()
+    .from(ibkrGatewayHostsTable)
+    .where(eq(ibkrGatewayHostsTable.id, hostId))
+    .limit(1);
+  return host ?? null;
+}
+
+export async function countActiveIbkrGatewayHostLeases(
+  hostId: string,
+): Promise<number | null> {
+  if (!validIds(hostId)) return null;
+  const [result] = await db
+    .select({ count: sql<number>`count(*)::integer` })
+    .from(ibkrGatewaySessionsTable)
+    .where(
+      and(
+        eq(ibkrGatewaySessionsTable.hostId, hostId),
+        gt(ibkrGatewaySessionsTable.leaseExpiresAt, sql`now()`),
+      ),
+    );
+  return result?.count ?? 0;
+}
+
 function normalizeControlOrigin(value: string): string | null {
   try {
     const url = new URL(value);

@@ -316,7 +316,7 @@ check(
   scriptsReadme.includes("runProductionApp.mjs") &&
     scriptsReadme.includes("one-port production") &&
     scriptsReadme.includes("signed lifecycle configuration") &&
-    scriptsReadme.includes("treats either child exit as fatal"),
+    scriptsReadme.includes("either child exit as fatal"),
   "scripts/README.md must document production supervisor ownership and its fail-closed host boundary.",
 );
 
@@ -329,14 +329,26 @@ check(
     pyrusProductionRunner.includes("IBKR_SESSION_HOST_ENABLED") &&
     pyrusProductionRunner.includes("IBKR_GATEWAY_FLEET_ENABLED") &&
     pyrusProductionRunner.includes("REQUIRED_SIGNED_HOST_ENV") &&
-    pyrusProductionRunner.includes('name.startsWith("IBKR_SESSION_")') &&
+    pyrusProductionRunner.includes("HOST_RUNTIME_ENV") &&
+    pyrusProductionRunner.includes("productionHostControlKeys") &&
+    pyrusProductionRunner.includes("createHmac") &&
+    pyrusProductionRunner.includes(
+      "PYRUS-IBKR-HOST-CONTROL-KEY-V1",
+    ) &&
+    !pyrusProductionRunner.includes('name.startsWith("IBKR_SESSION_")') &&
     pyrusProductionRunner.includes(
       'DOCKER_HOST: "unix:///var/run/docker.sock"',
     ) &&
     pyrusProductionRunner.includes("spawn(process.execPath") &&
     pyrusProductionRunner.includes('child.kill("SIGTERM")') &&
     pyrusProductionRunner.includes('child.kill("SIGKILL")'),
-  "runProductionApp.mjs must own the single-port API/session-host process tree, require signed host lifecycle configuration, minimize host env authority, and bound child shutdown.",
+  "runProductionApp.mjs must own the single-port API/session-host process tree, derive host-bound keys, minimize host env authority, and bound child shutdown.",
+);
+const apiBuild = read("artifacts/api-server/build.mjs");
+check(
+  apiBuild.includes('"ibkr-gateway-host-admin"') &&
+    apiBuild.includes('"src/scripts/ibkr-gateway-host-admin.ts"'),
+  "The API production build must include the non-network IBKR fleet host operator CLI.",
 );
 check(
   pyrusRunner.includes("apiPortOwnerStatus(apiRootPid)") &&

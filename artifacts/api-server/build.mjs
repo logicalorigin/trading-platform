@@ -16,7 +16,13 @@ async function buildAll() {
 
   const startedAt = Date.now();
   const result = await esbuild({
-    entryPoints: [path.resolve(artifactDir, "src/index.ts")],
+    entryPoints: {
+      index: path.resolve(artifactDir, "src/index.ts"),
+      "ibkr-gateway-host-admin": path.resolve(
+        artifactDir,
+        "src/scripts/ibkr-gateway-host-admin.ts",
+      ),
+    },
     platform: "node",
     bundle: true,
     format: "esm",

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHmac } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { readFileSync } from "node:fs";
 import test from "node:test";
@@ -9,6 +10,15 @@ import {
 } from "./runProductionApp.mjs";
 
 const repoRoot = "/synthetic/repo";
+const ROOT_KEY = Buffer.alloc(32, 41);
+const OVERLAP_ROOT_KEY = Buffer.alloc(32, 42);
+const HOST_ID = "11111111-1111-4111-8111-111111111111";
+
+function deriveHostKey(rootKey) {
+  return createHmac("sha256", rootKey)
+    .update(`PYRUS-IBKR-HOST-CONTROL-KEY-V1\0${HOST_ID}`)
+    .digest("base64url");
+}
 
 function baseEnv() {
   return {
@@ -24,12 +34,11 @@ function baseEnv() {
 function enabledHostEnv() {
   return {
     ...baseEnv(),
-    IBKR_GATEWAY_FLEET_CONTROL_ROOT_KEY: "api-root-secret",
+    IBKR_GATEWAY_FLEET_CONTROL_ROOT_KEY: ROOT_KEY.toString("base64url"),
     IBKR_SESSION_CAPSULE_IMAGE: `sha256:${"a".repeat(64)}`,
-    IBKR_SESSION_HOST_CONTROL_KEY: "derived-host-key",
     IBKR_SESSION_HOST_ENABLED: "1",
     IBKR_SESSION_HOST_FAILURE_DOMAIN: "reserved-vm-primary",
-    IBKR_SESSION_HOST_ID: "11111111-1111-4111-8111-111111111111",
+    IBKR_SESSION_HOST_ID: HOST_ID,
     IBKR_SESSION_HOST_RUNTIME_ATTESTATION_DIGEST: `sha256:${"b".repeat(64)}`,
     IBKR_SESSION_HOST_RUNTIME_SPEC_DIGEST: `sha256:${"c".repeat(64)}`,
     IBKR_SESSION_HOST_WORKLOAD_IDENTITY_DIGEST: "d".repeat(64),
@@ -53,28 +62,36 @@ test("enabled production starts a least-privilege co-located session host", () =
   const env = {
     ...enabledHostEnv(),
     DATABASE_URL: "postgres://sensitive.invalid/db",
-    IBKR_GATEWAY_FLEET_CONTROL_OVERLAP_ROOT_KEY: "api-overlap-secret",
-    IBKR_SESSION_HOST_OVERLAP_CONTROL_KEY: "derived-overlap-host-key",
+    IBKR_GATEWAY_FLEET_CONTROL_OVERLAP_ROOT_KEY:
+      OVERLAP_ROOT_KEY.toString("base64url"),
+    IBKR_SESSION_HOST_CONTROL_KEY: "externally-supplied-host-key",
+    IBKR_SESSION_HOST_OVERLAP_CONTROL_KEY:
+      "externally-supplied-overlap-host-key",
+    IBKR_SESSION_COOKIE: "legacy-session-cookie",
     SNAPTRADE_API_KEY: "broker-secret",
   };
   const [api, host] = resolveProductionServices(env, repoRoot);
 
   assert.equal(api.name, "API");
-  assert.equal(api.env.IBKR_GATEWAY_FLEET_CONTROL_ROOT_KEY, "api-root-secret");
+  assert.equal(
+    api.env.IBKR_GATEWAY_FLEET_CONTROL_ROOT_KEY,
+    ROOT_KEY.toString("base64url"),
+  );
   assert.equal(host.name, "IBKR session host");
   assert.equal(
     host.entry,
     "/synthetic/repo/lib/ibkr-session-host/dist/index.mjs",
   );
-  assert.equal(host.env.IBKR_SESSION_HOST_CONTROL_KEY, "derived-host-key");
+  assert.equal(host.env.IBKR_SESSION_HOST_CONTROL_KEY, deriveHostKey(ROOT_KEY));
   assert.equal(
     host.env.IBKR_SESSION_HOST_OVERLAP_CONTROL_KEY,
-    "derived-overlap-host-key",
+    deriveHostKey(OVERLAP_ROOT_KEY),
   );
   assert.equal(host.env.IBKR_SESSION_HOST_ID, env.IBKR_SESSION_HOST_ID);
   assert.equal(host.env.PYRUS_API_PORT, "18747");
   assert.equal(host.env.DOCKER_HOST, "unix:///var/run/docker.sock");
   assert.equal(host.env.DATABASE_URL, undefined);
+  assert.equal(host.env.IBKR_SESSION_COOKIE, undefined);
   assert.equal(host.env.IBKR_GATEWAY_FLEET_CONTROL_ROOT_KEY, undefined);
   assert.equal(
     host.env.IBKR_GATEWAY_FLEET_CONTROL_OVERLAP_ROOT_KEY,
@@ -126,22 +143,23 @@ test("production fails closed on an incoherent co-located topology", () => {
       resolveProductionServices(
         {
           ...enabledHostEnv(),
-          IBKR_GATEWAY_FLEET_CONTROL_OVERLAP_ROOT_KEY: "overlap-root",
+          IBKR_GATEWAY_FLEET_CONTROL_ROOT_KEY: "invalid",
         },
         repoRoot,
       ),
-    /overlap keys must be configured together/,
+    /control root keys are invalid/,
   );
   assert.throws(
     () =>
       resolveProductionServices(
         {
           ...enabledHostEnv(),
-          IBKR_SESSION_HOST_OVERLAP_CONTROL_KEY: "overlap-host",
+          IBKR_GATEWAY_FLEET_CONTROL_OVERLAP_ROOT_KEY:
+            ROOT_KEY.toString("base64url"),
         },
         repoRoot,
       ),
-    /overlap keys must be configured together/,
+    /control root keys are invalid/,
   );
 });
 

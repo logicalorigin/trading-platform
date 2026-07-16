@@ -12,10 +12,12 @@ import { eq } from "drizzle-orm";
 import {
   approveIbkrGatewayHost,
   assertCurrentIbkrGatewayFence,
+  countActiveIbkrGatewayHostLeases,
   disableIbkrGatewayHost,
   ensureIbkrGatewayBrokerConnection,
   ensureIbkrGatewaySessionIdentity,
   heartbeatIbkrGatewayHost,
+  readIbkrGatewayHost,
   readCurrentIbkrGatewayFence,
   registerIbkrGatewayHost,
   releaseIbkrGatewayLease,
@@ -155,6 +157,10 @@ test("host registration is idempotent, quarantined by default, and attestation-b
     assert.equal(registered.controlOrigin, "https://host-a.internal.invalid");
     assert.equal(registered.status, "quarantined");
     assert.equal(registered.admissionSlotCapacity, 1);
+    assert.equal((await readIbkrGatewayHost(HOST_A))?.id, HOST_A);
+    assert.equal(await readIbkrGatewayHost("not-a-host"), null);
+    assert.equal(await countActiveIbkrGatewayHostLeases(HOST_A), 0);
+    assert.equal(await countActiveIbkrGatewayHostLeases("not-a-host"), null);
 
     const repeated = await registerIbkrGatewayHost({
       hostId: HOST_A,
@@ -372,6 +378,7 @@ test("draining blocks new placement while quarantine synchronously fences existi
     if (first.status !== "acquired") return;
     assert.equal(first.fence.hostId, HOST_A);
     assert.deepEqual(await readCurrentIbkrGatewayFence(identityA), first.fence);
+    assert.equal(await countActiveIbkrGatewayHostLeases(HOST_A), 1);
 
     assert.ok(await disableIbkrGatewayHost(HOST_A, "draining"));
     assert.equal(await assertCurrentIbkrGatewayFence(first.fence), true);

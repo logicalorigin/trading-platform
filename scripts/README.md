@@ -114,8 +114,14 @@ directory to define separate Replit app runners.
 - `artifacts/pyrus/scripts/runProductionApp.mjs` owns the one-port production
   API/session-host process tree on a Reserved VM. The host remains disabled by
   default; when enabled, the runner requires signed lifecycle configuration,
-  passes only host-scoped environment values to it, forces loopback API/Docker
-  targets, and treats either child exit as fatal.
+  derives host-bound keys from the API roots, passes only host-scoped
+  environment values to it, forces loopback API/Docker targets, and treats
+  either child exit as fatal.
+- `artifacts/api-server/dist/ibkr-gateway-host-admin.mjs` is the built,
+  non-network operator interface for inspecting, approving, draining, or
+  quarantining a fleet host. Mutations require exact bounded arguments plus
+  `--execute`; the command uses the script DB profile and closes every database
+  pool before exit. Run it with `--help` for the exact syntax.
 - `start-local-postgres.sh` and `wait-for-local-postgres.sh` support manual
   workspace-local Postgres fallback diagnosis. They are not part of normal
   Replit app bring-up.
