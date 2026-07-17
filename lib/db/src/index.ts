@@ -764,6 +764,7 @@ export {
   type AdvisoryLockLease,
   type AdvisoryLockRelease,
 } from "./advisory-lock";
+export { parseOptionalPositiveInteger } from "./positive-integer";
 export * from "./runtime";
 export * from "./schema";
 export * from "./retention";

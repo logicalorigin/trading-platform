@@ -5,11 +5,15 @@ import {
   createAdvisoryLockHolder,
   sharedAdvisoryLockHolder,
 } from "./advisory-lock";
-import type { AdvisoryLockLease } from "./index";
+import {
+  parseOptionalPositiveInteger,
+  type AdvisoryLockLease,
+} from "./index";
 
-test("the package entry point exports the advisory lock lease contract", () => {
+test("the package entry point exports advisory runtime contracts", () => {
   const acceptLease = (_lease: AdvisoryLockLease) => undefined;
   assert.equal(typeof acceptLease, "function");
+  assert.equal(parseOptionalPositiveInteger("17"), 17);
 });
 
 /**
