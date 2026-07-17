@@ -15,6 +15,7 @@ const TRANSIENT_POSTGRES_CODES = new Set([
   "ETIMEDOUT",
   "EAI_AGAIN",
   "ENOTFOUND",
+  "EPIPE",
 ]);
 
 const TRANSIENT_POSTGRES_MESSAGE_PATTERNS = [
@@ -49,17 +50,69 @@ export type TransientPostgresErrorSummary = {
   cause?: TransientPostgresErrorSummary;
 };
 
+const MAX_POSTGRES_ERROR_CLASSIFICATION_TEXT_LENGTH = 4_096;
+const DRIZZLE_QUERY_FAILURE_MESSAGE = /^\s*Failed query:/i;
+const SAFE_POSTGRES_ERROR_NAMES = new Set([
+  "AggregateError",
+  "DatabaseError",
+  "Error",
+  "EvalError",
+  "RangeError",
+  "ReferenceError",
+  "SyntaxError",
+  "TypeError",
+  "URIError",
+]);
+const SAFE_POSTGRES_ERROR_CODES = new Set([
+  ...TRANSIENT_POSTGRES_CODES,
+  "23505",
+  "28P01",
+  "42P01",
+  "55P03",
+  "57014",
+]);
+
 const asRecord = (value: unknown): Record<string, unknown> =>
   value && typeof value === "object" ? (value as Record<string, unknown>) : {};
 
 function textFromError(value: unknown): string {
-  if (value instanceof Error) {
-    return [value.name, value.message, value.stack].filter(Boolean).join("\n");
+  const text =
+    value instanceof Error
+      ? value.message
+      : typeof value === "string"
+        ? value
+        : "";
+  return text.slice(0, MAX_POSTGRES_ERROR_CLASSIFICATION_TEXT_LENGTH);
+}
+
+function summarizePostgresErrorMessage(error: unknown): string {
+  const message =
+    error instanceof Error
+      ? error.message
+      : typeof error === "string"
+        ? error
+        : "Unknown database error";
+  const classificationText = message.slice(
+    0,
+    MAX_POSTGRES_ERROR_CLASSIFICATION_TEXT_LENGTH,
+  );
+  if (DRIZZLE_QUERY_FAILURE_MESSAGE.test(classificationText)) {
+    return "Database query failed";
   }
-  if (typeof value === "string") {
-    return value;
+  if (isPoolContentionError(error)) {
+    return "Database pool timed out";
   }
-  return "";
+  if (isStatementTimeoutError(error)) {
+    return "Database statement timed out";
+  }
+  if (isTransientPostgresError(error)) {
+    return "Database connection failed";
+  }
+  return "Database operation failed";
+}
+
+function isSafePostgresErrorCode(code: string): boolean {
+  return SAFE_POSTGRES_ERROR_CODES.has(code);
 }
 
 export function isTransientPostgresError(error: unknown, depth = 0): boolean {
@@ -139,14 +192,13 @@ export function summarizeTransientPostgresError(
   const code = record["code"] ?? record["errno"];
   const cause = record["cause"];
   const summary = {
-    name: error instanceof Error ? error.name : null,
-    message:
-      error instanceof Error
-        ? error.message
-        : typeof error === "string"
-          ? error
-          : "Unknown database error",
-    code: typeof code === "string" ? code : null,
+    name:
+      error instanceof Error && SAFE_POSTGRES_ERROR_NAMES.has(error.name)
+        ? error.name
+        : null,
+    message: summarizePostgresErrorMessage(error),
+    code:
+      typeof code === "string" && isSafePostgresErrorCode(code) ? code : null,
   };
 
   if (cause && depth < 3) {
