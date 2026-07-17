@@ -52,6 +52,37 @@ test("Signal Options shadow mark enforcement treats hard stops as actionable", (
   assert.equal(decision.exitPrice, 0.05);
 });
 
+test("Shadow option economics reject non-positive contract inputs at the trust boundary", () => {
+  const valid = {
+    ...optionContract,
+    ticker: "O:CRM260619C00250000",
+  };
+
+  assert.equal(
+    internals.asOptionContractForTests({ ...valid, strike: 0 }),
+    null,
+  );
+  assert.equal(
+    internals.asOptionContractForTests({ ...valid, multiplier: -100 }),
+    null,
+  );
+  assert.equal(
+    internals.asOptionContractForTests({ ...valid, sharesPerContract: 0 }),
+    null,
+  );
+  assert.equal(
+    internals.marketMultiplierForTests({
+      assetClass: "option",
+      optionContract: {
+        ...valid,
+        multiplier: 0,
+        sharesPerContract: -5,
+      } as never,
+    }),
+    100,
+  );
+});
+
 test("Signal Options shadow mark enforcement still treats runner trails as actionable", () => {
   const decision = internals.computeSignalOptionsShadowMarkExitDecision({
     contract: optionContract as never,

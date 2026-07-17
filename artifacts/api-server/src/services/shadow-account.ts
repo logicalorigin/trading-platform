@@ -1431,8 +1431,8 @@ function marketMultiplier(input: {
 }): number {
   if (input.assetClass === "option") {
     return (
-      toNumber(input.optionContract?.sharesPerContract) ??
-      toNumber(input.optionContract?.multiplier) ??
+      readPositiveNumber(input.optionContract?.multiplier) ??
+      readPositiveNumber(input.optionContract?.sharesPerContract) ??
       100
     );
   }
@@ -2773,12 +2773,20 @@ function asOptionContract(value: unknown): ShadowOptionContract | null {
   const right = String(value.right ?? "").toLowerCase();
   const ticker = String(value.ticker ?? "");
   const underlying = normalizeSymbol(String(value.underlying ?? ticker));
-  const strike = toNumber(value.strike);
+  const strike = readPositiveNumber(value.strike);
+  const multiplier =
+    value.multiplier == null ? 100 : readPositiveNumber(value.multiplier);
+  const sharesPerContract =
+    value.sharesPerContract == null
+      ? 100
+      : readPositiveNumber(value.sharesPerContract);
   if (
     !ticker ||
     !underlying ||
     Number.isNaN(expirationDate.getTime()) ||
     strike == null ||
+    multiplier == null ||
+    sharesPerContract == null ||
     (right !== "call" && right !== "put")
   ) {
     return null;
@@ -2789,8 +2797,8 @@ function asOptionContract(value: unknown): ShadowOptionContract | null {
     expirationDate,
     strike,
     right,
-    multiplier: toNumber(value.multiplier) ?? 100,
-    sharesPerContract: toNumber(value.sharesPerContract) ?? 100,
+    multiplier,
+    sharesPerContract,
     providerContractId:
       typeof value.providerContractId === "string" &&
       value.providerContractId.trim()
@@ -17021,6 +17029,8 @@ async function insertWatchlistBacktestFills(input: {
 }
 
 export const __shadowWatchlistBacktestInternalsForTests = {
+  marketMultiplierForTests: marketMultiplier,
+  asOptionContractForTests: asOptionContract,
   writeWatchlistBacktestRunToOwnLedgerForTests:
     writeWatchlistBacktestRunToOwnLedger,
   shadowInjectedFastRiskReadCacheKeyForTests:
