@@ -4,6 +4,7 @@ import {
   postgresConnectionExhaustionGate,
 } from "./connection-exhaustion-gate";
 import { attachPostgresClientErrorHandler } from "./pool-error-handler";
+import { parseOptionalPositiveInteger } from "./positive-integer";
 import { resolveDatabaseRuntimeConfig } from "./runtime";
 
 const { Client } = pg;
@@ -14,17 +15,21 @@ const ConnectionExhaustionGatedClient =
   );
 
 export type AdvisoryLockRelease = () => Promise<void>;
+export type AdvisoryLockLease = AdvisoryLockRelease & {
+  readonly signal: AbortSignal;
+  readonly fenceToken?: string;
+};
 
 type ClientLike = {
   connect: () => Promise<void>;
   end: () => Promise<void>;
-  query: <Row>(
-    sql: string,
-    values?: unknown[],
-  ) => Promise<{ rows: Row[] }>;
+  query: <Row>(sql: string, values?: unknown[]) => Promise<{ rows: Row[] }>;
   on: (event: "error", listener: (error: Error) => void) => unknown;
   off?: (event: "error", listener: (error: Error) => void) => unknown;
-  removeListener?: (event: "error", listener: (error: Error) => void) => unknown;
+  removeListener?: (
+    event: "error",
+    listener: (error: Error) => void,
+  ) => unknown;
 };
 
 type AdvisoryLockHolderOptions = {
@@ -35,6 +40,7 @@ type AdvisoryLockHolderOptions = {
    */
   createClient?: () => ClientLike;
   context?: string;
+  teardownTimeoutMs?: number;
 };
 
 /**
@@ -61,24 +67,92 @@ export function createAdvisoryLockHolder(
   const context = options.context ?? "advisory-lock";
   const createClient =
     options.createClient ?? (() => defaultLockClient(context));
+  const teardownTimeoutMs =
+    parseOptionalPositiveInteger(
+      options.teardownTimeoutMs === undefined
+        ? undefined
+        : String(options.teardownTimeoutMs),
+    ) ??
+    parseOptionalPositiveInteger(process.env.DB_CONNECTION_TIMEOUT_MS) ??
+    30_000;
 
   let client: ClientLike | null = null;
   let connecting: Promise<ClientLike> | null = null;
   let detachErrorHandler: (() => void) | null = null;
-  const heldKeys = new Map<number, ClientLike>();
-  const acquiringKeys = new Set<number>();
+  const heldKeys = new Map<
+    number,
+    { client: ClientLike; controller: AbortController }
+  >();
+  const acquiringKeys = new Map<number, symbol>();
   let generation = 0;
   let closed = false;
   let closing: Promise<void> | null = null;
   let queryTail: Promise<void> = Promise.resolve();
+  let detachedTeardown: Promise<void> = Promise.resolve();
+  const clientTeardowns = new WeakMap<ClientLike, Promise<void>>();
 
   const closedError = () => new Error(`${context} holder is closed.`);
+
+  const endClient = async (current: ClientLike): Promise<void> => {
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    const timedOut = new Promise<never>((_resolve, reject) => {
+      timeout = setTimeout(() => {
+        reject(
+          new Error(
+            `${context} connection teardown timed out after ${teardownTimeoutMs}ms.`,
+          ),
+        );
+      }, teardownTimeoutMs);
+      timeout.unref?.();
+    });
+    try {
+      await Promise.race([current.end(), timedOut]);
+    } finally {
+      if (timeout) {
+        clearTimeout(timeout);
+      }
+    }
+  };
+
+  const trackClientTeardown = (current: ClientLike): Promise<void> => {
+    const existing = clientTeardowns.get(current);
+    if (existing) {
+      return existing;
+    }
+    const ending = endClient(current);
+    clientTeardowns.set(current, ending);
+    const previous = detachedTeardown;
+    detachedTeardown = Promise.allSettled([previous, ending]).then(
+      (results) => {
+        const errors = results.flatMap((result) =>
+          result.status === "rejected" ? [result.reason] : [],
+        );
+        if (errors.length === 1) {
+          throw errors[0];
+        }
+        if (errors.length > 1) {
+          throw new AggregateError(
+            errors,
+            `Failed to tear down detached ${context} connections`,
+          );
+        }
+      },
+    );
+    void detachedTeardown.catch(() => {});
+    return ending;
+  };
 
   const detachClient = () => {
     const current = client;
     generation += 1;
     client = null;
     connecting = null;
+    // Query serialization is connection-scoped. An unsettled query on the dead
+    // generation must not block the replacement client's independent queue.
+    queryTail = Promise.resolve();
+    for (const lease of heldKeys.values()) {
+      lease.controller.abort();
+    }
     heldKeys.clear();
     acquiringKeys.clear();
     detachErrorHandler?.();
@@ -86,13 +160,13 @@ export function createAdvisoryLockHolder(
     return current;
   };
 
-  const dropClient = () => {
-    const current = detachClient();
-    if (current) {
-      // Best-effort teardown so a future acquire starts from a clean client.
-      // Postgres releases the session's advisory locks once the connection ends.
-      void current.end().catch(() => {});
+  const dropClient = (expected: ClientLike): Promise<void> => {
+    if (client !== expected) {
+      return clientTeardowns.get(expected) ?? Promise.resolve();
     }
+    const current = detachClient();
+    // Postgres releases the session's advisory locks once the connection ends.
+    return current ? trackClientTeardown(current) : Promise.resolve();
   };
 
   const getClient = async (): Promise<ClientLike> => {
@@ -107,30 +181,40 @@ export function createAdvisoryLockHolder(
     }
 
     const attemptGeneration = generation;
-    let attempt!: Promise<ClientLike>;
-    attempt = (async () => {
+    const attempt = Promise.resolve().then(async () => {
       const next = createClient();
-      // A dropped lock connection releases all of its session locks. Surface the
-      // drop so the next acquire reconnects rather than reusing a dead client.
-      detachErrorHandler = attachPostgresClientErrorHandler(next, {
-        context,
-        onError: () => {
-          dropClient();
-        },
-      });
+      let connectingError: Error | null = null;
       try {
+        // A dropped lock connection releases all of its session locks. Surface
+        // the drop so the next acquire reconnects instead of reusing it.
+        detachErrorHandler = attachPostgresClientErrorHandler(next, {
+          context,
+          onError: (error) => {
+            connectingError = error;
+            void dropClient(next);
+          },
+        });
         await next.connect();
+        if (connectingError) {
+          throw connectingError;
+        }
       } catch (error) {
         detachErrorHandler?.();
         detachErrorHandler = null;
-        if (connecting === attempt) {
-          connecting = null;
+        try {
+          await trackClientTeardown(next);
+        } catch (teardownError) {
+          throw new AggregateError(
+            [error, teardownError],
+            `Failed to clean up ${context} connection attempt`,
+            { cause: error },
+          );
         }
         throw error;
       }
       if (closed || generation !== attemptGeneration) {
         try {
-          await next.end();
+          await endClient(next);
         } catch (error) {
           throw new AggregateError(
             [error],
@@ -140,14 +224,17 @@ export function createAdvisoryLockHolder(
         throw closedError();
       }
       client = next;
+      return next;
+    });
+    connecting = attempt;
+
+    try {
+      return await attempt;
+    } finally {
       if (connecting === attempt) {
         connecting = null;
       }
-      return next;
-    })();
-    connecting = attempt;
-
-    return attempt;
+    }
   };
 
   const runQuery = <Row>(
@@ -176,14 +263,20 @@ export function createAdvisoryLockHolder(
    * Attempt to take the session advisory lock for `key`. Resolves to a release
    * closure when acquired, or `null` when another holder already owns it.
    */
-  const acquire = async (key: number): Promise<AdvisoryLockRelease | null> => {
+  const acquire = async (key: number): Promise<AdvisoryLockLease | null> => {
     if (closed) {
       throw closedError();
     }
     if (heldKeys.has(key) || acquiringKeys.has(key)) {
       return null;
     }
-    acquiringKeys.add(key);
+    const acquisition = Symbol();
+    acquiringKeys.set(key, acquisition);
+    const finishAcquiring = () => {
+      if (acquiringKeys.get(key) === acquisition) {
+        acquiringKeys.delete(key);
+      }
+    };
 
     let active: ClientLike;
     try {
@@ -191,49 +284,75 @@ export function createAdvisoryLockHolder(
     } catch (error) {
       // Connection failed: nothing acquired, nothing to release. The next tick
       // retries from a clean state.
-      dropClient();
+      finishAcquiring();
       throw error;
     }
     const acquireGeneration = generation;
 
     let locked = false;
+    let fenceToken: string | undefined;
     try {
-      const result = await runQuery<{ locked: boolean }>(
+      const result = await runQuery<{
+        locked: boolean;
+        fenceToken?: string | null;
+      }>(
         active,
-        "select pg_try_advisory_lock($1) as locked",
+        `with lock_attempt as materialized (
+          select pg_try_advisory_lock($1) as locked
+        )
+        select
+          locked,
+          case when locked then txid_current()::text else null end as "fenceToken"
+        from lock_attempt`,
         [key],
       );
       locked = result.rows[0]?.locked === true;
+      const rawFenceToken = result.rows[0]?.fenceToken;
+      if (
+        rawFenceToken !== undefined &&
+        rawFenceToken !== null &&
+        !/^[1-9]\d*$/u.test(rawFenceToken)
+      ) {
+        throw new Error(`${context} returned an invalid fence token.`);
+      }
+      fenceToken = rawFenceToken ?? undefined;
     } catch (error) {
       // A failed acquire query means the lock was not taken. Drop the client so
       // a broken connection self-heals on the next acquire.
-      dropClient();
+      try {
+        await dropClient(active);
+      } catch (teardownError) {
+        throw new AggregateError(
+          [error, teardownError],
+          `Failed to clean up ${context} after lock acquisition failed`,
+          { cause: error },
+        );
+      }
       throw error;
     } finally {
-      acquiringKeys.delete(key);
+      finishAcquiring();
     }
 
     if (!locked) {
       return null;
     }
-    if (
-      closed ||
-      generation !== acquireGeneration ||
-      client !== active
-    ) {
+    if (closed || generation !== acquireGeneration || client !== active) {
       throw closed
         ? closedError()
         : new Error(`${context} connection changed during lock acquisition.`);
     }
 
-    heldKeys.set(key, active);
+    const controller = new AbortController();
+    const held = { client: active, controller };
+    heldKeys.set(key, held);
     let released = false;
-    return async () => {
+    const release: AdvisoryLockRelease = async () => {
       if (released) {
         return;
       }
       released = true;
-      if (heldKeys.get(key) !== active) {
+      controller.abort();
+      if (heldKeys.get(key) !== held) {
         return;
       }
       // If the connection dropped between acquire and release, Postgres already
@@ -243,13 +362,28 @@ export function createAdvisoryLockHolder(
       }
       try {
         await runQuery(active, "select pg_advisory_unlock($1)", [key]);
-        heldKeys.delete(key);
-      } catch {
+        if (heldKeys.get(key) === held) {
+          heldKeys.delete(key);
+        }
+      } catch (unlockError) {
         // A failed unlock means the connection is unhealthy; drop it so the lock
         // is released by Postgres on disconnect and the next acquire reconnects.
-        dropClient();
+        try {
+          await dropClient(active);
+        } catch (teardownError) {
+          throw new AggregateError(
+            [unlockError, teardownError],
+            `Failed to release ${context} lock`,
+            { cause: unlockError },
+          );
+        }
+        throw unlockError;
       }
     };
+    return Object.assign(release, {
+      signal: controller.signal,
+      ...(fenceToken ? { fenceToken } : {}),
+    });
   };
 
   return {
@@ -262,15 +396,29 @@ export function createAdvisoryLockHolder(
       closed = true;
       const pending = connecting;
       const current = detachClient();
+      if (current) {
+        trackClientTeardown(current);
+      }
       closing = (async () => {
-        const currentEnd = current?.end();
         const pendingEnd = pending?.catch((error) => {
           if (error instanceof AggregateError) {
             throw error;
           }
           // A failed or deliberately closed connect owns no live session.
         });
-        await Promise.all([currentEnd, pendingEnd]);
+        const results = await Promise.allSettled([
+          detachedTeardown,
+          pendingEnd,
+        ]);
+        const errors = results.flatMap((result) =>
+          result.status === "rejected" ? [result.reason] : [],
+        );
+        if (errors.length === 1) {
+          throw errors[0];
+        }
+        if (errors.length > 1) {
+          throw new AggregateError(errors, `Failed to close ${context} holder`);
+        }
       })();
       return closing;
     },
@@ -289,27 +437,20 @@ function defaultLockClient(context: string): ClientLike {
   // the 12 pooled connections. `ssl: false` for helium mirrors the shared pool.
   // Duplicates index.ts's timeout reads because importing from index.ts here
   // would be circular (index.ts re-exports this module).
-  const idleTxTimeoutMs = Number(process.env.DB_IDLE_TX_TIMEOUT_MS);
-  const configuredConnectionTimeoutMs = Number(
+  const idleTxTimeoutMs = parseOptionalPositiveInteger(
+    process.env.DB_IDLE_TX_TIMEOUT_MS,
+  );
+  const resolvedIdleTxTimeoutMs = idleTxTimeoutMs ?? 10_000;
+  const configuredConnectionTimeoutMs = parseOptionalPositiveInteger(
     process.env.DB_CONNECTION_TIMEOUT_MS,
   );
-  const connectionTimeoutMillis =
-    Number.isFinite(configuredConnectionTimeoutMs) &&
-    configuredConnectionTimeoutMs > 0
-      ? Math.floor(configuredConnectionTimeoutMs)
-      : heliumDatabase
-        ? 30_000
-        : undefined;
+  const connectionTimeoutMillis = configuredConnectionTimeoutMs ?? 30_000;
   return new ConnectionExhaustionGatedClient({
     connectionString: config.url,
     application_name: "pyrus-advisory-lock",
-    ...(connectionTimeoutMillis === undefined
-      ? {}
-      : { connectionTimeoutMillis }),
-    idle_in_transaction_session_timeout:
-      Number.isFinite(idleTxTimeoutMs) && idleTxTimeoutMs > 0
-        ? Math.floor(idleTxTimeoutMs)
-        : 10_000,
+    connectionTimeoutMillis,
+    idle_in_transaction_session_timeout: resolvedIdleTxTimeoutMs,
+    options: `-c idle_in_transaction_session_timeout=${resolvedIdleTxTimeoutMs}`,
     ...(heliumDatabase
       ? {
           ssl: false,
