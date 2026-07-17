@@ -8,7 +8,7 @@ import {
   usersTable,
 } from "@workspace/db";
 import { withTestDb } from "@workspace/db/testing";
-import { eq } from "drizzle-orm";
+import { eq, isNotNull } from "drizzle-orm";
 import {
   approveIbkrGatewayHost,
   assertCurrentIbkrGatewayFence,
@@ -35,6 +35,7 @@ const SHA_A = `sha256:${"a".repeat(64)}`;
 const SHA_B = `sha256:${"b".repeat(64)}`;
 const WORKLOAD_A = "c".repeat(64);
 const WORKLOAD_B = "d".repeat(64);
+const POSTGRES_INTEGER_MAX = 2_147_483_647;
 
 test("creates one stable broker connection before gateway admission", async () => {
   await withTestDb(async () => {
@@ -297,11 +298,12 @@ test("measured host slots and the global ceiling admit at most twenty distinct o
     for (const identity of identities.slice(0, 4)) {
       results.push(await tryAcquireIbkrGatewayLease(identity));
     }
-    const acquired = results.filter(
-      (result) => result.status === "acquired",
-    );
+    const acquired = results.filter((result) => result.status === "acquired");
     assert.equal(acquired.length, 3);
-    assert.equal(results.filter((result) => result.status === "busy").length, 1);
+    assert.equal(
+      results.filter((result) => result.status === "busy").length,
+      1,
+    );
 
     assert.ok(
       await approveIbkrGatewayHost({
@@ -330,7 +332,10 @@ test("measured host slots and the global ceiling admit at most twenty distinct o
       results.filter((result) => result.status === "acquired").length,
       20,
     );
-    assert.equal(results.filter((result) => result.status === "busy").length, 1);
+    assert.equal(
+      results.filter((result) => result.status === "busy").length,
+      1,
+    );
 
     const allAcquired = results.filter(
       (result) => result.status === "acquired",
@@ -353,6 +358,14 @@ test("measured host slots and the global ceiling admit at most twenty distinct o
       assert.equal("cpgPort" in placement, false);
       assert.equal("viewerPort" in placement, false);
     }
+
+    await db
+      .update(ibkrGatewaySessionsTable)
+      .set({ leaseExpiresAt: new Date(Date.now() - 1_000) })
+      .where(isNotNull(ibkrGatewaySessionsTable.hostId));
+    assert.deepEqual(await tryAcquireIbkrGatewayLease(identities[3]!), {
+      status: "busy",
+    });
   });
 });
 
@@ -402,16 +415,148 @@ test("draining blocks new placement while quarantine synchronously fences existi
       true,
     );
     assert.equal(await releaseIbkrGatewayLease(second.fence), true);
+    assert.deepEqual(await tryAcquireIbkrGatewayLease(identityA), {
+      status: "busy",
+    });
+    const reusableAtMs = Date.now();
+    await db
+      .update(ibkrGatewaySessionsTable)
+      .set({
+        leaseExpiresAt: new Date(reusableAtMs - 126_000),
+        replacementDeadlineAt: new Date(reusableAtMs - 1_000),
+      })
+      .where(eq(ibkrGatewaySessionsTable.id, first.fence.sessionId));
+    assert.deepEqual(await tryAcquireIbkrGatewayLease(identityA), {
+      status: "busy",
+    });
+    assert.equal(
+      await transitionIbkrGatewayLifecycle(first.fence, "draining"),
+      true,
+    );
+    assert.equal(await releaseIbkrGatewayLease(first.fence), true);
     const replacement = await tryAcquireIbkrGatewayLease(identityA);
     assert.equal(replacement.status, "acquired");
     if (replacement.status !== "acquired") return;
     assert.equal(replacement.fence.hostId, HOST_B);
-    assert.equal(replacement.fence.generation, first.fence.generation + 1);
+    assert.equal(replacement.fence.generation, first.fence.generation + 2);
     assert.equal(await assertCurrentIbkrGatewayFence(first.fence), false);
   });
 });
 
-test("expired leases free host slots and every takeover advances the generation fence", async () => {
+test("admission creates a 155-second fence and uncertain placements keep capacity", async () => {
+  await withTestDb(async () => {
+    await registerAndApproveHost({
+      hostId: HOST_A,
+      workloadIdentityDigest: WORKLOAD_A,
+      sha: SHA_A,
+      admissionSlotCapacity: 1,
+    });
+    const [identityA, identityB] = await seedIdentities(2);
+    assert.ok(identityA);
+    assert.ok(identityB);
+    const session = await ensureIbkrGatewaySessionIdentity(identityA);
+    assert.ok(session);
+    assert.ok(await ensureIbkrGatewaySessionIdentity(identityB));
+
+    const admissionStartedAtMs = Date.now();
+    const first = await tryAcquireIbkrGatewayLease(identityA);
+    assert.equal(first.status, "acquired");
+    if (first.status !== "acquired") return;
+    const [placed] = await db
+      .select()
+      .from(ibkrGatewaySessionsTable)
+      .where(eq(ibkrGatewaySessionsTable.id, session.id))
+      .limit(1);
+    assert.ok(placed?.replacementDeadlineAt);
+    assert.equal(placed.controlAttemptId, null);
+    assert.equal(placed.controlAcknowledgedAt, null);
+    assert.ok(
+      placed.replacementDeadlineAt.getTime() >= admissionStartedAtMs + 155_000,
+    );
+    assert.ok(placed.leaseExpiresAt);
+    assert.ok(
+      placed.replacementDeadlineAt.getTime() -
+        placed.leaseExpiresAt.getTime() >=
+        125_000,
+    );
+
+    await db
+      .update(ibkrGatewaySessionsTable)
+      .set({ leaseExpiresAt: new Date(Date.now() - 1_000) })
+      .where(eq(ibkrGatewaySessionsTable.id, session.id));
+
+    assert.equal(await countActiveIbkrGatewayHostLeases(HOST_A), 1);
+    assert.deepEqual(await tryAcquireIbkrGatewayLease(identityA), {
+      status: "busy",
+    });
+    assert.deepEqual(await tryAcquireIbkrGatewayLease(identityB), {
+      status: "busy",
+    });
+    const [stillPlaced] = await db
+      .select()
+      .from(ibkrGatewaySessionsTable)
+      .where(eq(ibkrGatewaySessionsTable.id, session.id))
+      .limit(1);
+    assert.equal(stillPlaced?.hostId, first.fence.hostId);
+    assert.equal(stillPlaced?.slotNumber, first.fence.slotNumber);
+    assert.equal(
+      stillPlaced?.replacementDeadlineAt?.getTime(),
+      placed.replacementDeadlineAt.getTime(),
+    );
+  });
+});
+
+test("admission deadlines start after the admission lock is acquired", async () => {
+  await withTestDb(async ({ client }) => {
+    await client.exec(`
+      CREATE FUNCTION public.pg_advisory_xact_lock(bigint)
+      RETURNS void
+      LANGUAGE plpgsql
+      AS $$
+      BEGIN
+        PERFORM now();
+        PERFORM pg_sleep(2);
+      END
+      $$;
+      SET search_path = public, pg_catalog;
+      SET DateStyle = 'SQL, DMY'
+    `);
+    await registerAndApproveHost({
+      hostId: HOST_A,
+      workloadIdentityDigest: WORKLOAD_A,
+      sha: SHA_A,
+      admissionSlotCapacity: 1,
+    });
+    const [identity] = await seedIdentities(1);
+    assert.ok(identity);
+    const session = await ensureIbkrGatewaySessionIdentity(identity);
+    assert.ok(session);
+
+    const databaseClock = await client.query<{ at_ms: number }>(`
+      SELECT (extract(epoch FROM clock_timestamp()) * 1000)::double precision AS at_ms
+    `);
+    const admissionStartedAtMs = Number(databaseClock.rows[0]!.at_ms);
+    const acquired = await tryAcquireIbkrGatewayLease(identity);
+    assert.equal(acquired.status, "acquired");
+    const storedDeadline = await client.query<{ deadline_ms: number }>(
+      `
+        SELECT
+          (extract(epoch FROM replacement_deadline_at) * 1000)::double precision AS deadline_ms
+        FROM ibkr_gateway_sessions
+        WHERE id = $1
+      `,
+      [session.id],
+    );
+    const replacementDeadlineAtMs = Number(storedDeadline.rows[0]?.deadline_ms);
+    assert.ok(Number.isFinite(replacementDeadlineAtMs));
+    assert.ok(
+      replacementDeadlineAtMs >= admissionStartedAtMs + 156_000,
+      JSON.stringify({ admissionStartedAtMs, replacementDeadlineAtMs }),
+    );
+  });
+});
+
+test("elapsed database deadlines do not reuse a capsule without host-enforced expiry", async () => {
   await withTestDb(async () => {
     await registerAndApproveHost({
       hostId: HOST_A,
@@ -427,17 +572,32 @@ test("expired leases free host slots and every takeover advances the generation 
     assert.equal(first.status, "acquired");
     if (first.status !== "acquired") return;
 
+    const reusableAtMs = Date.now();
     await db
       .update(ibkrGatewaySessionsTable)
-      .set({ leaseExpiresAt: new Date(Date.now() - 1_000) })
+      .set({
+        leaseExpiresAt: new Date(reusableAtMs - 126_000),
+        replacementDeadlineAt: new Date(reusableAtMs - 1_000),
+      })
       .where(eq(ibkrGatewaySessionsTable.id, session.id));
 
-    const replacement = await tryAcquireIbkrGatewayLease(identity);
-    assert.equal(replacement.status, "acquired");
-    if (replacement.status !== "acquired") return;
-    assert.equal(replacement.fence.generation, first.fence.generation + 1);
-    assert.notEqual(replacement.fence.leaseHolderId, first.fence.leaseHolderId);
-    assert.equal(await assertCurrentIbkrGatewayFence(first.fence), false);
+    assert.deepEqual(await tryAcquireIbkrGatewayLease(identity), {
+      status: "busy",
+    });
+    assert.equal(await countActiveIbkrGatewayHostLeases(HOST_A), 1);
+    const [retained] = await db
+      .select()
+      .from(ibkrGatewaySessionsTable)
+      .where(eq(ibkrGatewaySessionsTable.id, session.id))
+      .limit(1);
+    assert.equal(retained?.generation, first.fence.generation);
+    assert.equal(retained?.hostId, first.fence.hostId);
+    assert.equal(retained?.slotNumber, first.fence.slotNumber);
+    assert.equal(retained?.leaseHolderId, first.fence.leaseHolderId);
+    assert.equal(
+      retained?.replacementDeadlineAt?.getTime(),
+      reusableAtMs - 1_000,
+    );
   });
 });
 
@@ -538,6 +698,14 @@ test("lifecycle transitions are ordered, idempotent, and exact-generation fenced
     );
 
     assert.equal(await releaseIbkrGatewayLease(first.fence), true);
+    const [released] = await db
+      .select()
+      .from(ibkrGatewaySessionsTable)
+      .where(eq(ibkrGatewaySessionsTable.id, session.id))
+      .limit(1);
+    assert.equal(released?.controlAttemptId, null);
+    assert.equal(released?.controlAcknowledgedAt, null);
+    assert.equal(released?.replacementDeadlineAt, null);
     const replacement = await tryAcquireIbkrGatewayLease(identity);
     assert.equal(replacement.status, "acquired");
     if (replacement.status !== "acquired") return;
@@ -573,25 +741,71 @@ test("lifecycle transitions are ordered, idempotent, and exact-generation fenced
       .set({ leaseExpiresAt: new Date(Date.now() - 1_000) })
       .where(eq(ibkrGatewaySessionsTable.id, session.id));
     assert.equal(
-      await transitionIbkrGatewayLifecycle(
-        replacement.fence,
-        "login_required",
-      ),
+      await transitionIbkrGatewayLifecycle(replacement.fence, "login_required"),
       false,
     );
     assert.equal(
       await transitionIbkrGatewayLifecycle(replacement.fence, "draining"),
       true,
     );
-    assert.equal(await releaseIbkrGatewayLease(replacement.fence), false);
-    const [expiredDraining] = await db
+    assert.equal(
+      (await renewIbkrGatewayCleanupLease(replacement.fence)) !== null,
+      true,
+    );
+    assert.equal(await releaseIbkrGatewayLease(replacement.fence), true);
+    const [releasedAfterExpiry] = await db
       .select()
       .from(ibkrGatewaySessionsTable)
       .where(eq(ibkrGatewaySessionsTable.id, session.id))
       .limit(1);
-    assert.ok(expiredDraining);
-    assert.equal(expiredDraining.lifecycleState, "draining");
-    assert.equal(expiredDraining.hostId, replacement.fence.hostId);
-    assert.equal(expiredDraining.slotNumber, replacement.fence.slotNumber);
+    assert.ok(releasedAfterExpiry);
+    assert.equal(releasedAfterExpiry.lifecycleState, "released");
+    assert.equal(releasedAfterExpiry.hostId, null);
+    assert.equal(releasedAfterExpiry.slotNumber, null);
+  });
+});
+
+test("exact cleanup retires a maximum-generation placement without overflow", async () => {
+  await withTestDb(async () => {
+    await registerAndApproveHost({
+      hostId: HOST_A,
+      workloadIdentityDigest: WORKLOAD_A,
+      sha: SHA_A,
+      admissionSlotCapacity: 1,
+    });
+    const [identity] = await seedIdentities(1);
+    assert.ok(identity);
+    const session = await ensureIbkrGatewaySessionIdentity(identity);
+    assert.ok(session);
+    const acquired = await tryAcquireIbkrGatewayLease(identity);
+    assert.equal(acquired.status, "acquired");
+    if (acquired.status !== "acquired") return;
+    assert.equal(
+      await transitionIbkrGatewayLifecycle(acquired.fence, "draining"),
+      true,
+    );
+    await db
+      .update(ibkrGatewaySessionsTable)
+      .set({ generation: POSTGRES_INTEGER_MAX })
+      .where(eq(ibkrGatewaySessionsTable.id, session.id));
+    const maxFence = {
+      ...acquired.fence,
+      generation: POSTGRES_INTEGER_MAX,
+    };
+
+    assert.equal(await releaseIbkrGatewayLease(maxFence), true);
+    const [released] = await db
+      .select()
+      .from(ibkrGatewaySessionsTable)
+      .where(eq(ibkrGatewaySessionsTable.id, session.id))
+      .limit(1);
+    assert.ok(released);
+    assert.equal(released.generation, POSTGRES_INTEGER_MAX);
+    assert.equal(released.hostId, null);
+    assert.equal(released.leaseHolderId, null);
+    assert.equal(released.replacementDeadlineAt, null);
+    assert.deepEqual(await tryAcquireIbkrGatewayLease(identity), {
+      status: "busy",
+    });
   });
 });

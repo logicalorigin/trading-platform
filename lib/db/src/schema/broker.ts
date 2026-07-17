@@ -52,21 +52,16 @@ export const brokerConnectionsTable = pgTable(
       table.brokerProvider,
       table.connectionType,
     ),
-    uniqueIndex("broker_connections_unique_provider_mode_idx").on(
-      table.connectionType,
-      table.mode,
-      table.name,
-    ).where(sql`${table.appUserId} IS NULL`),
+    uniqueIndex("broker_connections_unique_provider_mode_idx")
+      .on(table.connectionType, table.mode, table.name)
+      .where(sql`${table.appUserId} IS NULL`),
     uniqueIndex("broker_connections_user_provider_mode_idx")
       .on(table.appUserId, table.connectionType, table.mode, table.name)
       .where(sql`${table.appUserId} IS NOT NULL`),
   ],
 );
 
-export type IbkrGatewayHostStatus =
-  | "active"
-  | "draining"
-  | "quarantined";
+export type IbkrGatewayHostStatus = "active" | "draining" | "quarantined";
 
 export type IbkrGatewayLifecycleState =
   | "requested"
@@ -169,6 +164,13 @@ export const ibkrGatewaySessionsTable = pgTable(
     slotNumber: integer("slot_number"),
     leaseHolderId: uuid("lease_holder_id"),
     leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true }),
+    controlAttemptId: uuid("control_attempt_id"),
+    controlAcknowledgedAt: timestamp("control_acknowledged_at", {
+      withTimezone: true,
+    }),
+    replacementDeadlineAt: timestamp("replacement_deadline_at", {
+      withTimezone: true,
+    }),
     lastActivityAt: timestamp("last_activity_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -212,6 +214,18 @@ export const ibkrGatewaySessionsTable = pgTable(
         AND ${table.slotNumber} IS NOT NULL
         AND ${table.leaseHolderId} IS NOT NULL
         AND ${table.leaseExpiresAt} IS NOT NULL)`,
+    ),
+    check(
+      "ibkr_gateway_sessions_control_fencing_chk",
+      sql`(${table.hostId} IS NULL
+        AND ${table.controlAttemptId} IS NULL
+        AND ${table.controlAcknowledgedAt} IS NULL
+        AND ${table.replacementDeadlineAt} IS NULL)
+        OR (${table.hostId} IS NOT NULL
+        AND ${table.replacementDeadlineAt} IS NOT NULL
+        AND ${table.replacementDeadlineAt} >= ${table.leaseExpiresAt} + interval '125 seconds'
+        AND (${table.controlAcknowledgedAt} IS NULL
+          OR ${table.controlAttemptId} IS NOT NULL))`,
     ),
     check(
       "ibkr_gateway_sessions_slot_number_chk",
@@ -260,13 +274,17 @@ export const brokerAccountsTable = pgTable(
     connectionId: uuid("connection_id")
       .notNull()
       .references(() => brokerConnectionsTable.id),
-    providerAccountId: varchar("provider_account_id", { length: 128 }).notNull(),
+    providerAccountId: varchar("provider_account_id", {
+      length: 128,
+    }).notNull(),
     displayName: text("display_name").notNull(),
     mode: environmentModeEnum("mode").notNull(),
     accountStatus: varchar("account_status", { length: 32 }),
     accountType: varchar("account_type", { length: 32 }),
     includedInTrading: boolean("included_in_trading").notNull().default(true),
-    baseCurrency: varchar("base_currency", { length: 16 }).notNull().default("USD"),
+    baseCurrency: varchar("base_currency", { length: 16 })
+      .notNull()
+      .default("USD"),
     capabilities: text("capabilities").array().notNull().default([]),
     executionBlockers: text("execution_blockers").array().notNull().default([]),
     isDefault: boolean("is_default").notNull().default(false),
@@ -274,9 +292,9 @@ export const brokerAccountsTable = pgTable(
     ...timestamps,
   },
   (table) => [
-    uniqueIndex("broker_accounts_provider_account_id_idx").on(
-      table.providerAccountId,
-    ).where(sql`${table.appUserId} IS NULL`),
+    uniqueIndex("broker_accounts_provider_account_id_idx")
+      .on(table.providerAccountId)
+      .where(sql`${table.appUserId} IS NULL`),
     uniqueIndex("broker_accounts_user_provider_account_id_idx")
       .on(table.appUserId, table.providerAccountId)
       .where(sql`${table.appUserId} IS NOT NULL`),
@@ -294,7 +312,8 @@ export const insertIbkrGatewayHostSchema = createInsertSchema(
 export const insertIbkrGatewaySessionSchema = createInsertSchema(
   ibkrGatewaySessionsTable,
 );
-export const insertBrokerAccountSchema = createInsertSchema(brokerAccountsTable);
+export const insertBrokerAccountSchema =
+  createInsertSchema(brokerAccountsTable);
 
 export type BrokerConnection = typeof brokerConnectionsTable.$inferSelect;
 export type InsertBrokerConnection = typeof brokerConnectionsTable.$inferInsert;
