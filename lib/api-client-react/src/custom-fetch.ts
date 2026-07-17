@@ -19,6 +19,7 @@ const NATIVE_FETCH_NETWORK_MESSAGES = new Set([
   "failed to fetch",
   "fetch failed",
   "load failed",
+  "network request failed",
 ]);
 const HEAVY_GET_PATHS = new Set([
   "/api/bars",
