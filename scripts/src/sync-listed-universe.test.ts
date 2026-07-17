@@ -822,3 +822,13 @@ test("diagnostics redact percent-encoded credential query names", () => {
 
   assert.doesNotMatch(diagnostic, new RegExp(credential, "u"));
 });
+
+test("diagnostics reject standalone named credentials", () => {
+  const credential = "short-listed-secret";
+  assert.equal(
+    listed.safeDiagnostic(
+      new Error(`provider rejected access_token=${credential}`),
+    ),
+    "Unknown listed-universe sync error",
+  );
+});

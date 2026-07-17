@@ -77,6 +77,16 @@ test("catalog diagnostics redact percent-encoded credential query names", () => 
   assert.doesNotMatch(diagnostic, new RegExp(credential, "u"));
 });
 
+test("catalog diagnostics reject standalone named credentials", () => {
+  const credential = "short-catalog-secret";
+  assert.equal(
+    catalog.safeDiagnostic(
+      new Error(`provider rejected access_token=${credential}`),
+    ),
+    "Unknown universe-catalog sync error",
+  );
+});
+
 test("CLI is strict, preview-first, and requires bare execute authority", () => {
   assert.deepEqual(catalog.parseOptions([]), {
     execute: false,

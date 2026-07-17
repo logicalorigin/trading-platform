@@ -1,7 +1,10 @@
 import { pathToFileURL } from "node:url";
 import { parseArgs, stripVTControlCharacters } from "node:util";
 import { and, eq, sql } from "drizzle-orm";
-import { hasOpaqueOperatorCredential } from "./operator-diagnostic";
+import {
+  hasNamedOperatorCredential,
+  hasOpaqueOperatorCredential,
+} from "./operator-diagnostic";
 import {
   closeDatabaseConnections,
   db,
@@ -609,7 +612,11 @@ function safeOutput(value: unknown, fallback: string): string {
     .replace(/\s+/gu, " ")
     .trim();
   const diagnostic =
-    cleaned && !hasOpaqueOperatorCredential(cleaned) ? cleaned : fallback;
+    cleaned &&
+    !hasNamedOperatorCredential(cleaned) &&
+    !hasOpaqueOperatorCredential(cleaned)
+      ? cleaned
+      : fallback;
   if (diagnostic.length <= MAX_DIAGNOSTIC_LENGTH) return diagnostic;
   return `${diagnostic.slice(0, MAX_DIAGNOSTIC_LENGTH - 1)}…`;
 }

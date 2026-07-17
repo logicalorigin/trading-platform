@@ -237,6 +237,19 @@ test("CLI diagnostics redact credentials and cannot control the terminal", () =>
   );
   assert.doesNotMatch(queryDiagnostic, new RegExp(credential, "u"));
   assert.doesNotMatch(queryDiagnostic, /access_token/u);
+
+  for (const name of ["access_token", "access%5Ftoken", "api-key", "token"]) {
+    const shortCredential = `${name}-short-secret`;
+    const namedDiagnostic = hydrateCli.safeDiagnostic(
+      new Error(`provider rejected ${name}=${shortCredential}`),
+    );
+    assert.doesNotMatch(namedDiagnostic, new RegExp(shortCredential, "u"));
+    assert.equal(namedDiagnostic, "Unknown hydration error");
+  }
+  assert.equal(
+    hydrateCli.safeDiagnostic(new Error("provider token bucket depleted")),
+    "provider token bucket depleted",
+  );
 });
 
 test("invalid CLI input fails before database work without exposing a stack", () => {
@@ -413,6 +426,59 @@ test("a stale hydrator cannot overwrite a successor checkpoint", async () => {
     assert.equal(
       (persisted?.metadata as Record<string, unknown>)?.leaseFenceToken,
       "21",
+    );
+  });
+});
+
+test("a committed terminal hydration checkpoint cannot be downgraded", async () => {
+  await withTestDb(async () => {
+    const scopeKey = "ibkr-hydration:stocks:terminal";
+    const startedAt = new Date("2026-07-17T18:00:00.000Z");
+    const completedAt = new Date("2026-07-17T18:05:00.000Z");
+    await claimUniverseCatalogWriterFence({ fenceToken: "22" });
+    await hydrateCli.writeSyncState({
+      writerFenceToken: "22",
+      scopeKey,
+      market: "stocks",
+      activeOnly: true,
+      lastProcessedListingKey: "MSFT|stocks|XNAS",
+      rowsSynced: 2,
+      startedAt,
+      finishedAt: completedAt,
+      lastSuccessAt: completedAt,
+      lastError: null,
+      metadata: { complete: true },
+    });
+
+    await assert.rejects(
+      hydrateCli.writeSyncState({
+        writerFenceToken: "22",
+        scopeKey,
+        market: "stocks",
+        activeOnly: true,
+        lastProcessedListingKey: "MSFT|stocks|XNAS",
+        rowsSynced: 2,
+        startedAt,
+        finishedAt: null,
+        lastSuccessAt: completedAt,
+        lastError: "late failure",
+        metadata: { failed: true },
+      }),
+      /superseded/iu,
+    );
+
+    const [persisted] = await db
+      .select()
+      .from(universeCatalogSyncStatesTable)
+      .where(eq(universeCatalogSyncStatesTable.scopeKey, scopeKey));
+    assert.equal(
+      persisted?.finishedAt?.toISOString(),
+      completedAt.toISOString(),
+    );
+    assert.equal(persisted?.lastError, null);
+    assert.equal(
+      (persisted?.metadata as Record<string, unknown>)?.complete,
+      true,
     );
   });
 });
