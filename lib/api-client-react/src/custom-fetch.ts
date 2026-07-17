@@ -15,6 +15,11 @@ const NO_BODY_STATUS = new Set([204, 205, 304]);
 const DEFAULT_JSON_ACCEPT = "application/json, application/problem+json";
 const HEAVY_GET_PRIORITY_HEADER = "x-pyrus-fetch-priority";
 const API_TIMING_EVENT = "pyrus:api-request-timing";
+const NATIVE_FETCH_NETWORK_MESSAGES = new Set([
+  "failed to fetch",
+  "fetch failed",
+  "load failed",
+]);
 const HEAVY_GET_PATHS = new Set([
   "/api/bars",
   "/api/options/chart-bars",
@@ -365,6 +370,20 @@ function createTimeoutError(timeoutMs: number): Error {
   const error = new Error(`The request timed out after ${timeoutMs}ms.`);
   error.name = "TimeoutError";
   return error;
+}
+
+function isNativeFetchNetworkError(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const failure = error as { name?: unknown; message?: unknown };
+  if (failure.name === "NetworkError") return true;
+  if (failure.name !== "TypeError" || typeof failure.message !== "string") {
+    return false;
+  }
+  const message = failure.message.trim().toLowerCase();
+  return (
+    NATIVE_FETCH_NETWORK_MESSAGES.has(message) ||
+    message.startsWith("networkerror when attempting to fetch resource")
+  );
 }
 
 function createNetworkError(cause: unknown): Error & { code: "request_network" } {
@@ -886,7 +905,11 @@ async function executeFetch<T = unknown>(input: {
     if ((error as { name?: unknown })?.name === "TimeoutError") {
       throw error;
     }
-    if (!responseReceived && (error as { name?: unknown })?.name !== "AbortError") {
+    if (
+      !responseReceived &&
+      (error as { name?: unknown })?.name !== "AbortError" &&
+      isNativeFetchNetworkError(error)
+    ) {
       throw createNetworkError(error);
     }
     throw error;

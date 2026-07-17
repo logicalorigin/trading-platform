@@ -4,15 +4,12 @@ import {
   HYDRATION_PRIORITY_HEADER,
   buildHydrationRequestOptions,
 } from "./hydrationCoordinator";
+import { retryUnlessTimeout } from "./queryRetry";
 
-// Mirrors react-query's internal numeric retry check (`failureCount < max`) so
-// behavior is identical to `retry: max`, except a client-side request timeout is
-// never retried. Retrying a TimeoutError just re-fires the same request against
-// an unresponsive backend, re-consuming the browser connection the timeout was
-// meant to free (the connection-starvation that freezes screens on a spinner).
-export const retryUnlessTimeout =
-  (maxRetries) => (failureCount, error) =>
-    error?.name !== "TimeoutError" && failureCount < maxRetries;
+// Retry only normalized transport failures and explicitly transient HTTP
+// responses. Timeouts, cancellations, deterministic failures, and exhausted
+// retry budgets stay terminal.
+export { retryUnlessTimeout };
 
 export const parseRetryAfterMs = (value, nowMs = Date.now()) => {
   if (!value) return null;
@@ -26,9 +23,11 @@ export const parseRetryAfterMs = (value, nowMs = Date.now()) => {
 };
 
 export const retryDelayWithRetryAfter =
-  (fallbackDelay) => (attempt, error) => {
+  (fallbackDelay, random = Math.random) =>
+  (attempt, error) => {
     if (error?.status === 429 && Number.isFinite(error.retryAfterMs)) {
-      return Math.max(0, error.retryAfterMs);
+      const retryAfterMs = Math.max(0, error.retryAfterMs);
+      return retryAfterMs + Math.round(retryAfterMs * 0.1 * random());
     }
     return fallbackDelay(attempt, error);
   };

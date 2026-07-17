@@ -2,16 +2,13 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useEffect, type PropsWithChildren } from "react";
 import { AuthProvider, useAuthSession } from "../features/auth/authSession.jsx";
 import { usePyrusPerformanceMetricsReporter } from "../features/platform/performanceMetrics";
+import { retryUnlessTimeout } from "../features/platform/queryRetry";
 
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
       refetchOnWindowFocus: false,
-      // Mirrors react-query's numeric `retry: 1` (failureCount < 1) but never
-      // retries a client-side timeout — re-firing it just re-hangs against an
-      // unresponsive backend and re-consumes the freed connection.
-      retry: (failureCount, error) =>
-        error?.name !== "TimeoutError" && failureCount < 1,
+      retry: retryUnlessTimeout(1),
       staleTime: 30_000,
       gcTime: 10 * 60_000,
     },
