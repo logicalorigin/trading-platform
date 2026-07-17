@@ -15,6 +15,65 @@ test.afterEach(() => {
   globalThis.fetch = originalFetch;
 });
 
+test("a native fetch transport failure is tagged for the shared retry policy", async () => {
+  const cause = new TypeError("Failed to fetch");
+  globalThis.fetch = async () => {
+    throw cause;
+  };
+
+  await assert.rejects(
+    () => platformJsonRequest("/api/test"),
+    (error) => {
+      assert.equal(error.name, "NetworkError");
+      assert.equal(error.code, "request_network");
+      assert.equal(error.cause, cause);
+      return true;
+    },
+  );
+});
+
+test("deterministic fetch configuration and programming errors stay untagged", async () => {
+  const deterministicErrors = [
+    new TypeError("Failed to parse URL from [object Object]"),
+    new Error("fetch adapter bug"),
+  ];
+
+  for (const deterministicError of deterministicErrors) {
+    globalThis.fetch = async () => {
+      throw deterministicError;
+    };
+
+    await assert.rejects(
+      () => platformJsonRequest("/api/test"),
+      (error) => {
+        assert.equal(error, deterministicError);
+        assert.equal(error.code, undefined);
+        return true;
+      },
+    );
+  }
+});
+
+test("a deterministic JSON parse error stays untagged", async () => {
+  const parseError = new SyntaxError("Unexpected token");
+  globalThis.fetch = async () => ({
+    ok: true,
+    status: 200,
+    json: async () => {
+      throw parseError;
+    },
+  });
+
+  await assert.rejects(
+    () => platformJsonRequest("/api/test"),
+    (error) => {
+      assert.equal(error, parseError);
+      assert.equal(error.code, undefined);
+      return true;
+    },
+  );
+});
+
 test("timeoutMs aborts a stalled request instead of hanging forever", async () => {
   // A fetch that never settles until its AbortSignal fires.
   globalThis.fetch = (_path, init) =>

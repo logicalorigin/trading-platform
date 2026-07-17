@@ -1,4 +1,5 @@
 import { parseRetryAfterMs } from "./queryDefaults.js";
+import { fetchWithNetworkError } from "./fetchWithNetworkError.js";
 
 export const platformJsonRequest = async (
   path,
@@ -17,7 +18,7 @@ export const platformJsonRequest = async (
 
   let response;
   try {
-    response = await fetch(path, {
+    response = await fetchWithNetworkError(path, {
       method,
       signal: signal || controller?.signal,
       headers:

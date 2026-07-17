@@ -32,3 +32,14 @@ test("quote snapshot fallback waits for provider configuration", () => {
   assert.match(source, /marketDataProviderConfigurationReady = false/);
   assert.match(source, /!marketDataProviderConfigurationReady[\s\S]*\? "market-data-config-loading"/);
 });
+
+test("sparkline seed normalizes native fetch transport failures at the request boundary", () => {
+  assert.match(
+    source,
+    /import \{ fetchWithNetworkError \} from "\.\/fetchWithNetworkError";/,
+  );
+  assert.match(
+    source,
+    /const response = await fetchWithNetworkError\("\/api\/sparklines\/seed",/,
+  );
+});

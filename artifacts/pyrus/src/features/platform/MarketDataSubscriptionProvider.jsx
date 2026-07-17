@@ -12,6 +12,7 @@ import {
   useStockMinuteAggregateSymbolsVersion,
 } from "../charting/useMassiveStockAggregateStream";
 import { MARKET_PERFORMANCE_SYMBOLS } from "../market/marketReferenceData";
+import { fetchWithNetworkError } from "./fetchWithNetworkError";
 import { useIbkrQuoteSnapshotStream } from "./live-streams";
 import { useRuntimeWorkloadFlag } from "./workloadStats";
 import {
@@ -269,7 +270,7 @@ const fetchSparklineSeed = async (
   }
   const headers = new Headers(requestOptions?.headers);
   headers.set("content-type", "application/json");
-  const response = await fetch("/api/sparklines/seed", {
+  const response = await fetchWithNetworkError("/api/sparklines/seed", {
     ...requestOptions,
     method: "POST",
     headers,
