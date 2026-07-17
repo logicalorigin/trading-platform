@@ -23,6 +23,8 @@ import {
 import {
   ensureGateway,
   getGateway,
+  refreshGateway,
+  stopGateway,
   transitionGatewayLifecycle,
 } from "./ibkr-portal-gateway-manager";
 import {
@@ -70,8 +72,20 @@ async function withFleetUser(
 
     globalThis.fetch = (async (request, init) => {
       const url = new URL(String(request));
+      const controlRequest = url.pathname.match(
+        /^\/sessions\/([^/]+)\/generations\/(\d+)\/slots\/(\d+)\/(ensure|release|status)$/,
+      );
+      const receipt = controlRequest
+        ? {
+            sessionId: decodeURIComponent(controlRequest[1]!),
+            generation: Number(controlRequest[2]),
+            slotNumber: Number(controlRequest[3]),
+          }
+        : null;
       if (url.pathname.endsWith("/ensure")) {
+        assert.ok(receipt);
         return Response.json({
+          ...receipt,
           capsule: {
             loginCompletions: 1,
             name: "pyrus-ibkr-slot-1",
@@ -87,7 +101,9 @@ async function withFleetUser(
         url.pathname.endsWith("/status") &&
         !url.pathname.includes("/data/")
       ) {
+        assert.ok(receipt);
         return Response.json({
+          ...receipt,
           capsule: {
             loginCompletions: 1,
             name: "pyrus-ibkr-slot-1",
@@ -114,14 +130,10 @@ async function withFleetUser(
           selectedAccount: "DU1234567",
         });
       }
-      const release = url.pathname.match(
-        /^\/sessions\/([^/]+)\/generations\/(\d+)\/slots\/(\d+)\/release$/,
-      );
-      if (release) {
+      if (controlRequest?.[4] === "release") {
+        assert.ok(receipt);
         return Response.json({
-          sessionId: decodeURIComponent(release[1]!),
-          generation: Number(release[2]),
-          slotNumber: Number(release[3]),
+          ...receipt,
           released: true,
         });
       }
@@ -187,6 +199,131 @@ async function withFleetUser(
     }
   });
 }
+
+function delayNextControlAcknowledgement(testDb: TestDatabase): {
+  committed: Promise<void>;
+  release: () => void;
+  restore: () => void;
+} {
+  type UpdateQuery = {
+    returning: (...args: unknown[]) => unknown;
+  };
+  type UpdateBuilder = {
+    set: (values: Record<string, unknown>) => UpdateQuery;
+  };
+  let signalCommit!: () => void;
+  let releaseResult!: () => void;
+  const committed = new Promise<void>((resolve) => {
+    signalCommit = resolve;
+  });
+  const resultGate = new Promise<void>((resolve) => {
+    releaseResult = resolve;
+  });
+  let delayed = false;
+  const interceptedDb = new Proxy(testDb.db as object, {
+    get(dbTarget, property) {
+      const value = Reflect.get(dbTarget, property, dbTarget);
+      if (property !== "update") {
+        return typeof value === "function" ? value.bind(dbTarget) : value;
+      }
+      return (table: unknown): UpdateBuilder => {
+        const builder = (value as (table: unknown) => UpdateBuilder).call(
+          dbTarget,
+          table,
+        );
+        const originalSet = builder.set.bind(builder);
+        builder.set = (values) => {
+          const query = originalSet(values);
+          if (
+            table !== ibkrGatewaySessionsTable ||
+            values["controlAcknowledgedAt"] === null ||
+            !("controlAcknowledgedAt" in values) ||
+            "lifecycleState" in values ||
+            delayed
+          ) {
+            return query;
+          }
+          delayed = true;
+          const originalReturning = query.returning.bind(query);
+          query.returning = (...args) =>
+            Promise.resolve(originalReturning(...args)).then(
+              async (result) => {
+                signalCommit();
+                await resultGate;
+                return result;
+              },
+            );
+          return query;
+        };
+        return builder;
+      };
+    },
+  }) as WorkspaceDatabase;
+  return {
+    committed,
+    release: releaseResult,
+    restore: __setDbForTests(interceptedDb),
+  };
+}
+
+test(
+  "fleet stop invalidates ensure after its control acknowledgement commits",
+  { timeout: 90_000 },
+  async () => {
+    await withFleetUser({}, async ({ appUserId, testDb }) => {
+      const delayed = delayNextControlAcknowledgement(testDb);
+      try {
+        const ensuring = ensureGateway(appUserId);
+        await delayed.committed;
+        const stopping = stopGateway(appUserId);
+        delayed.release();
+        const [ensureResult, stopResult] = await Promise.allSettled([
+          ensuring,
+          stopping,
+        ]);
+        assert.equal(ensureResult.status, "rejected");
+        if (ensureResult.status === "rejected") {
+          assert.equal(
+            (ensureResult.reason as { code?: unknown }).code,
+            "ibkr_portal_connect_cancelled",
+          );
+        }
+        assert.equal(stopResult.status, "fulfilled");
+        assert.equal(getGateway(appUserId), null);
+      } finally {
+        delayed.release();
+        delayed.restore();
+      }
+    });
+  },
+);
+
+test(
+  "fleet stop invalidates status after its control acknowledgement commits",
+  { timeout: 90_000 },
+  async () => {
+    await withFleetUser({}, async ({ appUserId, testDb }) => {
+      await ensureGateway(appUserId);
+      const delayed = delayNextControlAcknowledgement(testDb);
+      try {
+        const refreshing = refreshGateway(appUserId);
+        await delayed.committed;
+        const stopping = stopGateway(appUserId);
+        delayed.release();
+        const [refreshed, stopResult] = await Promise.all([
+          refreshing,
+          stopping.then(() => "fulfilled" as const),
+        ]);
+        assert.equal(refreshed, null);
+        assert.equal(stopResult, "fulfilled");
+        assert.equal(getGateway(appUserId), null);
+      } finally {
+        delayed.release();
+        delayed.restore();
+      }
+    });
+  },
+);
 
 test(
   "same-generation lifecycle completions preserve the newest intent",

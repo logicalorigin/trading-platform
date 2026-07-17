@@ -10,6 +10,7 @@ import { db, ibkrGatewaySessionsTable, usersTable } from "@workspace/db";
 import { withTestDb } from "@workspace/db/testing";
 import { eq } from "drizzle-orm";
 
+import { HttpError } from "../lib/errors";
 import {
   approveIbkrGatewayHost,
   ensureIbkrGatewayBrokerConnection,
@@ -66,6 +67,8 @@ test("fleet mode routes every operation through the current signed generation fe
       "mismatched_receipt" | "not_found" | "released_false"
     >();
     const releaseFailureUserIds: string[] = [];
+    const statusMissingSessionIds = new Set<string>();
+    const statusNullOkSessionIds = new Set<string>();
 
     process.env["IBKR_GATEWAY_FLEET_ENABLED"] = "1";
     process.env["IBKR_GATEWAY_FLEET_CONTROL_ROOT_KEY"] =
@@ -146,7 +149,33 @@ test("fleet mode routes every operation through the current signed generation fe
         return Response.json({ ...receipt, released: true });
       }
       if (url.pathname.endsWith("/status")) {
+        const statusRoute = url.pathname.match(
+          /^\/sessions\/([^/]+)\/generations\/(\d+)\/slots\/(\d+)\/status$/,
+        );
+        assert.ok(statusRoute);
+        if (statusNullOkSessionIds.has(statusRoute[1]!)) {
+          return Response.json({
+            sessionId: statusRoute[1],
+            generation: Number(statusRoute[2]),
+            slotNumber: Number(statusRoute[3]),
+            capsule: null,
+          });
+        }
+        if (statusMissingSessionIds.has(statusRoute[1]!)) {
+          return Response.json(
+            {
+              sessionId: statusRoute[1],
+              generation: Number(statusRoute[2]),
+              slotNumber: Number(statusRoute[3]),
+              capsule: null,
+            },
+            { status: 404 },
+          );
+        }
         return Response.json({
+          sessionId: statusRoute[1],
+          generation: Number(statusRoute[2]),
+          slotNumber: Number(statusRoute[3]),
           capsule: {
             loginCompletions: 2,
             name: "pyrus-ibkr-slot-1",
@@ -161,7 +190,14 @@ test("fleet mode routes every operation through the current signed generation fe
       if (url.pathname.endsWith("/data/cpg/v1/api/tickle")) {
         return Response.json({ session: "synthetic-session" });
       }
+      const ensureRoute = url.pathname.match(
+        /^\/sessions\/([^/]+)\/generations\/(\d+)\/slots\/(\d+)\/ensure$/,
+      );
+      assert.ok(ensureRoute);
       return Response.json({
+        sessionId: ensureRoute[1],
+        generation: Number(ensureRoute[2]),
+        slotNumber: Number(ensureRoute[3]),
         capsule: {
           loginCompletions: 1,
           name: "pyrus-ibkr-slot-1",
@@ -193,6 +229,13 @@ test("fleet mode routes every operation through the current signed generation fe
         brokerConnectionId: primaryConnection.id,
       });
       assert.ok(primaryFence);
+      const [ensuredSession] = await db
+        .select()
+        .from(ibkrGatewaySessionsTable)
+        .where(eq(ibkrGatewaySessionsTable.id, primaryFence.sessionId))
+        .limit(1);
+      assert.ok(ensuredSession?.controlAttemptId);
+      assert.ok(ensuredSession.controlAcknowledgedAt);
       for (const state of [
         "login_required",
         "verifying",
@@ -339,9 +382,41 @@ test("fleet mode routes every operation through the current signed generation fe
       assert.equal(recovered?.recovered, true);
       assert.equal(recovered?.port, 15009);
       assert.equal(recovered?.proxyPort, 16089);
+      const recoveryFence = await readCurrentIbkrGatewayFence({
+        appUserId: recoveryUser.id,
+        brokerConnectionId: connection.id,
+      });
+      assert.ok(recoveryFence);
+      statusMissingSessionIds.add(recoveryFence.sessionId);
+      assert.equal(await refreshGateway(recoveryUser.id), null);
+      const [missingStatusSession] = await db
+        .select()
+        .from(ibkrGatewaySessionsTable)
+        .where(eq(ibkrGatewaySessionsTable.id, recoveryFence.sessionId))
+        .limit(1);
+      assert.ok(missingStatusSession?.controlAttemptId);
+      assert.ok(missingStatusSession.controlAcknowledgedAt);
+      statusMissingSessionIds.delete(recoveryFence.sessionId);
+      statusNullOkSessionIds.add(recoveryFence.sessionId);
+      await assert.rejects(
+        refreshGateway(recoveryUser.id),
+        (error: unknown) =>
+          error instanceof HttpError &&
+          error.code === "ibkr_session_host_response_invalid",
+      );
+      const [invalidStatusSession] = await db
+        .select()
+        .from(ibkrGatewaySessionsTable)
+        .where(eq(ibkrGatewaySessionsTable.id, recoveryFence.sessionId))
+        .limit(1);
+      assert.ok(invalidStatusSession?.controlAttemptId);
+      assert.equal(invalidStatusSession.controlAcknowledgedAt, null);
+      statusNullOkSessionIds.delete(recoveryFence.sessionId);
       await stopGateway(recoveryUser.id);
       assert.match(requests[3]!.path, /\/generations\/1\/slots\/1\/status$/);
-      assert.match(requests[4]!.path, /\/generations\/1\/slots\/1\/release$/);
+      assert.match(requests[4]!.path, /\/generations\/1\/slots\/1\/status$/);
+      assert.match(requests[5]!.path, /\/generations\/1\/slots\/1\/status$/);
+      assert.match(requests[6]!.path, /\/generations\/1\/slots\/1\/release$/);
 
       for (const [index, failureMode] of (
         ["released_false", "mismatched_receipt", "not_found"] as const
@@ -410,6 +485,8 @@ test("fleet mode routes every operation through the current signed generation fe
           quarantinedSession.leaseHolderId,
           releaseFailureFence.leaseHolderId,
         );
+        assert.ok(quarantinedSession.controlAttemptId);
+        assert.equal(quarantinedSession.controlAcknowledgedAt, null);
       }
     } finally {
       for (const releaseFailureUserId of releaseFailureUserIds) {

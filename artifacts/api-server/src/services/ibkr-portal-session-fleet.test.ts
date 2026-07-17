@@ -48,8 +48,20 @@ test("fleet portal persists paper lifecycle and disconnects mixed accounts", asy
 
     globalThis.fetch = (async (input, init) => {
       const url = new URL(String(input));
+      const controlRequest = url.pathname.match(
+        /^\/sessions\/([^/]+)\/generations\/(\d+)\/slots\/(\d+)\/(ensure|release|status)$/,
+      );
+      const receipt = controlRequest
+        ? {
+            sessionId: decodeURIComponent(controlRequest[1]!),
+            generation: Number(controlRequest[2]),
+            slotNumber: Number(controlRequest[3]),
+          }
+        : null;
       if (url.pathname.endsWith("/ensure")) {
+        assert.ok(receipt);
         return Response.json({
+          ...receipt,
           capsule: {
             loginCompletions: 0,
             name: "pyrus-ibkr-slot-1",
@@ -65,7 +77,9 @@ test("fleet portal persists paper lifecycle and disconnects mixed accounts", asy
         url.pathname.endsWith("/status") &&
         !url.pathname.includes("/data/")
       ) {
+        assert.ok(receipt);
         return Response.json({
+          ...receipt,
           capsule: {
             loginCompletions: 0,
             name: "pyrus-ibkr-slot-1",
@@ -112,14 +126,10 @@ test("fleet portal persists paper lifecycle and disconnects mixed accounts", asy
           selectedAccount: "DU1234567",
         });
       }
-      const release = url.pathname.match(
-        /^\/sessions\/([^/]+)\/generations\/(\d+)\/slots\/(\d+)\/release$/,
-      );
-      if (release) {
+      if (controlRequest?.[4] === "release") {
+        assert.ok(receipt);
         return Response.json({
-          sessionId: decodeURIComponent(release[1]!),
-          generation: Number(release[2]),
-          slotNumber: Number(release[3]),
+          ...receipt,
           released: true,
         });
       }

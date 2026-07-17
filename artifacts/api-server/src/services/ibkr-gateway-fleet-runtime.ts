@@ -6,8 +6,11 @@ import {
 import { HttpError } from "../lib/errors";
 import { getRuntimeMode } from "../lib/runtime";
 import {
+  acknowledgeIbkrGatewayControlAttempt,
+  beginIbkrGatewayControlAttempt,
   ensureIbkrGatewayBrokerConnection,
   ensureIbkrGatewaySessionIdentity,
+  type IbkrGatewayControlAuthority,
   type IbkrGatewayFence,
   readCurrentIbkrGatewayFence,
   readIbkrGatewayBrokerConnection,
@@ -93,7 +96,9 @@ export async function ensureIbkrGatewayFleetFence(
 async function fleetContext(
   fence: IbkrGatewayFence,
   authority: "cleanup" | "traffic" = "traffic",
+  issueControlAttempt = false,
 ): Promise<{
+  controlAttemptId: string | null;
   fence: IbkrGatewayFence;
   origin: string;
   rootKey: Buffer;
@@ -105,10 +110,18 @@ async function fleetContext(
       expose: true,
     });
   }
-  const renewed =
-    authority === "cleanup"
-      ? await renewIbkrGatewayCleanupLease(fence)
-      : await renewIbkrGatewayLease(fence);
+  let controlAttemptId: string | null = null;
+  let renewed: IbkrGatewayFence | null;
+  if (issueControlAttempt) {
+    const attempt = await beginIbkrGatewayControlAttempt(fence, authority);
+    controlAttemptId = attempt?.controlAttemptId ?? null;
+    renewed = attempt?.fence ?? null;
+  } else {
+    renewed =
+      authority === "cleanup"
+        ? await renewIbkrGatewayCleanupLease(fence)
+        : await renewIbkrGatewayLease(fence);
+  }
   if (!renewed) {
     throw new HttpError(
       409,
@@ -133,7 +146,12 @@ async function fleetContext(
       },
     );
   }
-  return { fence: renewed, origin: placement.controlOrigin, rootKey };
+  return {
+    controlAttemptId,
+    fence: renewed,
+    origin: placement.controlOrigin,
+    rootKey,
+  };
 }
 
 export async function renewIbkrGatewayFleetFence(
@@ -186,15 +204,49 @@ async function readFleetJson<T>(response: Response): Promise<T> {
   }
 }
 
+export type IbkrGatewayFleetHostResponse<T> = {
+  authority: IbkrGatewayControlAuthority;
+  controlAttemptId: string;
+  fence: IbkrGatewayFence;
+  status: "not_found" | "ok";
+  value: T;
+};
+
+export async function acknowledgeIbkrGatewayFleetControl(
+  response: Pick<
+    IbkrGatewayFleetHostResponse<unknown>,
+    "authority" | "controlAttemptId" | "fence"
+  >,
+): Promise<void> {
+  if (
+    !(await acknowledgeIbkrGatewayControlAttempt(
+      response.fence,
+      response.controlAttemptId,
+      response.authority,
+    ))
+  ) {
+    throw new HttpError(
+      409,
+      "The IBKR gateway placement is no longer current.",
+      { code: "ibkr_gateway_fence_stale", expose: true },
+    );
+  }
+}
+
 export async function requestIbkrGatewayFleetHost<T>(
   fence: IbkrGatewayFence,
   action: "ensure" | "release" | "status",
-): Promise<{ fence: IbkrGatewayFence; value: T }> {
+): Promise<IbkrGatewayFleetHostResponse<T>> {
   const method = action === "status" ? "GET" : "POST";
-  const current = await fleetContext(
-    fence,
-    action === "release" ? "cleanup" : "traffic",
-  );
+  const authority = action === "release" ? "cleanup" : "traffic";
+  const current = await fleetContext(fence, authority, true);
+  if (!current.controlAttemptId) {
+    throw new HttpError(
+      409,
+      "The IBKR gateway placement is no longer current.",
+      { code: "ibkr_gateway_fence_stale", expose: true },
+    );
+  }
   const path = fleetRequestPath(current.fence, `/${action}`);
   const key = deriveIbkrHostControlKey(current.rootKey, current.fence.hostId);
   let response: Response;
@@ -217,6 +269,15 @@ export async function requestIbkrGatewayFleetHost<T>(
       expose: true,
     });
   }
+  if (action === "status" && response.status === 404) {
+    return {
+      authority,
+      controlAttemptId: current.controlAttemptId,
+      fence: current.fence,
+      status: "not_found",
+      value: await readFleetJson<T>(response),
+    };
+  }
   if (!response.ok) {
     await response.body?.cancel().catch(() => undefined);
     throw new HttpError(
@@ -225,7 +286,13 @@ export async function requestIbkrGatewayFleetHost<T>(
       { code: "ibkr_session_host_control_failed", expose: true },
     );
   }
-  return { fence: current.fence, value: await readFleetJson<T>(response) };
+  return {
+    authority,
+    controlAttemptId: current.controlAttemptId,
+    fence: current.fence,
+    status: "ok",
+    value: await readFleetJson<T>(response),
+  };
 }
 
 export async function prepareIbkrGatewayFleetDataRequest(input: {

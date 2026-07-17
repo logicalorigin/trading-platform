@@ -154,6 +154,13 @@ export type IbkrGatewayFence = {
   slotNumber: number;
 };
 
+export type IbkrGatewayControlAuthority = "cleanup" | "traffic";
+
+export type IbkrGatewayControlAttempt = {
+  controlAttemptId: string;
+  fence: IbkrGatewayFence;
+};
+
 export type IbkrGatewayLeaseResult =
   | { status: "acquired"; fence: IbkrGatewayFence; expiresAt: Date }
   | { status: "busy" };
@@ -664,6 +671,20 @@ export async function transitionIbkrGatewayLifecycle(
   const [transitioned] = await db
     .update(ibkrGatewaySessionsTable)
     .set({
+      ...(target === "draining"
+        ? {
+            controlAcknowledgedAt: sql`CASE
+              WHEN ${ibkrGatewaySessionsTable.lifecycleState} = 'draining'
+                THEN ${ibkrGatewaySessionsTable.controlAcknowledgedAt}
+              ELSE NULL
+            END`,
+            controlAttemptId: sql`CASE
+              WHEN ${ibkrGatewaySessionsTable.lifecycleState} = 'draining'
+                THEN ${ibkrGatewaySessionsTable.controlAttemptId}
+              ELSE NULL
+            END`,
+          }
+        : {}),
       lifecycleState: target,
       lastActivityAt: sql`CASE
         WHEN ${ibkrGatewaySessionsTable.lifecycleState} = ${target}
@@ -786,15 +807,20 @@ export async function resolveIbkrGatewayCleanupPlacement(
   };
 }
 
-export async function renewIbkrGatewayLease(
+async function refreshIbkrGatewayFence(
   fence: IbkrGatewayFence,
-): Promise<IbkrGatewayFence | null> {
-  if (!isValidIbkrGatewayFence(fence)) return null;
+  authority: IbkrGatewayControlAuthority,
+  controlAttemptId?: string,
+): Promise<IbkrGatewaySession | null> {
+  const fenceWhere =
+    authority === "cleanup"
+      ? cleanupIbkrGatewayFenceWhere(fence)
+      : currentIbkrGatewayFenceWhere(fence);
   return db.transaction(async (tx) => {
     const [locked] = await tx
       .select({ id: ibkrGatewaySessionsTable.id })
       .from(ibkrGatewaySessionsTable)
-      .where(currentIbkrGatewayFenceWhere(fence))
+      .where(fenceWhere)
       .limit(1)
       .for("update");
     if (!locked) return null;
@@ -813,53 +839,90 @@ export async function renewIbkrGatewayLease(
       .set({
         leaseExpiresAt: fencingWindow.leaseExpiresAt,
         replacementDeadlineAt: fencingWindow.replacementDeadlineAt,
-        lastActivityAt: sql`now()`,
-        updatedAt: sql`now()`,
+        ...(authority === "traffic"
+          ? { lastActivityAt: sql`now()`, updatedAt: sql`now()` }
+          : {}),
+        ...(controlAttemptId === undefined
+          ? {}
+          : { controlAcknowledgedAt: null, controlAttemptId }),
       })
-      .where(currentIbkrGatewayFenceWhere(fence))
+      .where(fenceWhere)
       .returning();
-    return renewed ? toFence(renewed) : null;
+    return renewed ?? null;
   });
+}
+
+export async function renewIbkrGatewayLease(
+  fence: IbkrGatewayFence,
+): Promise<IbkrGatewayFence | null> {
+  if (!isValidIbkrGatewayFence(fence)) return null;
+  const renewed = await refreshIbkrGatewayFence(fence, "traffic");
+  return renewed ? toFence(renewed) : null;
 }
 
 export async function renewIbkrGatewayCleanupLease(
   fence: IbkrGatewayFence,
 ): Promise<IbkrGatewayFence | null> {
   if (!isValidIbkrGatewayFence(fence)) return null;
-  return db.transaction(async (tx) => {
-    const [locked] = await tx
-      .select({ id: ibkrGatewaySessionsTable.id })
-      .from(ibkrGatewaySessionsTable)
-      .where(cleanupIbkrGatewayFenceWhere(fence))
-      .limit(1)
-      .for("update");
-    if (!locked) return null;
-    const [databaseClock] = await tx
-      .select({
-        atMs: sql<string>`ceil(extract(epoch FROM clock_timestamp()) * 1000)::bigint::text`,
-      })
-      .from(ibkrGatewaySessionsTable)
-      .where(eq(ibkrGatewaySessionsTable.id, locked.id))
-      .limit(1);
-    if (!databaseClock) return null;
-    const fencingWindow = sessionFencingWindow(databaseClock.atMs);
-    if (!fencingWindow) return null;
-    const [renewed] = await tx
-      .update(ibkrGatewaySessionsTable)
-      .set({
-        leaseExpiresAt: fencingWindow.leaseExpiresAt,
-        replacementDeadlineAt: fencingWindow.replacementDeadlineAt,
-      })
-      .where(cleanupIbkrGatewayFenceWhere(fence))
-      .returning();
-    return renewed ? toFence(renewed) : null;
-  });
+  const renewed = await refreshIbkrGatewayFence(fence, "cleanup");
+  return renewed ? toFence(renewed) : null;
+}
+
+export async function beginIbkrGatewayControlAttempt(
+  fence: IbkrGatewayFence,
+  authority: IbkrGatewayControlAuthority,
+): Promise<IbkrGatewayControlAttempt | null> {
+  if (!isValidIbkrGatewayFence(fence)) return null;
+  const controlAttemptId = randomUUID();
+  const renewed = await refreshIbkrGatewayFence(
+    fence,
+    authority,
+    controlAttemptId,
+  );
+  const renewedFence = renewed ? toFence(renewed) : null;
+  return renewedFence ? { controlAttemptId, fence: renewedFence } : null;
+}
+
+export async function acknowledgeIbkrGatewayControlAttempt(
+  fence: IbkrGatewayFence,
+  controlAttemptId: string,
+  authority: IbkrGatewayControlAuthority,
+): Promise<boolean> {
+  if (
+    !isValidIbkrGatewayFence(fence) ||
+    !uuidSchema.safeParse(controlAttemptId).success ||
+    (authority !== "cleanup" && authority !== "traffic")
+  ) {
+    return false;
+  }
+  const fenceWhere =
+    authority === "cleanup"
+      ? cleanupIbkrGatewayFenceWhere(fence)
+      : currentIbkrGatewayFenceWhere(fence);
+  const [acknowledged] = await db
+    .update(ibkrGatewaySessionsTable)
+    .set({ controlAcknowledgedAt: sql`clock_timestamp()` })
+    .where(
+      and(
+        fenceWhere,
+        eq(ibkrGatewaySessionsTable.controlAttemptId, controlAttemptId),
+        isNull(ibkrGatewaySessionsTable.controlAcknowledgedAt),
+      ),
+    )
+    .returning({ id: ibkrGatewaySessionsTable.id });
+  return Boolean(acknowledged);
 }
 
 export async function releaseIbkrGatewayLease(
   fence: IbkrGatewayFence,
+  controlAttemptId: string,
 ): Promise<boolean> {
-  if (!isValidIbkrGatewayFence(fence)) return false;
+  if (
+    !isValidIbkrGatewayFence(fence) ||
+    !uuidSchema.safeParse(controlAttemptId).success
+  ) {
+    return false;
+  }
   const [released] = await db
     .update(ibkrGatewaySessionsTable)
     .set({
@@ -879,7 +942,13 @@ export async function releaseIbkrGatewayLease(
       lastActivityAt: sql`now()`,
       updatedAt: sql`now()`,
     })
-    .where(cleanupIbkrGatewayFenceWhere(fence))
+    .where(
+      and(
+        cleanupIbkrGatewayFenceWhere(fence),
+        eq(ibkrGatewaySessionsTable.controlAttemptId, controlAttemptId),
+        isNotNull(ibkrGatewaySessionsTable.controlAcknowledgedAt),
+      ),
+    )
     .returning({ id: ibkrGatewaySessionsTable.id });
   return Boolean(released);
 }

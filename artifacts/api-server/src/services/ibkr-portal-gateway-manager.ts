@@ -28,6 +28,7 @@ import {
   transitionIbkrGatewayLifecycle as transitionDurableIbkrGatewayLifecycle,
 } from "./ibkr-gateway-session-store";
 import {
+  acknowledgeIbkrGatewayFleetControl,
   ensureIbkrGatewayFleetFence,
   isIbkrGatewayFleetEnabled,
   normalizeIbkrGatewayPath,
@@ -399,6 +400,16 @@ const HostStatusResponseSchema = z.object({
   capsule: HostCapsuleSchema.nullable(),
   targets: HostTargetsSchema.optional(),
 });
+const FleetHostEnsureResponseSchema = HostEnsureResponseSchema.extend({
+  sessionId: z.string().uuid(),
+  generation: z.number().int().min(0).max(2_147_483_647),
+  slotNumber: z.number().int().min(1).max(20),
+}).strict();
+const FleetHostStatusResponseSchema = HostStatusResponseSchema.extend({
+  sessionId: z.string().uuid(),
+  generation: z.number().int().min(0).max(2_147_483_647),
+  slotNumber: z.number().int().min(1).max(20),
+}).strict();
 const HostReleaseResponseSchema = z
   .object({
     sessionId: z.string().uuid(),
@@ -411,18 +422,39 @@ const HostReleaseResponseSchema = z
 type HostEnsureResponse = z.infer<typeof HostEnsureResponseSchema>;
 type HostStatusResponse = z.infer<typeof HostStatusResponseSchema>;
 
+function invalidHostResponse(): HttpError {
+  return new HttpError(
+    502,
+    "The IBKR session host returned an invalid response.",
+    {
+      code: "ibkr_session_host_response_invalid",
+      expose: false,
+    },
+  );
+}
+
 function parseHostResponse<T extends z.ZodType>(
   schema: T,
   value: unknown,
 ): z.output<T> {
   const parsed = schema.safeParse(value);
   if (!parsed.success) {
-    throw new HttpError(502, "The IBKR session host returned an invalid response.", {
-      code: "ibkr_session_host_response_invalid",
-      expose: false,
-    });
+    throw invalidHostResponse();
   }
   return parsed.data;
+}
+
+function assertMatchingFleetResponse(
+  response: { generation: number; sessionId: string; slotNumber: number },
+  fence: IbkrGatewayFence,
+): void {
+  if (
+    response.sessionId !== fence.sessionId ||
+    response.generation !== fence.generation ||
+    response.slotNumber !== fence.slotNumber
+  ) {
+    throw invalidHostResponse();
+  }
 }
 
 async function hostRequest<T>(
@@ -763,7 +795,20 @@ async function ensureFleetGateway(appUserId: string): Promise<PortalGateway> {
         { code: "ibkr_portal_connect_cancelled", expose: true },
       );
     }
-    const result = parseHostResponse(HostEnsureResponseSchema, response.value);
+    if (response.status !== "ok") throw invalidHostResponse();
+    const result = parseHostResponse(
+      FleetHostEnsureResponseSchema,
+      response.value,
+    );
+    assertMatchingFleetResponse(result, response.fence);
+    await acknowledgeIbkrGatewayFleetControl(response);
+    if (gatewayEpoch(appUserId) !== epoch) {
+      throw new HttpError(
+        409,
+        "The IBKR Client Portal connection was cancelled.",
+        { code: "ibkr_portal_connect_cancelled", expose: true },
+      );
+    }
     return rememberFleetGateway(appUserId, response.fence, result, false);
   })();
   fleetEnsureRequests.set(appUserId, request);
@@ -908,42 +953,54 @@ export async function refreshGateway(
   if (isIbkrGatewayFleetEnabled()) {
     const fence = entry?.fleetFence ?? (await readIbkrGatewayFleetFence(appUserId));
     if (!fence) return null;
-    let response: { fence: IbkrGatewayFence; value: unknown } | null = null;
-    try {
-      response = await requestIbkrGatewayFleetHost<unknown>(
-        fence,
-        "status",
-      );
-    } catch (error) {
-      if (!(error instanceof HttpError) || error.statusCode !== 404) throw error;
-    }
+    const response = await requestIbkrGatewayFleetHost<unknown>(
+      fence,
+      "status",
+    );
     if (gatewayEpoch(appUserId) !== epoch) return null;
-    if (!response) {
-      if (entry && gateways.get(appUserId) === entry) {
+    const result = parseHostResponse(
+      FleetHostStatusResponseSchema,
+      response.value,
+    );
+    assertMatchingFleetResponse(result, response.fence);
+    if (
+      (response.status === "not_found" && result.capsule !== null) ||
+      (response.status === "ok" && result.capsule === null)
+    ) {
+      throw invalidHostResponse();
+    }
+    await acknowledgeIbkrGatewayFleetControl(response);
+    if (gatewayEpoch(appUserId) !== epoch) return null;
+    if (response.status === "not_found") {
+      if (
+        entry &&
+        gateways.get(appUserId) === entry &&
+        sameFleetFence(entry.fleetFence, response.fence)
+      ) {
         entry.status = "stopped";
         gateways.delete(appUserId);
         stopFleetLeaseKeepalive(appUserId);
       }
       return null;
     }
-    const result = parseHostResponse(HostStatusResponseSchema, response.value);
-    if (!result.capsule) {
-      if (entry && gateways.get(appUserId) === entry) {
-        entry.status = "stopped";
-        gateways.delete(appUserId);
-        stopFleetLeaseKeepalive(appUserId);
-      }
-      return null;
-    }
+    const capsule = result.capsule;
+    if (!capsule) throw invalidHostResponse();
     const current = gateways.get(appUserId);
-    if (current?.fleetFence && isAlive(current)) {
+    if (current) {
+      if (
+        !current.fleetFence ||
+        !isAlive(current) ||
+        !sameFleetFence(current.fleetFence, response.fence)
+      ) {
+        return null;
+      }
       current.fleetFence = response.fence;
-      return updateHostedGateway(current, result.capsule);
+      return updateHostedGateway(current, capsule);
     }
     return rememberFleetGateway(
       appUserId,
       response.fence,
-      { capsule: result.capsule, targets: result.targets ?? HOSTED_TARGETS },
+      { capsule, targets: result.targets ?? HOSTED_TARGETS },
       true,
     );
   }
@@ -1010,6 +1067,7 @@ export async function stopGateway(appUserId: string): Promise<void> {
         );
       }
       let currentFence = fence;
+      let releaseControlAttemptId: string | null = null;
       try {
         const released = await requestIbkrGatewayFleetHost<unknown>(
           fence,
@@ -1019,23 +1077,22 @@ export async function stopGateway(appUserId: string): Promise<void> {
           HostReleaseResponseSchema,
           released.value,
         );
-        if (
-          receipt.sessionId !== released.fence.sessionId ||
-          receipt.generation !== released.fence.generation ||
-          receipt.slotNumber !== released.fence.slotNumber
-        ) {
-          throw new HttpError(
-            502,
-            "The IBKR session host returned an invalid response.",
-            { code: "ibkr_session_host_response_invalid", expose: false },
-          );
-        }
+        if (released.status !== "ok") throw invalidHostResponse();
+        assertMatchingFleetResponse(receipt, released.fence);
+        await acknowledgeIbkrGatewayFleetControl(released);
         currentFence = released.fence;
+        releaseControlAttemptId = released.controlAttemptId;
       } catch (error) {
         await transitionDurableIbkrGatewayLifecycle(fence, "quarantined");
         throw error;
       }
-      if (!(await releaseIbkrGatewayLease(currentFence))) {
+      if (
+        !releaseControlAttemptId ||
+        !(await releaseIbkrGatewayLease(
+          currentFence,
+          releaseControlAttemptId,
+        ))
+      ) {
         await transitionDurableIbkrGatewayLifecycle(fence, "quarantined");
         throw new HttpError(
           409,
