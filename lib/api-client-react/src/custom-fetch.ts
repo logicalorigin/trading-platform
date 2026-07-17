@@ -15,8 +15,6 @@ const NO_BODY_STATUS = new Set([204, 205, 304]);
 const DEFAULT_JSON_ACCEPT = "application/json, application/problem+json";
 const HEAVY_GET_PRIORITY_HEADER = "x-pyrus-fetch-priority";
 const API_TIMING_EVENT = "pyrus:api-request-timing";
-const TRANSIENT_API_GET_STATUS_CODES = new Set([502, 503, 504]);
-const DEFAULT_TRANSIENT_API_GET_RETRY_DELAYS_MS = [250, 750, 1_500, 2_500];
 const HEAVY_GET_PATHS = new Set([
   "/api/bars",
   "/api/options/chart-bars",
@@ -48,8 +46,6 @@ let _authTokenGetter: AuthTokenGetter | null = null;
 let _csrfTokenGetter: CsrfTokenGetter | null = null;
 let _heavyActiveCount = 0;
 let _heavySequence = 0;
-let _transientApiGetRetryDelaysMs: readonly number[] =
-  DEFAULT_TRANSIENT_API_GET_RETRY_DELAYS_MS;
 type HeavyQueueEntry = {
   run: () => void;
   reject: (error: unknown) => void;
@@ -57,9 +53,17 @@ type HeavyQueueEntry = {
   sequence: number;
   started: boolean;
   canceled: boolean;
+  enqueuedAtMs: number;
 };
 const _heavyQueue: HeavyQueueEntry[] = [];
-const _heavyInFlight = new Map<string, Promise<unknown>>();
+type SharedHeavyRequest<T = unknown> = {
+  promise: Promise<T>;
+  controller: AbortController;
+  waiters: number;
+  settled: boolean;
+  deadlineId: ReturnType<typeof setTimeout> | null;
+};
+const _heavyInFlight = new Map<string, SharedHeavyRequest>();
 
 /**
  * Set a base URL that is prepended to every relative request URL
@@ -93,13 +97,6 @@ export function setAuthTokenGetter(getter: AuthTokenGetter | null): void {
  */
 export function setCsrfTokenGetter(getter: CsrfTokenGetter | null): void {
   _csrfTokenGetter = getter;
-}
-
-export function setCustomFetchTransientRetryDelaysForTests(
-  delaysMs: readonly number[] | null,
-): void {
-  _transientApiGetRetryDelaysMs =
-    delaysMs ?? DEFAULT_TRANSIENT_API_GET_RETRY_DELAYS_MS;
 }
 
 function isRequest(input: RequestInfo | URL): input is Request {
@@ -241,7 +238,7 @@ function normalizeUrlForDedupe(input: RequestInfo | URL): {
     const query = params.toString();
     return {
       pathname: url.pathname,
-      normalized: query ? `${url.pathname}?${query}` : url.pathname,
+      normalized: `${url.origin}${url.pathname}${query ? `?${query}` : ""}`,
     };
   } catch {
     return null;
@@ -306,6 +303,7 @@ function buildHeavyGetKey(input: {
   method: string;
   responseType: CustomFetchOptions["responseType"];
   headers: Headers;
+  timeoutMs: number | null;
 }): string | null {
   if (input.method !== "GET") {
     return null;
@@ -320,6 +318,7 @@ function buildHeavyGetKey(input: {
     method: input.method,
     url: normalizedUrl.normalized,
     responseType: input.responseType ?? "auto",
+    timeoutMs: input.timeoutMs,
     headers: headersFingerprint(
       input.headers,
       new Set([HEAVY_GET_PRIORITY_HEADER]),
@@ -345,22 +344,6 @@ function isHeavyGetPath(pathname: string): boolean {
   return HEAVY_GET_PATHS.has(pathname);
 }
 
-function shouldDetachCallerAbort(
-  input: RequestInfo | URL,
-  method: string,
-): boolean {
-  if (method !== "GET") {
-    return false;
-  }
-
-  const normalizedUrl = normalizeUrlForDedupe(input);
-  if (!normalizedUrl) {
-    return false;
-  }
-
-  return normalizedUrl.pathname === "/api/options/chains";
-}
-
 function createAbortError(): Error {
   if (typeof DOMException !== "undefined") {
     return new DOMException("The operation was aborted.", "AbortError");
@@ -381,6 +364,17 @@ function createTimeoutError(timeoutMs: number): Error {
 
   const error = new Error(`The request timed out after ${timeoutMs}ms.`);
   error.name = "TimeoutError";
+  return error;
+}
+
+function createNetworkError(cause: unknown): Error & { code: "request_network" } {
+  const error = new Error("Network request failed.") as Error & {
+    code: "request_network";
+    cause?: unknown;
+  };
+  error.name = "NetworkError";
+  error.code = "request_network";
+  error.cause = cause;
   return error;
 }
 
@@ -416,87 +410,6 @@ function resolveDefaultRequestTimeoutMs(
     return HEAVY_API_GET_TIMEOUT_MS;
   }
   return DEFAULT_API_GET_TIMEOUT_MS;
-}
-
-function isApiPath(input: RequestInfo | URL): boolean {
-  const normalizedUrl = normalizeUrlForDedupe(input);
-  if (!normalizedUrl) {
-    return false;
-  }
-
-  return (
-    normalizedUrl.pathname === "/api" ||
-    normalizedUrl.pathname.startsWith("/api/")
-  );
-}
-
-function shouldRetryTransientApiGet(input: {
-  requestInput: RequestInfo | URL;
-  method: string;
-  response: Response;
-  attemptIndex: number;
-}): boolean {
-  if (input.method !== "GET") {
-    return false;
-  }
-  if (input.attemptIndex >= _transientApiGetRetryDelaysMs.length) {
-    return false;
-  }
-  if (!TRANSIENT_API_GET_STATUS_CODES.has(input.response.status)) {
-    return false;
-  }
-  if (
-    input.response.headers
-      .get("x-pyrus-admission-action")
-      ?.trim()
-      .toLowerCase() === "shed"
-  ) {
-    return false;
-  }
-
-  return isApiPath(input.requestInput);
-}
-
-async function discardRetryResponseBody(response: Response): Promise<void> {
-  try {
-    await response.body?.cancel();
-  } catch {
-    // Best-effort cleanup only. The retry is more important than draining an
-    // already-failed proxy response.
-  }
-}
-
-function waitForRetryDelay(
-  delayMs: number,
-  signal?: AbortSignal | null,
-): Promise<void> {
-  if (signal?.aborted) {
-    return Promise.reject(createAbortError());
-  }
-  if (delayMs <= 0) {
-    return Promise.resolve();
-  }
-
-  return new Promise((resolve, reject) => {
-    let timeoutId: ReturnType<typeof setTimeout> | null = null;
-    let cleanup = () => {};
-    const handleAbort = () => {
-      cleanup();
-      reject(createAbortError());
-    };
-    cleanup = () => {
-      if (timeoutId != null) {
-        clearTimeout(timeoutId);
-      }
-      signal?.removeEventListener("abort", handleAbort);
-    };
-
-    timeoutId = setTimeout(() => {
-      cleanup();
-      resolve();
-    }, delayMs);
-    signal?.addEventListener("abort", handleAbort, { once: true });
-  });
 }
 
 function withRequestTimeout(
@@ -577,22 +490,45 @@ function waitForCaller<T>(
   });
 }
 
+function waitForSharedHeavyRequest<T>(
+  entry: SharedHeavyRequest<T>,
+  signal?: AbortSignal | null,
+): Promise<T> {
+  entry.waiters += 1;
+  let released = false;
+  const release = () => {
+    if (released) return;
+    released = true;
+    entry.waiters = Math.max(0, entry.waiters - 1);
+    if (!entry.settled && entry.waiters === 0) {
+      entry.controller.abort(createAbortError());
+    }
+  };
+  return waitForCaller(entry.promise, signal).finally(release);
+}
+
+const effectiveHeavyPriority = (entry: HeavyQueueEntry, atMs: number): number =>
+  entry.priority + Math.max(0, atMs - entry.enqueuedAtMs) / 1_000;
+
 function takeNextHeavyRequest(): (() => void) | null {
   if (!_heavyQueue.length) {
     return null;
   }
 
   let nextIndex = 0;
+  const atMs = nowMs();
   for (let index = 1; index < _heavyQueue.length; index += 1) {
     const current = _heavyQueue[index];
     if (current.canceled) {
       continue;
     }
     const next = _heavyQueue[nextIndex];
+    const currentPriority = effectiveHeavyPriority(current, atMs);
+    const nextPriority = effectiveHeavyPriority(next, atMs);
     if (
       next.canceled ||
-      current.priority > next.priority ||
-      (current.priority === next.priority && current.sequence < next.sequence)
+      currentPriority > nextPriority ||
+      (currentPriority === nextPriority && current.sequence < next.sequence)
     ) {
       nextIndex = index;
     }
@@ -630,7 +566,9 @@ function runQueuedHeavyRequest<T>(
         _heavyQueue.splice(index, 1);
       }
       cleanup();
-      reject(createAbortError());
+      reject(
+        signal?.reason instanceof Error ? signal.reason : createAbortError(),
+      );
     };
     const run = () => {
       if (entry?.canceled) {
@@ -664,6 +602,7 @@ function runQueuedHeavyRequest<T>(
       sequence: _heavySequence,
       started: false,
       canceled: false,
+      enqueuedAtMs: nowMs(),
     };
     signal?.addEventListener("abort", handleAbort, { once: true });
     _heavyQueue.push(entry);
@@ -918,50 +857,41 @@ async function executeFetch<T = unknown>(input: {
   requestInfo: { method: string; url: string };
   timeoutMs?: number | null;
 }): Promise<T> {
-  for (let attemptIndex = 0; ; attemptIndex += 1) {
-    const timed = withRequestTimeout(input.init, input.timeoutMs);
+  const timed = withRequestTimeout(input.init, input.timeoutMs);
+  let responseReceived = false;
 
-    try {
-      const response = await fetch(input.requestInput, {
-        ...timed.init,
-        method: input.method,
-        headers: input.headers,
-      });
-      dispatchApiPressureHeaderEvent(response, input.requestInfo);
+  try {
+    const response = await fetch(input.requestInput, {
+      ...timed.init,
+      method: input.method,
+      headers: input.headers,
+    });
+    responseReceived = true;
+    dispatchApiPressureHeaderEvent(response, input.requestInfo);
 
-      if (!response.ok) {
-        if (
-          shouldRetryTransientApiGet({
-            requestInput: input.requestInput,
-            method: input.method,
-            response,
-            attemptIndex,
-          })
-        ) {
-          const delayMs = _transientApiGetRetryDelaysMs[attemptIndex] ?? 0;
-          await discardRetryResponseBody(response);
-          timed.cleanup();
-          await waitForRetryDelay(delayMs, input.init.signal);
-          continue;
-        }
-
-        const errorData = await parseErrorBody(response, input.method);
-        throw new ApiError(response, errorData, input.requestInfo);
-      }
-
-      return (await parseSuccessBody(
-        response,
-        input.responseType,
-        input.requestInfo,
-      )) as T;
-    } catch (error) {
-      if (timed.didTimeout()) {
-        throw createTimeoutError(input.timeoutMs ?? 0);
-      }
-      throw error;
-    } finally {
-      timed.cleanup();
+    if (!response.ok) {
+      const errorData = await parseErrorBody(response, input.method);
+      throw new ApiError(response, errorData, input.requestInfo);
     }
+
+    return (await parseSuccessBody(
+      response,
+      input.responseType,
+      input.requestInfo,
+    )) as T;
+  } catch (error) {
+    if (timed.didTimeout()) {
+      throw createTimeoutError(input.timeoutMs ?? 0);
+    }
+    if ((error as { name?: unknown })?.name === "TimeoutError") {
+      throw error;
+    }
+    if (!responseReceived && (error as { name?: unknown })?.name !== "AbortError") {
+      throw createNetworkError(error);
+    }
+    throw error;
+  } finally {
+    timed.cleanup();
   }
 }
 
@@ -1012,8 +942,11 @@ export function resetCustomFetchDedupeForTests(): void {
   _heavyActiveCount = 0;
   _heavySequence = 0;
   _heavyQueue.splice(0, _heavyQueue.length);
+  for (const entry of _heavyInFlight.values()) {
+    entry.controller.abort(createAbortError());
+    if (entry.deadlineId != null) clearTimeout(entry.deadlineId);
+  }
   _heavyInFlight.clear();
-  setCustomFetchTransientRetryDelaysForTests(null);
 }
 
 export const __customFetchInternalsForTests = {
@@ -1095,15 +1028,17 @@ export async function customFetch<T = unknown>(
     method,
     responseType,
     headers,
+    timeoutMs,
   });
 
   try {
     if (heavyKey) {
-      const callerSignal = init.signal;
+      const callerSignal =
+        init.signal ?? (isRequest(input) ? input.signal : undefined);
       const existing = _heavyInFlight.get(heavyKey);
       if (existing) {
-        const result = await waitForCaller(
-          existing as Promise<T>,
+        const result = await waitForSharedHeavyRequest(
+          existing as SharedHeavyRequest<T>,
           callerSignal,
         );
         dispatchApiTiming({
@@ -1116,10 +1051,23 @@ export async function customFetch<T = unknown>(
         return result;
       }
 
-      const detachCallerAbort = shouldDetachCallerAbort(input, method);
       const { signal: _callerSignal, ...initWithoutSignal } = init;
-      const upstreamInit = detachCallerAbort ? initWithoutSignal : init;
+      const controller = new AbortController();
+      const upstreamInit = { ...initWithoutSignal, signal: controller.signal };
       const priority = heavyRequestPriority;
+      const entry: SharedHeavyRequest<T> = {
+        promise: Promise.resolve(undefined as T),
+        controller,
+        waiters: 0,
+        settled: false,
+        deadlineId: null,
+      };
+      if (timeoutMs != null && timeoutMs > 0) {
+        entry.deadlineId = setTimeout(
+          () => controller.abort(createTimeoutError(timeoutMs)),
+          timeoutMs,
+        );
+      }
       const sharedRequest = runQueuedHeavyRequest(
         () =>
           executeFetch<T>({
@@ -1129,16 +1077,24 @@ export async function customFetch<T = unknown>(
             headers,
             responseType,
             requestInfo,
-            timeoutMs,
+            timeoutMs: null,
           }),
         priority,
-        detachCallerAbort ? undefined : callerSignal,
+        controller.signal,
       ).finally(() => {
-        _heavyInFlight.delete(heavyKey);
+        entry.settled = true;
+        if (entry.deadlineId != null) {
+          clearTimeout(entry.deadlineId);
+          entry.deadlineId = null;
+        }
+        if (_heavyInFlight.get(heavyKey) === entry) {
+          _heavyInFlight.delete(heavyKey);
+        }
       });
-      _heavyInFlight.set(heavyKey, sharedRequest);
+      entry.promise = sharedRequest;
+      _heavyInFlight.set(heavyKey, entry);
       sharedRequest.catch(() => {});
-      const result = await waitForCaller(sharedRequest, callerSignal);
+      const result = await waitForSharedHeavyRequest(entry, callerSignal);
       dispatchApiTiming({
         method,
         url: requestInfo.url,
