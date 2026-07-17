@@ -118,6 +118,12 @@ test("fractional and noncanonical admission limits fall back safely", async () =
   (client as FakeClient).release();
 });
 
+test("admission config shares the effective pool acquisition timeout", () => {
+  const resolved = resolveDbAdmissionSchedulerConfig(12, {}, 30_000);
+
+  assert.equal(resolved.acquireTimeoutMs, 30_000);
+});
+
 test("positive integer parsing stays within the shared timer ceiling", () => {
   for (const [value, expected] of [
     [undefined, undefined],

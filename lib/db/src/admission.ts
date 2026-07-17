@@ -136,9 +136,11 @@ const readPositiveInteger = (
 export function resolveDbAdmissionSchedulerConfig(
   maxInFlight: number,
   env: NodeJS.ProcessEnv = process.env,
+  acquireTimeoutMs: number | null = null,
 ): DbAdmissionSchedulerConfig {
   return {
     maxInFlight,
+    acquireTimeoutMs,
     agingMs: readPositiveInteger(
       env,
       "PYRUS_DB_LANE_AGING_MS",

@@ -494,7 +494,11 @@ function instrumentPostgresPoolDiagnostics(targetPool: pg.Pool): void {
     pg.PoolClient
   >;
   sharedPoolAdmissionScheduler = createDbAdmissionScheduler<pg.PoolClient>(
-    resolveDbAdmissionSchedulerConfig(resolvedPoolMax),
+    resolveDbAdmissionSchedulerConfig(
+      resolvedPoolMax,
+      process.env,
+      targetPool.options.connectionTimeoutMillis ?? null,
+    ),
     originalConnect,
   );
   setDbAdmissionDiagnosticsSource(

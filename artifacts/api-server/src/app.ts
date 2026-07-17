@@ -5,6 +5,7 @@ import path from "node:path";
 import zlib from "node:zlib";
 import { fileURLToPath } from "node:url";
 import {
+  DbAdmissionTimeoutError,
   runWithPostgresDiagnosticContext,
   type PostgresDiagnosticContext,
 } from "@workspace/db";
@@ -291,7 +292,12 @@ if (process.env["PYRUS_SERVE_WEB"] === "1") {
   });
 }
 
-app.use((error: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+export function apiErrorHandler(
+  error: unknown,
+  _req: express.Request,
+  res: express.Response,
+  _next: express.NextFunction,
+) {
   if (res.headersSent) {
     return;
   }
@@ -317,6 +323,21 @@ app.use((error: unknown, _req: express.Request, res: express.Response, _next: ex
         .map((issue) => (typeof issue.message === "string" ? issue.message : "Invalid input"))
         .join("; "),
       errors: issues,
+    });
+    return;
+  }
+
+  if (error instanceof DbAdmissionTimeoutError) {
+    res.setHeader("Retry-After", String(error.retryAfterSeconds));
+    res.status(503).type("application/problem+json").json({
+      type: "https://pyrus.local/problems/database-admission-timeout",
+      title: "Database temporarily unavailable",
+      status: 503,
+      detail:
+        "Database capacity is temporarily unavailable. Retry the request.",
+      code: error.code,
+      kind: error.kind,
+      lane: error.lane,
     });
     return;
   }
@@ -356,6 +377,8 @@ app.use((error: unknown, _req: express.Request, res: express.Response, _next: ex
     status: 500,
     detail: "The API server hit an unexpected error.",
   });
-});
+}
+
+app.use(apiErrorHandler);
 
 export default app;
