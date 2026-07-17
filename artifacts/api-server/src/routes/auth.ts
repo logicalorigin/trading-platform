@@ -157,7 +157,11 @@ function readCookie(req: RequestWithHeaders, name: string): string | null {
   for (const part of header.split(";")) {
     const [rawName, ...rawValue] = part.trim().split("=");
     if (rawName === name) {
-      return decodeURIComponent(rawValue.join("="));
+      try {
+        return decodeURIComponent(rawValue.join("="));
+      } catch {
+        return null;
+      }
     }
   }
   return null;
