@@ -2,6 +2,21 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
+import { eq } from "drizzle-orm";
+
+import {
+  db,
+  shadowAccountsTable,
+  shadowPositionMarksTable,
+  shadowPositionsTable,
+} from "@workspace/db";
+import { withTestDb } from "@workspace/db/testing";
+
+import {
+  recordShadowAutomationEvent,
+  SHADOW_ACCOUNT_ID,
+} from "./shadow-account";
+
 const source = readFileSync(new URL("./shadow-account.ts", import.meta.url), "utf8");
 
 test("snapshot totals read one latest mark per requested position", () => {
@@ -135,4 +150,90 @@ test("shadow automation mirror repair excludes mirrored events before decoding p
     /const mirrored = eventIds\.length/,
     "already-mirrored history must not be loaded and decoded in Node",
   );
+});
+
+test("invalid or future shadow automation marks are rejected before mutating a clean schema", async () => {
+  await withTestDb(async () => {
+    const openedAt = new Date("2026-07-17T14:30:00.000Z");
+    const positionKey = "option:CRM:2026-07-17:250:call:crm-future-mark";
+    const selectedContract = {
+      ticker: "O:CRM260717C00250000",
+      underlying: "CRM",
+      expirationDate: "2026-07-17",
+      strike: 250,
+      right: "call",
+      multiplier: 100,
+      sharesPerContract: 100,
+      providerContractId: "crm-future-mark",
+    };
+
+    await db.insert(shadowAccountsTable).values({
+      id: SHADOW_ACCOUNT_ID,
+      displayName: "Shadow",
+      startingBalance: "25000",
+      cash: "25000",
+    });
+    const [position] = await db
+      .insert(shadowPositionsTable)
+      .values({
+        accountId: SHADOW_ACCOUNT_ID,
+        positionKey,
+        symbol: "CRM",
+        assetClass: "option",
+        positionType: "option",
+        quantity: "1",
+        averageCost: "1",
+        mark: "1",
+        marketValue: "100",
+        unrealizedPnl: "0",
+        optionContract: selectedContract,
+        openedAt,
+        asOf: openedAt,
+        status: "open",
+      })
+      .returning();
+    assert.ok(position);
+
+    const automationMark = {
+      eventType: "signal_options_shadow_mark",
+      symbol: "CRM",
+      payload: {
+        metadata: {
+          positionKey,
+          runMode: "historical_backfill",
+          runSource: "backfill",
+        },
+        selectedContract,
+        position: {
+          symbol: "CRM",
+          lastMarkPrice: 9,
+          selectedContract,
+        },
+      },
+    };
+    const futureRecorded = await recordShadowAutomationEvent({
+      ...automationMark,
+      id: "00000000-0000-4000-8000-000000000501",
+      occurredAt: new Date(Date.now() + 60 * 60_000),
+    } as never);
+    const invalidRecorded = await recordShadowAutomationEvent({
+      ...automationMark,
+      id: "00000000-0000-4000-8000-000000000502",
+      occurredAt: new Date(Number.NaN),
+    } as never);
+
+    const [persistedPosition] = await db
+      .select()
+      .from(shadowPositionsTable)
+      .where(eq(shadowPositionsTable.id, position.id));
+    const marks = await db
+      .select()
+      .from(shadowPositionMarksTable)
+      .where(eq(shadowPositionMarksTable.positionId, position.id));
+
+    assert.equal(futureRecorded, null);
+    assert.equal(invalidRecorded, null);
+    assert.equal(Number(persistedPosition?.mark), 1);
+    assert.equal(marks.length, 0);
+  });
 });

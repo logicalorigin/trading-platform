@@ -18430,6 +18430,10 @@ async function recordShadowAutomationMark(
   event: ExecutionEvent,
   options: ShadowAutomationMirrorOptions,
 ) {
+  const occurredAtMs = event.occurredAt.getTime();
+  if (!Number.isFinite(occurredAtMs) || occurredAtMs > Date.now()) {
+    return null;
+  }
   await ensureShadowAccount();
   const payload = readRecord(event.payload) ?? {};
   const position = readRecord(payload.position);
