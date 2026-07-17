@@ -1,6 +1,7 @@
 import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { isFiniteNumber } from "./gexModel.js";
+import { fetchWithNetworkError } from "../platform/fetchWithNetworkError.js";
 
 export const GEX_PROJECTION_QUERY_STALE_MS = 60_000;
 export const GEX_PROJECTION_QUERY_REFETCH_MS = 60_000;
@@ -31,7 +32,7 @@ export const fetchGexProjection = async (
     params.set("mode", GEX_PROJECTION_MODE_SNAPSHOT);
   }
 
-  const response = await fetch(
+  const response = await fetchWithNetworkError(
     `/api/gex/${encodeURIComponent(normalizedTicker)}/projection?${params.toString()}`,
     { signal },
   );

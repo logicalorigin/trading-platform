@@ -1,6 +1,8 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Play, RefreshCw } from "lucide-react";
+// @ts-expect-error JavaScript request boundary imported into TypeScript context
+import { fetchWithNetworkError } from "../platform/fetchWithNetworkError.js";
 
 // @ts-expect-error JSX module imported into TypeScript context
 import { CSS_COLOR, FONT_WEIGHTS, RADII } from "../../lib/uiTokens.jsx";
@@ -117,7 +119,7 @@ function terminalStatus(status: string | null | undefined): boolean {
 }
 
 async function jsonRequest<T>(url: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(url, {
+  const response = await fetchWithNetworkError(url, {
     ...init,
     headers: {
       Accept: "application/json",
