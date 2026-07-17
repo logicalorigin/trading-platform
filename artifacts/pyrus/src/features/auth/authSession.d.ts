@@ -1,3 +1,4 @@
+import type { QueryClient } from "@tanstack/react-query";
 import type { ReactElement, ReactNode } from "react";
 
 export const AUTH_SESSION_QUERY_KEY: readonly ["auth-session"];
@@ -13,6 +14,7 @@ export type AuthSessionUser = {
 export type AuthSessionPayload = {
   user: AuthSessionUser | null;
   csrfToken: string | null;
+  expiresAt?: string;
 };
 
 export type AuthSessionValue = {
@@ -24,8 +26,16 @@ export type AuthSessionValue = {
   isLoading: boolean;
   isError: boolean;
   hasEntitlement: (key: string) => boolean;
-  refresh: () => Promise<void>;
+  adoptSession: (session: AuthSessionPayload) => void;
+  refresh: (options?: { clearUserCache?: boolean }) => Promise<void>;
 };
+
+export function applyAuthSessionTransition(
+  queryClient: QueryClient,
+  session: AuthSessionPayload,
+): void;
+
+export function clearUserScopedQueryCache(queryClient: QueryClient): void;
 
 export function readAuthSession(options?: {
   signal?: AbortSignal;

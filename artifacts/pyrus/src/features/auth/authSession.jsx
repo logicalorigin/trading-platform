@@ -1,11 +1,12 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { setCsrfTokenGetter } from "@workspace/api-client-react";
+import { customFetch, setCsrfTokenGetter } from "@workspace/api-client-react";
 import {
   createContext,
   useCallback,
   useContext,
   useEffect,
   useMemo,
+  useRef,
 } from "react";
 
 // Slice 8: one canonical auth-session source for the whole SPA. Historically
@@ -14,6 +15,28 @@ import {
 // code — starting with the login gate — should read `useAuthSession()` so there
 // is a single place that knows "who am I / am I signed in / what can I do".
 export const AUTH_SESSION_QUERY_KEY = ["auth-session"];
+
+function isAuthSessionQuery(query) {
+  return (
+    query.queryKey.length === AUTH_SESSION_QUERY_KEY.length &&
+    query.queryKey[0] === AUTH_SESSION_QUERY_KEY[0]
+  );
+}
+
+function authSessionIdentity(session) {
+  return session?.user?.id ?? null;
+}
+
+export function clearUserScopedQueryCache(queryClient) {
+  queryClient.removeQueries({
+    predicate: (query) => !isAuthSessionQuery(query),
+  });
+}
+
+export function applyAuthSessionTransition(queryClient, session) {
+  clearUserScopedQueryCache(queryClient);
+  queryClient.setQueryData(AUTH_SESSION_QUERY_KEY, session);
+}
 
 // `/api/auth/session` always responds 200: `{ user, csrfToken }` when signed in,
 // `{ user: null, csrfToken: null }` when signed out. A non-200 means the backend
@@ -31,52 +54,21 @@ export async function readAuthSession({ signal } = {}) {
   return response.json();
 }
 
-// Shared POST helper for the public auth endpoints (login / bootstrap / logout).
-// Throws an Error carrying `.data` (the parsed error body) and `.status`.
-// Login/bootstrap can be slow under DB pressure; bound the wait so a stalled
-// request rejects (clearing the submit button) instead of hanging forever.
-const AUTH_POST_TIMEOUT_MS = 20000;
-
-export async function postAuthJson(path, body, headers = {}) {
-  let response;
-  try {
-    response = await fetch(path, {
-      method: "POST",
-      headers: {
-        Accept: "application/json",
-        "Content-Type": "application/json",
-        ...headers,
-      },
-      body: JSON.stringify(body),
-      signal: AbortSignal.timeout(AUTH_POST_TIMEOUT_MS),
-    });
-  } catch (fetchError) {
-    if (
-      fetchError?.name === "TimeoutError" ||
-      fetchError?.name === "AbortError"
-    ) {
-      throw new Error("Sign in timed out. Please try again.");
-    }
-    throw fetchError;
-  }
-  let payload = null;
-  try {
-    payload = await response.json();
-  } catch {
-    payload = null;
-  }
-  if (!response.ok) {
-    const error = new Error(
-      payload?.detail ||
-        payload?.title ||
-        payload?.message ||
-        `HTTP ${response.status}`,
-    );
-    error.data = payload;
-    error.status = response.status;
-    throw error;
-  }
-  return payload;
+// Auth mutations deliberately have no client deadline. Aborting after the API
+// commits a session would turn a successful mutation into an ambiguous failure.
+// The shared transport only installs default deadlines on idempotent GETs.
+export function postAuthJson(path, body, headers = {}) {
+  return customFetch(path, {
+    method: "POST",
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/json",
+      ...headers,
+    },
+    body: JSON.stringify(body),
+    responseType: "json",
+    timeoutMs: null,
+  });
 }
 
 const AuthSessionContext = createContext(null);
@@ -90,8 +82,52 @@ export function AuthProvider({ children }) {
     retry: false,
   });
 
+  const initialSession = queryClient.getQueryData(AUTH_SESSION_QUERY_KEY);
+  const observedIdentityRef = useRef(
+    initialSession === undefined
+      ? undefined
+      : authSessionIdentity(initialSession),
+  );
+  useEffect(
+    () =>
+      queryClient.getQueryCache().subscribe((event) => {
+        if (
+          event.type !== "updated" ||
+          event.action.type !== "success" ||
+          !isAuthSessionQuery(event.query)
+        ) {
+          return;
+        }
+        const nextIdentity = authSessionIdentity(event.query.state.data);
+        const previousIdentity = observedIdentityRef.current;
+        observedIdentityRef.current = nextIdentity;
+        if (
+          previousIdentity !== undefined &&
+          previousIdentity !== nextIdentity
+        ) {
+          clearUserScopedQueryCache(queryClient);
+        }
+      }),
+    [queryClient],
+  );
+
   const refresh = useCallback(
-    () => queryClient.invalidateQueries({ queryKey: AUTH_SESSION_QUERY_KEY }),
+    ({ clearUserCache = false } = {}) => {
+      if (clearUserCache) {
+        clearUserScopedQueryCache(queryClient);
+      }
+      return queryClient.invalidateQueries({
+        queryKey: AUTH_SESSION_QUERY_KEY,
+      });
+    },
+    [queryClient],
+  );
+
+  const adoptSession = useCallback(
+    (session) => {
+      observedIdentityRef.current = authSessionIdentity(session);
+      applyAuthSessionTransition(queryClient, session);
+    },
     [queryClient],
   );
 
@@ -119,9 +155,17 @@ export function AuthProvider({ children }) {
       isError: query.isError,
       // Mirrors the backend `sessionHasEntitlement` (admins hold everything).
       hasEntitlement: (key) => isAdmin || entitlements.includes(key),
+      adoptSession,
       refresh,
     };
-  }, [csrfToken, query.data, query.isLoading, query.isError, refresh]);
+  }, [
+    adoptSession,
+    csrfToken,
+    query.data,
+    query.isError,
+    query.isLoading,
+    refresh,
+  ]);
 
   return (
     <AuthSessionContext.Provider value={value}>

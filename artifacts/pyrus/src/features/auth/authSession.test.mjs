@@ -1,9 +1,22 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { QueryClient, QueryObserver } from "@tanstack/react-query";
+import {
+  QueryClient,
+  QueryClientProvider,
+  QueryObserver,
+} from "@tanstack/react-query";
+import React, { act } from "react";
+import { createRoot } from "react-dom/client";
 
-import { AUTH_SESSION_QUERY_KEY, readAuthSession } from "./authSession.jsx";
+import {
+  AUTH_SESSION_QUERY_KEY,
+  AuthProvider,
+  applyAuthSessionTransition,
+  clearUserScopedQueryCache,
+  postAuthJson,
+  readAuthSession,
+} from "./authSession.jsx";
 
 const originalFetch = globalThis.fetch;
 const originalAbortSignalTimeout = AbortSignal.timeout;
@@ -40,6 +53,54 @@ function stubHungFetch() {
     });
   };
   return () => observedSignal;
+}
+
+function installReactRootGlobals() {
+  const globalNames = [
+    "document",
+    "HTMLIFrameElement",
+    "IS_REACT_ACT_ENVIRONMENT",
+    "React",
+    "window",
+  ];
+  const previousGlobals = globalNames.map((name) => [
+    name,
+    Object.getOwnPropertyDescriptor(globalThis, name),
+  ]);
+  const noop = () => {};
+  const document = {
+    activeElement: null,
+    addEventListener: noop,
+    defaultView: globalThis,
+    nodeType: 9,
+    removeEventListener: noop,
+  };
+  const container = {
+    addEventListener: noop,
+    firstChild: null,
+    lastChild: null,
+    nodeType: 1,
+    ownerDocument: document,
+    parentNode: null,
+    removeEventListener: noop,
+    tagName: "DIV",
+  };
+  document.documentElement = container;
+  globalThis.document = document;
+  globalThis.HTMLIFrameElement = class {};
+  globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+  globalThis.React = React;
+  globalThis.window = globalThis;
+
+  return {
+    container,
+    restore() {
+      previousGlobals.forEach(([name, descriptor]) => {
+        if (descriptor) Object.defineProperty(globalThis, name, descriptor);
+        else delete globalThis[name];
+      });
+    },
+  };
 }
 
 test("readAuthSession aborts a hung session fetch after the auth timeout", async () => {
@@ -81,4 +142,220 @@ test("a hung auth session query flips to isError within the timeout", async () =
   client.clear();
   assert.equal(state.isError, true);
   assert.equal(state.isLoading, false);
+});
+
+test("an auth mutation waits for a definite server response without a client deadline", async () => {
+  AbortSignal.timeout = () => {
+    throw new Error("auth mutation installed an ambiguous client deadline");
+  };
+  let resolveFetch;
+  let requestInit;
+  globalThis.fetch = (path, init = {}) => {
+    assert.equal(path, "/api/auth/login");
+    requestInit = init;
+    return new Promise((resolve) => {
+      resolveFetch = resolve;
+    });
+  };
+
+  const pending = postAuthJson("/api/auth/login", {
+    email: "operator@example.com",
+    password: "correct horse battery staple",
+  });
+  await Promise.resolve();
+
+  assert.equal(requestInit.signal, undefined);
+  const session = {
+    user: { id: "user-a", entitlements: [] },
+    csrfToken: "csrf-a",
+    expiresAt: "2026-07-17T00:00:00.000Z",
+  };
+  resolveFetch(
+    new Response(JSON.stringify(session), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    }),
+  );
+  assert.deepEqual(await pending, session);
+});
+
+test("an auth identity change evicts private queries before the next observer mounts", () => {
+  const client = new QueryClient();
+  client.setQueryData(AUTH_SESSION_QUERY_KEY, {
+    user: { id: "user-a" },
+  });
+  client.setQueryData(["/api/algo/deployments"], {
+    deployments: [{ id: "private-user-a-deployment" }],
+  });
+  client.setQueryData(["/api/accounts"], {
+    accounts: [{ id: "private-user-a-account" }],
+  });
+  const priorIdentityObserver = new QueryObserver(client, {
+    queryKey: ["/api/algo/deployments"],
+    enabled: false,
+  });
+  const unsubscribePriorIdentity = priorIdentityObserver.subscribe(() => {});
+
+  clearUserScopedQueryCache(client);
+
+  assert.deepEqual(client.getQueryData(AUTH_SESSION_QUERY_KEY), {
+    user: { id: "user-a" },
+  });
+  assert.equal(client.getQueryData(["/api/algo/deployments"]), undefined);
+  assert.equal(client.getQueryData(["/api/accounts"]), undefined);
+  // An already-mounted old-identity observer keeps its current render until the
+  // auth gate unmounts it; the next identity mounts against the cleared cache.
+  assert.deepEqual(priorIdentityObserver.getCurrentResult().data, {
+    deployments: [{ id: "private-user-a-deployment" }],
+  });
+  unsubscribePriorIdentity();
+  const nextIdentityObserver = new QueryObserver(client, {
+    queryKey: ["/api/algo/deployments"],
+    enabled: false,
+  });
+  assert.equal(nextIdentityObserver.getCurrentResult().data, undefined);
+  client.clear();
+});
+
+test("a definitive auth response replaces identity after evicting private cache", () => {
+  const client = new QueryClient();
+  client.setQueryData(AUTH_SESSION_QUERY_KEY, {
+    user: { id: "user-a" },
+    csrfToken: "csrf-a",
+  });
+  client.setQueryData(["/api/accounts"], {
+    accounts: [{ id: "private-user-a-account" }],
+  });
+  const nextSession = {
+    user: { id: "user-b" },
+    csrfToken: "csrf-b",
+  };
+
+  applyAuthSessionTransition(client, nextSession);
+
+  assert.equal(client.getQueryData(["/api/accounts"]), undefined);
+  assert.deepEqual(client.getQueryData(AUTH_SESSION_QUERY_KEY), nextSession);
+  client.clear();
+});
+
+test("the StrictMode auth watcher evicts only on identity change or revocation", async () => {
+  const priorSession = {
+    user: {
+      id: "user-a",
+      email: "a@example.com",
+      displayName: "A",
+      role: "member",
+      entitlements: [],
+    },
+    csrfToken: "csrf-a",
+  };
+  const equivalentSession = {
+    ...priorSession,
+    csrfToken: "csrf-a-rotated",
+  };
+  const nextSession = {
+    user: {
+      id: "user-b",
+      email: "b@example.com",
+      displayName: "B",
+      role: "member",
+      entitlements: [],
+    },
+    csrfToken: "csrf-b",
+  };
+  const anonymousSession = {
+    user: null,
+    csrfToken: null,
+  };
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  client.setQueryData(AUTH_SESSION_QUERY_KEY, priorSession);
+  client.setQueryData(["/api/accounts"], {
+    accounts: [{ id: "private-user-a-account" }],
+  });
+  const responses = [equivalentSession, nextSession, anonymousSession];
+  globalThis.fetch = async (path) => {
+    assert.equal(path, "/api/auth/session");
+    const session = responses.shift();
+    assert.ok(session, "unexpected extra auth-session fetch");
+    return new Response(JSON.stringify(session), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  };
+
+  const { container, restore } = installReactRootGlobals();
+  const root = createRoot(container);
+  let unmounted = false;
+  try {
+    await act(async () => {
+      root.render(
+        React.createElement(
+          React.StrictMode,
+          null,
+          React.createElement(
+            QueryClientProvider,
+            { client },
+            React.createElement(AuthProvider),
+          ),
+        ),
+      );
+    });
+    await act(async () => {
+      await client.refetchQueries({
+        queryKey: AUTH_SESSION_QUERY_KEY,
+        type: "active",
+      });
+    });
+    assert.deepEqual(
+      client.getQueryData(AUTH_SESSION_QUERY_KEY),
+      equivalentSession,
+    );
+    assert.deepEqual(client.getQueryData(["/api/accounts"]), {
+      accounts: [{ id: "private-user-a-account" }],
+    });
+
+    await act(async () => {
+      await client.refetchQueries({
+        queryKey: AUTH_SESSION_QUERY_KEY,
+        type: "active",
+      });
+    });
+
+    assert.deepEqual(client.getQueryData(AUTH_SESSION_QUERY_KEY), nextSession);
+    assert.equal(client.getQueryData(["/api/accounts"]), undefined);
+
+    client.setQueryData(["/api/accounts"], {
+      accounts: [{ id: "private-user-b-account" }],
+    });
+    await act(async () => {
+      await client.refetchQueries({
+        queryKey: AUTH_SESSION_QUERY_KEY,
+        type: "active",
+      });
+    });
+    assert.deepEqual(
+      client.getQueryData(AUTH_SESSION_QUERY_KEY),
+      anonymousSession,
+    );
+    assert.equal(client.getQueryData(["/api/accounts"]), undefined);
+    assert.equal(responses.length, 0);
+
+    await act(async () => root.unmount());
+    unmounted = true;
+    client.setQueryData(["/api/accounts"], {
+      accounts: [{ id: "post-unmount-private-account" }],
+    });
+    client.setQueryData(AUTH_SESSION_QUERY_KEY, priorSession);
+    assert.deepEqual(client.getQueryData(["/api/accounts"]), {
+      accounts: [{ id: "post-unmount-private-account" }],
+    });
+  } finally {
+    if (!unmounted) {
+      await act(async () => root.unmount());
+    }
+    client.clear();
+    restore();
+  }
 });
