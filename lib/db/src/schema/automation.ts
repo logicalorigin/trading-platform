@@ -1,6 +1,7 @@
 import { createInsertSchema } from "drizzle-zod";
 import {
   boolean,
+  check,
   date,
   doublePrecision,
   index,
@@ -205,6 +206,10 @@ export const signalOptionsSeenSignalsTable = pgTable(
     available: doublePrecision("available"),
     chainDebugReason: varchar("chain_debug_reason", { length: 128 }),
     expirationsDebugReason: varchar("expirations_debug_reason", { length: 128 }),
+    sourceKind: varchar("source_kind", { length: 16 })
+      .$type<"live" | "historical" | "unknown">()
+      .notNull()
+      .default("unknown"),
     ...timestamps,
   },
   (table) => [
@@ -220,6 +225,10 @@ export const signalOptionsSeenSignalsTable = pgTable(
     index("signal_options_seen_signals_deployment_reason_idx").on(
       table.deploymentId,
       table.reason,
+    ),
+    check(
+      "signal_options_seen_signals_source_kind_chk",
+      sql`${table.sourceKind} in ('live', 'historical', 'unknown')`,
     ),
   ],
 );
