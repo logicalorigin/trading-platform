@@ -3872,18 +3872,87 @@ function Graph({ cos, sel, onSel, vFilter, searchQuery, theme, liveData = {}, li
       const vc = VX[d.v];
       const br = BRAND[d.t] || [CSS_COLOR.textDim, d.t.slice(0,2)];
       const tipPrice = resolveResearchPrice(d, liveDataRef.current[d.t]);
-      // Green dot for live-sourced fields, gray for authored fallback
-      const dot = (isLive) => `<span style="display:inline-block;width:4px;height:4px;border-radius:2px;background:${isLive ? CSS_COLOR.green : toneAlpha(CSS_COLOR.text, 0.12)};margin-left:4px;vertical-align:middle"></span>`;
-      tip.innerHTML = `<div style="display:flex;align-items:center;gap:5px;margin-bottom:2px;"><span style="display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;border-radius:3px;background:${br[0]};color:${CSS_COLOR.onAccent};font-size:10px;font-weight: ${FONT_WEIGHTS.regular};font-family:${T.display};">${br[1]}</span><span style="font-weight: ${FONT_WEIGHTS.regular};color:${vc.c};font-size:14px;">${d.cc || ""} $${d.t}</span><span style="font-weight: ${FONT_WEIGHTS.regular};color:${CSS_COLOR.text};font-size:14px;margin-left:auto;font-family:${T.display};">${fmtPrice(tipPrice)}</span></div>` +
-        `<div style="color:${CSS_COLOR.textSec};font-size:12px;margin:3px 0 5px">${d.nm} &middot; ${vc.n}</div>` +
-        `<div style="display:grid;grid-template-columns:1fr 1fr;gap:3px 14px;font-size:12px;">` +
-        `<span style="color:${CSS_COLOR.textDim}">Mkt Cap</span><span style="color:${CSS_COLOR.text};font-weight: ${FONT_WEIGHTS.regular}">${fmtMC(d._mc)}${dot(d._mcIsLive)}</span>` +
-        `<span style="color:${CSS_COLOR.textDim}">Revenue ${d._revIsLive ? 'TTM' : ''}</span><span style="color:${CSS_COLOR.text};font-weight: ${FONT_WEIGHTS.regular}">${fmtMC(d._rev)}${dot(d._revIsLive)}</span>` +
-        `<span style="color:${CSS_COLOR.textDim}">GM</span><span style="color:${CSS_COLOR.text};font-weight: ${FONT_WEIGHTS.regular}">${d._gm != null ? Math.round(d._gm) + '%' : '\u2014'}${dot(d._gmIsLive)}</span>` +
-        `<span style="color:${CSS_COLOR.textDim}">P/E</span><span style="color:${CSS_COLOR.text};font-weight: ${FONT_WEIGHTS.regular}">${d._pe ? Number(d._pe).toFixed(1) + 'x' : '\u2014'}</span>` +
-        `<span style="color:${CSS_COLOR.textDim}">Growth</span><span style="color:${CSS_COLOR.text};font-weight: ${FONT_WEIGHTS.regular}">${d.fin?.rg?.[4] ? '+' + d.fin.rg[4] + '%' : '\u2014'}</span>` +
-        `</div>` +
-        `<div style="color:${CSS_COLOR.textSec};font-size:11px;margin-top:5px;border-top:1px solid ${CSS_COLOR.border};padding-top:4px;font-style:italic">${d.pr}</div>`;
+      const tooltipRoot = select(tip);
+      tooltipRoot.selectAll("*").remove();
+
+      const header = tooltipRoot.append("div")
+        .style("display", "flex")
+        .style("align-items", "center")
+        .style("gap", "5px")
+        .style("margin-bottom", "2px");
+      header.append("span")
+        .style("display", "inline-flex")
+        .style("align-items", "center")
+        .style("justify-content", "center")
+        .style("width", "18px")
+        .style("height", "18px")
+        .style("border-radius", "3px")
+        .style("background", br[0])
+        .style("color", CSS_COLOR.onAccent)
+        .style("font-size", "10px")
+        .style("font-weight", FONT_WEIGHTS.regular)
+        .style("font-family", T.display)
+        .text(br[1]);
+      header.append("span")
+        .style("font-weight", FONT_WEIGHTS.regular)
+        .style("color", vc.c)
+        .style("font-size", "14px")
+        .text(`${d.cc || ""} $${d.t}`);
+      header.append("span")
+        .style("font-weight", FONT_WEIGHTS.regular)
+        .style("color", CSS_COLOR.text)
+        .style("font-size", "14px")
+        .style("margin-left", "auto")
+        .style("font-family", T.display)
+        .text(fmtPrice(tipPrice));
+
+      tooltipRoot.append("div")
+        .style("color", CSS_COLOR.textSec)
+        .style("font-size", "12px")
+        .style("margin", "3px 0 5px")
+        .text(`${d.nm} · ${vc.n}`);
+
+      const grid = tooltipRoot.append("div")
+        .style("display", "grid")
+        .style("grid-template-columns", "1fr 1fr")
+        .style("gap", "3px 14px")
+        .style("font-size", "12px");
+      const rows = [
+        ["Mkt Cap", fmtMC(d._mc), true, d._mcIsLive],
+        [`Revenue ${d._revIsLive ? "TTM" : ""}`, fmtMC(d._rev), true, d._revIsLive],
+        ["GM", d._gm != null ? `${Math.round(d._gm)}%` : "\u2014", true, d._gmIsLive],
+        ["P/E", d._pe ? `${Number(d._pe).toFixed(1)}x` : "\u2014", false, false],
+        ["Growth", d.fin?.rg?.[4] ? `+${d.fin.rg[4]}%` : "\u2014", false, false],
+      ];
+      rows.forEach(([label, value, showDot, isLive]) => {
+        grid.append("span")
+          .style("color", CSS_COLOR.textDim)
+          .text(label);
+        const valueCell = grid.append("span")
+          .style("color", CSS_COLOR.text)
+          .style("font-weight", FONT_WEIGHTS.regular)
+          .text(value);
+        if (showDot) {
+          valueCell.append("span")
+            .attr("aria-hidden", "true")
+            .style("display", "inline-block")
+            .style("width", "4px")
+            .style("height", "4px")
+            .style("border-radius", "2px")
+            .style("background", isLive ? CSS_COLOR.green : toneAlpha(CSS_COLOR.text, 0.12))
+            .style("margin-left", "4px")
+            .style("vertical-align", "middle");
+        }
+      });
+
+      tooltipRoot.append("div")
+        .style("color", CSS_COLOR.textSec)
+        .style("font-size", "11px")
+        .style("margin-top", "5px")
+        .style("border-top", `1px solid ${CSS_COLOR.border}`)
+        .style("padding-top", "4px")
+        .style("font-style", "italic")
+        .text(d.pr);
       tip.style.display = "block";
     })
     .on("mousemove", (e, d) => {
