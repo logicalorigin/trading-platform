@@ -9,6 +9,7 @@ export type ErrorType<T = unknown> = ApiError<T>;
 export type BodyType<T> = T;
 
 export type AuthTokenGetter = () => Promise<string | null> | string | null;
+export type CsrfTokenGetter = AuthTokenGetter;
 
 const NO_BODY_STATUS = new Set([204, 205, 304]);
 const DEFAULT_JSON_ACCEPT = "application/json, application/problem+json";
@@ -44,6 +45,7 @@ const HEAVY_API_GET_TIMEOUT_MS = 45_000;
 
 let _baseUrl: string | null = null;
 let _authTokenGetter: AuthTokenGetter | null = null;
+let _csrfTokenGetter: CsrfTokenGetter | null = null;
 let _heavyActiveCount = 0;
 let _heavySequence = 0;
 let _transientApiGetRetryDelaysMs: readonly number[] =
@@ -83,6 +85,14 @@ export function setBaseUrl(url: string | null): void {
  */
 export function setAuthTokenGetter(getter: AuthTokenGetter | null): void {
   _authTokenGetter = getter;
+}
+
+/**
+ * Register the current web-session CSRF token getter. Unsafe, same-origin
+ * requests receive the token unless the caller already supplied one.
+ */
+export function setCsrfTokenGetter(getter: CsrfTokenGetter | null): void {
+  _csrfTokenGetter = getter;
 }
 
 export function setCustomFetchTransientRetryDelaysForTests(
@@ -130,6 +140,37 @@ function resolveUrl(input: RequestInfo | URL): string {
   if (typeof input === "string") return input;
   if (isUrl(input)) return input.toString();
   return input.url;
+}
+
+function isSameOriginWebRequest(input: RequestInfo | URL): boolean {
+  const rawUrl = resolveUrl(input);
+  if (
+    typeof window !== "undefined" &&
+    typeof window.location?.href === "string"
+  ) {
+    try {
+      const pageUrl = new URL(window.location.href);
+      return new URL(rawUrl, pageUrl).origin === pageUrl.origin;
+    } catch {
+      return false;
+    }
+  }
+
+  // CSRF tokens authenticate cookie-backed browser sessions. Without a
+  // browser origin, allow only URLs that remain relative after URL parsing.
+  try {
+    new URL(rawUrl);
+    return false;
+  } catch {
+    try {
+      return (
+        new URL(rawUrl, "https://pyrus-relative.invalid").origin ===
+        "https://pyrus-relative.invalid"
+      );
+    } catch {
+      return false;
+    }
+  }
 }
 
 function nowMs(): number {
@@ -1022,6 +1063,18 @@ export async function customFetch<T = unknown>(
     const token = await _authTokenGetter();
     if (token) {
       headers.set("authorization", `Bearer ${token}`);
+    }
+  }
+
+  if (
+    _csrfTokenGetter &&
+    !["GET", "HEAD", "OPTIONS"].includes(method) &&
+    !headers.has("x-csrf-token") &&
+    isSameOriginWebRequest(input)
+  ) {
+    const token = await _csrfTokenGetter();
+    if (token) {
+      headers.set("x-csrf-token", token);
     }
   }
 

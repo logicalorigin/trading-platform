@@ -1,5 +1,12 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { createContext, useCallback, useContext, useMemo } from "react";
+import { setCsrfTokenGetter } from "@workspace/api-client-react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+} from "react";
 
 // Slice 8: one canonical auth-session source for the whole SPA. Historically
 // `/api/auth/session` was fetched independently in ~6 places (each redeclaring
@@ -88,6 +95,12 @@ export function AuthProvider({ children }) {
     [queryClient],
   );
 
+  const csrfToken = query.data?.csrfToken ?? null;
+  useEffect(() => {
+    setCsrfTokenGetter(() => csrfToken);
+    return () => setCsrfTokenGetter(null);
+  }, [csrfToken]);
+
   const value = useMemo(() => {
     const user = query.data?.user ?? null;
     const entitlements = Array.isArray(user?.entitlements)
@@ -97,7 +110,7 @@ export function AuthProvider({ children }) {
     return {
       user,
       entitlements,
-      csrfToken: query.data?.csrfToken ?? null,
+      csrfToken,
       signedIn: Boolean(user),
       isAdmin,
       // Fetch still in flight on first paint (nothing cached yet).
@@ -108,7 +121,7 @@ export function AuthProvider({ children }) {
       hasEntitlement: (key) => isAdmin || entitlements.includes(key),
       refresh,
     };
-  }, [query.data, query.isLoading, query.isError, refresh]);
+  }, [csrfToken, query.data, query.isLoading, query.isError, refresh]);
 
   return (
     <AuthSessionContext.Provider value={value}>
