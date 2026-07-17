@@ -19,7 +19,8 @@ export type DatabaseRuntimeConfig = {
   overrideActive: boolean;
 };
 
-export type DatabaseRuntimeDescription = DatabaseRuntimeConfig & {
+export type DatabaseRuntimeDescription = Omit<DatabaseRuntimeConfig, "url"> & {
+  url?: never;
   configured: boolean;
   protocol: string | null;
   host: string | null;
@@ -30,9 +31,101 @@ export type DatabaseRuntimeDescription = DatabaseRuntimeConfig & {
   parseError: string | null;
 };
 
+const APPLICATION_OWNED_CONNECTION_PARAMS = [
+  "application_name",
+  "statement_timeout",
+  "query_timeout",
+  "idle_in_transaction_session_timeout",
+  "options",
+] as const;
+
+const SAFE_SSL_DIAGNOSTIC_VALUES = new Set([
+  "0",
+  "1",
+  "disable",
+  "false",
+  "no-verify",
+  "prefer",
+  "require",
+  "true",
+  "verify-ca",
+  "verify-full",
+]);
+
+const MAX_DATABASE_DIAGNOSTIC_VALUE_LENGTH = 4_096;
+
 function getLastSearchParam(url: URL, name: string): string | null {
   const values = url.searchParams.getAll(name);
   return values.length > 0 ? values[values.length - 1] || null : null;
+}
+
+function hasControlCharacters(value: string): boolean {
+  return /[\u0000-\u001f\u007f]/u.test(value);
+}
+
+function hasCredentialUserinfo(value: string): boolean {
+  const passwordSeparator = value.indexOf(":");
+  const authoritySeparator = value.lastIndexOf("@");
+  return passwordSeparator >= 0 && authoritySeparator > passwordSeparator + 1;
+}
+
+function isUnsafeDatabaseDiagnosticValue(value: string): boolean {
+  return (
+    hasControlCharacters(value) ||
+    /\\u[\da-f]{4}/iu.test(value) ||
+    value.includes("://") ||
+    hasCredentialUserinfo(value) ||
+    /(?:api[\s_-]*key|authorization|credential(?:s)?|pgpassword|sslpassword|pass(?:word|phrase)?|pwd|secret(?:[\s_-]*(?:access[\s_-]*)?key)?|token)[\\'"\s)\]}]*[:=]/iu.test(
+      value,
+    ) ||
+    /--(?:api[\s_-]*key|authorization|credential(?:s)?|pgpassword|sslpassword|pass(?:word|phrase)?|pwd|secret|token)(?:\s+|=)\S/iu.test(
+      value,
+    ) ||
+    /(?:^|\s)(?:--user(?:\s+|=)|-u(?:\s+|=)?)[^\s:]*:\S/iu.test(value) ||
+    /(?:^|\s)(?:authorization[\s:=]+)?bearer\s+\S/iu.test(value) ||
+    /(?:\b(?:AKIA|ASIA)[A-Z0-9]{16}\b|\bgh[pousr]_[A-Za-z0-9]{20,}\b|\bgithub_pat_[A-Za-z0-9_]{20,}\b|\bsk-[A-Za-z0-9_-]{16,}\b|\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b)/u.test(
+      value,
+    )
+  );
+}
+
+export function safeDatabaseDiagnosticValue(
+  value: string | null,
+): string | null {
+  if (!value || value.length > MAX_DATABASE_DIAGNOSTIC_VALUE_LENGTH) {
+    return null;
+  }
+
+  let decoded = value;
+  for (let depth = 0; depth < 4; depth += 1) {
+    if (isUnsafeDatabaseDiagnosticValue(decoded)) {
+      return null;
+    }
+    let next: string;
+    try {
+      next = decodeURIComponent(decoded);
+    } catch {
+      return null;
+    }
+    if (next === decoded) {
+      return value;
+    }
+    decoded = next;
+  }
+
+  // Fail closed when a bounded decode still leaves an encoded payload.
+  return isUnsafeDatabaseDiagnosticValue(decoded) ||
+    /%[\da-f]{2}/iu.test(decoded)
+    ? null
+    : value;
+}
+
+function safeSslDiagnosticValue(value: string | null): string | null {
+  return value && SAFE_SSL_DIAGNOSTIC_VALUES.has(value) ? value : null;
+}
+
+function unbracketIpv6Host(host: string): string {
+  return host.startsWith("[") && host.endsWith("]") ? host.slice(1, -1) : host;
 }
 
 function classifyDatabaseRuntimeSource(url: URL): DatabaseRuntimeSource {
@@ -68,8 +161,7 @@ function isValidPostgresHost(host: string): boolean {
   if (host.startsWith("/")) {
     return true;
   }
-  const unbracketedHost =
-    host.startsWith("[") && host.endsWith("]") ? host.slice(1, -1) : host;
+  const unbracketedHost = unbracketIpv6Host(host);
   return (
     isIP(unbracketedHost) === 6 ||
     (!/[%/\\@?#:\s]/u.test(host) && !host.includes("[") && !host.includes("]"))
@@ -94,6 +186,19 @@ function parseDatabaseRuntimeUrl(value: string | null): URL | null {
       return null;
     }
     const decodedPathname = decodeURI(url.pathname);
+    const decodedUsername = decodeURIComponent(url.username);
+    const decodedPassword = decodeURIComponent(url.password);
+    if (
+      hasControlCharacters(decodedPathname) ||
+      hasControlCharacters(decodedUsername) ||
+      hasControlCharacters(decodedPassword) ||
+      Array.from(url.searchParams).some(
+        ([name, entry]) =>
+          hasControlCharacters(name) || hasControlCharacters(entry),
+      )
+    ) {
+      return null;
+    }
     if (
       url.protocol === "socket:" &&
       (!decodedPathname.startsWith("/") ||
@@ -104,8 +209,6 @@ function parseDatabaseRuntimeUrl(value: string | null): URL | null {
     if (!isValidPostgresPort(getLastSearchParam(url, "port") || url.port)) {
       return null;
     }
-    decodeURIComponent(url.username);
-    decodeURIComponent(url.password);
     if (url.protocol !== "socket:") {
       const host =
         getLastSearchParam(url, "host") ||
@@ -132,6 +235,26 @@ function disableHeliumSsl(url: URL): string {
   }
   url.searchParams.set("sslmode", "disable");
   return url.toString();
+}
+
+function normalizeEffectiveIpv6Host(url: URL): void {
+  if (url.protocol === "socket:") return;
+  const queryHost = getLastSearchParam(url, "host");
+  const effectiveHost =
+    queryHost || (url.hostname ? decodeURIComponent(url.hostname) : "");
+  const unbracketedHost = unbracketIpv6Host(effectiveHost);
+  if (unbracketedHost !== effectiveHost && isIP(unbracketedHost) === 6) {
+    // pg-connection-string preserves brackets from URL authority hosts, but
+    // Node's resolver expects a bare IPv6 literal. A query host is pg's
+    // effective host and keeps the canonical URL usable by the client.
+    url.searchParams.set("host", unbracketedHost);
+  }
+}
+
+function stripApplicationOwnedConnectionParams(url: URL): void {
+  for (const name of APPLICATION_OWNED_CONNECTION_PARAMS) {
+    url.searchParams.delete(name);
+  }
 }
 
 function classifyDatabaseRuntimeSourceFromUrl(
@@ -180,8 +303,7 @@ function buildPostgresEnvDatabaseUrl(env: NodeJS.ProcessEnv): string | null {
   }
 
   const url = new URL("postgres://pghost.invalid");
-  const unbracketedHost =
-    host.startsWith("[") && host.endsWith("]") ? host.slice(1, -1) : host;
+  const unbracketedHost = unbracketIpv6Host(host);
   const ipv6Host = isIP(unbracketedHost) === 6;
   if (!isValidPostgresHost(host)) {
     return null;
@@ -276,6 +398,8 @@ export function resolveDatabaseRuntimeConfig(
     };
   }
   const source = classifyDatabaseRuntimeSource(parsedUrl);
+  normalizeEffectiveIpv6Host(parsedUrl);
+  stripApplicationOwnedConnectionParams(parsedUrl);
   return {
     url:
       source === "replit-internal-dev-db"
@@ -290,58 +414,62 @@ export function resolveDatabaseRuntimeConfig(
 export function describeDatabaseRuntimeConnection(
   env: NodeJS.ProcessEnv = process.env,
 ): DatabaseRuntimeDescription {
-  const config = resolveDatabaseRuntimeConfig(env);
-  if (!config.url) {
+  const { url, ...config } = resolveDatabaseRuntimeConfig(env);
+  if (!url) {
     return {
       ...config,
       configured: false,
       protocol: null,
-      host: env["PGHOST"] || null,
-      port: env["PGPORT"] || null,
-      database: env["PGDATABASE"] || null,
-      user: env["PGUSER"] ? `${env["PGUSER"]!.slice(0, 2)}***` : null,
-      sslMode: env["PGSSLMODE"] || null,
+      host: null,
+      port: null,
+      database: null,
+      user: null,
+      sslMode: null,
       parseError: null,
     };
   }
 
   try {
-    const url = new URL(config.url);
-    const socketUrl = url.protocol === "socket:";
+    const parsedUrl = new URL(url);
+    const socketUrl = parsedUrl.protocol === "socket:";
     const host = socketUrl
-      ? decodeURI(url.pathname)
-      : getLastSearchParam(url, "host") ||
-        (url.hostname ? decodeURIComponent(url.hostname) : null);
+      ? decodeURI(parsedUrl.pathname)
+      : getLastSearchParam(parsedUrl, "host") ||
+        (parsedUrl.hostname ? decodeURIComponent(parsedUrl.hostname) : null);
     const user =
-      getLastSearchParam(url, "user") ||
-      (url.username ? decodeURIComponent(url.username) : null) ||
+      getLastSearchParam(parsedUrl, "user") ||
+      (parsedUrl.username ? decodeURIComponent(parsedUrl.username) : null) ||
       env["PGUSER"] ||
       pg.defaults.user ||
       null;
+    const safeUser = safeDatabaseDiagnosticValue(user);
     const configuredPort =
-      getLastSearchParam(url, "port") ||
-      url.port ||
+      getLastSearchParam(parsedUrl, "port") ||
+      parsedUrl.port ||
       env["PGPORT"] ||
       (host ? "5432" : null);
-    const database =
+    const database = safeDatabaseDiagnosticValue(
       (socketUrl
-        ? url.searchParams.get("db") || null
-        : decodeURI(url.pathname.replace(/^\//, "")) || null) ||
-      env["PGDATABASE"] ||
-      user;
+        ? parsedUrl.searchParams.get("db") || null
+        : decodeURI(parsedUrl.pathname.replace(/^\//, "")) || null) ||
+        env["PGDATABASE"] ||
+        user,
+    );
+    const sslMode = safeSslDiagnosticValue(
+      getLastSearchParam(parsedUrl, "sslmode") ||
+        getLastSearchParam(parsedUrl, "ssl") ||
+        env["PGSSLMODE"] ||
+        null,
+    );
     return {
       ...config,
       configured: true,
-      protocol: url.protocol.replace(/:$/, "") || null,
-      host,
+      protocol: parsedUrl.protocol.replace(/:$/, "") || null,
+      host: safeDatabaseDiagnosticValue(host),
       port: configuredPort ? String(Number.parseInt(configuredPort, 10)) : null,
       database,
-      user: user ? `${user.slice(0, 2)}***` : null,
-      sslMode:
-        getLastSearchParam(url, "sslmode") ||
-        getLastSearchParam(url, "ssl") ||
-        env["PGSSLMODE"] ||
-        null,
+      user: safeUser ? `${safeUser.slice(0, 2)}***` : null,
+      sslMode,
       parseError: null,
     };
   } catch (error) {

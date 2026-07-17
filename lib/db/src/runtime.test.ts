@@ -6,6 +6,7 @@ import pg from "pg";
 import {
   describeDatabaseRuntimeConnection,
   resolveDatabaseRuntimeConfig,
+  safeDatabaseDiagnosticValue,
 } from "./runtime";
 
 const postgresEnv = (overrides: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv => ({
@@ -224,6 +225,17 @@ test("Postgres environment preserves IPv6 endpoints", () => {
   }
 });
 
+test("authority IPv6 URLs use the unbracketed host honored by Node", () => {
+  const env = { DATABASE_URL: "postgres://runner@[::1]:6543/pyrus" };
+  const config = resolveDatabaseRuntimeConfig(env);
+  const description = describeDatabaseRuntimeConnection(env);
+  const client = new pg.Client({ connectionString: config.url! });
+
+  assert.equal(client.host, "::1");
+  assert.equal(description.host, client.host);
+  assert.equal(description.port, "6543");
+});
+
 test("database description reports the endpoint honored by pg", () => {
   const description = describeDatabaseRuntimeConnection({
     DATABASE_URL:
@@ -233,6 +245,280 @@ test("database description reports the endpoint honored by pg", () => {
   assert.equal(description.host, "actual.invalid");
   assert.equal(description.port, "6543");
   assert.equal(description.user, "qu***");
+});
+
+test("database descriptions never expose connection credentials", () => {
+  const secret = "runtime-description-secret";
+  const description = describeDatabaseRuntimeConnection({
+    DATABASE_URL: `postgres://alice:${secret}@db.internal/pyrus`,
+  });
+
+  assert.equal("url" in description, false);
+  assert.equal(JSON.stringify(description).includes(secret), false);
+});
+
+test("configured descriptions do not echo credential-bearing fallbacks", () => {
+  const secret = "configured-fallback-secret";
+
+  for (const databaseUrl of [
+    "postgres://alice@db.internal",
+    "socket:/var/run/postgresql?user=alice",
+  ]) {
+    const description = describeDatabaseRuntimeConnection({
+      DATABASE_URL: databaseUrl,
+      PGDATABASE: `postgres://bob:${secret}@fallback.invalid/pyrus`,
+      PGSSLMODE: `postgres://bob:${secret}@fallback.invalid/pyrus`,
+    });
+    const serialized = JSON.stringify(description);
+
+    assert.equal(description.configured, true);
+    assert.equal(description.database, null);
+    assert.equal(description.sslMode, null);
+    assert.equal(serialized.includes(secret), false);
+    assert.equal(serialized.includes("://"), false);
+  }
+});
+
+test("configured descriptions reject unsafe user fallbacks before masking", () => {
+  for (const user of [
+    "password=runtime-user-secret",
+    "postgres://alice:runtime-user-secret@fallback.invalid",
+    "\u001b[31m",
+  ]) {
+    const description = describeDatabaseRuntimeConnection({
+      DATABASE_URL: "postgres://db.internal/pyrus",
+      PGUSER: user,
+    });
+
+    assert.equal(description.configured, true);
+    assert.equal(description.user, null);
+  }
+});
+
+test("database diagnostics reject compound userinfo and curl user credentials", () => {
+  const secret = "compound-runtime-secret";
+  const values = [
+    `alice:@${secret}@db.internal`,
+    `:@${secret}@db.internal`,
+    `--user alice:${secret}`,
+    `--user=alice:${secret}`,
+    `-u alice:${secret}`,
+    `-ualice:${secret}`,
+  ];
+  let encodedCompoundUserinfo = values[0]!;
+  for (let depth = 0; depth < 4; depth += 1) {
+    encodedCompoundUserinfo = encodeURIComponent(encodedCompoundUserinfo);
+    values.push(encodedCompoundUserinfo);
+  }
+
+  for (const value of values) {
+    assert.equal(safeDatabaseDiagnosticValue(value), null);
+
+    const description = describeDatabaseRuntimeConnection({
+      DATABASE_URL: "postgres://runner@db.internal",
+      PGDATABASE: value,
+    });
+    assert.equal(description.database, null);
+    assert.equal(JSON.stringify(description).includes(secret), false);
+  }
+});
+
+test("database diagnostics reject opaque credential formats without a label", () => {
+  for (const value of [
+    `AKIA${"A".repeat(16)}`,
+    `ghp_${"b".repeat(32)}`,
+    `github_pat_${"b".repeat(40)}`,
+    `sk-${"c".repeat(32)}`,
+    `eyJ${"d".repeat(12)}.${"e".repeat(12)}.${"f".repeat(12)}`,
+  ]) {
+    assert.equal(safeDatabaseDiagnosticValue(value), null);
+    assert.equal(
+      safeDatabaseDiagnosticValue(`provider rejected credential ${value}`),
+      null,
+    );
+  }
+});
+
+test("database descriptions recursively reject credential-shaped endpoint fields", () => {
+  const secret = "nested-runtime-description-secret";
+  const credentialUrl = `postgres://alice:${secret}@fallback.invalid/pyrus`;
+  let nestedCredentialUrl = credentialUrl;
+  for (let depth = 0; depth < 4; depth += 1) {
+    nestedCredentialUrl = encodeURIComponent(nestedCredentialUrl);
+  }
+  const slashCredentialValues = [`safe/password: ${secret}`];
+  for (let depth = 0; depth < 4; depth += 1) {
+    slashCredentialValues.push(
+      encodeURIComponent(slashCredentialValues.at(-1)!),
+    );
+  }
+  const unicodeCredentialValues = [`{"pass\\u0077ord":"${secret}"}`];
+  for (let depth = 0; depth < 4; depth += 1) {
+    unicodeCredentialValues.push(
+      encodeURIComponent(unicodeCredentialValues.at(-1)!),
+    );
+  }
+
+  for (const value of unicodeCredentialValues) {
+    assert.equal(safeDatabaseDiagnosticValue(value), null);
+  }
+
+  for (const env of [
+    {
+      DATABASE_URL: `postgres://runner@db.internal/pyrus?host=${encodeURIComponent(`/postgres://alice:${secret}@fallback.invalid/pyrus`)}`,
+    },
+    {
+      DATABASE_URL: `socket:/postgres://alice:${secret}@fallback.invalid/pyrus?db=pyrus&user=runner`,
+    },
+    {
+      DATABASE_URL: `postgres://runner@db.internal/${nestedCredentialUrl}`,
+    },
+    {
+      DATABASE_URL: "postgres://runner@db.internal",
+      PGDATABASE: nestedCredentialUrl,
+    },
+    {
+      DATABASE_URL: "postgres://runner@db.internal",
+      PGDATABASE: ` prefix alice:${secret}@fallback.invalid`,
+    },
+    {
+      DATABASE_URL: "postgres://runner@db.internal",
+      PGDATABASE: `fallback.invalid/pyrus?password=${secret}`,
+    },
+    {
+      DATABASE_URL: "postgres://runner@db.internal",
+      PGDATABASE: `PGPASSWORD=${secret}`,
+    },
+    {
+      DATABASE_URL: "postgres://runner@db.internal",
+      PGDATABASE: `password: ${secret}`,
+    },
+    {
+      DATABASE_URL: "postgres://runner@db.internal",
+      PGDATABASE: `dbPassword=${secret}`,
+    },
+    {
+      DATABASE_URL: "postgres://runner@db.internal",
+      PGDATABASE: `clientSecret=${secret}`,
+    },
+    {
+      DATABASE_URL: "postgres://runner@db.internal",
+      PGDATABASE: `accessToken=${secret}`,
+    },
+    {
+      DATABASE_URL: "postgres://runner@db.internal",
+      PGDATABASE: `database failed {"password":"${secret}"}`,
+    },
+    {
+      DATABASE_URL: "postgres://runner@db.internal",
+      PGDATABASE: `{"accessToken":"${secret}"}`,
+    },
+    {
+      DATABASE_URL: "postgres://runner@db.internal",
+      PGDATABASE: `payload="{\\"password\\":\\"${secret}\\"}"`,
+    },
+    {
+      DATABASE_URL: "postgres://runner@db.internal",
+      PGDATABASE: `connect failed :${secret}@db.internal`,
+    },
+    {
+      DATABASE_URL: "postgres://runner@db.internal",
+      PGDATABASE: `API key: ${secret}`,
+    },
+    {
+      DATABASE_URL: "postgres://runner@db.internal",
+      PGDATABASE: `connect failed --password ${secret}`,
+    },
+    {
+      DATABASE_URL: "postgres://runner@db.internal",
+      PGDATABASE: `AWS_SECRET_ACCESS_KEY=${secret}`,
+    },
+    {
+      DATABASE_URL: "postgres://runner@db.internal",
+      PGDATABASE: `Key (access_token)=(${secret}) already exists`,
+    },
+    {
+      DATABASE_URL: "postgres://runner@db.internal",
+      PGDATABASE: `Authorization Bearer ${secret}`,
+    },
+    {
+      DATABASE_URL: "postgres://runner@db.internal",
+      PGDATABASE: `Bearer ${secret}`,
+    },
+    {
+      DATABASE_URL: "postgres://runner@db.internal",
+      PGDATABASE: `(alice:${secret}@fallback.invalid)`,
+    },
+    {
+      DATABASE_URL: "postgres://runner@db.internal",
+      PGDATABASE: `prefix alice:part/${secret}@fallback.invalid`,
+    },
+    {
+      DATABASE_URL: "postgres://runner@db.internal",
+      PGDATABASE: `prefix alice:part ${secret}@fallback.invalid`,
+    },
+    {
+      DATABASE_URL: "postgres://runner@db.internal",
+      PGDATABASE: `prefix alice: ${secret}@/var/run/postgresql`,
+    },
+    ...slashCredentialValues.map((value) => ({
+      DATABASE_URL: "postgres://runner@db.internal",
+      PGDATABASE: value,
+    })),
+    ...unicodeCredentialValues.map((value) => ({
+      DATABASE_URL: "postgres://runner@db.internal",
+      PGDATABASE: value,
+    })),
+  ]) {
+    const description = describeDatabaseRuntimeConnection(env);
+    const serialized = JSON.stringify(description);
+
+    assert.equal(serialized.includes(secret), false);
+    assert.equal(serialized.includes("://"), false);
+  }
+});
+
+test("database diagnostic values are bounded before scanning", () => {
+  assert.equal(
+    safeDatabaseDiagnosticValue("d".repeat(4_096)),
+    "d".repeat(4_096),
+  );
+  assert.equal(safeDatabaseDiagnosticValue("d".repeat(4_097)), null);
+
+  const description = describeDatabaseRuntimeConnection({
+    DATABASE_URL: "postgres://runner@db.internal",
+    PGDATABASE: "d".repeat(20_000),
+  });
+  assert.equal(description.database, null);
+});
+
+test("unconfigured descriptions do not echo credential-bearing fallbacks", () => {
+  const secret = "malformed-fallback-secret";
+
+  for (const env of [
+    {
+      DATABASE_URL: `http://alice:${secret}@db.invalid/pyrus`,
+    },
+    {
+      PGHOST: `postgres://alice:${secret}@db.invalid/pyrus`,
+      PGDATABASE: `postgres://alice:${secret}@db.invalid/pyrus`,
+      PGUSER: "alice",
+      PGPORT: secret,
+      PGSSLMODE: secret,
+    },
+  ]) {
+    const description = describeDatabaseRuntimeConnection(env);
+    const serialized = JSON.stringify(description);
+
+    assert.equal(description.configured, false);
+    assert.equal(description.host, null);
+    assert.equal(description.port, null);
+    assert.equal(description.database, null);
+    assert.equal(description.user, null);
+    assert.equal(description.sslMode, null);
+    assert.equal(serialized.includes(secret), false);
+    assert.equal(serialized.includes("://"), false);
+  }
 });
 
 test("database source and description use the last effective query host", () => {
@@ -283,6 +569,14 @@ test("Postgres environment rejects control characters in endpoints", () => {
       null,
     );
   }
+
+  for (const env of [
+    postgresEnv({ PGUSER: "run\u0000ner" }),
+    postgresEnv({ PGPASSWORD: "pass\u001fword" }),
+    postgresEnv({ PGDATABASE: "py\u007frus" }),
+  ]) {
+    assert.equal(resolveDatabaseRuntimeConfig(env).url, null);
+  }
 });
 
 test("Postgres environment rejects database names the URI parser cannot round-trip", () => {
@@ -309,7 +603,13 @@ test("selected database URLs fail closed instead of falling through to pg defaul
     "postgres://runner@db.internal/pyrus?host=%00",
     "postgres://runner@db.internal/pyrus?host=%1F",
     "postgres://runner@db.internal/pyrus?host=%2Ftmp%2Fpostgres%00",
+    "postgres://us%00er:pass@db.internal/pyrus",
+    "postgres://user:pa%00ss@db.internal/pyrus",
+    "postgres://user:pass@db.internal/py%00rus",
+    "postgres://user:pass@db.internal/pyrus?user=us%00er",
+    "postgres://user:pass@db.internal/pyrus?password=pa%00ss",
     "postgres://runner@db.internal/pyrus%ZZ",
+    "socket:/tmp/postgres?db=py%00rus&user=runner",
     "socket:/tmp/postgres%00?db=pyrus",
     "socket:/tmp/postgres%1F?db=pyrus",
     "socket:/tmp/postgres%7F?db=pyrus",
@@ -343,6 +643,25 @@ test("selected database URLs preserve supported Postgres and socket forms", () =
   ]) {
     assert.equal(resolveDatabaseRuntimeConfig({ DATABASE_URL: url }).url, url);
   }
+});
+
+test("selected database URLs cannot override application-owned pool policy", () => {
+  const config = resolveDatabaseRuntimeConfig({
+    DATABASE_URL:
+      "postgres://runner@helium/pyrus?application_name=url-app&statement_timeout=0&query_timeout=0&idle_in_transaction_session_timeout=0&options=-c%20statement_timeout%3D0",
+  });
+  const url = new URL(config.url!);
+
+  for (const name of [
+    "application_name",
+    "statement_timeout",
+    "query_timeout",
+    "idle_in_transaction_session_timeout",
+    "options",
+  ]) {
+    assert.equal(url.searchParams.has(name), false, name);
+  }
+  assert.equal(url.searchParams.get("sslmode"), "disable");
 });
 
 test("selected database URLs pass the validated canonical form to pg", () => {
