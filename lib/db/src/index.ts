@@ -761,6 +761,7 @@ export {
 export {
   createAdvisoryLockHolder,
   sharedAdvisoryLockHolder,
+  type AdvisoryLockLease,
   type AdvisoryLockRelease,
 } from "./advisory-lock";
 export * from "./runtime";
