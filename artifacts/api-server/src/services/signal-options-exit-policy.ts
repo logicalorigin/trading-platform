@@ -2,6 +2,7 @@ import type {
   SignalOptionsExecutionProfile,
   SignalOptionsWireTrailRung,
 } from "@workspace/backtest-core";
+import { tradingDaysBetween } from "@workspace/market-calendar";
 
 export type SignalOptionsEntryQuality = {
   tier: "high" | "standard" | "low";
@@ -146,12 +147,15 @@ const WIRE_RUNG_ORDER: SignalOptionsWireTrailRung[] = [
 ];
 
 function finiteNumber(value: unknown): number | null {
-  // null/"" coerce to 0 via Number(), which is finite — without this guard a null
-  // wire rung becomes a phantom $0 wire price (silently disabling long structure
-  // breaks and instantly firing short ones), ageMs: null reads as perfectly-fresh
-  // greeks, and a null delta scores as a real 0-delta. Matches the sibling helper
-  // in signal-options-automation.ts.
-  if (value == null || value === "") return null;
+  // Number() also coerces null, booleans, blank strings, and arrays to finite
+  // values. At this provider/config boundary those are missing or malformed,
+  // not real zeroes; accepting them can create a phantom $0 wire or fresh age.
+  if (
+    typeof value !== "number" &&
+    (typeof value !== "string" || value.trim() === "")
+  ) {
+    return null;
+  }
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
 }
@@ -196,25 +200,43 @@ function resolveWireBarFreshness(input: {
 }) {
   const context = input.context;
   const latestBarAt = latestDate(context?.latestBarAt);
-  if (!context || !latestBarAt) {
-    return { stale: false, ageMs: null, intervalMs: null };
+  if (!context) {
+    return { stale: false, ageMs: null, intervalMs: null, reason: null };
+  }
+  if (!latestBarAt) {
+    return {
+      stale: true,
+      ageMs: null,
+      intervalMs: null,
+      reason: "missing_bar_timestamp",
+    };
   }
   const timeframeMs = signalOptionsWireTimeframeMs(context.timeframe);
+  const dailyTimeframe = String(context.timeframe ?? "")
+    .trim()
+    .match(/^(\d+)d$/i);
   const previousBarAt = latestDate(context.previousBarAt);
   const spacingMs =
     previousBarAt && latestBarAt.getTime() > previousBarAt.getTime()
       ? latestBarAt.getTime() - previousBarAt.getTime()
       : null;
   const intervalMs = timeframeMs ?? spacingMs;
-  if (intervalMs == null) {
-    return { stale: false, ageMs: null, intervalMs: null };
-  }
   const now = input.now ?? new Date();
-  const ageMs = Math.max(0, now.getTime() - latestBarAt.getTime());
+  const ageMs = now.getTime() - latestBarAt.getTime();
+  if (ageMs < 0) {
+    return { stale: true, ageMs, intervalMs, reason: "future_bar" };
+  }
+  if (intervalMs == null) {
+    return { stale: false, ageMs: null, intervalMs: null, reason: null };
+  }
+  const stale = dailyTimeframe
+    ? tradingDaysBetween(latestBarAt, now) > Number(dailyTimeframe[1]) * 2
+    : ageMs > intervalMs * 2;
   return {
-    stale: ageMs > intervalMs * 2,
+    stale,
     ageMs,
     intervalMs,
+    reason: stale ? "stale_bar" : null,
   };
 }
 
@@ -309,13 +331,21 @@ function resolveGreekFreshness(input: {
   const now = input.now ?? new Date();
   const ageMs =
     explicitAge ??
-    (updatedAt ? Math.max(0, now.getTime() - updatedAt.getTime()) : null);
+    (updatedAt ? now.getTime() - updatedAt.getTime() : null);
   const fresh =
-    ageMs != null && ageMs <= input.profile.exitPolicy.wireGreekTrail.greekMaxAgeMs;
+    ageMs != null &&
+    ageMs >= 0 &&
+    ageMs <= input.profile.exitPolicy.wireGreekTrail.greekMaxAgeMs;
   return {
     fresh,
     ageMs,
-    reason: fresh ? null : ageMs == null ? "missing_greek_timestamp" : "stale_greeks",
+    reason: fresh
+      ? null
+      : ageMs == null
+        ? "missing_greek_timestamp"
+        : ageMs < 0
+          ? "future_greeks"
+          : "stale_greeks",
   };
 }
 
@@ -411,6 +441,7 @@ export function computeSignalOptionsPositionStop(input: {
   barsSinceEntry?: number | null;
   quantity?: number | null;
   scaleOutAlreadyFired?: boolean | null;
+  priorStopPrice?: number | null;
   signalQuality?: SignalOptionsEntryQuality | null;
   now?: Date | null;
   // Shadow-first gate: unless the caller passes the operator enforce flag, the wire
@@ -487,7 +518,7 @@ export function computeSignalOptionsPositionStop(input: {
       : latestUnderlyingClose! >= selectedWire!.price);
   const wireBarFreshness = rawStructureBreak
     ? resolveWireBarFreshness({ context: wireContext, now: input.now })
-    : { stale: false, ageMs: null, intervalMs: null };
+    : { stale: false, ageMs: null, intervalMs: null, reason: null };
   const structureBreak = rawStructureBreak && !wireBarFreshness.stale;
   // Full direction-resolved underlying ladder (not just the active rung) so the
   // frontend can draw/point-at every wire. Null when no wire context is loaded
@@ -536,7 +567,11 @@ export function computeSignalOptionsPositionStop(input: {
   const legacyTrailActive = usesProgressiveTrail
     ? progressiveTrailStep != null
     : returnPct >= profile.exitPolicy.trailActivationPct;
-  const trailActive = usesWireTrail || legacyTrailActive;
+  const priorStopPrice = finiteNumber(input.priorStopPrice);
+  const trailActive =
+    usesWireTrail ||
+    legacyTrailActive ||
+    (priorStopPrice != null && priorStopPrice > hardStopPrice);
   const scaleOutPolicy = profile.exitPolicy.scaleOut;
   const quantity = finiteNumber(input.quantity);
   const scaleOutArmed =
@@ -582,7 +617,13 @@ export function computeSignalOptionsPositionStop(input: {
       )
     : null;
   const trailStopPrice =
-    rawTrailStopPrice == null ? null : Number(rawTrailStopPrice.toFixed(2));
+    rawTrailStopPrice == null
+      ? null
+      : Number(
+          Math.max(rawTrailStopPrice, priorStopPrice ?? rawTrailStopPrice).toFixed(
+            2,
+          ),
+        );
   const trailHasTakenOver =
     trailActive && trailStopPrice != null && trailStopPrice > hardStopPrice;
   const activeStopKind = trailHasTakenOver ? "trailing_stop" : "hard_stop";
@@ -652,7 +693,9 @@ export function computeSignalOptionsPositionStop(input: {
       latestUnderlyingBarAgeMs: wireBarFreshness.ageMs,
       latestUnderlyingBarIntervalMs: wireBarFreshness.intervalMs,
       structureBreak,
-      structureBreakSuppressed: wireBarFreshness.stale ? "stale_bar" : null,
+      structureBreakSuppressed: wireBarFreshness.stale
+        ? wireBarFreshness.reason
+        : null,
       regimeDirection,
       previousRegimeDirection,
       regimeFlipAgainstPosition,
@@ -703,6 +746,7 @@ export function computeSignalOptionsOvernightPositionExit(input: {
         )
       : null;
   const exitReason =
+    profile.exitPolicy.overnightMinGainExitEnabled &&
     markReturnPct < conditional.overnightMinGainPct
       ? "overnight_risk_exit"
       : overnightTrailStopPrice != null && markPrice <= overnightTrailStopPrice

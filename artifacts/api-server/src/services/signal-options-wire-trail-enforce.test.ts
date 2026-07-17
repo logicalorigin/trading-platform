@@ -102,6 +102,47 @@ test("deltaSizedGiveback is per-share premium (delta × underlying distance), no
   assert.equal(stop.trailStopPrice, 1.25);
 });
 
+test("delta-sized trail cannot loosen below the persisted prior stop", () => {
+  const profile = resolveSignalOptionsExecutionProfile({
+    exitPolicy: { wireGreekTrail: { enabled: true, deltaSizingEnabled: true } },
+  });
+  const first = computeSignalOptionsPositionStop({
+    entryPrice: 100,
+    peakPrice: 200,
+    markPrice: 200,
+    profile,
+    underlyingSpot: 100,
+    wireContext: {
+      ...bullWireContext,
+      latestClose: 100,
+      bullWires: [90, 89, 88],
+    },
+    currentGreeks: { delta: 0.5, ageMs: 1_000 },
+    entryGreeks: { delta: 0.5, ageMs: 1_000 },
+    wireTrailEnforceEnabled: true,
+  });
+  assert.equal(first.stopPrice, 195);
+
+  const next = computeSignalOptionsPositionStop({
+    entryPrice: 100,
+    peakPrice: 201,
+    markPrice: 200,
+    profile,
+    priorStopPrice: first.stopPrice,
+    underlyingSpot: 200,
+    wireContext: {
+      ...bullWireContext,
+      latestClose: 200,
+      bullWires: [90, 89, 88],
+    },
+    currentGreeks: { delta: 1, ageMs: 1_000 },
+    entryGreeks: { delta: 0.5, ageMs: 1_000 },
+    wireTrailEnforceEnabled: true,
+  });
+
+  assert.equal(next.stopPrice, first.stopPrice);
+});
+
 test("enforce off: delta sizing candidate is telemetry-only and never shifts the stop", () => {
   const profile = resolveSignalOptionsExecutionProfile({
     exitPolicy: { wireGreekTrail: { enabled: true, deltaSizingEnabled: true } },
@@ -170,6 +211,104 @@ test("wire structure break still fires when the completed bar is fresh", () => {
   assert.equal(stop.exitReason, "wire_structure_break");
   assert.equal(stop.wireTrail.structureBreak, true);
   assert.equal(stop.wireTrail.structureBreakSuppressed, null);
+});
+
+test("daily wire bars stay fresh across non-trading calendar gaps", () => {
+  for (const [latestBarAt, now] of [
+    // Normal weekend: Friday close -> Monday morning.
+    ["2026-06-12T20:00:00Z", "2026-06-15T15:00:00Z"],
+    // Independence Day observed Friday 07-03: Thursday close -> Monday morning.
+    ["2026-07-02T20:00:00Z", "2026-07-06T15:00:00Z"],
+  ]) {
+    const stop = computeSignalOptionsPositionStop({
+      entryPrice: 1,
+      peakPrice: 1.38,
+      markPrice: 1.2,
+      profile: wireProfile,
+      now: new Date(now),
+      wireContext: {
+        ...bullWireContext,
+        timeframe: "1d",
+        latestBarAt: new Date(latestBarAt),
+        latestClose: 96,
+      },
+    });
+
+    assert.equal(stop.exitReason, "wire_structure_break");
+    assert.equal(stop.wireTrail.structureBreak, true);
+    assert.equal(stop.wireTrail.structureBreakSuppressed, null);
+  }
+});
+
+test("daily wire bars become stale after more than two trading-day intervals", () => {
+  const stop = computeSignalOptionsPositionStop({
+    entryPrice: 1,
+    peakPrice: 1.38,
+    markPrice: 1.2,
+    profile: wireProfile,
+    now: new Date("2026-06-17T15:00:00Z"),
+    wireContext: {
+      ...bullWireContext,
+      timeframe: "1d",
+      latestBarAt: new Date("2026-06-12T20:00:00Z"),
+      latestClose: 96,
+    },
+  });
+
+  assert.equal(stop.exitReason, null);
+  assert.equal(stop.wireTrail.structureBreak, false);
+  assert.equal(stop.wireTrail.structureBreakSuppressed, "stale_bar");
+});
+
+test("wire structure break rejects missing and invalid bar timestamps", () => {
+  for (const latestBarAt of [null, "not-a-date"]) {
+    const stop = computeSignalOptionsPositionStop({
+      entryPrice: 1,
+      peakPrice: 1.38,
+      markPrice: 1.2,
+      profile: wireProfile,
+      now: new Date("2026-07-07T15:01:30Z"),
+      wireContext: {
+        ...bullWireContext,
+        timeframe: "1m",
+        latestBarAt,
+        latestClose: 96,
+      },
+    });
+
+    assert.equal(stop.exitReason, null);
+    assert.equal(stop.wireTrail.structureBreak, false);
+    assert.equal(
+      stop.wireTrail.structureBreakSuppressed,
+      "missing_bar_timestamp",
+    );
+  }
+});
+
+test("wire structure break rejects future bars even without interval metadata", () => {
+  for (const [timeframe, previousBarAt] of [
+    ["1m", undefined],
+    [null, null],
+  ] as const) {
+    const stop = computeSignalOptionsPositionStop({
+      entryPrice: 1,
+      peakPrice: 1.38,
+      markPrice: 1.2,
+      profile: wireProfile,
+      now: new Date("2026-07-07T15:00:00Z"),
+      wireContext: {
+        ...bullWireContext,
+        timeframe,
+        previousBarAt,
+        latestBarAt: new Date("2026-07-07T15:01:00Z"),
+        latestClose: 96,
+      },
+    });
+
+    assert.equal(stop.exitReason, null);
+    assert.equal(stop.wireTrail.structureBreak, false);
+    assert.equal(stop.wireTrail.structureBreakSuppressed, "future_bar");
+  }
 });
 
 test("wire structure break fails open when timeframe and bar spacing are unavailable", () => {

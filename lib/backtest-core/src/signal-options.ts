@@ -94,6 +94,7 @@ export type SignalOptionsExecutionProfile = {
     allowanceBasis: "cost" | "mark";
   };
   entryGate: {
+    entryCutoffMinutesBeforeClose: number;
     mtfAlignment: {
       enabled: boolean;
       requiredCount: number;
@@ -121,6 +122,8 @@ export type SignalOptionsExecutionProfile = {
     chaseSteps: number[];
   };
   exitPolicy: {
+    stopConfirmationWindowMs: number;
+    stopConfirmationMaxQuoteAgeMs: number;
     hardStopPct: number;
     trailActivationPct: number;
     minLockedGainPct: number;
@@ -136,6 +139,7 @@ export type SignalOptionsExecutionProfile = {
     earlyExitBars: number;
     earlyExitLossPct: number;
     overnightExitEnabled: boolean;
+    overnightMinGainExitEnabled: boolean;
     overnightMinGainPct: number;
     overnightRunnerGivebackPct: number;
     highQualityOvernightRunnerGivebackPct: number;
@@ -250,6 +254,7 @@ export const defaultSignalOptionsExecutionProfile: SignalOptionsExecutionProfile
       allowanceBasis: "cost",
     },
     entryGate: {
+      entryCutoffMinutesBeforeClose: 15,
       mtfAlignment: {
         enabled: true,
         // Full alignment is invariant: all selected frames must agree.
@@ -286,6 +291,8 @@ export const defaultSignalOptionsExecutionProfile: SignalOptionsExecutionProfile
       chaseSteps: [0, 0.35, 0.65, 0.9],
     },
     exitPolicy: {
+      stopConfirmationWindowMs: 10_000,
+      stopConfirmationMaxQuoteAgeMs: 10_000,
       hardStopPct: -40,
       trailActivationPct: 40,
       minLockedGainPct: 10,
@@ -328,6 +335,7 @@ export const defaultSignalOptionsExecutionProfile: SignalOptionsExecutionProfile
       earlyExitBars: 0,
       earlyExitLossPct: 0,
       overnightExitEnabled: false,
+      overnightMinGainExitEnabled: false,
       overnightMinGainPct: 20,
       overnightRunnerGivebackPct: 15,
       highQualityOvernightRunnerGivebackPct: 25,
@@ -428,6 +436,7 @@ export const tunedSignalOptionsExecutionProfilePatch = {
       spreadWideningMultiplier: 1.5,
     },
     overnightExitEnabled: true,
+    overnightMinGainExitEnabled: false,
     overnightMinGainPct: 10,
     overnightRunnerGivebackPct: 15,
     highQualityOvernightRunnerGivebackPct: 25,
@@ -445,6 +454,12 @@ function asRecord(value: unknown): Record<string, unknown> {
 }
 
 function finiteNumber(value: unknown, fallback: number, min: number, max: number) {
+  if (
+    typeof value !== "number" &&
+    (typeof value !== "string" || value.trim() === "")
+  ) {
+    return fallback;
+  }
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) {
     return fallback;
@@ -486,11 +501,11 @@ function signalOptionsMtfPreset(value: unknown): SignalOptionsMtfPreset {
 const MAX_SIGNAL_OPTIONS_STRIKE_SLOTS = 3;
 
 function parseStrikeSlot(value: unknown): SignalOptionsStrikeSlot | null {
-  const parsed = Number(value);
+  const parsed = finiteNumber(value, Number.NaN, 0, 5);
   if (!Number.isFinite(parsed)) {
     return null;
   }
-  return Math.min(5, Math.max(0, Math.round(parsed))) as SignalOptionsStrikeSlot;
+  return Math.round(parsed) as SignalOptionsStrikeSlot;
 }
 
 function strikeSlots(
@@ -521,9 +536,8 @@ function chaseSteps(value: unknown, fallback: number[]) {
   }
 
   const steps = value
-    .map((step) => Number(step))
-    .filter((step) => Number.isFinite(step))
-    .map((step) => Math.min(1, Math.max(0, step)));
+    .map((step) => finiteNumber(step, Number.NaN, 0, 1))
+    .filter((step) => Number.isFinite(step));
   return steps.length ? Array.from(new Set(steps)).sort((a, b) => a - b) : fallback;
 }
 
@@ -924,6 +938,13 @@ export function resolveSignalOptionsExecutionProfile(
           : "cost",
     },
     entryGate: {
+      entryCutoffMinutesBeforeClose: finiteInteger(
+        entryGate.entryCutoffMinutesBeforeClose ??
+          root.entryCutoffMinutesBeforeClose,
+        defaults.entryGate.entryCutoffMinutesBeforeClose,
+        0,
+        390,
+      ),
       mtfAlignment: {
         // The control panel exposes this toggle (entryGate.mtfAlignment.enabled)
         // and is authoritative; only an unset value falls back to enabled.
@@ -990,6 +1011,18 @@ export function resolveSignalOptionsExecutionProfile(
       ),
     },
     exitPolicy: {
+      stopConfirmationWindowMs: finiteInteger(
+        exitPolicy.stopConfirmationWindowMs ?? root.stopConfirmationWindowMs,
+        defaults.exitPolicy.stopConfirmationWindowMs,
+        100,
+        300_000,
+      ),
+      stopConfirmationMaxQuoteAgeMs: finiteInteger(
+        exitPolicy.stopConfirmationMaxQuoteAgeMs ?? root.stopConfirmationMaxQuoteAgeMs,
+        defaults.exitPolicy.stopConfirmationMaxQuoteAgeMs,
+        100,
+        300_000,
+      ),
       hardStopPct: finiteNumber(
         exitPolicy.hardStopPct ?? root.hardStopPct,
         defaults.exitPolicy.hardStopPct,
@@ -1067,6 +1100,11 @@ export function resolveSignalOptionsExecutionProfile(
       overnightExitEnabled: booleanValue(
         exitPolicy.overnightExitEnabled ?? root.overnightExitEnabled,
         defaults.exitPolicy.overnightExitEnabled,
+      ),
+      overnightMinGainExitEnabled: booleanValue(
+        exitPolicy.overnightMinGainExitEnabled ??
+          root.overnightMinGainExitEnabled,
+        defaults.exitPolicy.overnightMinGainExitEnabled,
       ),
       overnightMinGainPct: finiteNumber(
         exitPolicy.overnightMinGainPct ?? root.overnightMinGainPct,

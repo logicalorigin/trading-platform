@@ -105,6 +105,35 @@ test("ratchet monotonicity: stopPrice is non-decreasing as the peak rises", () =
   assert.ok(stops[2]! >= stops[1]!);
 });
 
+test("progressive step changes cannot loosen below the persisted prior stop", () => {
+  const profile = resolveSignalOptionsExecutionProfile({
+    exitPolicy: {
+      progressiveTrailEnabled: true,
+      progressiveTrailSteps: [
+        { activationPct: 20, minLockedGainPct: 20, givebackPct: 10 },
+        { activationPct: 30, minLockedGainPct: 0, givebackPct: 30 },
+      ],
+    },
+  });
+  const first = computeSignalOptionsPositionStop({
+    entryPrice: 100,
+    peakPrice: 129,
+    markPrice: 125,
+    profile,
+  });
+  assert.equal(first.stopPrice, 120);
+
+  const next = computeSignalOptionsPositionStop({
+    entryPrice: 100,
+    peakPrice: 130,
+    markPrice: 125,
+    profile,
+    priorStopPrice: first.stopPrice,
+  });
+
+  assert.equal(next.stopPrice, first.stopPrice);
+});
+
 test("progressive trail: peak in each step band selects that step's numbers", () => {
   const progressiveProfile = resolveSignalOptionsExecutionProfile({
     exitPolicy: {

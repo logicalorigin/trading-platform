@@ -7,6 +7,35 @@ import {
   tunedSignalOptionsExecutionProfilePatch,
 } from "./signal-options";
 
+test("entry cutoff defaults to the final 15 minutes and remains configurable", () => {
+  assert.equal(
+    resolveSignalOptionsExecutionProfile({}).entryGate
+      .entryCutoffMinutesBeforeClose,
+    15,
+  );
+  assert.equal(
+    resolveSignalOptionsExecutionProfile({
+      entryGate: { entryCutoffMinutesBeforeClose: 30 },
+    }).entryGate.entryCutoffMinutesBeforeClose,
+    30,
+  );
+});
+
+test("regular-stop confirmation timing defaults safely and remains configurable", () => {
+  const defaults = resolveSignalOptionsExecutionProfile({});
+  assert.equal(defaults.exitPolicy.stopConfirmationWindowMs, 10_000);
+  assert.equal(defaults.exitPolicy.stopConfirmationMaxQuoteAgeMs, 10_000);
+
+  const configured = resolveSignalOptionsExecutionProfile({
+    exitPolicy: {
+      stopConfirmationWindowMs: 20_000,
+      stopConfirmationMaxQuoteAgeMs: 5_000,
+    },
+  });
+  assert.equal(configured.exitPolicy.stopConfirmationWindowMs, 20_000);
+  assert.equal(configured.exitPolicy.stopConfirmationMaxQuoteAgeMs, 5_000);
+});
+
 test("honors the panel's MTF gate toggle; liquidity gates stay always-on", () => {
   const profile = resolveSignalOptionsExecutionProfile({
     entryGate: {
@@ -78,6 +107,20 @@ test("base profile keeps conditional quality exits off while resolving overnight
   assert.equal(profile.exitPolicy.highQualityOvernightRunnerGivebackPct, 25);
 });
 
+test("overnight minimum-gain exits default off and remain an explicit opt-in", () => {
+  assert.equal(
+    resolveSignalOptionsExecutionProfile({}).exitPolicy
+      .overnightMinGainExitEnabled,
+    false,
+  );
+  assert.equal(
+    resolveSignalOptionsExecutionProfile({
+      exitPolicy: { overnightMinGainExitEnabled: true },
+    }).exitPolicy.overnightMinGainExitEnabled,
+    true,
+  );
+});
+
 test("tuned profile enables P3 quality exits and carries the wider overnight runner giveback", () => {
   const resolvedPatch = resolveSignalOptionsExecutionProfile(
     tunedSignalOptionsExecutionProfilePatch,
@@ -115,6 +158,68 @@ test("scaleOut config defaults off and survives deployment-config normalization"
     sellFractionPct: 75,
     runnerGivebackPct: 35,
   });
+});
+
+test("non-numeric progressive-trail values cannot become executable zeroes", () => {
+  for (const invalid of [null, "", "   ", false, true, [], [0]]) {
+    const profile = resolveSignalOptionsExecutionProfile({
+      exitPolicy: {
+        progressiveTrailEnabled: true,
+        progressiveTrailSteps: [
+          {
+            activationPct: invalid,
+            minLockedGainPct: invalid,
+            givebackPct: invalid,
+          },
+        ],
+      },
+    });
+
+    assert.deepEqual(profile.exitPolicy.progressiveTrailSteps, []);
+  }
+});
+
+test("non-numeric strike slots fall back instead of selecting slot zero", () => {
+  for (const invalid of [null, "", "   ", false, true, [], [0]]) {
+    const profile = resolveSignalOptionsExecutionProfile({
+      optionSelection: {
+        callStrikeSlots: [invalid],
+        putStrikeSlots: [invalid],
+      },
+    });
+
+    assert.deepEqual(profile.optionSelection.callStrikeSlots, [3]);
+    assert.deepEqual(profile.optionSelection.putStrikeSlots, [2]);
+  }
+
+  const numericStrings = resolveSignalOptionsExecutionProfile({
+    optionSelection: {
+      callStrikeSlots: ["2"],
+      putStrikeSlots: ["1"],
+    },
+  });
+  assert.deepEqual(numericStrings.optionSelection.callStrikeSlots, [2]);
+  assert.deepEqual(numericStrings.optionSelection.putStrikeSlots, [1]);
+});
+
+test("non-numeric chase steps fall back instead of becoming executable fractions", () => {
+  const fallback = resolveSignalOptionsExecutionProfile({}).fillPolicy
+    .chaseSteps;
+
+  for (const invalid of [null, "", "   ", false, true, [], [0]]) {
+    const profile = resolveSignalOptionsExecutionProfile({
+      fillPolicy: { chaseSteps: [invalid] },
+    });
+
+    assert.deepEqual(profile.fillPolicy.chaseSteps, fallback);
+  }
+
+  assert.deepEqual(
+    resolveSignalOptionsExecutionProfile({
+      fillPolicy: { chaseSteps: ["0.25", "1"] },
+    }).fillPolicy.chaseSteps,
+    [0.25, 1],
+  );
 });
 
 test("oppositeSignalDualConfirm config defaults off and normalizes nested/root keys", () => {

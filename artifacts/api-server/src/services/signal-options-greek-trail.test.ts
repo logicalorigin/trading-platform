@@ -226,10 +226,93 @@ test("greek freshness: ageMs null with no timestamp is NOT fresh (missing_greek_
   assert.deepEqual(stop.wireTrail.greekAdjustment.reasons, ["greeks_unavailable"]);
 });
 
+test("greek freshness rejects non-numeric coercions", () => {
+  for (const ageMs of [false, [], "   "]) {
+    const stop = computeSignalOptionsPositionStop({
+      entryPrice: 1,
+      peakPrice: 1.4,
+      markPrice: 1.3,
+      profile: wireProfile,
+      wireContext: bullWireContext,
+      currentGreeks: {
+        delta: 0.5,
+        ageMs: ageMs as never,
+        updatedAt: null,
+      },
+      entryGreeks: { delta: 0.5, ageMs: 1_000 },
+      wireTrailEnforceEnabled: true,
+    });
+
+    assert.equal(stop.wireTrail.greekFresh, false);
+    assert.equal(stop.wireTrail.greekFallbackReason, "missing_greek_timestamp");
+    assert.deepEqual(stop.wireTrail.greekAdjustment.reasons, [
+      "greeks_unavailable",
+    ]);
+  }
+});
+
+test("greek freshness rejects negative explicit ages", () => {
+  const stop = computeSignalOptionsPositionStop({
+    entryPrice: 1,
+    peakPrice: 1.4,
+    markPrice: 1.3,
+    profile: wireProfile,
+    wireContext: bullWireContext,
+    currentGreeks: { delta: 0.35, ageMs: -3_600_000 },
+    entryGreeks: { delta: 0.5, ageMs: 1_000 },
+  });
+
+  assert.equal(stop.wireTrail.greekFresh, false);
+  assert.equal(stop.wireTrail.greekFallbackReason, "future_greeks");
+  assert.deepEqual(stop.wireTrail.greekAdjustment.reasons, [
+    "greeks_unavailable",
+  ]);
+});
+
+test("greek freshness rejects timestamps in the future", () => {
+  const stop = computeSignalOptionsPositionStop({
+    entryPrice: 1,
+    peakPrice: 1.4,
+    markPrice: 1.3,
+    profile: wireProfile,
+    now: new Date("2026-07-07T15:00:00Z"),
+    wireContext: bullWireContext,
+    currentGreeks: {
+      delta: 0.35,
+      updatedAt: new Date("2026-07-07T15:01:00Z"),
+    },
+    entryGreeks: { delta: 0.5, ageMs: 1_000 },
+  });
+
+  assert.equal(stop.wireTrail.greekFresh, false);
+  assert.equal(stop.wireTrail.greekFallbackReason, "future_greeks");
+  assert.deepEqual(stop.wireTrail.greekAdjustment.reasons, [
+    "greeks_unavailable",
+  ]);
+});
+
+test("wire fallback rejects non-numeric coercions at the selected rung", () => {
+  for (const wire of [false, [], "   "]) {
+    const stop = computeSignalOptionsPositionStop({
+      entryPrice: 1,
+      peakPrice: 1.7,
+      markPrice: 1.7,
+      profile: wireProfile,
+      wireContext: {
+        ...bullWireContext,
+        bullWires: [101, wire as never, 97],
+      },
+    });
+
+    assert.equal(stop.wireTrail.baselineRung, "wire2");
+    assert.equal(stop.wireTrail.selectedRung, "wire1");
+    assert.equal(stop.wireTrail.selectedWirePrice, 101);
+  }
+});
+
 test("wire fallback: an undefined value at the selected rung walks down toward the trend line", () => {
-  // Uses `undefined`, not `null`, at the missing rung: see the BUG-FOUND note above —
-  // `null` currently defeats this fallback. `undefined` still hits the intended
-  // selectUsableWireValue walk-down and pins that mechanism positively.
+  // Undefined follows the same selectUsableWireValue walk-down as the guarded
+  // null and malformed-value cases above.
   const stop = computeSignalOptionsPositionStop({
     entryPrice: 1.0,
     peakPrice: 1.7, // +70%: baseline rung "wire2"
