@@ -85,6 +85,12 @@ test("catalog diagnostics reject standalone named credentials", () => {
     ),
     "Unknown universe-catalog sync error",
   );
+  assert.equal(
+    catalog.safeDiagnostic(
+      new Error('provider rejected {"access_token":"short-json-secret"}'),
+    ),
+    "Unknown universe-catalog sync error",
+  );
 });
 
 test("CLI is strict, preview-first, and requires bare execute authority", () => {

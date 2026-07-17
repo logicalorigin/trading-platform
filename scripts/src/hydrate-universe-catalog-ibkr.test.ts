@@ -247,6 +247,12 @@ test("CLI diagnostics redact credentials and cannot control the terminal", () =>
     assert.equal(namedDiagnostic, "Unknown hydration error");
   }
   assert.equal(
+    hydrateCli.safeDiagnostic(
+      new Error('provider rejected {"access_token":"short-json-secret"}'),
+    ),
+    "Unknown hydration error",
+  );
+  assert.equal(
     hydrateCli.safeDiagnostic(new Error("provider token bucket depleted")),
     "provider token bucket depleted",
   );

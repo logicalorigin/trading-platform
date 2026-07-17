@@ -831,4 +831,10 @@ test("diagnostics reject standalone named credentials", () => {
     ),
     "Unknown listed-universe sync error",
   );
+  assert.equal(
+    listed.safeDiagnostic(
+      new Error('provider rejected {"access_token":"short-json-secret"}'),
+    ),
+    "Unknown listed-universe sync error",
+  );
 });
