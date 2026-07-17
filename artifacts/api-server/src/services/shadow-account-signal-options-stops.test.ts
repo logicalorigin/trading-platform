@@ -83,6 +83,47 @@ test("Shadow option economics reject non-positive contract inputs at the trust b
   );
 });
 
+test("Shadow stop diagnostics retain no credential-shaped error text", async () => {
+  internals.resetSignalOptionsTrailingStopEnforcementFailureDiagnosticsForTests();
+  const secret = "postgres://redacted.invalid/pyrus";
+  const warnings: Array<{ fields: unknown; message: string }> = [];
+
+  const result =
+    await internals.enforceSignalOptionsTrailingStopFromShadowMarkSafely(
+      {
+        position: {
+          id: "position-sensitive",
+          symbol: "CRM",
+        },
+        contract: optionContract,
+        quote: null,
+        pricing: actionableOptionQuotePricing,
+        markPrice: 0.06,
+        markAt: new Date("2026-06-12T17:00:00.000Z"),
+      } as never,
+      {
+        enforce: async () => {
+          throw new Error(secret);
+        },
+        warn: (fields: unknown, message: string) => {
+          warnings.push({ fields, message });
+        },
+      },
+    );
+
+  assert.equal(result.reason, "enforcement_failed");
+  const diagnostics =
+    internals.getSignalOptionsTrailingStopEnforcementFailureDiagnostics();
+  assert.equal(diagnostics.count, 1);
+  assert.equal(
+    diagnostics.recent[0]?.message,
+    "Signal-options stop enforcement failed.",
+  );
+  assert.equal(JSON.stringify(diagnostics).includes(secret), false);
+  assert.equal(warnings.length, 1);
+  assert.equal(JSON.stringify(warnings).includes(secret), false);
+});
+
 test("Signal Options shadow mark enforcement still treats runner trails as actionable", () => {
   const decision = internals.computeSignalOptionsShadowMarkExitDecision({
     contract: optionContract as never,

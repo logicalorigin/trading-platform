@@ -53,6 +53,7 @@ import {
   shadowOrdersTable,
   shadowPositionMarksTable,
   shadowPositionsTable,
+  safeDatabaseDiagnosticValue,
   type AlgoDeployment,
   type ExecutionEvent,
 } from "@workspace/db";
@@ -5996,8 +5997,10 @@ function recordSignalOptionsTrailingStopEnforcementFailure(input: {
   const diagnostic: SignalOptionsTrailingStopEnforcementFailureDiagnostic = {
     positionId: input.position.id,
     symbol: input.position.symbol,
-    message: error.message,
-    name: error.name || null,
+    message:
+      safeDatabaseDiagnosticValue(error.message) ??
+      "Signal-options stop enforcement failed.",
+    name: safeDatabaseDiagnosticValue(error.name || null),
     markPrice: input.markPrice,
     markAt: input.markAt,
     observedAt: new Date(),
@@ -6085,6 +6088,7 @@ async function enforceSignalOptionsTrailingStopFromShadowMarkSafely(
     enforce?: (
       enforcementInput: SignalOptionsTrailingStopEnforcementInput,
     ) => Promise<{ exited: boolean; reason: string }>;
+    warn?: (fields: Record<string, unknown>, message: string) => void;
   } = {},
 ) {
   try {
@@ -6098,9 +6102,15 @@ async function enforceSignalOptionsTrailingStopFromShadowMarkSafely(
       markPrice: input.markPrice,
       markAt: input.markAt,
     });
-    logger.warn?.(
+    const warn =
+      options.warn ??
+      ((fields: Record<string, unknown>, message: string) => {
+        logger.warn?.(fields, message);
+      });
+    warn(
       {
-        err: error,
+        errorName: diagnostic.name,
+        errorMessage: diagnostic.message,
         positionId: input.position.id,
         symbol: input.position.symbol,
         enforcementFailureCount:
