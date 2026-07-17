@@ -1,11 +1,17 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import test from "node:test";
 import { pathToFileURL } from "node:url";
-import { and } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { db } from "@workspace/db";
-import { universeCatalogListingsTable } from "@workspace/db/schema";
+import {
+  universeCatalogListingsTable,
+  universeCatalogSyncStatesTable,
+} from "@workspace/db/schema";
+import { withTestDb } from "@workspace/db/testing";
+import { claimUniverseCatalogWriterFence } from "../../artifacts/api-server/src/services/universe-catalog-writer-fence";
 import { __hydrateUniverseCatalogIbkrInternalsForTests as hydrateCli } from "./hydrate-universe-catalog-ibkr";
 
 const ISOLATED_DATABASE_ENV = {
@@ -173,6 +179,41 @@ test("broad progress advances only after hydration and its checkpoint succeed", 
   assert.equal(completed.checkpoint, "durable");
 });
 
+test("lease loss after hydration skips the checkpoint", async () => {
+  const controller = new AbortController();
+  const leaseLost = new Error("Universe-catalog lease lost");
+  let checkpointCalls = 0;
+  const operation = {
+    row: {
+      listingKey: "MSFT|stocks|XNAS",
+      symbol: "MSFT",
+      source: "broad",
+    },
+    phase: "broad" as const,
+    progress: {
+      processedThisMarket: 0,
+      phaseProcessedRows: 0,
+      totalProcessedRows: 0,
+      lastProcessedListingKey: null,
+    },
+    signal: controller.signal,
+    hydrate: async () => {
+      controller.abort(leaseLost);
+      return { status: "not_found" };
+    },
+    checkpoint: async () => {
+      checkpointCalls += 1;
+      return "written-after-abort";
+    },
+  };
+
+  await assert.rejects(
+    hydrateCli.hydrateAndCheckpointRow(operation),
+    (error) => error === leaseLost,
+  );
+  assert.equal(checkpointCalls, 0);
+});
+
 test("CLI diagnostics redact credentials and cannot control the terminal", () => {
   const diagnostic = hydrateCli.safeDiagnostic(
     new Error(
@@ -187,6 +228,15 @@ test("CLI diagnostics redact credentials and cannot control the terminal", () =>
     /[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/u,
   );
   assert.ok(diagnostic.length <= 400);
+
+  const credential = `sk-${"a".repeat(24)}`;
+  const queryDiagnostic = hydrateCli.safeDiagnostic(
+    new Error(
+      `provider rejected ${credential}; https://api.example.test/path?access_token=${credential}`,
+    ),
+  );
+  assert.doesNotMatch(queryDiagnostic, new RegExp(credential, "u"));
+  assert.doesNotMatch(queryDiagnostic, /access_token/u);
 });
 
 test("invalid CLI input fails before database work without exposing a stack", () => {
@@ -277,4 +327,126 @@ test("importing the IBKR catalog hydrator does not run database or provider work
     0,
     `import unexpectedly ran the hydrator:\n${imported.stdout}${imported.stderr}`,
   );
+});
+
+test("CLI cleanup closes pooled and advisory database connections", async () => {
+  const source = await readFile(
+    resolve(import.meta.dirname, "hydrate-universe-catalog-ibkr.ts"),
+    "utf8",
+  );
+
+  assert.match(source, /await closeDatabaseConnections\(\);/u);
+  assert.doesNotMatch(source, /await pool\.end\(\);/u);
+});
+
+test("executing the hydrator shares the catalog writer lease and fence", async () => {
+  const source = await readFile(
+    resolve(import.meta.dirname, "hydrate-universe-catalog-ibkr.ts"),
+    "utf8",
+  );
+
+  assert.match(source, /sharedAdvisoryLockHolder\.acquire/u);
+  assert.match(source, /claimUniverseCatalogWriterFence/u);
+  assert.match(source, /requireUniverseCatalogWriterFenceToken/u);
+  assert.match(source, /writerFenceToken/u);
+});
+
+test("a stale hydrator cannot overwrite a successor checkpoint", async () => {
+  await withTestDb(async () => {
+    const scopeKey = "ibkr-hydration:stocks:fence-test";
+    const startedAt = new Date("2026-07-17T18:00:00.000Z");
+    await claimUniverseCatalogWriterFence({ fenceToken: "20" });
+    await hydrateCli.writeSyncState({
+      writerFenceToken: "20",
+      scopeKey,
+      market: "stocks",
+      activeOnly: true,
+      lastProcessedListingKey: "AAPL|stocks|XNAS",
+      rowsSynced: 1,
+      startedAt,
+      finishedAt: null,
+      lastSuccessAt: startedAt,
+      lastError: null,
+      metadata: { owner: "old" },
+    });
+
+    const successorAt = new Date("2026-07-17T18:05:00.000Z");
+    await claimUniverseCatalogWriterFence({ fenceToken: "21" });
+    await hydrateCli.writeSyncState({
+      writerFenceToken: "21",
+      scopeKey,
+      market: "stocks",
+      activeOnly: true,
+      lastProcessedListingKey: "MSFT|stocks|XNAS",
+      rowsSynced: 2,
+      startedAt,
+      finishedAt: successorAt,
+      lastSuccessAt: successorAt,
+      lastError: null,
+      metadata: { owner: "successor" },
+    });
+
+    await assert.rejects(
+      hydrateCli.writeSyncState({
+        writerFenceToken: "20",
+        scopeKey,
+        market: "stocks",
+        activeOnly: true,
+        lastProcessedListingKey: "AAPL|stocks|XNAS",
+        rowsSynced: 1,
+        startedAt,
+        finishedAt: null,
+        lastSuccessAt: startedAt,
+        lastError: "late stale checkpoint",
+        metadata: { owner: "old-late" },
+      }),
+      /superseded/iu,
+    );
+
+    const [persisted] = await db
+      .select()
+      .from(universeCatalogSyncStatesTable)
+      .where(eq(universeCatalogSyncStatesTable.scopeKey, scopeKey));
+    assert.equal(persisted?.lastProcessedListingKey, "MSFT|stocks|XNAS");
+    assert.equal(persisted?.rowsSynced, 2);
+    assert.equal(persisted?.lastError, null);
+    assert.equal(
+      (persisted?.metadata as Record<string, unknown>)?.leaseFenceToken,
+      "21",
+    );
+  });
+});
+
+test("an aborted hydrator cannot write a failure checkpoint", async () => {
+  await withTestDb(async () => {
+    await claimUniverseCatalogWriterFence({ fenceToken: "30" });
+    const controller = new AbortController();
+    const leaseLost = new Error("Universe-catalog lease lost");
+    controller.abort(leaseLost);
+    const scopeKey = "ibkr-hydration:stocks:aborted";
+    const checkpoint = {
+      writerFenceToken: "30",
+      scopeKey,
+      market: "stocks" as const,
+      activeOnly: true,
+      lastProcessedListingKey: "AAPL|stocks|XNAS",
+      rowsSynced: 1,
+      startedAt: new Date("2026-07-17T18:00:00.000Z"),
+      finishedAt: null,
+      lastSuccessAt: null,
+      lastError: "provider failed",
+      metadata: { failed: true },
+      signal: controller.signal,
+    };
+
+    await assert.rejects(
+      hydrateCli.writeSyncState(checkpoint),
+      (error) => error === leaseLost,
+    );
+    const persisted = await db
+      .select()
+      .from(universeCatalogSyncStatesTable)
+      .where(eq(universeCatalogSyncStatesTable.scopeKey, scopeKey));
+    assert.equal(persisted.length, 0);
+  });
 });

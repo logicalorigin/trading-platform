@@ -1,7 +1,12 @@
 import { pathToFileURL } from "node:url";
 import { parseArgs, stripVTControlCharacters } from "node:util";
 import { and, asc, eq, gt, inArray, ne, sql } from "drizzle-orm";
-import { db, pool } from "@workspace/db";
+import { hasOpaqueOperatorCredential } from "./operator-diagnostic";
+import {
+  closeDatabaseConnections,
+  db,
+  sharedAdvisoryLockHolder,
+} from "@workspace/db";
 import {
   universeCatalogListingsTable,
   universeCatalogSyncStatesTable,
@@ -9,6 +14,12 @@ import {
 } from "@workspace/db/schema";
 import { type UniverseMarket } from "../../artifacts/api-server/src/providers/massive/market-data";
 import { hydrateUniverseCatalogListingWithIbkr } from "../../artifacts/api-server/src/services/platform";
+import {
+  assertUniverseCatalogWriterFence,
+  claimUniverseCatalogWriterFence,
+  requireUniverseCatalogWriterFenceToken,
+  UNIVERSE_CATALOG_WRITER_ADVISORY_LOCK_KEY,
+} from "../../artifacts/api-server/src/services/universe-catalog-writer-fence";
 import {
   loadWatchlistUniversePrioritySymbols,
   normalizeUniversePrioritySymbol,
@@ -250,12 +261,14 @@ function parseHydrationArgs(args = process.argv.slice(2)): HydrationArgs {
 function safeOutput(value: unknown, fallback: string): string {
   const withoutCredentials = String(value ?? "")
     .replace(/([a-z][a-z0-9+.-]*:\/\/)[^@\s]+@/giu, "$1[redacted]@")
+    .replace(/([a-z][a-z0-9+.-]*:\/\/[^\s?#]+)[?#][^\s]*/giu, "$1?[redacted]")
     .replace(/\s+/gu, " ");
   const cleaned = stripVTControlCharacters(withoutCredentials)
     .replace(UNSAFE_OUTPUT_PATTERN, " ")
     .replace(/\s+/gu, " ")
     .trim();
-  const diagnostic = cleaned || fallback;
+  const diagnostic =
+    cleaned && !hasOpaqueOperatorCredential(cleaned) ? cleaned : fallback;
   if (diagnostic.length <= MAX_DIAGNOSTIC_LENGTH) return diagnostic;
   return `${diagnostic.slice(0, MAX_DIAGNOSTIC_LENGTH - 1)}…`;
 }
@@ -296,6 +309,8 @@ async function readSyncState(scopeKey: string) {
 }
 
 async function writeSyncState(input: {
+  writerFenceToken: string;
+  signal?: AbortSignal;
   scopeKey: string;
   market: UniverseMarket;
   activeOnly: boolean;
@@ -307,42 +322,57 @@ async function writeSyncState(input: {
   lastError: string | null;
   metadata?: Record<string, unknown> | null;
 }) {
+  input.signal?.throwIfAborted();
   const now = new Date();
-  await db
-    .insert(universeCatalogSyncStatesTable)
-    .values({
-      scopeKey: input.scopeKey,
-      phase: "ibkr_hydration",
-      market: input.market,
-      activeOnly: input.activeOnly,
-      cursor: null,
-      lastProcessedListingKey: input.lastProcessedListingKey,
-      pagesSynced: 0,
-      rowsSynced: input.rowsSynced,
-      startedAt: input.startedAt,
-      finishedAt: input.finishedAt,
-      lastSuccessAt: input.lastSuccessAt,
-      lastError: input.lastError,
-      metadata: input.metadata ?? null,
-      updatedAt: now,
-    })
-    .onConflictDoUpdate({
-      target: universeCatalogSyncStatesTable.scopeKey,
-      set: {
+  const metadata = {
+    ...(input.metadata ?? {}),
+    leaseFenceToken: input.writerFenceToken,
+  };
+  await db.transaction(async (tx) => {
+    input.signal?.throwIfAborted();
+    await assertUniverseCatalogWriterFence({
+      fenceToken: input.writerFenceToken,
+      transaction: tx,
+    });
+    input.signal?.throwIfAborted();
+    await tx
+      .insert(universeCatalogSyncStatesTable)
+      .values({
+        scopeKey: input.scopeKey,
         phase: "ibkr_hydration",
         market: input.market,
         activeOnly: input.activeOnly,
         cursor: null,
         lastProcessedListingKey: input.lastProcessedListingKey,
+        pagesSynced: 0,
         rowsSynced: input.rowsSynced,
         startedAt: input.startedAt,
         finishedAt: input.finishedAt,
         lastSuccessAt: input.lastSuccessAt,
         lastError: input.lastError,
-        metadata: input.metadata ?? null,
+        metadata,
         updatedAt: now,
-      },
-    });
+      })
+      .onConflictDoUpdate({
+        target: universeCatalogSyncStatesTable.scopeKey,
+        set: {
+          phase: "ibkr_hydration",
+          market: input.market,
+          activeOnly: input.activeOnly,
+          cursor: null,
+          lastProcessedListingKey: input.lastProcessedListingKey,
+          rowsSynced: input.rowsSynced,
+          startedAt: input.startedAt,
+          finishedAt: input.finishedAt,
+          lastSuccessAt: input.lastSuccessAt,
+          lastError: input.lastError,
+          metadata,
+          updatedAt: now,
+        },
+      });
+    input.signal?.throwIfAborted();
+  });
+  input.signal?.throwIfAborted();
 }
 
 function listingHydrationFilters(input: {
@@ -657,6 +687,7 @@ async function hydrateAndCheckpointRow<Result, Checkpoint>(input: {
   row: HydrationRow;
   phase: HydrationPhase;
   progress: HydrationProgress;
+  signal?: AbortSignal;
   hydrate: () => Promise<Result>;
   checkpoint: (
     progress: HydrationProgress,
@@ -667,7 +698,9 @@ async function hydrateAndCheckpointRow<Result, Checkpoint>(input: {
   result: Result;
   checkpoint: Checkpoint;
 }> {
+  input.signal?.throwIfAborted();
   const result = await input.hydrate();
+  input.signal?.throwIfAborted();
   const progress = {
     processedThisMarket: input.progress.processedThisMarket + 1,
     phaseProcessedRows: input.progress.phaseProcessedRows + 1,
@@ -678,10 +711,15 @@ async function hydrateAndCheckpointRow<Result, Checkpoint>(input: {
         : input.progress.lastProcessedListingKey,
   };
   const checkpoint = await input.checkpoint(progress, result);
+  input.signal?.throwIfAborted();
   return { progress, result, checkpoint };
 }
 
-async function main() {
+async function runHydration(input: {
+  options: HydrationArgs;
+  writerFenceToken?: string;
+  signal?: AbortSignal;
+}) {
   const {
     execute,
     activeOnly,
@@ -694,8 +732,13 @@ async function main() {
     batchSize,
     maxRowsPerMarket,
     markets,
-  } = parseHydrationArgs();
+  } = input.options;
   const dryRun = !execute;
+  const writerFenceToken = input.writerFenceToken ?? "";
+  if (execute && !writerFenceToken) {
+    throw new Error("Universe-catalog writer fence token is required.");
+  }
+  input.signal?.throwIfAborted();
   const watchlistSymbols = priorityLanes.includes("watchlists")
     ? await loadWatchlistUniversePrioritySymbols()
     : [];
@@ -711,6 +754,7 @@ async function main() {
   }> = [];
 
   for (const market of markets) {
+    input.signal?.throwIfAborted();
     let processedThisMarket = 0;
     const phases: HydrationPhase[] =
       mode === "priority"
@@ -720,6 +764,7 @@ async function main() {
           : ["priority", "broad"];
 
     for (const phase of phases) {
+      input.signal?.throwIfAborted();
       if (processedThisMarket >= maxRowsPerMarket) break;
       const scopeKey = buildScopeKey(market, activeOnly, phase);
       const existingState =
@@ -764,6 +809,8 @@ async function main() {
 
       if (!dryRun) {
         await writeSyncState({
+          writerFenceToken,
+          signal: input.signal,
           scopeKey,
           market,
           activeOnly,
@@ -789,6 +836,7 @@ async function main() {
 
       try {
         while (processedThisMarket < maxRowsPerMarket) {
+          input.signal?.throwIfAborted();
           const remaining = Math.min(
             batchSize,
             maxRowsPerMarket - processedThisMarket,
@@ -826,6 +874,7 @@ async function main() {
           );
 
           for (const row of rows) {
+            input.signal?.throwIfAborted();
             const outputRow = safeHydrationRowForOutput(row);
             if (dryRun) {
               processedThisMarket += 1;
@@ -844,6 +893,7 @@ async function main() {
               const completed = await hydrateAndCheckpointRow({
                 row,
                 phase,
+                signal: input.signal,
                 progress: {
                   processedThisMarket,
                   phaseProcessedRows,
@@ -851,13 +901,19 @@ async function main() {
                   lastProcessedListingKey,
                 },
                 hydrate: () =>
-                  hydrateUniverseCatalogListingWithIbkr({
-                    listingKey: row.listingKey,
-                    force,
-                  }),
+                  hydrateUniverseCatalogListingWithIbkr(
+                    {
+                      listingKey: row.listingKey,
+                      writerFenceToken,
+                      force,
+                    },
+                    { signal: input.signal },
+                  ),
                 checkpoint: async (progress, result) => {
                   const checkpointAt = new Date();
                   await writeSyncState({
+                    writerFenceToken,
+                    signal: input.signal,
                     scopeKey,
                     market,
                     activeOnly,
@@ -916,6 +972,8 @@ async function main() {
         if (!dryRun) {
           const completedAt = new Date();
           await writeSyncState({
+            writerFenceToken,
+            signal: input.signal,
             scopeKey,
             market,
             activeOnly,
@@ -960,10 +1018,13 @@ async function main() {
           sample: phaseSample,
         });
       } catch (error) {
+        input.signal?.throwIfAborted();
         const message = safeDiagnostic(error);
         if (!dryRun) {
           try {
             await writeSyncState({
+              writerFenceToken,
+              signal: input.signal,
               scopeKey,
               market,
               activeOnly,
@@ -1014,12 +1075,49 @@ async function main() {
   );
 }
 
+async function main() {
+  const options = parseHydrationArgs();
+  if (!options.execute) {
+    await runHydration({ options });
+    return;
+  }
+
+  const lease = await sharedAdvisoryLockHolder.acquire(
+    UNIVERSE_CATALOG_WRITER_ADVISORY_LOCK_KEY,
+  );
+  if (!lease) {
+    throw new Error("A universe-catalog writer is already running.");
+  }
+  let failed = false;
+  try {
+    lease.signal.throwIfAborted();
+    const writerFenceToken = requireUniverseCatalogWriterFenceToken(lease);
+    await claimUniverseCatalogWriterFence({ fenceToken: writerFenceToken });
+    lease.signal.throwIfAborted();
+    await runHydration({
+      options,
+      writerFenceToken,
+      signal: lease.signal,
+    });
+  } catch (error) {
+    failed = true;
+    throw error;
+  } finally {
+    try {
+      await lease();
+    } catch (error) {
+      if (!failed) throw error;
+    }
+  }
+}
+
 export const __hydrateUniverseCatalogIbkrInternalsForTests = {
   hydrateAndCheckpointRow,
   listingHydrationFilters,
   parseHydrationArgs,
   prioritySymbolFilter,
   safeDiagnostic,
+  writeSyncState,
 };
 
 async function runCli(): Promise<void> {
@@ -1030,9 +1128,11 @@ async function runCli(): Promise<void> {
     process.exitCode = 1;
   } finally {
     try {
-      await pool.end();
+      await closeDatabaseConnections();
     } catch (error) {
-      console.error(`Failed to close database pool: ${safeDiagnostic(error)}`);
+      console.error(
+        `Failed to close database connections: ${safeDiagnostic(error)}`,
+      );
       process.exitCode = 1;
     }
   }

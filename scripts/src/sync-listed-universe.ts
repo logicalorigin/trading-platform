@@ -1,10 +1,12 @@
 import { pathToFileURL } from "node:url";
 import { parseArgs, stripVTControlCharacters } from "node:util";
 import { and, eq, sql } from "drizzle-orm";
+import { hasOpaqueOperatorCredential } from "./operator-diagnostic";
 import {
   closeDatabaseConnections,
   db,
   sharedAdvisoryLockHolder,
+  type AdvisoryLockLease,
   type WorkspaceDatabase,
 } from "@workspace/db";
 import { universeSourceMembershipsTable } from "@workspace/db/schema";
@@ -20,6 +22,12 @@ import type {
   UniverseMarket,
   UniverseTicker,
 } from "../../artifacts/api-server/src/providers/massive/market-data";
+import {
+  assertUniverseCatalogWriterFence,
+  claimUniverseCatalogWriterFence,
+  requireUniverseCatalogWriterFenceToken,
+  UNIVERSE_CATALOG_WRITER_ADVISORY_LOCK_KEY,
+} from "../../artifacts/api-server/src/services/universe-catalog-writer-fence";
 
 type DirectorySource = "nasdaq" | "other";
 type SourceId = "nasdaq_listed" | "other_listed";
@@ -62,8 +70,10 @@ type MembershipSyncInput = {
   rows: readonly SourceRow[];
   activeSourceSymbols: ReadonlyMap<SourceId, ReadonlySet<string>>;
   reconcileSourceIds: readonly SourceId[];
+  writerFenceToken: string;
   database?: WorkspaceDatabase;
   now?: Date;
+  signal?: AbortSignal;
 };
 
 type MembershipSyncResult = {
@@ -82,9 +92,14 @@ type SyncResult = {
 };
 
 type RunDependencies = {
-  acquireLock: () => Promise<(() => Promise<void>) | null>;
-  buildRows: (options: CliOptions) => Promise<BuiltRows>;
-  upsertCatalog: (rows: UniverseTicker[]) => Promise<void>;
+  acquireLock: () => Promise<AdvisoryLockLease | null>;
+  claimWriterFence: (fenceToken: string) => Promise<void>;
+  buildRows: (options: CliOptions, signal?: AbortSignal) => Promise<BuiltRows>;
+  upsertCatalog: (
+    rows: UniverseTicker[],
+    writerFenceToken: string,
+    signal: AbortSignal,
+  ) => Promise<void>;
   syncMemberships: (
     input: MembershipSyncInput,
   ) => Promise<MembershipSyncResult>;
@@ -96,7 +111,6 @@ type DirectoryFetchers = {
 };
 
 const SOURCE_MEMBERSHIP_UPSERT_CHUNK_SIZE = 1_000;
-const LISTED_UNIVERSE_SYNC_ADVISORY_LOCK_KEY = 1_930_514_024;
 const MAX_DIAGNOSTIC_LENGTH = 400;
 const UNSAFE_OUTPUT_PATTERN =
   /[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/gu;
@@ -274,7 +288,9 @@ function invalidRecordCount(
 async function buildRows(
   options: CliOptions,
   fetchers: DirectoryFetchers = DEFAULT_FETCHERS,
+  signal?: AbortSignal,
 ): Promise<BuiltRows> {
+  signal?.throwIfAborted();
   const sourceSummaries: BuiltRows["sourceSummaries"] = {};
   const activeSourceSymbols: BuiltRows["activeSourceSymbols"] = new Map();
   const rows: SourceRow[] = [];
@@ -286,7 +302,9 @@ async function buildRows(
   };
 
   if (options.sources.has("nasdaq")) {
+    signal?.throwIfAborted();
     const text = await fetchers.fetchNasdaq(options.nasdaqUrl);
+    signal?.throwIfAborted();
     const parsed = parseNasdaqListedDirectory(text, parseOptions);
     const source = parseNasdaqListedDirectory(text, ALL_RECORDS_OPTIONS);
     const symbols = new Set(parsed.records.map((record) => record.rawSymbol));
@@ -318,7 +336,9 @@ async function buildRows(
   }
 
   if (options.sources.has("other")) {
+    signal?.throwIfAborted();
     const text = await fetchers.fetchOther(options.otherUrl);
+    signal?.throwIfAborted();
     const parsed = parseOtherListedDirectory(text, parseOptions);
     const source = parseOtherListedDirectory(text, ALL_RECORDS_OPTIONS);
     const symbols = new Set(parsed.records.map((record) => record.rawSymbol));
@@ -403,16 +423,23 @@ async function syncSourceMemberships(
       throw new Error(`Cannot reconcile ${id} without source evidence.`);
     }
   }
+  input.signal?.throwIfAborted();
 
   // ponytail: the shared catalog writer owns its own transaction; keep this
   // membership phase atomic until that writer accepts an injected transaction.
   return database.transaction(async (tx) => {
+    await assertUniverseCatalogWriterFence({
+      fenceToken: input.writerFenceToken,
+      transaction: tx,
+    });
+    input.signal?.throwIfAborted();
     let upsertedRows = 0;
     for (
       let index = 0;
       index < input.rows.length;
       index += SOURCE_MEMBERSHIP_UPSERT_CHUNK_SIZE
     ) {
+      input.signal?.throwIfAborted();
       const chunk = input.rows.slice(
         index,
         index + SOURCE_MEMBERSHIP_UPSERT_CHUNK_SIZE,
@@ -449,12 +476,14 @@ async function syncSourceMemberships(
             updatedAt: now,
           },
         });
+      input.signal?.throwIfAborted();
       upsertedRows += chunk.length;
     }
 
     let deactivatedRows = 0;
     const deactivatedBySource: MembershipSyncResult["deactivatedBySource"] = {};
     for (const id of reconcileSourceIds) {
+      input.signal?.throwIfAborted();
       const symbols = [...input.activeSourceSymbols.get(id)!];
       const deactivated = await tx
         .update(universeSourceMembershipsTable)
@@ -473,22 +502,26 @@ async function syncSourceMemberships(
         .returning({
           sourceSymbol: universeSourceMembershipsTable.sourceSymbol,
         });
+      input.signal?.throwIfAborted();
       deactivatedBySource[id] = deactivated.length;
       deactivatedRows += deactivated.length;
     }
+    input.signal?.throwIfAborted();
     return { upsertedRows, deactivatedRows, deactivatedBySource };
   });
 }
 
 const DEFAULT_RUN_DEPENDENCIES: RunDependencies = {
   acquireLock: () =>
-    sharedAdvisoryLockHolder.acquire(LISTED_UNIVERSE_SYNC_ADVISORY_LOCK_KEY),
-  buildRows,
-  upsertCatalog: async (rows) => {
+    sharedAdvisoryLockHolder.acquire(UNIVERSE_CATALOG_WRITER_ADVISORY_LOCK_KEY),
+  claimWriterFence: (fenceToken) =>
+    claimUniverseCatalogWriterFence({ fenceToken }),
+  buildRows: (options, signal) => buildRows(options, DEFAULT_FETCHERS, signal),
+  upsertCatalog: async (rows, writerFenceToken, signal) => {
     const { upsertUniverseCatalogRows } = await import(
       "../../artifacts/api-server/src/services/platform"
     );
-    await upsertUniverseCatalogRows(rows);
+    await upsertUniverseCatalogRows(rows, { writerFenceToken, signal });
   },
   syncMemberships: syncSourceMemberships,
 };
@@ -512,22 +545,36 @@ async function runSync(
     return emptySyncResult(await dependencies.buildRows(options));
   }
 
-  const release = await dependencies.acquireLock();
-  if (!release) {
+  const lease = await dependencies.acquireLock();
+  if (!lease) {
     throw new Error("A listed-universe sync is already running.");
   }
   let failed = false;
   try {
-    const built = await dependencies.buildRows(options);
+    lease.signal.throwIfAborted();
+    const writerFenceToken = requireUniverseCatalogWriterFenceToken(lease);
+    await dependencies.claimWriterFence(writerFenceToken);
+    lease.signal.throwIfAborted();
+    const built = await dependencies.buildRows(options, lease.signal);
+    lease.signal.throwIfAborted();
     assertAuthoritativeSourceEvidence(built, options.sources);
-    await dependencies.upsertCatalog(built.rows.map((row) => row.ticker));
+    lease.signal.throwIfAborted();
+    await dependencies.upsertCatalog(
+      built.rows.map((row) => row.ticker),
+      writerFenceToken,
+      lease.signal,
+    );
+    lease.signal.throwIfAborted();
     const reconciledSourceIds =
       options.limit === null ? [...options.sources].map(sourceId) : [];
     const membership = await dependencies.syncMemberships({
       rows: built.rows,
       activeSourceSymbols: built.activeSourceSymbols,
       reconcileSourceIds: reconciledSourceIds,
+      writerFenceToken,
+      signal: lease.signal,
     });
+    lease.signal.throwIfAborted();
     return {
       built,
       catalogRowsUpserted: built.rows.length,
@@ -541,7 +588,7 @@ async function runSync(
     throw error;
   } finally {
     try {
-      await release();
+      await lease();
     } catch (error) {
       if (!failed) throw error;
     }
@@ -551,12 +598,18 @@ async function runSync(
 function safeOutput(value: unknown, fallback: string): string {
   const withoutCredentials = String(value ?? "")
     .replace(/([a-z][a-z0-9+.-]*:\/\/)[^@\s]+@/giu, "$1[redacted]@")
+    .replace(/([a-z][a-z0-9+.-]*:\/\/[^\s?#]+)[?#][^\s]*/giu, "$1?[redacted]")
+    .replace(
+      /([?&](?:api[-_]?key|access[-_]?token|token)=)[^&#\s]*/giu,
+      "$1[redacted]",
+    )
     .replace(/\s+/gu, " ");
   const cleaned = stripVTControlCharacters(withoutCredentials)
     .replace(UNSAFE_OUTPUT_PATTERN, " ")
     .replace(/\s+/gu, " ")
     .trim();
-  const diagnostic = cleaned || fallback;
+  const diagnostic =
+    cleaned && !hasOpaqueOperatorCredential(cleaned) ? cleaned : fallback;
   if (diagnostic.length <= MAX_DIAGNOSTIC_LENGTH) return diagnostic;
   return `${diagnostic.slice(0, MAX_DIAGNOSTIC_LENGTH - 1)}…`;
 }

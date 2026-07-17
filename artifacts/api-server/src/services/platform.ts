@@ -18,6 +18,7 @@ import {
   getDbAdmissionDiagnostics,
   instrumentsTable,
   runInDbLane,
+  safeDatabaseDiagnosticValue,
   watchlistItemsTable,
   watchlistsTable,
 } from "@workspace/db";
@@ -214,6 +215,7 @@ import {
   persistDurableOptionChain,
 } from "./option-metadata-store";
 import { validateSingleLegOrderIntent } from "./option-order-intent";
+import { assertUniverseCatalogWriterFence } from "./universe-catalog-writer-fence";
 import {
   getRuntimeMarketDataDiagnostics,
   getRuntimeMassiveProviderDiagnostics,
@@ -2945,11 +2947,6 @@ export function getPlatformResourceDiagnostics() {
       ttlMs: FLOW_PREMIUM_DISTRIBUTION_CACHE_TTL_MS,
       ...countExpired(flowPremiumDistributionCache.values()),
     },
-    universeIbkrHydration: {
-      queued: universeCatalogIbkrHydrationQueue.length,
-      queuedUnique: universeCatalogIbkrHydrationQueued.size,
-      inFlight: universeCatalogIbkrHydrationInFlight.size,
-    },
   };
 }
 
@@ -5673,7 +5670,6 @@ const UNIVERSE_SEARCH_MASSIVE_EXACT_BUDGET_MS = 1_500;
 // tight so a cold name query settles fast instead of blocking on the broker.
 const UNIVERSE_SEARCH_MASSIVE_FOREGROUND_BUDGET_MS = 1_500;
 const UNIVERSE_SEARCH_BACKGROUND_BUDGET_MS = 12_000;
-const UNIVERSE_CATALOG_IBKR_HYDRATION_QUEUE_CONCURRENCY = 2;
 const UNIVERSE_CATALOG_IBKR_RETRY_COOLDOWN_MS = 30 * 60_000;
 const universeSearchCache = new Map<
   string,
@@ -5689,9 +5685,6 @@ const universeSearchInFlight = new Map<
   }
 >();
 const universeSearchBackgroundInFlight = new Set<string>();
-const universeCatalogIbkrHydrationQueue: string[] = [];
-const universeCatalogIbkrHydrationQueued = new Set<string>();
-const universeCatalogIbkrHydrationInFlight = new Set<string>();
 
 const EXCHANGE_MIC_ALIASES: Record<string, string> = {
   NASDAQ: "XNAS",
@@ -6694,14 +6687,28 @@ export async function searchUniverseCatalog(input: {
   } satisfies UniverseCatalogSearchResponse;
 }
 
-export async function upsertUniverseCatalogRows(rows: UniverseTicker[]) {
+export async function upsertUniverseCatalogRows(
+  rows: UniverseTicker[],
+  options: { writerFenceToken: string; signal?: AbortSignal },
+) {
+  if (!options?.writerFenceToken) {
+    throw new Error("Universe-catalog writer fence token is required.");
+  }
+  options.signal?.throwIfAborted();
   const values = rows
     .map(buildUniverseCatalogRow)
     .filter((row) => row.ticker && row.name && row.market);
+  options.signal?.throwIfAborted();
   if (!values.length) return;
 
   await db.transaction(async (tx) => {
+    await assertUniverseCatalogWriterFence({
+      fenceToken: options.writerFenceToken,
+      transaction: tx,
+    });
+    options.signal?.throwIfAborted();
     for (const value of values) {
+      options.signal?.throwIfAborted();
       const conflictSet = {
         market: value.market,
         ticker: value.ticker,
@@ -6783,7 +6790,9 @@ export async function upsertUniverseCatalogRows(rows: UniverseTicker[]) {
           target: universeCatalogListingsTable.listingKey,
           set: conflictSet,
         });
+      options.signal?.throwIfAborted();
     }
+    options.signal?.throwIfAborted();
   });
 }
 
@@ -7013,9 +7022,18 @@ function scoreUniverseCatalogIbkrCandidate(
   return score;
 }
 
+function safeUniverseCatalogHydrationError(error: unknown): string {
+  const message = error instanceof Error ? error.message : null;
+  return safeDatabaseDiagnosticValue(message) ?? "IBKR hydration failed.";
+}
+
+export const __safeUniverseCatalogHydrationErrorForTests =
+  safeUniverseCatalogHydrationError;
+
 export async function hydrateUniverseCatalogListingWithIbkr(
   input: {
     listingKey: string;
+    writerFenceToken: string;
     force?: boolean;
   },
   options: SearchUniverseTickersOptions = {},
@@ -7024,11 +7042,24 @@ export async function hydrateUniverseCatalogListingWithIbkr(
   status: UniverseCatalogHydrationStatus | "skipped";
   providerContractId: string | null;
 }> {
+  if (!input?.writerFenceToken) {
+    throw new Error("Universe-catalog writer fence token is required.");
+  }
+  options.signal?.throwIfAborted();
+  await db.transaction(async (tx) => {
+    await assertUniverseCatalogWriterFence({
+      fenceToken: input.writerFenceToken,
+      transaction: tx,
+    });
+  });
+  options.signal?.throwIfAborted();
+
   const [rowRecord] = await db
     .select()
     .from(universeCatalogListingsTable)
     .where(eq(universeCatalogListingsTable.listingKey, input.listingKey))
     .limit(1);
+  options.signal?.throwIfAborted();
   const row = rowRecord as UniverseCatalogListingHydrationRecord | undefined;
   if (!row) {
     return {
@@ -7056,6 +7087,7 @@ export async function hydrateUniverseCatalogListingWithIbkr(
       limit: UNIVERSE_SEARCH_DEFAULT_LIMIT,
       signal: options.signal,
     });
+    options.signal?.throwIfAborted();
     const bestCandidate = results.results
       .map((candidate) => ({
         candidate,
@@ -7100,15 +7132,19 @@ export async function hydrateUniverseCatalogListingWithIbkr(
         ibkrHydratedAt: attemptedAt,
         ibkrHydrationError: null,
         contractDescription: mergedValue.contractDescription,
-        contractMeta: mergedValue.contractMeta,
         lastUpdatedAt: mergedValue.lastUpdatedAt,
         lastSeenAt: row.lastSeenAt,
         updatedAt: new Date(),
       } satisfies UniverseCatalogListingUpdateSet;
-      await db
-        .update(universeCatalogListingsTable)
-        .set(hydratedSet)
-        .where(eq(universeCatalogListingsTable.id, row.id));
+      await updateUniverseCatalogListingWithWriterFence({
+        id: row.id,
+        set: hydratedSet,
+        contractMetaPatch: normalizeUniverseTickerContractMeta(
+          bestCandidate.candidate.contractMeta,
+        ),
+        writerFenceToken: input.writerFenceToken,
+        signal: options.signal,
+      });
 
       return {
         listingKey: mergedValue.listingKey,
@@ -7129,28 +7165,32 @@ export async function hydrateUniverseCatalogListingWithIbkr(
           : `IBKR returned no tradable match for ${row.ticker}.`,
       updatedAt: new Date(),
     } satisfies UniverseCatalogListingUpdateSet;
-    await db
-      .update(universeCatalogListingsTable)
-      .set(unresolvedSet)
-      .where(eq(universeCatalogListingsTable.id, row.id));
+    await updateUniverseCatalogListingWithWriterFence({
+      id: row.id,
+      set: unresolvedSet,
+      writerFenceToken: input.writerFenceToken,
+      signal: options.signal,
+    });
     return {
       listingKey: row.listingKey,
       status,
       providerContractId: null,
     };
   } catch (error) {
-    const message =
-      error instanceof Error ? error.message : "Unknown IBKR hydration error.";
+    options.signal?.throwIfAborted();
+    const message = safeUniverseCatalogHydrationError(error);
     const failedSet = {
       ibkrHydrationStatus: "failed",
       ibkrHydrationAttemptedAt: attemptedAt,
       ibkrHydrationError: message,
       updatedAt: new Date(),
     } satisfies UniverseCatalogListingUpdateSet;
-    await db
-      .update(universeCatalogListingsTable)
-      .set(failedSet)
-      .where(eq(universeCatalogListingsTable.id, row.id));
+    await updateUniverseCatalogListingWithWriterFence({
+      id: row.id,
+      set: failedSet,
+      writerFenceToken: input.writerFenceToken,
+      signal: options.signal,
+    });
     return {
       listingKey: row.listingKey,
       status: "failed",
@@ -7159,50 +7199,40 @@ export async function hydrateUniverseCatalogListingWithIbkr(
   }
 }
 
-function enqueueUniverseCatalogIbkrHydrationRows(
-  rows: UniverseCatalogListingHydrationRecord[],
-) {
-  const candidates = rows.filter((row) =>
-    shouldAttemptUniverseCatalogIbkrHydration(row),
-  );
-
-  for (const row of candidates) {
-    if (
-      universeCatalogIbkrHydrationQueued.has(row.listingKey) ||
-      universeCatalogIbkrHydrationInFlight.has(row.listingKey)
-    ) {
-      continue;
-    }
-    universeCatalogIbkrHydrationQueued.add(row.listingKey);
-    universeCatalogIbkrHydrationQueue.push(row.listingKey);
-  }
-
-  drainUniverseCatalogIbkrHydrationQueue();
+async function updateUniverseCatalogListingWithWriterFence(input: {
+  id: string;
+  set: UniverseCatalogListingUpdateSet;
+  contractMetaPatch?: UniverseTicker["contractMeta"];
+  writerFenceToken: string;
+  signal?: AbortSignal;
+}) {
+  input.signal?.throwIfAborted();
+  await db.transaction(async (tx) => {
+    await assertUniverseCatalogWriterFence({
+      fenceToken: input.writerFenceToken,
+      transaction: tx,
+    });
+    input.signal?.throwIfAborted();
+    const set: UniverseCatalogListingUpdateSet =
+      input.contractMetaPatch === undefined
+        ? input.set
+        : {
+            ...input.set,
+            contractMeta: sql<Record<string, unknown> | null>`
+              coalesce(${universeCatalogListingsTable.contractMeta}, '{}'::jsonb)
+              || ${JSON.stringify(input.contractMetaPatch ?? {})}::jsonb
+            `,
+          };
+    await tx
+      .update(universeCatalogListingsTable)
+      .set(set)
+      .where(eq(universeCatalogListingsTable.id, input.id));
+    input.signal?.throwIfAborted();
+  });
 }
 
-function drainUniverseCatalogIbkrHydrationQueue() {
-  while (
-    universeCatalogIbkrHydrationInFlight.size <
-      UNIVERSE_CATALOG_IBKR_HYDRATION_QUEUE_CONCURRENCY &&
-    universeCatalogIbkrHydrationQueue.length > 0
-  ) {
-    const listingKey = universeCatalogIbkrHydrationQueue.shift();
-    if (!listingKey) break;
-    universeCatalogIbkrHydrationQueued.delete(listingKey);
-    universeCatalogIbkrHydrationInFlight.add(listingKey);
-    void hydrateUniverseCatalogListingWithIbkr({ listingKey })
-      .catch((error) => {
-        logger.debug(
-          { err: error, listingKey },
-          "background IBKR hydration for universe catalog failed",
-        );
-      })
-      .finally(() => {
-        universeCatalogIbkrHydrationInFlight.delete(listingKey);
-        drainUniverseCatalogIbkrHydrationQueue();
-      });
-  }
-}
+export const __updateUniverseCatalogListingWithWriterFenceForTests =
+  updateUniverseCatalogListingWithWriterFence;
 
 function createClientAbortedError() {
   return new HttpError(499, "Ticker search request was aborted.", {
@@ -8281,7 +8311,6 @@ export async function searchUniverseTickers(
     });
     if (catalogResponse.results.length) {
       if (strictTradeResolve) {
-        enqueueUniverseCatalogIbkrHydrationRows(catalogResponse.listingRows);
         const exactCatalogResponse = filterExactIbkrTradableTickerMatches({
           response: catalogResponse,
           normalizedSearch,
@@ -8337,14 +8366,8 @@ export async function searchUniverseTickers(
       resultLimit,
     });
     cacheUniverseSearchResponse(cacheKey, mergedResponse, { allowEmpty: true });
-    if (mergedResponse.results.length) {
-      void upsertUniverseCatalogRows(mergedResponse.results).catch((err) => {
-        logger.debug(
-          { err, search: normalizedSearch },
-          "persisted universe catalog upsert failed",
-        );
-      });
-    }
+    // Interactive responses remain cache-only. Durable catalog mutations are
+    // reserved for the advisory-lease-fenced sync writers.
     return mergedResponse;
   }
 
@@ -8395,12 +8418,6 @@ export async function searchUniverseTickers(
           resultLimit,
         })
       : response;
-    void upsertUniverseCatalogRows(finalResponse.results).catch((error) => {
-      logger.debug(
-        { err: error, search: normalizedSearch },
-        "persisted universe catalog upsert failed",
-      );
-    });
     if (strictTradeResolve) {
       if (hasIbkrTradableResult(finalResponse)) {
         writeUniverseSearchCache(cacheKey, finalResponse);
@@ -8425,7 +8442,9 @@ export async function searchUniverseTickers(
       // including a no-match result — so a repeated keystroke is warm instead
       // of re-running the full live path. Short TTL keeps it from masking
       // background IBKR hydration.
-      cacheUniverseSearchResponse(cacheKey, finalResponse, { allowEmpty: true });
+      cacheUniverseSearchResponse(cacheKey, finalResponse, {
+        allowEmpty: true,
+      });
     }
     return finalResponse;
   } finally {

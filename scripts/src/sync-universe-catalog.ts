@@ -1,10 +1,13 @@
+import { createHash } from "node:crypto";
 import { pathToFileURL } from "node:url";
 import { parseArgs, stripVTControlCharacters } from "node:util";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
+import { hasOpaqueOperatorCredential } from "./operator-diagnostic";
 import {
   closeDatabaseConnections,
   db,
   sharedAdvisoryLockHolder,
+  type AdvisoryLockLease,
 } from "@workspace/db";
 import { universeCatalogSyncStatesTable } from "@workspace/db/schema";
 import { getMassiveRuntimeConfig } from "../../artifacts/api-server/src/lib/runtime";
@@ -14,11 +17,17 @@ import {
   type UniverseTicker,
 } from "../../artifacts/api-server/src/providers/massive/market-data";
 import { upsertUniverseCatalogRows } from "../../artifacts/api-server/src/services/platform";
+import {
+  assertUniverseCatalogWriterFence,
+  claimUniverseCatalogWriterFence,
+  requireUniverseCatalogWriterFenceToken,
+  UNIVERSE_CATALOG_WRITER_ADVISORY_LOCK_KEY,
+} from "../../artifacts/api-server/src/services/universe-catalog-writer-fence";
 
 const DEFAULT_MARKETS: UniverseMarket[] = ["stocks", "etf", "otc"];
-// Shares the listed-universe lock because both commands write the catalog.
-const UNIVERSE_CATALOG_SYNC_ADVISORY_LOCK_KEY = 1_930_514_024;
 const PROVIDER_TIMEOUT_MS = 30_000;
+const MAX_PERSISTED_CURSOR_DIGESTS = 4_096;
+const CURSOR_DIGEST_PATTERN = /^[A-Za-z0-9_-]{43}$/u;
 const MAX_DIAGNOSTIC_LENGTH = 400;
 const UNSAFE_OUTPUT_PATTERN =
   /[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/gu;
@@ -53,6 +62,7 @@ type SyncState = {
   startedAt: Date | null;
   finishedAt: Date | null;
   lastSuccessAt: Date | null;
+  metadata?: Record<string, unknown> | null;
 };
 
 type SyncStateWrite = {
@@ -68,6 +78,7 @@ type SyncStateWrite = {
   lastSuccessAt: Date | null;
   lastError: string | null;
   metadata?: Record<string, unknown> | null;
+  fenceToken: string;
 };
 
 type UniversePage = {
@@ -77,7 +88,8 @@ type UniversePage = {
 };
 
 type RunDependencies = {
-  acquireLock: () => Promise<(() => Promise<void>) | null>;
+  acquireLock: () => Promise<AdvisoryLockLease | null>;
+  claimWriterFence: (fenceToken: string) => Promise<void>;
   listPage: (input: {
     market: UniverseMarket;
     active: boolean;
@@ -88,7 +100,11 @@ type RunDependencies = {
   now: () => Date;
   readState: (scopeKey: string) => Promise<SyncState | null>;
   sanitizeCursor: (cursor: string | null) => string | null;
-  upsertRows: (rows: UniverseTicker[]) => Promise<void>;
+  upsertRows: (
+    rows: UniverseTicker[],
+    writerFenceToken: string,
+    signal: AbortSignal,
+  ) => Promise<void>;
   writeState: (input: SyncStateWrite) => Promise<void>;
 };
 
@@ -230,28 +246,28 @@ async function readSyncState(scopeKey: string) {
 }
 
 async function writeSyncState(input: SyncStateWrite) {
+  if (!/^[1-9]\d*$/u.test(input.fenceToken)) {
+    throw new Error("Universe-catalog checkpoint fence token is invalid.");
+  }
   const now = new Date();
-  await db
-    .insert(universeCatalogSyncStatesTable)
-    .values({
-      scopeKey: input.scopeKey,
-      phase: "catalog",
-      market: input.market,
-      activeOnly: input.activeOnly,
-      cursor: input.cursor,
-      lastProcessedListingKey: input.lastProcessedListingKey,
-      pagesSynced: input.pagesSynced,
-      rowsSynced: input.rowsSynced,
-      startedAt: input.startedAt,
-      finishedAt: input.finishedAt,
-      lastSuccessAt: input.lastSuccessAt,
-      lastError: input.lastError,
-      metadata: input.metadata ?? null,
-      updatedAt: now,
-    })
-    .onConflictDoUpdate({
-      target: universeCatalogSyncStatesTable.scopeKey,
-      set: {
+  const metadata = {
+    ...(input.metadata ?? {}),
+    leaseFenceToken: input.fenceToken,
+  };
+  const persistedFenceToken = sql<number>`case
+    when coalesce(${universeCatalogSyncStatesTable.metadata}->>'leaseFenceToken', '') ~ '^[1-9][0-9]*$'
+      then (${universeCatalogSyncStatesTable.metadata}->>'leaseFenceToken')::numeric
+    else 0
+  end`;
+  const rows = await db.transaction(async (tx) => {
+    await assertUniverseCatalogWriterFence({
+      fenceToken: input.fenceToken,
+      transaction: tx,
+    });
+    return tx
+      .insert(universeCatalogSyncStatesTable)
+      .values({
+        scopeKey: input.scopeKey,
         phase: "catalog",
         market: input.market,
         activeOnly: input.activeOnly,
@@ -263,10 +279,40 @@ async function writeSyncState(input: SyncStateWrite) {
         finishedAt: input.finishedAt,
         lastSuccessAt: input.lastSuccessAt,
         lastError: input.lastError,
-        metadata: input.metadata ?? null,
+        metadata,
         updatedAt: now,
-      },
-    });
+      })
+      .onConflictDoUpdate({
+        target: universeCatalogSyncStatesTable.scopeKey,
+        set: {
+          phase: "catalog",
+          market: input.market,
+          activeOnly: input.activeOnly,
+          cursor: input.cursor,
+          lastProcessedListingKey: input.lastProcessedListingKey,
+          pagesSynced: input.pagesSynced,
+          rowsSynced: input.rowsSynced,
+          startedAt: input.startedAt,
+          finishedAt: input.finishedAt,
+          lastSuccessAt: input.lastSuccessAt,
+          lastError: input.lastError,
+          metadata,
+          updatedAt: now,
+        },
+        setWhere: sql`${persistedFenceToken} < ${input.fenceToken}::numeric
+          or (
+            ${persistedFenceToken} = ${input.fenceToken}::numeric
+            and (
+              ${universeCatalogSyncStatesTable.finishedAt} is null
+              or ${input.finishedAt !== null}
+            )
+          )`,
+      })
+      .returning({ scopeKey: universeCatalogSyncStatesTable.scopeKey });
+  });
+  if (!rows.length) {
+    throw new Error("Universe-catalog checkpoint lease was superseded.");
+  }
 }
 
 function sanitizeCursorUrl(
@@ -290,9 +336,73 @@ function sanitizeCursorUrl(
   return url.toString();
 }
 
+function cursorDigest(cursor: string): string {
+  const canonical = new URL(cursor);
+  canonical.searchParams.sort();
+  return createHash("sha256").update(canonical.toString()).digest("base64url");
+}
+
+function restoreCursorDigests(
+  metadata: Record<string, unknown> | null | undefined,
+  cursorUrl: string | null,
+): Set<string> {
+  const rawDigests = metadata?.["cursorDigests"];
+  if (rawDigests !== undefined && !Array.isArray(rawDigests)) {
+    throw new Error(
+      "Persisted provider cursor history is invalid; rerun with --reset.",
+    );
+  }
+  if (
+    Array.isArray(rawDigests) &&
+    rawDigests.length > MAX_PERSISTED_CURSOR_DIGESTS
+  ) {
+    throw new Error(
+      "Persisted provider cursor history exceeds its safety limit; rerun with --reset.",
+    );
+  }
+  const digests = new Set<string>();
+  for (const value of rawDigests ?? []) {
+    if (typeof value !== "string" || !CURSOR_DIGEST_PATTERN.test(value)) {
+      throw new Error(
+        "Persisted provider cursor history is invalid; rerun with --reset.",
+      );
+    }
+    digests.add(value);
+  }
+  if (cursorUrl) {
+    digests.add(cursorDigest(cursorUrl));
+  }
+  if (digests.size > MAX_PERSISTED_CURSOR_DIGESTS) {
+    throw new Error(
+      "Persisted provider cursor history exceeds its safety limit; rerun with --reset.",
+    );
+  }
+  return digests;
+}
+
+function assertUnseenCursor(
+  cursorUrl: string | null,
+  seenCursorDigests: ReadonlySet<string>,
+): string | null {
+  if (!cursorUrl) return null;
+  const digest = cursorDigest(cursorUrl);
+  if (seenCursorDigests.has(digest)) {
+    throw new Error("Provider cursor did not advance.");
+  }
+  // ponytail: checkpoint JSON owns at most 4,096 cursor digests; move this
+  // history to a dedicated table if a legitimate catalog approaches the cap.
+  if (seenCursorDigests.size >= MAX_PERSISTED_CURSOR_DIGESTS) {
+    throw new Error(
+      "Provider cursor history reached its safety limit; rerun with --reset.",
+    );
+  }
+  return digest;
+}
+
 function safeOutput(value: unknown, fallback: string): string {
   const cleaned = stripVTControlCharacters(String(value ?? ""))
     .replace(/([a-z][a-z0-9+.-]*:\/\/)[^@\s]+@/giu, "$1[redacted]@")
+    .replace(/([a-z][a-z0-9+.-]*:\/\/[^\s?#]+)[?#][^\s]*/giu, "$1?[redacted]")
     .replace(
       /([?&](?:api[-_]?key|access[-_]?token|token)=)[^&#\s]*/giu,
       "$1[redacted]",
@@ -300,7 +410,8 @@ function safeOutput(value: unknown, fallback: string): string {
     .replace(UNSAFE_OUTPUT_PATTERN, " ")
     .replace(/\s+/gu, " ")
     .trim();
-  const diagnostic = cleaned || fallback;
+  const diagnostic =
+    cleaned && !hasOpaqueOperatorCredential(cleaned) ? cleaned : fallback;
   return diagnostic.length <= MAX_DIAGNOSTIC_LENGTH
     ? diagnostic
     : `${diagnostic.slice(0, MAX_DIAGNOSTIC_LENGTH - 1)}…`;
@@ -335,17 +446,26 @@ async function runSync(
   dependencies: RunDependencies,
 ): Promise<SyncSummary[]> {
   const summaries: SyncSummary[] = [];
-  let release: (() => Promise<void>) | null = null;
+  let lease: AdvisoryLockLease | null = null;
   let failed = false;
 
   if (options.execute) {
-    release = await dependencies.acquireLock();
-    if (!release) {
+    lease = await dependencies.acquireLock();
+    if (!lease) {
       throw new Error("A universe-catalog sync is already running.");
     }
   }
 
   try {
+    const writerFenceToken = lease
+      ? requireUniverseCatalogWriterFenceToken(lease)
+      : null;
+    if (lease && writerFenceToken) {
+      lease.signal.throwIfAborted();
+      await dependencies.claimWriterFence(writerFenceToken);
+      lease.signal.throwIfAborted();
+    }
+
     for (const market of options.markets) {
       if (!options.execute) {
         const page = await dependencies.listPage({
@@ -366,11 +486,24 @@ async function runSync(
         continue;
       }
 
+      const fenceToken = writerFenceToken!;
+      lease!.signal.throwIfAborted();
       const scopeKey = buildScopeKey(market, options.activeOnly);
       const existingState =
         !options.reset && options.resume
           ? await dependencies.readState(scopeKey)
           : null;
+      lease!.signal.throwIfAborted();
+      if (
+        existingState &&
+        !existingState.finishedAt &&
+        !existingState.cursor &&
+        (existingState.pagesSynced > 0 || existingState.rowsSynced > 0)
+      ) {
+        throw new Error(
+          "Persisted universe-catalog progress has no resumable cursor; rerun with --reset.",
+        );
+      }
       if (
         options.resume &&
         !options.reset &&
@@ -390,6 +523,10 @@ async function runSync(
       let cursorUrl = dependencies.sanitizeCursor(
         existingState?.cursor ?? null,
       );
+      const seenCursorDigests = restoreCursorDigests(
+        existingState?.metadata,
+        cursorUrl,
+      );
       let pageCount = options.reset ? 0 : (existingState?.pagesSynced ?? 0);
       let rowCount = options.reset ? 0 : (existingState?.rowsSynced ?? 0);
       let lastProcessedListingKey = options.reset
@@ -405,7 +542,9 @@ async function runSync(
           : dependencies.now();
       const sampleListingKeys: string[] = [];
 
+      lease!.signal.throwIfAborted();
       await dependencies.writeState({
+        fenceToken,
         scopeKey,
         market,
         activeOnly: options.activeOnly,
@@ -421,31 +560,62 @@ async function runSync(
           pageLimit: options.pageLimit,
           maxPages: options.maxPages,
           resumed: Boolean(existingState && !options.reset),
+          cursorDigests: [...seenCursorDigests],
         },
       });
+      lease!.signal.throwIfAborted();
 
+      let durableProgress = {
+        cursor: cursorUrl,
+        lastProcessedListingKey,
+        pagesSynced: pageCount,
+        rowsSynced: rowCount,
+        lastSuccessAt,
+        cursorDigests: [...seenCursorDigests],
+      };
       try {
         let processedPagesThisRun = 0;
+        let reachedEmptyTerminalPage = false;
+        let completionCheckpointed = false;
         do {
+          lease!.signal.throwIfAborted();
           const page = await dependencies.listPage({
             market,
             active: options.activeOnly,
             limit: options.pageLimit,
             cursorUrl,
-            signal: AbortSignal.timeout(PROVIDER_TIMEOUT_MS),
+            signal: AbortSignal.any([
+              lease!.signal,
+              AbortSignal.timeout(PROVIDER_TIMEOUT_MS),
+            ]),
           });
+          lease!.signal.throwIfAborted();
           assertCompletePage(page);
           const nextCursor = dependencies.sanitizeCursor(page.nextUrl);
+          const nextCursorDigest = assertUnseenCursor(
+            nextCursor,
+            seenCursorDigests,
+          );
           if (!page.results.length) {
-            cursorUrl = null;
+            reachedEmptyTerminalPage = true;
             break;
           }
 
-          await dependencies.upsertRows(page.results);
+          await dependencies.upsertRows(
+            page.results,
+            fenceToken,
+            lease!.signal,
+          );
+          lease!.signal.throwIfAborted();
           rowCount += page.results.length;
           pageCount += 1;
           processedPagesThisRun += 1;
           cursorUrl = nextCursor;
+          if (nextCursorDigest) {
+            seenCursorDigests.add(nextCursorDigest);
+          } else {
+            seenCursorDigests.clear();
+          }
           lastProcessedListingKey = buildListingKey(
             page.results.at(-1) as UniverseTicker,
           );
@@ -454,7 +624,9 @@ async function runSync(
             if (sampleListingKeys.length === 10) break;
             sampleListingKeys.push(safeListingKey(row));
           }
+          lease!.signal.throwIfAborted();
           await dependencies.writeState({
+            fenceToken,
             scopeKey,
             market,
             activeOnly: options.activeOnly,
@@ -463,7 +635,7 @@ async function runSync(
             pagesSynced: pageCount,
             rowsSynced: rowCount,
             startedAt,
-            finishedAt: null,
+            finishedAt: cursorUrl ? null : lastSuccessAt,
             lastSuccessAt,
             lastError: null,
             metadata: {
@@ -471,47 +643,76 @@ async function runSync(
               processedPagesThisRun,
               lastPageCount: page.results.length,
               nextCursorPresent: Boolean(cursorUrl),
+              complete: !cursorUrl,
+              cursorDigests: [...seenCursorDigests],
             },
           });
-        } while (cursorUrl && processedPagesThisRun < options.maxPages);
-
-        const completedAt = dependencies.now();
-        await dependencies.writeState({
-          scopeKey,
-          market,
-          activeOnly: options.activeOnly,
-          cursor: cursorUrl,
-          lastProcessedListingKey,
-          pagesSynced: pageCount,
-          rowsSynced: rowCount,
-          startedAt,
-          finishedAt: cursorUrl ? null : completedAt,
-          lastSuccessAt: completedAt,
-          lastError: null,
-          metadata: {
-            pageLimit: options.pageLimit,
-            maxPages: options.maxPages,
-            complete: !cursorUrl,
-          },
-        });
-      } catch (error) {
-        try {
-          await dependencies.writeState({
-            scopeKey,
-            market,
-            activeOnly: options.activeOnly,
+          durableProgress = {
             cursor: cursorUrl,
             lastProcessedListingKey,
             pagesSynced: pageCount,
             rowsSynced: rowCount,
+            lastSuccessAt,
+            cursorDigests: [...seenCursorDigests],
+          };
+          completionCheckpointed = cursorUrl === null;
+          lease!.signal.throwIfAborted();
+        } while (cursorUrl && processedPagesThisRun < options.maxPages);
+
+        if (!completionCheckpointed) {
+          const completedAt = dependencies.now();
+          lease!.signal.throwIfAborted();
+          await dependencies.writeState({
+            fenceToken,
+            scopeKey,
+            market,
+            activeOnly: options.activeOnly,
+            cursor: reachedEmptyTerminalPage ? null : cursorUrl,
+            lastProcessedListingKey,
+            pagesSynced: pageCount,
+            rowsSynced: rowCount,
+            startedAt,
+            finishedAt: reachedEmptyTerminalPage ? completedAt : null,
+            lastSuccessAt: completedAt,
+            lastError: null,
+            metadata: {
+              pageLimit: options.pageLimit,
+              maxPages: options.maxPages,
+              complete: reachedEmptyTerminalPage,
+              cursorDigests: reachedEmptyTerminalPage
+                ? []
+                : [...seenCursorDigests],
+            },
+          });
+          if (reachedEmptyTerminalPage) {
+            cursorUrl = null;
+            seenCursorDigests.clear();
+          }
+          lease!.signal.throwIfAborted();
+        }
+      } catch (error) {
+        if (lease!.signal.aborted) {
+          throw error;
+        }
+        try {
+          await dependencies.writeState({
+            fenceToken,
+            scopeKey,
+            market,
+            activeOnly: options.activeOnly,
+            cursor: durableProgress.cursor,
+            lastProcessedListingKey: durableProgress.lastProcessedListingKey,
+            pagesSynced: durableProgress.pagesSynced,
+            rowsSynced: durableProgress.rowsSynced,
             startedAt,
             finishedAt: null,
-            lastSuccessAt,
+            lastSuccessAt: durableProgress.lastSuccessAt,
             lastError: safeDiagnostic(error),
             metadata: {
               pageLimit: options.pageLimit,
               maxPages: options.maxPages,
               failed: true,
+              cursorDigests: durableProgress.cursorDigests,
             },
           });
         } catch {
@@ -520,6 +721,7 @@ async function runSync(
         throw error;
       }
 
+      lease!.signal.throwIfAborted();
       summaries.push({
         market,
         complete: !cursorUrl,
@@ -533,9 +735,9 @@ async function runSync(
     failed = true;
     throw error;
   } finally {
-    if (release) {
+    if (lease) {
       try {
-        await release();
+        await lease();
       } catch (error) {
         if (!failed) throw error;
       }
@@ -558,21 +760,29 @@ async function main(args = process.argv.slice(2)): Promise<void> {
   const client = new MassiveMarketDataClient(config);
   const summaries = await runSync(options, {
     acquireLock: () =>
-      sharedAdvisoryLockHolder.acquire(UNIVERSE_CATALOG_SYNC_ADVISORY_LOCK_KEY),
+      sharedAdvisoryLockHolder.acquire(
+        UNIVERSE_CATALOG_WRITER_ADVISORY_LOCK_KEY,
+      ),
+    claimWriterFence: (fenceToken) =>
+      claimUniverseCatalogWriterFence({ fenceToken }),
     listPage: (input) => client.listUniverseTickersPage(input),
     now: () => new Date(),
     readState: readSyncState,
     sanitizeCursor: (cursor) => sanitizeCursorUrl(cursor, config.baseUrl),
-    upsertRows: upsertUniverseCatalogRows,
+    upsertRows: (rows, writerFenceToken, signal) =>
+      upsertUniverseCatalogRows(rows, { writerFenceToken, signal }),
     writeState: writeSyncState,
   });
   console.log(JSON.stringify({ execute: options.execute, summaries }, null, 2));
 }
 
 export const __syncUniverseCatalogInternalsForTests = {
+  cursorDigest,
   parseOptions,
   runSync,
+  safeDiagnostic,
   sanitizeCursorUrl,
+  writeSyncState,
 };
 
 async function runCli(): Promise<void> {

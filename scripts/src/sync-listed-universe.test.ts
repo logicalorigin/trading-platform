@@ -5,7 +5,10 @@ import test from "node:test";
 import { pathToFileURL } from "node:url";
 import { asc } from "drizzle-orm";
 import { withTestDb } from "@workspace/db/testing";
-import { universeSourceMembershipsTable } from "@workspace/db/schema";
+import {
+  universeCatalogSyncStatesTable,
+  universeSourceMembershipsTable,
+} from "@workspace/db/schema";
 import type {
   UniverseMarket,
   UniverseTicker,
@@ -114,6 +117,14 @@ function authoritativeBuild(source: DirectorySource = "nasdaq"): BuiltRows {
     },
     activeSourceSymbols: new Map([[sourceId, new Set(["AAPL"])]]),
   };
+}
+
+function advisoryLease(
+  controller = new AbortController(),
+  release: () => Promise<void> = async () => {},
+  fenceToken = "1",
+) {
+  return Object.assign(release, { signal: controller.signal, fenceToken });
 }
 
 test("CLI is strict, preview-first, and requires bare --execute", () => {
@@ -239,6 +250,40 @@ test("raw evidence validates the file while filters define active membership", a
   );
 });
 
+test("lease loss between directory sources stops the next fetch", async () => {
+  const controller = new AbortController();
+  const leaseLost = new Error("listed-universe lease lost");
+  const calls: string[] = [];
+
+  await assert.rejects(
+    listed.buildRows(
+      listed.parseOptions([]),
+      {
+        fetchNasdaq: async () => {
+          calls.push("nasdaq");
+          controller.abort(leaseLost);
+          return [
+            "Symbol|Security Name|Market Category|Test Issue|Financial Status|Round Lot Size|ETF|NextShares",
+            "AAPL|Apple Inc. - Common Stock|Q|N|N|100|N|N",
+            "File Creation Time: 0714202617:00",
+          ].join("\n");
+        },
+        fetchOther: async () => {
+          calls.push("other");
+          return [
+            "ACT Symbol|Security Name|Exchange|CQS Symbol|ETF|Round Lot Size|Test Issue|NASDAQ Symbol",
+            "IBM|International Business Machines - Common Stock|N|IBM|N|100|N|IBM",
+            "File Creation Time: 0714202617:01",
+          ].join("\n");
+        },
+      },
+      controller.signal,
+    ),
+    (error) => error === leaseLost,
+  );
+  assert.deepEqual(calls, ["nasdaq"]);
+});
+
 test("missing trailers and malformed source rows are not authoritative", async () => {
   const missingTrailer = authoritativeBuild();
   missingTrailer.sourceSummaries.nasdaq!.fileCreationTime = null;
@@ -299,7 +344,10 @@ test("preview does not acquire a lock or cross a write boundary", async () => {
     {
       acquireLock: async () => {
         calls.push("lock");
-        return async () => {};
+        return advisoryLease();
+      },
+      claimWriterFence: async (fenceToken) => {
+        calls.push(`claim:${fenceToken}`);
       },
       buildRows: async () => {
         calls.push("build");
@@ -343,9 +391,12 @@ test("complete execution reconciles; limited execution remains additive", async 
     const result = await listed.runSync(listed.parseOptions(input.args), {
       acquireLock: async () => {
         calls.push("lock");
-        return async () => {
+        return advisoryLease(new AbortController(), async () => {
           calls.push("release");
-        };
+        });
+      },
+      claimWriterFence: async (fenceToken) => {
+        calls.push(`claim:${fenceToken}`);
       },
       buildRows: async () => {
         calls.push("build");
@@ -369,6 +420,7 @@ test("complete execution reconciles; limited execution remains additive", async 
 
     assert.deepEqual(calls, [
       "lock",
+      "claim:1",
       "build",
       "catalog",
       "memberships",
@@ -396,9 +448,12 @@ test("execution fails closed before writes and always releases its lock", async 
     listed.runSync(listed.parseOptions(["--execute", "--sources=nasdaq"]), {
       acquireLock: async () => {
         calls.push("lock");
-        return async () => {
+        return advisoryLease(new AbortController(), async () => {
           calls.push("release");
-        };
+        });
+      },
+      claimWriterFence: async (fenceToken) => {
+        calls.push(`claim:${fenceToken}`);
       },
       buildRows: async () => {
         calls.push("build");
@@ -418,11 +473,12 @@ test("execution fails closed before writes and always releases its lock", async 
     }),
     /complete|trailer|authoritative/iu,
   );
-  assert.deepEqual(calls, ["lock", "build", "release"]);
+  assert.deepEqual(calls, ["lock", "claim:1", "build", "release"]);
 
   await assert.rejects(
     listed.runSync(listed.parseOptions(["--execute"]), {
       acquireLock: async () => null,
+      claimWriterFence: async () => {},
       buildRows: async () => {
         throw new Error("build should not run");
       },
@@ -439,9 +495,11 @@ test("execution fails closed before writes and always releases its lock", async 
   const primary = new Error("primary source failure");
   await assert.rejects(
     listed.runSync(listed.parseOptions(["--execute"]), {
-      acquireLock: async () => async () => {
-        throw new Error("secondary lock cleanup failure");
-      },
+      acquireLock: async () =>
+        advisoryLease(new AbortController(), async () => {
+          throw new Error("secondary lock cleanup failure");
+        }),
+      claimWriterFence: async () => {},
       buildRows: async () => {
         throw primary;
       },
@@ -456,9 +514,68 @@ test("execution fails closed before writes and always releases its lock", async 
   );
 });
 
+test("lease loss stops the next catalog and membership write phases", async () => {
+  for (const abortAfter of ["build", "catalog"] as const) {
+    const controller = new AbortController();
+    const leaseLost = new Error(`lease lost after ${abortAfter}`);
+    const calls: string[] = [];
+
+    await assert.rejects(
+      listed.runSync(listed.parseOptions(["--execute", "--sources=nasdaq"]), {
+        acquireLock: async () => {
+          calls.push("lock");
+          return advisoryLease(controller, async () => {
+            calls.push("release");
+          });
+        },
+        claimWriterFence: async (fenceToken) => {
+          calls.push(`claim:${fenceToken}`);
+        },
+        buildRows: async () => {
+          calls.push("build");
+          if (abortAfter === "build") controller.abort(leaseLost);
+          return authoritativeBuild();
+        },
+        upsertCatalog: async (
+          _rows: unknown,
+          _writerFenceToken: string,
+          signal?: AbortSignal,
+        ) => {
+          calls.push("catalog");
+          assert.equal(signal, controller.signal);
+          if (abortAfter === "catalog") controller.abort(leaseLost);
+        },
+        syncMemberships: async () => {
+          calls.push("memberships");
+          return {
+            upsertedRows: 1,
+            deactivatedRows: 0,
+            deactivatedBySource: {},
+          };
+        },
+      }),
+      (error) => error === leaseLost,
+    );
+
+    assert.deepEqual(
+      calls,
+      abortAfter === "build"
+        ? ["lock", "claim:1", "build", "release"]
+        : ["lock", "claim:1", "build", "catalog", "release"],
+    );
+  }
+});
+
 test("membership transaction deactivates absences from the filtered source set", async () => {
   await withTestDb(async ({ db }) => {
     const old = new Date("2026-07-01T00:00:00.000Z");
+    await db.insert(universeCatalogSyncStatesTable).values({
+      scopeKey: "catalog:writer",
+      phase: "writer",
+      market: "stocks",
+      activeOnly: true,
+      metadata: { leaseFenceToken: "1" },
+    });
     await db.insert(universeSourceMembershipsTable).values([
       {
         sourceId: "nasdaq_listed",
@@ -519,6 +636,7 @@ test("membership transaction deactivates absences from the filtered source set",
         ["nasdaq_listed", new Set(["AAPL", "MSFT", "RETURNED"])],
       ]),
       reconcileSourceIds: ["nasdaq_listed"],
+      writerFenceToken: "1",
       database: db,
       now,
     });
@@ -604,6 +722,33 @@ test("membership transaction deactivates absences from the filtered source set",
   });
 });
 
+test("a superseded universe writer cannot commit source memberships", async () => {
+  await withTestDb(async ({ db }) => {
+    await db.insert(universeCatalogSyncStatesTable).values({
+      scopeKey: "catalog:writer",
+      phase: "writer",
+      market: "stocks",
+      activeOnly: true,
+      metadata: { leaseFenceToken: "11" },
+    });
+    const input = {
+      rows: [sourceRow("nasdaq_listed", "AAPL")],
+      activeSourceSymbols: new Map([
+        ["nasdaq_listed" as const, new Set(["AAPL"])],
+      ]),
+      reconcileSourceIds: ["nasdaq_listed" as const],
+      database: db,
+      writerFenceToken: "10",
+    } as MembershipSyncInput & { writerFenceToken: string };
+
+    await assert.rejects(listed.syncSourceMemberships(input), /superseded/iu);
+    assert.equal(
+      (await db.select().from(universeSourceMembershipsTable)).length,
+      0,
+    );
+  });
+});
+
 test("CLI help/import boundaries never reach providers or the database", () => {
   const help = runCli(["--help"]);
   assert.equal(help.status, 0, `${help.stdout}${help.stderr}`);
@@ -645,15 +790,35 @@ test("CLI help/import boundaries never reach providers or the database", () => {
 test("diagnostics redact credentials and cannot control the terminal", () => {
   const diagnostic = listed.safeDiagnostic(
     new Error(
-      `postgresql://operator:super-secret@db.example/pyrus \u001b[31mline\nnext\u202e${"x".repeat(600)}`,
+      `postgresql://operator:super-secret@db.example/pyrus https://directory.example/file?access_token=short-secret&cursor=keep \u001b[31mline\nnext\u202e${"x".repeat(600)}`,
     ),
   );
 
   assert.match(diagnostic, /postgresql:\/\/\[redacted\]@db\.example\/pyrus/u);
   assert.doesNotMatch(diagnostic, /super-secret/u);
+  assert.match(diagnostic, /https:\/\/directory\.example\/file\?\[redacted\]/u);
+  assert.doesNotMatch(diagnostic, /short-secret/u);
   assert.doesNotMatch(
     diagnostic,
     /[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/u,
   );
   assert.ok(diagnostic.length <= 400);
+  const opaqueCredential = `sk-${"a".repeat(32)}`;
+  assert.doesNotMatch(
+    listed.safeDiagnostic(
+      new Error(`provider rejected credential ${opaqueCredential}`),
+    ),
+    new RegExp(opaqueCredential, "u"),
+  );
+});
+
+test("diagnostics redact percent-encoded credential query names", () => {
+  const credential = "percent-encoded-listed-secret";
+  const diagnostic = listed.safeDiagnostic(
+    new Error(
+      `provider rejected https://directory.example/file?access%5Ftoken=${credential}&cursor=keep`,
+    ),
+  );
+
+  assert.doesNotMatch(diagnostic, new RegExp(credential, "u"));
 });
