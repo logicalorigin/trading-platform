@@ -748,10 +748,13 @@ export async function closeDatabaseConnections(): Promise<void> {
 export {
   createDbAdmissionScheduler,
   currentDbLane,
+  DbAdmissionTimeoutError,
   getDbAdmissionDiagnostics,
   resolveDbAdmissionSchedulerConfig,
   runInDbLane,
+  type DbAdmissionAcquireOptions,
   type DbAdmissionDiagnostics,
+  type DbAdmissionTimeoutKind,
   type DbLane,
 } from "./admission";
 export {
