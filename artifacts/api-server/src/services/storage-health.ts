@@ -1,5 +1,6 @@
 import {
   describeDatabaseRuntimeConnection,
+  parseOptionalPositiveInteger,
   pool,
 } from "@workspace/db";
 import * as dbExports from "@workspace/db";
@@ -35,9 +36,9 @@ export type StorageHealthSnapshot = {
   // Kept for compatibility; use the components below to attribute app-side queueing
   // vs. actual DB work. Fresh-connection DB RTT is ~2-5ms (see wo-db-pressure-report).
   pingMs: number | null;
-  // Background admission lane (cap 2) queue wait before the probe starts.
+  // Reserved for a future measured admission-lane split; unavailable today.
   laneWaitMs: number | null;
-  // pool.connect() wait once admitted (pool saturation shows up here).
+  // Wrapped pool.connect() time: admission queue plus raw pg pool acquisition.
   acquireMs: number | null;
   // Actual statement execution + synchronous-commit WAL flush (the real DB signal).
   execMs: number | null;
@@ -48,7 +49,7 @@ export type StorageHealthSnapshot = {
 };
 
 type StorageHealthProbeTimings = {
-  laneWaitMs: number;
+  laneWaitMs: number | null;
   acquireMs: number;
   execMs: number;
 };
@@ -56,6 +57,8 @@ type StorageHealthProbe = () => Promise<StorageHealthProbeTimings | void>;
 type DbLaneRunner = <T>(lane: "background", fn: () => T) => T;
 
 let storageHealthProbeForTests: StorageHealthProbe | null = null;
+let storageHealthProbeInFlight: Promise<StorageHealthSnapshot> | null = null;
+let storageHealthProbeGeneration = 0;
 const DEFAULT_STORAGE_HEALTH_PROBE_INTERVAL_MS = 5 * 60 * 1000;
 const runInDbLane = (
   dbExports as typeof dbExports & { runInDbLane: DbLaneRunner }
@@ -133,10 +136,10 @@ let cachedStorageHealth = buildSnapshot({
 });
 
 async function defaultStorageHealthProbe(): Promise<StorageHealthProbeTimings> {
-  const laneRequestedAt = Date.now();
   return runInDbLane("background", async () => {
-    const admittedAt = Date.now();
+    const acquireStartedAt = Date.now();
     const client = await pool.connect();
+    let releaseError: Error | undefined;
     try {
       const acquiredAt = Date.now();
       const probeId = `probe-${Date.now()}-${Math.random().toString(36).slice(2)}`;
@@ -153,30 +156,45 @@ async function defaultStorageHealthProbe(): Promise<StorageHealthProbeTimings> {
         [probeId],
       );
       if (result.rows[0]?.value !== "ok") {
-        throw new Error("Postgres read/write probe did not return the inserted row.");
+        throw new Error(
+          "Postgres read/write probe did not return the inserted row.",
+        );
       }
       await client.query("commit");
       return {
-        laneWaitMs: admittedAt - laneRequestedAt,
-        acquireMs: acquiredAt - admittedAt,
+        // ponytail: wrapped pool.connect exposes only combined admission + pg
+        // acquisition; add per-acquire scheduler timing when a consumer needs it.
+        laneWaitMs: null,
+        acquireMs: acquiredAt - acquireStartedAt,
         execMs: Date.now() - acquiredAt,
       };
     } catch (error) {
       try {
         await client.query("rollback");
-      } catch {}
+      } catch (rollbackError) {
+        releaseError =
+          rollbackError instanceof Error
+            ? rollbackError
+            : new Error(String(rollbackError));
+        throw new AggregateError(
+          [error, releaseError],
+          "Storage health probe and rollback failed",
+          { cause: error },
+        );
+      }
       throw error;
     } finally {
-      client.release();
+      client.release(releaseError);
     }
   });
 }
 
 function storageHealthProbeIntervalMs(): number {
-  const parsed = Number(process.env["STORAGE_HEALTH_PROBE_INTERVAL_MS"]);
-  return Number.isFinite(parsed) && parsed > 0
-    ? Math.floor(parsed)
-    : DEFAULT_STORAGE_HEALTH_PROBE_INTERVAL_MS;
+  return (
+    parseOptionalPositiveInteger(
+      process.env["STORAGE_HEALTH_PROBE_INTERVAL_MS"],
+    ) ?? DEFAULT_STORAGE_HEALTH_PROBE_INTERVAL_MS
+  );
 }
 
 function canReuseCachedStorageHealth(nowMs: number): boolean {
@@ -222,33 +240,58 @@ export async function refreshStorageHealthSnapshot(): Promise<StorageHealthSnaps
   if (canReuseCachedStorageHealth(Date.now())) {
     return cachedStorageHealth;
   }
+  if (storageHealthProbeInFlight) {
+    return storageHealthProbeInFlight;
+  }
 
-  const startedAt = Date.now();
+  const probeGeneration = storageHealthProbeGeneration;
+  const publish = (snapshot: StorageHealthSnapshot): StorageHealthSnapshot => {
+    if (storageHealthProbeGeneration === probeGeneration) {
+      cachedStorageHealth = snapshot;
+    }
+    return snapshot;
+  };
+  const probe = (async () => {
+    const startedAt = Date.now();
+    try {
+      const timings = await (
+        storageHealthProbeForTests ?? defaultStorageHealthProbe
+      )();
+      return publish(
+        buildSnapshot({
+          status: "ok",
+          reachable: true,
+          reason: null,
+          error: null,
+          pingMs: Date.now() - startedAt,
+          laneWaitMs: timings?.laneWaitMs ?? null,
+          acquireMs: timings?.acquireMs ?? null,
+          execMs: timings?.execMs ?? null,
+        }),
+      );
+    } catch (error) {
+      const transient = isTransientPostgresError(error);
+      const dbError = summarizeTransientPostgresError(error);
+      return publish(
+        buildSnapshot({
+          status: "unavailable",
+          reachable: false,
+          reason: transient ? "postgres_unreachable" : "postgres_probe_failed",
+          error: dbError.message,
+          pingMs: Date.now() - startedAt,
+          transient,
+          dbError,
+        }),
+      );
+    }
+  })();
+  storageHealthProbeInFlight = probe;
   try {
-    const timings = await (storageHealthProbeForTests ?? defaultStorageHealthProbe)();
-    cachedStorageHealth = buildSnapshot({
-      status: "ok",
-      reachable: true,
-      reason: null,
-      error: null,
-      pingMs: Date.now() - startedAt,
-      laneWaitMs: timings?.laneWaitMs ?? null,
-      acquireMs: timings?.acquireMs ?? null,
-      execMs: timings?.execMs ?? null,
-    });
-    return cachedStorageHealth;
-  } catch (error) {
-    const transient = isTransientPostgresError(error);
-    cachedStorageHealth = buildSnapshot({
-      status: "unavailable",
-      reachable: false,
-      reason: transient ? "postgres_unreachable" : "postgres_probe_failed",
-      error: error instanceof Error ? error.message : String(error),
-      pingMs: Date.now() - startedAt,
-      transient,
-      dbError: summarizeTransientPostgresError(error),
-    });
-    return cachedStorageHealth;
+    return await probe;
+  } finally {
+    if (storageHealthProbeInFlight === probe) {
+      storageHealthProbeInFlight = null;
+    }
   }
 }
 
@@ -256,25 +299,30 @@ export function markStorageHealthDegraded(
   reason: string,
   error: unknown,
 ): StorageHealthSnapshot {
+  const dbError = summarizeTransientPostgresError(error);
   cachedStorageHealth = {
     ...cachedStorageHealth,
     status: "degraded",
     reachable: true,
     checkedAt: nowIso(),
     reason,
-    error: error instanceof Error ? error.message : String(error),
+    error: dbError.message,
     transient: isTransientPostgresError(error),
-    dbError: summarizeTransientPostgresError(error),
+    dbError,
   };
   return cachedStorageHealth;
 }
 
-export function __setStorageHealthProbeForTests(probe: StorageHealthProbe | null): void {
+export function __setStorageHealthProbeForTests(
+  probe: StorageHealthProbe | null,
+): void {
   storageHealthProbeForTests = probe;
 }
 
 export function __resetStorageHealthForTests(): void {
+  storageHealthProbeGeneration += 1;
   storageHealthProbeForTests = null;
+  storageHealthProbeInFlight = null;
   cachedStorageHealth = buildSnapshot({
     status: "unavailable",
     reachable: false,
