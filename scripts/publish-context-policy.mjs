@@ -1,4 +1,4 @@
-import { lstatSync, readdirSync } from "node:fs";
+import { lstatSync, readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 
 export const publishContextLimitBytes = 7_000_000_000;
@@ -16,6 +16,11 @@ export const requiredPublishExclusions = Object.freeze([
   "**/.local",
   "**/.cache",
   "**/.config",
+  "**/.ssh",
+  "**/.aws",
+  "**/.docker",
+  "**/.kube",
+  "**/.gnupg",
   "**/.gstack",
   "**/.pythonlibs",
   "**/.venv",
@@ -42,6 +47,13 @@ export const requiredPublishExclusions = Object.freeze([
   "**/AGENT_CHAT*.jsonl",
   "**/AGENTS.md",
   "**/CLAUDE.md",
+  "**/.npmrc",
+  "!.npmrc",
+  "**/.netrc",
+  "**/.pypirc",
+  "**/.git-credentials",
+  "**/.cargo/credentials",
+  "**/.cargo/credentials.toml",
   "**/.[eE][nN][vV]",
   "**/.[eE][nN][vV].*",
   "!.env.example",
@@ -64,6 +76,11 @@ const protectedDirectoryNames = new Set([
   ".local",
   ".cache",
   ".config",
+  ".ssh",
+  ".aws",
+  ".docker",
+  ".kube",
+  ".gnupg",
   ".gstack",
   ".pythonlibs",
   ".venv",
@@ -83,6 +100,13 @@ const protectedDirectoryNames = new Set([
   "playwright-report",
   "attached_assets",
 ]);
+const protectedCredentialFileNames = new Set([
+  ".netrc",
+  ".pypirc",
+  ".git-credentials",
+]);
+const credentialExtensionPattern = /\.(?:pem|key|p12|pfx|jks|keystore)$/i;
+const approvedRootNpmConfig = "strict-peer-dependencies=false\n";
 
 export function parsePublishIgnore(ignoreText) {
   return ignoreText
@@ -127,8 +151,25 @@ export function isProtectedPublishPath(relPath) {
   }
 
   return (
-    /\.(?:pem|key|p12|pfx|jks|keystore)$/iu.test(base) ||
+    (base === ".npmrc" && normalized !== ".npmrc") ||
+    protectedCredentialFileNames.has(base) ||
+    normalized === ".cargo/credentials" ||
+    normalized === ".cargo/credentials.toml" ||
+    normalized.endsWith("/.cargo/credentials") ||
+    normalized.endsWith("/.cargo/credentials.toml") ||
+    credentialExtensionPattern.test(base) ||
     base.endsWith(".cpuprofile")
+  );
+}
+
+function hasAmbiguousCredentialFilename(relPath) {
+  const base = relPath.split(path.sep).at(-1) ?? "";
+  if (base.trim() !== base || /[\u0000-\u001f\u007f]/u.test(base)) {
+    return true;
+  }
+  const canonicalBase = base.normalize("NFKC");
+  return (
+    canonicalBase !== base && credentialExtensionPattern.test(canonicalBase)
   );
 }
 
@@ -151,12 +192,26 @@ export function auditPublishContext({
       `Replit publish context must exclude protected paths and file types; missing: ${missing.join(", ")}.`,
     );
   }
-  const unexpectedReincludes = ignoreEntries.filter(
-    (entry) => entry.startsWith("!") && entry !== "!.env.example",
+  const unexpectedRules = ignoreEntries.filter(
+    (entry) => !requiredPublishExclusions.includes(entry),
   );
-  if (unexpectedReincludes.length > 0) {
+  if (unexpectedRules.length > 0) {
     failures.push(
-      `Replit publish context must not re-include protected content; unexpected rules: ${unexpectedReincludes.join(", ")}.`,
+      `Replit publish context contains unexpected rules: ${unexpectedRules.join(", ")}.`,
+    );
+  }
+  const orderedPolicyMatches =
+    ignoreEntries.length === requiredPublishExclusions.length &&
+    ignoreEntries.every(
+      (entry, index) => entry === requiredPublishExclusions[index],
+    );
+  if (
+    !orderedPolicyMatches &&
+    missing.length === 0 &&
+    unexpectedRules.length === 0
+  ) {
+    failures.push(
+      "Replit publish context must preserve the reviewed ordered publication policy.",
     );
   }
 
@@ -179,6 +234,11 @@ export function auditPublishContext({
       const relPath = relativeDir
         ? path.join(relativeDir, entry.name)
         : entry.name;
+      if (hasAmbiguousCredentialFilename(relPath)) {
+        failures.push(
+          `Publish context contains an ambiguous credential filename: ${JSON.stringify(relPath)}.`,
+        );
+      }
       if (isProtectedPublishPath(relPath)) continue;
 
       const fullPath = path.join(dirPath, entry.name);
@@ -200,6 +260,15 @@ export function auditPublishContext({
         archiveEstimateBytes += 512;
         walk(fullPath, relPath);
       } else if (stat.isFile()) {
+        if (
+          relPath === ".npmrc" &&
+          (stat.size !== approvedRootNpmConfig.length ||
+            readFileSync(fullPath, "utf8") !== approvedRootNpmConfig)
+        ) {
+          failures.push(
+            "Publish context root .npmrc must match the reviewed sanitized configuration.",
+          );
+        }
         includedBytes += stat.size;
         includedFiles += 1;
         archiveEstimateBytes += archiveEntryBytes(stat.size);

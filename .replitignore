@@ -12,6 +12,11 @@
 **/.local
 **/.cache
 **/.config
+**/.ssh
+**/.aws
+**/.docker
+**/.kube
+**/.gnupg
 **/.gstack
 **/.pythonlibs
 **/.venv
@@ -44,6 +49,13 @@ security/pentest
 **/CLAUDE.md
 
 # Secrets and private-key containers are denied by name and type.
+**/.npmrc
+!.npmrc
+**/.netrc
+**/.pypirc
+**/.git-credentials
+**/.cargo/credentials
+**/.cargo/credentials.toml
 **/.[eE][nN][vV]
 **/.[eE][nN][vV].*
 !.env.example
