@@ -83,6 +83,20 @@ test("Shadow option economics reject non-positive contract inputs at the trust b
   );
 });
 
+test("Shadow option economics preserve the shares-per-contract preference", () => {
+  assert.equal(
+    internals.marketMultiplierForTests({
+      assetClass: "option",
+      optionContract: {
+        ...optionContract,
+        multiplier: 50,
+        sharesPerContract: 100,
+      } as never,
+    }),
+    100,
+  );
+});
+
 test("Shadow stop diagnostics retain no credential-shaped error text", async () => {
   internals.resetSignalOptionsTrailingStopEnforcementFailureDiagnosticsForTests();
   const secret = "postgres://redacted.invalid/pyrus";

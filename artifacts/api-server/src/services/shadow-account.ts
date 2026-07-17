@@ -1432,8 +1432,8 @@ function marketMultiplier(input: {
 }): number {
   if (input.assetClass === "option") {
     return (
-      readPositiveNumber(input.optionContract?.multiplier) ??
       readPositiveNumber(input.optionContract?.sharesPerContract) ??
+      readPositiveNumber(input.optionContract?.multiplier) ??
       100
     );
   }
