@@ -6,12 +6,24 @@ import {
   readFileSync,
   readdirSync,
   readlinkSync,
+  renameSync,
+  rmSync,
   statSync,
   writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
+
+import {
+  extractCustomExecCommands,
+  textFromCodexValue,
+} from "../../../../scripts/lib/codex-rollout.mjs";
+import { redactPersistedText } from "../../../../scripts/lib/redact-persisted-text.mjs";
+import {
+  createValidationLock,
+  removeValidationLock,
+} from "../../../../scripts/run-validation-command.mjs";
 
 function fail(message) {
   process.stderr.write(`session-handoff: ${message}\n`);
@@ -143,17 +155,20 @@ function resolveRepoRoot(startDir) {
   return path.resolve(startDir);
 }
 
-function pathRelated(left, right) {
-  if (!left || !right) {
+export function isPathWithin(parentPath, candidatePath) {
+  if (!parentPath || !candidatePath) {
     return false;
   }
 
-  const normalizedLeft = path.resolve(left);
-  const normalizedRight = path.resolve(right);
+  const relative = path.relative(
+    path.resolve(parentPath),
+    path.resolve(candidatePath),
+  );
   return (
-    normalizedLeft === normalizedRight ||
-    normalizedLeft.startsWith(`${normalizedRight}${path.sep}`) ||
-    normalizedRight.startsWith(`${normalizedLeft}${path.sep}`)
+    relative === "" ||
+    (relative !== ".." &&
+      !relative.startsWith(`..${path.sep}`) &&
+      !path.isAbsolute(relative))
   );
 }
 
@@ -234,7 +249,7 @@ function loadRecentUserMessagesFromHistory(sessionId, limit = 12) {
 
       messages.push({
         timestamp,
-        text: entry.text.trim(),
+        text: redactPersistedText(entry.text).trim(),
       });
     } catch {
       continue;
@@ -351,16 +366,54 @@ function isHighSignalPath(filePath) {
   return true;
 }
 
-function oneLine(value, maxLength = 120) {
-  const normalized = String(value ?? "")
+function markdownSafeText(value) {
+  return redactPersistedText(value)
+    .replace(/\r\n?/g, "\n")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll("`", "&#96;")
+    .replaceAll("[", "&#91;");
+}
+
+export function oneLine(value, maxLength = 120) {
+  const normalized = markdownSafeText(value)
     .replace(/\s+/g, " ")
     .trim();
+  const codePoints = Array.from(normalized);
 
-  if (normalized.length <= maxLength) {
+  if (codePoints.length <= maxLength) {
     return normalized;
   }
 
-  return `${normalized.slice(0, Math.max(0, maxLength - 1)).trimEnd()}…`;
+  return `${codePoints.slice(0, Math.max(0, maxLength - 1)).join("").trimEnd()}…`;
+}
+
+function markdownBlockquote(value) {
+  return markdownSafeText(value)
+    .split("\n")
+    .map((line) => (line.trim() ? `> ${line}` : ">"))
+    .join("\n");
+}
+
+function markdownSafeBlock(value) {
+  return markdownSafeText(value).replace(
+    /^(\s*)(#{1,6})(?=\s)/gm,
+    (_match, indent, hashes) => `${indent}&#35;${hashes.slice(1)}`,
+  );
+}
+
+function inlineCode(value, maxLength = 1000) {
+  const text = oneLine(value || "unknown", maxLength);
+  const longest = Math.max(0, ...[...text.matchAll(/`+/g)].map((match) => match[0].length));
+  const fence = "`".repeat(Math.max(1, longest + 1));
+  return `${fence}${text}${fence}`;
+}
+
+function fencedText(value) {
+  const text = redactPersistedText(value || "Unavailable").replace(/\r\n?/g, "\n");
+  const longest = Math.max(0, ...[...text.matchAll(/`+/g)].map((match) => match[0].length));
+  const fence = "`".repeat(Math.max(3, longest + 1));
+  return `${fence}text\n${text}\n${fence}`;
 }
 
 function tableCell(value) {
@@ -451,37 +504,11 @@ function outputPathForThread({ args, repoRoot, thread }) {
   return path.join(outputDir, existingFileName ?? defaultHandoffFileName(thread));
 }
 
-function textFromValue(value) {
-  if (typeof value === "string") {
-    return value;
-  }
-
-  if (Array.isArray(value)) {
-    return value
-      .map((item) => {
-        if (typeof item === "string") {
-          return item;
-        }
-        if (typeof item?.text === "string") {
-          return item.text;
-        }
-        if (typeof item?.content === "string") {
-          return item.content;
-        }
-        return "";
-      })
-      .filter(Boolean)
-      .join(" ");
-  }
-
-  return "";
-}
-
 function payloadText(payload) {
-  return (
-    textFromValue(payload?.message) ||
-    textFromValue(payload?.text) ||
-    textFromValue(payload?.content)
+  return redactPersistedText(
+    textFromCodexValue(payload?.message) ||
+      textFromCodexValue(payload?.text) ||
+      textFromCodexValue(payload?.content),
   ).trim();
 }
 
@@ -518,6 +545,25 @@ function commandFromFunctionCall(payload) {
   return args.cmd || args.command || "";
 }
 
+function customToolOutputState(payload) {
+  if (typeof payload?.exit_code === "number") {
+    return { kind: "exit", exitCode: payload.exit_code };
+  }
+
+  const output = textFromCodexValue(payload?.output);
+  const exit = output.match(
+    /(?:^|\n)(?:Process exited with code|exit_code["']?\s*[:=])\s*(-?\d+)\b/im,
+  );
+  if (exit) return { kind: "exit", exitCode: Number.parseInt(exit[1], 10) };
+  if (/(?:^|\n)Script completed[ \t]*(?:\r?\n|$)/i.test(output)) {
+    return { kind: "completed" };
+  }
+  if (/(?:^|\n)Script running with cell ID\b/im.test(output)) {
+    return { kind: "running" };
+  }
+  return { kind: "unknown" };
+}
+
 function functionCallSummary(payload) {
   const name = payload?.name ?? "tool";
   if (name === "exec_command") {
@@ -532,10 +578,49 @@ function functionCallSummary(payload) {
   return `Tool: ${name} ${oneLine(payload?.arguments ?? "", 160)}`;
 }
 
+function shellCommandSegments(command) {
+  const segments = [];
+  let start = 0;
+  let quote = null;
+  for (let index = 0; index < command.length; index += 1) {
+    const char = command[index];
+    if (quote) {
+      if (char === "\\" && quote !== "'") index += 1;
+      else if (char === quote) quote = null;
+      continue;
+    }
+    if (char === '"' || char === "'" || char === "`") {
+      quote = char;
+      continue;
+    }
+    const separator = char === "\n" || char === ";" ||
+      ((char === "&" || char === "|") && command[index + 1] === char);
+    if (!separator) continue;
+    segments.push(command.slice(start, index));
+    if (char === "&" || char === "|") index += 1;
+    start = index + 1;
+  }
+  segments.push(command.slice(start));
+  return segments;
+}
+
 function isValidationCommand(command) {
-  return /\b(node\s+--check|pnpm\s+(run\s+)?(test|typecheck|build|lint)|npm\s+(run\s+)?(test|typecheck|build|lint)|yarn\s+(test|typecheck|build|lint)|bun\s+(test|run\s+(test|typecheck|build|lint))|vitest|playwright\s+test|tsc\b|cargo\s+test|go\s+test)\b/i.test(
-    command,
-  );
+  const pnpmOptions = String.raw`(?:(?:\s+--(?:filter|dir|workspace-concurrency)(?:=|\s+)\S+)|(?:\s+--(?:workspace-root|recursive|if-present))|(?:\s+-[rw])|(?:\s+-C\s+\S+))*`;
+  return shellCommandSegments(String(command ?? "")).some((rawSegment) => {
+    const segment = rawSegment
+      .trim()
+      .replace(/^(?:env\s+)?(?:(?:[A-Za-z_][A-Za-z0-9_]*)=(?:"(?:\\.|[^"])*"|'[^']*'|\S+)\s+)*/, "");
+    return new RegExp(
+      `^pnpm\\b${pnpmOptions}\\s+(?:(?:run\\s+)?(?:test|typecheck|build|lint|check|deadcode|fmt|audit(?::[A-Za-z0-9:_-]+)?)\\b|exec\\s+(?:vitest|tsc|playwright\\s+test|node\\s+--test)\\b)`,
+      "i",
+    ).test(segment) ||
+      /^(?:npm|yarn)\s+(?:run\s+)?(?:test|typecheck|build|lint|check)\b/i.test(segment) ||
+      /^bun\s+(?:test|run\s+(?:test|typecheck|build|lint|check))\b/i.test(segment) ||
+      /^node\s+(?:--check|--test)\b/i.test(segment) ||
+      /^node\s+scripts\/(?:run-validation-command|check-[^\s]+)\.mjs\b/i.test(segment) ||
+      /^node\s+scripts\/run-[^\s]+\.mjs\s+(?:test|typecheck|lint|build|check|fmt)\b/i.test(segment) ||
+      /^(?:vitest|playwright\s+test|tsc\b|cargo\s+(?:test|check|clippy|fmt)\b|go\s+test\b)/i.test(segment);
+  });
 }
 
 function compactActivity(activity) {
@@ -556,7 +641,7 @@ function compactActivity(activity) {
   ];
 }
 
-function loadRolloutSummary(rolloutPath) {
+export function loadRolloutSummary(rolloutPath) {
   const summary = {
     activity: [],
     userMessages: [],
@@ -573,6 +658,7 @@ function loadRolloutSummary(rolloutPath) {
     .filter(Boolean);
 
   const activity = [];
+  const customExecCommands = new Map();
   const validations = [];
   const userMessages = [];
 
@@ -611,6 +697,63 @@ function loadRolloutSummary(rolloutPath) {
       continue;
     }
 
+    if (type === "custom_tool_call") {
+      if (payload?.name !== "exec" || typeof payload.call_id !== "string") continue;
+      const extracted = extractCustomExecCommands(payload.input);
+      customExecCommands.set(payload.call_id, {
+        ...extracted,
+        validationIndexes: new Map(),
+      });
+      for (const command of extracted.commands) {
+        activity.push({ timestamp, text: `Tool: exec ${oneLine(command, 180)}` });
+      }
+      if (extracted.unknownInvocations > 0) {
+        activity.push({
+          timestamp,
+          text: `Tool: exec (${extracted.unknownInvocations} command ${extracted.unknownInvocations === 1 ? "shape" : "shapes"} unavailable)`,
+        });
+      }
+      continue;
+    }
+
+    if (type === "custom_tool_call_output") {
+      const invocation = customExecCommands.get(payload.call_id);
+      if (!invocation) continue;
+      const state = customToolOutputState(payload);
+      const correlatedState = invocation.commands.length === 1 &&
+        invocation.unknownInvocations === 0 ? state : { kind: "unknown" };
+      const label = correlatedState.kind === "exit"
+        ? ` (exit ${correlatedState.exitCode})`
+        : correlatedState.kind === "completed"
+          ? " (completed)"
+          : correlatedState.kind === "running"
+            ? " (started; completion not observed)"
+            : " (result returned; exit unknown)";
+
+      for (const [commandIndex, command] of invocation.commands.entries()) {
+        if (isValidationCommand(command)) {
+          const validation = { timestamp, text: `${oneLine(command, 180)}${label}` };
+          const existingIndex = invocation.validationIndexes.get(commandIndex);
+          if (existingIndex === undefined) {
+            invocation.validationIndexes.set(commandIndex, validations.push(validation) - 1);
+          } else {
+            validations[existingIndex] = validation;
+          }
+        }
+      }
+
+      if (state.kind === "exit" && state.exitCode !== 0) {
+        activity.push({
+          timestamp,
+          text: invocation.commands.length === 1 && invocation.unknownInvocations === 0
+            ? `Tool failed: ${oneLine(invocation.commands[0], 180)} (exit ${state.exitCode})`
+            : `Tool failed: exec orchestration (exit ${state.exitCode})`,
+        });
+      }
+      if (state.kind !== "running") customExecCommands.delete(payload.call_id);
+      continue;
+    }
+
     if (type === "exec_command_end") {
       const command = commandFromExecEnd(payload);
       const exitCode =
@@ -619,7 +762,7 @@ function loadRolloutSummary(rolloutPath) {
       if (isValidationCommand(command)) {
         validations.push({
           timestamp,
-          text: `${oneLine(command, 180)}${exitCode === null ? "" : ` (exit ${exitCode})`}`,
+          text: `${oneLine(command, 180)}${exitCode === null ? " (result returned; exit unknown)" : ` (exit ${exitCode})`}`,
         });
       }
 
@@ -657,7 +800,7 @@ function mergeUserMessages(historyMessages, rolloutMessages, limit = 12) {
 }
 
 function markdownTimestamp(timestamp) {
-  return timestamp ? `\`${timestamp}\`` : "`unknown-time`";
+  return inlineCode(timestamp ?? "unknown-time");
 }
 
 function splitMarkdownTableRow(line) {
@@ -746,10 +889,10 @@ function parseMasterSessionRows(markdown) {
 }
 
 function extractMasterTail(markdown) {
-  const prunedHistoryIndex = markdown.indexOf("\n## Pruned History");
-  return prunedHistoryIndex === -1
-    ? ""
-    : markdown.slice(prunedHistoryIndex).trimEnd();
+  const marker = "\n## Pruned History";
+  const start = markdown.indexOf(marker);
+  if (start === -1) return "";
+  return markdownSafeBlock(markdown.slice(start + marker.length).trim());
 }
 
 function masterRowTimestampMs(row) {
@@ -765,7 +908,7 @@ function masterRowTimestampMs(row) {
 function formatMasterRow(row) {
   return `| ${[
     tableCell(stripMarkdownCode(row.lastUpdated)),
-    `\`${stripMarkdownCode(row.sessionId)}\``,
+    inlineCode(stripMarkdownCode(row.sessionId)),
     tableCell(row.summary),
     tableCell(row.handoff),
     tableCell(row.status),
@@ -782,7 +925,39 @@ function existingOrIncoming(existingValue, incomingValue, defaultValues) {
   return existingValue;
 }
 
-function upsertMasterIndexEntry({
+function acquireMasterLock(masterPath) {
+  const lockPath = `${masterPath}.lock`;
+  const deadline = Date.now() + 30_000;
+  const sleeper = new Int32Array(new SharedArrayBuffer(4));
+
+  while (Date.now() < deadline) {
+    const lock = createValidationLock(lockPath, "session-handoff-master");
+    if (lock.acquired) {
+      return { lockId: lock.lockId, lockPath };
+    }
+    Atomics.wait(sleeper, 0, 0, 10);
+  }
+
+  throw new Error(`Timed out waiting for session handoff master lock: ${lockPath}`);
+}
+
+function writeMasterAtomically(masterPath, markdown, lockId) {
+  const temporaryPath = path.join(
+    path.dirname(masterPath),
+    `.${path.basename(masterPath)}.${lockId}.tmp`,
+  );
+  try {
+    writeFileSync(temporaryPath, markdown, {
+      encoding: "utf8",
+      flag: "wx",
+    });
+    renameSync(temporaryPath, masterPath);
+  } finally {
+    rmSync(temporaryPath, { force: true });
+  }
+}
+
+function updateMasterIndexEntry({
   generatedAt,
   masterPath,
   nextStep,
@@ -790,7 +965,7 @@ function upsertMasterIndexEntry({
   sessionId,
   status,
   threadTitle,
-}) {
+}, lockId) {
   const existing = existsSync(masterPath)
     ? readFileSync(masterPath, "utf8")
     : null;
@@ -801,7 +976,7 @@ function upsertMasterIndexEntry({
   const existingRow = rowsBySessionId.get(sessionId);
 
   rowsBySessionId.set(sessionId, {
-    handoff: `\`${outputFileName}\``,
+    handoff: outputFileName,
     lastUpdated: generatedAt,
     nextStep: existingOrIncoming(existingRow?.nextStep, nextStep, [
       "See handoff.",
@@ -829,17 +1004,32 @@ function upsertMasterIndexEntry({
     `| Last Updated (${HANDOFF_TIME_ZONE_LABEL}) | Session ID | Summary | Handoff | Status | Next Step |`,
     "| --- | --- | --- | --- | --- | --- |",
     ...rows.map(formatMasterRow),
-    tail ? `\n${tail}` : "",
+    tail ? `\n## Pruned History\n\n${tail}` : "",
   ]
     .join("\n")
     .trimEnd();
 
-  writeFileSync(masterPath, `${markdown}\n`, "utf8");
+  writeMasterAtomically(masterPath, `${markdown}\n`, lockId);
+}
+
+export function upsertMasterIndexEntry(input) {
+  const lock = acquireMasterLock(input.masterPath);
+  try {
+    updateMasterIndexEntry(input, lock.lockId);
+  } finally {
+    removeValidationLock(lock.lockPath, lock.lockId);
+  }
+}
+
+function markdownSectionStart(markdown, heading) {
+  const marker = `## ${heading}`;
+  if (markdown.startsWith(`${marker}\n`)) return 0;
+  const nested = markdown.indexOf(`\n${marker}\n`);
+  return nested === -1 ? -1 : nested + 1;
 }
 
 function extractMarkdownSection(markdown, heading) {
-  const marker = `## ${heading}`;
-  const start = markdown.indexOf(marker);
+  const start = markdownSectionStart(markdown, heading);
   if (start === -1) {
     return null;
   }
@@ -856,8 +1046,7 @@ function extractMarkdownSection(markdown, heading) {
 }
 
 function replaceMarkdownSection(markdown, heading, content) {
-  const marker = `## ${heading}`;
-  const start = markdown.indexOf(marker);
+  const start = markdownSectionStart(markdown, heading);
   if (start === -1) {
     return markdown;
   }
@@ -878,7 +1067,7 @@ function meaningfulEditableSection(content) {
   return Boolean(trimmed) && !/Replace this (section|item)/i.test(trimmed);
 }
 
-function mergeEditableSections(existingMarkdown, generatedMarkdown) {
+export function mergeEditableSections(existingMarkdown, generatedMarkdown) {
   let merged = generatedMarkdown;
 
   for (const heading of [
@@ -888,7 +1077,11 @@ function mergeEditableSections(existingMarkdown, generatedMarkdown) {
   ]) {
     const existingSection = extractMarkdownSection(existingMarkdown, heading);
     if (meaningfulEditableSection(existingSection)) {
-      merged = replaceMarkdownSection(merged, heading, existingSection);
+      merged = replaceMarkdownSection(
+        merged,
+        heading,
+        markdownSafeBlock(existingSection),
+      );
     }
   }
 
@@ -901,7 +1094,7 @@ function compactSectionForPointer(markdown, heading, fallback) {
     return fallback;
   }
 
-  return section.trimEnd();
+  return markdownSafeBlock(section.trimEnd());
 }
 
 function sectionPreview(markdown, heading, fallback) {
@@ -924,7 +1117,7 @@ function sectionPreview(markdown, heading, fallback) {
   return oneLine(normalized, 140);
 }
 
-function buildCurrentPointer({
+export function buildCurrentPointer({
   generatedAt,
   generatedAtUtc,
   handoffFileName,
@@ -937,12 +1130,12 @@ function buildCurrentPointer({
 
 This is a pointer to the active durable handoff. Do not use this file as the full session narrative.
 
-- Last Updated (${HANDOFF_TIME_ZONE_LABEL}): \`${generatedAt}\`
-- Last Updated (UTC): \`${generatedAtUtc}\`
-- Native Codex Session ID: \`${sessionId}\`
+- Last Updated (${HANDOFF_TIME_ZONE_LABEL}): ${inlineCode(generatedAt)}
+- Last Updated (UTC): ${inlineCode(generatedAtUtc)}
+- Native Codex Session ID: ${inlineCode(sessionId)}
 - Summary: ${identitySummary({ generatedAt, sessionId, threadTitle })}
-- Handoff: \`${handoffFileName}\`
-- Master Index: \`${masterFileName}\`
+- Handoff: ${inlineCode(handoffFileName)}
+- Master Index: ${inlineCode(masterFileName)}
 
 ## Current Status
 
@@ -1091,7 +1284,7 @@ function listLiveCodexTerminals(repoRoot) {
     }
 
     const cwd = readlinkSafe(path.join(procPath, "cwd"));
-    if (!pathRelated(repoRoot, cwd)) {
+    if (!isPathWithin(repoRoot, cwd)) {
       continue;
     }
 
@@ -1168,7 +1361,7 @@ function listLiveCodexTerminals(repoRoot) {
   });
 }
 
-function buildMarkdown({
+export function buildMarkdown({
   branch,
   changedFiles,
   diffStat,
@@ -1195,66 +1388,65 @@ function buildMarkdown({
 
 ## Session Metadata
 
-- Session ID: \`${thread.id}\`
-- Saved At (${HANDOFF_TIME_ZONE_LABEL}): \`${generatedAt}\`
-- Saved At (UTC): \`${generatedAtUtc}\`
+- Session ID: ${inlineCode(thread.id)}
+- Saved At (${HANDOFF_TIME_ZONE_LABEL}): ${inlineCode(generatedAt)}
+- Saved At (UTC): ${inlineCode(generatedAtUtc)}
 - Summary: ${summary}
-- Repo Root: \`${repoRoot}\`
-- Thread CWD: \`${thread.cwd ?? "unknown"}\`
-- Rollout Path: \`${thread.rollout_path ?? "unknown"}\`
-- Branch: \`${branch || thread.git_branch || "unknown"}\`
-- HEAD: \`${headSha || thread.git_sha || "unknown"}\`
-- Latest Commit: \`${latestCommitSubject || "unknown"}\`
-- Latest Commit Session ID: \`${latestCommitSessionId ?? "unknown"}\`
+- Repo Root: ${inlineCode(repoRoot)}
+- Thread CWD: ${inlineCode(thread.cwd ?? "unknown")}
+- Rollout Path: ${inlineCode(thread.rollout_path ?? "unknown")}
+- Branch: ${inlineCode(branch || thread.git_branch || "unknown")}
+- HEAD: ${inlineCode(headSha || thread.git_sha || "unknown")}
+- Latest Commit: ${inlineCode(latestCommitSubject || "unknown")}
+- Latest Commit Session ID: ${inlineCode(latestCommitSessionId ?? "unknown")}
 - Title: ${threadTitle}
-- Model: \`${thread.model ?? "unknown"}\`
-- Reasoning Effort: \`${thread.reasoning_effort ?? "unknown"}\`
-- Tokens Used: \`${thread.tokens_used ?? "unknown"}\`
+- Model: ${inlineCode(thread.model ?? "unknown")}
+- Reasoning Effort: ${inlineCode(thread.reasoning_effort ?? "unknown")}
+- Tokens Used: ${inlineCode(thread.tokens_used ?? "unknown")}
 
 ## Current User Request
 
-${thread.first_user_message ?? thread.title ?? "Unknown"}
+${markdownBlockquote(thread.first_user_message ?? thread.title ?? "Unknown")}
 
 ## Prior Handoffs
 
-${formatBulletList(priorHandoffs, (value) => `- \`${value}\``)}
+${formatBulletList(priorHandoffs, (value) => `- ${inlineCode(value)}`)}
 
 ## Recent User Messages
 
 ${formatBulletList(
   recentMessages,
-  (message) => `- ${markdownTimestamp(message.timestamp)} ${message.text}`,
+  (message) =>
+    `- ${markdownTimestamp(message.timestamp)} ${oneLine(message.text, 1000)}`,
 )}
 
 ## Session Activity Summary
 
 ${formatBulletList(
   rolloutSummary.activity,
-  (event) => `- ${event.timestamp ? `\`${event.timestamp}\` ` : ""}${event.text}`,
+  (event) =>
+    `- ${event.timestamp ? `${inlineCode(event.timestamp)} ` : ""}${oneLine(event.text, 1000)}`,
   "- No rollout activity summary available.",
 )}
 
 ## High-Signal Changed Files
 
-${formatBulletList(changedFiles, (value) => `- \`${value}\``)}
+${formatBulletList(changedFiles, (value) => `- ${inlineCode(value)}`)}
 
 ## Repo State Snapshot
 
-\`\`\`text
-${statusShort || "Unavailable"}
-\`\`\`
+${fencedText(statusShort)}
 
 ## Diff Summary
 
-\`\`\`text
-${diffStat || "Unavailable"}
-\`\`\`
+${fencedText(diffStat)}
 
 ## Validations Detected In Transcript
 
 ${formatBulletList(
   rolloutSummary.validations,
-  (event) => `- ${event.timestamp ? `\`${event.timestamp}\` ` : ""}${event.text}`,
+  (event) =>
+    `- ${event.timestamp ? `${inlineCode(event.timestamp)} ` : ""}${oneLine(event.text, 1000)}`,
   "- None detected in this session transcript.",
 )}
 
@@ -1292,7 +1484,7 @@ function saveHandoffsOnce(args, { failOnEmpty = true } = {}) {
   const allThreads = loadThreadsFromState();
   const repoThreads = allThreads.filter(
     (thread) =>
-      typeof thread.cwd === "string" && pathRelated(repoRoot, thread.cwd),
+      typeof thread.cwd === "string" && isPathWithin(repoRoot, thread.cwd),
   );
   const threadsToSave = args.session
     ? allThreads.filter((thread) => thread.id === args.session)
@@ -1529,15 +1721,17 @@ async function watchHandoffs(args) {
   process.stderr.write("session-handoff: watch mode stopped\n");
 }
 
-let args;
-try {
-  args = parseArgs(process.argv.slice(2));
-} catch (error) {
-  fail(error.message);
-}
+if (import.meta.main) {
+  let args;
+  try {
+    args = parseArgs(process.argv.slice(2));
+  } catch (error) {
+    fail(error.message);
+  }
 
-if (args.watch) {
-  await watchHandoffs(args);
-} else {
-  printSaveResult(saveHandoffsOnce(args));
+  if (args.watch) {
+    await watchHandoffs(args);
+  } else {
+    printSaveResult(saveHandoffsOnce(args));
+  }
 }

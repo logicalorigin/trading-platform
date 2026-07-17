@@ -43,6 +43,21 @@ For any substantial implementation, investigation, test run, multi-terminal task
 - Keep `SESSION_HANDOFF_MASTER.md` as the changelog/table of contents. It must contain one short row per unique session ID.
 - Keep `SESSION_HANDOFF_CURRENT.md` as a compact pointer to the active/latest per-session handoff. Do not use it as the detailed handoff body.
 
+## Codex Automatic Autosave (hook)
+
+Codex CLI autosaves automatically through `.codex/hooks.json`. The adapter at
+`scripts/codex-autosave-handoff.mjs` runs on `SessionStart`, `PreCompact`, and
+`Stop`, passes the active hook `session_id` to `write-session-handoff.mjs`, and
+keeps the per-session handoff, master index, and current pointer fresh.
+
+- The adapter always exits 0, so autosave failure cannot block a Codex turn.
+- `Stop` is the Codex turn boundary; Codex does not expose Claude's
+  `SessionEnd` event.
+- Repo-local hooks must be reviewed once with `/hooks` and are re-reviewed when
+  their definition changes.
+- Manual saves and the watcher remain available for forced checkpoints and
+  in-flight updates before risky or long-running work.
+
 ## Conventions
 
 - Put the skill in `.agents/skills/session-handoff/`.
