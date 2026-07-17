@@ -347,7 +347,7 @@ async function writeSyncState(input: {
       transaction: tx,
     });
     input.signal?.throwIfAborted();
-    return tx
+    const persistedRows = await tx
       .insert(universeCatalogSyncStatesTable)
       .values({
         scopeKey: input.scopeKey,
@@ -392,6 +392,7 @@ async function writeSyncState(input: {
       })
       .returning({ scopeKey: universeCatalogSyncStatesTable.scopeKey });
     input.signal?.throwIfAborted();
+    return persistedRows;
   });
   if (!rows.length) {
     throw new Error(

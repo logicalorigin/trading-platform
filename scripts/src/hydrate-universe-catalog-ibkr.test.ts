@@ -522,3 +522,41 @@ test("an aborted hydrator cannot write a failure checkpoint", async () => {
     assert.equal(persisted.length, 0);
   });
 });
+
+test("lease loss after checkpoint DML rolls the transaction back", async () => {
+  await withTestDb(async () => {
+    await claimUniverseCatalogWriterFence({ fenceToken: "31" });
+    const leaseLost = new Error("Universe-catalog lease lost");
+    let checks = 0;
+    const signal = {
+      throwIfAborted() {
+        checks += 1;
+        if (checks === 4) throw leaseLost;
+      },
+    } as AbortSignal;
+    const scopeKey = "ibkr-hydration:stocks:aborted-after-dml";
+
+    await assert.rejects(
+      hydrateCli.writeSyncState({
+        writerFenceToken: "31",
+        scopeKey,
+        market: "stocks",
+        activeOnly: true,
+        lastProcessedListingKey: "AAPL|stocks|XNAS",
+        rowsSynced: 1,
+        startedAt: new Date("2026-07-17T18:00:00.000Z"),
+        finishedAt: null,
+        lastSuccessAt: null,
+        lastError: null,
+        metadata: null,
+        signal,
+      }),
+      (error) => error === leaseLost,
+    );
+    const persisted = await db
+      .select()
+      .from(universeCatalogSyncStatesTable)
+      .where(eq(universeCatalogSyncStatesTable.scopeKey, scopeKey));
+    assert.equal(persisted.length, 0);
+  });
+});
