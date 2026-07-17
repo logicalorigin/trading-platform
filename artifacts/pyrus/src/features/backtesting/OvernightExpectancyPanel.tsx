@@ -118,7 +118,10 @@ function terminalStatus(status: string | null | undefined): boolean {
   return status === "completed" || status === "failed" || status === "canceled";
 }
 
-async function jsonRequest<T>(url: string, init?: RequestInit): Promise<T> {
+export async function jsonRequest<T>(
+  url: string,
+  init?: RequestInit,
+): Promise<T> {
   const response = await fetchWithNetworkError(url, {
     ...init,
     headers: {
@@ -133,7 +136,7 @@ async function jsonRequest<T>(url: string, init?: RequestInit): Promise<T> {
       payload && typeof payload === "object" && "error" in payload
         ? String((payload as { error: unknown }).error)
         : `HTTP ${response.status}`;
-    throw new Error(detail);
+    throw Object.assign(new Error(detail), { status: response.status });
   }
   return payload as T;
 }
