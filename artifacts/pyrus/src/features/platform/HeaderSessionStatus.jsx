@@ -1,4 +1,3 @@
-import { useQueryClient } from "@tanstack/react-query";
 import {
   ChevronDown,
   KeyRound,
@@ -28,7 +27,7 @@ import {
   T,
   textSize,
 } from "../../lib/uiTokens.jsx";
-import { useAuthSession } from "../auth/authSession.jsx";
+import { postAuthJson, useAuthSession } from "../auth/authSession.jsx";
 import {
   buildFirstRunBody,
   buildSignInBody,
@@ -36,36 +35,6 @@ import {
   validateFirstRunInput,
   validateSignInInput,
 } from "./headerSessionModel.js";
-
-async function postAuthJson(path, body, headers = {}) {
-  const response = await fetch(path, {
-    method: "POST",
-    headers: {
-      Accept: "application/json",
-      "Content-Type": "application/json",
-      ...headers,
-    },
-    body: JSON.stringify(body),
-  });
-  let payload = null;
-  try {
-    payload = await response.json();
-  } catch {
-    payload = null;
-  }
-  if (!response.ok) {
-    const error = new Error(
-      payload?.detail ||
-        payload?.title ||
-        payload?.message ||
-        `HTTP ${response.status}`,
-    );
-    error.data = payload;
-    error.status = response.status;
-    throw error;
-  }
-  return payload;
-}
 
 function SessionStatusRow({ label, value, tone = CSS_COLOR.textSec }) {
   return (
@@ -216,7 +185,6 @@ export function HeaderSessionStatus({
   mobileSheet = false,
   surfaceStyle,
 }) {
-  const queryClient = useQueryClient();
   const triggerRef = useRef(null);
   const popoverRef = useRef(null);
   const [open, setOpen] = useState(false);
@@ -321,17 +289,12 @@ export function HeaderSessionStatus({
     };
   }, [mobileSheet, open, updatePopoverPosition]);
 
-  const finishAuthChange = useCallback(() => {
+  const finishAuthChange = useCallback((session) => {
     setPassword("");
     setBootstrapToken("");
     setLocalError("");
-    // Refresh the session immediately so the header flips to the new state.
-    // Mark everything else stale WITHOUT forcing an immediate app-wide refetch
-    // (that thundering herd can hang the spinner under load); those queries
-    // refetch lazily on next access.
-    void authSession.refresh();
-    void queryClient.invalidateQueries({ refetchType: "none" });
-  }, [authSession, queryClient]);
+    authSession.adoptSession(session);
+  }, [authSession]);
 
   const submitSignIn = useCallback(async () => {
     const input = { email, password };
@@ -343,8 +306,11 @@ export function HeaderSessionStatus({
     setPending(true);
     setLocalError("");
     try {
-      await postAuthJson("/api/auth/login", buildSignInBody(input));
-      finishAuthChange();
+      const session = await postAuthJson(
+        "/api/auth/login",
+        buildSignInBody(input),
+      );
+      finishAuthChange(session);
       setOpen(false);
     } catch (error) {
       setLocalError(error?.message || "Sign in failed.");
@@ -363,8 +329,11 @@ export function HeaderSessionStatus({
     setPending(true);
     setLocalError("");
     try {
-      await postAuthJson("/api/auth/bootstrap", buildFirstRunBody(input));
-      finishAuthChange();
+      const session = await postAuthJson(
+        "/api/auth/bootstrap",
+        buildFirstRunBody(input),
+      );
+      finishAuthChange(session);
       setOpen(false);
     } catch (error) {
       if (error?.data?.code === "bootstrap_already_complete") {
@@ -387,7 +356,7 @@ export function HeaderSessionStatus({
         {},
         csrfToken ? { "x-csrf-token": csrfToken } : {},
       );
-      finishAuthChange();
+      finishAuthChange({ user: null, csrfToken: null });
     } catch (error) {
       setLocalError(error?.message || "Sign out failed.");
     } finally {

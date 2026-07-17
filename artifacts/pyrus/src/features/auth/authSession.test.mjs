@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import {
@@ -178,6 +179,28 @@ test("an auth mutation waits for a definite server response without a client dea
     }),
   );
   assert.deepEqual(await pending, session);
+});
+
+test("both sign-in surfaces adopt the definitive POST response without a second session read", () => {
+  const loginGate = readFileSync(
+    new URL("./LoginGate.jsx", import.meta.url),
+    "utf8",
+  );
+  const headerSession = readFileSync(
+    new URL("../platform/HeaderSessionStatus.jsx", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(loginGate, /adoptSession\(session\)/);
+  assert.doesNotMatch(loginGate, /await refresh\(\)/);
+  assert.match(headerSession, /postAuthJson,\s*useAuthSession/);
+  assert.doesNotMatch(headerSession, /async function postAuthJson/);
+  assert.match(headerSession, /authSession\.adoptSession\(session\)/);
+  assert.match(
+    headerSession,
+    /await postAuthJson\(\s*"\/api\/auth\/logout",[\s\S]*?finishAuthChange\(\{ user: null, csrfToken: null \}\)/,
+  );
+  assert.doesNotMatch(headerSession, /authSession\.refresh\(\)/);
 });
 
 test("an auth identity change evicts private queries before the next observer mounts", () => {

@@ -70,7 +70,7 @@ function LoginShell({ children, loading = false }) {
 }
 
 export function LoginGate({ children }) {
-  const { signedIn, isLoading, refresh } = useAuthSession();
+  const { adoptSession, signedIn, isLoading } = useAuthSession();
 
   const [mode, setMode] = useState("signin");
   const [email, setEmail] = useState("");
@@ -101,15 +101,15 @@ export function LoginGate({ children }) {
       setPending(true);
       setError("");
       try {
-        if (isFirstRun) {
-          await postAuthJson("/api/auth/bootstrap", buildFirstRunBody(input));
-        } else {
-          await postAuthJson("/api/auth/login", buildSignInBody(input));
-        }
-        // On success the session query flips and the gate swaps this wall for
-        // the app; the finally below re-enables the form for every other outcome
-        // (error, timeout, or a 200 whose session didn't take) so it can't latch.
-        await refresh();
+        const session = isFirstRun
+          ? await postAuthJson(
+              "/api/auth/bootstrap",
+              buildFirstRunBody(input),
+            )
+          : await postAuthJson("/api/auth/login", buildSignInBody(input));
+        // The mutation response is the definitive new session. Adopting it
+        // avoids a second request that can race the session-cookie update.
+        adoptSession(session);
       } catch (submitError) {
         if (submitError?.data?.code === "bootstrap_already_complete") {
           setError("An account already exists. Sign in instead.");
@@ -125,13 +125,13 @@ export function LoginGate({ children }) {
       }
     },
     [
+      adoptSession,
       bootstrapToken,
       displayName,
       email,
       isFirstRun,
       password,
       pending,
-      refresh,
     ],
   );
 
