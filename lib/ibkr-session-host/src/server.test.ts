@@ -10,6 +10,7 @@ import test from "node:test";
 import {
   decodeIbkrHostControlKey,
   signIbkrHostControlRequest,
+  verifyIbkrHostControlReceipt,
 } from "@workspace/ibkr-contracts/control-auth";
 
 import { CapsuleError } from "./capsule";
@@ -189,7 +190,31 @@ test("accepts one signed host-bound request and rejects its replay", async () =>
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   try {
     const { port } = server.address() as AddressInfo;
-    const path = `/sessions/${SESSION_ID}/generations/7/slots/1/ensure`;
+    const legacyPath = `/sessions/${SESSION_ID}/ensure`;
+    const legacy = await fetch(`http://127.0.0.1:${port}${legacyPath}`, {
+      method: "POST",
+      headers: signIbkrHostControlRequest({
+        hostId,
+        key,
+        method: "POST",
+        nonce: "b".repeat(32),
+        path: legacyPath,
+        timestampSeconds: 1_784_200_000,
+      }),
+    });
+    assert.equal(legacy.status, 200);
+    assert.equal(legacy.headers.get("x-pyrus-control-receipt"), null);
+    assert.deepEqual(await legacy.json(), {
+      sessionId: SESSION_ID,
+      capsule: { name: "pyrus-ibkr-slot-1", status: "ready" },
+      targets: {
+        cpg: { host: "127.0.0.1", port: 15000 },
+        console: { host: "127.0.0.1", port: 16080 },
+      },
+    });
+    const routePath = `/sessions/${SESSION_ID}/generations/7/slots/1/ensure`;
+    const controlAttemptId = "33333333-3333-4333-8333-333333333333";
+    const path = `${routePath}?controlAttemptId=${controlAttemptId}`;
     const headers = signIbkrHostControlRequest({
       hostId,
       key: overlapKey,
@@ -203,14 +228,53 @@ test("accepts one signed host-bound request and rejects its replay", async () =>
       headers,
     });
     assert.equal(first.status, 200);
-    const primary = await fetch(`http://127.0.0.1:${port}${path}`, {
+    const firstBody = await first.text();
+    assert.equal(
+      verifyIbkrHostControlReceipt({
+        action: "ensure",
+        body: firstBody,
+        controlAttemptId,
+        expectedHostId: hostId,
+        headers: Object.fromEntries(first.headers.entries()),
+        key,
+        status: first.status,
+      }),
+      true,
+    );
+    assert.equal(
+      verifyIbkrHostControlReceipt({
+        action: "ensure",
+        body: firstBody,
+        controlAttemptId,
+        expectedHostId: hostId,
+        headers: Object.fromEntries(first.headers.entries()),
+        key: overlapKey,
+        status: first.status,
+      }),
+      false,
+    );
+    assert.deepEqual(JSON.parse(firstBody), {
+      action: "ensure",
+      controlAttemptId,
+      sessionId: SESSION_ID,
+      generation: 7,
+      slotNumber: 1,
+      capsule: { name: "pyrus-ibkr-slot-1", status: "ready" },
+      targets: {
+        cpg: { host: "127.0.0.1", port: 15000 },
+        console: { host: "127.0.0.1", port: 16080 },
+      },
+    });
+    const primaryAttemptId = "44444444-4444-4444-8444-444444444444";
+    const primaryPath = `${routePath}?controlAttemptId=${primaryAttemptId}`;
+    const primary = await fetch(`http://127.0.0.1:${port}${primaryPath}`, {
       method: "POST",
       headers: signIbkrHostControlRequest({
         hostId,
         key,
         method: "POST",
         nonce: "d".repeat(32),
-        path,
+        path: primaryPath,
         timestampSeconds: 1_784_200_000,
       }),
     });
@@ -223,8 +287,221 @@ test("accepts one signed host-bound request and rejects its replay", async () =>
     assert.deepEqual(await replay.json(), {
       error: { code: "unauthorized", message: "Unauthorized." },
     });
-    assert.equal(ensures, 2);
+    assert.equal(ensures, 3);
   } finally {
+    await new Promise<void>((resolve, reject) => {
+      server.close((error) => (error ? reject(error) : resolve()));
+    });
+  }
+});
+
+test("rejects malformed signed control-attempt queries before side effects", async () => {
+  const key = decodeIbkrHostControlKey(
+    Buffer.alloc(32, 11).toString("base64url"),
+  )!;
+  const hostId = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
+  let ensures = 0;
+  const server = createSessionHostServer({
+    controlIdentity: {
+      hostId,
+      key,
+      nowSeconds: () => 1_784_200_000,
+    },
+    ensureSession: async () => {
+      ensures += 1;
+      return { name: "pyrus-ibkr-slot-1", status: "ready" };
+    },
+    readiness: () => ({ ready: true }),
+    snapshot: () => ({
+      mode: "paper",
+      capacity: { max: 1, active: 0 },
+    }),
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const { port } = server.address() as AddressInfo;
+    const routePath = `/sessions/${SESSION_ID}/generations/7/slots/1/ensure`;
+    const attempts = [
+      "?controlAttemptId=not-a-uuid",
+      "?controlAttemptId=aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaA",
+      "?control%41ttemptId=33333333-3333-4333-8333-333333333333",
+      "?controlAttemptId=33333333-3333-4333-8333-333333333333&extra=1",
+      "?controlAttemptId=33333333-3333-4333-8333-333333333333&controlAttemptId=44444444-4444-4444-8444-444444444444",
+    ];
+    for (const [index, search] of attempts.entries()) {
+      const path = `${routePath}${search}`;
+      const response = await fetch(`http://127.0.0.1:${port}${path}`, {
+        method: "POST",
+        headers: signIbkrHostControlRequest({
+          hostId,
+          key,
+          method: "POST",
+          nonce: String(index + 1).repeat(32),
+          path,
+          timestampSeconds: 1_784_200_000,
+        }),
+      });
+      assert.equal(response.status, 400);
+      assert.equal(response.headers.get("x-pyrus-control-receipt"), null);
+      assert.deepEqual(await response.json(), {
+        error: {
+          code: "control_attempt_invalid",
+          message: "IBKR session control failed.",
+        },
+      });
+    }
+    assert.equal(ensures, 0);
+  } finally {
+    await new Promise<void>((resolve, reject) => {
+      server.close((error) => (error ? reject(error) : resolve()));
+    });
+  }
+});
+
+test("signs an exact receipt for a missing fenced session", async () => {
+  const key = decodeIbkrHostControlKey(
+    Buffer.alloc(32, 12).toString("base64url"),
+  )!;
+  const hostId = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
+  const controlAttemptId = "55555555-5555-4555-8555-555555555555";
+  const path =
+    `/sessions/${SESSION_ID}/generations/8/slots/2/status` +
+    `?controlAttemptId=${controlAttemptId}`;
+  const server = createSessionHostServer({
+    controlIdentity: {
+      hostId,
+      key,
+      nowSeconds: () => 1_784_200_000,
+    },
+    readiness: () => ({ ready: true }),
+    snapshot: () => ({
+      mode: "paper",
+      capacity: { max: 1, active: 0 },
+    }),
+    statusSession: async () => null,
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const { port } = server.address() as AddressInfo;
+    const response = await fetch(`http://127.0.0.1:${port}${path}`, {
+      headers: signIbkrHostControlRequest({
+        hostId,
+        key,
+        method: "GET",
+        nonce: "f".repeat(32),
+        path,
+        timestampSeconds: 1_784_200_000,
+      }),
+    });
+    const body = await response.text();
+    assert.equal(response.status, 404);
+    assert.equal(
+      verifyIbkrHostControlReceipt({
+        action: "status",
+        body,
+        controlAttemptId,
+        expectedHostId: hostId,
+        headers: Object.fromEntries(response.headers.entries()),
+        key,
+        status: response.status,
+      }),
+      true,
+    );
+    assert.deepEqual(JSON.parse(body), {
+      action: "status",
+      controlAttemptId,
+      sessionId: SESSION_ID,
+      generation: 8,
+      slotNumber: 2,
+      capsule: null,
+    });
+  } finally {
+    await new Promise<void>((resolve, reject) => {
+      server.close((error) => (error ? reject(error) : resolve()));
+    });
+  }
+});
+
+test("emits a release receipt only after cleanup completes", async () => {
+  const key = decodeIbkrHostControlKey(
+    Buffer.alloc(32, 14).toString("base64url"),
+  )!;
+  const hostId = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee";
+  const controlAttemptId = "66666666-6666-4666-8666-666666666666";
+  const path =
+    `/sessions/${SESSION_ID}/generations/9/slots/1/release` +
+    `?controlAttemptId=${controlAttemptId}`;
+  let markStarted!: () => void;
+  let completeCleanup!: () => void;
+  const started = new Promise<void>((resolve) => {
+    markStarted = resolve;
+  });
+  const cleanup = new Promise<void>((resolve) => {
+    completeCleanup = resolve;
+  });
+  const server = createSessionHostServer({
+    controlIdentity: {
+      hostId,
+      key,
+      nowSeconds: () => 1_784_200_000,
+    },
+    readiness: () => ({ ready: true }),
+    releaseSession: async () => {
+      markStarted();
+      await cleanup;
+    },
+    snapshot: () => ({
+      mode: "paper",
+      capacity: { max: 1, active: 1 },
+    }),
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const { port } = server.address() as AddressInfo;
+    let settled = false;
+    const pending = fetch(`http://127.0.0.1:${port}${path}`, {
+      method: "POST",
+      headers: signIbkrHostControlRequest({
+        hostId,
+        key,
+        method: "POST",
+        nonce: "a".repeat(32),
+        path,
+        timestampSeconds: 1_784_200_000,
+      }),
+    }).then((response) => {
+      settled = true;
+      return response;
+    });
+    await started;
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(settled, false);
+    completeCleanup();
+    const response = await pending;
+    const body = await response.text();
+    assert.equal(response.status, 200);
+    assert.equal(
+      verifyIbkrHostControlReceipt({
+        action: "release",
+        body,
+        controlAttemptId,
+        expectedHostId: hostId,
+        headers: Object.fromEntries(response.headers.entries()),
+        key,
+        status: response.status,
+      }),
+      true,
+    );
+    assert.deepEqual(JSON.parse(body), {
+      action: "release",
+      controlAttemptId,
+      sessionId: SESSION_ID,
+      generation: 9,
+      slotNumber: 1,
+      released: true,
+    });
+  } finally {
+    completeCleanup();
     await new Promise<void>((resolve, reject) => {
       server.close((error) => (error ? reject(error) : resolve()));
     });
@@ -504,9 +781,17 @@ test("routes an explicit generation-fenced host-slot placement", async () => {
   }
 });
 
-test("returns a redacted conflict for a stale generation", async () => {
+test("signs a redacted conflict for a stale generation", async () => {
+  const key = decodeIbkrHostControlKey(
+    Buffer.alloc(32, 15).toString("base64url"),
+  )!;
+  const hostId = "ffffffff-ffff-4fff-bfff-ffffffffffff";
+  const controlAttemptId = "77777777-7777-4777-8777-777777777777";
+  const path =
+    `/sessions/${SESSION_ID}/generations/7/slots/1/ensure` +
+    `?controlAttemptId=${controlAttemptId}`;
   const server = createSessionHostServer({
-    controlToken: "test-control-token",
+    controlIdentity: { hostId, key },
     ensureSession: async () => {
       throw new CapsuleError("stale_generation", "sensitive detail");
     },
@@ -519,15 +804,32 @@ test("returns a redacted conflict for a stale generation", async () => {
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   try {
     const { port } = server.address() as AddressInfo;
-    const response = await fetch(
-      `http://127.0.0.1:${port}/sessions/${SESSION_ID}/generations/7/slots/1/ensure`,
-      {
+    const response = await fetch(`http://127.0.0.1:${port}${path}`, {
+      method: "POST",
+      headers: signIbkrHostControlRequest({
+        hostId,
+        key,
         method: "POST",
-        headers: { authorization: "Bearer test-control-token" },
-      },
-    );
+        path,
+      }),
+    });
+    const body = await response.text();
     assert.equal(response.status, 409);
-    assert.deepEqual(await response.json(), {
+    assert.equal(
+      verifyIbkrHostControlReceipt({
+        action: "ensure",
+        body,
+        controlAttemptId,
+        expectedHostId: hostId,
+        headers: Object.fromEntries(response.headers.entries()),
+        key,
+        status: response.status,
+      }),
+      true,
+    );
+    assert.deepEqual(JSON.parse(body), {
+      action: "ensure",
+      controlAttemptId,
       error: {
         code: "stale_generation",
         message: "IBKR session control failed.",

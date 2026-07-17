@@ -2,6 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  deriveIbkrHostControlKey,
+  signIbkrHostControlReceipt,
+  type IbkrHostControlAction,
+} from "@workspace/ibkr-contracts/control-auth";
+import {
   __setDbForTests,
   db,
   ibkrGatewaySessionsTable,
@@ -60,11 +65,33 @@ async function withFleetUser(
     );
     const previousFetch = globalThis.fetch;
     let appUserId: string | null = null;
+    const rootKey = Buffer.alloc(32, 39);
+    const hostKey = deriveIbkrHostControlKey(rootKey, HOST_ID);
+    const signedControlResponse = (
+      action: IbkrHostControlAction,
+      controlAttemptId: string,
+      value: Record<string, unknown>,
+      status = 200,
+    ): Response => {
+      const body = JSON.stringify({ ...value, action, controlAttemptId });
+      return new Response(body, {
+        status,
+        headers: {
+          "content-type": "application/json",
+          ...signIbkrHostControlReceipt({
+            action,
+            body,
+            controlAttemptId,
+            hostId: HOST_ID,
+            key: hostKey,
+            status,
+          }),
+        },
+      });
+    };
 
-    process.env["IBKR_GATEWAY_FLEET_CONTROL_ROOT_KEY"] = Buffer.alloc(
-      32,
-      39,
-    ).toString("base64url");
+    process.env["IBKR_GATEWAY_FLEET_CONTROL_ROOT_KEY"] =
+      rootKey.toString("base64url");
     delete process.env["IBKR_GATEWAY_FLEET_CONTROL_OVERLAP_ROOT_KEY"];
     process.env["IBKR_GATEWAY_FLEET_ENABLED"] = "1";
     delete process.env["IBKR_SESSION_HOST_ENABLED"];
@@ -75,6 +102,13 @@ async function withFleetUser(
       const controlRequest = url.pathname.match(
         /^\/sessions\/([^/]+)\/generations\/(\d+)\/slots\/(\d+)\/(ensure|release|status)$/,
       );
+      let controlAttemptId: string | null = null;
+      if (controlRequest) {
+        const attempts = url.searchParams.getAll("controlAttemptId");
+        assert.equal(attempts.length, 1);
+        controlAttemptId = attempts[0]!;
+        assert.equal(url.search, `?controlAttemptId=${controlAttemptId}`);
+      }
       const receipt = controlRequest
         ? {
             sessionId: decodeURIComponent(controlRequest[1]!),
@@ -84,7 +118,8 @@ async function withFleetUser(
         : null;
       if (url.pathname.endsWith("/ensure")) {
         assert.ok(receipt);
-        return Response.json({
+        assert.ok(controlAttemptId);
+        return signedControlResponse("ensure", controlAttemptId, {
           ...receipt,
           capsule: {
             loginCompletions: 1,
@@ -102,12 +137,17 @@ async function withFleetUser(
         !url.pathname.includes("/data/")
       ) {
         assert.ok(receipt);
-        return Response.json({
+        assert.ok(controlAttemptId);
+        return signedControlResponse("status", controlAttemptId, {
           ...receipt,
           capsule: {
             loginCompletions: 1,
             name: "pyrus-ibkr-slot-1",
             status: "ready",
+          },
+          targets: {
+            cpg: { host: "127.0.0.1", port: 15000 },
+            console: { host: "127.0.0.1", port: 16080 },
           },
         });
       }
@@ -132,7 +172,8 @@ async function withFleetUser(
       }
       if (controlRequest?.[4] === "release") {
         assert.ok(receipt);
-        return Response.json({
+        assert.ok(controlAttemptId);
+        return signedControlResponse("release", controlAttemptId, {
           ...receipt,
           released: true,
         });
@@ -246,13 +287,11 @@ function delayNextControlAcknowledgement(testDb: TestDatabase): {
           delayed = true;
           const originalReturning = query.returning.bind(query);
           query.returning = (...args) =>
-            Promise.resolve(originalReturning(...args)).then(
-              async (result) => {
-                signalCommit();
-                await resultGate;
-                return result;
-              },
-            );
+            Promise.resolve(originalReturning(...args)).then(async (result) => {
+              signalCommit();
+              await resultGate;
+              return result;
+            });
           return query;
         };
         return builder;

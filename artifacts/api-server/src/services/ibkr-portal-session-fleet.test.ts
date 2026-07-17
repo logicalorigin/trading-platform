@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import {
+  deriveIbkrHostControlKey,
+  signIbkrHostControlReceipt,
+  type IbkrHostControlAction,
+} from "@workspace/ibkr-contracts/control-auth";
 import { db, ibkrGatewaySessionsTable, usersTable } from "@workspace/db";
 import { withTestDb } from "@workspace/db/testing";
 import { eq } from "drizzle-orm";
@@ -36,11 +41,33 @@ test("fleet portal persists paper lifecycle and disconnects mixed accounts", asy
     let accountReads = 0;
     let appUserId: string | null = null;
     let lifecycleDuringAccounts: string | null = null;
+    const rootKey = Buffer.alloc(32, 29);
+    const hostKey = deriveIbkrHostControlKey(rootKey, hostId);
+    const signedControlResponse = (
+      action: IbkrHostControlAction,
+      controlAttemptId: string,
+      value: Record<string, unknown>,
+      status = 200,
+    ): Response => {
+      const body = JSON.stringify({ ...value, action, controlAttemptId });
+      return new Response(body, {
+        status,
+        headers: {
+          "content-type": "application/json",
+          ...signIbkrHostControlReceipt({
+            action,
+            body,
+            controlAttemptId,
+            hostId,
+            key: hostKey,
+            status,
+          }),
+        },
+      });
+    };
 
-    process.env["IBKR_GATEWAY_FLEET_CONTROL_ROOT_KEY"] = Buffer.alloc(
-      32,
-      29,
-    ).toString("base64url");
+    process.env["IBKR_GATEWAY_FLEET_CONTROL_ROOT_KEY"] =
+      rootKey.toString("base64url");
     delete process.env["IBKR_GATEWAY_FLEET_CONTROL_OVERLAP_ROOT_KEY"];
     process.env["IBKR_GATEWAY_FLEET_ENABLED"] = "1";
     delete process.env["IBKR_SESSION_HOST_ENABLED"];
@@ -51,6 +78,13 @@ test("fleet portal persists paper lifecycle and disconnects mixed accounts", asy
       const controlRequest = url.pathname.match(
         /^\/sessions\/([^/]+)\/generations\/(\d+)\/slots\/(\d+)\/(ensure|release|status)$/,
       );
+      let controlAttemptId: string | null = null;
+      if (controlRequest) {
+        const attempts = url.searchParams.getAll("controlAttemptId");
+        assert.equal(attempts.length, 1);
+        controlAttemptId = attempts[0]!;
+        assert.equal(url.search, `?controlAttemptId=${controlAttemptId}`);
+      }
       const receipt = controlRequest
         ? {
             sessionId: decodeURIComponent(controlRequest[1]!),
@@ -60,7 +94,8 @@ test("fleet portal persists paper lifecycle and disconnects mixed accounts", asy
         : null;
       if (url.pathname.endsWith("/ensure")) {
         assert.ok(receipt);
-        return Response.json({
+        assert.ok(controlAttemptId);
+        return signedControlResponse("ensure", controlAttemptId, {
           ...receipt,
           capsule: {
             loginCompletions: 0,
@@ -78,12 +113,17 @@ test("fleet portal persists paper lifecycle and disconnects mixed accounts", asy
         !url.pathname.includes("/data/")
       ) {
         assert.ok(receipt);
-        return Response.json({
+        assert.ok(controlAttemptId);
+        return signedControlResponse("status", controlAttemptId, {
           ...receipt,
           capsule: {
             loginCompletions: 0,
             name: "pyrus-ibkr-slot-1",
             status: "ready",
+          },
+          targets: {
+            cpg: { host: "127.0.0.1", port: 15000 },
+            console: { host: "127.0.0.1", port: 16080 },
           },
         });
       }
@@ -128,7 +168,8 @@ test("fleet portal persists paper lifecycle and disconnects mixed accounts", asy
       }
       if (controlRequest?.[4] === "release") {
         assert.ok(receipt);
-        return Response.json({
+        assert.ok(controlAttemptId);
+        return signedControlResponse("release", controlAttemptId, {
           ...receipt,
           released: true,
         });

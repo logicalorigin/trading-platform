@@ -7,7 +7,11 @@ import {
 } from "node:http";
 import type { Duplex } from "node:stream";
 
-import { verifyIbkrHostControlRequest } from "@workspace/ibkr-contracts/control-auth";
+import {
+  signIbkrHostControlReceipt,
+  type IbkrHostControlAction,
+  verifyIbkrHostControlRequest,
+} from "@workspace/ibkr-contracts/control-auth";
 
 import {
   CapsuleError,
@@ -72,17 +76,67 @@ const RESPONSE_HEADERS = {
   "x-frame-options": "DENY",
 } as const;
 
+type ControlReceiptContext = {
+  action: IbkrHostControlAction;
+  controlAttemptId: string;
+  hostId: string;
+  key: Uint8Array;
+};
+
 function sendJson(
   response: ServerResponse,
   status: number,
   body: Record<string, unknown>,
+  receipt?: ControlReceiptContext,
 ): void {
-  const payload = JSON.stringify(body);
+  const payload = JSON.stringify(
+    receipt
+      ? {
+          ...body,
+          action: receipt.action,
+          controlAttemptId: receipt.controlAttemptId,
+        }
+      : body,
+  );
   response.writeHead(status, {
     ...RESPONSE_HEADERS,
+    ...(receipt
+      ? signIbkrHostControlReceipt({
+          action: receipt.action,
+          body: payload,
+          controlAttemptId: receipt.controlAttemptId,
+          hostId: receipt.hostId,
+          key: receipt.key,
+          status,
+        })
+      : {}),
     "content-length": Buffer.byteLength(payload),
   });
   response.end(payload);
+}
+
+const CONTROL_ATTEMPT_ID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+
+function controlAttemptQuery(
+  url: URL,
+):
+  | { kind: "invalid" }
+  | { kind: "legacy" }
+  | { controlAttemptId: string; kind: "receipt" } {
+  if (!url.search) return { kind: "legacy" };
+  const attempts = url.searchParams.getAll("controlAttemptId");
+  const controlAttemptId = attempts[0];
+  return attempts.length === 1 &&
+    controlAttemptId !== undefined &&
+    CONTROL_ATTEMPT_ID_PATTERN.test(controlAttemptId) &&
+    url.search === `?controlAttemptId=${controlAttemptId}`
+    ? { controlAttemptId, kind: "receipt" }
+    : { kind: "invalid" };
+}
+
+function isControlAction(value: string): value is IbkrHostControlAction {
+  return value === "ensure" || value === "release" || value === "status";
 }
 
 function sessionRoute(path: string): {
@@ -351,7 +405,11 @@ async function proxyDataRequest(input: {
   });
 }
 
-function sendCapsuleError(response: ServerResponse, error: unknown): void {
+function sendCapsuleError(
+  response: ServerResponse,
+  error: unknown,
+  receipt?: ControlReceiptContext,
+): void {
   const code = error instanceof CapsuleError ? error.code : "control_failed";
   const status =
     code === "data_request_too_large"
@@ -367,9 +425,12 @@ function sendCapsuleError(response: ServerResponse, error: unknown): void {
               code === "invalid_slot_number"
             ? 400
             : 503;
-  sendJson(response, status, {
-    error: { code, message: "IBKR session control failed." },
-  });
+  sendJson(
+    response,
+    status,
+    { error: { code, message: "IBKR session control failed." } },
+    receipt,
+  );
 }
 
 function rejectDataUpgrade(socket: Duplex, status: number): void {
@@ -540,7 +601,7 @@ export function createSessionHostServer(
           {
             headers: request.headers,
             method: request.method ?? "",
-            path,
+            path: `${path}${requestUrl.search}`,
           },
           options,
           replayNonces,
@@ -551,6 +612,32 @@ export function createSessionHostServer(
         });
         return;
       }
+      const attempt = controlAttemptQuery(requestUrl);
+      if (
+        attempt.kind === "invalid" ||
+        (attempt.kind === "receipt" &&
+          (!options.controlIdentity ||
+            !route.explicitGeneration ||
+            !route.explicitSlot ||
+            !isControlAction(route.action)))
+      ) {
+        sendJson(response, 400, {
+          error: {
+            code: "control_attempt_invalid",
+            message: "IBKR session control failed.",
+          },
+        });
+        return;
+      }
+      const receipt: ControlReceiptContext | undefined =
+        attempt.kind === "receipt" && options.controlIdentity
+          ? {
+              action: route.action as IbkrHostControlAction,
+              controlAttemptId: attempt.controlAttemptId,
+              hostId: options.controlIdentity.hostId,
+              key: options.controlIdentity.key,
+            }
+          : undefined;
       try {
         if (request.method === "POST" && route.action === "ensure") {
           const capsule = await options.ensureSession?.(
@@ -559,36 +646,46 @@ export function createSessionHostServer(
             route.slotNumber,
           );
           if (!capsule || !options.target) {
-            sendJson(response, 503, {
-              error: {
-                code: "control_unavailable",
-                message: "IBKR session control failed.",
+            sendJson(
+              response,
+              503,
+              {
+                error: {
+                  code: "control_unavailable",
+                  message: "IBKR session control failed.",
+                },
               },
-            });
+              receipt,
+            );
             return;
           }
-          sendJson(response, 200, {
-            sessionId: route.sessionId,
-            ...(route.explicitGeneration
-              ? { generation: route.generation }
-              : {}),
-            ...(route.explicitSlot ? { slotNumber: route.slotNumber } : {}),
-            capsule,
-            targets: {
-              cpg: options.target(
-                route.sessionId,
-                route.generation,
-                "cpg",
-                route.slotNumber,
-              ),
-              console: options.target(
-                route.sessionId,
-                route.generation,
-                "console",
-                route.slotNumber,
-              ),
+          sendJson(
+            response,
+            200,
+            {
+              sessionId: route.sessionId,
+              ...(route.explicitGeneration
+                ? { generation: route.generation }
+                : {}),
+              ...(route.explicitSlot ? { slotNumber: route.slotNumber } : {}),
+              capsule,
+              targets: {
+                cpg: options.target(
+                  route.sessionId,
+                  route.generation,
+                  "cpg",
+                  route.slotNumber,
+                ),
+                console: options.target(
+                  route.sessionId,
+                  route.generation,
+                  "console",
+                  route.slotNumber,
+                ),
+              },
             },
-          });
+            receipt,
+          );
           return;
         }
         if (request.method === "GET" && route.action === "status") {
@@ -598,42 +695,52 @@ export function createSessionHostServer(
               route.generation,
               route.slotNumber,
             )) ?? null;
-          sendJson(response, capsule ? 200 : 404, {
-            sessionId: route.sessionId,
-            ...(route.explicitGeneration
-              ? { generation: route.generation }
-              : {}),
-            ...(route.explicitSlot ? { slotNumber: route.slotNumber } : {}),
-            capsule,
-            ...(capsule && options.target
-              ? {
-                  targets: {
-                    cpg: options.target(
-                      route.sessionId,
-                      route.generation,
-                      "cpg",
-                      route.slotNumber,
-                    ),
-                    console: options.target(
-                      route.sessionId,
-                      route.generation,
-                      "console",
-                      route.slotNumber,
-                    ),
-                  },
-                }
-              : {}),
-          });
+          sendJson(
+            response,
+            capsule ? 200 : 404,
+            {
+              sessionId: route.sessionId,
+              ...(route.explicitGeneration
+                ? { generation: route.generation }
+                : {}),
+              ...(route.explicitSlot ? { slotNumber: route.slotNumber } : {}),
+              capsule,
+              ...(capsule && options.target
+                ? {
+                    targets: {
+                      cpg: options.target(
+                        route.sessionId,
+                        route.generation,
+                        "cpg",
+                        route.slotNumber,
+                      ),
+                      console: options.target(
+                        route.sessionId,
+                        route.generation,
+                        "console",
+                        route.slotNumber,
+                      ),
+                    },
+                  }
+                : {}),
+            },
+            receipt,
+          );
           return;
         }
         if (request.method === "POST" && route.action === "release") {
           if (!options.releaseSession) {
-            sendJson(response, 503, {
-              error: {
-                code: "control_unavailable",
-                message: "IBKR session control failed.",
+            sendJson(
+              response,
+              503,
+              {
+                error: {
+                  code: "control_unavailable",
+                  message: "IBKR session control failed.",
+                },
               },
-            });
+              receipt,
+            );
             return;
           }
           await options.releaseSession(
@@ -641,18 +748,23 @@ export function createSessionHostServer(
             route.generation,
             route.slotNumber,
           );
-          sendJson(response, 200, {
-            sessionId: route.sessionId,
-            ...(route.explicitGeneration
-              ? { generation: route.generation }
-              : {}),
-            ...(route.explicitSlot ? { slotNumber: route.slotNumber } : {}),
-            released: true,
-          });
+          sendJson(
+            response,
+            200,
+            {
+              sessionId: route.sessionId,
+              ...(route.explicitGeneration
+                ? { generation: route.generation }
+                : {}),
+              ...(route.explicitSlot ? { slotNumber: route.slotNumber } : {}),
+              released: true,
+            },
+            receipt,
+          );
           return;
         }
       } catch (error) {
-        sendCapsuleError(response, error);
+        sendCapsuleError(response, error, receipt);
         return;
       }
     }

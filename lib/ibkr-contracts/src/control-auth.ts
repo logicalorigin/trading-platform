@@ -11,10 +11,13 @@ const KEY_PATTERN = /^[A-Za-z0-9_-]{43}$/;
 const NONCE_PATTERN = /^[a-f0-9]{32}$/;
 const SIGNATURE_PATTERN = /^Pyrus-HMAC-SHA256 ([a-f0-9]{64})$/;
 const TIMESTAMP_PATTERN = /^(0|[1-9][0-9]{0,10})$/;
+const CONTROL_ACTION_PATTERN = /^(ensure|release|status)$/;
 const VERSION = "1";
+const RECEIPT_VERSION = "1";
 const MAX_CLOCK_SKEW_SECONDS = 30;
 
 export type IbkrHostControlHeaders = Record<string, string>;
+export type IbkrHostControlAction = "ensure" | "release" | "status";
 
 type SignInput = {
   body?: string | Uint8Array;
@@ -41,8 +44,26 @@ export type IbkrHostControlVerification =
   | { valid: false }
   | { nonce: string; timestampSeconds: number; valid: true };
 
+type SignReceiptInput = {
+  action: IbkrHostControlAction;
+  body: string | Uint8Array;
+  controlAttemptId: string;
+  hostId: string;
+  key: Uint8Array;
+  status: number;
+};
+
+type VerifyReceiptInput = Omit<SignReceiptInput, "hostId"> & {
+  expectedHostId: string;
+  headers: Record<string, string | string[] | undefined>;
+};
+
 function isValidKey(key: Uint8Array): boolean {
   return key.byteLength === 32;
+}
+
+function isValidReceiptBody(value: unknown): value is string | Uint8Array {
+  return typeof value === "string" || value instanceof Uint8Array;
 }
 
 function isValidMethod(method: string): boolean {
@@ -74,6 +95,23 @@ function canonicalRequest(input: {
     input.nonce,
     input.method,
     input.path,
+    input.contentDigest,
+  ].join("\n");
+}
+
+function canonicalReceipt(input: {
+  action: IbkrHostControlAction;
+  contentDigest: string;
+  controlAttemptId: string;
+  hostId: string;
+  status: number;
+}): string {
+  return [
+    "PYRUS-IBKR-HOST-CONTROL-RECEIPT-V1",
+    input.hostId,
+    input.controlAttemptId,
+    input.action,
+    String(input.status),
     input.contentDigest,
   ].join("\n");
 }
@@ -210,8 +248,85 @@ export function verifyIbkrHostControlRequest(
     "hex",
   );
   const provided = Buffer.from(signatureMatch[1], "hex");
-  return expected.byteLength === provided.byteLength &&
+  if (
+    expected.byteLength !== provided.byteLength ||
+    !timingSafeEqual(expected, provided)
+  ) {
+    return { valid: false };
+  }
+  return { nonce, timestampSeconds, valid: true };
+}
+
+export function signIbkrHostControlReceipt(
+  input: SignReceiptInput,
+): IbkrHostControlHeaders {
+  if (
+    !CONTROL_ACTION_PATTERN.test(input.action) ||
+    !isValidReceiptBody(input.body) ||
+    !HOST_ID_PATTERN.test(input.controlAttemptId) ||
+    !HOST_ID_PATTERN.test(input.hostId) ||
+    !isValidKey(input.key) ||
+    !Number.isSafeInteger(input.status) ||
+    input.status < 100 ||
+    input.status > 599
+  ) {
+    throw new Error("Invalid IBKR host control receipt signing input.");
+  }
+  const contentDigest = bodyDigest(input.body);
+  const signature = createHmac("sha256", input.key)
+    .update(
+      canonicalReceipt({
+        action: input.action,
+        contentDigest,
+        controlAttemptId: input.controlAttemptId,
+        hostId: input.hostId,
+        status: input.status,
+      }),
+    )
+    .digest("hex");
+  return {
+    "x-pyrus-control-receipt": `Pyrus-HMAC-SHA256 ${signature}`,
+    "x-pyrus-control-receipt-version": RECEIPT_VERSION,
+  };
+}
+
+export function verifyIbkrHostControlReceipt(
+  input: VerifyReceiptInput,
+): boolean {
+  const signature = normalizedHeader(input.headers, "x-pyrus-control-receipt");
+  const version = normalizedHeader(
+    input.headers,
+    "x-pyrus-control-receipt-version",
+  );
+  const signatureMatch = signature?.match(SIGNATURE_PATTERN);
+  if (
+    !signatureMatch ||
+    version !== RECEIPT_VERSION ||
+    !CONTROL_ACTION_PATTERN.test(input.action) ||
+    !isValidReceiptBody(input.body) ||
+    !HOST_ID_PATTERN.test(input.controlAttemptId) ||
+    !HOST_ID_PATTERN.test(input.expectedHostId) ||
+    !isValidKey(input.key) ||
+    !Number.isSafeInteger(input.status) ||
+    input.status < 100 ||
+    input.status > 599
+  ) {
+    return false;
+  }
+  const expected = createHmac("sha256", input.key)
+    .update(
+      canonicalReceipt({
+        action: input.action,
+        contentDigest: bodyDigest(input.body),
+        controlAttemptId: input.controlAttemptId,
+        hostId: input.expectedHostId,
+        status: input.status,
+      }),
+    )
+    .digest();
+  const provided = Buffer.from(signatureMatch[1], "hex");
+  return (
+    expected.byteLength === provided.byteLength &&
     timingSafeEqual(expected, provided)
-    ? { nonce, timestampSeconds, valid: true }
-    : { valid: false };
+  );
 }

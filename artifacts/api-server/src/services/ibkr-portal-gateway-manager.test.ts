@@ -4,6 +4,8 @@ import test from "node:test";
 import {
   decodeIbkrHostControlKey,
   deriveIbkrHostControlKey,
+  signIbkrHostControlReceipt,
+  type IbkrHostControlAction,
   verifyIbkrHostControlRequest,
 } from "@workspace/ibkr-contracts/control-auth";
 import { db, ibkrGatewaySessionsTable, usersTable } from "@workspace/db";
@@ -53,6 +55,35 @@ test("fleet mode routes every operation through the current signed generation fe
     const overlapHostKey = deriveIbkrHostControlKey(overlapRootKey, hostId);
     const sha = `sha256:${"9".repeat(64)}`;
     const workloadIdentityDigest = "8".repeat(64);
+    type ReceiptFailure = "missing" | "tampered" | "wrong_attempt";
+    type StatusFailure = ReceiptFailure | "unexpected_status";
+    const signedControlResponse = (
+      action: IbkrHostControlAction,
+      controlAttemptId: string,
+      body: Record<string, unknown>,
+      status = 200,
+      failure?: ReceiptFailure,
+    ): Response => {
+      const payload = JSON.stringify({ action, controlAttemptId, ...body });
+      const receiptHeaders =
+        failure === "missing"
+          ? {}
+          : signIbkrHostControlReceipt({
+              action,
+              body: payload,
+              controlAttemptId:
+                failure === "wrong_attempt"
+                  ? "ffffffff-ffff-4fff-bfff-ffffffffffff"
+                  : controlAttemptId,
+              hostId,
+              key: action === "status" ? overlapHostKey : hostKey,
+              status,
+            });
+      return new Response(failure === "tampered" ? `${payload} ` : payload, {
+        status,
+        headers: { "content-type": "application/json", ...receiptHeaders },
+      });
+    };
     const requests: Array<{
       body: string;
       headers: Record<string, string>;
@@ -61,6 +92,7 @@ test("fleet mode routes every operation through the current signed generation fe
       redirect: RequestInit["redirect"];
       signal: boolean;
     }> = [];
+    let missingTargetsUserId: string | null = null;
     let recoveryUserId: string | null = null;
     const releaseFailureModes = new Map<
       string,
@@ -68,7 +100,9 @@ test("fleet mode routes every operation through the current signed generation fe
     >();
     const releaseFailureUserIds: string[] = [];
     const statusMissingSessionIds = new Set<string>();
+    const statusMissingTargetsSessionIds = new Set<string>();
     const statusNullOkSessionIds = new Set<string>();
+    const statusFailureModes = new Map<string, StatusFailure>();
 
     process.env["IBKR_GATEWAY_FLEET_ENABLED"] = "1";
     process.env["IBKR_GATEWAY_FLEET_CONTROL_ROOT_KEY"] =
@@ -119,85 +153,146 @@ test("fleet mode routes every operation through the current signed generation fe
         redirect: init?.redirect,
         signal: init?.signal instanceof AbortSignal,
       });
-      if (url.pathname.endsWith("/release")) {
-        const releaseRoute = url.pathname.match(
-          /^\/sessions\/([^/]+)\/generations\/(\d+)\/slots\/(\d+)\/release$/,
+      const controlRoute = url.pathname.match(
+        /^\/sessions\/([^/]+)\/generations\/(\d+)\/slots\/(\d+)\/(ensure|release|status)$/,
+      );
+      const control = controlRoute
+        ? {
+            action: controlRoute[4] as IbkrHostControlAction,
+            controlAttemptId: url.searchParams.getAll("controlAttemptId")[0],
+            generation: Number(controlRoute[2]),
+            sessionId: controlRoute[1]!,
+            slotNumber: Number(controlRoute[3]),
+          }
+        : null;
+      if (control) {
+        assert.equal(url.searchParams.size, 1);
+        assert.equal(url.searchParams.getAll("controlAttemptId").length, 1);
+        assert.match(
+          control.controlAttemptId ?? "",
+          /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
         );
-        assert.ok(releaseRoute);
+        assert.equal(
+          url.search,
+          `?controlAttemptId=${control.controlAttemptId}`,
+        );
+      }
+      if (control?.action === "release") {
         const receipt = {
-          sessionId: releaseRoute[1]!,
-          generation: Number(releaseRoute[2]!),
-          slotNumber: Number(releaseRoute[3]!),
+          sessionId: control.sessionId,
+          generation: control.generation,
+          slotNumber: control.slotNumber,
         };
         const failureMode = releaseFailureModes.get(receipt.sessionId);
         if (failureMode === "released_false") {
-          return Response.json({ ...receipt, released: false });
+          return signedControlResponse(
+            control.action,
+            control.controlAttemptId!,
+            { ...receipt, released: false },
+          );
         }
         if (failureMode === "mismatched_receipt") {
-          return Response.json({
-            ...receipt,
-            generation: receipt.generation + 1,
-            released: true,
-          });
+          return signedControlResponse(
+            control.action,
+            control.controlAttemptId!,
+            {
+              ...receipt,
+              generation: receipt.generation + 1,
+              released: true,
+            },
+          );
         }
         if (failureMode === "not_found") {
-          return Response.json(
+          return signedControlResponse(
+            control.action,
+            control.controlAttemptId!,
             { error: { code: "not_found" } },
-            { status: 404 },
+            404,
           );
         }
-        return Response.json({ ...receipt, released: true });
-      }
-      if (url.pathname.endsWith("/status")) {
-        const statusRoute = url.pathname.match(
-          /^\/sessions\/([^/]+)\/generations\/(\d+)\/slots\/(\d+)\/status$/,
+        return signedControlResponse(
+          control.action,
+          control.controlAttemptId!,
+          { ...receipt, released: true },
         );
-        assert.ok(statusRoute);
-        if (statusNullOkSessionIds.has(statusRoute[1]!)) {
-          return Response.json({
-            sessionId: statusRoute[1],
-            generation: Number(statusRoute[2]),
-            slotNumber: Number(statusRoute[3]),
-            capsule: null,
-          });
-        }
-        if (statusMissingSessionIds.has(statusRoute[1]!)) {
-          return Response.json(
+      }
+      if (control?.action === "status") {
+        const statusFailure = statusFailureModes.get(control.sessionId);
+        const receiptFailure =
+          statusFailure === "unexpected_status" ? undefined : statusFailure;
+        if (statusNullOkSessionIds.has(control.sessionId)) {
+          return signedControlResponse(
+            control.action,
+            control.controlAttemptId!,
             {
-              sessionId: statusRoute[1],
-              generation: Number(statusRoute[2]),
-              slotNumber: Number(statusRoute[3]),
+              sessionId: control.sessionId,
+              generation: control.generation,
+              slotNumber: control.slotNumber,
               capsule: null,
             },
-            { status: 404 },
+            200,
+            receiptFailure,
           );
         }
-        return Response.json({
-          sessionId: statusRoute[1],
-          generation: Number(statusRoute[2]),
-          slotNumber: Number(statusRoute[3]),
-          capsule: {
-            loginCompletions: 2,
-            name: "pyrus-ibkr-slot-1",
-            status: "ready",
+        if (statusMissingSessionIds.has(control.sessionId)) {
+          return signedControlResponse(
+            control.action,
+            control.controlAttemptId!,
+            {
+              sessionId: control.sessionId,
+              generation: control.generation,
+              slotNumber: control.slotNumber,
+              capsule: null,
+            },
+            404,
+            receiptFailure,
+          );
+        }
+        if (statusMissingTargetsSessionIds.has(control.sessionId)) {
+          return signedControlResponse(
+            control.action,
+            control.controlAttemptId!,
+            {
+              sessionId: control.sessionId,
+              generation: control.generation,
+              slotNumber: control.slotNumber,
+              capsule: {
+                loginCompletions: 2,
+                name: "pyrus-ibkr-slot-2",
+                status: "ready",
+              },
+            },
+          );
+        }
+        return signedControlResponse(
+          control.action,
+          control.controlAttemptId!,
+          {
+            sessionId: control.sessionId,
+            generation: control.generation,
+            slotNumber: control.slotNumber,
+            capsule: {
+              loginCompletions: 2,
+              name: "pyrus-ibkr-slot-1",
+              status: "ready",
+            },
+            targets: {
+              cpg: { host: "127.0.0.1", port: 15009 },
+              console: { host: "127.0.0.1", port: 16089 },
+            },
           },
-          targets: {
-            cpg: { host: "127.0.0.1", port: 15009 },
-            console: { host: "127.0.0.1", port: 16089 },
-          },
-        });
+          statusFailure === "unexpected_status" ? 201 : 200,
+          receiptFailure,
+        );
       }
       if (url.pathname.endsWith("/data/cpg/v1/api/tickle")) {
         return Response.json({ session: "synthetic-session" });
       }
-      const ensureRoute = url.pathname.match(
-        /^\/sessions\/([^/]+)\/generations\/(\d+)\/slots\/(\d+)\/ensure$/,
-      );
-      assert.ok(ensureRoute);
-      return Response.json({
-        sessionId: ensureRoute[1],
-        generation: Number(ensureRoute[2]),
-        slotNumber: Number(ensureRoute[3]),
+      assert.equal(control?.action, "ensure");
+      return signedControlResponse(control.action, control.controlAttemptId!, {
+        sessionId: control.sessionId,
+        generation: control.generation,
+        slotNumber: control.slotNumber,
         capsule: {
           loginCompletions: 1,
           name: "pyrus-ibkr-slot-1",
@@ -236,6 +331,12 @@ test("fleet mode routes every operation through the current signed generation fe
         .limit(1);
       assert.ok(ensuredSession?.controlAttemptId);
       assert.ok(ensuredSession.controlAcknowledgedAt);
+      assert.equal(
+        new URL(requests[0]!.path, "https://host.invalid").searchParams.get(
+          "controlAttemptId",
+        ),
+        ensuredSession.controlAttemptId,
+      );
       for (const state of [
         "login_required",
         "verifying",
@@ -340,13 +441,19 @@ test("fleet mode routes every operation through the current signed generation fe
           false,
         );
       }
-      assert.match(requests[0]!.path, /\/generations\/1\/slots\/1\/ensure$/);
+      assert.match(
+        requests[0]!.path,
+        /\/generations\/1\/slots\/1\/ensure\?controlAttemptId=[0-9a-f-]{36}$/,
+      );
       assert.equal(requests[0]!.redirect, "error");
       assert.equal(requests[0]!.signal, true);
       assert.match(requests[1]!.path, /\/data\/cpg\/v1\/api\/tickle$/);
       assert.equal(requests[1]!.body, "{}");
       assert.equal(requests[1]!.redirect, "manual");
-      assert.match(requests[2]!.path, /\/generations\/1\/slots\/1\/release$/);
+      assert.match(
+        requests[2]!.path,
+        /\/generations\/1\/slots\/1\/release\?controlAttemptId=[0-9a-f-]{36}$/,
+      );
       assert.equal(requests[2]!.redirect, "error");
 
       const [recoveryUser] = await db
@@ -387,6 +494,31 @@ test("fleet mode routes every operation through the current signed generation fe
         brokerConnectionId: connection.id,
       });
       assert.ok(recoveryFence);
+      const rejectedReceiptAttempts = new Set<string>();
+      for (const failure of [
+        "missing",
+        "tampered",
+        "wrong_attempt",
+        "unexpected_status",
+      ] as const) {
+        statusFailureModes.set(recoveryFence.sessionId, failure);
+        await assert.rejects(
+          refreshGateway(recoveryUser.id),
+          (error: unknown) =>
+            error instanceof HttpError &&
+            error.code === "ibkr_session_host_response_invalid",
+        );
+        const [rejectedReceiptSession] = await db
+          .select()
+          .from(ibkrGatewaySessionsTable)
+          .where(eq(ibkrGatewaySessionsTable.id, recoveryFence.sessionId))
+          .limit(1);
+        assert.ok(rejectedReceiptSession?.controlAttemptId);
+        rejectedReceiptAttempts.add(rejectedReceiptSession.controlAttemptId);
+        assert.equal(rejectedReceiptSession.controlAcknowledgedAt, null);
+      }
+      statusFailureModes.delete(recoveryFence.sessionId);
+      assert.equal(rejectedReceiptAttempts.size, 4);
       statusMissingSessionIds.add(recoveryFence.sessionId);
       assert.equal(await refreshGateway(recoveryUser.id), null);
       const [missingStatusSession] = await db
@@ -412,11 +544,72 @@ test("fleet mode routes every operation through the current signed generation fe
       assert.ok(invalidStatusSession?.controlAttemptId);
       assert.equal(invalidStatusSession.controlAcknowledgedAt, null);
       statusNullOkSessionIds.delete(recoveryFence.sessionId);
+      const [missingTargetsUser] = await db
+        .insert(usersTable)
+        .values({
+          email: "synthetic-manager-missing-targets@example.invalid",
+          passwordHash: "synthetic-unused-hash",
+        })
+        .returning({ id: usersTable.id });
+      assert.ok(missingTargetsUser);
+      missingTargetsUserId = missingTargetsUser.id;
+      const missingTargetsConnection = await ensureIbkrGatewayBrokerConnection({
+        appUserId: missingTargetsUser.id,
+        mode: "shadow",
+      });
+      assert.ok(missingTargetsConnection);
+      assert.ok(
+        await ensureIbkrGatewaySessionIdentity({
+          appUserId: missingTargetsUser.id,
+          brokerConnectionId: missingTargetsConnection.id,
+        }),
+      );
+      const missingTargetsPlacement = await tryAcquireIbkrGatewayLease({
+        appUserId: missingTargetsUser.id,
+        brokerConnectionId: missingTargetsConnection.id,
+      });
+      assert.equal(missingTargetsPlacement.status, "acquired");
+      if (missingTargetsPlacement.status !== "acquired") {
+        throw new Error("synthetic slot-two placement was not acquired");
+      }
+      assert.equal(missingTargetsPlacement.fence.slotNumber, 2);
       await stopGateway(recoveryUser.id);
-      assert.match(requests[3]!.path, /\/generations\/1\/slots\/1\/status$/);
-      assert.match(requests[4]!.path, /\/generations\/1\/slots\/1\/status$/);
-      assert.match(requests[5]!.path, /\/generations\/1\/slots\/1\/status$/);
-      assert.match(requests[6]!.path, /\/generations\/1\/slots\/1\/release$/);
+      assert.equal(requests.length, 11);
+      for (const request of requests.slice(3, 10)) {
+        assert.match(
+          request.path,
+          /\/generations\/1\/slots\/1\/status\?controlAttemptId=[0-9a-f-]{36}$/,
+        );
+      }
+      assert.match(
+        requests[10]!.path,
+        /\/generations\/1\/slots\/1\/release\?controlAttemptId=[0-9a-f-]{36}$/,
+      );
+      statusMissingTargetsSessionIds.add(
+        missingTargetsPlacement.fence.sessionId,
+      );
+      await assert.rejects(
+        refreshGateway(missingTargetsUser.id),
+        (error: unknown) =>
+          error instanceof HttpError &&
+          error.code === "ibkr_session_host_response_invalid",
+      );
+      const [missingTargetsSession] = await db
+        .select()
+        .from(ibkrGatewaySessionsTable)
+        .where(
+          eq(
+            ibkrGatewaySessionsTable.id,
+            missingTargetsPlacement.fence.sessionId,
+          ),
+        )
+        .limit(1);
+      assert.ok(missingTargetsSession?.controlAttemptId);
+      assert.equal(missingTargetsSession.controlAcknowledgedAt, null);
+      statusMissingTargetsSessionIds.delete(
+        missingTargetsPlacement.fence.sessionId,
+      );
+      await stopGateway(missingTargetsUser.id);
 
       for (const [index, failureMode] of (
         ["released_false", "mismatched_receipt", "not_found"] as const
@@ -494,6 +687,9 @@ test("fleet mode routes every operation through the current signed generation fe
       }
       if (recoveryUserId) {
         await stopGateway(recoveryUserId).catch(() => undefined);
+      }
+      if (missingTargetsUserId) {
+        await stopGateway(missingTargetsUserId).catch(() => undefined);
       }
       await stopGateway(user.id).catch(() => undefined);
       globalThis.fetch = previousFetch;

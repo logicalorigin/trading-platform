@@ -4,7 +4,9 @@ import test from "node:test";
 import {
   decodeIbkrHostControlKey,
   deriveIbkrHostControlKey,
+  signIbkrHostControlReceipt,
   signIbkrHostControlRequest,
+  verifyIbkrHostControlReceipt,
   verifyIbkrHostControlRequest,
 } from "@workspace/ibkr-contracts/control-auth";
 
@@ -18,6 +20,7 @@ const KEY = decodeIbkrHostControlKey(KEY_TEXT)!;
 const OVERLAP_KEY_TEXT = Buffer.alloc(32, 8).toString("base64url");
 const OVERLAP_KEY = decodeIbkrHostControlKey(OVERLAP_KEY_TEXT)!;
 const NOW_SECONDS = 1_784_200_000;
+const CONTROL_ATTEMPT_ID = "44444444-4444-4444-8444-444444444444";
 const PATH =
   "/sessions/33333333-3333-4333-8333-333333333333/generations/7/slots/2/ensure";
 
@@ -51,6 +54,126 @@ test("signs a host-bound, replay-identifiable control request", () => {
   assert.match(headers.authorization, /^Pyrus-HMAC-SHA256 [a-f0-9]{64}$/);
   assert.equal(headers["x-pyrus-control-host"], HOST_ID);
   assert.equal(headers["x-pyrus-control-version"], "1");
+});
+
+test("binds one control attempt in the signed request path", () => {
+  const controlPath = `${PATH}?controlAttemptId=${CONTROL_ATTEMPT_ID}`;
+  const headers = signIbkrHostControlRequest({
+    hostId: HOST_ID,
+    key: KEY,
+    method: "POST",
+    nonce: "c".repeat(32),
+    path: controlPath,
+    timestampSeconds: NOW_SECONDS,
+  });
+
+  assert.equal(headers["x-pyrus-control-version"], "1");
+  assert.deepEqual(
+    verifyIbkrHostControlRequest({
+      expectedHostId: HOST_ID,
+      headers,
+      key: KEY,
+      method: "POST",
+      nowSeconds: NOW_SECONDS,
+      path: controlPath,
+    }),
+    {
+      nonce: "c".repeat(32),
+      timestampSeconds: NOW_SECONDS,
+      valid: true,
+    },
+  );
+  assert.deepEqual(
+    verifyIbkrHostControlRequest({
+      expectedHostId: HOST_ID,
+      headers,
+      key: KEY,
+      method: "POST",
+      nowSeconds: NOW_SECONDS,
+      path: `${PATH}?controlAttemptId=55555555-5555-4555-8555-555555555555`,
+    }),
+    { valid: false },
+  );
+});
+
+test("signs an exact response receipt bound to its request", () => {
+  const body = JSON.stringify({
+    action: "ensure",
+    controlAttemptId: CONTROL_ATTEMPT_ID,
+    sessionId: "33333333-3333-4333-8333-333333333333",
+  });
+  const headers = signIbkrHostControlReceipt({
+    action: "ensure",
+    body,
+    controlAttemptId: CONTROL_ATTEMPT_ID,
+    hostId: HOST_ID,
+    key: KEY,
+    status: 200,
+  });
+  const verify = (
+    overrides: Partial<Parameters<typeof verifyIbkrHostControlReceipt>[0]>,
+  ): boolean =>
+    verifyIbkrHostControlReceipt({
+      action: "ensure",
+      body,
+      controlAttemptId: CONTROL_ATTEMPT_ID,
+      expectedHostId: HOST_ID,
+      headers,
+      key: KEY,
+      status: 200,
+      ...overrides,
+    });
+
+  assert.equal(headers["x-pyrus-control-receipt-version"], "1");
+  assert.match(
+    headers["x-pyrus-control-receipt"] ?? "",
+    /^Pyrus-HMAC-SHA256 [a-f0-9]{64}$/,
+  );
+  assert.equal(verify({}), true);
+  assert.equal(verify({ body: `${body} ` }), false);
+  assert.equal(verify({ action: "release" }), false);
+  assert.equal(
+    verify({
+      controlAttemptId: "55555555-5555-4555-8555-555555555555",
+    }),
+    false,
+  );
+  assert.equal(verify({ expectedHostId: OTHER_HOST_ID }), false);
+  assert.equal(verify({ key: OVERLAP_KEY }), false);
+  assert.equal(verify({ status: 404 }), false);
+  assert.equal(verify({ body: undefined as never }), false);
+  assert.throws(() =>
+    signIbkrHostControlReceipt({
+      action: "ensure",
+      body: undefined as never,
+      controlAttemptId: CONTROL_ATTEMPT_ID,
+      hostId: HOST_ID,
+      key: KEY,
+      status: 200,
+    }),
+  );
+  assert.equal(
+    verify({
+      headers: {
+        ...headers,
+        "x-pyrus-control-receipt-version": "2",
+      },
+    }),
+    false,
+  );
+  assert.equal(
+    verify({
+      headers: signIbkrHostControlRequest({
+        hostId: HOST_ID,
+        key: KEY,
+        method: "POST",
+        nonce: "e".repeat(32),
+        path: PATH,
+        timestampSeconds: NOW_SECONDS,
+      }),
+    }),
+    false,
+  );
 });
 
 test("rejects tampering, another host, stale time, and malformed keys", () => {

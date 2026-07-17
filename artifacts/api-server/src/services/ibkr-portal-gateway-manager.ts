@@ -30,6 +30,7 @@ import {
 import {
   acknowledgeIbkrGatewayFleetControl,
   ensureIbkrGatewayFleetFence,
+  type IbkrGatewayFleetHostResponse,
   isIbkrGatewayFleetEnabled,
   normalizeIbkrGatewayPath,
   prepareIbkrGatewayFleetDataRequest,
@@ -401,17 +402,23 @@ const HostStatusResponseSchema = z.object({
   targets: HostTargetsSchema.optional(),
 });
 const FleetHostEnsureResponseSchema = HostEnsureResponseSchema.extend({
+  action: z.literal("ensure"),
+  controlAttemptId: z.string().uuid(),
   sessionId: z.string().uuid(),
   generation: z.number().int().min(0).max(2_147_483_647),
   slotNumber: z.number().int().min(1).max(20),
 }).strict();
 const FleetHostStatusResponseSchema = HostStatusResponseSchema.extend({
+  action: z.literal("status"),
+  controlAttemptId: z.string().uuid(),
   sessionId: z.string().uuid(),
   generation: z.number().int().min(0).max(2_147_483_647),
   slotNumber: z.number().int().min(1).max(20),
 }).strict();
-const HostReleaseResponseSchema = z
+const FleetHostReleaseResponseSchema = z
   .object({
+    action: z.literal("release"),
+    controlAttemptId: z.string().uuid(),
     sessionId: z.string().uuid(),
     generation: z.number().int().min(0).max(2_147_483_647),
     slotNumber: z.number().int().min(1).max(20),
@@ -445,13 +452,24 @@ function parseHostResponse<T extends z.ZodType>(
 }
 
 function assertMatchingFleetResponse(
-  response: { generation: number; sessionId: string; slotNumber: number },
-  fence: IbkrGatewayFence,
+  response: {
+    action: "ensure" | "release" | "status";
+    controlAttemptId: string;
+    generation: number;
+    sessionId: string;
+    slotNumber: number;
+  },
+  request: Pick<
+    IbkrGatewayFleetHostResponse<unknown>,
+    "action" | "controlAttemptId" | "fence"
+  >,
 ): void {
   if (
-    response.sessionId !== fence.sessionId ||
-    response.generation !== fence.generation ||
-    response.slotNumber !== fence.slotNumber
+    response.action !== request.action ||
+    response.controlAttemptId !== request.controlAttemptId ||
+    response.sessionId !== request.fence.sessionId ||
+    response.generation !== request.fence.generation ||
+    response.slotNumber !== request.fence.slotNumber
   ) {
     throw invalidHostResponse();
   }
@@ -800,7 +818,7 @@ async function ensureFleetGateway(appUserId: string): Promise<PortalGateway> {
       FleetHostEnsureResponseSchema,
       response.value,
     );
-    assertMatchingFleetResponse(result, response.fence);
+    assertMatchingFleetResponse(result, response);
     await acknowledgeIbkrGatewayFleetControl(response);
     if (gatewayEpoch(appUserId) !== epoch) {
       throw new HttpError(
@@ -962,16 +980,24 @@ export async function refreshGateway(
       FleetHostStatusResponseSchema,
       response.value,
     );
-    assertMatchingFleetResponse(result, response.fence);
-    if (
-      (response.status === "not_found" && result.capsule !== null) ||
-      (response.status === "ok" && result.capsule === null)
-    ) {
-      throw invalidHostResponse();
-    }
+    assertMatchingFleetResponse(result, response);
+    const hostStatus = (() => {
+      if (response.status === "not_found") {
+        if (result.capsule !== null || result.targets !== undefined) {
+          throw invalidHostResponse();
+        }
+        return { kind: "not_found" as const };
+      }
+      if (!result.capsule || !result.targets) throw invalidHostResponse();
+      return {
+        capsule: result.capsule,
+        kind: "found" as const,
+        targets: result.targets,
+      };
+    })();
     await acknowledgeIbkrGatewayFleetControl(response);
     if (gatewayEpoch(appUserId) !== epoch) return null;
-    if (response.status === "not_found") {
+    if (hostStatus.kind === "not_found") {
       if (
         entry &&
         gateways.get(appUserId) === entry &&
@@ -983,8 +1009,6 @@ export async function refreshGateway(
       }
       return null;
     }
-    const capsule = result.capsule;
-    if (!capsule) throw invalidHostResponse();
     const current = gateways.get(appUserId);
     if (current) {
       if (
@@ -995,12 +1019,12 @@ export async function refreshGateway(
         return null;
       }
       current.fleetFence = response.fence;
-      return updateHostedGateway(current, capsule);
+      return updateHostedGateway(current, hostStatus.capsule);
     }
     return rememberFleetGateway(
       appUserId,
       response.fence,
-      { capsule, targets: result.targets ?? HOSTED_TARGETS },
+      { capsule: hostStatus.capsule, targets: hostStatus.targets },
       true,
     );
   }
@@ -1074,11 +1098,11 @@ export async function stopGateway(appUserId: string): Promise<void> {
           "release",
         );
         const receipt = parseHostResponse(
-          HostReleaseResponseSchema,
+          FleetHostReleaseResponseSchema,
           released.value,
         );
         if (released.status !== "ok") throw invalidHostResponse();
-        assertMatchingFleetResponse(receipt, released.fence);
+        assertMatchingFleetResponse(receipt, released);
         await acknowledgeIbkrGatewayFleetControl(released);
         currentFence = released.fence;
         releaseControlAttemptId = released.controlAttemptId;
