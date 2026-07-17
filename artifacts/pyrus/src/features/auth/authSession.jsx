@@ -2,6 +2,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { customFetch, setCsrfTokenGetter } from "@workspace/api-client-react";
 import {
   createContext,
+  Fragment,
   useCallback,
   useContext,
   useEffect,
@@ -166,10 +167,17 @@ export function AuthProvider({ children }) {
     query.isLoading,
     refresh,
   ]);
+  const authBoundaryIdentity = authSessionIdentity(query.data);
+  const authBoundaryKey =
+    query.data === undefined
+      ? "pending"
+      : authBoundaryIdentity !== null
+        ? `user:${authBoundaryIdentity}`
+        : "anonymous";
 
   return (
     <AuthSessionContext.Provider value={value}>
-      {children}
+      <Fragment key={authBoundaryKey}>{children}</Fragment>
     </AuthSessionContext.Provider>
   );
 }

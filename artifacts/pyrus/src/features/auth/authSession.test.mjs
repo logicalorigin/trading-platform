@@ -5,6 +5,7 @@ import {
   QueryClient,
   QueryClientProvider,
   QueryObserver,
+  useQuery,
 } from "@tanstack/react-query";
 import React, { act } from "react";
 import { createRoot } from "react-dom/client";
@@ -204,7 +205,7 @@ test("an auth identity change evicts private queries before the next observer mo
   assert.equal(client.getQueryData(["/api/algo/deployments"]), undefined);
   assert.equal(client.getQueryData(["/api/accounts"]), undefined);
   // An already-mounted old-identity observer keeps its current render until the
-  // auth gate unmounts it; the next identity mounts against the cleared cache.
+  // auth identity boundary unmounts it; the next identity mounts cleanly.
   assert.deepEqual(priorIdentityObserver.getCurrentResult().data, {
     deployments: [{ id: "private-user-a-deployment" }],
   });
@@ -238,7 +239,7 @@ test("a definitive auth response replaces identity after evicting private cache"
   client.clear();
 });
 
-test("the StrictMode auth watcher evicts only on identity change or revocation", async () => {
+test("the StrictMode auth boundary remounts private observers only on identity change or revocation", async () => {
   const priorSession = {
     user: {
       id: "user-a",
@@ -275,6 +276,20 @@ test("the StrictMode auth watcher evicts only on identity change or revocation",
     accounts: [{ id: "private-user-a-account" }],
   });
   const responses = [equivalentSession, nextSession, anonymousSession];
+  let observedAccountId = null;
+  let privateProbeMounts = 0;
+  function PrivateAccountProbe() {
+    const query = useQuery({
+      queryKey: ["/api/accounts"],
+      queryFn: async () => ({ accounts: [] }),
+      enabled: false,
+    });
+    observedAccountId = query.data?.accounts?.[0]?.id ?? null;
+    React.useEffect(() => {
+      privateProbeMounts += 1;
+    }, []);
+    return null;
+  }
   globalThis.fetch = async (path) => {
     assert.equal(path, "/api/auth/session");
     const session = responses.shift();
@@ -297,17 +312,24 @@ test("the StrictMode auth watcher evicts only on identity change or revocation",
           React.createElement(
             QueryClientProvider,
             { client },
-            React.createElement(AuthProvider),
+            React.createElement(
+              AuthProvider,
+              null,
+              React.createElement(PrivateAccountProbe),
+            ),
           ),
         ),
       );
     });
+    assert.equal(observedAccountId, "private-user-a-account");
+    const priorIdentityMounts = privateProbeMounts;
     await act(async () => {
       await client.refetchQueries({
         queryKey: AUTH_SESSION_QUERY_KEY,
         type: "active",
       });
     });
+    await act(() => new Promise((resolve) => setImmediate(resolve)));
     assert.deepEqual(
       client.getQueryData(AUTH_SESSION_QUERY_KEY),
       equivalentSession,
@@ -315,6 +337,8 @@ test("the StrictMode auth watcher evicts only on identity change or revocation",
     assert.deepEqual(client.getQueryData(["/api/accounts"]), {
       accounts: [{ id: "private-user-a-account" }],
     });
+    assert.equal(observedAccountId, "private-user-a-account");
+    assert.equal(privateProbeMounts, priorIdentityMounts);
 
     await act(async () => {
       await client.refetchQueries({
@@ -322,11 +346,21 @@ test("the StrictMode auth watcher evicts only on identity change or revocation",
         type: "active",
       });
     });
+    await act(() => new Promise((resolve) => setImmediate(resolve)));
 
     assert.deepEqual(client.getQueryData(AUTH_SESSION_QUERY_KEY), nextSession);
     assert.equal(client.getQueryData(["/api/accounts"]), undefined);
+    assert.equal(observedAccountId, null);
+    assert.ok(privateProbeMounts > priorIdentityMounts);
+    const nextIdentityMounts = privateProbeMounts;
 
-    client.setQueryData(["/api/accounts"], {
+    await act(async () => {
+      client.setQueryData(["/api/accounts"], {
+        accounts: [{ id: "private-user-b-account" }],
+      });
+      await Promise.resolve();
+    });
+    assert.deepEqual(client.getQueryData(["/api/accounts"]), {
       accounts: [{ id: "private-user-b-account" }],
     });
     await act(async () => {
@@ -335,11 +369,17 @@ test("the StrictMode auth watcher evicts only on identity change or revocation",
         type: "active",
       });
     });
+    await act(() => new Promise((resolve) => setImmediate(resolve)));
     assert.deepEqual(
       client.getQueryData(AUTH_SESSION_QUERY_KEY),
       anonymousSession,
     );
     assert.equal(client.getQueryData(["/api/accounts"]), undefined);
+    assert.ok(
+      privateProbeMounts > nextIdentityMounts,
+      `private observer did not remount (${privateProbeMounts} <= ${nextIdentityMounts})`,
+    );
+    assert.equal(observedAccountId, null);
     assert.equal(responses.length, 0);
 
     await act(async () => root.unmount());
