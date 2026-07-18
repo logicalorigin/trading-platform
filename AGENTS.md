@@ -64,3 +64,17 @@ the ceiling and upgrade path. Never simplify away trust-boundary validation, dat
 handling, security, accessibility, or anything explicitly requested — and never skip
 understanding the code before shortening the solution. Codex workers: treat this as a
 standing rule from ignition, and leaders must repeat it in work-order prompts.
+
+## Agent model vertical discipline
+
+- Unless the user explicitly requests another model family, delegate only within the
+  current agent's own model vertical. A Codex leader uses Codex workers; do not silently
+  substitute Claude, Gemini, or another provider's agents.
+- Vary cost and depth inside that vertical through the available model and reasoning
+  profiles. State the selected model/profile in each worker assignment.
+- If the available delegation tool cannot pin the requested vertical, disclose that
+  limitation and use a pin-capable Codex mechanism or work inline. Do not cross model
+  verticals as an implicit fallback.
+- Workers may delegate further only when those subagents can also be pinned to the same
+  vertical. Otherwise they must self-review inline or return the review lane to the
+  leader for a separately pinned Codex worker.
