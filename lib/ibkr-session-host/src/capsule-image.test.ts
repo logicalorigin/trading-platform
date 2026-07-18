@@ -624,6 +624,14 @@ test("capsule restricts CPG clients and exposes only fixed host relays with RAM-
     entrypoint,
     /start_service chromium chromium[\s\S]*?--user-data-dir="\$\{RUNTIME_DIR\}\/chromium"[\s\S]*?--ignore-certificate-errors-spki-list="\$\{CPG_SPKI_SHA256\}"[\s\S]*?^  --app=https:\/\/localhost:5000\/$/m,
   );
+  assert.match(entrypoint, /^  -XX:\+UseSerialGC \\$/m);
+  assert.match(entrypoint, /^  --disable-breakpad \\$/m);
+  assert.match(entrypoint, /^  --disable-gpu \\$/m);
+  assert.match(
+    entrypoint,
+    /^  --disable-features=OptimizationHints,OptimizationGuideModelExecution,OptimizationGuideOnDeviceModel \\$/m,
+  );
+  assert.match(entrypoint, /^  --renderer-process-limit=1 \\$/m);
   assert.match(entrypoint, /^  --window-position=0,0 \\$/m);
   assert.match(entrypoint, /^  --window-size=1364,768 \\$/m);
   assert.doesNotMatch(entrypoint, /--incognito/);

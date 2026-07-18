@@ -175,6 +175,7 @@ start_service novnc websockify \
 
 start_service cpg java \
   -server \
+  -XX:+UseSerialGC \
   -Dvertx.disableDnsResolver=true \
   -Djava.net.preferIPv4Stack=true \
   -Dvertx.logger-delegate-factory-class-name=io.vertx.core.logging.SLF4JLogDelegateFactory \
@@ -197,8 +198,12 @@ start_service chromium chromium \
   --no-first-run \
   --no-default-browser-check \
   --disable-background-networking \
+  --disable-breakpad \
   --disable-component-update \
+  --disable-features=OptimizationHints,OptimizationGuideModelExecution,OptimizationGuideOnDeviceModel \
+  --disable-gpu \
   --disable-sync \
+  --renderer-process-limit=1 \
   --window-position=0,0 \
   --window-size=1364,768 \
   --ignore-certificate-errors-spki-list="${CPG_SPKI_SHA256}" \
