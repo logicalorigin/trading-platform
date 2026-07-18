@@ -2107,11 +2107,13 @@ export function SnapTradeConnectPanel({ enabled = true }) {
       setLocalError("The secure IBKR login viewer is not available.");
       return;
     }
-    setIbkrLoginUrl(loginUrl);
-    const startedAt = Date.now();
+    let loginStartedAt = null;
     const poll = async () => {
       if (attempt !== ibkrAttemptRef.current) return;
-      if (hasIbkrPortalLoginTimedOut(startedAt, Date.now())) {
+      if (
+        loginStartedAt !== null &&
+        hasIbkrPortalLoginTimedOut(loginStartedAt, Date.now())
+      ) {
         void disconnectIbkrPortal("IBKR connection attempt timed out.");
         return;
       }
@@ -2131,6 +2133,14 @@ export function SnapTradeConnectPanel({ enabled = true }) {
         getGetIbkrPortalReadinessQueryKey(),
         status,
       );
+      const progress = buildIbkrPortalProgressModel({
+        readiness: status,
+        connecting: true,
+      });
+      if (loginStartedAt === null && progress.showLoginViewer) {
+        loginStartedAt = Date.now();
+        setIbkrLoginUrl(loginUrl);
+      }
       if (status?.status === "connected" && status?.authenticated === true) {
         ++ibkrAttemptRef.current;
         setIbkrLoginUrl("");
@@ -2157,7 +2167,7 @@ export function SnapTradeConnectPanel({ enabled = true }) {
         ibkrPollRef.current = window.setTimeout(poll, 3000);
       }
     };
-    ibkrPollRef.current = window.setTimeout(poll, 3000);
+    void poll();
   };
 
   const disconnectIbkrPortal = async (finalMessage = "") => {

@@ -177,12 +177,7 @@ test("native IBKR proxy uses the CPG target and keeps app credentials out of the
       );
       assert.equal(connected.status, 200);
       const connectBody = (await connected.json()) as { loginPath: string };
-      assert.equal(
-        connectBody.loginPath,
-        "/api/broker-execution/ibkr-portal/gateway/vnc.html" +
-          "?autoconnect=1&resize=scale" +
-          "&path=api%2Fbroker-execution%2Fibkr-portal%2Fgateway%2Fwebsockify",
-      );
+      assert.equal(connectBody.loginPath, "/ibkr-viewer.html");
 
       const embedGrant = issueIbkrPortalEmbedGrant({
         appUserId: admin.id,

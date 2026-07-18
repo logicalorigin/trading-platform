@@ -24,6 +24,7 @@ test("IBKR portal progress distinguishes browser login from verified connection"
     },
   });
   assert.equal(starting.title, "Starting IBKR Client Portal");
+  assert.equal(starting.showLoginViewer, false);
   assert.deepEqual(
     starting.steps.map(({ status }) => status),
     ["current", "pending", "pending"],
@@ -157,6 +158,7 @@ test("IBKR portal progress ignores stale disconnected copy during startup", () =
   });
 
   assert.equal(starting.title, "Starting IBKR Client Portal");
+  assert.equal(starting.showLoginViewer, false);
   assert.doesNotMatch(starting.detail, /not connected/i);
 });
 

@@ -160,6 +160,7 @@ function criticalChunkModulePreloadPlugin(): import("vite").Plugin {
     transformIndexHtml: {
       order: "post",
       handler(html, ctx) {
+        if (path.basename(ctx.filename) !== "index.html") return html;
         const bundle = ctx.bundle;
         if (!bundle) return html;
         const basePrefix = basePrefixFor(resolvedBase);
@@ -327,6 +328,10 @@ export default defineConfig({
     chunkSizeWarningLimit: 350,
     reportCompressedSize: false,
     modulePreload: {
+      // With multiple HTML inputs, Vite's injected compatibility shim becomes
+      // a shared chunk that couples the standalone viewer to the app. Keep both
+      // entries independent by relying on their native modulepreload links.
+      polyfill: false,
       resolveDependencies(_filename, deps) {
         return deps.filter(
           (dep) =>
@@ -339,6 +344,7 @@ export default defineConfig({
     rollupOptions: {
       input: {
         app: path.resolve(import.meta.dirname, "index.html"),
+        ibkrViewer: path.resolve(import.meta.dirname, "ibkr-viewer.html"),
       },
       output: {
         manualChunks(id) {
@@ -435,6 +441,10 @@ export default defineConfig({
           const packageName = getNodeModulePackageName(normalizedId);
 
           if (packageName) {
+            if (packageName === "@novnc/novnc") {
+              return "ibkr-viewer-vendor";
+            }
+
             if (packageName === "hls.js") {
               return "vendor-hls";
             }
@@ -613,6 +623,7 @@ export default defineConfig({
       "d3",
       "hls.js/light",
       "three",
+      "@novnc/novnc/core/rfb.js",
     ],
   },
   server: {

@@ -177,7 +177,14 @@ test("IBKR keeps the capsule-local login inside a contained sandboxed modal", ()
     connectBlock,
     /new URL\(loginUrl\)\.origin !== window\.location\.origin/,
   );
-  assert.match(connectBlock, /setIbkrLoginUrl\(loginUrl\)/);
+  assert.match(
+    connectBlock,
+    /let loginStartedAt = null;[\s\S]*?status = await getIbkrPortalStatus\(\);[\s\S]*?showLoginViewer[\s\S]*?loginStartedAt = Date\.now\(\);[\s\S]*?setIbkrLoginUrl\(loginUrl\)/,
+  );
+  assert.doesNotMatch(
+    connectBlock,
+    /setIbkrLoginUrl\(loginUrl\);[\s\S]*?let loginStartedAt = null;/,
+  );
   assert.match(connectBlock, /const attempt = \+\+ibkrAttemptRef\.current/);
   assert.match(connectBlock, /attempt !== ibkrAttemptRef\.current/);
   assert.match(
@@ -203,9 +210,14 @@ test("IBKR keeps the capsule-local login inside a contained sandboxed modal", ()
   );
   assert.match(
     connectBlock,
-    /hasIbkrPortalLoginTimedOut\(startedAt, Date\.now\(\)\)/,
+    /loginStartedAt !== null[\s\S]*?hasIbkrPortalLoginTimedOut\(\s*loginStartedAt,\s*Date\.now\(\),?\s*\)/,
   );
   assert.match(connectBlock, /"IBKR connection attempt timed out\."/);
+  assert.match(connectBlock, /void poll\(\);/);
+  assert.doesNotMatch(
+    connectBlock,
+    /ibkrPollRef\.current = window\.setTimeout\(poll, 3000\);\s*\n\s*\};$/,
+  );
   assert.doesNotMatch(connectBlock, /IBKR Client Portal login timed out/);
   assert.doesNotMatch(
     connectBlock,

@@ -130,7 +130,7 @@ export function buildIbkrPortalProgressModel({
   return {
     connected,
     browserLoginComplete,
-    showLoginViewer: true,
+    showLoginViewer: false,
     title: "Starting IBKR Client Portal",
     detail:
       (!startingFromStaleReadiness && readiness?.message) ||

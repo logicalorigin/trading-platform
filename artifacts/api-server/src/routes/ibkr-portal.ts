@@ -61,9 +61,7 @@ import { getControlledIbkrOrderLifecycle } from "../services/tax-planning";
 const router: IRouter = Router();
 
 const GW_BASE = "/api/broker-execution/ibkr-portal/gateway";
-export const IBKR_PORTAL_CONSOLE_LOGIN_PATH =
-  `${GW_BASE}/vnc.html?autoconnect=1&resize=scale` +
-  `&path=${encodeURIComponent(`${GW_BASE.slice(1)}/websockify`)}`;
+export const IBKR_PORTAL_CONSOLE_LOGIN_PATH = "/ibkr-viewer.html";
 export { IBKR_PORTAL_CLIENT_MOUNT };
 
 function isWithinMount(pathname: string, mount: string): boolean {
