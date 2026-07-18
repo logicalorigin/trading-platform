@@ -1101,6 +1101,117 @@ test("fresh broker stream removal evicts scoped Account data instead of retainin
   assert.deepEqual(queries, []);
 });
 
+test("IBKR frames preserve provider-combined account caches when provider IDs collide", () => {
+  const inventoryKey = ["/api/accounts", { mode: "live" }];
+  const providerSummaryKey = ["/api/accounts/snap-1/summary", { mode: "live" }];
+  const ibkrSummaryKey = ["/api/accounts/U123/summary", { mode: "live" }];
+  const combinedPositionsKey = [
+    "/api/accounts/combined/positions",
+    { mode: "live", detail: "fast", liveQuotes: true },
+  ];
+  const ibkrAccount = {
+    id: "U123",
+    providerAccountId: "U123",
+    provider: "ibkr",
+    buyingPower: 202,
+    cash: 101,
+    currency: "USD",
+    netLiquidation: 303,
+    updatedAt: "2026-07-18T16:00:00.000Z",
+  };
+  const providerAccount = {
+    id: "snap-1",
+    providerAccountId: "U123",
+    provider: "snaptrade",
+  };
+  const providerSummary = { accountId: "snap-1", marker: "provider" };
+  const ibkrSummary = {
+    currency: "USD",
+    metrics: {},
+    updatedAt: "2026-07-18T15:00:00.000Z",
+  };
+  const combinedPositions = {
+    accountId: "combined",
+    positions: [{ id: "snap-position", accountId: "snap-1" }],
+    totals: {},
+  };
+  const queries = [
+    {
+      queryKey: inventoryKey,
+      data: { accounts: [ibkrAccount, providerAccount] },
+    },
+    { queryKey: providerSummaryKey, data: providerSummary },
+    { queryKey: ibkrSummaryKey, data: ibkrSummary },
+    { queryKey: combinedPositionsKey, data: combinedPositions },
+  ];
+  const queryClient = {
+    getQueryCache: () => ({
+      findAll: ({ predicate, queryKey } = {}) =>
+        queries.filter((query) =>
+          predicate
+            ? predicate(query)
+            : queryKeyText(query.queryKey.slice(0, queryKey.length)) ===
+              queryKeyText(queryKey),
+        ),
+    }),
+    getQueryData: (queryKey) =>
+      queries.find(
+        (query) => queryKeyText(query.queryKey) === queryKeyText(queryKey),
+      )?.data,
+    setQueryData: (queryKey, updater) => {
+      const query = queries.find(
+        (candidate) =>
+          queryKeyText(candidate.queryKey) === queryKeyText(queryKey),
+      );
+      assert.ok(query);
+      query.data =
+        typeof updater === "function" ? updater(query.data) : updater;
+    },
+    removeQueries: ({ queryKey }) => {
+      const index = queries.findIndex(
+        (query) => queryKeyText(query.queryKey) === queryKeyText(queryKey),
+      );
+      if (index >= 0) queries.splice(index, 1);
+    },
+    invalidateQueries: () => Promise.resolve(),
+  };
+
+  __liveStreamsInternalsForTests.applyIbkrAccountPayloadToCache(
+    queryClient,
+    {
+      accounts: [ibkrAccount],
+      positions: [
+        {
+          id: "U123:AAPL",
+          accountId: "U123",
+          symbol: "AAPL",
+          assetClass: "stock",
+          quantity: 1,
+          averagePrice: 100,
+          marketPrice: 101,
+          marketValue: 101,
+          unrealizedPnl: 1,
+          unrealizedPnlPercent: 1,
+        },
+      ],
+    },
+    { mode: "live" },
+  );
+
+  assert.equal(
+    queryClient.getQueryData(combinedPositionsKey),
+    combinedPositions,
+  );
+  assert.equal(queryClient.getQueryData(providerSummaryKey), providerSummary);
+  assert.equal(
+    queryClient.getQueryData(ibkrSummaryKey).metrics.netLiquidation.value,
+    303,
+  );
+  assert.deepEqual(queryClient.getQueryData(inventoryKey), {
+    accounts: [ibkrAccount, providerAccount],
+  });
+});
+
 test("account page positions query keys request fast real-account positions first", () => {
   assert.equal(
     __liveStreamsInternalsForTests.primaryAccountPositionsUseLiveQuotes({

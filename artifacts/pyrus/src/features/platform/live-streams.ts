@@ -5230,11 +5230,100 @@ export function queueAccountPagePayloadToCache(
   scheduleAccountPagePayloadFlush();
 }
 
+type AccountInventoryAuthority = {
+  providerByAccountId: Map<string, string>;
+  hasProviderBackedAccounts: boolean;
+};
+
+const readAccountInventoryAuthority = (
+  queryClient: ReturnType<typeof useQueryClient>,
+  mode: StreamMode,
+): AccountInventoryAuthority => {
+  const providerByAccountId = new Map<string, string>();
+  let hasProviderBackedAccounts = false;
+  queryClient
+    .getQueryCache()
+    .findAll({ queryKey: ["/api/accounts"] })
+    .forEach((query) => {
+      if (!matchesMode(readQueryParams(query.queryKey), mode)) {
+        return;
+      }
+      const data =
+        typeof queryClient.getQueryData === "function"
+          ? queryClient.getQueryData<AccountsResponse>(query.queryKey)
+          : (query.state?.data as AccountsResponse | undefined);
+      const accounts = data?.accounts ?? [];
+      accounts.forEach((account) => {
+        const provider = String(account.provider ?? "")
+          .trim()
+          .toLowerCase();
+        if (!provider) return;
+        providerByAccountId.set(account.id, provider);
+        if (provider !== "ibkr") {
+          hasProviderBackedAccounts = true;
+        }
+      });
+      accounts.forEach((account) => {
+        const provider = String(account.provider ?? "")
+          .trim()
+          .toLowerCase();
+        if (
+          provider &&
+          account.providerAccountId &&
+          !providerByAccountId.has(account.providerAccountId)
+        ) {
+          providerByAccountId.set(account.providerAccountId, provider);
+        }
+      });
+    });
+  return { providerByAccountId, hasProviderBackedAccounts };
+};
+
+const mergeIbkrAccountInventory = (
+  current: AccountsResponse | undefined,
+  incomingAccounts: AccountsResponse["accounts"],
+): AccountsResponse => {
+  const currentAccounts = current?.accounts ?? [];
+  const currentIbkrByIdentity = new Map<string, BrokerAccount>();
+  currentAccounts.forEach((account) => {
+    if (account.provider === "ibkr") {
+      currentIbkrByIdentity.set(account.id, account);
+      if (account.providerAccountId) {
+        currentIbkrByIdentity.set(account.providerAccountId, account);
+      }
+    }
+  });
+  return {
+    ...current,
+    accounts: [
+      ...incomingAccounts.map((account) => ({
+        ...(currentIbkrByIdentity.get(account.id) ??
+          currentIbkrByIdentity.get(account.providerAccountId)),
+        ...account,
+      })),
+      ...currentAccounts.filter((account) => account.provider !== "ibkr"),
+    ],
+  };
+};
+
+const accountIsOutsideIbkrStreamAuthority = (
+  accountId: string,
+  authority: AccountInventoryAuthority,
+): boolean =>
+  isInternalShadowAccountId(accountId) ||
+  (accountId === "combined"
+    ? authority.hasProviderBackedAccounts
+    : Boolean(
+        authority.providerByAccountId.get(accountId) &&
+          authority.providerByAccountId.get(accountId) !== "ibkr",
+      ));
+
 export const applyIbkrAccountPayloadToCache = (
   queryClient: ReturnType<typeof useQueryClient>,
   payload: AccountStreamPayload,
   input: { accountId?: string | null; mode: StreamMode },
 ) => {
+  const authority = readAccountInventoryAuthority(queryClient, input.mode);
   queryClient
     .getQueryCache()
     .findAll({ queryKey: ["/api/accounts"] })
@@ -5244,9 +5333,11 @@ export const applyIbkrAccountPayloadToCache = (
         return;
       }
 
-      queryClient.setQueryData(query.queryKey, {
-        accounts: payload.accounts,
-      } satisfies AccountsResponse);
+      queryClient.setQueryData(
+        query.queryKey,
+        (current: AccountsResponse | undefined) =>
+          mergeIbkrAccountInventory(current, payload.accounts),
+      );
     });
 
   queryClient
@@ -5287,7 +5378,7 @@ export const applyIbkrAccountPayloadToCache = (
       const path = queryKeyPath(query.queryKey);
       const summaryAccountId = accountIdFromScopedPath(path, "summary");
       if (summaryAccountId) {
-        if (isInternalShadowAccountId(summaryAccountId)) {
+        if (accountIsOutsideIbkrStreamAuthority(summaryAccountId, authority)) {
           return;
         }
         if (!accountStreamHasScopedAccount(payload, summaryAccountId)) {
@@ -5304,7 +5395,10 @@ export const applyIbkrAccountPayloadToCache = (
 
       const positionsAccountId = accountIdFromScopedPath(path, "positions");
       if (positionsAccountId) {
-        if (isInternalShadowAccountId(positionsAccountId)) {
+        if (
+          accountIsOutsideIbkrStreamAuthority(positionsAccountId, authority) ||
+          (input.accountId && positionsAccountId !== input.accountId)
+        ) {
           return;
         }
         if (
@@ -5331,7 +5425,7 @@ export const applyIbkrAccountPayloadToCache = (
       if (!equityAccountId) {
         return;
       }
-      if (isInternalShadowAccountId(equityAccountId)) {
+      if (accountIsOutsideIbkrStreamAuthority(equityAccountId, authority)) {
         return;
       }
       if (!accountStreamHasScopedAccount(payload, equityAccountId)) {
