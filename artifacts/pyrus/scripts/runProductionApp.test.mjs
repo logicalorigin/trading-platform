@@ -80,7 +80,7 @@ test("enabled production starts a least-privilege co-located session host", () =
   assert.equal(host.name, "IBKR session host");
   assert.equal(
     host.entry,
-    "/synthetic/repo/lib/ibkr-session-host/dist/index.mjs",
+    "/synthetic/repo/artifacts/pyrus/scripts/runIbkrSessionHost.mjs",
   );
   assert.equal(host.env.IBKR_SESSION_HOST_CONTROL_KEY, deriveHostKey(ROOT_KEY));
   assert.equal(

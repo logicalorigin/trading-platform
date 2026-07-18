@@ -157,7 +157,7 @@ export function resolveProductionServices(
   }
   services.push({
     name: "IBKR session host",
-    entry: path.join(root, "lib/ibkr-session-host/dist/index.mjs"),
+    entry: path.join(root, "artifacts/pyrus/scripts/runIbkrSessionHost.mjs"),
     env: hostEnvironment(env, apiPort, controlKeys),
   });
   return services;
