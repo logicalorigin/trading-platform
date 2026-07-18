@@ -1,6 +1,6 @@
 # IBKR gateway fleet production runbook
 
-Last reviewed: 2026-07-16
+Last reviewed: 2026-07-18
 
 Status: **HOLD**. This runbook is executable only after every hard gate below
 has evidence. It does not authorize a Replit publish, secret change, host
@@ -47,19 +47,28 @@ network authentication, transport, and failure modes before use.
 | Observed | The repository builds the web app, API, session host, and local operator CLI. The production supervisor owns both children and treats either exit as fatal. |
 | Observed | Host registration is HMAC-authenticated, quarantined by default, attestation-bound, and heartbeat-gated. Approval requires exact immutable values and a fresh heartbeat. |
 | Observed | The host refuses readiness unless the pinned seccomp file, Docker daemon capabilities, and exact immutable capsule image all pass its runtime checks. |
+| Observed | Fresh placement requires capsule lease protocol version 1. The migration records existing hosts as version 0, and the host capability is immutable for a host ID. |
+| Observed | The authenticated session host—not the API—mints every capsule grant from its own Linux boot ID and `CLOCK_BOOTTIME`, returns that grant only in the signed receipt, and applies it locally before acknowledging control. Its 20-second grant window plus the capsule's fixed 120-second TTL remains inside the database's 155-second replacement fence. |
+| Observed | A disposable development-image preflight on this workspace host rejected an invalid HMAC lease frame, accepted a real host-local renewal through the private TCP bridge, remained ready with zero logins/restarts/OOM kills, and cleaned up without touching the live API or unrelated slot 1. This is local transport evidence, not Reserved VM release evidence. |
+| Observed | The development workspace parent cgroup is capped at 1,024 tasks and has reached that exact peak. A 60-second no-login probe of the current image reached a sampled maximum of 107 capsule PIDs. In the final staged five-new-capsule attempt, slots 2–5 reached ready with zero logins, slot 6 began at 1,014 tasks and failed its Docker operation, and the parent limit-event counter rose from 469 to 545. Scoped cleanup was exact. This is a development-host capacity failure, not a capsule OOM or per-container PID-limit event. |
+| Observed | This release is not wire-compatible with a mixed-version rolling registration: the prior API rejects the new capability field, while the new API rejects registrations that omit it. |
 | Observed | The runtime-attestation digest is configured identity data, not a digest dynamically measured by the host. Runtime readiness is evidenced separately by fresh lifecycle traffic. |
+| Observed | The repository now has a clean-tree, registry-neutral BuildKit publish path that emits provenance, an SBOM, exact image/config evidence, and a release manifest. |
+| Observed | On an enabled deployment, the API starts normally while the host wrapper preloads and validates only the configured immutable digest. Session-host code is imported only after that succeeds; capsule creation retains `--pull never`. |
+| Observed | The guarded paper-density runner binds the host control port, refuses active or pre-existing capsule state, executes the fixed `1 → 2 → 5 → 10 → 15 → 20` lease-v1 ramp, records API/container/host samples, cleans up, and never changes admission capacity. |
 | Observed | Replit documents Reserved VM as an always-on deployment selected in the Publishing tool, with published-app secrets, monitoring, and configurable port mapping. |
 | Inferred | The explicit host-child environment allowlist reduces direct authority but does not isolate two same-UID processes on the same VM. |
 | Unknown | Replit's public documentation does not establish that the selected published Reserved VM exposes a usable Docker daemon/socket with the required capabilities. |
-| Unknown | The repository has no production capsule image build/publish/preload path. Because capsule creation uses `--pull never`, a fresh VM cannot be assumed to contain the pinned image. |
-| Unknown | The repository does not yet generate the separately reviewed release manifest that must source the workload, runtime-spec, and configured runtime-attestation digests. |
+| Unknown | No registry has been owner-approved and no exact release image/manifest has been published from the eventual clean release commit. |
+| Unknown | The exact published image has not been preloaded and inspected on the selected Reserved VM. |
+| Unknown | The selected Reserved VM's parent-cgroup task ceiling, idle baseline, and per-capsule peak have not been measured. A 1,024-task ceiling is insufficient for the 20-session target even before adding host-process headroom at the locally observed 107 PIDs per no-login capsule. |
 | Unknown | A trusted shell with the published app environment and production database has not been proven. Without one, the non-network approval CLI cannot be used against production. |
 | Inferred | A fresh signed heartbeat proves the host's runtime readiness check passed at that time, because lifecycle traffic is withheld while runtime readiness is degraded. |
 
 Primary Replit references:
 
-- [Reserved VM deployments](https://docs.replit.com/references/publishing/reserved-vm-deployments)
-- [Published app monitoring](https://docs.replit.com/references/publishing/monitoring-a-deployment)
+- [Deployment types](https://docs.replit.com/features/publishing/deployment-types)
+- [Published app monitoring](https://docs.replit.com/features/publishing/monitoring-a-deployment)
 - [Publishing troubleshooting](https://docs.replit.com/build/troubleshooting)
 
 ## Non-negotiable invariants
@@ -85,6 +94,13 @@ Primary Replit references:
    density/chaos evidence is attached to the release record.
 9. No live order is part of this runbook. Any later live-order proof requires a
    separate, exact per-order user approval.
+10. Do not attempt a mixed-version rolling registration. With fleet routing off
+    and no active leases, apply the additive migration, publish the new API with
+    the host disabled, and only then start the version-1 host under a fresh host
+    UUID. Never reuse a migrated version-0 host ID for this release.
+11. Do not mint capsule grants in the API process or compare absolute
+    `CLOCK_BOOTTIME` values across machines. The API authenticates the control
+    attempt; the selected session host mints and applies the local-kernel grant.
 
 ## Required published-app configuration
 
@@ -98,11 +114,11 @@ so verify the published list explicitly.
 | `IBKR_SESSION_HOST_ENABLED` | `1` for the runtime preflight publish | No |
 | `IBKR_GATEWAY_FLEET_CONTROL_ROOT_KEY` | Canonical 32-byte base64url value from the approved secret manager | Yes |
 | `IBKR_GATEWAY_FLEET_CONTROL_OVERLAP_ROOT_KEY` | Unset outside a bounded rotation window | Yes |
-| `IBKR_SESSION_HOST_ID` | Stable canonical UUID for this host | No |
+| `IBKR_SESSION_HOST_ID` | Fresh canonical UUID for this immutable version-1 host identity; do not reuse a migrated version-0 row | No |
 | `IBKR_SESSION_HOST_CONTROL_TOKEN` | Unset | Yes |
 | `IBKR_SESSION_HOST_CONTROL_KEY` | Unset; supervisor-derived | Yes |
 | `IBKR_SESSION_HOST_OVERLAP_CONTROL_KEY` | Unset; supervisor-derived | Yes |
-| `IBKR_SESSION_CAPSULE_IMAGE` | Immutable `repository@sha256:...` or exact local image ID | No |
+| `IBKR_SESSION_CAPSULE_IMAGE` | Release-manifest `repository@sha256:...`; exact local image IDs are development/test only | No |
 | `IBKR_SESSION_HOST_CAPACITY` | `1` initially | No |
 | `IBKR_SESSION_HOST_MODE` | `paper` | No |
 | `IBKR_SESSION_HOST_PORT` | `18748` | No |
@@ -123,7 +139,10 @@ worktree:
 ```bash
 git status --short
 pnpm run build:pyrus-app
-node --test artifacts/pyrus/scripts/runProductionApp.test.mjs
+node --test artifacts/pyrus/scripts/runProductionApp.test.mjs artifacts/pyrus/scripts/runIbkrSessionHost.test.mjs
+node --test scripts/lib/ibkr-capsule-image.test.mjs scripts/ibkr-capsule-release.test.mjs scripts/ibkr-capsule-density.test.mjs
+pnpm --filter @workspace/ibkr-contracts test
+pnpm --filter @workspace/ibkr-session-host test
 pnpm --filter @workspace/api-server exec tsx --test src/scripts/ibkr-gateway-host-admin-cli.test.ts
 pnpm run replit:config:status
 ```
@@ -138,41 +157,103 @@ Expected evidence:
 
 ## Gate 2 — release manifest and immutable capsule distribution
 
-This gate is currently **not implemented**.
+The mechanism is implemented; the release-specific external evidence is not
+yet present.
 
-Before publishing with the host enabled, establish a reviewed mechanism that:
+The manifest uses three distinct, deterministic identities:
 
-1. defines the canonical inputs and provenance for the workload-identity,
-   runtime-spec, and configured runtime-attestation digests, then records them
-   in a release manifest reviewed independently from published configuration;
-2. builds `lib/ibkr-session-host/capsule/Dockerfile` from the release commit;
-3. records build provenance and the resulting Linux/amd64 image digest;
-4. makes that exact image available to the fresh Reserved VM without falling
-   back to a mutable tag;
-5. preserves the host's `--pull never` runtime rule, or replaces it only with a
-   separately reviewed digest-verified preload step;
-6. proves the image inspected on the target has the expected nonroot user,
-   entrypoint, no declared volumes, and exact digest.
+1. `workloadIdentityDigest` is a domain-separated SHA-256 over the exact,
+   path-and-length-framed files admitted by the capsule's deny-by-default
+   `.dockerignore`.
+2. `runtimeSpecDigest` is a separate domain-separated SHA-256 over the
+   production host wrapper/supervisor, capsule runtime invocation, pinned
+   seccomp profile, and immutable image preload verifier.
+3. `runtimeAttestationDigest` binds the source commit, resulting image digest,
+   Linux/amd64 platform, workload identity, and runtime spec in canonical JSON.
+   It is configured release identity, not a claim of live runtime measurement.
 
-Do not approve a host while this gate lacks evidence. Selecting a registry,
-creating credentials, publishing an image, or changing Replit control-plane
-state requires explicit owner approval.
+After a registry is explicitly owner-approved and the operator has
+authenticated Docker through its credential helper (never a token in command
+arguments), publish from the clean Gate 1 commit:
 
-## Gate 3 — Reserved VM and one-port publish
+```bash
+pnpm run ibkr:capsule:release publish \
+  --repository="$APPROVED_CAPSULE_REPOSITORY" \
+  --manifest="$RELEASE_MANIFEST"
+```
 
-Operator action in Replit's Publishing tool:
+The command:
 
-1. Select and verify **Reserved VM** as the deployment type.
-2. Confirm the build command remains `pnpm run build:pyrus-app` and the run
+- refuses a dirty tree and resolves the full Git commit;
+- builds only Linux/amd64 from
+  `lib/ibkr-session-host/capsule/Dockerfile`;
+- enables BuildKit `mode=max` provenance and an SBOM;
+- pushes through the existing Docker credential helper;
+- resolves the pushed result to `repository@sha256:...`;
+- pulls that exact digest back and validates its repository digest, platform,
+  UID/GID, entrypoint, absent healthcheck/volumes, source/runtime labels, and
+  lease-protocol label;
+- writes the manifest plus a separately hashed raw BuildKit metadata file.
+
+The local runner's default Docker build network could not resolve Debian
+repositories while its host network could. If the same failure is reproduced
+for the clean release build, add `--build-network=host`; the selected network
+is recorded in the manifest. Do not use that option preemptively.
+
+On a trusted target shell, the independent preload evidence command is:
+
+```bash
+pnpm run ibkr:capsule:release preload \
+  --manifest="$RELEASE_MANIFEST"
+```
+
+Production also performs this exact-digest pull and structural/label
+inspection automatically in the host wrapper. The API starts concurrently,
+but session-host code does not load until verification passes. Capsule
+creation itself still uses `--pull never`, so there is no mutable-tag or
+on-demand fallback.
+
+This gate passes only when the manifest and raw metadata are reviewed, the
+registry contains the exact digest, and target preload/inspection evidence
+matches the same manifest. Selecting a registry, creating credentials,
+executing `publish`, or changing Replit control-plane state requires explicit
+owner approval.
+
+## Gate 3 — disabled-fleet cutover and one-port publish
+
+This is an explicit stop-the-fleet cutover, not a mixed-version rolling
+deployment. Before changing binaries, prove fleet routing is already disabled,
+drain or quarantine every prior host, and record `activeLeaseCount=0` for each.
+Then:
+
+1. Through the separately reviewed production migration runner, apply and
+   verify these migrations in order, skipping a migration only after proving
+   its exact schema is already present:
+   `20260716_ibkr_gateway_fleet.sql`,
+   `20260716_ibkr_gateway_loopback_control_origin.sql`,
+   `20260716_ibkr_gateway_session_control_fencing.sql`, and
+   `20260717_ibkr_gateway_capsule_lease_deadlines.sql`. Capture success and
+   schema evidence for all four. If no reviewed migration path exists, keep the
+   release on HOLD.
+2. Select and verify **Reserved VM** as the deployment type.
+3. Set both `IBKR_GATEWAY_FLEET_ENABLED=0` and
+   `IBKR_SESSION_HOST_ENABLED=0`, then publish the new API release. Confirm the
+   API health check is green before any version-1 host can register.
+4. Confirm the build command remains `pnpm run build:pyrus-app` and the run
    command resolves to the artifact's production supervisor.
-3. Expose only local port `18747` through the published web service.
-4. Verify `/api/healthz` is 200 through the published URL.
-5. Verify the Publishing Overview reports `Reserved VM`, and capture the
+5. Expose only local port `18747` through the published web service.
+6. Assign a fresh `IBKR_SESSION_HOST_ID` that has no database row, set
+   `IBKR_SESSION_HOST_ENABLED=1`, and republish the same reviewed release while
+   fleet routing remains off. Do not reuse the prior stable ID: its migrated
+   capability is immutably version 0.
+7. Verify `/api/healthz` is 200 through the published URL.
+8. Verify the Publishing Overview reports `Reserved VM`, and capture the
    deployment ID, release commit, VM size, and timestamp.
-6. Verify production secrets are present by name only. Never capture values.
+9. Verify production secrets are present by name only. Never capture values.
 
 Stop if the published deployment type is Autoscale, if more than one port is
-external, or if the API health check does not remain green.
+external, if any old lease remains, if the migration is unproven, if the new
+host ID already exists, or if the API health check does not remain green.
 
 ## Gate 4 — target Docker/runtime preflight
 
@@ -185,8 +266,11 @@ source-enforced checks passed at that instant:
 - memory, swap, and PID limits;
 - pinned local seccomp profile hash;
 - exact immutable capsule image present;
-- image is Linux/amd64, UID/GID `10001:10001`, exact entrypoint, and declares no
-  healthcheck or volumes.
+- image is Linux/amd64, declares UID/GID `10001:10001`, uses exact entrypoint
+  `/usr/local/bin/pyrus-capsule-supervisor.py`, and declares no healthcheck or
+  volumes;
+- pre-import image labels match the configured workload identity and runtime
+  spec from the reviewed release manifest.
 
 From a trusted shell inside the published VM, if such a shell is available:
 
@@ -222,6 +306,7 @@ Require all of the following:
 - `status` is `quarantined`;
 - `heartbeatFresh` is `true` in two inspections at least 10 seconds apart;
 - `activeLeaseCount` is `0`;
+- `capsuleLeaseProtocolVersion` is exactly `1`;
 - `controlOrigin` is exactly loopback HTTP;
 - measured capacity is `1` for the initial release;
 - workload, image, runtime-spec, runtime-attestation, and failure-domain values
@@ -238,6 +323,7 @@ node artifacts/api-server/dist/ibkr-gateway-host-admin.mjs approve \
   --image-digest="$APPROVED_IMAGE_DIGEST" \
   --runtime-spec-digest="$APPROVED_RUNTIME_SPEC_DIGEST" \
   --runtime-attestation-digest="$APPROVED_RUNTIME_ATTESTATION_DIGEST" \
+  --capsule-lease-protocol-version=1 \
   --admission-slot-capacity=1 \
   --execute
 ```
@@ -248,7 +334,8 @@ is stale, any digest differs, or requested capacity exceeds the measured
 capacity.
 
 Re-run `inspect`; require `status=active`, `heartbeatFresh=true`,
-`activeLeaseCount=0`, and `admissionSlotCapacity=1`. Fleet routing remains off.
+`activeLeaseCount=0`, `capsuleLeaseProtocolVersion=1`, and
+`admissionSlotCapacity=1`. Fleet routing remains off.
 
 ## Gate 6 — paper canary and fleet enablement
 
@@ -327,11 +414,60 @@ The initial co-located release stays at capacity one. Replit's documented VM
 sizes and each capsule's configured 2 GiB memory ceiling make higher density a
 measurement question, not an assumption.
 
+Run density only in a maintenance window with fleet routing and the production
+session host disabled, the API healthy on loopback port `18747`, and no active
+lease. Use the exact reviewed release manifest and a new report path:
+
+```bash
+cat /sys/fs/cgroup/pids.current
+cat /sys/fs/cgroup/pids.max
+cat /sys/fs/cgroup/pids.events
+cat /sys/fs/cgroup/pids.peak
+
+pnpm run ibkr:capsule:density \
+  --manifest="$RELEASE_MANIFEST" \
+  --report="$DENSITY_REPORT" \
+  --deployment-id="$REPLIT_DEPLOYMENT_ID" \
+  --vm-size="$REPLIT_RESERVED_VM_SIZE" \
+  --execute
+```
+
+Record all four parent-cgroup values before and after the run. If cgroup-v2
+task counters are unavailable, the task ceiling is lower than the host
+baseline plus the target multiplied by the measured per-capsule peak, or the
+counter in `pids.events` increases, the stage fails. Include reviewed task
+headroom for host processes and transient capsule boot fan-out; do not size to
+the arithmetic limit.
+
+The wrapper validates the manifest, preloads its exact digest and labels, then
+starts the built density runner. The runner owns `127.0.0.1:18748` throughout
+the test, so it refuses a running host and prevents one from starting
+concurrently. It also refuses any `pyrus-ibkr-slot-*` container before making a
+change. It starts synthetic paper capsules at `1`, `2`, `5`, `10`, `15`, and
+`20`; holds each intermediate level for two minutes and level 20 for ten
+minutes; renews lease-v1 fencing sequentially to avoid synchronized Docker CLI
+bursts; and samples every ten seconds. Each renewal revalidates the exact
+container identity and running state. Every aggregate sample requires API
+health 200, the exact expected running container set, zero Docker restarts, and
+no OOM kill while recording container CPU/memory/PIDs and host
+memory/swap/load. API health is also sampled every five seconds while each new
+group boots. All successful synthetic placements are released in a finally
+path and remaining capsule names are reported.
+
+Require `verdict.mechanicalPass=true`, `cleanup.complete=true`, all six stages,
+and sufficient reviewed memory/CPU headroom. A passing report is evidence, not
+an automatic promotion: the runner always records `promotionApplied=false`.
+On failure or incomplete cleanup, keep capacity at the last separately proven
+level, quarantine before investigation if any capsule remains, and do not
+rerun over that state.
+
 ## Release evidence record
 
 Capture no secret values. Record:
 
 - release commit and build transcript;
+- migration transcript, prior-host zero-lease evidence, and the fresh
+  version-1 host ID cutover record;
 - Publishing deployment ID/type/VM size and one-port mapping;
 - capsule image provenance and exact digest;
 - API health and host readiness evidence;

@@ -111,6 +111,31 @@ directory to define separate Replit app runners.
 
 - The legacy Windows-side IBKR bridge bundle has been retired; do not add bridge
   packaging or helper-launch scripts back to startup.
+- `pnpm run ibkr:capsule:release publish ...` is the registry-neutral,
+  clean-tree release path for the Linux/amd64 Client Portal Gateway capsule. It
+  uses BuildKit provenance and SBOM attestations, pushes through the operator's
+  existing Docker credential helper, resolves the result to
+  `repository@sha256:...`, pulls that exact digest back for configuration and
+  label inspection, and writes a separately reviewable manifest. It never
+  accepts a registry password or mutable runtime tag. The `publish` command
+  changes external registry state and therefore requires explicit owner
+  approval.
+- `pnpm run ibkr:capsule:release preload --manifest=...` pulls and verifies
+  the manifest's exact Linux/amd64 digest on a target Docker host. Production
+  performs the equivalent check automatically in
+  `artifacts/pyrus/scripts/runIbkrSessionHost.mjs`; the public API starts
+  independently while the host wrapper preloads, and session-host code is not
+  imported if the image is missing, mutable, mislabeled, or structurally
+  invalid.
+- `pnpm run ibkr:capsule:density` is the destructive, paper-only Reserved VM
+  density proof. It requires `--manifest=...`, `--report=...`,
+  `--deployment-id=...`, `--vm-size=...`, and `--execute`. It validates and
+  preloads the reviewed release manifest, refuses an active session host or
+  any existing capsule, owns the loopback host-control port for the whole run,
+  exercises the fixed `1 → 2 → 5 → 10 → 15 → 20` lease-v1 ramp, samples
+  API/container/host health, and attempts to remove every synthetic capsule
+  before exit. Its report never changes admission capacity; capacity promotion
+  remains a separate reviewed operator action.
 - `artifacts/pyrus/scripts/runProductionApp.mjs` owns the one-port production
   API/session-host process tree on a Reserved VM. The host remains disabled by
   default; when enabled, the runner requires signed lifecycle configuration,
