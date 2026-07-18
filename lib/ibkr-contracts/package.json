@@ -5,14 +5,9 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./control-auth": "./src/control-auth.ts",
-    "./lease-clock": "./src/lease-clock.ts"
-  },
-  "scripts": {
-    "test": "node --import tsx --test --test-reporter=spec src/*.test.ts"
+    "./control-auth": "./src/control-auth.ts"
   },
   "devDependencies": {
-    "@types/node": "catalog:",
-    "tsx": "catalog:"
+    "@types/node": "catalog:"
   }
 }
