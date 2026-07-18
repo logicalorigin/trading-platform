@@ -248,6 +248,9 @@ export function runBacktest(
   const points: BacktestPoint[] = [];
   let cash = study.portfolioRules.initialCapital;
   let peakEquity = study.portfolioRules.initialCapital;
+  const maxGrossExposureValue =
+    study.portfolioRules.initialCapital *
+    (study.portfolioRules.maxGrossExposurePercent / 100);
 
   const resolveFill = (
     symbol: string,
@@ -367,6 +370,17 @@ export function runBacktest(
       }
 
       const entryValue = quantity * fillPrice;
+      const currentGrossExposure = [...positions.values()].reduce(
+        (sum, position) =>
+          sum +
+          position.quantity *
+            (latestCloseBySymbol.get(position.symbol) ?? position.entryPrice),
+        0,
+      );
+      if (currentGrossExposure + entryValue > maxGrossExposureValue) {
+        pendingEntries.delete(order.symbol);
+        return;
+      }
       const commissionPaid = computeCommission(
         entryValue,
         study.executionProfile.commissionBps,
