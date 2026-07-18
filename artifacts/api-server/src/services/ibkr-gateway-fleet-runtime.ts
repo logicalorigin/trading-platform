@@ -365,7 +365,9 @@ export async function prepareIbkrGatewayFleetDataRequest(input: {
       path: `${url.pathname}${url.search}`,
     }),
   );
-  if (input.transport === "websocket") url.protocol = "wss:";
+  if (input.transport === "websocket") {
+    url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+  }
   input.headers.host = url.host;
   return { fence: current.fence, headers: input.headers, url };
 }
