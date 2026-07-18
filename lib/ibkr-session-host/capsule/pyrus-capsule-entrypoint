@@ -9,7 +9,14 @@ readonly PID_DIR=${RUNTIME_DIR}/pids
 readonly CPG_HOME=/opt/ibkr/clientportal
 readonly CPG_CERT_SHA256=13daf89a0712b962c3ecaa5ede344100aee0d3b5dec5a79abd7602a812eda3be
 readonly CPG_SPKI_SHA256='QoH2+wIocE83ZkR4/oyn5ru2JtE+/ZrYS9brNjujldU='
+readonly MARKER_FD=${PYRUS_IBKR_CAPSULE_MARKER_FD:-}
 declare -a children=()
+declare -A child_names=()
+
+if [[ ! "${MARKER_FD}" =~ ^[1-9][0-9]{0,8}$ ]] ||
+  [[ ! -e "/proc/self/fd/${MARKER_FD}" ]]; then
+  exit 1
+fi
 
 mkdir -p \
   "${HOME}" \
@@ -26,7 +33,23 @@ start_service() {
   "$@" >>"${LOG_DIR}/${name}.log" 2>&1 &
   local pid=$!
   children+=("${pid}")
+  child_names["${pid}"]="${name}"
   printf '%s\n' "${pid}" >"${PID_DIR}/${name}.pid"
+}
+
+require_stage() {
+  local stage=$1
+  shift
+  if "$@"; then
+    return 0
+  fi
+  if [[ ! "${stage}" =~ ^[a-z0-9-]{1,32}$ ]]; then
+    stage=unknown
+  fi
+  printf 'PYRUS_IBKR_CAPSULE_STARTUP_FAILURE_V1 stage=%s\n' \
+    "${stage}" \
+    >&"${MARKER_FD}"
+  exit 1
 }
 
 cleanup() {
@@ -122,7 +145,7 @@ observe_cpg_logins() {
   # this fixed marker when IBKR exposes one. Never copy the matched log line.
   while IFS= read -r line; do
     if [[ "${line}" =~ ^[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{3}[[:space:]]+INFO[[:space:]]+[^[:space:]]+[[:space:]]+GatewayHttpProxy[[:space:]]+:[[:space:]]Client[[:space:]]login[[:space:]]succeeds$ ]]; then
-      printf 'PYRUS_IBKR_CAPSULE_LOGIN_COMPLETE_V1\n' >/proc/1/fd/1
+      printf 'PYRUS_IBKR_CAPSULE_LOGIN_COMPLETE_V1\n' >&"${MARKER_FD}"
     fi
   done < <(tail -n 0 -F "${gateway_log}")
 }
@@ -133,7 +156,7 @@ trap stop_cleanly INT TERM
 # This loopback-only desktop supervisor is the first local-agent slice. A
 # later authenticated control tunnel can consume noVNC without publishing it.
 start_service xvfb Xvfb :99 -screen 0 1364x768x24 -nolisten tcp -noreset
-wait_for_path /tmp/.X11-unix/X99 20
+require_stage xvfb-path wait_for_path /tmp/.X11-unix/X99 20
 
 # No VNC password is stored: the RFB listener is reachable only from loopback
 # inside the capsule. noVNC is reachable only through the fixed host-loopback
@@ -159,13 +182,13 @@ start_service cpg java \
   -cp "${CPG_HOME}/root:${CPG_HOME}/dist/ibgroup.web.core.iblink.router.clientportal.gw.jar:${CPG_HOME}/build/lib/runtime/*" \
   ibgroup.web.core.clientportal.gw.GatewayStart \
   --conf ../root/conf.yaml
-wait_for_port 5000 60
+require_stage cpg-port wait_for_port 5000 60
 
 start_service cpg-relay /usr/local/bin/pyrus-capsule-relay \
   15000 \
   5000 \
   "${CPG_CERT_SHA256}"
-wait_for_cpg_login 15000 60
+require_stage cpg-login wait_for_cpg_login 15000 60
 
 start_service login-observer observe_cpg_logins
 
@@ -181,13 +204,23 @@ start_service chromium chromium \
   --ignore-certificate-errors-spki-list="${CPG_SPKI_SHA256}" \
   --app=https://localhost:5000/
 
-wait_until_healthy
+require_stage stack-health wait_until_healthy
 printf 'PYRUS_IBKR_CAPSULE_READY_V1\n'
 start_service watchdog watchdog
 
 # A critical child exit is a capsule failure. Docker's on-failure policy can
 # then restart the whole coherent stack instead of leaving a partial session.
+failed_pid=0
 set +e
-wait -n "${children[@]}"
+wait -n -p failed_pid "${children[@]}"
+failed_status=$?
 set -e
+failed_name=${child_names["${failed_pid}"]:-unknown}
+if [[ ! "${failed_name}" =~ ^[a-z0-9-]{1,32}$ ]]; then
+  failed_name=unknown
+fi
+printf 'PYRUS_IBKR_CAPSULE_CHILD_EXIT_V1 name=%s status=%d\n' \
+  "${failed_name}" \
+  "${failed_status}" \
+  >&"${MARKER_FD}"
 exit 1

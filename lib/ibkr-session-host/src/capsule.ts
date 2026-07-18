@@ -1,8 +1,10 @@
 import { execFile } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash, createHmac, randomBytes } from "node:crypto";
 import { readFile } from "node:fs/promises";
-import { isIP } from "node:net";
+import { createConnection, isIP } from "node:net";
 import { fileURLToPath } from "node:url";
+
+import { readLinuxBoottimeNs } from "./lease-clock";
 
 export type SessionHostConfig = {
   bindHost: "127.0.0.1";
@@ -217,7 +219,7 @@ export async function checkCapsuleRuntime(
     image?.["Architecture"] !== "amd64" ||
     imageConfig?.["User"] !== "10001:10001" ||
     entrypoint.length !== 1 ||
-    entrypoint[0] !== "/usr/local/bin/pyrus-capsule-entrypoint" ||
+    entrypoint[0] !== "/usr/local/bin/pyrus-capsule-supervisor.py" ||
     (healthcheck !== null && healthcheck !== undefined) ||
     !volumesAreEmpty
   ) {
@@ -264,14 +266,124 @@ const DIGEST_IMAGE_PATTERN = /^[a-z0-9][a-z0-9._:/-]*@sha256:[a-f0-9]{64}$/;
 const LOCAL_IMAGE_ID_PATTERN = /^sha256:[a-f0-9]{64}$/;
 type CapsuleInspection =
   | {
+      containerId: string;
       fenceHash: string;
       generation: number;
+      leaseControlKey: string | null;
+      leaseProtocol: 1 | null;
+      running: boolean;
       status: "current";
       networkAddress: string | null;
       sessionHash: string;
       slotNumber: number;
     }
   | { status: "stale_image"; containerId: string };
+
+export type CapsuleLeaseGrant = {
+  bootId: string;
+  controlAttemptId: string;
+  grantNotAfterNs: string;
+  version: 1;
+};
+
+export type CapsuleLeaseRenewal = {
+  controlKey: string;
+  fenceHash: string;
+  grant: CapsuleLeaseGrant;
+  host: string;
+};
+
+export type CapsuleLeaseRenewer = (
+  renewal: CapsuleLeaseRenewal,
+) => Promise<boolean>;
+
+export type CapsuleLeaseRuntime = {
+  clear: (timer: ReturnType<typeof setTimeout>) => void;
+  nowNs: () => bigint;
+  schedule: (
+    callback: () => void,
+    delayMs: number,
+  ) => ReturnType<typeof setTimeout>;
+};
+
+const CAPSULE_LEASE_PROTOCOL_VERSION = 1;
+const CAPSULE_LEASE_TTL_NS = 120_000_000_000n;
+const CAPSULE_LEASE_GRANT_WINDOW_NS = 20_000_000_000n;
+const CAPSULE_LEASE_GRANTED_MARKER = "PYRUS_IBKR_CAPSULE_LEASE_GRANTED_V1";
+const CAPSULE_LEASE_CONTROL_PORT = 17_000;
+const CAPSULE_LEASE_CONTROL_TIMEOUT_MS = 5_000;
+const CAPSULE_LEASE_CONTROL_KEY_PATTERN = /^[a-f0-9]{64}$/;
+const BOOT_ID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+const MONOTONIC_NS_PATTERN = /^[1-9][0-9]{0,18}$/;
+const MAX_GRANT_NOT_AFTER_NS =
+  9_223_372_036_854_775_807n - CAPSULE_LEASE_TTL_NS;
+const defaultCapsuleLeaseRuntime: CapsuleLeaseRuntime = {
+  clear: (timer) => clearTimeout(timer),
+  nowNs: readLinuxBoottimeNs,
+  schedule: (callback, delayMs) => {
+    const timer = setTimeout(callback, delayMs);
+    timer.unref?.();
+    return timer;
+  },
+};
+
+export async function readCapsuleBootId(): Promise<string> {
+  let bootId = "";
+  try {
+    bootId = (await readFile("/proc/sys/kernel/random/boot_id", "utf8")).trim();
+  } catch {
+    // The supported session-host topology is Linux-only; fail closed below.
+  }
+  if (!BOOT_ID_PATTERN.test(bootId)) {
+    throw new CapsuleError(
+      "lease_clock_unavailable",
+      "The Linux boot identity is unavailable.",
+    );
+  }
+  return bootId;
+}
+
+export function createCapsuleLeaseGrantIssuer(
+  bootId: string,
+  nowNs: () => bigint = readLinuxBoottimeNs,
+): (controlAttemptId: string) => CapsuleLeaseGrant {
+  if (!BOOT_ID_PATTERN.test(bootId)) {
+    throw new CapsuleError(
+      "lease_clock_unavailable",
+      "The Linux boot identity is unavailable.",
+    );
+  }
+  return (controlAttemptId) => {
+    if (!UUID_PATTERN.test(controlAttemptId)) {
+      throw new CapsuleError(
+        "invalid_lease_grant",
+        "IBKR capsule lease grant is invalid.",
+      );
+    }
+    let grantNotAfterNs: bigint;
+    try {
+      grantNotAfterNs = nowNs() + CAPSULE_LEASE_GRANT_WINDOW_NS;
+    } catch {
+      throw new CapsuleError(
+        "lease_clock_unavailable",
+        "The Linux boot clock is unavailable.",
+      );
+    }
+    if (grantNotAfterNs <= 0n || grantNotAfterNs > MAX_GRANT_NOT_AFTER_NS) {
+      throw new CapsuleError(
+        "lease_clock_unavailable",
+        "The Linux boot clock is unavailable.",
+      );
+    }
+    return {
+      version: CAPSULE_LEASE_PROTOCOL_VERSION,
+      bootId,
+      controlAttemptId,
+      grantNotAfterNs: String(grantNotAfterNs),
+    };
+  };
+}
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -307,6 +419,101 @@ function isEmptyRecordOrNull(value: unknown): boolean {
     (asRecord(value) !== null &&
       Object.keys(asRecord(value) ?? {}).length === 0)
   );
+}
+
+function isEmptyArrayOrNull(value: unknown): boolean {
+  return (
+    value === null ||
+    value === undefined ||
+    (Array.isArray(value) && value.length === 0)
+  );
+}
+
+function hasExactStringSet(value: unknown, expected: string[]): boolean {
+  if (
+    !Array.isArray(value) ||
+    value.length !== expected.length ||
+    value.some((entry) => typeof entry !== "string")
+  ) {
+    return false;
+  }
+  const entries = value as string[];
+  return (
+    new Set(entries).size === expected.length &&
+    expected.every((entry) => entries.includes(entry))
+  );
+}
+
+function canonicalJsonValue(value: unknown): unknown {
+  if (
+    value === null ||
+    typeof value === "string" ||
+    typeof value === "boolean"
+  ) {
+    return value;
+  }
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+  if (Array.isArray(value)) {
+    return value.map(canonicalJsonValue);
+  }
+  const record = asRecord(value);
+  if (record) {
+    return Object.fromEntries(
+      Object.keys(record)
+        .sort()
+        .map((key) => [key, canonicalJsonValue(record[key])]),
+    );
+  }
+  throw new Error("invalid JSON value");
+}
+
+async function hasExactSeccompSecurityOptions(
+  value: unknown,
+  profilePath: string,
+): Promise<boolean> {
+  if (!Array.isArray(value) || value.length !== 2) return false;
+  const options = value.filter(
+    (entry): entry is string => typeof entry === "string",
+  );
+  if (options.length !== 2 || !options.includes("no-new-privileges=true")) {
+    return false;
+  }
+  const seccompOptions = options.filter((entry) =>
+    entry.startsWith("seccomp="),
+  );
+  if (seccompOptions.length !== 1) return false;
+
+  let expectedBytes: Buffer;
+  try {
+    expectedBytes = await readFile(profilePath);
+  } catch {
+    return false;
+  }
+  if (
+    createHash("sha256").update(expectedBytes).digest("hex") !==
+    SECCOMP_PROFILE_SHA256
+  ) {
+    return false;
+  }
+
+  const inspected = seccompOptions[0]!.slice("seccomp=".length);
+  if (inspected === profilePath) return true;
+  // Docker 27 expands a path-backed seccomp option to inline JSON in inspect;
+  // older engines can retain the original path. Both must match the pinned file.
+  try {
+    return (
+      JSON.stringify(canonicalJsonValue(JSON.parse(inspected) as unknown)) ===
+      JSON.stringify(
+        canonicalJsonValue(
+          JSON.parse(expectedBytes.toString("utf8")) as unknown,
+        ),
+      )
+    );
+  } catch {
+    return false;
+  }
 }
 
 function parsePort(value: string | undefined): number {
@@ -451,6 +658,105 @@ function fenceHashForSession(sessionId: string, generation: number): string {
         .slice(0, 24);
 }
 
+function validateLeaseGrant(
+  grant: CapsuleLeaseGrant,
+  nowNs: bigint,
+): { deadlineNs: bigint; grantNotAfterNs: bigint } {
+  if (
+    grant.version !== CAPSULE_LEASE_PROTOCOL_VERSION ||
+    !BOOT_ID_PATTERN.test(grant.bootId) ||
+    !UUID_PATTERN.test(grant.controlAttemptId) ||
+    !MONOTONIC_NS_PATTERN.test(grant.grantNotAfterNs)
+  ) {
+    throw new CapsuleError(
+      "invalid_lease_grant",
+      "IBKR capsule lease grant is invalid.",
+    );
+  }
+  const grantNotAfterNs = BigInt(grant.grantNotAfterNs);
+  if (grantNotAfterNs > MAX_GRANT_NOT_AFTER_NS || nowNs >= grantNotAfterNs) {
+    throw new CapsuleError(
+      "lease_grant_expired",
+      "IBKR capsule lease grant has expired.",
+    );
+  }
+  return {
+    deadlineNs: grantNotAfterNs + CAPSULE_LEASE_TTL_NS,
+    grantNotAfterNs,
+  };
+}
+
+export function serializeCapsuleLeaseRenewal(
+  renewal: Omit<CapsuleLeaseRenewal, "host">,
+): string {
+  if (
+    !CAPSULE_LEASE_CONTROL_KEY_PATTERN.test(renewal.controlKey) ||
+    !SESSION_HASH_PATTERN.test(renewal.fenceHash)
+  ) {
+    throw new CapsuleError(
+      "invalid_lease_control",
+      "IBKR capsule lease control is invalid.",
+    );
+  }
+  validateLeaseGrant(renewal.grant, -1n);
+  const payload = JSON.stringify({
+    version: renewal.grant.version,
+    bootId: renewal.grant.bootId,
+    fenceHash: renewal.fenceHash,
+    controlAttemptId: renewal.grant.controlAttemptId,
+    grantNotAfterNs: renewal.grant.grantNotAfterNs,
+  });
+  const mac = createHmac("sha256", Buffer.from(renewal.controlKey, "hex"))
+    .update(payload)
+    .digest("hex");
+  return `${mac} ${payload}\n`;
+}
+
+export const renewCapsuleLease: CapsuleLeaseRenewer = async (
+  renewal,
+): Promise<boolean> => {
+  if (!isPrivateIpv4(renewal.host)) return false;
+  let request: string;
+  try {
+    request = serializeCapsuleLeaseRenewal(renewal);
+  } catch {
+    return false;
+  }
+  const expected = Buffer.from(`${CAPSULE_LEASE_GRANTED_MARKER}\n`);
+  return new Promise<boolean>((resolve) => {
+    const chunks: Buffer[] = [];
+    let received = 0;
+    let settled = false;
+    const socket = createConnection({
+      host: renewal.host,
+      port: CAPSULE_LEASE_CONTROL_PORT,
+    });
+    const finish = (accepted: boolean): void => {
+      if (settled) return;
+      settled = true;
+      socket.destroy();
+      resolve(accepted);
+    };
+    socket.setTimeout(CAPSULE_LEASE_CONTROL_TIMEOUT_MS, () => finish(false));
+    socket.once("connect", () => socket.end(request));
+    socket.on("data", (chunk: Buffer) => {
+      received += chunk.length;
+      if (received > expected.length) {
+        finish(false);
+        return;
+      }
+      chunks.push(chunk);
+    });
+    socket.once("end", () => {
+      finish(
+        received === expected.length &&
+          Buffer.concat(chunks, received).equals(expected),
+      );
+    });
+    socket.once("error", () => finish(false));
+  });
+};
+
 export function capsuleNameForSession(
   sessionId: string,
   slotNumber = 1,
@@ -464,10 +770,13 @@ export function buildCreateCapsuleInvocation(
   sessionId: string,
   slotNumber = 1,
   generation = 0,
+  leaseGrant?: CapsuleLeaseGrant,
 ): DockerInvocation {
   const name = capsuleNameForSession(sessionId, slotNumber);
   const sessionHash = sessionHashForSession(sessionId);
   const fenceHash = fenceHashForSession(sessionId, generation);
+  if (leaseGrant) validateLeaseGrant(leaseGrant, -1n);
+  const leaseControlKey = leaseGrant ? randomBytes(32).toString("hex") : null;
   return {
     command: config.dockerBinary,
     args: [
@@ -484,22 +793,51 @@ export function buildCreateCapsuleInvocation(
       `pyrus.ibkr.generation=${generation}`,
       "--label",
       `pyrus.ibkr.slot=${validateSlotNumber(slotNumber)}`,
+      ...(leaseGrant
+        ? [
+            "--label",
+            `pyrus.ibkr.lease_protocol=${CAPSULE_LEASE_PROTOCOL_VERSION}`,
+            "--env",
+            `PYRUS_IBKR_CAPSULE_LEASE_VERSION=${CAPSULE_LEASE_PROTOCOL_VERSION}`,
+            "--env",
+            `PYRUS_IBKR_CAPSULE_LEASE_BOOT_ID=${leaseGrant.bootId}`,
+            "--env",
+            `PYRUS_IBKR_CAPSULE_LEASE_FENCE_HASH=${fenceHash}`,
+            "--env",
+            `PYRUS_IBKR_CAPSULE_LEASE_CONTROL_ATTEMPT_ID=${leaseGrant.controlAttemptId}`,
+            "--env",
+            `PYRUS_IBKR_CAPSULE_LEASE_GRANT_NOT_AFTER_NS=${leaseGrant.grantNotAfterNs}`,
+            "--env",
+            `PYRUS_IBKR_CAPSULE_LEASE_CONTROL_KEY=${leaseControlKey}`,
+          ]
+        : []),
       "--pull",
       "never",
       "--restart",
-      "on-failure:3",
-      "--init",
+      leaseGrant ? "no" : "on-failure:3",
       "--user",
-      "10001:10001",
+      "0:0",
       "--read-only",
       "--cap-drop",
       "ALL",
+      "--cap-add",
+      "KILL",
+      "--cap-add",
+      "NET_ADMIN",
+      "--cap-add",
+      "SETGID",
+      "--cap-add",
+      "SETPCAP",
+      "--cap-add",
+      "SETUID",
       "--security-opt",
       "no-new-privileges=true",
       "--security-opt",
       `seccomp=${config.seccompProfilePath}`,
       "--network",
       capsuleNetworkName(slotNumber),
+      "--cgroupns",
+      "private",
       "--memory",
       "2g",
       "--memory-swap",
@@ -520,7 +858,9 @@ export function buildCreateCapsuleInvocation(
       "--tmpfs",
       "/tmp:rw,noexec,nosuid,nodev,size=256m,mode=1777",
       "--tmpfs",
-      "/run/pyrus:rw,noexec,nosuid,nodev,size=512m,mode=0700,uid=10001,gid=10001",
+      leaseGrant
+        ? "/run/pyrus:rw,noexec,nosuid,nodev,size=512m,mode=0710,uid=10001,gid=0"
+        : "/run/pyrus:rw,noexec,nosuid,nodev,size=512m,mode=0700,uid=10001,gid=10001",
       "--log-driver",
       "local",
       "--log-opt",
@@ -558,8 +898,14 @@ async function runChecked(
 
 export class CapsuleManager {
   private active: {
+    containerId: string;
     fenceHash: string;
     generation: number;
+    lease: {
+      controlKey: string;
+      deadlineNs: bigint | null;
+      timer: ReturnType<typeof setTimeout> | null;
+    } | null;
     networkAddress: string | null;
     sessionHash: string;
     record: CapsuleRecord;
@@ -579,6 +925,8 @@ export class CapsuleManager {
     private readonly runner: CommandRunner,
     private readonly delayFn: (ms: number) => Promise<void> = delay,
     private readonly slotNumber = 1,
+    private readonly leaseRuntime: CapsuleLeaseRuntime = defaultCapsuleLeaseRuntime,
+    private readonly leaseRenewer: CapsuleLeaseRenewer = renewCapsuleLease,
   ) {
     validateSlotNumber(slotNumber);
     if (slotNumber > config.capacity) {
@@ -597,7 +945,11 @@ export class CapsuleManager {
     return capsuleNetworkName(this.slotNumber);
   }
 
-  ensure(sessionId: string, generation = 0): Promise<CapsuleRecord> {
+  ensure(
+    sessionId: string,
+    generation = 0,
+    leaseGrant?: CapsuleLeaseGrant,
+  ): Promise<CapsuleRecord> {
     const sessionHash = sessionHashForSession(sessionId);
     const fenceHash = fenceHashForSession(sessionId, generation);
     if (this.poisoned) {
@@ -612,7 +964,7 @@ export class CapsuleManager {
       );
     }
     if (this.active?.fenceHash === fenceHash) {
-      return this.refreshActive(fenceHash);
+      return this.ensureActive(sessionId, generation, fenceHash, leaseGrant);
     }
     if (this.pending?.fenceHash === fenceHash) {
       return this.pending.promise;
@@ -631,9 +983,41 @@ export class CapsuleManager {
       generation,
       sessionHash,
       fenceHash,
+      leaseGrant,
     );
     this.pending = { fenceHash, promise };
     return promise;
+  }
+
+  private async ensureActive(
+    sessionId: string,
+    generation: number,
+    fenceHash: string,
+    leaseGrant?: CapsuleLeaseGrant,
+  ): Promise<CapsuleRecord> {
+    const active = this.active;
+    if (!active || active.fenceHash !== fenceHash) {
+      throw new CapsuleError(
+        "capacity_exhausted",
+        "The IBKR session host is already in use.",
+      );
+    }
+    if (!leaseGrant) {
+      if (active.lease) {
+        throw new CapsuleError(
+          "session_placement_conflict",
+          "IBKR session placement conflicts with the current host slot.",
+        );
+      }
+      return this.refreshActive(fenceHash);
+    }
+    if (!active.lease) {
+      validateLeaseGrant(leaseGrant, this.leaseRuntime.nowNs());
+      await this.release(sessionId, generation);
+      return this.ensure(sessionId, generation, leaseGrant);
+    }
+    await this.keepalive(sessionId, generation, leaseGrant);
+    return this.refreshActive(fenceHash);
   }
 
   async identityForSession(
@@ -647,7 +1031,11 @@ export class CapsuleManager {
       : null;
   }
 
-  async replace(sessionId: string, generation: number): Promise<CapsuleRecord> {
+  async replace(
+    sessionId: string,
+    generation: number,
+    leaseGrant?: CapsuleLeaseGrant,
+  ): Promise<CapsuleRecord> {
     const sessionHash = sessionHashForSession(sessionId);
     const fenceHash = fenceHashForSession(sessionId, generation);
     if (this.poisoned) throw this.cleanupUnconfirmed();
@@ -658,7 +1046,7 @@ export class CapsuleManager {
       );
     }
     if (!this.active) await this.reconcile();
-    if (!this.active) return this.ensure(sessionId, generation);
+    if (!this.active) return this.ensure(sessionId, generation, leaseGrant);
     if (this.active.fenceHash === fenceHash) {
       return this.refreshActive(fenceHash);
     }
@@ -675,7 +1063,7 @@ export class CapsuleManager {
       );
     }
     await this.release(sessionId, this.active.generation);
-    return this.ensure(sessionId, generation);
+    return this.ensure(sessionId, generation, leaseGrant);
   }
 
   async reconcile(): Promise<CapsuleRecord | null> {
@@ -715,9 +1103,93 @@ export class CapsuleManager {
     if (!this.active) {
       await this.reconcile();
     }
+    if (
+      this.active?.fenceHash === fenceHash &&
+      this.active.lease &&
+      !this.leaseIsCurrent(this.active)
+    ) {
+      return null;
+    }
     return this.active?.fenceHash === fenceHash
       ? this.refreshActive(fenceHash)
       : null;
+  }
+
+  async keepalive(
+    sessionId: string,
+    generation: number,
+    grant: CapsuleLeaseGrant,
+  ): Promise<void> {
+    const fenceHash = fenceHashForSession(sessionId, generation);
+    const lease = validateLeaseGrant(grant, this.leaseRuntime.nowNs());
+    if (this.poisoned) throw this.cleanupUnconfirmed();
+    if (!this.active) await this.reconcile();
+    const active = this.active;
+    if (
+      !active ||
+      active.fenceHash !== fenceHash ||
+      !active.lease ||
+      !active.networkAddress ||
+      this.releasing ||
+      (active.lease.deadlineNs !== null && !this.leaseIsCurrent(active))
+    ) {
+      throw new CapsuleError("session_not_found", "IBKR session not found.");
+    }
+
+    let renewed = false;
+    try {
+      renewed = await this.leaseRenewer({
+        controlKey: active.lease.controlKey,
+        fenceHash: active.fenceHash,
+        grant,
+        host: active.networkAddress,
+      });
+    } catch {
+      throw new CapsuleError(
+        "lease_renewal_failed",
+        "IBKR capsule lease renewal failed.",
+      );
+    }
+    if (!renewed) {
+      throw new CapsuleError(
+        "lease_renewal_failed",
+        "IBKR capsule lease renewal failed.",
+      );
+    }
+    if (this.active !== active || this.releasing) {
+      throw new CapsuleError("session_not_found", "IBKR session not found.");
+    }
+    const networkId = await this.ensureCapsuleNetwork();
+    if (this.active !== active || this.releasing) {
+      throw new CapsuleError("session_not_found", "IBKR session not found.");
+    }
+    const identity = await this.inspectOwnedCapsule(
+      active.containerId,
+      networkId,
+    );
+    if (
+      this.active !== active ||
+      this.releasing ||
+      (active.lease.deadlineNs !== null && !this.leaseIsCurrent(active))
+    ) {
+      throw new CapsuleError("session_not_found", "IBKR session not found.");
+    }
+    if (
+      identity?.status !== "current" ||
+      identity.containerId !== active.containerId ||
+      identity.fenceHash !== active.fenceHash ||
+      identity.leaseControlKey !== active.lease.controlKey ||
+      identity.leaseProtocol !== 1 ||
+      !identity.running
+    ) {
+      throw this.cleanupUnconfirmed();
+    }
+    if (!this.armLease(active, lease.deadlineNs)) {
+      throw new CapsuleError(
+        "lease_renewal_failed",
+        "IBKR capsule lease renewal failed.",
+      );
+    }
   }
 
   getTarget(
@@ -726,7 +1198,12 @@ export class CapsuleManager {
     generation = 0,
   ): CapsuleTarget {
     const fenceHash = fenceHashForSession(sessionId, generation);
-    if (this.active?.fenceHash !== fenceHash) {
+    if (
+      this.poisoned ||
+      this.releasing ||
+      this.active?.fenceHash !== fenceHash ||
+      !this.leaseIsCurrent(this.active)
+    ) {
       throw new CapsuleError("session_not_found", "IBKR session not found.");
     }
     return capsuleTargetForSlot(this.slotNumber, kind);
@@ -735,6 +1212,8 @@ export class CapsuleManager {
   getRelayTarget(kind: CapsuleTargetKind): CapsuleRelayTarget | null {
     return this.active?.networkAddress &&
       this.active.record.status === "ready" &&
+      this.leaseIsCurrent(this.active) &&
+      !this.poisoned &&
       !this.releasing
       ? { host: this.active.networkAddress, port: CAPSULE_INTERNAL_PORTS[kind] }
       : null;
@@ -750,6 +1229,10 @@ export class CapsuleManager {
     if (this.poisoned) {
       return Promise.reject(this.cleanupUnconfirmed());
     }
+    return this.beginRelease(fenceHash);
+  }
+
+  private beginRelease(fenceHash: string): Promise<void> {
     if (this.releasing?.fenceHash === fenceHash) {
       return this.releasing.promise;
     }
@@ -767,6 +1250,71 @@ export class CapsuleManager {
     return promise;
   }
 
+  private leaseIsCurrent(active: NonNullable<typeof this.active>): boolean {
+    if (!active.lease) return true;
+    const deadlineNs = active.lease.deadlineNs;
+    if (deadlineNs === null) return false;
+    if (this.leaseRuntime.nowNs() < deadlineNs) return true;
+    this.expireLease(active);
+    return false;
+  }
+
+  private armLease(
+    active: NonNullable<typeof this.active>,
+    deadlineNs: bigint,
+    expireOnFailure = true,
+  ): boolean {
+    if (!active.lease || this.active !== active) {
+      throw new CapsuleError("session_not_found", "IBKR session not found.");
+    }
+    const nowNs = this.leaseRuntime.nowNs();
+    const currentDeadlineNs = active.lease.deadlineNs;
+    if (
+      currentDeadlineNs !== null &&
+      currentDeadlineNs >= deadlineNs &&
+      active.lease.timer
+    ) {
+      if (nowNs < currentDeadlineNs) return true;
+      if (expireOnFailure) this.expireLease(active);
+      return false;
+    }
+    const effectiveDeadlineNs =
+      currentDeadlineNs !== null && currentDeadlineNs > deadlineNs
+        ? currentDeadlineNs
+        : deadlineNs;
+    if (active.lease.timer) this.leaseRuntime.clear(active.lease.timer);
+    active.lease.deadlineNs = effectiveDeadlineNs;
+    const remainingNs = effectiveDeadlineNs - nowNs;
+    if (remainingNs <= 0n) {
+      if (expireOnFailure) this.expireLease(active);
+      return false;
+    }
+    const delayMs = Math.max(
+      1,
+      Math.min(Number((remainingNs + 999_999n) / 1_000_000n), 2_147_483_647),
+    );
+    active.lease.timer = this.leaseRuntime.schedule(() => {
+      if (this.active !== active || !active.lease) return;
+      active.lease.timer = null;
+      if (this.leaseRuntime.nowNs() < effectiveDeadlineNs) {
+        this.armLease(active, effectiveDeadlineNs);
+        return;
+      }
+      this.expireLease(active);
+    }, delayMs);
+    return true;
+  }
+
+  private expireLease(active: NonNullable<typeof this.active>): void {
+    if (this.active !== active || !active.lease) return;
+    if (active.lease.timer) this.leaseRuntime.clear(active.lease.timer);
+    active.lease.timer = null;
+    active.lease.deadlineNs = 0n;
+    active.networkAddress = null;
+    active.record = { ...active.record, status: "occupied" };
+    void this.beginRelease(active.fenceHash).catch(() => undefined);
+  }
+
   private async releaseActive(fenceHash: string): Promise<void> {
     if (this.pending?.fenceHash === fenceHash) {
       await this.pending.promise;
@@ -777,19 +1325,32 @@ export class CapsuleManager {
     if (this.active?.fenceHash !== fenceHash) {
       throw new CapsuleError("session_not_found", "IBKR session not found.");
     }
+    await this.removeActive(fenceHash);
+  }
 
+  private async removeActive(fenceHash: string): Promise<void> {
+    const active = this.active;
+    if (!active || active.fenceHash !== fenceHash) {
+      throw new CapsuleError("session_not_found", "IBKR session not found.");
+    }
     let removed: CommandResult;
     try {
       removed = await this.runner(this.config.dockerBinary, [
         "rm",
         "--force",
-        this.active.record.name,
+        active.containerId,
       ]);
     } catch {
       throw this.cleanupUnconfirmed();
     }
     if (removed.code !== 0) {
       throw this.cleanupUnconfirmed();
+    }
+    if (this.active !== active) {
+      throw this.cleanupUnconfirmed();
+    }
+    if (active.lease?.timer) {
+      this.leaseRuntime.clear(active.lease.timer);
     }
     this.active = null;
     this.reconciled = true;
@@ -831,7 +1392,7 @@ export class CapsuleManager {
         "The IBKR session host is already in use.",
       );
     }
-    const probe = await this.probeCapsule(active.record.name);
+    const probe = await this.probeCapsule(active.containerId);
     if (this.active !== active) {
       throw new CapsuleError("session_not_found", "IBKR session not found.");
     }
@@ -842,7 +1403,7 @@ export class CapsuleManager {
         throw new CapsuleError("session_not_found", "IBKR session not found.");
       }
       const identity = await this.inspectOwnedCapsule(
-        active.record.name,
+        active.containerId,
         networkId,
       );
       if (this.active !== active) {
@@ -850,6 +1411,7 @@ export class CapsuleManager {
       }
       if (
         identity?.status !== "current" ||
+        identity.containerId !== active.containerId ||
         identity.fenceHash !== active.fenceHash
       ) {
         throw this.cleanupUnconfirmed();
@@ -926,15 +1488,40 @@ export class CapsuleManager {
       return null;
     }
 
-    const probe = await this.probeCapsule(this.capsuleName);
+    if (identity.leaseProtocol === 1 && !identity.running) {
+      let removed: CommandResult;
+      try {
+        removed = await this.runner(this.config.dockerBinary, [
+          "rm",
+          "--force",
+          identity.containerId,
+        ]);
+      } catch {
+        throw this.cleanupUnconfirmed();
+      }
+      if (removed.code !== 0) throw this.cleanupUnconfirmed();
+      this.reconciled = true;
+      return null;
+    }
+
+    const probe = await this.probeCapsule(identity.containerId);
     const record: CapsuleRecord = {
       loginCompletions: probe.loginCompletions,
       name: this.capsuleName,
       status: probe.ready && identity.networkAddress ? "ready" : "occupied",
     };
     this.active = {
+      containerId: identity.containerId,
       fenceHash: identity.fenceHash,
       generation: identity.generation,
+      lease:
+        identity.leaseProtocol === 1
+          ? {
+              controlKey: identity.leaseControlKey!,
+              deadlineNs: null,
+              timer: null,
+            }
+          : null,
       networkAddress: identity.networkAddress,
       sessionHash: identity.sessionHash,
       record,
@@ -948,23 +1535,40 @@ export class CapsuleManager {
     generation: number,
     sessionHash: string,
     fenceHash: string,
+    leaseGrant?: CapsuleLeaseGrant,
   ): Promise<CapsuleRecord> {
     try {
       await this.reconcile();
       if (this.active) {
         if (this.active.fenceHash === fenceHash) {
-          return this.active.record;
+          if (!leaseGrant) {
+            if (this.active.lease) {
+              throw new CapsuleError(
+                "session_placement_conflict",
+                "IBKR session placement conflicts with the current host slot.",
+              );
+            }
+            return this.active.record;
+          }
+          if (this.active.lease) {
+            await this.keepalive(sessionId, generation, leaseGrant);
+            return this.refreshActive(fenceHash);
+          }
+          validateLeaseGrant(leaseGrant, this.leaseRuntime.nowNs());
+          await this.removeActive(fenceHash);
+        } else {
+          throw new CapsuleError(
+            "capacity_exhausted",
+            "The IBKR session host is already in use.",
+          );
         }
-        throw new CapsuleError(
-          "capacity_exhausted",
-          "The IBKR session host is already in use.",
-        );
       }
       return await this.provision(
         sessionId,
         generation,
         sessionHash,
         fenceHash,
+        leaseGrant,
       );
     } finally {
       if (this.pending?.fenceHash === fenceHash) {
@@ -1074,8 +1678,12 @@ export class CapsuleManager {
     generation: number,
     sessionHash: string,
     fenceHash: string,
+    leaseGrant?: CapsuleLeaseGrant,
   ): Promise<CapsuleRecord> {
     const name = capsuleNameForSession(sessionId, this.slotNumber);
+    const lease = leaseGrant
+      ? validateLeaseGrant(leaseGrant, this.leaseRuntime.nowNs())
+      : null;
     let created = false;
     try {
       const networkId = await this.ensureCapsuleNetwork(true);
@@ -1086,6 +1694,7 @@ export class CapsuleManager {
           sessionId,
           this.slotNumber,
           generation,
+          leaseGrant,
         ),
         "docker_create_failed",
       );
@@ -1101,7 +1710,8 @@ export class CapsuleManager {
         identity?.status !== "current" ||
         !identity.networkAddress ||
         identity.sessionHash !== sessionHash ||
-        identity.fenceHash !== fenceHash
+        identity.fenceHash !== fenceHash ||
+        identity.leaseProtocol !== (leaseGrant ? 1 : null)
       ) {
         throw new CapsuleError(
           "capsule_identity_invalid",
@@ -1114,21 +1724,41 @@ export class CapsuleManager {
         status: "ready",
       };
       this.active = {
+        containerId: identity.containerId,
         fenceHash: identity.fenceHash,
         generation: identity.generation,
+        lease: lease
+          ? {
+              controlKey: identity.leaseControlKey!,
+              deadlineNs: lease.deadlineNs,
+              timer: null,
+            }
+          : null,
         networkAddress: identity.networkAddress,
         sessionHash: identity.sessionHash,
         record,
       };
+      if (lease && !this.armLease(this.active, lease.deadlineNs, false)) {
+        throw new CapsuleError(
+          "lease_grant_expired",
+          "IBKR capsule lease grant has expired.",
+        );
+      }
       return record;
     } catch (error) {
       if (created) {
+        const failedActive =
+          this.active?.fenceHash === fenceHash ? this.active : null;
+        if (failedActive?.lease?.timer) {
+          this.leaseRuntime.clear(failedActive.lease.timer);
+        }
+        if (failedActive) this.active = null;
         let cleaned = false;
         try {
           const result = await this.runner(this.config.dockerBinary, [
             "rm",
             "--force",
-            name,
+            failedActive?.containerId ?? name,
           ]);
           cleaned = result.code === 0;
         } catch {
@@ -1137,6 +1767,7 @@ export class CapsuleManager {
         if (!cleaned) {
           throw this.cleanupUnconfirmed();
         }
+        this.reconciled = true;
       }
       throw error;
     }
@@ -1204,6 +1835,11 @@ export class CapsuleManager {
       inspected.code === 0 ? parseJsonRecord(inspected.stdout) : null;
     const containerConfig = asRecord(container?.["Config"]);
     const labels = asRecord(containerConfig?.["Labels"]);
+    const environment = Array.isArray(containerConfig?.["Env"])
+      ? containerConfig["Env"].filter(
+          (entry): entry is string => typeof entry === "string",
+        )
+      : [];
     const hostConfig = asRecord(container?.["HostConfig"]);
     const networks = asRecord(
       asRecord(container?.["NetworkSettings"])?.["Networks"],
@@ -1212,10 +1848,14 @@ export class CapsuleManager {
     const networkNames = networks ? Object.keys(networks) : [];
     const endpoint = asRecord(networks?.[this.networkName]);
     const state = asRecord(container?.["State"]);
+    const entrypoint = Array.isArray(containerConfig?.["Entrypoint"])
+      ? containerConfig["Entrypoint"]
+      : [];
     const sessionHash = labels?.["pyrus.ibkr.session_hash"];
     const rawFenceHash = labels?.["pyrus.ibkr.fence_hash"];
     const rawGeneration = labels?.["pyrus.ibkr.generation"];
     const rawSlotNumber = labels?.["pyrus.ibkr.slot"];
+    const rawLeaseProtocol = labels?.["pyrus.ibkr.lease_protocol"];
     const legacyIdentity =
       rawFenceHash === undefined &&
       rawGeneration === undefined &&
@@ -1232,7 +1872,124 @@ export class CapsuleManager {
       Number.isInteger(slotNumber) &&
       slotNumber === this.slotNumber &&
       String(slotNumber) === rawSlotNumber;
+    const leaseProtocol: 1 | null = rawLeaseProtocol === undefined ? null : 1;
     const image = containerConfig?.["Image"];
+    const rawContainerId = container?.["Id"];
+    const containerId =
+      typeof rawContainerId === "string" &&
+      DOCKER_ID_PATTERN.test(rawContainerId)
+        ? rawContainerId
+        : leaseProtocol === null
+          ? name
+          : null;
+    const environmentValue = (name: string): string | null => {
+      const prefix = `${name}=`;
+      const matches = environment.filter((entry) => entry.startsWith(prefix));
+      return matches.length === 1 ? matches[0]!.slice(prefix.length) : null;
+    };
+    const leaseGrantNotAfterNs = environmentValue(
+      "PYRUS_IBKR_CAPSULE_LEASE_GRANT_NOT_AFTER_NS",
+    );
+    const leaseControlKey = environmentValue(
+      "PYRUS_IBKR_CAPSULE_LEASE_CONTROL_KEY",
+    );
+    const securityOptions = hostConfig?.["SecurityOpt"];
+    const securityOptionsAreValid = await hasExactSeccompSecurityOptions(
+      securityOptions,
+      this.config.seccompProfilePath,
+    );
+    const tmpfs = asRecord(hostConfig?.["Tmpfs"]);
+    const tmpfsNames = tmpfs ? Object.keys(tmpfs).sort() : [];
+    const ulimits = Array.isArray(hostConfig?.["Ulimits"])
+      ? hostConfig["Ulimits"]
+      : [];
+    const exactUlimit = (
+      index: number,
+      name: string,
+      soft: number,
+      hard: number,
+    ): boolean => {
+      const value = asRecord(ulimits[index]);
+      return (
+        value?.["Name"] === name &&
+        value["Soft"] === soft &&
+        value["Hard"] === hard
+      );
+    };
+    const supervisorRuntimeConfigurationIsValid =
+      entrypoint.length === 1 &&
+      entrypoint[0] === "/usr/local/bin/pyrus-capsule-supervisor.py" &&
+      containerConfig?.["StopTimeout"] === 30 &&
+      containerConfig?.["User"] === "0:0" &&
+      isEmptyRecordOrNull(containerConfig?.["Volumes"]) &&
+      hostConfig?.["Privileged"] === false &&
+      hostConfig["ReadonlyRootfs"] === true &&
+      hasExactStringSet(hostConfig["CapAdd"], [
+        "KILL",
+        "NET_ADMIN",
+        "SETGID",
+        "SETPCAP",
+        "SETUID",
+      ]) &&
+      hasExactStringSet(hostConfig["CapDrop"], ["ALL"]) &&
+      securityOptionsAreValid &&
+      hostConfig["CgroupnsMode"] === "private" &&
+      hostConfig["IpcMode"] === "private" &&
+      hostConfig["PidMode"] === "" &&
+      isEmptyArrayOrNull(hostConfig["Binds"]) &&
+      isEmptyArrayOrNull(hostConfig["Mounts"]) &&
+      isEmptyArrayOrNull(hostConfig["VolumesFrom"]) &&
+      isEmptyArrayOrNull(hostConfig["Devices"]) &&
+      isEmptyArrayOrNull(hostConfig["DeviceRequests"]) &&
+      isEmptyArrayOrNull(hostConfig["DeviceCgroupRules"]) &&
+      isEmptyArrayOrNull(container?.["Mounts"]) &&
+      tmpfsNames.length === 2 &&
+      tmpfsNames[0] === "/run/pyrus" &&
+      tmpfsNames[1] === "/tmp" &&
+      tmpfs?.["/run/pyrus"] ===
+        (leaseProtocol === null
+          ? "rw,noexec,nosuid,nodev,size=512m,mode=0700,uid=10001,gid=10001"
+          : "rw,noexec,nosuid,nodev,size=512m,mode=0710,uid=10001,gid=0") &&
+      tmpfs?.["/tmp"] === "rw,noexec,nosuid,nodev,size=256m,mode=1777" &&
+      hostConfig["Memory"] === 2_147_483_648 &&
+      hostConfig["MemorySwap"] === 2_147_483_648 &&
+      hostConfig["NanoCpus"] === 1_000_000_000 &&
+      hostConfig["PidsLimit"] === 512 &&
+      hostConfig["ShmSize"] === 536_870_912 &&
+      ulimits.length === 2 &&
+      exactUlimit(0, "core", 0, 0) &&
+      exactUlimit(1, "nofile", 4096, 4096) &&
+      hostConfig["PublishAllPorts"] === false &&
+      hostConfig?.["Init"] !== true;
+    const leaseConfigurationIsValid =
+      leaseProtocol === null
+        ? supervisorRuntimeConfigurationIsValid &&
+          rawLeaseProtocol === undefined &&
+          [
+            "PYRUS_IBKR_CAPSULE_LEASE_VERSION",
+            "PYRUS_IBKR_CAPSULE_LEASE_BOOT_ID",
+            "PYRUS_IBKR_CAPSULE_LEASE_FENCE_HASH",
+            "PYRUS_IBKR_CAPSULE_LEASE_CONTROL_ATTEMPT_ID",
+            "PYRUS_IBKR_CAPSULE_LEASE_GRANT_NOT_AFTER_NS",
+            "PYRUS_IBKR_CAPSULE_LEASE_CONTROL_KEY",
+          ].every((name) => environmentValue(name) === null) &&
+          asRecord(hostConfig?.["RestartPolicy"])?.["Name"] === "on-failure"
+        : rawLeaseProtocol === String(CAPSULE_LEASE_PROTOCOL_VERSION) &&
+          supervisorRuntimeConfigurationIsValid &&
+          environmentValue("PYRUS_IBKR_CAPSULE_LEASE_VERSION") ===
+            String(CAPSULE_LEASE_PROTOCOL_VERSION) &&
+          BOOT_ID_PATTERN.test(
+            environmentValue("PYRUS_IBKR_CAPSULE_LEASE_BOOT_ID") ?? "",
+          ) &&
+          environmentValue("PYRUS_IBKR_CAPSULE_LEASE_FENCE_HASH") ===
+            fenceHash &&
+          UUID_PATTERN.test(
+            environmentValue("PYRUS_IBKR_CAPSULE_LEASE_CONTROL_ATTEMPT_ID") ??
+              "",
+          ) &&
+          MONOTONIC_NS_PATTERN.test(leaseGrantNotAfterNs ?? "") &&
+          CAPSULE_LEASE_CONTROL_KEY_PATTERN.test(leaseControlKey ?? "") &&
+          asRecord(hostConfig?.["RestartPolicy"])?.["Name"] === "no";
     const rawNetworkAddress = endpoint?.["IPAddress"];
     const networkAddress = isPrivateIpv4(rawNetworkAddress)
       ? rawNetworkAddress
@@ -1246,6 +2003,8 @@ export class CapsuleManager {
       typeof fenceHash === "string" &&
       SESSION_HASH_PATTERN.test(fenceHash) &&
       (legacyIdentity || (generationIsValid && slotNumberIsValid)) &&
+      typeof containerId === "string" &&
+      leaseConfigurationIsValid &&
       hostConfig?.["NetworkMode"] === this.networkName &&
       isEmptyRecordOrNull(hostConfig["PortBindings"]) &&
       networkNames.length === 1 &&
@@ -1256,20 +2015,23 @@ export class CapsuleManager {
     if (!ownedAndIsolated) return null;
     if (image === this.config.capsuleImage) {
       return {
+        containerId,
         fenceHash,
         generation,
+        leaseControlKey,
+        leaseProtocol,
+        running: state?.["Running"] === true,
         status: "current",
         networkAddress,
         sessionHash,
         slotNumber,
       };
     }
-    const containerId = container?.["Id"];
-    return typeof containerId === "string" &&
-      DOCKER_ID_PATTERN.test(containerId) &&
+    return typeof rawContainerId === "string" &&
+      DOCKER_ID_PATTERN.test(rawContainerId) &&
       typeof image === "string" &&
       (LOCAL_IMAGE_ID_PATTERN.test(image) || DIGEST_IMAGE_PATTERN.test(image))
-      ? { status: "stale_image", containerId }
+      ? { status: "stale_image", containerId: rawContainerId }
       : null;
   }
 

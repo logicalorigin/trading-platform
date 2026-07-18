@@ -38,6 +38,7 @@ RUN apt-get update \
     chromium-common=150.0.7871.100-1~deb12u1 \
     chromium-sandbox=150.0.7871.100-1~deb12u1 \
     fonts-liberation=1:1.07.4-11 \
+    nftables=1.0.6-2+deb12u2 \
     novnc=1:1.3.0-1 \
     openjdk-17-jre-headless=17.0.19+10-1~deb12u2 \
     websockify=0.10.0+dfsg1-4+b1 \
@@ -59,8 +60,9 @@ COPY --chmod=0444 chromium-managed-policy.json /etc/chromium/policies/managed/py
 COPY --chmod=0555 pyrus-capsule-entrypoint /usr/local/bin/pyrus-capsule-entrypoint
 COPY --chmod=0555 pyrus-capsule-health /usr/local/bin/pyrus-capsule-health
 COPY --chmod=0555 pyrus-capsule-relay.py /usr/local/bin/pyrus-capsule-relay
+COPY --chmod=0555 pyrus-capsule-supervisor.py /usr/local/bin/pyrus-capsule-supervisor.py
 
 USER 10001:10001
 WORKDIR /run/pyrus
 
-ENTRYPOINT ["/usr/local/bin/pyrus-capsule-entrypoint"]
+ENTRYPOINT ["/usr/local/bin/pyrus-capsule-supervisor.py"]

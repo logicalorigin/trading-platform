@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { createHmac } from "node:crypto";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import {
@@ -9,12 +11,24 @@ import {
   capsuleNameForSession,
   checkCapsuleRuntime,
   checkDocker,
+  createCapsuleLeaseGrantIssuer,
   execFileCommandRunner,
   loadSessionHostConfig,
+  serializeCapsuleLeaseRenewal,
+  type CapsuleLeaseGrant,
+  type CapsuleLeaseRuntime,
   type CommandResult,
   type CommandRunner,
 } from "./capsule";
 
+const SECCOMP_PROFILE = JSON.parse(
+  readFileSync(DEFAULT_SECCOMP_PROFILE_PATH, "utf8"),
+) as Record<string, unknown>;
+const SECCOMP_INSPECT_OPTION = `seccomp=${JSON.stringify(SECCOMP_PROFILE)}`;
+const WEAKENED_SECCOMP_INSPECT_OPTION = `seccomp=${JSON.stringify({
+  ...SECCOMP_PROFILE,
+  defaultAction: "SCMP_ACT_ALLOW",
+})}`;
 const IMAGE = "ghcr.io/pyrus/ibkr-session-capsule@sha256:" + "a".repeat(64);
 const SESSION_ID = "11111111-1111-4111-8111-111111111111";
 const OTHER_SESSION_ID = "22222222-2222-4222-8222-222222222222";
@@ -28,9 +42,22 @@ const READY_MARKER = "PYRUS_IBKR_CAPSULE_READY_V1";
 const LOGIN_COMPLETE_MARKER = "PYRUS_IBKR_CAPSULE_LOGIN_COMPLETE_V1";
 const STARTED_AT = "2026-07-09T22:00:00.000Z";
 const CURRENT_LOG_AT = "2026-07-09T22:00:01.000Z";
+const BOOT_ID = "33333333-3333-4333-8333-333333333333";
+const CONTROL_ATTEMPT_ID = "44444444-4444-4444-8444-444444444444";
+const LEASE_CONTROL_KEY = "ab".repeat(32);
 
 const dockerLogLine = (message: string, timestamp = CURRENT_LOG_AT): string =>
   `${timestamp} ${message}\n`;
+
+const leaseGrant = (
+  grantNotAfterNs: bigint,
+  controlAttemptId = CONTROL_ATTEMPT_ID,
+): CapsuleLeaseGrant => ({
+  bootId: BOOT_ID,
+  controlAttemptId,
+  grantNotAfterNs: String(grantNotAfterNs),
+  version: 1,
+});
 
 const noExistingSlot = (): CommandResult => ({
   code: 0,
@@ -41,7 +68,12 @@ const noExistingSlot = (): CommandResult => ({
 const capsuleProbeResult = (
   args: string[],
   sessionHash = SESSION_HASH,
-  identity?: { fenceHash: string; generation: number; slotNumber: number },
+  identity?: {
+    fenceHash: string;
+    generation: number;
+    leaseGrant?: CapsuleLeaseGrant;
+    slotNumber: number;
+  },
 ): CommandResult | null => {
   if (args[0] === "network" && args[1] === "inspect") {
     return {
@@ -74,8 +106,24 @@ const capsuleProbeResult = (
     return {
       code: 0,
       stdout: JSON.stringify({
+        Id: CONTAINER_ID,
+        Mounts: [],
         Config: {
+          Entrypoint: ["/usr/local/bin/pyrus-capsule-supervisor.py"],
           Image: IMAGE,
+          StopTimeout: 30,
+          User: "0:0",
+          Volumes: null,
+          Env: identity?.leaseGrant
+            ? [
+                "PYRUS_IBKR_CAPSULE_LEASE_VERSION=1",
+                `PYRUS_IBKR_CAPSULE_LEASE_BOOT_ID=${identity.leaseGrant.bootId}`,
+                `PYRUS_IBKR_CAPSULE_LEASE_FENCE_HASH=${identity.fenceHash}`,
+                `PYRUS_IBKR_CAPSULE_LEASE_CONTROL_ATTEMPT_ID=${identity.leaseGrant.controlAttemptId}`,
+                `PYRUS_IBKR_CAPSULE_LEASE_GRANT_NOT_AFTER_NS=${identity.leaseGrant.grantNotAfterNs}`,
+                `PYRUS_IBKR_CAPSULE_LEASE_CONTROL_KEY=${LEASE_CONTROL_KEY}`,
+              ]
+            : [],
           Labels: {
             "pyrus.ibkr.capsule": "1",
             "pyrus.ibkr.session_hash": sessionHash,
@@ -84,11 +132,50 @@ const capsuleProbeResult = (
                   "pyrus.ibkr.fence_hash": identity.fenceHash,
                   "pyrus.ibkr.generation": String(identity.generation),
                   "pyrus.ibkr.slot": String(identity.slotNumber),
+                  ...(identity.leaseGrant
+                    ? { "pyrus.ibkr.lease_protocol": "1" }
+                    : {}),
                 }
               : {}),
           },
         },
-        HostConfig: { NetworkMode: NETWORK_NAME, PortBindings: null },
+        HostConfig: {
+          Binds: null,
+          CapAdd: ["KILL", "NET_ADMIN", "SETGID", "SETPCAP", "SETUID"],
+          CapDrop: ["ALL"],
+          CgroupnsMode: "private",
+          DeviceCgroupRules: null,
+          DeviceRequests: null,
+          Devices: [],
+          Init: false,
+          IpcMode: "private",
+          Memory: 2_147_483_648,
+          MemorySwap: 2_147_483_648,
+          NanoCpus: 1_000_000_000,
+          NetworkMode: NETWORK_NAME,
+          PidMode: "",
+          PidsLimit: 512,
+          PortBindings: null,
+          Privileged: false,
+          PublishAllPorts: false,
+          ReadonlyRootfs: true,
+          RestartPolicy: {
+            Name: identity?.leaseGrant ? "no" : "on-failure",
+          },
+          SecurityOpt: ["no-new-privileges=true", SECCOMP_INSPECT_OPTION],
+          ShmSize: 536_870_912,
+          Tmpfs: {
+            "/run/pyrus": identity?.leaseGrant
+              ? "rw,noexec,nosuid,nodev,size=512m,mode=0710,uid=10001,gid=0"
+              : "rw,noexec,nosuid,nodev,size=512m,mode=0700,uid=10001,gid=10001",
+            "/tmp": "rw,noexec,nosuid,nodev,size=256m,mode=1777",
+          },
+          Ulimits: [
+            { Hard: 0, Name: "core", Soft: 0 },
+            { Hard: 4096, Name: "nofile", Soft: 4096 },
+          ],
+          VolumesFrom: null,
+        },
         NetworkSettings: {
           Networks: {
             [NETWORK_NAME]: {
@@ -224,6 +311,113 @@ test("builds isolated names, networks, and loopback relays for every host slot",
   );
 });
 
+test("builds leased capsules with one non-resetting monotonic grant", () => {
+  const config = loadSessionHostConfig({ IBKR_SESSION_CAPSULE_IMAGE: IMAGE });
+  const grant = leaseGrant(25_000_000_000n);
+  const invocation = buildCreateCapsuleInvocation(
+    config,
+    SESSION_ID,
+    1,
+    7,
+    grant,
+  );
+  const serialized = JSON.stringify(invocation.args);
+  const fenceHash = invocation.args
+    .find((arg) => arg.startsWith("pyrus.ibkr.fence_hash="))!
+    .split("=", 2)[1]!;
+
+  assert(invocation.args.includes("pyrus.ibkr.lease_protocol=1"));
+  assert(invocation.args.includes("PYRUS_IBKR_CAPSULE_LEASE_VERSION=1"));
+  assert(
+    invocation.args.includes(
+      `PYRUS_IBKR_CAPSULE_LEASE_BOOT_ID=${grant.bootId}`,
+    ),
+  );
+  assert(
+    invocation.args.includes(
+      `PYRUS_IBKR_CAPSULE_LEASE_FENCE_HASH=${fenceHash}`,
+    ),
+  );
+  assert(
+    invocation.args.includes(
+      `PYRUS_IBKR_CAPSULE_LEASE_CONTROL_ATTEMPT_ID=${grant.controlAttemptId}`,
+    ),
+  );
+  assert(
+    invocation.args.includes(
+      `PYRUS_IBKR_CAPSULE_LEASE_GRANT_NOT_AFTER_NS=${grant.grantNotAfterNs}`,
+    ),
+  );
+  assert.match(
+    invocation.args.find((argument) =>
+      argument.startsWith("PYRUS_IBKR_CAPSULE_LEASE_CONTROL_KEY="),
+    ) ?? "",
+    /^PYRUS_IBKR_CAPSULE_LEASE_CONTROL_KEY=[a-f0-9]{64}$/,
+  );
+  assert.equal(invocation.args[invocation.args.indexOf("--restart") + 1], "no");
+  assert.equal(invocation.args[invocation.args.indexOf("--user") + 1], "0:0");
+  assert.deepEqual(
+    invocation.args.flatMap((argument, index) =>
+      argument === "--cap-add" ? [invocation.args[index + 1]] : [],
+    ),
+    ["KILL", "NET_ADMIN", "SETGID", "SETPCAP", "SETUID"],
+  );
+  assert(
+    invocation.args.includes(
+      "/run/pyrus:rw,noexec,nosuid,nodev,size=512m,mode=0710,uid=10001,gid=0",
+    ),
+  );
+  assert(!invocation.args.includes("--init"));
+  assert(!serialized.includes(SESSION_ID));
+});
+
+test("authenticates capsule lease renewal frames with the per-capsule key", () => {
+  const grant = leaseGrant(25_000_000_000n);
+  const fenceHash = "c".repeat(24);
+  const frame = serializeCapsuleLeaseRenewal({
+    controlKey: LEASE_CONTROL_KEY,
+    fenceHash,
+    grant,
+  });
+  const separator = frame.indexOf(" ");
+  const mac = frame.slice(0, separator);
+  const payload = frame.slice(separator + 1, -1);
+
+  assert.equal(
+    mac,
+    createHmac("sha256", Buffer.from(LEASE_CONTROL_KEY, "hex"))
+      .update(payload)
+      .digest("hex"),
+  );
+  assert.deepEqual(JSON.parse(payload), {
+    version: 1,
+    bootId: grant.bootId,
+    fenceHash,
+    controlAttemptId: grant.controlAttemptId,
+    grantNotAfterNs: grant.grantNotAfterNs,
+  });
+  assert.equal(frame.endsWith("\n"), true);
+  assert.throws(
+    () =>
+      serializeCapsuleLeaseRenewal({
+        controlKey: LEASE_CONTROL_KEY,
+        fenceHash,
+        grant: leaseGrant((1n << 63n) - 1n),
+      }),
+    CapsuleError,
+  );
+});
+
+test("issues capsule grants from the session host boot clock", () => {
+  const issue = createCapsuleLeaseGrantIssuer(BOOT_ID, () => 7_000_000_000n);
+  assert.deepEqual(issue(CONTROL_ATTEMPT_ID), {
+    version: 1,
+    bootId: BOOT_ID,
+    controlAttemptId: CONTROL_ATTEMPT_ID,
+    grantNotAfterNs: "27000000000",
+  });
+});
+
 test("builds a fixed hardened Docker create invocation without secret-bearing inputs", () => {
   const config = loadSessionHostConfig({ IBKR_SESSION_CAPSULE_IMAGE: IMAGE });
   const invocation = buildCreateCapsuleInvocation(config, SESSION_ID);
@@ -250,18 +444,29 @@ test("builds a fixed hardened Docker create invocation without secret-bearing in
       "never",
       "--restart",
       "on-failure:3",
-      "--init",
       "--user",
-      "10001:10001",
+      "0:0",
       "--read-only",
       "--cap-drop",
       "ALL",
+      "--cap-add",
+      "KILL",
+      "--cap-add",
+      "NET_ADMIN",
+      "--cap-add",
+      "SETGID",
+      "--cap-add",
+      "SETPCAP",
+      "--cap-add",
+      "SETUID",
       "--security-opt",
       "no-new-privileges=true",
       "--security-opt",
       `seccomp=${DEFAULT_SECCOMP_PROFILE_PATH}`,
       "--network",
       NETWORK_NAME,
+      "--cgroupns",
+      "private",
       "--memory",
       "2g",
       "--memory-swap",
@@ -694,7 +899,7 @@ test("returns session-owned loopback targets and releases the fixed slot", async
   );
 
   await manager.release(SESSION_ID);
-  assert.deepEqual(calls.at(-1), ["rm", "--force", SLOT_NAME]);
+  assert.deepEqual(calls.at(-1), ["rm", "--force", CONTAINER_ID]);
   assert.deepEqual(manager.snapshot(), {
     mode: "paper",
     capacity: { max: 1, active: 0 },
@@ -1203,6 +1408,73 @@ test("removes a partially created capsule and releases capacity after start fail
   );
 });
 
+test("clears provisioned state when the final capsule lease expires before arming", async () => {
+  const config = loadSessionHostConfig({ IBKR_SESSION_CAPSULE_IMAGE: IMAGE });
+  const grant = leaseGrant(20_000_000_000n);
+  const fenceHash = buildCreateCapsuleInvocation(
+    config,
+    SESSION_ID,
+    1,
+    7,
+    grant,
+  )
+    .args.find((argument) => argument.startsWith("pyrus.ibkr.fence_hash="))!
+    .split("=", 2)[1]!;
+  let hasContainer = false;
+  let nowNs = 10_000_000_000n;
+  let removals = 0;
+  const runner: CommandRunner = async (_command, args) => {
+    if (args[0] === "container" && args[1] === "ls") {
+      return {
+        code: 0,
+        stdout: hasContainer ? `${SLOT_NAME}\n` : "",
+        stderr: "",
+      };
+    }
+    if (args[0] === "create") {
+      hasContainer = true;
+      return { code: 0, stdout: `${CONTAINER_ID}\n`, stderr: "" };
+    }
+    if (args[0] === "rm") {
+      removals += 1;
+      hasContainer = false;
+      return { code: 0, stdout: "", stderr: "" };
+    }
+    const result = capsuleProbeResult(args, SESSION_HASH, {
+      fenceHash,
+      generation: 7,
+      leaseGrant: grant,
+      slotNumber: 1,
+    });
+    if (
+      hasContainer &&
+      args[0] === "container" &&
+      args[1] === "inspect" &&
+      args.includes("{{json .}}")
+    ) {
+      nowNs = 140_000_000_000n;
+    }
+    return result ?? { code: 0, stdout: "", stderr: "" };
+  };
+  const manager = new CapsuleManager(config, runner, undefined, 1, {
+    clear: () => undefined,
+    nowNs: () => nowNs,
+    schedule: () => ({}) as ReturnType<typeof setTimeout>,
+  });
+
+  await assert.rejects(
+    () => manager.ensure(SESSION_ID, 7, grant),
+    (error: unknown) =>
+      error instanceof CapsuleError && error.code === "lease_grant_expired",
+  );
+  assert.equal(removals, 1);
+  assert.equal(await manager.reconcile(), null);
+  assert.deepEqual(manager.snapshot(), {
+    mode: "paper",
+    capacity: { max: 1, active: 0 },
+  });
+});
+
 test("poisons capacity when partial-capsule cleanup cannot be confirmed", async () => {
   const startSecret = "sensitive-start-stderr";
   const cleanupSecret = "sensitive-cleanup-stderr";
@@ -1302,14 +1574,69 @@ test("reconciles the fixed daemon slot and preserves capacity across host restar
     ],
     ["network", "inspect", "--format", "{{json .}}", NETWORK_NAME],
     ["container", "inspect", "--format", "{{json .}}", SLOT_NAME],
-    ["container", "inspect", "--format", "{{json .State}}", SLOT_NAME],
-    ["logs", "--timestamps", "--tail", "1000", SLOT_NAME],
-    ["container", "inspect", "--format", "{{json .State}}", SLOT_NAME],
-    ["container", "inspect", "--format", "{{json .State}}", SLOT_NAME],
-    ["logs", "--timestamps", "--tail", "1000", SLOT_NAME],
-    ["container", "inspect", "--format", "{{json .State}}", SLOT_NAME],
+    ["container", "inspect", "--format", "{{json .State}}", CONTAINER_ID],
+    ["logs", "--timestamps", "--tail", "1000", CONTAINER_ID],
+    ["container", "inspect", "--format", "{{json .State}}", CONTAINER_ID],
+    ["container", "inspect", "--format", "{{json .State}}", CONTAINER_ID],
+    ["logs", "--timestamps", "--tail", "1000", CONTAINER_ID],
+    ["container", "inspect", "--format", "{{json .State}}", CONTAINER_ID],
   ]);
   assert(!calls.some((args) => args[0] === "exec"));
+});
+
+test("upgrades a matching legacy capsule before acknowledging a leased ensure", async () => {
+  const config = loadSessionHostConfig({ IBKR_SESSION_CAPSULE_IMAGE: IMAGE });
+  const grant = leaseGrant(20_000_000_000n);
+  let hasContainer = true;
+  let leased = false;
+  const calls: string[][] = [];
+  const runner: CommandRunner = async (_command, args) => {
+    calls.push(args);
+    if (args[0] === "container" && args[1] === "ls") {
+      return {
+        code: 0,
+        stdout: hasContainer ? `${SLOT_NAME}\n` : "",
+        stderr: "",
+      };
+    }
+    if (args[0] === "rm") {
+      hasContainer = false;
+      return { code: 0, stdout: "", stderr: "" };
+    }
+    if (args[0] === "create") {
+      hasContainer = true;
+      leased = true;
+      return { code: 0, stdout: `${CONTAINER_ID}\n`, stderr: "" };
+    }
+    return (
+      capsuleProbeResult(
+        args,
+        SESSION_HASH,
+        leased
+          ? {
+              fenceHash: SESSION_HASH,
+              generation: 0,
+              leaseGrant: grant,
+              slotNumber: 1,
+            }
+          : undefined,
+      ) ?? { code: 0, stdout: "", stderr: "" }
+    );
+  };
+  const manager = new CapsuleManager(config, runner, undefined, 1, {
+    clear: () => undefined,
+    nowNs: () => 10_000_000_000n,
+    schedule: () => ({}) as ReturnType<typeof setTimeout>,
+  });
+
+  assert.equal((await manager.ensure(SESSION_ID, 0, grant)).status, "ready");
+  assert.equal(leased, true);
+  assert.ok(calls.some((args) => args[0] === "rm"));
+  assert.ok(calls.some((args) => args[0] === "create"));
+  assert.deepEqual(manager.getTarget(SESSION_ID, "cpg", 0), {
+    host: "127.0.0.1",
+    port: 15000,
+  });
 });
 
 test("reconciles and enforces a persisted capsule generation fence", async () => {
@@ -1351,6 +1678,623 @@ test("reconciles and enforces a persisted capsule generation fence", async () =>
   );
   await assert.rejects(
     () => manager.release(SESSION_ID, 6),
+    (error: unknown) =>
+      error instanceof CapsuleError && error.code === "session_not_found",
+  );
+});
+
+test("requires an exact capsule lease grant before routing after host restart", async () => {
+  const config = loadSessionHostConfig({ IBKR_SESSION_CAPSULE_IMAGE: IMAGE });
+  const initialGrant = leaseGrant(20_000_000_000n);
+  const invocation = buildCreateCapsuleInvocation(
+    config,
+    SESSION_ID,
+    1,
+    7,
+    initialGrant,
+  );
+  const fenceHash = invocation.args
+    .find((argument) => argument.startsWith("pyrus.ibkr.fence_hash="))!
+    .split("=", 2)[1]!;
+  const identity = {
+    fenceHash,
+    generation: 7,
+    leaseGrant: initialGrant,
+    slotNumber: 1,
+  };
+  let nowNs = 10_000_000_000n;
+  const scheduled: Array<() => void> = [];
+  const leaseRuntime: CapsuleLeaseRuntime = {
+    clear: () => undefined,
+    nowNs: () => nowNs,
+    schedule: (callback) => {
+      scheduled.push(callback);
+      return {} as ReturnType<typeof setTimeout>;
+    },
+  };
+  const calls: string[][] = [];
+  const renewals: unknown[] = [];
+  const runner: CommandRunner = async (_command, args) => {
+    calls.push(args);
+    if (args[0] === "container" && args[1] === "ls") {
+      return { code: 0, stdout: `${SLOT_NAME}\n`, stderr: "" };
+    }
+    return (
+      capsuleProbeResult(args, SESSION_HASH, identity) ?? {
+        code: 0,
+        stdout: "",
+        stderr: "",
+      }
+    );
+  };
+  const manager = new CapsuleManager(
+    config,
+    runner,
+    undefined,
+    1,
+    leaseRuntime,
+    async (renewal) => {
+      renewals.push(renewal);
+      return true;
+    },
+  );
+
+  assert.equal((await manager.reconcile())?.status, "ready");
+  assert.throws(
+    () => manager.getTarget(SESSION_ID, "cpg", 7),
+    (error: unknown) =>
+      error instanceof CapsuleError && error.code === "session_not_found",
+  );
+
+  const renewal = leaseGrant(
+    30_000_000_000n,
+    "55555555-5555-4555-8555-555555555555",
+  );
+  await manager.keepalive(SESSION_ID, 7, renewal);
+  assert.deepEqual(manager.getTarget(SESSION_ID, "cpg", 7), {
+    host: "127.0.0.1",
+    port: 15000,
+  });
+  assert.deepEqual(renewals, [
+    {
+      controlKey: LEASE_CONTROL_KEY,
+      fenceHash,
+      grant: renewal,
+      host: NETWORK_IP,
+    },
+  ]);
+  assert(!calls.some((args) => args[0] === "exec"));
+
+  nowNs = 150_000_000_000n;
+  const expiry = scheduled.at(-1);
+  assert(expiry);
+  expiry();
+  assert.throws(
+    () => manager.getTarget(SESSION_ID, "cpg", 7),
+    (error: unknown) =>
+      error instanceof CapsuleError && error.code === "session_not_found",
+  );
+});
+
+test("applies a new lease attempt before acknowledging an existing leased ensure", async () => {
+  const config = loadSessionHostConfig({ IBKR_SESSION_CAPSULE_IMAGE: IMAGE });
+  const initialGrant = leaseGrant(20_000_000_000n);
+  const invocation = buildCreateCapsuleInvocation(
+    config,
+    SESSION_ID,
+    1,
+    7,
+    initialGrant,
+  );
+  const fenceHash = invocation.args
+    .find((argument) => argument.startsWith("pyrus.ibkr.fence_hash="))!
+    .split("=", 2)[1]!;
+  const identity = {
+    fenceHash,
+    generation: 7,
+    leaseGrant: initialGrant,
+    slotNumber: 1,
+  };
+  const renewals: CapsuleLeaseGrant[] = [];
+  const runner: CommandRunner = async (_command, args) => {
+    if (args[0] === "container" && args[1] === "ls") {
+      return { code: 0, stdout: `${SLOT_NAME}\n`, stderr: "" };
+    }
+    return (
+      capsuleProbeResult(args, SESSION_HASH, identity) ?? {
+        code: 0,
+        stdout: "",
+        stderr: "",
+      }
+    );
+  };
+  const manager = new CapsuleManager(
+    config,
+    runner,
+    undefined,
+    1,
+    {
+      clear: () => undefined,
+      nowNs: () => 10_000_000_000n,
+      schedule: () => ({}) as ReturnType<typeof setTimeout>,
+    },
+    async ({ grant }) => {
+      renewals.push(grant);
+      return true;
+    },
+  );
+  await manager.reconcile();
+  const renewal = leaseGrant(
+    30_000_000_000n,
+    "55555555-5555-4555-8555-555555555555",
+  );
+
+  assert.equal((await manager.ensure(SESSION_ID, 7, renewal)).status, "ready");
+  assert.deepEqual(renewals, [renewal]);
+});
+
+test("never rolls the local lease deadline backward when renewals finish out of order", async () => {
+  const config = loadSessionHostConfig({ IBKR_SESSION_CAPSULE_IMAGE: IMAGE });
+  const initialGrant = leaseGrant(20_000_000_000n);
+  const invocation = buildCreateCapsuleInvocation(
+    config,
+    SESSION_ID,
+    1,
+    7,
+    initialGrant,
+  );
+  const fenceHash = invocation.args
+    .find((argument) => argument.startsWith("pyrus.ibkr.fence_hash="))!
+    .split("=", 2)[1]!;
+  const identity = {
+    fenceHash,
+    generation: 7,
+    leaseGrant: initialGrant,
+    slotNumber: 1,
+  };
+  const timers: Array<{
+    cancelled: boolean;
+    delayMs: number;
+    handle: ReturnType<typeof setTimeout>;
+  }> = [];
+  const leaseRuntime: CapsuleLeaseRuntime = {
+    clear: (handle) => {
+      const timer = timers.find((candidate) => candidate.handle === handle);
+      if (timer) timer.cancelled = true;
+    },
+    nowNs: () => 10_000_000_000n,
+    schedule: (_callback, delayMs) => {
+      const handle = {} as ReturnType<typeof setTimeout>;
+      timers.push({ cancelled: false, delayMs, handle });
+      return handle;
+    },
+  };
+  let keepalivePhase = false;
+  let keepaliveInspections = 0;
+  let releaseFirstInspection!: () => void;
+  let markFirstInspectionStarted!: () => void;
+  const firstInspectionGate = new Promise<void>((resolve) => {
+    releaseFirstInspection = resolve;
+  });
+  const firstInspectionStarted = new Promise<void>((resolve) => {
+    markFirstInspectionStarted = resolve;
+  });
+  const runner: CommandRunner = async (_command, args) => {
+    if (args[0] === "container" && args[1] === "ls") {
+      return { code: 0, stdout: `${SLOT_NAME}\n`, stderr: "" };
+    }
+    const result = capsuleProbeResult(args, SESSION_HASH, identity);
+    if (
+      keepalivePhase &&
+      args[0] === "container" &&
+      args[1] === "inspect" &&
+      args.includes("{{json .}}")
+    ) {
+      keepaliveInspections += 1;
+      if (keepaliveInspections === 1) {
+        markFirstInspectionStarted();
+        await firstInspectionGate;
+      }
+    }
+    return result ?? { code: 0, stdout: "", stderr: "" };
+  };
+  const manager = new CapsuleManager(
+    config,
+    runner,
+    undefined,
+    1,
+    leaseRuntime,
+    async () => true,
+  );
+  await manager.reconcile();
+  keepalivePhase = true;
+
+  const first = manager.keepalive(
+    SESSION_ID,
+    7,
+    leaseGrant(30_000_000_000n, "55555555-5555-4555-8555-555555555555"),
+  );
+  await firstInspectionStarted;
+  const second = manager.keepalive(
+    SESSION_ID,
+    7,
+    leaseGrant(40_000_000_000n, "66666666-6666-4666-8666-666666666666"),
+  );
+  await second;
+  releaseFirstInspection();
+  await first;
+
+  assert.deepEqual(
+    timers.filter((timer) => !timer.cancelled).map((timer) => timer.delayMs),
+    [150_000],
+  );
+});
+
+test("does not poison a slot when release overtakes an in-flight keepalive", async () => {
+  const config = loadSessionHostConfig({ IBKR_SESSION_CAPSULE_IMAGE: IMAGE });
+  const initialGrant = leaseGrant(20_000_000_000n);
+  const invocation = buildCreateCapsuleInvocation(
+    config,
+    SESSION_ID,
+    1,
+    7,
+    initialGrant,
+  );
+  const fenceHash = invocation.args
+    .find((argument) => argument.startsWith("pyrus.ibkr.fence_hash="))!
+    .split("=", 2)[1]!;
+  const identity = {
+    fenceHash,
+    generation: 7,
+    leaseGrant: initialGrant,
+    slotNumber: 1,
+  };
+  let keepalivePhase = false;
+  let releaseNetworkInspection!: () => void;
+  let markNetworkInspectionStarted!: () => void;
+  const networkInspectionGate = new Promise<void>((resolve) => {
+    releaseNetworkInspection = resolve;
+  });
+  const networkInspectionStarted = new Promise<void>((resolve) => {
+    markNetworkInspectionStarted = resolve;
+  });
+  const runner: CommandRunner = async (_command, args) => {
+    if (args[0] === "container" && args[1] === "ls") {
+      return { code: 0, stdout: `${SLOT_NAME}\n`, stderr: "" };
+    }
+    if (keepalivePhase && args[0] === "network" && args[1] === "inspect") {
+      markNetworkInspectionStarted();
+      await networkInspectionGate;
+    }
+    return (
+      capsuleProbeResult(args, SESSION_HASH, identity) ?? {
+        code: 0,
+        stdout: "",
+        stderr: "",
+      }
+    );
+  };
+  const manager = new CapsuleManager(
+    config,
+    runner,
+    undefined,
+    1,
+    {
+      clear: () => undefined,
+      nowNs: () => 10_000_000_000n,
+      schedule: () => ({}) as ReturnType<typeof setTimeout>,
+    },
+    async () => true,
+  );
+  await manager.reconcile();
+  keepalivePhase = true;
+
+  const keepalive = manager.keepalive(
+    SESSION_ID,
+    7,
+    leaseGrant(30_000_000_000n, "55555555-5555-4555-8555-555555555555"),
+  );
+  await networkInspectionStarted;
+  await manager.release(SESSION_ID, 7);
+  releaseNetworkInspection();
+
+  await assert.rejects(
+    keepalive,
+    (error: unknown) =>
+      error instanceof CapsuleError && error.code === "session_not_found",
+  );
+  assert.equal(await manager.reconcile(), null);
+  assert.equal(manager.getRelayTarget("cpg"), null);
+});
+
+test("refuses to adopt a leased capsule without the root supervisor boundary", async () => {
+  const config = loadSessionHostConfig({ IBKR_SESSION_CAPSULE_IMAGE: IMAGE });
+  const initialGrant = leaseGrant(20_000_000_000n);
+  const invocation = buildCreateCapsuleInvocation(
+    config,
+    SESSION_ID,
+    1,
+    7,
+    initialGrant,
+  );
+  const fenceHash = invocation.args
+    .find((argument) => argument.startsWith("pyrus.ibkr.fence_hash="))!
+    .split("=", 2)[1]!;
+  const calls: string[][] = [];
+  const runner: CommandRunner = async (_command, args) => {
+    calls.push(args);
+    if (args[0] === "container" && args[1] === "ls") {
+      return { code: 0, stdout: `${SLOT_NAME}\n`, stderr: "" };
+    }
+    const result = capsuleProbeResult(args, SESSION_HASH, {
+      fenceHash,
+      generation: 7,
+      leaseGrant: initialGrant,
+      slotNumber: 1,
+    });
+    if (
+      result &&
+      args[0] === "container" &&
+      args[1] === "inspect" &&
+      args.includes("{{json .}}")
+    ) {
+      const inspection = JSON.parse(result.stdout) as {
+        Config: { User: string };
+      };
+      inspection.Config.User = "10001:10001";
+      return { ...result, stdout: JSON.stringify(inspection) };
+    }
+    return result ?? { code: 0, stdout: "", stderr: "" };
+  };
+  const manager = new CapsuleManager(config, runner);
+
+  await assert.rejects(
+    () => manager.reconcile(),
+    (error: unknown) =>
+      error instanceof CapsuleError && error.code === "cleanup_unconfirmed",
+  );
+  assert.equal(manager.getRelayTarget("cpg"), null);
+  assert(!calls.some((args) => args[0] === "exec"));
+});
+
+test("refuses to adopt a leased capsule with a weakened runtime contract", async () => {
+  const config = loadSessionHostConfig({ IBKR_SESSION_CAPSULE_IMAGE: IMAGE });
+  const initialGrant = leaseGrant(20_000_000_000n);
+  const invocation = buildCreateCapsuleInvocation(
+    config,
+    SESSION_ID,
+    1,
+    7,
+    initialGrant,
+  );
+  const fenceHash = invocation.args
+    .find((argument) => argument.startsWith("pyrus.ibkr.fence_hash="))!
+    .split("=", 2)[1]!;
+  const mutations: Array<
+    [
+      string,
+      (inspection: {
+        Config: Record<string, unknown>;
+        HostConfig: Record<string, unknown>;
+      }) => void,
+    ]
+  > = [
+    [
+      "entrypoint",
+      (inspection) => {
+        inspection.Config["Entrypoint"] = [
+          "/usr/local/bin/pyrus-capsule-entrypoint",
+        ];
+      },
+    ],
+    [
+      "read-only root",
+      (inspection) => {
+        inspection.HostConfig["ReadonlyRootfs"] = false;
+      },
+    ],
+    [
+      "security options",
+      (inspection) => {
+        inspection.HostConfig["SecurityOpt"] = [
+          "no-new-privileges=true",
+          WEAKENED_SECCOMP_INSPECT_OPTION,
+        ];
+      },
+    ],
+    [
+      "temporary setup capabilities",
+      (inspection) => {
+        inspection.HostConfig["CapAdd"] = ["KILL", "SETGID", "SETUID"];
+      },
+    ],
+    [
+      "duplicate setup capabilities hiding an omitted capability",
+      (inspection) => {
+        inspection.HostConfig["CapAdd"] = [
+          "KILL",
+          "KILL",
+          "NET_ADMIN",
+          "SETGID",
+          "SETPCAP",
+        ];
+      },
+    ],
+  ];
+
+  for (const [name, mutate] of mutations) {
+    const runner: CommandRunner = async (_command, args) => {
+      if (args[0] === "container" && args[1] === "ls") {
+        return { code: 0, stdout: `${SLOT_NAME}\n`, stderr: "" };
+      }
+      const result = capsuleProbeResult(args, SESSION_HASH, {
+        fenceHash,
+        generation: 7,
+        leaseGrant: initialGrant,
+        slotNumber: 1,
+      });
+      if (
+        result &&
+        args[0] === "container" &&
+        args[1] === "inspect" &&
+        args.includes("{{json .}}")
+      ) {
+        const inspection = JSON.parse(result.stdout) as {
+          Config: Record<string, unknown>;
+          HostConfig: Record<string, unknown>;
+        };
+        mutate(inspection);
+        return { ...result, stdout: JSON.stringify(inspection) };
+      }
+      return result ?? { code: 0, stdout: "", stderr: "" };
+    };
+    const manager = new CapsuleManager(config, runner);
+    await assert.rejects(
+      () => manager.reconcile(),
+      (error: unknown) =>
+        error instanceof CapsuleError && error.code === "cleanup_unconfirmed",
+      name,
+    );
+  }
+});
+
+test("does not replace an active container ID with a same-name fence match", async () => {
+  const config = loadSessionHostConfig({ IBKR_SESSION_CAPSULE_IMAGE: IMAGE });
+  const initialGrant = leaseGrant(20_000_000_000n);
+  const invocation = buildCreateCapsuleInvocation(
+    config,
+    SESSION_ID,
+    1,
+    7,
+    initialGrant,
+  );
+  const fenceHash = invocation.args
+    .find((argument) => argument.startsWith("pyrus.ibkr.fence_hash="))!
+    .split("=", 2)[1]!;
+  let emitReadyMarker = true;
+  let replacementRace = false;
+  const runner: CommandRunner = async (_command, args) => {
+    if (args[0] === "container" && args[1] === "ls") {
+      return { code: 0, stdout: `${SLOT_NAME}\n`, stderr: "" };
+    }
+    if (args[0] === "logs" && !emitReadyMarker) {
+      return { code: 0, stdout: "", stderr: "" };
+    }
+    const result = capsuleProbeResult(args, SESSION_HASH, {
+      fenceHash,
+      generation: 7,
+      leaseGrant: initialGrant,
+      slotNumber: 1,
+    });
+    if (
+      replacementRace &&
+      args[0] === "container" &&
+      args[1] === "inspect" &&
+      args.includes("{{json .}}")
+    ) {
+      if (args.at(-1) === CONTAINER_ID) {
+        return { code: 1, stdout: "", stderr: "missing" };
+      }
+      if (args.at(-1) === SLOT_NAME) {
+        assert(result);
+        const inspection = JSON.parse(result.stdout) as {
+          Id: string;
+          NetworkSettings: {
+            Networks: Record<string, { IPAddress: string; NetworkID: string }>;
+          };
+        };
+        inspection.Id = "f".repeat(64);
+        inspection.NetworkSettings.Networks[NETWORK_NAME]!.IPAddress =
+          "172.20.0.99";
+        return { ...result, stdout: JSON.stringify(inspection) };
+      }
+    }
+    return result ?? { code: 0, stdout: "", stderr: "" };
+  };
+  const manager = new CapsuleManager(
+    config,
+    runner,
+    undefined,
+    1,
+    {
+      clear: () => undefined,
+      nowNs: () => 10_000_000_000n,
+      schedule: () => ({}) as ReturnType<typeof setTimeout>,
+    },
+    async () => true,
+  );
+
+  await manager.reconcile();
+  await manager.keepalive(
+    SESSION_ID,
+    7,
+    leaseGrant(30_000_000_000n, "55555555-5555-4555-8555-555555555555"),
+  );
+  emitReadyMarker = false;
+  assert.equal((await manager.status(SESSION_ID, 7))?.status, "occupied");
+  emitReadyMarker = true;
+  replacementRace = true;
+
+  await assert.rejects(
+    () => manager.status(SESSION_ID, 7),
+    (error: unknown) =>
+      error instanceof CapsuleError && error.code === "cleanup_unconfirmed",
+  );
+  assert.equal(manager.getRelayTarget("cpg"), null);
+});
+
+test("does not route or acknowledge a failed authenticated lease renewal", async () => {
+  const config = loadSessionHostConfig({ IBKR_SESSION_CAPSULE_IMAGE: IMAGE });
+  const initialGrant = leaseGrant(20_000_000_000n);
+  const invocation = buildCreateCapsuleInvocation(
+    config,
+    SESSION_ID,
+    1,
+    7,
+    initialGrant,
+  );
+  const fenceHash = invocation.args
+    .find((argument) => argument.startsWith("pyrus.ibkr.fence_hash="))!
+    .split("=", 2)[1]!;
+  const runner: CommandRunner = async (_command, args) => {
+    if (args[0] === "container" && args[1] === "ls") {
+      return { code: 0, stdout: `${SLOT_NAME}\n`, stderr: "" };
+    }
+    return (
+      capsuleProbeResult(args, SESSION_HASH, {
+        fenceHash,
+        generation: 7,
+        leaseGrant: initialGrant,
+        slotNumber: 1,
+      }) ?? { code: 0, stdout: "", stderr: "" }
+    );
+  };
+  const manager = new CapsuleManager(
+    config,
+    runner,
+    undefined,
+    1,
+    {
+      clear: () => undefined,
+      nowNs: () => 10_000_000_000n,
+      schedule: () => ({}) as ReturnType<typeof setTimeout>,
+    },
+    async () => false,
+  );
+
+  await manager.reconcile();
+  await assert.rejects(
+    () =>
+      manager.keepalive(
+        SESSION_ID,
+        7,
+        leaseGrant(30_000_000_000n, "55555555-5555-4555-8555-555555555555"),
+      ),
+    (error: unknown) =>
+      error instanceof CapsuleError && error.code === "lease_renewal_failed",
+  );
+  assert.throws(
+    () => manager.getTarget(SESSION_ID, "cpg", 7),
     (error: unknown) =>
       error instanceof CapsuleError && error.code === "session_not_found",
   );
@@ -1454,29 +2398,22 @@ test("reconciliation keeps an unproven existing slot occupied, not ready", async
         args[1] === "inspect" &&
         args.includes("{{json .}}")
       ) {
+        const inspected = capsuleProbeResult(args);
+        assert(inspected);
+        const container = JSON.parse(inspected.stdout) as {
+          HostConfig: { NetworkMode: string; PortBindings: null };
+          NetworkSettings: {
+            Networks: Record<string, { IPAddress: string; NetworkID: string }>;
+            Ports: Record<string, unknown>;
+          };
+          State: { Running: boolean };
+        };
+        container.NetworkSettings.Networks[NETWORK_NAME]!.IPAddress =
+          probe.running ? NETWORK_IP : "";
+        container.State.Running = probe.running;
         return {
-          code: 0,
-          stdout: JSON.stringify({
-            Config: {
-              Image: IMAGE,
-              Labels: {
-                "pyrus.ibkr.capsule": "1",
-                "pyrus.ibkr.session_hash": SESSION_HASH,
-              },
-            },
-            HostConfig: { NetworkMode: NETWORK_NAME, PortBindings: null },
-            NetworkSettings: {
-              Networks: {
-                [NETWORK_NAME]: {
-                  IPAddress: probe.running ? NETWORK_IP : "",
-                  NetworkID: NETWORK_ID,
-                },
-              },
-              Ports: {},
-            },
-            State: { Running: probe.running },
-          }),
-          stderr: "",
+          ...inspected,
+          stdout: JSON.stringify(container),
         };
       }
       if (args.includes("{{json .State}}")) {
@@ -1533,29 +2470,21 @@ test("restores the private relay address when a stopped slot becomes ready", asy
         stopOnNextIdentityInspect = false;
         running = false;
       }
+      const inspected = capsuleProbeResult(args);
+      assert(inspected);
+      const container = JSON.parse(inspected.stdout) as {
+        NetworkSettings: {
+          Networks: Record<string, { IPAddress: string; NetworkID: string }>;
+        };
+        State: { Running: boolean };
+      };
+      container.NetworkSettings.Networks[NETWORK_NAME]!.IPAddress = running
+        ? NETWORK_IP
+        : "";
+      container.State.Running = running;
       return {
-        code: 0,
-        stdout: JSON.stringify({
-          Config: {
-            Image: IMAGE,
-            Labels: {
-              "pyrus.ibkr.capsule": "1",
-              "pyrus.ibkr.session_hash": SESSION_HASH,
-            },
-          },
-          HostConfig: { NetworkMode: NETWORK_NAME, PortBindings: null },
-          NetworkSettings: {
-            Networks: {
-              [NETWORK_NAME]: {
-                IPAddress: running ? NETWORK_IP : "",
-                NetworkID: NETWORK_ID,
-              },
-            },
-            Ports: {},
-          },
-          State: { Running: running },
-        }),
-        stderr: "",
+        ...inspected,
+        stdout: JSON.stringify(container),
       };
     }
     if (args[0] === "logs") {
@@ -1628,29 +2557,21 @@ test("a stale address recovery cannot poison a replacement capsule", async () =>
       };
     }
     if (args[0] === "container" && args.includes("{{json .}}")) {
+      const inspected = capsuleProbeResult(args, currentSessionHash);
+      assert(inspected);
+      const container = JSON.parse(inspected.stdout) as {
+        NetworkSettings: {
+          Networks: Record<string, { IPAddress: string; NetworkID: string }>;
+        };
+        State: { Running: boolean };
+      };
+      container.NetworkSettings.Networks[NETWORK_NAME]!.IPAddress = running
+        ? NETWORK_IP
+        : "";
+      container.State.Running = running;
       return {
-        code: 0,
-        stdout: JSON.stringify({
-          Config: {
-            Image: IMAGE,
-            Labels: {
-              "pyrus.ibkr.capsule": "1",
-              "pyrus.ibkr.session_hash": currentSessionHash,
-            },
-          },
-          HostConfig: { NetworkMode: NETWORK_NAME, PortBindings: null },
-          NetworkSettings: {
-            Networks: {
-              [NETWORK_NAME]: {
-                IPAddress: running ? NETWORK_IP : "",
-                NetworkID: NETWORK_ID,
-              },
-            },
-            Ports: {},
-          },
-          State: { Running: running },
-        }),
-        stderr: "",
+        ...inspected,
+        stdout: JSON.stringify(container),
       };
     }
     if (args[0] === "logs") {
@@ -1691,30 +2612,15 @@ test("removes a fully owned persisted slot whose immutable image is stale", asyn
       return { code: 0, stdout: `${SLOT_NAME}\n`, stderr: "" };
     }
     if (args.includes("{{json .}}")) {
+      const inspected = capsuleProbeResult(args);
+      assert(inspected);
+      const container = JSON.parse(inspected.stdout) as {
+        Config: { Image: string };
+      };
+      container.Config.Image = "sha256:" + "f".repeat(64);
       return {
-        code: 0,
-        stdout: JSON.stringify({
-          Id: CONTAINER_ID,
-          Config: {
-            Image: "sha256:" + "f".repeat(64),
-            Labels: {
-              "pyrus.ibkr.capsule": "1",
-              "pyrus.ibkr.session_hash": SESSION_HASH,
-            },
-          },
-          HostConfig: { NetworkMode: NETWORK_NAME, PortBindings: null },
-          NetworkSettings: {
-            Networks: {
-              [NETWORK_NAME]: {
-                IPAddress: NETWORK_IP,
-                NetworkID: NETWORK_ID,
-              },
-            },
-            Ports: {},
-          },
-          State: { Running: true },
-        }),
-        stderr: "",
+        ...inspected,
+        stdout: JSON.stringify(container),
       };
     }
     if (args[0] === "rm") {
@@ -1908,7 +2814,7 @@ test("runtime preflight requires hardened daemon capabilities and the exact caps
         Architecture: "amd64",
         Config: {
           User: "10001:10001",
-          Entrypoint: ["/usr/local/bin/pyrus-capsule-entrypoint"],
+          Entrypoint: ["/usr/local/bin/pyrus-capsule-supervisor.py"],
           Volumes: {},
         },
       }),
@@ -1949,7 +2855,7 @@ test("runtime preflight binds a local image reference to the inspected image ID"
             Architecture: "amd64",
             Config: {
               User: "10001:10001",
-              Entrypoint: ["/usr/local/bin/pyrus-capsule-entrypoint"],
+              Entrypoint: ["/usr/local/bin/pyrus-capsule-supervisor.py"],
             },
           },
     ),
@@ -1976,17 +2882,17 @@ test("runtime preflight rejects image-declared volumes and non-exact exec arrays
   const imageConfigVariants = [
     {
       User: "10001:10001",
-      Entrypoint: ["/usr/local/bin/pyrus-capsule-entrypoint"],
+      Entrypoint: ["/usr/local/bin/pyrus-capsule-supervisor.py"],
       Volumes: { "/run/pyrus": {} },
     },
     {
       User: "10001:10001",
-      Entrypoint: ["/usr/local/bin/pyrus-capsule-entrypoint", "unexpected"],
+      Entrypoint: ["/usr/local/bin/pyrus-capsule-supervisor.py", "unexpected"],
       Volumes: {},
     },
     {
       User: "10001:10001",
-      Entrypoint: ["/usr/local/bin/pyrus-capsule-entrypoint"],
+      Entrypoint: ["/usr/local/bin/pyrus-capsule-supervisor.py"],
       Healthcheck: {
         Test: ["CMD-SHELL", "/usr/local/bin/pyrus-capsule-health"],
       },
@@ -1994,7 +2900,7 @@ test("runtime preflight rejects image-declared volumes and non-exact exec arrays
     },
     {
       User: "10001:10001",
-      Entrypoint: ["/usr/local/bin/pyrus-capsule-entrypoint"],
+      Entrypoint: ["/usr/local/bin/pyrus-capsule-supervisor.py"],
       Healthcheck: {
         Test: ["CMD", "/usr/local/bin/pyrus-capsule-health", "unexpected"],
       },

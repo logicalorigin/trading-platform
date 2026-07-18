@@ -1,0 +1,11 @@
+*
+!.dockerignore
+!Dockerfile
+!chromium-managed-policy.json
+!paper-only-extension/
+!paper-only-extension/manifest.json
+!paper-only-extension/paper-only.js
+!pyrus-capsule-entrypoint
+!pyrus-capsule-health
+!pyrus-capsule-relay.py
+!pyrus-capsule-supervisor.py
