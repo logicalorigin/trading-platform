@@ -151,10 +151,16 @@ function validateQuote(input: ResolveOptionFillInput): {
   diagnostics: OptionFillDiagnostics;
   rejection: OptionFillRejectionReason | null;
 } {
-  const bid = finitePositive(input.bar.bid);
-  const ask = finitePositive(input.bar.ask);
+  const rawBid = input.bar.bid;
+  const rawAsk = input.bar.ask;
+  const bid = finitePositive(rawBid);
+  const ask = finitePositive(rawAsk);
   const mid = resolveMid(input.bar, bid, ask);
   const diag = diagnostics(input, bid, ask, mid);
+
+  if ((rawBid != null && bid == null) || (rawAsk != null && ask == null)) {
+    return { bid, ask, mid, diagnostics: diag, rejection: "invalid_quote" };
+  }
 
   if (bid == null || ask == null || mid == null) {
     return {
@@ -168,10 +174,6 @@ function validateQuote(input: ResolveOptionFillInput): {
 
   if (ask < bid) {
     return { bid, ask, mid, diagnostics: diag, rejection: "crossed_quote" };
-  }
-
-  if (mid <= 0 || bid <= 0 || ask <= 0) {
-    return { bid, ask, mid, diagnostics: diag, rejection: "invalid_quote" };
   }
 
   if (
