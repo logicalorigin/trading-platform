@@ -12,6 +12,7 @@
     "deadcode:prod": "PORT=18747 BASE_PATH=/ knip --production --include files,exports,types,duplicates --no-config-hints --workspace @workspace/pyrus --workspace @workspace/api-server --workspace @workspace/backtest-worker --workspace @workspace/mcp-server --workspace @workspace/api-client-react --workspace @workspace/account-math --workspace @workspace/api-zod --workspace @workspace/api-spec --workspace @workspace/db --workspace @workspace/market-calendar --workspace @workspace/backtest-core --workspace @workspace/pyrus-signals-core --workspace @workspace/ibkr-contracts",
     "diagnose:agent-restarts": "node scripts/diagnose-agent-restarts.mjs",
     "diagnose:replit-restarts": "node scripts/inspect-replit-flight-recorder.mjs",
+    "ibkr:capsule:release": "node scripts/ibkr-capsule-release.mjs",
     "shot": "node scripts/headless-shot.mjs",
     "audit:api-codegen": "node scripts/check-api-codegen-drift.mjs",
     "audit:branding": "node scripts/check-legacy-branding.mjs",
