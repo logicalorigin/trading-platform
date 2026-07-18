@@ -6,10 +6,6 @@
 // loginPath inside the isolated in-app dialog; the frontend polls status until
 // the server verifies the authenticated session or the dialog closes.
 
-export function canManageIbkrPortalConnections(user) {
-  return user?.role === "admin";
-}
-
 // Human-friendly copy for the readiness/status codes emitted by
 // artifacts/api-server/src/services/ibkr-portal-session.ts
 // (PortalConnectionStatus). Unmapped codes fall back to their raw value so a

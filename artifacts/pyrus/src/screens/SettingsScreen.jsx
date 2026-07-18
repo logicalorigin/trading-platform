@@ -2685,6 +2685,8 @@ export default function SettingsScreen({
     <div
       ref={settingsRootRef}
       data-testid="settings-screen"
+      data-onboarding-anchor="settings-root"
+      data-onboarding-state="ready"
       data-layout={settingsIsPhone ? "phone" : settingsIsNarrow ? "tablet" : "desktop"}
       style={{
         height: "100%",
@@ -2793,6 +2795,15 @@ export default function SettingsScreen({
               <button
                 key={tab.id}
                 data-testid={`settings-tab-${tab.id.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")}`}
+                data-onboarding-anchor={
+                  tab.id === "Data & Broker"
+                    ? "settings-data-broker-tab"
+                    : undefined
+                }
+                data-onboarding-state={
+                  tab.id === "Data & Broker" ? "ready" : undefined
+                }
+                className="ra-touch-target"
                 type="button"
                 aria-pressed={activeTab === tab.id}
                 onClick={() => setActiveTab(tab.id)}

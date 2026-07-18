@@ -9,6 +9,7 @@ import {
 import { createPortal } from "react-dom";
 import {
   Bot,
+  BookOpen,
   ChartCandlestick,
   Eye,
   EyeOff,
@@ -58,8 +59,24 @@ const buildScreenCommands = (handleSetScreen) =>
     run: () => handleSetScreen(screen.id),
   }));
 
-const buildSystemCommands = ({ theme, onToggleTheme, scrollersCollapsed, onToggleScrollers }) => {
+const buildSystemCommands = ({
+  theme,
+  onToggleTheme,
+  scrollersCollapsed,
+  onToggleScrollers,
+  onOpenGettingStarted,
+}) => {
   const commands = [];
+  if (typeof onOpenGettingStarted === "function") {
+    commands.push({
+      id: "getting-started:open",
+      label: "Open Getting Started",
+      hint: "Guide",
+      icon: BookOpen,
+      keywords: "getting started onboarding walkthrough goals help setup",
+      run: () => onOpenGettingStarted(),
+    });
+  }
   if (typeof onToggleTheme === "function") {
     commands.push({
       id: "theme:toggle",
@@ -116,6 +133,7 @@ const CommandPaletteInner = ({
   onToggleTheme,
   scrollersCollapsed,
   onToggleScrollers,
+  onOpenGettingStarted,
 }) => {
   const [query, setQuery] = useState("");
   const [activeIndex, setActiveIndex] = useState(0);
@@ -138,9 +156,17 @@ const CommandPaletteInner = ({
       onToggleTheme,
       scrollersCollapsed,
       onToggleScrollers,
+      onOpenGettingStarted,
     });
     return [...screenCmds, ...systemCmds];
-  }, [handleSetScreen, theme, onToggleTheme, scrollersCollapsed, onToggleScrollers]);
+  }, [
+    handleSetScreen,
+    onOpenGettingStarted,
+    onToggleScrollers,
+    onToggleTheme,
+    scrollersCollapsed,
+    theme,
+  ]);
 
   const symbolCandidate = useMemo(() => normalizeSymbolInput(query), [query]);
 

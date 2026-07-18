@@ -27,7 +27,10 @@ async function createUser(email: string): Promise<string> {
   return user.id;
 }
 
-async function createBrokerConnection(appUserId: string): Promise<string> {
+async function createBrokerConnection(
+  appUserId: string,
+  status: "configured" | "connected" | "disconnected" | "error" = "connected",
+): Promise<string> {
   const [connection] = await db
     .insert(brokerConnectionsTable)
     .values({
@@ -36,7 +39,7 @@ async function createBrokerConnection(appUserId: string): Promise<string> {
       connectionType: "broker",
       brokerProvider: "snaptrade",
       mode: "live",
-      status: "connected",
+      status,
       capabilities: ["accounts", "positions"],
     })
     .returning({ id: brokerConnectionsTable.id });
@@ -51,6 +54,8 @@ async function createBrokerAccount(input: {
   displayName: string;
   accountType: string;
   includedInTrading: boolean;
+  capabilities?: string[];
+  executionBlockers?: string[];
 }) {
   const [account] = await db
     .insert(brokerAccountsTable)
@@ -64,7 +69,8 @@ async function createBrokerAccount(input: {
       mode: "live",
       accountStatus: "open",
       baseCurrency: "USD",
-      capabilities: ["accounts", "positions"],
+      capabilities: input.capabilities ?? ["accounts", "positions"],
+      executionBlockers: input.executionBlockers ?? [],
     })
     .returning({
       id: brokerAccountsTable.id,
@@ -88,6 +94,7 @@ test("broker account inclusions list category and inclusion fields for the app u
       displayName: "Webull Individual Cash",
       accountType: "equity",
       includedInTrading: true,
+      capabilities: ["accounts", "positions", "execution-ready"],
     });
     await createBrokerAccount({
       appUserId: ownerId,
@@ -96,6 +103,11 @@ test("broker account inclusions list category and inclusion fields for the app u
       displayName: "Webull Crypto Cash",
       accountType: "crypto",
       includedInTrading: false,
+      capabilities: ["accounts", "positions", "execution-ready"],
+      executionBlockers: [
+        "snaptrade.connection.read_only",
+        "provider-secret=must-not-leak",
+      ],
     });
     await createBrokerAccount({
       appUserId: otherId,
@@ -117,6 +129,9 @@ test("broker account inclusions list category and inclusion fields for the app u
         displayName: account.displayName,
         accountType: account.accountType,
         includedInTrading: account.includedInTrading,
+        connectionVerified: account.connectionVerified,
+        executionReady: account.executionReady,
+        executionBlockers: account.executionBlockers,
       })),
       [
         {
@@ -126,6 +141,12 @@ test("broker account inclusions list category and inclusion fields for the app u
           displayName: "Webull Crypto Cash",
           accountType: "crypto",
           includedInTrading: false,
+          connectionVerified: true,
+          executionReady: false,
+          executionBlockers: [
+            "snaptrade.connection.read_only",
+            "broker.execution_unavailable",
+          ],
         },
         {
           providerAccountId: "snaptrade:equity-1",
@@ -134,11 +155,112 @@ test("broker account inclusions list category and inclusion fields for the app u
           displayName: "Webull Individual Cash",
           accountType: "equity",
           includedInTrading: true,
+          connectionVerified: true,
+          executionReady: true,
+          executionBlockers: [],
         },
       ],
     );
     assert.equal(result.accounts[1]?.id, equity.id);
     assert.ok(result.accounts[1]?.updatedAt instanceof Date);
+  });
+});
+
+test("disconnected broker connections remain visible but cannot be verified or execution-ready", async () => {
+  await withTestDb(async () => {
+    const appUserId = await createUser(
+      "broker-inclusions-disconnected@example.com",
+    );
+    const connectionId = await createBrokerConnection(
+      appUserId,
+      "disconnected",
+    );
+    await createBrokerAccount({
+      appUserId,
+      connectionId,
+      providerAccountId: "snaptrade:disconnected",
+      displayName: "Disconnected Account",
+      accountType: "equity",
+      includedInTrading: true,
+      capabilities: ["accounts", "positions", "execution-ready"],
+      executionBlockers: ["broker.connection_not_connected"],
+    });
+
+    const result = await listBrokerAccountInclusions({ appUserId });
+
+    assert.deepEqual(
+      result.accounts.map((account) => ({
+        connectionVerified: account.connectionVerified,
+        executionReady: account.executionReady,
+        executionBlockers: account.executionBlockers,
+      })),
+      [
+        {
+          connectionVerified: false,
+          executionReady: false,
+          executionBlockers: ["broker.connection_not_connected"],
+        },
+      ],
+    );
+  });
+});
+
+test("broker accounts linked to another user's connection are excluded", async () => {
+  await withTestDb(async () => {
+    const ownerId = await createUser(
+      "broker-inclusions-mismatched-owner@example.com",
+    );
+    const otherId = await createUser(
+      "broker-inclusions-mismatched-connection@example.com",
+    );
+    const otherConnectionId = await createBrokerConnection(otherId);
+    await createBrokerAccount({
+      appUserId: ownerId,
+      connectionId: otherConnectionId,
+      providerAccountId: "snaptrade:mismatched-owner",
+      displayName: "Mismatched Owner",
+      accountType: "equity",
+      includedInTrading: true,
+      capabilities: ["accounts", "positions", "execution-ready"],
+    });
+
+    const result = await listBrokerAccountInclusions({ appUserId: ownerId });
+
+    assert.deepEqual(result.accounts, []);
+  });
+});
+
+test("accounts linked to a non-broker connection are excluded", async () => {
+  await withTestDb(async () => {
+    const appUserId = await createUser(
+      "broker-inclusions-market-data-link@example.com",
+    );
+    const [connection] = await db
+      .insert(brokerConnectionsTable)
+      .values({
+        appUserId,
+        name: `massive:${appUserId}`,
+        connectionType: "market_data",
+        marketDataProvider: "massive",
+        mode: "live",
+        status: "connected",
+        capabilities: ["quotes"],
+      })
+      .returning({ id: brokerConnectionsTable.id });
+    assert.ok(connection);
+    await createBrokerAccount({
+      appUserId,
+      connectionId: connection.id,
+      providerAccountId: "massive:not-a-broker-account",
+      displayName: "Invalid market-data account link",
+      accountType: "equity",
+      includedInTrading: true,
+      capabilities: ["execution-ready"],
+    });
+
+    const result = await listBrokerAccountInclusions({ appUserId });
+
+    assert.deepEqual(result.accounts, []);
   });
 });
 

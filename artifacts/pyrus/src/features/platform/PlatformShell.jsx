@@ -784,6 +784,7 @@ export const PlatformShell = ({
   bridgeTone,
   theme,
   onToggleTheme,
+  onOpenGettingStarted,
   safeQaMode = false,
   realtimeStreamGateReason = null,
   runtimeWatchlistSymbols,
@@ -1125,6 +1126,7 @@ export const PlatformShell = ({
         bridgeTone={bridgeTone}
         theme={theme}
         onToggleTheme={onToggleTheme}
+        onOpenGettingStarted={onOpenGettingStarted}
         safeQaMode={safeQaMode}
         accounts={accounts}
         primaryAccountId={primaryAccountId}
@@ -1174,6 +1176,7 @@ export const PlatformShell = ({
         onOpenWatchlist={() => setMobileWatchlistOpen(true)}
         onOpenActivity={() => setMobileActivityOpen(true)}
         onOpenBloomberg={() => setMobileBloombergMounted(true)}
+        onOpenGettingStarted={onOpenGettingStarted}
         activeWatchlist={activeWatchlist}
         selectedSymbol={selectedSymbol}
         session={session}

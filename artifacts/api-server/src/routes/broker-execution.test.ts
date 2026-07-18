@@ -513,7 +513,7 @@ test("included broker accounts routes list and persist authenticated selections"
           mode: "live",
           accountStatus: "open",
           baseCurrency: "USD",
-          capabilities: ["accounts", "positions"],
+          capabilities: ["accounts", "positions", "execution-ready"],
         })
         .returning({ id: brokerAccountsTable.id });
       const [crypto] = await db
@@ -529,6 +529,10 @@ test("included broker accounts routes list and persist authenticated selections"
           accountStatus: "open",
           baseCurrency: "USD",
           capabilities: ["accounts", "positions"],
+          executionBlockers: [
+            "snaptrade.connection.read_only",
+            "provider-secret=must-not-leak",
+          ],
         })
         .returning({ id: brokerAccountsTable.id });
       assert.ok(equity);
@@ -545,6 +549,9 @@ test("included broker accounts routes list and persist authenticated selections"
           providerAccountId: string;
           accountType: string | null;
           includedInTrading: boolean;
+          connectionVerified: boolean;
+          executionReady: boolean;
+          executionBlockers: string[];
         }>;
       };
       assert.deepEqual(
@@ -552,17 +559,29 @@ test("included broker accounts routes list and persist authenticated selections"
           providerAccountId: account.providerAccountId,
           accountType: account.accountType,
           includedInTrading: account.includedInTrading,
+          connectionVerified: account.connectionVerified,
+          executionReady: account.executionReady,
+          executionBlockers: account.executionBlockers,
         })),
         [
           {
             providerAccountId: "snaptrade:included-crypto",
             accountType: "crypto",
             includedInTrading: false,
+            connectionVerified: true,
+            executionReady: false,
+            executionBlockers: [
+              "snaptrade.connection.read_only",
+              "broker.execution_unavailable",
+            ],
           },
           {
             providerAccountId: "snaptrade:included-equity",
             accountType: "equity",
             includedInTrading: true,
+            connectionVerified: true,
+            executionReady: true,
+            executionBlockers: [],
           },
         ],
       );
@@ -578,16 +597,40 @@ test("included broker accounts routes list and persist authenticated selections"
       });
       assert.equal(updated.status, 200);
       const updatedBody = (await updated.json()) as {
-        accounts: Array<{ id: string; includedInTrading: boolean }>;
+        accounts: Array<{
+          id: string;
+          includedInTrading: boolean;
+          connectionVerified: boolean;
+          executionReady: boolean;
+          executionBlockers: string[];
+        }>;
       };
       assert.deepEqual(
         updatedBody.accounts.map((account) => ({
           id: account.id,
           includedInTrading: account.includedInTrading,
+          connectionVerified: account.connectionVerified,
+          executionReady: account.executionReady,
+          executionBlockers: account.executionBlockers,
         })),
         [
-          { id: crypto.id, includedInTrading: true },
-          { id: equity.id, includedInTrading: false },
+          {
+            id: crypto.id,
+            includedInTrading: true,
+            connectionVerified: true,
+            executionReady: false,
+            executionBlockers: [
+              "snaptrade.connection.read_only",
+              "broker.execution_unavailable",
+            ],
+          },
+          {
+            id: equity.id,
+            includedInTrading: false,
+            connectionVerified: true,
+            executionReady: true,
+            executionBlockers: [],
+          },
         ],
       );
     }),

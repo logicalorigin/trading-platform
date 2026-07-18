@@ -181,28 +181,6 @@ test("an auth mutation waits for a definite server response without a client dea
   assert.deepEqual(await pending, session);
 });
 
-test("both sign-in surfaces adopt the definitive POST response without a second session read", () => {
-  const loginGate = readFileSync(
-    new URL("./LoginGate.jsx", import.meta.url),
-    "utf8",
-  );
-  const headerSession = readFileSync(
-    new URL("../platform/HeaderSessionStatus.jsx", import.meta.url),
-    "utf8",
-  );
-
-  assert.match(loginGate, /adoptSession\(session\)/);
-  assert.doesNotMatch(loginGate, /await refresh\(\)/);
-  assert.match(headerSession, /postAuthJson,\s*useAuthSession/);
-  assert.doesNotMatch(headerSession, /async function postAuthJson/);
-  assert.match(headerSession, /authSession\.adoptSession\(session\)/);
-  assert.match(
-    headerSession,
-    /await postAuthJson\(\s*"\/api\/auth\/logout",[\s\S]*?finishAuthChange\(\{ user: null, csrfToken: null \}\)/,
-  );
-  assert.doesNotMatch(headerSession, /authSession\.refresh\(\)/);
-});
-
 test("an auth identity change evicts private queries before the next observer mounts", () => {
   const client = new QueryClient();
   client.setQueryData(AUTH_SESSION_QUERY_KEY, {
@@ -228,7 +206,7 @@ test("an auth identity change evicts private queries before the next observer mo
   assert.equal(client.getQueryData(["/api/algo/deployments"]), undefined);
   assert.equal(client.getQueryData(["/api/accounts"]), undefined);
   // An already-mounted old-identity observer keeps its current render until the
-  // auth identity boundary unmounts it; the next identity mounts cleanly.
+  // auth gate unmounts it; the next identity mounts against the cleared cache.
   assert.deepEqual(priorIdentityObserver.getCurrentResult().data, {
     deployments: [{ id: "private-user-a-deployment" }],
   });
@@ -301,6 +279,12 @@ test("the StrictMode auth boundary remounts private observers only on identity c
   const responses = [equivalentSession, nextSession, anonymousSession];
   let observedAccountId = null;
   let privateProbeMounts = 0;
+  async function waitForPrivateProbeRemount(previousMounts) {
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      if (privateProbeMounts > previousMounts) return;
+      await act(() => new Promise((resolve) => setTimeout(resolve, 0)));
+    }
+  }
   function PrivateAccountProbe() {
     const query = useQuery({
       queryKey: ["/api/accounts"],
@@ -369,7 +353,7 @@ test("the StrictMode auth boundary remounts private observers only on identity c
         type: "active",
       });
     });
-    await act(() => new Promise((resolve) => setImmediate(resolve)));
+    await waitForPrivateProbeRemount(priorIdentityMounts);
 
     assert.deepEqual(client.getQueryData(AUTH_SESSION_QUERY_KEY), nextSession);
     assert.equal(client.getQueryData(["/api/accounts"]), undefined);
@@ -392,7 +376,7 @@ test("the StrictMode auth boundary remounts private observers only on identity c
         type: "active",
       });
     });
-    await act(() => new Promise((resolve) => setImmediate(resolve)));
+    await waitForPrivateProbeRemount(nextIdentityMounts);
     assert.deepEqual(
       client.getQueryData(AUTH_SESSION_QUERY_KEY),
       anonymousSession,
@@ -421,4 +405,29 @@ test("the StrictMode auth boundary remounts private observers only on identity c
     client.clear();
     restore();
   }
+});
+
+test("both sign-in surfaces adopt the definitive POST response without a second session read", () => {
+  const loginGate = readFileSync(
+    new URL("./LoginGate.jsx", import.meta.url),
+    "utf8",
+  );
+  const headerSession = readFileSync(
+    new URL("../platform/HeaderSessionStatus.jsx", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(loginGate, /adoptSession\(session\)/);
+  assert.doesNotMatch(loginGate, /refresh\(\{ clearUserCache: true \}\)/);
+  assert.match(headerSession, /postAuthJson,\s*useAuthSession/);
+  assert.doesNotMatch(headerSession, /async function postAuthJson/);
+  assert.match(headerSession, /authSession\.adoptSession\(session\)/);
+  assert.match(
+    headerSession,
+    /await postAuthJson\(\s*"\/api\/auth\/logout",[\s\S]*?finishAuthChange\(\{ user: null, csrfToken: null \}\)/,
+  );
+  assert.doesNotMatch(
+    headerSession,
+    /authSession\.refresh\(\{ clearUserCache: true \}\)/,
+  );
 });

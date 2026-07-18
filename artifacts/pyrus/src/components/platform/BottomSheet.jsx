@@ -8,11 +8,17 @@ export const BottomSheet = ({
   open,
   onClose,
   title = "Sheet",
+  description = null,
+  descriptionId = null,
+  closeLabel = null,
+  initialFocusRef = null,
   children,
   maxHeight = "82dvh",
   testId = "platform-bottom-sheet",
 }) => {
   const restoreFocusRef = useRef(null);
+  const resolvedDescriptionId =
+    descriptionId || `${testId}-description`;
 
   if (!open || typeof document === "undefined") return null;
 
@@ -43,9 +49,13 @@ export const BottomSheet = ({
           />
           <Dialog.Content
             asChild
-            aria-describedby={undefined}
-            onOpenAutoFocus={() => {
+            aria-describedby={description ? resolvedDescriptionId : undefined}
+            onOpenAutoFocus={(event) => {
               restoreFocusRef.current = document.activeElement;
+              if (initialFocusRef?.current) {
+                event.preventDefault();
+                initialFocusRef.current?.focus?.();
+              }
             }}
             onCloseAutoFocus={(event) => {
               event.preventDefault();
@@ -124,7 +134,7 @@ export const BottomSheet = ({
                   <Dialog.Close asChild>
                     <button
                       type="button"
-                      aria-label={`Close ${title}`}
+                      aria-label={closeLabel || `Close ${title}`}
                       style={{
                         width: dim(44),
                         height: dim(44),
@@ -143,6 +153,23 @@ export const BottomSheet = ({
                     </button>
                   </Dialog.Close>
                 </div>
+                {description ? (
+                  <Dialog.Description asChild>
+                    <p
+                      id={resolvedDescriptionId}
+                      style={{
+                        width: "100%",
+                        margin: 0,
+                        color: "var(--ra-text-secondary)",
+                        fontFamily: T.sans,
+                        fontSize: fs(12),
+                        lineHeight: 1.45,
+                      }}
+                    >
+                      {description}
+                    </p>
+                  </Dialog.Description>
+                ) : null}
               </div>
               <div
                 className="ra-hide-scrollbar"

@@ -18,8 +18,10 @@ export const SNAPTRADE_BROKER_CHOICES = Object.freeze([
   },
 ]);
 
-export function canManageSnapTradeConnections(user) {
-  return user?.role === "admin";
+export function canManageSnapTradeConnections(authSession) {
+  return Boolean(
+    authSession?.user && authSession.hasEntitlement?.("broker_connect"),
+  );
 }
 
 // Brokerages hidden from the connect picker even when SnapTrade reports them as

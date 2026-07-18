@@ -1,5 +1,8 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { customFetch, setCsrfTokenGetter } from "@workspace/api-client-react";
+import {
+  customFetch,
+  setCsrfTokenGetter,
+} from "@workspace/api-client-react";
 import {
   createContext,
   Fragment,
@@ -76,19 +79,39 @@ const AuthSessionContext = createContext(null);
 
 export function AuthProvider({ children }) {
   const queryClient = useQueryClient();
-  const query = useQuery({
-    queryKey: AUTH_SESSION_QUERY_KEY,
-    queryFn: readAuthSession,
-    staleTime: 60_000,
-    retry: false,
-  });
-
   const initialSession = queryClient.getQueryData(AUTH_SESSION_QUERY_KEY);
   const observedIdentityRef = useRef(
     initialSession === undefined
       ? undefined
       : authSessionIdentity(initialSession),
   );
+  const readAttachedAuthSession = useCallback(
+    async (context) => {
+      const session = await readAuthSession(context);
+      const nextIdentity = authSessionIdentity(session);
+      const cachedSession = queryClient.getQueryData(AUTH_SESSION_QUERY_KEY);
+      const previousIdentity =
+        cachedSession === undefined
+          ? observedIdentityRef.current
+          : authSessionIdentity(cachedSession);
+      if (
+        previousIdentity !== undefined &&
+        previousIdentity !== nextIdentity
+      ) {
+        clearUserScopedQueryCache(queryClient);
+      }
+      observedIdentityRef.current = nextIdentity;
+      return session;
+    },
+    [queryClient],
+  );
+  const query = useQuery({
+    queryKey: AUTH_SESSION_QUERY_KEY,
+    queryFn: readAttachedAuthSession,
+    staleTime: 60_000,
+    retry: false,
+  });
+
   useEffect(
     () =>
       queryClient.getQueryCache().subscribe((event) => {
@@ -117,9 +140,7 @@ export function AuthProvider({ children }) {
       if (clearUserCache) {
         clearUserScopedQueryCache(queryClient);
       }
-      return queryClient.invalidateQueries({
-        queryKey: AUTH_SESSION_QUERY_KEY,
-      });
+      return queryClient.invalidateQueries({ queryKey: AUTH_SESSION_QUERY_KEY });
     },
     [queryClient],
   );

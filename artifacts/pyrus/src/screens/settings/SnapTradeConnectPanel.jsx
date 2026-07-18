@@ -817,6 +817,7 @@ function BrokerChoiceLogo({ choice }) {
   if (!choice.logoUrl || failed) {
     return (
       <span
+        aria-hidden="true"
         style={{
           ...frameStyle,
           background: cssColorMix(CSS_COLOR.border, 45),
@@ -939,10 +940,8 @@ function BrokerCardRing({ phase }) {
   );
 }
 
-// The card is the single surface for a broker: identity + lifecycle ring +
-// contextual actions in its footer (docs/plans/broker-connection-ux-plan.md).
-// It is a div[role=button] rather than a <button> because the footer holds
-// real <Button>s — nested buttons are invalid HTML.
+// The card groups one native broker-selection button with sibling lifecycle
+// actions (docs/plans/broker-connection-ux-plan.md).
 function BrokerChoiceButton({
   choice,
   selected,
@@ -960,19 +959,9 @@ function BrokerChoiceButton({
       : cssColorMix(CSS_COLOR.border, 70);
   return (
     <div
-      ref={focusRef}
-      role="button"
-      tabIndex={0}
-      aria-pressed={selected}
+      role="group"
+      aria-label={`${choice.label} broker connection`}
       data-broker-card={choice.value}
-      onClick={() => onSelect(choice.value)}
-      onKeyDown={(event) => {
-        if (event.target !== event.currentTarget) return;
-        if (event.key === "Enter" || event.key === " ") {
-          event.preventDefault();
-          onSelect(choice.value);
-        }
-      }}
       style={{
         position: "relative",
         border: `1px solid ${borderColor}`,
@@ -987,17 +976,30 @@ function BrokerChoiceButton({
         alignContent: "start",
         gap: sp(6),
         textAlign: "left",
-        cursor: "pointer",
         fontFamily: T.sans,
       }}
     >
       <BrokerCardRing phase={phase} />
-      <span
+      <button
+        ref={focusRef}
+        type="button"
+        aria-label={`Select ${choice.label}`}
+        aria-pressed={selected}
+        onClick={() => onSelect(choice.value)}
         style={{
+          width: "100%",
+          minHeight: dim(44),
           display: "flex",
           alignItems: "center",
           gap: sp(8),
           minWidth: 0,
+          padding: 0,
+          color: "inherit",
+          background: "transparent",
+          border: 0,
+          textAlign: "left",
+          cursor: "pointer",
+          font: "inherit",
         }}
       >
         <BrokerChoiceLogo choice={choice} />
@@ -1037,12 +1039,10 @@ function BrokerChoiceButton({
             }}
           />
         ) : null}
-      </span>
+      </button>
       {actions.length ? (
         <span
           style={{ display: "flex", gap: sp(6), flexWrap: "wrap" }}
-          onClick={(event) => event.stopPropagation()}
-          onKeyDown={(event) => event.stopPropagation()}
         >
           {actions.map((action) => (
             <Button
@@ -1081,7 +1081,7 @@ export function SnapTradeConnectPanel({ enabled = true }) {
   const [connectHandoffCopyStatus, setConnectHandoffCopyStatus] = useState("");
 
   const authSession = useAuthSession();
-  const canManage = canManageSnapTradeConnections(authSession.user);
+  const canManage = canManageSnapTradeConnections(authSession);
   const csrfToken = authSession.csrfToken || "";
   const csrfHeaders = useMemo(
     () => (csrfToken ? { "x-csrf-token": csrfToken } : {}),
@@ -1332,6 +1332,16 @@ export function SnapTradeConnectPanel({ enabled = true }) {
       portfolioQuery.isFetching,
   );
   const inclusionAccounts = inclusionQuery.data?.accounts || [];
+  const onboardingReadinessState =
+    inclusionQuery.isLoading && !inclusionQuery.data
+      ? "loading"
+      : inclusionQuery.isError && !inclusionQuery.data
+        ? "error"
+        : inclusionQuery.isStale
+          ? "stale"
+          : inclusionAccounts.length
+            ? "ready"
+            : "empty";
   const toggleIncludedAccount = (accountId, nextIncluded) => {
     const includedAccountIds = inclusionAccounts
       .filter((account) =>
@@ -2516,6 +2526,8 @@ export function SnapTradeConnectPanel({ enabled = true }) {
     >
       <div style={{ display: "grid", gap: sp(12), minWidth: 0 }}>
         <div
+          data-onboarding-anchor="broker-readiness"
+          data-onboarding-state={onboardingReadinessState}
           style={{
             display: "grid",
             gridTemplateColumns: `repeat(auto-fit, minmax(${dim(150)}px, 1fr))`,
@@ -2709,8 +2721,12 @@ export function SnapTradeConnectPanel({ enabled = true }) {
           )}
         </div>
 
-        <div style={{ display: "grid", gap: sp(7) }}>
+        <div
+          style={{ display: "grid", gap: sp(7) }}
+        >
           <div
+            data-onboarding-anchor="broker-provider-controls"
+            data-onboarding-state="ready"
             style={{
               color: CSS_COLOR.textDim,
               fontFamily: T.sans,

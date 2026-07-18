@@ -1,4 +1,9 @@
 import { HttpError } from "../lib/errors";
+import {
+  createDefaultOnboardingProgressPreference,
+  normalizeOnboardingProgressPreference,
+  type OnboardingProgressPreference,
+} from "./onboarding-progress-model";
 
 export const USER_PREFERENCES_PROFILE_KEY = "default";
 export const USER_PREFERENCES_VERSION = 1;
@@ -7,6 +12,7 @@ type JsonRecord = Record<string, unknown>;
 const RETIRED_DASHBOARD_SETTING_KEY = ["ray", "AlgoDashboard"].join("");
 
 export type UserPreferences = {
+  onboarding: OnboardingProgressPreference;
   appearance: {
     theme: "system" | "dark" | "light";
     density: "compact" | "comfortable";
@@ -71,6 +77,7 @@ export type UserPreferences = {
 };
 
 export const DEFAULT_USER_PREFERENCES: UserPreferences = {
+  onboarding: createDefaultOnboardingProgressPreference(),
   appearance: {
     theme: "dark",
     density: "compact",
@@ -338,6 +345,9 @@ export function normalizeUserPreferences(
   const privacy = recordValue(input.privacy);
 
   return {
+    onboarding: normalizeOnboardingProgressPreference(input.onboarding, {
+      strict,
+    }),
     appearance: {
       theme: enumValue(
         appearance.theme,

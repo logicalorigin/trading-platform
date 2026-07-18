@@ -93,8 +93,27 @@ test("SnapTrade broker choices fall back to the static defaults without live dat
   );
 });
 
-test("SnapTrade setup is admin-gated for the interim rollout", () => {
-  assert.equal(canManageSnapTradeConnections({ role: "admin" }), true);
-  assert.equal(canManageSnapTradeConnections({ role: "user" }), false);
+test("SnapTrade setup uses the broker connection entitlement for every user role", () => {
+  assert.equal(
+    canManageSnapTradeConnections({
+      user: { role: "member" },
+      hasEntitlement: (key) => key === "broker_connect",
+    }),
+    true,
+  );
+  assert.equal(
+    canManageSnapTradeConnections({
+      user: { role: "admin" },
+      hasEntitlement: () => true,
+    }),
+    true,
+  );
+  assert.equal(
+    canManageSnapTradeConnections({
+      user: { role: "member" },
+      hasEntitlement: () => false,
+    }),
+    false,
+  );
   assert.equal(canManageSnapTradeConnections(null), false);
 });

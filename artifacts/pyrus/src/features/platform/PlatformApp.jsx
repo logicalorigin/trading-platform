@@ -71,6 +71,7 @@ import { PlatformProviders } from "./PlatformProviders.jsx";
 import { PlatformRuntimeLayer } from "./PlatformRuntimeLayer.jsx";
 import { PlatformScreenRouter } from "./PlatformScreenRouter.jsx";
 import { useCriticalApiMutationPause } from "./criticalApiMutationPause.js";
+import { useAuthSession } from "../auth/authSession.jsx";
 import { HeaderAccountStrip } from "./HeaderAccountStrip.jsx";
 import { HEADER_KPI_SYMBOLS, HeaderKpiStrip } from "./HeaderKpiStrip.jsx";
 // HeaderStatusCluster is a large (~101KB) header chunk. Split it out of the
@@ -205,6 +206,7 @@ import {
   isFiniteNumber,
 } from "../../lib/formatters";
 import { useUserPreferences } from "../preferences/useUserPreferences";
+import { OnboardingHost } from "../onboarding/OnboardingHost";
 import {
   BOOT_SCREEN_MODULE_PRELOAD_TASK_IDS,
   completeBootProgressTask,
@@ -325,6 +327,7 @@ input[type=range]{accent-color:var(--ra-color-accent)}
 @keyframes brokerErrorShake{0%,100%{transform:translateX(0)}20%{transform:translateX(-2px)}40%{transform:translateX(2px)}60%{transform:translateX(-2px)}80%{transform:translateX(2px)}}
 [data-broker-check="draw"] path,[data-broker-check="draw"] polyline{stroke-dasharray:24;animation:brokerCheckDraw var(--motion-base,300ms) var(--ease-out-quart,cubic-bezier(0.25,1,0.5,1)) 700ms both}
 @media (prefers-reduced-motion: reduce){[data-broker-ring],[data-broker-ring] *,[data-broker-check],[data-broker-check] *{animation:none!important}}
+html[data-pyrus-reduced-motion="on"] [data-broker-ring],html[data-pyrus-reduced-motion="on"] [data-broker-ring] *,html[data-pyrus-reduced-motion="on"] [data-broker-check],html[data-pyrus-reduced-motion="on"] [data-broker-check] *{animation:none!important}
 @media (prefers-reduced-motion: reduce){[data-pulse-hit]{animation:none!important}}
 @media (prefers-reduced-motion: reduce){[data-premium-flow-glyph]{animation:none!important}}
 @media (prefers-reduced-motion: reduce){[data-ibkr-wave] *{animation:none!important}}
@@ -867,6 +870,7 @@ const isOpenMarketDataPosition = (position) => {
 
 export default function PlatformApp() {
   const queryClient = useQueryClient();
+  const authSession = useAuthSession();
   const criticalApiMutationPaused = useCriticalApiMutationPause();
   const platformFreshnessBus = useMemo(
     () => createPlatformFreshnessBus({ artifactId: "artifacts/pyrus" }),
@@ -890,6 +894,22 @@ export default function PlatformApp() {
   const isPhone = viewport.flags.isPhone;
   const memoryPressureSignal = useMemoryPressureMonitor();
   const userPreferences = useUserPreferences();
+  const [gettingStartedOpen, setGettingStartedOpen] = useState(false);
+  const openGettingStarted = useCallback(
+    () => setGettingStartedOpen(true),
+    [],
+  );
+  const persistOnboardingProgress = useCallback(
+    (progress) => userPreferences.patch({ onboarding: progress }),
+    [userPreferences.patch],
+  );
+  const onboardingUserIdRef = useRef(authSession.user?.id || null);
+  useEffect(() => {
+    const userId = authSession.user?.id || null;
+    if (onboardingUserIdRef.current === userId) return;
+    onboardingUserIdRef.current = userId;
+    setGettingStartedOpen(false);
+  }, [authSession.user?.id]);
   const startupRefreshQueuedRef = useRef(false);
   const initialScreenRef = useRef(
     readInitialUrlScreen() ??
@@ -5302,6 +5322,7 @@ export default function PlatformApp() {
           bridgeTone={bridgeTone}
           theme={theme}
           onToggleTheme={toggleTheme}
+          onOpenGettingStarted={openGettingStarted}
           safeQaMode={safeQaMode}
           realtimeStreamGateReason={signalMatrixAuxiliaryStreamGateReason}
           runtimeWatchlistSymbols={runtimeWatchlistSymbols}
@@ -5324,6 +5345,31 @@ export default function PlatformApp() {
             handleChangeSignalMonitorFreshWindowBars
           }
           onChangeSignalMonitorMaxSymbols={handleChangeSignalMonitorMaxSymbols}
+        />
+        <OnboardingHost
+          requestedOpen={gettingStartedOpen}
+          onRequestedOpenChange={setGettingStartedOpen}
+          activeScreen={screen}
+          onNavigate={activateScreen}
+          userId={authSession.user?.id || null}
+          workspaceReady={bootProgress.complete}
+          sessionState={
+            !sessionMetadataSettled
+              ? "loading"
+              : sessionQuery.isError && !sessionQuery.data
+                ? "error"
+                : "ready"
+          }
+          dataConfigured={Boolean(
+            session?.configured?.massive || session?.configured?.ibkr,
+          )}
+          progress={userPreferences.preferences.onboarding}
+          remoteStatus={userPreferences.remoteStatus}
+          preferenceSaving={userPreferences.saving}
+          preferenceError={userPreferences.error}
+          preferenceStorageStatus={userPreferences.onboardingStorageStatus}
+          onPersistProgress={persistOnboardingProgress}
+          onReloadPreferences={userPreferences.reload}
         />
       </PlatformRuntimeLayer>
       {!bootProgress.complete ? (

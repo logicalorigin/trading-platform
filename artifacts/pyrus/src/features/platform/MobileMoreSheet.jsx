@@ -1,6 +1,7 @@
 import {
   Activity,
   Bot,
+  BookOpen,
   ChartCandlestick,
   FlaskConical,
   Gauge,
@@ -112,6 +113,7 @@ export const MobileMoreSheet = ({
   onOpenWatchlist,
   onOpenActivity,
   onOpenBloomberg,
+  onOpenGettingStarted,
   activeWatchlist,
   selectedSymbol,
   session,
@@ -254,6 +256,13 @@ export const MobileMoreSheet = ({
             gap: sp(6),
           }}
         >
+          <ActionButton
+            Icon={BookOpen}
+            label="Getting Started"
+            detail="Goals, safety, and walkthroughs"
+            onClick={() => handleAction(onOpenGettingStarted)}
+            testId="mobile-more-getting-started"
+          />
           <ActionButton
             Icon={List}
             label="Watchlist"

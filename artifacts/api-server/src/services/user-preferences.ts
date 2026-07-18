@@ -1,6 +1,13 @@
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, parse, resolve } from "node:path";
 import { and, eq, sql } from "drizzle-orm";
 import { db, userPreferenceProfilesTable } from "@workspace/db";
 import { requireCurrentAppUserId } from "./app-user-context";
@@ -28,9 +35,44 @@ const readRecord = (value: unknown): Record<string, unknown> =>
     ? (value as Record<string, unknown>)
     : {};
 
-const fallbackFile = (userId: string) =>
-  process.env["PYRUS_USER_PREFERENCES_FILE"] ||
-  join(tmpdir(), "pyrus", `user-preferences-${userId}.json`);
+const APP_USER_ID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const warnedLegacyFallbackFiles = new Set<string>();
+
+export const resolveUserPreferencesFallbackFile = (
+  userId: string,
+  configuredFile = process.env["PYRUS_USER_PREFERENCES_FILE"],
+): string => {
+  if (!APP_USER_ID_PATTERN.test(userId)) {
+    throw new Error("Invalid app user ID for preference fallback.");
+  }
+  if (!configuredFile) {
+    return join(tmpdir(), "pyrus", `user-preferences-${userId}.json`);
+  }
+  const configured = resolve(configuredFile);
+  const parts = parse(configured);
+  const userHash = createHash("sha256").update(userId).digest("hex");
+  return join(parts.dir, `${parts.name}.${userHash}${parts.ext}`);
+};
+
+const fallbackFile = (userId: string) => {
+  const configured = process.env["PYRUS_USER_PREFERENCES_FILE"];
+  const resolved = resolveUserPreferencesFallbackFile(userId, configured);
+  if (configured) {
+    const legacy = resolve(configured);
+    if (
+      existsSync(legacy) &&
+      !existsSync(resolved) &&
+      !warnedLegacyFallbackFiles.has(legacy)
+    ) {
+      warnedLegacyFallbackFiles.add(legacy);
+      console.warn(
+        `Ignoring legacy unkeyed preference fallback at ${legacy}; use the per-user hashed sibling.`,
+      );
+    }
+  }
+  return resolved;
+};
 
 const readFallback = (userId: string): PreferenceSnapshot => {
   try {
@@ -88,6 +130,7 @@ const writeFallback = (
     ),
     { mode: 0o600 },
   );
+  chmodSync(file, 0o600);
   return snapshot;
 };
 

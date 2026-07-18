@@ -3875,6 +3875,12 @@ export interface BrokerAccountInclusionAccount {
   displayName: string;
   accountType: string | null;
   includedInTrading: boolean;
+  /** True only when this account belongs to the authenticated user and its broker connection is currently connected. */
+  connectionVerified: boolean;
+  /** True only when the persisted account state is currently eligible for live order submission. */
+  executionReady: boolean;
+  /** Sanitized machine-readable reasons this account is not currently eligible for live order submission. */
+  executionBlockers: string[];
   updatedAt: string;
 }
 

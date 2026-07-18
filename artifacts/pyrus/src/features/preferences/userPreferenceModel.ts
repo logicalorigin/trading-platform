@@ -3,6 +3,11 @@ import {
   PYRUS_WORKSPACE_SETTINGS_EVENT,
   readPyrusWorkspaceState,
 } from "../../lib/workspaceStorage";
+import {
+  createDefaultOnboardingProgress,
+  normalizeOnboardingProgress,
+  type OnboardingProgress,
+} from "../onboarding/onboardingModel";
 
 export const USER_PREFERENCES_UPDATED_EVENT = "pyrus:user-preferences-updated";
 export const USER_PREFERENCES_STORAGE_KEY = PYRUS_STORAGE_KEY;
@@ -15,6 +20,7 @@ const DATE_TIME_FORMATTER_CACHE_LIMIT = 128;
 export type AccentPreset = "pyrus" | "coral" | "amber" | "green" | "aurora";
 
 export type UserPreferences = {
+  onboarding: OnboardingProgress;
   appearance: {
     theme: "system" | "dark" | "light";
     density: "compact" | "comfortable";
@@ -99,6 +105,7 @@ export type UserPreferenceSnapshot = {
 type JsonRecord = Record<string, unknown>;
 
 export const DEFAULT_USER_PREFERENCES: UserPreferences = {
+  onboarding: createDefaultOnboardingProgress(),
   appearance: {
     theme: "system",
     density: "compact",
@@ -320,6 +327,7 @@ export function normalizeUserPreferences(value: unknown): UserPreferences {
   const privacy = recordValue(input.privacy);
 
   return {
+    onboarding: normalizeOnboardingProgress(input.onboarding),
     appearance: {
       theme: enumValue(appearance.theme, ["system", "dark", "light"], DEFAULT_USER_PREFERENCES.appearance.theme),
       density: enumValue(appearance.density, ["compact", "comfortable"], DEFAULT_USER_PREFERENCES.appearance.density),
@@ -431,9 +439,12 @@ export const writeCachedUserPreferences = (
   if (typeof window === "undefined") return;
   try {
     const current = readWorkspaceState();
+    const { onboarding: _onboarding, ...cacheablePreferences } = preferences;
     const next = {
       ...current,
-      userPreferences: preferences,
+      // Educational progress is identity-scoped server state. The shared
+      // workspace cache survives account changes and must never contain it.
+      userPreferences: cacheablePreferences,
       theme:
         preferences.appearance.theme === "system"
           ? current.theme
@@ -443,7 +454,7 @@ export const writeCachedUserPreferences = (
     window.localStorage.setItem(USER_PREFERENCES_STORAGE_KEY, JSON.stringify(next));
     window.dispatchEvent(
       new CustomEvent(USER_PREFERENCES_UPDATED_EVENT, {
-        detail: preferences,
+        detail: cacheablePreferences,
       }),
     );
     window.dispatchEvent(
@@ -453,6 +464,13 @@ export const writeCachedUserPreferences = (
     );
   } catch {}
 };
+
+export const buildUserPreferencesResetValue = (
+  current: UserPreferences,
+): UserPreferences => ({
+  ...DEFAULT_USER_PREFERENCES,
+  onboarding: normalizeOnboardingProgress(current.onboarding),
+});
 
 export const buildLocalPreferenceSnapshot = (): UserPreferenceSnapshot => ({
   profileKey: "default",

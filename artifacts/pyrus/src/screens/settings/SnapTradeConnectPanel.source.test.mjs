@@ -19,10 +19,15 @@ test("Settings Data & Broker tab uses the SnapTrade connect panel", () => {
   assert.doesNotMatch(dataBrokerBlock, /<IbkrLaneArchitecturePanel/);
 });
 
-test("SnapTrade connect panel keeps portal launch admin gated and trade-if-available", () => {
+test("SnapTrade connect panel uses user connection authority and trade-if-available", () => {
   const source = readLocalSource("./SnapTradeConnectPanel.jsx");
+  const ibkrModelSource = readLocalSource("./ibkrPortalConnectModel.js");
 
-  assert.match(source, /canManageSnapTradeConnections\(authSession\.user\)/);
+  assert.match(source, /canManageSnapTradeConnections\(authSession\)/);
+  assert.doesNotMatch(
+    ibkrModelSource,
+    /canManageIbkrPortalConnections|role\s*===/,
+  );
   // Connect is card-native: launchPortal takes the card's brokerage slug
   // (defaulting to the selected one) and builds the portal body from it.
   assert.match(
@@ -62,6 +67,39 @@ test("SnapTrade connect panel keeps portal launch admin gated and trade-if-avail
   assert.match(source, />\s*Load Portfolio\s*</);
   assert.match(source, /aria-label="SnapTrade portfolio account"/);
   assert.match(source, /aria-label="SnapTrade portfolio positions"/);
+});
+
+test("broker cards use a group with one native selection control and sibling actions", () => {
+  const source = readLocalSource("./SnapTradeConnectPanel.jsx");
+  const cardBlock =
+    /function BrokerChoiceButton[\s\S]*?\n}\n\nexport function SnapTradeConnectPanel/.exec(
+      source,
+    )?.[0] ?? "";
+
+  assert.match(cardBlock, /role="group"/);
+  assert.match(
+    cardBlock,
+    /<button[\s\S]*?type="button"[\s\S]*?aria-pressed=\{selected\}/,
+  );
+  assert.doesNotMatch(cardBlock, /role="button"/);
+  assert.ok(
+    cardBlock.indexOf("</button>") < cardBlock.indexOf("{actions.length"),
+  );
+});
+
+test("broker lifecycle motion honors both reduced-motion channels", () => {
+  const appSource = readLocalSource(
+    "../../features/platform/PlatformApp.jsx",
+  );
+
+  assert.match(
+    appSource,
+    /@media \(prefers-reduced-motion: reduce\)\{\[data-broker-ring\]/,
+  );
+  assert.match(
+    appSource,
+    /html\[data-pyrus-reduced-motion="on"\]\s+\[data-broker-ring\]/,
+  );
 });
 
 test("SnapTrade connect panel exposes copy-link and QR handoff for broker launches", () => {

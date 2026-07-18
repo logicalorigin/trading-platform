@@ -275,6 +275,7 @@ const AppHeaderInner = ({
   bridgeTone,
   theme,
   onToggleTheme,
+  onOpenGettingStarted,
   safeQaMode = false,
   accounts,
   primaryAccountId,
@@ -791,6 +792,7 @@ const AppHeaderInner = ({
         onToggleTheme={onToggleTheme}
         scrollersCollapsed={scrollersCollapsed}
         onToggleScrollers={handleToggleScrollers}
+        onOpenGettingStarted={onOpenGettingStarted}
       />
     </>
   );
