@@ -11,13 +11,27 @@ const KEY_PATTERN = /^[A-Za-z0-9_-]{43}$/;
 const NONCE_PATTERN = /^[a-f0-9]{32}$/;
 const SIGNATURE_PATTERN = /^Pyrus-HMAC-SHA256 ([a-f0-9]{64})$/;
 const TIMESTAMP_PATTERN = /^(0|[1-9][0-9]{0,10})$/;
-const CONTROL_ACTION_PATTERN = /^(ensure|release|status)$/;
+const CONTROL_ACTION_PATTERN = /^(ensure|keepalive|release|status)$/;
+const GRANT_NOT_AFTER_NS_PATTERN = /^[1-9][0-9]{0,18}$/;
+const MAX_GRANT_NOT_AFTER_NS = 9_223_371_916_854_775_807n;
 const VERSION = "1";
 const RECEIPT_VERSION = "1";
 const MAX_CLOCK_SKEW_SECONDS = 30;
 
 export type IbkrHostControlHeaders = Record<string, string>;
-export type IbkrHostControlAction = "ensure" | "release" | "status";
+export type IbkrHostControlAction =
+  | "ensure"
+  | "keepalive"
+  | "release"
+  | "status";
+export type IbkrHostLeaseGrant = {
+  version: 1;
+  bootId: string;
+  grantNotAfterNs: string;
+};
+export type IbkrHostLeaseRequest = IbkrHostLeaseGrant & {
+  controlAttemptId: string;
+};
 
 type SignInput = {
   body?: string | Uint8Array;
@@ -68,6 +82,30 @@ function isValidReceiptBody(value: unknown): value is string | Uint8Array {
 
 function isValidMethod(method: string): boolean {
   return /^[A-Z]{3,10}$/.test(method);
+}
+
+function isIbkrHostLeaseRequest(value: unknown): value is IbkrHostLeaseRequest {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return false;
+  }
+  const record = value as Record<string, unknown>;
+  const keys = Object.keys(record);
+  return (
+    keys.length === 4 &&
+    keys.every((key) =>
+      ["bootId", "controlAttemptId", "grantNotAfterNs", "version"].includes(
+        key,
+      ),
+    ) &&
+    record.version === 1 &&
+    typeof record.bootId === "string" &&
+    HOST_ID_PATTERN.test(record.bootId) &&
+    typeof record.grantNotAfterNs === "string" &&
+    GRANT_NOT_AFTER_NS_PATTERN.test(record.grantNotAfterNs) &&
+    BigInt(record.grantNotAfterNs) <= MAX_GRANT_NOT_AFTER_NS &&
+    typeof record.controlAttemptId === "string" &&
+    HOST_ID_PATTERN.test(record.controlAttemptId)
+  );
 }
 
 function isValidPath(path: string): boolean {
@@ -132,6 +170,31 @@ export function decodeIbkrHostControlKey(value: string): Buffer | null {
   return decoded.byteLength === 32 && decoded.toString("base64url") === value
     ? decoded
     : null;
+}
+
+export function parseIbkrHostLeaseRequest(
+  body: string,
+): IbkrHostLeaseRequest | null {
+  try {
+    const parsed: unknown = JSON.parse(body);
+    return isIbkrHostLeaseRequest(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+export function serializeIbkrHostLeaseRequest(
+  request: IbkrHostLeaseRequest,
+): string {
+  if (!isIbkrHostLeaseRequest(request)) {
+    throw new Error("Invalid IBKR host lease request.");
+  }
+  return JSON.stringify({
+    version: request.version,
+    bootId: request.bootId,
+    grantNotAfterNs: request.grantNotAfterNs,
+    controlAttemptId: request.controlAttemptId,
+  });
 }
 
 export function deriveIbkrHostControlKey(
