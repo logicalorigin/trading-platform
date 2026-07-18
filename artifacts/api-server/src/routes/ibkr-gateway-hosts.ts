@@ -13,12 +13,17 @@ import {
   heartbeatIbkrGatewayHost,
   registerIbkrGatewayHost,
 } from "../services/ibkr-gateway-session-store";
+import { noteIbkrGatewayFleetHostReady } from "../services/ibkr-portal-gateway-manager";
 
 export const IBKR_GATEWAY_HOSTS_MOUNT =
   "/api/internal/ibkr/gateway-hosts";
 
 const identityDigestSchema = z.string().regex(/^[0-9a-f]{64}$/);
 const sha256DigestSchema = z.string().regex(/^sha256:[0-9a-f]{64}$/);
+const capsuleLeaseProtocolVersionSchema = z.union([
+  z.literal(0),
+  z.literal(1),
+]);
 const registrationBodySchema = z
   .object({
     workloadIdentityDigest: identityDigestSchema,
@@ -26,6 +31,7 @@ const registrationBodySchema = z
     imageDigest: sha256DigestSchema,
     runtimeSpecDigest: sha256DigestSchema,
     runtimeAttestationDigest: sha256DigestSchema,
+    capsuleLeaseProtocolVersion: capsuleLeaseProtocolVersionSchema,
     failureDomain: z.string().min(1).max(128),
     measuredSlotCapacity: z.number().int().min(1).max(20),
   })
@@ -50,6 +56,7 @@ type LifecycleRouteDependencies = {
   registerHost: (
     input: z.infer<typeof registrationBodySchema> & { hostId: string },
   ) => Promise<LifecycleHost | null>;
+  onHostReady: (hostId: string) => void;
   verifyRequest: ReturnType<typeof createIbkrGatewayHostRequestVerifier>;
 };
 
@@ -124,6 +131,8 @@ export function createIbkrGatewayHostLifecycleRouter(
 ): Router {
   const heartbeatHost =
     dependencies.heartbeatHost ?? heartbeatIbkrGatewayHost;
+  const onHostReady =
+    dependencies.onHostReady ?? noteIbkrGatewayFleetHostReady;
   const registerHost = dependencies.registerHost ?? registerIbkrGatewayHost;
   const verifyRequest =
     dependencies.verifyRequest ?? createIbkrGatewayHostRequestVerifier();
@@ -141,6 +150,7 @@ export function createIbkrGatewayHostLifecycleRouter(
           code: "ibkr_gateway_host_registration_rejected",
         });
       }
+      onHostReady(hostId);
       sendHostState(res, host);
     }),
   );
@@ -157,6 +167,7 @@ export function createIbkrGatewayHostLifecycleRouter(
           code: "ibkr_gateway_host_heartbeat_rejected",
         });
       }
+      onHostReady(hostId);
       sendHostState(res, host);
     }),
   );

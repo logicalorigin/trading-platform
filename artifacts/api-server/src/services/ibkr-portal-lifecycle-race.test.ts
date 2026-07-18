@@ -5,6 +5,7 @@ import {
   deriveIbkrHostControlKey,
   signIbkrHostControlReceipt,
   type IbkrHostControlAction,
+  verifyIbkrHostControlRequest,
 } from "@workspace/ibkr-contracts/control-auth";
 import {
   __setDbForTests,
@@ -26,6 +27,7 @@ import {
   tryAcquireIbkrGatewayLease,
 } from "./ibkr-gateway-session-store";
 import {
+  __setIbkrGatewayFleetCoordinationDependenciesForTests,
   ensureGateway,
   getGateway,
   refreshGateway,
@@ -38,6 +40,13 @@ import {
   readPortalReadiness,
 } from "./ibkr-portal-session";
 
+__setIbkrGatewayFleetCoordinationDependenciesForTests({
+  acquireControlLock: async () => async () => {},
+});
+test.after(() => {
+  __setIbkrGatewayFleetCoordinationDependenciesForTests(null);
+});
+
 const HOST_ID = "00000000-0000-4000-8000-000000000029";
 const SHA = `sha256:${"7".repeat(64)}`;
 const WORKLOAD_IDENTITY = "6".repeat(64);
@@ -49,7 +58,10 @@ type FleetTestContext = {
 };
 
 async function withFleetUser(
-  input: { onAccounts?: (appUserId: string) => Promise<void> },
+  input: {
+    beforeEnsure?: () => Promise<void>;
+    onAccounts?: (appUserId: string) => Promise<void>;
+  },
   run: (context: FleetTestContext) => Promise<void>,
 ): Promise<void> {
   await withTestDb(async (testDb) => {
@@ -67,6 +79,16 @@ async function withFleetUser(
     let appUserId: string | null = null;
     const rootKey = Buffer.alloc(32, 39);
     const hostKey = deriveIbkrHostControlKey(rootKey, HOST_ID);
+    let hostGrantNotAfterNs = 50_000_000_000n;
+    const issueHostLease = () => {
+      const lease = {
+        version: 1 as const,
+        bootId: "29292929-2929-4929-8929-292929292929",
+        grantNotAfterNs: String(hostGrantNotAfterNs),
+      };
+      hostGrantNotAfterNs += 1_000_000_000n;
+      return lease;
+    };
     const signedControlResponse = (
       action: IbkrHostControlAction,
       controlAttemptId: string,
@@ -100,7 +122,7 @@ async function withFleetUser(
     globalThis.fetch = (async (request, init) => {
       const url = new URL(String(request));
       const controlRequest = url.pathname.match(
-        /^\/sessions\/([^/]+)\/generations\/(\d+)\/slots\/(\d+)\/(ensure|release|status)$/,
+        /^\/sessions\/([^/]+)\/generations\/(\d+)\/slots\/(\d+)\/(ensure|keepalive|release|status)$/,
       );
       let controlAttemptId: string | null = null;
       if (controlRequest) {
@@ -116,9 +138,38 @@ async function withFleetUser(
             slotNumber: Number(controlRequest[3]),
           }
         : null;
+      const action = controlRequest?.[4] as IbkrHostControlAction | undefined;
+      const requestBody = String(init?.body ?? "");
+      if (controlRequest) {
+        assert.ok(controlAttemptId);
+        assert.equal(
+          verifyIbkrHostControlRequest({
+            expectedHostId: HOST_ID,
+            body: requestBody,
+            headers: Object.fromEntries(new Headers(init?.headers).entries()),
+            key: hostKey,
+            method: String(init?.method ?? "GET"),
+            path: `${url.pathname}${url.search}`,
+          }).valid,
+          true,
+        );
+        assert.equal(requestBody, "");
+      }
+      if (action === "keepalive") {
+        assert.ok(receipt);
+        assert.ok(controlAttemptId);
+        const lease = issueHostLease();
+        return signedControlResponse("keepalive", controlAttemptId, {
+          ...receipt,
+          keptAlive: true,
+          lease,
+        });
+      }
       if (url.pathname.endsWith("/ensure")) {
         assert.ok(receipt);
         assert.ok(controlAttemptId);
+        await input.beforeEnsure?.();
+        const lease = issueHostLease();
         return signedControlResponse("ensure", controlAttemptId, {
           ...receipt,
           capsule: {
@@ -126,6 +177,7 @@ async function withFleetUser(
             name: "pyrus-ibkr-slot-1",
             status: "ready",
           },
+          lease,
           targets: {
             cpg: { host: "127.0.0.1", port: 15000 },
             console: { host: "127.0.0.1", port: 16080 },
@@ -199,6 +251,7 @@ async function withFleetUser(
           imageDigest: SHA,
           runtimeSpecDigest: SHA,
           runtimeAttestationDigest: SHA,
+          capsuleLeaseProtocolVersion: 1,
           failureDomain: "synthetic-zone-twenty-nine",
           measuredSlotCapacity: 1,
         }),
@@ -210,6 +263,7 @@ async function withFleetUser(
           imageDigest: SHA,
           runtimeSpecDigest: SHA,
           runtimeAttestationDigest: SHA,
+          capsuleLeaseProtocolVersion: 1,
           admissionSlotCapacity: 1,
         }),
       );
@@ -240,6 +294,53 @@ async function withFleetUser(
     }
   });
 }
+
+test("durable provisioning resumes without blocking readiness after an API restart", async () => {
+  let markEnsureEntered!: () => void;
+  const ensureEntered = new Promise<void>((resolve) => {
+    markEnsureEntered = resolve;
+  });
+  let releaseEnsure!: () => void;
+  const ensureReleased = new Promise<void>((resolve) => {
+    releaseEnsure = resolve;
+  });
+  let blocked = true;
+
+  try {
+    await withFleetUser(
+      {
+        beforeEnsure: async () => {
+          if (!blocked) return;
+          blocked = false;
+          markEnsureEntered();
+          await ensureReleased;
+        },
+      },
+      async ({ appUserId, brokerConnectionId }) => {
+        const acquired = await tryAcquireIbkrGatewayLease({
+          appUserId,
+          brokerConnectionId,
+        });
+        assert.equal(acquired.status, "acquired");
+        assert.equal(getGateway(appUserId), null);
+
+        const readiness = await readPortalReadiness(appUserId);
+        assert.equal(readiness.status, "gateway_starting");
+        assert.equal(readiness.gatewayRunning, false);
+        await ensureEntered;
+        assert.equal(getGateway(appUserId), null);
+
+        releaseEnsure();
+        const gateway = await ensureGateway(appUserId);
+        assert.equal(gateway.recovered, true);
+        const ready = await readPortalReadiness(appUserId);
+        assert.equal(ready.status, "needs_login");
+      },
+    );
+  } finally {
+    releaseEnsure();
+  }
+});
 
 function delayNextControlAcknowledgement(testDb: TestDatabase): {
   committed: Promise<void>;

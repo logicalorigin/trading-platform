@@ -77,6 +77,7 @@ test("loads lifecycle attestation only for a complete signed host identity", () 
       imageDigest: IMAGE_DIGEST,
       runtimeSpecDigest: RUNTIME_SPEC_DIGEST,
       runtimeAttestationDigest: RUNTIME_ATTESTATION_DIGEST,
+      capsuleLeaseProtocolVersion: 1,
       failureDomain: "reserved-vm-primary",
       measuredSlotCapacity: 20,
     },
@@ -162,6 +163,16 @@ test("registers, heartbeats, and re-registers after a failed heartbeat", async (
       const action = path.endsWith("/heartbeat") ? "heartbeat" : "register";
       actions.push(action);
       const body = String(init.body ?? "");
+      if (action === "register") {
+        assert.equal(
+          (
+            JSON.parse(body) as {
+              capsuleLeaseProtocolVersion?: unknown;
+            }
+          ).capsuleLeaseProtocolVersion,
+          1,
+        );
+      }
       assert.deepEqual(
         verifyIbkrHostControlRequest({
           body,

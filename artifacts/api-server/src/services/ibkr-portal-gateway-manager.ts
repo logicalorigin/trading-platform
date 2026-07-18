@@ -19,11 +19,18 @@ import {
   decodeIbkrHostControlKey,
   signIbkrHostControlRequest,
 } from "@workspace/ibkr-contracts/control-auth";
-import type { IbkrGatewayLifecycleState } from "@workspace/db";
+import {
+  sharedAdvisoryLockHolder,
+  type AdvisoryLockRelease,
+  type IbkrGatewayLifecycleState,
+} from "@workspace/db";
 
 import { HttpError } from "../lib/errors";
 import {
   type IbkrGatewayFence,
+  listRenewableIbkrGatewayFences,
+  readIbkrGatewayBrokerConnection,
+  readIbkrGatewayLifecycleSnapshot,
   releaseIbkrGatewayLease,
   transitionIbkrGatewayLifecycle as transitionDurableIbkrGatewayLifecycle,
 } from "./ibkr-gateway-session-store";
@@ -38,6 +45,7 @@ import {
   renewIbkrGatewayFleetFence,
   requestIbkrGatewayFleetHost,
 } from "./ibkr-gateway-fleet-runtime";
+import { getRuntimeMode } from "../lib/runtime";
 import { findRepoRoot } from "./runtime-flight-recorder";
 
 // Self-hosted IBKR Client Portal Gateway (CPAPI) pool. Each connected app user
@@ -109,9 +117,46 @@ const hostedStatusRequests = new Map<
   { epoch: number; request: Promise<HostStatusResponse | null> }
 >();
 const hostedStops = new Map<string, Promise<void>>();
+const fleetAdmissionRequests = new Map<
+  string,
+  Promise<{ request: Promise<PortalGateway> }>
+>();
 const fleetEnsureRequests = new Map<string, Promise<PortalGateway>>();
-const fleetLeaseTimers = new Map<string, ReturnType<typeof setInterval>>();
+const fleetControlTails = new Map<string, Promise<void>>();
 const FLEET_LEASE_RENEW_INTERVAL_MS = 10_000;
+const FLEET_COORDINATOR_MAX_SESSIONS = 20;
+const FLEET_CONTROL_LOCK_BUSY = "ibkr_gateway_control_busy";
+const FLEET_CONTROL_LOCK_UNAVAILABLE =
+  "ibkr_gateway_control_lock_unavailable";
+const fleetReadyHostIds = new Set<string>();
+let fleetCoordinatorTimer: ReturnType<typeof setInterval> | null = null;
+let fleetCoordinatorRun: Promise<void> | null = null;
+
+type FleetCoordinationDependencies = {
+  acquireControlLock: (
+    key: number,
+  ) => Promise<AdvisoryLockRelease | null>;
+  listRenewableFences: () => Promise<IbkrGatewayFence[]>;
+  transitionLifecycle: (
+    fence: IbkrGatewayFence,
+    target: IbkrGatewayLifecycleState,
+  ) => Promise<boolean>;
+};
+
+const defaultFleetCoordinationDependencies: FleetCoordinationDependencies = {
+  acquireControlLock: sharedAdvisoryLockHolder.acquire,
+  listRenewableFences: listRenewableIbkrGatewayFences,
+  transitionLifecycle: transitionDurableIbkrGatewayLifecycle,
+};
+let fleetCoordinationDependencies = defaultFleetCoordinationDependencies;
+
+export function __setIbkrGatewayFleetCoordinationDependenciesForTests(
+  value: Partial<FleetCoordinationDependencies> | null,
+): void {
+  fleetCoordinationDependencies = value
+    ? { ...defaultFleetCoordinationDependencies, ...value }
+    : defaultFleetCoordinationDependencies;
+}
 
 function sameFleetFence(
   left: IbkrGatewayFence | undefined,
@@ -129,50 +174,81 @@ function sameFleetFence(
   );
 }
 
+function fleetControlLockKey(sessionId: string): number {
+  const value = Number.parseInt(
+    sessionId.replaceAll("-", "").slice(-13),
+    16,
+  );
+  return Number.isSafeInteger(value) && value > 0 ? -value : -1;
+}
+
+function fleetControlLockError(
+  code: typeof FLEET_CONTROL_LOCK_BUSY | typeof FLEET_CONTROL_LOCK_UNAVAILABLE,
+  cause?: unknown,
+): HttpError {
+  return new HttpError(
+    code === FLEET_CONTROL_LOCK_BUSY ? 409 : 503,
+    "The IBKR gateway control session is busy.",
+    {
+      ...(cause === undefined ? {} : { cause }),
+      code,
+      expose: true,
+    },
+  );
+}
+
+function isFleetControlLockError(error: unknown): boolean {
+  return (
+    error instanceof HttpError &&
+    (error.code === FLEET_CONTROL_LOCK_BUSY ||
+      error.code === FLEET_CONTROL_LOCK_UNAVAILABLE)
+  );
+}
+
+async function serializeFleetControl<T>(
+  fence: IbkrGatewayFence,
+  operation: () => Promise<T>,
+): Promise<T> {
+  const prior = fleetControlTails.get(fence.sessionId) ?? Promise.resolve();
+  let release!: () => void;
+  const turn = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const tail = prior.catch(() => undefined).then(() => turn);
+  fleetControlTails.set(fence.sessionId, tail);
+  await prior.catch(() => undefined);
+  try {
+    let releaseShared: AdvisoryLockRelease | null;
+    try {
+      releaseShared =
+        await fleetCoordinationDependencies.acquireControlLock(
+          fleetControlLockKey(fence.sessionId),
+        );
+    } catch (error) {
+      throw fleetControlLockError(FLEET_CONTROL_LOCK_UNAVAILABLE, error);
+    }
+    if (!releaseShared) {
+      throw fleetControlLockError(FLEET_CONTROL_LOCK_BUSY);
+    }
+    try {
+      return await operation();
+    } finally {
+      await releaseShared();
+    }
+  } finally {
+    release();
+    if (fleetControlTails.get(fence.sessionId) === tail) {
+      fleetControlTails.delete(fence.sessionId);
+    }
+  }
+}
+
 function gatewayEpoch(appUserId: string): number {
   return gatewayEpochs.get(appUserId) ?? 0;
 }
 
 function bumpGatewayEpoch(appUserId: string): void {
   gatewayEpochs.set(appUserId, gatewayEpoch(appUserId) + 1);
-}
-
-function stopFleetLeaseKeepalive(appUserId: string): void {
-  const timer = fleetLeaseTimers.get(appUserId);
-  if (!timer) return;
-  clearInterval(timer);
-  fleetLeaseTimers.delete(appUserId);
-}
-
-function startFleetLeaseKeepalive(appUserId: string, entry: Entry): void {
-  stopFleetLeaseKeepalive(appUserId);
-  let renewing = false;
-  const timer = setInterval(() => {
-    if (renewing || gateways.get(appUserId) !== entry || !entry.fleetFence) {
-      return;
-    }
-    renewing = true;
-    void renewIbkrGatewayFleetFence(entry.fleetFence)
-      .then((fence) => {
-        if (gateways.get(appUserId) === entry) entry.fleetFence = fence;
-      })
-      .catch((error: unknown) => {
-        if (
-          error instanceof HttpError &&
-          error.code === "ibkr_gateway_fence_stale" &&
-          gateways.get(appUserId) === entry
-        ) {
-          entry.status = "stopped";
-          gateways.delete(appUserId);
-          stopFleetLeaseKeepalive(appUserId);
-        }
-      })
-      .finally(() => {
-        renewing = false;
-      });
-  }, FLEET_LEASE_RENEW_INTERVAL_MS);
-  timer.unref?.();
-  fleetLeaseTimers.set(appUserId, timer);
 }
 
 type HostedConfig = {
@@ -401,11 +477,27 @@ const HostStatusResponseSchema = z.object({
   capsule: HostCapsuleSchema.nullable(),
   targets: HostTargetsSchema.optional(),
 });
+const HOST_LEASE_GRANT_NOT_AFTER_NS_MAX = "9223371916854775807";
+const HostLeaseGrantSchema = z
+  .object({
+    version: z.literal(1),
+    bootId: z.string().uuid(),
+    grantNotAfterNs: z
+      .string()
+      .regex(/^[1-9][0-9]{0,18}$/)
+      .refine(
+        (value) =>
+          value.length < HOST_LEASE_GRANT_NOT_AFTER_NS_MAX.length ||
+          value <= HOST_LEASE_GRANT_NOT_AFTER_NS_MAX,
+      ),
+  })
+  .strict();
 const FleetHostEnsureResponseSchema = HostEnsureResponseSchema.extend({
   action: z.literal("ensure"),
   controlAttemptId: z.string().uuid(),
   sessionId: z.string().uuid(),
   generation: z.number().int().min(0).max(2_147_483_647),
+  lease: HostLeaseGrantSchema,
   slotNumber: z.number().int().min(1).max(20),
 }).strict();
 const FleetHostStatusResponseSchema = HostStatusResponseSchema.extend({
@@ -423,6 +515,17 @@ const FleetHostReleaseResponseSchema = z
     generation: z.number().int().min(0).max(2_147_483_647),
     slotNumber: z.number().int().min(1).max(20),
     released: z.literal(true),
+  })
+  .strict();
+const FleetHostKeepaliveResponseSchema = z
+  .object({
+    action: z.literal("keepalive"),
+    controlAttemptId: z.string().uuid(),
+    sessionId: z.string().uuid(),
+    generation: z.number().int().min(0).max(2_147_483_647),
+    slotNumber: z.number().int().min(1).max(20),
+    keptAlive: z.literal(true),
+    lease: HostLeaseGrantSchema,
   })
   .strict();
 
@@ -453,7 +556,7 @@ function parseHostResponse<T extends z.ZodType>(
 
 function assertMatchingFleetResponse(
   response: {
-    action: "ensure" | "release" | "status";
+    action: "ensure" | "keepalive" | "release" | "status";
     controlAttemptId: string;
     generation: number;
     sessionId: string;
@@ -473,6 +576,115 @@ function assertMatchingFleetResponse(
   ) {
     throw invalidHostResponse();
   }
+}
+
+async function requestFleetCapsuleKeepalive(
+  fence: IbkrGatewayFence,
+): Promise<IbkrGatewayFence> {
+  const response = await requestIbkrGatewayFleetHost<unknown>(
+    fence,
+    "keepalive",
+  );
+  if (response.status !== "ok") throw invalidHostResponse();
+  const result = parseHostResponse(
+    FleetHostKeepaliveResponseSchema,
+    response.value,
+  );
+  assertMatchingFleetResponse(result, response);
+  await acknowledgeIbkrGatewayFleetControl(response);
+  return response.fence;
+}
+
+async function keepaliveFleetCapsule(
+  fence: IbkrGatewayFence,
+): Promise<IbkrGatewayFence> {
+  return serializeFleetControl(fence, () =>
+    requestFleetCapsuleKeepalive(fence),
+  );
+}
+
+function matchingLocalFleetEntry(fence: IbkrGatewayFence): Entry | null {
+  const entry = gateways.get(fence.appUserId);
+  return entry && sameFleetFence(entry.fleetFence, fence) ? entry : null;
+}
+
+async function coordinateFleetFenceKeepalive(
+  fence: IbkrGatewayFence,
+): Promise<void> {
+  try {
+    await serializeFleetControl(fence, async () => {
+      try {
+        const renewed = await requestFleetCapsuleKeepalive(fence);
+        const entry = matchingLocalFleetEntry(fence);
+        if (entry) entry.fleetFence = renewed;
+      } catch (error) {
+        if (
+          !(error instanceof HttpError) ||
+          (error.code !== "ibkr_session_host_control_failed" &&
+            error.code !== "ibkr_session_host_response_invalid")
+        ) {
+          throw error;
+        }
+        try {
+          await fleetCoordinationDependencies.transitionLifecycle(
+            fence,
+            "draining",
+          );
+        } finally {
+          const entry = matchingLocalFleetEntry(fence);
+          if (entry) {
+            entry.status = "stopped";
+            gateways.delete(fence.appUserId);
+          }
+        }
+      }
+    });
+  } catch (error) {
+    if (!isFleetControlLockError(error)) throw error;
+  }
+}
+
+async function runFleetCoordinatorSweep(): Promise<void> {
+  if (!isIbkrGatewayFleetEnabled()) return;
+  const fences =
+    await fleetCoordinationDependencies.listRenewableFences();
+  await Promise.allSettled(
+    fences
+      .filter((fence) => fleetReadyHostIds.has(fence.hostId))
+      .slice(0, FLEET_COORDINATOR_MAX_SESSIONS)
+      .map((fence) => coordinateFleetFenceKeepalive(fence)),
+  );
+}
+
+function runFleetCoordinatorOnce(): Promise<void> {
+  if (fleetCoordinatorRun) return fleetCoordinatorRun;
+  const run = runFleetCoordinatorSweep().finally(() => {
+    if (fleetCoordinatorRun === run) fleetCoordinatorRun = null;
+  });
+  fleetCoordinatorRun = run;
+  return run;
+}
+
+export function noteIbkrGatewayFleetHostReady(hostId: string): void {
+  fleetReadyHostIds.add(hostId);
+}
+
+export function startIbkrGatewayFleetCoordinator(): void {
+  if (fleetCoordinatorTimer || !isIbkrGatewayFleetEnabled()) return;
+  void runFleetCoordinatorOnce().catch(() => undefined);
+  fleetCoordinatorTimer = setInterval(() => {
+    void runFleetCoordinatorOnce().catch(() => undefined);
+  }, FLEET_LEASE_RENEW_INTERVAL_MS);
+  fleetCoordinatorTimer.unref?.();
+}
+
+export async function stopIbkrGatewayFleetCoordinator(): Promise<void> {
+  if (fleetCoordinatorTimer) {
+    clearInterval(fleetCoordinatorTimer);
+    fleetCoordinatorTimer = null;
+  }
+  await fleetCoordinatorRun;
+  fleetReadyHostIds.clear();
 }
 
 async function hostRequest<T>(
@@ -550,7 +762,6 @@ export async function prepareGatewayDataRequest(input: {
         ) {
           entry.status = "stopped";
           gateways.delete(input.appUserId);
-          stopFleetLeaseKeepalive(input.appUserId);
         }
         throw error;
       });
@@ -623,7 +834,6 @@ export async function validateGatewayDataFence(appUserId: string): Promise<void>
       ) {
         entry.status = "stopped";
         gateways.delete(appUserId);
-        stopFleetLeaseKeepalive(appUserId);
       }
       throw error;
     },
@@ -725,7 +935,6 @@ function rememberFleetGateway(
   if (existing?.fleetFence && isAlive(existing)) {
     existing.fleetFence = fence;
     existing.recovered = existing.recovered && recovered;
-    startFleetLeaseKeepalive(appUserId, existing);
     return updateHostedGateway(existing, result.capsule);
   }
   const entry: Entry = {
@@ -744,7 +953,6 @@ function rememberFleetGateway(
     startedAt: Date.now(),
   };
   gateways.set(appUserId, entry);
-  startFleetLeaseKeepalive(appUserId, entry);
   return toPublic(entry);
 }
 
@@ -794,18 +1002,29 @@ async function ensureHostedGateway(appUserId: string): Promise<PortalGateway> {
   return rememberHostedGateway(appUserId, result, false);
 }
 
-async function ensureFleetGateway(appUserId: string): Promise<PortalGateway> {
-  const stopping = hostedStops.get(appUserId);
-  if (stopping) await stopping;
+function startFleetGatewayEnsure(
+  appUserId: string,
+  fence: IbkrGatewayFence,
+  epoch: number,
+  recovered: boolean,
+): Promise<PortalGateway> {
   const existingRequest = fleetEnsureRequests.get(appUserId);
   if (existingRequest) return existingRequest;
-  const epoch = gatewayEpoch(appUserId);
   const request = (async () => {
-    const fence = await ensureIbkrGatewayFleetFence(appUserId);
-    const response = await requestIbkrGatewayFleetHost<unknown>(
-      fence,
-      "ensure",
-    );
+    const response = await serializeFleetControl(fence, async () => {
+      const current = await requestIbkrGatewayFleetHost<unknown>(
+        fence,
+        "ensure",
+      );
+      if (current.status !== "ok") throw invalidHostResponse();
+      const result = parseHostResponse(
+        FleetHostEnsureResponseSchema,
+        current.value,
+      );
+      assertMatchingFleetResponse(result, current);
+      await acknowledgeIbkrGatewayFleetControl(current);
+      return { current, result };
+    });
     if (gatewayEpoch(appUserId) !== epoch) {
       throw new HttpError(
         409,
@@ -813,13 +1032,7 @@ async function ensureFleetGateway(appUserId: string): Promise<PortalGateway> {
         { code: "ibkr_portal_connect_cancelled", expose: true },
       );
     }
-    if (response.status !== "ok") throw invalidHostResponse();
-    const result = parseHostResponse(
-      FleetHostEnsureResponseSchema,
-      response.value,
-    );
-    assertMatchingFleetResponse(result, response);
-    await acknowledgeIbkrGatewayFleetControl(response);
+    const keepaliveFence = await keepaliveFleetCapsule(response.current.fence);
     if (gatewayEpoch(appUserId) !== epoch) {
       throw new HttpError(
         409,
@@ -827,21 +1040,99 @@ async function ensureFleetGateway(appUserId: string): Promise<PortalGateway> {
         { code: "ibkr_portal_connect_cancelled", expose: true },
       );
     }
-    return rememberFleetGateway(appUserId, response.fence, result, false);
+    return rememberFleetGateway(
+      appUserId,
+      keepaliveFence,
+      response.result,
+      recovered,
+    );
   })();
   fleetEnsureRequests.set(appUserId, request);
   const pending = hostedEnsureRequests.get(appUserId) ?? new Set();
   pending.add(request);
   hostedEnsureRequests.set(appUserId, pending);
-  try {
-    return await request;
-  } finally {
+  const clear = (): void => {
     if (fleetEnsureRequests.get(appUserId) === request) {
       fleetEnsureRequests.delete(appUserId);
     }
     pending.delete(request);
     if (pending.size === 0) hostedEnsureRequests.delete(appUserId);
+  };
+  void request.then(clear, clear);
+  return request;
+}
+
+async function beginFleetGatewayEnsure(
+  appUserId: string,
+  recovered: boolean,
+): Promise<{ request: Promise<PortalGateway> }> {
+  const stopping = hostedStops.get(appUserId);
+  if (stopping) await stopping;
+  const existingRequest = fleetEnsureRequests.get(appUserId);
+  if (existingRequest) return { request: existingRequest };
+  const existingAdmission = fleetAdmissionRequests.get(appUserId);
+  if (existingAdmission) return existingAdmission;
+  const admission = (async () => {
+    const epoch = gatewayEpoch(appUserId);
+    const fence = await ensureIbkrGatewayFleetFence(appUserId);
+    return {
+      request: startFleetGatewayEnsure(
+        appUserId,
+        fence,
+        epoch,
+        recovered,
+      ),
+    };
+  })();
+  fleetAdmissionRequests.set(appUserId, admission);
+  const clear = (): void => {
+    if (fleetAdmissionRequests.get(appUserId) === admission) {
+      fleetAdmissionRequests.delete(appUserId);
+    }
+  };
+  void admission.then(clear, clear);
+  return admission;
+}
+
+async function ensureFleetGateway(appUserId: string): Promise<PortalGateway> {
+  const started = await beginFleetGatewayEnsure(appUserId, false);
+  return started.request;
+}
+
+export async function beginGatewayStartup(
+  appUserId: string,
+): Promise<PortalGateway | null> {
+  const existing = gateways.get(appUserId);
+  if (existing && isAlive(existing)) return toPublic(existing);
+  if (!isIbkrGatewayFleetEnabled()) return ensureGateway(appUserId);
+  await beginFleetGatewayEnsure(appUserId, false);
+  return getGateway(appUserId);
+}
+
+export async function isGatewayStartupPending(
+  appUserId: string,
+): Promise<boolean> {
+  const existing = gateways.get(appUserId);
+  if (existing && isAlive(existing)) return false;
+  if (!isIbkrGatewayFleetEnabled()) return false;
+  if (
+    fleetAdmissionRequests.has(appUserId) ||
+    fleetEnsureRequests.has(appUserId)
+  ) {
+    return true;
   }
+  const connection = await readIbkrGatewayBrokerConnection({
+    appUserId,
+    mode: getRuntimeMode(),
+  });
+  if (!connection) return false;
+  const lifecycle = await readIbkrGatewayLifecycleSnapshot({
+    appUserId,
+    brokerConnectionId: connection.id,
+  });
+  if (lifecycle?.lifecycleState !== "provisioning") return false;
+  await beginFleetGatewayEnsure(appUserId, true);
+  return true;
 }
 
 export async function ensureGateway(appUserId: string): Promise<PortalGateway> {
@@ -971,41 +1262,44 @@ export async function refreshGateway(
   if (isIbkrGatewayFleetEnabled()) {
     const fence = entry?.fleetFence ?? (await readIbkrGatewayFleetFence(appUserId));
     if (!fence) return null;
-    const response = await requestIbkrGatewayFleetHost<unknown>(
-      fence,
-      "status",
-    );
+    const keepaliveFence = await keepaliveFleetCapsule(fence);
     if (gatewayEpoch(appUserId) !== epoch) return null;
-    const result = parseHostResponse(
-      FleetHostStatusResponseSchema,
-      response.value,
-    );
-    assertMatchingFleetResponse(result, response);
-    const hostStatus = (() => {
-      if (response.status === "not_found") {
-        if (result.capsule !== null || result.targets !== undefined) {
-          throw invalidHostResponse();
+    const response = await serializeFleetControl(keepaliveFence, async () => {
+      const current = await requestIbkrGatewayFleetHost<unknown>(
+        keepaliveFence,
+        "status",
+      );
+      const result = parseHostResponse(
+        FleetHostStatusResponseSchema,
+        current.value,
+      );
+      assertMatchingFleetResponse(result, current);
+      const hostStatus = (() => {
+        if (current.status === "not_found") {
+          if (result.capsule !== null || result.targets !== undefined) {
+            throw invalidHostResponse();
+          }
+          return { kind: "not_found" as const };
         }
-        return { kind: "not_found" as const };
-      }
-      if (!result.capsule || !result.targets) throw invalidHostResponse();
-      return {
-        capsule: result.capsule,
-        kind: "found" as const,
-        targets: result.targets,
-      };
-    })();
-    await acknowledgeIbkrGatewayFleetControl(response);
+        if (!result.capsule || !result.targets) throw invalidHostResponse();
+        return {
+          capsule: result.capsule,
+          kind: "found" as const,
+          targets: result.targets,
+        };
+      })();
+      await acknowledgeIbkrGatewayFleetControl(current);
+      return { current, hostStatus };
+    });
     if (gatewayEpoch(appUserId) !== epoch) return null;
-    if (hostStatus.kind === "not_found") {
+    if (response.hostStatus.kind === "not_found") {
       if (
         entry &&
         gateways.get(appUserId) === entry &&
-        sameFleetFence(entry.fleetFence, response.fence)
+        sameFleetFence(entry.fleetFence, response.current.fence)
       ) {
         entry.status = "stopped";
         gateways.delete(appUserId);
-        stopFleetLeaseKeepalive(appUserId);
       }
       return null;
     }
@@ -1014,17 +1308,20 @@ export async function refreshGateway(
       if (
         !current.fleetFence ||
         !isAlive(current) ||
-        !sameFleetFence(current.fleetFence, response.fence)
+        !sameFleetFence(current.fleetFence, response.current.fence)
       ) {
         return null;
       }
-      current.fleetFence = response.fence;
-      return updateHostedGateway(current, hostStatus.capsule);
+      current.fleetFence = response.current.fence;
+      return updateHostedGateway(current, response.hostStatus.capsule);
     }
     return rememberFleetGateway(
       appUserId,
-      response.fence,
-      { capsule: hostStatus.capsule, targets: hostStatus.targets },
+      response.current.fence,
+      {
+        capsule: response.hostStatus.capsule,
+        targets: response.hostStatus.targets,
+      },
       true,
     );
   }
@@ -1072,13 +1369,14 @@ export async function stopGateway(appUserId: string): Promise<void> {
   const entry = gateways.get(appUserId);
   if (isIbkrGatewayFleetEnabled()) {
     bumpGatewayEpoch(appUserId);
-    stopFleetLeaseKeepalive(appUserId);
     if (entry) {
       entry.status = "stopped";
       if (gateways.get(appUserId) === entry) gateways.delete(appUserId);
     }
-    const pending = [...(hostedEnsureRequests.get(appUserId) ?? [])];
     const promise = (async () => {
+      const admission = fleetAdmissionRequests.get(appUserId);
+      if (admission) await Promise.allSettled([admission]);
+      const pending = [...(hostedEnsureRequests.get(appUserId) ?? [])];
       await Promise.allSettled(pending);
       const fence =
         entry?.fleetFence ?? (await readIbkrGatewayFleetFence(appUserId));
@@ -1093,17 +1391,20 @@ export async function stopGateway(appUserId: string): Promise<void> {
       let currentFence = fence;
       let releaseControlAttemptId: string | null = null;
       try {
-        const released = await requestIbkrGatewayFleetHost<unknown>(
-          fence,
-          "release",
-        );
-        const receipt = parseHostResponse(
-          FleetHostReleaseResponseSchema,
-          released.value,
-        );
-        if (released.status !== "ok") throw invalidHostResponse();
-        assertMatchingFleetResponse(receipt, released);
-        await acknowledgeIbkrGatewayFleetControl(released);
+        const released = await serializeFleetControl(fence, async () => {
+          const current = await requestIbkrGatewayFleetHost<unknown>(
+            fence,
+            "release",
+          );
+          const receipt = parseHostResponse(
+            FleetHostReleaseResponseSchema,
+            current.value,
+          );
+          if (current.status !== "ok") throw invalidHostResponse();
+          assertMatchingFleetResponse(receipt, current);
+          await acknowledgeIbkrGatewayFleetControl(current);
+          return current;
+        });
         currentFence = released.fence;
         releaseControlAttemptId = released.controlAttemptId;
       } catch (error) {
@@ -1166,3 +1467,10 @@ export async function stopGateway(appUserId: string): Promise<void> {
 export function listGateways(): PortalGateway[] {
   return [...gateways.values()].filter(isAlive).map(toPublic);
 }
+
+export const __ibkrPortalGatewayManagerInternalsForTests = {
+  fleetControlLockKey,
+  hostLeaseGrantIsValid: (value: unknown) =>
+    HostLeaseGrantSchema.safeParse(value).success,
+  runFleetCoordinatorOnce,
+};

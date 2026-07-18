@@ -16,6 +16,7 @@ const NOW = new Date("2026-07-16T20:00:00.000Z");
 function host(overrides: Partial<OperatorHost> = {}): OperatorHost {
   return {
     admissionSlotCapacity: 1,
+    capsuleLeaseProtocolVersion: 1,
     controlOrigin: "http://127.0.0.1:18748",
     failureDomain: "reserved-vm-primary",
     heartbeatExpiresAt: new Date("2026-07-16T20:00:30.000Z"),
@@ -77,6 +78,7 @@ test("inspects only the bounded nonsecret host state", async () => {
     host: {
       admissionSlotCapacity: 1,
       activeLeaseCount: 0,
+      capsuleLeaseProtocolVersion: 1,
       controlOrigin: "http://127.0.0.1:18748",
       failureDomain: "reserved-vm-primary",
       heartbeatExpiresAt: "2026-07-16T20:00:30.000Z",
@@ -102,6 +104,7 @@ test("approves only the exact attestation and requested admission ceiling", asyn
     `--image-digest=${SHA}`,
     `--runtime-spec-digest=${SHA}`,
     `--runtime-attestation-digest=${SHA}`,
+    "--capsule-lease-protocol-version=1",
     "--admission-slot-capacity=1",
     "--execute",
   ]);
@@ -122,6 +125,7 @@ test("approves only the exact attestation and requested admission ceiling", asyn
   assert.deepEqual(approvals, [
     {
       admissionSlotCapacity: 1,
+      capsuleLeaseProtocolVersion: 1,
       hostId: HOST_ID,
       imageDigest: SHA,
       runtimeAttestationDigest: SHA,
@@ -129,6 +133,43 @@ test("approves only the exact attestation and requested admission ceiling", asyn
       workloadIdentityDigest: WORKLOAD,
     },
   ]);
+});
+
+test("requires a canonical capsule lease protocol approval version", () => {
+  const approvalArgs = [
+    "approve",
+    `--host-id=${HOST_ID}`,
+    `--workload-identity-digest=${WORKLOAD}`,
+    `--image-digest=${SHA}`,
+    `--runtime-spec-digest=${SHA}`,
+    `--runtime-attestation-digest=${SHA}`,
+    "--admission-slot-capacity=1",
+    "--execute",
+  ];
+  for (const version of ["0", "1"]) {
+    const command = parseIbkrGatewayHostAdminArgs([
+      ...approvalArgs,
+      `--capsule-lease-protocol-version=${version}`,
+    ]);
+    assert.equal(
+      command?.action === "approve"
+        ? command.capsuleLeaseProtocolVersion
+        : undefined,
+      Number(version),
+    );
+  }
+  for (const version of [undefined, "-1", "2", "01"]) {
+    assert.throws(
+      () =>
+        parseIbkrGatewayHostAdminArgs([
+          ...approvalArgs,
+          ...(version === undefined
+            ? []
+            : [`--capsule-lease-protocol-version=${version}`]),
+        ]),
+      /Usage:/,
+    );
+  }
 });
 
 test("drains or quarantines through the explicit fail-safe state transition", async () => {

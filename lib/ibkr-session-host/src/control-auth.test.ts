@@ -21,6 +21,12 @@ const OVERLAP_KEY_TEXT = Buffer.alloc(32, 8).toString("base64url");
 const OVERLAP_KEY = decodeIbkrHostControlKey(OVERLAP_KEY_TEXT)!;
 const NOW_SECONDS = 1_784_200_000;
 const CONTROL_ATTEMPT_ID = "44444444-4444-4444-8444-444444444444";
+const LEASE_REQUEST = {
+  version: 1 as const,
+  bootId: "66666666-6666-4666-8666-666666666666",
+  grantNotAfterNs: "1234567890123456",
+  controlAttemptId: CONTROL_ATTEMPT_ID,
+};
 const PATH =
   "/sessions/33333333-3333-4333-8333-333333333333/generations/7/slots/2/ensure";
 
@@ -171,6 +177,52 @@ test("signs an exact response receipt bound to its request", () => {
         path: PATH,
         timestampSeconds: NOW_SECONDS,
       }),
+    }),
+    false,
+  );
+});
+
+test("binds keepalive response receipts to the exact attempt and body", () => {
+  const body = JSON.stringify({
+    action: "keepalive",
+    controlAttemptId: CONTROL_ATTEMPT_ID,
+    keptAlive: true,
+    lease: {
+      version: LEASE_REQUEST.version,
+      bootId: LEASE_REQUEST.bootId,
+      grantNotAfterNs: LEASE_REQUEST.grantNotAfterNs,
+    },
+  });
+  const headers = signIbkrHostControlReceipt({
+    action: "keepalive",
+    body,
+    controlAttemptId: CONTROL_ATTEMPT_ID,
+    hostId: HOST_ID,
+    key: KEY,
+    status: 200,
+  });
+
+  assert.equal(
+    verifyIbkrHostControlReceipt({
+      action: "keepalive",
+      body,
+      controlAttemptId: CONTROL_ATTEMPT_ID,
+      expectedHostId: HOST_ID,
+      headers,
+      key: KEY,
+      status: 200,
+    }),
+    true,
+  );
+  assert.equal(
+    verifyIbkrHostControlReceipt({
+      action: "ensure",
+      body,
+      controlAttemptId: CONTROL_ATTEMPT_ID,
+      expectedHostId: HOST_ID,
+      headers,
+      key: KEY,
+      status: 200,
     }),
     false,
   );

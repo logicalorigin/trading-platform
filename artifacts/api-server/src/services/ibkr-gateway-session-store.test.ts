@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   brokerConnectionsTable,
   db,
+  ibkrGatewayHostsTable,
   ibkrGatewaySessionsTable,
   usersTable,
 } from "@workspace/db";
@@ -20,8 +21,12 @@ import {
   ensureIbkrGatewayBrokerConnection,
   ensureIbkrGatewaySessionIdentity,
   heartbeatIbkrGatewayHost,
+  listRecoverableIbkrGatewayFences,
+  listRenewableIbkrGatewayFences,
+  readIbkrGatewayLifecycleSnapshot,
   readIbkrGatewayHost,
   readCurrentIbkrGatewayFence,
+  reapExpiredIbkrGatewayPlacements,
   registerIbkrGatewayHost,
   releaseIbkrGatewayLease,
   renewIbkrGatewayCleanupLease,
@@ -117,6 +122,7 @@ async function seedIdentities(count: number): Promise<SyntheticIdentity[]> {
 
 async function registerAndApproveHost(input: {
   admissionSlotCapacity: number;
+  capsuleLeaseProtocolVersion?: 0 | 1;
   hostId: string;
   measuredSlotCapacity?: number;
   workloadIdentityDigest: string;
@@ -132,6 +138,7 @@ async function registerAndApproveHost(input: {
     failureDomain: input.hostId === HOST_A ? "synthetic-a" : "synthetic-b",
     measuredSlotCapacity:
       input.measuredSlotCapacity ?? input.admissionSlotCapacity,
+    capsuleLeaseProtocolVersion: input.capsuleLeaseProtocolVersion ?? 1,
   });
   assert.ok(registered);
   assert.equal(registered.status, "quarantined");
@@ -142,16 +149,54 @@ async function registerAndApproveHost(input: {
     imageDigest: input.sha,
     runtimeSpecDigest: input.sha,
     runtimeAttestationDigest: input.sha,
+    capsuleLeaseProtocolVersion: input.capsuleLeaseProtocolVersion ?? 1,
     admissionSlotCapacity: input.admissionSlotCapacity,
   });
   assert.ok(approved);
   assert.equal(approved.status, "active");
 }
 
+async function placeLegacySession(
+  identity: SyntheticIdentity,
+  hostId: string,
+): Promise<IbkrGatewayFence> {
+  const session = await ensureIbkrGatewaySessionIdentity(identity);
+  assert.ok(session);
+  const generation = session.generation + 1;
+  const leaseExpiresAt = new Date(Date.now() + 30_000);
+  const replacementDeadlineAt = new Date(Date.now() + 155_000);
+  const [placed] = await db
+    .update(ibkrGatewaySessionsTable)
+    .set({
+      generation,
+      lifecycleState: "provisioning",
+      hostId,
+      slotNumber: 1,
+      leaseHolderId: session.id,
+      leaseExpiresAt,
+      replacementDeadlineAt,
+    })
+    .where(eq(ibkrGatewaySessionsTable.id, session.id))
+    .returning();
+  assert.ok(placed);
+  return {
+    ...identity,
+    generation,
+    hostId,
+    leaseHolderId: session.id,
+    sessionId: session.id,
+    slotNumber: 1,
+  };
+}
+
 async function beginAndAcknowledgeCleanup(
   fence: IbkrGatewayFence,
 ): Promise<string> {
-  const attempt = await beginIbkrGatewayControlAttempt(fence, "cleanup");
+  const attempt = await beginIbkrGatewayControlAttempt(
+    fence,
+    "cleanup",
+    "release",
+  );
   assert.ok(attempt);
   assert.equal(
     await acknowledgeIbkrGatewayControlAttempt(
@@ -173,6 +218,7 @@ test("host registration is idempotent, quarantined by default, and attestation-b
       imageDigest: SHA_A,
       runtimeSpecDigest: SHA_A,
       runtimeAttestationDigest: SHA_A,
+      capsuleLeaseProtocolVersion: 0,
       failureDomain: "synthetic-a",
       measuredSlotCapacity: 2,
     });
@@ -180,6 +226,7 @@ test("host registration is idempotent, quarantined by default, and attestation-b
     assert.equal(registered.controlOrigin, "https://host-a.internal.invalid");
     assert.equal(registered.status, "quarantined");
     assert.equal(registered.admissionSlotCapacity, 1);
+    assert.equal(registered.capsuleLeaseProtocolVersion, 0);
     assert.equal((await readIbkrGatewayHost(HOST_A))?.id, HOST_A);
     assert.equal(await readIbkrGatewayHost("not-a-host"), null);
     assert.equal(await countActiveIbkrGatewayHostLeases(HOST_A), 0);
@@ -192,10 +239,64 @@ test("host registration is idempotent, quarantined by default, and attestation-b
       imageDigest: SHA_A,
       runtimeSpecDigest: SHA_A,
       runtimeAttestationDigest: SHA_A,
+      capsuleLeaseProtocolVersion: 0,
       failureDomain: "synthetic-a",
       measuredSlotCapacity: 2,
     });
     assert.equal(repeated?.id, HOST_A);
+    assert.equal(
+      await registerIbkrGatewayHost({
+        hostId: HOST_A,
+        workloadIdentityDigest: WORKLOAD_A,
+        controlOrigin: "https://host-a.internal.invalid",
+        imageDigest: SHA_A,
+        runtimeSpecDigest: SHA_A,
+        runtimeAttestationDigest: SHA_A,
+        failureDomain: "synthetic-a",
+        measuredSlotCapacity: 2,
+        capsuleLeaseProtocolVersion: 1,
+      }),
+      null,
+    );
+
+    const leased = await registerIbkrGatewayHost({
+      hostId: HOST_B,
+      workloadIdentityDigest: WORKLOAD_B,
+      controlOrigin: "https://host-b.internal.invalid",
+      imageDigest: SHA_B,
+      runtimeSpecDigest: SHA_B,
+      runtimeAttestationDigest: SHA_B,
+      failureDomain: "synthetic-b",
+      measuredSlotCapacity: 1,
+      capsuleLeaseProtocolVersion: 1,
+    });
+    assert.equal(leased?.capsuleLeaseProtocolVersion, 1);
+    assert.equal(
+      await registerIbkrGatewayHost({
+        hostId: "00000000-0000-4000-8000-000000000003",
+        workloadIdentityDigest: "e".repeat(64),
+        controlOrigin: "https://host-c.internal.invalid",
+        imageDigest: SHA_B,
+        runtimeSpecDigest: SHA_B,
+        runtimeAttestationDigest: SHA_B,
+        failureDomain: "synthetic-c",
+        measuredSlotCapacity: 1,
+        capsuleLeaseProtocolVersion: 2 as never,
+      }),
+      null,
+    );
+    await assert.rejects(
+      db
+        .update(ibkrGatewayHostsTable)
+        .set({ capsuleLeaseProtocolVersion: 2 as never })
+        .where(eq(ibkrGatewayHostsTable.id, HOST_A)),
+      (error) =>
+        error instanceof Error &&
+        error.cause instanceof Error &&
+        /ibkr_gateway_hosts_capsule_lease_protocol_version_chk/.test(
+          error.cause.message,
+        ),
+    );
 
     assert.equal(
       await registerIbkrGatewayHost({
@@ -205,6 +306,7 @@ test("host registration is idempotent, quarantined by default, and attestation-b
         imageDigest: SHA_B,
         runtimeSpecDigest: SHA_A,
         runtimeAttestationDigest: SHA_A,
+        capsuleLeaseProtocolVersion: 0,
         failureDomain: "synthetic-a",
         measuredSlotCapacity: 2,
       }),
@@ -217,6 +319,19 @@ test("host registration is idempotent, quarantined by default, and attestation-b
         imageDigest: SHA_B,
         runtimeSpecDigest: SHA_A,
         runtimeAttestationDigest: SHA_A,
+        capsuleLeaseProtocolVersion: 0,
+        admissionSlotCapacity: 2,
+      }),
+      null,
+    );
+    assert.equal(
+      await approveIbkrGatewayHost({
+        hostId: HOST_A,
+        workloadIdentityDigest: WORKLOAD_A,
+        imageDigest: SHA_A,
+        runtimeSpecDigest: SHA_A,
+        runtimeAttestationDigest: SHA_A,
+        capsuleLeaseProtocolVersion: 1,
         admissionSlotCapacity: 2,
       }),
       null,
@@ -228,6 +343,7 @@ test("host registration is idempotent, quarantined by default, and attestation-b
       imageDigest: SHA_A,
       runtimeSpecDigest: SHA_A,
       runtimeAttestationDigest: SHA_A,
+      capsuleLeaseProtocolVersion: 0 as const,
       admissionSlotCapacity: 2,
     });
     assert.equal(approved?.status, "active");
@@ -259,6 +375,7 @@ test("host registration permits only exact loopback HTTP control origins", async
       imageDigest: SHA_A,
       runtimeSpecDigest: SHA_A,
       runtimeAttestationDigest: SHA_A,
+      capsuleLeaseProtocolVersion: 0 as const,
       failureDomain: "synthetic-loopback",
       measuredSlotCapacity: 1,
     };
@@ -289,6 +406,62 @@ test("host registration permits only exact loopback HTTP control origins", async
       controlOrigin: "http://[::1]:18748/",
     });
     assert.equal(ipv6?.controlOrigin, "http://[::1]:18748");
+  });
+});
+
+test("admission excludes hosts without the capsule lease protocol", async () => {
+  await withTestDb(async () => {
+    await registerAndApproveHost({
+      hostId: HOST_A,
+      workloadIdentityDigest: WORKLOAD_A,
+      sha: SHA_A,
+      admissionSlotCapacity: 1,
+      capsuleLeaseProtocolVersion: 0,
+    });
+    const [identity] = await seedIdentities(1);
+    assert.ok(identity);
+    assert.ok(await ensureIbkrGatewaySessionIdentity(identity));
+
+    assert.deepEqual(await tryAcquireIbkrGatewayLease(identity), {
+      status: "busy",
+    });
+  });
+});
+
+test("reads only the lifecycle for the exact owner-bound gateway connection", async () => {
+  await withTestDb(async () => {
+    const [owner, otherOwner, missing] = await seedIdentities(3);
+    assert.ok(owner);
+    assert.ok(otherOwner);
+    assert.ok(missing);
+    const session = await ensureIbkrGatewaySessionIdentity(owner);
+    assert.ok(session);
+
+    await db
+      .update(ibkrGatewaySessionsTable)
+      .set({ lifecycleState: "released" })
+      .where(eq(ibkrGatewaySessionsTable.id, session.id));
+
+    assert.deepEqual(await readIbkrGatewayLifecycleSnapshot(owner), {
+      lifecycleState: "released",
+    });
+    assert.equal(
+      await readIbkrGatewayLifecycleSnapshot({
+        appUserId: otherOwner.appUserId,
+        brokerConnectionId: owner.brokerConnectionId,
+      }),
+      null,
+    );
+    assert.equal(await readIbkrGatewayLifecycleSnapshot(missing), null);
+
+    await db
+      .update(ibkrGatewaySessionsTable)
+      .set({ lifecycleState: "provisioning" })
+      .where(eq(ibkrGatewaySessionsTable.id, session.id));
+
+    const provisioning = await readIbkrGatewayLifecycleSnapshot(owner);
+    assert.deepEqual(provisioning, { lifecycleState: "provisioning" });
+    assert.deepEqual(Object.keys(provisioning ?? {}), ["lifecycleState"]);
   });
 });
 
@@ -331,6 +504,7 @@ test("measured host slots and the global ceiling admit at most twenty distinct o
         imageDigest: SHA_A,
         runtimeSpecDigest: SHA_A,
         runtimeAttestationDigest: SHA_A,
+        capsuleLeaseProtocolVersion: 1,
         admissionSlotCapacity: 20,
       }),
     );
@@ -341,6 +515,7 @@ test("measured host slots and the global ceiling admit at most twenty distinct o
         imageDigest: SHA_B,
         runtimeSpecDigest: SHA_B,
         runtimeAttestationDigest: SHA_B,
+        capsuleLeaseProtocolVersion: 1,
         admissionSlotCapacity: 20,
       }),
     );
@@ -451,18 +626,6 @@ test("draining blocks new placement while quarantine synchronously fences existi
         replacementDeadlineAt: new Date(reusableAtMs - 1_000),
       })
       .where(eq(ibkrGatewaySessionsTable.id, first.fence.sessionId));
-    assert.deepEqual(await tryAcquireIbkrGatewayLease(identityA), {
-      status: "busy",
-    });
-    assert.equal(
-      await transitionIbkrGatewayLifecycle(first.fence, "draining"),
-      true,
-    );
-    const firstCleanupAttemptId = await beginAndAcknowledgeCleanup(first.fence);
-    assert.equal(
-      await releaseIbkrGatewayLease(first.fence, firstCleanupAttemptId),
-      true,
-    );
     const replacement = await tryAcquireIbkrGatewayLease(identityA);
     assert.equal(replacement.status, "acquired");
     if (replacement.status !== "acquired") return;
@@ -592,14 +755,11 @@ test("elapsed database deadlines do not reuse a capsule without host-enforced ex
       workloadIdentityDigest: WORKLOAD_A,
       sha: SHA_A,
       admissionSlotCapacity: 1,
+      capsuleLeaseProtocolVersion: 0,
     });
     const [identity] = await seedIdentities(1);
     assert.ok(identity);
-    const session = await ensureIbkrGatewaySessionIdentity(identity);
-    assert.ok(session);
-    const first = await tryAcquireIbkrGatewayLease(identity);
-    assert.equal(first.status, "acquired");
-    if (first.status !== "acquired") return;
+    const first = await placeLegacySession(identity, HOST_A);
 
     const reusableAtMs = Date.now();
     await db
@@ -608,7 +768,7 @@ test("elapsed database deadlines do not reuse a capsule without host-enforced ex
         leaseExpiresAt: new Date(reusableAtMs - 126_000),
         replacementDeadlineAt: new Date(reusableAtMs - 1_000),
       })
-      .where(eq(ibkrGatewaySessionsTable.id, session.id));
+      .where(eq(ibkrGatewaySessionsTable.id, first.sessionId));
 
     assert.deepEqual(await tryAcquireIbkrGatewayLease(identity), {
       status: "busy",
@@ -617,16 +777,585 @@ test("elapsed database deadlines do not reuse a capsule without host-enforced ex
     const [retained] = await db
       .select()
       .from(ibkrGatewaySessionsTable)
-      .where(eq(ibkrGatewaySessionsTable.id, session.id))
+      .where(eq(ibkrGatewaySessionsTable.id, first.sessionId))
       .limit(1);
-    assert.equal(retained?.generation, first.fence.generation);
-    assert.equal(retained?.hostId, first.fence.hostId);
-    assert.equal(retained?.slotNumber, first.fence.slotNumber);
-    assert.equal(retained?.leaseHolderId, first.fence.leaseHolderId);
+    assert.equal(retained?.generation, first.generation);
+    assert.equal(retained?.hostId, first.hostId);
+    assert.equal(retained?.slotNumber, first.slotNumber);
+    assert.equal(retained?.leaseHolderId, first.leaseHolderId);
     assert.equal(
       retained?.replacementDeadlineAt?.getTime(),
       reusableAtMs - 1_000,
     );
+  });
+});
+
+test("only acknowledged ensure and keepalive attempts move the replacement deadline", async () => {
+  await withTestDb(async () => {
+    await registerAndApproveHost({
+      hostId: HOST_A,
+      workloadIdentityDigest: WORKLOAD_A,
+      sha: SHA_A,
+      admissionSlotCapacity: 1,
+    });
+    const [identity] = await seedIdentities(1);
+    assert.ok(identity);
+    const session = await ensureIbkrGatewaySessionIdentity(identity);
+    assert.ok(session);
+    const acquired = await tryAcquireIbkrGatewayLease(identity);
+    assert.equal(acquired.status, "acquired");
+    if (acquired.status !== "acquired") return;
+
+    const shortDeadline = new Date(Date.now() + 60_000);
+    await db
+      .update(ibkrGatewaySessionsTable)
+      .set({ replacementDeadlineAt: shortDeadline })
+      .where(eq(ibkrGatewaySessionsTable.id, session.id));
+
+    assert.ok(await renewIbkrGatewayLease(acquired.fence));
+    let [stored] = await db
+      .select()
+      .from(ibkrGatewaySessionsTable)
+      .where(eq(ibkrGatewaySessionsTable.id, session.id))
+      .limit(1);
+    assert.equal(
+      stored?.replacementDeadlineAt?.getTime(),
+      shortDeadline.getTime(),
+    );
+
+    const status = await beginIbkrGatewayControlAttempt(
+      acquired.fence,
+      "traffic",
+      "status",
+    );
+    assert.ok(status);
+    [stored] = await db
+      .select()
+      .from(ibkrGatewaySessionsTable)
+      .where(eq(ibkrGatewaySessionsTable.id, session.id))
+      .limit(1);
+    assert.equal(
+      stored?.replacementDeadlineAt?.getTime(),
+      shortDeadline.getTime(),
+    );
+    assert.equal(
+      await acknowledgeIbkrGatewayControlAttempt(
+        status.fence,
+        status.controlAttemptId,
+        "traffic",
+        false,
+      ),
+      true,
+    );
+    [stored] = await db
+      .select()
+      .from(ibkrGatewaySessionsTable)
+      .where(eq(ibkrGatewaySessionsTable.id, session.id))
+      .limit(1);
+    assert.equal(
+      stored?.replacementDeadlineAt?.getTime(),
+      shortDeadline.getTime(),
+    );
+
+    const ensureStartedAt = Date.now();
+    const ensure = await beginIbkrGatewayControlAttempt(
+      acquired.fence,
+      "traffic",
+      "ensure",
+    );
+    assert.ok(ensure);
+    [stored] = await db
+      .select()
+      .from(ibkrGatewaySessionsTable)
+      .where(eq(ibkrGatewaySessionsTable.id, session.id))
+      .limit(1);
+    assert.ok(stored?.leaseExpiresAt);
+    assert.ok(
+      stored.leaseExpiresAt.getTime() >= ensureStartedAt + 120_000,
+    );
+    assert.equal(
+      stored.replacementDeadlineAt?.getTime(),
+      shortDeadline.getTime(),
+    );
+    const ensureAcknowledgedAt = Date.now();
+    assert.equal(
+      await acknowledgeIbkrGatewayControlAttempt(
+        ensure.fence,
+        ensure.controlAttemptId,
+        "traffic",
+        true,
+      ),
+      true,
+    );
+    [stored] = await db
+      .select()
+      .from(ibkrGatewaySessionsTable)
+      .where(eq(ibkrGatewaySessionsTable.id, session.id))
+      .limit(1);
+    assert.ok(
+      (stored?.replacementDeadlineAt?.getTime() ?? 0) >=
+        ensureAcknowledgedAt + 155_000,
+    );
+
+    await db
+      .update(ibkrGatewaySessionsTable)
+      .set({ replacementDeadlineAt: shortDeadline })
+      .where(eq(ibkrGatewaySessionsTable.id, session.id));
+    const keepalive = await beginIbkrGatewayControlAttempt(
+      acquired.fence,
+      "traffic",
+      "keepalive",
+    );
+    assert.ok(keepalive);
+    [stored] = await db
+      .select()
+      .from(ibkrGatewaySessionsTable)
+      .where(eq(ibkrGatewaySessionsTable.id, session.id))
+      .limit(1);
+    assert.equal(
+      stored?.replacementDeadlineAt?.getTime(),
+      shortDeadline.getTime(),
+    );
+    const keepaliveAcknowledgedAt = Date.now();
+    assert.equal(
+      await acknowledgeIbkrGatewayControlAttempt(
+        keepalive.fence,
+        keepalive.controlAttemptId,
+        "traffic",
+        true,
+      ),
+      true,
+    );
+    [stored] = await db
+      .select()
+      .from(ibkrGatewaySessionsTable)
+      .where(eq(ibkrGatewaySessionsTable.id, session.id))
+      .limit(1);
+    const keepaliveDeadline = stored?.replacementDeadlineAt;
+    assert.ok(
+      (keepaliveDeadline?.getTime() ?? 0) >= keepaliveAcknowledgedAt + 155_000,
+    );
+
+    assert.equal(
+      await transitionIbkrGatewayLifecycle(acquired.fence, "draining"),
+      true,
+    );
+    assert.ok(await renewIbkrGatewayCleanupLease(acquired.fence));
+    [stored] = await db
+      .select()
+      .from(ibkrGatewaySessionsTable)
+      .where(eq(ibkrGatewaySessionsTable.id, session.id))
+      .limit(1);
+    assert.equal(
+      stored?.replacementDeadlineAt?.getTime(),
+      keepaliveDeadline?.getTime(),
+    );
+    const release = await beginIbkrGatewayControlAttempt(
+      acquired.fence,
+      "cleanup",
+      "release",
+    );
+    assert.ok(release);
+    [stored] = await db
+      .select()
+      .from(ibkrGatewaySessionsTable)
+      .where(eq(ibkrGatewaySessionsTable.id, session.id))
+      .limit(1);
+    assert.equal(
+      stored?.replacementDeadlineAt?.getTime(),
+      keepaliveDeadline?.getTime(),
+    );
+
+    assert.equal(
+      await beginIbkrGatewayControlAttempt(
+        acquired.fence,
+        "cleanup",
+        "keepalive",
+      ),
+      null,
+    );
+    assert.equal(
+      await beginIbkrGatewayControlAttempt(
+        acquired.fence,
+        "traffic",
+        "release",
+      ),
+      null,
+    );
+  });
+});
+
+test("ensure acknowledgements remain exact through the transport window", async () => {
+  await withTestDb(async ({ client }) => {
+    await registerAndApproveHost({
+      hostId: HOST_A,
+      workloadIdentityDigest: WORKLOAD_A,
+      sha: SHA_A,
+      admissionSlotCapacity: 1,
+    });
+    const [identity] = await seedIdentities(1);
+    assert.ok(identity);
+    const session = await ensureIbkrGatewaySessionIdentity(identity);
+    assert.ok(session);
+    const acquired = await tryAcquireIbkrGatewayLease(identity);
+    assert.equal(acquired.status, "acquired");
+    if (acquired.status !== "acquired") return;
+
+    const first = await beginIbkrGatewayControlAttempt(
+      acquired.fence,
+      "traffic",
+      "ensure",
+    );
+    assert.ok(first);
+    let [stored] = await db
+      .select()
+      .from(ibkrGatewaySessionsTable)
+      .where(eq(ibkrGatewaySessionsTable.id, session.id))
+      .limit(1);
+    assert.ok(stored?.replacementDeadlineAt);
+    await db
+      .update(ibkrGatewayHostsTable)
+      .set({
+        heartbeatExpiresAt: new Date(
+          stored.replacementDeadlineAt.getTime() + 30_000,
+        ),
+      })
+      .where(eq(ibkrGatewayHostsTable.id, HOST_A));
+    const afterNinetySeconds = new Date(
+      stored.replacementDeadlineAt.getTime() - 65_000,
+    );
+    await client.exec(`
+      CREATE TABLE synthetic_ibkr_ack_clock (at timestamptz NOT NULL);
+      INSERT INTO synthetic_ibkr_ack_clock
+      VALUES ('${afterNinetySeconds.toISOString()}');
+      CREATE FUNCTION public.clock_timestamp()
+      RETURNS timestamptz
+      LANGUAGE sql
+      STABLE
+      AS $$ SELECT at FROM synthetic_ibkr_ack_clock LIMIT 1 $$;
+      SET search_path = public, pg_catalog;
+    `);
+
+    assert.equal(
+      await acknowledgeIbkrGatewayControlAttempt(
+        first.fence,
+        HOST_B,
+        "traffic",
+      ),
+      false,
+    );
+    assert.equal(
+      await acknowledgeIbkrGatewayControlAttempt(
+        { ...first.fence, leaseHolderId: HOST_B },
+        first.controlAttemptId,
+        "traffic",
+      ),
+      false,
+    );
+    assert.equal(
+      await acknowledgeIbkrGatewayControlAttempt(
+        first.fence,
+        first.controlAttemptId,
+        "traffic",
+      ),
+      true,
+    );
+
+    const second = await beginIbkrGatewayControlAttempt(
+      first.fence,
+      "traffic",
+      "ensure",
+    );
+    assert.ok(second);
+    [stored] = await db
+      .select()
+      .from(ibkrGatewaySessionsTable)
+      .where(eq(ibkrGatewaySessionsTable.id, session.id))
+      .limit(1);
+    assert.ok(stored?.replacementDeadlineAt);
+    await client.exec(`
+      UPDATE synthetic_ibkr_ack_clock
+      SET at = '${stored.replacementDeadlineAt.toISOString()}'
+    `);
+    assert.equal(
+      await acknowledgeIbkrGatewayControlAttempt(
+        second.fence,
+        second.controlAttemptId,
+        "traffic",
+      ),
+      false,
+    );
+  });
+});
+
+test("only exact lease-v1 ensure and keepalive recover an expired API lease", async () => {
+  await withTestDb(async () => {
+    await registerAndApproveHost({
+      hostId: HOST_A,
+      workloadIdentityDigest: WORKLOAD_A,
+      sha: SHA_A,
+      admissionSlotCapacity: 1,
+      capsuleLeaseProtocolVersion: 1,
+    });
+    await registerAndApproveHost({
+      hostId: HOST_B,
+      workloadIdentityDigest: WORKLOAD_B,
+      sha: SHA_B,
+      admissionSlotCapacity: 1,
+      capsuleLeaseProtocolVersion: 0,
+    });
+    const [identityA, identityB] = await seedIdentities(2);
+    assert.ok(identityA);
+    assert.ok(identityB);
+    assert.ok(await ensureIbkrGatewaySessionIdentity(identityA));
+    assert.ok(await ensureIbkrGatewaySessionIdentity(identityB));
+    const leased = await tryAcquireIbkrGatewayLease(identityA);
+    const legacy = await placeLegacySession(identityB, HOST_B);
+    assert.equal(leased.status, "acquired");
+    if (leased.status !== "acquired") return;
+
+    await db
+      .update(ibkrGatewaySessionsTable)
+      .set({ leaseExpiresAt: new Date(Date.now() - 1_000) })
+      .where(isNotNull(ibkrGatewaySessionsTable.hostId));
+    assert.equal(await renewIbkrGatewayLease(leased.fence), null);
+    assert.equal(
+      await beginIbkrGatewayControlAttempt(
+        leased.fence,
+        "traffic",
+        "status",
+      ),
+      null,
+    );
+    assert.deepEqual(await listRecoverableIbkrGatewayFences(), [leased.fence]);
+
+    const recovered = await beginIbkrGatewayControlAttempt(
+      leased.fence,
+      "traffic",
+      "ensure",
+    );
+    assert.ok(recovered);
+    assert.deepEqual(recovered.fence, leased.fence);
+    assert.equal(await assertCurrentIbkrGatewayFence(leased.fence), true);
+
+    await db
+      .update(ibkrGatewaySessionsTable)
+      .set({ leaseExpiresAt: new Date(Date.now() - 1_000) })
+      .where(eq(ibkrGatewaySessionsTable.id, leased.fence.sessionId));
+    assert.ok(
+      await beginIbkrGatewayControlAttempt(
+        leased.fence,
+        "traffic",
+        "keepalive",
+      ),
+    );
+    assert.equal(
+      await beginIbkrGatewayControlAttempt(
+        legacy,
+        "traffic",
+        "ensure",
+      ),
+      null,
+    );
+
+    const staleFence = {
+      ...leased.fence,
+      generation: leased.fence.generation + 1,
+    };
+    assert.equal(
+      await beginIbkrGatewayControlAttempt(
+        staleFence,
+        "traffic",
+        "keepalive",
+      ),
+      null,
+    );
+  });
+});
+
+test("coordinator-renewable fences exclude unfinished provisioning placements", async () => {
+  await withTestDb(async () => {
+    await registerAndApproveHost({
+      hostId: HOST_A,
+      workloadIdentityDigest: WORKLOAD_A,
+      sha: SHA_A,
+      admissionSlotCapacity: 2,
+      capsuleLeaseProtocolVersion: 1,
+    });
+    const identities = await seedIdentities(2);
+    for (const identity of identities) {
+      assert.ok(identity);
+      assert.ok(await ensureIbkrGatewaySessionIdentity(identity));
+    }
+    const placements = await Promise.all(
+      identities.map((identity) => tryAcquireIbkrGatewayLease(identity)),
+    );
+    assert.equal(
+      placements.every((placement) => placement.status === "acquired"),
+      true,
+    );
+    const [provisioning, readyForLogin] = placements;
+    assert.equal(provisioning?.status, "acquired");
+    assert.equal(readyForLogin?.status, "acquired");
+    if (
+      provisioning?.status !== "acquired" ||
+      readyForLogin?.status !== "acquired"
+    ) {
+      return;
+    }
+    assert.equal(
+      await transitionIbkrGatewayLifecycle(
+        readyForLogin.fence,
+        "login_required",
+      ),
+      true,
+    );
+
+    assert.deepEqual(
+      new Set(
+        (await listRecoverableIbkrGatewayFences()).map(
+          (fence) => fence.sessionId,
+        ),
+      ),
+      new Set([
+        provisioning.fence.sessionId,
+        readyForLogin.fence.sessionId,
+      ]),
+    );
+    assert.deepEqual(await listRenewableIbkrGatewayFences(), [
+      readyForLogin.fence,
+    ]);
+  });
+});
+
+test("lease-v1 deadlines reap at 155000ms, not 154999ms, and immediately free the exact slot", async () => {
+  await withTestDb(async ({ client }) => {
+    await registerAndApproveHost({
+      hostId: HOST_A,
+      workloadIdentityDigest: WORKLOAD_A,
+      sha: SHA_A,
+      admissionSlotCapacity: 1,
+      capsuleLeaseProtocolVersion: 1,
+    });
+    await registerAndApproveHost({
+      hostId: HOST_B,
+      workloadIdentityDigest: WORKLOAD_B,
+      sha: SHA_B,
+      admissionSlotCapacity: 1,
+      capsuleLeaseProtocolVersion: 0,
+    });
+    const [identityA, identityB, identityC] = await seedIdentities(3);
+    assert.ok(identityA);
+    assert.ok(identityB);
+    assert.ok(identityC);
+    assert.ok(await ensureIbkrGatewaySessionIdentity(identityA));
+    assert.ok(await ensureIbkrGatewaySessionIdentity(identityB));
+    assert.ok(await ensureIbkrGatewaySessionIdentity(identityC));
+    const leased = await tryAcquireIbkrGatewayLease(identityA);
+    const legacy = await placeLegacySession(identityB, HOST_B);
+    assert.equal(leased.status, "acquired");
+    if (leased.status !== "acquired") return;
+    assert.equal(leased.fence.hostId, HOST_A);
+    assert.equal(legacy.hostId, HOST_B);
+
+    const replacementDeadline = new Date(Date.now() + 10_000);
+    const hostHeartbeatDeadline = new Date(
+      replacementDeadline.getTime() + 30_000,
+    );
+    await db
+      .update(ibkrGatewayHostsTable)
+      .set({ heartbeatExpiresAt: hostHeartbeatDeadline })
+      .where(isNotNull(ibkrGatewayHostsTable.id));
+    await db
+      .update(ibkrGatewaySessionsTable)
+      .set({
+        leaseExpiresAt: hostHeartbeatDeadline,
+        replacementDeadlineAt: replacementDeadline,
+      })
+      .where(isNotNull(ibkrGatewaySessionsTable.hostId));
+    await db
+      .update(ibkrGatewaySessionsTable)
+      .set({ generation: POSTGRES_INTEGER_MAX })
+      .where(eq(ibkrGatewaySessionsTable.id, leased.fence.sessionId));
+    const saturatedFence = {
+      ...leased.fence,
+      generation: POSTGRES_INTEGER_MAX,
+    };
+
+    await client.exec(`
+      CREATE TABLE synthetic_ibkr_clock (at timestamptz NOT NULL);
+      CREATE TABLE synthetic_ibkr_admission_locks (calls integer NOT NULL);
+      INSERT INTO synthetic_ibkr_clock
+      VALUES ('${new Date(replacementDeadline.getTime() - 1).toISOString()}');
+      INSERT INTO synthetic_ibkr_admission_locks VALUES (0);
+      CREATE FUNCTION public.clock_timestamp()
+      RETURNS timestamptz
+      LANGUAGE sql
+      STABLE
+      AS $$ SELECT at FROM synthetic_ibkr_clock LIMIT 1 $$;
+      CREATE FUNCTION public.pg_advisory_xact_lock(bigint)
+      RETURNS void
+      LANGUAGE plpgsql
+      AS $$
+      BEGIN
+        UPDATE synthetic_ibkr_admission_locks SET calls = calls + 1;
+      END
+      $$;
+      SET search_path = public, pg_catalog;
+    `);
+    assert.equal(await reapExpiredIbkrGatewayPlacements(), 0);
+    assert.equal(await assertCurrentIbkrGatewayFence(saturatedFence), true);
+    assert.deepEqual(
+      await readCurrentIbkrGatewayFence(identityB),
+      legacy,
+    );
+    let lockCalls = await client.query<{ calls: number }>(
+      `SELECT calls FROM synthetic_ibkr_admission_locks`,
+    );
+    assert.equal(lockCalls.rows[0]?.calls, 1);
+
+    await client.exec(`
+      UPDATE synthetic_ibkr_clock
+      SET at = '${replacementDeadline.toISOString()}'
+    `);
+    assert.equal(await reapExpiredIbkrGatewayPlacements(), 1);
+    lockCalls = await client.query<{ calls: number }>(
+      `SELECT calls FROM synthetic_ibkr_admission_locks`,
+    );
+    assert.equal(lockCalls.rows[0]?.calls, 2);
+    assert.equal(await assertCurrentIbkrGatewayFence(saturatedFence), false);
+    assert.equal(await renewIbkrGatewayLease(saturatedFence), null);
+    assert.equal(await readCurrentIbkrGatewayFence(identityB), null);
+
+    const [reaped] = await db
+      .select()
+      .from(ibkrGatewaySessionsTable)
+      .where(eq(ibkrGatewaySessionsTable.id, saturatedFence.sessionId))
+      .limit(1);
+    assert.ok(reaped);
+    assert.equal(reaped.generation, POSTGRES_INTEGER_MAX);
+    assert.equal(reaped.lifecycleState, "released");
+    assert.equal(reaped.hostId, null);
+    assert.equal(reaped.slotNumber, null);
+    assert.equal(reaped.leaseHolderId, null);
+    assert.equal(reaped.leaseExpiresAt, null);
+    assert.equal(reaped.controlAttemptId, null);
+    assert.equal(reaped.controlAcknowledgedAt, null);
+    assert.equal(reaped.replacementDeadlineAt, null);
+
+    const [retainedLegacy] = await db
+      .select()
+      .from(ibkrGatewaySessionsTable)
+      .where(eq(ibkrGatewaySessionsTable.id, legacy.sessionId))
+      .limit(1);
+    assert.equal(retainedLegacy?.hostId, HOST_B);
+    assert.equal(retainedLegacy?.slotNumber, legacy.slotNumber);
+
+    const replacement = await tryAcquireIbkrGatewayLease(identityC);
+    assert.equal(replacement.status, "acquired");
+    if (replacement.status !== "acquired") return;
+    assert.equal(replacement.fence.hostId, HOST_A);
+    assert.equal(replacement.fence.slotNumber, leased.fence.slotNumber);
   });
 });
 
@@ -857,13 +1586,7 @@ test("exact cleanup retires a maximum-generation placement without overflow", as
 });
 
 test("control acknowledgements CAS only the latest exact attempt", async () => {
-  await withTestDb(async ({ client }) => {
-    const databaseClockMs = async (): Promise<number> => {
-      const clock = await client.query<{ at_ms: number }>(`
-        SELECT (extract(epoch FROM clock_timestamp()) * 1000)::double precision AS at_ms
-      `);
-      return Number(clock.rows[0]!.at_ms);
-    };
+  await withTestDb(async () => {
     await registerAndApproveHost({
       hostId: HOST_A,
       workloadIdentityDigest: WORKLOAD_A,
@@ -879,13 +1602,24 @@ test("control acknowledgements CAS only the latest exact attempt", async () => {
     if (acquired.status !== "acquired") return;
 
     assert.equal(
-      await beginIbkrGatewayControlAttempt(acquired.fence, "cleanup"),
+      await beginIbkrGatewayControlAttempt(
+        acquired.fence,
+        "cleanup",
+        "release",
+      ),
       null,
     );
-    const firstStartedAtMs = await databaseClockMs();
+    const [beforeFirst] = await db
+      .select({
+        replacementDeadlineAt: ibkrGatewaySessionsTable.replacementDeadlineAt,
+      })
+      .from(ibkrGatewaySessionsTable)
+      .where(eq(ibkrGatewaySessionsTable.id, session.id))
+      .limit(1);
     const first = await beginIbkrGatewayControlAttempt(
       acquired.fence,
       "traffic",
+      "ensure",
     );
     assert.ok(first);
     assert.deepEqual(first.fence, acquired.fence);
@@ -897,14 +1631,15 @@ test("control acknowledgements CAS only the latest exact attempt", async () => {
       .limit(1);
     assert.equal(firstStored?.controlAttemptId, first.controlAttemptId);
     assert.equal(firstStored?.controlAcknowledgedAt, null);
-    assert.ok(
-      (firstStored?.replacementDeadlineAt?.getTime() ?? 0) >=
-        firstStartedAtMs + 155_000,
+    assert.equal(
+      firstStored?.replacementDeadlineAt?.getTime(),
+      beforeFirst?.replacementDeadlineAt?.getTime(),
     );
 
     const second = await beginIbkrGatewayControlAttempt(
       acquired.fence,
       "traffic",
+      "keepalive",
     );
     assert.ok(second);
     assert.notEqual(second.controlAttemptId, first.controlAttemptId);
@@ -960,7 +1695,11 @@ test("control acknowledgements CAS only the latest exact attempt", async () => {
       false,
     );
     assert.equal(
-      await beginIbkrGatewayControlAttempt(acquired.fence, "traffic"),
+      await beginIbkrGatewayControlAttempt(
+        acquired.fence,
+        "traffic",
+        "status",
+      ),
       null,
     );
     const elapsedAtMs = Date.now();
@@ -971,10 +1710,11 @@ test("control acknowledgements CAS only the latest exact attempt", async () => {
         replacementDeadlineAt: new Date(elapsedAtMs - 1_000),
       })
       .where(eq(ibkrGatewaySessionsTable.id, session.id));
-    const cleanupStartedAtMs = await databaseClockMs();
+    const cleanupDeadlineAtMs = elapsedAtMs - 1_000;
     const cleanup = await beginIbkrGatewayControlAttempt(
       acquired.fence,
       "cleanup",
+      "release",
     );
     assert.ok(cleanup);
     const [cleanupStored] = await db
@@ -984,9 +1724,9 @@ test("control acknowledgements CAS only the latest exact attempt", async () => {
       .limit(1);
     assert.equal(cleanupStored?.controlAttemptId, cleanup.controlAttemptId);
     assert.equal(cleanupStored?.controlAcknowledgedAt, null);
-    assert.ok(
-      (cleanupStored?.replacementDeadlineAt?.getTime() ?? 0) >=
-        cleanupStartedAtMs + 155_000,
+    assert.equal(
+      cleanupStored?.replacementDeadlineAt?.getTime(),
+      cleanupDeadlineAtMs,
     );
     assert.equal(
       await acknowledgeIbkrGatewayControlAttempt(
@@ -1041,6 +1781,7 @@ test("control acknowledgements CAS only the latest exact attempt", async () => {
     const replacementAttempt = await beginIbkrGatewayControlAttempt(
       replacement.fence,
       "traffic",
+      "ensure",
     );
     assert.ok(replacementAttempt);
     assert.ok(await disableIbkrGatewayHost(HOST_A, "quarantined"));

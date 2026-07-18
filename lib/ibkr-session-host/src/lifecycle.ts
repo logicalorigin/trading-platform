@@ -19,6 +19,7 @@ type Registration = {
   imageDigest: string;
   runtimeSpecDigest: string;
   runtimeAttestationDigest: string;
+  capsuleLeaseProtocolVersion: 1;
   failureDomain: string;
   measuredSlotCapacity: number;
 };
@@ -144,6 +145,7 @@ export function loadIbkrHostLifecycleConfig(input: {
       imageDigest,
       runtimeSpecDigest,
       runtimeAttestationDigest,
+      capsuleLeaseProtocolVersion: 1,
       failureDomain,
       measuredSlotCapacity: input.hostConfig.capacity,
     },

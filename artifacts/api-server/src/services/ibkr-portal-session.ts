@@ -11,7 +11,9 @@ import {
 import { findRepoRoot } from "./runtime-flight-recorder";
 
 import {
+  beginGatewayStartup,
   ensureGateway,
+  isGatewayStartupPending,
   isPortalRuntimeAvailable,
   prepareGatewayClientRequest,
   refreshGateway,
@@ -117,6 +119,7 @@ const loginMonitors = new Map<
 const readinessQuietWindows = new Map<string, NodeJS.Timeout>();
 const observedLoginCompletions = new Map<string, number>();
 const completedLoginAttempts = new Set<string>();
+const pendingLoginStarts = new Set<string>();
 
 function clearPortalReadinessQuietWindow(appUserId: string): void {
   const timer = readinessQuietWindows.get(appUserId);
@@ -309,6 +312,17 @@ function needsLoginMessage(
     : "IBKR browser login completed. Waiting for IBKR's API session; this connection is not active yet.";
 }
 
+function initializePortalLogin(
+  appUserId: string,
+  loginCompletions: number,
+): void {
+  if (!pendingLoginStarts.delete(appUserId)) return;
+  observedLoginCompletions.set(appUserId, loginCompletions);
+  completedLoginAttempts.delete(appUserId);
+  setPortalReadinessQuietWindow(appUserId, LOGIN_MONITOR_TTL_MS);
+  startLoginMonitor(appUserId);
+}
+
 async function enterPortalVerification(appUserId: string): Promise<boolean> {
   if (await transitionGatewayLifecycle(appUserId, "verifying")) return true;
   await transitionGatewayLifecycle(appUserId, "reauth_required");
@@ -329,6 +343,14 @@ export async function readPortalReadiness(
     });
   }
 
+  if (await isGatewayStartupPending(appUserId)) {
+    return base({
+      status: "gateway_starting",
+      gatewayRunning: false,
+      message: "Starting the IBKR gateway…",
+    });
+  }
+
   const gateway = await refreshGateway(appUserId);
   if (!gateway) {
     return base({
@@ -337,6 +359,9 @@ export async function readPortalReadiness(
     });
   }
 
+  if (gateway.status === "ready") {
+    initializePortalLogin(appUserId, gateway.loginCompletions);
+  }
   const loginObservation = observePortalLoginCompletions(
     appUserId,
     gateway.loginCompletions,
@@ -461,20 +486,21 @@ export async function readPortalReadiness(
 export async function connectPortal(
   appUserId: string,
 ): Promise<{ status: PortalConnectionStatus }> {
-  const gateway = await ensureGateway(appUserId);
-  observedLoginCompletions.set(appUserId, gateway.loginCompletions);
-  completedLoginAttempts.delete(appUserId);
-  setPortalReadinessQuietWindow(appUserId, LOGIN_MONITOR_TTL_MS);
-  const status: PortalConnectionStatus =
-    gateway.status === "starting" ? "gateway_starting" : "needs_login";
-  // The login surface must not wait on /iserver/auth/status. A fresh CPG can
-  // take the full request timeout to answer before the browser has opened its
-  // login page. Both monitors stay quiet until exact Dispatcher success replaces
-  // this login-length guard with the shorter post-promotion quiet window.
-  startLoginMonitor(appUserId);
-  return {
-    status,
-  };
+  pendingLoginStarts.add(appUserId);
+  try {
+    const gateway = await beginGatewayStartup(appUserId);
+    if (!gateway) return { status: "gateway_starting" };
+    if (gateway.status === "ready") {
+      initializePortalLogin(appUserId, gateway.loginCompletions);
+    }
+    return {
+      status:
+        gateway.status === "starting" ? "gateway_starting" : "needs_login",
+    };
+  } catch (error) {
+    pendingLoginStarts.delete(appUserId);
+    throw error;
+  }
 }
 
 export async function getPortalStatus(
@@ -489,6 +515,7 @@ export async function disconnectPortal(
   clearPortalReadinessQuietWindow(appUserId);
   observedLoginCompletions.delete(appUserId);
   completedLoginAttempts.delete(appUserId);
+  pendingLoginStarts.delete(appUserId);
   stopLoginMonitor(appUserId);
   stopTickle(appUserId);
   revokeIbkrPortalEmbedSessions(appUserId);

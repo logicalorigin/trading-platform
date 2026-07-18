@@ -26,6 +26,7 @@ import { getIbkrClientPortalClient } from "./ibkr-client-runtime";
 import { runWithIbkrPortalUser } from "./ibkr-portal-context";
 
 import {
+  __setIbkrGatewayFleetCoordinationDependenciesForTests,
   ensureGateway,
   getGateway,
   markGatewayPaperAccountVerified,
@@ -34,6 +35,13 @@ import {
   stopGateway,
   validateGatewayDataFence,
 } from "./ibkr-portal-gateway-manager";
+
+__setIbkrGatewayFleetCoordinationDependenciesForTests({
+  acquireControlLock: async () => async () => {},
+});
+test.after(() => {
+  __setIbkrGatewayFleetCoordinationDependenciesForTests(null);
+});
 
 test("fleet mode routes every operation through the current signed generation fence", async () => {
   await withTestDb(async () => {
@@ -92,6 +100,25 @@ test("fleet mode routes every operation through the current signed generation fe
       redirect: RequestInit["redirect"];
       signal: boolean;
     }> = [];
+    const hostBootId = "99999999-9999-4999-8999-999999999999";
+    const hostLeases: Array<{
+      bootId: string;
+      controlAttemptId: string;
+      grantNotAfterNs: string;
+      version: 1;
+    }> = [];
+    let hostGrantNotAfterNs = 50_000_000_000n;
+    const issueHostLease = (controlAttemptId: string) => {
+      const lease = {
+        version: 1 as const,
+        bootId: hostBootId,
+        controlAttemptId,
+        grantNotAfterNs: String(hostGrantNotAfterNs),
+      };
+      hostGrantNotAfterNs += 1_000_000_000n;
+      hostLeases.push(lease);
+      return lease;
+    };
     let missingTargetsUserId: string | null = null;
     let recoveryUserId: string | null = null;
     const releaseFailureModes = new Map<
@@ -128,6 +155,7 @@ test("fleet mode routes every operation through the current signed generation fe
         imageDigest: sha,
         runtimeSpecDigest: sha,
         runtimeAttestationDigest: sha,
+        capsuleLeaseProtocolVersion: 1,
         failureDomain: "synthetic-zone-nine",
         measuredSlotCapacity: 3,
       }),
@@ -139,6 +167,7 @@ test("fleet mode routes every operation through the current signed generation fe
         imageDigest: sha,
         runtimeSpecDigest: sha,
         runtimeAttestationDigest: sha,
+        capsuleLeaseProtocolVersion: 1,
         admissionSlotCapacity: 3,
       }),
     );
@@ -154,7 +183,7 @@ test("fleet mode routes every operation through the current signed generation fe
         signal: init?.signal instanceof AbortSignal,
       });
       const controlRoute = url.pathname.match(
-        /^\/sessions\/([^/]+)\/generations\/(\d+)\/slots\/(\d+)\/(ensure|release|status)$/,
+        /^\/sessions\/([^/]+)\/generations\/(\d+)\/slots\/(\d+)\/(ensure|keepalive|release|status)$/,
       );
       const control = controlRoute
         ? {
@@ -165,6 +194,7 @@ test("fleet mode routes every operation through the current signed generation fe
             slotNumber: Number(controlRoute[3]),
           }
         : null;
+      const requestBody = String(init?.body ?? "");
       if (control) {
         assert.equal(url.searchParams.size, 1);
         assert.equal(url.searchParams.getAll("controlAttemptId").length, 1);
@@ -175,6 +205,36 @@ test("fleet mode routes every operation through the current signed generation fe
         assert.equal(
           url.search,
           `?controlAttemptId=${control.controlAttemptId}`,
+        );
+        assert.equal(
+          verifyIbkrHostControlRequest({
+            expectedHostId: hostId,
+            body: requestBody,
+            headers: Object.fromEntries(new Headers(init?.headers).entries()),
+            key: hostKey,
+            method: String(init?.method ?? "GET"),
+            path: `${url.pathname}${url.search}`,
+          }).valid,
+          true,
+        );
+        assert.equal(requestBody, "");
+      }
+      if (control?.action === "keepalive") {
+        const lease = issueHostLease(control.controlAttemptId!);
+        return signedControlResponse(
+          control.action,
+          control.controlAttemptId!,
+          {
+            sessionId: control.sessionId,
+            generation: control.generation,
+            slotNumber: control.slotNumber,
+            keptAlive: true,
+            lease: {
+              version: lease.version,
+              bootId: lease.bootId,
+              grantNotAfterNs: lease.grantNotAfterNs,
+            },
+          },
         );
       }
       if (control?.action === "release") {
@@ -289,6 +349,7 @@ test("fleet mode routes every operation through the current signed generation fe
         return Response.json({ session: "synthetic-session" });
       }
       assert.equal(control?.action, "ensure");
+      const lease = issueHostLease(control.controlAttemptId!);
       return signedControlResponse(control.action, control.controlAttemptId!, {
         sessionId: control.sessionId,
         generation: control.generation,
@@ -297,6 +358,11 @@ test("fleet mode routes every operation through the current signed generation fe
           loginCompletions: 1,
           name: "pyrus-ibkr-slot-1",
           status: "ready",
+        },
+        lease: {
+          version: lease.version,
+          bootId: lease.bootId,
+          grantNotAfterNs: lease.grantNotAfterNs,
         },
         targets: {
           cpg: { host: "127.0.0.1", port: 15000 },
@@ -332,7 +398,7 @@ test("fleet mode routes every operation through the current signed generation fe
       assert.ok(ensuredSession?.controlAttemptId);
       assert.ok(ensuredSession.controlAcknowledgedAt);
       assert.equal(
-        new URL(requests[0]!.path, "https://host.invalid").searchParams.get(
+        new URL(requests[1]!.path, "https://host.invalid").searchParams.get(
           "controlAttemptId",
         ),
         ensuredSession.controlAttemptId,
@@ -416,7 +482,7 @@ test("fleet mode routes every operation through the current signed generation fe
       assert.equal(releasedSession.slotNumber, null);
       assert.equal(releasedSession.leaseHolderId, null);
       assert.equal(releasedSession.leaseExpiresAt, null);
-      assert.equal(requests.length, 3);
+      assert.equal(requests.length, 4);
       for (const request of requests) {
         assert.equal(
           verifyIbkrHostControlRequest({
@@ -447,14 +513,25 @@ test("fleet mode routes every operation through the current signed generation fe
       );
       assert.equal(requests[0]!.redirect, "error");
       assert.equal(requests[0]!.signal, true);
-      assert.match(requests[1]!.path, /\/data\/cpg\/v1\/api\/tickle$/);
-      assert.equal(requests[1]!.body, "{}");
-      assert.equal(requests[1]!.redirect, "manual");
       assert.match(
-        requests[2]!.path,
+        requests[1]!.path,
+        /\/generations\/1\/slots\/1\/keepalive\?controlAttemptId=[0-9a-f-]{36}$/,
+      );
+      assert.equal(requests[1]!.redirect, "error");
+      assert.equal(requests[0]!.body, "");
+      assert.equal(requests[1]!.body, "");
+      assert.deepEqual(
+        hostLeases.slice(0, 2).map(({ bootId }) => bootId),
+        [hostBootId, hostBootId],
+      );
+      assert.match(requests[2]!.path, /\/data\/cpg\/v1\/api\/tickle$/);
+      assert.equal(requests[2]!.body, "{}");
+      assert.equal(requests[2]!.redirect, "manual");
+      assert.match(
+        requests[3]!.path,
         /\/generations\/1\/slots\/1\/release\?controlAttemptId=[0-9a-f-]{36}$/,
       );
-      assert.equal(requests[2]!.redirect, "error");
+      assert.equal(requests[3]!.redirect, "error");
 
       const [recoveryUser] = await db
         .insert(usersTable)
@@ -574,15 +651,18 @@ test("fleet mode routes every operation through the current signed generation fe
       }
       assert.equal(missingTargetsPlacement.fence.slotNumber, 2);
       await stopGateway(recoveryUser.id);
-      assert.equal(requests.length, 11);
-      for (const request of requests.slice(3, 10)) {
+      assert.equal(requests.length, 19);
+      for (const [index, request] of requests.slice(4, 18).entries()) {
+        const action = index % 2 === 0 ? "keepalive" : "status";
         assert.match(
           request.path,
-          /\/generations\/1\/slots\/1\/status\?controlAttemptId=[0-9a-f-]{36}$/,
+          new RegExp(
+            `/generations/1/slots/1/${action}\\?controlAttemptId=[0-9a-f-]{36}$`,
+          ),
         );
       }
       assert.match(
-        requests[10]!.path,
+        requests[18]!.path,
         /\/generations\/1\/slots\/1\/release\?controlAttemptId=[0-9a-f-]{36}$/,
       );
       statusMissingTargetsSessionIds.add(

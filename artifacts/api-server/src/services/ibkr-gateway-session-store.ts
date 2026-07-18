@@ -18,7 +18,9 @@ import {
   isNotNull,
   isNull,
   lt,
+  lte,
   ne,
+  or,
   sql,
 } from "drizzle-orm";
 import { z } from "zod";
@@ -28,12 +30,14 @@ const GLOBAL_FLEET_CAPACITY = 20;
 const GLOBAL_ADMISSION_LOCK_ID = 1_347_901_778;
 const HOST_HEARTBEAT_INTERVAL_SQL = sql`now() + interval '30 seconds'`;
 const SESSION_LEASE_DURATION_MS = 30_000;
+const SESSION_ENSURE_LEASE_DURATION_MS = 120_000;
 const SESSION_REPLACEMENT_DEADLINE_DURATION_MS = 155_000;
 
 const uuidSchema = z.string().uuid();
 const identityDigestSchema = z.string().regex(/^[0-9a-f]{64}$/);
 const sha256DigestSchema = z.string().regex(/^sha256:[0-9a-f]{64}$/);
 const fleetCapacitySchema = z.number().int().min(1).max(GLOBAL_FLEET_CAPACITY);
+const capsuleLeaseProtocolVersionSchema = z.union([z.literal(0), z.literal(1)]);
 const environmentModeSchema = z.enum(["shadow", "live"]);
 const IBKR_BROKER_CONNECTION_NAME = "Interactive Brokers Bridge";
 const ROUTABLE_LIFECYCLE_STATES: IbkrGatewayLifecycleState[] = [
@@ -44,6 +48,8 @@ const ROUTABLE_LIFECYCLE_STATES: IbkrGatewayLifecycleState[] = [
   "degraded",
   "reauth_required",
 ];
+const RENEWABLE_LIFECYCLE_STATES: IbkrGatewayLifecycleState[] =
+  ROUTABLE_LIFECYCLE_STATES.filter((state) => state !== "provisioning");
 const LIFECYCLE_PREDECESSORS: Partial<
   Record<IbkrGatewayLifecycleState, IbkrGatewayLifecycleState[]>
 > = {
@@ -61,25 +67,31 @@ const LIFECYCLE_PREDECESSORS: Partial<
   quarantined: ["draining", "quarantined"],
 };
 
-const hostRegistrationSchema = z.object({
-  hostId: uuidSchema,
-  workloadIdentityDigest: identityDigestSchema,
-  controlOrigin: z.string().min(1).max(2_048),
-  imageDigest: sha256DigestSchema,
-  runtimeSpecDigest: sha256DigestSchema,
-  runtimeAttestationDigest: sha256DigestSchema,
-  failureDomain: z.string().min(1).max(128),
-  measuredSlotCapacity: fleetCapacitySchema,
-});
+const hostRegistrationSchema = z
+  .object({
+    hostId: uuidSchema,
+    workloadIdentityDigest: identityDigestSchema,
+    controlOrigin: z.string().min(1).max(2_048),
+    imageDigest: sha256DigestSchema,
+    runtimeSpecDigest: sha256DigestSchema,
+    runtimeAttestationDigest: sha256DigestSchema,
+    capsuleLeaseProtocolVersion: capsuleLeaseProtocolVersionSchema,
+    failureDomain: z.string().min(1).max(128),
+    measuredSlotCapacity: fleetCapacitySchema,
+  })
+  .strict();
 
-const hostApprovalSchema = z.object({
-  hostId: uuidSchema,
-  workloadIdentityDigest: identityDigestSchema,
-  imageDigest: sha256DigestSchema,
-  runtimeSpecDigest: sha256DigestSchema,
-  runtimeAttestationDigest: sha256DigestSchema,
-  admissionSlotCapacity: fleetCapacitySchema,
-});
+const hostApprovalSchema = z
+  .object({
+    hostId: uuidSchema,
+    workloadIdentityDigest: identityDigestSchema,
+    imageDigest: sha256DigestSchema,
+    runtimeSpecDigest: sha256DigestSchema,
+    runtimeAttestationDigest: sha256DigestSchema,
+    capsuleLeaseProtocolVersion: capsuleLeaseProtocolVersionSchema,
+    admissionSlotCapacity: fleetCapacitySchema,
+  })
+  .strict();
 
 const hostHeartbeatSchema = z.object({
   hostId: uuidSchema,
@@ -155,6 +167,12 @@ export type IbkrGatewayFence = {
 };
 
 export type IbkrGatewayControlAuthority = "cleanup" | "traffic";
+
+export type IbkrGatewayControlAction =
+  | "ensure"
+  | "keepalive"
+  | "release"
+  | "status";
 
 export type IbkrGatewayControlAttempt = {
   controlAttemptId: string;
@@ -235,21 +253,29 @@ function eligibleIbkrConnectionWhere(input: IdentityInput) {
   )`;
 }
 
-function healthyAssignedHostWhere() {
+function healthyAssignedHostWhere(capsuleLeaseProtocolVersion?: 1) {
   return sql`EXISTS (
     SELECT 1
     FROM ${ibkrGatewayHostsTable}
     WHERE ${ibkrGatewayHostsTable.id} = ${ibkrGatewaySessionsTable.hostId}
       AND ${ibkrGatewayHostsTable.status} IN ('active', 'draining')
       AND ${ibkrGatewayHostsTable.heartbeatExpiresAt} > clock_timestamp()
+      ${
+        capsuleLeaseProtocolVersion === 1
+          ? sql`AND ${ibkrGatewayHostsTable.capsuleLeaseProtocolVersion} = 1`
+          : sql``
+      }
   )`;
 }
 
-function sessionFencingWindow(databaseClockMs: string) {
+function sessionFencingWindow(
+  databaseClockMs: string,
+  leaseDurationMs = SESSION_LEASE_DURATION_MS,
+) {
   const fencedAtMs = Number(databaseClockMs);
   if (!Number.isSafeInteger(fencedAtMs) || fencedAtMs <= 0) return null;
   return {
-    leaseExpiresAt: new Date(fencedAtMs + SESSION_LEASE_DURATION_MS),
+    leaseExpiresAt: new Date(fencedAtMs + leaseDurationMs),
     replacementDeadlineAt: new Date(
       fencedAtMs + SESSION_REPLACEMENT_DEADLINE_DURATION_MS,
     ),
@@ -293,6 +319,7 @@ function registrationMatches(
     host.imageDigest === input.imageDigest &&
     host.runtimeSpecDigest === input.runtimeSpecDigest &&
     host.runtimeAttestationDigest === input.runtimeAttestationDigest &&
+    host.capsuleLeaseProtocolVersion === input.capsuleLeaseProtocolVersion &&
     host.failureDomain === input.failureDomain &&
     host.measuredSlotCapacity === input.measuredSlotCapacity
   );
@@ -316,6 +343,7 @@ export async function registerIbkrGatewayHost(
       imageDigest: input.imageDigest,
       runtimeSpecDigest: input.runtimeSpecDigest,
       runtimeAttestationDigest: input.runtimeAttestationDigest,
+      capsuleLeaseProtocolVersion: input.capsuleLeaseProtocolVersion,
       failureDomain: input.failureDomain,
       measuredSlotCapacity: input.measuredSlotCapacity,
       admissionSlotCapacity: 1,
@@ -358,6 +386,10 @@ export async function approveIbkrGatewayHost(
         eq(
           ibkrGatewayHostsTable.runtimeAttestationDigest,
           input.runtimeAttestationDigest,
+        ),
+        eq(
+          ibkrGatewayHostsTable.capsuleLeaseProtocolVersion,
+          input.capsuleLeaseProtocolVersion,
         ),
         sql`${ibkrGatewayHostsTable.measuredSlotCapacity} >= ${input.admissionSlotCapacity}`,
         gt(ibkrGatewayHostsTable.heartbeatExpiresAt, sql`now()`),
@@ -458,6 +490,82 @@ export async function ensureIbkrGatewaySessionIdentity(
   return identity ?? null;
 }
 
+export async function readIbkrGatewayLifecycleSnapshot(
+  input: IdentityInput,
+): Promise<Pick<IbkrGatewaySession, "lifecycleState"> | null> {
+  if (!validIds(input.appUserId, input.brokerConnectionId)) return null;
+  const [snapshot] = await db
+    .select({ lifecycleState: ibkrGatewaySessionsTable.lifecycleState })
+    .from(ibkrGatewaySessionsTable)
+    .where(
+      and(
+        eq(ibkrGatewaySessionsTable.appUserId, input.appUserId),
+        eq(
+          ibkrGatewaySessionsTable.brokerConnectionId,
+          input.brokerConnectionId,
+        ),
+        eligibleIbkrConnectionWhere(input),
+      ),
+    )
+    .limit(1);
+  return snapshot ?? null;
+}
+
+type IbkrGatewayTransaction = Parameters<
+  Parameters<typeof db.transaction>[0]
+>[0];
+
+async function reapExpiredIbkrGatewayPlacementsWithinAdmissionLock(
+  tx: IbkrGatewayTransaction,
+): Promise<number> {
+  const reaped = await tx
+    .update(ibkrGatewaySessionsTable)
+    .set({
+      generation: sql`CASE
+        WHEN ${ibkrGatewaySessionsTable.generation} < ${POSTGRES_INTEGER_MAX}
+          THEN ${ibkrGatewaySessionsTable.generation} + 1
+        ELSE ${ibkrGatewaySessionsTable.generation}
+      END`,
+      lifecycleState: "released",
+      hostId: null,
+      slotNumber: null,
+      leaseHolderId: null,
+      leaseExpiresAt: null,
+      controlAttemptId: null,
+      controlAcknowledgedAt: null,
+      replacementDeadlineAt: null,
+      lastActivityAt: sql`clock_timestamp()`,
+      updatedAt: sql`clock_timestamp()`,
+    })
+    .where(
+      and(
+        isNotNull(ibkrGatewaySessionsTable.hostId),
+        isNotNull(ibkrGatewaySessionsTable.replacementDeadlineAt),
+        lte(
+          ibkrGatewaySessionsTable.replacementDeadlineAt,
+          sql`clock_timestamp()`,
+        ),
+        sql`EXISTS (
+          SELECT 1
+          FROM ${ibkrGatewayHostsTable}
+          WHERE ${ibkrGatewayHostsTable.id} = ${ibkrGatewaySessionsTable.hostId}
+            AND ${ibkrGatewayHostsTable.capsuleLeaseProtocolVersion} = 1
+        )`,
+      ),
+    )
+    .returning({ id: ibkrGatewaySessionsTable.id });
+  return reaped.length;
+}
+
+export async function reapExpiredIbkrGatewayPlacements(): Promise<number> {
+  return db.transaction(async (tx) => {
+    await tx.execute(
+      sql`SELECT pg_advisory_xact_lock(${GLOBAL_ADMISSION_LOCK_ID})`,
+    );
+    return reapExpiredIbkrGatewayPlacementsWithinAdmissionLock(tx);
+  });
+}
+
 export async function tryAcquireIbkrGatewayLease(
   input: IdentityInput,
 ): Promise<IbkrGatewayLeaseResult> {
@@ -470,6 +578,7 @@ export async function tryAcquireIbkrGatewayLease(
     await tx.execute(
       sql`SELECT pg_advisory_xact_lock(${GLOBAL_ADMISSION_LOCK_ID})`,
     );
+    await reapExpiredIbkrGatewayPlacementsWithinAdmissionLock(tx);
     const [candidate] = await tx
       .select()
       .from(ibkrGatewaySessionsTable)
@@ -492,8 +601,6 @@ export async function tryAcquireIbkrGatewayLease(
       .for("update");
     if (!candidate) return { status: "busy" };
 
-    // ponytail: Exact release is the safe reuse ceiling until capsule hosts
-    // durably enforce a propagated monotonic expiry; deadlines alone prove no stop.
     const [activeCount] = await tx
       .select({ count: sql<number>`count(*)::integer` })
       .from(ibkrGatewaySessionsTable)
@@ -513,6 +620,7 @@ export async function tryAcquireIbkrGatewayLease(
       .where(
         and(
           eq(ibkrGatewayHostsTable.status, "active"),
+          eq(ibkrGatewayHostsTable.capsuleLeaseProtocolVersion, 1),
           gt(ibkrGatewayHostsTable.heartbeatExpiresAt, sql`clock_timestamp()`),
         ),
       )
@@ -638,7 +746,17 @@ function liveIbkrGatewayFenceWhere(fence: IbkrGatewayFence) {
   return and(
     exactIbkrGatewayFenceWhere(fence),
     gt(ibkrGatewaySessionsTable.leaseExpiresAt, sql`clock_timestamp()`),
+    gt(ibkrGatewaySessionsTable.replacementDeadlineAt, sql`clock_timestamp()`),
     healthyAssignedHostWhere(),
+  );
+}
+
+function recoverableIbkrGatewayFenceWhere(fence: IbkrGatewayFence) {
+  return and(
+    exactIbkrGatewayFenceWhere(fence),
+    gt(ibkrGatewaySessionsTable.replacementDeadlineAt, sql`clock_timestamp()`),
+    healthyAssignedHostWhere(1),
+    inArray(ibkrGatewaySessionsTable.lifecycleState, ROUTABLE_LIFECYCLE_STATES),
   );
 }
 
@@ -739,12 +857,84 @@ export async function readCurrentIbkrGatewayFence(
         isNotNull(ibkrGatewaySessionsTable.slotNumber),
         isNotNull(ibkrGatewaySessionsTable.leaseHolderId),
         gt(ibkrGatewaySessionsTable.leaseExpiresAt, sql`clock_timestamp()`),
+        gt(
+          ibkrGatewaySessionsTable.replacementDeadlineAt,
+          sql`clock_timestamp()`,
+        ),
+        inArray(
+          ibkrGatewaySessionsTable.lifecycleState,
+          ROUTABLE_LIFECYCLE_STATES,
+        ),
         eligibleIbkrConnectionWhere(input),
         healthyAssignedHostWhere(),
       ),
     )
     .limit(1);
   return current ? toFence(current) : null;
+}
+
+async function listIbkrGatewayFences(
+  lifecycleStates: IbkrGatewayLifecycleState[],
+): Promise<IbkrGatewayFence[]> {
+  const rows = await db
+    .select({
+      appUserId: ibkrGatewaySessionsTable.appUserId,
+      brokerConnectionId: ibkrGatewaySessionsTable.brokerConnectionId,
+      generation: ibkrGatewaySessionsTable.generation,
+      hostId: ibkrGatewaySessionsTable.hostId,
+      leaseHolderId: ibkrGatewaySessionsTable.leaseHolderId,
+      sessionId: ibkrGatewaySessionsTable.id,
+      slotNumber: ibkrGatewaySessionsTable.slotNumber,
+    })
+    .from(ibkrGatewaySessionsTable)
+    .innerJoin(
+      ibkrGatewayHostsTable,
+      eq(ibkrGatewayHostsTable.id, ibkrGatewaySessionsTable.hostId),
+    )
+    .where(
+      and(
+        eq(ibkrGatewayHostsTable.capsuleLeaseProtocolVersion, 1),
+        inArray(ibkrGatewayHostsTable.status, ["active", "draining"]),
+        gt(ibkrGatewayHostsTable.heartbeatExpiresAt, sql`clock_timestamp()`),
+        gt(
+          ibkrGatewaySessionsTable.replacementDeadlineAt,
+          sql`clock_timestamp()`,
+        ),
+        inArray(ibkrGatewaySessionsTable.lifecycleState, lifecycleStates),
+        isNotNull(ibkrGatewaySessionsTable.hostId),
+        isNotNull(ibkrGatewaySessionsTable.slotNumber),
+        isNotNull(ibkrGatewaySessionsTable.leaseHolderId),
+      ),
+    )
+    .orderBy(ibkrGatewaySessionsTable.id)
+    .limit(GLOBAL_FLEET_CAPACITY);
+  return rows.flatMap((row) =>
+    row.hostId && row.leaseHolderId && row.slotNumber !== null
+      ? [
+          {
+            appUserId: row.appUserId,
+            brokerConnectionId: row.brokerConnectionId,
+            generation: row.generation,
+            hostId: row.hostId,
+            leaseHolderId: row.leaseHolderId,
+            sessionId: row.sessionId,
+            slotNumber: row.slotNumber,
+          },
+        ]
+      : [],
+  );
+}
+
+export async function listRecoverableIbkrGatewayFences(): Promise<
+  IbkrGatewayFence[]
+> {
+  return listIbkrGatewayFences(ROUTABLE_LIFECYCLE_STATES);
+}
+
+export async function listRenewableIbkrGatewayFences(): Promise<
+  IbkrGatewayFence[]
+> {
+  return listIbkrGatewayFences(RENEWABLE_LIFECYCLE_STATES);
 }
 
 export async function resolveCurrentIbkrGatewayPlacement(
@@ -811,11 +1001,19 @@ async function refreshIbkrGatewayFence(
   fence: IbkrGatewayFence,
   authority: IbkrGatewayControlAuthority,
   controlAttemptId?: string,
+  extendReplacementDeadline = false,
+  recoverExpiredLease = false,
+  leaseDurationMs = SESSION_LEASE_DURATION_MS,
 ): Promise<IbkrGatewaySession | null> {
   const fenceWhere =
     authority === "cleanup"
       ? cleanupIbkrGatewayFenceWhere(fence)
-      : currentIbkrGatewayFenceWhere(fence);
+      : recoverExpiredLease
+        ? or(
+            currentIbkrGatewayFenceWhere(fence),
+            recoverableIbkrGatewayFenceWhere(fence),
+          )
+        : currentIbkrGatewayFenceWhere(fence);
   return db.transaction(async (tx) => {
     const [locked] = await tx
       .select({ id: ibkrGatewaySessionsTable.id })
@@ -832,13 +1030,18 @@ async function refreshIbkrGatewayFence(
       .where(eq(ibkrGatewaySessionsTable.id, locked.id))
       .limit(1);
     if (!databaseClock) return null;
-    const fencingWindow = sessionFencingWindow(databaseClock.atMs);
+    const fencingWindow = sessionFencingWindow(
+      databaseClock.atMs,
+      leaseDurationMs,
+    );
     if (!fencingWindow) return null;
     const [renewed] = await tx
       .update(ibkrGatewaySessionsTable)
       .set({
         leaseExpiresAt: fencingWindow.leaseExpiresAt,
-        replacementDeadlineAt: fencingWindow.replacementDeadlineAt,
+        ...(extendReplacementDeadline
+          ? { replacementDeadlineAt: fencingWindow.replacementDeadlineAt }
+          : {}),
         ...(authority === "traffic"
           ? { lastActivityAt: sql`now()`, updatedAt: sql`now()` }
           : {}),
@@ -871,13 +1074,26 @@ export async function renewIbkrGatewayCleanupLease(
 export async function beginIbkrGatewayControlAttempt(
   fence: IbkrGatewayFence,
   authority: IbkrGatewayControlAuthority,
+  action: IbkrGatewayControlAction,
 ): Promise<IbkrGatewayControlAttempt | null> {
-  if (!isValidIbkrGatewayFence(fence)) return null;
+  const exactAuthority =
+    action === "release"
+      ? authority === "cleanup"
+      : (action === "ensure" ||
+          action === "keepalive" ||
+          action === "status") &&
+        authority === "traffic";
+  if (!isValidIbkrGatewayFence(fence) || !exactAuthority) return null;
   const controlAttemptId = randomUUID();
   const renewed = await refreshIbkrGatewayFence(
     fence,
     authority,
     controlAttemptId,
+    false,
+    action === "ensure" || action === "keepalive",
+    action === "ensure"
+      ? SESSION_ENSURE_LEASE_DURATION_MS
+      : SESSION_LEASE_DURATION_MS,
   );
   const renewedFence = renewed ? toFence(renewed) : null;
   return renewedFence ? { controlAttemptId, fence: renewedFence } : null;
@@ -887,11 +1103,13 @@ export async function acknowledgeIbkrGatewayControlAttempt(
   fence: IbkrGatewayFence,
   controlAttemptId: string,
   authority: IbkrGatewayControlAuthority,
+  extendReplacementDeadline = false,
 ): Promise<boolean> {
   if (
     !isValidIbkrGatewayFence(fence) ||
     !uuidSchema.safeParse(controlAttemptId).success ||
-    (authority !== "cleanup" && authority !== "traffic")
+    (authority !== "cleanup" && authority !== "traffic") ||
+    (extendReplacementDeadline && authority !== "traffic")
   ) {
     return false;
   }
@@ -901,7 +1119,14 @@ export async function acknowledgeIbkrGatewayControlAttempt(
       : currentIbkrGatewayFenceWhere(fence);
   const [acknowledged] = await db
     .update(ibkrGatewaySessionsTable)
-    .set({ controlAcknowledgedAt: sql`clock_timestamp()` })
+    .set({
+      controlAcknowledgedAt: sql`clock_timestamp()`,
+      ...(extendReplacementDeadline
+        ? {
+            replacementDeadlineAt: sql`clock_timestamp() + ${SESSION_REPLACEMENT_DEADLINE_DURATION_MS} * interval '1 millisecond'`,
+          }
+        : {}),
+    })
     .where(
       and(
         fenceWhere,

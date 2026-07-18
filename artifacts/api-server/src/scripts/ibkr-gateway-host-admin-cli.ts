@@ -6,7 +6,7 @@ const IDENTITY_DIGEST_PATTERN = /^[0-9a-f]{64}$/;
 const SHA256_DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/;
 export const IBKR_GATEWAY_HOST_ADMIN_USAGE = `Usage:
   ibkr-gateway-host-admin inspect --host-id=UUID
-  ibkr-gateway-host-admin approve --host-id=UUID --workload-identity-digest=HEX --image-digest=SHA256 --runtime-spec-digest=SHA256 --runtime-attestation-digest=SHA256 --admission-slot-capacity=1..20 --execute
+  ibkr-gateway-host-admin approve --host-id=UUID --workload-identity-digest=HEX --image-digest=SHA256 --runtime-spec-digest=SHA256 --runtime-attestation-digest=SHA256 --capsule-lease-protocol-version=0|1 --admission-slot-capacity=1..20 --execute
   ibkr-gateway-host-admin drain --host-id=UUID --execute
   ibkr-gateway-host-admin quarantine --host-id=UUID --execute`;
 
@@ -14,6 +14,7 @@ type HostStatus = "active" | "draining" | "quarantined";
 
 export type OperatorHost = {
   admissionSlotCapacity: number;
+  capsuleLeaseProtocolVersion: number;
   controlOrigin: string;
   failureDomain: string;
   heartbeatExpiresAt: Date;
@@ -34,6 +35,7 @@ type OperatorHostState = {
 
 type ApprovalInput = {
   admissionSlotCapacity: number;
+  capsuleLeaseProtocolVersion: 0 | 1;
   hostId: string;
   imageDigest: string;
   runtimeAttestationDigest: string;
@@ -70,6 +72,13 @@ function canonicalCapacity(value: string | undefined): number {
   return Number(value);
 }
 
+function canonicalLeaseProtocolVersion(
+  value: string | undefined,
+): 0 | 1 {
+  if (value !== "0" && value !== "1") invalidUsage();
+  return Number(value) as 0 | 1;
+}
+
 export function parseIbkrGatewayHostAdminArgs(
   args: string[],
 ): IbkrGatewayHostAdminCommand | null {
@@ -82,6 +91,7 @@ export function parseIbkrGatewayHostAdminArgs(
       tokens: true,
       options: {
         "admission-slot-capacity": { type: "string" },
+        "capsule-lease-protocol-version": { type: "string" },
         execute: { type: "boolean" },
         help: { type: "boolean", short: "h" },
         "host-id": { type: "string" },
@@ -138,6 +148,8 @@ export function parseIbkrGatewayHostAdminArgs(
   const runtimeSpecDigest = parsed.values["runtime-spec-digest"];
   const runtimeAttestationDigest =
     parsed.values["runtime-attestation-digest"];
+  const capsuleLeaseProtocolVersion =
+    parsed.values["capsule-lease-protocol-version"];
   const admissionSlotCapacity =
     parsed.values["admission-slot-capacity"];
   if (
@@ -147,6 +159,7 @@ export function parseIbkrGatewayHostAdminArgs(
       "image-digest",
       "runtime-spec-digest",
       "runtime-attestation-digest",
+      "capsule-lease-protocol-version",
       "admission-slot-capacity",
       "execute",
     ) ||
@@ -159,6 +172,7 @@ export function parseIbkrGatewayHostAdminArgs(
     !SHA256_DIGEST_PATTERN.test(runtimeSpecDigest) ||
     typeof runtimeAttestationDigest !== "string" ||
     !SHA256_DIGEST_PATTERN.test(runtimeAttestationDigest) ||
+    typeof capsuleLeaseProtocolVersion !== "string" ||
     typeof admissionSlotCapacity !== "string"
   ) {
     invalidUsage();
@@ -166,6 +180,9 @@ export function parseIbkrGatewayHostAdminArgs(
   return {
     action,
     admissionSlotCapacity: canonicalCapacity(admissionSlotCapacity),
+    capsuleLeaseProtocolVersion: canonicalLeaseProtocolVersion(
+      capsuleLeaseProtocolVersion,
+    ),
     hostId,
     imageDigest,
     runtimeAttestationDigest,
@@ -179,6 +196,7 @@ function operatorView(state: OperatorHostState, now: Date) {
   return {
     admissionSlotCapacity: host.admissionSlotCapacity,
     activeLeaseCount: state.activeLeaseCount,
+    capsuleLeaseProtocolVersion: host.capsuleLeaseProtocolVersion,
     controlOrigin: host.controlOrigin,
     failureDomain: host.failureDomain,
     heartbeatExpiresAt: host.heartbeatExpiresAt.toISOString(),

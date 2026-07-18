@@ -27,6 +27,7 @@ const registrationBody = JSON.stringify({
   imageDigest: SHA,
   runtimeSpecDigest: SHA,
   runtimeAttestationDigest: SHA,
+  capsuleLeaseProtocolVersion: 1,
   failureDomain: "reserved-vm-primary",
   measuredSlotCapacity: 20,
 });
@@ -65,6 +66,7 @@ function signedHeaders(input: {
 async function withServer(
   input: {
     heartbeatHost?: (value: HostInput) => Promise<HostState | null>;
+    onHostReady?: (hostId: string) => void;
     registerHost?: (value: HostInput) => Promise<HostState | null>;
   },
   fn: (baseUrl: string) => Promise<void>,
@@ -85,6 +87,7 @@ async function withServer(
         status: "quarantined",
         heartbeatExpiresAt: new Date("2027-01-15T08:00:30.000Z"),
       })),
+    onHostReady: input.onHostReady,
     verifyRequest: createIbkrGatewayHostRequestVerifier({
       nowSeconds: () => NOW_SECONDS,
       rootKeys: () => [ROOT_KEY],
@@ -127,6 +130,7 @@ async function withServer(
 
 test("registers an authenticated host from the exact raw body", async () => {
   const inputs: HostInput[] = [];
+  const readyHosts: string[] = [];
   const path = `${IBKR_GATEWAY_HOSTS_MOUNT}/${HOST_ID}/register`;
   await withServer(
     {
@@ -138,6 +142,7 @@ test("registers an authenticated host from the exact raw body", async () => {
           heartbeatExpiresAt: new Date("2027-01-15T08:00:30.000Z"),
         };
       },
+      onHostReady: (hostId) => readyHosts.push(hostId),
     },
     async (baseUrl) => {
       const response = await fetch(`${baseUrl}${path}`, {
@@ -160,12 +165,14 @@ test("registers an authenticated host from the exact raw body", async () => {
       assert.deepEqual(inputs, [
         { hostId: HOST_ID, ...JSON.parse(registrationBody) },
       ]);
+      assert.deepEqual(readyHosts, [HOST_ID]);
     },
   );
 });
 
 test("heartbeats only the host identity named by the signed path", async () => {
   const inputs: HostInput[] = [];
+  const readyHosts: string[] = [];
   const path = `${IBKR_GATEWAY_HOSTS_MOUNT}/${HOST_ID}/heartbeat`;
   await withServer(
     {
@@ -177,6 +184,7 @@ test("heartbeats only the host identity named by the signed path", async () => {
           heartbeatExpiresAt: new Date("2027-01-15T08:00:30.000Z"),
         };
       },
+      onHostReady: (hostId) => readyHosts.push(hostId),
     },
     async (baseUrl) => {
       const response = await fetch(`${baseUrl}${path}`, {
@@ -193,6 +201,7 @@ test("heartbeats only the host identity named by the signed path", async () => {
       assert.deepEqual(inputs, [
         { hostId: HOST_ID, ...JSON.parse(heartbeatBody) },
       ]);
+      assert.deepEqual(readyHosts, [HOST_ID]);
     },
   );
 });
@@ -285,6 +294,65 @@ test("returns a generic conflict when attestation persistence rejects a host", a
       );
     },
   );
+});
+
+test("accepts only an explicit capsule lease protocol version 0 or 1", async () => {
+  const path = `${IBKR_GATEWAY_HOSTS_MOUNT}/${HOST_ID}/register`;
+  const baseRegistration = JSON.parse(registrationBody) as Record<
+    string,
+    unknown
+  >;
+  const inputs: HostInput[] = [];
+  await withServer(
+    {
+      registerHost: async (input) => {
+        inputs.push(input);
+        return {
+          id: HOST_ID,
+          status: "quarantined",
+          heartbeatExpiresAt: new Date("2027-01-15T08:00:30.000Z"),
+        };
+      },
+    },
+    async (baseUrl) => {
+      const versionZeroBody = JSON.stringify({
+        ...baseRegistration,
+        capsuleLeaseProtocolVersion: 0,
+      });
+      const accepted = await fetch(`${baseUrl}${path}`, {
+        method: "POST",
+        headers: signedHeaders({
+          body: versionZeroBody,
+          nonce: "6".repeat(32),
+          path,
+        }),
+        body: versionZeroBody,
+      });
+      assert.equal(accepted.status, 200);
+
+      for (const [index, value] of [undefined, 2, "1"].entries()) {
+        const invalidRegistration = { ...baseRegistration };
+        if (value === undefined) {
+          delete invalidRegistration.capsuleLeaseProtocolVersion;
+        } else {
+          invalidRegistration.capsuleLeaseProtocolVersion = value;
+        }
+        const body = JSON.stringify(invalidRegistration);
+        const rejected = await fetch(`${baseUrl}${path}`, {
+          method: "POST",
+          headers: signedHeaders({
+            body,
+            nonce: String(index + 7).repeat(32),
+            path,
+          }),
+          body,
+        });
+        assert.equal(rejected.status, 400);
+      }
+    },
+  );
+  assert.equal(inputs.length, 1);
+  assert.equal(inputs[0]?.capsuleLeaseProtocolVersion, 0);
 });
 
 test("terminates browser preflights without granting CORS", async () => {

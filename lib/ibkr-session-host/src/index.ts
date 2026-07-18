@@ -3,8 +3,10 @@ import {
   CapsuleManager,
   capsuleTargetForSlot,
   checkCapsuleRuntime,
+  createCapsuleLeaseGrantIssuer,
   execFileCommandRunner,
   loadSessionHostConfig,
+  readCapsuleBootId,
 } from "./capsule";
 import { CapsuleFleetManager } from "./fleet";
 import { loadIbkrHostControlIdentity } from "./control-config";
@@ -17,6 +19,9 @@ import { createSessionHostServer } from "./server";
 
 async function main(): Promise<void> {
   const config = loadSessionHostConfig();
+  const issueLeaseGrant = createCapsuleLeaseGrantIssuer(
+    await readCapsuleBootId(),
+  );
   const controlIdentity = loadIbkrHostControlIdentity();
   const lifecycleConfig = loadIbkrHostLifecycleConfig({
     controlIdentity,
@@ -42,6 +47,7 @@ async function main(): Promise<void> {
     (slotNumber) =>
       new CapsuleManager(config, execFileCommandRunner, undefined, slotNumber),
   );
+  await fleet.reconcile();
   const readiness = await readRuntimeReadiness();
   const relays = Array.from({ length: config.capacity }, (_, index) => {
     const slotNumber = index + 1;
@@ -56,8 +62,11 @@ async function main(): Promise<void> {
   const server = createSessionHostServer({
     controlIdentity: controlIdentity ?? undefined,
     controlToken: process.env["IBKR_SESSION_HOST_CONTROL_TOKEN"],
-    ensureSession: (sessionId, generation, slotNumber) =>
-      fleet.ensure(sessionId, generation, slotNumber),
+    ensureSession: (sessionId, generation, slotNumber, leaseGrant) =>
+      fleet.ensure(sessionId, generation, slotNumber, leaseGrant),
+    keepaliveSession: (sessionId, generation, slotNumber, leaseGrant) =>
+      fleet.keepalive(sessionId, generation, slotNumber, leaseGrant),
+    issueLeaseGrant,
     releaseSession: (sessionId, generation, slotNumber) =>
       fleet.release(sessionId, generation, slotNumber),
     readiness: readRuntimeReadiness,
@@ -70,8 +79,10 @@ async function main(): Promise<void> {
     snapshot: () => fleet.snapshot(),
     statusSession: (sessionId, generation, slotNumber) =>
       fleet.status(sessionId, generation, slotNumber),
-    target: (sessionId, generation, kind, slotNumber) =>
-      fleet.getTarget(sessionId, generation, slotNumber, kind),
+    // Control responses advertise fixed loopback relay ports only. Data-plane
+    // routing still goes through resolveTarget, which requires a live lease.
+    target: (_sessionId, _generation, kind, slotNumber) =>
+      capsuleTargetForSlot(slotNumber, kind),
   });
 
   await Promise.all([

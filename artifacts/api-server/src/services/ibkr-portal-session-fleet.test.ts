@@ -5,6 +5,7 @@ import {
   deriveIbkrHostControlKey,
   signIbkrHostControlReceipt,
   type IbkrHostControlAction,
+  verifyIbkrHostControlRequest,
 } from "@workspace/ibkr-contracts/control-auth";
 import { db, ibkrGatewaySessionsTable, usersTable } from "@workspace/db";
 import { withTestDb } from "@workspace/db/testing";
@@ -16,8 +17,23 @@ import {
   readCurrentIbkrGatewayFence,
   registerIbkrGatewayHost,
 } from "./ibkr-gateway-session-store";
-import { ensureGateway, getGateway } from "./ibkr-portal-gateway-manager";
-import { disconnectPortal, readPortalReadiness } from "./ibkr-portal-session";
+import {
+  __setIbkrGatewayFleetCoordinationDependenciesForTests,
+  ensureGateway,
+  getGateway,
+} from "./ibkr-portal-gateway-manager";
+import {
+  connectPortal,
+  disconnectPortal,
+  readPortalReadiness,
+} from "./ibkr-portal-session";
+
+__setIbkrGatewayFleetCoordinationDependenciesForTests({
+  acquireControlLock: async () => async () => {},
+});
+test.after(() => {
+  __setIbkrGatewayFleetCoordinationDependenciesForTests(null);
+});
 
 test("fleet portal persists paper lifecycle and disconnects mixed accounts", async () => {
   await withTestDb(async () => {
@@ -41,8 +57,29 @@ test("fleet portal persists paper lifecycle and disconnects mixed accounts", asy
     let accountReads = 0;
     let appUserId: string | null = null;
     let lifecycleDuringAccounts: string | null = null;
+    let blockNextEnsure = true;
+    let ensureRequestCount = 0;
+    let nonEnsureControlRequestCount = 0;
+    let markEnsureEntered!: () => void;
+    const ensureEntered = new Promise<void>((resolve) => {
+      markEnsureEntered = resolve;
+    });
+    let unblockEnsure!: () => void;
+    const ensureUnblocked = new Promise<void>((resolve) => {
+      unblockEnsure = resolve;
+    });
     const rootKey = Buffer.alloc(32, 29);
     const hostKey = deriveIbkrHostControlKey(rootKey, hostId);
+    let hostGrantNotAfterNs = 50_000_000_000n;
+    const issueHostLease = () => {
+      const lease = {
+        version: 1 as const,
+        bootId: "19191919-1919-4919-8919-191919191919",
+        grantNotAfterNs: String(hostGrantNotAfterNs),
+      };
+      hostGrantNotAfterNs += 1_000_000_000n;
+      return lease;
+    };
     const signedControlResponse = (
       action: IbkrHostControlAction,
       controlAttemptId: string,
@@ -76,7 +113,7 @@ test("fleet portal persists paper lifecycle and disconnects mixed accounts", asy
     globalThis.fetch = (async (input, init) => {
       const url = new URL(String(input));
       const controlRequest = url.pathname.match(
-        /^\/sessions\/([^/]+)\/generations\/(\d+)\/slots\/(\d+)\/(ensure|release|status)$/,
+        /^\/sessions\/([^/]+)\/generations\/(\d+)\/slots\/(\d+)\/(ensure|keepalive|release|status)$/,
       );
       let controlAttemptId: string | null = null;
       if (controlRequest) {
@@ -92,9 +129,44 @@ test("fleet portal persists paper lifecycle and disconnects mixed accounts", asy
             slotNumber: Number(controlRequest[3]),
           }
         : null;
-      if (url.pathname.endsWith("/ensure")) {
+      const action = controlRequest?.[4] as IbkrHostControlAction | undefined;
+      const requestBody = String(init?.body ?? "");
+      if (controlRequest) {
+        assert.ok(controlAttemptId);
+        assert.equal(
+          verifyIbkrHostControlRequest({
+            expectedHostId: hostId,
+            body: requestBody,
+            headers: Object.fromEntries(new Headers(init?.headers).entries()),
+            key: hostKey,
+            method: String(init?.method ?? "GET"),
+            path: `${url.pathname}${url.search}`,
+          }).valid,
+          true,
+        );
+        assert.equal(requestBody, "");
+      }
+      if (action === "keepalive") {
+        nonEnsureControlRequestCount += 1;
         assert.ok(receipt);
         assert.ok(controlAttemptId);
+        const lease = issueHostLease();
+        return signedControlResponse("keepalive", controlAttemptId, {
+          ...receipt,
+          keptAlive: true,
+          lease,
+        });
+      }
+      if (url.pathname.endsWith("/ensure")) {
+        ensureRequestCount += 1;
+        if (blockNextEnsure) {
+          blockNextEnsure = false;
+          markEnsureEntered();
+          await ensureUnblocked;
+        }
+        assert.ok(receipt);
+        assert.ok(controlAttemptId);
+        const lease = issueHostLease();
         return signedControlResponse("ensure", controlAttemptId, {
           ...receipt,
           capsule: {
@@ -102,6 +174,7 @@ test("fleet portal persists paper lifecycle and disconnects mixed accounts", asy
             name: "pyrus-ibkr-slot-1",
             status: "ready",
           },
+          lease,
           targets: {
             cpg: { host: "127.0.0.1", port: 15000 },
             console: { host: "127.0.0.1", port: 16080 },
@@ -112,6 +185,7 @@ test("fleet portal persists paper lifecycle and disconnects mixed accounts", asy
         url.pathname.endsWith("/status") &&
         !url.pathname.includes("/data/")
       ) {
+        nonEnsureControlRequestCount += 1;
         assert.ok(receipt);
         assert.ok(controlAttemptId);
         return signedControlResponse("status", controlAttemptId, {
@@ -167,6 +241,7 @@ test("fleet portal persists paper lifecycle and disconnects mixed accounts", asy
         });
       }
       if (controlRequest?.[4] === "release") {
+        nonEnsureControlRequestCount += 1;
         assert.ok(receipt);
         assert.ok(controlAttemptId);
         return signedControlResponse("release", controlAttemptId, {
@@ -195,6 +270,7 @@ test("fleet portal persists paper lifecycle and disconnects mixed accounts", asy
           imageDigest: sha,
           runtimeSpecDigest: sha,
           runtimeAttestationDigest: sha,
+          capsuleLeaseProtocolVersion: 1,
           failureDomain: "synthetic-zone-nineteen",
           measuredSlotCapacity: 1,
         }),
@@ -206,9 +282,50 @@ test("fleet portal persists paper lifecycle and disconnects mixed accounts", asy
           imageDigest: sha,
           runtimeSpecDigest: sha,
           runtimeAttestationDigest: sha,
+          capsuleLeaseProtocolVersion: 1,
           admissionSlotCapacity: 1,
         }),
       );
+
+      const [asyncUser] = await db
+        .insert(usersTable)
+        .values({
+          email: "synthetic-portal-fleet-async@example.invalid",
+          passwordHash: "synthetic-unused-hash",
+        })
+        .returning({ id: usersTable.id });
+      assert.ok(asyncUser);
+      const connectAttempt = connectPortal(asyncUser.id);
+      await ensureEntered;
+      const start = await Promise.race([
+        connectAttempt,
+        new Promise<"blocked">((resolve) =>
+          setTimeout(() => resolve("blocked"), 250),
+        ),
+      ]);
+      let startupReadiness: Awaited<
+        ReturnType<typeof readPortalReadiness>
+      > | null = null;
+      const controlsBeforeReadiness = nonEnsureControlRequestCount;
+      if (start !== "blocked") {
+        const readiness = await Promise.race([
+          readPortalReadiness(asyncUser.id),
+          new Promise<"blocked">((resolve) =>
+            setTimeout(() => resolve("blocked"), 500),
+          ),
+        ]);
+        if (readiness !== "blocked") startupReadiness = readiness;
+      }
+      unblockEnsure();
+      await connectAttempt;
+      assert.notEqual(start, "blocked");
+      assert.deepEqual(start, { status: "gateway_starting" });
+      assert.equal(startupReadiness?.status, "gateway_starting");
+      assert.equal(startupReadiness?.gatewayRunning, false);
+      assert.equal(nonEnsureControlRequestCount, controlsBeforeReadiness);
+      assert.equal(ensureRequestCount, 1);
+      await ensureGateway(asyncUser.id);
+      await disconnectPortal(asyncUser.id);
 
       await ensureGateway(user.id);
       const connection = await ensureIbkrGatewayBrokerConnection({

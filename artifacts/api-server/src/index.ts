@@ -24,6 +24,10 @@ import {
 } from "./services/account";
 import { isIbkrClientPortalConfigured } from "./services/ibkr-client-runtime";
 import {
+  startIbkrGatewayFleetCoordinator,
+  stopIbkrGatewayFleetCoordinator,
+} from "./services/ibkr-portal-gateway-manager";
+import {
   getRuntimeDiagnostics,
   getOrderVisibilityProbe,
   startFlowUniverseOptionabilityVerifier,
@@ -249,6 +253,7 @@ async function shutdownApi(signal: NodeJS.Signals): Promise<void> {
     });
   });
 
+  await stopIbkrGatewayFleetCoordinator();
   await Promise.all([
     serverClosed,
     stopPythonComputeRuntime().catch((pythonError) => {
@@ -311,6 +316,7 @@ server.listen(port, () => {
   // their first connect over a few seconds is harmless and keeps the boot from
   // stampeding Postgres.
   const backgroundWorkers: Array<() => void> = [
+    startIbkrGatewayFleetCoordinator,
     startAccountFlexRefreshScheduler,
     startOptionsFlowScanner,
     startFlowUniverseOptionabilityVerifier,

@@ -1,5 +1,6 @@
 import {
   CapsuleError,
+  type CapsuleLeaseGrant,
   type CapsuleRecord,
   type CapsuleRelayTarget,
   type CapsuleTarget,
@@ -7,7 +8,11 @@ import {
 } from "./capsule";
 
 export type CapsuleSlotController = {
-  ensure: (sessionId: string, generation: number) => Promise<CapsuleRecord>;
+  ensure: (
+    sessionId: string,
+    generation: number,
+    leaseGrant?: CapsuleLeaseGrant,
+  ) => Promise<CapsuleRecord>;
   getRelayTarget: (kind: CapsuleTargetKind) => CapsuleRelayTarget | null;
   getTarget: (
     sessionId: string,
@@ -17,8 +22,18 @@ export type CapsuleSlotController = {
   identityForSession: (
     sessionId: string,
   ) => Promise<{ generation: number } | null>;
+  keepalive: (
+    sessionId: string,
+    generation: number,
+    leaseGrant: CapsuleLeaseGrant,
+  ) => Promise<void>;
+  reconcile: () => Promise<CapsuleRecord | null>;
   release: (sessionId: string, generation: number) => Promise<void>;
-  replace: (sessionId: string, generation: number) => Promise<CapsuleRecord>;
+  replace: (
+    sessionId: string,
+    generation: number,
+    leaseGrant?: CapsuleLeaseGrant,
+  ) => Promise<CapsuleRecord>;
   snapshot: () => { capacity: { active: number } };
   status: (
     sessionId: string,
@@ -91,6 +106,7 @@ export class CapsuleFleetManager {
     sessionId: string,
     generation: number,
     slotNumber: number,
+    leaseGrant?: CapsuleLeaseGrant,
   ): Promise<CapsuleRecord> {
     validateGeneration(generation);
     const slot = this.slot(slotNumber);
@@ -128,8 +144,8 @@ export class CapsuleFleetManager {
         if (identity.generation < generation) replace = true;
       }
       return await (replace
-        ? slot.replace(sessionId, generation)
-        : slot.ensure(sessionId, generation));
+        ? slot.replace(sessionId, generation, leaseGrant)
+        : slot.ensure(sessionId, generation, leaseGrant));
     } catch (error) {
       if (existingPlacement && this.sessionSlots.get(sessionId) === placement) {
         this.sessionSlots.set(sessionId, existingPlacement);
@@ -143,6 +159,42 @@ export class CapsuleFleetManager {
       }
       throw error;
     }
+  }
+
+  async reconcile(): Promise<void> {
+    await Promise.all(this.slots.map((slot) => slot.reconcile()));
+  }
+
+  async keepalive(
+    sessionId: string,
+    generation: number,
+    slotNumber: number,
+    leaseGrant: CapsuleLeaseGrant,
+  ): Promise<void> {
+    validateGeneration(generation);
+    const existingPlacement = this.sessionSlots.get(sessionId);
+    if (
+      existingPlacement &&
+      (existingPlacement.generation !== generation ||
+        existingPlacement.slotNumber !== slotNumber)
+    ) {
+      if (existingPlacement.generation > generation) throw staleGeneration();
+      throw new CapsuleError(
+        "session_placement_conflict",
+        "IBKR session placement conflicts with the current host slot.",
+      );
+    }
+    const existingOccupant = this.slotSessions.get(slotNumber);
+    if (existingOccupant && existingOccupant.sessionId !== sessionId) {
+      throw new CapsuleError(
+        "session_placement_conflict",
+        "IBKR session placement conflicts with the current host slot.",
+      );
+    }
+    await this.slot(slotNumber).keepalive(sessionId, generation, leaseGrant);
+    const placement = { generation, sessionId, slotNumber };
+    this.sessionSlots.set(sessionId, placement);
+    this.slotSessions.set(slotNumber, placement);
   }
 
   async status(

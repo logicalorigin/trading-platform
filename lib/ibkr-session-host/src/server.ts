@@ -15,6 +15,7 @@ import {
 
 import {
   CapsuleError,
+  type CapsuleLeaseGrant,
   type CapsuleRecord,
   type CapsuleTarget,
   type CapsuleTargetKind,
@@ -40,7 +41,15 @@ export type SessionHostServerOptions = {
     sessionId: string,
     generation: number,
     slotNumber: number,
+    lease?: CapsuleLeaseGrant,
   ) => Promise<CapsuleRecord>;
+  keepaliveSession?: (
+    sessionId: string,
+    generation: number,
+    slotNumber: number,
+    lease: CapsuleLeaseGrant,
+  ) => Promise<void>;
+  issueLeaseGrant?: (controlAttemptId: string) => CapsuleLeaseGrant;
   releaseSession?: (
     sessionId: string,
     generation: number,
@@ -136,7 +145,12 @@ function controlAttemptQuery(
 }
 
 function isControlAction(value: string): value is IbkrHostControlAction {
-  return value === "ensure" || value === "release" || value === "status";
+  return (
+    value === "ensure" ||
+    value === "keepalive" ||
+    value === "release" ||
+    value === "status"
+  );
 }
 
 function sessionRoute(path: string): {
@@ -147,42 +161,46 @@ function sessionRoute(path: string): {
   sessionId: string;
   slotNumber: number;
 } | null {
-  const fenced =
-    /^\/sessions\/([^/]+)\/generations\/([0-9]+)\/slots\/([0-9]+)\/([^/]+)$/.exec(
-      path,
-    );
-  if (fenced) {
-    return {
-      action: fenced[4],
-      explicitGeneration: true,
-      explicitSlot: true,
-      generation: Number(fenced[2]),
-      sessionId: decodeURIComponent(fenced[1]),
-      slotNumber: Number(fenced[3]),
-    };
-  }
-  const placed = /^\/sessions\/([^/]+)\/slots\/([0-9]+)\/([^/]+)$/.exec(path);
-  if (placed) {
-    return {
-      action: placed[3],
-      explicitGeneration: false,
-      explicitSlot: true,
-      generation: 0,
-      sessionId: decodeURIComponent(placed[1]),
-      slotNumber: Number(placed[2]),
-    };
-  }
-  const legacy = /^\/sessions\/([^/]+)\/([^/]+)$/.exec(path);
-  return legacy
-    ? {
-        action: legacy[2],
+  try {
+    const fenced =
+      /^\/sessions\/([^/]+)\/generations\/([0-9]+)\/slots\/([0-9]+)\/([^/]+)$/.exec(
+        path,
+      );
+    if (fenced) {
+      return {
+        action: fenced[4],
+        explicitGeneration: true,
+        explicitSlot: true,
+        generation: Number(fenced[2]),
+        sessionId: decodeURIComponent(fenced[1]),
+        slotNumber: Number(fenced[3]),
+      };
+    }
+    const placed = /^\/sessions\/([^/]+)\/slots\/([0-9]+)\/([^/]+)$/.exec(path);
+    if (placed) {
+      return {
+        action: placed[3],
         explicitGeneration: false,
-        explicitSlot: false,
+        explicitSlot: true,
         generation: 0,
-        sessionId: decodeURIComponent(legacy[1]),
-        slotNumber: 1,
-      }
-    : null;
+        sessionId: decodeURIComponent(placed[1]),
+        slotNumber: Number(placed[2]),
+      };
+    }
+    const legacy = /^\/sessions\/([^/]+)\/([^/]+)$/.exec(path);
+    return legacy
+      ? {
+          action: legacy[2],
+          explicitGeneration: false,
+          explicitSlot: false,
+          generation: 0,
+          sessionId: decodeURIComponent(legacy[1]),
+          slotNumber: 1,
+        }
+      : null;
+  } catch {
+    return null;
+  }
 }
 
 function dataRoute(path: string): {
@@ -266,6 +284,7 @@ function authorized(
 }
 
 const DATA_REQUEST_MAX_BYTES = 1 * 1024 * 1024;
+const CONTROL_REQUEST_MAX_BYTES = 512;
 const DATA_RESPONSE_MAX_BYTES = 8 * 1024 * 1024;
 const DATA_PROXY_TIMEOUT_MS = 20_000;
 const DATA_STRIPPED_HEADERS = new Set([
@@ -292,6 +311,23 @@ async function readDataBody(request: IncomingMessage): Promise<Buffer> {
       throw new CapsuleError(
         "data_request_too_large",
         "IBKR host data request is too large.",
+      );
+    }
+    chunks.push(buffer);
+  }
+  return Buffer.concat(chunks);
+}
+
+async function readControlBody(request: IncomingMessage): Promise<Buffer> {
+  const chunks: Buffer[] = [];
+  let bytes = 0;
+  for await (const chunk of request) {
+    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    bytes += buffer.length;
+    if (bytes > CONTROL_REQUEST_MAX_BYTES) {
+      throw new CapsuleError(
+        "control_request_too_large",
+        "IBKR host control request is too large.",
       );
     }
     chunks.push(buffer);
@@ -596,9 +632,22 @@ export function createSessionHostServer(
     }
     const route = sessionRoute(path);
     if (route) {
+      let requestBody: Buffer;
+      try {
+        requestBody = await readControlBody(request);
+      } catch {
+        sendJson(response, 413, {
+          error: {
+            code: "control_request_too_large",
+            message: "IBKR session control failed.",
+          },
+        });
+        return;
+      }
       if (
         !authorized(
           {
+            body: requestBody,
             headers: request.headers,
             method: request.method ?? "",
             path: `${path}${requestUrl.search}`,
@@ -615,6 +664,11 @@ export function createSessionHostServer(
       const attempt = controlAttemptQuery(requestUrl);
       if (
         attempt.kind === "invalid" ||
+        (options.controlIdentity &&
+          (!route.explicitGeneration ||
+            !route.explicitSlot ||
+            attempt.kind !== "receipt")) ||
+        (route.explicitGeneration && attempt.kind !== "receipt") ||
         (attempt.kind === "receipt" &&
           (!options.controlIdentity ||
             !route.explicitGeneration ||
@@ -638,12 +692,51 @@ export function createSessionHostServer(
               key: options.controlIdentity.key,
             }
           : undefined;
+      let lease: CapsuleLeaseGrant | undefined;
+      if (attempt.kind === "receipt") {
+        if (requestBody.length !== 0) {
+          sendJson(
+            response,
+            400,
+            {
+              error: {
+                code: "control_body_invalid",
+                message: "IBKR session control failed.",
+              },
+            },
+            receipt,
+          );
+          return;
+        }
+        if (route.action === "ensure" || route.action === "keepalive") {
+          try {
+            lease = options.issueLeaseGrant?.(attempt.controlAttemptId);
+          } catch {
+            lease = undefined;
+          }
+          if (!lease || lease.controlAttemptId !== attempt.controlAttemptId) {
+            sendJson(
+              response,
+              503,
+              {
+                error: {
+                  code: "lease_grant_unavailable",
+                  message: "IBKR session control failed.",
+                },
+              },
+              receipt,
+            );
+            return;
+          }
+        }
+      }
       try {
         if (request.method === "POST" && route.action === "ensure") {
           const capsule = await options.ensureSession?.(
             route.sessionId,
             route.generation,
             route.slotNumber,
+            lease,
           );
           if (!capsule || !options.target) {
             sendJson(
@@ -669,6 +762,15 @@ export function createSessionHostServer(
                 : {}),
               ...(route.explicitSlot ? { slotNumber: route.slotNumber } : {}),
               capsule,
+              ...(lease
+                ? {
+                    lease: {
+                      version: lease.version,
+                      bootId: lease.bootId,
+                      grantNotAfterNs: lease.grantNotAfterNs,
+                    },
+                  }
+                : {}),
               targets: {
                 cpg: options.target(
                   route.sessionId,
@@ -682,6 +784,45 @@ export function createSessionHostServer(
                   "console",
                   route.slotNumber,
                 ),
+              },
+            },
+            receipt,
+          );
+          return;
+        }
+        if (request.method === "POST" && route.action === "keepalive") {
+          if (!options.keepaliveSession || !lease) {
+            sendJson(
+              response,
+              503,
+              {
+                error: {
+                  code: "control_unavailable",
+                  message: "IBKR session control failed.",
+                },
+              },
+              receipt,
+            );
+            return;
+          }
+          await options.keepaliveSession(
+            route.sessionId,
+            route.generation,
+            route.slotNumber,
+            lease,
+          );
+          sendJson(
+            response,
+            200,
+            {
+              sessionId: route.sessionId,
+              generation: route.generation,
+              slotNumber: route.slotNumber,
+              keptAlive: true,
+              lease: {
+                version: lease.version,
+                bootId: lease.bootId,
+                grantNotAfterNs: lease.grantNotAfterNs,
               },
             },
             receipt,

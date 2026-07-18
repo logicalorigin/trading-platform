@@ -55,6 +55,7 @@ test("fleet WebSocket data requests preserve loopback HTTP transport and upgrade
       for (const [index, host] of hosts.entries()) {
         assert.ok(
           await registerIbkrGatewayHost({
+            capsuleLeaseProtocolVersion: 1,
             controlOrigin: host.controlOrigin,
             failureDomain: `synthetic-transport-${index}`,
             hostId: host.hostId,
@@ -68,6 +69,7 @@ test("fleet WebSocket data requests preserve loopback HTTP transport and upgrade
         assert.ok(
           await approveIbkrGatewayHost({
             admissionSlotCapacity: 1,
+            capsuleLeaseProtocolVersion: 1,
             hostId: host.hostId,
             imageDigest,
             runtimeAttestationDigest: imageDigest,

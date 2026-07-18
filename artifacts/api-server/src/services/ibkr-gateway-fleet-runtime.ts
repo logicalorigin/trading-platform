@@ -28,6 +28,7 @@ import {
 } from "./ibkr-gateway-fleet-config";
 
 const FLEET_CONTROL_TIMEOUT_MS = 20_000;
+const FLEET_ENSURE_TIMEOUT_MS = 110_000;
 const FLEET_CONTROL_MAX_RESPONSE_BYTES = 64 * 1024;
 
 export function isIbkrGatewayFleetEnabled(): boolean {
@@ -101,7 +102,7 @@ export async function ensureIbkrGatewayFleetFence(
 async function fleetContext(
   fence: IbkrGatewayFence,
   authority: "cleanup" | "traffic" = "traffic",
-  issueControlAttempt = false,
+  controlAction: IbkrHostControlAction | null = null,
 ): Promise<{
   controlAttemptId: string | null;
   fence: IbkrGatewayFence;
@@ -117,8 +118,12 @@ async function fleetContext(
   }
   let controlAttemptId: string | null = null;
   let renewed: IbkrGatewayFence | null;
-  if (issueControlAttempt) {
-    const attempt = await beginIbkrGatewayControlAttempt(fence, authority);
+  if (controlAction) {
+    const attempt = await beginIbkrGatewayControlAttempt(
+      fence,
+      authority,
+      controlAction,
+    );
     controlAttemptId = attempt?.controlAttemptId ?? null;
     renewed = attempt?.fence ?? null;
   } else {
@@ -229,7 +234,7 @@ export type IbkrGatewayFleetHostResponse<T> = {
 export async function acknowledgeIbkrGatewayFleetControl(
   response: Pick<
     IbkrGatewayFleetHostResponse<unknown>,
-    "authority" | "controlAttemptId" | "fence"
+    "action" | "authority" | "controlAttemptId" | "fence"
   >,
 ): Promise<void> {
   if (
@@ -237,6 +242,7 @@ export async function acknowledgeIbkrGatewayFleetControl(
       response.fence,
       response.controlAttemptId,
       response.authority,
+      response.action === "ensure" || response.action === "keepalive",
     ))
   ) {
     throw new HttpError(
@@ -253,7 +259,7 @@ export async function requestIbkrGatewayFleetHost<T>(
 ): Promise<IbkrGatewayFleetHostResponse<T>> {
   const method = action === "status" ? "GET" : "POST";
   const authority = action === "release" ? "cleanup" : "traffic";
-  const current = await fleetContext(fence, authority, true);
+  const current = await fleetContext(fence, authority, action);
   const controlAttemptId = current.controlAttemptId;
   if (!controlAttemptId) {
     throw new HttpError(
@@ -280,7 +286,11 @@ export async function requestIbkrGatewayFleetHost<T>(
         path,
       }),
       redirect: "error",
-      signal: AbortSignal.timeout(FLEET_CONTROL_TIMEOUT_MS),
+      signal: AbortSignal.timeout(
+        action === "ensure"
+          ? FLEET_ENSURE_TIMEOUT_MS
+          : FLEET_CONTROL_TIMEOUT_MS,
+      ),
     });
   } catch (error) {
     throw new HttpError(502, "The IBKR session host is unavailable.", {
@@ -289,14 +299,14 @@ export async function requestIbkrGatewayFleetHost<T>(
       expose: true,
     });
   }
-  const body = await readFleetBody(response);
+  const responseBody = await readFleetBody(response);
   const receiptHeaders = Object.fromEntries(response.headers.entries());
   const receiptValid = [current.rootKeys.primary, current.rootKeys.overlap]
     .filter((rootKey): rootKey is Buffer => rootKey !== null)
     .some((rootKey) =>
       verifyIbkrHostControlReceipt({
         action,
-        body,
+        body: responseBody,
         controlAttemptId,
         expectedHostId: current.fence.hostId,
         headers: receiptHeaders,
@@ -312,7 +322,7 @@ export async function requestIbkrGatewayFleetHost<T>(
       controlAttemptId,
       fence: current.fence,
       status: "not_found",
-      value: parseFleetJson<T>(body),
+      value: parseFleetJson<T>(responseBody),
     };
   }
   if (response.status !== 200) {
@@ -329,7 +339,7 @@ export async function requestIbkrGatewayFleetHost<T>(
     controlAttemptId,
     fence: current.fence,
     status: "ok",
-    value: parseFleetJson<T>(body),
+    value: parseFleetJson<T>(responseBody),
   };
 }
 

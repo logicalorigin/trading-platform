@@ -6,6 +6,12 @@ import { CapsuleFleetManager, type CapsuleSlotController } from "./fleet";
 
 const SESSION_A = "11111111-1111-4111-8111-111111111111";
 const SESSION_B = "22222222-2222-4222-8222-222222222222";
+const LEASE_GRANT = {
+  bootId: "33333333-3333-4333-8333-333333333333",
+  controlAttemptId: "44444444-4444-4444-8444-444444444444",
+  grantNotAfterNs: "20000000000",
+  version: 1,
+} as const;
 
 function fakeSlot(slotNumber: number): CapsuleSlotController {
   const sessions = new Map<string, number>();
@@ -38,6 +44,15 @@ function fakeSlot(slotNumber: number): CapsuleSlotController {
       const generation = sessions.get(sessionId);
       return generation === undefined ? null : { generation };
     },
+    keepalive: async (sessionId, generation) => {
+      if (sessions.get(sessionId) !== generation) {
+        throw new CapsuleError("session_not_found", "not found");
+      }
+    },
+    reconcile: async () =>
+      sessions.size > 0
+        ? { name: `pyrus-ibkr-slot-${slotNumber}`, status: "ready" }
+        : null,
     release: async (sessionId, generation) => {
       if (sessions.get(sessionId) !== generation) {
         throw new CapsuleError("session_not_found", "not found");
@@ -134,4 +149,22 @@ test("fleet recovers generation identity from the capsule after host restart", a
   assert.equal((await restarted.ensure(SESSION_A, 8, 1)).status, "ready");
   assert.equal(await restarted.status(SESSION_A, 7, 1), null);
   assert.equal((await restarted.status(SESSION_A, 8, 1))?.status, "ready");
+});
+
+test("fleet keepalive restores only the exact durable placement", async () => {
+  const fleet = new CapsuleFleetManager(2, fakeSlot);
+  await fleet.ensure(SESSION_A, 7, 2, LEASE_GRANT);
+
+  await fleet.keepalive(SESSION_A, 7, 2, LEASE_GRANT);
+  await assert.rejects(
+    () => fleet.keepalive(SESSION_A, 7, 1, LEASE_GRANT),
+    (error: unknown) =>
+      error instanceof CapsuleError &&
+      error.code === "session_placement_conflict",
+  );
+  await assert.rejects(
+    () => fleet.keepalive(SESSION_A, 6, 2, LEASE_GRANT),
+    (error: unknown) =>
+      error instanceof CapsuleError && error.code === "stale_generation",
+  );
 });
