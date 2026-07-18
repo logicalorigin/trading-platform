@@ -219,14 +219,17 @@ export function resolveBacktestOptionContract(input: {
   preset: BacktestOptionPreset;
   signalOptionsProfile: SignalOptionsExecutionProfile | null;
 }): ResolvedBacktestOptionContract | null {
+  const contracts = input.contracts.filter(
+    (contract) => contract.right === input.right,
+  );
   const filteredByExpiry = input.signalOptionsProfile
     ? selectSignalOptionsExpiryWindow(
-        input.contracts,
+        contracts,
         input.occurredAt,
         input.signalOptionsProfile,
       )
     : selectExpiryWindow(
-        input.contracts,
+        contracts,
         input.occurredAt,
         input.preset.targetDte,
         input.preset.minDte,

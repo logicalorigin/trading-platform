@@ -103,6 +103,40 @@ test("option resolution returns null for an empty contract set", () => {
   assert.equal(resolve({ contracts: [] }), null);
 });
 
+test("option resolution filters mixed contract lists to the requested right", () => {
+  const contracts = [
+    contract({
+      expirationDate: "2026-06-15",
+      strike: 100,
+      right: "put",
+      ticker: "WRONG_RIGHT",
+    }),
+    contract({
+      expirationDate: "2026-06-15",
+      strike: 105,
+      right: "call",
+      ticker: "REQUESTED_RIGHT",
+    }),
+  ];
+  const resolved = [
+    resolve({ contracts, right: "call" }),
+    resolve({
+      contracts,
+      right: "call",
+      signalOptionsProfile: resolveSignalOptionsExecutionProfile({}),
+    }),
+  ];
+
+  assert.deepEqual(
+    resolved.map((item) => item?.ticker),
+    ["REQUESTED_RIGHT", "REQUESTED_RIGHT"],
+  );
+  assert.deepEqual(
+    resolved.map((item) => item?.right),
+    ["call", "call"],
+  );
+});
+
 test("an expiration inside the configured DTE window outranks closer out-of-window contracts", () => {
   const resolved = resolve({
     contracts: [
