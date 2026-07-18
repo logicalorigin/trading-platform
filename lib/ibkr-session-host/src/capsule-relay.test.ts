@@ -229,7 +229,12 @@ test("capsule relay rejects a TLS target whose certificate does not match", asyn
   const target = createTlsServer(
     { cert: TEST_CERT, key: TEST_KEY },
     (socket) => {
-      targetCloses.push(once(socket, "close"));
+      targetCloses.push(
+        new Promise((resolve) => {
+          socket.once("close", resolve);
+        }),
+      );
+      socket.once("error", () => undefined);
       socket.on("data", (data) => {
         targetBytes += data.length;
       });
