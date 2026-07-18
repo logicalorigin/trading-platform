@@ -25,8 +25,15 @@ const controlFencingMigrationSource = readFileSync(
   ),
   "utf8",
 );
+const capsuleLeaseMigrationSource = readFileSync(
+  new URL(
+    "../../migrations/20260717_ibkr_gateway_capsule_lease_deadlines.sql",
+    import.meta.url,
+  ),
+  "utf8",
+);
 const prerequisiteMigrationSource = `${fleetMigrationSource}\n${loopbackOriginMigrationSource}`;
-const migrationSource = `${prerequisiteMigrationSource}\n${controlFencingMigrationSource}`;
+const migrationSource = `${prerequisiteMigrationSource}\n${controlFencingMigrationSource}\n${capsuleLeaseMigrationSource}`;
 const schemaSource = readFileSync(
   new URL("./broker.ts", import.meta.url),
   "utf8",
@@ -180,6 +187,7 @@ before(async () => {
       "BEGIN;\nSELECT now();\nSELECT pg_sleep(2);",
     ),
   );
+  await client.exec(capsuleLeaseMigrationSource);
   const storedDeadline = await client.query<{ deadline_ms: number }>(`
     SELECT
       (extract(epoch FROM replacement_deadline_at) * 1000)::double precision AS deadline_ms
@@ -257,6 +265,7 @@ test("host registration is fail-closed and stores only identity, attestation, ca
     "image_digest",
     "runtime_spec_digest",
     "runtime_attestation_digest",
+    "capsule_lease_protocol_version",
     "failure_domain",
     "measured_slot_capacity",
     "admission_slot_capacity",
@@ -310,6 +319,14 @@ test("workload identity and runtime attestations are syntactically constrained a
     client.exec(`
       UPDATE ibkr_gateway_hosts
       SET runtime_spec_digest = '${SHA_B}'
+      WHERE id = '${HOST_A}'
+    `),
+    /ibkr_gateway_hosts_attestation_immutable/,
+  );
+  await assert.rejects(
+    client.exec(`
+      UPDATE ibkr_gateway_hosts
+      SET capsule_lease_protocol_version = 1
       WHERE id = '${HOST_A}'
     `),
     /ibkr_gateway_hosts_attestation_immutable/,
@@ -394,7 +411,7 @@ test("session placement is owner-bound, all-or-none, and unique per host slot", 
   );
 });
 
-test("placed sessions require a full replacement fence and exact control acknowledgement", async () => {
+test("placed sessions require a replacement fence and exact control acknowledgement", async () => {
   await assert.rejects(
     client.exec(`
       INSERT INTO ibkr_gateway_sessions (
@@ -419,32 +436,6 @@ test("placed sessions require a full replacement fence and exact control acknowl
     `),
     /ibkr_gateway_sessions_control_fencing_chk/,
   );
-  await assert.rejects(
-    client.exec(`
-      INSERT INTO ibkr_gateway_sessions (
-        app_user_id,
-        broker_connection_id,
-        generation,
-        lifecycle_state,
-        host_id,
-        slot_number,
-        lease_holder_id,
-        lease_expires_at,
-        replacement_deadline_at
-      ) VALUES (
-        '${OWNER_A}',
-        '${CONNECTION_A}',
-        1,
-        'provisioning',
-        '${HOST_A}',
-        1,
-        '${HOLDER_A}',
-        now() + interval '30 seconds',
-        now() + interval '154 seconds'
-      )
-    `),
-    /ibkr_gateway_sessions_control_fencing_chk/,
-  );
   await client.exec(`
     INSERT INTO ibkr_gateway_sessions (
       app_user_id,
@@ -465,7 +456,7 @@ test("placed sessions require a full replacement fence and exact control acknowl
       1,
       '${HOLDER_A}',
       now() + interval '30 seconds',
-      now() + interval '155 seconds'
+      now() + interval '31 seconds'
     )
   `);
   await assert.rejects(
@@ -516,6 +507,7 @@ test("migration and Drizzle schema retain the same named fleet safety constraint
     "ibkr_gateway_hosts_workload_identity_digest_chk",
     "ibkr_gateway_hosts_digest_chk",
     "ibkr_gateway_hosts_capacity_chk",
+    "ibkr_gateway_hosts_capsule_lease_protocol_version_chk",
     "ibkr_gateway_hosts_status_chk",
     "ibkr_gateway_hosts_heartbeat_chk",
     "ibkr_gateway_hosts_control_origin_chk",

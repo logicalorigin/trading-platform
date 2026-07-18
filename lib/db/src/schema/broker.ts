@@ -88,6 +88,9 @@ export const ibkrGatewayHostsTable = pgTable(
     runtimeAttestationDigest: varchar("runtime_attestation_digest", {
       length: 71,
     }).notNull(),
+    capsuleLeaseProtocolVersion: integer("capsule_lease_protocol_version")
+      .notNull()
+      .default(0),
     failureDomain: varchar("failure_domain", { length: 128 }).notNull(),
     measuredSlotCapacity: integer("measured_slot_capacity").notNull(),
     admissionSlotCapacity: integer("admission_slot_capacity").notNull(),
@@ -121,6 +124,10 @@ export const ibkrGatewayHostsTable = pgTable(
       "ibkr_gateway_hosts_capacity_chk",
       sql`${table.measuredSlotCapacity} BETWEEN 1 AND 20
         AND ${table.admissionSlotCapacity} BETWEEN 1 AND ${table.measuredSlotCapacity}`,
+    ),
+    check(
+      "ibkr_gateway_hosts_capsule_lease_protocol_version_chk",
+      sql`${table.capsuleLeaseProtocolVersion} IN (0, 1)`,
     ),
     check(
       "ibkr_gateway_hosts_status_chk",
@@ -223,7 +230,6 @@ export const ibkrGatewaySessionsTable = pgTable(
         AND ${table.replacementDeadlineAt} IS NULL)
         OR (${table.hostId} IS NOT NULL
         AND ${table.replacementDeadlineAt} IS NOT NULL
-        AND ${table.replacementDeadlineAt} >= ${table.leaseExpiresAt} + interval '125 seconds'
         AND (${table.controlAcknowledgedAt} IS NULL
           OR ${table.controlAttemptId} IS NOT NULL))`,
     ),
