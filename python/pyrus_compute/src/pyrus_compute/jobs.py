@@ -67,9 +67,6 @@ def _bound_option_scenario_components(
 ) -> tuple[dict[str, float], bool]:
     raw_total = sum(components.values())
     lower_bound, upper_bound = _option_scenario_pnl_bounds(position, new_spot)
-    if raw_total == 0:
-        return components, False
-
     bounded_total = raw_total
     if lower_bound is not None:
         bounded_total = max(bounded_total, lower_bound)
@@ -78,6 +75,9 @@ def _bound_option_scenario_components(
 
     if bounded_total == raw_total:
         return components, False
+
+    if raw_total == 0:
+        return {**components, "boundAdjustment": bounded_total}, True
 
     scale = bounded_total / raw_total
     return {key: value * scale for key, value in components.items()}, True
@@ -1041,6 +1041,37 @@ def _normalize_volatility(value: float | None) -> float | None:
 def _resolve_black_scholes_volatility(
     position: GreekPositionInput,
 ) -> tuple[float | None, str | None]:
+    if (
+        position.pricingModel != GreekScenarioPricingModel.BOUNDED_GREEK_APPROXIMATION
+        and position.strike is not None
+        and position.right is not None
+        and position.daysToExpiration is not None
+    ):
+        years = max(position.daysToExpiration, 0) / 365
+        minimum_price = black_scholes_price(
+            spot=position.spot,
+            strike=position.strike,
+            time_to_expiration_years=years,
+            volatility=MIN_VOLATILITY,
+            right=position.right,
+            risk_free_rate=position.riskFreeRate or 0.0,
+            dividend_yield=position.dividendYield or 0.0,
+        )
+        maximum_price = black_scholes_price(
+            spot=position.spot,
+            strike=position.strike,
+            time_to_expiration_years=years,
+            volatility=MAX_VOLATILITY,
+            right=position.right,
+            risk_free_rate=position.riskFreeRate or 0.0,
+            dividend_yield=position.dividendYield or 0.0,
+        )
+        tolerance = max(1e-9, abs(maximum_price) * 1e-9)
+        if not (minimum_price - tolerance <= position.markPrice <= maximum_price + tolerance):
+            raise ValueError(
+                f"{position.symbol} mark price is outside the supported Black-Scholes price range"
+            )
+
     direct_volatility = _normalize_volatility(position.impliedVolatility)
     if direct_volatility is not None:
         return direct_volatility, "input"
@@ -1135,12 +1166,8 @@ def _black_scholes_scenario_pnl(
         risk_free_rate=position["riskFreeRate"] or 0.0,
         dividend_yield=position["dividendYield"] or 0.0,
     )
-    lower_price, upper_price = _option_price_bounds(position, new_spot)
-    bounded_price = max(shocked_price, lower_price)
-    if upper_price is not None:
-        bounded_price = min(bounded_price, upper_price)
     signed_contract_units = math.copysign(position["contractUnits"], position["quantity"])
-    return (bounded_price - position["markPrice"]) * signed_contract_units
+    return (shocked_price - position["markPrice"]) * signed_contract_units
 
 
 def _scaled_greek(
@@ -1234,6 +1261,7 @@ def run_greek_scenario_matrix(
                 total_gamma = 0.0
                 total_theta = 0.0
                 total_vega = 0.0
+                total_bound_adjustment = 0.0
                 total_repricing = 0.0
                 scenario_bounded_count = 0
                 scenario_repriced_count = 0
@@ -1268,9 +1296,17 @@ def run_greek_scenario_matrix(
                     total_gamma += components["gamma"]
                     total_theta += components["theta"]
                     total_vega += components["vega"]
+                    total_bound_adjustment += components.get("boundAdjustment", 0.0)
                     scenario_fallback_count += 1
 
-                total = total_delta + total_gamma + total_theta + total_vega + total_repricing
+                total = (
+                    total_delta
+                    + total_gamma
+                    + total_theta
+                    + total_vega
+                    + total_bound_adjustment
+                    + total_repricing
+                )
                 bounded_position_scenario_count += scenario_bounded_count
                 repriced_position_scenario_count += scenario_repriced_count
                 fallback_position_scenario_count += scenario_fallback_count
@@ -1284,6 +1320,8 @@ def run_greek_scenario_matrix(
                             "vega": round(total_vega, 6),
                         }
                     )
+                    if total_bound_adjustment != 0:
+                        component_values["boundAdjustment"] = round(total_bound_adjustment, 6)
                 if scenario_repriced_count > 0:
                     component_values["repricing"] = round(total_repricing, 6)
                 scenario_rows.append(
@@ -1376,12 +1414,19 @@ def _build_greek_management_flags(
 def run_portfolio_optimization(
     input_data: PortfolioOptimizationInput,
 ) -> tuple[dict[str, Any], list[str]]:
-    warnings: list[str] = []
+    allocation_method = _portfolio_allocation_method(input_data.objective)
+    advisory_warning = (
+        f"{allocation_method.replace('_', ' ')} allocation is advisory only; "
+        "no constrained solver is used"
+    )
+    warnings = [advisory_warning]
     positions = input_data.positions
     if not positions:
         warning = "portfolio_optimization received no positions"
+        warnings.append(warning)
         return {
             "advisoryOnly": True,
+            "allocationMethod": allocation_method,
             "objective": input_data.objective.value,
             "allocations": [],
             "turnover": 0,
@@ -1392,8 +1437,8 @@ def run_portfolio_optimization(
                 "topSymbol": None,
                 "effectivePositionCount": 0,
             },
-            "warnings": [warning],
-        }, [warning]
+            "warnings": warnings,
+        }, warnings
 
     symbols = [position.symbol for position in positions]
     current_weights, current_warnings = _current_portfolio_weights(input_data)
@@ -1417,14 +1462,27 @@ def run_portfolio_optimization(
         current_weights,
         input_data.constraints.maxTurnover,
     )
-    target_weights = _normalize_weights(
-        target_weights,
-        allow_short=not input_data.constraints.longOnly,
-    )
-    risk_contribution = _risk_contribution(target_weights, covariance)
+    max_weight = input_data.constraints.maxWeight
+    if max_weight is not None and np.any(np.abs(target_weights) > max_weight + 1e-9):
+        raise ValueError("maxWeight cannot be satisfied together with the other constraints")
     turnover = 0.5 * float(np.sum(np.abs(target_weights - current_weights)))
-    portfolio_variance = max(float(target_weights @ covariance @ target_weights), 0.0)
-    max_index = int(np.argmax(target_weights))
+    max_turnover = input_data.constraints.maxTurnover
+    if max_turnover is not None and turnover > max_turnover + 1e-9:
+        raise ValueError("maxTurnover could not be satisfied")
+    allocation_total = float(
+        np.sum(target_weights)
+        if input_data.constraints.longOnly
+        else np.sum(np.abs(target_weights))
+    )
+    if not math.isclose(allocation_total, 1.0, rel_tol=1e-9, abs_tol=1e-9):
+        raise ValueError("maxTurnover cannot preserve a fully invested allocation")
+    raw_portfolio_variance = float(target_weights @ covariance @ target_weights)
+    if not math.isfinite(raw_portfolio_variance) or raw_portfolio_variance < 0:
+        raise ValueError("portfolio variance must be a finite non-negative number")
+    portfolio_variance = raw_portfolio_variance
+    risk_contribution = _risk_contribution(target_weights, covariance)
+    max_index = int(np.argmax(np.abs(target_weights)))
+    squared_weight_sum = float(np.sum(target_weights * target_weights))
     allocations = [
         {
             "symbol": symbol,
@@ -1439,17 +1497,17 @@ def run_portfolio_optimization(
 
     return {
         "advisoryOnly": True,
+        "allocationMethod": allocation_method,
         "objective": input_data.objective.value,
         "allocations": allocations,
         "turnover": round(turnover, 6),
         "portfolioVariance": round(portfolio_variance, 10),
         "portfolioVolatility": round(math.sqrt(portfolio_variance), 10),
         "concentration": {
-            "maxWeight": round(float(np.max(target_weights)), 6),
+            "maxWeight": round(float(np.max(np.abs(target_weights))), 6),
             "topSymbol": symbols[max_index],
-            "effectivePositionCount": round(
-                1 / float(np.sum(target_weights * target_weights)),
-                6,
+            "effectivePositionCount": (
+                round(1 / squared_weight_sum, 6) if squared_weight_sum > 0 else 0
             ),
         },
         "constraints": {
@@ -1461,19 +1519,34 @@ def run_portfolio_optimization(
     }, warnings
 
 
+def _portfolio_allocation_method(
+    objective: PortfolioOptimizationObjective,
+) -> str:
+    if objective == PortfolioOptimizationObjective.RISK_PARITY:
+        return "inverse_volatility_advisory"
+    if objective == PortfolioOptimizationObjective.MAX_RETURN:
+        return "positive_expected_return_advisory"
+    return "inverse_variance_advisory"
+
+
 def _current_portfolio_weights(
     input_data: PortfolioOptimizationInput,
 ) -> tuple[np.ndarray, list[str]]:
     weights = np.array([position.currentWeight for position in input_data.positions], dtype=float)
-    warnings: list[str] = []
     weights = np.where(np.isfinite(weights), weights, 0.0)
     if input_data.constraints.longOnly and np.any(weights < 0):
-        weights = np.maximum(weights, 0.0)
-        warnings.append("negative current weights were clamped for long-only optimization")
-    return (
-        _normalize_weights(weights, allow_short=not input_data.constraints.longOnly),
-        warnings,
-    )
+        raise ValueError("negative current weights are invalid for long-only optimization")
+    if input_data.constraints.maxTurnover is not None:
+        book_total = float(
+            np.sum(weights)
+            if input_data.constraints.longOnly
+            else np.sum(np.abs(weights))
+        )
+        if not math.isclose(book_total, 1.0, rel_tol=1e-9, abs_tol=1e-9):
+            raise ValueError(
+                "current weights must be fully invested when maxTurnover is constrained"
+            )
+    return weights, []
 
 
 def _optimization_covariance(
@@ -1484,17 +1557,23 @@ def _optimization_covariance(
     if input_data.covariance is not None:
         try:
             covariance = np.array(input_data.covariance, dtype=float)
-        except ValueError:
-            covariance = np.empty((0, 0), dtype=float)
-        if (
-            covariance.shape == (size, size)
-            and np.all(np.isfinite(covariance))
-            and np.all(np.diag(covariance) > 0)
-        ):
-            return (covariance + covariance.T) / 2, []
-        return _diagonal_covariance(input_data, symbols), [
-            "invalid covariance matrix; using diagonal fallback"
-        ]
+        except (TypeError, ValueError) as error:
+            raise ValueError("covariance must be a finite square matrix") from error
+        if covariance.shape != (size, size) or not np.all(np.isfinite(covariance)):
+            raise ValueError("covariance must be a finite square matrix")
+        if not np.allclose(covariance, covariance.T, rtol=1e-10, atol=1e-12):
+            raise ValueError("covariance matrix must be symmetric")
+        covariance = (covariance + covariance.T) / 2
+        if np.any(np.diag(covariance) <= 0):
+            raise ValueError("covariance diagonal must be positive")
+        eigenvalue_tolerance = (
+            np.finfo(np.float64).eps
+            * max(size, 1)
+            * max(1.0, float(np.linalg.norm(covariance, ord=2)))
+        )
+        if float(np.min(np.linalg.eigvalsh(covariance))) < -eigenvalue_tolerance:
+            raise ValueError("covariance matrix must be positive semidefinite")
+        return covariance, []
     return _returns_covariance(input_data, symbols)
 
 
@@ -1586,9 +1665,7 @@ def _apply_max_weight_constraint(
     if size == 0:
         return weights, []
     if max_weight * size < 1:
-        return np.full(size, 1 / size, dtype=float), [
-            "maxWeight below feasible floor; using equal weights"
-        ]
+        raise ValueError("maxWeight is below the feasible floor for this portfolio")
 
     result = np.zeros(size, dtype=float)
     remaining_indices = list(range(size))
