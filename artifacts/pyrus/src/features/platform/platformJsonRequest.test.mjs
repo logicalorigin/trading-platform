@@ -15,6 +15,45 @@ test.afterEach(() => {
   globalThis.fetch = originalFetch;
 });
 
+test("adds an in-memory CSRF token to state-changing requests", async () => {
+  let observedInit = null;
+  globalThis.fetch = (_path, init) => {
+    observedInit = init;
+    return Promise.resolve({
+      ok: true,
+      status: 200,
+      json: async () => ({ ok: true }),
+    });
+  };
+
+  await platformJsonRequest("/api/watchlists", {
+    method: "POST",
+    body: { name: "Tech" },
+    csrfToken: "session-csrf",
+  });
+
+  assert.equal(observedInit.headers["X-CSRF-Token"], "session-csrf");
+});
+
+test("does not attach a CSRF token to read-only requests", async () => {
+  let observedInit = null;
+  globalThis.fetch = (_path, init) => {
+    observedInit = init;
+    return Promise.resolve({
+      ok: true,
+      status: 200,
+      json: async () => ({ ok: true }),
+    });
+  };
+
+  await platformJsonRequest("/api/watchlists", {
+    method: "GET",
+    csrfToken: "session-csrf",
+  });
+
+  assert.equal(observedInit.headers["X-CSRF-Token"], undefined);
+});
+
 test("a native fetch transport failure is tagged for the shared retry policy", async () => {
   const cause = new TypeError("Failed to fetch");
   globalThis.fetch = async () => {

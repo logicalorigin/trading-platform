@@ -3,7 +3,7 @@ import { fetchWithNetworkError } from "./fetchWithNetworkError.js";
 
 export const platformJsonRequest = async (
   path,
-  { method = "GET", body, signal, timeoutMs = 0 } = {},
+  { method = "GET", body, signal, timeoutMs = 0, csrfToken } = {},
 ) => {
   const controller =
     timeoutMs > 0 && typeof AbortController !== "undefined"
@@ -21,12 +21,12 @@ export const platformJsonRequest = async (
     response = await fetchWithNetworkError(path, {
       method,
       signal: signal || controller?.signal,
-      headers:
-        body == null
-          ? undefined
-          : {
-              "Content-Type": "application/json",
-            },
+      headers: {
+        ...(body == null ? {} : { "Content-Type": "application/json" }),
+        ...(csrfToken && !["GET", "HEAD", "OPTIONS"].includes(method.toUpperCase())
+          ? { "X-CSRF-Token": csrfToken }
+          : {}),
+      },
       body: body == null ? undefined : JSON.stringify(body),
     });
   } catch (error) {
