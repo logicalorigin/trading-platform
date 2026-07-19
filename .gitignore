@@ -84,6 +84,7 @@ artifacts/*.log
 scripts/reports/signal-options-greek-selector-smoke/
 scripts/reports/open-acceptance/
 scripts/reports/pyrus-performance-monitor/
+scripts/scripts/reports/pyrus-performance-monitor/
 reports/pattern-discovery-sweeps/
 
 # local runtime registries
