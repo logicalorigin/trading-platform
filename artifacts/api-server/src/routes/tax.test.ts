@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { once } from "node:events";
+import { readFile } from "node:fs/promises";
 import type { AddressInfo } from "node:net";
 import { after, mock, test } from "node:test";
 
@@ -87,31 +88,14 @@ test("tax events route leaves the happy response unchanged", async () => {
   });
 });
 
-test("tax events route returns a fast retryable response when the read hangs", async () => {
-  await withServer(async (baseUrl) => {
-    listAccountTaxEventsImpl = async () => new Promise(() => {});
-    const startedAt = Date.now();
+test("tax events route has no detached response-budget race", async () => {
+  const source = await readFile(new URL("./tax.ts", import.meta.url), "utf8");
 
-    const response = await fetch(`${baseUrl}/accounts/shadow/tax/events`, {
-      signal: AbortSignal.timeout(4_000),
-    });
-
-    assert.equal(response.status, 200);
-    assert.ok(Date.now() - startedAt < 3_000);
-    assert.equal(response.headers.get("retry-after"), "15");
-    assert.deepEqual(await response.json(), {
-      events: [],
-      sourceFreshness: "temporarily_unavailable",
-      basisConfidence: "unknown",
-      degraded: true,
-      partial: true,
-      retryable: true,
-      reason: "tax_events_timeout",
-    });
-  });
+  assert.doesNotMatch(source, /Promise\.race/);
+  assert.doesNotMatch(source, /listAccountTaxEventsWithinRouteBudget/);
 });
 
-test("tax events route degrades only retryable database pressure failures", async () => {
+test("tax events route reports retryable database pressure as unavailable", async () => {
   await withServer(async (baseUrl) => {
     for (const [error, reason] of [
       [
@@ -133,11 +117,23 @@ test("tax events route degrades only retryable database pressure failures", asyn
       const response = await fetch(`${baseUrl}/accounts/shadow/tax/events`);
       const body = (await response.json()) as Record<string, unknown>;
 
-      assert.equal(response.status, 200);
-      assert.deepEqual(body.events, []);
-      assert.equal(body.degraded, true);
-      assert.equal(body.retryable, true);
-      assert.equal(body.reason, reason);
+      assert.equal(response.status, 503);
+      assert.equal(
+        response.headers.get("content-type"),
+        "application/problem+json; charset=utf-8",
+      );
+      assert.equal(response.headers.get("retry-after"), "15");
+      assert.equal(response.headers.get("x-pyrus-admission-action"), "shed");
+      assert.deepEqual(body, {
+        type: "https://pyrus.local/problems/tax-events-unavailable",
+        title: "Tax events temporarily unavailable",
+        status: 503,
+        detail: "Tax events could not be loaded because the database is temporarily unavailable.",
+        code: "tax_events_unavailable",
+        retryable: true,
+        reason,
+      });
+      assert.equal("events" in body, false);
     }
 
     listAccountTaxEventsImpl = async () => {
@@ -147,5 +143,6 @@ test("tax events route degrades only retryable database pressure failures", asyn
       `${baseUrl}/accounts/shadow/tax/events`,
     );
     assert.equal(hardFailure.status, 500);
+    assert.equal(hardFailure.headers.get("retry-after"), null);
   });
 });
