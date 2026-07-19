@@ -4641,18 +4641,26 @@ export default function PlatformApp() {
 
   // Watchlist sync: clicking a sidebar item updates sym AND signals Trade tab
   // to load it into the active slot
-  const handleSelectSymbol = useCallback((newSym) => {
+  const handleSelectSymbol = useCallback((newSym, tradeIntent = null) => {
     const normalized = normalizeTickerSymbol(newSym);
     if (!normalized) {
       return;
     }
+    const requestedAssetMode = ["equity", "option"].includes(
+      tradeIntent?.assetMode,
+    )
+      ? tradeIntent.assetMode
+      : null;
     ensureTradeTickerInfo(normalized, normalized);
     setSym(normalized);
     setMarketSymPing((prev) => ({ sym: normalized, n: prev.n + 1 }));
     setTradeSymPing((prev) => ({
       sym: normalized,
       n: prev.n + 1,
-      contract: null,
+      contract:
+        requestedAssetMode === "option" ? tradeIntent?.contract || null : null,
+      assetMode: requestedAssetMode,
+      openTicket: Boolean(requestedAssetMode),
     }));
   }, []);
   const handleFocusMarketChart = useCallback((newSym) => {
@@ -5043,8 +5051,8 @@ export default function PlatformApp() {
   );
 
   const handleAccountJumpToTrade = useCallback(
-    (symbol) => {
-      handleSelectSymbol(symbol);
+    (symbol, tradeIntent = null) => {
+      handleSelectSymbol(symbol, tradeIntent);
       activateScreen("trade");
     },
     [activateScreen, handleSelectSymbol],

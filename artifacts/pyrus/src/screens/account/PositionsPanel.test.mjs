@@ -7,11 +7,70 @@ import { __positionsPanelInternalsForTests } from "./PositionsPanel.jsx";
 const {
   applyLiveEquityQuoteToRow,
   applyLiveOptionQuoteToRow,
+  buildPositionTradeIntent,
   buildDisplayTotals,
   displayTotalsDayChangePercent,
   displayTotalsUnrealizedPnlPercent,
   scaledPositionGreek,
 } = __positionsPanelInternalsForTests;
+
+test("position trade intent fails closed when an option identity is incomplete", () => {
+  assert.deepEqual(buildPositionTradeIntent({ assetClass: "equity" }), {
+    assetMode: "equity",
+  });
+  assert.deepEqual(
+    buildPositionTradeIntent({
+      assetClass: "option",
+      optionContract: {
+        strike: 150,
+        right: "call",
+        expirationDate: "2026-08-21",
+      },
+    }),
+    {
+      assetMode: "option",
+      contract: {
+        strike: 150,
+        cp: "C",
+        exp: "2026-08-21",
+        providerContractId: null,
+      },
+    },
+  );
+  assert.equal(
+    buildPositionTradeIntent({
+      assetClass: "option",
+      optionContract: {
+        strike: 150,
+        right: "unknown",
+        expirationDate: "2026-08-21",
+      },
+    }),
+    null,
+  );
+});
+
+test("position trade intent normalizes generated Date expirations for the ticket handoff", () => {
+  assert.deepEqual(
+    buildPositionTradeIntent({
+      assetClass: "option",
+      optionContract: {
+        strike: 150,
+        right: "call",
+        expirationDate: new Date("2026-08-21T00:00:00.000Z"),
+      },
+    }),
+    {
+      assetMode: "option",
+      contract: {
+        strike: 150,
+        cp: "C",
+        exp: "2026-08-21",
+        providerContractId: null,
+      },
+    },
+  );
+});
 
 const optionRow = (overrides = {}) => ({
   id: "U1:AAPL-C",

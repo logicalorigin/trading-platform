@@ -3622,6 +3622,14 @@ const TradeScreenInner = ({
     Boolean(_initialState.tradeTicketExpanded),
   );
   const [ticketSideRequest, setTicketSideRequest] = useState(null);
+  const [ticketAssetModeRequest, setTicketAssetModeRequest] = useState(null);
+  const requestTicketAssetMode = useCallback((mode) => {
+    if (mode !== "equity" && mode !== "option") return;
+    setTicketAssetModeRequest((current) => ({
+      mode,
+      nonce: (current?.nonce || 0) + 1,
+    }));
+  }, []);
   const [phoneL2DrawerOpen, setPhoneL2DrawerOpen] = useState(false);
   useEffect(() => {
     if (!isVisible) {
@@ -4074,6 +4082,10 @@ const TradeScreenInner = ({
     if (Object.hasOwn(symPing, "automationCandidate")) {
       setAutomationContext(symPing.automationCandidate || null);
     }
+    if (["equity", "option"].includes(symPing.assetMode)) {
+      requestTicketAssetMode(symPing.assetMode);
+      if (symPing.openTicket) setTicketExpanded(true);
+    }
     if (symPing.contract) {
       const incoming = symPing.contract;
       setContracts((current) => {
@@ -4258,14 +4270,19 @@ const TradeScreenInner = ({
     [activeTicker, queryClient],
   );
   const handleLoadPosition = useCallback(
-    ({ ticker, strike, cp, exp }) => {
+    ({ ticker, strike, cp, exp, assetMode = "option" }) => {
       focusTicker(ticker);
-      setContracts((current) => ({
-        ...current,
-        [ticker]: { strike, cp, exp },
-      }));
+      const mode = assetMode === "equity" ? "equity" : "option";
+      if (mode === "option") {
+        setContracts((current) => ({
+          ...current,
+          [ticker]: { strike, cp, exp },
+        }));
+      }
+      requestTicketAssetMode(mode);
+      setTicketExpanded(true);
     },
-    [focusTicker],
+    [focusTicker, requestTicketAssetMode],
   );
   const renderTradeTickerSearch = useCallback(
     (open, embedded = true) =>
@@ -4489,6 +4506,8 @@ const TradeScreenInner = ({
       automationContext={automationContextVisible ? automationContext : null}
       requestedSide={ticketSideRequest?.side ?? null}
       requestedNonce={ticketSideRequest?.nonce ?? 0}
+      requestedAssetMode={ticketAssetModeRequest?.mode ?? null}
+      requestedAssetModeNonce={ticketAssetModeRequest?.nonce ?? 0}
     />
   );
   const chainPanel = (

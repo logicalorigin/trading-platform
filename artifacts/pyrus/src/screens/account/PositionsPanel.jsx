@@ -880,6 +880,36 @@ const isOptionPosition = (row) =>
   String(row?.positionType || "").toLowerCase() === "option" ||
   ["option", "options"].includes(String(row?.assetClass || "").toLowerCase());
 
+const buildPositionTradeIntent = (row) => {
+  if (!isOptionPosition(row)) return { assetMode: "equity" };
+  const contract = row?.optionContract;
+  if (!contract) return null;
+  const right = String(contract.right || contract.cp || "").toLowerCase();
+  const cp =
+    right === "call" || right === "c"
+      ? "C"
+      : right === "put" || right === "p"
+        ? "P"
+        : null;
+  const strike = Number(contract.strike);
+  const expiryValue =
+    contract.expirationDate ?? contract.exp ?? contract.expiry;
+  const rawExpiry =
+    expiryValue instanceof Date && !Number.isNaN(expiryValue.getTime())
+      ? expiryValue.toISOString().slice(0, 10)
+      : firstText(expiryValue);
+  if (!cp || !Number.isFinite(strike) || strike <= 0 || !rawExpiry) return null;
+  return {
+    assetMode: "option",
+    contract: {
+      strike,
+      cp,
+      exp: rawExpiry,
+      providerContractId: firstText(contract.providerContractId) || null,
+    },
+  };
+};
+
 const resolvePositionUnderlyingSymbol = (row) => {
   const symbol = firstDisplayText(
     row?.marketDataSymbol,
@@ -1722,6 +1752,7 @@ export const __positionsPanelInternalsForTests = {
   applyLiveOptionQuoteToRow,
   automationPositionMetrics,
   automationStopTone,
+  buildPositionTradeIntent,
   buildDisplayTotals,
   displayTotalsDayChangePercent,
   displayTotalsUnrealizedPnlPercent,
@@ -2646,9 +2677,11 @@ const DensePositionActions = ({
     (!isOptionPosition(row) ? row.assetClass : "") ||
     "";
   const sideLabel = row.quantity < 0 ? "Short" : "Long";
+  const tradeIntent = buildPositionTradeIntent(row);
   const tradeAction = () => {
+    if (!tradeIntent) return;
     onPositionSelect?.(row);
-    onJumpToChart?.(row.symbol);
+    onJumpToChart?.(row.symbol, tradeIntent);
   };
 
   return (
@@ -2661,10 +2694,12 @@ const DensePositionActions = ({
       primaryAction={{
         id: "trade",
         label: "Trade",
-        description: `Open ${row.symbol} in the trade ticket`,
+        description: tradeIntent
+          ? `Open ${row.symbol} in the trade ticket`
+          : "This option is missing the contract identity required for a safe ticket handoff",
         Icon: Ticket,
         onSelect: tradeAction,
-        disabled: !onJumpToChart,
+        disabled: !onJumpToChart || !tradeIntent,
       }}
       quoteItems={[
         {

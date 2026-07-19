@@ -375,6 +375,8 @@ export const TradeOrderTicket = ({
   automationContext = null,
   requestedSide = null,
   requestedNonce = 0,
+  requestedAssetMode = null,
+  requestedAssetModeNonce = 0,
 }) => {
   const toast = useToast();
   const queryClient = useQueryClient();
@@ -1300,6 +1302,12 @@ export const TradeOrderTicket = ({
       setSide(optionOrderIntent.side);
     }
   };
+  useEffect(() => {
+    if (requestedAssetMode === "equity" || requestedAssetMode === "option") {
+      selectTicketAssetMode(requestedAssetMode);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [requestedAssetMode, requestedAssetModeNonce]);
   // Preselect side when the docked collapsed bar requests it (BUY/SELL pills).
   // Keyed on requestedNonce so re-tapping the same pill re-asserts the side.
   useEffect(() => {

@@ -2527,7 +2527,9 @@ const AccountScreenInner = ({
             onAssetFilterChange={setAssetFilter}
             sourceFilter={sourceFilter}
             onSourceFilterChange={setSourceFilter}
-            onJumpToChart={(symbol) => onJumpToTrade?.(symbol)}
+            onJumpToChart={(symbol, tradeIntent) =>
+              onJumpToTrade?.(symbol, tradeIntent)
+            }
             accountId={positionManagementAccountId}
             environment={modeParams.mode}
             gatewayTradingReady={positionManagementGatewayReady}
