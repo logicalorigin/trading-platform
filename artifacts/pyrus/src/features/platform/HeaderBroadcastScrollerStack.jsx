@@ -635,17 +635,80 @@ const HeaderAlgoContextIcon = ({ context, compact = false }) => {
   );
 };
 
-const HeaderAlgoTapeItem = ({ item, duplicate = false, onClick, compact = false }) => {
+const HeaderAlgoTradeMetricPill = ({
+  context,
+  compact = false,
+  tooltipsEnabled = true,
+}) => {
+  const tone = resolveAlgoTone(context.toneKind);
+  const metricTone = `color-mix(in srgb, ${tone} 80%, ${CSS_COLOR.text})`;
+
+  return (
+    <AppTooltip content={context.label} disabled={!tooltipsEnabled}>
+      <span
+        data-algo-trade-metric={context.metricLabel}
+        aria-label={context.label}
+        style={{
+          display: "inline-flex",
+          alignItems: "center",
+          gap: sp(2),
+          height: dim(compact ? 15 : 18),
+          flexShrink: 0,
+          padding: sp(compact ? "0px 3px" : "0px 4px"),
+          border: `1px solid ${cssColorMix(tone, 22)}`,
+          borderRadius: dim(RADII.pill),
+          background: cssColorMix(tone, 8),
+          color: metricTone,
+          fontFamily: T.sans,
+          fontVariantNumeric: "tabular-nums",
+          lineHeight: 1,
+          whiteSpace: "nowrap",
+        }}
+      >
+        <span
+          style={{
+            color: CSS_COLOR.textSec,
+            fontSize: textSize("micro"),
+            fontWeight: FONT_WEIGHTS.label,
+            letterSpacing: "0.02em",
+          }}
+        >
+          {context.metricLabel}
+        </span>
+        <span
+          style={{
+            fontSize: textSize("caption"),
+            fontWeight: FONT_WEIGHTS.label,
+          }}
+        >
+          {context.valueLabel}
+        </span>
+      </span>
+    </AppTooltip>
+  );
+};
+
+const HeaderAlgoTapeItem = ({
+  item,
+  duplicate = false,
+  onClick,
+  compact = false,
+}) => {
   const tone = resolveAlgoTone(item.toneKind);
   const Icon = ALGO_EVENT_ICONS[item.iconKind] || Info;
   const timeLabel = formatRelativeTimeShort(item.time);
-  const contextLabels = (item.contextIcons || []).map((context) => context.label);
-  const title = [
-    item.actionLabel,
-    item.symbol,
-    ...contextLabels,
-    timeLabel,
-  ].filter(Boolean).join(" ");
+  const contextLabels = (item.contextIcons || []).map(
+    (context) => context.label,
+  );
+  const contextIcons = (item.contextIcons || []).filter(
+    (context) => !context.metricLabel,
+  );
+  const tradeMetrics = (item.contextIcons || []).filter(
+    (context) => context.metricLabel,
+  );
+  const title = [item.actionLabel, item.symbol, ...contextLabels, timeLabel]
+    .filter(Boolean)
+    .join(" ");
 
   return (
     <HeaderBroadcastSegment
@@ -656,7 +719,7 @@ const HeaderAlgoTapeItem = ({ item, duplicate = false, onClick, compact = false 
       onClick={(selected) => onClick?.(selected.raw)}
       ariaLabel={title}
       compact={compact}
-      maxWidth={compact ? 260 : 320}
+      maxWidth={compact ? 260 : 360}
     >
       <Icon
         size={compact ? 12 : 13}
@@ -677,11 +740,12 @@ const HeaderAlgoTapeItem = ({ item, duplicate = false, onClick, compact = false 
         style={headerPillTextStyle({
           color: CSS_COLOR.text,
           maxWidth: compact ? 58 : 72,
+          shrink: false,
         })}
       >
         {item.symbol}
       </span>
-      {(item.contextIcons || []).map((context) => (
+      {contextIcons.map((context) => (
         <HeaderAlgoContextIcon
           key={context.kind}
           context={context}
@@ -697,6 +761,28 @@ const HeaderAlgoTapeItem = ({ item, duplicate = false, onClick, compact = false 
       >
         {timeLabel}
       </span>
+      {tradeMetrics.length ? (
+        <span
+          data-algo-trade-metrics
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: sp(2),
+            minWidth: 0,
+            marginLeft: "auto",
+            flexShrink: 0,
+          }}
+        >
+          {tradeMetrics.map((context) => (
+            <HeaderAlgoTradeMetricPill
+              key={context.kind}
+              context={context}
+              compact={compact}
+              tooltipsEnabled={!duplicate}
+            />
+          ))}
+        </span>
+      ) : null}
     </HeaderBroadcastSegment>
   );
 };

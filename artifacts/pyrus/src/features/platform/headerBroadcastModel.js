@@ -352,7 +352,9 @@ const compactMoney = (value, { showSign = false } = {}) => {
       ? `$${(abs / 1_000_000).toFixed(1)}M`
       : abs >= 1_000
         ? `$${(abs / 1_000).toFixed(1)}K`
-        : `$${abs.toFixed(0)}`;
+        : abs > 0 && abs < 1
+          ? `$${abs.toFixed(2)}`
+          : `$${abs.toFixed(0)}`;
   return `${sign}${amount}`;
 };
 
@@ -534,6 +536,8 @@ const buildHeaderAlgoContextIcons = (
       label: "Opened",
     });
   } else if (isExit) {
+    const exitValueLabel =
+      pnl == null ? "" : compactMoney(pnl, { showSign: true });
     const exitIconKind =
       pnl == null
         ? "opened"
@@ -544,19 +548,21 @@ const buildHeaderAlgoContextIcons = (
             : "flat_exit";
     const exitToneKind =
       pnl == null ? "info" : pnl > 0 ? "success" : pnl < 0 ? "danger" : "info";
+    const exitLabel =
+      pnl == null
+        ? "Exited"
+        : pnl > 0
+          ? "Profitable exit"
+          : pnl < 0
+            ? "Losing exit"
+            : "Flat exit";
     push({
       kind: "status",
       iconKind: exitIconKind,
       toneKind: exitToneKind,
-      label:
-        pnl == null
-          ? "Exited"
-          : pnl > 0
-            ? "Profitable exit"
-            : pnl < 0
-              ? "Losing exit"
-              : "Flat exit",
-      valueLabel: pnl == null ? "" : compactMoney(pnl, { showSign: true }),
+      metricLabel: pnl == null ? "" : "P&L",
+      label: exitValueLabel ? `${exitLabel} ${exitValueLabel}` : exitLabel,
+      valueLabel: exitValueLabel,
     });
   } else if (isMark) {
     push({
@@ -579,6 +585,7 @@ const buildHeaderAlgoContextIcons = (
       kind: "money",
       iconKind: "money",
       toneKind: pnl > 0 ? "success" : pnl < 0 ? "danger" : "info",
+      metricLabel: "P&L",
       label: `PnL ${compactMoney(pnl, { showSign: true })}`,
       valueLabel: compactMoney(pnl, { showSign: true }),
     });
@@ -587,6 +594,7 @@ const buildHeaderAlgoContextIcons = (
       kind: "money",
       iconKind: "money",
       toneKind: "accent",
+      metricLabel: "PREM",
       label: `Premium ${compactMoney(premium)}`,
       valueLabel: compactMoney(premium),
     });
@@ -607,6 +615,7 @@ const buildHeaderAlgoContextIcons = (
       kind: "quantity",
       iconKind: "quantity",
       toneKind: "info",
+      metricLabel: "SIZE",
       label: `Quantity x${quantity}`,
       valueLabel: `x${quantity}`,
     });
@@ -627,6 +636,7 @@ const buildHeaderAlgoContextIcons = (
       kind: "dte",
       iconKind: "dte",
       toneKind: "info",
+      metricLabel: "DTE",
       label: `DTE ${dte}`,
       valueLabel: `${dte}d`,
     });
