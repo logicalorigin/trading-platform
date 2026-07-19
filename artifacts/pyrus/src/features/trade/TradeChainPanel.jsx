@@ -867,13 +867,16 @@ export const TradeChainPanel = ({
       }}
     >
       <div
+        data-testid="trade-chain-header-controls"
         style={{
           display: "flex",
           alignItems: "center",
+          flexWrap: "wrap",
           padding: sp("6px 10px"),
           borderBottom: `1px solid ${CSS_COLOR.border}`,
           gap: sp(8),
           flexShrink: 0,
+          minWidth: 0,
         }}
       >
         <MarketIdentityInline
