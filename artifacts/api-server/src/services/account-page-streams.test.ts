@@ -16,6 +16,7 @@ import {
   serializeSseEventData,
 } from "./sse-stream-diagnostics";
 import { runWithShadowAccountId } from "./shadow-account-context";
+import { notifyShadowAccountChanged } from "./shadow-account-events";
 
 const source = readFileSync(new URL("./account-page-streams.ts", import.meta.url), "utf8");
 const sourceFile = ts.createSourceFile(
@@ -85,17 +86,8 @@ type TimerHandle = {
 };
 
 function createFakeTimers() {
-  const intervals = new Set<TimerHandle>();
   const timeouts = new Set<TimerHandle>();
   return {
-    setInterval: ((callback: () => void) => {
-      const handle = { callback, unref: () => {} };
-      intervals.add(handle);
-      return handle as never;
-    }) as unknown as typeof setInterval,
-    clearInterval: ((handle: TimerHandle) => {
-      intervals.delete(handle);
-    }) as unknown as typeof clearInterval,
     setTimeout: ((callback: () => void) => {
       const handle = { callback, unref: () => {} };
       timeouts.add(handle);
@@ -109,9 +101,6 @@ function createFakeTimers() {
         timeouts.delete(handle);
         handle.callback();
       }
-    },
-    fireIntervals: () => {
-      for (const handle of [...intervals]) handle.callback();
     },
   };
 }
@@ -461,6 +450,163 @@ test("account-page payload identity ignores build stamps but keeps source change
   assert.notStrictEqual(changedDerivedEquity, derived);
 });
 
+test("account-page live polling waits a full interval after an overrun settles", async () => {
+  const timers = createFakeTimers();
+  const firstPayload = livePayload({ stamp: "2026-07-07T00:00:01.000Z" });
+  let resolveFirstLive!: (payload: AccountPageLivePayload) => void;
+  const firstLive = new Promise<AccountPageLivePayload>((resolve) => {
+    resolveFirstLive = resolve;
+  });
+  let liveFetches = 0;
+  const unsubscribe = subscribeAccountPageSnapshots(
+    {
+      accountId: "account-test",
+      appUserId: "app-user-test",
+      mode: "live",
+    },
+    () => {},
+    () => {},
+    {
+      fetchLivePayload: async () => {
+        liveFetches += 1;
+        return liveFetches === 1
+          ? firstLive
+          : livePayload({ stamp: "2026-07-07T00:00:02.000Z" });
+      },
+      fetchDerivedPayload: async () =>
+        derivedPayload({ stamp: "2026-07-07T00:00:01.000Z" }),
+      setTimeout: timers.setTimeout,
+      clearTimeout: timers.clearTimeout,
+    },
+  );
+
+  try {
+    timers.fireTimeouts();
+    await flushAsyncWork();
+    assert.equal(liveFetches, 1);
+
+    timers.fireTimeouts();
+    resolveFirstLive(firstPayload);
+    await flushAsyncWork();
+    assert.equal(liveFetches, 1);
+
+    timers.fireTimeouts();
+    await flushAsyncWork();
+    assert.equal(liveFetches, 2);
+  } finally {
+    unsubscribe();
+  }
+});
+
+test("shadow changes coalesce during a live fetch and refresh promptly when idle", async () => {
+  const timers = createFakeTimers();
+  let resolveFirstLive!: (payload: AccountPageLivePayload) => void;
+  const firstLive = new Promise<AccountPageLivePayload>((resolve) => {
+    resolveFirstLive = resolve;
+  });
+  let liveFetches = 0;
+  const unsubscribe = subscribeAccountPageSnapshots(
+    {
+      accountId: "shadow",
+      appUserId: "app-user-test",
+      mode: "shadow",
+    },
+    () => {},
+    () => {},
+    {
+      fetchLivePayload: async () => {
+        liveFetches += 1;
+        return liveFetches === 1
+          ? firstLive
+          : livePayload({ stamp: `2026-07-07T00:00:0${liveFetches}.000Z` });
+      },
+      fetchDerivedPayload: async () =>
+        derivedPayload({ stamp: "2026-07-07T00:00:01.000Z" }),
+      setTimeout: timers.setTimeout,
+      clearTimeout: timers.clearTimeout,
+    },
+  );
+
+  try {
+    timers.fireTimeouts();
+    await flushAsyncWork();
+    assert.equal(liveFetches, 1);
+
+    notifyShadowAccountChanged();
+    notifyShadowAccountChanged();
+    await flushAsyncWork();
+    assert.equal(liveFetches, 1);
+
+    resolveFirstLive(livePayload({ stamp: "2026-07-07T00:00:01.000Z" }));
+    await flushAsyncWork();
+    assert.equal(liveFetches, 1);
+
+    timers.fireTimeouts();
+    await flushAsyncWork();
+    assert.equal(liveFetches, 2);
+
+    notifyShadowAccountChanged();
+    await flushAsyncWork();
+    assert.equal(liveFetches, 3);
+  } finally {
+    unsubscribe();
+    clearAccountPageSnapshotCache();
+  }
+});
+
+test("unsubscribe during a live fetch prevents emission and future polling", async () => {
+  const timers = createFakeTimers();
+  let resolveLive!: (payload: AccountPageLivePayload) => void;
+  const pendingLive = new Promise<AccountPageLivePayload>((resolve) => {
+    resolveLive = resolve;
+  });
+  let liveFetches = 0;
+  let liveEmits = 0;
+  let unsubscribed = false;
+  const unsubscribe = subscribeAccountPageSnapshots(
+    {
+      accountId: "account-test",
+      appUserId: "app-user-test",
+      mode: "live",
+    },
+    () => {
+      liveEmits += 1;
+    },
+    () => {},
+    {
+      fetchLivePayload: async () => {
+        liveFetches += 1;
+        return pendingLive;
+      },
+      fetchDerivedPayload: async () =>
+        derivedPayload({ stamp: "2026-07-07T00:00:01.000Z" }),
+      setTimeout: timers.setTimeout,
+      clearTimeout: timers.clearTimeout,
+    },
+  );
+
+  try {
+    timers.fireTimeouts();
+    await flushAsyncWork();
+    assert.equal(liveFetches, 1);
+
+    unsubscribe();
+    unsubscribed = true;
+    resolveLive(livePayload({ stamp: "2026-07-07T00:00:01.000Z" }));
+    await flushAsyncWork();
+    timers.fireTimeouts();
+    await flushAsyncWork();
+
+    assert.equal(liveFetches, 1);
+    assert.equal(liveEmits, 0);
+  } finally {
+    if (!unsubscribed) {
+      unsubscribe();
+      resolveLive(livePayload({ stamp: "2026-07-07T00:00:01.000Z" }));
+    }
+  }
+});
+
 test("account-page subscriber emits and serializes each changed lane exactly once", async () => {
   __resetSseStreamDiagnosticsForTests();
   clearAccountPageSnapshotCache();
@@ -511,8 +657,6 @@ test("account-page subscriber emits and serializes each changed lane exactly onc
       initialDerivedPayload: initialDerived,
       fetchLivePayload: async () => livePayloads[liveFetches++]!,
       fetchDerivedPayload: async () => derivedPayloads[derivedFetches++]!,
-      setInterval: timers.setInterval,
-      clearInterval: timers.clearInterval,
       setTimeout: timers.setTimeout,
       clearTimeout: timers.clearTimeout,
     },
@@ -525,7 +669,7 @@ test("account-page subscriber emits and serializes each changed lane exactly onc
     assert.equal(liveEmits.length, 0);
     assert.equal(derivedEmits.length, 0);
 
-    timers.fireIntervals();
+    timers.fireTimeouts();
     await flushAsyncWork();
     assert.equal(getSseEmitCounters().events, 2);
     assert.equal(liveEmits.length, 1);

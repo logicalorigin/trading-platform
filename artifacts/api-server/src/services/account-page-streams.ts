@@ -1068,8 +1068,6 @@ export function subscribeAccountPageSnapshots(
     initialDerivedDelayMs?: number;
     fetchLivePayload?: typeof fetchAccountPageLivePayload;
     fetchDerivedPayload?: typeof fetchAccountPageDerivedPayload;
-    setInterval?: typeof setInterval;
-    clearInterval?: typeof clearInterval;
     setTimeout?: typeof setTimeout;
     clearTimeout?: typeof clearTimeout;
     onPollSuccess?: (input: {
@@ -1082,7 +1080,6 @@ export function subscribeAccountPageSnapshots(
   let active = true;
   let liveInFlight = false;
   let derivedInFlight = false;
-  let queued = false;
   let lastLivePayload = options.initialPayload
     ? livePayloadFromBootstrap(options.initialPayload)
     : options.initialLivePayload ?? null;
@@ -1092,37 +1089,38 @@ export function subscribeAccountPageSnapshots(
   const fetchLivePayload = options.fetchLivePayload ?? fetchAccountPageLivePayload;
   const fetchDerivedPayload =
     options.fetchDerivedPayload ?? fetchAccountPageDerivedPayload;
-  const setPollInterval = options.setInterval ?? setInterval;
-  const clearPollInterval = options.clearInterval ?? clearInterval;
   const setPollTimeout = options.setTimeout ?? setTimeout;
   const clearPollTimeout = options.clearTimeout ?? clearTimeout;
+  let liveTimer: ReturnType<typeof setTimeout> | null = null;
+  let derivedTimer: ReturnType<typeof setTimeout> | null = null;
 
   const tickLive = async () => {
     if (!active || liveInFlight) {
-      if (liveInFlight) {
-        queued = true;
-      }
       return;
     }
     liveInFlight = true;
     try {
-      do {
-        queued = false;
-        const snapshot = await fetchLivePayload(input);
-        if (!active) {
-          return;
-        }
-        const changed = snapshot !== lastLivePayload;
-        if (changed) {
-          lastLivePayload = snapshot;
-          onLive(snapshot);
-        }
-        await options.onPollSuccess?.({ payload: snapshot, kind: "live", changed });
-      } while (active && queued);
+      const snapshot = await fetchLivePayload(input);
+      if (!active) {
+        return;
+      }
+      const changed = snapshot !== lastLivePayload;
+      if (changed) {
+        lastLivePayload = snapshot;
+        onLive(snapshot);
+      }
+      await options.onPollSuccess?.({ payload: snapshot, kind: "live", changed });
     } catch (error) {
       logger.warn({ err: error }, "Account page live stream polling failed");
     } finally {
       liveInFlight = false;
+      if (active) {
+        liveTimer = setPollTimeout(() => {
+          liveTimer = null;
+          void tickLive();
+        }, ACCOUNT_PAGE_STREAM_INTERVAL_MS);
+        liveTimer.unref?.();
+      }
     }
   };
 
@@ -1146,29 +1144,28 @@ export function subscribeAccountPageSnapshots(
       logger.warn({ err: error }, "Account page derived stream polling failed");
     } finally {
       derivedInFlight = false;
+      if (active) {
+        derivedTimer = setPollTimeout(() => {
+          derivedTimer = null;
+          void tickDerived();
+        }, ACCOUNT_PAGE_DERIVED_STREAM_INTERVAL_MS);
+        derivedTimer.unref?.();
+      }
     }
   };
 
-  let liveTimer: ReturnType<typeof setInterval> | null = null;
-  let derivedTimer: ReturnType<typeof setInterval> | null = null;
   const liveDelay = Math.max(0, options.initialLiveDelayMs ?? 0);
   const derivedDelay = Math.max(0, options.initialDerivedDelayMs ?? 0);
-  const firstLiveTimer = setPollTimeout(() => {
+  liveTimer = setPollTimeout(() => {
+    liveTimer = null;
     void tickLive();
-    liveTimer = setPollInterval(() => {
-      void tickLive();
-    }, ACCOUNT_PAGE_STREAM_INTERVAL_MS);
-    liveTimer.unref?.();
   }, liveDelay);
-  firstLiveTimer.unref?.();
-  const firstDerivedTimer = setPollTimeout(() => {
+  liveTimer.unref?.();
+  derivedTimer = setPollTimeout(() => {
+    derivedTimer = null;
     void tickDerived();
-    derivedTimer = setPollInterval(() => {
-      void tickDerived();
-    }, ACCOUNT_PAGE_DERIVED_STREAM_INTERVAL_MS);
-    derivedTimer.unref?.();
   }, derivedDelay);
-  firstDerivedTimer.unref?.();
+  derivedTimer.unref?.();
 
   const unsubscribeShadowChanges = isShadowAccountId(input.accountId)
     ? subscribeShadowAccountChanges((change) => {
@@ -1177,6 +1174,14 @@ export function subscribeAccountPageSnapshots(
         }
         clearAccountPageSnapshotCache();
         invalidateShadowAccountSnapshotBaseCache();
+        if (liveTimer) {
+          clearPollTimeout(liveTimer);
+          liveTimer = null;
+        }
+        if (derivedTimer) {
+          clearPollTimeout(derivedTimer);
+          derivedTimer = null;
+        }
         void tickLive();
         void tickDerived();
       })
@@ -1184,13 +1189,11 @@ export function subscribeAccountPageSnapshots(
 
   return () => {
     active = false;
-    clearPollTimeout(firstLiveTimer);
-    clearPollTimeout(firstDerivedTimer);
     if (liveTimer) {
-      clearPollInterval(liveTimer);
+      clearPollTimeout(liveTimer);
     }
     if (derivedTimer) {
-      clearPollInterval(derivedTimer);
+      clearPollTimeout(derivedTimer);
     }
     unsubscribeShadowChanges();
   };
