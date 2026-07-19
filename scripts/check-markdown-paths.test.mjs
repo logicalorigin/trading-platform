@@ -13,9 +13,16 @@ test("checks repository-owned Claude skill references", () => {
   );
 });
 
-test("accepts the API deployment entrypoint before its build creates dist", () => {
+test("accepts API entrypoints before their build creates dist", () => {
   assert.equal(
     candidateExists("CLAUDE.md", "artifacts/api-server/dist/index.mjs"),
+    true,
+  );
+  assert.equal(
+    candidateExists(
+      "scripts/README.md",
+      "artifacts/api-server/dist/ibkr-gateway-host-admin.mjs",
+    ),
     true,
   );
 });

@@ -1,0 +1,40 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$(git rev-parse --show-toplevel)/scripts/codex-autosave-handoff.mjs\"",
+            "timeout": 30,
+            "statusMessage": "Autosaving session handoff…"
+          }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$(git rev-parse --show-toplevel)/scripts/codex-autosave-handoff.mjs\"",
+            "timeout": 30,
+            "statusMessage": "Autosaving session handoff…"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$(git rev-parse --show-toplevel)/scripts/codex-autosave-handoff.mjs\"",
+            "timeout": 30,
+            "statusMessage": "Autosaving session handoff…"
+          }
+        ]
+      }
+    ]
+  }
+}

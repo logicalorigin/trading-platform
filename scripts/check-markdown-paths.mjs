@@ -25,6 +25,10 @@ const rootQualifiedPrefixes = [
 ];
 const generatedPathSources = new Map([
   ["artifacts/api-server/dist/index.mjs", "artifacts/api-server/src/index.ts"],
+  [
+    "artifacts/api-server/dist/ibkr-gateway-host-admin.mjs",
+    "artifacts/api-server/src/scripts/ibkr-gateway-host-admin.ts",
+  ],
 ]);
 
 const extractCandidates = (markdown) => {
