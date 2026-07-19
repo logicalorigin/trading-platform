@@ -20,3 +20,16 @@ export const log = {
   warn: (message: string, detail?: unknown): void => emit("warn", message, detail),
   error: (message: string, detail?: unknown): void => emit("error", message, detail),
 };
+
+export function reportStartupReady(
+  httpToolCount: number,
+  hostToolCount: number,
+): void {
+  log.info(
+    `ready (stdio) — ${httpToolCount} http + 1 db + ${hostToolCount} host tools`,
+  );
+}
+
+export function reportStartupFailure(_error: unknown): void {
+  log.error("fatal MCP startup failure");
+}

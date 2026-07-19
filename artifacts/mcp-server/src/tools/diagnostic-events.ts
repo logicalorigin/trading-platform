@@ -6,19 +6,31 @@ import { z } from "zod";
 import { config } from "../config";
 import { readFlightRecorder } from "../host/flight-recorder";
 import { log } from "../log";
-import { fail, ok, type ToolTextResult } from "./result";
+import { fail, fromHostError, ok, type ToolTextResult } from "./result";
 
 const { Pool } = pg;
 const DEFAULT_LIMIT = 200;
 const MAX_LIMIT = 1_000;
-const PRESSURE_LIMITS = { normal: 1_000, watch: 300, high: 150 } as const;
 const RAW_MAX_DEPTH = 4;
 const RAW_MAX_OBJECT_KEYS = 40;
 const RAW_MAX_ARRAY_ITEMS = 20;
 const RAW_MAX_STRING_LENGTH = 2_000;
 const diagnosticSchema = { diagnosticEventsTable };
+const diagnosticDateInput = z
+  .string()
+  .trim()
+  .max(64)
+  .datetime({ offset: true })
+  .refine((value) => Number.isFinite(new Date(value).getTime()));
+const diagnosticEventsInputShape = {
+  subsystem: z.string().trim().min(1).max(48).optional().describe("Filter to one diagnostics subsystem"),
+  severity: z.enum(["info", "warning"]).optional(),
+  from: diagnosticDateInput.optional().describe("ISO timestamp lower bound"),
+  to: diagnosticDateInput.optional().describe("ISO timestamp upper bound"),
+} satisfies z.ZodRawShape;
+const diagnosticEventsInputSchema = z.object(diagnosticEventsInputShape);
 
-type PressureLevel = keyof typeof PRESSURE_LIMITS;
+type PressureLevel = "normal" | "watch" | "high";
 type DiagnosticDatabase = NodePgDatabase<typeof diagnosticSchema>;
 type DiagnosticEventRow = typeof diagnosticEventsTable.$inferSelect;
 
@@ -88,21 +100,6 @@ async function readDiagnosticEvents(
   input: DiagnosticEventsQueryInput,
 ): Promise<DiagnosticEventRow[]> {
   return buildDiagnosticEventsQuery(getDatabase(), input);
-}
-
-function parseDate(value: unknown, fallback: Date): Date {
-  if (typeof value !== "string" || !value.trim()) return fallback;
-  const parsed = new Date(value);
-  return Number.isFinite(parsed.getTime()) ? parsed : fallback;
-}
-
-function stringFilter(value: unknown): string | undefined {
-  if (typeof value !== "string") return undefined;
-  return value.trim() || undefined;
-}
-
-function severityFilter(value: unknown): "info" | "warning" | undefined {
-  return value === "info" || value === "warning" ? value : undefined;
 }
 
 function isPressureLevel(value: unknown): value is PressureLevel {
@@ -187,19 +184,25 @@ export async function handleListDiagnosticEvents(
   readEvents: ReadDiagnosticEvents = readDiagnosticEvents,
   getPressureLevel: ReadPressureLevel = readPressureLevel,
 ): Promise<ToolTextResult> {
-  const to = parseDate(args["to"], new Date());
-  const from = parseDate(args["from"], new Date(to.getTime() - 60 * 60 * 1_000));
+  const parsed = diagnosticEventsInputSchema.safeParse(args);
+  if (!parsed.success) {
+    return fail("list_diagnostic_events failed: invalid input.");
+  }
+  const to = parsed.data.to === undefined ? new Date() : new Date(parsed.data.to);
+  const from = parsed.data.from === undefined
+    ? new Date(to.getTime() - 60 * 60 * 1_000)
+    : new Date(parsed.data.from);
+  if (from.getTime() > to.getTime()) {
+    return fail("list_diagnostic_events failed: invalid input.");
+  }
   const pressureLevel = await getPressureLevel().catch(() => "normal" as const);
-  const pressureLimit = PRESSURE_LIMITS[pressureLevel];
-  const appliedLimit = Math.min(DEFAULT_LIMIT, pressureLimit);
-  const subsystem = stringFilter(args["subsystem"]);
-  const severity = severityFilter(args["severity"]);
+  const { subsystem, severity } = parsed.data;
   const input: DiagnosticEventsQueryInput = {
     from,
     to,
     ...(subsystem ? { subsystem } : {}),
     ...(severity ? { severity } : {}),
-    limit: appliedLimit,
+    limit: DEFAULT_LIMIT,
   };
 
   let rows: DiagnosticEventRow[];
@@ -215,24 +218,31 @@ export async function handleListDiagnosticEvents(
     events: rows.map(eventPayload),
     limits: {
       requestedLimit: DEFAULT_LIMIT,
-      appliedLimit,
-      maxLimit: Math.min(MAX_LIMIT, pressureLimit),
+      appliedLimit: DEFAULT_LIMIT,
+      maxLimit: MAX_LIMIT,
       absoluteMaxLimit: MAX_LIMIT,
       pressureLevel,
-      pressureLimited: appliedLimit < DEFAULT_LIMIT,
+      pressureLimited: false,
     },
   });
+}
+
+async function runDiagnosticEventsTool(
+  args: Record<string, unknown>,
+  readEvents: ReadDiagnosticEvents = readDiagnosticEvents,
+  getPressureLevel: ReadPressureLevel = readPressureLevel,
+): Promise<ToolTextResult> {
+  try {
+    return await handleListDiagnosticEvents(args, readEvents, getPressureLevel);
+  } catch (error) {
+    return fromHostError("list_diagnostic_events", error);
+  }
 }
 
 export const diagnosticEventsTool = {
   name: "list_diagnostic_events",
   description:
     "Diagnostic events/incidents (open and resolved). Filter by subsystem, severity (info|warning), and an ISO from/to time window.",
-  inputShape: {
-    subsystem: z.string().optional().describe("Filter to one diagnostics subsystem"),
-    severity: z.enum(["info", "warning"]).optional(),
-    from: z.string().optional().describe("ISO timestamp lower bound"),
-    to: z.string().optional().describe("ISO timestamp upper bound"),
-  },
-  run: handleListDiagnosticEvents,
+  inputShape: diagnosticEventsInputShape,
+  run: runDiagnosticEventsTool,
 } as const;

@@ -18,10 +18,10 @@ test("registry is non-empty and names are unique", () => {
   assert.equal(new Set(names).size, names.length, "tool names must be unique");
 });
 
-test("registry exposes only diagnostics endpoints that are public by contract", () => {
+test("registry exposes only HTTP endpoints that are public by accepted contract", () => {
   assert.deepEqual(
-    httpTools.map((tool) => tool.name),
-    ["get_readiness", "get_diagnostics", "get_runtime_diagnostics"],
+    httpTools.map(({ name, endpoint }) => [name, endpoint]),
+    [["get_readiness", "/readiness"]],
   );
 });
 

@@ -19,6 +19,12 @@ function fitWithNote(text: string, note: string, maxBytes: number): string {
   return utf8Prefix(text, maxBytes - byteLength(suffix)) + suffix;
 }
 
+export function capToolText(text: string, maxBytes: number): string {
+  return byteLength(text) <= maxBytes
+    ? text
+    : fitWithNote(text, "\n[truncated]", maxBytes);
+}
+
 function safeStringify(value: unknown): string {
   try {
     return JSON.stringify(value, null, 2) ?? String(value);
@@ -52,20 +58,24 @@ function capArrays(value: unknown, perArray: number): unknown {
  * caps arrays before falling back to a raw cut.
  */
 export function toToolText(value: unknown, maxBytes: number): string {
-  const full = safeStringify(value);
-  if (byteLength(full) <= maxBytes) {
-    return full;
-  }
-  for (const cap of [50, 20, 5, 1]) {
-    const text = safeStringify(capArrays(value, cap));
-    const note = `\n\n/* _truncated: arrays capped to ${cap} items to fit the ${maxBytes}-byte limit. Narrow the query (subsystem / severity / time window / limit) for more. */`;
-    if (byteLength(text) + byteLength(note) <= maxBytes) {
-      return text + note;
+  try {
+    const full = safeStringify(value);
+    if (byteLength(full) <= maxBytes) {
+      return full;
     }
+    for (const cap of [50, 20, 5, 1]) {
+      const text = safeStringify(capArrays(value, cap));
+      const note = `\n\n/* _truncated: arrays capped to ${cap} items to fit the ${maxBytes}-byte limit. Narrow the query (subsystem / severity / time window / limit) for more. */`;
+      if (byteLength(text) + byteLength(note) <= maxBytes) {
+        return text + note;
+      }
+    }
+    return fitWithNote(
+      full,
+      `\n\n/* _truncated: response hard-cut at ${maxBytes} bytes. */`,
+      maxBytes,
+    );
+  } catch {
+    return capToolText("[unserializable]", maxBytes);
   }
-  return fitWithNote(
-    full,
-    `\n\n/* _truncated: response hard-cut at ${maxBytes} bytes. */`,
-    maxBytes,
-  );
 }

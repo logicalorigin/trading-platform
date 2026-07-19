@@ -9,9 +9,14 @@ export interface HealthzResult {
 }
 
 export async function checkHealthz(): Promise<HealthzResult> {
-  const url = `${config.apiBaseUrl}/api/healthz`;
+  const url = "/api/healthz";
   try {
-    const res = await fetch(url, { signal: AbortSignal.timeout(5000) });
+    const res = await fetch(`${config.apiBaseUrl}${url}`, {
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!res.ok) {
+      return { url, ok: false, status: res.status, body: null, error: "http_error" };
+    }
     let body: unknown = null;
     try {
       body = await res.json();
@@ -20,12 +25,19 @@ export async function checkHealthz(): Promise<HealthzResult> {
     }
     return { url, ok: res.ok, status: res.status, body, error: null };
   } catch (error) {
+    const name =
+      error !== null && typeof error === "object" && "name" in error
+        ? String(error.name)
+        : "";
     return {
       url,
       ok: false,
       status: null,
       body: null,
-      error: error instanceof Error ? error.message : String(error),
+      error:
+        name === "TimeoutError" || name === "AbortError"
+          ? "timeout"
+          : "request_failed",
     };
   }
 }

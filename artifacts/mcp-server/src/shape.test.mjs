@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { toToolText } from "./shape.ts";
+import { capToolText, toToolText } from "./shape.ts";
 
 test("small values pass through as full pretty JSON", () => {
   const value = { a: 1, b: ["x", "y"] };
@@ -33,4 +33,33 @@ test("a hard cut counts UTF-8 bytes instead of JavaScript characters", () => {
   const text = toToolText(value, maxBytes);
   assert.ok(Buffer.byteLength(text, "utf8") <= maxBytes, "multi-byte text respects the byte cap");
   assert.ok(text.includes("_truncated"));
+});
+
+test("unserializable values return a byte-capped sentinel", () => {
+  const value = {
+    toJSON() {
+      throw new Error("JSON serialization failed");
+    },
+    [Symbol.toPrimitive]() {
+      throw new Error("string coercion failed");
+    },
+  };
+  const maxBytes = 8;
+
+  assert.equal(toToolText(value, maxBytes), capToolText("[unserializable]", maxBytes));
+});
+
+test("a getter that fails during array capping returns the unserializable sentinel", () => {
+  let reads = 0;
+  const value = {
+    blob: "z".repeat(1_000),
+    get unstable() {
+      reads += 1;
+      if (reads === 1) return "first pass";
+      throw new Error("second traversal failed");
+    },
+  };
+
+  assert.equal(toToolText(value, 128), "[unserializable]");
+  assert.equal(reads, 2);
 });

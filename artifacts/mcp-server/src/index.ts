@@ -1,9 +1,8 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { config } from "./config";
-import { log } from "./log";
+import { reportStartupFailure, reportStartupReady } from "./log";
 import { apiGet } from "./http/api-client";
-import { ok, fail, fromHttpError } from "./tools/result";
+import { ok, fromHostError, fromHttpError } from "./tools/result";
 import { httpTools } from "./tools/registry";
 import { hostTools } from "./tools/host-tools";
 import { diagnosticEventsTool } from "./tools/diagnostic-events";
@@ -44,7 +43,7 @@ server.registerTool(
   (args: Record<string, unknown>) => diagnosticEventsTool.run(args ?? {}),
 );
 
-// Subsystem 3: read-only host/supervisor introspection (no signals).
+// Subsystem 3: read-only host introspection (no signals).
 for (const tool of hostTools) {
   server.registerTool(
     tool.name,
@@ -57,7 +56,7 @@ for (const tool of hostTools) {
       try {
         return ok(await tool.run(args ?? {}));
       } catch (error) {
-        return fail(`${tool.name} failed: ${error instanceof Error ? error.message : String(error)}`);
+        return fromHostError(tool.name, error);
       }
     },
   );
@@ -67,12 +66,10 @@ async function main(): Promise<void> {
   const transport = new StdioServerTransport();
   await server.connect(transport);
   // stdout is the MCP wire; status goes to stderr only.
-  log.info(
-    `ready (stdio) — ${httpTools.length} http + 1 db + ${hostTools.length} host tools; API=${config.apiBaseUrl}`,
-  );
+  reportStartupReady(httpTools.length, hostTools.length);
 }
 
 main().catch((error: unknown) => {
-  log.error("fatal", error);
+  reportStartupFailure(error);
   process.exit(1);
 });
