@@ -112,7 +112,7 @@ export default function TaxCenterPanel({
     query: { staleTime: 30_000 },
   });
   const eventsQuery = useGetAccountTaxEvents(accountId, {
-    query: { enabled: Boolean(accountId) && activeTab === "Overview" },
+    query: { enabled: Boolean(accountId) && activeTab === "Overview", retry: false },
   });
   const lotsQuery = useGetAccountTaxLots(accountId, {
     query: { enabled: Boolean(accountId) && activeTab === "Lots" },
@@ -133,6 +133,8 @@ export default function TaxCenterPanel({
   const reserve = asRecord(reserveQuery.data);
   const unknowns = asArray(overview.unknowns);
   const reserveWarnings = asArray(reserve.warnings);
+  const hasEventsSnapshot = eventsQuery.data !== undefined;
+  const eventCount = asArray(eventsQuery.data?.events).length;
   const isShadowTaxView =
     overview.accountScope === "shadow_simulation" ||
     scope.shadowIncluded === true ||
@@ -277,9 +279,23 @@ export default function TaxCenterPanel({
               {unknown}
             </div>
           ))}
-          <div style={{ color: CSS_COLOR.textMuted, fontFamily: T.sans, fontSize: textSize("caption") }}>
-            Events loaded: {asArray(eventsQuery.data?.events).length}
-          </div>
+          {eventsQuery.isLoading && !hasEventsSnapshot ? (
+            <div role="status" style={{ color: CSS_COLOR.textMuted, fontFamily: T.sans, fontSize: textSize("caption") }}>
+              Loading tax events
+            </div>
+          ) : eventsQuery.error && hasEventsSnapshot ? (
+            <div role="status" style={{ color: CSS_COLOR.amber, fontFamily: T.sans, fontSize: textSize("caption") }}>
+              Events loaded: {eventCount} (last known). Latest refresh unavailable.
+            </div>
+          ) : eventsQuery.error ? (
+            <div role="alert" style={{ color: CSS_COLOR.red, fontFamily: T.sans, fontSize: textSize("caption") }}>
+              Tax events temporarily unavailable.
+            </div>
+          ) : hasEventsSnapshot ? (
+            <div style={{ color: CSS_COLOR.textMuted, fontFamily: T.sans, fontSize: textSize("caption") }}>
+              Events loaded: {eventCount}
+            </div>
+          ) : null}
         </div>
       </div>
     );
@@ -287,8 +303,11 @@ export default function TaxCenterPanel({
     activeTab,
     currency,
     estimates,
-    eventsQuery.data,
+    eventCount,
+    eventsQuery.error,
+    eventsQuery.isLoading,
     federal.status,
+    hasEventsSnapshot,
     isPhone,
     isShadowTaxView,
     lotsQuery.data,
