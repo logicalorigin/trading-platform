@@ -14,6 +14,7 @@ import {
 import { Button } from "../../components/ui/Button.jsx";
 import {
   Select,
+  StatTile,
   StatusPill,
   SurfacePanel,
   TextField,
@@ -114,39 +115,31 @@ const fieldGridStyle = (isSingleColumn = false) => ({
   gap: sp(8),
 });
 
+const summaryGridStyle = (phoneColumns = 0) => ({
+  display: "grid",
+  gridTemplateColumns: phoneColumns
+    ? `repeat(${phoneColumns}, minmax(0, 1fr))`
+    : "repeat(auto-fit, minmax(min(100%, 132px), 1fr))",
+  gap: 0,
+  minWidth: 0,
+});
+
 function SummaryCell({ label, value, tone = CSS_COLOR.text }) {
   return (
-    <div
+    <StatTile
+      label={label}
+      value={value}
+      tone={tone}
+      divider
+      minWidth={0}
       style={{
         minWidth: 0,
-        border: `1px solid ${CSS_COLOR.border}`,
-        borderRadius: dim(RADII.sm),
-        background: CSS_COLOR.bg0,
-        padding: sp("7px 8px"),
+        width: "100%",
+        padding: sp("5px 8px"),
+        justifyContent: "flex-start",
+        overflowWrap: "anywhere",
       }}
-    >
-      <div
-        style={{
-          color: CSS_COLOR.textMuted,
-          fontFamily: T.sans,
-          fontSize: textSize("caption"),
-        }}
-      >
-        {label}
-      </div>
-      <div
-        style={{
-          color: tone,
-          fontFamily: T.data,
-          fontSize: textSize("bodyStrong"),
-          fontWeight: FONT_WEIGHTS.regular,
-          marginTop: sp(2),
-          overflowWrap: "anywhere",
-        }}
-      >
-        {value}
-      </div>
-    </div>
+    />
   );
 }
 
@@ -432,7 +425,10 @@ export default function TaxSettingsPanel({ enabled = true, isPhone = false }) {
         rightRail={<StatusPill color={stateReady ? CSS_COLOR.green : CSS_COLOR.amber}>{stateReady ? "verified" : "unavailable"}</StatusPill>}
       >
         <div style={{ display: "grid", gap: sp(8), minWidth: 0 }}>
-          <div style={fieldGridStyle(isPhone)}>
+          <div
+            data-preserve-mobile-layout
+            style={summaryGridStyle(isPhone ? 2 : 0)}
+          >
             <SummaryCell label="Available" value={stateSummary.available ?? 0} tone={CSS_COLOR.green} />
             <SummaryCell label="Stale" value={stateSummary.stale ?? 0} tone={CSS_COLOR.amber} />
             <SummaryCell label="Unavailable" value={stateSummary.unavailable ?? 0} tone={CSS_COLOR.amber} />
@@ -467,7 +463,10 @@ export default function TaxSettingsPanel({ enabled = true, isPhone = false }) {
         }
       >
         <div style={{ display: "grid", gap: sp(9), minWidth: 0 }}>
-          <div style={fieldGridStyle(isPhone)}>
+          <div
+            data-preserve-mobile-layout
+            style={summaryGridStyle(isPhone ? 3 : 0)}
+          >
             <SummaryCell
               label="Target"
               value={formatAccountMoney(reserve.targetAmount || 0, reserve.currency || "USD")}
@@ -501,7 +500,10 @@ export default function TaxSettingsPanel({ enabled = true, isPhone = false }) {
       </SurfacePanel>
 
       <SurfacePanel title="Coverage" subtitle="Tax profile account scope">
-        <div style={fieldGridStyle(isPhone)}>
+        <div
+          data-preserve-mobile-layout
+          style={summaryGridStyle(isPhone ? 3 : 0)}
+        >
           <SummaryCell label="Connected accounts" value={profileAccounts.length} />
           <SummaryCell
             label="Included"

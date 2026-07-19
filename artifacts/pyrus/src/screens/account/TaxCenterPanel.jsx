@@ -7,13 +7,12 @@ import {
   useGetAccountWashWindows,
   useGetTaxReserve,
 } from "@workspace/api-client-react";
+import { StatTile } from "../../components/platform/primitives.jsx";
 import {
   CSS_COLOR,
   FONT_WEIGHTS,
-  RADII,
   T,
   cssColorMix,
-  dim,
   sp,
   textSize,
 } from "../../lib/uiTokens.jsx";
@@ -42,38 +41,37 @@ const statusTone = (value) => {
   return "amber";
 };
 
+const taxMetricGridStyle = (phoneColumns = 0) => ({
+  display: "grid",
+  gridTemplateColumns: phoneColumns
+    ? `repeat(${phoneColumns}, minmax(0, 1fr))`
+    : "repeat(auto-fit, minmax(min(100%, 132px), 1fr))",
+  gap: 0,
+  minWidth: 0,
+});
+
+const taxRecordGridStyle = {
+  display: "grid",
+  gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 220px), 1fr))",
+  gap: sp(4),
+  minWidth: 0,
+};
+
 const MiniStat = ({ label, value, tone = CSS_COLOR.text }) => (
-  <div
+  <StatTile
+    label={label}
+    value={value}
+    tone={tone}
+    divider
+    minWidth={0}
     style={{
       minWidth: 0,
-      border: `1px solid ${CSS_COLOR.border}`,
-      background: CSS_COLOR.bg0,
-      borderRadius: dim(RADII.xs),
-      padding: sp("7px 8px"),
+      width: "100%",
+      padding: sp("5px 8px"),
+      justifyContent: "flex-start",
+      overflowWrap: "anywhere",
     }}
-  >
-    <div
-      style={{
-        color: CSS_COLOR.textMuted,
-        fontFamily: T.sans,
-        fontSize: textSize("caption"),
-        fontWeight: FONT_WEIGHTS.regular,
-      }}
-    >
-      {label}
-    </div>
-    <div
-      style={{
-        color: tone,
-        fontFamily: T.data,
-        fontSize: textSize("bodyStrong"),
-        marginTop: sp(2),
-        overflowWrap: "anywhere",
-      }}
-    >
-      {value}
-    </div>
-  </div>
+  />
 );
 
 const TaxTabButton = ({ active, children, onClick }) => (
@@ -166,7 +164,7 @@ export default function TaxCenterPanel({
     if (activeTab === "Wash Sales") {
       const windows = asArray(washQuery.data?.washWindows);
       return windows.length ? (
-        <div style={{ display: "grid", gap: sp(6) }}>
+        <div style={taxRecordGridStyle}>
           {windows.map((row, index) => (
             <MiniStat key={row.id || index} label={row.symbol || "Window"} value={row.riskLevel || "risk"} />
           ))}
@@ -179,7 +177,7 @@ export default function TaxCenterPanel({
     if (activeTab === "Lots") {
       const lots = asArray(lotsQuery.data?.lots);
       return lots.length ? (
-        <div style={{ display: "grid", gap: sp(6) }}>
+        <div style={taxRecordGridStyle}>
           {lots.map((row, index) => (
             <MiniStat key={row.id || index} label={row.symbol || "Lot"} value={row.status || "open"} />
           ))}
@@ -192,13 +190,7 @@ export default function TaxCenterPanel({
     if (activeTab === "Reserve") {
       return (
         <div style={{ display: "grid", gap: sp(8) }}>
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: isPhone ? "1fr" : "repeat(3, minmax(0, 1fr))",
-              gap: sp(6),
-            }}
-          >
+          <div style={taxMetricGridStyle(isPhone ? 3 : 0)}>
             <MiniStat
               label="Target"
               value={formatAccountMoney(reserve.targetAmount || 0, reserve.currency || currency, true, maskValues)}
@@ -221,7 +213,7 @@ export default function TaxCenterPanel({
     if (activeTab === "Reconciliation") {
       const issues = asArray(reconciliationQuery.data?.issues);
       return issues.length ? (
-        <div style={{ display: "grid", gap: sp(6) }}>
+        <div style={taxRecordGridStyle}>
           {issues.map((issue) => (
             <MiniStat key={issue.id} label={issue.issueType} value={issue.message} tone={CSS_COLOR.amber} />
           ))}
@@ -234,13 +226,7 @@ export default function TaxCenterPanel({
     return (
       <div style={{ display: "grid", gap: sp(8) }}>
         {isShadowTaxView ? (
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: isPhone ? "1fr" : "repeat(4, minmax(0, 1fr))",
-              gap: sp(6),
-            }}
-          >
+          <div style={taxMetricGridStyle(isPhone ? 2 : 0)}>
             <MiniStat
               label="Realized P/L"
               value={formatAccountMoney(shadowRealizedPnl, shadowCurrency, true, maskValues)}
@@ -257,15 +243,17 @@ export default function TaxCenterPanel({
             <MiniStat label="Shadow events" value={`${shadowEventCount}`} />
           </div>
         ) : (
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: isPhone ? "1fr" : "repeat(4, minmax(0, 1fr))",
-              gap: sp(6),
-            }}
-          >
-            <MiniStat label="Federal" value={federal.status || "unavailable"} tone={CSS_COLOR.amber} />
-            <MiniStat label="State" value={state.status || "unavailable"} tone={CSS_COLOR.amber} />
+          <div style={taxMetricGridStyle(isPhone ? 2 : 0)}>
+            <MiniStat
+              label="Federal"
+              value={federal.status || "unavailable"}
+              tone={CSS_COLOR[statusTone(federal.status)]}
+            />
+            <MiniStat
+              label="State"
+              value={state.status || "unavailable"}
+              tone={CSS_COLOR[statusTone(state.status)]}
+            />
             <MiniStat
               label="Reserve target"
               value={formatAccountMoney(estimates.totalReserveTarget || 0, estimates.currency || currency, true, maskValues)}
@@ -340,7 +328,6 @@ export default function TaxCenterPanel({
           </Pill>
         </span>
       }
-      minHeight={isPhone ? 360 : 260}
     >
       <div style={{ display: "grid", gap: sp(8), minWidth: 0 }}>
         <div className="ra-hide-scrollbar" style={{ display: "flex", overflowX: "auto", borderBottom: `1px solid ${CSS_COLOR.border}` }}>
