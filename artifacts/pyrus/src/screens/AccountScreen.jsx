@@ -100,7 +100,6 @@ import {
 import { buildAccountRefreshPolicy } from "./account/accountRefreshPolicy";
 import {
   buildPerformanceCalendarParams,
-  performanceCalendarQueriesEnabled as resolvePerformanceCalendarQueriesEnabled,
   resolveReturnsCalendarData,
 } from "./account/accountCalendarData";
 import {
@@ -562,7 +561,6 @@ const ACCOUNT_SWITCH_PREFETCH_OPTIONS = {
     retry: false,
   },
 };
-const ACCOUNT_SWITCH_KEEP_WARM_MS = 60_000;
 
 const DEFAULT_EQUITY_BENCHMARK_VISIBILITY = {
   SPY: true,
@@ -1124,13 +1122,6 @@ const AccountScreenInner = ({
         accountProviderScope === "schwab" ||
         accountProviderScope === "mixed"),
   );
-  // The opposite-mode tab to keep warm: from shadow, prewarm the live "All"
-  // aggregate; from any live tab, prewarm shadow.
-  const inactiveAccountTab = shadowMode
-    ? ibkrAccountRoutesAvailable
-      ? "all"
-      : null
-    : "shadow";
   const genericRealAccountDataEnabled = Boolean(
     isVisible &&
       !safeQaMode &&
@@ -1143,9 +1134,6 @@ const AccountScreenInner = ({
       !safeQaMode &&
       accountRequestId &&
       (shadowMode || genericRealAccountDataEnabled),
-  );
-  const accountQueriesEnabled = Boolean(
-    genericAccountQueriesEnabled || snapTradeAccountPanelsEnabled,
   );
   const modeParams = useMemo(
     () => ({
@@ -1234,11 +1222,6 @@ const AccountScreenInner = ({
       };
     },
     [assetFilter, environment, orderTab],
-  );
-  const inactiveAccountPageRequest = useMemo(
-    () =>
-      inactiveAccountTab ? getAccountTabRequest(inactiveAccountTab) : null,
-    [getAccountTabRequest, inactiveAccountTab],
   );
   const prefetchAccountTabLiveQueries = useCallback(
     (tab) => {
@@ -1347,34 +1330,6 @@ const AccountScreenInner = ({
       accountTimingStagesRef.current = new Set();
     }
   }, [isVisible]);
-  const inactiveAccountPageStreamEnabled = Boolean(
-    accountPageStreamEnabled &&
-      accountPageStreamFreshness.accountPrimaryFresh &&
-      inactiveAccountPageRequest,
-  );
-  const inactiveAccountPageStreamFreshness = useAccountPageSnapshotStream({
-    accountId: inactiveAccountPageRequest?.accountId,
-    mode: inactiveAccountPageRequest?.mode || modeParams.mode,
-    range,
-    orderTab: inactiveAccountPageRequest?.orderTab,
-    assetClass: inactiveAccountPageRequest?.assetClass,
-    tradeFilters: {
-      from: closedTradeParams.from,
-      to: closedTradeParams.to,
-      symbol: closedTradeParams.symbol,
-      assetClass: closedTradeParams.assetClass,
-      pnlSign: closedTradeParams.pnlSign,
-      holdDuration: closedTradeParams.holdDuration,
-    },
-    performanceCalendarFrom: performanceCalendarParams.from,
-    enabled: inactiveAccountPageStreamEnabled,
-  });
-  const inactiveAccountPrewarmEnabled = Boolean(
-    isVisible &&
-      accountQueriesEnabled &&
-      inactiveAccountTab &&
-      !inactiveAccountPageStreamFreshness.accountPrimaryFresh,
-  );
   useEffect(() => {
     onReadinessChange?.({
       contentReady: Boolean(isVisible),
@@ -1383,32 +1338,6 @@ const AccountScreenInner = ({
       backgroundAllowed: Boolean(isVisible && !safeQaMode),
     });
   }, [isVisible, onReadinessChange, safeQaMode]);
-  useEffect(() => {
-    if (!inactiveAccountPrewarmEnabled) {
-      return undefined;
-    }
-    prefetchAccountTabLiveQueries(inactiveAccountTab);
-    return undefined;
-  }, [
-    inactiveAccountPrewarmEnabled,
-    inactiveAccountTab,
-    prefetchAccountTabLiveQueries,
-  ]);
-  useEffect(() => {
-    if (!inactiveAccountPrewarmEnabled) {
-      return undefined;
-    }
-    const timer = window.setInterval(() => {
-      prefetchAccountTabLiveQueries(inactiveAccountTab);
-    }, ACCOUNT_SWITCH_KEEP_WARM_MS);
-    return () => {
-      window.clearInterval(timer);
-    };
-  }, [
-    inactiveAccountPrewarmEnabled,
-    inactiveAccountTab,
-    prefetchAccountTabLiveQueries,
-  ]);
   const markAccountTiming = useCallback((stage, detail) => {
     if (accountTimingStagesRef.current.has(stage)) {
       return;
@@ -1517,29 +1446,26 @@ const AccountScreenInner = ({
     },
   );
   const primaryAccountRestQueriesEnabled = Boolean(
-    genericAccountQueriesEnabled &&
-      (!accountPageStreamEnabled ||
-        !accountPageStreamFreshness.accountPrimaryFresh),
+    genericAccountQueriesEnabled && !accountPageStreamEnabled,
   );
   const liveAccountQueriesEnabled = Boolean(
-    genericAccountQueriesEnabled &&
-      (!accountPageStreamEnabled ||
-        !accountPageStreamFreshness.accountLiveFresh),
+    genericAccountQueriesEnabled && !accountPageStreamEnabled,
   );
   const derivedAccountQueriesEnabled = Boolean(
-    genericAccountQueriesEnabled &&
-      (!accountPageStreamEnabled ||
-        !accountPageStreamFreshness.accountDerivedFresh),
+    genericAccountQueriesEnabled && !accountPageStreamEnabled,
   );
   const equityHistoryQueriesEnabled = Boolean(derivedAccountQueriesEnabled);
   const secondaryAccountQueriesEnabled = Boolean(derivedAccountQueriesEnabled);
   const benchmarkQueriesEnabled = Boolean(equityHistoryQueriesEnabled);
-  const performanceCalendarQueriesEnabled =
-    resolvePerformanceCalendarQueriesEnabled(genericAccountQueriesEnabled);
+  const performanceCalendarQueriesEnabled = Boolean(
+    genericAccountQueriesEnabled && !accountPageStreamEnabled,
+  );
   const todayPanelQueriesEnabled = Boolean(
     liveAccountQueriesEnabled && activatedAccountPanels.today,
   );
-  const tradingAnalysisQueriesEnabled = Boolean(genericAccountQueriesEnabled);
+  const tradingAnalysisQueriesEnabled = Boolean(
+    genericAccountQueriesEnabled && !accountPageStreamEnabled,
+  );
   const ordersPanelQueriesEnabled = Boolean(primaryAccountRestQueriesEnabled);
   const positionsRestQueriesEnabled = Boolean(liveAccountQueriesEnabled);
   useRuntimeWorkloadFlag("account:live", Boolean(liveRefreshInterval), {
@@ -1566,7 +1492,7 @@ const AccountScreenInner = ({
   // Flex health is the diagnostic that explains why the broker session is disconnected, and
   // GET /accounts/flex/health is a plain server route that responds regardless of
   // broker state. Gate it only on the Account screen being visible (not on the
-  // broker being connected via accountQueriesEnabled, nor on the Setup & Health
+  // broker being connected via generic account data, nor on the Setup & Health
   // accordion being expanded) so a disconnected broker can still be diagnosed and
   // reconnected instead of the diagnostic being gated behind the very state it
   // would explain.
@@ -2315,18 +2241,6 @@ const AccountScreenInner = ({
       });
     } catch {}
   };
-  const accountActivePrefetchEnabled = Boolean(
-    accountQueriesEnabled &&
-      (!accountPageStreamEnabled ||
-        !accountPageStreamFreshness.accountPrimaryFresh),
-  );
-  useEffect(() => {
-    if (!accountActivePrefetchEnabled) {
-      return;
-    }
-    prefetchAccountTabLiveQueries(accountTab);
-  }, [accountActivePrefetchEnabled, accountTab, prefetchAccountTabLiveQueries]);
-
   return (
     <div
       ref={accountLayoutRef}

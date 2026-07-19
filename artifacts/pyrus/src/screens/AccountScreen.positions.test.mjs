@@ -8,6 +8,10 @@ const source = readFileSync(
   new URL("./AccountScreen.jsx", import.meta.url),
   "utf8",
 );
+const accountTabsSource = readFileSync(
+  new URL("./account/AccountTabs.jsx", import.meta.url),
+  "utf8",
+);
 
 test("positions source selector is wired to live state, not pinned to all", () => {
   assert.match(
@@ -42,7 +46,7 @@ test("account positions REST polling yields to the live account-page stream", ()
   assert.match(
     source,
     /const positionsRestQueriesEnabled = Boolean\(liveAccountQueriesEnabled\);/,
-    "Positions REST polling must use the stream freshness fallback gate instead of staying always-on.",
+    "Positions REST polling must use the generic stream gate instead of staying always-on.",
   );
 });
 
@@ -54,9 +58,52 @@ test("SnapTrade account positions enable live Massive quote hydration", () => {
   );
 });
 
-test("Account stream freshness gates REST directly without fallback-ready state", () => {
+test("Account stream gates REST directly without fallback-ready state", () => {
   assert.doesNotMatch(source, /FallbackReady/);
   assert.doesNotMatch(source, /rest-fallback/);
+});
+
+test("enabled Account page stream owns generic demand without boot or inactive REST fanout", () => {
+  assert.equal(
+    (source.match(/\buseAccountPageSnapshotStream\s*\(\{/g) || []).length,
+    1,
+    "AccountScreen must open exactly one Account page snapshot stream",
+  );
+  assert.doesNotMatch(source, /inactiveAccount(?:Tab|Page|Prewarm)/);
+  assert.doesNotMatch(source, /ACCOUNT_SWITCH_KEEP_WARM_MS/);
+  assert.doesNotMatch(
+    source,
+    /\bprefetchAccountTabLiveQueries\(/,
+    "Account tab REST prefetch must not run from a mount effect or timer",
+  );
+
+  const restGateBlock = source.slice(
+    source.indexOf("const primaryAccountRestQueriesEnabled"),
+    source.indexOf('useRuntimeWorkloadFlag("account:live"'),
+  );
+  assert.doesNotMatch(restGateBlock, /accountPageStreamFreshness/);
+  for (const gate of [
+    "primaryAccountRestQueriesEnabled",
+    "liveAccountQueriesEnabled",
+    "derivedAccountQueriesEnabled",
+    "performanceCalendarQueriesEnabled",
+    "tradingAnalysisQueriesEnabled",
+  ]) {
+    assert.match(
+      restGateBlock,
+      new RegExp(
+        `const ${gate} = Boolean\\(\\s*genericAccountQueriesEnabled &&\\s*!accountPageStreamEnabled,?\\s*\\);`,
+      ),
+      `${gate} must stay off whenever the generic Account stream is enabled`,
+    );
+  }
+
+  assert.match(
+    source,
+    /<AccountTabs[\s\S]*?onTabIntent=\{prefetchAccountTabLiveQueries\}[\s\S]*?\/>/,
+  );
+  assert.match(accountTabsSource, /onMouseEnter=\{\(\) => onIntent\?\.\(id\)\}/);
+  assert.match(accountTabsSource, /onFocus=\{\(\) => onIntent\?\.\(id\)\}/);
 });
 
 test("Accounts and Algo current-position tables share the generic account positions source", () => {
