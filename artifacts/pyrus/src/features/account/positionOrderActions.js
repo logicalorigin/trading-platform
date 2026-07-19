@@ -3,6 +3,10 @@
 // request shapes in src/features/trade/TradePositionsPanel.jsx so the account
 // surface routes through the exact same broker contract; keep them in sync.
 
+export const ORDER_BLOTTER_CANCELLATION_AVAILABLE = false;
+export const ORDER_BLOTTER_CANCELLATION_UNAVAILABLE_REASON =
+  "This order list cannot verify that the broker order belongs to PYRUS's prepared lifecycle. Cancel an app-tracked order from its active order ticket.";
+
 export const buildOptionContractPayload = (optionContract) =>
   optionContract
     ? {

@@ -2,10 +2,20 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  ORDER_BLOTTER_CANCELLATION_AVAILABLE,
+  ORDER_BLOTTER_CANCELLATION_UNAVAILABLE_REASON,
   buildCloseOrderRequest,
   buildStopOrderRequest,
   positionExitSide,
 } from "./positionOrderActions.js";
+
+test("generic broker blotters fail closed when lifecycle ownership is unknown", () => {
+  assert.equal(ORDER_BLOTTER_CANCELLATION_AVAILABLE, false);
+  assert.match(
+    ORDER_BLOTTER_CANCELLATION_UNAVAILABLE_REASON,
+    /cannot verify that the broker order belongs to PYRUS's prepared lifecycle/,
+  );
+});
 
 test("positionExitSide exits long positions by selling and short positions by buying", () => {
   assert.equal(positionExitSide({ quantity: 3 }), "sell");

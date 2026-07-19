@@ -17,6 +17,8 @@ import {
   getGetAccountPositionsQueryOptions,
   getGetAccountRiskQueryOptions,
   getGetAccountSummaryQueryOptions,
+  getGetSnapTradeAccountPortfolioQueryKey,
+  getGetSnapTradeRecentOrdersQueryKey,
   useCancelAccountOrder,
   useGetAccountAllocation,
   useGetAccountCashActivity,
@@ -48,6 +50,7 @@ import { Button } from "../components/ui/Button.jsx";
 import { platformJsonRequest } from "../features/platform/platformJsonRequest";
 import { parseRetryAfterMs } from "../features/platform/queryDefaults";
 import { useUserPreferences } from "../features/preferences/useUserPreferences";
+import { useAuthSession } from "../features/auth/authSession.jsx";
 import {
   responsiveFlags,
   useElementSize,
@@ -72,6 +75,10 @@ import {
   buildPositionOptionQuoteGroups,
 } from "./account/PositionOptionQuoteStreams.jsx";
 import { getOpenPositionRows } from "../features/account/accountPositionRows.js";
+import {
+  ORDER_BLOTTER_CANCELLATION_AVAILABLE,
+  ORDER_BLOTTER_CANCELLATION_UNAVAILABLE_REASON,
+} from "../features/account/positionOrderActions.js";
 import {
   accountPositionTypeParam,
   normalizeAccountPositionTypeFilter,
@@ -111,6 +118,7 @@ import {
   buildSnapTradeAccountPanelData,
   resolveAccountProviderScope,
 } from "./account/snapTradeAccountPanelModel.js";
+import { cancelSnapTradeOrderRequest } from "./account/snapTradeOrderCancelRequest.js";
 import { AccountHeroBlock } from "./account/AccountHeroBlock";
 import { AccountReturnsPanel } from "./account/AccountReturnsPanel";
 import PositionsPanel, {
@@ -959,6 +967,7 @@ const AccountScreenInner = ({
   onReadinessChange,
 }) => {
   const queryClient = useQueryClient();
+  const authSession = useAuthSession();
   const toast = useToast();
   const { preferences: userPreferences } = useUserPreferences();
   const maskAccountValues = Boolean(
@@ -1797,6 +1806,12 @@ const AccountScreenInner = ({
   const snapTradeRecentOrdersQueryForDisplay = withoutFailedQueryData(
     snapTradeRecentOrdersQuery,
   );
+  const snapTradeOrderCancellationReady = Boolean(
+    snapTradeAccountPanelsEnabled &&
+      snapTradeRecentOrdersQueryForDisplay.data?.account?.executionReady,
+  );
+  const snapTradeOrderCancellationMessage =
+    "Select an execution-ready SnapTrade account in Settings before canceling an order.";
   const snapTradeHistoryQueryForDisplay = withoutFailedQueryData(
     snapTradeHistoryQuery,
   );
@@ -1867,6 +1882,41 @@ const AccountScreenInner = ({
   const cashQueryForDisplay = snapTradeAccountPanelsEnabled
     ? buildIdleAccountQuery(snapTradePanelData?.cash)
     : withoutFailedQueryData(cashQuery);
+  const cancelSnapTradeOrderMutation = useMutation({
+    mutationFn: (variables) =>
+      cancelSnapTradeOrderRequest({
+        ...variables,
+        csrfToken: authSession.csrfToken,
+      }),
+    onSuccess: (_response, variables) => {
+      queryClient.invalidateQueries({
+        queryKey: [`/api/accounts/${variables.accountId}/orders`],
+      });
+      queryClient.invalidateQueries({
+        queryKey: [`/api/accounts/${variables.accountId}/positions`],
+      });
+      queryClient.invalidateQueries({
+        queryKey: getGetSnapTradeAccountPortfolioQueryKey(variables.accountId),
+      });
+      toast.push({
+        kind: "success",
+        title: "Order cancel submitted",
+        body: variables.orderId,
+      });
+    },
+    onError: (error) => {
+      toast.push({
+        kind: "error",
+        title: "Cancellation not confirmed",
+        body: `${error?.message || "SnapTrade did not confirm the order cancellation."} Refresh recent orders before trying again.`,
+      });
+    },
+    onSettled: (_response, _error, variables) => {
+      queryClient.invalidateQueries({
+        queryKey: getGetSnapTradeRecentOrdersQueryKey(variables.accountId),
+      });
+    },
+  });
   const shadowWatchlistBacktestMutation = useMutation({
     mutationFn: (payload = { timeframe: "15m" }) =>
       platformJsonRequest("/api/accounts/shadow/watchlist-backtest/runs", {
@@ -2223,8 +2273,20 @@ const AccountScreenInner = ({
     ],
   );
   const handleCancelOrder = async (order) => {
-    if (!gatewayTradingReady) {
-      window.alert(gatewayTradingMessage);
+    const cancellationReady = snapTradeAccountPanelsEnabled
+      ? snapTradeOrderCancellationReady
+      : ORDER_BLOTTER_CANCELLATION_AVAILABLE;
+    const cancellationMessage = snapTradeAccountPanelsEnabled
+      ? snapTradeOrderCancellationMessage
+      : ORDER_BLOTTER_CANCELLATION_UNAVAILABLE_REASON;
+    if (!cancellationReady) {
+      window.alert(cancellationMessage);
+      return;
+    }
+    if (snapTradeAccountPanelsEnabled && !order.brokerOrderId) {
+      window.alert(
+        "SnapTrade did not return a cancelable broker order id. Refresh the order list before trying again.",
+      );
       return;
     }
 
@@ -2234,6 +2296,14 @@ const AccountScreenInner = ({
       return;
     }
     try {
+      if (snapTradeAccountPanelsEnabled) {
+        await cancelSnapTradeOrderMutation.mutateAsync({
+          accountId: order.accountId,
+          orderId: order.brokerOrderId,
+          assetClass: order.assetClass,
+        });
+        return;
+      }
       const orderMode =
         order.mode === "live" || order.mode === "shadow"
           ? order.mode
@@ -2550,14 +2620,20 @@ const AccountScreenInner = ({
               onTabChange={setOrderTab}
               currency={currency}
               onCancelOrder={handleCancelOrder}
-              cancelPending={cancelOrderMutation.isPending}
+              cancelPending={
+                snapTradeAccountPanelsEnabled
+                  ? cancelSnapTradeOrderMutation.isPending
+                  : cancelOrderMutation.isPending
+              }
               cancelDisabled={
-                snapTradeAccountPanelsEnabled || !gatewayTradingReady
+                snapTradeAccountPanelsEnabled
+                  ? !snapTradeOrderCancellationReady
+                  : !ORDER_BLOTTER_CANCELLATION_AVAILABLE
               }
               cancelDisabledReason={
                 snapTradeAccountPanelsEnabled
-                  ? "SnapTrade order cancellation is handled outside this panel."
-                  : gatewayTradingMessage
+                  ? snapTradeOrderCancellationMessage
+                  : ORDER_BLOTTER_CANCELLATION_UNAVAILABLE_REASON
               }
               sourceFilter="all"
               emptyBody={
