@@ -7,7 +7,6 @@ import { useEffect, useRef } from "react";
 const DeferredRender = ({
   children,
   className = "",
-  minHeight = 160,
   onActivate,
   testId,
 }) => {
@@ -26,9 +25,6 @@ const DeferredRender = ({
       className={["ra-deferred-render", className].filter(Boolean).join(" ")}
       data-testid={testId}
       data-deferred-render="mounted"
-      style={{
-        minHeight,
-      }}
     >
       {children}
     </div>
