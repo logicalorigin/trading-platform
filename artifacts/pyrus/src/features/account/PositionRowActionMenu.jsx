@@ -55,10 +55,16 @@ const stopRowEvent = (event) => {
   event.stopPropagation();
 };
 
-const runAction = (action, event) => {
+const disabledActionLabel = (action) =>
+  action?.disabled
+    ? `${action.label || "Action"}, unavailable: ${action.description || "No reason provided"}`
+    : undefined;
+
+const runAction = (action, event, revealDisabledReason) => {
   stopRowEvent(event);
   if (action?.disabled) {
     event.preventDefault?.();
+    revealDisabledReason?.(action);
     return;
   }
   action?.onSelect?.();
@@ -115,12 +121,15 @@ const QuoteStrip = ({ items = [] }) => {
   );
 };
 
-const RadialActionItem = ({ action, slot }) => {
+const RadialActionItem = ({ action, slot, revealDisabledReason }) => {
   const tone = toneColor(action?.tone);
   return (
     <DropdownMenuItem
-      disabled={action.disabled}
-      onSelect={(event) => runAction(action, event)}
+      aria-disabled={action.disabled || undefined}
+      aria-label={disabledActionLabel(action)}
+      onFocus={() => revealDisabledReason(action)}
+      onPointerDown={() => revealDisabledReason(action)}
+      onSelect={(event) => runAction(action, event, revealDisabledReason)}
       title={action.description || action.label}
       style={{
         ...menuItemBaseStyle,
@@ -158,12 +167,15 @@ const RadialActionItem = ({ action, slot }) => {
   );
 };
 
-const ManagementActionItem = ({ action }) => {
+const ManagementActionItem = ({ action, revealDisabledReason }) => {
   const tone = toneColor(action?.tone);
   return (
     <DropdownMenuItem
-      disabled={action.disabled}
-      onSelect={(event) => runAction(action, event)}
+      aria-disabled={action.disabled || undefined}
+      aria-label={disabledActionLabel(action)}
+      onFocus={() => revealDisabledReason(action)}
+      onPointerDown={() => revealDisabledReason(action)}
+      onSelect={(event) => runAction(action, event, revealDisabledReason)}
       title={action.description || action.label}
       style={{
         ...menuItemBaseStyle,
@@ -207,6 +219,7 @@ export const PositionRowActionMenu = ({
   const [open, setOpen] = useState(false);
   const [primaryHover, setPrimaryHover] = useState(false);
   const [triggerHover, setTriggerHover] = useState(false);
+  const [disabledReason, setDisabledReason] = useState(null);
   const primaryDisabled = Boolean(primaryAction?.disabled);
   const activeUtilities = utilityActions.filter(Boolean).slice(0, 6);
   const activeManagement = managementActions.filter(Boolean).slice(0, 4);
@@ -215,9 +228,20 @@ export const PositionRowActionMenu = ({
     primaryAction?.description ||
     primaryAction?.label ||
     `Open ${symbol || "position"} in trade ticket`;
+  const revealDisabledReason = (action) => {
+    setDisabledReason(
+      action?.disabled
+        ? `${action.label || "Action"}: ${action.description || "Unavailable"}`
+        : null,
+    );
+  };
+  const handleOpenChange = (nextOpen) => {
+    setOpen(nextOpen);
+    if (!nextOpen) setDisabledReason(null);
+  };
 
   return (
-    <DropdownMenu open={open} onOpenChange={setOpen}>
+    <DropdownMenu open={open} onOpenChange={handleOpenChange}>
       <span
         data-testid={testId}
         onClick={stopRowEvent}
@@ -443,6 +467,7 @@ export const PositionRowActionMenu = ({
                   key={action.id || action.label}
                   action={action}
                   slot={radialSlots[index]}
+                  revealDisabledReason={revealDisabledReason}
                 />
               ))}
             </div>
@@ -462,10 +487,32 @@ export const PositionRowActionMenu = ({
                 <ManagementActionItem
                   key={action.id || action.label}
                   action={action}
+                  revealDisabledReason={revealDisabledReason}
                 />
               ))}
             </div>
           </>
+        ) : null}
+        {disabledReason ? (
+          <div
+            role="status"
+            aria-live="polite"
+            aria-atomic="true"
+            data-testid={`${testId}-disabled-reason`}
+            style={{
+              marginTop: sp(7),
+              padding: sp("5px 7px"),
+              border: `1px solid ${cssColorMix(CSS_COLOR.amber, 24)}`,
+              borderRadius: dim(RADII.xs),
+              background: cssColorMix(CSS_COLOR.amber, 6),
+              color: CSS_COLOR.textSec,
+              fontFamily: T.sans,
+              fontSize: textSize("caption"),
+              lineHeight: 1.35,
+            }}
+          >
+            {disabledReason}
+          </div>
         ) : null}
       </DropdownMenuContent>
     </DropdownMenu>
