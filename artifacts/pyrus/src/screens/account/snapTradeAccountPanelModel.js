@@ -354,6 +354,7 @@ const buildSnapTradeOrderRows = ({ accountId, orders = [], tab, checkedAt }) =>
           order.brokerageOrderId ||
           order.brokerageGroupOrderId ||
           `${order.symbol || order.rawSymbol || "snaptrade"}:${placedAt}`,
+        brokerOrderId: order.brokerageOrderId || null,
         accountId,
         symbol: normalizeText(
           order.symbol,

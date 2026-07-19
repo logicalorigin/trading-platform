@@ -454,6 +454,23 @@ test("buildSnapTradeAccountPanelData maps recent orders by working/history tab",
     working.orders.orders.map((order) => [order.id, order.status, order.type]),
     [["open-1", "accepted", "limit"]],
   );
+  assert.equal(working.orders.orders[0].brokerOrderId, "open-1");
+  const groupOnly = buildSnapTradeAccountPanelData({
+    ...common,
+    orderTab: "working",
+    recentOrders: {
+      ...common.recentOrders,
+      orders: [
+        {
+          ...common.recentOrders.orders[0],
+          brokerageOrderId: null,
+          brokerageGroupOrderId: "group-only-1",
+        },
+      ],
+    },
+  });
+  assert.equal(groupOnly.orders.orders[0].id, "group-only-1");
+  assert.equal(groupOnly.orders.orders[0].brokerOrderId, null);
   assert.deepEqual(
     history.orders.orders.map((order) => [order.id, order.status, order.side]),
     [["filled-1", "filled", "sell"]],
