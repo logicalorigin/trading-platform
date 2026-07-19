@@ -287,6 +287,49 @@ test("Platform shells pass the STA profile timeframe into the algo monitor sideb
   );
 });
 
+test("Algo monitor rail keeps its persisted desktop preference across tablet layout", () => {
+  const appSource = readLocalSource("./PlatformApp.jsx");
+  const shellSource = readLocalSource("./PlatformShell.jsx");
+
+  assert.match(
+    appSource,
+    /const \[activitySidebarCollapsed, setActivitySidebarCollapsed\] = useState\(\s*_initialState\.activitySidebarCollapsed \|\| false,?\s*\);/,
+  );
+  assert.match(
+    appSource,
+    /const \[activitySidebarWidth, setActivitySidebarWidth\] = useState\(\(\) => \{[\s\S]*_initialState\.activitySidebarWidth \?\?[\s\S]*_initialState\.marketActivityPanelWidth[\s\S]*ACTIVITY_SIDEBAR_WIDTH_MIN,[\s\S]*ACTIVITY_SIDEBAR_WIDTH_MAX,[\s\S]*ACTIVITY_SIDEBAR_WIDTH_DEFAULT;\s*\}\);/,
+  );
+  assert.match(
+    appSource,
+    /useEffect\(\(\) => \{\s*persistState\(\{ activitySidebarCollapsed \}\);\s*\}, \[activitySidebarCollapsed\]\);/,
+  );
+  assert.match(
+    appSource,
+    /useEffect\(\(\) => \{\s*persistState\(\{ activitySidebarWidth \}\);\s*\}, \[activitySidebarWidth\]\);/,
+  );
+  assert.match(
+    shellSource,
+    /collapsed=\{isTablet \|\| activitySidebarCollapsed\}[\s\S]*isTablet \|\| activitySidebarCollapsed[\s\S]*\? 40[\s\S]*: resolvedActivitySidebarWidth/,
+  );
+  assert.match(
+    shellSource,
+    /onExpand=\{\(\) => \{\s*if \(isTablet\) \{\s*setMobileActivityOpen\(true\);\s*return;\s*\}\s*setActivitySidebarCollapsed\?\.\(false\);\s*\}\}/,
+  );
+  assert.match(
+    shellSource,
+    /data-testid="activity-sidebar-collapse"[\s\S]*onClick=\{\(\) => setActivitySidebarCollapsed\?\.\(true\)\}/,
+  );
+  assert.match(
+    appSource,
+    /onToggleActivitySidebar=\{\(\) =>\s*setActivitySidebarCollapsed\(\(current\) => !current\)\s*\}/,
+  );
+  assert.equal(
+    (appSource + shellSource).match(/setActivitySidebarCollapsed(?:\?\.)?\(/g)
+      ?.length,
+    3,
+  );
+});
+
 test("Platform shell algo stream pauses during blocking API mutations", () => {
   const shellSource = readLocalSource("./PlatformShell.jsx");
 
