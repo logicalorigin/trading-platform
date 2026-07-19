@@ -524,7 +524,7 @@ export function MarketIdentityMark({
       ) : showMarketIcon && size >= 22 ? (
         <Icon size={Math.max(12, Math.round(size * 0.58))} strokeWidth={2.3} />
       ) : (
-        identity.fallbackText
+        size <= 14 ? identity.fallbackText.slice(0, 1) : identity.fallbackText
       )}
       {showCountryBadge && identity.flag && size >= 20 && !logoReady ? (
         <span
