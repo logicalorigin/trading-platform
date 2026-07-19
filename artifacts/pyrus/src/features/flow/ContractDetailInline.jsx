@@ -37,7 +37,6 @@ import {
   normalizeFlowOptionStrike,
 } from "../platform/flowOptionChartIdentity";
 import { useFlowTapeFilterState } from "../platform/flowFilterStore";
-import { useToast } from "../platform/platformContexts.jsx";
 import { normalizeTickerSymbol } from "../platform/tickerIdentity";
 import {
   Badge,
@@ -57,7 +56,6 @@ import {
 } from "../../lib/formatters";
 import {
   CSS_COLOR,
-  cssColorMix,
   FONT_WEIGHTS,
   MISSING_VALUE,
   RADII,
@@ -133,8 +131,6 @@ export const ContractDetailInline = ({
   onBack,
   onJumpToTrade,
 }) => {
-  const toast = useToast();
-  const [alertSet, setAlertSet] = useState(false);
   const flowTapeFilters = useFlowTapeFilterState();
 
   useEffect(() => {
@@ -170,22 +166,6 @@ export const ContractDetailInline = ({
     },
     {
       symbol: chartSymbol || evt?.ticker || evt?.underlying,
-      fallback: optionTicker || "Flow option",
-    },
-  );
-  const flowOptionContractShortLabel = formatOptionContractLabel(
-    {
-      ...evt,
-      ticker: evt?.ticker || evt?.underlying,
-      symbol: evt?.ticker || evt?.underlying,
-      expirationDate: optionExpirationIso || evt?.expirationDate || evt?.exp,
-      right: optionRight || evt?.right,
-      cp: evt?.cp,
-      strike: optionStrike ?? evt?.strike,
-    },
-    {
-      symbol: chartSymbol || evt?.ticker || evt?.underlying,
-      includeSymbol: false,
       fallback: optionTicker || "Flow option",
     },
   );
@@ -759,38 +739,32 @@ export const ContractDetailInline = ({
         >
           Open in Trade
         </button>
-        <button
-          className="ra-touch-target"
-          onClick={() => {
-            const next = !alertSet;
-            setAlertSet(next);
-            toast.push({
-              kind: next ? "success" : "info",
-              title: next ? "Alert set" : "Alert removed",
-              body: next
-                ? `${flowOptionContractShortLabel} · Notify on next big activity (>$100K)`
-                : `${flowOptionContractShortLabel} · No longer watching this contract`,
-            });
-          }}
-          style={{
-            display: "inline-flex",
-            alignItems: "center",
-            gap: sp(4),
-            padding: sp("5px 10px"),
-            background: alertSet ? `${cssColorMix(CSS_COLOR.amber, 13)}` : "transparent",
-            color: alertSet ? CSS_COLOR.amber : CSS_COLOR.textSec,
-            border: `1px solid ${alertSet ? CSS_COLOR.amber : CSS_COLOR.border}`,
-            borderRadius: dim(RADII.xs),
-            cursor: "pointer",
-            fontSize: fs(10),
-            fontWeight: FONT_WEIGHTS.regular,
-            fontFamily: T.sans,
-            flexShrink: 0,
-          }}
-        >
-          <Icon as={Bell} size={12} aria-hidden />
-          {alertSet ? "Alert active" : "Set alert"}
-        </button>
+        {/* ponytail: enable only after tenant-scoped rule persistence and delivery exist. */}
+        <AppTooltip content="Flow contract alerts are not available yet.">
+          <button
+            data-testid="flow-contract-alert-unavailable"
+            disabled
+            className="ra-touch-target"
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: sp(4),
+              padding: sp("5px 10px"),
+              background: "transparent",
+              color: CSS_COLOR.textMuted,
+              border: `1px solid ${CSS_COLOR.border}`,
+              borderRadius: dim(RADII.xs),
+              cursor: "not-allowed",
+              fontSize: fs(10),
+              fontWeight: FONT_WEIGHTS.regular,
+              fontFamily: T.sans,
+              flexShrink: 0,
+            }}
+          >
+            <Icon as={Bell} size={12} aria-hidden />
+            Alerts unavailable
+          </button>
+        </AppTooltip>
       </div>
 
       <div
