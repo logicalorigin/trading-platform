@@ -1,9 +1,48 @@
 from __future__ import annotations
 
+import math
 from enum import StrEnum
-from typing import Annotated, Any, Literal
+from numbers import Real
+from typing import Annotated, Any, Literal, Self
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+MAX_GREEK_SCENARIO_WORK_ITEMS = 1_000_000
+MAX_NUMERIC_TREE_DEPTH = 100
+MAX_NUMERIC_TREE_NODES = 100_000
+
+
+def _ensure_finite_numbers(value: Any, path: str = "value") -> None:
+    stack: list[tuple[Any, str, int]] = [(value, path, 0)]
+    visited = 0
+    while stack:
+        item, item_path, depth = stack.pop()
+        visited += 1
+        if visited > MAX_NUMERIC_TREE_NODES:
+            raise ValueError(f"{path} exceeds the numeric tree node limit")
+        if depth > MAX_NUMERIC_TREE_DEPTH:
+            raise ValueError(f"{path} exceeds the numeric tree depth limit")
+        if isinstance(item, int):
+            continue
+        if isinstance(item, Real):
+            try:
+                is_finite = math.isfinite(float(item))
+            except (OverflowError, TypeError, ValueError) as error:
+                raise ValueError(f"{item_path} must contain only finite numbers") from error
+            if not is_finite:
+                raise ValueError(f"{item_path} must contain only finite numbers")
+            continue
+        if isinstance(item, dict):
+            if len(item) > MAX_NUMERIC_TREE_NODES - visited - len(stack):
+                raise ValueError(f"{path} exceeds the numeric tree node limit")
+            stack.extend((child, f"{item_path}.{key}", depth + 1) for key, child in item.items())
+            continue
+        if isinstance(item, list | tuple):
+            if len(item) > MAX_NUMERIC_TREE_NODES - visited - len(stack):
+                raise ValueError(f"{path} exceeds the numeric tree node limit")
+            stack.extend(
+                (child, f"{item_path}[{index}]", depth + 1) for index, child in enumerate(item)
+            )
 
 
 class JobType(StrEnum):
@@ -23,7 +62,7 @@ class JobStatus(StrEnum):
 
 
 class PositionInput(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
 
     symbol: Annotated[str, Field(min_length=1, max_length=32)]
     quantity: float
@@ -33,14 +72,14 @@ class PositionInput(BaseModel):
 
 
 class ReturnSeriesInput(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
 
     symbol: Annotated[str, Field(min_length=1, max_length=32)]
     values: list[float] = Field(default_factory=list, max_length=10_000)
 
 
 class PortfolioRiskInput(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
 
     positions: list[PositionInput] = Field(default_factory=list, max_length=5_000)
     returns: list[ReturnSeriesInput] = Field(default_factory=list, max_length=1_000)
@@ -59,7 +98,7 @@ class PortfolioOptimizationObjective(StrEnum):
 
 
 class PortfolioOptimizationPositionInput(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
 
     symbol: Annotated[str, Field(min_length=1, max_length=32)]
     currentWeight: float = 0
@@ -67,7 +106,7 @@ class PortfolioOptimizationPositionInput(BaseModel):
 
 
 class PortfolioOptimizationConstraints(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
 
     longOnly: bool = True
     maxWeight: Annotated[float, Field(gt=0, le=1)] | None = None
@@ -75,7 +114,7 @@ class PortfolioOptimizationConstraints(BaseModel):
 
 
 class PortfolioOptimizationInput(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
 
     positions: list[PortfolioOptimizationPositionInput] = Field(
         default_factory=list,
@@ -101,7 +140,7 @@ class GreekScenarioPricingModel(StrEnum):
 
 
 class GreekPositionInput(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
 
     symbol: Annotated[str, Field(min_length=1, max_length=80)]
     underlying: Annotated[str, Field(min_length=1, max_length=32)]
@@ -124,7 +163,7 @@ class GreekPositionInput(BaseModel):
 
 
 class GreekScenarioMatrixInput(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
 
     positions: list[GreekPositionInput] = Field(default_factory=list, max_length=5_000)
     spotShocks: list[float] = Field(
@@ -152,6 +191,17 @@ class GreekScenarioMatrixInput(BaseModel):
     def validate_day_offsets(cls, value: list[float]) -> list[float]:
         return [offset for offset in value if 0 <= offset <= 365]
 
+    @model_validator(mode="after")
+    def validate_work_budget(self) -> Self:
+        work_items = (
+            len(self.positions) * len(self.spotShocks) * len(self.ivShocks) * len(self.dayOffsets)
+        )
+        if work_items > MAX_GREEK_SCENARIO_WORK_ITEMS:
+            raise ValueError(
+                "greek scenario matrix exceeds the 1,000,000 position-scenario work-item limit"
+            )
+        return self
+
 
 class BenchmarkMatrixInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -162,7 +212,7 @@ class BenchmarkMatrixInput(BaseModel):
 
 
 class SignalMatrixSettingsInput(BaseModel):
-    model_config = ConfigDict(extra="allow")
+    model_config = ConfigDict(extra="allow", allow_inf_nan=False)
 
     timeHorizon: Annotated[int, Field(ge=2, le=40)] = 10
     bosConfirmation: Literal["close", "wicks"] = "close"
@@ -197,14 +247,14 @@ class SignalMatrixSettingsInput(BaseModel):
 
 
 class SignalMatrixBarInput(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
 
     time: int
     ts: str | None = None
     date: str | None = None
     o: float
     h: float
-    l: float
+    l: float  # noqa: E741 - wire-format key shared with the TypeScript bar contract
     c: float
     v: float = 0
 
@@ -239,6 +289,12 @@ class JobRequest(BaseModel):
     schemaVersion: Literal[1] = 1
     input: dict[str, Any] = Field(default_factory=dict)
     options: JobOptions = Field(default_factory=JobOptions)
+
+    @field_validator("input")
+    @classmethod
+    def validate_finite_input(cls, value: dict[str, Any]) -> dict[str, Any]:
+        _ensure_finite_numbers(value, "input")
+        return value
 
 
 class JobAccepted(BaseModel):
