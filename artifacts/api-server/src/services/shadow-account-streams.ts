@@ -104,50 +104,56 @@ function createPollingStream<T>({
 }): Unsubscribe {
   let active = true;
   let inFlight = false;
-  let queued = false;
+  let timer: ReturnType<typeof setTimeout> | null = null;
   let lastSignature = "";
   let lastSnapshot: T | null = null;
 
+  function scheduleNext() {
+    if (!active) {
+      return;
+    }
+    timer = setTimeout(() => {
+      timer = null;
+      void tick();
+    }, intervalMs);
+    timer.unref?.();
+  }
+
   const tick = async () => {
     if (!active || inFlight) {
-      if (inFlight) {
-        queued = true;
-      }
       return;
     }
 
+    if (timer) {
+      clearTimeout(timer);
+      timer = null;
+    }
     inFlight = true;
     try {
-      do {
-        queued = false;
-        const snapshot = await fetchSnapshot();
-        if (!active) {
-          return;
-        }
+      const snapshot = await fetchSnapshot();
+      if (!active) {
+        return;
+      }
 
-        let changed = false;
-        if (snapshot !== lastSnapshot) {
-          const signature = stableStringify(snapshot);
-          changed = signature !== lastSignature;
-          lastSignature = signature;
-          lastSnapshot = snapshot;
-        }
-        if (changed) {
-          onSnapshot(snapshot);
-        }
-        await onPollSuccess?.({ snapshot, changed });
-      } while (active && queued);
+      let changed = false;
+      if (snapshot !== lastSnapshot) {
+        const signature = stableStringify(snapshot);
+        changed = signature !== lastSignature;
+        lastSignature = signature;
+        lastSnapshot = snapshot;
+      }
+      if (changed) {
+        onSnapshot(snapshot);
+      }
+      await onPollSuccess?.({ snapshot, changed });
     } catch (error) {
       logger.warn({ err: error }, "Shadow account stream polling failed");
     } finally {
       inFlight = false;
+      scheduleNext();
     }
   };
 
-  const timer = setInterval(() => {
-    void tick();
-  }, intervalMs);
-  timer.unref?.();
   const unsubscribeImmediate =
     subscribeImmediate?.((change) => {
       if (change.reason === "mark_refresh") {
@@ -160,10 +166,17 @@ function createPollingStream<T>({
 
   return () => {
     active = false;
-    clearInterval(timer);
+    if (timer) {
+      clearTimeout(timer);
+      timer = null;
+    }
     unsubscribeImmediate();
   };
 }
+
+export const __shadowAccountStreamInternalsForTests = {
+  createPollingStream,
+};
 
 export async function fetchShadowAccountSnapshotPayload(): Promise<{
   summary: Awaited<ReturnType<typeof getShadowAccountSummaryFromPositions>>;
