@@ -139,6 +139,38 @@ const firstText = (...values) => {
   return "";
 };
 
+const normalizeTradePositionOptionRight = (value) => {
+  const normalized = String(value ?? "").trim().toLowerCase();
+  if (normalized === "call" || normalized === "c") return "C";
+  if (normalized === "put" || normalized === "p") return "P";
+  return null;
+};
+
+const buildTradePositionLoadIntent = (position) => {
+  const ticker = normalizeTickerSymbol(position?.ticker);
+  if (!ticker) return null;
+
+  const canonicalPosition = position?._brokerPosition || position;
+  const isOption = Boolean(
+    position?.optionLoadContract ||
+      position?.optionContract ||
+      canonicalPosition?.optionContract,
+  );
+  if (!isOption) return { ticker, assetMode: "equity" };
+
+  const contract = position?.optionLoadContract;
+  const strike = Number(contract?.strike);
+  const cp = normalizeTradePositionOptionRight(contract?.cp);
+  const exp = String(contract?.exp ?? "").trim();
+  if (!Number.isFinite(strike) || strike <= 0 || !cp || !exp) return null;
+
+  return { ...contract, ticker, assetMode: "option", strike, cp, exp };
+};
+
+export const __tradePositionsPanelInternalsForTests = {
+  buildTradePositionLoadIntent,
+};
+
 const buildTradePositionFallbackSparklineData = (position, snapshot, symbol) => {
   const current = firstPositiveNumber(snapshot?.price, position?.mark, position?.entry);
   if (current == null) return [];
@@ -689,6 +721,9 @@ export const TradePositionsPanel = ({
               position.optionContract?.underlying ||
               position.symbol,
           ) || position.symbol;
+        const optionRight = normalizeTradePositionOptionRight(
+          position.optionContract?.right,
+        );
         const contract = isOption
           ? formatOptionContractLabel(position.optionContract, {
               includeSymbol: false,
@@ -705,10 +740,10 @@ export const TradePositionsPanel = ({
           contract,
           optionContract: position.optionContract ?? null,
           openOrders: position.openOrders ?? [],
-          optionLoadContract: isOption
+          optionLoadContract: isOption && optionRight
             ? {
                 strike: position.optionContract.strike,
-                cp: position.optionContract.right === "call" ? "C" : "P",
+                cp: optionRight,
                 exp: formatExpirationLabel(position.optionContract.expirationDate),
               }
             : null,
@@ -1564,7 +1599,8 @@ export const TradePositionsPanel = ({
                   ))}
                 </div>
               {openPositions.map((p, rowIndex) => {
-                const isLoadable = Boolean(p.optionLoadContract);
+                const loadIntent = buildTradePositionLoadIntent(p);
+                const isLoadable = Boolean(loadIntent && onLoadPosition);
                 const closeDisabled = gatewayActionDisabled;
                 const protectDisabled = gatewayActionDisabled;
                 const display = tradePositionDisplay(p);
@@ -1600,10 +1636,7 @@ export const TradePositionsPanel = ({
                   : "transparent";
                 const loadPositionIntoTicket = () => {
                   if (!isLoadable) return;
-                  onLoadPosition({
-                    ticker: p.ticker,
-                    ...p.optionLoadContract,
-                  });
+                  onLoadPosition(loadIntent);
                 };
                 return (
                   <AppTooltip key={p._id} content={
@@ -1775,7 +1808,7 @@ export const TradePositionsPanel = ({
                           label: "Trade",
                           description: isLoadable
                             ? `Load ${p.ticker} ${p.contract} into the order ticket`
-                            : "Equity position ticket loading is not wired from this panel yet",
+                            : "This position cannot be loaded into the order ticket",
                           Icon: Ticket,
                           onSelect: loadPositionIntoTicket,
                           disabled: !isLoadable,
