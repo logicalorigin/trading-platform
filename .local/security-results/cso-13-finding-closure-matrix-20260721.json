@@ -1,0 +1,181 @@
+{
+  "schema_version": 1,
+  "prepared_at": {
+    "mountain": "2026-07-21T10:01:09-06:00",
+    "utc": "2026-07-21T16:01:09Z"
+  },
+  "publication_decision": "hold",
+  "audit_comparison": {
+    "original_report": ".gstack/security-reports/2026-07-19-230625.json",
+    "original_finding_count": 13,
+    "latest_report": ".gstack/security-reports/2026-07-20-211827.json",
+    "latest_finding_count": 1,
+    "latest_trend": {
+      "resolved": 12,
+      "persistent": 1,
+      "new": 0
+    },
+    "local_repository_shallow": true,
+    "local_shallow_boundary_count": 1,
+    "product_validation_rerun_in_this_session": false,
+    "current_tree_certified": false
+  },
+  "status_definition": {
+    "persistent_verified": "Listed as a surviving verified finding by the latest completed audit.",
+    "historically_resolved": "Counted resolved and omitted from the latest finding list, but not rerun on the current mutable tree.",
+    "frozen_candidate_pending": "Must be revalidated on one immutable clean release candidate."
+  },
+  "findings": [
+    {
+      "id": "F1",
+      "severity_at_discovery": "HIGH",
+      "original_status": "VERIFIED",
+      "title": "Historical IBKR bridge credential reachable through named Git refs",
+      "latest_audit_state": "persistent_verified",
+      "current_validation_state": "live_refs_and_objects_still_present",
+      "publication_blocker": true,
+      "required_next_proof": [
+        "local_history_purge",
+        "remote_namespace_cleanup_and_fresh_mirror",
+        "provider_copy_deletion_expiry_or_reviewed_exception",
+        "credential_decommission_revocation_evidence_or_reviewed_exception",
+        "frozen_candidate_security_rerun",
+        "independent_review"
+      ]
+    },
+    {
+      "id": "F2",
+      "severity_at_discovery": "HIGH",
+      "original_status": "VERIFIED",
+      "title": "Current worktree removed fail-closed production and publication gates",
+      "latest_audit_state": "historically_resolved",
+      "current_validation_state": "not_rerun_in_this_session",
+      "publication_blocker": false,
+      "required_next_proof": "audit_guards_typecheck_and_production_build_on_frozen_candidate"
+    },
+    {
+      "id": "F3",
+      "severity_at_discovery": "HIGH",
+      "original_status": "VERIFIED",
+      "title": "Raw IBKR Flex statements retained without an expiry policy",
+      "latest_audit_state": "historically_resolved",
+      "current_validation_state": "prior_live_migration_evidence_not_requeried",
+      "publication_blocker": false,
+      "required_next_proof": "frozen_schema_migration_test_plus_provider_retention_evidence"
+    },
+    {
+      "id": "F4",
+      "severity_at_discovery": "HIGH",
+      "original_status": "VERIFIED",
+      "title": "Default handoff discovery accepted ancestor-CWD Codex sessions",
+      "latest_audit_state": "historically_resolved",
+      "current_validation_state": "not_rerun_in_this_session",
+      "publication_blocker": false,
+      "required_next_proof": "session_handoff_security_suite_on_frozen_candidate"
+    },
+    {
+      "id": "F5",
+      "severity_at_discovery": "MEDIUM",
+      "original_status": "VERIFIED",
+      "title": "Member-controlled browser diagnostics could overwrite global incident records",
+      "latest_audit_state": "historically_resolved",
+      "current_validation_state": "not_rerun_in_this_session",
+      "publication_blocker": false,
+      "required_next_proof": "api_route_mcp_contract_and_typecheck_lanes_on_frozen_candidate"
+    },
+    {
+      "id": "F6",
+      "severity_at_discovery": "MEDIUM",
+      "original_status": "VERIFIED",
+      "title": "HttpError expose false still returned or logged message and detail",
+      "latest_audit_state": "historically_resolved",
+      "current_validation_state": "not_rerun_in_this_session",
+      "publication_blocker": false,
+      "required_next_proof": "response_and_logging_boundary_tests_on_frozen_candidate"
+    },
+    {
+      "id": "F7",
+      "severity_at_discovery": "MEDIUM",
+      "original_status": "VERIFIED",
+      "title": "Pentest market proxy logged API keys embedded in query strings",
+      "latest_audit_state": "historically_resolved",
+      "current_validation_state": "not_rerun_in_this_session",
+      "publication_blocker": false,
+      "required_next_proof": "proxy_source_and_non_active_harness_contracts_on_frozen_candidate"
+    },
+    {
+      "id": "F8",
+      "severity_at_discovery": "MEDIUM",
+      "original_status": "VERIFIED",
+      "title": "Ignored mutable skills were live-linked into Codex without provenance",
+      "latest_audit_state": "historically_resolved",
+      "current_validation_state": "not_rerun_in_this_session",
+      "publication_blocker": false,
+      "required_next_proof": "installer_and_callers_absent_and_no_runtime_dependency"
+    },
+    {
+      "id": "F9",
+      "severity_at_discovery": "MEDIUM",
+      "original_status": "VERIFIED",
+      "title": "OpenAPI omitted runtime routes and security semantics",
+      "latest_audit_state": "historically_resolved",
+      "current_validation_state": "not_rerun_in_this_session",
+      "publication_blocker": false,
+      "required_next_proof": "bidirectional_route_spec_security_manifest_and_codegen_parity"
+    },
+    {
+      "id": "F10",
+      "severity_at_discovery": "MEDIUM",
+      "original_status": "VERIFIED",
+      "title": "User-scoped table registry was incomplete and its test was one-way",
+      "latest_audit_state": "historically_resolved",
+      "current_validation_state": "not_rerun_in_this_session",
+      "publication_blocker": false,
+      "required_next_proof": "bidirectional_exported_schema_parity_and_query_audit"
+    },
+    {
+      "id": "F11",
+      "severity_at_discovery": "MEDIUM",
+      "original_status": "VERIFIED",
+      "title": "IBKR gateway-host lifecycle router was defined but not mounted",
+      "latest_audit_state": "historically_resolved",
+      "current_validation_state": "not_rerun_in_this_session",
+      "publication_blocker": false,
+      "required_next_proof": "mount_hmac_replay_client_session_host_build_and_api_typecheck"
+    },
+    {
+      "id": "F12",
+      "severity_at_discovery": "MEDIUM",
+      "original_status": "VERIFIED",
+      "title": "Session handoff master updates were unlocked and non-atomic",
+      "latest_audit_state": "historically_resolved",
+      "current_validation_state": "not_rerun_in_this_session",
+      "publication_blocker": false,
+      "required_next_proof": "concurrent_writer_and_atomic_replacement_suite_on_frozen_candidate"
+    },
+    {
+      "id": "F13",
+      "severity_at_discovery": "MEDIUM",
+      "original_status": "TENTATIVE",
+      "title": "Broker authorization popups retained an opener reference",
+      "latest_audit_state": "historically_resolved",
+      "current_validation_state": "source_focused_evidence_only_no_provider_navigation",
+      "publication_blocker": false,
+      "required_next_proof": "helper_source_and_normal_url_browser_acceptance_without_provider_side_effect"
+    }
+  ],
+  "f1_closure_tracks": {
+    "credential_service_evidence_or_exception": "open",
+    "local_git_history": "prepared_not_executed",
+    "remote_git_history": "unknown_pending_separate_authorization",
+    "provider_managed_retention": "unknown_pending_support",
+    "frozen_candidate_release_gates": "pending",
+    "independent_review": "pending"
+  },
+  "overall": {
+    "historically_resolved_count": 12,
+    "persistent_count": 1,
+    "freshly_revalidated_count_this_session": 0,
+    "publication_ready": false
+  }
+}
