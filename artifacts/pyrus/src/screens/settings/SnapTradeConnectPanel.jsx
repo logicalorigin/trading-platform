@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Dialog } from "radix-ui";
 import {
   getGetRobinhoodReadinessQueryKey,
   getGetSchwabReadinessQueryKey,
@@ -81,11 +80,14 @@ import {
   schwabConnectActionLabel,
 } from "./schwabConnectModel.js";
 import {
+  IBKR_OFFICIAL_CLIENT_SERVICES_URL,
+  IBKR_OFFICIAL_CLIENT_PORTAL_URL,
   buildIbkrPortalProgressModel,
   formatIbkrPortalStatus,
   hasIbkrPortalLoginTimedOut,
   isTerminalIbkrPortalConnectStatus,
   restoreIbkrPortalFocus,
+  startIbkrPortalConnectWithRecovery,
 } from "./ibkrPortalConnectModel.js";
 import {
   BROKER_ERROR_FLASH_MS,
@@ -348,175 +350,307 @@ function IbkrPortalProgress({ model, statusUnavailable }) {
   );
 }
 
+function IbkrPortalVerificationRecovery({ onRestart, restarting }) {
+  return (
+    <div
+      aria-label="IBKR account verification recovery"
+      style={{
+        display: "grid",
+        gap: sp(10),
+        margin: sp("0 16px 16px"),
+        padding: sp(12),
+        border: `1px solid ${cssColorMix(CSS_COLOR.amber, 45)}`,
+        borderRadius: dim(RADII.sm),
+        background: cssColorMix(CSS_COLOR.amber, 8),
+        color: CSS_COLOR.textSec,
+        fontFamily: T.sans,
+        fontSize: textSize("caption"),
+        lineHeight: 1.5,
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "flex-start", gap: sp(8) }}>
+        <ShieldAlert
+          size={16}
+          strokeWidth={2}
+          aria-hidden="true"
+          style={{ color: CSS_COLOR.amber, flexShrink: 0, marginTop: dim(2) }}
+        />
+        <div style={{ display: "grid", gap: sp(5) }}>
+          <strong style={{ color: CSS_COLOR.text }}>
+            IBKR did not activate the API session
+          </strong>
+          <span>
+            A separate account verification task in IBKR Client Portal may be
+            one cause. Open the official IBKR site, complete any pending task,
+            then log out of IBKR before restarting this connection.
+          </span>
+          <span style={{ color: CSS_COLOR.textDim }}>
+            PYRUS never asks for or receives your IBKR password, 2FA code, or
+            verification token.
+          </span>
+        </div>
+      </div>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: sp(8),
+          flexWrap: "wrap",
+        }}
+      >
+        <a
+          href={IBKR_OFFICIAL_CLIENT_PORTAL_URL}
+          target="_blank"
+          rel="noreferrer noopener"
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: sp(5),
+            minHeight: dim(36),
+            color: CSS_COLOR.accent,
+            fontWeight: FONT_WEIGHTS.semibold,
+            textDecoration: "none",
+          }}
+        >
+          Open official IBKR Client Portal
+          <ExternalLink size={13} strokeWidth={2} aria-hidden="true" />
+        </a>
+        <a
+          href={IBKR_OFFICIAL_CLIENT_SERVICES_URL}
+          target="_blank"
+          rel="noreferrer noopener"
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: sp(5),
+            minHeight: dim(36),
+            color: CSS_COLOR.textSec,
+            fontWeight: FONT_WEIGHTS.semibold,
+            textDecoration: "none",
+          }}
+        >
+          IBKR Client Services
+          <ExternalLink size={13} strokeWidth={2} aria-hidden="true" />
+        </a>
+        <Button
+          variant="secondary"
+          size="sm"
+          loading={restarting}
+          onClick={onRestart}
+        >
+          <RefreshCw size={13} strokeWidth={2} aria-hidden="true" />
+          Restart connection
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 function IbkrPortalLoginDialog({
   open,
   url,
   connecting,
   disconnecting,
+  restarting,
   readiness,
   statusUnavailable,
   onClose,
   onDisconnect,
+  onRestart,
   returnFocusRef,
 }) {
+  const dialogRef = useRef(null);
+  const wasOpenRef = useRef(false);
   const progress = buildIbkrPortalProgressModel({ readiness, connecting });
   const showViewer = Boolean(url && progress.showLoginViewer);
+
+  useEffect(() => {
+    const dialog = dialogRef.current;
+    if (!dialog) return;
+    if (open) {
+      if (!dialog.open) dialog.showModal();
+      wasOpenRef.current = true;
+      return;
+    }
+    if (dialog.open) dialog.close();
+    if (wasOpenRef.current) {
+      restoreIbkrPortalFocus(returnFocusRef?.current);
+      wasOpenRef.current = false;
+    }
+  }, [open, returnFocusRef]);
+
   return (
-    <Dialog.Root
-      open={open}
-      onOpenChange={(nextOpen) => {
-        if (!nextOpen) onClose();
+    <dialog
+      ref={dialogRef}
+      className="ibkr-portal-dialog"
+      aria-labelledby="ibkr-portal-login-title"
+      onCancel={(event) => {
+        event.preventDefault();
+        onClose();
+      }}
+      style={{
+        position: "fixed",
+        inset: 0,
+        zIndex: 10020,
+        width: "100%",
+        height: "100%",
+        maxWidth: "100%",
+        maxHeight: "100%",
+        margin: 0,
+        padding: 0,
+        overflow: "hidden",
+        border: 0,
+        background: "transparent",
+        color: CSS_COLOR.text,
       }}
     >
-      <Dialog.Portal>
+      <div
+        style={{
+          position: "fixed",
+          inset: 0,
+          display: "grid",
+          placeItems: "center",
+          padding: `max(${sp(12)}px, env(safe-area-inset-top, 0px)) max(${sp(12)}px, env(safe-area-inset-right, 0px)) max(${sp(12)}px, env(safe-area-inset-bottom, 0px)) max(${sp(12)}px, env(safe-area-inset-left, 0px))`,
+        }}
+      >
+        <div
+          aria-hidden="true"
+          style={{
+            position: "absolute",
+            inset: 0,
+            background: cssColorMix(CSS_COLOR.bg0, 82),
+          }}
+        />
         <div
           style={{
-            position: "fixed",
-            inset: 0,
-            zIndex: 10020,
+            position: "relative",
+            zIndex: 1,
             display: "grid",
-            placeItems: "center",
-            padding: `max(${sp(12)}px, env(safe-area-inset-top, 0px)) max(${sp(12)}px, env(safe-area-inset-right, 0px)) max(${sp(12)}px, env(safe-area-inset-bottom, 0px)) max(${sp(12)}px, env(safe-area-inset-left, 0px))`,
+            gridTemplateRows: showViewer
+              ? "auto auto minmax(0, 1fr)"
+              : "auto auto",
+            width: "100%",
+            height: showViewer ? "100%" : "auto",
+            maxWidth: dim(showViewer ? 960 : 640),
+            maxHeight: dim(800),
+            margin: 0,
+            padding: 0,
+            overflow: "hidden",
+            background: CSS_COLOR.bg0,
+            color: CSS_COLOR.text,
+            border: `1px solid ${CSS_COLOR.border}`,
+            borderRadius: dim(RADII.md),
+            boxShadow: ELEVATION.lg,
           }}
         >
-          <Dialog.Overlay
+          <div
             style={{
-              position: "absolute",
-              inset: 0,
-              background: cssColorMix(CSS_COLOR.bg0, 82),
-            }}
-          />
-          <Dialog.Content
-            aria-describedby={undefined}
-            onCloseAutoFocus={(event) => {
-              event.preventDefault();
-              restoreIbkrPortalFocus(returnFocusRef?.current);
-            }}
-            onPointerDownOutside={(event) => event.preventDefault()}
-            style={{
-              position: "relative",
-              zIndex: 1,
-              display: "grid",
-              gridTemplateRows: showViewer
-                ? "auto auto minmax(0, 1fr)"
-                : "auto auto",
-              width: "100%",
-              height: showViewer ? "100%" : "auto",
-              maxWidth: dim(showViewer ? 960 : 640),
-              maxHeight: dim(800),
-              margin: 0,
-              padding: 0,
-              overflow: "hidden",
-              background: CSS_COLOR.bg0,
-              color: CSS_COLOR.text,
-              border: `1px solid ${CSS_COLOR.border}`,
-              borderRadius: dim(RADII.md),
-              boxShadow: ELEVATION.lg,
+              minHeight: dim(52),
+              padding: sp("6px 8px"),
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: sp(8),
+              borderBottom: `1px solid ${CSS_COLOR.border}`,
+              background: CSS_COLOR.bg1,
             }}
           >
             <div
               style={{
-                minHeight: dim(52),
-                padding: sp("6px 8px"),
                 display: "flex",
                 alignItems: "center",
-                justifyContent: "space-between",
                 gap: sp(8),
-                borderBottom: `1px solid ${CSS_COLOR.border}`,
-                background: CSS_COLOR.bg1,
+                minWidth: 0,
               }}
             >
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: sp(8),
-                  minWidth: 0,
-                }}
-              >
-                <BrokerLogo provider="ibkr" size={32} />
-                <div style={{ minWidth: 0 }}>
-                  <Dialog.Title
-                    style={{
-                      margin: 0,
-                      fontFamily: T.sans,
-                      fontSize: textSize("paragraph"),
-                      fontWeight: FONT_WEIGHTS.semibold,
-                      letterSpacing: 0,
-                    }}
-                  >
-                    Interactive Brokers
-                  </Dialog.Title>
-                  <div
-                    style={{
-                      color: CSS_COLOR.textDim,
-                      fontFamily: T.sans,
-                      fontSize: textSize("caption"),
-                      letterSpacing: 0,
-                    }}
-                  >
-                    Client Portal
-                  </div>
+              <BrokerLogo provider="ibkr" size={32} />
+              <div style={{ minWidth: 0 }}>
+                <h2
+                  id="ibkr-portal-login-title"
+                  style={{
+                    margin: 0,
+                    fontFamily: T.sans,
+                    fontSize: textSize("paragraph"),
+                    fontWeight: FONT_WEIGHTS.semibold,
+                    letterSpacing: 0,
+                  }}
+                >
+                  Interactive Brokers
+                </h2>
+                <div
+                  style={{
+                    color: CSS_COLOR.textDim,
+                    fontFamily: T.sans,
+                    fontSize: textSize("caption"),
+                    letterSpacing: 0,
+                  }}
+                >
+                  Client Portal
                 </div>
               </div>
-              <div
+            </div>
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: sp(4),
+                flexShrink: 0,
+              }}
+            >
+              <Button
+                variant="ghost"
+                size="sm"
+                loading={disconnecting}
+                onClick={onDisconnect}
+              >
+                <Unplug size={14} strokeWidth={2} aria-hidden="true" />
+                Disconnect
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                aria-label="Hide IBKR Client Portal window"
+                title="Hide window (connection continues)"
+                onClick={onClose}
                 style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: sp(4),
+                  width: dim(40),
+                  height: dim(40),
+                  padding: 0,
+                  borderRadius: dim(RADII.xs),
                   flexShrink: 0,
                 }}
               >
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  loading={disconnecting}
-                  onClick={onDisconnect}
-                >
-                  <Unplug size={14} strokeWidth={2} aria-hidden="true" />
-                  Disconnect
-                </Button>
-                <Dialog.Close asChild>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    aria-label="Hide IBKR Client Portal window"
-                    title="Hide window (connection continues)"
-                    style={{
-                      width: dim(40),
-                      height: dim(40),
-                      padding: 0,
-                      borderRadius: dim(RADII.xs),
-                      flexShrink: 0,
-                    }}
-                  >
-                    <X size={18} strokeWidth={2} aria-hidden="true" />
-                  </Button>
-                </Dialog.Close>
-              </div>
+                <X size={18} strokeWidth={2} aria-hidden="true" />
+              </Button>
             </div>
-            <IbkrPortalProgress
-              model={progress}
-              statusUnavailable={statusUnavailable}
+          </div>
+          <IbkrPortalProgress
+            model={progress}
+            statusUnavailable={statusUnavailable}
+          />
+          {progress.showVerificationRecovery ? (
+            <IbkrPortalVerificationRecovery
+              restarting={restarting}
+              onRestart={onRestart}
             />
-            {showViewer ? (
-              <iframe
-                title="Interactive Brokers Client Portal login"
-                src={url}
-                sandbox="allow-same-origin allow-scripts"
-                referrerPolicy="same-origin"
-                style={{
-                  width: "100%",
-                  height: "100%",
-                  border: 0,
-                  background: "#fff",
-                }}
-              />
-            ) : null}
-          </Dialog.Content>
+          ) : null}
+          {showViewer ? (
+            <iframe
+              title="Interactive Brokers Client Portal login"
+              src={url}
+              sandbox="allow-same-origin allow-scripts"
+              referrerPolicy="same-origin"
+              style={{
+                width: "100%",
+                height: "100%",
+                border: 0,
+                background: "#fff",
+              }}
+            />
+          ) : null}
         </div>
-      </Dialog.Portal>
-    </Dialog.Root>
+      </div>
+    </dialog>
   );
 }
 
@@ -1242,9 +1376,11 @@ export function SnapTradeConnectPanel({ enabled = true }) {
   const [ibkrConnecting, setIbkrConnecting] = useState(false);
   const [ibkrStatusUnavailable, setIbkrStatusUnavailable] = useState(false);
   const [ibkrDisconnecting, setIbkrDisconnecting] = useState(false);
+  const [ibkrRestarting, setIbkrRestarting] = useState(false);
   const ibkrPollRef = useRef(null);
   const ibkrAttemptRef = useRef(0);
   const ibkrConnectBusyRef = useRef(false);
+  const ibkrRestartBusyRef = useRef(false);
   const ibkrReturnFocusRef = useRef(null);
   const ibkrPortalReadinessQuery = useGetIbkrPortalReadiness({
     query: {
@@ -1305,7 +1441,8 @@ export function SnapTradeConnectPanel({ enabled = true }) {
     schwabSyncMutation.isPending ||
     ibkrPortalReadinessQuery.isLoading ||
     ibkrConnecting ||
-    ibkrDisconnecting;
+    ibkrDisconnecting ||
+    ibkrRestarting;
   const connectDisabled = Boolean(
     !canManage ||
       !csrfToken ||
@@ -1467,6 +1604,10 @@ export function SnapTradeConnectPanel({ enabled = true }) {
 
   const ibkrPortalReadiness = ibkrPortalReadinessQuery.data;
   const ibkrPortalStatus = ibkrPortalReadiness?.status || "disconnected";
+  const ibkrPortalProgress = buildIbkrPortalProgressModel({
+    readiness: ibkrPortalReadiness,
+    connecting: ibkrConnecting,
+  });
   const ibkrPortalUnavailable = ibkrPortalStatus === "unavailable";
   const ibkrPortalConnected = ibkrPortalStatus === "connected";
   const ibkrPortalPending =
@@ -1479,10 +1620,15 @@ export function SnapTradeConnectPanel({ enabled = true }) {
       ibkrPortalUnavailable ||
       ibkrConnecting ||
       ibkrPortalConnectMutation.isPending ||
-      ibkrDisconnecting,
+      ibkrDisconnecting ||
+      ibkrRestarting,
   );
   const ibkrDisconnectDisabled = Boolean(
-    !canManage || !csrfToken || ibkrConnecting || ibkrDisconnecting,
+    !canManage ||
+      !csrfToken ||
+      ibkrConnecting ||
+      ibkrDisconnecting ||
+      ibkrRestarting,
   );
 
   // ── Shared card lifecycle: map every connector onto one phase machine ──
@@ -2081,7 +2227,10 @@ export function SnapTradeConnectPanel({ enabled = true }) {
     setLocalError("");
     let started;
     try {
-      started = await ibkrPortalConnectMutation.mutateAsync();
+      started = await startIbkrPortalConnectWithRecovery({
+        start: () => ibkrPortalConnectMutation.mutateAsync(),
+        readStatus: getIbkrPortalStatus,
+      });
     } catch (error) {
       if (attempt !== ibkrAttemptRef.current) return;
       stopIbkrPortalPoll();
@@ -2095,6 +2244,25 @@ export function SnapTradeConnectPanel({ enabled = true }) {
       return;
     }
     if (attempt !== ibkrAttemptRef.current) return;
+    queryClient.setQueryData(
+      getGetIbkrPortalReadinessQueryKey(),
+      (current) =>
+        current
+          ? {
+              ...current,
+              status: started?.status || "gateway_starting",
+              gatewayRunning: true,
+              authenticated: false,
+              browserLoginComplete: false,
+              apiSessionActivationFailed: false,
+              selectedAccountId: null,
+              accounts: [],
+              executionTargets: [],
+              loginPath: null,
+              message: "Starting a fresh IBKR Client Portal connection…",
+            }
+          : current,
+    );
     const loginPath = started?.loginPath;
     if (!loginPath) {
       stopIbkrPortalPoll();
@@ -2117,13 +2285,11 @@ export function SnapTradeConnectPanel({ enabled = true }) {
       setLocalError("The secure IBKR login viewer is not available.");
       return;
     }
-    let loginStartedAt = null;
+    setIbkrLoginUrl(loginUrl);
+    const startedAt = Date.now();
     const poll = async () => {
       if (attempt !== ibkrAttemptRef.current) return;
-      if (
-        loginStartedAt !== null &&
-        hasIbkrPortalLoginTimedOut(loginStartedAt, Date.now())
-      ) {
+      if (hasIbkrPortalLoginTimedOut(startedAt, Date.now())) {
         void disconnectIbkrPortal("IBKR connection attempt timed out.");
         return;
       }
@@ -2143,14 +2309,6 @@ export function SnapTradeConnectPanel({ enabled = true }) {
         getGetIbkrPortalReadinessQueryKey(),
         status,
       );
-      const progress = buildIbkrPortalProgressModel({
-        readiness: status,
-        connecting: true,
-      });
-      if (loginStartedAt === null && progress.showLoginViewer) {
-        loginStartedAt = Date.now();
-        setIbkrLoginUrl(loginUrl);
-      }
       if (status?.status === "connected" && status?.authenticated === true) {
         ++ibkrAttemptRef.current;
         setIbkrLoginUrl("");
@@ -2177,14 +2335,14 @@ export function SnapTradeConnectPanel({ enabled = true }) {
         ibkrPollRef.current = window.setTimeout(poll, 3000);
       }
     };
-    void poll();
+    ibkrPollRef.current = window.setTimeout(poll, 3000);
   };
 
   const disconnectIbkrPortal = async (finalMessage = "") => {
-    if (!canManage) return;
+    if (!canManage) return false;
     if (!csrfToken) {
       setLocalError("Auth session is missing a CSRF token.");
-      return;
+      return false;
     }
     ++ibkrAttemptRef.current;
     setIbkrLoginUrl("");
@@ -2202,6 +2360,7 @@ export function SnapTradeConnectPanel({ enabled = true }) {
       void queryClient.invalidateQueries({
         queryKey: getListAccountsQueryKey(),
       });
+      return true;
     } catch (error) {
       setLocalError(
         readErrorMessage(
@@ -2209,8 +2368,24 @@ export function SnapTradeConnectPanel({ enabled = true }) {
           "IBKR Client Portal could not be disconnected.",
         ),
       );
+      return false;
     } finally {
       setIbkrDisconnecting(false);
+    }
+  };
+
+  const restartIbkrPortal = async () => {
+    if (ibkrRestartBusyRef.current) return;
+    ibkrRestartBusyRef.current = true;
+    setIbkrRestarting(true);
+    setLocalError("");
+    try {
+      const disconnected = await disconnectIbkrPortal();
+      if (!disconnected) return;
+      await connectIbkrPortal();
+    } finally {
+      ibkrRestartBusyRef.current = false;
+      setIbkrRestarting(false);
     }
   };
 
@@ -2374,7 +2549,7 @@ export function SnapTradeConnectPanel({ enabled = true }) {
               setSelectedBroker(key);
               setIbkrDialogOpen(true);
             },
-            disabled: ibkrDisconnecting,
+            disabled: ibkrDisconnecting || ibkrRestarting,
           },
           {
             label: "Disconnect",
@@ -2412,7 +2587,8 @@ export function SnapTradeConnectPanel({ enabled = true }) {
               setSelectedBroker(key);
               setIbkrDialogOpen(true);
             },
-            disabled: !canManage || !csrfToken || ibkrDisconnecting,
+            disabled:
+              !canManage || !csrfToken || ibkrDisconnecting || ibkrRestarting,
             loading: ibkrConnecting && ibkrDialogOpen,
           },
           {
@@ -2428,7 +2604,8 @@ export function SnapTradeConnectPanel({ enabled = true }) {
               setSelectedBroker(key);
               void disconnectIbkrPortal();
             },
-            disabled: !canManage || !csrfToken || ibkrDisconnecting,
+            disabled:
+              !canManage || !csrfToken || ibkrDisconnecting || ibkrRestarting,
             loading: ibkrDisconnecting,
           },
         ];
@@ -2672,11 +2849,11 @@ export function SnapTradeConnectPanel({ enabled = true }) {
                 tone={CSS_COLOR.textSec}
               />
               <StatusRow
-                label="Accounts"
+                label="Trading accounts"
                 value={
                   Array.isArray(ibkrPortalReadiness?.accounts) &&
                   ibkrPortalReadiness.accounts.length
-                    ? `${ibkrPortalReadiness.accounts.length} accounts`
+                    ? `${ibkrPortalReadiness.accounts.length} available`
                     : MISSING_VALUE
                 }
                 tone={CSS_COLOR.textSec}
@@ -3018,6 +3195,13 @@ export function SnapTradeConnectPanel({ enabled = true }) {
             />
             <span>{ibkrPortalReadiness.message}</span>
           </div>
+        ) : null}
+
+        {isIbkrPortal && ibkrPortalProgress.showVerificationRecovery ? (
+          <IbkrPortalVerificationRecovery
+            restarting={ibkrRestarting}
+            onRestart={() => void restartIbkrPortal()}
+          />
         ) : null}
 
         {isSchwab && schwabLimitations.length ? (
@@ -3629,11 +3813,13 @@ export function SnapTradeConnectPanel({ enabled = true }) {
         open={ibkrDialogOpen}
         url={ibkrLoginUrl}
         connecting={ibkrConnecting}
-        disconnecting={ibkrDisconnecting}
+        disconnecting={ibkrDisconnecting || ibkrRestarting}
+        restarting={ibkrRestarting}
         readiness={ibkrPortalReadiness}
         statusUnavailable={ibkrStatusUnavailable}
         onClose={closeIbkrPortalDialog}
         onDisconnect={() => void disconnectIbkrPortal()}
+        onRestart={() => void restartIbkrPortal()}
         returnFocusRef={ibkrReturnFocusRef}
       />
     </SurfacePanel>

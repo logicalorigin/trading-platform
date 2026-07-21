@@ -4,7 +4,12 @@
 // /api/broker-execution/ibkr-portal/status, POST
 // /api/broker-execution/ibkr-portal/disconnect. Connect opens its one-time
 // loginPath inside the isolated in-app dialog; the frontend polls status until
-// the server verifies the authenticated session or the dialog closes.
+// the server verifies the authenticated session or the attempt ends.
+
+export const IBKR_OFFICIAL_CLIENT_PORTAL_URL =
+  "https://ndcdyn.interactivebrokers.com/sso/Login?RL=1&menu=A";
+export const IBKR_OFFICIAL_CLIENT_SERVICES_URL =
+  "https://www.interactivebrokers.com/en/support/individuals.php";
 
 // Human-friendly copy for the readiness/status codes emitted by
 // artifacts/api-server/src/services/ibkr-portal-session.ts
@@ -37,6 +42,11 @@ export function buildIbkrPortalProgressModel({
     status !== "gateway_starting";
   const browserLoginComplete =
     readiness?.browserLoginComplete === true || connected;
+  const showVerificationRecovery =
+    browserLoginComplete &&
+    !connected &&
+    !competing &&
+    readiness?.apiSessionActivationFailed === true;
   const loginStepComplete = browserLoginComplete && !competing;
   const currentStep = connected
     ? null
@@ -71,11 +81,12 @@ export function buildIbkrPortalProgressModel({
     const accountCount = Array.isArray(readiness?.accounts)
       ? readiness.accounts.length
       : 0;
-    const accountLabel = `${accountCount} account${accountCount === 1 ? "" : "s"} available`;
+    const accountLabel = `${accountCount} trading account${accountCount === 1 ? "" : "s"} available`;
     return {
       connected,
       browserLoginComplete,
       showLoginViewer: false,
+      showVerificationRecovery: false,
       title: "Connected to IBKR",
       detail: readiness?.selectedAccountId
         ? `${readiness.selectedAccountId} · ${accountLabel}`
@@ -89,6 +100,7 @@ export function buildIbkrPortalProgressModel({
       connected,
       browserLoginComplete,
       showLoginViewer: true,
+      showVerificationRecovery: false,
       title: "IBKR session needs attention",
       detail:
         readiness?.message ||
@@ -102,10 +114,11 @@ export function buildIbkrPortalProgressModel({
       connected,
       browserLoginComplete,
       showLoginViewer: false,
-      title: "IBKR browser login complete",
+      showVerificationRecovery,
+      title: "IBKR sign-in received",
       detail:
         readiness?.message ||
-        "Waiting for IBKR's API session; this connection is not active yet.",
+        "PYRUS is opening IBKR's API session and loading accounts; this connection is not active yet.",
       steps,
     };
   }
@@ -115,6 +128,7 @@ export function buildIbkrPortalProgressModel({
       connected,
       browserLoginComplete,
       showLoginViewer: true,
+      showVerificationRecovery: false,
       title: "Complete your IBKR login",
       detail:
         readiness?.message ||
@@ -126,7 +140,8 @@ export function buildIbkrPortalProgressModel({
   return {
     connected,
     browserLoginComplete,
-    showLoginViewer: false,
+    showLoginViewer: true,
+    showVerificationRecovery: false,
     title: "Starting IBKR Client Portal",
     detail:
       (!startingFromStaleReadiness && readiness?.message) ||
@@ -141,7 +156,42 @@ export function isTerminalIbkrPortalConnectStatus(readiness) {
   );
 }
 
-export const IBKR_PORTAL_LOGIN_TIMEOUT_MS = 5 * 60_000 + 30_000;
+export async function startIbkrPortalConnectWithRecovery({
+  start,
+  readStatus,
+  wait = () =>
+    new Promise((resolve) => {
+      setTimeout(resolve, 500);
+    }),
+}) {
+  let originalError;
+  try {
+    return await start();
+  } catch (error) {
+    originalError = error;
+  }
+  let status;
+  try {
+    status = await readStatus();
+  } catch {
+    try {
+      await wait();
+      status = await readStatus();
+    } catch {
+      throw originalError;
+    }
+  }
+  if (status?.status === "needs_login" && status.gatewayRunning === true) {
+    try {
+      return await start();
+    } catch {
+      // Preserve the first POST failure after the single bounded retry.
+    }
+  }
+  throw originalError;
+}
+
+export const IBKR_PORTAL_LOGIN_TIMEOUT_MS = 6 * 60_000 + 30_000;
 
 export function hasIbkrPortalLoginTimedOut(startedAt, now) {
   return now - startedAt > IBKR_PORTAL_LOGIN_TIMEOUT_MS;

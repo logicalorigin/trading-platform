@@ -136,8 +136,9 @@ test("SnapTrade connect panel exposes copy-link and QR handoff for broker launch
   );
 });
 
-test("IBKR keeps the capsule-local login inside a contained sandboxed modal", () => {
+test("IBKR keeps the capsule-local login inside a persistent sandboxed modal", () => {
   const source = readLocalSource("./SnapTradeConnectPanel.jsx");
+  const styles = readLocalSource("../../index.css");
   const viteSource = readLocalSource("../../../vite.config.ts");
   const dialogBlock =
     /function IbkrPortalProgress[\s\S]*?\n}\n\n\/\/ Watches a broker auth popup/.exec(
@@ -152,7 +153,24 @@ test("IBKR keeps the capsule-local login inside a contained sandboxed modal", ()
     source,
     /function IbkrPortalLoginDialog\(\{[\s\S]*?open[\s\S]*?readiness[\s\S]*?returnFocusRef[\s\S]*?\}\)/,
   );
-  assert.match(source, /<Dialog\.Content/);
+  assert.match(dialogBlock, /const dialogRef = useRef\(null\)/);
+  assert.match(dialogBlock, /const wasOpenRef = useRef\(false\)/);
+  assert.match(dialogBlock, /<dialog/);
+  assert.match(dialogBlock, /className="ibkr-portal-dialog"/);
+  assert.match(dialogBlock, /ref=\{dialogRef\}/);
+  assert.match(dialogBlock, /aria-labelledby="ibkr-portal-login-title"/);
+  assert.match(dialogBlock, /dialog\.showModal\(\)/);
+  assert.match(dialogBlock, /dialog\.close\(\)/);
+  assert.match(
+    dialogBlock,
+    /onCancel=\{\(event\) => \{\s*event\.preventDefault\(\);\s*onClose\(\);/,
+  );
+  assert.doesNotMatch(dialogBlock, /<Dialog\./);
+  assert.doesNotMatch(source, /import \{ Dialog \} from "radix-ui"/);
+  assert.match(
+    styles,
+    /\.ibkr-portal-dialog::backdrop\s*\{\s*background: transparent;/,
+  );
   assert.match(source, /<iframe/);
   assert.match(
     source,
@@ -161,11 +179,15 @@ test("IBKR keeps the capsule-local login inside a contained sandboxed modal", ()
   assert.doesNotMatch(source, /sandbox="[^"]*allow-popups/);
   assert.match(source, /const ibkrAttemptRef = useRef\(0\)/);
   assert.match(source, /const ibkrConnectBusyRef = useRef\(false\)/);
+  assert.match(source, /const ibkrRestartBusyRef = useRef\(false\)/);
   assert.match(
     source,
     /const \[ibkrStatusUnavailable, setIbkrStatusUnavailable\] = useState\(false\)/,
   );
-  assert.match(source, /open=\{open\}/);
+  assert.match(
+    dialogBlock,
+    /const showViewer = Boolean\(url && progress\.showLoginViewer\)/,
+  );
   assert.match(dialogBlock, /buildIbkrPortalProgressModel/);
   assert.match(dialogBlock, /role="status"/);
   assert.match(dialogBlock, /aria-live="polite"/);
@@ -173,10 +195,6 @@ test("IBKR keeps the capsule-local login inside a contained sandboxed modal", ()
   assert.match(dialogBlock, /Connection status unavailable — retrying/);
   assert.match(dialogBlock, /<ol/);
   assert.match(dialogBlock, /aria-current=/);
-  assert.match(
-    source,
-    /onPointerDownOutside=\{\(event\) => event\.preventDefault\(\)\}/,
-  );
   assert.match(dialogBlock, /background: cssColorMix\(CSS_COLOR\.bg0, 82\)/);
   assert.match(dialogBlock, /env\(safe-area-inset-top, 0px\)/);
   assert.match(dialogBlock, /env\(safe-area-inset-right, 0px\)/);
@@ -187,13 +205,12 @@ test("IBKR keeps the capsule-local login inside a contained sandboxed modal", ()
   assert.match(dialogBlock, /maxWidth: dim\(showViewer \? 960 : 640\)/);
   assert.match(dialogBlock, /maxHeight: dim\(800\)/);
   assert.match(dialogBlock, /boxShadow: ELEVATION\.lg/);
-  assert.match(dialogBlock, /onCloseAutoFocus/);
   assert.match(
     dialogBlock,
     /restoreIbkrPortalFocus\(returnFocusRef\?\.current\)/,
   );
-  assert.doesNotMatch(dialogBlock, /onOpenAutoFocus|restoreFocusRef/);
-  assert.match(dialogBlock, /<Dialog\.Title/);
+  assert.doesNotMatch(dialogBlock, /onOpenAutoFocus|onCloseAutoFocus|restoreFocusRef/);
+  assert.match(dialogBlock, /<h2[\s\S]*?id="ibkr-portal-login-title"/);
   assert.match(source, /import \{ BrokerLogo \} from "\.\.\/\.\.\/components\/brand\/brokerLogos";/);
   assert.match(
     dialogBlock,
@@ -201,6 +218,8 @@ test("IBKR keeps the capsule-local login inside a contained sandboxed modal", ()
   );
   assert.match(dialogBlock, /aria-label="Hide IBKR Client Portal window"/);
   assert.match(dialogBlock, />\s*Disconnect\s*</);
+  assert.match(dialogBlock, /progress\.showVerificationRecovery/);
+  assert.match(dialogBlock, /onRestart=\{onRestart\}/);
   assert.doesNotMatch(dialogBlock, /onEscapeKeyDown/);
   assert.doesNotMatch(
     dialogBlock,
@@ -209,20 +228,17 @@ test("IBKR keeps the capsule-local login inside a contained sandboxed modal", ()
   assert.match(source, /ibkrPortalConnectMutation\.isPending/);
   assert.match(
     connectBlock,
+    /startIbkrPortalConnectWithRecovery\(\{\s*start: \(\) => ibkrPortalConnectMutation\.mutateAsync\(\),\s*readStatus: getIbkrPortalStatus,\s*\}\)/,
+  );
+  assert.match(
+    connectBlock,
     /loginUrl = new URL\(loginPath, window\.location\.origin\)\.href/,
   );
   assert.match(
     connectBlock,
     /new URL\(loginUrl\)\.origin !== window\.location\.origin/,
   );
-  assert.match(
-    connectBlock,
-    /let loginStartedAt = null;[\s\S]*?status = await getIbkrPortalStatus\(\);[\s\S]*?showLoginViewer[\s\S]*?loginStartedAt = Date\.now\(\);[\s\S]*?setIbkrLoginUrl\(loginUrl\)/,
-  );
-  assert.doesNotMatch(
-    connectBlock,
-    /setIbkrLoginUrl\(loginUrl\);[\s\S]*?let loginStartedAt = null;/,
-  );
+  assert.match(connectBlock, /setIbkrLoginUrl\(loginUrl\)/);
   assert.match(connectBlock, /const attempt = \+\+ibkrAttemptRef\.current/);
   assert.match(connectBlock, /attempt !== ibkrAttemptRef\.current/);
   assert.match(
@@ -248,14 +264,9 @@ test("IBKR keeps the capsule-local login inside a contained sandboxed modal", ()
   );
   assert.match(
     connectBlock,
-    /loginStartedAt !== null[\s\S]*?hasIbkrPortalLoginTimedOut\(\s*loginStartedAt,\s*Date\.now\(\),?\s*\)/,
+    /hasIbkrPortalLoginTimedOut\(startedAt, Date\.now\(\)\)/,
   );
   assert.match(connectBlock, /"IBKR connection attempt timed out\."/);
-  assert.match(connectBlock, /void poll\(\);/);
-  assert.doesNotMatch(
-    connectBlock,
-    /ibkrPollRef\.current = window\.setTimeout\(poll, 3000\);\s*\n\s*\};$/,
-  );
   assert.doesNotMatch(connectBlock, /IBKR Client Portal login timed out/);
   assert.doesNotMatch(
     connectBlock,
@@ -284,6 +295,12 @@ test("IBKR keeps the capsule-local login inside a contained sandboxed modal", ()
       ?.length,
     1,
   );
+  const restartBlock =
+    /const restartIbkrPortal = async \(\) => \{[\s\S]*?\n  \};/.exec(source)
+      ?.[0] ?? "";
+  assert.match(restartBlock, /ibkrRestartBusyRef\.current/);
+  assert.match(restartBlock, /await disconnectIbkrPortal\(\)/);
+  assert.match(restartBlock, /await connectIbkrPortal\(\)/);
   assert.doesNotMatch(
     connectBlock,
     /hasIbkrPortalLoginTimedOut[\s\S]{0,180}?closeIbkrPortalDialog\(\)/,
@@ -308,6 +325,10 @@ test("IBKR keeps the capsule-local login inside a contained sandboxed modal", ()
   assert.match(source, /statusUnavailable=\{ibkrStatusUnavailable\}/);
   assert.match(
     source,
+    /isIbkrPortal[\s\S]*?<StatusRow[\s\S]*?label="Trading accounts"/,
+  );
+  assert.match(
+    source,
     /queryClient\.setQueryData\(\s*getGetIbkrPortalReadinessQueryKey\(\),\s*status,\s*\)/,
   );
   assert.doesNotMatch(source, /ibkrPortalPollReadiness/);
@@ -324,6 +345,28 @@ test("IBKR keeps the capsule-local login inside a contained sandboxed modal", ()
   assert.match(
     source,
     /<IbkrPortalLoginDialog[\s\S]*?returnFocusRef=\{ibkrReturnFocusRef\}/,
+  );
+  assert.match(
+    source,
+    /<IbkrPortalLoginDialog[\s\S]*?onRestart=\{\(\) => void restartIbkrPortal\(\)\}/,
+  );
+  assert.match(
+    source,
+    /href=\{IBKR_OFFICIAL_CLIENT_PORTAL_URL\}[\s\S]*?target="_blank"[\s\S]*?rel="noreferrer noopener"/,
+  );
+  assert.match(
+    source,
+    /href=\{IBKR_OFFICIAL_CLIENT_SERVICES_URL\}[\s\S]*?target="_blank"[\s\S]*?rel="noreferrer noopener"/,
+  );
+  assert.match(source, /IBKR Client Services/);
+  assert.match(
+    source,
+    /A separate account verification task[\s\S]*?may be\s+one cause/,
+  );
+  assert.match(source, /log out of IBKR[\s\S]*?Restart connection/);
+  assert.match(
+    source,
+    /never asks for or receives your IBKR password, 2FA code, or\s+verification token/,
   );
   assert.match(source, /const ibkrPortalAttemptActive = Boolean\(/);
   assert.match(source, /label: "View status"/);

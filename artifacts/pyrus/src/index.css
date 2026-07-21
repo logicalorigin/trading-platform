@@ -2976,3 +2976,7 @@ html[data-pyrus-reduced-motion="on"] .diagnostics-machine-edge[data-animated="tr
   animation: none !important;
   stroke-dashoffset: 0 !important;
 }
+
+.ibkr-portal-dialog::backdrop {
+  background: transparent;
+}
