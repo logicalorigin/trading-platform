@@ -64,7 +64,11 @@ export type PositionGreekSnapshot = {
   theta: number | null;
   vega: number | null;
   impliedVolatility: number | null;
-  source: "IBKR_POSITIONS" | "IBKR_OPTION_CHAIN" | "SHADOW_OPTION_QUOTE";
+  source:
+    | "IBKR_POSITIONS"
+    | "IBKR_OPTION_CHAIN"
+    | "ROBINHOOD_OPTION_QUOTE"
+    | "SHADOW_OPTION_QUOTE";
   matched: boolean;
   warning: string | null;
 };

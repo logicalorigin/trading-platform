@@ -827,7 +827,7 @@ async function safeDb<T>(
 
 function diagnosticsDbPoolIsSaturated(): boolean {
   const stats = getPoolStats();
-  return stats.totalWaiting > 0 || (stats.max > 0 && stats.active >= stats.max);
+  return stats.appPoolSaturated === true;
 }
 
 function compactDiagnosticRawValue(value: unknown, depth = 0): unknown {
@@ -2861,7 +2861,7 @@ function buildResourcePressureMetrics(
     eventLoopDelayP95Ms: numeric(api["eventLoopP95Ms"]),
     eventLoopUtilization: numeric(api["eventLoopUtilization"]),
     dbPoolActive: dbPool.active,
-    dbPoolWaiting: dbPool.waiting,
+    dbPoolWaiting: dbPool.appPoolSaturated ? dbPool.totalWaiting : 0,
     dbPoolMax: dbPool.max,
     clientLevel: clientLevel
       ? normalizeApiResourcePressureLevel(clientLevel)
@@ -2918,6 +2918,8 @@ function buildResourcePressureMetrics(
     dbPoolTotalWaiting: dbPool.totalWaiting,
     dbPoolRawWaiting: dbPool.rawPoolWaiting,
     dbPoolAdmissionWaiting: dbPool.admissionWaiting,
+    dbPoolAdmissionBacklog: dbPool.admissionBacklog,
+    dbPoolAppSaturated: dbPool.appPoolSaturated,
     dbPoolMax: dbPool.max,
     dbPoolTotal: dbPool.total,
     dbPoolIdle: dbPool.idle,
@@ -2927,6 +2929,8 @@ function buildResourcePressureMetrics(
     db_pool_total_waiting: dbPool.totalWaiting,
     db_pool_raw_waiting: dbPool.rawPoolWaiting,
     db_pool_admission_waiting: dbPool.admissionWaiting,
+    db_pool_admission_backlog: dbPool.admissionBacklog,
+    db_pool_app_saturated: dbPool.appPoolSaturated,
     db_pool_active_percent:
       dbPool.max > 0 ? roundMetric((dbPool.active / dbPool.max) * 100) : null,
     browserMemoryMb,

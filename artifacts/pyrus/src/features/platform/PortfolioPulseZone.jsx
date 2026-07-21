@@ -16,7 +16,7 @@ import {
   TrendingUp,
   Zap,
 } from "lucide-react";
-import { useListOrders, useListPositions } from "@workspace/api-client-react";
+import { useGetAccountPositions, useListOrders } from "@workspace/api-client-react";
 import {
   CSS_COLOR,
   FONT_WEIGHTS,
@@ -177,8 +177,9 @@ const PortfolioPulseZoneInner = ({
     enabled,
   });
   const brokerQueryEnabled = Boolean(enabled && brokerAuthenticated && accountId && mode);
-  const positionsQuery = useListPositions(
-    { accountId, mode },
+  const positionsQuery = useGetAccountPositions(
+    accountId || "",
+    { mode, detail: "fast", liveQuotes: false },
     {
       query: {
         enabled: brokerQueryEnabled,

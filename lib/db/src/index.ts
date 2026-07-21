@@ -693,12 +693,20 @@ export type PostgresPoolStats = {
   idle: number;
   /** Checked-out connections in active use (`total - idle`). */
   active: number;
-  /** Acquire requests queued because every connection is checked out. */
+  /** Every configured app-pool slot is currently checked out. */
+  appPoolSaturated?: boolean;
+  /** Legacy alias for the raw node-postgres acquire queue. */
   waiting: number;
-  /** Raw node-postgres acquire queue; identical to legacy `waiting`. */
+  /**
+   * Raw node-postgres acquire queue; identical to legacy `waiting`. A sampled
+   * waiter can be an asynchronous idle-client handoff, so this is not itself a
+   * saturation signal.
+   */
   rawPoolWaiting: number;
   /** Callers queued in the admission bus before reaching node-postgres. */
   admissionWaiting: number;
+  /** The admission bus currently has queued callers. */
+  admissionBacklog?: boolean;
   /** All queued callers (`rawPoolWaiting + admissionWaiting`). */
   totalWaiting: number;
   /** Admission bus lane gauges for the shared pool. */
@@ -706,14 +714,14 @@ export type PostgresPoolStats = {
 };
 
 /**
- * Point-in-time snapshot of the shared Postgres pool. Observability only:
- * `waiting > 0` means callers are blocked waiting for a connection (pool
- * saturation), which surfaces as acquire timeouts and stale-cache "degraded"
- * reads. Reads live node-postgres counters; takes no connection itself.
+ * Point-in-time snapshot of the shared Postgres pool. Separates app-pool
+ * occupancy from the raw node-postgres queue and the admission-bus backlog.
+ * Reads live counters and takes no connection itself.
  */
 export function getPoolStats(): PostgresPoolStats {
   const total = pool.totalCount;
   const idle = pool.idleCount;
+  const active = Math.max(0, total - idle);
   const rawPoolWaiting = pool.waitingCount;
   const admission = getDbAdmissionDiagnostics();
   const admissionWaiting =
@@ -724,10 +732,13 @@ export function getPoolStats(): PostgresPoolStats {
     max: resolvedPoolMax,
     total,
     idle,
-    active: Math.max(0, total - idle),
+    active,
+    appPoolSaturated:
+      resolvedPoolMax > 0 && active >= resolvedPoolMax && idle === 0,
     waiting: rawPoolWaiting,
     rawPoolWaiting,
     admissionWaiting,
+    admissionBacklog: admissionWaiting > 0,
     totalWaiting: rawPoolWaiting + admissionWaiting,
     admission,
   };

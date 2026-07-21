@@ -27,8 +27,55 @@ import {
   resolveApiRssPressureThresholds,
 } from "./resource-pressure";
 import { getRecentRequestSamples } from "./request-metrics";
+import {
+  getWorkGovernorSnapshot,
+  setWorkGovernorTimingListener,
+  type WorkGovernorTiming,
+} from "./work-governor";
 
 type JsonRecord = Record<string, unknown>;
+
+const ACCOUNT_POSITIONS_STAGE_NAMES = [
+  "universe",
+  "positions_upstream",
+  "positions_snaptrade_snapshot",
+  "positions_ibkr",
+  "positions_robinhood",
+  "positions_robinhood_session",
+  "positions_robinhood_holdings",
+  "positions_robinhood_market_data",
+  "positions_provider_fanout",
+  "fast_open_date_schedule",
+  "equity_quotes",
+  "option_quotes",
+  "fast_quote_fanout",
+  "market_hydration_initial",
+  "full_orders",
+  "full_lots",
+  "full_greeks",
+  "full_flex_open_dates",
+  "full_execution_open_dates",
+  "full_fanout",
+  "real_attribution",
+  "market_hydration_full",
+  "response_shape",
+] as const;
+
+export type AccountPositionsStage =
+  (typeof ACCOUNT_POSITIONS_STAGE_NAMES)[number];
+
+export type AccountPositionsCacheDisposition = "hit" | "inflight" | "miss";
+
+export type AccountPositionsTiming = {
+  detail: "fast" | "full";
+  liveQuotes: boolean;
+  outcome: "success" | "failure";
+  positionsCache: AccountPositionsCacheDisposition | null;
+  positionCount: number | null;
+  rowCount: number | null;
+  stagesMs: Partial<Record<AccountPositionsStage, number>>;
+  totalDurationMs: number;
+};
 
 type RuntimeIncident = JsonRecord & {
   incidentId?: string;
@@ -524,6 +571,7 @@ function buildApiHeartbeat(): JsonRecord {
     },
     apiPressure: pressure,
     dbPool: getPoolStats(),
+    workGovernor: getWorkGovernorSnapshot(),
     requests: requestSummary(),
   };
 }
@@ -710,14 +758,14 @@ const DB_POOL_PRESSURE_MIN_REWARN_MS = 60_000;
 let dbPoolPressureActive = false;
 let lastDbPoolPressureWarnAt = 0;
 
-// Observability only: records an event when the shared Postgres pool saturates
-// (acquire requests queued because every connection is checked out) so a slow
-// load or a "degraded"/"stale" cockpit banner can be correlated with real pool
-// contention from the flight recorder. Takes no action and holds no connection.
+// Observability only: records an event while every shared app-pool connection is
+// checked out. Admission backlog and raw node-postgres waiting remain separate
+// payload fields so intentional pacing or an idle-client handoff cannot be
+// mistaken for saturation. Takes no action and holds no connection.
 function recordDbPoolPressureIfNeeded(): void {
   try {
     const stats = getPoolStats();
-    if (stats.totalWaiting <= 0) {
+    if (!stats.appPoolSaturated) {
       dbPoolPressureActive = false;
       return;
     }
@@ -735,6 +783,8 @@ function recordDbPoolPressureIfNeeded(): void {
       totalWaiting: stats.totalWaiting,
       rawPoolWaiting: stats.rawPoolWaiting,
       admissionWaiting: stats.admissionWaiting,
+      admissionBacklog: stats.admissionBacklog,
+      appPoolSaturated: stats.appPoolSaturated,
       total: stats.total,
       idle: stats.idle,
       active: stats.active,
@@ -779,6 +829,133 @@ const SLOW_EVENT_RATE_WINDOW_MS = 60_000;
 const SLOW_EVENT_RATE_BURST = 5; // first N per family per window emitted freely
 const SLOW_EVENT_RATE_THROTTLE_MS = 10_000; // then at most one per 10s
 const SLOW_EVENT_INTRADAY_BYTE_CAP_DEFAULT = 64 * 1024 * 1024;
+const WORK_GOVERNOR_TIMING_MIN_MS = 250;
+const WORK_GOVERNOR_TIMING_RATE_MS = 10_000;
+const ACCOUNT_POSITIONS_TIMING_MIN_MS = 250;
+const ACCOUNT_POSITIONS_TIMING_RATE_MS = 10_000;
+
+type WorkGovernorTimingRateState = {
+  lastEmittedAt: number;
+  suppressedSinceEmit: number;
+};
+
+const workGovernorTimingRateByFamily = new Map<
+  string,
+  WorkGovernorTimingRateState
+>();
+const accountPositionsTimingRateByFamily = new Map<
+  string,
+  WorkGovernorTimingRateState
+>();
+
+function appendAccountPositionsTiming(
+  timing: AccountPositionsTiming,
+  nowMs: number = Date.now(),
+): void {
+  try {
+    if (
+      timing.outcome === "success" &&
+      timing.totalDurationMs < ACCOUNT_POSITIONS_TIMING_MIN_MS
+    ) {
+      return;
+    }
+    const family = `${timing.detail}:${timing.outcome}`;
+    const state = accountPositionsTimingRateByFamily.get(family) ?? {
+      lastEmittedAt: Number.NEGATIVE_INFINITY,
+      suppressedSinceEmit: 0,
+    };
+    accountPositionsTimingRateByFamily.set(family, state);
+    if (nowMs - state.lastEmittedAt < ACCOUNT_POSITIONS_TIMING_RATE_MS) {
+      state.suppressedSinceEmit += 1;
+      return;
+    }
+
+    const stagesMs = Object.fromEntries(
+      ACCOUNT_POSITIONS_STAGE_NAMES.flatMap((stage) => {
+        const durationMs = timing.stagesMs[stage];
+        return typeof durationMs === "number" && Number.isFinite(durationMs)
+          ? [[stage, durationMs] as const]
+          : [];
+      }),
+    );
+    const detail: JsonRecord = {
+      detail: timing.detail,
+      liveQuotes: timing.liveQuotes,
+      outcome: timing.outcome,
+      positionsCache: timing.positionsCache,
+      positionCount: timing.positionCount,
+      rowCount: timing.rowCount,
+      stagesMs,
+      totalDurationMs: timing.totalDurationMs,
+    };
+    if (state.suppressedSinceEmit > 0) {
+      detail["suppressedCount"] = state.suppressedSinceEmit;
+    }
+    state.lastEmittedAt = nowMs;
+    state.suppressedSinceEmit = 0;
+    appendRuntimeFlightRecorderEvent("api-account-positions-timing", detail);
+  } catch {
+    // Diagnostics must never affect account reads.
+  }
+}
+
+export function recordAccountPositionsTiming(
+  timing: AccountPositionsTiming,
+): void {
+  appendAccountPositionsTiming(timing);
+}
+
+export function __appendAccountPositionsTimingForTests(
+  timing: AccountPositionsTiming,
+  nowMs?: number,
+): void {
+  appendAccountPositionsTiming(timing, nowMs);
+}
+
+export function __resetAccountPositionsTimingRateLimitForTests(): void {
+  accountPositionsTimingRateByFamily.clear();
+}
+
+function appendWorkGovernorTiming(
+  timing: WorkGovernorTiming,
+  nowMs: number = Date.now(),
+): void {
+  if (
+    timing.outcome === "success" &&
+    timing.totalDurationMs < WORK_GOVERNOR_TIMING_MIN_MS
+  ) {
+    return;
+  }
+  const family = `${timing.category}:${timing.operation ?? "unknown"}:${timing.outcome}`;
+  const state = workGovernorTimingRateByFamily.get(family) ?? {
+    lastEmittedAt: Number.NEGATIVE_INFINITY,
+    suppressedSinceEmit: 0,
+  };
+  workGovernorTimingRateByFamily.set(family, state);
+  if (nowMs - state.lastEmittedAt < WORK_GOVERNOR_TIMING_RATE_MS) {
+    state.suppressedSinceEmit += 1;
+    return;
+  }
+
+  const detail: JsonRecord = { ...timing };
+  if (state.suppressedSinceEmit > 0) {
+    detail["suppressedCount"] = state.suppressedSinceEmit;
+  }
+  state.lastEmittedAt = nowMs;
+  state.suppressedSinceEmit = 0;
+  appendRuntimeFlightRecorderEvent("api-work-governor-timing", detail);
+}
+
+export function __appendWorkGovernorTimingForTests(
+  timing: WorkGovernorTiming,
+  nowMs?: number,
+): void {
+  appendWorkGovernorTiming(timing, nowMs);
+}
+
+export function __resetWorkGovernorTimingRateLimitForTests(): void {
+  workGovernorTimingRateByFamily.clear();
+}
 
 type SlowEventRateState = {
   windowStartMs: number;
@@ -893,6 +1070,7 @@ export function installRuntimeFlightRecorderDbDiagnostics(): void {
   setPostgresPoolDiagnosticListener((event: PostgresPoolDiagnosticEvent) => {
     appendPostgresPoolDiagnosticEvent(event);
   });
+  setWorkGovernorTimingListener(appendWorkGovernorTiming);
 }
 
 export function installRuntimeFlightRecorderProcessHandlers(): void {
@@ -1039,6 +1217,21 @@ export function getRuntimeFlightRecorderDiagnostics(): {
         (apiCurrent?.["dbPool"] as JsonRecord | undefined)?.["totalWaiting"] ??
         (apiCurrent?.["dbPool"] as JsonRecord | undefined)?.["waiting"] ??
         null,
+      apiDbPoolRawWaiting:
+        (apiCurrent?.["dbPool"] as JsonRecord | undefined)?.["rawPoolWaiting"] ??
+        null,
+      apiDbPoolAdmissionWaiting:
+        (apiCurrent?.["dbPool"] as JsonRecord | undefined)?.[
+          "admissionWaiting"
+        ] ?? null,
+      apiDbPoolAdmissionBacklog:
+        (apiCurrent?.["dbPool"] as JsonRecord | undefined)?.[
+          "admissionBacklog"
+        ] ?? null,
+      apiDbPoolAppSaturated:
+        (apiCurrent?.["dbPool"] as JsonRecord | undefined)?.[
+          "appPoolSaturated"
+        ] ?? null,
       apiDbPoolActive:
         (apiCurrent?.["dbPool"] as JsonRecord | undefined)?.["active"] ?? null,
       apiDbPoolTotal:

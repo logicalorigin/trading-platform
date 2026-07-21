@@ -21,8 +21,25 @@ export type WorkGovernorConfig = {
   backoffMs: number;
 };
 
+export type WorkGovernorOperation =
+  | "accounts"
+  | "positions"
+  | "executions"
+  | "orders";
+
+export type WorkGovernorTiming = {
+  category: WorkGovernorCategory;
+  operation: WorkGovernorOperation | null;
+  outcome: "success" | "failure" | "canceled" | "backoff";
+  queued: boolean;
+  queueWaitMs: number;
+  executionDurationMs: number;
+  totalDurationMs: number;
+};
+
 export type WorkGovernorOptions = {
   bypassBackoff?: boolean;
+  operation?: WorkGovernorOperation;
   recordFailure?: boolean;
   signal?: AbortSignal;
 };
@@ -73,6 +90,26 @@ const waiters: Record<WorkGovernorCategory, Array<() => void>> = {
   account: [],
   orders: [],
 };
+
+let timingListener: ((timing: WorkGovernorTiming) => void) | null = null;
+
+export function setWorkGovernorTimingListener(
+  listener: ((timing: WorkGovernorTiming) => void) | null,
+): void {
+  timingListener = listener;
+}
+
+function elapsedMs(startedAt: number, completedAt: number): number {
+  return Math.max(0, Math.round((completedAt - startedAt) * 1_000) / 1_000);
+}
+
+function emitWorkGovernorTiming(timing: WorkGovernorTiming): void {
+  try {
+    timingListener?.(timing);
+  } catch {
+    // Diagnostics must never affect governed work.
+  }
+}
 
 function emptyState(): CategoryState {
   return {
@@ -159,7 +196,13 @@ export function isTransientWorkError(error: unknown): boolean {
 }
 
 function describeError(error: unknown): string {
-  return error instanceof Error && error.message ? error.message : "Work failed.";
+  if (!(error instanceof HttpError)) return "work_failed";
+  const cause = error.cause;
+  return (
+    error.code ??
+    (cause instanceof HttpError ? cause.code : null) ??
+    "http_error"
+  );
 }
 
 function backoffError(category: WorkGovernorCategory): HttpError {
@@ -252,31 +295,75 @@ export async function runGovernedWork<T>(
 ): Promise<T> {
   const bypassBackoff = Boolean(options.bypassBackoff);
   const signal = options.signal;
-  if (!bypassBackoff && isWorkBackedOff(category)) throw backoffError(category);
-  await acquireSlot(category, signal);
-  if (signal?.aborted) {
-    releaseSlot(category);
-    throw abortError(signal);
-  }
-  if (!bypassBackoff && isWorkBackedOff(category)) {
-    releaseSlot(category);
-    throw backoffError(category);
-  }
+  const startedAt = performance.now();
+  let acquiredAt: number | null = null;
+  let executionStartedAt: number | null = null;
+  let outcome: WorkGovernorTiming["outcome"] = "failure";
+  let queued = false;
+  let acquired = false;
   try {
+    if (!bypassBackoff && isWorkBackedOff(category)) {
+      outcome = "backoff";
+      throw backoffError(category);
+    }
+    if (signal?.aborted) {
+      outcome = "canceled";
+      throw abortError(signal);
+    }
+    queued = state[category].active >= configFor(category).concurrency;
+    await acquireSlot(category, signal);
+    acquired = true;
+    acquiredAt = performance.now();
+    if (signal?.aborted) {
+      outcome = "canceled";
+      throw abortError(signal);
+    }
+    if (!bypassBackoff && isWorkBackedOff(category)) {
+      outcome = "backoff";
+      throw backoffError(category);
+    }
+    executionStartedAt = performance.now();
     const result = await work();
     recordWorkSuccess(category);
+    outcome = "success";
     return result;
   } catch (error) {
-    if (options.recordFailure !== false && !signal?.aborted) {
+    if (signal?.aborted) {
+      outcome = "canceled";
+    }
+    if (
+      executionStartedAt !== null &&
+      options.recordFailure !== false &&
+      !signal?.aborted
+    ) {
       recordWorkFailure(category, error);
     }
     throw error;
   } finally {
-    releaseSlot(category);
+    const completedAt = performance.now();
+    if (acquired) releaseSlot(category);
+    emitWorkGovernorTiming({
+      category,
+      operation: options.operation ?? null,
+      outcome,
+      queued,
+      queueWaitMs:
+        queued && acquiredAt !== null
+          ? elapsedMs(startedAt, acquiredAt)
+          : queued
+            ? elapsedMs(startedAt, completedAt)
+            : 0,
+      executionDurationMs:
+        executionStartedAt === null
+          ? 0
+          : elapsedMs(executionStartedAt, completedAt),
+      totalDurationMs: elapsedMs(startedAt, completedAt),
+    });
   }
 }
 
 export function __resetWorkGovernorForTests(): void {
+  timingListener = null;
   (Object.keys(state) as WorkGovernorCategory[]).forEach((category) => {
     Object.assign(state[category], emptyState());
     waiters[category].splice(0);

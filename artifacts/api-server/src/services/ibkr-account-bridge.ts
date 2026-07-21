@@ -10,7 +10,11 @@ import type {
   BrokerOrderSnapshot,
   BrokerPositionSnapshot,
 } from "../providers/ibkr/client";
-import { runGovernedWork, type WorkGovernorCategory } from "./work-governor";
+import {
+  runGovernedWork,
+  type WorkGovernorCategory,
+  type WorkGovernorOperation,
+} from "./work-governor";
 import {
   assertIbkrClientPortalGatewaySnapshot,
   getIbkrClientPortalClient,
@@ -122,6 +126,7 @@ async function runCachedAccountRead<T extends unknown[]>({
   inflight,
   key,
   freshTtlMs,
+  operation,
   workCategory = "account",
   work,
 }: {
@@ -129,6 +134,7 @@ async function runCachedAccountRead<T extends unknown[]>({
   inflight: Map<string, Promise<T>>;
   key: string;
   freshTtlMs: number;
+  operation: WorkGovernorOperation;
   workCategory?: WorkGovernorCategory;
   work: () => Promise<T>;
 }): Promise<T> {
@@ -145,7 +151,7 @@ async function runCachedAccountRead<T extends unknown[]>({
     return pending;
   }
 
-  const promise = runGovernedWork(workCategory, work)
+  const promise = runGovernedWork(workCategory, work, { operation })
     .then((payload) => {
       cache.set(key, { payload, cachedAt: Date.now() });
       return payload;
@@ -182,6 +188,7 @@ export function listIbkrAccounts(
     inflight: accountListInflight,
     requestKey: mode,
     freshTtlMs: accountFreshTtlMs(),
+    operation: "accounts",
     work: (client) => client.listAccounts(mode),
   });
 }
@@ -199,6 +206,7 @@ export function listIbkrPositions(input: {
     inflight: positionInflight,
     requestKey,
     freshTtlMs: accountFreshTtlMs(),
+    operation: "positions",
     work: async (client) =>
       (await client.listPositions(input)).filter(
         (position) => Math.abs(Number(position.quantity)) > 1e-9,
@@ -227,6 +235,7 @@ export function listIbkrExecutions(input: {
     inflight: executionInflight,
     requestKey,
     freshTtlMs: executionsFreshTtlMs(),
+    operation: "executions",
     work: (client) => client.listExecutions(input),
   });
 }
@@ -246,6 +255,7 @@ export function listIbkrOrders(input: {
     inflight: orderInflight,
     requestKey,
     freshTtlMs: accountFreshTtlMs(),
+    operation: "orders",
     workCategory: "orders",
     work: async (client) => {
       if (!client.listOrders) {

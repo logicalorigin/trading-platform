@@ -174,6 +174,7 @@ import {
 import { recordServerDiagnosticEvent } from "./diagnostics";
 import { getSignalMonitorDbFallbackDiagnostics } from "./signal-monitor-diagnostics";
 import { listIbkrExecutions } from "./ibkr-account-bridge";
+import { getWorkGovernorSnapshot } from "./work-governor";
 import {
   filterClosedBarsForStore,
   loadStoredMarketBars,
@@ -2562,6 +2563,7 @@ export async function getRuntimeDiagnostics() {
       },
       resourceCaches,
       resourcePressure: getApiResourcePressureSnapshot(),
+      workGovernor: getWorkGovernorSnapshot(),
       accountPage: getAccountPageStreamDiagnostics(),
       shadowAccountReads: getShadowAccountReadDiagnostics(),
       pythonCompute: getPythonComputeDiagnostics(),

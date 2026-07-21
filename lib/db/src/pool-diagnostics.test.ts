@@ -141,10 +141,23 @@ test("pool stats separate raw and admission waiting without changing waiting", (
       recentWaitMsP95: 0,
     },
   };
-  const waitingDescriptor = Object.getOwnPropertyDescriptor(pool, "waitingCount");
+  const waitingDescriptor = Object.getOwnPropertyDescriptor(
+    pool,
+    "waitingCount",
+  );
+  const totalDescriptor = Object.getOwnPropertyDescriptor(pool, "totalCount");
+  const idleDescriptor = Object.getOwnPropertyDescriptor(pool, "idleCount");
   Object.defineProperty(pool, "waitingCount", {
     configurable: true,
     value: 4,
+  });
+  Object.defineProperty(pool, "totalCount", {
+    configurable: true,
+    value: 1,
+  });
+  Object.defineProperty(pool, "idleCount", {
+    configurable: true,
+    value: 1,
   });
   setDbAdmissionDiagnosticsSource(() => admission);
 
@@ -154,13 +167,43 @@ test("pool stats separate raw and admission waiting without changing waiting", (
     assert.equal(stats.rawPoolWaiting, 4);
     assert.equal(stats.admissionWaiting, 10);
     assert.equal(stats.totalWaiting, 14);
+    assert.equal(stats.admissionBacklog, true);
+    assert.equal(stats.appPoolSaturated, false);
     assert.equal(stats.admission, admission);
+
+    Object.defineProperty(pool, "waitingCount", {
+      configurable: true,
+      value: 0,
+    });
+    Object.defineProperty(pool, "totalCount", {
+      configurable: true,
+      value: stats.max,
+    });
+    Object.defineProperty(pool, "idleCount", {
+      configurable: true,
+      value: 0,
+    });
+
+    const saturatedStats = getPoolStats();
+    assert.equal(saturatedStats.rawPoolWaiting, 0);
+    assert.equal(saturatedStats.admissionBacklog, true);
+    assert.equal(saturatedStats.appPoolSaturated, true);
   } finally {
     setDbAdmissionDiagnosticsSource(null);
     if (waitingDescriptor) {
       Object.defineProperty(pool, "waitingCount", waitingDescriptor);
     } else {
       Reflect.deleteProperty(pool, "waitingCount");
+    }
+    if (totalDescriptor) {
+      Object.defineProperty(pool, "totalCount", totalDescriptor);
+    } else {
+      Reflect.deleteProperty(pool, "totalCount");
+    }
+    if (idleDescriptor) {
+      Object.defineProperty(pool, "idleCount", idleDescriptor);
+    } else {
+      Reflect.deleteProperty(pool, "idleCount");
     }
   }
 });

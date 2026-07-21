@@ -593,6 +593,45 @@ test("account universe resolves combined provider accounts without reading direc
   );
 });
 
+test("account universe starts independent provider reads in parallel", async () => {
+  const started: string[] = [];
+  let releaseSnapTrade!: () => void;
+  let releaseRobinhood!: () => void;
+  const snapTradeGate = new Promise<void>((resolve) => {
+    releaseSnapTrade = resolve;
+  });
+  const robinhoodGate = new Promise<void>((resolve) => {
+    releaseRobinhood = resolve;
+  });
+
+  const universePromise =
+    __accountUniverseInternalsForTests.readLiveAccountUniverseUncached(
+      "combined",
+      "live",
+      {
+        appUserId: "user-parallel-providers",
+        allowDirectIbkr: false,
+        getSnapTradeAccounts: async () => {
+          started.push("snaptrade");
+          await snapTradeGate;
+          return [];
+        },
+        getRobinhoodAccounts: async () => {
+          started.push("robinhood");
+          await robinhoodGate;
+          return [];
+        },
+      },
+    );
+
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  const startedBeforeRelease = [...started];
+  releaseSnapTrade();
+  releaseRobinhood();
+  await assert.rejects(universePromise, /was not found/);
+  assert.deepEqual(startedBeforeRelease, ["snaptrade", "robinhood"]);
+});
+
 test("account universe resolves one provider account without reading direct IBKR", async () => {
   let directIbkrReads = 0;
   const universe =
@@ -772,6 +811,216 @@ test("SnapTrade-only positions do not call the IBKR position reader", async () =
 
   assert.equal(ibkrReads, 0);
   assert.deepEqual(positions, []);
+});
+
+test("Robinhood-only positions use the local account id without calling IBKR", async () => {
+  const robinhoodAccount = {
+    ...snapshot("rh-local-id", "robinhood"),
+    providerAccountId: "robinhood:727958282",
+  };
+  const robinhoodPosition = {
+    id: `${robinhoodAccount.id}:NVDA`,
+    accountId: robinhoodAccount.id,
+    symbol: "NVDA",
+    assetClass: "equity" as const,
+    quantity: 0.026212,
+    averagePrice: 202.58,
+    marketPrice: 192,
+    marketValue: 5.032704,
+    unrealizedPnl: -0.277124,
+    unrealizedPnlPercent: -5.222628,
+    optionContract: null,
+  };
+  let ibkrReads = 0;
+
+  const positions = await __accountPositionInternalsForTests.readPositionsForUniverseUncached(
+    {
+      appUserId: "user-1",
+      allowDirectIbkr: false,
+      requestedAccountId: robinhoodAccount.id,
+      accountIds: [robinhoodAccount.id],
+      isCombined: false,
+      accounts: [robinhoodAccount],
+      primaryCurrency: "USD",
+      source: "robinhood",
+      latestSnapshotAt: null,
+    },
+    "live",
+    {
+      listIbkrPositions: async () => {
+        ibkrReads += 1;
+        return [];
+      },
+      readRobinhoodPositions: async (input: {
+        appUserId: string;
+        accounts: readonly { accountId: string; accountNumber: string }[];
+      }) => {
+        assert.deepEqual(input, {
+          appUserId: "user-1",
+          accounts: [
+            {
+              accountId: robinhoodAccount.id,
+              accountNumber: "727958282",
+            },
+          ],
+        });
+        return [robinhoodPosition];
+      },
+    },
+  );
+
+  assert.equal(ibkrReads, 0);
+  assert.deepEqual(positions, [robinhoodPosition]);
+});
+
+test("combined positions include IBKR, SnapTrade, and Robinhood rows", async () => {
+  const ibkrAccount = snapshot("U1", "ibkr");
+  const snapTradeAccount = snapshot("etrade-a", "snaptrade");
+  const robinhoodAccount = {
+    ...snapshot("rh-local-id", "robinhood"),
+    providerAccountId: "robinhood:727958282",
+  };
+  const ibkrPosition = {
+    id: `${ibkrAccount.id}:AAPL`,
+    accountId: ibkrAccount.id,
+    symbol: "AAPL",
+    assetClass: "equity" as const,
+    quantity: 2,
+    averagePrice: 200,
+    marketPrice: 210,
+    marketValue: 420,
+    unrealizedPnl: 20,
+    unrealizedPnlPercent: 5,
+    optionContract: null,
+  };
+  const robinhoodPosition = {
+    id: `${robinhoodAccount.id}:PLUG`,
+    accountId: robinhoodAccount.id,
+    symbol: "PLUG",
+    assetClass: "equity" as const,
+    quantity: 2.092137,
+    averagePrice: 2.39,
+    marketPrice: 2.4,
+    marketValue: 5.0211288,
+    unrealizedPnl: 0.02092137,
+    unrealizedPnlPercent: 0.41841,
+    optionContract: null,
+  };
+  const timing = {
+    startedAt: performance.now(),
+    positionsCache: null,
+    positionCount: null,
+    stagesMs: {} as Record<string, number>,
+  };
+
+  const positions = await __accountPositionInternalsForTests.readPositionsForUniverseUncached(
+    {
+      appUserId: "user-1",
+      allowDirectIbkr: true,
+      requestedAccountId: "combined",
+      accountIds: [
+        ibkrAccount.id,
+        snapTradeAccount.id,
+        robinhoodAccount.id,
+      ],
+      isCombined: true,
+      accounts: [ibkrAccount, snapTradeAccount, robinhoodAccount],
+      primaryCurrency: "USD",
+      source: "live",
+      latestSnapshotAt: null,
+    },
+    "live",
+    {
+      listIbkrPositions: async () => [ibkrPosition],
+      readSnapTradePortfolio: () =>
+        portfolio({
+          cash: 0,
+          buyingPower: 0,
+          netLiquidation: 125,
+          positions: [
+            {
+              snapTradePositionId: "stock:MSFT",
+              symbol: "MSFT",
+              rawSymbol: "MSFT",
+              description: "Microsoft Corp.",
+              instrumentKind: "stock",
+              assetClass: "equity",
+              optionContract: null,
+              quantity: 1,
+              side: "long",
+              price: 125,
+              averagePurchasePrice: 100,
+              marketValue: 125,
+              costBasis: 100,
+              unrealizedPnl: 25,
+              currency: "USD",
+              cashEquivalent: false,
+            },
+          ],
+        }),
+      readRobinhoodPositions: async (input: {
+        appUserId: string;
+        accounts: readonly { accountId: string; accountNumber: string }[];
+      }) => {
+        assert.deepEqual(input.accounts, [
+          {
+            accountId: robinhoodAccount.id,
+            accountNumber: "727958282",
+          },
+        ]);
+        return [robinhoodPosition];
+      },
+      timing,
+    },
+  );
+
+  assert.deepEqual(
+    positions.map((position) => position.id).sort(),
+    [
+      ibkrPosition.id,
+      `snaptrade:${snapTradeAccount.id}:stock:MSFT`,
+      robinhoodPosition.id,
+    ].sort(),
+  );
+  for (const stage of [
+    "positions_snaptrade_snapshot",
+    "positions_ibkr",
+    "positions_robinhood",
+    "positions_provider_fanout",
+  ] as const) {
+    assert.equal(typeof timing.stagesMs[stage], "number", stage);
+  }
+});
+
+test("Robinhood position-reader failures propagate", async () => {
+  const robinhoodAccount = {
+    ...snapshot("rh-reader-failure", "robinhood"),
+    providerAccountId: "robinhood:727958282",
+  };
+  const failure = new Error("robinhood position outage");
+
+  await assert.rejects(
+    __accountPositionInternalsForTests.readPositionsForUniverseUncached(
+      {
+        appUserId: "user-1",
+        allowDirectIbkr: false,
+        requestedAccountId: robinhoodAccount.id,
+        accountIds: [robinhoodAccount.id],
+        isCombined: false,
+        accounts: [robinhoodAccount],
+        primaryCurrency: "USD",
+        source: "robinhood",
+        latestSnapshotAt: null,
+      },
+      "live",
+      {
+        readRobinhoodPositions: async () => {
+          throw failure;
+        },
+      },
+    ),
+    (error) => error === failure,
+  );
 });
 
 test("generic positions consume the latest user-scoped SnapTrade portfolio", async () => {

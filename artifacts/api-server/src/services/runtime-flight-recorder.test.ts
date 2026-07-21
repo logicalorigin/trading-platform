@@ -9,9 +9,13 @@ import {
   recordApiRequest,
 } from "./request-metrics";
 import {
+  __appendAccountPositionsTimingForTests,
+  __appendWorkGovernorTimingForTests,
   __appendPostgresPoolDiagnosticEventForTests,
   __recordMemorySampleForTests,
   __resetPostgresPoolDiagnosticRateLimitForTests,
+  __resetAccountPositionsTimingRateLimitForTests,
+  __resetWorkGovernorTimingRateLimitForTests,
   appendFlightRecorderJsonLine,
   flushRuntimeFlightRecorderBuffersSync,
   rssPressureThresholdBytes,
@@ -485,6 +489,207 @@ test("slow-query recorder stops appending after the intra-day byte cap and flags
     assert.equal(capNotices[0]?.["capBytes"], 200);
   } finally {
     __resetPostgresPoolDiagnosticRateLimitForTests();
+    if (previousRecorderDir === undefined) {
+      delete process.env["PYRUS_FLIGHT_RECORDER_DIR"];
+    } else {
+      process.env["PYRUS_FLIGHT_RECORDER_DIR"] = previousRecorderDir;
+    }
+    rmSync(recorderDir, { recursive: true, force: true });
+  }
+});
+
+test("work-governor timings are slow-only, rate-bounded, and sanitized", () => {
+  const previousRecorderDir = process.env["PYRUS_FLIGHT_RECORDER_DIR"];
+  const recorderDir = mkdtempSync(
+    path.join(tmpdir(), "pyrus-work-governor-recorder-"),
+  );
+  process.env["PYRUS_FLIGHT_RECORDER_DIR"] = recorderDir;
+  __resetWorkGovernorTimingRateLimitForTests();
+
+  try {
+    __appendWorkGovernorTimingForTests(
+      {
+        category: "account",
+        operation: "positions",
+        outcome: "success",
+        queued: false,
+        queueWaitMs: 0,
+        executionDurationMs: 249,
+        totalDurationMs: 249,
+      },
+      1_000,
+    );
+    __appendWorkGovernorTimingForTests(
+      {
+        category: "account",
+        operation: "positions",
+        outcome: "success",
+        queued: true,
+        queueWaitMs: 100,
+        executionDurationMs: 200,
+        totalDurationMs: 300,
+      },
+      2_000,
+    );
+    __appendWorkGovernorTimingForTests(
+      {
+        category: "account",
+        operation: "positions",
+        outcome: "success",
+        queued: true,
+        queueWaitMs: 120,
+        executionDurationMs: 181,
+        totalDurationMs: 301,
+      },
+      3_000,
+    );
+    __appendWorkGovernorTimingForTests(
+      {
+        category: "account",
+        operation: "positions",
+        outcome: "success",
+        queued: false,
+        queueWaitMs: 0,
+        executionDurationMs: 302,
+        totalDurationMs: 302,
+      },
+      12_001,
+    );
+    flushRuntimeFlightRecorderBuffersSync();
+
+    const events = readDayEvents(recorderDir).filter(
+      (event) => event["event"] === "api-work-governor-timing",
+    );
+    assert.equal(events.length, 2);
+    assert.deepEqual(
+      events.map((event) => ({
+        category: event["category"],
+        operation: event["operation"],
+        outcome: event["outcome"],
+        queued: event["queued"],
+        queueWaitMs: event["queueWaitMs"],
+        executionDurationMs: event["executionDurationMs"],
+        totalDurationMs: event["totalDurationMs"],
+        suppressedCount: event["suppressedCount"] ?? 0,
+      })),
+      [
+        {
+          category: "account",
+          operation: "positions",
+          outcome: "success",
+          queued: true,
+          queueWaitMs: 100,
+          executionDurationMs: 200,
+          totalDurationMs: 300,
+          suppressedCount: 0,
+        },
+        {
+          category: "account",
+          operation: "positions",
+          outcome: "success",
+          queued: false,
+          queueWaitMs: 0,
+          executionDurationMs: 302,
+          totalDurationMs: 302,
+          suppressedCount: 1,
+        },
+      ],
+    );
+    assert.equal(JSON.stringify(events).includes("accountId"), false);
+    assert.equal(JSON.stringify(events).includes("symbol"), false);
+  } finally {
+    __resetWorkGovernorTimingRateLimitForTests();
+    if (previousRecorderDir === undefined) {
+      delete process.env["PYRUS_FLIGHT_RECORDER_DIR"];
+    } else {
+      process.env["PYRUS_FLIGHT_RECORDER_DIR"] = previousRecorderDir;
+    }
+    rmSync(recorderDir, { recursive: true, force: true });
+  }
+});
+
+test("runtime heartbeat exposes work-governor occupancy", () => {
+  const previousRecorderDir = process.env["PYRUS_FLIGHT_RECORDER_DIR"];
+  const recorderDir = mkdtempSync(
+    path.join(tmpdir(), "pyrus-work-governor-heartbeat-"),
+  );
+  process.env["PYRUS_FLIGHT_RECORDER_DIR"] = recorderDir;
+
+  try {
+    const heartbeat = writeRuntimeFlightRecorderHeartbeat();
+    assert.ok(heartbeat);
+    const workGovernor = heartbeat["workGovernor"] as
+      | Record<string, Record<string, unknown>>
+      | undefined;
+    assert.equal(workGovernor?.["account"]?.["active"], 0);
+    assert.equal(workGovernor?.["account"]?.["queued"], 0);
+    assert.equal(workGovernor?.["orders"]?.["active"], 0);
+    assert.equal(workGovernor?.["orders"]?.["queued"], 0);
+  } finally {
+    flushRuntimeFlightRecorderBuffersSync();
+    if (previousRecorderDir === undefined) {
+      delete process.env["PYRUS_FLIGHT_RECORDER_DIR"];
+    } else {
+      process.env["PYRUS_FLIGHT_RECORDER_DIR"] = previousRecorderDir;
+    }
+    rmSync(recorderDir, { recursive: true, force: true });
+  }
+});
+
+test("account-position timings are slow-only, rate-bounded, and sanitized", () => {
+  const previousRecorderDir = process.env["PYRUS_FLIGHT_RECORDER_DIR"];
+  const recorderDir = mkdtempSync(
+    path.join(tmpdir(), "pyrus-account-position-recorder-"),
+  );
+  process.env["PYRUS_FLIGHT_RECORDER_DIR"] = recorderDir;
+  __resetAccountPositionsTimingRateLimitForTests();
+  const timing = {
+    detail: "full" as const,
+    liveQuotes: false,
+    outcome: "success" as const,
+    positionsCache: "miss" as const,
+    positionCount: 4,
+    rowCount: 4,
+    stagesMs: {
+      universe: 50,
+      positions_upstream: 200,
+      positions_ibkr: 180,
+      positions_provider_fanout: 181,
+    },
+  };
+
+  try {
+    __appendAccountPositionsTimingForTests(
+      { ...timing, totalDurationMs: 249 },
+      1_000,
+    );
+    __appendAccountPositionsTimingForTests(
+      { ...timing, totalDurationMs: 300 },
+      2_000,
+    );
+    __appendAccountPositionsTimingForTests(
+      { ...timing, totalDurationMs: 301 },
+      3_000,
+    );
+    __appendAccountPositionsTimingForTests(
+      { ...timing, totalDurationMs: 302 },
+      12_001,
+    );
+    flushRuntimeFlightRecorderBuffersSync();
+
+    const events = readDayEvents(recorderDir).filter(
+      (event) => event["event"] === "api-account-positions-timing",
+    );
+    assert.equal(events.length, 2);
+    assert.equal(events[0]?.["totalDurationMs"], 300);
+    assert.equal(events[0]?.["positionsCache"], "miss");
+    assert.equal(events[1]?.["totalDurationMs"], 302);
+    assert.equal(events[1]?.["suppressedCount"], 1);
+    assert.deepEqual(events[0]?.["stagesMs"], timing.stagesMs);
+    assert.equal(JSON.stringify(events).includes("accountId"), false);
+    assert.equal(JSON.stringify(events).includes("symbol"), false);
+  } finally {
+    __resetAccountPositionsTimingRateLimitForTests();
     if (previousRecorderDir === undefined) {
       delete process.env["PYRUS_FLIGHT_RECORDER_DIR"];
     } else {

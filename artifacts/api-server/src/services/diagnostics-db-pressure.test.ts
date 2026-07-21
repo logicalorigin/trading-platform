@@ -29,8 +29,40 @@ test("diagnostics resource pressure surfaces DB pool waiters", () => {
   assert.match(diagnosticsSource, /metricKey:\s*"resource_pressure\.db_pool_waiting"/);
   assert.match(diagnosticsSource, /dbPoolWaiting:\s*dbPool\.waiting/);
   assert.match(diagnosticsSource, /dbPoolTotalWaiting:\s*dbPool\.totalWaiting/);
+  assert.match(
+    diagnosticsSource,
+    /dbPoolAdmissionBacklog:\s*dbPool\.admissionBacklog/,
+  );
+  assert.match(
+    diagnosticsSource,
+    /dbPoolAppSaturated:\s*dbPool\.appPoolSaturated/,
+  );
   assert.match(diagnosticsSource, /db_pool_waiting:\s*dbPool\.waiting/);
   assert.match(diagnosticsSource, /db_pool_total_waiting:\s*dbPool\.totalWaiting/);
+  assert.match(
+    diagnosticsSource,
+    /db_pool_admission_backlog:\s*dbPool\.admissionBacklog/,
+  );
+  assert.match(
+    diagnosticsSource,
+    /db_pool_app_saturated:\s*dbPool\.appPoolSaturated/,
+  );
+});
+
+test("resource-pressure control counts queues only while the app pool is saturated", () => {
+  const pressureUpdateBlock = sourceBlock(
+    "const resourcePressure = updateApiResourcePressure({",
+    "const apiPressureLevel = resourcePressure.level;",
+  );
+
+  assert.match(
+    pressureUpdateBlock,
+    /dbPoolWaiting:\s*dbPool\.appPoolSaturated\s*\?\s*dbPool\.totalWaiting\s*:\s*0/,
+  );
+  assert.doesNotMatch(
+    pressureUpdateBlock,
+    /dbPoolWaiting:\s*dbPool\.totalWaiting\s*[,}]/,
+  );
 });
 
 test("runtime diagnostics surfaces active DB pool admission lane gauges", () => {
@@ -141,8 +173,8 @@ test("diagnostics heavy reads reuse cached telemetry under DB pool pressure", ()
     "function compactDiagnosticRawValue",
   );
   assert.match(saturationBlock, /getPoolStats\(\)/);
-  assert.match(saturationBlock, /stats\.totalWaiting > 0/);
-  assert.match(saturationBlock, /stats\.active >= stats\.max/);
+  assert.match(saturationBlock, /return stats\.appPoolSaturated/);
+  assert.doesNotMatch(saturationBlock, /stats\.totalWaiting/);
 
   const automationBlock = sourceBlock(
     "async function readRecentAutomationEvents",
@@ -165,10 +197,10 @@ test("diagnostics heavy reads reuse cached telemetry under DB pool pressure", ()
   assert.match(storageBlock, /storageStatsCacheStatus: "stale"/);
 });
 
-test("runtime flight recorder counts admission waiters as DB pressure", () => {
+test("runtime flight recorder separates admission backlog from app-pool saturation", () => {
   assert.match(
     flightRecorderSource,
-    /if \(stats\.totalWaiting <= 0\)/,
+    /if \(!stats\.appPoolSaturated\)/,
   );
   assert.match(
     flightRecorderSource,
@@ -177,6 +209,14 @@ test("runtime flight recorder counts admission waiters as DB pressure", () => {
   assert.match(
     flightRecorderSource,
     /totalWaiting:\s*stats\.totalWaiting/,
+  );
+  assert.match(
+    flightRecorderSource,
+    /admissionBacklog:\s*stats\.admissionBacklog/,
+  );
+  assert.match(
+    flightRecorderSource,
+    /appPoolSaturated:\s*stats\.appPoolSaturated/,
   );
   assert.match(
     flightRecorderSource,

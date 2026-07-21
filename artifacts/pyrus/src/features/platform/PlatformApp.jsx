@@ -23,10 +23,10 @@ import {
   getListWatchlistsQueryKey,
   listSignalMonitorEvents,
   useEvaluateSignalMonitor,
+  useGetAccountPositions,
   useGetSignalMonitorProfile,
   useGetSession,
   useListAccounts,
-  useListPositions,
   useListWatchlists,
   useUpdateSignalMonitorProfile,
 } from "@workspace/api-client-react";
@@ -2941,8 +2941,9 @@ export default function PlatformApp() {
     sessionMetadataSettled,
     tradeWarmTicker,
   ]);
-  const positionAlertsQuery = useListPositions(
-    { accountId: primaryAccountId, mode: environment },
+  const positionAlertsQuery = useGetAccountPositions(
+    primaryAccountId || "",
+    { mode: environment, detail: "fast", liveQuotes: false },
     {
       query: {
         enabled: Boolean(

@@ -17,7 +17,11 @@ import {
   refreshGateway,
   stopGateway,
 } from "./ibkr-portal-gateway-manager";
-import { __resetWorkGovernorForTests } from "./work-governor";
+import {
+  __resetWorkGovernorForTests,
+  setWorkGovernorTimingListener,
+  type WorkGovernorTiming,
+} from "./work-governor";
 
 afterEach(() => {
   __setIbkrAccountBridgeDependenciesForTests(null);
@@ -53,6 +57,48 @@ test("account list reads through broker client without bridge health", async () 
 
   assert.deepEqual(accounts, []);
   assert.equal(accountCalls, 1);
+});
+
+test("account bridge labels governed operations without request data", async () => {
+  const samples: WorkGovernorTiming[] = [];
+  setWorkGovernorTimingListener((sample) => samples.push(sample));
+  __setIbkrAccountBridgeDependenciesForTests({
+    bridgeClient: {
+      async listAccounts() {
+        return [];
+      },
+      async listPositions() {
+        return [];
+      },
+      async listExecutions() {
+        return [];
+      },
+      async listOrders() {
+        return [];
+      },
+    },
+  });
+
+  await listIbkrAccounts("shadow");
+  await listIbkrPositions({ accountId: "DU123", mode: "shadow" });
+  await listIbkrExecutions({ accountId: "DU123", mode: "shadow" });
+  await listIbkrOrders({ accountId: "DU123", mode: "shadow" });
+
+  await listIbkrAccounts("shadow");
+  await listIbkrPositions({ accountId: "DU123", mode: "shadow" });
+  await listIbkrExecutions({ accountId: "DU123", mode: "shadow" });
+  await listIbkrOrders({ accountId: "DU123", mode: "shadow" });
+
+  assert.deepEqual(
+    samples.map(({ category, operation }) => ({ category, operation })),
+    [
+      { category: "account", operation: "accounts" },
+      { category: "account", operation: "positions" },
+      { category: "account", operation: "executions" },
+      { category: "orders", operation: "orders" },
+    ],
+  );
+  assert.equal(JSON.stringify(samples).includes("DU123"), false);
 });
 
 test("a user without a verified gateway cannot consume the global account cache", async () => {

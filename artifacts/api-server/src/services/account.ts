@@ -5,6 +5,7 @@ import {
   gte,
   inArray,
   isNotNull,
+  isNull,
   lt,
   lte,
   or,
@@ -54,6 +55,11 @@ import {
   listIbkrExecutions,
   listIbkrPositions,
 } from "./ibkr-account-bridge";
+import {
+  recordAccountPositionsTiming,
+  type AccountPositionsCacheDisposition,
+  type AccountPositionsStage,
+} from "./runtime-flight-recorder";
 import {
   getShadowAccountAllocation,
   getShadowAccountCashActivity,
@@ -180,6 +186,7 @@ import {
   type SnapTradeHistoryTrade,
 } from "./snaptrade-account-history";
 import { readRobinhoodAccountActivities } from "./robinhood-account-history";
+import { readRobinhoodAccountPositions } from "./robinhood-account-positions";
 import { getRobinhoodAccessToken } from "./robinhood-oauth";
 import { ownedBy } from "./scoped-db";
 import { RobinhoodMcpSession } from "../providers/robinhood/mcp-client";
@@ -384,6 +391,12 @@ function ibkrReadableAccountsForUniverse(
     : universe.accounts;
 }
 
+function brokerAccountOwnershipCondition(appUserId: string | null) {
+  return appUserId === null
+    ? isNull(brokerAccountsTable.appUserId)
+    : eq(brokerAccountsTable.appUserId, appUserId);
+}
+
 function brokerAccountSnapshotCondition(universe: AccountUniverse) {
   const localAccountIds = universe.accountIds.filter((accountId) =>
     UUID_V4_OR_COMPATIBLE_PATTERN.test(accountId),
@@ -521,6 +534,7 @@ function readShortLivedAccountCache<T>(
   key: string,
   factory: () => Promise<T>,
   ttlMs = ACCOUNT_PAGE_SHARED_LIVE_READ_CACHE_TTL_MS,
+  onRead?: (disposition: AccountPositionsCacheDisposition) => void,
 ): Promise<T> {
   const now = Date.now();
   for (const [entryKey, entry] of cache.entries()) {
@@ -531,9 +545,11 @@ function readShortLivedAccountCache<T>(
 
   const cached = cache.get(key);
   if (cached && (!cached.settled || cached.expiresAt > now)) {
+    onRead?.(cached.settled ? "hit" : "inflight");
     return cached.promise;
   }
 
+  onRead?.("miss");
   const entry: ShortLivedAccountCacheEntry<T> = {
     promise: Promise.resolve().then(factory),
     expiresAt: Number.POSITIVE_INFINITY,
@@ -1328,34 +1344,37 @@ async function readLiveAccountUniverseUncached(
     ? accounts
     : accounts.filter((account) => account.id === requestedAccountId);
 
-  const readProviderBackedAccounts = async () => [
-    ...(await (options.getSnapTradeAccounts ?? getSnapTradeBackedAccounts)(
-      mode,
-      appUserId,
-    ).catch((error) => {
-      if (isAccountDbReadUnavailableError(error)) {
-        throw createAccountDbUnavailableError(error);
-      }
-      logger.warn(
-        { err: error },
-        "SnapTrade account detail resolution failed; omitting unavailable provider",
-      );
-      return [] as BrokerAccountSnapshot[];
-    })),
-    ...(await (options.getRobinhoodAccounts ?? getRobinhoodBackedAccounts)(
-      mode,
-      appUserId,
-    ).catch((error) => {
-      if (isAccountDbReadUnavailableError(error)) {
-        throw createAccountDbUnavailableError(error);
-      }
-      logger.warn(
-        { err: error },
-        "Robinhood account detail resolution failed; omitting unavailable provider",
-      );
-      return [] as BrokerAccountSnapshot[];
-    })),
-  ];
+  const readProviderBackedAccounts = async () => {
+    const [snapTradeAccounts, robinhoodAccounts] = await Promise.all([
+      (options.getSnapTradeAccounts ?? getSnapTradeBackedAccounts)(
+        mode,
+        appUserId,
+      ).catch((error) => {
+        if (isAccountDbReadUnavailableError(error)) {
+          throw createAccountDbUnavailableError(error);
+        }
+        logger.warn(
+          { err: error },
+          "SnapTrade account detail resolution failed; omitting unavailable provider",
+        );
+        return [] as BrokerAccountSnapshot[];
+      }),
+      (options.getRobinhoodAccounts ?? getRobinhoodBackedAccounts)(
+        mode,
+        appUserId,
+      ).catch((error) => {
+        if (isAccountDbReadUnavailableError(error)) {
+          throw createAccountDbUnavailableError(error);
+        }
+        logger.warn(
+          { err: error },
+          "Robinhood account detail resolution failed; omitting unavailable provider",
+        );
+        return [] as BrokerAccountSnapshot[];
+      }),
+    ]);
+    return [...snapTradeAccounts, ...robinhoodAccounts];
+  };
 
   if (isCombined && selectedAccounts.length) {
     const combinedAccounts = mergeAccountsWithDirectIbkrSupersedence(
@@ -1465,11 +1484,18 @@ function accountPositionsCacheKey(
 async function listPositionsForUniverse(
   universe: AccountUniverse,
   mode: RuntimeMode,
+  timing?: AccountPositionsTimingState,
 ): Promise<BrokerPositionSnapshot[]> {
   return readShortLivedAccountCache(
     accountPositionsReadCache,
     accountPositionsCacheKey(universe, mode),
-    () => readPositionsForUniverseUncached(universe, mode),
+    () => readPositionsForUniverseUncached(universe, mode, { timing }),
+    ACCOUNT_PAGE_SHARED_LIVE_READ_CACHE_TTL_MS,
+    (disposition) => {
+      if (timing) {
+        timing.positionsCache = disposition;
+      }
+    },
   );
 }
 
@@ -1565,6 +1591,8 @@ async function readPositionsForUniverseUncached(
     readSnapTradePortfolio?: (
       accountId: string,
     ) => SnapTradeAccountPortfolioResponse | null;
+    readRobinhoodPositions?: typeof readRobinhoodAccountPositions;
+    timing?: AccountPositionsTimingState;
   } = {},
 ): Promise<BrokerPositionSnapshot[]> {
   const snapTradeAccounts = universe.accounts.filter(
@@ -1578,21 +1606,71 @@ async function readPositionsForUniverseUncached(
     options.readSnapTradePortfolio ??
     ((accountId: string) =>
       readLatestSnapTradeAccountPortfolio({ appUserId, accountId }));
-  const snapTradePositions = snapTradeAccounts.flatMap((account) => {
-    const portfolio = readSnapTradePortfolio(account.id);
-    return (portfolio?.positions ?? []).map((position) =>
-      snapTradePortfolioPositionToBrokerPosition(account.id, position),
-    );
-  });
+  const snapTradePositions = snapTradeAccounts.length
+    ? timeAccountPositionsSyncStage(
+        options.timing,
+        "positions_snaptrade_snapshot",
+        () =>
+          snapTradeAccounts.flatMap((account) => {
+            const portfolio = readSnapTradePortfolio(account.id);
+            return (portfolio?.positions ?? []).map((position) =>
+              snapTradePortfolioPositionToBrokerPosition(account.id, position),
+            );
+          }),
+      )
+    : [];
+
+  const robinhoodAccounts = universe.accounts.filter(
+    (account) => account.provider === "robinhood",
+  );
+  if (robinhoodAccounts.length && !appUserId) {
+    throw new HttpError(503, "Robinhood account identity is unavailable.", {
+      code: "robinhood_account_identity_unavailable",
+      expose: true,
+    });
+  }
+  const robinhoodPositionsPromise =
+    robinhoodAccounts.length && appUserId
+      ? timeAccountPositionsStage(
+          options.timing,
+          "positions_robinhood",
+          () =>
+            (options.readRobinhoodPositions ?? readRobinhoodAccountPositions)(
+              {
+                appUserId,
+                accounts: robinhoodAccounts.map((account) => ({
+                  accountId: account.id,
+                  accountNumber: robinhoodAccountNumber(
+                    account.providerAccountId,
+                  ),
+                })),
+              },
+              {
+                onStageTiming: (stage, durationMs) => {
+                  if (!options.timing) {
+                    return;
+                  }
+                  const accountStage: AccountPositionsStage =
+                    stage === "session"
+                      ? "positions_robinhood_session"
+                      : stage === "holdings"
+                        ? "positions_robinhood_holdings"
+                        : "positions_robinhood_market_data";
+                  options.timing.stagesMs[accountStage] = durationMs;
+                },
+              },
+            ),
+        )
+      : Promise.resolve([] as BrokerPositionSnapshot[]);
 
   const ibkrAccounts = ibkrReadableAccountsForUniverse(universe).filter(
     (account) => account.provider === "ibkr",
   );
-  if (!ibkrAccounts.length) {
-    return filterOpenBrokerPositions(snapTradePositions);
-  }
 
   const readOpenPositions = async (): Promise<BrokerPositionSnapshot[]> => {
+    if (!ibkrAccounts.length) {
+      return [];
+    }
     if (!universe.isCombined && ibkrAccounts[0]) {
       return filterOpenBrokerPositions(
         await (options.listIbkrPositions ?? listIbkrPositions)({
@@ -1613,9 +1691,22 @@ async function readPositionsForUniverseUncached(
     return filterOpenBrokerPositions(positions.flat());
   };
 
+  const ibkrPositionsPromise = ibkrAccounts.length
+    ? timeAccountPositionsStage(
+        options.timing,
+        "positions_ibkr",
+        readOpenPositions,
+      )
+    : Promise.resolve([] as BrokerPositionSnapshot[]);
+  const [ibkrPositions, robinhoodPositions] = await timeAccountPositionsStage(
+    options.timing,
+    "positions_provider_fanout",
+    () => Promise.all([ibkrPositionsPromise, robinhoodPositionsPromise]),
+  );
   return filterOpenBrokerPositions([
-    ...(await readOpenPositions()),
+    ...ibkrPositions,
     ...snapTradePositions,
+    ...robinhoodPositions,
   ]);
 }
 
@@ -1790,6 +1881,30 @@ function quoteDate(value: unknown): Date | null {
 function quoteTimestampMs(value: unknown): number | null {
   const date = quoteDate(value);
   return date ? date.getTime() : null;
+}
+
+function selectCombinedPositionQuote(
+  providerSecurityType: string | null,
+  positionQuotes: PositionQuoteSnapshot[],
+  fallback: PositionQuoteSnapshot | null,
+): PositionQuoteSnapshot | null {
+  if (providerSecurityType !== "robinhood_option") {
+    return fallback;
+  }
+  return (
+    positionQuotes.reduce<PositionQuoteSnapshot | null>((freshest, quote) => {
+      const quoteUpdatedAt =
+        quoteTimestampMs(quote.dataUpdatedAt) ??
+        quoteTimestampMs(quote.updatedAt) ??
+        Number.NEGATIVE_INFINITY;
+      const freshestUpdatedAt = freshest
+        ? (quoteTimestampMs(freshest.dataUpdatedAt) ??
+          quoteTimestampMs(freshest.updatedAt) ??
+          Number.NEGATIVE_INFINITY)
+        : Number.NEGATIVE_INFINITY;
+      return !freshest || quoteUpdatedAt > freshestUpdatedAt ? quote : freshest;
+    }, null) ?? fallback
+  );
 }
 
 function optionQuoteStatusRank(status: unknown): number {
@@ -2251,6 +2366,7 @@ async function fetchOptionQuoteSnapshotsForPositions(
 type AccountPositionOptionQuoteDemandRow = {
   accountId?: string | null;
   accounts?: string[] | null;
+  providerSecurityType?: string | null;
   optionContract?: {
     ticker?: string | null;
     underlying?: string | null;
@@ -2263,6 +2379,12 @@ type AccountPositionOptionQuoteDemandRow = {
     conid?: string | number | null;
   } | null;
 };
+
+function isRobinhoodOptionQuoteRow(
+  row: AccountPositionOptionQuoteDemandRow,
+): boolean {
+  return row.providerSecurityType === "robinhood_option";
+}
 
 function finiteOptionNumber(value: unknown): number | null {
   if (value === null || value === undefined || value === "") {
@@ -2315,6 +2437,9 @@ function primaryOptionProviderContractIdForRow(
 function opraOptionTickerForRow(
   row: AccountPositionOptionQuoteDemandRow,
 ): string | null {
+  if (isRobinhoodOptionQuoteRow(row)) {
+    return null;
+  }
   const ticker = String(row.optionContract?.ticker ?? "").trim().toUpperCase();
   if (/^O:[A-Z0-9.-]+\d{6}[CP]\d{8}$/.test(ticker)) {
     return ticker;
@@ -2353,6 +2478,9 @@ function uniqueOptionProviderContractIds(
 function optionQuoteDemandProviderContractIdsForPosition(
   row: AccountPositionOptionQuoteDemandRow,
 ): string[] {
+  if (isRobinhoodOptionQuoteRow(row)) {
+    return [];
+  }
   const opraOptionTicker = opraOptionTickerForRow(row);
   if (opraOptionTicker) {
     return [opraOptionTicker];
@@ -2411,7 +2539,7 @@ function declareAccountPositionOptionQuoteDemands(
       // underlying is silently excluded from the account-monitor-live lease and
       // (correctly) can't use equity quotes either, so it gets no live market
       // data. Surface it rather than dropping it invisibly.
-      if (row.optionContract) {
+      if (row.optionContract && !isRobinhoodOptionQuoteRow(row)) {
         droppedOptionPositions += 1;
       }
       return map;
@@ -2877,9 +3005,7 @@ async function fetchExecutionOpenDatesForPositions(
     async () => {
       const executions = await listExecutionsForUniverse(universe, mode, {});
       return stabilizeExecutionOpenDatesForPositions(
-        accountUniverseReadCacheKey("position-open-dates:last-known", universe, mode, {
-          positions: accountPositionOpenDateSignature(positions),
-        }),
+        executionOpenDateLastKnownCacheKey(universe, mode, positions),
         positions,
         buildExecutionOpenDatesForPositions(positions, executions),
       );
@@ -2951,6 +3077,21 @@ function openDateHasValue(openDate: PositionOpenDate | null | undefined): boolea
   );
 }
 
+function executionOpenDateLastKnownCacheKey(
+  universe: AccountUniverse,
+  mode: RuntimeMode,
+  positions: BrokerPositionSnapshot[],
+): string {
+  return accountUniverseReadCacheKey(
+    "position-open-dates:last-known",
+    universe,
+    mode,
+    {
+      positions: accountPositionOpenDateSignature(positions),
+    },
+  );
+}
+
 function readLastKnownExecutionOpenDates(
   cacheKey: string,
   positionIds: Set<string>,
@@ -2971,6 +3112,22 @@ function readLastKnownExecutionOpenDates(
     ),
   );
   return filtered.size ? filtered : null;
+}
+
+function readLastKnownExecutionOpenDatesForPositions(
+  universe: AccountUniverse,
+  mode: RuntimeMode,
+  positions: BrokerPositionSnapshot[],
+): Map<string, PositionOpenDate> {
+  if (!positions.some((position) => !position.openedAt)) {
+    return new Map();
+  }
+  return (
+    readLastKnownExecutionOpenDates(
+      executionOpenDateLastKnownCacheKey(universe, mode, positions),
+      new Set(positions.map((position) => position.id)),
+    ) ?? new Map()
+  );
 }
 
 function stabilizeExecutionOpenDatesForPositions(
@@ -3283,6 +3440,9 @@ async function enrichPositionGreeks(
   const byPositionId = new Map<string, PositionGreekSnapshot>();
   const warnings = new Set<string>();
   const optionPositions = positions.filter(hasOptionContract);
+  const optionChainPositions = optionPositions.filter(
+    (position) => position.providerSecurityType !== "robinhood_option",
+  );
 
   if (!optionPositions.length) {
     positions.forEach((position) => {
@@ -3313,11 +3473,14 @@ async function enrichPositionGreeks(
   }
 
   const optionGroups = Array.from(
-    optionPositions.reduce<Map<string, OptionPositionSnapshot[]>>((acc, position) => {
-      const key = optionChainGroupKey(position.optionContract);
-      acc.set(key, [...(acc.get(key) ?? []), position]);
-      return acc;
-    }, new Map()),
+    optionChainPositions.reduce<Map<string, OptionPositionSnapshot[]>>(
+      (acc, position) => {
+        const key = optionChainGroupKey(position.optionContract);
+        acc.set(key, [...(acc.get(key) ?? []), position]);
+        return acc;
+      },
+      new Map(),
+    ),
   );
   const chainResults = new Map<
     string,
@@ -3360,6 +3523,55 @@ async function enrichPositionGreeks(
     }
 
     const underlying = position.optionContract.underlying;
+    if (position.providerSecurityType === "robinhood_option") {
+      const delta = scaleOptionGreek(
+        finiteOptionNumber(position.quote?.delta),
+        position,
+      );
+      const gamma = scaleOptionGreek(
+        finiteOptionNumber(position.quote?.gamma),
+        position,
+      );
+      const theta = scaleOptionGreek(
+        finiteOptionNumber(position.quote?.theta),
+        position,
+      );
+      const vega = scaleOptionGreek(
+        finiteOptionNumber(position.quote?.vega),
+        position,
+      );
+      const impliedVolatility = finiteOptionNumber(
+        position.quote?.impliedVolatility,
+      );
+      const betaWeightedDelta =
+        delta === null ? null : delta * betaForSymbol(underlying);
+      const hasAnyGreek =
+        delta !== null || gamma !== null || theta !== null || vega !== null;
+      const warning = hasAnyGreek
+        ? null
+        : `Robinhood returned ${position.symbol} without option greek values.`;
+      if (warning) {
+        warnings.add(warning);
+      } else {
+        matchedOptionPositions += 1;
+      }
+      byPositionId.set(position.id, {
+        positionId: position.id,
+        symbol: position.symbol,
+        underlying,
+        delta,
+        betaWeightedDelta,
+        gamma,
+        theta,
+        vega,
+        impliedVolatility,
+        source: "ROBINHOOD_OPTION_QUOTE",
+        matched: hasAnyGreek,
+        warning,
+      });
+      return;
+    }
+
     const contracts =
       chainResults.get(optionChainGroupKey(position.optionContract))?.contracts ?? [];
     const matchedContract = matchOptionChainContract(contracts, position.optionContract);
@@ -6264,6 +6476,63 @@ function resolveAccountPositionTypeFilter(input: string | null | undefined) {
 
 type AccountPositionsDetail = "fast" | "full";
 
+type RealAccountPositionsInput = {
+  accountId: string;
+  appUserId: string | null;
+  allowDirectIbkr: boolean;
+  assetClass?: string | null;
+  mode: RuntimeMode;
+  source?: string | null;
+  liveQuotes?: boolean;
+  detail: AccountPositionsDetail;
+};
+
+type AccountPositionsTimingState = {
+  startedAt: number;
+  positionsCache: AccountPositionsCacheDisposition | null;
+  positionCount: number | null;
+  stagesMs: Partial<Record<AccountPositionsStage, number>>;
+};
+
+function accountPositionsElapsedMs(startedAt: number): number {
+  return Math.max(
+    0,
+    Math.round((performance.now() - startedAt) * 1_000) / 1_000,
+  );
+}
+
+async function timeAccountPositionsStage<T>(
+  timing: AccountPositionsTimingState | undefined,
+  stage: AccountPositionsStage,
+  work: () => Promise<T>,
+): Promise<T> {
+  if (!timing) {
+    return work();
+  }
+  const startedAt = performance.now();
+  try {
+    return await work();
+  } finally {
+    timing.stagesMs[stage] = accountPositionsElapsedMs(startedAt);
+  }
+}
+
+function timeAccountPositionsSyncStage<T>(
+  timing: AccountPositionsTimingState | undefined,
+  stage: AccountPositionsStage,
+  work: () => T,
+): T {
+  if (!timing) {
+    return work();
+  }
+  const startedAt = performance.now();
+  try {
+    return work();
+  } finally {
+    timing.stagesMs[stage] = accountPositionsElapsedMs(startedAt);
+  }
+}
+
 function normalizeAccountPositionsDetail(
   input: AccountPositionsDetail | string | null | undefined,
 ): AccountPositionsDetail {
@@ -6438,33 +6707,72 @@ function foldRealPositionAttribution(
   return attribution;
 }
 
-async function getAccountPositionsUncached(input: {
-  accountId: string;
-  appUserId: string | null;
-  allowDirectIbkr: boolean;
-  assetClass?: string | null;
-  mode: RuntimeMode;
-  source?: string | null;
-  liveQuotes?: boolean;
-  detail: AccountPositionsDetail;
-}) {
+async function getAccountPositionsUncached(input: RealAccountPositionsInput) {
+  const timing: AccountPositionsTimingState = {
+    startedAt: performance.now(),
+    positionsCache: null,
+    positionCount: null,
+    stagesMs: {},
+  };
+  try {
+    const result = await buildAccountPositionsUncached(input, timing);
+    recordAccountPositionsTiming({
+      detail: input.detail,
+      liveQuotes: input.liveQuotes !== false,
+      outcome: "success",
+      positionsCache: timing.positionsCache,
+      positionCount: timing.positionCount,
+      rowCount: result.positions.length,
+      stagesMs: timing.stagesMs,
+      totalDurationMs: accountPositionsElapsedMs(timing.startedAt),
+    });
+    return result;
+  } catch (error) {
+    recordAccountPositionsTiming({
+      detail: input.detail,
+      liveQuotes: input.liveQuotes !== false,
+      outcome: "failure",
+      positionsCache: timing.positionsCache,
+      positionCount: timing.positionCount,
+      rowCount: null,
+      stagesMs: timing.stagesMs,
+      totalDurationMs: accountPositionsElapsedMs(timing.startedAt),
+    });
+    throw error;
+  }
+}
+
+async function buildAccountPositionsUncached(
+  input: RealAccountPositionsInput,
+  timing: AccountPositionsTimingState,
+) {
   const mode = input.mode;
-  const universe = applyLatestSnapTradeBalancesToUniverse(
-    await getLiveAccountUniverse(
-      input.accountId,
-      mode,
-      input.appUserId,
-      input.allowDirectIbkr,
-    ),
+  const universe = await timeAccountPositionsStage(
+    timing,
+    "universe",
+    async () =>
+      applyLatestSnapTradeBalancesToUniverse(
+        await getLiveAccountUniverse(
+          input.accountId,
+          mode,
+          input.appUserId,
+          input.allowDirectIbkr,
+        ),
+      ),
   );
   const assetClassFilter = resolveAccountPositionTypeFilter(input.assetClass);
-  const allPositions = await listPositionsForUniverse(universe, mode);
+  const allPositions = await timeAccountPositionsStage(
+    timing,
+    "positions_upstream",
+    () => listPositionsForUniverse(universe, mode, timing),
+  );
   const positions = allPositions.filter((position) =>
     accountPositionTypeMatchesFilter(
       classifyAccountPositionType(position),
       assetClassFilter,
     ),
   );
+  timing.positionCount = positions.length;
   let ordersResult: Awaited<ReturnType<typeof listOrdersForUniverse>> = { orders: [] };
   let lots: Awaited<ReturnType<typeof getPositionLots>> = [];
   let greekEnrichment: OptionGreekEnrichmentResult = {
@@ -6478,15 +6786,43 @@ async function getAccountPositionsUncached(input: {
   let openDates = new Map<string, PositionOpenDate>();
   let realAttribution = new Map<string, RealPositionAttribution>();
   if (input.detail === "fast") {
-    [equityQuoteSnapshots, optionQuoteSnapshots, openDates] = await Promise.all([
-      input.liveQuotes === false
-        ? new Map<string, QuoteSnapshot>()
-        : fetchEquityQuoteSnapshotsForPositions(positions),
-      input.liveQuotes === false
-        ? new Map<string, AccountPositionOptionQuoteDemandState>()
-        : fetchOptionQuoteSnapshotsForPositions(positions),
-      fetchExecutionOpenDatesForPositions(universe, mode, positions),
+    const openDateScheduleStartedAt = performance.now();
+    openDates = readLastKnownExecutionOpenDatesForPositions(
+      universe,
+      mode,
+      positions,
+    );
+    void fetchExecutionOpenDatesForPositions(universe, mode, positions).catch(
+      (error) => {
+        logger.warn(
+          {
+            err: error,
+            accountId: universe.requestedAccountId,
+            mode,
+          },
+          "Account position execution open-date refresh failed",
+        );
+      },
+    );
+    timing.stagesMs.fast_open_date_schedule = accountPositionsElapsedMs(
+      openDateScheduleStartedAt,
+    );
+    const quoteFanoutStartedAt = performance.now();
+    [equityQuoteSnapshots, optionQuoteSnapshots] = await Promise.all([
+      timeAccountPositionsStage(timing, "equity_quotes", async () =>
+        input.liveQuotes === false
+          ? new Map<string, QuoteSnapshot>()
+          : fetchEquityQuoteSnapshotsForPositions(positions),
+      ),
+      timeAccountPositionsStage(timing, "option_quotes", async () =>
+        input.liveQuotes === false
+          ? new Map<string, AccountPositionOptionQuoteDemandState>()
+          : fetchOptionQuoteSnapshotsForPositions(positions),
+      ),
     ]);
+    timing.stagesMs.fast_quote_fanout = accountPositionsElapsedMs(
+      quoteFanoutStartedAt,
+    );
     inferSameDayExpiringOptionOpenDatesForPositions(positions).forEach(
       (openDate, positionId) => {
         if (!openDates.has(positionId)) {
@@ -6495,14 +6831,20 @@ async function getAccountPositionsUncached(input: {
       },
     );
   }
-  let marketHydration = await hydratePositionMarkets(
-    positions,
-    equityQuoteSnapshots,
-    optionQuoteSnapshots,
-    openDates,
+  let marketHydration = await timeAccountPositionsStage(
+    timing,
+    "market_hydration_initial",
+    () =>
+      hydratePositionMarkets(
+        positions,
+        equityQuoteSnapshots,
+        optionQuoteSnapshots,
+        openDates,
+      ),
   );
 
   if (input.detail !== "fast") {
+    const fullFanoutStartedAt = performance.now();
     const [
       fullOrdersResult,
       fullLots,
@@ -6512,18 +6854,33 @@ async function getAccountPositionsUncached(input: {
       flexOpenDates,
       executionOpenDates,
     ] = await Promise.all([
-      listOrdersForUniverse(universe, mode),
-      getPositionLots(universe.accountIds),
-      enrichPositionGreeks(positions, { refreshChains: false }),
-      input.liveQuotes === false
-        ? new Map<string, QuoteSnapshot>()
-        : fetchEquityQuoteSnapshotsForPositions(positions),
-      input.liveQuotes === false
-        ? new Map<string, AccountPositionOptionQuoteDemandState>()
-        : fetchOptionQuoteSnapshotsForPositions(positions),
-      fetchFlexOpenDatesForPositions(universe, mode, positions),
-      fetchExecutionOpenDatesForPositions(universe, mode, positions),
+      timeAccountPositionsStage(timing, "full_orders", () =>
+        listOrdersForUniverse(universe, mode),
+      ),
+      timeAccountPositionsStage(timing, "full_lots", () =>
+        getPositionLots(universe.accountIds, universe.appUserId ?? null),
+      ),
+      timeAccountPositionsStage(timing, "full_greeks", () =>
+        enrichPositionGreeks(positions, { refreshChains: false }),
+      ),
+      timeAccountPositionsStage(timing, "equity_quotes", async () =>
+        input.liveQuotes === false
+          ? new Map<string, QuoteSnapshot>()
+          : fetchEquityQuoteSnapshotsForPositions(positions),
+      ),
+      timeAccountPositionsStage(timing, "option_quotes", async () =>
+        input.liveQuotes === false
+          ? new Map<string, AccountPositionOptionQuoteDemandState>()
+          : fetchOptionQuoteSnapshotsForPositions(positions),
+      ),
+      timeAccountPositionsStage(timing, "full_flex_open_dates", () =>
+        fetchFlexOpenDatesForPositions(universe, mode, positions),
+      ),
+      timeAccountPositionsStage(timing, "full_execution_open_dates", () =>
+        fetchExecutionOpenDatesForPositions(universe, mode, positions),
+      ),
     ]);
+    timing.stagesMs.full_fanout = accountPositionsElapsedMs(fullFanoutStartedAt);
     ordersResult = fullOrdersResult;
     lots = fullLots;
     greekEnrichment = fullGreekEnrichment;
@@ -6543,20 +6900,31 @@ async function getAccountPositionsUncached(input: {
         }
       },
     );
-    realAttribution = await buildRealPositionAttribution({
-      appUserId: input.appUserId,
-      providerAccountIds: universe.accounts.map(
-        (account) => account.providerAccountId,
-      ),
-      positions,
-    });
-    marketHydration = await hydratePositionMarkets(
-      positions,
-      equityQuoteSnapshots,
-      optionQuoteSnapshots,
-      openDates,
+    realAttribution = await timeAccountPositionsStage(
+      timing,
+      "real_attribution",
+      () =>
+        buildRealPositionAttribution({
+          appUserId: input.appUserId,
+          providerAccountIds: universe.accounts.map(
+            (account) => account.providerAccountId,
+          ),
+          positions,
+        }),
+    );
+    marketHydration = await timeAccountPositionsStage(
+      timing,
+      "market_hydration_full",
+      () =>
+        hydratePositionMarkets(
+          positions,
+          equityQuoteSnapshots,
+          optionQuoteSnapshots,
+          openDates,
+        ),
     );
   }
+  const responseShapeStartedAt = performance.now();
   const orders = ordersResult.orders;
   const nav = sumAccounts(universe.accounts, "netLiquidation") ?? 0;
 
@@ -6579,6 +6947,7 @@ async function getAccountPositionsUncached(input: {
     symbol: string;
     description: string;
     assetClass: string;
+    providerSecurityType: string | null;
     positionType: ReturnType<typeof classifyAccountPositionType>;
     optionContract: BrokerPositionSnapshot["optionContract"] | null;
     marketDataSymbol: string;
@@ -6596,6 +6965,7 @@ async function getAccountPositionsUncached(input: {
     betaWeightedDelta: number | null;
     lots: typeof lots;
     openOrders: BrokerOrderSnapshot[];
+    positionQuotes: PositionQuoteSnapshot[];
     source: "IBKR_POSITIONS";
     openedAt: Date | null;
     openedAtSource: BrokerPositionSnapshot["openedAtSource"] | null;
@@ -6614,6 +6984,7 @@ async function getAccountPositionsUncached(input: {
               ? `${position.optionContract.underlying} ${toIsoDateString(position.optionContract.expirationDate)} ${position.optionContract.strike} ${position.optionContract.right}`
               : position.symbol,
             assetClass: normalizeAssetClassLabel(position),
+            providerSecurityType: position.providerSecurityType ?? null,
             positionType: classifyAccountPositionType(position),
             optionContract: position.optionContract ?? null,
             marketDataSymbol: accountPositionMarketDataSymbol(position),
@@ -6631,6 +7002,7 @@ async function getAccountPositionsUncached(input: {
             betaWeightedDelta: null as number | null,
             lots: [] as typeof lots,
             openOrders: [] as BrokerOrderSnapshot[],
+            positionQuotes: [] as PositionQuoteSnapshot[],
             source: "IBKR_POSITIONS" as const,
             openedAt: null as Date | null,
             openedAtSource: null as BrokerPositionSnapshot["openedAtSource"] | null,
@@ -6698,6 +7070,9 @@ async function getAccountPositionsUncached(input: {
             ...current.openOrders,
             ...(openOrdersBySymbol.get(position.symbol.toUpperCase()) ?? []),
           ].filter((order) => orderGroupKey(order) === key);
+          if (position.quote) {
+            current.positionQuotes.push(position.quote);
+          }
           const nextOpen = earlierPositionOpen(
             {
               openedAt: current.openedAt,
@@ -6717,6 +7092,7 @@ async function getAccountPositionsUncached(input: {
         symbol: row.symbol,
         description: row.description,
         assetClass: row.assetClass,
+        providerSecurityType: row.providerSecurityType,
         positionType: row.positionType,
         optionContract: row.optionContract,
         marketDataSymbol: row.marketDataSymbol,
@@ -6767,25 +7143,29 @@ async function getAccountPositionsUncached(input: {
         optionQuote: row.optionContract
           ? accountOptionQuoteForPosition(row, optionQuoteSnapshots)
           : null,
-        quote: attachAccountOptionQuoteMetadata(
-          buildPositionQuoteFromSnapshot(
+        quote: selectCombinedPositionQuote(
+          row.providerSecurityType,
+          row.positionQuotes,
+          attachAccountOptionQuoteMetadata(
+            buildPositionQuoteFromSnapshot(
+              row.optionContract
+                ? optionQuoteSnapshotForPosition(row, optionQuoteSnapshots)
+                : equityQuoteSnapshots.get(normalizeSymbol(row.marketDataSymbol || row.symbol)),
+              row.markWeight > 0 ? row.markAccumulator / row.markWeight : null,
+              row.optionContract
+                ? "option_quote"
+                : (
+                    equityQuoteSnapshots.get(
+                      normalizeSymbol(row.marketDataSymbol || row.symbol),
+                    ) as (QuoteSnapshot & { source?: string }) | undefined
+                  )?.source === "massive"
+                  ? "massive"
+                  : "bridge_quote",
+            ),
             row.optionContract
-              ? optionQuoteSnapshotForPosition(row, optionQuoteSnapshots)
-              : equityQuoteSnapshots.get(normalizeSymbol(row.marketDataSymbol || row.symbol)),
-            row.markWeight > 0 ? row.markAccumulator / row.markWeight : null,
-            row.optionContract
-              ? "option_quote"
-              : (
-                  equityQuoteSnapshots.get(
-                    normalizeSymbol(row.marketDataSymbol || row.symbol),
-                  ) as (QuoteSnapshot & { source?: string }) | undefined
-                )?.source === "massive"
-                ? "massive"
-                : "bridge_quote",
+              ? optionQuoteDemandStateForPosition(row, optionQuoteSnapshots)
+              : null,
           ),
-          row.optionContract
-            ? optionQuoteDemandStateForPosition(row, optionQuoteSnapshots)
-            : null,
         ),
       }))
     : positions.map((position) => {
@@ -6812,6 +7192,7 @@ async function getAccountPositionsUncached(input: {
             ? `${position.optionContract.underlying} ${toIsoDateString(position.optionContract.expirationDate)} ${position.optionContract.strike} ${position.optionContract.right}`
             : position.symbol,
           assetClass: normalizeAssetClassLabel(position),
+          providerSecurityType: position.providerSecurityType ?? null,
           positionType: classifyAccountPositionType(position),
           optionContract: position.optionContract ?? null,
           marketDataSymbol: accountPositionMarketDataSymbol(position),
@@ -6875,7 +7256,7 @@ async function getAccountPositionsUncached(input: {
     marketDataDemandPositions,
     universe.requestedAccountId || input.accountId,
   );
-  return {
+  const result = {
     accountId: universe.requestedAccountId,
     currency: universe.primaryCurrency,
     positions: openRows,
@@ -6888,6 +7269,10 @@ async function getAccountPositionsUncached(input: {
     }),
     updatedAt: accountMetricUpdatedAt(universe.accounts) ?? new Date(),
   };
+  timing.stagesMs.response_shape = accountPositionsElapsedMs(
+    responseShapeStartedAt,
+  );
+  return result;
 }
 
 export async function getAccountPositionsAtDate(input: {
@@ -7335,7 +7720,10 @@ function aggregateBalanceRows(
   };
 }
 
-async function getPositionLots(accountIds: string[]) {
+async function getPositionLots(
+  accountIds: string[],
+  appUserId: string | null,
+) {
   if (!accountIds.length) {
     return [];
   }
@@ -7361,7 +7749,12 @@ async function getPositionLots(accountIds: string[]) {
           instrumentsTable,
           eq(positionLotsTable.instrumentId, instrumentsTable.id),
         )
-        .where(inArray(brokerAccountsTable.providerAccountId, accountIds))
+        .where(
+          and(
+            brokerAccountOwnershipCondition(appUserId),
+            inArray(brokerAccountsTable.providerAccountId, accountIds),
+          ),
+        )
         .orderBy(desc(positionLotsTable.asOf));
 
       return rows.map((row) => ({
@@ -9688,6 +10081,7 @@ export const __accountPositionInternalsForTests = {
   stabilizeExecutionOpenDatesForPositions,
   selectFlexOpenPositionCandidate,
   selectBalanceBoundaryRows,
+  selectCombinedPositionQuote,
 };
 
 export const __accountDbReadInternalsForTests = {
