@@ -618,8 +618,9 @@ test("capsule restricts CPG clients and exposes only fixed host relays with RAM-
   );
   assert.match(
     entrypoint,
-    /printf 'GET \/ HTTP\/1\.0\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3/,
+    /printf 'GET \/ HTTP\/1\.0\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&"\$\{probe_fd\}"/,
   );
+  assert.doesNotMatch(entrypoint, /exec 3<>/);
   assert.match(
     entrypoint,
     /start_service chromium chromium[\s\S]*?--user-data-dir="\$\{RUNTIME_DIR\}\/chromium"[\s\S]*?--ignore-certificate-errors-spki-list="\$\{CPG_SPKI_SHA256\}"[\s\S]*?^  --app=https:\/\/localhost:5000\/$/m,
@@ -646,7 +647,7 @@ test("capsule restricts CPG clients and exposes only fixed host relays with RAM-
   assert.match(entrypoint, /while sleep 10/);
   assert.match(
     entrypoint,
-    /if \{ exec 3<>"\/dev\/tcp\/127\.0\.0\.1\/\$\{port\}"; \} 2>\/dev\/null; then/,
+    /if \{ exec \{probe_fd\}<>"\/dev\/tcp\/127\.0\.0\.1\/\$\{port\}"; \} 2>\/dev\/null; then/,
   );
   assert.match(dockerfile, /\)" = '127\.0\.0\.1'/);
   assert.match(dockerfile, /grep -Fq 'listenSsl: true'/);

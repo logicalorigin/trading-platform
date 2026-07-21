@@ -14,7 +14,7 @@ import {
   isIbkrClientPortalConfigured,
 } from "./ibkr-client-runtime";
 
-test("the portal runtime stays owner-scoped and paper-only after verification", async () => {
+test("the portal runtime stays owner-scoped and supports a verified real account", async () => {
   const previousEnabled = process.env["IBKR_SESSION_HOST_ENABLED"];
   const previousToken = process.env["IBKR_SESSION_HOST_CONTROL_TOKEN"];
   const previousGlobalUrl = process.env["IBKR_CLIENT_PORTAL_BASE_URL"];
@@ -33,12 +33,15 @@ test("the portal runtime stays owner-scoped and paper-only after verification", 
       return Response.json({
         authenticated: true,
         connected: true,
+        established: true,
+        isPaper: false,
         selectedAccount: "U1234567",
       });
     }
     if (url.pathname.endsWith("/iserver/accounts")) {
       return Response.json({
         accounts: ["U1234567"],
+        isPaper: false,
         selectedAccount: "U1234567",
       });
     }
@@ -77,18 +80,14 @@ test("the portal runtime stays owner-scoped and paper-only after verification", 
       runWithIbkrPortalUser(appUserId, isIbkrClientPortalConfigured),
       true,
     );
-    await assert.rejects(
-      runWithIbkrPortalUser(appUserId, () =>
-        getIbkrClientPortalClient().ensureBrokerageSession({
-          initializeIfNeeded: false,
-        }),
-      ),
-      (error: unknown) =>
-        typeof error === "object" &&
-        error !== null &&
-        "code" in error &&
-        error.code === "ibkr_paper_account_required",
+    const session = await runWithIbkrPortalUser(appUserId, () =>
+      getIbkrClientPortalClient().ensureBrokerageSession({
+        initializeIfNeeded: false,
+      }),
     );
+    assert.equal(session.authenticated, true);
+    assert.equal(session.isPaper, false);
+    assert.equal(session.selectedAccountId, "U1234567");
     const snapshot = runWithIbkrPortalUser(
       appUserId,
       getIbkrClientPortalGatewaySnapshot,

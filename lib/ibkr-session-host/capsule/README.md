@@ -140,8 +140,9 @@ to Docker output.
 
 Chromium opens CPG's loopback login page directly and does not load the bundled
 `paper-only-extension`; that legacy asset remains dormant in the immutable
-image. The current application policy allows any IBKR account to authenticate
-and applies account capabilities after the session is verified. The one-CPU
+image. Any authenticated IBKR account may establish the connection; the
+application verifies account capabilities at each execution boundary and
+requires explicit real-account proof for live order routing. The one-CPU
 capsule uses Java's serial collector and bounds Chromium to one renderer while
 disabling GPU acceleration, crash reporting, and unrelated optimization/on-
 device-model services. These controls retain the Chromium sandbox and the

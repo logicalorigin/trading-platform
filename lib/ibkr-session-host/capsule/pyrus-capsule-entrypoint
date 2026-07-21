@@ -86,9 +86,10 @@ wait_for_path() {
 wait_for_port() {
   local port=$1
   local attempts=$2
+  local probe_fd
   for ((attempt = 0; attempt < attempts; attempt += 1)); do
-    if { exec 3<>"/dev/tcp/127.0.0.1/${port}"; } 2>/dev/null; then
-      exec 3>&- 3<&-
+    if { exec {probe_fd}<>"/dev/tcp/127.0.0.1/${port}"; } 2>/dev/null; then
+      exec {probe_fd}>&-
       return 0
     fi
     sleep 1
@@ -99,13 +100,14 @@ wait_for_port() {
 wait_for_cpg_login() {
   local port=$1
   local attempts=$2
+  local probe_fd
   local status
   for ((attempt = 0; attempt < attempts; attempt += 1)); do
     status=""
-    if { exec 3<>"/dev/tcp/127.0.0.1/${port}"; } 2>/dev/null; then
-      printf 'GET / HTTP/1.0\r\nHost: localhost\r\nConnection: close\r\n\r\n' >&3
-      IFS= read -r -t 2 status <&3 || true
-      exec 3>&- 3<&-
+    if { exec {probe_fd}<>"/dev/tcp/127.0.0.1/${port}"; } 2>/dev/null; then
+      printf 'GET / HTTP/1.0\r\nHost: localhost\r\nConnection: close\r\n\r\n' >&"${probe_fd}"
+      IFS= read -r -t 2 status <&"${probe_fd}" || true
+      exec {probe_fd}>&-
       if [[ "${status}" =~ ^HTTP/[0-9.]+[[:space:]]+(200|302|303)[[:space:]] ]]; then
         return 0
       fi

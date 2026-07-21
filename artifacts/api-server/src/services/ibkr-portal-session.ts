@@ -33,6 +33,10 @@ export const IBKR_PORTAL_CLIENT_MOUNT =
 const TICKLE_INTERVAL_MS = 55_000;
 const LOGIN_MONITOR_INTERVAL_MS = 3_000;
 const LOGIN_MONITOR_TTL_MS = 6 * 60_000;
+// A verified successful login can omit the outer browser-completion marker.
+// Check authoritative status sparsely after the initial CPG-owned handshake
+// window without starting a second SSO/SSODH flow.
+const MARKERLESS_AUTH_PROBE_INTERVAL_MS = 30_000;
 // ponytail: the pinned CPG retries its gateway-owned brokerage authentication
 // up to five times at 3s intervals after the Dispatcher marker. This fixed
 // window leaves that stateful handshake undisturbed; replace it when CPG
@@ -79,6 +83,7 @@ export type PortalReadiness = {
   gatewayRunning: boolean;
   authenticated: boolean;
   browserLoginComplete: boolean;
+  apiSessionActivationFailed: boolean;
   established: boolean | null;
   isPaper: boolean | null;
   selectedAccountId: string | null;
@@ -202,7 +207,7 @@ function clientFor(
     username: null,
     password: null,
     allowInsecureTls: true,
-    paperAccountOnly: true,
+    paperAccountOnly: false,
   };
   return new IbkrClient(config, {
     onBrokerageSessionError,
@@ -242,10 +247,23 @@ function stopLoginMonitor(appUserId: string, generation?: symbol): boolean {
   return true;
 }
 
+async function hasMarkerlessPortalAuthentication(
+  appUserId: string,
+): Promise<boolean> {
+  const gateway = await refreshGateway(appUserId);
+  if (!gateway || gateway.status !== "ready") return false;
+  return clientFor(appUserId, gateway.baseUrl)
+    .getSessionStatus()
+    .then((status) => status.authenticated)
+    .catch(() => false);
+}
+
 function startLoginMonitor(appUserId: string): void {
   stopLoginMonitor(appUserId);
   const generation = Symbol(appUserId);
   const expiresAt = Date.now() + LOGIN_MONITOR_TTL_MS;
+  let nextMarkerlessAuthProbeAt =
+    Date.now() + MARKERLESS_AUTH_PROBE_INTERVAL_MS;
   const isCurrent = (): boolean =>
     loginMonitors.get(appUserId)?.generation === generation;
   const schedule = (poll: () => Promise<void>): void => {
@@ -256,10 +274,38 @@ function startLoginMonitor(appUserId: string): void {
   const poll = async (): Promise<void> => {
     if (!isCurrent()) return;
     if (Date.now() >= expiresAt) {
+      clearPortalReadinessQuietWindow(appUserId);
+      let readiness: PortalReadiness | null = null;
+      try {
+        readiness = await readPortalReadiness(appUserId);
+      } catch {
+        // Cleanup below keeps an expired, unverifiable login from occupying a slot.
+      }
+      if (!isCurrent()) return;
       if (!stopLoginMonitor(appUserId, generation)) return;
       revokeIbkrPortalEmbedSessions(appUserId);
+      if (
+        readiness?.status === "connected" ||
+        readiness?.status === "disconnected" ||
+        readiness?.status === "unavailable"
+      ) {
+        return;
+      }
       await stopGateway(appUserId).catch(() => undefined);
       return;
+    }
+    if (
+      !completedLoginAttempts.has(appUserId) &&
+      Date.now() >= nextMarkerlessAuthProbeAt
+    ) {
+      nextMarkerlessAuthProbeAt =
+        Date.now() + MARKERLESS_AUTH_PROBE_INTERVAL_MS;
+      const authenticated = await hasMarkerlessPortalAuthentication(appUserId);
+      if (!isCurrent()) return;
+      if (authenticated) {
+        completedLoginAttempts.add(appUserId);
+        clearPortalReadinessQuietWindow(appUserId);
+      }
     }
     let readiness: PortalReadiness;
     try {
@@ -289,6 +335,7 @@ function base(overrides: Partial<PortalReadiness>): PortalReadiness {
     gatewayRunning: false,
     authenticated: false,
     browserLoginComplete: false,
+    apiSessionActivationFailed: false,
     established: null,
     isPaper: null,
     selectedAccountId: null,
@@ -308,8 +355,8 @@ function needsLoginMessage(
     return "Gateway is running. Log in to IBKR to finish connecting.";
   }
   return verificationFailed
-    ? "IBKR browser login completed, but the API session is still unavailable. PYRUS is retrying; this connection is not active."
-    : "IBKR browser login completed. Waiting for IBKR's API session; this connection is not active yet.";
+    ? "IBKR sign-in response received, but the API session is still unavailable. PYRUS is checking the session; this connection is not active."
+    : "IBKR sign-in response received. PYRUS is opening the API session and loading accounts; this connection is not active yet.";
 }
 
 function initializePortalLogin(
@@ -422,7 +469,7 @@ export async function readPortalReadiness(
     if (status.authenticated) {
       if (!(await transitionGatewayLifecycle(appUserId, "authenticated"))) {
         throw new HttpError(503, "The IBKR session could not be verified.", {
-          code: "ibkr_paper_session_verification_failed",
+          code: "ibkr_session_verification_failed",
         });
       }
       startTickle(appUserId, gateway.baseUrl);
@@ -456,29 +503,13 @@ export async function readPortalReadiness(
         httpStatus: error instanceof HttpError ? error.statusCode : undefined,
       });
     }
-    if (
-      error instanceof HttpError &&
-      error.code === "ibkr_paper_account_required"
-    ) {
-      await transitionGatewayLifecycle(appUserId, "draining");
-      await disconnectPortal(appUserId);
-      return base({
-        status: "disconnected",
-        gatewayRunning: false,
-        browserLoginComplete: loginObservation.browserLoginComplete,
-        message:
-          "Only IBKR Paper Trading accounts are allowed. This connection was closed. Sign in with the separate username assigned to your Paper Trading account.",
-      });
-    }
     await transitionGatewayLifecycle(appUserId, "degraded");
     return base({
       status: "needs_login",
       gatewayRunning: true,
       browserLoginComplete: loginObservation.browserLoginComplete,
-      message: needsLoginMessage(
-        loginObservation.browserLoginComplete,
-        true,
-      ),
+      apiSessionActivationFailed: loginObservation.browserLoginComplete,
+      message: needsLoginMessage(loginObservation.browserLoginComplete, true),
     });
   }
 }

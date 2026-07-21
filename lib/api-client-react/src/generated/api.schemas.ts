@@ -1950,6 +1950,8 @@ export interface IbkrPortalReadinessResponse {
   authenticated: boolean;
   /** True after the capsule observes a new IBKR browser-login completion for the current connection attempt; API session verification may still be pending. */
   browserLoginComplete: boolean;
+  /** True only after a completed browser sign-in is followed by a failed API-session activation check. This does not identify the upstream cause. */
+  apiSessionActivationFailed: boolean;
   established: boolean | null;
   isPaper: boolean | null;
   selectedAccountId: string | null;

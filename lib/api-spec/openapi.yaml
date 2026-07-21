@@ -7066,6 +7066,9 @@ components:
         browserLoginComplete:
           type: boolean
           description: True after the capsule observes a new IBKR browser-login completion for the current connection attempt; API session verification may still be pending.
+        apiSessionActivationFailed:
+          type: boolean
+          description: True only after a completed browser sign-in is followed by a failed API-session activation check. This does not identify the upstream cause.
         established:
           type: boolean
           nullable: true
@@ -7095,6 +7098,7 @@ components:
         - gatewayRunning
         - authenticated
         - browserLoginComplete
+        - apiSessionActivationFailed
         - established
         - isPaper
         - selectedAccountId
