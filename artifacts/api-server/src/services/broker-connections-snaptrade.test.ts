@@ -116,11 +116,22 @@ test("listBrokerConnections returns only the user's persisted brokerages", async
     assert.equal(robinhood[0]?.id, ownerRobinhood.id);
     assert.equal(robinhood[0]?.name, "Robinhood Agentic");
 
-    // The hardcoded massive + IBKR entries remain intact alongside it.
+    // Client Portal is the retained live IBKR connection; the retired desktop
+    // transport and paper-only catalog entry must not reappear.
     assert.ok(
       connections.some((connection) => connection.provider === "massive"),
     );
-    assert.ok(connections.some((connection) => connection.provider === "ibkr"));
+    const ibkr = connections.filter(
+      (connection) => connection.provider === "ibkr",
+    );
+    assert.deepEqual(
+      ibkr.map((connection) => connection.id),
+      ["ibkr-live"],
+    );
+    assert.equal(ibkr[0]?.name, "Interactive Brokers Client Portal");
+    assert.equal(ibkr[0]?.mode, "live");
+    assert.ok(ibkr[0]?.capabilities.includes("live-trading"));
+    assert.ok(!ibkr[0]?.capabilities.includes("paper-trading"));
   });
 });
 

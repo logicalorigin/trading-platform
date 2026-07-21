@@ -100,6 +100,7 @@ import {
   isIbkrClientPortalConfigured,
   type IbkrClientPortalGatewaySnapshot,
 } from "./ibkr-client-runtime";
+import { getPortalStatus } from "./ibkr-portal-session";
 import {
   MassiveMarketDataClient,
   computeUnusualMetrics,
@@ -2955,18 +2956,19 @@ export async function listBrokerConnections(appUserId: string) {
   const timestamp = new Date();
   const marketDataName = getMarketDataConnectionName();
   const marketDataCapabilities = getMarketDataConnectionCapabilities();
-  const bridgeHealth = await getBridgeHealthForSession({
-    waitForInitialRefresh: false,
-    waitForStaleRefresh: false,
-  }).catch(() => null);
-  const ibkrConnectionName = "Interactive Brokers Gateway";
-  const ibkrStatus = !configured.ibkr
-    ? ("disconnected" as const)
-    : bridgeHealth?.connected
+  const portalReadiness = await getPortalStatus(appUserId).catch(() => null);
+  const ibkrConnectionName = "Interactive Brokers Client Portal";
+  const ibkrStatus =
+    portalReadiness?.status === "connected"
       ? ("connected" as const)
-      : bridgeHealth?.lastError
-        ? ("error" as const)
-        : ("configured" as const);
+      : portalReadiness?.status === "gateway_starting" ||
+          portalReadiness?.status === "needs_login"
+        ? ("configured" as const)
+        : portalReadiness?.status === "unavailable" ||
+            portalReadiness?.status === "competing" ||
+            portalReadiness === null
+          ? ("error" as const)
+          : ("disconnected" as const);
 
   const connections: BrokerConnectionListItem[] = [
     {
@@ -2989,21 +2991,6 @@ export async function listBrokerConnections(appUserId: string) {
         ? ("configured" as const)
         : ("disconnected" as const),
       capabilities: marketDataCapabilities,
-      updatedAt: timestamp,
-    },
-    {
-      id: "ibkr-paper",
-      provider: "ibkr" as const,
-      name: ibkrConnectionName,
-      mode: "shadow" as const,
-      status: ibkrStatus,
-      capabilities: [
-        "accounts",
-        "positions",
-        "orders",
-        "executions",
-        "paper-trading",
-      ],
       updatedAt: timestamp,
     },
     {
