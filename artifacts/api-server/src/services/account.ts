@@ -116,6 +116,8 @@ import {
   type AccountEquityHistorySeedPoint,
 } from "./account-equity-history-model";
 import {
+  accountPositionSourceForProvider,
+  combineAccountPositionSources,
   normalizeAssetClassLabel,
   normalizeOrderTab,
   normalizeTradeAssetClassLabel,
@@ -123,6 +125,7 @@ import {
   positionGroupKey,
   terminalOrderStatus,
   workingOrderStatus,
+  type AccountPositionSource,
   type OrderTab,
 } from "./account-trade-model";
 import {
@@ -1290,6 +1293,7 @@ async function getLiveAccountUniverse(
   mode: RuntimeMode,
   appUserId: string | null = getCurrentAppUserId(),
   allowDirectIbkr?: boolean,
+  timing?: AccountPositionsTimingState,
 ): Promise<AccountUniverse> {
   const effectiveAllowDirectIbkr = directIbkrReadsAllowed(
     appUserId,
@@ -1307,7 +1311,14 @@ async function getLiveAccountUniverse(
       readLiveAccountUniverseUncached(accountId, mode, {
         appUserId,
         allowDirectIbkr: effectiveAllowDirectIbkr,
+        timing,
       }),
+    ACCOUNT_PAGE_SHARED_LIVE_READ_CACHE_TTL_MS,
+    (disposition) => {
+      if (timing) {
+        timing.universeCache = disposition;
+      }
+    },
   );
 }
 
@@ -1321,7 +1332,7 @@ async function readLiveAccountUniverseUncached(
     | "listLiveAccounts"
     | "getSnapTradeAccounts"
     | "getRobinhoodAccounts"
-  > = {},
+  > & { timing?: AccountPositionsTimingState } = {},
 ): Promise<AccountUniverse> {
   const appUserId =
     options.appUserId === undefined ? getCurrentAppUserId() : options.appUserId;
@@ -1331,12 +1342,14 @@ async function readLiveAccountUniverseUncached(
   );
   let liveReadError: unknown = null;
   const accounts = allowDirectIbkr
-    ? await (options.listLiveAccounts ?? listIbkrAccounts)(mode).catch(
-        (error) => {
-          liveReadError = error;
-          return [] as BrokerAccountSnapshot[];
-        },
-      )
+    ? await timeAccountPositionsStage(
+        options.timing,
+        "universe_ibkr_accounts",
+        () => (options.listLiveAccounts ?? listIbkrAccounts)(mode),
+      ).catch((error) => {
+        liveReadError = error;
+        return [] as BrokerAccountSnapshot[];
+      })
     : [];
   const requestedAccountId = accountId || COMBINED_ACCOUNT_ID;
   const isCombined = requestedAccountId === COMBINED_ACCOUNT_ID;
@@ -1345,34 +1358,50 @@ async function readLiveAccountUniverseUncached(
     : accounts.filter((account) => account.id === requestedAccountId);
 
   const readProviderBackedAccounts = async () => {
-    const [snapTradeAccounts, robinhoodAccounts] = await Promise.all([
-      (options.getSnapTradeAccounts ?? getSnapTradeBackedAccounts)(
-        mode,
-        appUserId,
-      ).catch((error) => {
-        if (isAccountDbReadUnavailableError(error)) {
-          throw createAccountDbUnavailableError(error);
-        }
-        logger.warn(
-          { err: error },
-          "SnapTrade account detail resolution failed; omitting unavailable provider",
-        );
-        return [] as BrokerAccountSnapshot[];
-      }),
-      (options.getRobinhoodAccounts ?? getRobinhoodBackedAccounts)(
-        mode,
-        appUserId,
-      ).catch((error) => {
-        if (isAccountDbReadUnavailableError(error)) {
-          throw createAccountDbUnavailableError(error);
-        }
-        logger.warn(
-          { err: error },
-          "Robinhood account detail resolution failed; omitting unavailable provider",
-        );
-        return [] as BrokerAccountSnapshot[];
-      }),
-    ]);
+    const [snapTradeAccounts, robinhoodAccounts] =
+      await timeAccountPositionsStage(
+        options.timing,
+        "universe_provider_fanout",
+        () =>
+          Promise.all([
+            timeAccountPositionsStage(
+              options.timing,
+              "universe_snaptrade_accounts",
+              () =>
+                (options.getSnapTradeAccounts ?? getSnapTradeBackedAccounts)(
+                  mode,
+                  appUserId,
+                ),
+            ).catch((error) => {
+              if (isAccountDbReadUnavailableError(error)) {
+                throw createAccountDbUnavailableError(error);
+              }
+              logger.warn(
+                { err: error },
+                "SnapTrade account detail resolution failed; omitting unavailable provider",
+              );
+              return [] as BrokerAccountSnapshot[];
+            }),
+            timeAccountPositionsStage(
+              options.timing,
+              "universe_robinhood_accounts",
+              () =>
+                (options.getRobinhoodAccounts ?? getRobinhoodBackedAccounts)(
+                  mode,
+                  appUserId,
+                ),
+            ).catch((error) => {
+              if (isAccountDbReadUnavailableError(error)) {
+                throw createAccountDbUnavailableError(error);
+              }
+              logger.warn(
+                { err: error },
+                "Robinhood account detail resolution failed; omitting unavailable provider",
+              );
+              return [] as BrokerAccountSnapshot[];
+            }),
+          ]),
+      );
     return [...snapTradeAccounts, ...robinhoodAccounts];
   };
 
@@ -6441,6 +6470,7 @@ export async function getAccountPositions(input: {
       assetClass: input.assetClass,
       source: input.source,
       liveQuotes: input.liveQuotes,
+      detail: input.detail,
     });
   }
 
@@ -6489,6 +6519,7 @@ type RealAccountPositionsInput = {
 
 type AccountPositionsTimingState = {
   startedAt: number;
+  universeCache: AccountPositionsCacheDisposition | null;
   positionsCache: AccountPositionsCacheDisposition | null;
   positionCount: number | null;
   stagesMs: Partial<Record<AccountPositionsStage, number>>;
@@ -6710,6 +6741,7 @@ function foldRealPositionAttribution(
 async function getAccountPositionsUncached(input: RealAccountPositionsInput) {
   const timing: AccountPositionsTimingState = {
     startedAt: performance.now(),
+    universeCache: null,
     positionsCache: null,
     positionCount: null,
     stagesMs: {},
@@ -6720,6 +6752,7 @@ async function getAccountPositionsUncached(input: RealAccountPositionsInput) {
       detail: input.detail,
       liveQuotes: input.liveQuotes !== false,
       outcome: "success",
+      universeCache: timing.universeCache,
       positionsCache: timing.positionsCache,
       positionCount: timing.positionCount,
       rowCount: result.positions.length,
@@ -6732,6 +6765,7 @@ async function getAccountPositionsUncached(input: RealAccountPositionsInput) {
       detail: input.detail,
       liveQuotes: input.liveQuotes !== false,
       outcome: "failure",
+      universeCache: timing.universeCache,
       positionsCache: timing.positionsCache,
       positionCount: timing.positionCount,
       rowCount: null,
@@ -6750,15 +6784,20 @@ async function buildAccountPositionsUncached(
   const universe = await timeAccountPositionsStage(
     timing,
     "universe",
-    async () =>
-      applyLatestSnapTradeBalancesToUniverse(
-        await getLiveAccountUniverse(
-          input.accountId,
-          mode,
-          input.appUserId,
-          input.allowDirectIbkr,
-        ),
-      ),
+    async () => {
+      const liveUniverse = await getLiveAccountUniverse(
+        input.accountId,
+        mode,
+        input.appUserId,
+        input.allowDirectIbkr,
+        timing,
+      );
+      return timeAccountPositionsSyncStage(
+        timing,
+        "universe_balance_overlay",
+        () => applyLatestSnapTradeBalancesToUniverse(liveUniverse),
+      );
+    },
   );
   const assetClassFilter = resolveAccountPositionTypeFilter(input.assetClass);
   const allPositions = await timeAccountPositionsStage(
@@ -6927,6 +6966,15 @@ async function buildAccountPositionsUncached(
   const responseShapeStartedAt = performance.now();
   const orders = ordersResult.orders;
   const nav = sumAccounts(universe.accounts, "netLiquidation") ?? 0;
+  const positionSourceByAccountId = new Map(
+    universe.accounts.map((account) => [
+      account.id,
+      accountPositionSourceForProvider(account.provider),
+    ]),
+  );
+  const positionSource = (position: BrokerPositionSnapshot) =>
+    positionSourceByAccountId.get(position.accountId) ??
+    accountPositionSourceForProvider(null);
 
   const openOrdersBySymbol = new Map<string, BrokerOrderSnapshot[]>();
   orders.filter((order) => workingOrderStatus(order.status)).forEach((order) => {
@@ -6966,7 +7014,7 @@ async function buildAccountPositionsUncached(
     lots: typeof lots;
     openOrders: BrokerOrderSnapshot[];
     positionQuotes: PositionQuoteSnapshot[];
-    source: "IBKR_POSITIONS";
+    sources: Set<AccountPositionSource>;
     openedAt: Date | null;
     openedAtSource: BrokerPositionSnapshot["openedAtSource"] | null;
   };
@@ -7003,7 +7051,7 @@ async function buildAccountPositionsUncached(
             lots: [] as typeof lots,
             openOrders: [] as BrokerOrderSnapshot[],
             positionQuotes: [] as PositionQuoteSnapshot[],
-            source: "IBKR_POSITIONS" as const,
+            sources: new Set<AccountPositionSource>(),
             openedAt: null as Date | null,
             openedAtSource: null as BrokerPositionSnapshot["openedAtSource"] | null,
           };
@@ -7062,6 +7110,7 @@ async function buildAccountPositionsUncached(
           current.accounts = Array.from(
             new Set([...current.accounts, position.accountId]),
           );
+          current.sources.add(positionSource(position));
           current.lots = [
             ...current.lots,
             ...(lotRowsBySymbol.get(position.symbol.toUpperCase()) ?? []),
@@ -7135,7 +7184,7 @@ async function buildAccountPositionsUncached(
         )
           .map(([, order]) => order)
           .sort((left, right) => right.updatedAt.getTime() - left.updatedAt.getTime()),
-        source: row.source,
+        source: combineAccountPositionSources(row.sources),
         ...(realAttribution.get(realAttributionPositionKey(row)) ??
           MANUAL_REAL_POSITION_ATTRIBUTION),
         openedAt: row.openedAt,
@@ -7227,7 +7276,7 @@ async function buildAccountPositionsUncached(
             (openOrdersBySymbol.get(position.symbol.toUpperCase()) ?? []).filter(
               (order) => orderGroupKey(order) === positionGroupKey(position),
             ),
-          source: "IBKR_POSITIONS",
+          source: positionSource(position),
           ...(realAttribution.get(realAttributionPositionKey(position)) ??
             MANUAL_REAL_POSITION_ATTRIBUTION),
           openedAt: openedAt.openedAt,

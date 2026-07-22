@@ -59,6 +59,26 @@ test("option quote plan can suppress fallback chain demand when streaming is not
   assert.deepEqual(plan.requestedProviderContractIds, ["P100"]);
 });
 
+test("option quote plan excludes native Robinhood ids from Massive subscriptions", () => {
+  const plan = buildTradeOptionQuoteSubscriptionPlan({
+    heldContracts: [
+      {
+        providerContractId: "robinhood-option-uuid",
+        providerSecurityType: "robinhood_option",
+      },
+      {
+        providerContractId: "O:AAPL260821C00200000",
+        providerSecurityType: "OPT",
+      },
+    ],
+    includeFallbackVisibleRows: false,
+  });
+
+  assert.deepEqual(plan.executionProviderContractIds, [
+    "O:AAPL260821C00200000",
+  ]);
+});
+
 test("option quote fallback rows center on the selected strike before falling back to ATM", () => {
   const chainRows = makeChainRows(21);
 

@@ -40,13 +40,16 @@ const normalizedRight = (value) => {
   return text;
 };
 
+const isNativeRobinhoodOption = (value) =>
+  normalizeText(value) === "robinhood_option";
+
 export const sameManagementOptionContract = (left, right) => {
   if (!left && !right) return true;
   if (!left || !right) return false;
   const leftProvider = firstText(left.providerContractId, left.conid);
   const rightProvider = firstText(right.providerContractId, right.conid);
-  if (leftProvider && rightProvider) {
-    return leftProvider === rightProvider;
+  if (leftProvider || rightProvider) {
+    return Boolean(leftProvider && rightProvider && leftProvider === rightProvider);
   }
   return (
     normalizeSymbol(left.underlying ?? left.ticker) ===
@@ -70,7 +73,23 @@ export const orderMatchesManagementPosition = (position, order) => {
     return false;
   }
   if (position?.optionContract || order?.optionContract) {
-    return sameManagementOptionContract(position?.optionContract, order?.optionContract);
+    const orderContract = order?.optionContract
+      ? {
+          ...order.optionContract,
+          providerContractId: firstText(
+            order.optionContract.providerContractId,
+            order.providerContractId,
+          ),
+        }
+      : null;
+    if (
+      isNativeRobinhoodOption(position?.providerSecurityType) &&
+      (!firstText(position?.optionContract?.providerContractId) ||
+        !firstText(orderContract?.providerContractId))
+    ) {
+      return false;
+    }
+    return sameManagementOptionContract(position?.optionContract, orderContract);
   }
   return true;
 };

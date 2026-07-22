@@ -1193,9 +1193,22 @@ paths:
         - name: liveQuotes
           in: query
           required: false
-          description: Set to `false` to skip blocking live option quote hydration for shadow positions.
+          description: Set to `false` to skip blocking quote snapshot hydration while preserving background position-market-data demand.
           schema:
             type: boolean
+        - name: detail
+          in: query
+          required: false
+          description: >-
+            `fast` returns core broker positions without putting full lots,
+            orders, Greeks, attribution, or historical enrichment on the
+            response critical path; cached or ledger-backed equivalents may
+            still be present. `full` returns the complete enriched position
+            response. Defaults to `full`.
+          schema:
+            type: string
+            enum: [fast, full]
+            default: full
         - name: mode
           in: query
           required: false
@@ -12359,6 +12372,10 @@ components:
         assetClass:
           type: string
           description: Display label for the position type.
+        providerSecurityType:
+          type: string
+          nullable: true
+          description: Provider security subtype used to preserve native contract identity and quote semantics.
         positionType:
           type: string
           enum: [stock, etf, option]
@@ -12431,6 +12448,13 @@ components:
           description: Normalized chart overlay state for stop-loss and trailing-stop lines, when available.
         source:
           type: string
+          description: >-
+            Holding provenance. Live broker rows use `IBKR_POSITIONS`,
+            `SNAPTRADE_POSITIONS`, `ROBINHOOD_POSITIONS`, or
+            `SCHWAB_POSITIONS`; an unknown provider uses `BROKER_POSITIONS`,
+            and a combined row spanning providers uses
+            `MIXED_BROKER_POSITIONS`. Shadow and historical rows retain their
+            ledger-specific source values.
         sourceType:
           type: string
           enum: [manual, automation, signal_options_replay, watchlist_backtest, mixed]

@@ -47,10 +47,10 @@ test("real account positions declare account-monitor demand even for fast quote-
     "detail:fast must not suppress derived account-monitor demand",
   );
 
-  const uncachedLoader = functionSource("getAccountPositionsUncached");
+  const uncachedLoader = functionSource("buildAccountPositionsUncached");
   assert.match(
     uncachedLoader,
-    /const allPositions = await listPositionsForUniverse\(universe, mode\);/,
+    /const allPositions = await timeAccountPositionsStage\([\s\S]*?listPositionsForUniverse\(universe,\s*mode,\s*timing\)/,
     "demand must be derived from the unfiltered real position set",
   );
   assert.match(
@@ -75,6 +75,15 @@ test("real account positions declare account-monitor demand even for fast quote-
   );
 });
 
+test("shadow account positions preserve the requested fast-detail contract", () => {
+  const publicLoader = functionSource("getAccountPositions");
+  assert.match(
+    publicLoader,
+    /getShadowAccountPositions\(\{[\s\S]*?detail:\s*input\.detail,[\s\S]*?\}\)/,
+    "detail:fast must cross the account-to-shadow service boundary",
+  );
+});
+
 test("real account equity quote refresh does not reserve broker market-data lines", () => {
   const quoteRefresh = functionSource("refreshAccountPositionEquityQuotes");
 
@@ -91,7 +100,7 @@ test("real account equity quote refresh does not reserve broker market-data line
 });
 
 test("fast real account positions hydrate quote snapshots when live quotes are requested", () => {
-  const uncachedLoader = functionSource("getAccountPositionsUncached");
+  const uncachedLoader = functionSource("buildAccountPositionsUncached");
   assert.match(
     uncachedLoader,
     /if\s*\(input\.detail === "fast"\)\s*\{[\s\S]*?input\.liveQuotes === false[\s\S]*?fetchEquityQuoteSnapshotsForPositions\(positions\)[\s\S]*?input\.liveQuotes === false[\s\S]*?fetchOptionQuoteSnapshotsForPositions\(positions\)[\s\S]*?\}/,
@@ -99,12 +108,22 @@ test("fast real account positions hydrate quote snapshots when live quotes are r
   );
 });
 
-test("fast real account positions hydrate execution open dates for day PnL", () => {
-  const uncachedLoader = functionSource("getAccountPositionsUncached");
+test("fast real account positions do not await execution history for day PnL", () => {
+  const uncachedLoader = functionSource("buildAccountPositionsUncached");
+  assert.doesNotMatch(
+    uncachedLoader,
+    /\[\s*equityQuoteSnapshots,\s*optionQuoteSnapshots,\s*openDates\s*\]\s*=\s*await Promise\.all/,
+    "detail:fast must not put optional execution history on the structural positions critical path",
+  );
   assert.match(
     uncachedLoader,
-    /if\s*\(input\.detail === "fast"\)\s*\{[\s\S]*?fetchExecutionOpenDatesForPositions\(universe,\s*mode,\s*positions\)[\s\S]*?\}/,
-    "detail:fast must fetch execution-derived open dates before market hydration",
+    /openDates\s*=\s*readLastKnownExecutionOpenDatesForPositions\(\s*universe,\s*mode,\s*positions,?\s*\)/,
+    "detail:fast must hydrate immediately from last-known execution open dates",
+  );
+  assert.match(
+    uncachedLoader,
+    /void fetchExecutionOpenDatesForPositions\(universe,\s*mode,\s*positions\)\.catch/,
+    "detail:fast must refresh execution-derived open dates outside the response critical path",
   );
 
   const executionOpenDateLoader = functionSource(

@@ -11,6 +11,40 @@ import {
 
 export type OrderTab = "working" | "history";
 
+export type AccountPositionSource =
+  | "IBKR_POSITIONS"
+  | "SNAPTRADE_POSITIONS"
+  | "ROBINHOOD_POSITIONS"
+  | "SCHWAB_POSITIONS"
+  | "BROKER_POSITIONS"
+  | "MIXED_BROKER_POSITIONS";
+
+export function accountPositionSourceForProvider(
+  provider: string | null | undefined,
+): AccountPositionSource {
+  switch (provider?.trim().toLowerCase()) {
+    case "ibkr":
+      return "IBKR_POSITIONS";
+    case "snaptrade":
+      return "SNAPTRADE_POSITIONS";
+    case "robinhood":
+      return "ROBINHOOD_POSITIONS";
+    case "schwab":
+      return "SCHWAB_POSITIONS";
+    default:
+      return "BROKER_POSITIONS";
+  }
+}
+
+export function combineAccountPositionSources(
+  sources: Iterable<AccountPositionSource>,
+): AccountPositionSource {
+  const unique = new Set(sources);
+  if (unique.size === 0) return "BROKER_POSITIONS";
+  if (unique.size === 1) return unique.values().next().value!;
+  return "MIXED_BROKER_POSITIONS";
+}
+
 export function isEtfSymbol(symbol: string): boolean {
   return isStaticAccountEtfSymbol(symbol);
 }
@@ -70,26 +104,47 @@ export function normalizeTradeAssetClassLabel(input: {
 
 export function positionGroupKey(position: BrokerPositionSnapshot): string {
   if (position.optionContract) {
-    return [
-      "option",
-      position.optionContract.underlying,
-      toIsoDateString(position.optionContract.expirationDate),
-      position.optionContract.strike,
-      position.optionContract.right,
-    ].join(":");
+    const providerContractId = String(
+      position.optionContract.providerContractId ??
+        position.optionContract.brokerContractId ??
+        "",
+    ).trim();
+    return optionContractGroupKey(
+      position.optionContract,
+      providerContractId ||
+        (position.providerSecurityType?.trim().toLowerCase() === "robinhood_option"
+          ? `position:${position.id}`
+          : null),
+    );
   }
   return `equity:${position.symbol.toUpperCase()}`;
 }
 
 export function orderGroupKey(order: BrokerOrderSnapshot): string {
   if (order.optionContract) {
-    return [
-      "option",
-      order.optionContract.underlying,
-      toIsoDateString(order.optionContract.expirationDate),
-      order.optionContract.strike,
-      order.optionContract.right,
-    ].join(":");
+    const providerContractId = String(
+      order.optionContract.providerContractId ??
+        order.optionContract.brokerContractId ??
+        order.providerContractId ??
+        "",
+    ).trim();
+    return optionContractGroupKey(order.optionContract, providerContractId || null);
   }
   return `equity:${order.symbol.toUpperCase()}`;
+}
+
+function optionContractGroupKey(
+  contract: NonNullable<BrokerPositionSnapshot["optionContract"]>,
+  identity: string | null,
+): string {
+  return [
+    "option",
+    identity ? `provider:${identity}` : "tuple",
+    contract.underlying.toUpperCase(),
+    toIsoDateString(contract.expirationDate),
+    contract.strike,
+    contract.right,
+    contract.multiplier,
+    contract.sharesPerContract,
+  ].join(":");
 }

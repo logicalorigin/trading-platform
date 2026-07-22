@@ -908,6 +908,7 @@ test("combined positions include IBKR, SnapTrade, and Robinhood rows", async () 
   };
   const timing = {
     startedAt: performance.now(),
+    universeCache: null,
     positionsCache: null,
     positionCount: null,
     stagesMs: {} as Record<string, number>,

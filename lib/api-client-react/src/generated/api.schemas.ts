@@ -5295,6 +5295,8 @@ export interface AccountPositionRow {
   description: string;
   /** Display label for the position type. */
   assetClass: string;
+  /** Provider security subtype used to preserve native contract identity and quote semantics. */
+  providerSecurityType?: string | null;
   /** Canonical account position type used for filtering and market-data routing. */
   positionType: AccountPositionRowPositionType;
   optionContract?: OptionContract | null;
@@ -5326,6 +5328,7 @@ export interface AccountPositionRow {
   takeProfit?: number | null;
   /** Normalized chart overlay state for stop-loss and trailing-stop lines, when available. */
   riskOverlay?: AccountPositionRiskOverlay | null;
+  /** Holding provenance. Live broker rows use `IBKR_POSITIONS`, `SNAPTRADE_POSITIONS`, `ROBINHOOD_POSITIONS`, or `SCHWAB_POSITIONS`; an unknown provider uses `BROKER_POSITIONS`, and a combined row spanning providers uses `MIXED_BROKER_POSITIONS`. Shadow and historical rows retain their ledger-specific source values. */
   source: string;
   sourceType?: AccountPositionRowSourceType;
   strategyLabel?: string | null;
@@ -8593,11 +8596,23 @@ assetClass?: AccountPositionTypeFilter;
  */
 source?: string;
 /**
- * Set to `false` to skip blocking live option quote hydration for shadow positions.
+ * Set to `false` to skip blocking quote snapshot hydration while preserving background position-market-data demand.
  */
 liveQuotes?: boolean;
+/**
+ * `fast` returns core broker positions without putting full lots, orders, Greeks, attribution, or historical enrichment on the response critical path; cached or ledger-backed equivalents may still be present. `full` returns the complete enriched position response. Defaults to `full`.
+ */
+detail?: GetAccountPositionsDetail;
 mode?: EnvironmentMode;
 };
+
+export type GetAccountPositionsDetail = typeof GetAccountPositionsDetail[keyof typeof GetAccountPositionsDetail];
+
+
+export const GetAccountPositionsDetail = {
+  fast: 'fast',
+  full: 'full',
+} as const;
 
 export type GetAccountPositionsAtDateParams = {
 date: string;

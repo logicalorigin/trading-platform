@@ -12,8 +12,11 @@ import {
 import path from "node:path";
 import * as v8 from "node:v8";
 import {
+  getPostgresDiagnosticContext,
   getPoolStats,
+  safeDatabaseDiagnosticValue,
   setPostgresPoolDiagnosticListener,
+  type PostgresDiagnosticContext,
   type PostgresPoolDiagnosticEvent,
 } from "@workspace/db";
 import { logger } from "../lib/logger";
@@ -37,6 +40,11 @@ type JsonRecord = Record<string, unknown>;
 
 const ACCOUNT_POSITIONS_STAGE_NAMES = [
   "universe",
+  "universe_ibkr_accounts",
+  "universe_snaptrade_accounts",
+  "universe_robinhood_accounts",
+  "universe_provider_fanout",
+  "universe_balance_overlay",
   "positions_upstream",
   "positions_snaptrade_snapshot",
   "positions_ibkr",
@@ -70,12 +78,69 @@ export type AccountPositionsTiming = {
   detail: "fast" | "full";
   liveQuotes: boolean;
   outcome: "success" | "failure";
+  universeCache: AccountPositionsCacheDisposition | null;
   positionsCache: AccountPositionsCacheDisposition | null;
   positionCount: number | null;
   rowCount: number | null;
   stagesMs: Partial<Record<AccountPositionsStage, number>>;
   totalDurationMs: number;
 };
+
+const ACCOUNT_POSITIONS_DURATION_BUCKETS = [
+  ["le50", 50],
+  ["le100", 100],
+  ["le250", 250],
+  ["le500", 500],
+  ["le1000", 1_000],
+  ["le2500", 2_500],
+] as const;
+
+type AccountPositionsDurationBucket =
+  | (typeof ACCOUNT_POSITIONS_DURATION_BUCKETS)[number][0]
+  | "gt2500";
+type AccountPositionsCacheBucket = AccountPositionsCacheDisposition | "unknown";
+type AccountPositionsStageAggregate = {
+  count: number;
+  totalMs: number;
+  maxMs: number;
+};
+type AccountPositionsTimingAggregate = {
+  count: number;
+  successCount: number;
+  failureCount: number;
+  sub250SuccessCount: number;
+  totalDurationMs: number;
+  maxDurationMs: number;
+  durationBuckets: Record<AccountPositionsDurationBucket, number>;
+  universeCache: Record<AccountPositionsCacheBucket, number>;
+  positionsCache: Record<AccountPositionsCacheBucket, number>;
+  stagesMs: Partial<
+    Record<AccountPositionsStage, AccountPositionsStageAggregate>
+  >;
+};
+
+function emptyAccountPositionsTimingAggregate(): AccountPositionsTimingAggregate {
+  return {
+    count: 0,
+    successCount: 0,
+    failureCount: 0,
+    sub250SuccessCount: 0,
+    totalDurationMs: 0,
+    maxDurationMs: 0,
+    durationBuckets: {
+      le50: 0,
+      le100: 0,
+      le250: 0,
+      le500: 0,
+      le1000: 0,
+      le2500: 0,
+      gt2500: 0,
+    },
+    universeCache: { hit: 0, inflight: 0, miss: 0, unknown: 0 },
+    positionsCache: { hit: 0, inflight: 0, miss: 0, unknown: 0 },
+    stagesMs: {},
+  };
+}
 
 type RuntimeIncident = JsonRecord & {
   incidentId?: string;
@@ -572,6 +637,7 @@ function buildApiHeartbeat(): JsonRecord {
     apiPressure: pressure,
     dbPool: getPoolStats(),
     workGovernor: getWorkGovernorSnapshot(),
+    accountPositions: accountPositionsTimingSummary(),
     requests: requestSummary(),
   };
 }
@@ -635,6 +701,23 @@ function recordMemorySampleIfDue(heartbeat: JsonRecord): void {
       "inputs"
     ] as JsonRecord | undefined;
     const dbPool = heartbeat["dbPool"] as JsonRecord | undefined;
+    const compactPoolLane = (lane: unknown): JsonRecord | null => {
+      if (!lane || typeof lane !== "object" || Array.isArray(lane)) {
+        return null;
+      }
+      const value = lane as JsonRecord;
+      return {
+        active: value["active"] ?? null,
+        waiting: value["waiting"] ?? null,
+        totalWaiting: value["totalWaiting"] ?? value["waiting"] ?? null,
+        rawPoolWaiting: value["rawPoolWaiting"] ?? null,
+        admissionWaiting: value["admissionWaiting"] ?? null,
+        ...(value["appPoolSaturated"] === undefined
+          ? {}
+          : { appPoolSaturated: value["appPoolSaturated"] }),
+        max: value["max"] ?? null,
+      };
+    };
     appendRuntimeFlightRecorderEvent("api-memory-sample", {
       memoryMb: heartbeat["memoryMb"] ?? null,
       system: systemMemorySnapshotMb(),
@@ -642,13 +725,13 @@ function recordMemorySampleIfDue(heartbeat: JsonRecord): void {
       eventLoopUtilization: pressureInputs?.["eventLoopUtilization"] ?? null,
       dbPool: dbPool
         ? {
-            active: dbPool["active"] ?? null,
-            waiting: dbPool["waiting"] ?? null,
-            totalWaiting:
-              dbPool["totalWaiting"] ?? dbPool["waiting"] ?? null,
-            rawPoolWaiting: dbPool["rawPoolWaiting"] ?? null,
-            admissionWaiting: dbPool["admissionWaiting"] ?? null,
-            max: dbPool["max"] ?? null,
+            ...compactPoolLane(dbPool),
+            ...(dbPool["authPool"]
+              ? { authPool: compactPoolLane(dbPool["authPool"]) }
+              : {}),
+            ...(dbPool["tradingPool"]
+              ? { tradingPool: compactPoolLane(dbPool["tradingPool"]) }
+              : {}),
           }
         : null,
     });
@@ -847,19 +930,177 @@ const accountPositionsTimingRateByFamily = new Map<
   string,
   WorkGovernorTimingRateState
 >();
+let accountPositionsTimingAggregate = emptyAccountPositionsTimingAggregate();
+const accountPositionsTimingAggregateByFamily = new Map<
+  string,
+  AccountPositionsTimingAggregate
+>();
+
+function roundedDiagnosticMs(value: number): number {
+  return Math.round(value * 1_000) / 1_000;
+}
+
+function addAccountPositionsTimingToAggregate(
+  aggregate: AccountPositionsTimingAggregate,
+  timing: AccountPositionsTiming,
+): void {
+  const durationMs = Number.isFinite(timing.totalDurationMs)
+    ? Math.max(0, timing.totalDurationMs)
+    : 0;
+  aggregate.count += 1;
+  aggregate.successCount += Number(timing.outcome === "success");
+  aggregate.failureCount += Number(timing.outcome === "failure");
+  aggregate.sub250SuccessCount += Number(
+    timing.outcome === "success" &&
+      durationMs < ACCOUNT_POSITIONS_TIMING_MIN_MS,
+  );
+  aggregate.totalDurationMs += durationMs;
+  aggregate.maxDurationMs = Math.max(aggregate.maxDurationMs, durationMs);
+
+  let matchedDurationBucket = false;
+  for (const [bucket, upperBoundMs] of ACCOUNT_POSITIONS_DURATION_BUCKETS) {
+    if (durationMs <= upperBoundMs) {
+      aggregate.durationBuckets[bucket] += 1;
+      matchedDurationBucket = true;
+    }
+  }
+  if (!matchedDurationBucket) {
+    aggregate.durationBuckets.gt2500 += 1;
+  }
+
+  aggregate.universeCache[timing.universeCache ?? "unknown"] += 1;
+  aggregate.positionsCache[timing.positionsCache ?? "unknown"] += 1;
+  for (const stage of ACCOUNT_POSITIONS_STAGE_NAMES) {
+    const duration = timing.stagesMs[stage];
+    if (typeof duration !== "number" || !Number.isFinite(duration)) {
+      continue;
+    }
+    const current = aggregate.stagesMs[stage] ?? {
+      count: 0,
+      totalMs: 0,
+      maxMs: 0,
+    };
+    current.count += 1;
+    current.totalMs += Math.max(0, duration);
+    current.maxMs = Math.max(current.maxMs, Math.max(0, duration));
+    aggregate.stagesMs[stage] = current;
+  }
+}
+
+function accountPositionsTimingAggregateSnapshot(
+  aggregate: AccountPositionsTimingAggregate,
+) {
+  return {
+    count: aggregate.count,
+    successCount: aggregate.successCount,
+    failureCount: aggregate.failureCount,
+    sub250SuccessCount: aggregate.sub250SuccessCount,
+    durationMs: {
+      total: roundedDiagnosticMs(aggregate.totalDurationMs),
+      average:
+        aggregate.count > 0
+          ? roundedDiagnosticMs(aggregate.totalDurationMs / aggregate.count)
+          : 0,
+      max: roundedDiagnosticMs(aggregate.maxDurationMs),
+      buckets: { ...aggregate.durationBuckets },
+    },
+    universeCache: { ...aggregate.universeCache },
+    positionsCache: { ...aggregate.positionsCache },
+    stagesMs: Object.fromEntries(
+      ACCOUNT_POSITIONS_STAGE_NAMES.flatMap((stage) => {
+        const value = aggregate.stagesMs[stage];
+        return value
+          ? [
+              [
+                stage,
+                {
+                  count: value.count,
+                  average: roundedDiagnosticMs(value.totalMs / value.count),
+                  max: roundedDiagnosticMs(value.maxMs),
+                },
+              ] as const,
+            ]
+          : [];
+      }),
+    ),
+  };
+}
+
+function accountPositionsTimingSummary() {
+  return {
+    total: accountPositionsTimingAggregateSnapshot(
+      accountPositionsTimingAggregate,
+    ),
+    families: Object.fromEntries(
+      Array.from(
+        accountPositionsTimingAggregateByFamily,
+        ([family, aggregate]) => [
+          family,
+          accountPositionsTimingAggregateSnapshot(aggregate),
+        ],
+      ),
+    ),
+  };
+}
+
+function recordAccountPositionsTimingAggregate(
+  timing: AccountPositionsTiming,
+): void {
+  addAccountPositionsTimingToAggregate(accountPositionsTimingAggregate, timing);
+  const family = `${timing.detail}:${timing.liveQuotes ? "quotes-on" : "quotes-off"}`;
+  const aggregate =
+    accountPositionsTimingAggregateByFamily.get(family) ??
+    emptyAccountPositionsTimingAggregate();
+  accountPositionsTimingAggregateByFamily.set(family, aggregate);
+  addAccountPositionsTimingToAggregate(aggregate, timing);
+}
+
+const REQUEST_CORRELATION_TEXT_KEYS = [
+  "requestId",
+  "routeClass",
+  "requestFamily",
+  "clientRole",
+  "requestOrigin",
+  "admissionAction",
+  "workloadFamily",
+] as const satisfies ReadonlyArray<keyof PostgresDiagnosticContext>;
+
+function safeRequestCorrelationText(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const bounded = value.trim();
+  return bounded.length <= 128 ? safeDatabaseDiagnosticValue(bounded) : null;
+}
+
+function currentRequestCorrelation(): JsonRecord | null {
+  const context = getPostgresDiagnosticContext();
+  if (!context) return null;
+  const correlation: JsonRecord = {};
+  for (const key of REQUEST_CORRELATION_TEXT_KEYS) {
+    const safeValue = safeRequestCorrelationText(context[key]);
+    if (safeValue) correlation[key] = safeValue;
+  }
+  if (
+    typeof context.fetchPriority === "number" &&
+    Number.isFinite(context.fetchPriority)
+  ) {
+    correlation["fetchPriority"] = context.fetchPriority;
+  }
+  return Object.keys(correlation).length > 0 ? correlation : null;
+}
 
 function appendAccountPositionsTiming(
   timing: AccountPositionsTiming,
   nowMs: number = Date.now(),
 ): void {
   try {
+    recordAccountPositionsTimingAggregate(timing);
     if (
       timing.outcome === "success" &&
       timing.totalDurationMs < ACCOUNT_POSITIONS_TIMING_MIN_MS
     ) {
       return;
     }
-    const family = `${timing.detail}:${timing.outcome}`;
+    const family = `${timing.detail}:${timing.liveQuotes ? "quotes-on" : "quotes-off"}:${timing.outcome}`;
     const state = accountPositionsTimingRateByFamily.get(family) ?? {
       lastEmittedAt: Number.NEGATIVE_INFINITY,
       suppressedSinceEmit: 0,
@@ -882,12 +1123,15 @@ function appendAccountPositionsTiming(
       detail: timing.detail,
       liveQuotes: timing.liveQuotes,
       outcome: timing.outcome,
+      universeCache: timing.universeCache,
       positionsCache: timing.positionsCache,
       positionCount: timing.positionCount,
       rowCount: timing.rowCount,
       stagesMs,
       totalDurationMs: timing.totalDurationMs,
     };
+    const correlation = currentRequestCorrelation();
+    if (correlation) detail["correlation"] = correlation;
     if (state.suppressedSinceEmit > 0) {
       detail["suppressedCount"] = state.suppressedSinceEmit;
     }
@@ -914,6 +1158,12 @@ export function __appendAccountPositionsTimingForTests(
 
 export function __resetAccountPositionsTimingRateLimitForTests(): void {
   accountPositionsTimingRateByFamily.clear();
+  accountPositionsTimingAggregate = emptyAccountPositionsTimingAggregate();
+  accountPositionsTimingAggregateByFamily.clear();
+}
+
+export function __getAccountPositionsTimingSummaryForTests() {
+  return accountPositionsTimingSummary();
 }
 
 function appendWorkGovernorTiming(
@@ -938,6 +1188,8 @@ function appendWorkGovernorTiming(
   }
 
   const detail: JsonRecord = { ...timing };
+  const correlation = currentRequestCorrelation();
+  if (correlation) detail["correlation"] = correlation;
   if (state.suppressedSinceEmit > 0) {
     detail["suppressedCount"] = state.suppressedSinceEmit;
   }
@@ -1194,6 +1446,15 @@ export function getRuntimeFlightRecorderDiagnostics(): {
       ? supervisorCurrent["updatedAt"]
       : null;
   const workspaceTestProcesses = getWorkspaceTestProcessDiagnostics();
+  const dbPool = apiCurrent?.["dbPool"] as JsonRecord | undefined;
+  const authDbPool = dbPool?.["authPool"] as JsonRecord | undefined;
+  const tradingDbPool = dbPool?.["tradingPool"] as JsonRecord | undefined;
+  const accountPositions =
+    (apiCurrent?.["accountPositions"] as JsonRecord | undefined) ??
+    accountPositionsTimingSummary();
+  const accountPositionsTotal = accountPositions["total"] as
+    | JsonRecord
+    | undefined;
 
   return {
     metrics: {
@@ -1238,6 +1499,19 @@ export function getRuntimeFlightRecorderDiagnostics(): {
         (apiCurrent?.["dbPool"] as JsonRecord | undefined)?.["total"] ?? null,
       apiDbPoolMax:
         (apiCurrent?.["dbPool"] as JsonRecord | undefined)?.["max"] ?? null,
+      apiAuthDbPoolActive: authDbPool?.["active"] ?? null,
+      apiAuthDbPoolRawWaiting: authDbPool?.["rawPoolWaiting"] ?? null,
+      apiAuthDbPoolSaturated: authDbPool?.["appPoolSaturated"] ?? null,
+      apiTradingDbPoolActive: tradingDbPool?.["active"] ?? null,
+      apiTradingDbPoolRawWaiting: tradingDbPool?.["rawPoolWaiting"] ?? null,
+      apiTradingDbPoolSaturated: tradingDbPool?.["appPoolSaturated"] ?? null,
+      apiAccountPositionsRequestCount: accountPositionsTotal?.["count"] ?? 0,
+      apiAccountPositionsSuccessCount:
+        accountPositionsTotal?.["successCount"] ?? 0,
+      apiAccountPositionsFailureCount:
+        accountPositionsTotal?.["failureCount"] ?? 0,
+      apiAccountPositionsSub250SuccessCount:
+        accountPositionsTotal?.["sub250SuccessCount"] ?? 0,
       workspaceTestProcessScanEnabled: workspaceTestProcesses.enabled,
       workspaceTestProcessCount: workspaceTestProcesses.count,
       workspaceLongRunningTestProcessCount: workspaceTestProcesses.longRunningCount,
@@ -1246,6 +1520,7 @@ export function getRuntimeFlightRecorderDiagnostics(): {
     raw: {
       supervisorCurrent,
       apiCurrent,
+      accountPositions,
       latestIncident,
       workspaceTestProcesses: workspaceTestProcesses.processes,
     },

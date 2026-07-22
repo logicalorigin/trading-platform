@@ -15,11 +15,11 @@ import {
   getOptionChain as getOptionChainRequest,
   listAggregateFlowEvents as listAggregateFlowEventsRequest,
   listFlowEvents as listFlowEventsRequest,
+  useGetAccountPositions,
   useGetSignalMonitorProfile,
   useGetOptionExpirations,
   useGetQuoteSnapshots,
   useListOrders,
-  useListPositions,
 } from "@workspace/api-client-react";
 import {
   getStoredOptionQuoteSnapshot,
@@ -3875,8 +3875,9 @@ const TradeScreenInner = ({
     },
     [activeTicker, contract, upsertTradeWorkspace],
   );
-  const tradePositionsQuery = useListPositions(
-    { accountId, mode: environment },
+  const tradePositionsQuery = useGetAccountPositions(
+    accountId || "",
+    { mode: environment, liveQuotes: false, detail: "fast" },
     {
       query: {
         enabled: Boolean(
@@ -3909,16 +3910,21 @@ const TradeScreenInner = ({
         .filter(
           (position) =>
             isOpenPositionRow(position) &&
-            position.symbol === activeTicker &&
-            position.assetClass === "option" &&
-            position.optionContract,
+            position.positionType === "option" &&
+            position.optionContract &&
+            normalizeTradeTickerSymbol(
+              position.marketDataSymbol ||
+                position.optionContract.underlying ||
+                position.symbol,
+            ) === activeTicker,
         )
         .map((position) => ({
           strike: position.optionContract.strike,
           cp: position.optionContract.right === "call" ? "C" : "P",
           exp: formatExpirationLabel(position.optionContract.expirationDate),
           providerContractId: position.optionContract.providerContractId,
-          entry: position.averagePrice,
+          providerSecurityType: position.providerSecurityType,
+          entry: position.averageCost,
           qty: Math.abs(position.quantity),
           pnl: position.unrealizedPnl,
           pct: position.unrealizedPnlPercent,

@@ -1,4 +1,7 @@
 const normalizeProviderContractId = (value) => String(value || "").trim();
+const isNativeRobinhoodOption = (holding) =>
+  String(holding?.providerSecurityType || "").trim().toLowerCase() ===
+  "robinhood_option";
 const OPTION_CHAIN_COVERAGE_ALL = "all";
 export const TRADE_OPTION_VISIBLE_QUOTE_CONTRACT_LIMIT = 40;
 export const TRADE_OPTION_VISIBLE_QUOTE_UNDERLYING_LINE_RESERVE = 1;
@@ -123,6 +126,7 @@ export const buildTradeOptionProviderContractIdPlan = ({
   );
 
   heldContracts.forEach((holding) => {
+    if (isNativeRobinhoodOption(holding)) return;
     pushProviderContractId(collected, seen, holding?.providerContractId);
   });
 
@@ -152,6 +156,7 @@ export const buildTradeOptionQuoteSubscriptionPlan = ({
     resolveSelectedProviderContractId({ chainRows, contract }),
   );
   heldContracts.forEach((holding) => {
+    if (isNativeRobinhoodOption(holding)) return;
     pushProviderContractId(
       executionProviderContractIds,
       executionSeen,

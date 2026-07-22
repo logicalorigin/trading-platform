@@ -267,6 +267,8 @@ const defaultConnectionTimeoutMillis = heliumDatabase ? 30_000 : undefined;
 // only fires on pathological stalls. Override with DB_STATEMENT_TIMEOUT_MS.
 const defaultStatementTimeoutMillis = heliumDatabase ? 15_000 : undefined;
 const resolvedPoolMax = readPositiveInteger("DB_POOL_MAX", defaultPoolMax());
+const resolvedTradingPoolMax = readPositiveInteger("DB_TRADING_POOL_MAX", 3);
+const resolvedAuthPoolMax = readPositiveInteger("DB_AUTH_POOL_MAX", 2);
 // Server-side kill switch for connections parked inside an open transaction
 // (the pathology that pins scarce pooled connections). Sent as a Postgres
 // startup parameter by pg's getStartupConf().
@@ -314,7 +316,7 @@ attachPostgresPoolErrorHandler(pool);
 export const tradingPool = new Pool({
   Client: ConnectionExhaustionGatedClient,
   connectionString: resolvedDatabaseUrl,
-  max: readPositiveInteger("DB_TRADING_POOL_MAX", 3),
+  max: resolvedTradingPoolMax,
   ...heliumConnectionOptions,
   ...(readOptionalPositiveInteger("DB_CONNECTION_TIMEOUT_MS") !== undefined ||
   defaultConnectionTimeoutMillis !== undefined
@@ -343,7 +345,7 @@ attachPostgresPoolErrorHandler(tradingPool);
 export const authPool = new Pool({
   Client: ConnectionExhaustionGatedClient,
   connectionString: resolvedDatabaseUrl,
-  max: readPositiveInteger("DB_AUTH_POOL_MAX", 2),
+  max: resolvedAuthPoolMax,
   ...heliumConnectionOptions,
   ...(readOptionalPositiveInteger("DB_CONNECTION_TIMEOUT_MS") !== undefined ||
   defaultConnectionTimeoutMillis !== undefined
@@ -684,7 +686,7 @@ export function __setDbForTests(next: WorkspaceDatabase): () => void {
   };
 }
 
-export type PostgresPoolStats = {
+export type PostgresPoolLaneStats = {
   /** Configured maximum pooled connections (`max`). */
   max: number;
   /** Connections currently open (idle + checked-out). */
@@ -709,9 +711,38 @@ export type PostgresPoolStats = {
   admissionBacklog?: boolean;
   /** All queued callers (`rawPoolWaiting + admissionWaiting`). */
   totalWaiting: number;
+};
+
+export type PostgresPoolStats = PostgresPoolLaneStats & {
   /** Admission bus lane gauges for the shared pool. */
   admission?: DbAdmissionDiagnostics;
+  /** Dedicated auth-pool occupancy, isolated from shared data-plane traffic. */
+  authPool?: PostgresPoolLaneStats;
+  /** Dedicated trading-pool occupancy, isolated from shared read traffic. */
+  tradingPool?: PostgresPoolLaneStats;
 };
+
+function poolLaneStats(
+  targetPool: pg.Pool,
+  max: number,
+): PostgresPoolLaneStats {
+  const total = targetPool.totalCount;
+  const idle = targetPool.idleCount;
+  const active = Math.max(0, total - idle);
+  const rawPoolWaiting = targetPool.waitingCount;
+  return {
+    max,
+    total,
+    idle,
+    active,
+    appPoolSaturated: max > 0 && active >= max && idle === 0,
+    waiting: rawPoolWaiting,
+    rawPoolWaiting,
+    admissionWaiting: 0,
+    admissionBacklog: false,
+    totalWaiting: rawPoolWaiting,
+  };
+}
 
 /**
  * Point-in-time snapshot of the shared Postgres pool. Separates app-pool
@@ -719,28 +750,20 @@ export type PostgresPoolStats = {
  * Reads live counters and takes no connection itself.
  */
 export function getPoolStats(): PostgresPoolStats {
-  const total = pool.totalCount;
-  const idle = pool.idleCount;
-  const active = Math.max(0, total - idle);
-  const rawPoolWaiting = pool.waitingCount;
+  const shared = poolLaneStats(pool, resolvedPoolMax);
   const admission = getDbAdmissionDiagnostics();
   const admissionWaiting =
     admission.interactive.queued +
     admission.bulk.queued +
     admission.background.queued;
   return {
-    max: resolvedPoolMax,
-    total,
-    idle,
-    active,
-    appPoolSaturated:
-      resolvedPoolMax > 0 && active >= resolvedPoolMax && idle === 0,
-    waiting: rawPoolWaiting,
-    rawPoolWaiting,
+    ...shared,
     admissionWaiting,
     admissionBacklog: admissionWaiting > 0,
-    totalWaiting: rawPoolWaiting + admissionWaiting,
+    totalWaiting: shared.rawPoolWaiting + admissionWaiting,
     admission,
+    authPool: poolLaneStats(authPool, resolvedAuthPoolMax),
+    tradingPool: poolLaneStats(tradingPool, resolvedTradingPoolMax),
   };
 }
 

@@ -2144,10 +2144,13 @@ export const GetAccountPositionsParams = zod.object({
   "accountId": zod.coerce.string().describe('IBKR account id or the virtual \"combined\" account id.')
 })
 
+export const getAccountPositionsQueryDetailDefault = `full`;
+
 export const GetAccountPositionsQueryParams = zod.object({
   "assetClass": zod.enum(['all', 'equity', 'stock', 'etf', 'option']).optional().describe('Position-type filter. Canonical values are `all`, `stock`, `etf`, `option`; legacy `equity` matches stock and ETF.'),
   "source": zod.coerce.string().optional().describe('Optional source scope for shadow ledger positions, such as `automation`.'),
-  "liveQuotes": booleanQueryParam.optional().describe('Set to `false` to skip blocking live option quote hydration for shadow positions.'),
+  "liveQuotes": booleanQueryParam.optional().describe('Set to `false` to skip blocking quote snapshot hydration while preserving background position-market-data demand.'),
+  "detail": zod.enum(['fast', 'full']).default(getAccountPositionsQueryDetailDefault).describe('`fast` returns core broker positions without putting full lots, orders, Greeks, attribution, or historical enrichment on the response critical path; cached or ledger-backed equivalents may still be present. `full` returns the complete enriched position response. Defaults to `full`.'),
   "mode": zod.enum(['shadow', 'live']).optional()
 })
 
@@ -2161,6 +2164,7 @@ export const GetAccountPositionsResponse = zod.object({
   "symbol": zod.string(),
   "description": zod.string(),
   "assetClass": zod.string().describe('Display label for the position type.'),
+  "providerSecurityType": zod.string().nullish().describe('Provider security subtype used to preserve native contract identity and quote semantics.'),
   "positionType": zod.enum(['stock', 'etf', 'option']).describe('Canonical account position type used for filtering and market-data routing.'),
   "optionContract": zod.union([zod.object({
   "ticker": zod.string(),
@@ -2258,7 +2262,7 @@ export const GetAccountPositionsResponse = zod.object({
   "minLockedGainPct": zod.number().nullable(),
   "peakPrice": zod.number().nullable()
 }).describe('Normalized chart overlay state for position risk lines.'),zod.null()]).optional().describe('Normalized chart overlay state for stop-loss and trailing-stop lines, when available.'),
-  "source": zod.string(),
+  "source": zod.string().describe('Holding provenance. Live broker rows use `IBKR_POSITIONS`, `SNAPTRADE_POSITIONS`, `ROBINHOOD_POSITIONS`, or `SCHWAB_POSITIONS`; an unknown provider uses `BROKER_POSITIONS`, and a combined row spanning providers uses `MIXED_BROKER_POSITIONS`. Shadow and historical rows retain their ledger-specific source values.'),
   "sourceType": zod.enum(['manual', 'automation', 'signal_options_replay', 'watchlist_backtest', 'mixed']).optional(),
   "strategyLabel": zod.string().nullish(),
   "attributionStatus": zod.enum(['attributed', 'mixed', 'unknown']).optional(),
@@ -2385,6 +2389,7 @@ export const GetAccountPositionsAtDateResponse = zod.object({
   "symbol": zod.string(),
   "description": zod.string(),
   "assetClass": zod.string().describe('Display label for the position type.'),
+  "providerSecurityType": zod.string().nullish().describe('Provider security subtype used to preserve native contract identity and quote semantics.'),
   "positionType": zod.enum(['stock', 'etf', 'option']).describe('Canonical account position type used for filtering and market-data routing.'),
   "optionContract": zod.union([zod.object({
   "ticker": zod.string(),
@@ -2482,7 +2487,7 @@ export const GetAccountPositionsAtDateResponse = zod.object({
   "minLockedGainPct": zod.number().nullable(),
   "peakPrice": zod.number().nullable()
 }).describe('Normalized chart overlay state for position risk lines.'),zod.null()]).optional().describe('Normalized chart overlay state for stop-loss and trailing-stop lines, when available.'),
-  "source": zod.string(),
+  "source": zod.string().describe('Holding provenance. Live broker rows use `IBKR_POSITIONS`, `SNAPTRADE_POSITIONS`, `ROBINHOOD_POSITIONS`, or `SCHWAB_POSITIONS`; an unknown provider uses `BROKER_POSITIONS`, and a combined row spanning providers uses `MIXED_BROKER_POSITIONS`. Shadow and historical rows retain their ledger-specific source values.'),
   "sourceType": zod.enum(['manual', 'automation', 'signal_options_replay', 'watchlist_backtest', 'mixed']).optional(),
   "strategyLabel": zod.string().nullish(),
   "attributionStatus": zod.enum(['attributed', 'mixed', 'unknown']).optional(),

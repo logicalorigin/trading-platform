@@ -59,6 +59,7 @@ export type ChartPosition = {
   accountId?: string | null;
   symbol?: string | null;
   assetClass?: string | null;
+  providerSecurityType?: string | null;
   quantity?: number | string | null;
   averagePrice?: number | string | null;
   averageCost?: number | string | null;
@@ -82,6 +83,7 @@ export type ChartExecution = {
   accountId?: string | null;
   symbol?: string | null;
   assetClass?: string | null;
+  providerSecurityType?: string | null;
   side?: string | null;
   price?: number | string | null;
   quantity?: number | string | null;
@@ -330,13 +332,15 @@ const optionContractTupleKey = (
 const sameOptionContract = (
   left?: ChartPositionOptionContract | null,
   right?: ChartPositionOptionContract | null,
+  requireProviderIdentity = false,
 ): boolean => {
   if (!left || !right) return false;
   const leftProvider = String(left.providerContractId || "").trim();
   const rightProvider = String(right.providerContractId || "").trim();
-  if (leftProvider && rightProvider) {
-    return leftProvider === rightProvider;
+  if (leftProvider || rightProvider) {
+    return Boolean(leftProvider && rightProvider && leftProvider === rightProvider);
   }
+  if (requireProviderIdentity) return false;
   const leftTuple = optionContractTupleKey(left);
   const rightTuple = optionContractTupleKey(right);
   return Boolean(leftTuple && rightTuple && leftTuple === rightTuple);
@@ -354,9 +358,13 @@ const matchesChartContext = (
       "optionContract" in item ? item.optionContract : null;
     const directProviderContractId =
       "providerContractId" in item ? item.providerContractId : null;
+    const requireProviderIdentity =
+      String(item.providerSecurityType || "").trim().toLowerCase() ===
+      "robinhood_option";
     return sameOptionContract(
       itemContract || { providerContractId: directProviderContractId },
       context.optionContract,
+      requireProviderIdentity,
     );
   }
 

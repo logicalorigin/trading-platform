@@ -17,8 +17,8 @@ import {
 } from "lucide-react";
 import {
   useCancelOrder,
+  useGetAccountPositions,
   useListOrders,
-  useListPositions,
   usePlaceOrder,
   usePreviewOrder,
   useReplaceOrder,
@@ -554,8 +554,9 @@ export const TradePositionsPanel = ({
   const brokerPanelEnabled = Boolean(
     isVisible && !safeQaMode && brokerAuthenticated && accountId,
   );
-  const positionsQuery = useListPositions(
-    { accountId, mode: environment },
+  const positionsQuery = useGetAccountPositions(
+    accountId || "",
+    { mode: environment, liveQuotes: false, detail: "full" },
     {
       query: {
         enabled: brokerPanelEnabled,
@@ -745,16 +746,18 @@ export const TradePositionsPanel = ({
                 strike: position.optionContract.strike,
                 cp: optionRight,
                 exp: formatExpirationLabel(position.optionContract.expirationDate),
+                providerContractId:
+                  position.optionContract.providerContractId || null,
               }
             : null,
           qty: Math.abs(position.quantity),
-          entry: position.averagePrice,
-          mark: position.marketPrice,
+          entry: position.averageCost,
+          mark: position.mark,
           pnl: position.unrealizedPnl,
           pct: position.unrealizedPnlPercent,
           openedAt: position.openedAt ?? null,
           openedAtSource: position.openedAtSource ?? null,
-          quote: position.quote ?? null,
+          quote: position.quote ?? position.optionQuote ?? null,
           sl:
             position.riskOverlay?.activeStopPrice ??
             position.stopLoss ??
@@ -1149,9 +1152,9 @@ export const TradePositionsPanel = ({
 
           for (const position of livePositions) {
             const referencePrice =
-              isFiniteNumber(position.marketPrice) && position.marketPrice > 0
-                ? position.marketPrice
-                : position.averagePrice;
+              isFiniteNumber(position.mark) && position.mark > 0
+                ? position.mark
+                : position.averageCost;
             if (!isFiniteNumber(referencePrice) || referencePrice <= 0) {
               failedCount += 1;
               continue;
@@ -1264,9 +1267,9 @@ export const TradePositionsPanel = ({
         onConfirm: async () => {
           const position = p._brokerPosition;
           const referencePrice =
-            isFiniteNumber(position.marketPrice) && position.marketPrice > 0
-              ? position.marketPrice
-              : position.averagePrice;
+            isFiniteNumber(position.mark) && position.mark > 0
+              ? position.mark
+              : position.averageCost;
           if (!isFiniteNumber(referencePrice) || referencePrice <= 0) {
             throw new Error("A live mark or average price is required before syncing a stop.");
           }

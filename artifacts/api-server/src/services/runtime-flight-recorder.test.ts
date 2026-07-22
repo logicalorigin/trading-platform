@@ -647,6 +647,7 @@ test("account-position timings are slow-only, rate-bounded, and sanitized", () =
     detail: "full" as const,
     liveQuotes: false,
     outcome: "success" as const,
+    universeCache: "miss" as const,
     positionsCache: "miss" as const,
     positionCount: 4,
     rowCount: 4,

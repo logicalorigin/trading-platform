@@ -10279,33 +10279,39 @@ export async function getShadowAccountPositions(input: {
   assetClass?: string | null;
   source?: string | null;
   liveQuotes?: boolean;
-  detail?: "marketing";
+  detail?: "fast" | "marketing" | "full";
 }): Promise<ShadowAccountPositionsResponseShape> {
   const source = normalizeShadowSourceScope(input.source);
   const assetClassFilter = normalizePositionAssetClass(input.assetClass);
   const includeLiveQuotes = input.liveQuotes !== false;
+  const fast = input.detail === "fast";
   const marketing = input.detail === "marketing";
-  const reusableLiveQuoted = readReusableLiveQuotedShadowPositionsResponse({
-    assetClassFilter,
-    source,
-    includeLiveQuotes,
-  });
+  const reusableLiveQuoted = marketing || fast
+    ? null
+    : readReusableLiveQuotedShadowPositionsResponse({
+        assetClassFilter,
+        source,
+        includeLiveQuotes,
+      });
   if (reusableLiveQuoted) {
     return reusableLiveQuoted;
   }
-  const reusableFiltered = readReusableShadowPositionsResponseForAssetClass({
-    assetClassFilter,
-    source,
-    includeLiveQuotes,
-  });
+  const reusableFiltered = marketing || fast
+    ? null
+    : readReusableShadowPositionsResponseForAssetClass({
+        assetClassFilter,
+        source,
+        includeLiveQuotes,
+      });
   if (reusableFiltered) {
     return reusableFiltered;
   }
+  const detailCacheSuffix = marketing ? ":marketing" : fast ? ":fast" : "";
   const cacheKey = `${shadowPositionsReadCacheKey({
     assetClassFilter,
     source,
     includeLiveQuotes,
-  })}${marketing ? ":marketing" : ""}`;
+  })}${detailCacheSuffix}`;
   const readFullPositions = async () => {
     try {
       if (isShadowAccountDbBackoffActive()) {
@@ -10340,7 +10346,7 @@ export async function getShadowAccountPositions(input: {
             )
           : positions;
       const ordersByPositionKey = shadowOrdersByPositionKey(orders);
-      const automationManagementEvents = marketing
+      const automationManagementEvents = marketing || fast
         ? new Map<string, ExecutionEvent>()
         : await latestShadowAutomationManagementEvents(
             filtered,
@@ -10397,21 +10403,23 @@ export async function getShadowAccountPositions(input: {
           });
         }
       }
-      const dayChanges = await readShadowPositionDayChanges(
-        filtered,
-        observedAt,
-        optionQuoteByProviderContractId,
-        {
-          fetchMissingOptionQuotes: false,
-          fetchOptionQuoteOptions: includeLiveQuotes
-            ? {
-                intent: "visible-live",
-                ownerPrefix: `${positionQuoteOwnerPrefix}:option-visible`,
-              }
-            : undefined,
-        },
-      );
-      const peakMarkByPositionId = marketing
+      const dayChanges = fast
+        ? new Map<string, ShadowPositionDayChange>()
+        : await readShadowPositionDayChanges(
+            filtered,
+            observedAt,
+            optionQuoteByProviderContractId,
+            {
+              fetchMissingOptionQuotes: false,
+              fetchOptionQuoteOptions: includeLiveQuotes
+                ? {
+                    intent: "visible-live",
+                    ownerPrefix: `${positionQuoteOwnerPrefix}:option-visible`,
+                  }
+                : undefined,
+            },
+          );
+      const peakMarkByPositionId = marketing || fast
         ? new Map<string, number>()
         : await readShadowPositionPeakMarkPrices(filtered);
       const rows = filtered.map((position) => {

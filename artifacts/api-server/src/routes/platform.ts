@@ -1825,7 +1825,8 @@ router.get("/accounts/:accountId/positions", async (req, res) => {
       : req.query.liveQuotes === "false"
         ? false
         : undefined;
-  const detail = req.query.detail === "fast" ? "fast" : undefined;
+  const detail =
+    req.query.detail === "fast" ? "fast" : req.query.detail === "full" ? "full" : undefined;
   res.json(
     await withCallerShadowScope(req.params.accountId, () =>
       getAccountPositions({

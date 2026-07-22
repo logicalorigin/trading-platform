@@ -64,6 +64,13 @@ function isPayloadTooLargeError(error: unknown): boolean {
   );
 }
 
+function requestDiagnosticId(requestId: unknown): string | null {
+  if (typeof requestId === "string" || typeof requestId === "number") {
+    return String(requestId);
+  }
+  return null;
+}
+
 function applyIsolationHeaders(_req: express.Request, res: express.Response, next: express.NextFunction) {
   const mode =
     process.env["PYRUS_CROSS_ORIGIN_ISOLATION"] ?? "report-only";
@@ -240,7 +247,7 @@ app.use((req, res, next) => {
   const path = req.path || req.originalUrl?.split("?")[0] || req.url?.split("?")[0] || "/";
   const requestId = (req as { id?: unknown }).id;
   const context: PostgresDiagnosticContext = {
-    requestId: typeof requestId === "string" ? requestId : null,
+    requestId: requestDiagnosticId(requestId),
     method: req.method,
     path,
     route: `${req.method} ${path}`,
