@@ -3117,7 +3117,8 @@ export function SnapTradeConnectPanel({ enabled = true }) {
                           style={{
                             display: "flex",
                             alignItems: "center",
-                            justifyContent: "space-between",
+                            justifyContent: "flex-start",
+                            flexWrap: "wrap",
                             gap: sp(8),
                           }}
                         >

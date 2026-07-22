@@ -82,6 +82,10 @@ test("Settings does not overlap backend refresh and apply requests", () => {
 
 test("broker trading accounts use a native table with explicit query states", () => {
   const source = readSource("./settings/SnapTradeConnectPanel.jsx");
+  const tableBlock = source.slice(
+    source.indexOf('aria-label="Broker trading accounts"'),
+    source.indexOf("inclusionAccounts.map", source.indexOf('aria-label="Broker trading accounts"')),
+  );
 
   assert.match(
     source,
@@ -96,6 +100,10 @@ test("broker trading accounts use a native table with explicit query states", ()
   assert.match(source, /Trading accounts could not be loaded/);
   assert.match(source, /No trading accounts available/);
   assert.match(source, /inclusionQuery\.refetch\(\)/);
+  assert.match(
+    tableBlock,
+    /role="alert"[\s\S]*?justifyContent: "flex-start"[\s\S]*?flexWrap: "wrap"[\s\S]*?inclusionQuery\.refetch\(\)/,
+  );
   assert.match(
     source,
     /aria-busy=\{\s*inclusionQuery\.isFetching \|\| inclusionMutation\.isPending\s*\}/,
