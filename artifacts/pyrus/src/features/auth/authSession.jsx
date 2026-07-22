@@ -173,7 +173,7 @@ export function AuthProvider({ children }) {
       isAdmin,
       // Fetch still in flight on first paint (nothing cached yet).
       isLoading: query.isLoading,
-      // Backend unreachable — the gate treats this as "not signed in".
+      // Backend unreachable — the gate withholds credentials and offers retry.
       isError: query.isError,
       // Mirrors the backend `sessionHasEntitlement` (admins hold everything).
       hasEntitlement: (key) => isAdmin || entitlements.includes(key),

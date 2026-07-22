@@ -25,7 +25,6 @@ import {
   RADII,
   sp,
   T,
-  textSize,
 } from "../../lib/uiTokens.jsx";
 import {
   buildFirstRunBody,
@@ -70,7 +69,7 @@ function LoginShell({ children, loading = false }) {
 }
 
 export function LoginGate({ children }) {
-  const { adoptSession, signedIn, isLoading } = useAuthSession();
+  const { adoptSession, signedIn, isError, isLoading, refresh } = useAuthSession();
 
   const [mode, setMode] = useState("signin");
   const [email, setEmail] = useState("");
@@ -107,8 +106,8 @@ export function LoginGate({ children }) {
               buildFirstRunBody(input),
             )
           : await postAuthJson("/api/auth/login", buildSignInBody(input));
-        // The mutation response is the definitive new session. Adopting it
-        // avoids a second request that can race the session-cookie update.
+        // The mutation response is authoritative. Adopting it avoids turning a
+        // committed login into a visible failure when a second session GET stalls.
         adoptSession(session);
       } catch (submitError) {
         if (submitError?.data?.code === "bootstrap_already_complete") {
@@ -141,7 +140,7 @@ export function LoginGate({ children }) {
   useEffect(() => {
     if (!isLoading && !signedIn) {
       skipBootProgressTasks(
-        PLATFORM_BOOT_PROGRESS_TASK_IDS,
+        [...PLATFORM_BOOT_PROGRESS_TASK_IDS, "workspace-route-chunk"],
         "Signed-out visitor — showing sign-in",
       );
     }
@@ -155,6 +154,58 @@ export function LoginGate({ children }) {
 
   if (signedIn) {
     return children;
+  }
+
+  if (isError) {
+    return (
+      <LoginShell>
+        <Card
+          style={{
+            width: "100%",
+            background: "transparent",
+            border: "none",
+            boxShadow: "none",
+          }}
+        >
+          <CardHeader>
+            <div role="alert" style={{ display: "grid", gap: sp(6) }}>
+              <h1
+                style={{
+                  margin: 0,
+                  fontFamily: T.sans,
+                  fontSize: "20px",
+                  fontWeight: FONT_WEIGHTS.emphasis,
+                  color: CSS_COLOR.text,
+                }}
+              >
+                Sign-in status unavailable
+              </h1>
+              <CardDescription
+                style={{
+                  fontFamily: T.sans,
+                  fontSize: "14px",
+                  color: CSS_COLOR.textSec,
+                }}
+              >
+                PYRUS couldn’t confirm your session. Check the service and try again.
+              </CardDescription>
+            </div>
+          </CardHeader>
+          <CardContent>
+            <Button
+              type="button"
+              variant="primary"
+              size="lg"
+              dataTestId="login-gate-session-retry"
+              onClick={() => void refresh()}
+              style={{ width: "100%", minHeight: 44 }}
+            >
+              Retry sign-in status
+            </Button>
+          </CardContent>
+        </Card>
+      </LoginShell>
+    );
   }
 
   return (
@@ -173,7 +224,7 @@ export function LoginGate({ children }) {
               style={{
                 margin: 0,
                 fontFamily: T.sans,
-                fontSize: textSize("screenTitle"),
+                fontSize: "20px",
                 fontWeight: FONT_WEIGHTS.emphasis,
                 color: CSS_COLOR.text,
               }}
@@ -183,13 +234,13 @@ export function LoginGate({ children }) {
             <CardDescription
               style={{
                 fontFamily: T.sans,
-                fontSize: textSize("body"),
+                fontSize: "14px",
                 color: CSS_COLOR.textSec,
               }}
             >
               {isFirstRun
-                ? "Create the operator account to get started."
-                : "Welcome back. Sign in to continue."}
+                ? "Create the first operator account for this installation."
+                : "Use your operator account to continue."}
             </CardDescription>
           </div>
         </CardHeader>
@@ -197,7 +248,7 @@ export function LoginGate({ children }) {
           <form onSubmit={handleSubmit} aria-label={isFirstRun ? "First-time setup" : "Sign in"} style={{ display: "grid", gap: sp(14) }}>
             <div style={{ display: "grid", gap: sp(14) }}>
               <div style={{ display: "grid", gap: sp(6) }}>
-                <Label htmlFor="email" style={{ color: CSS_COLOR.textSec, fontSize: textSize("caption"), fontWeight: FONT_WEIGHTS.medium, fontFamily: T.sans }}>
+                <Label htmlFor="email" style={{ color: CSS_COLOR.textSec, fontSize: "13px", fontWeight: FONT_WEIGHTS.medium, fontFamily: T.sans }}>
                   Email
                 </Label>
                 <Input
@@ -210,14 +261,15 @@ export function LoginGate({ children }) {
                     background: CSS_COLOR.bg0,
                     borderColor: CSS_COLOR.border,
                     color: CSS_COLOR.text,
-                    fontSize: textSize("body"),
+                    fontSize: "16px",
                     fontFamily: T.sans,
+                    minHeight: 44,
                   }}
                 />
               </div>
               {isFirstRun ? (
                 <div style={{ display: "grid", gap: sp(6) }}>
-                  <Label htmlFor="displayName" style={{ color: CSS_COLOR.textSec, fontSize: textSize("caption"), fontWeight: FONT_WEIGHTS.medium, fontFamily: T.sans }}>
+                  <Label htmlFor="displayName" style={{ color: CSS_COLOR.textSec, fontSize: "13px", fontWeight: FONT_WEIGHTS.medium, fontFamily: T.sans }}>
                     Display name (optional)
                   </Label>
                   <Input
@@ -230,14 +282,15 @@ export function LoginGate({ children }) {
                       background: CSS_COLOR.bg0,
                       borderColor: CSS_COLOR.border,
                       color: CSS_COLOR.text,
-                      fontSize: textSize("body"),
+                      fontSize: "16px",
                       fontFamily: T.sans,
+                      minHeight: 44,
                     }}
                   />
                 </div>
               ) : null}
               <div style={{ display: "grid", gap: sp(6) }}>
-                <Label htmlFor="password" style={{ color: CSS_COLOR.textSec, fontSize: textSize("caption"), fontWeight: FONT_WEIGHTS.medium, fontFamily: T.sans }}>
+                <Label htmlFor="password" style={{ color: CSS_COLOR.textSec, fontSize: "13px", fontWeight: FONT_WEIGHTS.medium, fontFamily: T.sans }}>
                   Password
                 </Label>
                 <Input
@@ -246,23 +299,25 @@ export function LoginGate({ children }) {
                   value={password}
                   onChange={(event) => setPassword(event.target.value)}
                   autoComplete={isFirstRun ? "new-password" : "current-password"}
+                  aria-describedby={isFirstRun ? "login-gate-password-help" : undefined}
                   style={{
                     background: CSS_COLOR.bg0,
                     borderColor: CSS_COLOR.border,
                     color: CSS_COLOR.text,
-                    fontSize: textSize("body"),
+                    fontSize: "16px",
                     fontFamily: T.sans,
+                    minHeight: 44,
                   }}
                 />
                 {isFirstRun && (
-                  <span style={{ color: CSS_COLOR.textMuted, fontSize: textSize("caption"), fontFamily: T.sans }}>
+                  <span id="login-gate-password-help" style={{ color: CSS_COLOR.textMuted, fontSize: "13px", fontFamily: T.sans }}>
                     At least 12 characters.
                   </span>
                 )}
               </div>
               {isFirstRun ? (
                 <div style={{ display: "grid", gap: sp(6) }}>
-                  <Label htmlFor="bootstrapToken" style={{ color: CSS_COLOR.textSec, fontSize: textSize("caption"), fontWeight: FONT_WEIGHTS.medium, fontFamily: T.sans }}>
+                  <Label htmlFor="bootstrapToken" style={{ color: CSS_COLOR.textSec, fontSize: "13px", fontWeight: FONT_WEIGHTS.medium, fontFamily: T.sans }}>
                     Setup token
                   </Label>
                   <Input
@@ -270,15 +325,18 @@ export function LoginGate({ children }) {
                     type="password"
                     value={bootstrapToken}
                     onChange={(event) => setBootstrapToken(event.target.value)}
+                    autoComplete="off"
+                    aria-describedby="login-gate-bootstrap-token-help"
                     style={{
                       background: CSS_COLOR.bg0,
                       borderColor: CSS_COLOR.border,
                       color: CSS_COLOR.text,
-                      fontSize: textSize("body"),
+                      fontSize: "16px",
                       fontFamily: T.sans,
+                      minHeight: 44,
                     }}
                   />
-                  <span style={{ color: CSS_COLOR.textMuted, fontSize: textSize("caption"), fontFamily: T.sans }}>
+                  <span id="login-gate-bootstrap-token-help" style={{ color: CSS_COLOR.textMuted, fontSize: "13px", fontFamily: T.sans }}>
                     From the PYRUS_AUTH_BOOTSTRAP_TOKEN secret.
                   </span>
                 </div>
@@ -294,7 +352,7 @@ export function LoginGate({ children }) {
                   background: cssColorMix(CSS_COLOR.red, 12),
                   border: `1px solid ${cssColorMix(CSS_COLOR.red, 40)}`,
                   color: CSS_COLOR.red,
-                  fontSize: textSize("caption"),
+                  fontSize: "13px",
                   fontFamily: T.sans,
                 }}
               >
@@ -308,33 +366,38 @@ export function LoginGate({ children }) {
               size="lg"
               style={{
                 width: "100%",
-                opacity: pending ? 0.7 : 1,
+                minHeight: 44,
               }}
-              disabled={pending}
+              loading={pending}
+              aria-busy={pending}
               dataTestId="login-gate-submit"
             >
-              {isFirstRun ? "Create account" : "Sign in"}
+              {pending
+                ? isFirstRun
+                  ? "Creating account…"
+                  : "Signing in…"
+                : isFirstRun
+                  ? "Create account"
+                  : "Sign in"}
             </Button>
 
-            <button
+            <Button
               type="button"
+              variant="ghost"
+              size="md"
+              dataTestId="login-gate-mode-switch"
               onClick={() => {
                 setError("");
                 setMode(isFirstRun ? "signin" : "firstrun");
               }}
               style={{
-                background: "none",
-                border: "none",
-                padding: 0,
-                cursor: "pointer",
                 justifySelf: "center",
-                color: CSS_COLOR.textSec,
-                fontFamily: T.sans,
-                fontSize: textSize("caption"),
+                minHeight: 44,
+                fontSize: "14px",
               }}
             >
               {isFirstRun ? "Have an account? Sign in" : "First-time setup"}
-            </button>
+            </Button>
           </form>
         </CardContent>
       </Card>
