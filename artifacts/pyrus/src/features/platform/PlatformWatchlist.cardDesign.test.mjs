@@ -6,6 +6,14 @@ const source = readFileSync(
   new URL("./PlatformWatchlist.jsx", import.meta.url),
   "utf8",
 );
+const shellSource = readFileSync(
+  new URL("./PlatformShell.jsx", import.meta.url),
+  "utf8",
+);
+const appSource = readFileSync(
+  new URL("./PlatformApp.jsx", import.meta.url),
+  "utf8",
+);
 
 test("watchlist cards prioritize quotes and omit empty trend rails", () => {
   assert.match(source, /const renderQuoteStack = \(\) => \(/);
@@ -30,4 +38,20 @@ test("watchlist card actions remain native and density-safe", () => {
   assert.equal(source.match(/data-testid="watchlist-row-primary"/g)?.length, 2);
   assert.equal(source.match(/onClick=\{handlePrimaryActionClick\}/g)?.length, 2);
   assert.match(source, /minHeight: mobileDense \? 52 : undefined/);
+});
+
+test("watchlist card internals fit every supported sidebar width", () => {
+  assert.doesNotMatch(source, /watchlist-signal-pill|renderSignalPill/);
+  assert.match(
+    source,
+    /const WATCHLIST_SIGNAL_DOTS_STYLE = \{ minWidth: dim\(52\), gap: 0 \};/,
+  );
+  assert.equal(source.match(/selectionMode \? null : renderSignalCluster/g)?.length, 1);
+  assert.match(source, /selectionMode\s*\? null\s*:\s*renderSignalCluster\(\{ marginLeft: "auto", flexShrink: 0 \}\)/);
+  assert.equal(source.match(/width: dim\(TABLE_SPARKLINE_COMPACT_WIDTH\)/g)?.length, 2);
+  assert.equal(source.match(/height: dim\(TABLE_SPARKLINE_COMPACT_HEIGHT\)/g)?.length, 2);
+  assert.match(shellSource, /const WATCHLIST_SIDEBAR_WIDTH_DEFAULT = 220;/);
+  assert.match(shellSource, /const WATCHLIST_SIDEBAR_WIDTH_MIN = 220;/);
+  assert.match(appSource, /const WATCHLIST_SIDEBAR_WIDTH_DEFAULT = 220;/);
+  assert.match(appSource, /const WATCHLIST_SIDEBAR_WIDTH_MIN = 220;/);
 });

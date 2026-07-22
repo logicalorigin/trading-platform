@@ -75,7 +75,7 @@ import {
 const TRANSIENT_SCREEN_IDS = new Set(["diagnostics", "settings"]);
 const MOBILE_PRIMARY_SCREEN_IDS = ["market", "signals", "trade", "account"];
 const WATCHLIST_SIDEBAR_WIDTH_DEFAULT = 220;
-const WATCHLIST_SIDEBAR_WIDTH_MIN = 196;
+const WATCHLIST_SIDEBAR_WIDTH_MIN = 220;
 const WATCHLIST_SIDEBAR_WIDTH_MAX = 320;
 const ACTIVITY_SIDEBAR_WIDTH_DEFAULT = 220;
 const ACTIVITY_SIDEBAR_WIDTH_MIN = 196;

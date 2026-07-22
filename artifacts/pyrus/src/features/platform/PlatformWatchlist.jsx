@@ -27,7 +27,6 @@ import {
   formatQuotePrice,
   formatSignedPercent,
   isFiniteNumber,
-  signalBarsSinceTokens,
 } from "../../lib/formatters";
 import {
   joinMotionClasses,
@@ -57,8 +56,6 @@ import { MarketIdentityMark } from "./marketIdentity";
 import {
   TABLE_SPARKLINE_COMPACT_HEIGHT,
   TABLE_SPARKLINE_COMPACT_WIDTH,
-  TABLE_SPARKLINE_HEIGHT,
-  TABLE_SPARKLINE_WIDTH,
 } from "./sparklineConfig";
 import {
   WATCHLIST_SORT_MODE,
@@ -208,7 +205,7 @@ const EMPTY_WATCHLIST_SYMBOLS = [];
 // Hoisted so the row sparkline's fill style is a stable reference — an inline object
 // literal here defeats MicroSparkline's memo and rebuilds its SVG on every row render.
 const SPARKLINE_FILL_STYLE = { width: "100%", height: "100%" };
-const WATCHLIST_SIGNAL_DOTS_STYLE = { minWidth: dim(52), gap: sp(3) };
+const WATCHLIST_SIGNAL_DOTS_STYLE = { minWidth: dim(52), gap: 0 };
 
 const isWatchlistSignalDirection = isSignalSparklineDirection;
 
@@ -254,12 +251,6 @@ const WatchlistRow = memo(
     const bestSignalState = getBestWatchlistSignalState(signalStatesByTimeframe);
     const rowSelectable = Boolean(item.canRemove && item.id);
     const selectedRow = selected === item.sym;
-    const signalDirection = bestSignalState?.currentSignalDirection;
-    const hasSignal =
-      isWatchlistSignalDirection(signalDirection) &&
-      bestSignalState?.status !== "error" &&
-      bestSignalState?.status !== "unavailable";
-    const signalColor = signalDirection === "buy" ? CSS_COLOR.blue : CSS_COLOR.red;
     // Sparkline color follows the traded (execution) signal so the watchlist
     // matches the STA table. Use the execution-timeframe state for the latched
     // single-color fallback; without an execution timeframe, keep the legacy
@@ -297,7 +288,6 @@ const WatchlistRow = memo(
       isWatchlistSignalDirection(sparklineSignalDirection)
         ? signalColorForDirection(sparklineSignalDirection)
         : null;
-    const signalFresh = Boolean(bestSignalState?.fresh);
     const pctPositive = isFiniteNumber(snapshot?.pct) ? snapshot.pct >= 0 : null;
     const extendedHoursDisplay = resolveExtendedHoursQuoteDisplay({
       quote: snapshot,
@@ -544,44 +534,6 @@ const WatchlistRow = memo(
           </span>
         </span>
       ) : null;
-    const renderSignalPill = () =>
-      hasSignal ? (
-        <AppTooltip
-          content={[
-            `${signalDirection.toUpperCase()} ${signalFresh ? "fresh" : "stale"} signal`,
-            bestSignalState?.timeframe || "monitor",
-            ...signalBarsSinceTokens(bestSignalState),
-          ].join(" - ")}
-        >
-          <button
-            type="button"
-            data-testid="watchlist-signal-pill"
-            data-fresh={signalFresh ? "true" : "false"}
-            className={signalFresh ? "ra-status-pulse" : "ra-interactive"}
-            onClick={(event) => {
-              event.stopPropagation();
-              onSignalAction?.(item.sym, bestSignalState);
-            }}
-            style={{
-              border: `1px solid ${signalFresh ? signalColor : `${cssColorMix(signalColor, 53)}`}`,
-              background: signalFresh ? `${cssColorMix(signalColor, 14)}` : `${cssColorMix(signalColor, 8)}`,
-              color: signalFresh ? signalColor : `${cssColorMix(signalColor, 82)}`,
-              cursor: "pointer",
-              fontFamily: T.sans,
-              fontSize: fs(7),
-              fontWeight: FONT_WEIGHTS.medium,
-              letterSpacing: 0,
-              lineHeight: 1,
-              padding: sp("2px 5px"),
-              borderRadius: dim(RADII.pill),
-              boxShadow: signalFresh ? `0 0 0 2px ${cssColorMix(signalColor, 13)}` : "none",
-              whiteSpace: "nowrap",
-            }}
-          >
-            {signalDirection.toUpperCase()}
-          </button>
-        </AppTooltip>
-      ) : null;
     const renderSignalCluster = (style = null) => (
       <span
         data-testid="watchlist-signal-cluster"
@@ -599,7 +551,6 @@ const WatchlistRow = memo(
           onSelect={handleSignalSelect}
           style={WATCHLIST_SIGNAL_DOTS_STYLE}
         />
-        {mobileDense ? null : renderSignalPill()}
       </span>
     );
 
@@ -619,7 +570,7 @@ const WatchlistRow = memo(
             ...motionRowStyle(itemIndex, 7, 140),
             ...motionVars({
               // Match the desktop row: accent follows P&L (green/red); buy/sell
-              // direction stays on the signal pill/dots per DESIGN.md.
+              // direction stays on the signal dots per DESIGN.md.
               accent: selectedRow
                 ? CSS_COLOR.accent
                 : pctPositive == null
@@ -692,7 +643,9 @@ const WatchlistRow = memo(
                 {item.sym}
               </span>
             </button>
-            {renderSignalCluster({ marginLeft: "auto", flexShrink: 0 })}
+            {selectionMode
+              ? null
+              : renderSignalCluster({ marginLeft: "auto", flexShrink: 0 })}
             {renderQuoteStack()}
           </div>
           {sparklinePoints.length >= 2 ? (
@@ -775,7 +728,7 @@ const WatchlistRow = memo(
           ...motionVars({
             // Row hover/focus accent follows financial outcome (green/red) per
             // DESIGN.md. Directional buy/sell (blue/red) stays on the signal
-            // pill and dots so the two color languages never collide on one
+            // dots so the two color languages never collide on one
             // element or read differently from one row to the next.
             accent: selectedRow
               ? CSS_COLOR.accent
@@ -892,9 +845,9 @@ const WatchlistRow = memo(
                 data-sparkline-points={sparklinePoints.length}
                 data-sparkline-point-timestamps={sparklinePointTimestampCount}
                 style={{
-                  width: dim(TABLE_SPARKLINE_WIDTH),
-                  minWidth: dim(TABLE_SPARKLINE_WIDTH),
-                  height: dim(TABLE_SPARKLINE_HEIGHT),
+                  width: dim(TABLE_SPARKLINE_COMPACT_WIDTH),
+                  minWidth: dim(TABLE_SPARKLINE_COMPACT_WIDTH),
+                  height: dim(TABLE_SPARKLINE_COMPACT_HEIGHT),
                   overflow: "hidden",
                 }}
               >
@@ -903,14 +856,14 @@ const WatchlistRow = memo(
                   positive={pctPositive}
                   color={sparklineColor}
                   pointColors={sparklinePointColors}
-                  width={TABLE_SPARKLINE_WIDTH}
-                  height={TABLE_SPARKLINE_HEIGHT}
+                  width={TABLE_SPARKLINE_COMPACT_WIDTH}
+                  height={TABLE_SPARKLINE_COMPACT_HEIGHT}
                   ariaHidden
                   style={SPARKLINE_FILL_STYLE}
                 />
               </span>
             ) : null}
-            {renderSignalCluster({ marginLeft: "auto" })}
+            {selectionMode ? null : renderSignalCluster({ marginLeft: "auto" })}
           </div>
           {extendedHoursDisplay ? (
             <div style={{ display: "flex", justifyContent: "flex-end", marginTop: sp(4) }}>
