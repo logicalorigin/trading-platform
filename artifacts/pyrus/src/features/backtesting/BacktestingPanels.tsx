@@ -1021,6 +1021,7 @@ function SectionCard({
   right,
   children,
   style,
+  testId,
 }: {
   title: string;
   theme: ThemeTokens;
@@ -1028,9 +1029,14 @@ function SectionCard({
   right?: ReactNode;
   children: ReactNode;
   style?: CSSProperties;
+  testId?: string;
 }) {
   return (
-    <div className="ra-panel-enter" style={{ ...cardStyle(theme, scale), ...style }}>
+    <div
+      className="ra-panel-enter"
+      data-testid={testId}
+      style={{ ...cardStyle(theme, scale), ...style }}
+    >
       <div
         style={{
           display: "flex",
@@ -2701,7 +2707,7 @@ export function BacktestWorkspace({
 
       showBanner({
         kind: "success",
-        title: "Run promoted",
+        title: "Algo draft created",
         detail: `${draft.name} is now visible in the Algo draft queue.`,
       });
       await refreshBacktestQueries();
@@ -2961,13 +2967,14 @@ export function BacktestWorkspace({
             <button
               type="button"
               onClick={() => void handlePromoteRun()}
+              aria-label={`Create Algo draft from ${runDetail?.run.name ?? "selected run"}`}
               disabled={runDetail?.run.status !== "completed"}
               style={{
                 ...buttonStyle(theme, scale, "ghost"),
                 opacity: runDetail?.run.status !== "completed" ? 0.5 : 1,
               }}
             >
-              Promote
+              Create Algo Draft
             </button>
           </div>
           )}
@@ -2984,6 +2991,7 @@ export function BacktestWorkspace({
         title="Backtest Inputs"
         theme={theme}
         scale={scale}
+        testId="backtest-inputs"
         right={
           <div
             style={{
@@ -3690,7 +3698,12 @@ export function BacktestWorkspace({
         </div>
       </SectionCard>
 
-      <SectionCard title="Summary" theme={theme} scale={scale}>
+      <SectionCard
+        title="Summary"
+        theme={theme}
+        scale={scale}
+        testId="backtest-results"
+      >
         {!runDetail ? (
           <div style={{ color: theme.textDim, fontSize: scale.fs(10) }}>
             Select a run to inspect the summary, pattern buckets, trade replay,
@@ -5397,6 +5410,7 @@ export function BacktestWorkspace({
         title="Trades"
         theme={theme}
         scale={scale}
+        testId="backtest-trades"
         right={
           <div
             style={{
@@ -5535,7 +5549,11 @@ export function BacktestWorkspace({
                 background: theme.bg0,
               }}
             >
-              <div style={{ overflowX: "auto" }}>
+              <div
+                data-testid="backtest-trades-scroll"
+                data-preserve-mobile-layout
+                style={{ overflowX: "auto" }}
+              >
                 <table
                   style={{
                     width: "100%",
@@ -5921,11 +5939,18 @@ export function BacktestWorkspace({
         )}
       </SectionCard>
 
-      <SectionCard title="Logs" theme={theme} scale={scale}>
+      <SectionCard
+        title="Logs"
+        theme={theme}
+        scale={scale}
+        testId="backtest-logs"
+      >
         <div
           style={{
             display: "grid",
-            gridTemplateColumns: "minmax(0, 1fr) minmax(320px, 0.95fr)",
+            gridTemplateColumns: backtestIsNarrow
+              ? "minmax(0, 1fr)"
+              : "minmax(0, 1fr) minmax(320px, 0.95fr)",
             gap: scale.sp(10),
             alignItems: "start",
           }}
@@ -6085,11 +6110,18 @@ export function BacktestWorkspace({
         </div>
       </SectionCard>
 
-      <SectionCard title="History" theme={theme} scale={scale}>
+      <SectionCard
+        title="History"
+        theme={theme}
+        scale={scale}
+        testId="backtest-history"
+      >
         <div
           style={{
             display: "grid",
-            gridTemplateColumns: "minmax(0, 1fr) minmax(320px, 0.95fr)",
+            gridTemplateColumns: backtestIsNarrow
+              ? "minmax(0, 1fr)"
+              : "minmax(0, 1fr) minmax(320px, 0.95fr)",
             gap: scale.sp(10),
             alignItems: "start",
           }}
@@ -6205,10 +6237,12 @@ export function BacktestWorkspace({
                       }}
                     >
                       <div
+                        data-testid="backtest-history-run"
                         style={{
                           display: "grid",
-                          gridTemplateColumns:
-                            "minmax(0, 1.3fr) repeat(4, minmax(0, 1fr))",
+                          gridTemplateColumns: backtestIsNarrow
+                            ? "minmax(0, 1fr)"
+                            : "minmax(0, 1.3fr) repeat(4, minmax(0, 1fr))",
                           gap: scale.sp(8),
                           alignItems: "center",
                         }}
