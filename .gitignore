@@ -90,7 +90,6 @@ reports/pattern-discovery-sweeps/
 # local runtime registries
 .pyrus-runtime/
 artifacts/api-server/data/ibkr-remote-desktops.json
-artifacts/api-server/data/ibkr-bridge-runtime-override.json
 
 # accidental root shell arg artifacts
 /'expirationDate'
@@ -115,7 +114,10 @@ playwright-report/
 AGENT_CHAT_LIVE.jsonl
 
 # Codex/Claude watch scratch debris (screenshots, session JSON, pid/registry
-# files) — agent checkpoints must not sweep these into commits
-/.codex-watch/
+# files) — agent checkpoints must not sweep these into commits.
+# Exception: the ponytail review campaign ledger (small text) is tracked so
+# review state survives container resets.
+/.codex-watch/*
+!/.codex-watch/ponytail-review-2026-07-09/
 /.codex-watch-*/
 /.codex-log-watch/
