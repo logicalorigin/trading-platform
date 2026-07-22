@@ -208,6 +208,7 @@ const EMPTY_WATCHLIST_SYMBOLS = [];
 // Hoisted so the row sparkline's fill style is a stable reference — an inline object
 // literal here defeats MicroSparkline's memo and rebuilds its SVG on every row render.
 const SPARKLINE_FILL_STYLE = { width: "100%", height: "100%" };
+const WATCHLIST_SIGNAL_DOTS_STYLE = { minWidth: dim(52), gap: sp(3) };
 
 const isWatchlistSignalDirection = isSignalSparklineDirection;
 
@@ -393,6 +394,14 @@ const WatchlistRow = memo(
       }
       onSelect?.(item.sym);
     };
+    const handlePrimaryActionClick = (event) => {
+      event.stopPropagation();
+      handleRowClick();
+    };
+    const handleSignalSelect = useCallback(
+      (state) => onSignalAction?.(item.sym, state),
+      [item.sym, onSignalAction],
+    );
     const renderSelectionControl = () => (
       <button
         type="button"
@@ -453,7 +462,7 @@ const WatchlistRow = memo(
         style={{
           color:
             pctPositive == null ? CSS_COLOR.textMuted : pctPositive ? CSS_COLOR.green : CSS_COLOR.red,
-          fontFamily: T.sans,
+          fontFamily: T.data,
           fontSize: textSize("body"),
           fontVariantNumeric: "tabular-nums",
           fontWeight: FONT_WEIGHTS.medium,
@@ -463,6 +472,37 @@ const WatchlistRow = memo(
         }}
       >
         {formatSignedPercent(snapshot?.pct)}
+      </span>
+    );
+    const renderQuoteStack = () => (
+      <span
+        data-testid="watchlist-row-quote"
+        style={{
+          alignItems: "flex-end",
+          display: "inline-flex",
+          flexDirection: "column",
+          flexShrink: 0,
+          gap: sp(3),
+          justifyContent: "center",
+          minWidth: 0,
+        }}
+      >
+        <span
+          data-testid="watchlist-row-price"
+          className={priceFlashClassName}
+          style={{
+            color: CSS_COLOR.text,
+            fontFamily: T.data,
+            fontSize: mobileDense ? textSize("body") : textSize("paragraphMuted"),
+            fontVariantNumeric: "tabular-nums",
+            fontWeight: FONT_WEIGHTS.medium,
+            lineHeight: 1,
+            whiteSpace: "nowrap",
+          }}
+        >
+          {formatQuotePrice(displayedPrice)}
+        </span>
+        {renderDayChange({ fontSize: textSize("caption") })}
       </span>
     );
     const renderExtendedHoursBadge = () =>
@@ -481,7 +521,7 @@ const WatchlistRow = memo(
                 : extendedHoursPositive
                   ? CSS_COLOR.green
                   : CSS_COLOR.red,
-            fontFamily: T.sans,
+            fontFamily: T.data,
             fontSize: textSize("caption"),
             fontVariantNumeric: "tabular-nums",
             fontWeight: FONT_WEIGHTS.medium,
@@ -494,7 +534,7 @@ const WatchlistRow = memo(
             whiteSpace: "nowrap",
           }}
         >
-          <span style={{ color: CSS_COLOR.textMuted }}>
+          <span style={{ color: CSS_COLOR.textMuted, fontFamily: T.sans }}>
             {extendedHoursDisplay.sessionLabel}
           </span>
           <span>{formatQuotePrice(extendedHoursDisplay.price)}</span>
@@ -556,10 +596,10 @@ const WatchlistRow = memo(
       >
         <SignalDots
           statesByTimeframe={signalStatesByTimeframe}
-          onSelect={(state) => onSignalAction?.(item.sym, state)}
-          style={{ minWidth: dim(52), gap: sp(3) }}
+          onSelect={handleSignalSelect}
+          style={WATCHLIST_SIGNAL_DOTS_STYLE}
         />
-        {renderSignalPill()}
+        {mobileDense ? null : renderSignalPill()}
       </span>
     );
 
@@ -589,13 +629,14 @@ const WatchlistRow = memo(
                     : CSS_COLOR.red,
             }),
             width: "100%",
-            height: 44,
-            minHeight: 44,
+            height: mobileDense ? "auto" : undefined,
+            minHeight: mobileDense ? 52 : undefined,
             display: "flex",
             flexDirection: "column",
             gap: 2,
             padding: "4px 8px",
             border: "none",
+            boxShadow: `inset 0 -1px 0 ${CSS_COLOR.border}`,
             background:
               selectedRow || dragOver ? `${cssColorMix(CSS_COLOR.accent, 7)}` : rowBackground,
             color: CSS_COLOR.text,
@@ -615,79 +656,85 @@ const WatchlistRow = memo(
             }}
           >
             {selectionMode ? renderSelectionControl() : null}
-            <MarketIdentityMark item={identityItem} size={18} showCountryBadge={false} />
-            <span
-              data-testid="watchlist-row-symbol"
-              className={priceFlashClassName}
+            <button
+              type="button"
+              data-testid="watchlist-row-primary"
+              aria-label={`Open ${item.sym}`}
+              className="ra-touch-target-y"
+              onClick={handlePrimaryActionClick}
               style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: sp(4),
                 minWidth: 0,
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-                whiteSpace: "nowrap",
-                color: CSS_COLOR.text,
-                fontFamily: T.sans,
-                fontSize: textSize("body"),
-                fontWeight: FONT_WEIGHTS.medium,
-                lineHeight: 1,
+                border: "none",
+                background: "transparent",
+                padding: 0,
+                cursor: "pointer",
               }}
             >
-              {item.sym}
-            </span>
-            {renderDayChange()}
+              <MarketIdentityMark item={identityItem} size={18} showCountryBadge={false} />
+              <span
+                data-testid="watchlist-row-symbol"
+                className={priceFlashClassName}
+                style={{
+                  minWidth: 0,
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                  color: CSS_COLOR.text,
+                  fontFamily: T.sans,
+                  fontSize: textSize("body"),
+                  fontWeight: FONT_WEIGHTS.medium,
+                  lineHeight: 1,
+                }}
+              >
+                {item.sym}
+              </span>
+            </button>
             {renderSignalCluster({ marginLeft: "auto", flexShrink: 0 })}
+            {renderQuoteStack()}
           </div>
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 6,
-              minWidth: 0,
-              lineHeight: 1,
-            }}
-          >
-            <span
-              data-testid="watchlist-mobile-sparkline"
-              data-sparkline-signal-mode={sparklineSignalMode}
-              data-sparkline-signal-events={signalEvents.length}
-              data-sparkline-signal-direction={sparklineSignalDirection || undefined}
-              data-sparkline-source={sparklineResolved.source}
-              data-sparkline-points={sparklinePoints.length}
-              data-sparkline-point-timestamps={sparklinePointTimestampCount}
+          {sparklinePoints.length >= 2 ? (
+            <div
+              data-testid="watchlist-row-context"
               style={{
-                width: dim(TABLE_SPARKLINE_COMPACT_WIDTH),
-                height: dim(TABLE_SPARKLINE_COMPACT_HEIGHT),
-                minWidth: dim(TABLE_SPARKLINE_COMPACT_WIDTH),
-                marginLeft: "auto",
-                overflow: "hidden",
-                flexShrink: 0,
-              }}
-            >
-              <MicroSparkline
-                data={sparklineData}
-                positive={pctPositive}
-                color={sparklineColor}
-                pointColors={sparklinePointColors}
-                width={TABLE_SPARKLINE_COMPACT_WIDTH}
-                height={TABLE_SPARKLINE_COMPACT_HEIGHT}
-                ariaHidden
-                style={SPARKLINE_FILL_STYLE}
-              />
-            </span>
-            <span
-              className={priceFlashClassName}
-              style={{
-                color: CSS_COLOR.text,
-                fontFamily: T.sans,
-                fontSize: textSize("body"),
-                fontVariantNumeric: "tabular-nums",
-                fontWeight: FONT_WEIGHTS.medium,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "flex-end",
+                minWidth: 0,
                 lineHeight: 1,
-                whiteSpace: "nowrap",
               }}
             >
-              {formatQuotePrice(displayedPrice)}
-            </span>
-          </div>
+              <span
+                data-testid="watchlist-mobile-sparkline"
+                data-sparkline-signal-mode={sparklineSignalMode}
+                data-sparkline-signal-events={signalEvents.length}
+                data-sparkline-signal-direction={sparklineSignalDirection || undefined}
+                data-sparkline-source={sparklineResolved.source}
+                data-sparkline-points={sparklinePoints.length}
+                data-sparkline-point-timestamps={sparklinePointTimestampCount}
+                style={{
+                  width: dim(TABLE_SPARKLINE_COMPACT_WIDTH),
+                  height: dim(TABLE_SPARKLINE_COMPACT_HEIGHT),
+                  minWidth: dim(TABLE_SPARKLINE_COMPACT_WIDTH),
+                  overflow: "hidden",
+                  flexShrink: 0,
+                }}
+              >
+                <MicroSparkline
+                  data={sparklineData}
+                  positive={pctPositive}
+                  color={sparklineColor}
+                  pointColors={sparklinePointColors}
+                  width={TABLE_SPARKLINE_COMPACT_WIDTH}
+                  height={TABLE_SPARKLINE_COMPACT_HEIGHT}
+                  ariaHidden
+                  style={SPARKLINE_FILL_STYLE}
+                />
+              </span>
+            </div>
+          ) : null}
         </div>
       );
     }
@@ -750,6 +797,7 @@ const WatchlistRow = memo(
           alignItems: "center",
           background:
             selectedRow || dragOver ? `${cssColorMix(CSS_COLOR.accent, 7)}` : rowBackground,
+          boxShadow: `inset 0 -1px 0 ${CSS_COLOR.border}`,
           opacity: dragging ? 0.55 : 1,
         }}
       >
@@ -759,8 +807,8 @@ const WatchlistRow = memo(
             style={{
               display: "grid",
               // Reserve the symbol column so it fits a 5-char ticker and never
-              // shrinks — the signal/sparkline cluster (minmax(0,auto)) gives up
-              // width or the parent clips it before a ticker can render partially.
+              // shrinks — the quote column gives up width or the parent clips it
+              // before a ticker can render partially.
               gridTemplateColumns:
                 `16px 18px minmax(${dim(56)}px, 1fr) minmax(0, auto)`,
               alignItems: "center",
@@ -793,10 +841,12 @@ const WatchlistRow = memo(
                 onTrade={(symbol) => onSignalAction?.(symbol, bestSignalState)}
                 onResearch={onResearchSymbol}
               >
-                <span
-                  data-testid="watchlist-row-symbol"
+                <button
+                  type="button"
+                  data-testid="watchlist-row-primary"
+                  aria-label={`Open ${item.sym}`}
+                  onClick={handlePrimaryActionClick}
                   className={priceFlashClassName}
-                  tabIndex={0}
                   style={{
                     minWidth: 0,
                     flex: "0 0 auto",
@@ -810,89 +860,63 @@ const WatchlistRow = memo(
                     whiteSpace: "nowrap",
                     padding: sp("1px 3px"),
                     borderRadius: dim(RADII.xs),
+                    border: "none",
+                    background: "transparent",
+                    cursor: "pointer",
                   }}
                 >
-                  {item.sym}
-                </span>
+                  <span data-testid="watchlist-row-symbol">{item.sym}</span>
+                </button>
               </SymbolHoverCard>
             </span>
-            {renderSignalCluster({ justifySelf: "end" })}
+            {renderQuoteStack()}
           </div>
           <div
+            data-testid="watchlist-row-context"
             style={{
-              display: "grid",
-              gridTemplateColumns: "max-content auto",
+              display: "flex",
               alignItems: "center",
-              justifyContent: "end",
+              justifyContent: "space-between",
               gap: sp(4),
               marginTop: sp(6),
               minWidth: 0,
             }}
           >
-            <span
-              data-testid="watchlist-row-sparkline"
-              data-sparkline-signal-mode={sparklineSignalMode}
-              data-sparkline-signal-events={signalEvents.length}
-              data-sparkline-signal-direction={sparklineSignalDirection || undefined}
-              data-sparkline-source={sparklineResolved.source}
-              data-sparkline-points={sparklinePoints.length}
-              data-sparkline-point-timestamps={sparklinePointTimestampCount}
-              style={{
-                width: dim(TABLE_SPARKLINE_WIDTH),
-                minWidth: dim(TABLE_SPARKLINE_WIDTH),
-                height: dim(TABLE_SPARKLINE_HEIGHT),
-                overflow: "hidden",
-              }}
-            >
-              <MicroSparkline
-                data={sparklineData}
-                positive={pctPositive}
-                color={sparklineColor}
-                pointColors={sparklinePointColors}
-                width={TABLE_SPARKLINE_WIDTH}
-                height={TABLE_SPARKLINE_HEIGHT}
-                ariaHidden
-                style={SPARKLINE_FILL_STYLE}
-              />
-            </span>
-            <span
-              style={{
-                alignItems: "flex-end",
-                display: "inline-flex",
-                flexDirection: "column",
-                gap: sp(3),
-                justifyContent: "center",
-                justifySelf: "end",
-                minWidth: 0,
-              }}
-            >
+            {sparklinePoints.length >= 2 ? (
               <span
-                data-testid="watchlist-row-price"
-                className={priceFlashClassName}
+                data-testid="watchlist-row-sparkline"
+                data-sparkline-signal-mode={sparklineSignalMode}
+                data-sparkline-signal-events={signalEvents.length}
+                data-sparkline-signal-direction={sparklineSignalDirection || undefined}
+                data-sparkline-source={sparklineResolved.source}
+                data-sparkline-points={sparklinePoints.length}
+                data-sparkline-point-timestamps={sparklinePointTimestampCount}
                 style={{
-                  display: "inline-flex",
-                  alignItems: "center",
-                  justifyContent: "flex-end",
-                  color: CSS_COLOR.text,
-                  fontFamily: T.sans,
-                  fontSize: textSize("paragraphMuted"),
-                  fontVariantNumeric: "tabular-nums",
-                  fontWeight: FONT_WEIGHTS.medium,
-                  textAlign: "right",
-                  padding: sp("1px 2px"),
-                  borderRadius: dim(RADII.xs),
-                  whiteSpace: "nowrap",
+                  width: dim(TABLE_SPARKLINE_WIDTH),
+                  minWidth: dim(TABLE_SPARKLINE_WIDTH),
+                  height: dim(TABLE_SPARKLINE_HEIGHT),
+                  overflow: "hidden",
                 }}
               >
-                {formatQuotePrice(displayedPrice)}
+                <MicroSparkline
+                  data={sparklineData}
+                  positive={pctPositive}
+                  color={sparklineColor}
+                  pointColors={sparklinePointColors}
+                  width={TABLE_SPARKLINE_WIDTH}
+                  height={TABLE_SPARKLINE_HEIGHT}
+                  ariaHidden
+                  style={SPARKLINE_FILL_STYLE}
+                />
               </span>
-              {renderDayChange({
-                fontSize: textSize("caption"),
-                justifySelf: "end",
-              })}
-              {renderExtendedHoursBadge()}
-            </span>
+            ) : null}
+            {renderSignalCluster({ marginLeft: "auto" })}
           </div>
+          {extendedHoursDisplay ? (
+            <div style={{ display: "flex", justifyContent: "flex-end", marginTop: sp(4) }}>
+              {renderExtendedHoursBadge()}
+            </div>
+          ) : null}
         </div>
         {item.monitoredOnly ? (
           <AppTooltip content={`Add ${item.sym} to watchlist`}>
