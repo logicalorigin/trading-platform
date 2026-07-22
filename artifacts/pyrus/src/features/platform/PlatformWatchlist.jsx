@@ -54,8 +54,8 @@ import { useRuntimeTickerSnapshot, useRuntimeTickerSnapshots } from "./runtimeTi
 import { useAlgoStaExecutionTimeframe } from "./algoStaExecutionTimeframeStore";
 import { MarketIdentityMark } from "./marketIdentity";
 import {
-  TABLE_SPARKLINE_COMPACT_HEIGHT,
-  TABLE_SPARKLINE_COMPACT_WIDTH,
+  TABLE_SPARKLINE_HEIGHT,
+  TABLE_SPARKLINE_WIDTH,
 } from "./sparklineConfig";
 import {
   WATCHLIST_SORT_MODE,
@@ -205,7 +205,15 @@ const EMPTY_WATCHLIST_SYMBOLS = [];
 // Hoisted so the row sparkline's fill style is a stable reference — an inline object
 // literal here defeats MicroSparkline's memo and rebuilds its SVG on every row render.
 const SPARKLINE_FILL_STYLE = { width: "100%", height: "100%" };
-const WATCHLIST_SIGNAL_DOTS_STYLE = { minWidth: dim(52), gap: 0 };
+const WATCHLIST_SIGNAL_DOTS_STYLE = { minWidth: dim(52), gap: sp(3) };
+const WATCHLIST_SPARKLINE_FRAME_STYLE = {
+  flex: "1 1 auto",
+  width: "100%",
+  minWidth: 0,
+  maxWidth: dim(104),
+  height: dim(TABLE_SPARKLINE_HEIGHT),
+  overflow: "hidden",
+};
 
 const isWatchlistSignalDirection = isSignalSparklineDirection;
 
@@ -388,9 +396,12 @@ const WatchlistRow = memo(
       event.stopPropagation();
       handleRowClick();
     };
-    const handleSignalSelect = useCallback(
-      (state) => onSignalAction?.(item.sym, state),
-      [item.sym, onSignalAction],
+    const handleSignalClusterClick = useCallback(
+      (event) => {
+        event.stopPropagation();
+        onSignalAction?.(item.sym, bestSignalState);
+      },
+      [bestSignalState, item.sym, onSignalAction],
     );
     const renderSelectionControl = () => (
       <button
@@ -535,23 +546,33 @@ const WatchlistRow = memo(
         </span>
       ) : null;
     const renderSignalCluster = (style = null) => (
-      <span
+      <button
+        type="button"
         data-testid="watchlist-signal-cluster"
+        aria-label={`Open ${item.sym} in Trade from signal status`}
+        className="ra-interactive"
+        disabled={!onSignalAction}
+        onClick={handleSignalClusterClick}
         style={{
+          appearance: "none",
+          background: "transparent",
+          border: 0,
+          color: "inherit",
+          cursor: onSignalAction ? "pointer" : "default",
           display: "inline-flex",
           alignItems: "center",
           justifyContent: "flex-end",
-          gap: sp(4),
+          minHeight: dim(mobileDense ? 44 : 24),
           minWidth: 0,
+          padding: 0,
           ...style,
         }}
       >
         <SignalDots
           statesByTimeframe={signalStatesByTimeframe}
-          onSelect={handleSignalSelect}
           style={WATCHLIST_SIGNAL_DOTS_STYLE}
         />
-      </span>
+      </button>
     );
 
     if (mobileDense) {
@@ -667,21 +688,15 @@ const WatchlistRow = memo(
                 data-sparkline-source={sparklineResolved.source}
                 data-sparkline-points={sparklinePoints.length}
                 data-sparkline-point-timestamps={sparklinePointTimestampCount}
-                style={{
-                  width: dim(TABLE_SPARKLINE_COMPACT_WIDTH),
-                  height: dim(TABLE_SPARKLINE_COMPACT_HEIGHT),
-                  minWidth: dim(TABLE_SPARKLINE_COMPACT_WIDTH),
-                  overflow: "hidden",
-                  flexShrink: 0,
-                }}
+                style={WATCHLIST_SPARKLINE_FRAME_STYLE}
               >
                 <MicroSparkline
                   data={sparklineData}
                   positive={pctPositive}
                   color={sparklineColor}
                   pointColors={sparklinePointColors}
-                  width={TABLE_SPARKLINE_COMPACT_WIDTH}
-                  height={TABLE_SPARKLINE_COMPACT_HEIGHT}
+                  width={TABLE_SPARKLINE_WIDTH}
+                  height={TABLE_SPARKLINE_HEIGHT}
                   ariaHidden
                   style={SPARKLINE_FILL_STYLE}
                 />
@@ -844,20 +859,15 @@ const WatchlistRow = memo(
                 data-sparkline-source={sparklineResolved.source}
                 data-sparkline-points={sparklinePoints.length}
                 data-sparkline-point-timestamps={sparklinePointTimestampCount}
-                style={{
-                  width: dim(TABLE_SPARKLINE_COMPACT_WIDTH),
-                  minWidth: dim(TABLE_SPARKLINE_COMPACT_WIDTH),
-                  height: dim(TABLE_SPARKLINE_COMPACT_HEIGHT),
-                  overflow: "hidden",
-                }}
+                style={WATCHLIST_SPARKLINE_FRAME_STYLE}
               >
                 <MicroSparkline
                   data={sparklineData}
                   positive={pctPositive}
                   color={sparklineColor}
                   pointColors={sparklinePointColors}
-                  width={TABLE_SPARKLINE_COMPACT_WIDTH}
-                  height={TABLE_SPARKLINE_COMPACT_HEIGHT}
+                  width={TABLE_SPARKLINE_WIDTH}
+                  height={TABLE_SPARKLINE_HEIGHT}
                   ariaHidden
                   style={SPARKLINE_FILL_STYLE}
                 />
