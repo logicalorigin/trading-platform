@@ -65,6 +65,7 @@ test("ring specs cover every phase and idle renders no ring", () => {
   }
   assert.equal(BROKER_RING_SPECS.idle, null);
   assert.equal(BROKER_RING_SPECS.connected.tone, "green");
+  assert.equal(BROKER_RING_SPECS.connected.sheen, undefined);
   assert.equal(BROKER_RING_SPECS.impaired.dashed, true);
   assert.equal(BROKER_RING_SPECS.working.motion, "arc");
 });

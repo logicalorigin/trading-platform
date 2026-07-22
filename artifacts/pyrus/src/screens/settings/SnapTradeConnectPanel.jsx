@@ -1051,25 +1051,6 @@ function BrokerCardRing({ phase }) {
           animation: rectAnimation,
         }}
       />
-      {spec.sheen ? (
-        <rect
-          pathLength="100"
-          style={{
-            x: "1px",
-            y: "1px",
-            width: "calc(100% - 2px)",
-            height: "calc(100% - 2px)",
-            rx: dim(RADII.sm),
-            fill: "none",
-            stroke,
-            strokeWidth: 2,
-            strokeLinecap: "round",
-            strokeDasharray: "6 94",
-            opacity: 0.4,
-            animation: "brokerRingSheen 6s linear infinite",
-          }}
-        />
-      ) : null}
     </svg>
   );
 }
@@ -1176,6 +1157,8 @@ function BrokerChoiceButton({
       </button>
       {actions.length ? (
         <span
+          role="group"
+          aria-label={`${choice.label} connection actions`}
           style={{ display: "flex", gap: sp(6), flexWrap: "wrap" }}
         >
           {actions.map((action) => (

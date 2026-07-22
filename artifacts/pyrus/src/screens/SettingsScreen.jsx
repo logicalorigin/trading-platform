@@ -20,6 +20,10 @@ import {
   DiagnosticThresholdSettingsPanel,
 } from "./settings/DiagnosticThresholdSettingsPanel";
 import { SnapTradeConnectPanel } from "./settings/SnapTradeConnectPanel.jsx";
+import {
+  getSettingsChangeStatus,
+  settleSettingsDrafts,
+} from "./settings/settingsChangeStatus.js";
 import TaxSettingsPanel from "./settings/TaxSettingsPanel.jsx";
 import {
   LOCAL_ALERT_PREFERENCES_EVENT,
@@ -619,6 +623,7 @@ function SettingCard({ setting, draftValue, onDraftChange }) {
         <Select
           value={draftValue ?? setting.pendingValue ?? setting.value ?? ""}
           onChange={(next) => onDraftChange(setting.key, next)}
+          ariaLabel={setting.label}
           options={setting.options}
         />
       ) : (
@@ -647,10 +652,12 @@ function useBackendSettings({ enabled = true } = {}) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
   const [drafts, setDrafts] = useState({});
+  const [applyOutcome, setApplyOutcome] = useState(null);
 
   const load = useCallback(() => {
     setLoading(true);
     setError(null);
+    setApplyOutcome(null);
     fetch("/api/settings/backend", { headers: { Accept: "application/json" } })
       .then((response) =>
         response.ok
@@ -673,6 +680,7 @@ function useBackendSettings({ enabled = true } = {}) {
   }, [enabled, load]);
 
   const setDraft = useCallback((key, value) => {
+    setApplyOutcome(null);
     setDrafts((current) => ({ ...current, [key]: value }));
   }, []);
 
@@ -681,6 +689,7 @@ function useBackendSettings({ enabled = true } = {}) {
     if (!changes.length) return;
     setSaving(true);
     setError(null);
+    setApplyOutcome(null);
     fetch("/api/settings/backend/apply", {
       method: "POST",
       headers: { "Content-Type": "application/json", Accept: "application/json" },
@@ -692,17 +701,28 @@ function useBackendSettings({ enabled = true } = {}) {
           : response.json().then((payload) => Promise.reject(payload)),
       )
       .then((payload) => {
+        const rejectedKeys = Array.isArray(payload.rejected)
+          ? payload.rejected.map((item) => item.key)
+          : [];
         setSnapshot(payload.snapshot);
-        setDrafts({});
+        setDrafts((current) =>
+          settleSettingsDrafts({
+            currentDrafts: current,
+            submittedDrafts: drafts,
+            rejectedKeys,
+          }),
+        );
         if (payload.rejected?.length) {
           const message = payload.rejected.map((item) => item.reason).join(" ");
           setError(message);
+          setApplyOutcome("partial");
           toast.push({
             kind: "warn",
             title: "Backend settings partially applied",
             body: message,
           });
         } else {
+          setApplyOutcome("success");
           toast.push({
             kind: "success",
             title: "Backend settings applied",
@@ -712,6 +732,7 @@ function useBackendSettings({ enabled = true } = {}) {
       .catch((err) => {
         const message = err?.detail || err?.message || "Failed to apply backend settings.";
         setError(message);
+        setApplyOutcome("error");
         toast.push({
           kind: "error",
           title: "Backend settings failed",
@@ -727,9 +748,13 @@ function useBackendSettings({ enabled = true } = {}) {
     saving,
     error,
     drafts,
+    applyOutcome,
     dirtyCount: Object.keys(drafts).length,
     setDraft,
-    discard: () => setDrafts({}),
+    discard: () => {
+      setApplyOutcome(null);
+      setDrafts({});
+    },
     reload: load,
     apply,
   };
@@ -2667,6 +2692,24 @@ export default function SettingsScreen({
       `${tab.label} ${tab.description} ${tab.keywords}`.toLowerCase().includes(query),
     );
   }, [settingsSearch]);
+  const settingsChangeStatus = getSettingsChangeStatus({
+    loading: backend.loading,
+    saving: backend.saving,
+    error: backend.error,
+    dirtyCount: backend.dirtyCount,
+    applyOutcome: backend.applyOutcome,
+    hasSnapshot: Boolean(backend.snapshot),
+  });
+  const settingsChangeTone =
+    settingsChangeStatus.kind === "error"
+      ? CSS_COLOR.red
+      : settingsChangeStatus.kind === "dirty"
+        ? CSS_COLOR.amber
+        : settingsChangeStatus.kind === "success"
+          ? CSS_COLOR.green
+          : settingsChangeStatus.kind === "working"
+            ? CSS_COLOR.accent
+            : CSS_COLOR.textDim;
 
   const renderSettingGrid = (group) => (
     <div style={{ display: "grid", gridTemplateColumns: settingsIsPhone ? "minmax(0, 1fr)" : `repeat(auto-fit, minmax(min(100%, ${dim(270)}px), 1fr))`, gap: sp(8), alignItems: "start" }}>
@@ -2711,14 +2754,40 @@ export default function SettingsScreen({
           marginBottom: sp(settingsIsPhone ? 8 : 0),
         }}
       >
-        <span style={{ color: summary.pendingRestartCount > 0 ? CSS_COLOR.amber : CSS_COLOR.green, fontFamily: T.sans, fontSize: fs(10), fontWeight: FONT_WEIGHTS.regular }}>
-          {summary.pendingRestartCount || 0} pending restart
-        </span>
+        <div
+          data-testid="settings-change-status"
+          role="status"
+          aria-live="polite"
+          aria-atomic="true"
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: sp(8),
+            flexWrap: "wrap",
+            fontFamily: T.sans,
+            fontSize: fs(10),
+            fontWeight: FONT_WEIGHTS.regular,
+          }}
+        >
+          <span style={{ color: settingsChangeTone }}>
+            {settingsChangeStatus.label}
+          </span>
+          <span
+            style={{
+              color:
+                summary.pendingRestartCount > 0
+                  ? CSS_COLOR.amber
+                  : CSS_COLOR.green,
+            }}
+          >
+            {summary.pendingRestartCount || 0} pending restart
+          </span>
+        </div>
         <Button
           variant="secondary"
           size="sm"
           onClick={backend.reload}
-          disabled={backend.loading}
+          disabled={backend.loading || backend.saving}
         >
           Refresh
         </Button>
@@ -2734,7 +2803,9 @@ export default function SettingsScreen({
           variant={backend.dirtyCount > 0 ? "primary" : "secondary"}
           size="sm"
           onClick={backend.apply}
-          disabled={backend.dirtyCount === 0 || backend.saving}
+          disabled={
+            backend.dirtyCount === 0 || backend.loading || backend.saving
+          }
           loading={backend.saving}
         >
           {backend.saving ? "Applying" : `Apply ${backend.dirtyCount || ""}`.trim()}

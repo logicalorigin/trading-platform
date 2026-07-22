@@ -321,7 +321,6 @@ input[type=range]{accent-color:var(--ra-color-accent)}
 @keyframes brokerRingBreathe{0%,100%{opacity:.42}50%{opacity:1}}
 @keyframes brokerRingSweep{from{stroke-dashoffset:100}to{stroke-dashoffset:0}}
 @keyframes brokerRingGlow{0%,100%{filter:drop-shadow(0 0 0 transparent)}45%{filter:drop-shadow(0 0 6px var(--broker-ring-color,transparent))}}
-@keyframes brokerRingSheen{from{stroke-dashoffset:0}to{stroke-dashoffset:-100}}
 @keyframes brokerCheckPop{0%{opacity:0;transform:scale(.6)}70%{opacity:1;transform:scale(1.18)}100%{opacity:1;transform:scale(1)}}
 @keyframes brokerCheckDraw{from{stroke-dashoffset:24}to{stroke-dashoffset:0}}
 @keyframes brokerErrorShake{0%,100%{transform:translateX(0)}20%{transform:translateX(-2px)}40%{transform:translateX(2px)}60%{transform:translateX(-2px)}80%{transform:translateX(2px)}}

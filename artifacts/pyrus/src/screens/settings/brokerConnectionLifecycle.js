@@ -76,7 +76,7 @@ export const BROKER_RING_SPECS = Object.freeze({
   working: Object.freeze({ tone: "accent", arc: true, motion: "arc" }),
   "awaiting-user": Object.freeze({ tone: "accent", motion: "breathe" }),
   success: Object.freeze({ tone: "green", motion: "sweep" }),
-  connected: Object.freeze({ tone: "green", glow: true, sheen: true }),
+  connected: Object.freeze({ tone: "green", glow: true }),
   impaired: Object.freeze({ tone: "amber", dashed: true }),
   error: Object.freeze({ tone: "amber", motion: "shake" }),
 });
