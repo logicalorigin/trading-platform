@@ -115,3 +115,30 @@ test("an absent broad Flow request does not synthesize a response", () => {
     null,
   );
 });
+
+test("preserved stale tape stays marked stale through the aggregate response", () => {
+  const preserved = mergeFlowEventsSnapshot(
+    {
+      events: [{ id: "cached-flow" }],
+      scannedAt: 1_721_430_000_000,
+      source: { provider: "massive", status: "live" },
+    },
+    { events: [], source: { provider: "massive", status: "empty" } },
+  );
+
+  const response = buildAggregateFlowResponse({ snapshot: preserved });
+
+  assert.equal(response.staleFlowEvents, true);
+});
+
+test("fresh aggregate tape is not marked stale", () => {
+  const response = buildAggregateFlowResponse({
+    snapshot: {
+      events: [{ id: "fresh-flow" }],
+      scannedAt: 1_721_430_000_000,
+      source: { provider: "massive", status: "loaded" },
+    },
+  });
+
+  assert.equal(response.staleFlowEvents, false);
+});

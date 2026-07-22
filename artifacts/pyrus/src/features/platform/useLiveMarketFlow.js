@@ -555,6 +555,7 @@ export const useLiveMarketFlow = (
         events: value.events || [],
         source: value.source || null,
         scannedAt: value.scannedAt || null,
+        staleFlowEvents: Boolean(value.staleFlowEvents),
         error: value.error || null,
       }),
     );

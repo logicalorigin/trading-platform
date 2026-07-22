@@ -185,6 +185,7 @@ export const buildAggregateFlowResponse = ({
     events: snapshot?.events || [],
     source: snapshot?.source || null,
     scannedAt: snapshot?.scannedAt || null,
+    staleFlowEvents: Boolean(snapshot?.staleFlowEvents),
     error: errorMessage,
     errorAt: errorMessage ? errorAt : null,
   };
