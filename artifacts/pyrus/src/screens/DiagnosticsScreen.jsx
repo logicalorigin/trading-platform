@@ -51,6 +51,8 @@ import {
   DIAGNOSTICS_COLLECTION_INTERVAL_MS,
   buildMachineStateDiagramModel,
 } from "./diagnostics/machineStateDiagramModel.js";
+import { DiagnosticsRecoveryBrief } from "./diagnostics/DiagnosticsRecoveryBrief.jsx";
+import { buildDiagnosticsRecoveryModel } from "./diagnostics/diagnosticsRecoveryModel.js";
 
 const GEX_QUERY_KEY_PREFIXES = ["gex-dashboard", "gex-projection", "gex-zero-gamma"];
 import {
@@ -1157,6 +1159,10 @@ export default function DiagnosticsScreen({
 
   const overviewSnapshots = latest?.snapshots || [];
   const topSeverity = latest?.severity || "info";
+  const recoveryModel = useMemo(
+    () => buildDiagnosticsRecoveryModel(latest),
+    [latest],
+  );
   const apiSnapshot = snapshotBySubsystem(latest, "api");
   const ibkrSnapshot = snapshotBySubsystem(latest, "ibkr");
   const marketDataSnapshot = snapshotBySubsystem(latest, "market-data");
@@ -1532,73 +1538,79 @@ export default function DiagnosticsScreen({
       <div
         style={{
           display: "flex",
-          alignItems: "center",
-          justifyContent: diagnosticsIsPhone ? "space-between" : "flex-end",
+          flexDirection: diagnosticsIsPhone ? "column" : "row",
+          alignItems: diagnosticsIsPhone ? "stretch" : "center",
+          justifyContent: "flex-end",
           gap: sp(8),
-          flexWrap: "wrap",
           minWidth: 0,
           marginBottom: sp(diagnosticsIsPhone ? 8 : 0),
         }}
       >
-        {latest?.status === "degraded" || latest?.status === "down" ? (
-          (() => {
-            const bandTone =
-              latest?.status === "down" ? CSS_COLOR.red : providerStatusTone("degraded");
-            return (
-              <div
-                style={{
-                  flex: "1 1 100%",
-                  display: "flex",
-                  alignItems: "center",
-                  gap: sp(8),
-                  padding: sp("6px 10px"),
-                  borderRadius: dim(RADII.sm),
-                  border: `1px solid ${cssColorAlpha(bandTone, "40")}`,
-                  background: cssColorAlpha(bandTone, "14"),
-                  color: CSS_COLOR.text,
-                  fontFamily: T.sans,
-                  fontSize: fs(11),
-                  fontWeight: FONT_WEIGHTS.medium,
-                }}
-              >
-                <StatusPill
-                  color={bandTone}
-                  variant="ghost"
-                  glow={latest?.status === "down"}
-                >
-                  {statusLabel(latest?.status)}
-                </StatusPill>
-              </div>
-            );
-          })()
-        ) : (
-          <StatusPill color={severityTone(topSeverity)} dot={false}>
+        <div
+          data-testid="diagnostics-status-row"
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: sp(8),
+            minWidth: 0,
+          }}
+        >
+          <StatusPill
+            color={latest?.status === "down" ? CSS_COLOR.red : severityTone(topSeverity)}
+            dot={false}
+          >
             {statusLabel(latest?.status)}
           </StatusPill>
-        )}
-        <span role="status" aria-live="polite" style={{ color: CSS_COLOR.textDim, fontFamily: T.sans, fontSize: fs(10) }}>
-          {streamState.toUpperCase()} / {latest?.timestamp ? formatAgo(latest.timestamp) : "waiting"}
-        </span>
-        {WINDOW_OPTIONS.map((option) => {
-          const active = windowMinutes === option.minutes;
-          return (
-            <Button
-              key={option.label}
-              variant={active ? "primary" : "secondary"}
-              size="sm"
-              onClick={() => setWindowMinutes(option.minutes)}
-            >
-              {option.label}
-            </Button>
-          );
-        })}
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={() => window.open(exportUrl, "_blank", "noopener,noreferrer")}
+          <span
+            role="status"
+            aria-live="polite"
+            style={{
+              color: CSS_COLOR.textDim,
+              fontFamily: T.sans,
+              fontSize: fs(10),
+              whiteSpace: "nowrap",
+            }}
+          >
+            {streamState.toUpperCase()} / {latest?.timestamp ? formatAgo(latest.timestamp) : "waiting"}
+          </span>
+        </div>
+        <div
+          data-testid="diagnostics-window-controls"
+          className="ra-hide-scrollbar"
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: diagnosticsIsPhone ? "flex-start" : "flex-end",
+            gap: sp(8),
+            flexWrap: "nowrap",
+            overflowX: diagnosticsIsPhone ? "auto" : undefined,
+            paddingBottom: diagnosticsIsPhone ? sp(2) : undefined,
+            minWidth: 0,
+          }}
         >
-          Export Raw
-        </Button>
+          {WINDOW_OPTIONS.map((option) => {
+            const active = windowMinutes === option.minutes;
+            return (
+              <Button
+                key={option.label}
+                variant={active ? "primary" : "secondary"}
+                size="sm"
+                onClick={() => setWindowMinutes(option.minutes)}
+                style={{ flexShrink: 0 }}
+              >
+                {option.label}
+              </Button>
+            );
+          })}
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => window.open(exportUrl, "_blank", "noopener,noreferrer")}
+            style={{ flexShrink: 0 }}
+          >
+            Export Raw
+          </Button>
+        </div>
       </div>
 
       <div
@@ -1628,7 +1640,12 @@ export default function DiagnosticsScreen({
 
       {activeTab === "Overview" && (
         <>
-          <MachineStateDiagram model={machineStateModel} />
+          <DiagnosticsRecoveryBrief
+            model={recoveryModel}
+            isPhone={diagnosticsIsPhone}
+            isNarrow={diagnosticsIsNarrow}
+            onOpenTab={setActiveTab}
+          />
           {activeAlertsPanel}
           <div className="ra-hide-scrollbar" style={{ display: "flex", flexWrap: "nowrap", overflowX: "auto", gap: sp(8), margin: sp("10px 0"), minWidth: 0 }}>
             <MetricCard label="API p95" value={formatMs(apiMetrics.p95LatencyMs)} sub={`${formatCount(apiMetrics.requestCount5m)} req / 5m`} severity={apiSnapshot?.severity} failurePoint={buildFailurePointFromDiagnosticsSnapshot(apiSnapshot)} onClick={() => selectMetric("api", "api.p95_latency_ms")} />
@@ -1652,6 +1669,7 @@ export default function DiagnosticsScreen({
               <EventList events={events.slice(0, 5)} onSelect={setSelectedEvent} />
             </Panel>
           </div>
+          <MachineStateDiagram model={machineStateModel} />
         </>
       )}
 
