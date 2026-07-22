@@ -2,10 +2,7 @@ import { createHash } from "node:crypto";
 import { pathToFileURL } from "node:url";
 import { parseArgs, stripVTControlCharacters } from "node:util";
 import { eq, sql } from "drizzle-orm";
-import {
-  hasNamedOperatorCredential,
-  hasOpaqueOperatorCredential,
-} from "./operator-diagnostic";
+import { hasOpaqueOperatorCredential } from "./operator-diagnostic";
 import {
   closeDatabaseConnections,
   db,
@@ -257,11 +254,6 @@ async function writeSyncState(input: SyncStateWrite) {
     ...(input.metadata ?? {}),
     leaseFenceToken: input.fenceToken,
   };
-  const persistedFenceToken = sql<number>`case
-    when coalesce(${universeCatalogSyncStatesTable.metadata}->>'leaseFenceToken', '') ~ '^[1-9][0-9]*$'
-      then (${universeCatalogSyncStatesTable.metadata}->>'leaseFenceToken')::numeric
-    else 0
-  end`;
   const rows = await db.transaction(async (tx) => {
     await assertUniverseCatalogWriterFence({
       fenceToken: input.fenceToken,
@@ -302,14 +294,11 @@ async function writeSyncState(input: SyncStateWrite) {
           metadata,
           updatedAt: now,
         },
-        setWhere: sql`${persistedFenceToken} < ${input.fenceToken}::numeric
-          or (
-            ${persistedFenceToken} = ${input.fenceToken}::numeric
-            and (
-              ${universeCatalogSyncStatesTable.finishedAt} is null
-              or ${input.finishedAt !== null}
-            )
-          )`,
+        setWhere: sql`case
+          when coalesce(${universeCatalogSyncStatesTable.metadata}->>'leaseFenceToken', '') ~ '^[1-9][0-9]*$'
+            then (${universeCatalogSyncStatesTable.metadata}->>'leaseFenceToken')::numeric
+          else 0
+        end <= ${input.fenceToken}::numeric`,
       })
       .returning({ scopeKey: universeCatalogSyncStatesTable.scopeKey });
   });
@@ -405,7 +394,6 @@ function assertUnseenCursor(
 function safeOutput(value: unknown, fallback: string): string {
   const cleaned = stripVTControlCharacters(String(value ?? ""))
     .replace(/([a-z][a-z0-9+.-]*:\/\/)[^@\s]+@/giu, "$1[redacted]@")
-    .replace(/([a-z][a-z0-9+.-]*:\/\/[^\s?#]+)[?#][^\s]*/giu, "$1?[redacted]")
     .replace(
       /([?&](?:api[-_]?key|access[-_]?token|token)=)[^&#\s]*/giu,
       "$1[redacted]",
@@ -414,11 +402,7 @@ function safeOutput(value: unknown, fallback: string): string {
     .replace(/\s+/gu, " ")
     .trim();
   const diagnostic =
-    cleaned &&
-    !hasNamedOperatorCredential(cleaned) &&
-    !hasOpaqueOperatorCredential(cleaned)
-      ? cleaned
-      : fallback;
+    cleaned && !hasOpaqueOperatorCredential(cleaned) ? cleaned : fallback;
   return diagnostic.length <= MAX_DIAGNOSTIC_LENGTH
     ? diagnostic
     : `${diagnostic.slice(0, MAX_DIAGNOSTIC_LENGTH - 1)}…`;

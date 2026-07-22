@@ -72,10 +72,6 @@ const allowed = [
     path: "artifacts/pyrus/src/lib/uiTokens.jsx",
     line: /RETIRED_WORKSPACE_STORAGE_KEY/,
   },
-  {
-    path: "artifacts/pyrus/src/features/platform/ibkrBridgeSession.js",
-    line: /\["ray",\s*"algo\.ibkrBridge/,
-  },
 ];
 
 export function shouldIgnore(relPath) {

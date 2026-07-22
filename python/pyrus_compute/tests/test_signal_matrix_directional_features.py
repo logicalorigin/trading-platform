@@ -23,7 +23,10 @@ from pathlib import Path
 
 from pyrus_compute.jobs import (
     _build_signal_filter_state,
+    _finite_rounded,
+    _round_or_nan,
     _signal_directional_features,
+    _signal_round_feature,
     run_signal_matrix,
 )
 from pyrus_compute.models import (
@@ -49,9 +52,7 @@ FEATURE_KEYS = [
 ]
 
 PARITY_FIXTURE = Path(__file__).parent / "fixtures" / "directional-features-parity.json"
-PIPELINE_PARITY_FIXTURE = (
-    Path(__file__).parent / "fixtures" / "signal-matrix-pipeline-parity.json"
-)
+PIPELINE_PARITY_FIXTURE = Path(__file__).parent / "fixtures" / "signal-matrix-pipeline-parity.json"
 
 
 def _bar(
@@ -179,7 +180,7 @@ def test_parity_with_js_producer_golden_fixture() -> None:
         assert features["version"] == expected["version"]
         for key in FEATURE_KEYS:
             assert math.isfinite(features[key]), f"{key} not finite for case {case['index']}"
-            assert abs(features[key] - expected[key]) <= 1e-6, (
+            assert features[key] == expected[key], (
                 f"case index={case['index']} direction={case['direction']} key={key}: "
                 f"python={features[key]} js={expected[key]}"
             )
@@ -229,6 +230,56 @@ def test_run_signal_matrix_attaches_directional_features() -> None:
     )
 
 
+def test_final_bar_signal_requires_closure_proof_when_waiting_for_close() -> None:
+    bars = _forming_bar_breakout_series()
+
+    forming_result, _ = run_signal_matrix(
+        SignalMatrixInput(
+            cells=[
+                SignalMatrixCellInput(
+                    symbol="FORMING",
+                    timeframe="5m",
+                    lastBarClosed=False,
+                    settings=SignalMatrixSettingsInput(
+                        timeHorizon=10,
+                        bosConfirmation="close",
+                        waitForBarClose=True,
+                    ),
+                    bars=bars,
+                )
+            ]
+        )
+    )
+    closed_result, _ = run_signal_matrix(
+        SignalMatrixInput(
+            cells=[
+                SignalMatrixCellInput(
+                    symbol="CLOSED",
+                    timeframe="5m",
+                    lastBarClosed=True,
+                    settings=SignalMatrixSettingsInput(
+                        timeHorizon=10,
+                        bosConfirmation="close",
+                        waitForBarClose=True,
+                    ),
+                    bars=bars,
+                )
+            ]
+        )
+    )
+
+    assert forming_result["states"][0]["signal"] is None
+    assert closed_result["states"][0]["signal"] is not None
+
+
+def test_signal_settings_defaults_match_typescript_source_of_truth() -> None:
+    settings = SignalMatrixSettingsInput()
+
+    assert settings.timeHorizon == 8
+    assert settings.bosConfirmation == "wicks"
+    assert settings.waitForBarClose is True
+
+
 def _direction_label(value: int | None) -> str | None:
     # Mirror of _normalized_indicator_direction: 0 (neutral) must map to None.
     if value == 1:
@@ -244,17 +295,14 @@ def _assert_number_or_none(context: str, actual: object, expected: object) -> No
         return
     assert isinstance(actual, (int, float)), f"{context}: python={actual!r} js={expected}"
     assert isinstance(expected, (int, float)), f"{context}: unexpected fixture value {expected!r}"
-    assert abs(float(actual) - float(expected)) <= 1e-6, (
-        f"{context}: python={actual} js={expected}"
-    )
+    assert abs(float(actual) - float(expected)) <= 1e-6, f"{context}: python={actual} js={expected}"
 
 
 def _assert_filter_state_parity(context: str, actual: dict, expected: dict) -> None:
     assert actual["enabled"] == expected["enabled"], f"{context}.enabled"
     assert actual["direction"] == expected["direction"], f"{context}.direction"
     assert list(actual["mtfDirections"]) == list(expected["mtfDirections"]), (
-        f"{context}.mtfDirections: python={actual['mtfDirections']} "
-        f"js={expected['mtfDirections']}"
+        f"{context}.mtfDirections: python={actual['mtfDirections']} js={expected['mtfDirections']}"
     )
     assert list(actual["mtfPass"]) == list(expected["mtfPass"]), (
         f"{context}.mtfPass: python={actual['mtfPass']} js={expected['mtfPass']}"
@@ -275,6 +323,12 @@ def _assert_filter_state_parity(context: str, actual: dict, expected: dict) -> N
         _assert_number_or_none(
             f"{context}.directionalFeatures.{key}", features[key], expected_features[key]
         )
+    if "regimeAgeBars" in expected_features:
+        assert features.get("regimeAgeBars") == expected_features["regimeAgeBars"], (
+            f"{context}.directionalFeatures.regimeAgeBars: "
+            f"python={features.get('regimeAgeBars')} "
+            f"js={expected_features['regimeAgeBars']}"
+        )
 
 
 def test_full_pipeline_parity_with_js_golden_fixture() -> None:
@@ -294,6 +348,7 @@ def test_full_pipeline_parity_with_js_golden_fixture() -> None:
                     SignalMatrixCellInput(
                         symbol=case["symbol"],
                         timeframe=case["timeframe"],
+                        lastBarClosed=case["lastBarClosed"],
                         settings=SignalMatrixSettingsInput(**case["settings"]),
                         bars=bars,
                     )
@@ -318,7 +373,17 @@ def test_full_pipeline_parity_with_js_golden_fixture() -> None:
                 f"({expected['signal']['eventType']}@{expected['signal']['barIndex']})"
             )
             signal = state["signal"]
-            for key in ("eventType", "direction", "barIndex", "time"):
+            assert set(signal) == set(expected["signal"]), f"{name}.signal shape"
+            for key in (
+                "id",
+                "eventType",
+                "direction",
+                "barIndex",
+                "time",
+                "ts",
+                "actionable",
+                "filtered",
+            ):
                 assert signal[key] == expected["signal"][key], f"{name}.signal.{key}"
             _assert_number_or_none(
                 f"{name}.signal.price", signal["price"], expected["signal"]["price"]
@@ -335,11 +400,24 @@ def test_full_pipeline_parity_with_js_golden_fixture() -> None:
         snapshot = state["indicatorSnapshot"]
         expected_snapshot = expected["snapshot"]
         assert snapshot is not None, name
+        assert set(snapshot) == set(expected_snapshot), f"{name}.snapshot shape"
         assert snapshot["trendDirection"] == _direction_label(
             expected_snapshot["trendDirection"]
         ), f"{name}.snapshot.trendDirection"
+        for key in (
+            "trendAgeBars",
+            "trendAgeBucket",
+            "adx",
+            "strength",
+            "volatilityScore",
+        ):
+            assert snapshot[key] == expected_snapshot[key], f"{name}.snapshot.{key}"
         assert len(snapshot["mtf"]) == len(expected_snapshot["mtf"]), name
-        for actual_mtf, expected_mtf in zip(snapshot["mtf"], expected_snapshot["mtf"]):
+        for actual_mtf, expected_mtf in zip(
+            snapshot["mtf"],
+            expected_snapshot["mtf"],
+            strict=True,
+        ):
             timeframe = expected_mtf["timeframe"]
             assert actual_mtf["timeframe"] == timeframe, f"{name}.snapshot.mtf.timeframe"
             assert actual_mtf["direction"] == _direction_label(expected_mtf["direction"]), (
@@ -354,6 +432,80 @@ def test_full_pipeline_parity_with_js_golden_fixture() -> None:
                 f"{name}.snapshot.mtf[{timeframe}].pass: "
                 f"python={actual_mtf['pass']} js={expected_mtf['pass']}"
             )
+        expected_filter_state = expected_snapshot["filterState"]
+        if expected_filter_state is None:
+            assert snapshot["filterState"] is None, f"{name}.snapshot.filterState"
+        else:
+            assert snapshot["filterState"] is not None, f"{name}.snapshot.filterState"
+            _assert_filter_state_parity(
+                f"{name}.snapshot.filterState",
+                snapshot["filterState"],
+                expected_filter_state,
+            )
+
+
+def test_enabled_filter_pipeline_emits_signal_with_regime_age() -> None:
+    fixture = json.loads(PIPELINE_PARITY_FIXTURE.read_text())
+    case = next(case for case in fixture["cases"] if case["name"] == "breakout-filters-enabled")
+    assert case["settings"]["signalFiltersEnabled"] is True
+    bars = [SignalMatrixBarInput(**bar) for bar in case["bars"]]
+
+    result, warnings = run_signal_matrix(
+        SignalMatrixInput(
+            cells=[
+                SignalMatrixCellInput(
+                    symbol=case["symbol"],
+                    timeframe=case["timeframe"],
+                    lastBarClosed=case["lastBarClosed"],
+                    settings=SignalMatrixSettingsInput(**case["settings"]),
+                    bars=bars,
+                )
+            ]
+        )
+    )
+
+    assert warnings == []
+    signal = result["states"][0]["signal"]
+    assert signal is not None
+    expected_features = case["expected"]["signal"]["filterState"]["directionalFeatures"]
+    assert (
+        signal["filterState"]["directionalFeatures"].get("regimeAgeBars")
+        == (expected_features["regimeAgeBars"])
+    )
+
+
+def test_indicator_rounding_matches_typescript_positive_half_tie() -> None:
+    assert _finite_rounded(2.25, 1) == 2.3
+
+
+def test_directional_feature_rounding_matches_typescript_fixed_decimal_ties() -> None:
+    assert _signal_round_feature(1 / 128) == 0.007813
+    assert _signal_round_feature(-1 / 128) == -0.007813
+
+
+def test_general_signal_rounding_matches_typescript_ties_and_preserves_nan() -> None:
+    for value in (math.nan, math.inf, -math.inf):
+        assert math.isnan(_round_or_nan(value))
+    assert (_round_or_nan(1 / 128), _round_or_nan(-1 / 128)) == (
+        0.007813,
+        -0.007813,
+    )
+
+
+def test_directional_features_sanitize_all_non_finite_values_for_json() -> None:
+    bars = _flat_then_pop_series()
+    for value in (math.nan, math.inf, -math.inf):
+        features = _signal_directional_features(
+            bars,
+            index=6,
+            direction=1,
+            mtf_directions=[1, 0, -1],
+            adx=value,
+            volatility_score=value,
+            atr=value,
+        )
+        json.dumps(features, allow_nan=False)
+        assert features["atrPct"] == 0
 
 
 def _mk_bar(index: int, close: float) -> SignalMatrixBarInput:

@@ -99,7 +99,7 @@ Capture a ~10s main-thread **V8 CPU profile** of the live API process.
   frames to trim (turns §5 P2 from inferred to measured).
 - Capture options (pick per how the API is started — see §7): `node --cpu-prof` on a manual API start;
   or `kill -USR1 <apiPid>` to open the inspector, record 10s via DevTools/`node-inspect`; or a
-  `clinic`/`0x` flame if available. **Avoid `SIGUSR2`** — that's the app's reload signal (§7).
+  `clinic`/`0x` flame if available. Do not signal the managed app launcher.
 - Zero-instrumentation corroborator already satisfied: the 20/20 `ClientRead` + zero-active +
   zero-idle-in-transaction fact only H1 explains once H3 is excluded.
 
@@ -161,8 +161,7 @@ Capture a ~10s main-thread **V8 CPU profile** of the live API process.
 SUP=$(pgrep -f 'node ./scripts/runDevApp.mjs' | head -1)
 APIPID=$(node -e 'console.log(JSON.parse(require("fs").readFileSync(".pyrus-runtime/flight-recorder/api-current.json","utf8")).pid)')
 
-# Reload backend IN PLACE after a code change (rebuild+restart API child; preview stays attached)
-kill -USR2 "$SUP"
+# Load backend changes through Replit's managed workflow restart action.
 curl -s http://127.0.0.1:8080/api/healthz    # expect {"status":"ok"}
 
 # Poll pressure (ELU + pool) — the primary success metric
@@ -634,7 +633,7 @@ Plan: (1) parallel read-only diagnosis — fresh baseline, bar_cache write shape
 shape, signal-options/state route (p95 16.3s), execution_events + null-context SQL; (2) implement:
 coverage.delayed restore via O(1) active-source accessor (NOT the diagnostics scan), dead-code
 removal, bar_cache write+read shape fixes, route fix, execution_events fix if warranted;
-(3) two reload checkpoints (SIGUSR2) with recorder-family verification vs baseline. All edits stay
+(3) two managed workflow restart checkpoints with recorder-family verification vs baseline. All edits stay
 uncommitted. Status/results will be appended here as §17.
 
 ---
@@ -664,4 +663,4 @@ Changes (all uncommitted, tests 93/93 + typecheck clean post-merge):
 5. **execution_events** — deferred by evidence (index-covered; ~5% of bar_cache load).
 
 Policy preserved: write-through under pressure (persist test 5/5), no pressure gating, flush
-concurrency 1, requeue never drops bars. Next: SIGUSR2 reload + recorder-family verify vs baseline.
+concurrency 1, requeue never drops bars. Next: managed workflow restart + recorder-family verify vs baseline.

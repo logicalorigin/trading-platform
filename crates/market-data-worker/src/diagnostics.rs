@@ -17,8 +17,21 @@ pub async fn run_doctor(config: &WorkerConfig) -> Result<()> {
     info!(
         queued_table_rows = count,
         provider = provider.provider,
-        base_url = provider.base_url,
         "market-data worker database check passed"
     );
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn doctor_logging_never_includes_the_provider_base_url() {
+        let source = include_str!("diagnostics.rs");
+        let production_source = source.split("#[cfg(test)]").next().unwrap();
+
+        assert!(
+            !production_source.contains("base_url = provider.base_url"),
+            "doctor diagnostics must not log the configured provider base URL"
+        );
+    }
 }

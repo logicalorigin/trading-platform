@@ -1,12 +1,13 @@
 {
   "cases": [
     {
-      "name": "breakout-filters-off",
+      "name": "breakout-filters-enabled",
       "symbol": "PARITY1",
       "timeframe": "5m",
+      "lastBarClosed": true,
       "settings": {
-        "timeHorizon": 10,
-        "bosConfirmation": "close",
+        "timeHorizon": 8,
+        "bosConfirmation": "wicks",
         "chochAtrBuffer": 0,
         "chochBodyExpansionAtr": 0,
         "chochVolumeGate": 0,
@@ -22,7 +23,7 @@
         "mtf1": "1h",
         "mtf2": "4h",
         "mtf3": "D",
-        "signalFiltersEnabled": false,
+        "signalFiltersEnabled": true,
         "requireMtf1": false,
         "requireMtf2": false,
         "requireMtf3": false,
@@ -33,7 +34,7 @@
         "volScoreMax": 10,
         "restrictToSelectedSessions": false,
         "sessions": [],
-        "waitForBarClose": false,
+        "waitForBarClose": true,
         "signalOffsetAtr": 3
       },
       "bars": [
@@ -1001,14 +1002,18 @@
       "expected": {
         "status": "ok",
         "signal": {
+          "id": "buy-119-1700035700",
           "eventType": "buy_signal",
           "direction": "long",
           "barIndex": 119,
           "time": 1700035700,
+          "ts": "2023-11-15T08:08:20.000Z",
           "price": 75.97052,
           "close": 129,
+          "actionable": true,
+          "filtered": false,
           "filterState": {
-            "enabled": false,
+            "enabled": true,
             "direction": 1,
             "mtfDirections": [
               0,
@@ -1030,7 +1035,8 @@
               "adxComponent": 2.5,
               "volatilityComponent": 0,
               "mtfAlignment": 0,
-              "atrPct": 0.911695
+              "atrPct": 0.911695,
+              "regimeAgeBars": 1
             },
             "sessionKey": "london",
             "mtfPass": [
@@ -1046,6 +1052,11 @@
         },
         "snapshot": {
           "trendDirection": 1,
+          "trendAgeBars": 0,
+          "trendAgeBucket": "new",
+          "adx": 85.6,
+          "strength": "strong",
+          "volatilityScore": 0,
           "mtf": [
             {
               "timeframe": "1h",
@@ -1065,17 +1076,55 @@
               "required": false,
               "pass": true
             }
-          ]
+          ],
+          "filterState": {
+            "enabled": true,
+            "direction": 1,
+            "mtfDirections": [
+              0,
+              0,
+              0
+            ],
+            "adx": 85.60232,
+            "volatilityScore": 0,
+            "directionalFeatures": {
+              "version": "directional-features-v1",
+              "shortMomentumPct": 55.328116,
+              "mediumMomentumPct": 51.497358,
+              "longMomentumPct": 37.453383,
+              "riskAdjustedMomentum": 56.485318,
+              "rangePosition20": 0.979253,
+              "rangeComponent": 1.917012,
+              "volumeRatio20": 1,
+              "volumeExpansion": 0,
+              "adxComponent": 2.5,
+              "volatilityComponent": 0,
+              "mtfAlignment": 0,
+              "atrPct": 0.911695,
+              "regimeAgeBars": 1
+            },
+            "sessionKey": "london",
+            "mtfPass": [
+              true,
+              true,
+              true
+            ],
+            "adxPass": true,
+            "volatilityPass": true,
+            "sessionPass": true,
+            "passes": true
+          }
         }
       }
     },
     {
-      "name": "h1-data-starved-htf-required",
-      "symbol": "PARITY2",
+      "name": "breakout-forming-bar-waits-for-close",
+      "symbol": "PARITY4",
       "timeframe": "5m",
+      "lastBarClosed": false,
       "settings": {
-        "timeHorizon": 10,
-        "bosConfirmation": "close",
+        "timeHorizon": 8,
+        "bosConfirmation": "wicks",
         "chochAtrBuffer": 0,
         "chochBodyExpansionAtr": 0,
         "chochVolumeGate": 0,
@@ -1091,10 +1140,10 @@
         "mtf1": "1h",
         "mtf2": "4h",
         "mtf3": "D",
-        "signalFiltersEnabled": true,
+        "signalFiltersEnabled": false,
         "requireMtf1": false,
         "requireMtf2": false,
-        "requireMtf3": true,
+        "requireMtf3": false,
         "requireAdx": false,
         "adxMin": 20,
         "requireVolScoreRange": false,
@@ -1102,7 +1151,7 @@
         "volScoreMax": 10,
         "restrictToSelectedSessions": false,
         "sessions": [],
-        "waitForBarClose": false,
+        "waitForBarClose": true,
         "signalOffsetAtr": 3
       },
       "bars": [
@@ -2072,6 +2121,1044 @@
         "signal": null,
         "snapshot": {
           "trendDirection": 1,
+          "trendAgeBars": 0,
+          "trendAgeBucket": "new",
+          "adx": 85.6,
+          "strength": "strong",
+          "volatilityScore": 0,
+          "mtf": [
+            {
+              "timeframe": "1h",
+              "direction": 0,
+              "required": false,
+              "pass": true
+            },
+            {
+              "timeframe": "4h",
+              "direction": 0,
+              "required": false,
+              "pass": true
+            },
+            {
+              "timeframe": "D",
+              "direction": 0,
+              "required": false,
+              "pass": true
+            }
+          ],
+          "filterState": null
+        }
+      }
+    },
+    {
+      "name": "h1-data-starved-htf-required",
+      "symbol": "PARITY2",
+      "timeframe": "5m",
+      "lastBarClosed": true,
+      "settings": {
+        "timeHorizon": 8,
+        "bosConfirmation": "wicks",
+        "chochAtrBuffer": 0,
+        "chochBodyExpansionAtr": 0,
+        "chochVolumeGate": 0,
+        "basisLength": 80,
+        "atrLength": 14,
+        "atrSmoothing": 21,
+        "volatilityMultiplier": 2,
+        "wireSpread": 0.5,
+        "shadowLength": 20,
+        "shadowStdDev": 2,
+        "adxLength": 14,
+        "volumeMaLength": 20,
+        "mtf1": "1h",
+        "mtf2": "4h",
+        "mtf3": "D",
+        "signalFiltersEnabled": true,
+        "requireMtf1": false,
+        "requireMtf2": false,
+        "requireMtf3": true,
+        "requireAdx": false,
+        "adxMin": 20,
+        "requireVolScoreRange": false,
+        "volScoreMin": 2,
+        "volScoreMax": 10,
+        "restrictToSelectedSessions": false,
+        "sessions": [],
+        "waitForBarClose": true,
+        "signalOffsetAtr": 3
+      },
+      "bars": [
+        {
+          "time": 1700000000,
+          "o": 100,
+          "h": 100.5,
+          "l": 99.5,
+          "c": 100,
+          "v": 1000
+        },
+        {
+          "time": 1700000300,
+          "o": 99.85,
+          "h": 100.35,
+          "l": 99.35,
+          "c": 99.85,
+          "v": 1000
+        },
+        {
+          "time": 1700000600,
+          "o": 99.7,
+          "h": 100.2,
+          "l": 99.2,
+          "c": 99.7,
+          "v": 1000
+        },
+        {
+          "time": 1700000900,
+          "o": 99.55,
+          "h": 100.05,
+          "l": 99.05,
+          "c": 99.55,
+          "v": 1000
+        },
+        {
+          "time": 1700001200,
+          "o": 99.4,
+          "h": 99.9,
+          "l": 98.9,
+          "c": 99.4,
+          "v": 1000
+        },
+        {
+          "time": 1700001500,
+          "o": 99.25,
+          "h": 99.75,
+          "l": 98.75,
+          "c": 99.25,
+          "v": 1000
+        },
+        {
+          "time": 1700001800,
+          "o": 99.1,
+          "h": 99.6,
+          "l": 98.6,
+          "c": 99.1,
+          "v": 1000
+        },
+        {
+          "time": 1700002100,
+          "o": 98.95,
+          "h": 99.45,
+          "l": 98.45,
+          "c": 98.95,
+          "v": 1000
+        },
+        {
+          "time": 1700002400,
+          "o": 98.8,
+          "h": 99.3,
+          "l": 98.3,
+          "c": 98.8,
+          "v": 1000
+        },
+        {
+          "time": 1700002700,
+          "o": 98.65,
+          "h": 99.15,
+          "l": 98.15,
+          "c": 98.65,
+          "v": 1000
+        },
+        {
+          "time": 1700003000,
+          "o": 98.5,
+          "h": 99,
+          "l": 98,
+          "c": 98.5,
+          "v": 1000
+        },
+        {
+          "time": 1700003300,
+          "o": 98.35,
+          "h": 98.85,
+          "l": 97.85,
+          "c": 98.35,
+          "v": 1000
+        },
+        {
+          "time": 1700003600,
+          "o": 98.2,
+          "h": 98.7,
+          "l": 97.7,
+          "c": 98.2,
+          "v": 1000
+        },
+        {
+          "time": 1700003900,
+          "o": 98.05,
+          "h": 98.55,
+          "l": 97.55,
+          "c": 98.05,
+          "v": 1000
+        },
+        {
+          "time": 1700004200,
+          "o": 97.9,
+          "h": 98.4,
+          "l": 97.4,
+          "c": 97.9,
+          "v": 1000
+        },
+        {
+          "time": 1700004500,
+          "o": 97.75,
+          "h": 98.25,
+          "l": 97.25,
+          "c": 97.75,
+          "v": 1000
+        },
+        {
+          "time": 1700004800,
+          "o": 97.6,
+          "h": 98.1,
+          "l": 97.1,
+          "c": 97.6,
+          "v": 1000
+        },
+        {
+          "time": 1700005100,
+          "o": 97.45,
+          "h": 97.95,
+          "l": 96.95,
+          "c": 97.45,
+          "v": 1000
+        },
+        {
+          "time": 1700005400,
+          "o": 97.3,
+          "h": 97.8,
+          "l": 96.8,
+          "c": 97.3,
+          "v": 1000
+        },
+        {
+          "time": 1700005700,
+          "o": 97.15,
+          "h": 97.65,
+          "l": 96.65,
+          "c": 97.15,
+          "v": 1000
+        },
+        {
+          "time": 1700006000,
+          "o": 97,
+          "h": 97.5,
+          "l": 96.5,
+          "c": 97,
+          "v": 1000
+        },
+        {
+          "time": 1700006300,
+          "o": 96.85,
+          "h": 97.35,
+          "l": 96.35,
+          "c": 96.85,
+          "v": 1000
+        },
+        {
+          "time": 1700006600,
+          "o": 96.7,
+          "h": 97.2,
+          "l": 96.2,
+          "c": 96.7,
+          "v": 1000
+        },
+        {
+          "time": 1700006900,
+          "o": 96.55,
+          "h": 97.05,
+          "l": 96.05,
+          "c": 96.55,
+          "v": 1000
+        },
+        {
+          "time": 1700007200,
+          "o": 96.4,
+          "h": 96.9,
+          "l": 95.9,
+          "c": 96.4,
+          "v": 1000
+        },
+        {
+          "time": 1700007500,
+          "o": 96.25,
+          "h": 96.75,
+          "l": 95.75,
+          "c": 96.25,
+          "v": 1000
+        },
+        {
+          "time": 1700007800,
+          "o": 96.1,
+          "h": 96.6,
+          "l": 95.6,
+          "c": 96.1,
+          "v": 1000
+        },
+        {
+          "time": 1700008100,
+          "o": 95.95,
+          "h": 96.45,
+          "l": 95.45,
+          "c": 95.95,
+          "v": 1000
+        },
+        {
+          "time": 1700008400,
+          "o": 95.8,
+          "h": 96.3,
+          "l": 95.3,
+          "c": 95.8,
+          "v": 1000
+        },
+        {
+          "time": 1700008700,
+          "o": 95.65,
+          "h": 96.15,
+          "l": 95.15,
+          "c": 95.65,
+          "v": 1000
+        },
+        {
+          "time": 1700009000,
+          "o": 95.5,
+          "h": 96,
+          "l": 95,
+          "c": 95.5,
+          "v": 1000
+        },
+        {
+          "time": 1700009300,
+          "o": 95.35,
+          "h": 95.85,
+          "l": 94.85,
+          "c": 95.35,
+          "v": 1000
+        },
+        {
+          "time": 1700009600,
+          "o": 95.2,
+          "h": 95.7,
+          "l": 94.7,
+          "c": 95.2,
+          "v": 1000
+        },
+        {
+          "time": 1700009900,
+          "o": 95.05,
+          "h": 95.55,
+          "l": 94.55,
+          "c": 95.05,
+          "v": 1000
+        },
+        {
+          "time": 1700010200,
+          "o": 94.9,
+          "h": 95.4,
+          "l": 94.4,
+          "c": 94.9,
+          "v": 1000
+        },
+        {
+          "time": 1700010500,
+          "o": 94.75,
+          "h": 95.25,
+          "l": 94.25,
+          "c": 94.75,
+          "v": 1000
+        },
+        {
+          "time": 1700010800,
+          "o": 94.6,
+          "h": 95.1,
+          "l": 94.1,
+          "c": 94.6,
+          "v": 1000
+        },
+        {
+          "time": 1700011100,
+          "o": 94.45,
+          "h": 94.95,
+          "l": 93.95,
+          "c": 94.45,
+          "v": 1000
+        },
+        {
+          "time": 1700011400,
+          "o": 94.3,
+          "h": 94.8,
+          "l": 93.8,
+          "c": 94.3,
+          "v": 1000
+        },
+        {
+          "time": 1700011700,
+          "o": 94.15,
+          "h": 94.65,
+          "l": 93.65,
+          "c": 94.15,
+          "v": 1000
+        },
+        {
+          "time": 1700012000,
+          "o": 112,
+          "h": 112.5,
+          "l": 111.5,
+          "c": 112,
+          "v": 1000
+        },
+        {
+          "time": 1700012300,
+          "o": 93.85,
+          "h": 94.35,
+          "l": 93.35,
+          "c": 93.85,
+          "v": 1000
+        },
+        {
+          "time": 1700012600,
+          "o": 93.7,
+          "h": 94.2,
+          "l": 93.2,
+          "c": 93.7,
+          "v": 1000
+        },
+        {
+          "time": 1700012900,
+          "o": 93.55,
+          "h": 94.05,
+          "l": 93.05,
+          "c": 93.55,
+          "v": 1000
+        },
+        {
+          "time": 1700013200,
+          "o": 93.4,
+          "h": 93.9,
+          "l": 92.9,
+          "c": 93.4,
+          "v": 1000
+        },
+        {
+          "time": 1700013500,
+          "o": 93.25,
+          "h": 93.75,
+          "l": 92.75,
+          "c": 93.25,
+          "v": 1000
+        },
+        {
+          "time": 1700013800,
+          "o": 93.1,
+          "h": 93.6,
+          "l": 92.6,
+          "c": 93.1,
+          "v": 1000
+        },
+        {
+          "time": 1700014100,
+          "o": 92.95,
+          "h": 93.45,
+          "l": 92.45,
+          "c": 92.95,
+          "v": 1000
+        },
+        {
+          "time": 1700014400,
+          "o": 92.8,
+          "h": 93.3,
+          "l": 92.3,
+          "c": 92.8,
+          "v": 1000
+        },
+        {
+          "time": 1700014700,
+          "o": 92.65,
+          "h": 93.15,
+          "l": 92.15,
+          "c": 92.65,
+          "v": 1000
+        },
+        {
+          "time": 1700015000,
+          "o": 92.5,
+          "h": 93,
+          "l": 92,
+          "c": 92.5,
+          "v": 1000
+        },
+        {
+          "time": 1700015300,
+          "o": 92.35,
+          "h": 92.85,
+          "l": 91.85,
+          "c": 92.35,
+          "v": 1000
+        },
+        {
+          "time": 1700015600,
+          "o": 92.2,
+          "h": 92.7,
+          "l": 91.7,
+          "c": 92.2,
+          "v": 1000
+        },
+        {
+          "time": 1700015900,
+          "o": 92.05,
+          "h": 92.55,
+          "l": 91.55,
+          "c": 92.05,
+          "v": 1000
+        },
+        {
+          "time": 1700016200,
+          "o": 91.9,
+          "h": 92.4,
+          "l": 91.4,
+          "c": 91.9,
+          "v": 1000
+        },
+        {
+          "time": 1700016500,
+          "o": 91.75,
+          "h": 92.25,
+          "l": 91.25,
+          "c": 91.75,
+          "v": 1000
+        },
+        {
+          "time": 1700016800,
+          "o": 91.6,
+          "h": 92.1,
+          "l": 91.1,
+          "c": 91.6,
+          "v": 1000
+        },
+        {
+          "time": 1700017100,
+          "o": 91.45,
+          "h": 91.95,
+          "l": 90.95,
+          "c": 91.45,
+          "v": 1000
+        },
+        {
+          "time": 1700017400,
+          "o": 91.3,
+          "h": 91.8,
+          "l": 90.8,
+          "c": 91.3,
+          "v": 1000
+        },
+        {
+          "time": 1700017700,
+          "o": 91.15,
+          "h": 91.65,
+          "l": 90.65,
+          "c": 91.15,
+          "v": 1000
+        },
+        {
+          "time": 1700018000,
+          "o": 91,
+          "h": 91.5,
+          "l": 90.5,
+          "c": 91,
+          "v": 1000
+        },
+        {
+          "time": 1700018300,
+          "o": 90.85,
+          "h": 91.35,
+          "l": 90.35,
+          "c": 90.85,
+          "v": 1000
+        },
+        {
+          "time": 1700018600,
+          "o": 90.7,
+          "h": 91.2,
+          "l": 90.2,
+          "c": 90.7,
+          "v": 1000
+        },
+        {
+          "time": 1700018900,
+          "o": 90.55,
+          "h": 91.05,
+          "l": 90.05,
+          "c": 90.55,
+          "v": 1000
+        },
+        {
+          "time": 1700019200,
+          "o": 90.4,
+          "h": 90.9,
+          "l": 89.9,
+          "c": 90.4,
+          "v": 1000
+        },
+        {
+          "time": 1700019500,
+          "o": 90.25,
+          "h": 90.75,
+          "l": 89.75,
+          "c": 90.25,
+          "v": 1000
+        },
+        {
+          "time": 1700019800,
+          "o": 90.1,
+          "h": 90.6,
+          "l": 89.6,
+          "c": 90.1,
+          "v": 1000
+        },
+        {
+          "time": 1700020100,
+          "o": 89.95,
+          "h": 90.45,
+          "l": 89.45,
+          "c": 89.95,
+          "v": 1000
+        },
+        {
+          "time": 1700020400,
+          "o": 89.8,
+          "h": 90.3,
+          "l": 89.3,
+          "c": 89.8,
+          "v": 1000
+        },
+        {
+          "time": 1700020700,
+          "o": 89.65,
+          "h": 90.15,
+          "l": 89.15,
+          "c": 89.65,
+          "v": 1000
+        },
+        {
+          "time": 1700021000,
+          "o": 89.5,
+          "h": 90,
+          "l": 89,
+          "c": 89.5,
+          "v": 1000
+        },
+        {
+          "time": 1700021300,
+          "o": 89.35,
+          "h": 89.85,
+          "l": 88.85,
+          "c": 89.35,
+          "v": 1000
+        },
+        {
+          "time": 1700021600,
+          "o": 89.2,
+          "h": 89.7,
+          "l": 88.7,
+          "c": 89.2,
+          "v": 1000
+        },
+        {
+          "time": 1700021900,
+          "o": 89.05,
+          "h": 89.55,
+          "l": 88.55,
+          "c": 89.05,
+          "v": 1000
+        },
+        {
+          "time": 1700022200,
+          "o": 88.9,
+          "h": 89.4,
+          "l": 88.4,
+          "c": 88.9,
+          "v": 1000
+        },
+        {
+          "time": 1700022500,
+          "o": 88.75,
+          "h": 89.25,
+          "l": 88.25,
+          "c": 88.75,
+          "v": 1000
+        },
+        {
+          "time": 1700022800,
+          "o": 88.6,
+          "h": 89.1,
+          "l": 88.1,
+          "c": 88.6,
+          "v": 1000
+        },
+        {
+          "time": 1700023100,
+          "o": 88.45,
+          "h": 88.95,
+          "l": 87.95,
+          "c": 88.45,
+          "v": 1000
+        },
+        {
+          "time": 1700023400,
+          "o": 88.3,
+          "h": 88.8,
+          "l": 87.8,
+          "c": 88.3,
+          "v": 1000
+        },
+        {
+          "time": 1700023700,
+          "o": 88.15,
+          "h": 88.65,
+          "l": 87.65,
+          "c": 88.15,
+          "v": 1000
+        },
+        {
+          "time": 1700024000,
+          "o": 88,
+          "h": 88.5,
+          "l": 87.5,
+          "c": 88,
+          "v": 1000
+        },
+        {
+          "time": 1700024300,
+          "o": 87.85,
+          "h": 88.35,
+          "l": 87.35,
+          "c": 87.85,
+          "v": 1000
+        },
+        {
+          "time": 1700024600,
+          "o": 87.7,
+          "h": 88.2,
+          "l": 87.2,
+          "c": 87.7,
+          "v": 1000
+        },
+        {
+          "time": 1700024900,
+          "o": 87.55,
+          "h": 88.05,
+          "l": 87.05,
+          "c": 87.55,
+          "v": 1000
+        },
+        {
+          "time": 1700025200,
+          "o": 87.4,
+          "h": 87.9,
+          "l": 86.9,
+          "c": 87.4,
+          "v": 1000
+        },
+        {
+          "time": 1700025500,
+          "o": 87.25,
+          "h": 87.75,
+          "l": 86.75,
+          "c": 87.25,
+          "v": 1000
+        },
+        {
+          "time": 1700025800,
+          "o": 87.1,
+          "h": 87.6,
+          "l": 86.6,
+          "c": 87.1,
+          "v": 1000
+        },
+        {
+          "time": 1700026100,
+          "o": 86.95,
+          "h": 87.45,
+          "l": 86.45,
+          "c": 86.95,
+          "v": 1000
+        },
+        {
+          "time": 1700026400,
+          "o": 86.8,
+          "h": 87.3,
+          "l": 86.3,
+          "c": 86.8,
+          "v": 1000
+        },
+        {
+          "time": 1700026700,
+          "o": 86.65,
+          "h": 87.15,
+          "l": 86.15,
+          "c": 86.65,
+          "v": 1000
+        },
+        {
+          "time": 1700027000,
+          "o": 86.5,
+          "h": 87,
+          "l": 86,
+          "c": 86.5,
+          "v": 1000
+        },
+        {
+          "time": 1700027300,
+          "o": 86.35,
+          "h": 86.85,
+          "l": 85.85,
+          "c": 86.35,
+          "v": 1000
+        },
+        {
+          "time": 1700027600,
+          "o": 86.2,
+          "h": 86.7,
+          "l": 85.7,
+          "c": 86.2,
+          "v": 1000
+        },
+        {
+          "time": 1700027900,
+          "o": 86.05,
+          "h": 86.55,
+          "l": 85.55,
+          "c": 86.05,
+          "v": 1000
+        },
+        {
+          "time": 1700028200,
+          "o": 85.9,
+          "h": 86.4,
+          "l": 85.4,
+          "c": 85.9,
+          "v": 1000
+        },
+        {
+          "time": 1700028500,
+          "o": 85.75,
+          "h": 86.25,
+          "l": 85.25,
+          "c": 85.75,
+          "v": 1000
+        },
+        {
+          "time": 1700028800,
+          "o": 85.6,
+          "h": 86.1,
+          "l": 85.1,
+          "c": 85.6,
+          "v": 1000
+        },
+        {
+          "time": 1700029100,
+          "o": 85.45,
+          "h": 85.95,
+          "l": 84.95,
+          "c": 85.45,
+          "v": 1000
+        },
+        {
+          "time": 1700029400,
+          "o": 85.3,
+          "h": 85.8,
+          "l": 84.8,
+          "c": 85.3,
+          "v": 1000
+        },
+        {
+          "time": 1700029700,
+          "o": 85.15,
+          "h": 85.65,
+          "l": 84.65,
+          "c": 85.15,
+          "v": 1000
+        },
+        {
+          "time": 1700030000,
+          "o": 85,
+          "h": 85.5,
+          "l": 84.5,
+          "c": 85,
+          "v": 1000
+        },
+        {
+          "time": 1700030300,
+          "o": 84.85,
+          "h": 85.35,
+          "l": 84.35,
+          "c": 84.85,
+          "v": 1000
+        },
+        {
+          "time": 1700030600,
+          "o": 84.7,
+          "h": 85.2,
+          "l": 84.2,
+          "c": 84.7,
+          "v": 1000
+        },
+        {
+          "time": 1700030900,
+          "o": 84.55,
+          "h": 85.05,
+          "l": 84.05,
+          "c": 84.55,
+          "v": 1000
+        },
+        {
+          "time": 1700031200,
+          "o": 84.4,
+          "h": 84.9,
+          "l": 83.9,
+          "c": 84.4,
+          "v": 1000
+        },
+        {
+          "time": 1700031500,
+          "o": 84.25,
+          "h": 84.75,
+          "l": 83.75,
+          "c": 84.25,
+          "v": 1000
+        },
+        {
+          "time": 1700031800,
+          "o": 84.1,
+          "h": 84.6,
+          "l": 83.6,
+          "c": 84.1,
+          "v": 1000
+        },
+        {
+          "time": 1700032100,
+          "o": 83.95,
+          "h": 84.45,
+          "l": 83.45,
+          "c": 83.95,
+          "v": 1000
+        },
+        {
+          "time": 1700032400,
+          "o": 83.8,
+          "h": 84.3,
+          "l": 83.3,
+          "c": 83.8,
+          "v": 1000
+        },
+        {
+          "time": 1700032700,
+          "o": 83.65,
+          "h": 84.15,
+          "l": 83.15,
+          "c": 83.65,
+          "v": 1000
+        },
+        {
+          "time": 1700033000,
+          "o": 83.5,
+          "h": 84,
+          "l": 83,
+          "c": 83.5,
+          "v": 1000
+        },
+        {
+          "time": 1700033300,
+          "o": 83.35,
+          "h": 83.85,
+          "l": 82.85,
+          "c": 83.35,
+          "v": 1000
+        },
+        {
+          "time": 1700033600,
+          "o": 83.2,
+          "h": 83.7,
+          "l": 82.7,
+          "c": 83.2,
+          "v": 1000
+        },
+        {
+          "time": 1700033900,
+          "o": 83.05,
+          "h": 83.55,
+          "l": 82.55,
+          "c": 83.05,
+          "v": 1000
+        },
+        {
+          "time": 1700034200,
+          "o": 82.9,
+          "h": 83.4,
+          "l": 82.4,
+          "c": 82.9,
+          "v": 1000
+        },
+        {
+          "time": 1700034500,
+          "o": 82.75,
+          "h": 83.25,
+          "l": 82.25,
+          "c": 82.75,
+          "v": 1000
+        },
+        {
+          "time": 1700034800,
+          "o": 82.6,
+          "h": 83.1,
+          "l": 82.1,
+          "c": 82.6,
+          "v": 1000
+        },
+        {
+          "time": 1700035100,
+          "o": 82.45,
+          "h": 82.95,
+          "l": 81.95,
+          "c": 82.45,
+          "v": 1000
+        },
+        {
+          "time": 1700035400,
+          "o": 82.3,
+          "h": 82.8,
+          "l": 81.8,
+          "c": 82.3,
+          "v": 1000
+        },
+        {
+          "time": 1700035700,
+          "o": 90,
+          "h": 130,
+          "l": 89,
+          "c": 129,
+          "v": 1000
+        }
+      ],
+      "expected": {
+        "status": "ok",
+        "signal": null,
+        "snapshot": {
+          "trendDirection": 1,
+          "trendAgeBars": 0,
+          "trendAgeBucket": "new",
+          "adx": 85.6,
+          "strength": "strong",
+          "volatilityScore": 0,
           "mtf": [
             {
               "timeframe": "1h",
@@ -2091,7 +3178,8 @@
               "required": true,
               "pass": false
             }
-          ]
+          ],
+          "filterState": null
         }
       }
     },
@@ -2099,9 +3187,10 @@
       "name": "computable-htf-parity",
       "symbol": "PARITY3",
       "timeframe": "5m",
+      "lastBarClosed": true,
       "settings": {
-        "timeHorizon": 10,
-        "bosConfirmation": "close",
+        "timeHorizon": 8,
+        "bosConfirmation": "wicks",
         "chochAtrBuffer": 0,
         "chochBodyExpansionAtr": 0,
         "chochVolumeGate": 0,
@@ -2128,7 +3217,7 @@
         "volScoreMax": 10,
         "restrictToSelectedSessions": false,
         "sessions": [],
-        "waitForBarClose": false,
+        "waitForBarClose": true,
         "signalOffsetAtr": 3
       },
       "bars": [
@@ -4055,29 +5144,119 @@
       ],
       "expected": {
         "status": "ok",
-        "signal": null,
+        "signal": {
+          "id": "sell-233-1700069900",
+          "eventType": "sell_signal",
+          "direction": "short",
+          "barIndex": 233,
+          "time": 1700069900,
+          "ts": "2023-11-15T17:38:20.000Z",
+          "price": 114.095392,
+          "close": 105.66846394709705,
+          "actionable": true,
+          "filtered": false,
+          "filterState": {
+            "enabled": true,
+            "direction": -1,
+            "mtfDirections": [
+              -1,
+              -1,
+              -1
+            ],
+            "adx": 19.400276,
+            "volatilityScore": 5,
+            "directionalFeatures": {
+              "version": "directional-features-v1",
+              "shortMomentumPct": 1.255438,
+              "mediumMomentumPct": 3.233428,
+              "longMomentumPct": -0.987858,
+              "riskAdjustedMomentum": 1.615676,
+              "rangePosition20": 0.774419,
+              "rangeComponent": 1.097677,
+              "volumeRatio20": 1.605172,
+              "volumeExpansion": 0.605172,
+              "adxComponent": 0.11669,
+              "volatilityComponent": 0.833333,
+              "mtfAlignment": 3,
+              "atrPct": 2.001285,
+              "regimeAgeBars": 1
+            },
+            "sessionKey": "new_york",
+            "mtfPass": [
+              true,
+              true,
+              true
+            ],
+            "adxPass": true,
+            "volatilityPass": true,
+            "sessionPass": true,
+            "passes": true
+          }
+        },
         "snapshot": {
-          "trendDirection": 1,
+          "trendDirection": -1,
+          "trendAgeBars": 6,
+          "trendAgeBucket": "new",
+          "adx": 22.1,
+          "strength": "weak",
+          "volatilityScore": 2,
           "mtf": [
             {
               "timeframe": "5m",
               "direction": -1,
               "required": true,
-              "pass": false
+              "pass": true
             },
             {
               "timeframe": "15m",
               "direction": -1,
               "required": true,
-              "pass": false
+              "pass": true
             },
             {
               "timeframe": "30m",
               "direction": -1,
               "required": true,
-              "pass": false
+              "pass": true
             }
-          ]
+          ],
+          "filterState": {
+            "enabled": true,
+            "direction": -1,
+            "mtfDirections": [
+              -1,
+              -1,
+              -1
+            ],
+            "adx": 19.400276,
+            "volatilityScore": 5,
+            "directionalFeatures": {
+              "version": "directional-features-v1",
+              "shortMomentumPct": 1.255438,
+              "mediumMomentumPct": 3.233428,
+              "longMomentumPct": -0.987858,
+              "riskAdjustedMomentum": 1.615676,
+              "rangePosition20": 0.774419,
+              "rangeComponent": 1.097677,
+              "volumeRatio20": 1.605172,
+              "volumeExpansion": 0.605172,
+              "adxComponent": 0.11669,
+              "volatilityComponent": 0.833333,
+              "mtfAlignment": 3,
+              "atrPct": 2.001285,
+              "regimeAgeBars": 1
+            },
+            "sessionKey": "new_york",
+            "mtfPass": [
+              true,
+              true,
+              true
+            ],
+            "adxPass": true,
+            "volatilityPass": true,
+            "sessionPass": true,
+            "passes": true
+          }
         }
       }
     }

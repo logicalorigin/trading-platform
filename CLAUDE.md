@@ -7,50 +7,24 @@ Source: https://github.com/multica-ai/andrej-karpathy-skills
 
 ## Project Run Rules
 
-The agent OWNS the dev app lifecycle — stop, rebuild, and restart it directly to load code changes
-and verify work at runtime. Do the running yourself. Do NOT defer running/restarting to the user,
-do NOT tell them to click the Replit Run button, and do NOT claim you can't — you can and you must.
-(The earlier guidance reserving app bring-up to the Run button has been retired and must stay
-retired.)
-
-**Reloading code to load changes (agent-driven, preview-safe).** The API runs a built bundle
-(`node dist/index.mjs`), not watch mode, so BACKEND changes need a rebuild + restart of the API
-process. The web (Vite) hot-reloads FRONTEND changes on its own — no action needed.
-
-WHY THIS MATTERS (learned the hard way): the user's Replit **preview is anchored to the supervisor
-that pid2 spawned** (Port Authority routes the webview to the port, but the workspace "running/
-crashed" + "ports opened/did not open" status is pid2's tracking of the workflow IT spawned). A
-shell-launched supervisor — even `REPLIT_MODE=workflow ...` — is NOT spawned by pid2, so pid2 never
-tracks it: the preview shows "crashed / ports did not open" while the app runs on a scope the preview
-can't see. There is no public in-container hook to make pid2 spawn the tracked workflow.
-
-- **Backend reload = SIGUSR2 to the LIVE pid2-owned supervisor. This is the default; use it.**
-  `kill -USR2 "$(pgrep -f 'node ./scripts/runDevApp.mjs' | head -1)"` rebuilds + restarts ONLY the
-  API child IN PLACE (handler in `runDevApp.mjs`: `reloadApiInPlace`). The supervisor never exits, so
-  the preview stays attached and the web port never drops — the user sees the new backend with no
-  crash flash and nothing to click. Confirm the reload: poll `http://127.0.0.1:8080/api/healthz` → 200.
-- Verify the supervisor is the pid2-owned one (its parent chain reaches the **pid2 server
-  process**): `pgrep -f 'node ./scripts/runDevApp.mjs'` then walk `/proc/<pid>/stat` field 4 up to
-  an ancestor whose `/proc/<pid>/cmdline` argv0 is `pid2`. CAUTION (verified 2026-07-05): on pooled
-  microVMs (`pid0 -pid2-pooling`, cluster riker) the pid2 server is NOT numeric PID 2 — observed at
-  OS pid 23 with comm `node` — so never test `pid === 2`; match argv0. The
-  `get_supervisor_state` MCP tool does this correctly now (`procinfo.ts` `cmdlineIsPid2`); before
-  2026-07-05 it false-negatived every pooled-microVM chain — do not trust old "preview detached"
-  verdicts, and confirm with the public-URL probe below before any corrective restart. If the app is
-  fully stopped (no supervisor), the user must hit Run once to let pid2 spawn it (the one bootstrap
-  only pid2 can do); then drive everything via SIGUSR2. After a whole-VM replacement (Replit rotates
-  the microVM ~every 6h since 2026-07-02, at ~:17 past 00/06/12/18 UTC) pid2 respawns the workflow
-  by itself ~10s after attach — no Run click is needed and the ~25s gap is not a crash.
-- Do NOT shell-launch `REPLIT_MODE=workflow pnpm ... dev:replit` to reload code — that spawns a
-  supervisor pid2 doesn't track, detaching the user's preview (the `Exit status 143` churn). Avoid it.
-- Confirm what the user actually sees by hitting the PUBLIC preview URL from the container:
+- Replit's Run/Stop controls own the managed artifact lifecycle. The selected
+  `artifacts/pyrus: web` artifact runs the development command declared in
+  `artifacts/pyrus/.replit-artifact/artifact.toml`.
+- Agents may build, test, and typecheck directly. The API uses a built bundle, so loading
+  backend changes requires Replit's native restart-run-workflow action when exposed, or the
+  workspace Run/Stop controls otherwise. Never signal the launcher or pid2, and never
+  shell-launch a second app copy. Vite hot-reloads frontend changes.
+- Confirm what the user sees by hitting the public preview URL from the container:
   `https://$REPLIT_DEV_DOMAIN/` (web) and `.../api/healthz` (API) — 200 + `<title>PYRUS Platform</title>`
   means the preview will render the live app on refresh.
-- Canonical ports: API `8080` (external 80), web/preview `18747` (external 3000); `pyrus_compute`
-  binds 18768/18770 (expected, not duplicates). Confirm a restart loaded your code by grepping the
-  live `artifacts/api-server/dist/index.mjs` or reading `.pyrus-runtime/flight-recorder/api-current.json`.
+- Canonical ports are API `8080` and web/preview `18747`.
 - Targeted `pnpm` test/typecheck/build commands remain the fast path for logic validation; restart
   only when you need runtime/preview verification.
+- Shared Replit memory is lifecycle-critical. Serialize package installs, broad builds/typechecks,
+  repeated bundling, browser/performance-capture processing, and large file patches across all
+  agents and sessions. Do not launch nested `codex exec` sessions. Before memory-heavy work,
+  require at least 6 GiB `MemAvailable` and no more than 10 GiB in cgroup `memory.current`;
+  otherwise reduce load first. Never print or patch the payload of a large generated capture.
 
 **Headless browser (visual verification + screenshots) — repo-native, no setup.** To actually SEE a
 rendered page (catch blank screens, crashes, console errors, network patterns), use the committed
@@ -65,15 +39,6 @@ network calls, `--viewport WxH`, `--fail-on-console`). It drives the already-ins
 browser:waterfall`) run in-container too. The app holds open SSE streams, so `networkidle` never
 fires — use `--wait`/`--wait-for`, not idle waits. Then Read the PNG to view it. Off Replit, run
 `pnpm exec playwright install chromium` once (the env var is unset and Playwright uses its own browser).
-
-**Startup contract (keeps the Replit workflow working — not an agent-permission guard).**
-- `artifacts/*/.replit-artifact/artifact.toml` is the source of truth for dev startup;
-  `[agent] stack = "PNPM_WORKSPACE"` + `[workflows] runButton = "artifacts/pyrus: web"` start the
-  services. Do not add a root `.replit` `run = [...]` or repo-defined `[[workflows.workflow]]` tasks,
-  and ignore Replit's generated **Configure Your App** option.
-- If you change `.replit`, `artifacts/*/.replit-artifact/artifact.toml`, artifact `dev` scripts, DB
-  startup config, or `scripts/reap-dev-port.mjs`, run `pnpm run audit:replit-startup` and keep
-  `scripts/check-replit-startup-guards.mjs` wired into `audit:guards` / root `typecheck`.
 
 ## Fact-First Operating Rules
 

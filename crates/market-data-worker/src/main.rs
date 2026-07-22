@@ -28,7 +28,9 @@ use crate::jobs::{
     claim_next_job, complete_job, fail_expired_jobs_over_attempt_limit,
     fail_gex_jobs_with_failed_prerequisites, fail_job, heartbeat_job, IngestJob,
 };
-use crate::providers::massive::{fetch_option_chain_snapshots, OptionChainFetchResult};
+use crate::providers::massive::{
+    fetch_option_chain_snapshots, provider_request_metadata, OptionChainFetchResult,
+};
 
 #[derive(Debug, Parser)]
 #[command(name = "market-data-worker")]
@@ -109,6 +111,7 @@ async fn run_once(config: WorkerConfig, kind: &str, symbol: &str) -> Result<()> 
             {
                 Ok(fetch) => fetch,
                 Err(error) => {
+                    let metadata = provider_request_metadata(&error);
                     log_provider_request(
                         &pool,
                         &provider.provider,
@@ -116,10 +119,10 @@ async fn run_once(config: WorkerConfig, kind: &str, symbol: &str) -> Result<()> 
                         symbol,
                         started_at,
                         "error",
-                        http_status_from_error(&error),
+                        metadata.http_status,
                         None,
                         None,
-                        None,
+                        metadata.rate_limit_reset_at,
                         Some(error.to_string()),
                     )
                     .await?;
@@ -143,9 +146,14 @@ async fn run_once(config: WorkerConfig, kind: &str, symbol: &str) -> Result<()> 
             )
             .await?;
             ensure_complete_option_chain(&fetch, symbol)?;
-            let persisted =
-                persist_option_chain_snapshots(&pool, symbol, &provider.provider, &fetch.snapshots)
-                    .await?;
+            let persisted = persist_option_chain_snapshots(
+                &pool,
+                symbol,
+                &provider.provider,
+                &fetch.snapshots,
+                None,
+            )
+            .await?;
             info!(
                 symbol = symbol.trim().to_uppercase(),
                 provider = provider.provider,
@@ -155,7 +163,7 @@ async fn run_once(config: WorkerConfig, kind: &str, symbol: &str) -> Result<()> 
             Ok(())
         }
         "gex_snapshot" => {
-            let summary = compute_and_persist_gex_snapshot(&pool, symbol).await?;
+            let summary = compute_and_persist_gex_snapshot(&pool, symbol, None).await?;
             info!(
                 symbol = summary.symbol,
                 option_count = summary.option_count,
@@ -219,7 +227,10 @@ async fn run_loop(config: WorkerConfig, max_jobs: Option<usize>) -> Result<()> {
         }
         match fail_expired_jobs_over_attempt_limit(&pool).await {
             Ok(count) if count > 0 => {
-                info!(count, "marked expired market-data jobs failed after max attempts");
+                info!(
+                    count,
+                    "marked expired market-data jobs failed after max attempts"
+                );
             }
             Ok(_) => {}
             Err(error) => {
@@ -284,7 +295,7 @@ async fn process_job(pool: &sqlx::PgPool, config: &WorkerConfig, job: &IngestJob
     match job.kind.as_str() {
         "gex_snapshot" => {
             with_job_heartbeat(pool, config, job, async {
-                compute_and_persist_gex_snapshot(pool, &job.symbol).await?;
+                compute_and_persist_gex_snapshot(pool, &job.symbol, Some(job)).await?;
                 Ok(())
             })
             .await
@@ -306,6 +317,7 @@ async fn process_job(pool: &sqlx::PgPool, config: &WorkerConfig, job: &IngestJob
                 {
                     Ok(fetch) => fetch,
                     Err(error) => {
+                        let metadata = provider_request_metadata(&error);
                         log_provider_request(
                             pool,
                             &provider.provider,
@@ -313,10 +325,10 @@ async fn process_job(pool: &sqlx::PgPool, config: &WorkerConfig, job: &IngestJob
                             &job.symbol,
                             started_at,
                             "error",
-                            http_status_from_error(&error),
+                            metadata.http_status,
                             None,
                             None,
-                            None,
+                            metadata.rate_limit_reset_at,
                             Some(error.to_string()),
                         )
                         .await?;
@@ -345,6 +357,7 @@ async fn process_job(pool: &sqlx::PgPool, config: &WorkerConfig, job: &IngestJob
                     &job.symbol,
                     &provider.provider,
                     &fetch.snapshots,
+                    Some(job),
                 )
                 .await?;
                 info!(
@@ -466,17 +479,11 @@ async fn log_provider_request(
     .await
 }
 
-fn http_status_from_error(error: &anyhow::Error) -> Option<i32> {
-    error
-        .downcast_ref::<reqwest::Error>()
-        .and_then(|error| error.status())
-        .map(|status| status.as_u16() as i32)
-}
-
 fn is_transient_job_error(error: &anyhow::Error) -> bool {
-    if let Some(status) = error
-        .downcast_ref::<reqwest::Error>()
-        .and_then(|error| error.status())
+    if let Some(status) = provider_request_metadata(error)
+        .http_status
+        .and_then(|status| u16::try_from(status).ok())
+        .and_then(|status| StatusCode::from_u16(status).ok())
     {
         // 429 and 5xx are worth retrying; any other provider 4xx is a permanent client error.
         return status == StatusCode::TOO_MANY_REQUESTS || status.is_server_error();
@@ -508,6 +515,7 @@ fn is_transient_job_error(error: &anyhow::Error) -> bool {
         || lower.contains("parse")
         || lower.contains("deserialize")
         || lower.contains("invalid json")
+        || lower.contains("invalid expiration date")
         || lower.contains("missing field")
         || lower.contains("unknown column")
         || lower.contains("no such column")
@@ -515,4 +523,61 @@ fn is_transient_job_error(error: &anyhow::Error) -> bool {
         || lower.contains("schema mismatch");
 
     !permanent
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn invalid_option_expiration_is_permanent() {
+        let error = anyhow::anyhow!("invalid expiration date for O:SPY260117C00600000");
+
+        assert!(!is_transient_job_error(&error));
+    }
+
+    #[test]
+    fn durable_persistence_is_transactionally_fenced_by_current_claim() {
+        let option_persistence = include_str!("ingest.rs");
+        let gex_persistence = include_str!("compute/gex.rs");
+        let fence_source = [option_persistence, gex_persistence, include_str!("jobs.rs")].concat();
+        let mut violations = Vec::new();
+
+        if !option_persistence.contains("lock_job_attempt_tx(") {
+            violations.push("option-chain persistence does not call lock_job_attempt_tx");
+        }
+        if !gex_persistence.contains("lock_job_attempt_tx(") {
+            violations.push("GEX persistence does not call lock_job_attempt_tx");
+        }
+
+        let fence_sql = fence_source.find("fn lock_job_attempt_tx").map(|start| {
+            fence_source[start..]
+                .lines()
+                .take(60)
+                .collect::<Vec<_>>()
+                .join(" ")
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ")
+                .to_ascii_lowercase()
+        });
+        match fence_sql {
+            Some(sql) => {
+                for predicate in [
+                    "id = $1::uuid",
+                    "lease_owner = $2",
+                    "attempt_count = $3",
+                    "status = 'running'",
+                    "for update",
+                ] {
+                    if !sql.contains(predicate) {
+                        violations.push(predicate);
+                    }
+                }
+            }
+            None => violations.push("shared lock_job_attempt_tx fence is missing"),
+        }
+
+        assert!(violations.is_empty(), "{}", violations.join("\n"));
+    }
 }

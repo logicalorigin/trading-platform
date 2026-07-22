@@ -35,8 +35,10 @@ directory to define separate Replit app runners.
   - Run:
     `DATABASE_URL=postgres://... MASSIVE_API_KEY=... pnpm --filter @workspace/scripts run shadow:massive-options-audit`
   - Optional selectors: `SHADOW_MASSIVE_AUDIT_ACCOUNT_ID`,
+    `SHADOW_MASSIVE_AUDIT_START`, `SHADOW_MASSIVE_AUDIT_END`,
     `SHADOW_MASSIVE_AUDIT_CONCURRENCY`, `SHADOW_MASSIVE_AUDIT_MAX_ROWS`, and
-    `SHADOW_MASSIVE_AUDIT_REPORT_DIR`.
+    `SHADOW_MASSIVE_AUDIT_REPORT_DIR`. Start/end use inclusive UTC
+    `YYYY-MM-DD` dates.
 - `shadow:management-review` reads the committed shadow option `automation`
   ledger, ranks management leaks by exit reason/symbol/signal quality, folds in
   prior dry sweep evidence when present, and writes Markdown/JSON/CSV reports
@@ -49,33 +51,30 @@ directory to define separate Replit app runners.
     `SHADOW_OPTIONS_MANAGEMENT_REVIEW_TOP_LEAKS`,
     `SHADOW_OPTIONS_MANAGEMENT_REVIEW_SWEEP_ROOT`, and
     `SHADOW_OPTIONS_MANAGEMENT_REVIEW_REPORT_DIR`.
+- `shadow:ledger-correction:2026-07-15` is the one-shot, assertion-heavy
+  correction for the July 13–14 shadow-options audit. It defaults to a
+  transactionally rolled-back dry run. Set `SHADOW_LEDGER_CORRECTION_MODE` to
+  `apply`, `reconcile`, `revert-dry-run`, or `revert` only for the corresponding
+  operator workflow. Apply/revert intentionally fail on a second invocation.
+  After `apply`, restart the managed workflow to clear the in-process
+  order-classification memo, then run `reconcile`; after `revert`, reload and
+  verify the restored account fold. Balance snapshots remain append-only, so
+  the correction is recorded as a July 15 adjustment rather than rewriting
+  historical chart points.
 
 ## Audit Guardrails
 
 - `check-env-example.mjs` verifies that JS/TS app-code environment references are
   documented in `.env.example`.
-- `check-replit-startup-guards.mjs` verifies that `.replit` stays in
-  `PNPM_WORKSPACE` artifact mode, PYRUS keeps its guarded artifact identity, and the
-  PYRUS web artifact owns full app bring-up. It also guards the
-  Replit-workflow replacement path in `reap-dev-port.mjs`, the controlled
-  supervisor handoff policy, and the supervisor lifecycle JSONL evidence path.
-- `protect-replit-config.mjs` locks or unlocks Replit startup config files
-  (`.replit`, `replit.nix`, and artifact TOMLs) with filesystem permissions.
-  Keep them locked during routine work; unlock only for an intentional
-  startup-config maintenance window.
-- `replit-config-clobber.mjs` detects the platform "Post-Recovery checkpoint"
-  clobber signature (deleted `replit.nix`, stripped `[nix]` channel, dropped
-  `postgresql-16` module, dropped `[workflows] runButton`, and changed the
-  configured port mappings).
-  Used by the startup guard, the restore script, and the PYRUS dev supervisor
-  (warn only — the supervisor never writes `.replit`).
-- `restore-replit-config.mjs` (`pnpm run replit:config:restore`) diffs the live
-  `.replit`/`replit.nix` against the checked-in canonical copies in
-  `scripts/replit-config/`; with `-- --write` it stages both locked replacements
-  before publishing `replit.nix` first and `.replit` second. Each publication
-  may trigger a workspace reload; wait for the workspace to settle before
-  auditing. If the canonical startup config intentionally changes, update
-  `scripts/replit-config/` in the same maintenance window.
+- `check-replit-startup-guards.mjs` verifies the single PYRUS artifact owner,
+  Replit-owned dev lifecycle, canonical startup-config recovery material, and
+  the one-port production supervisor/session-host build contract.
+- `protect-replit-config.mjs` locks or unlocks `.replit`, `replit.nix`, and the
+  PYRUS artifact TOML for an intentional startup-maintenance window.
+- `replit-config-clobber.mjs` detects loss of the tracked Replit startup
+  invariants. `restore-replit-config.mjs` compares the live files with
+  `scripts/replit-config/` and writes replacements only with explicit
+  `--write`; neither utility starts or restarts the app.
 - `check-api-codegen-drift.mjs` regenerates the OpenAPI clients and fails if the
   generated output changes.
 - `check-markdown-paths.mjs` verifies path-like references in maintained docs.
@@ -111,61 +110,14 @@ directory to define separate Replit app runners.
 
 - The legacy Windows-side IBKR bridge bundle has been retired; do not add bridge
   packaging or helper-launch scripts back to startup.
-- `pnpm run ibkr:capsule:release publish ...` is the registry-neutral,
-  clean-tree release path for the Linux/amd64 Client Portal Gateway capsule. It
-  uses BuildKit provenance and SBOM attestations, pushes through the operator's
-  existing Docker credential helper, resolves the result to
-  `repository@sha256:...`, pulls that exact digest back for configuration and
-  label inspection, and writes a separately reviewable manifest. It never
-  accepts a registry password or mutable runtime tag. The `publish` command
-  changes external registry state and therefore requires explicit owner
-  approval.
-- `pnpm run ibkr:capsule:release preload --manifest=...` pulls and verifies
-  the manifest's exact Linux/amd64 digest on a target Docker host. Production
-  performs the equivalent check automatically in
-  `artifacts/pyrus/scripts/runIbkrSessionHost.mjs`; the public API starts
-  independently while the host wrapper preloads, and session-host code is not
-  imported if the image is missing, mutable, mislabeled, or structurally
-  invalid.
-- `pnpm run ibkr:capsule:density` is the destructive, paper-only Reserved VM
-  density proof. It requires `--manifest=...`, `--report=...`,
-  `--deployment-id=...`, `--vm-size=...`, and `--execute`. It validates and
-  preloads the reviewed release manifest, refuses an active session host or
-  any existing capsule, owns the loopback host-control port for the whole run,
-  exercises the fixed `1 → 2 → 5 → 10 → 15 → 20` lease-v1 ramp, samples
-  API/container/host health, and attempts to remove every synthetic capsule
-  before exit. Its report never changes admission capacity; capacity promotion
-  remains a separate reviewed operator action.
 - `artifacts/pyrus/scripts/runProductionApp.mjs` owns the one-port production
-  API/session-host process tree on a Reserved VM. The host remains disabled by
-  default; when enabled, the runner requires signed lifecycle configuration,
-  derives host-bound keys from the API roots, passes only host-scoped
-  environment values to it, forces loopback API/Docker targets, and treats
-  either child exit as fatal.
-- `artifacts/api-server/dist/ibkr-gateway-host-admin.mjs` is the built,
-  non-network operator interface for inspecting, approving, draining, or
-  quarantining a fleet host. Mutations require exact bounded arguments plus
-  `--execute`; the command uses the script DB profile and closes every database
-  pool before exit. Run it with `--help` for the exact syntax.
+  API/session-host process tree. When the optional host is enabled, it requires
+  signed lifecycle configuration, derives host-bound control keys, forces
+  loopback API/Docker targets, and treats either child exit as fatal.
+- `pnpm run ibkr:capsule:release` is the reviewed immutable-image
+  publish/preload path. `pnpm run ibkr:capsule:density` is the destructive,
+  paper-only Reserved VM density proof; neither command may be run without its
+  documented operator gates.
 - `start-local-postgres.sh` and `wait-for-local-postgres.sh` support manual
   workspace-local Postgres fallback diagnosis. They are not part of normal
   Replit app bring-up.
-- `reap-dev-port.mjs` clears same-cgroup dev processes before package dev
-  scripts start. A verified Replit artifact workflow (`REPLIT_MODE=workflow`
-  plus the exact Pyrus artifact runner directly below platform-rooted pid2)
-  can replace older Replit execution scopes on the same pinned port.
-  `PYRUS_REPLIT_RUN=1` is a tag only, not restart authority.
-- `artifacts/pyrus/scripts/runDevApp.mjs` owns full dev app bring-up. A
-  duplicate Replit-owned Run event is treated as an intentional Run-button
-  restart immediately while the supervisor lock points at a live
-  `artifacts/pyrus/scripts/runDevApp.mjs` process. The new Replit-owned Run
-  uses a controlled handoff so the current workflow owns API/Vite again. Use
-  `PYRUS_DEV_FORCE_RESTART=1` only for an intentional Replit-owned recovery
-  restart that may request a controlled handoff from a live supervisor. Shell
-  smoke tests for the duplicate path must include
-  `PYRUS_DEV_DUPLICATE_CHECK_ONLY=1`; that mode reads the supervisor lock and
-  exits without starting API/web processes.
-- The supervisor writes lifecycle evidence to
-  `/tmp/pyrus/pyrus-dev-lifecycle-8080.jsonl`, including heartbeats, child
-  starts/exits, controlled handoffs, ignored SIGHUP, shutdown, and previous
-  heartbeat classification.

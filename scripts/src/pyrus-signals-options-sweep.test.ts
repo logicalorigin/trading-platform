@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rename, rm } from "node:fs/promises";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
@@ -36,6 +36,7 @@ type SweepInternals = {
     };
     commit: boolean;
     replay: boolean;
+    replayRunId?: string;
   }): Record<string, unknown>;
   csvValue(value: unknown): string;
   enableHistoricalBarEvaluation(env: NodeJS.ProcessEnv): void;
@@ -46,6 +47,8 @@ type SweepInternals = {
   publishReportFiles(
     reportDir: string,
     files: Record<"results.json" | "results.csv" | "report.md", string>,
+    signal?: AbortSignal,
+    renameDirectory?: (from: string, to: string) => Promise<void>,
   ): Promise<void>;
   readSweepConfig(
     env: NodeJS.ProcessEnv,
@@ -74,8 +77,39 @@ type SweepInternals = {
   }): void;
   replayReportLine(result?: sweep.SweepResult | null): string;
   safeDiagnostic(error: unknown): string;
+  runVariant(
+    input: {
+      deployment: {
+        id: string;
+        name: string;
+        mode: "shadow" | "live";
+        symbolUniverse: string[];
+      };
+      variant: sweep.SweepVariant;
+      config: {
+        start: string;
+        end?: string;
+        session: string;
+        signalTimeframe: string;
+        smoke: boolean;
+        replayWinner: boolean;
+        lockWaitMs: number;
+        reportDir: string;
+        mtfSweep: boolean;
+      };
+      commit: boolean;
+      replay: boolean;
+      signal: AbortSignal;
+    },
+    runtime: {
+      runSignalOptionsShadowBackfill(
+        input: Record<string, unknown>,
+      ): Promise<unknown>;
+    },
+  ): Promise<sweep.SweepResult>;
   verifyReplayLedger(input: {
     deploymentId: string;
+    runId: string;
     window: Record<string, unknown> | null;
     ledgerMode: "own" | "shadow_orders";
     serviceCompleted: boolean;
@@ -285,6 +319,37 @@ test("the selected deployment universe is forwarded to the backfill service", ()
   assert.deepEqual(backfill.symbolUniverseOverride, ["SPY", "NVDA"]);
   assert.equal(backfill.forceDeploymentUniverse, true);
   assert.equal(backfill.useBarDerivedMtf, true);
+});
+
+test("winner replay forwards one caller-owned run id into the backfill", () => {
+  const api = requireInternals();
+  const backfill = api.buildVariantBackfillInput({
+    deployment: {
+      id: "deployment-id",
+      name: "Pyrus Signals Options Shadow",
+      mode: "shadow",
+      symbolUniverse: ["SPY"],
+    },
+    variant: variant("stage-a-h10"),
+    config: {
+      start: "2026-06-01",
+      session: "regular",
+      signalTimeframe: "5m",
+      smoke: true,
+      replayWinner: true,
+      lockWaitMs: 0,
+      reportDir: "/tmp/options-sweep-test",
+      mtfSweep: false,
+    },
+    commit: true,
+    replay: true,
+    replayRunId: "pyrus-signals-sweep-exact-stage-a-h10",
+  });
+
+  assert.equal(
+    (backfill.replay as Record<string, unknown>)?.runId,
+    "pyrus-signals-sweep-exact-stage-a-h10",
+  );
 });
 
 test("invalid operator booleans fail instead of enabling fallback behavior", () => {
@@ -511,6 +576,13 @@ test("reported errors and Markdown fields are bounded and structure-safe", () =>
     /super-secret|query-secret|fragment|\u001b|\n|\u2028|\u202e/u,
   );
   assert.ok(diagnostic.length <= 400);
+  const opaqueCredential = `AKIA${"A".repeat(16)}`;
+  assert.doesNotMatch(
+    api.safeDiagnostic(
+      new Error(`provider rejected credential ${opaqueCredential}`),
+    ),
+    new RegExp(opaqueCredential, "u"),
+  );
 
   const markdown = api.markdownText(
     "name\n# forged\u2028second | <img> [click](https://bad.test)",
@@ -568,6 +640,106 @@ test("report files publish as one directory and never overwrite a completed run"
       await readFile(path.join(reportDir, "results.json"), "utf8"),
       original["results.json"],
     );
+    assert.deepEqual(
+      (await readdir(root)).filter((name) => name.includes(".tmp-")),
+      [],
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("lease loss during report rename removes the published directory", async () => {
+  const api = requireInternals();
+  const root = await mkdtemp(path.join(tmpdir(), "pyrus-sweep-rename-loss-"));
+  const reportDir = path.join(root, "report");
+  const controller = new AbortController();
+  const leaseLost = new Error("Pyrus sweep lease lost during rename");
+  try {
+    await assert.rejects(
+      api.publishReportFiles(
+        reportDir,
+        {
+          "results.json": "results\n",
+          "results.csv": "results\n",
+          "report.md": "report\n",
+        },
+        controller.signal,
+        async (from, to) => {
+          await rename(from, to);
+          controller.abort(leaseLost);
+        },
+      ),
+      (error) => error === leaseLost,
+    );
+    await assert.rejects(readFile(path.join(reportDir, "report.md"), "utf8"));
+    assert.deepEqual(
+      (await readdir(root)).filter((name) => name.includes(".tmp-")),
+      [],
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("lease loss stops the next variant and final report publication", async () => {
+  const api = requireInternals();
+  const controller = new AbortController();
+  const leaseLost = new Error("Pyrus sweep lease lost");
+  controller.abort(leaseLost);
+  let backfills = 0;
+
+  await assert.rejects(
+    api.runVariant(
+      {
+        deployment: {
+          id: "deployment-id",
+          name: "Pyrus Signals Options Shadow",
+          mode: "shadow",
+          symbolUniverse: ["SPY"],
+        },
+        variant: variant("lease-loss"),
+        config: {
+          start: "2026-05-01",
+          session: "regular",
+          signalTimeframe: "5m",
+          smoke: true,
+          replayWinner: false,
+          lockWaitMs: 0,
+          reportDir: "/tmp/pyrus-options-lease-loss",
+          mtfSweep: false,
+        },
+        commit: false,
+        replay: false,
+        signal: controller.signal,
+      },
+      {
+        runSignalOptionsShadowBackfill: async () => {
+          backfills += 1;
+          return {};
+        },
+      },
+    ),
+    (error) => error === leaseLost,
+  );
+  assert.equal(backfills, 0);
+
+  const root = await mkdtemp(path.join(tmpdir(), "pyrus-sweep-lease-loss-"));
+  const reportDir = path.join(root, "report");
+  try {
+    await assert.rejects(
+      api.publishReportFiles(
+        reportDir,
+        {
+          "results.json": "results\n",
+          "results.csv": "results\n",
+          "report.md": "report\n",
+        },
+        controller.signal,
+      ),
+      (error) => error === leaseLost,
+    );
+    await assert.rejects(readFile(path.join(reportDir, "report.md"), "utf8"));
     assert.deepEqual(
       (await readdir(root)).filter((name) => name.includes(".tmp-")),
       [],
@@ -714,6 +886,7 @@ test("replay verification cannot bypass the configured ledger proof", async () =
   };
   const base = {
     deploymentId: "deployment-id",
+    runId: "pyrus-signals-sweep-exact-stage-a-h10",
     window: {
       from: "2026-05-01T00:00:00.000Z",
       to: "2026-05-02T00:00:00.000Z",
@@ -733,7 +906,8 @@ test("replay verification cannot bypass the configured ledger proof", async () =
     {
       ledgerMode: "own",
       serviceCompletion: true,
-      reason: "Committed replay completed through the own-backtest-ledger service path.",
+      reason:
+        "Committed replay completed through the own-backtest-ledger service path.",
     },
   );
   assert.equal(queries.length, 0);
@@ -756,10 +930,15 @@ test("replay verification cannot bypass the configured ledger proof", async () =
   );
   assert.equal(queries.length, 1);
   assert.match(queries[0]?.sql ?? "", /from shadow_orders/u);
+  assert.match(
+    queries[0]?.sql ?? "",
+    /payload->'metadata'->>'runId'\s*=\s*\$4/u,
+  );
   assert.deepEqual(queries[0]?.values, [
     "deployment-id",
     "2026-05-01T00:00:00.000Z",
     "2026-05-02T00:00:00.000Z",
+    "pyrus-signals-sweep-exact-stage-a-h10",
   ]);
 
   assert.deepEqual(

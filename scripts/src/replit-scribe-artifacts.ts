@@ -1,7 +1,11 @@
-import { copyFileSync, existsSync } from "node:fs";
+import { existsSync } from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import {
+  parseArgs as parseNodeArgs,
+  stripVTControlCharacters,
+} from "node:util";
 
 type ScribeDocumentRow = {
   id: string;
@@ -38,6 +42,33 @@ const DEFAULT_PRIMARY_ARTIFACT_ID = "artifacts/pyrus";
 export const CONTROL_PLANE_CLEANUP_ENV =
   "PYRUS_ALLOW_REPLIT_CONTROL_PLANE_CLEANUP";
 const CONTROL_PLANE_CLEANUP_CONFIRM_FLAG = "--confirm-control-plane-cleanup";
+// ponytail: five seconds and 10 MiB bound this local helper; raise either only
+// after measured Scribe state growth proves the current ceiling insufficient.
+const SQLITE_HELPER_TIMEOUT_MS = 5_000;
+const SQLITE_HELPER_MAX_BUFFER_BYTES = 10 * 1024 * 1024;
+// ponytail: 1,000 characters keeps terminal diagnostics useful but bounded;
+// structured error artifacts are the upgrade path if truncation hides evidence.
+const MAX_LOG_STRING_LENGTH = 1_000;
+const UNSAFE_OUTPUT_PATTERN =
+  /[\u0000-\u001f\u007f-\u009f\u2028-\u202e\u2066-\u2069]/gu;
+const USAGE = `Usage: pnpm --filter @workspace/scripts run replit:scribe:artifacts -- [--db PATH] [--primary-artifact ID] [--json] [--backup-and-clean ${CONTROL_PLANE_CLEANUP_CONFIRM_FLAG}]`;
+
+const safeText = (value: unknown) => {
+  const cleaned = stripVTControlCharacters(String(value ?? ""))
+    .replace(UNSAFE_OUTPUT_PATTERN, " ")
+    .replace(/\s+/gu, " ")
+    .trim();
+  return cleaned.length <= MAX_LOG_STRING_LENGTH
+    ? cleaned
+    : `${cleaned.slice(0, MAX_LOG_STRING_LENGTH - 1)}…`;
+};
+
+const jsonText = (value: unknown) =>
+  (JSON.stringify(value, null, 2) ?? "").replace(
+    /[\u007f-\u009f\u2028-\u202e\u2066-\u2069]/gu,
+    (character) =>
+      `\\u${character.codePointAt(0)?.toString(16).padStart(4, "0") ?? "fffd"}`,
+  );
 
 const parseState = (state: string | Buffer) => {
   const text = Buffer.isBuffer(state) ? state.toString("utf8") : state;
@@ -57,15 +88,27 @@ export function parseScribeArtifactDocuments(
 ): ScribeArtifactRecord[] {
   return rows
     .map((row) => {
+      if (typeof row.id !== "string" || !row.id.startsWith("shape:artifact:")) {
+        return null;
+      }
       const state = parseState(row.state);
       const props =
-        state && "props" in state && state.props && typeof state.props === "object"
+        state &&
+        "props" in state &&
+        state.props &&
+        typeof state.props === "object"
           ? (state.props as Record<string, unknown>)
           : {};
       const artifactId =
         typeof props.artifactId === "string" ? props.artifactId : null;
       if (!artifactId || state?.type !== "iframe") {
         return null;
+      }
+      if (
+        !Number.isSafeInteger(row.lastChangedClock) ||
+        row.lastChangedClock < 0
+      ) {
+        throw new Error(`Invalid Scribe artifact clock: ${safeText(row.id)}`);
       }
 
       return {
@@ -81,7 +124,7 @@ export function parseScribeArtifactDocuments(
         y: numberOrNull(state.y),
         w: numberOrNull(props.w),
         h: numberOrNull(props.h),
-        lastChangedClock: Number(row.lastChangedClock) || 0,
+        lastChangedClock: row.lastChangedClock,
       } satisfies ScribeArtifactRecord;
     })
     .filter((record): record is ScribeArtifactRecord => Boolean(record));
@@ -91,7 +134,9 @@ export function selectScribeArtifactCleanup(
   artifacts: ScribeArtifactRecord[],
   { primaryArtifactId = DEFAULT_PRIMARY_ARTIFACT_ID } = {},
 ): ScribeArtifactCleanupSelection {
-  const liveArtifacts = artifacts.filter((artifact) => artifact.state === "live");
+  const liveArtifacts = artifacts.filter(
+    (artifact) => artifact.state === "live",
+  );
   const primaryLive = liveArtifacts
     .filter((artifact) => artifact.artifactId === primaryArtifactId)
     .sort((left, right) => right.lastChangedClock - left.lastChangedClock);
@@ -117,24 +162,40 @@ export function selectScribeArtifactCleanup(
 const runPythonJson = (script: string, args: string[]) => {
   const result = spawnSync("python3", ["-c", script, ...args], {
     encoding: "utf8",
-    maxBuffer: 10 * 1024 * 1024,
+    maxBuffer: SQLITE_HELPER_MAX_BUFFER_BYTES,
+    timeout: SQLITE_HELPER_TIMEOUT_MS,
   });
-  if (result.status !== 0) {
+  if (result.error) {
+    const code = (result.error as NodeJS.ErrnoException).code;
     throw new Error(
-      (result.stderr || result.stdout || "python3 sqlite helper failed").trim(),
+      code === "ETIMEDOUT"
+        ? `python3 SQLite helper timed out after ${SQLITE_HELPER_TIMEOUT_MS}ms`
+        : `Unable to run python3 SQLite helper: ${safeText(result.error.message)}`,
     );
   }
-  return JSON.parse(result.stdout || "null");
+  if (result.status !== 0) {
+    throw new Error(
+      safeText(result.stderr || result.stdout) ||
+        "python3 SQLite helper failed",
+    );
+  }
+  try {
+    return JSON.parse(result.stdout || "null");
+  } catch {
+    throw new Error("Invalid JSON from python3 SQLite helper");
+  }
 };
 
-const readScribeRows = (dbPath: string): ScribeDocumentRow[] =>
-  runPythonJson(
+const readScribeRows = (dbPath: string): ScribeDocumentRow[] => {
+  const rows = runPythonJson(
     `
 import json
+from pathlib import Path
 import sqlite3
 import sys
 
-con = sqlite3.connect(sys.argv[1])
+con = sqlite3.connect(Path(sys.argv[1]).resolve().as_uri() + "?mode=ro", uri=True)
+con.execute("pragma query_only=on")
 rows = []
 for row_id, state, clock in con.execute("select id, state, lastChangedClock from documents where id like 'shape:artifact:%' order by lastChangedClock"):
     if isinstance(state, bytes):
@@ -143,41 +204,161 @@ for row_id, state, clock in con.execute("select id, state, lastChangedClock from
 print(json.dumps(rows))
 `,
     [dbPath],
-  ) as ScribeDocumentRow[];
+  );
+  if (
+    !Array.isArray(rows) ||
+    rows.some(
+      (row) =>
+        !row ||
+        typeof row !== "object" ||
+        typeof row.id !== "string" ||
+        !row.id.startsWith("shape:artifact:") ||
+        typeof row.state !== "string" ||
+        !Number.isSafeInteger(row.lastChangedClock) ||
+        row.lastChangedClock < 0,
+    )
+  ) {
+    throw new Error("Invalid Scribe row payload from python3 SQLite helper");
+  }
+  return rows as ScribeDocumentRow[];
+};
 
 const cleanupScribeRows = (
   dbPath: string,
   backupPath: string,
-  cleanupIds: string[],
+  auditedArtifacts: ScribeArtifactRecord[],
+  cleanupArtifacts: ScribeArtifactRecord[],
 ) => {
-  copyFileSync(dbPath, backupPath);
+  const expectedArtifact = (artifact: ScribeArtifactRecord) => ({
+    id: artifact.id,
+    artifactId: artifact.artifactId,
+    state: artifact.state,
+    lastChangedClock: artifact.lastChangedClock,
+  });
   return runPythonJson(
     `
 import json
+import os
+from pathlib import Path
 import sqlite3
+import stat
 import sys
 
 db_path = sys.argv[1]
-cleanup_ids = json.loads(sys.argv[2])
-con = sqlite3.connect(db_path)
-with con:
-    row = con.execute("select documentClock from metadata limit 1").fetchone()
-    clock = int(row[0]) if row else 0
+backup_path = sys.argv[2]
+audited_artifacts = json.loads(sys.argv[3])
+cleanup_artifacts = json.loads(sys.argv[4])
+con = sqlite3.connect(Path(db_path).resolve().as_uri() + "?mode=rw", uri=True)
+backup_complete = False
+
+def current_artifact(row_id):
+    row = con.execute(
+        "select state, lastChangedClock from documents where id = ?",
+        (row_id,),
+    ).fetchone()
+    if not row:
+        return None
+    try:
+        state = row[0].decode("utf-8") if isinstance(row[0], bytes) else row[0]
+        document = json.loads(state)
+    except (TypeError, ValueError, UnicodeDecodeError):
+        return None
+    props = document.get("props") if isinstance(document, dict) else None
+    if not isinstance(document, dict) or document.get("type") != "iframe" or not isinstance(props, dict):
+        return None
+    return {
+        "artifactId": props.get("artifactId"),
+        "state": props.get("state"),
+        "lastChangedClock": row[1],
+    }
+
+def assert_unchanged(expected):
+    current = current_artifact(expected["id"])
+    if not current or any(
+        current[key] != expected[key]
+        for key in ("artifactId", "state", "lastChangedClock")
+    ):
+        raise RuntimeError(f"Scribe artifact changed since audit: {expected['id']}")
+
+def assert_exact_artifacts(expected_artifacts):
+    expected_ids = sorted(artifact["id"] for artifact in expected_artifacts)
+    current_ids = [
+        row[0]
+        for row in con.execute(
+            "select id from documents where id like 'shape:artifact:%' order by id"
+        )
+    ]
+    if current_ids != expected_ids:
+        raise RuntimeError("Scribe artifact set changed since audit")
+    for artifact in expected_artifacts:
+        assert_unchanged(artifact)
+
+con.execute("begin immediate")
+try:
+    assert_exact_artifacts(audited_artifacts)
+    fd = os.open(backup_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+    os.close(fd)
+    backup_source = sqlite3.connect(
+        Path(db_path).resolve().as_uri() + "?mode=ro",
+        uri=True,
+    )
+    backup = sqlite3.connect(backup_path)
+    try:
+        backup_source.backup(backup)
+    finally:
+        backup.close()
+        backup_source.close()
+    os.chmod(backup_path, stat.S_IMODE(os.stat(db_path).st_mode))
+    backup_complete = True
+    metadata = con.execute("select rowid, documentClock from metadata").fetchall()
+    if len(metadata) != 1:
+        raise RuntimeError("Expected exactly one Scribe metadata row")
+    metadata_rowid, clock = metadata[0]
+    if not isinstance(clock, int) or clock < 0:
+        raise RuntimeError("Expected a non-negative Scribe document clock")
     deleted = []
-    for row_id in cleanup_ids:
+    for artifact in cleanup_artifacts:
+        row_id = artifact["id"]
         cur = con.execute("delete from documents where id = ?", (row_id,))
-        if cur.rowcount:
-            clock += 1
-            con.execute(
-                "insert or replace into tombstones(id, clock) values(?, ?)",
-                (row_id, clock),
-            )
-            deleted.append(row_id)
-    con.execute("update metadata set documentClock = ?", (clock,))
+        if cur.rowcount != 1:
+            raise RuntimeError(f"Failed to delete audited Scribe artifact: {row_id}")
+        clock += 1
+        con.execute(
+            "insert or replace into tombstones(id, clock) values(?, ?)",
+            (row_id, clock),
+        )
+        deleted.append(row_id)
+    cleanup_ids = {artifact["id"] for artifact in cleanup_artifacts}
+    assert_exact_artifacts(
+        [
+            artifact
+            for artifact in audited_artifacts
+            if artifact["id"] not in cleanup_ids
+        ]
+    )
+    con.execute(
+        "update metadata set documentClock = ? where rowid = ?",
+        (clock, metadata_rowid),
+    )
+    con.commit()
+except BaseException:
+    con.rollback()
+    if not backup_complete and os.path.exists(backup_path):
+        os.unlink(backup_path)
+    raise
 print(json.dumps({"deleted": deleted, "documentClock": clock}))
 `,
-    [dbPath, JSON.stringify(cleanupIds)],
+    [
+      dbPath,
+      backupPath,
+      JSON.stringify(auditedArtifacts.map(expectedArtifact)),
+      JSON.stringify(cleanupArtifacts.map(expectedArtifact)),
+    ],
   );
+};
+
+export const __replitScribeArtifactsInternalsForTests = {
+  cleanupScribeRows,
 };
 
 const buildAuditPayload = (
@@ -189,12 +370,12 @@ const buildAuditPayload = (
     label?: string;
   },
 ) => ({
-    dbPath: options.dbPath,
-    backupPath: options.backupPath ?? null,
-    label: options.label ?? "audit",
-    artifacts,
-    keepPrimaryId: selection.keepPrimaryId,
-    cleanup: selection.cleanup,
+  dbPath: options.dbPath,
+  backupPath: options.backupPath ?? null,
+  label: options.label ?? "audit",
+  artifacts,
+  keepPrimaryId: selection.keepPrimaryId,
+  cleanup: selection.cleanup,
 });
 
 const printAudit = (
@@ -209,67 +390,85 @@ const printAudit = (
 ) => {
   const payload = buildAuditPayload(artifacts, selection, options);
   if (options.json) {
-    console.log(JSON.stringify(payload, null, 2));
+    console.log(jsonText(payload));
     return;
   }
 
   console.log(`[replit-scribe-artifacts] ${options.label ?? "audit"}`);
-  console.log(`[replit-scribe-artifacts] db: ${options.dbPath}`);
+  console.log(`[replit-scribe-artifacts] db: ${safeText(options.dbPath)}`);
   if (options.backupPath) {
-    console.log(`[replit-scribe-artifacts] backup: ${options.backupPath}`);
+    console.log(
+      `[replit-scribe-artifacts] backup: ${safeText(options.backupPath)}`,
+    );
   }
   console.log(
     `[replit-scribe-artifacts] artifact iframes: ${artifacts.length}; cleanup candidates: ${selection.cleanup.length}`,
   );
+  const cleanupReasons = new Map(
+    selection.cleanup.map((artifact) => [artifact.id, artifact.reason]),
+  );
   for (const artifact of artifacts) {
     const action =
-      selection.cleanup.find((item) => item.id === artifact.id)?.reason ||
+      cleanupReasons.get(artifact.id) ||
       (artifact.id === selection.keepPrimaryId ? "keep-primary" : "keep");
     console.log(
       [
         `- ${action}`,
-        artifact.id,
-        `artifact=${artifact.artifactId}`,
-        `state=${artifact.state ?? "unknown"}`,
+        safeText(artifact.id),
+        `artifact=${safeText(artifact.artifactId)}`,
+        `state=${safeText(artifact.state ?? "unknown")}`,
         `clock=${artifact.lastChangedClock}`,
-        `owner=${artifact.ownerId ?? "unknown"}`,
+        `owner=${safeText(artifact.ownerId ?? "unknown")}`,
       ].join(" "),
     );
   }
 };
 
 const parseArgs = (argv: string[]) => {
-  const options = {
-    dbPath: DEFAULT_DB_PATH,
-    primaryArtifactId: DEFAULT_PRIMARY_ARTIFACT_ID,
-    backupAndClean: false,
-    confirmControlPlaneCleanup: false,
-    json: false,
-  };
-  for (let index = 0; index < argv.length; index += 1) {
-    const arg = argv[index];
-    if (arg === "--db") {
-      options.dbPath = path.resolve(argv[++index] || "");
-    } else if (arg === "--") {
-      continue;
-    } else if (arg === "--primary-artifact") {
-      options.primaryArtifactId = argv[++index] || DEFAULT_PRIMARY_ARTIFACT_ID;
-    } else if (arg === "--backup-and-clean") {
-      options.backupAndClean = true;
-    } else if (arg === CONTROL_PLANE_CLEANUP_CONFIRM_FLAG) {
-      options.confirmControlPlaneCleanup = true;
-    } else if (arg === "--json") {
-      options.json = true;
-    } else if (arg === "--help" || arg === "-h") {
-      console.log(
-        `Usage: pnpm --filter @workspace/scripts run replit:scribe:artifacts -- [--db PATH] [--json] [--backup-and-clean ${CONTROL_PLANE_CLEANUP_CONFIRM_FLAG}]`,
-      );
-      process.exit(0);
-    } else {
-      throw new Error(`Unknown argument: ${arg}`);
+  const { values, tokens } = parseNodeArgs({
+    args: argv,
+    allowPositionals: false,
+    strict: true,
+    tokens: true,
+    options: {
+      db: { type: "string" },
+      "primary-artifact": { type: "string" },
+      "backup-and-clean": { type: "boolean" },
+      "confirm-control-plane-cleanup": { type: "boolean" },
+      json: { type: "boolean" },
+      help: { type: "boolean", short: "h" },
+    },
+  });
+  const seen = new Set<string>();
+  for (const token of tokens) {
+    if (token.kind !== "option") continue;
+    if (seen.has(token.name)) {
+      throw new Error(`Duplicate option: --${token.name}`);
     }
+    seen.add(token.name);
   }
-  return options;
+  if (values.help) {
+    console.log(USAGE);
+    process.exit(0);
+  }
+  if (values.db !== undefined && !values.db.trim()) {
+    throw new Error("Option --db requires a non-blank value");
+  }
+  if (
+    values["primary-artifact"] !== undefined &&
+    !values["primary-artifact"].trim()
+  ) {
+    throw new Error("Option --primary-artifact requires a non-blank value");
+  }
+  return {
+    dbPath: values.db ? path.resolve(values.db) : DEFAULT_DB_PATH,
+    primaryArtifactId:
+      values["primary-artifact"] ?? DEFAULT_PRIMARY_ARTIFACT_ID,
+    backupAndClean: values["backup-and-clean"] ?? false,
+    confirmControlPlaneCleanup:
+      values["confirm-control-plane-cleanup"] ?? false,
+    json: values.json ?? false,
+  };
 };
 
 export function assertControlPlaneCleanupAllowed(options: {
@@ -297,7 +496,14 @@ export async function main(argv = process.argv.slice(2)) {
     throw new Error(`Scribe DB not found: ${options.dbPath}`);
   }
 
-  const artifacts = parseScribeArtifactDocuments(readScribeRows(options.dbPath));
+  const rows = readScribeRows(options.dbPath);
+  const artifacts = parseScribeArtifactDocuments(rows);
+  if (options.backupAndClean && artifacts.length !== rows.length) {
+    const count = rows.length - artifacts.length;
+    throw new Error(
+      `Refusing Scribe artifact cleanup: ${count} queried document${count === 1 ? " was" : "s were"} not a recognized iframe artifact`,
+    );
+  }
   const selection = selectScribeArtifactCleanup(artifacts, {
     primaryArtifactId: options.primaryArtifactId,
   });
@@ -319,31 +525,33 @@ export async function main(argv = process.argv.slice(2)) {
     }
     const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
     backupPath = `${options.dbPath}.backup-${timestamp}`;
-    cleanupScribeRows(
-      options.dbPath,
-      backupPath,
-      selection.cleanup.map((artifact) => artifact.id),
-    );
+    cleanupScribeRows(options.dbPath, backupPath, artifacts, selection.cleanup);
     const remainingArtifacts = parseScribeArtifactDocuments(
       readScribeRows(options.dbPath),
     );
     const remainingSelection = selectScribeArtifactCleanup(remainingArtifacts, {
       primaryArtifactId: options.primaryArtifactId,
     });
+    if (remainingSelection.cleanup.length > 0) {
+      const count = remainingSelection.cleanup.length;
+      throw new Error(
+        `Scribe artifact cleanup incomplete: ${count} candidate${count === 1 ? "" : "s"} remains; backup: ${backupPath}`,
+      );
+    }
     if (options.json) {
       console.log(
-        JSON.stringify(
-          {
-            planned: plannedPayload,
-            postCleanup: buildAuditPayload(remainingArtifacts, remainingSelection, {
+        jsonText({
+          planned: plannedPayload,
+          postCleanup: buildAuditPayload(
+            remainingArtifacts,
+            remainingSelection,
+            {
               dbPath: options.dbPath,
               backupPath,
               label: "post-cleanup audit",
-            }),
-          },
-          null,
-          2,
-        ),
+            },
+          ),
+        }),
       );
       return;
     }
@@ -367,7 +575,10 @@ export async function main(argv = process.argv.slice(2)) {
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   main().catch((error) => {
     console.error(
-      `[replit-scribe-artifacts] ${error instanceof Error ? error.message : String(error)}`,
+      `[replit-scribe-artifacts] ${
+        safeText(error instanceof Error ? error.message : error) ||
+        "Unknown error"
+      }`,
     );
     process.exit(1);
   });

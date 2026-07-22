@@ -28,6 +28,17 @@ type ProcessSnapshot = {
   cpuTicks: number | null;
 };
 
+type ProcessIdentity = {
+  pid: number;
+  parentPid: number;
+  cmdline: string;
+};
+
+type MonitoredProcess = {
+  pid: number;
+  role: "api" | "supervisor" | "web";
+};
+
 type BrowserSample = {
   at: string;
   ok: boolean;
@@ -821,31 +832,82 @@ export function renderMarkdownReport(report: MonitorReport): string {
   ].join("\n");
 }
 
-async function discoverProcesses(): Promise<Array<{ pid: number; role: string }>> {
-  const discovered: Array<{ pid: number; role: string }> = [];
+function processOrAncestorMatches(
+  process: ProcessIdentity,
+  byPid: Map<number, ProcessIdentity>,
+  predicate: (candidate: ProcessIdentity) => boolean,
+): boolean {
+  const seen = new Set<number>();
+  let candidate: ProcessIdentity | undefined = process;
+  while (candidate && !seen.has(candidate.pid)) {
+    if (predicate(candidate)) return true;
+    seen.add(candidate.pid);
+    candidate = byPid.get(candidate.parentPid);
+  }
+  return false;
+}
+
+function selectMonitoredProcesses(
+  identities: ProcessIdentity[],
+): MonitoredProcess[] {
+  const byPid = new Map(identities.map((process) => [process.pid, process]));
+  const supervisor = identities.find((process) =>
+    process.cmdline.includes("runDevApp.mjs"),
+  );
+  const belongsToLiveTree = (process: ProcessIdentity) =>
+    !supervisor ||
+    processOrAncestorMatches(
+      process,
+      byPid,
+      (candidate) => candidate.pid === supervisor.pid,
+    );
+  const scoped = identities.filter(belongsToLiveTree);
+  const apiCandidates = scoped.filter((process) =>
+    process.cmdline.includes("./dist/index.mjs"),
+  );
+  const api =
+    apiCandidates.find((process) =>
+      processOrAncestorMatches(process, byPid, (candidate) =>
+        candidate.cmdline.includes("@workspace/api-server"),
+      ),
+    ) ?? (apiCandidates.length === 1 ? apiCandidates[0] : undefined);
+  const web = scoped.find(
+    (process) =>
+      process.cmdline.includes("vite") &&
+      process.cmdline.includes("vite.config.ts"),
+  );
+  return [
+    supervisor ? { pid: supervisor.pid, role: "supervisor" as const } : null,
+    web ? { pid: web.pid, role: "web" as const } : null,
+    api ? { pid: api.pid, role: "api" as const } : null,
+  ].filter((process): process is MonitoredProcess => process !== null);
+}
+
+async function discoverProcesses(): Promise<MonitoredProcess[]> {
+  const identities: ProcessIdentity[] = [];
   try {
     const entries = await readdir("/proc", { withFileTypes: true });
     for (const entry of entries) {
       if (!entry.isDirectory() || !/^\d+$/.test(entry.name)) continue;
       const pid = Number(entry.name);
-      const cmdline = await readFile(`/proc/${entry.name}/cmdline`, "utf8")
-        .then((value) => value.replace(/\0/g, " "))
-        .catch(() => "");
+      const [cmdline, status] = await Promise.all([
+        readFile(`/proc/${entry.name}/cmdline`, "utf8")
+          .then((value) => value.replace(/\0/g, " "))
+          .catch(() => ""),
+        readFile(`/proc/${entry.name}/status`, "utf8").catch(() => ""),
+      ]);
       if (!cmdline) continue;
-      if (cmdline.includes("./dist/index.mjs") && cmdline.includes("api-server")) {
-        discovered.push({ pid, role: "api" });
-      } else if (cmdline.includes("./dist/index.mjs") && discovered.every((item) => item.role !== "api")) {
-        discovered.push({ pid, role: "api" });
-      } else if (cmdline.includes("vite") && cmdline.includes("vite.config.ts")) {
-        discovered.push({ pid, role: "web" });
-      } else if (cmdline.includes("runDevApp.mjs")) {
-        discovered.push({ pid, role: "supervisor" });
-      }
+      const parentPid = Number((status.match(/^PPid:\s+(\d+)/m) ?? [])[1]);
+      identities.push({
+        pid,
+        parentPid: Number.isFinite(parentPid) ? parentPid : 0,
+        cmdline,
+      });
     }
   } catch {
-    return discovered;
+    return [];
   }
-  return discovered;
+  return selectMonitoredProcesses(identities);
 }
 
 async function readProcessSnapshot(processInfo: { pid: number; role: string }): Promise<ProcessSnapshot | null> {
@@ -1082,6 +1144,7 @@ export const __pyrusPerformanceMonitorInternalsForTests = {
   readResponseText,
   resetEndpointStats: () => endpointStats.clear(),
   runtimeDiagnosticsPath,
+  selectMonitoredProcesses,
 };
 
 if (import.meta.url === invokedPath) {

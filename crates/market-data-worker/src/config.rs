@@ -37,13 +37,19 @@ impl WorkerConfig {
             })?;
         let worker_id = std::env::var("MARKET_DATA_WORKER_ID")
             .unwrap_or_else(|_| format!("market-data-worker:{}", std::process::id()));
+        let db_pool_max_connections = read_u32_env("MARKET_DATA_WORKER_DB_POOL_MAX", 3).max(3);
+        let db_acquire_timeout_ms = read_u64_env("MARKET_DATA_WORKER_DB_ACQUIRE_TIMEOUT_MS", 5_000);
+        let minimum_job_lease_ms =
+            db_acquire_timeout_ms.saturating_mul(3).min(i64::MAX as u64) as i64;
         Ok(Self {
             database_url,
             worker_id,
-            db_pool_max_connections: read_u32_env("MARKET_DATA_WORKER_DB_POOL_MAX", 2),
-            db_acquire_timeout_ms: read_u64_env("MARKET_DATA_WORKER_DB_ACQUIRE_TIMEOUT_MS", 5_000),
+            db_pool_max_connections,
+            db_acquire_timeout_ms,
             poll_interval_ms: read_u64_env("MARKET_DATA_WORKER_POLL_MS", 3_000),
-            job_lease_ms: read_i64_env("MARKET_DATA_JOB_LEASE_MS", 60_000),
+            job_lease_ms: read_i64_env("MARKET_DATA_JOB_LEASE_MS", 60_000)
+                .max(3_000)
+                .max(minimum_job_lease_ms),
             option_chain_max_pages: read_usize_env("MARKET_DATA_OPTION_CHAIN_MAX_PAGES", 80),
             quote_retention_days: read_i64_env("MARKET_DATA_QUOTE_RETENTION_DAYS", 7),
             // bar_cache mixes intraday (short read window) and coarse/daily
@@ -108,12 +114,22 @@ fn build_pg_env_database_url() -> Result<String, std::env::VarError> {
     let user = std::env::var("PGUSER")?;
     let password = std::env::var("PGPASSWORD").unwrap_or_default();
     let port = std::env::var("PGPORT").unwrap_or_else(|_| "5432".into());
-    let auth = if password.is_empty() {
-        user
-    } else {
-        format!("{user}:{password}")
-    };
-    Ok(format!("postgres://{auth}@{host}:{port}/{database}"))
+    let mut url =
+        reqwest::Url::parse("postgresql://pghost.invalid").expect("static PostgreSQL URL is valid");
+    let mut query = url.query_pairs_mut();
+    query
+        .append_pair("host", &host)
+        .append_pair("port", &port)
+        .append_pair("dbname", &database)
+        .append_pair("user", &user);
+    if !password.is_empty() {
+        query.append_pair("password", &password);
+    }
+    if let Ok(ssl_mode) = std::env::var("PGSSLMODE") {
+        query.append_pair("sslmode", &ssl_mode);
+    }
+    drop(query);
+    Ok(url.into())
 }
 
 fn first_env(names: &[&str]) -> Option<String> {
@@ -135,4 +151,107 @@ fn read_market_data_provider_config() -> Option<MarketDataProviderConfig> {
             api_key,
         }
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use std::process::Command;
+    use std::str::FromStr;
+
+    use super::*;
+    use sqlx::postgres::PgConnectOptions;
+
+    #[test]
+    fn job_lease_and_pool_capacity_protect_heartbeat() {
+        const CHILD_MARKER: &str = "MARKET_DATA_LEASE_CONFIG_TEST_CHILD";
+        const TEST_NAME: &str = "config::tests::job_lease_and_pool_capacity_protect_heartbeat";
+
+        if std::env::var_os(CHILD_MARKER).is_some() {
+            match WorkerConfig::from_env() {
+                Ok(config) => {
+                    assert!(
+                        config.db_pool_max_connections >= 3,
+                        "job work, retention, and heartbeat require separate pool connections"
+                    );
+                    assert!(
+                        u64::try_from(config.job_lease_ms).unwrap_or_default()
+                            >= config.db_acquire_timeout_ms.saturating_mul(3),
+                        "lease must be at least three times the DB acquire timeout"
+                    );
+                }
+                Err(error) => assert!(
+                    [
+                        "MARKET_DATA_JOB_LEASE_MS",
+                        "MARKET_DATA_WORKER_DB_POOL_MAX",
+                        "MARKET_DATA_WORKER_DB_ACQUIRE_TIMEOUT_MS",
+                    ]
+                    .iter()
+                    .any(|setting| error.to_string().contains(setting)),
+                    "rejection must identify an invalid heartbeat setting: {error}"
+                ),
+            }
+            return;
+        }
+
+        let output = Command::new(std::env::current_exe().expect("current test executable"))
+            .args(["--exact", TEST_NAME, "--nocapture"])
+            .env(CHILD_MARKER, "1")
+            .env("DATABASE_URL", "postgres://lease-config-test")
+            .env("MARKET_DATA_WORKER_DB_POOL_MAX", "1")
+            .env("MARKET_DATA_WORKER_DB_ACQUIRE_TIMEOUT_MS", "5000")
+            .env("MARKET_DATA_JOB_LEASE_MS", "3000")
+            .output()
+            .expect("run isolated config test");
+
+        assert!(
+            output.status.success(),
+            "isolated config test failed:\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    #[test]
+    fn pg_environment_url_preserves_socket_and_reserved_credentials() {
+        const CHILD_MARKER: &str = "MARKET_DATA_PG_CONFIG_TEST_CHILD";
+        const TEST_NAME: &str =
+            "config::tests::pg_environment_url_preserves_socket_and_reserved_credentials";
+
+        if std::env::var_os(CHILD_MARKER).is_some() {
+            let database_url = build_pg_env_database_url().expect("PG environment URL");
+            let options = PgConnectOptions::from_str(&database_url).expect("SQLx options");
+            assert_eq!(
+                options.get_socket().and_then(|path| path.to_str()),
+                Some("/var/run/postgresql")
+            );
+            assert_eq!(options.get_port(), 6_543);
+            assert_eq!(options.get_username(), "u@:/?# name");
+            assert_eq!(options.get_database(), Some("pyrus/name?"));
+            assert!(reqwest::Url::parse(&database_url)
+                .expect("encoded URL")
+                .query_pairs()
+                .any(|(key, value)| key == "password" && value == "p@:/?# % ü"));
+            return;
+        }
+
+        let output = Command::new(std::env::current_exe().expect("current test executable"))
+            .args(["--exact", TEST_NAME, "--nocapture"])
+            .env(CHILD_MARKER, "1")
+            .env_remove("DATABASE_URL")
+            .env_remove("LOCAL_DATABASE_URL")
+            .env("PGHOST", "/var/run/postgresql")
+            .env("PGDATABASE", "pyrus/name?")
+            .env("PGUSER", "u@:/?# name")
+            .env("PGPASSWORD", "p@:/?# % ü")
+            .env("PGPORT", "6543")
+            .output()
+            .expect("run isolated PG config test");
+
+        assert!(
+            output.status.success(),
+            "isolated PG config test failed:\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
 }

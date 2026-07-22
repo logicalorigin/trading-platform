@@ -136,6 +136,14 @@ function recordValue(value: unknown): Record<string, unknown> | null {
     : null;
 }
 
+function isIsoTimestamp(value: unknown): value is string {
+  if (typeof value !== "string") {
+    return false;
+  }
+  const parsed = new Date(value);
+  return Number.isFinite(parsed.getTime()) && parsed.toISOString() === value;
+}
+
 function parseServiceDump(input: {
   temporaryPath: string;
   timeframe: Timeframe;
@@ -234,10 +242,50 @@ function parseServiceDump(input: {
     );
   }
   rowLines.forEach((line, index) => {
+    let rawRow: unknown;
     try {
-      JSON.parse(line);
+      rawRow = JSON.parse(line) as unknown;
     } catch {
       throw new Error(`Observation dump row ${index + 1} is not valid JSON`);
+    }
+    const audit = recordValue(recordValue(rawRow)?.audit);
+    const signalAt = audit?.signalAt;
+    const outcomeExitBarAt = audit?.outcomeExitBarAt;
+    if (!isIsoTimestamp(signalAt)) {
+      throw new Error(
+        `Observation dump row ${index + 1} audit.signalAt must be an exact timestamp`,
+      );
+    }
+    if (!isIsoTimestamp(outcomeExitBarAt)) {
+      throw new Error(
+        `Observation dump row ${index + 1} audit.outcomeExitBarAt must be an exact timestamp`,
+      );
+    }
+    if (Date.parse(outcomeExitBarAt) <= Date.parse(signalAt)) {
+      throw new Error(
+        `Observation dump row ${index + 1} audit.outcomeExitBarAt must be after audit.signalAt`,
+      );
+    }
+    const mtfTimeframes = audit?.mtfTimeframes;
+    const mtfDirections = audit?.mtfDirections;
+    if (
+      !Array.isArray(mtfTimeframes) ||
+      !Array.isArray(mtfDirections) ||
+      mtfTimeframes.length !== input.response.mtf.timeframes.length ||
+      mtfDirections.length !== mtfTimeframes.length ||
+      mtfTimeframes.some(
+        (timeframe, timeframeIndex) =>
+          timeframe !== input.response.mtf.timeframes[timeframeIndex],
+      ) ||
+      mtfDirections.some(
+        (direction) =>
+          !Number.isInteger(direction) ||
+          (direction !== -1 && direction !== 0 && direction !== 1),
+      )
+    ) {
+      throw new Error(
+        `Observation dump row ${index + 1} MTF gate provenance must match the response configuration`,
+      );
     }
   });
 
@@ -256,7 +304,7 @@ function parseServiceDump(input: {
   };
   const header = {
     header: true,
-    schemaVersion: 1,
+    schemaVersion: 2,
     runId: input.runId,
     deploymentId: input.options.deploymentId,
     asOfDay: input.response.asOfDay,

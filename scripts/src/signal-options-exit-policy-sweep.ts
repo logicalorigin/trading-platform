@@ -12,9 +12,11 @@ import {
   closeDatabaseConnections,
   pool,
   sharedAdvisoryLockHolder,
+  type AdvisoryLockLease,
 } from "@workspace/db";
 import { runSignalOptionsShadowBackfill } from "../../artifacts/api-server/src/services/signal-options-automation";
 import { SIGNAL_OPTIONS_WORKER_ADVISORY_LOCK_KEY } from "../../artifacts/api-server/src/services/signal-options-worker";
+import { hasOpaqueOperatorCredential } from "./operator-diagnostic";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -81,7 +83,7 @@ type SweepConfig = {
 
 type VariantBackfillInput = Parameters<
   typeof runSignalOptionsShadowBackfill
->[0];
+>[0] & { signal?: AbortSignal };
 
 const MIN_CLOSED_TRADES = 20;
 const ACCOUNT_SIZE = 30_000;
@@ -216,6 +218,20 @@ function parseSweepArgs(args = process.argv.slice(2)): void {
   }
 }
 
+function assertReplayLedgerCompatibility(
+  replayRequired: boolean,
+  env: NodeJS.ProcessEnv = process.env,
+): void {
+  if (
+    replayRequired &&
+    env["PYRUS_BACKTEST_LEDGER"]?.trim().toLowerCase() === "own"
+  ) {
+    throw new Error(
+      "Exit-policy replay verification requires the shadow-orders ledger; unset PYRUS_BACKTEST_LEDGER=own.",
+    );
+  }
+}
+
 function safeDiagnostic(error: unknown): string {
   const raw = error instanceof Error ? error.message : String(error);
   const cleaned = stripVTControlCharacters(
@@ -229,7 +245,10 @@ function safeDiagnostic(error: unknown): string {
     .replace(UNSAFE_OUTPUT_PATTERN, " ")
     .replace(/\s+/gu, " ")
     .trim();
-  const diagnostic = cleaned || "Unknown sweep error";
+  const diagnostic =
+    cleaned && !hasOpaqueOperatorCredential(cleaned)
+      ? cleaned
+      : "Unknown sweep error";
   return diagnostic.length <= MAX_DIAGNOSTIC_LENGTH
     ? diagnostic
     : `${diagnostic.slice(0, MAX_DIAGNOSTIC_LENGTH - 1)}…`;
@@ -1143,15 +1162,19 @@ async function runVariant(input: {
   config: SweepConfig;
   commit?: boolean;
   replay?: boolean;
+  replayRunId?: string;
+  signal: AbortSignal;
 }): Promise<SweepResult> {
   const started = new Date();
   try {
+    input.signal.throwIfAborted();
     const backfillInput = buildVariantBackfillInput(input);
     const result = await withVariantHeartbeat({
       variantId: input.variant.id,
       config: input.config,
       run: () => runSignalOptionsShadowBackfill(backfillInput),
     });
+    input.signal.throwIfAborted();
     const finished = new Date();
     const metrics = computeMetrics(result);
     const summary = sanitizeBackfillSummary(result.summary);
@@ -1172,6 +1195,9 @@ async function runVariant(input: {
       error: null,
     };
   } catch (error) {
+    if (input.signal.aborted) {
+      input.signal.throwIfAborted();
+    }
     const finished = new Date();
     return {
       variant: input.variant,
@@ -1198,11 +1224,15 @@ export function buildVariantBackfillInput(input: {
   >;
   commit?: boolean;
   replay?: boolean;
+  replayRunId?: string;
   replayRunSlug?: string;
+  signal?: AbortSignal;
 }): VariantBackfillInput {
   const replay = input.replay
     ? {
-        runId: `signal-options-exit-sweep-${input.replayRunSlug ?? slug()}-${input.variant.id}`,
+        runId:
+          input.replayRunId ??
+          `signal-options-exit-sweep-${input.replayRunSlug ?? slug()}-${input.variant.id}`,
         marketDate: input.config.start,
         deploymentId: input.deployment.id,
         deploymentName: input.deployment.name,
@@ -1230,6 +1260,7 @@ export function buildVariantBackfillInput(input: {
     // which has no coverage for historical windows. Without this every replayed
     // entry is rejected as mtf_not_aligned. See runSignalOptionsShadowBackfill.
     useBarDerivedMtf: true,
+    signal: input.signal,
   };
 }
 
@@ -1292,21 +1323,32 @@ async function assertReportDestinationAvailable(
 async function publishReportFiles(
   reportDir: string,
   files: ReportFiles,
+  signal?: AbortSignal,
+  renameDirectory: (from: string, to: string) => Promise<void> = rename,
 ): Promise<void> {
+  signal?.throwIfAborted();
   const parent = path.dirname(reportDir);
   await mkdir(parent, { recursive: true });
+  signal?.throwIfAborted();
   const temporaryDir = await mkdtemp(
     path.join(parent, `.${path.basename(reportDir)}.tmp-`),
   );
+  let published = false;
   try {
     await Promise.all(
       Object.entries(files).map(([name, contents]) =>
         writeFile(path.join(temporaryDir, name), contents),
       ),
     );
-    await rename(temporaryDir, reportDir);
+    signal?.throwIfAborted();
+    await renameDirectory(temporaryDir, reportDir);
+    published = true;
+    signal?.throwIfAborted();
   } catch (error) {
-    await rm(temporaryDir, { recursive: true, force: true }).catch(() => {});
+    await rm(published ? reportDir : temporaryDir, {
+      recursive: true,
+      force: true,
+    }).catch(() => {});
     throw error;
   }
 }
@@ -1481,7 +1523,9 @@ async function writeReports(input: {
   ranked: SweepResult[];
   replayResult?: SweepResult | null;
   verification?: JsonRecord | null;
+  signal?: AbortSignal;
 }) {
+  input.signal?.throwIfAborted();
   const rows = reportRows(input.results);
   const headers = Object.keys(
     rows[0] ?? {
@@ -1567,11 +1611,15 @@ async function writeReports(input: {
       : "",
   ].join("\n");
 
-  await publishReportFiles(input.reportDir, {
-    "results.json": `${jsonText(input, 2)}\n`,
-    "results.csv": `${csv}\n`,
-    "report.md": `${markdown}\n`,
-  });
+  await publishReportFiles(
+    input.reportDir,
+    {
+      "results.json": `${jsonText(input, 2)}\n`,
+      "results.csv": `${csv}\n`,
+      "report.md": `${markdown}\n`,
+    },
+    input.signal,
+  );
 }
 
 function replayReportLine(result?: SweepResult | null): string {
@@ -1607,6 +1655,7 @@ function assertSweepCompletion(input: {
   results: SweepResult[];
   replayRequired?: boolean;
   replayResult?: SweepResult | null;
+  verification?: JsonRecord | null;
 }): void {
   if (
     input.results.length === 0 ||
@@ -1631,17 +1680,48 @@ function assertSweepCompletion(input: {
   ) {
     throw new Error("Winner replay completed but is no longer eligible.");
   }
+
+  const verification = asRecord(input.verification);
+  const invalidCounts = [
+    "ordersWithNullSourceEventId",
+    "ordersWithNullSourceMetadata",
+    "ordersWithoutFills",
+  ].filter((key) => finiteNumber(verification[key]) !== 0);
+  if (
+    verification["skipped"] === true ||
+    finiteNumber(verification["orderCount"]) === null ||
+    (finiteNumber(verification["orderCount"]) ?? 0) < 1 ||
+    finiteNumber(verification["runIdCount"]) !== 1 ||
+    invalidCounts.length > 0
+  ) {
+    throw new Error(
+      "Replay ledger verification failed; inspect the written report.",
+    );
+  }
 }
 
 async function verifyReplayLedger(input: {
   deploymentId: string;
+  runId: string;
   window: JsonRecord | null;
+  signal?: AbortSignal;
+  runtime?: {
+    query(
+      queryText: string,
+      values: unknown[],
+    ): Promise<{ rows: JsonRecord[] }>;
+  };
 }) {
+  input.signal?.throwIfAborted();
   const from = String(input.window?.["from"] ?? "");
   const to = String(input.window?.["to"] ?? "");
   if (!from || !to) return { skipped: true, reason: "missing replay window" };
 
-  const result = await pool.query<JsonRecord>(
+  const query =
+    input.runtime?.query.bind(input.runtime) ??
+    ((queryText: string, values: unknown[]) =>
+      pool.query<JsonRecord>(queryText, values));
+  const result = await query(
     `
       with replay_orders as (
         select o.*
@@ -1655,6 +1735,7 @@ async function verifyReplayLedger(input: {
             or o.payload->>'sourceDeploymentId' = $1
             or o.payload->'metadata'->>'positionKey' like ('signal_options_replay:%:' || $1 || ':%')
           )
+          and o.payload->'metadata'->>'runId' = $4
       )
       select
         count(*)::int as "orderCount",
@@ -1662,6 +1743,7 @@ async function verifyReplayLedger(input: {
         count(*) filter (
           where payload->'metadata'->>'sourceType' is null
              or payload->'metadata'->>'positionKey' is null
+             or payload->'metadata'->>'runId' is null
         )::int as "ordersWithNullSourceMetadata",
         count(*) filter (
           where not exists (
@@ -1672,28 +1754,32 @@ async function verifyReplayLedger(input: {
         array_remove(array_agg(distinct payload->'metadata'->>'runId'), null) as "runIds"
       from replay_orders
     `,
-    [input.deploymentId, from, to],
+    [input.deploymentId, from, to, input.runId],
   );
+  input.signal?.throwIfAborted();
   return result.rows[0] ?? {};
 }
 
 async function main() {
   parseSweepArgs();
   const config = readSweepConfig();
+  assertReplayLedgerCompatibility(config.replayWinner);
   const variants = selectVariants(buildVariantUniverse(), config).map(
     (variant) => resolveVariantForConfig(variant, config),
   );
   await assertReportDestinationAvailable(config.reportDir);
   enableHistoricalBarEvaluation();
-  let releaseLock: (() => Promise<void>) | null = null;
+  let lease: AdvisoryLockLease | null = null;
   let failed = false;
 
   try {
-    releaseLock = await acquireSignalOptionsWorkerLock(config.lockWaitMs);
-    if (!releaseLock) {
+    lease = await acquireSignalOptionsWorkerLock(config.lockWaitMs);
+    if (!lease) {
       throw new Error("Signal-options worker advisory lock is already held.");
     }
+    lease.signal.throwIfAborted();
     const deployment = await readSignalOptionsDeployment();
+    lease.signal.throwIfAborted();
     if (config.symbols.length) {
       const requested = new Set(config.symbols);
       deployment.symbolUniverse = deployment.symbolUniverse.filter((symbol) =>
@@ -1724,8 +1810,15 @@ async function main() {
     );
 
     for (const variant of variants) {
+      lease.signal.throwIfAborted();
       console.log(`dry-run ${variant.id}`);
-      const result = await runVariant({ deployment, variant, config });
+      const result = await runVariant({
+        deployment,
+        variant,
+        config,
+        signal: lease.signal,
+      });
+      lease.signal.throwIfAborted();
       results.push(result);
       console.log(
         jsonText({
@@ -1742,6 +1835,7 @@ async function main() {
     let replayResult: SweepResult | null = null;
     let verification: JsonRecord | null = null;
     if (config.replayWinner) {
+      lease.signal.throwIfAborted();
       let selectedReplay: SweepResult | null = null;
       try {
         selectedReplay = selectReplayVariant(ranked, config.replayVariant);
@@ -1750,18 +1844,25 @@ async function main() {
       }
       if (selectedReplay) {
         console.log(`replay ${selectedReplay.variant.id}`);
+        const replayRunId = `signal-options-exit-sweep-${slug()}-${selectedReplay.variant.id}`;
         replayResult = await runVariant({
           deployment,
           variant: selectedReplay.variant,
           config,
           commit: true,
           replay: true,
+          replayRunId,
+          signal: lease.signal,
         });
+        lease.signal.throwIfAborted();
         if (replayResult.status === "succeeded") {
           verification = await verifyReplayLedger({
             deploymentId: deployment.id,
+            runId: replayRunId,
             window: replayResult.window,
+            signal: lease.signal,
           });
+          lease.signal.throwIfAborted();
         }
       }
     }
@@ -1774,11 +1875,14 @@ async function main() {
       ranked,
       replayResult,
       verification,
+      signal: lease.signal,
     });
+    lease.signal.throwIfAborted();
     assertSweepCompletion({
       results,
       replayRequired: config.replayWinner,
       replayResult,
+      verification,
     });
 
     console.log(
@@ -1801,9 +1905,9 @@ async function main() {
     throw error;
   } finally {
     const cleanupErrors: unknown[] = [];
-    if (releaseLock) {
+    if (lease) {
       try {
-        await releaseLock();
+        await lease();
       } catch (error) {
         cleanupErrors.push(error);
       }
@@ -1829,7 +1933,9 @@ async function main() {
 
 export const __signalOptionsExitPolicySweepInternalsForTests = {
   assertReportDestinationAvailable,
+  assertReplayLedgerCompatibility,
   assertSweepCompletion,
+  buildVariantBackfillInput,
   buildVariantUniverse,
   computeMetrics,
   csvValue,
@@ -1842,9 +1948,11 @@ export const __signalOptionsExitPolicySweepInternalsForTests = {
   readSweepConfig,
   replayReportLine,
   resolveVariantForConfig,
+  runVariant,
   safeDiagnostic,
   selectVariants,
   validateSweepDeployment,
+  verifyReplayLedger,
 };
 
 if (

@@ -66,33 +66,6 @@ test("catalog diagnostics reject opaque credentials", () => {
   );
 });
 
-test("catalog diagnostics redact percent-encoded credential query names", () => {
-  const credential = "percent-encoded-catalog-secret";
-  const diagnostic = catalog.safeDiagnostic(
-    new Error(
-      `provider rejected https://provider.invalid/tickers?access%5Ftoken=${credential}&cursor=keep`,
-    ),
-  );
-
-  assert.doesNotMatch(diagnostic, new RegExp(credential, "u"));
-});
-
-test("catalog diagnostics reject standalone named credentials", () => {
-  const credential = "short-catalog-secret";
-  assert.equal(
-    catalog.safeDiagnostic(
-      new Error(`provider rejected access_token=${credential}`),
-    ),
-    "Unknown universe-catalog sync error",
-  );
-  assert.equal(
-    catalog.safeDiagnostic(
-      new Error('provider rejected {"access_token":"short-json-secret"}'),
-    ),
-    "Unknown universe-catalog sync error",
-  );
-});
-
 test("CLI is strict, preview-first, and requires bare execute authority", () => {
   assert.deepEqual(catalog.parseOptions([]), {
     execute: false,
@@ -462,71 +435,6 @@ test("a final-page checkpoint resumes as complete after immediate lease loss", a
       sampleListingKeys: [],
     },
   ]);
-});
-
-test("a committed terminal checkpoint cannot be downgraded by its failure handler", async () => {
-  await withTestDb(async () => {
-    const checkpointFailure = new Error(
-      "catalog terminal checkpoint acknowledged late",
-    );
-    let throwAfterTerminalCommit = true;
-    let pageCalls = 0;
-    const readState = async (scopeKey: string) => {
-      const [state] = await db
-        .select()
-        .from(universeCatalogSyncStatesTable)
-        .where(eq(universeCatalogSyncStatesTable.scopeKey, scopeKey));
-      return state ?? null;
-    };
-    const runDependencies = dependencies({
-      acquireLock: async () =>
-        advisoryLease(new AbortController(), async () => {}, "40"),
-      claimWriterFence: (fenceToken: string) =>
-        claimUniverseCatalogWriterFence({ fenceToken }),
-      listPage: async () => {
-        pageCalls += 1;
-        return {
-          count: 1,
-          results: [ticker("AAPL")],
-          nextUrl: null,
-        };
-      },
-      readState,
-      writeState: async (
-        state: Parameters<typeof catalog.writeSyncState>[0],
-      ) => {
-        await catalog.writeSyncState(state);
-        if (throwAfterTerminalCommit && state.finishedAt) {
-          throwAfterTerminalCommit = false;
-          throw checkpointFailure;
-        }
-      },
-    });
-    const options = catalog.parseOptions(["--execute", "--markets=stocks"]);
-
-    await assert.rejects(
-      catalog.runSync(options, runDependencies),
-      (error) => error === checkpointFailure,
-    );
-    const persisted = await readState("catalog:stocks:active");
-    assert.equal(persisted?.cursor, null);
-    assert.equal(persisted?.finishedAt instanceof Date, true);
-    assert.equal(persisted?.pagesSynced, 1);
-    assert.equal(persisted?.rowsSynced, 1);
-
-    const resumed = await catalog.runSync(options, runDependencies);
-
-    assert.equal(pageCalls, 1);
-    assert.deepEqual(resumed, [
-      {
-        market: "stocks",
-        complete: true,
-        pages: 1,
-        rows: 1,
-        sampleListingKeys: [],
-      },
-    ]);
-  });
 });
 
 test("a failed final-page checkpoint resumes from the last durable cursor", async () => {

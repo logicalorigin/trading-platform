@@ -102,9 +102,12 @@ async fn apply_targets(
     batch_size: i64,
 ) -> Result<Vec<RetentionResult>> {
     let batch_size = batch_size.max(1);
+    let now = sqlx::query_scalar::<_, chrono::DateTime<Utc>>("select now()")
+        .fetch_one(pool)
+        .await?;
     let mut results = Vec::with_capacity(targets.len());
     for target in targets {
-        let cutoff = retention_cutoff(Utc::now(), target.retention_days);
+        let cutoff = retention_cutoff(now, target.retention_days);
         let extra = target
             .extra_where
             .map(|predicate| format!(" and {predicate}"))
@@ -198,5 +201,20 @@ mod tests {
         assert!(predicate.contains("gex.kind = 'gex_snapshot'"));
         assert!(predicate.contains("gex.status in ('queued','running')"));
         assert!(predicate.contains("dedupeBucket"));
+    }
+
+    #[test]
+    fn retention_cutoff_uses_the_database_clock() {
+        let source = include_str!("retention.rs")
+            .split("#[cfg(test)]")
+            .next()
+            .unwrap()
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+            .to_ascii_lowercase();
+
+        assert!(source.contains("select now()"));
+        assert!(!source.contains("retention_cutoff(utc::now()"));
     }
 }

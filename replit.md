@@ -38,77 +38,86 @@ See the `pnpm-workspace` skill for workspace structure, TypeScript setup, and pa
 - **backtest-worker** (`artifacts/backtest-worker`) — background worker that claims queued backtest jobs, hydrates/caches datasets, runs studies/sweeps, and promotes run artifacts into the DB.
 - The legacy desktop IBKR bridge artifact has been retired. Do not add a separate bridge artifact, workflow, helper bundle, or Windows-side bridge runtime back into app startup.
 
-## Replit Run & startup invariants
+## Replit startup
 
-The tracked `.replit` has **no** root `run = [...]` and **no** repo-defined `[[workflows.workflow]]` tasks. It keeps `[workflows] runButton = "artifacts/pyrus: web"` and `[agent] stack = "PNPM_WORKSPACE"` so the Run button targets the PYRUS web workflow and Replit discovers the artifact. Ignore Replit's generated **Configure Your App** option for startup.
+The Replit Run button starts the selected `artifacts/pyrus: web` artifact. Its
+development command is declared in
+`artifacts/pyrus/.replit-artifact/artifact.toml` and runs one foreground
+app launcher for:
 
-The app starts from the PYRUS artifact's `.replit-artifact/artifact.toml` `[services.development] run` = `pnpm --filter @workspace/pyrus run dev:replit` (tags startup with `PYRUS_REPLIT_RUN=1`). That supervisor owns BOTH dev servers:
+- API server on port `8080`
+- Vite web server on port `18747`
+- optional app workers when their configuration is present
 
-- API Server — `LOG_LEVEL=warn pnpm --filter @workspace/api-server run dev` on port `8080`.
-- PYRUS Platform — `pnpm --filter @workspace/pyrus run dev:web` on port `18747`.
+Replit owns the outer workflow lifecycle. The app launcher only coordinates its
+own child processes. Startup configuration is tracked in `.replit`,
+`replit.nix`, and the artifact TOML. Canonical recovery snapshots live under
+`scripts/replit-config/`; `pnpm run replit:config:restore` only compares them
+unless an operator explicitly supplies `--write` during a startup-maintenance
+window. The config lock and restore tools are recovery controls, not alternate
+app runners.
 
-The API dev script does not start Postgres; it uses Replit's managed DB by default (even if a stale workspace-local socket `DATABASE_URL` is present). The IBKR launcher calls `/api/ibkr/bridge/launcher`, so the API must already be up before activation; an unreachable launcher route is a startup issue, not a reason to add a workflow.
+Agents can run builds and checks directly. Runtime replacement goes through
+Replit's native restart-run-workflow action for `artifacts/pyrus: web`, or the
+workspace Run/Stop controls when that action is unavailable. Agents must never
+signal the launcher or pid2 and must never shell-launch a competing app copy.
+Vite handles frontend hot reload.
 
-**Invariants — do not violate during routine work:**
-- Do not add repo-tracked `[[workflows.workflow]]` tasks, a root `run`, or a root workflow coordinator.
-- Do not add a separate API artifact service or a third root runner — competing owners for ports `8080`/`18747` caused prior reaper conflicts. The PYRUS supervisor owns both.
-- Do not add a separate Replit `IBKR Bridge` workflow or any replacement desktop bridge runner. Broker connectivity is app-owned.
-- `PYRUS_REPLIT_RUN=1` is a tag only, not restart authority. **RETIRED (2026-07-09):** shell-launching `REPLIT_MODE=workflow pnpm --filter @workspace/pyrus run dev:replit` to restart/reload the app is NO LONGER sanctioned — it replaces the pid2-tracked supervisor, detaches the user's Replit preview, and produced the `same-container-supervisor-abrupt` kill-storm. **Sanctioned reload = SIGUSR2 to the LIVE pid2-owned supervisor** (`kill -USR2 "$(pgrep -f 'runDevApp[.]mjs' | head -1)"`): it rebuilds + restarts the API child IN PLACE while the supervisor and preview stay attached (no `143`/SIGTERM churn, no competing supervisor). Confirm with `http://127.0.0.1:8080/api/healthz` → 200 and verify the SAME supervisor pid is still alive; frontend (Vite) changes hot-reload on their own. If the app is fully stopped (no supervisor at all), only the user's Replit Run button (**artifacts/pyrus: web**) can bootstrap it — pid2 must spawn the tracked workflow. See CLAUDE.md "Project Run Rules" and AGENTS.md.
-- The PYRUS artifact TOML is the source of truth for dev/deploy service metadata.
-- `pnpm run audit:replit-startup` guards these invariants.
+The development VM is a shared memory domain. Agents must serialize package
+installs, broad builds/typechecks, repeated bundling, performance-capture
+processing, and large file patches across every active session. Do not start a
+memory-heavy action below 6 GiB `MemAvailable` or above 10 GiB cgroup
+`memory.current`, do not launch nested `codex exec` sessions, and inspect large
+generated captures by path/size/status rather than printing or patching them.
 
-Publishing: `pnpm run build:pyrus-app` builds the web app, API, and bounded
-IBKR session-host bundle. Production still exposes one web service/port: the
-artifact runs `artifacts/pyrus/scripts/runProductionApp.mjs`, which owns the
-fullstack API and optionally starts the session host on loopback. The host is
-disabled unless `IBKR_SESSION_HOST_ENABLED=1`, and the retired IBKR desktop
-bridge bundle is not part of build or deploy output.
+Publishing: `pnpm run build:pyrus-app` runs the fail-closed release guards and
+builds the web app, API, and bounded IBKR session-host bundle. Production still
+exposes one web service/port: the artifact runs
+`artifacts/pyrus/scripts/runProductionApp.mjs`, which owns the API process and
+optionally starts the signed session host on loopback. The host and fleet path
+remain disabled unless explicitly configured; the retired IBKR desktop bridge
+bundle is not part of build or deploy output.
 
-For co-located production, configure the API fleet root key and stable host ID,
-not a separate derived host secret. The supervisor derives the host-bound
-primary and optional rotation-overlap keys, overrides externally supplied host
-key values, and passes only the derivatives to the host child.
-
-IBKR fleet production must use an always-on **Reserved VM** selected and
-verified in Replit's Publishing tool; the tracked `deploymentTarget` value is
-not proof that the live published app was switched. Replit documents deployment
-type as a Publishing-tool choice:
-<https://docs.replit.com/references/publishing/reserved-vm-deployments>.
-Do not use an Autoscale deployment for the stateful session host. Before host
-approval, runtime preflight must also prove that the published VM exposes the
-required local Docker daemon/capabilities; repository packaging alone does not
-establish that production-host fact.
+The stateful IBKR fleet requires an always-on Reserved VM selected and verified
+in Replit's Publishing tool. Repository configuration alone does not prove that
+deployment choice or the production Docker daemon/capabilities required by the
+capsule preflight.
 
 ## IBKR Broker Connectivity
 
 ### Hosted user path
 
-For normal hosted PYRUS users, do not require TWS, IB Gateway, Client Portal Gateway, cloudflared, or a local connector. The user-facing IBKR path is the broker-hosted OAuth candidate exposed through `/api/broker-execution/ibkr/oauth/readiness`; it remains blocked until IBKR third-party approval, OAuth implementation, and account capability fixtures are complete.
+Interactive Brokers uses one connection architecture: the per-user Client
+Portal gateway exposed through `/api/broker-execution/ibkr-portal/*`. Connect
+starts or claims a supervised paper-session capsule, opens the isolated login
+viewer, and keeps the resulting broker session server-side. PYRUS does not ask
+for or receive the user's IBKR password or two-factor code.
 
-Configure OAuth application placeholders with `IBKR_OAUTH_CONSUMER_KEY`, `IBKR_OAUTH_SIGNING_KEY` or `IBKR_OAUTH_PRIVATE_KEY`, `IBKR_OAUTH_CALLBACK_URL`, and `IBKR_OAUTH_THIRD_PARTY_APPROVED=true` only after approval is recorded. These values must never be returned to the browser.
+The session host and fleet remain disabled until their signed control-plane,
+host identity, capsule image, and capacity configuration are present. The
+required variables and safe defaults are documented in `.env.example`.
 
-SnapTrade is the hosted broker-aggregation setup path. The server owns `SNAPTRADE_CLIENTID` and `SNAPTRADE_API_KEY`; each authenticated PYRUS user registers through `POST /api/broker-execution/snaptrade/users/current`, which stores the returned SnapTrade `userSecret` encrypted with `PYRUS_CREDENTIAL_ENCRYPTION_KEY`. The app then generates a short-lived Connection Portal URL through `POST /api/broker-execution/snaptrade/connection-portal`. The portal route requests `trade-if-available` by default but must not be treated as live-trading eligible until brokerage-specific capability fixtures prove positions, orders, fills, cancel/replace, and option support.
+The retired desktop helper, tunnel, runtime-override file, and browser
+credential handoff are removed. Do not restore bridge URL/token variables,
+launcher routes, helper bundles, or a second IBKR connection workflow.
 
-### Client Portal special connector
+### App-owned Client Portal fallback
 
-IBKR account and order routes can still use the app-owned Client Portal runtime for internal/dev or explicitly approved special-connector use. Configure the API with `IBKR_CLIENT_PORTAL_BASE_URL` or `IBKR_BASE_URL`; optional auth/account values are `IBKR_COOKIE`, `IBKR_BEARER_TOKEN`, `IBKR_ACCOUNT_ID`, and `IBKR_EXT_OPERATOR`.
-
-Delete stale desktop bridge secrets if present: `IBKR_BRIDGE_URL`, `IBKR_BRIDGE_BASE_URL`, `IBKR_BRIDGE_RUNTIME_OVERRIDE_FILE`, and `PYRUS_IBKR_BRIDGE_RUNTIME_OVERRIDE_FILE`.
+Internal development may point the same Client Portal client at an app-owned
+gateway with `IBKR_CLIENT_PORTAL_BASE_URL` or `IBKR_BASE_URL`. Optional
+cookie/bearer/account configuration remains Client Portal configuration; it is
+not a separate bridge architecture.
 
 Keep non-URL secrets/config as needed:
 - Optional account pin `IBKR_ACCOUNT_ID=<live-account-id>`.
 - Optional caps `IBKR_MAX_LIVE_EQUITY_LINES=80`, `IBKR_MAX_LIVE_OPTION_LINES=20`.
 - Flex secrets `IBKR_FLEX_TOKEN` / `IBKR_FLEX_QUERY_ID` (unrelated to Client Portal; do not remove).
 
-### Windows side
-
-No PYRUS Windows bridge helper is required. Hosted users must not be asked to install local IBKR software. For internal Client Portal special-connector use, a manually authenticated Client Portal Gateway may still be used outside the default customer path.
-
-### Verifying the chain from Replit
-
-```
-curl -sS "http://127.0.0.1:8080/api/bars?symbol=AAPL&timeframe=1m&limit=2"  # expect HTTP 200
-```
+Flex XML is a transient, in-memory parsing input. Never persist the full
+statement or reference response. Store only the normalized account records and
+bounded run metadata; migration
+`lib/db/migrations/20260720_purge_flex_report_raw_xml.sql` removes the retired
+payload column and clears existing values.
 
 ### Symbol quirks
 
@@ -118,11 +127,16 @@ curl -sS "http://127.0.0.1:8080/api/bars?symbol=AAPL&timeframe=1m&limit=2"  # ex
 
 `artifacts/api-server/src/services/platform.ts` uses app-owned market-data providers and broker clients:
 
-- **Accounts/orders** — hosted user path is broker-hosted OAuth/SnapTrade-style per-user connections; IBKR Client Portal remains an app-owned special connector for internal/dev use.
+- **Accounts/orders** — authenticated requests resolve through the user's
+  supervised Client Portal gateway; internal development can use the same
+  client against an explicitly configured app-owned gateway.
 - **Bars/quotes/scanners** — Massive/cache first where configured; IBKR Client Portal can fill broker-specific gaps when configured.
-- **News/search/flow events** — use app-owned provider clients; do not reintroduce the deleted desktop bridge artifact.
+- **News/search/flow events** — use app-owned provider clients; do not
+  reintroduce the deleted desktop bridge artifact.
   - **Expiry parsing** — IBKR returns expiries as compact `YYYYMMDD` strings. `toDate()` in `artifacts/api-server/src/lib/values.ts` handles 8-digit inputs as calendar dates *before* the numeric-ms branch (otherwise every contract collapsed to `1970-01-01`, breaking flow-event IDs/dedupe).
-- **Retired bridge surface** — legacy `/api/ibkr/desktop/*`, `/api/ibkr/bridge/*`, `/api/ibkr/activation/*`, and `/api/ibkr/remote-*` routes may remain as API tombstones so stale helpers can self-remove, but they are not app dependencies.
+- **Retired bridge surface** — the desktop helper/tunnel lifecycle, persisted
+  runtime override, and browser credential-handoff modules are absent. The
+  release startup guard rejects their reintroduction.
 
 ## Snapshot quote pipeline (gray-screen fix)
 
@@ -135,7 +149,7 @@ TWS snapshots stream *partial* field updates per tick and prefix some prices wit
 
 ## Server log noise (dev server)
 
-The API server uses a `pino-http` `customLogLevel` policy (`artifacts/api-server/src/app.ts`): 5xx → `error`; 4xx → `warn`; any request `>=1000ms` → `warn`; `GET /healthz*` under 1s → `silent`; else `info`. `responseTime` is computed from a `req._startTime` middleware ahead of `pinoHttp` (pino-http 10.5.0 doesn't expose `res.responseTime` to `customLogLevel`). The dev supervisor pins API logging to warn-level via `LOG_LEVEL=warn`. To restore verbose per-request logging while debugging, drop that env override in `artifacts/pyrus/scripts/runDevApp.mjs` and restart the PYRUS web workflow (production is unaffected).
+The API server uses a `pino-http` `customLogLevel` policy (`artifacts/api-server/src/app.ts`): 5xx → `error`; 4xx → `warn`; any request `>=1000ms` → `warn`; `GET /healthz*` under 1s → `silent`; else `info`. `responseTime` is computed from a `req._startTime` middleware ahead of `pinoHttp` (pino-http 10.5.0 doesn't expose `res.responseTime` to `customLogLevel`). The dev launcher defaults API logging to warn-level; change its `LOG_LEVEL` environment value and restart the managed workflow for verbose request logging.
 
 ## Managed Postgres by default
 
@@ -143,61 +157,7 @@ Replit's managed Postgres is the normal dev DB. Config resolution order: `LOCAL_
 
 Workspace-local Postgres scripts remain only as fallback/diagnostic tools: `scripts/start-local-postgres.sh` and `scripts/wait-for-local-postgres.sh`.
 
-If an API-side `pg` disconnect (`Connection terminated unexpectedly`) coincides with a `container-replaced` classification, treat the container replacement as platform context and the unhandled `pg` disconnect as the app-level hardening target. Do not add Replit workflows, local Postgres startup, or root runners for this class of incident.
-
-## Restart / reconnect diagnosis
-
-Start with `pnpm run diagnose:agent-restarts` (and `pnpm run diagnose:replit-restarts`). Both are observe-only: they correlate PYRUS flight-recorder incidents (`.pyrus-runtime/flight-recorder/`), Replit runtime file mtimes, workflow log tails, and surviving Codex session/log records. If a host-side trigger is not recorded inside the guest, the report says so rather than guessing. See `.agents/memory/replit-reconnect-diagnosis.md` for what each signal (DB-token reissue, `container-replaced` vs same-container bounce, agent log survival) does and does not prove.
-
-## Dev servers: single owner for API and web
-
-The PYRUS web workflow owns both dev listeners (API `8080`, pyrus `18747`). Three fixes prevent orphaned-port / `EADDRINUSE` recurrences:
-
-1. **Shared port reaper** (`scripts/reap-dev-port.mjs`), run by both packages before their dev servers start; it scans `/proc/net/tcp[6]` for `PORT` and reaps the owning PID (stale pid files are not trusted).
-2. **`strictPort: true`** on both `server` and `preview` in `artifacts/pyrus/vite.config.ts` so vite errors instead of silently falling back.
-3. **Process-group supervision** in `artifacts/pyrus/scripts/runDevApp.mjs` plus `exec` in child dev scripts, so workflow SIGTERM stops both API and Vite.
-
-Duplicate-start handling: a Replit-owned workflow start that finds an existing live PYRUS supervisor is treated as an intentional Run-button restart immediately. It requests a controlled handoff so the new workflow becomes sole owner instead of exiting as a duplicate no-op. Use `PYRUS_DEV_FORCE_RESTART=1` only for explicit recovery; `PYRUS_DEV_DUPLICATE_CHECK_ONLY=1` for shell smoke tests of the duplicate detection path. The supervisor writes lifecycle evidence to `/tmp/pyrus/pyrus-dev-lifecycle-8080.jsonl` (heartbeats, child starts/exits, controlled handoffs, ignored SIGHUP, shutdowns) to distinguish clean shutdowns from external Replit stops.
-
-`reap-dev-port.mjs` is **cgroup-aware**: it reads `/proc/<pid>/cgroup` for itself and each holder. From a normal shell it **refuses to kill** a holder in a different cgroup (protects the live workflow when you run `pnpm ... dev` from a shell). Under `REPLIT_MODE=workflow` it may reclaim the pinned port from a different Replit execution scope. To intentionally restart the live API/web service, use the workflow restart action, not `pnpm dev` from a shell.
-
-`EADDRINUSE` recovery:
-```bash
-PORT=8080 node scripts/reap-dev-port.mjs    # API
-PORT=18747 node scripts/reap-dev-port.mjs   # pyrus preview
-```
-`fuser` is unavailable on this NixOS image, and `ps`/`pgrep` may be too; if the reaper can't identify the PID, check `/proc/net/tcp[6]` directly (`:HEX_PORT`, HEX = `printf '%04X' PORT`).
-
-browser QA must attach to the existing app inside Replit: `artifacts/pyrus/browser QA.config.ts` disables its `webServer` block when Replit env markers are present. Set `PYRUS_BROWSER_QA_ALLOW_WEB_SERVER=1` only for an intentional maintenance run.
-
-`ensurePreviewReachable` is intentionally removed from the PYRUS artifact TOML — its health-poll of `/` re-mounted the iframe on probe hiccups (HMR stalls), causing ~20 reloads/min. If preview gating is ever needed again, raise the proxy's tolerance rather than re-adding a tight health probe.
-
-Known follow-up: the Windows `ibkr-bridge` (`node dist/index.mjs`, no pnpm wrapper) has no `SIGTERM` handler, so restarting it during a long in-flight request can leave the old process alive past the helper's restart timeout. Add a shutdown handler that calls `server.close()` + `process.exit()`.
-
-## Agent guardrail: files & actions that trigger app bounces
-
-Replit's workspace daemon watches a small set of config files; any save re-evaluates modules/ports/env/stack, which kills shells/terminals, re-mounts the preview, and SIGKILLs workspace-local Postgres. Separately, host-side control-plane writes (set/delete Replit env vars, create/update/remove Replit artifacts) rewrite `/run/replit/env/latest.json` + `/run/replit/toolchain.json` env/toolchain state and bounce the same-container supervisor ~1s later. Neither is normal setup/cleanup work.
-
-**Do not edit these from any agent during routine work or test cycles unless the user explicitly asked for a config change:**
-
-- `.replit` — modules, ports, `[userenv.*]`, `[agent]`, `[deployment]`. Use a single `DATABASE_URL` for dev DB config.
-- Replit control-plane env writes (set/delete env vars / add secrets) — only inside an explicit startup maintenance window.
-- Replit control-plane artifact writes (create/update/remove artifacts) — the controller reconciles on change and, in `PNPM_WORKSPACE` stack mode, cascades into a full re-bring-up. Maintenance window only.
-- `artifacts/*/.replit-artifact/artifact.toml` — same reconciliation cascade. Never hand-edit outside a maintenance window.
-- `replit.nix` — same daemon, same reload.
-
-**Test patterns that do NOT cause a reload:**
-- Verify API code: `pnpm --filter @workspace/api-server run typecheck` / `... run unit validation`.
-- Verify a route: `curl -sS http://127.0.0.1:8080/api/healthz` against the running server; `restart_workflow "artifacts/api-server: API Server"` only if the change is in compiled output.
-- For pyrus: `pnpm --filter @workspace/pyrus run typecheck` plus live Vite HMR; only restart the pyrus workflow if you edited `vite.config.ts` or `package.json`.
-
-Root validation: `pnpm run typecheck:libs` runs through `scripts/run-validation-command.mjs`, which records label/status events (not raw command arguments) in a private, size-capped `.pyrus-runtime/validation/commands.jsonl` ledger and holds a PID/start-time-bound single-validation lock so two broad checks do not contend. Interrupt signals are forwarded to the validation process group before cleanup. It does not inspect the live PYRUS supervisor or refuse checks because the app is running. Prefer targeted package checks when they are faster; root validation is not gated on supervisor hot-state.
-
-If a test genuinely requires a config change, batch intentional edits into the smallest maintenance window and warn the user that each startup-config publication may reload the workspace. To keep watched files read-only during routine work: `pnpm run replit:config:lock` / `pnpm run replit:config:unlock` (re-lock immediately after a batched edit, then run `pnpm run audit:replit-startup`).
-
-Recovery-clobber protection: Replit's platform "Post-Recovery checkpoint" flow can rewrite `.replit` from control-plane state and delete `replit.nix` (this bricked shells on 2026-07-09). Canonical known-good copies live in `scripts/replit-config/`; `pnpm run replit:config:restore` diffs them against the live files and `pnpm run replit:config:restore -- --write` stages locked replacements before publishing `replit.nix` first and `.replit` second. Each publication may trigger a workspace reload; wait for the workspace to settle before auditing. The startup audit and the dev supervisor both detect the clobber signature — the supervisor only warns and names the restore command; it never writes `.replit` itself. If Replit blocks the hardened command in an agent-owned shell, run that same command from the user-owned Shell pane; do not fall back to raw `chmod`/`cp` writes. If the canonical startup config intentionally changes, update `scripts/replit-config/` in the same maintenance window.
-
-Scribe artifact hygiene: workspace restoration can leave duplicate live artifact iframe records. Audit read-only with `pnpm run replit:scribe:artifacts`; only inside a maintenance window, `PYRUS_ALLOW_REPLIT_CONTROL_PLANE_CLEANUP=1 pnpm run replit:scribe:artifacts -- --backup-and-clean --confirm-control-plane-cleanup` (backup-first, but still control-plane maintenance).
+If an API-side `pg` disconnect (`Connection terminated unexpectedly`) coincides with a Replit VM replacement, treat the replacement as platform context and the unhandled disconnect as the app-level hardening target.
 
 ## Historical fix notes
 

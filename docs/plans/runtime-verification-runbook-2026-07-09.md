@@ -1,7 +1,8 @@
 # Runtime verification runbook — post-fix acceptance (task #8)
 
-Execute after the FB2 chain + S3B-1 + EE-BLOAT land and the API is reloaded in place (SIGUSR2 to
-the pid2-owned `runDevApp.mjs`; healthz 200; confirm markers in `artifacts/api-server/dist/index.mjs`).
+Execute after the FB2 chain + S3B-1 + EE-BLOAT land and the API is replaced
+through Replit's managed workflow restart action (healthz 200; confirm markers
+in `artifacts/api-server/dist/index.mjs`).
 Run on a WARM process (≥10 min uptime); ideally repeat next market open (~07:30 MDT) for the
 open-load acceptance.
 
@@ -21,12 +22,11 @@ open-load acceptance.
 
 ## Steps
 
-1. Record the supervisor PID FIRST (`sup=$(pgrep -f 'runDevApp[.]mjs' | head -1)`; confirm only ONE
-   match — multiple = zombie churn, stop and investigate). `kill -USR2 "$sup"`; poll
-   `http://127.0.0.1:8080/api/healthz` → 200; **then verify the SAME supervisor pid is alive and
-   still pid2-owned** — on 2026-07-09 a supervisor-abrupt kill landed 2s after a SIGUSR2 during
-   open-load (mechanism unverified: in-supervisor rebuild spike vs platform resource-kill; see the
-   rootcause doc's instability appendix). If the pid changed, the reload killed the tree — do not
+1. Confirm only one managed launcher exists, use Replit's managed workflow
+   restart action, then poll `http://127.0.0.1:8080/api/healthz` → 200. On
+   2026-07-09 the retired signal-reload path correlated with an abrupt
+   supervisor loss during open load (mechanism unverified; see the root-cause
+   doc's instability appendix). Do not
    trust the run; investigate before proceeding.
 2. Wait ≥10 min warm. Confirm commit markers in dist (grep one symbol per landed WO).
 3. CPU profile: `node scripts/diag/cpu-profile-running-api.mjs <apiPid> 20000`

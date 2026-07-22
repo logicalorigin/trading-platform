@@ -3,6 +3,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import ts from "typescript";
 
 const scriptPath = fileURLToPath(import.meta.url);
 const repoRoot = path.resolve(path.dirname(scriptPath), "..");
@@ -43,12 +44,72 @@ const forbiddenPatterns = [
   new RegExp(`\\b${retiredAlertSynonym}\\w*\\b`, "i"),
 ];
 const MAX_TEXT_FILE_BYTES = 50_000_000;
+const typedSourceExtensions = new Set([
+  ".cjs",
+  ".js",
+  ".jsx",
+  ".mjs",
+  ".ts",
+  ".tsx",
+]);
 // Comment-only lines (prose like "critical path" / "most severe first" / "severed the link")
 // use the retired words in ordinary English, not as an alert-tier identifier or value — skip them.
 const commentLinePrefixes = ["//", "/*", "*"];
 function isCommentOnlyLine(line) {
   const trimmed = line.trim();
   return commentLinePrefixes.some((prefix) => trimmed.startsWith(prefix));
+}
+
+const containsRetiredAlertTier = (text) =>
+  forbiddenPatterns.some((pattern) => pattern.test(text));
+
+function scriptKindFor(extension) {
+  if (extension === ".tsx") return ts.ScriptKind.TSX;
+  if (extension === ".jsx") return ts.ScriptKind.JSX;
+  if (extension === ".ts") return ts.ScriptKind.TS;
+  return ts.ScriptKind.JS;
+}
+
+function retiredAlertTierReferenceLines(source, extension) {
+  const references = new Set();
+  if (!typedSourceExtensions.has(extension)) {
+    source.split(/\r?\n/).forEach((line, index) => {
+      if (!isCommentOnlyLine(line) && containsRetiredAlertTier(line)) {
+        references.add(index);
+      }
+    });
+    return references;
+  }
+
+  const sourceFile = ts.createSourceFile(
+    `retired-alert-tier-scan${extension}`,
+    source,
+    ts.ScriptTarget.Latest,
+    false,
+    scriptKindFor(extension),
+  );
+  const visit = (node) => {
+    if (ts.isIdentifier(node) && containsRetiredAlertTier(node.text)) {
+      references.add(
+        sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile)).line,
+      );
+    } else if (
+      (ts.isStringLiteralLike(node) || ts.isTemplateLiteralToken(node)) &&
+      !/\s/.test(node.text) &&
+      containsRetiredAlertTier(node.text)
+    ) {
+      references.add(
+        sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile)).line,
+      );
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  return references;
+}
+
+export function hasRetiredAlertTierReference(source, extension) {
+  return retiredAlertTierReferenceLines(source, extension).size > 0;
 }
 
 export function isScanPath(relPath) {
@@ -94,11 +155,14 @@ const main = () => {
       continue;
     }
     const source = readFileSync(fullPath, "utf8");
-    source.split(/\r?\n/).forEach((line, index) => {
-      if (isCommentOnlyLine(line)) return;
-      if (!forbiddenPatterns.some((pattern) => pattern.test(line))) return;
+    const lines = source.split(/\r?\n/);
+    for (const index of retiredAlertTierReferenceLines(
+      source,
+      path.extname(relPath).toLowerCase(),
+    )) {
+      const line = lines[index] ?? "";
       failures.push(`${relPath}:${index + 1}: ${line.trim()}`);
-    });
+    }
   }
 
   if (failures.length > 0) {

@@ -1,10 +1,7 @@
 import { pathToFileURL } from "node:url";
 import { parseArgs, stripVTControlCharacters } from "node:util";
 import { and, eq, sql } from "drizzle-orm";
-import {
-  hasNamedOperatorCredential,
-  hasOpaqueOperatorCredential,
-} from "./operator-diagnostic";
+import { hasOpaqueOperatorCredential } from "./operator-diagnostic";
 import {
   closeDatabaseConnections,
   db,
@@ -601,7 +598,6 @@ async function runSync(
 function safeOutput(value: unknown, fallback: string): string {
   const withoutCredentials = String(value ?? "")
     .replace(/([a-z][a-z0-9+.-]*:\/\/)[^@\s]+@/giu, "$1[redacted]@")
-    .replace(/([a-z][a-z0-9+.-]*:\/\/[^\s?#]+)[?#][^\s]*/giu, "$1?[redacted]")
     .replace(
       /([?&](?:api[-_]?key|access[-_]?token|token)=)[^&#\s]*/giu,
       "$1[redacted]",
@@ -612,11 +608,7 @@ function safeOutput(value: unknown, fallback: string): string {
     .replace(/\s+/gu, " ")
     .trim();
   const diagnostic =
-    cleaned &&
-    !hasNamedOperatorCredential(cleaned) &&
-    !hasOpaqueOperatorCredential(cleaned)
-      ? cleaned
-      : fallback;
+    cleaned && !hasOpaqueOperatorCredential(cleaned) ? cleaned : fallback;
   if (diagnostic.length <= MAX_DIAGNOSTIC_LENGTH) return diagnostic;
   return `${diagnostic.slice(0, MAX_DIAGNOSTIC_LENGTH - 1)}…`;
 }

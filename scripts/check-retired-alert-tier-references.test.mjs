@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  hasRetiredAlertTierReference,
   isScanPath,
   shouldIgnore,
 } from "./check-retired-alert-tier-references.mjs";
@@ -23,5 +24,37 @@ test("scans only source roots without broad filename exemptions", () => {
       "artifacts/example/scripts/check-retired-alert-tier-references.mjs",
     ),
     false,
+  );
+});
+
+test("distinguishes prose strings from retired alert-tier identifiers and values", () => {
+  assert.equal(
+    hasRetiredAlertTierReference(
+      'test("response critical path remains asynchronous", () => {})',
+      ".ts",
+    ),
+    false,
+  );
+  assert.equal(
+    hasRetiredAlertTierReference(
+      "const summary = `most severe first`;",
+      ".ts",
+    ),
+    false,
+  );
+  assert.equal(
+    hasRetiredAlertTierReference(
+      'const summary = `ordinary status: ${critical}`;',
+      ".ts",
+    ),
+    true,
+  );
+  assert.equal(
+    hasRetiredAlertTierReference('const tier = "critical";', ".ts"),
+    true,
+  );
+  assert.equal(
+    hasRetiredAlertTierReference("const severe = true;", ".ts"),
+    true,
   );
 });

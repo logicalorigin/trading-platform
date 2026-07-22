@@ -1,16 +1,22 @@
 # Agent Run Rules
 
-- The agent may rebuild and reload the dev app directly to load changes and verify at runtime. **Sanctioned reload = SIGUSR2 to the LIVE pid2-owned supervisor** (in-place API rebuild+restart; the supervisor and preview stay attached): `kill -USR2 "$(pgrep -f 'runDevApp[.]mjs' | head -1)"`, then poll `http://127.0.0.1:8080/api/healthz` → 200 and verify the SAME supervisor pid is still alive. Do NOT shell-launch `REPLIT_MODE=workflow pnpm ... dev:replit` — that guidance is RETIRED (2026-07-09): it replaces the pid2-tracked supervisor, detaches the user's preview, and shows up as `same-container-supervisor-abrupt` incidents (nine such tree-kills were traced to this on 2026-07-09). If the app is fully stopped (no supervisor at all), the user's Replit Run button (**artifacts/pyrus: web**) is the only sanctioned bring-up.
-- Do not use the generated **Configure Your App** workflow as the app runner.
-- Do not add repo-defined `.replit` workflows or a root `.replit` `run = [...]` command; `[agent] stack = "PNPM_WORKSPACE"` lets Replit start the PYRUS web artifact.
-- Keep the PYRUS artifact development command in `artifacts/pyrus/.replit-artifact/artifact.toml` as the source of truth for dev startup; it owns starting the API and web dev servers.
-- Keep Replit startup config locked during routine work with `pnpm run replit:config:lock`; only run `pnpm run replit:config:unlock` for an intentional startup-config maintenance window.
-- Do not set/delete Replit environment variables, create/update/remove Replit artifacts, or run other Replit control-plane actions during routine work. These can rewrite `/run/replit/env/latest.json` and `/run/replit/toolchain.json`, trigger PNPM_WORKSPACE artifact reconciliation, and bounce the PYRUS supervisor. Use them only in an explicit startup maintenance window with user approval.
+- Replit owns the outer dev-app lifecycle. The Run button starts the selected `artifacts/pyrus: web` artifact; its development command lives in `artifacts/pyrus/.replit-artifact/artifact.toml`.
+- Agents may run targeted build, test, and typecheck commands directly. To load
+  backend changes, use Replit's native restart-run-workflow action for
+  `artifacts/pyrus: web` when that tool is exposed; otherwise use the workspace
+  Run/Stop controls. Never signal the launcher or pid2, and never shell-launch
+  a second app copy. Vite handles frontend hot reload.
+- `.replit`, `replit.nix`, and artifact TOML files are ordinary tracked configuration. Change them only when the task requires it, and validate the resulting command directly.
 - Keep the active per-session handoff updated during substantial work: refresh it at session start, after meaningful edits or validation, before risky/long-running actions, and before handing off. Each durable handoff belongs in its own `SESSION_HANDOFF_YYYY-MM-DD_<full-codex-session-id>.md`; `SESSION_HANDOFF_MASTER.md` is the changelog/table of contents; `SESSION_HANDOFF_CURRENT.md` is only a compact pointer to the active handoff.
 - For logic validation, prefer targeted `pnpm` test/typecheck/build commands (the fast path); restart the app for runtime/preview verification when needed.
-- For PYRUS browser QA, open the normal app URL by default. Use `?pyrusQa=safe` only when intentionally testing the safe-QA mode itself. Wait on explicit readiness selectors instead of `networkidle`, avoid raw generated click targets like `@e*`, and get explicit approval before live full-app navigation or side-effectful controls.
-- If you touch `.replit`, `artifacts/*/.replit-artifact/artifact.toml`, artifact `dev` scripts, database startup config, or `scripts/reap-dev-port.mjs`, run `pnpm run audit:replit-startup` before handing off.
-- Do not remove `scripts/check-replit-startup-guards.mjs` from `audit:guards` or root `typecheck`; it is the regression guard for the Replit workflow and artifact startup rules.
+- Treat shared Replit workspace memory as lifecycle-critical. Across all agents and
+  sessions, serialize package installs, broad builds/typechecks, repeated bundling,
+  browser/performance-capture processing, and large file patches. Do not launch nested
+  `codex exec` sessions. Size and interrupt memory-heavy actions according to current
+  headroom and observed pressure instead of blocking them behind fixed memory
+  thresholds. Inspect large generated captures with path/size/status commands only —
+  never print or patch their payloads.
+- For PYRUS browser or HTTP runtime QA, use the normal Replit runtime URL (`https://${REPLIT_DEV_DOMAIN}` when available). Never probe `localhost`, `127.0.0.1`, direct Vite/API ports, or alternate sideports as an app target. Gstack's generic target discovery does not override this rule. Use `?pyrusQa=safe` only when intentionally testing the safe-QA mode itself. Wait on explicit readiness selectors instead of `networkidle`, avoid raw generated click targets like `@e*`, and get explicit approval before live full-app navigation or side-effectful controls.
 - When a request has ambiguous product/UI semantics, especially wording like "share", "separate", "combine", "source", "pressure", or "footer", stop after repo inspection and ask a clarifying question before editing. Do not guess layout intent from implementation details alone; flatten ambiguity first, then implement.
 
 ## Fact-first operating rules

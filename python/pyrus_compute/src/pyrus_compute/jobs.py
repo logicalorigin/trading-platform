@@ -4,7 +4,8 @@ import math
 import statistics
 import time
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import UTC, datetime
+from decimal import ROUND_HALF_UP, Decimal, localcontext
 from typing import Any, TypedDict, cast
 
 import numpy as np
@@ -178,23 +179,14 @@ def run_benchmark_matrix(input_data: BenchmarkMatrixInput) -> tuple[dict[str, An
         timed(
             "signal_rolling_mean_numpy",
             lambda: {
-                "lastRollingMean": float(
-                    np.convolve(prices, np.ones(20) / 20, mode="valid")[-1]
-                )
+                "lastRollingMean": float(np.convolve(prices, np.ones(20) / 20, mode="valid")[-1])
             },
         ),
         timed(
             "option_gex_vector_numpy",
             lambda: {
                 "netGex": float(
-                    np.sum(
-                        np.sign(deltas)
-                        * gammas
-                        * open_interest
-                        * prices
-                        * prices
-                        * 0.01
-                    )
+                    np.sum(np.sign(deltas) * gammas * open_interest * prices * prices * 0.01)
                 )
             },
         ),
@@ -227,8 +219,8 @@ def finite(value: float | None) -> bool:
     return isinstance(value, int | float) and math.isfinite(value)
 
 
-def _round_or_nan(value: float, digits: int = 6) -> float:
-    return round(value, digits) if math.isfinite(value) else math.nan
+def _round_or_nan(value: float) -> float:
+    return _signal_round_feature(value) if math.isfinite(value) else math.nan
 
 
 def _signal_sma(values: list[float], period: int) -> list[float]:
@@ -407,8 +399,8 @@ def _bucket_start_ms(time_ms: int, timeframe: str) -> int:
         interval_ms = int(normalized[:-1]) * 60 * 60_000
         return math.floor(time_ms / interval_ms) * interval_ms
     if normalized in {"D", "1D", "1d"}:
-        value = datetime.fromtimestamp(time_ms / 1000, tz=timezone.utc)
-        return int(datetime(value.year, value.month, value.day, tzinfo=timezone.utc).timestamp() * 1000)
+        value = datetime.fromtimestamp(time_ms / 1000, tz=UTC)
+        return int(datetime(value.year, value.month, value.day, tzinfo=UTC).timestamp() * 1000)
     return time_ms
 
 
@@ -424,8 +416,10 @@ def _aggregate_signal_bars(
             aggregated.append(
                 SignalMatrixBarInput(
                     time=bucket_time,
-                    ts=datetime.fromtimestamp(bucket_time, tz=timezone.utc).isoformat().replace("+00:00", "Z"),
-                    date=datetime.fromtimestamp(bucket_time, tz=timezone.utc).date().isoformat(),
+                    ts=datetime.fromtimestamp(bucket_time, tz=UTC)
+                    .isoformat()
+                    .replace("+00:00", "Z"),
+                    date=datetime.fromtimestamp(bucket_time, tz=UTC).date().isoformat(),
                     o=bar.o,
                     h=bar.h,
                     l=bar.l,
@@ -464,7 +458,7 @@ def _signal_trend_direction(bars: list[SignalMatrixBarInput], basis_length: int)
 
 
 def _signal_bar_in_session(bar: SignalMatrixBarInput, session: str) -> bool:
-    value = datetime.fromtimestamp(bar.time, tz=timezone.utc)
+    value = datetime.fromtimestamp(bar.time, tz=UTC)
     minutes = value.hour * 60 + value.minute
     if session == "london":
         return 8 * 60 <= minutes < 17 * 60
@@ -532,12 +526,21 @@ def _has_hard_bar_gap(
     index: int,
     median_interval: float,
 ) -> bool:
-    return index > 0 and median_interval > 0 and bars[index].time - bars[index - 1].time > median_interval * 2
+    return (
+        index > 0
+        and median_interval > 0
+        and bars[index].time - bars[index - 1].time > median_interval * 2
+    )
 
 
 def _signal_round_feature(value: float) -> float:
     # Mirrors buildPyrusSignalsDirectionalFeatures roundFeature: finite -> 6dp, else 0.
-    return round(value, 6) if math.isfinite(value) else 0.0
+    if not math.isfinite(value):
+        return 0.0
+    decimal_value = Decimal.from_float(value)
+    with localcontext() as context:
+        context.prec = max(28, len(decimal_value.as_tuple().digits) + 6)
+        return float(decimal_value.quantize(Decimal("0.000001"), rounding=ROUND_HALF_UP))
 
 
 def _signal_clamp(value: float, minimum: float, maximum: float) -> float:
@@ -552,6 +555,7 @@ def _signal_directional_features(
     adx: float,
     volatility_score: float,
     atr: float,
+    regime_age_bars: int | None = None,
 ) -> dict[str, Any]:
     # Deterministic port of buildPyrusSignalsDirectionalFeatures
     # (lib/pyrus-signals-core/src/index.ts:958-1057). Keeps STA rows on the
@@ -600,14 +604,10 @@ def _signal_directional_features(
     else:
         range_position = 0.5
 
-    prior_volumes = [
-        bar.v for bar in bars[max(0, index - 20) : index] if math.isfinite(bar.v)
-    ]
+    prior_volumes = [bar.v for bar in bars[max(0, index - 20) : index] if math.isfinite(bar.v)]
     prior_volume_average = sum(prior_volumes) / len(prior_volumes) if prior_volumes else 0.0
     volume_ratio = (
-        current.v / prior_volume_average
-        if prior_volume_average > 0 and current.v > 0
-        else 1.0
+        current.v / prior_volume_average if prior_volume_average > 0 and current.v > 0 else 1.0
     )
 
     safe_adx = adx if math.isfinite(adx) else 0.0
@@ -616,15 +616,11 @@ def _signal_directional_features(
         sum(1 for value in mtf_directions if value == normalized_direction)
         - sum(1 for value in mtf_directions if value == -normalized_direction) * 0.5
     )
-    atr_pct = (
-        (atr / current.c) * 100
-        if math.isfinite(atr) and atr > 0 and current.c > 0
-        else 0.0
-    )
+    atr_pct = (atr / current.c) * 100 if math.isfinite(atr) and atr > 0 and current.c > 0 else 0.0
     risk_adjusted_momentum = medium_momentum / max(0.25, atr_pct or 0.25)
     clamped_range = _signal_clamp(range_position, 0, 1)
 
-    return {
+    features: dict[str, Any] = {
         "version": "directional-features-v1",
         "shortMomentumPct": _signal_round_feature(short_momentum),
         "mediumMomentumPct": _signal_round_feature(medium_momentum),
@@ -641,6 +637,9 @@ def _signal_directional_features(
         "mtfAlignment": _signal_round_feature(mtf_alignment),
         "atrPct": _signal_round_feature(atr_pct),
     }
+    if regime_age_bars is not None:
+        features["regimeAgeBars"] = regime_age_bars
+    return features
 
 
 def _build_signal_filter_state(
@@ -651,9 +650,12 @@ def _build_signal_filter_state(
     adx: list[float],
     volatility_score: list[float],
     atr_smoothed: list[float],
+    regime_direction_age: list[int] | None = None,
 ) -> dict[str, Any]:
     mtf_directions = [
-        _signal_trend_direction(_aggregate_signal_bars(bars[: index + 1], timeframe), settings.basisLength)
+        _signal_trend_direction(
+            _aggregate_signal_bars(bars[: index + 1], timeframe), settings.basisLength
+        )
         for timeframe in [settings.mtf1, settings.mtf2, settings.mtf3]
     ]
     current_adx = adx[index]
@@ -667,6 +669,7 @@ def _build_signal_filter_state(
         current_adx,
         current_volatility_score,
         atr_smoothed[index],
+        (regime_direction_age[index] if regime_direction_age is not None else None),
     )
     mtf_pass = [
         (not settings.requireMtf1) or mtf_directions[0] == direction,
@@ -689,7 +692,9 @@ def _build_signal_filter_state(
         "direction": direction,
         "mtfDirections": mtf_directions,
         "adx": current_adx if math.isfinite(current_adx) else None,
-        "volatilityScore": current_volatility_score if math.isfinite(current_volatility_score) else None,
+        "volatilityScore": current_volatility_score
+        if math.isfinite(current_volatility_score)
+        else None,
         "directionalFeatures": directional_features,
         "sessionKey": current_session_key,
         "mtfPass": mtf_pass,
@@ -701,12 +706,17 @@ def _build_signal_filter_state(
 
 
 def _event_iso(bar: SignalMatrixBarInput) -> str:
-    return bar.ts or datetime.fromtimestamp(bar.time, tz=timezone.utc).isoformat().replace("+00:00", "Z")
+    return bar.ts or (
+        datetime.fromtimestamp(bar.time, tz=UTC)
+        .isoformat(timespec="milliseconds")
+        .replace("+00:00", "Z")
+    )
 
 
 def _evaluate_signal_cell(
     bars: list[SignalMatrixBarInput],
     settings: SignalMatrixSettingsInput,
+    last_bar_closed: bool = False,
 ) -> dict[str, Any]:
     closes = [bar.c for bar in bars]
     basis = _signal_wma(closes, settings.basisLength)
@@ -733,6 +743,7 @@ def _evaluate_signal_cell(
     )
     trend_direction_series = [1] * len(bars)
     regime_direction = [1] * len(bars)
+    regime_direction_age = [1] * len(bars)
     signal_events: list[dict[str, Any]] = []
     trend_direction = 1
     trend_basis_computable = False
@@ -751,12 +762,24 @@ def _evaluate_signal_cell(
         if not math.isfinite(pivot_level):
             return False
         current_atr = atr_raw[index]
-        atr_buffer = current_atr * settings.chochAtrBuffer if math.isfinite(current_atr) and settings.chochAtrBuffer > 0 else 0
+        atr_buffer = (
+            current_atr * settings.chochAtrBuffer
+            if math.isfinite(current_atr) and settings.chochAtrBuffer > 0
+            else 0
+        )
         threshold = pivot_level + atr_buffer if direction == "long" else pivot_level - atr_buffer
         if direction == "long":
-            buffered_break = current.h > threshold if settings.bosConfirmation == "wicks" else current.c > threshold
+            buffered_break = (
+                current.h > threshold
+                if settings.bosConfirmation == "wicks"
+                else current.c > threshold
+            )
         else:
-            buffered_break = current.l < threshold if settings.bosConfirmation == "wicks" else current.c < threshold
+            buffered_break = (
+                current.l < threshold
+                if settings.bosConfirmation == "wicks"
+                else current.c < threshold
+            )
         if not buffered_break:
             return False
         if settings.chochBodyExpansionAtr > 0:
@@ -766,7 +789,10 @@ def _evaluate_signal_cell(
                 return False
         if settings.chochVolumeGate > 0:
             baseline_volume = volume_sma[index]
-            if not math.isfinite(baseline_volume) or current.v < baseline_volume * settings.chochVolumeGate:
+            if (
+                not math.isfinite(baseline_volume)
+                or current.v < baseline_volume * settings.chochVolumeGate
+            ):
                 return False
         return True
 
@@ -798,7 +824,9 @@ def _evaluate_signal_cell(
         bullish_choch = False
         bearish_choch = False
         if math.isfinite(breakable_high) and (
-            current.h > breakable_high if settings.bosConfirmation == "wicks" else current.c > breakable_high
+            current.h > breakable_high
+            if settings.bosConfirmation == "wicks"
+            else current.c > breakable_high
         ):
             if market_structure_direction == 1:
                 bullish_bos = True
@@ -808,7 +836,9 @@ def _evaluate_signal_cell(
                 market_structure_direction = 1
                 breakable_high = math.nan
         if math.isfinite(breakable_low) and (
-            current.l < breakable_low if settings.bosConfirmation == "wicks" else current.c < breakable_low
+            current.l < breakable_low
+            if settings.bosConfirmation == "wicks"
+            else current.c < breakable_low
         ):
             if market_structure_direction == -1:
                 bearish_bos = True
@@ -818,15 +848,25 @@ def _evaluate_signal_cell(
                 market_structure_direction = -1
                 breakable_low = math.nan
 
-        regime_direction[index] = market_structure_direction if market_structure_direction != 0 else trend_direction
+        regime_direction[index] = (
+            market_structure_direction if market_structure_direction != 0 else trend_direction
+        )
         active_regime_direction = regime_direction[index]
+        regime_direction_age[index] = (
+            regime_direction_age[index - 1] + 1
+            if previous_regime_direction is not None
+            and previous_regime_direction == active_regime_direction
+            else 1
+        )
         active_trend_line = lower_band[index] if active_regime_direction == 1 else upper_band[index]
-        regime_flipped = previous_regime_direction is not None and previous_regime_direction != active_regime_direction
+        regime_flipped = (
+            previous_regime_direction is not None
+            and previous_regime_direction != active_regime_direction
+        )
         if not hard_gap_bar and not regime_flipped and math.isfinite(active_trend_line):
             pass
         previous_regime_direction = active_regime_direction
-        # The API matrix path evaluates completed bars with includeProvisionalSignals=true.
-        actionable = True
+        actionable = not settings.waitForBarClose or last_bar_closed or index < len(bars) - 1
 
         if bullish_bos or bearish_bos:
             pass
@@ -841,15 +881,30 @@ def _evaluate_signal_cell(
                 adx,
                 volatility_score,
                 atr_smoothed,
+                regime_direction_age,
             )
             if filter_state["passes"] and actionable:
                 signal_price = (
-                    current.l - (atr_raw[index] * settings.signalOffsetAtr if math.isfinite(atr_raw[index]) else 0)
+                    current.l
+                    - (
+                        atr_raw[index] * settings.signalOffsetAtr
+                        if math.isfinite(atr_raw[index])
+                        else 0
+                    )
                     if event_direction == "long"
-                    else current.h + (atr_raw[index] * settings.signalOffsetAtr if math.isfinite(atr_raw[index]) else 0)
+                    else current.h
+                    + (
+                        atr_raw[index] * settings.signalOffsetAtr
+                        if math.isfinite(atr_raw[index])
+                        else 0
+                    )
                 )
                 signal_events.append(
                     {
+                        "id": (
+                            f"{'buy' if event_direction == 'long' else 'sell'}-"
+                            f"{index}-{current.time}"
+                        ),
                         "eventType": "buy_signal" if event_direction == "long" else "sell_signal",
                         "direction": event_direction,
                         "barIndex": index,
@@ -916,7 +971,8 @@ def _finite_rounded(value: Any, digits: int = 1) -> float | None:
     numeric = float(value) if isinstance(value, int | float) else math.nan
     if not math.isfinite(numeric):
         return None
-    return round(numeric, digits)
+    factor = 10.0**digits
+    return math.floor(numeric * factor + 0.5) / factor
 
 
 def _signal_indicator_snapshot(
@@ -944,9 +1000,7 @@ def _signal_indicator_snapshot(
         )
     else:
         structure_direction = evaluation.get("marketStructureDirection")
-        current_direction = (
-            structure_direction if structure_direction in {1, -1} else None
-        )
+        current_direction = structure_direction if structure_direction in {1, -1} else None
     if current_direction not in {1, -1}:
         current_direction = None
     trend_age_bars = _trend_age(regime_direction, current_direction)
@@ -960,13 +1014,16 @@ def _signal_indicator_snapshot(
         (settings.mtf2, settings.requireMtf2),
         (settings.mtf3, settings.requireMtf3),
     ]:
-        direction = _signal_trend_direction(_aggregate_signal_bars(bars, timeframe), settings.basisLength)
+        direction = _signal_trend_direction(
+            _aggregate_signal_bars(bars, timeframe), settings.basisLength
+        )
         mtf.append(
             {
                 "timeframe": timeframe,
                 "direction": _normalized_indicator_direction(direction),
                 "required": required,
-                "pass": (not required) or (current_direction is not None and direction == current_direction),
+                "pass": (not required)
+                or (current_direction is not None and direction == current_direction),
             }
         )
     return {
@@ -1000,8 +1057,12 @@ def run_signal_matrix(input_data: SignalMatrixInput) -> tuple[dict[str, Any], li
                 }
             )
             continue
-        evaluation = _evaluate_signal_cell(bars, cell.settings)
-        signal = cast(list[dict[str, Any]], evaluation["signalEvents"])[-1] if evaluation["signalEvents"] else None
+        evaluation = _evaluate_signal_cell(bars, cell.settings, cell.lastBarClosed)
+        signal = (
+            cast(list[dict[str, Any]], evaluation["signalEvents"])[-1]
+            if evaluation["signalEvents"]
+            else None
+        )
         bars_since_signal = None
         fresh = False
         if signal is not None:
@@ -1109,10 +1170,7 @@ def _can_reprice_black_scholes(position: NormalizedGreekPosition) -> bool:
         and position["daysToExpiration"] >= 0
         and position["quantity"] != 0
         and position["contractUnits"] > 0
-        and (
-            position["blackScholesVolatility"] is not None
-            or position["daysToExpiration"] == 0
-        )
+        and (position["blackScholesVolatility"] is not None or position["daysToExpiration"] == 0)
     )
 
 
@@ -1680,8 +1738,7 @@ def _apply_max_weight_constraint(
             break
 
         proposed = {
-            index: float(base[index] / subtotal * remaining_weight)
-            for index in remaining_indices
+            index: float(base[index] / subtotal * remaining_weight) for index in remaining_indices
         }
         capped = [index for index, value in proposed.items() if value > max_weight]
         if not capped:
@@ -1733,8 +1790,7 @@ def _finite_or_none(value: float) -> float | None:
 
 def _json_finite_matrix(matrix: np.ndarray, decimals: int) -> list[list[float | None]]:
     return [
-        [_finite_or_none(value) for value in row]
-        for row in np.round(matrix, decimals).tolist()
+        [_finite_or_none(value) for value in row] for row in np.round(matrix, decimals).tolist()
     ]
 
 

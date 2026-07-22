@@ -26,15 +26,32 @@ export function summarizeCpuProfile(profile) {
     throw new Error("CPU profile requires aligned samples and timeDeltas");
   }
 
-  const nodesById = new Map((profile.nodes ?? []).map((node) => [node.id, node]));
+  const nodesById = new Map(
+    (profile.nodes ?? []).map((node) => [node.id, node]),
+  );
   const durationByFrame = new Map();
+  let initialGapDurationUs = 0;
   let totalDurationUs = 0;
   let idleDurationUs = 0;
+  let negativeJitterSampleCount = 0;
+  let negativeJitterDurationUs = 0;
 
   for (let index = 0; index < samples.length; index += 1) {
-    const durationUs = Number(timeDeltas[index]);
-    if (!Number.isFinite(durationUs) || durationUs < 0) {
+    const rawDurationUs = Number(timeDeltas[index]);
+    if (!Number.isFinite(rawDurationUs) || rawDurationUs < -100) {
       throw new Error(`CPU profile has invalid timeDelta at index ${index}`);
+    }
+    const durationUs = Math.max(0, rawDurationUs);
+    if (rawDurationUs < 0) {
+      negativeJitterSampleCount += 1;
+      negativeJitterDurationUs += Math.abs(rawDurationUs);
+    }
+    if (index === 0) {
+      // V8 defines this as profiler start -> first sample. The profiler did
+      // not observe which frame owned that interval, so attributing it to the
+      // first sampled frame invents a hotspot (often by more than a second).
+      initialGapDurationUs = durationUs;
+      continue;
     }
     const node = nodesById.get(samples[index]);
     const functionName = node?.callFrame?.functionName || "(anonymous)";
@@ -58,9 +75,12 @@ export function summarizeCpuProfile(profile) {
 
   return {
     totalSamples: samples.length,
+    initialGapDurationUs,
     totalDurationUs,
     idleDurationUs,
     busyDurationUs,
+    negativeJitterSampleCount,
+    negativeJitterDurationUs,
     busyPercent:
       totalDurationUs > 0 ? (busyDurationUs / totalDurationUs) * 100 : 0,
     rows,
@@ -69,7 +89,7 @@ export function summarizeCpuProfile(profile) {
 
 export function parseCpuProfileSummaryOutput(stdout) {
   const header = stdout.match(
-    /total samples=(\d+) idle=(\d+) busy=(\d+) \(busy%=([\d.]+)\)/,
+    /total samples=(\d+)(?: initialGap=(\d+))? idle=(\d+) busy=(\d+) \(busy%=([\d.]+)\)/,
   );
   const rows = [];
   for (const line of stdout.split(/\r?\n/)) {
@@ -86,9 +106,10 @@ export function parseCpuProfileSummaryOutput(stdout) {
     .reduce((sum, row) => sum + row.percent, 0);
   return {
     totalSamples: header ? Number(header[1]) : null,
-    idleDurationUs: header ? Number(header[2]) : null,
-    busyDurationUs: header ? Number(header[3]) : null,
-    busyPercent: header ? Number(header[4]) : null,
+    initialGapDurationUs: header?.[2] ? Number(header[2]) : null,
+    idleDurationUs: header ? Number(header[3]) : null,
+    busyDurationUs: header ? Number(header[4]) : null,
+    busyPercent: header ? Number(header[5]) : null,
     gcPercent,
     rows,
   };
@@ -96,7 +117,10 @@ export function parseCpuProfileSummaryOutput(stdout) {
 
 function formatCallFrame(callFrame) {
   const functionName = callFrame?.functionName || "(anonymous)";
-  const file = String(callFrame?.url ?? "").split("/").at(-1) ?? "";
+  const file =
+    String(callFrame?.url ?? "")
+      .split("/")
+      .at(-1) ?? "";
   const line = Number(callFrame?.lineNumber ?? -1) + 1;
   return `${functionName} ${file}:${Math.max(0, line)}`;
 }

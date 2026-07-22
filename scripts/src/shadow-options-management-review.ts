@@ -1,6 +1,16 @@
-import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
+import {
+  lstat,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  rename,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import { stripVTControlCharacters } from "node:util";
 import { pool } from "@workspace/db";
 
 type JsonRecord = Record<string, unknown>;
@@ -113,29 +123,156 @@ type ReviewOutput = {
   recommendations: Recommendation[];
 };
 
-function slug(): string {
-  return new Date().toISOString().replace(/[:.]/g, "-");
+const MAX_SWEEP_DIRECTORIES = 1_000;
+// ponytail: 16 MiB bounds each local sweep artifact. If measured reports reach
+// this ceiling, extract the ranked summary into a small sidecar before raising it.
+const MAX_SWEEP_REPORT_BYTES = 16 * 1024 * 1024;
+// ponytail: 1,000 characters keeps operator output bounded. If this hides a
+// useful diagnostic, add a structured field rather than widening the ceiling.
+const MAX_OUTPUT_STRING_LENGTH = 1_000;
+const UNSAFE_OUTPUT_PATTERN =
+  /[\u0000-\u001f\u007f-\u009f\u2028-\u202e\u2066-\u2069]/gu;
+
+function safeText(value: unknown): string {
+  const cleaned = stripVTControlCharacters(
+    String(value ?? "")
+      .replace(
+        /([a-z][a-z0-9+.-]*:\/\/)[^@\s]+@/giu,
+        "$1[redacted]@",
+      )
+      .replace(
+        /([?&](?:api[_-]?key|access[_-]?token|token|key)=)[^&#\s]*/giu,
+        "$1[redacted]",
+      ),
+  )
+    .replace(UNSAFE_OUTPUT_PATTERN, " ")
+    .replace(/\s+/gu, " ")
+    .trim();
+  return cleaned.length <= MAX_OUTPUT_STRING_LENGTH
+    ? cleaned
+    : `${cleaned.slice(0, MAX_OUTPUT_STRING_LENGTH - 1)}…`;
 }
 
-function readPositiveIntegerEnv(name: string, fallback: number, max: number): number {
-  const value = Number(process.env[name]);
-  if (!Number.isFinite(value) || value < 1) return fallback;
-  return Math.min(max, Math.floor(value));
+function errorMessage(error: unknown): string {
+  return safeText(error instanceof Error ? error.message : error) || "Unknown review error";
 }
 
-function readConfig(): Config {
+function markdownText(value: unknown): string {
+  return safeText(value)
+    .replace(/&/gu, "&amp;")
+    .replace(/</gu, "&lt;")
+    .replace(/>/gu, "&gt;")
+    .replace(/\\/gu, "\\\\")
+    .replace(/([`*_[\]{}()|~])/gu, "\\$1");
+}
+
+function jsonText(value: unknown, space?: number): string {
+  return (
+    JSON.stringify(
+      value,
+      (_key, current) => (typeof current === "string" ? safeText(current) : current),
+      space,
+    ) ?? "null"
+  );
+}
+
+function jsonNumberSql(payloadSql: string, jsonPath: string): string {
+  return `case when jsonb_typeof(${payloadSql} #> '${jsonPath}') = 'number' then (${payloadSql} #>> '${jsonPath}')::numeric end`;
+}
+
+function jsonBooleanSql(payloadSql: string, jsonPath: string): string {
+  return `case when jsonb_typeof(${payloadSql} #> '${jsonPath}') = 'boolean' then (${payloadSql} #>> '${jsonPath}')::boolean end`;
+}
+
+function jsonStringSql(payloadSql: string, jsonPath: string): string {
+  return `case when jsonb_typeof(${payloadSql} #> '${jsonPath}') = 'string' then ${payloadSql} #>> '${jsonPath}' end`;
+}
+
+function slug(now = new Date()): string {
+  return now.toISOString().replace(/[:.]/g, "-");
+}
+
+function envValue(env: NodeJS.ProcessEnv, name: string): string | null {
+  const value = env[name]?.trim();
+  return value ? value : null;
+}
+
+function readPositiveIntegerEnv(
+  env: NodeJS.ProcessEnv,
+  name: string,
+  fallback: number,
+  max: number,
+): number {
+  const raw = envValue(env, name);
+  if (raw === null) return fallback;
+  if (!/^[1-9]\d*$/u.test(raw)) {
+    throw new Error(`${name} must be a positive integer.`);
+  }
+  const value = Number(raw);
+  if (!Number.isSafeInteger(value) || value > max) {
+    throw new Error(`${name} must be at most ${max}.`);
+  }
+  return value;
+}
+
+function readDateEnv(
+  env: NodeJS.ProcessEnv,
+  name: string,
+  fallback: string,
+): string {
+  const value = envValue(env, name) ?? fallback;
+  if (!isCanonicalDate(value)) {
+    throw new Error(`${name} must use YYYY-MM-DD.`);
+  }
+  return value;
+}
+
+function isCanonicalDate(value: unknown): value is string {
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/u.test(value)) {
+    return false;
+  }
+  const parsed = new Date(`${value}T00:00:00.000Z`);
+  return (
+    Number.isFinite(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value
+  );
+}
+
+function readConfig(
+  env: NodeJS.ProcessEnv = process.env,
+  cwd = process.cwd(),
+  now = new Date(),
+): Config {
+  const start = readDateEnv(
+    env,
+    "SHADOW_OPTIONS_MANAGEMENT_REVIEW_START",
+    "2026-04-01",
+  );
+  const end = readDateEnv(
+    env,
+    "SHADOW_OPTIONS_MANAGEMENT_REVIEW_END",
+    "2026-05-21",
+  );
+  if (start > end) {
+    throw new Error("Shadow options management review window start must not exceed end.");
+  }
   const reportRoot =
-    process.env["SHADOW_OPTIONS_MANAGEMENT_REVIEW_REPORT_DIR"] ??
-    path.join("reports", "shadow-options-management-review", slug());
+    envValue(env, "SHADOW_OPTIONS_MANAGEMENT_REVIEW_REPORT_DIR") ??
+    path.join("reports", "shadow-options-management-review", slug(now));
   return {
-    accountId: process.env["SHADOW_OPTIONS_MANAGEMENT_REVIEW_ACCOUNT_ID"] ?? "shadow",
-    start: process.env["SHADOW_OPTIONS_MANAGEMENT_REVIEW_START"] ?? "2026-04-01",
-    end: process.env["SHADOW_OPTIONS_MANAGEMENT_REVIEW_END"] ?? "2026-05-21",
-    reportDir: path.resolve(process.cwd(), reportRoot),
-    topLeaks: readPositiveIntegerEnv("SHADOW_OPTIONS_MANAGEMENT_REVIEW_TOP_LEAKS", 30, 250),
+    accountId:
+      envValue(env, "SHADOW_OPTIONS_MANAGEMENT_REVIEW_ACCOUNT_ID") ?? "shadow",
+    start,
+    end,
+    reportDir: path.resolve(cwd, reportRoot),
+    topLeaks: readPositiveIntegerEnv(
+      env,
+      "SHADOW_OPTIONS_MANAGEMENT_REVIEW_TOP_LEAKS",
+      30,
+      250,
+    ),
     sweepRoot: path.resolve(
-      process.cwd(),
-      process.env["SHADOW_OPTIONS_MANAGEMENT_REVIEW_SWEEP_ROOT"] ??
+      cwd,
+      envValue(env, "SHADOW_OPTIONS_MANAGEMENT_REVIEW_SWEEP_ROOT") ??
         path.join("reports", "signal-options-exit-policy-sweeps"),
     ),
   };
@@ -148,8 +285,35 @@ function asRecord(value: unknown): JsonRecord {
 }
 
 function finiteNumber(value: unknown): number | null {
+  if (
+    typeof value !== "number" &&
+    (typeof value !== "string" || !value.trim())
+  ) {
+    return null;
+  }
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
+}
+
+function requiredFiniteNumber(value: unknown, name: string): number {
+  const parsed = finiteNumber(value);
+  if (parsed === null) {
+    throw new Error(`Invalid ${name} in shadow management review row.`);
+  }
+  return parsed;
+}
+
+function optionalFiniteNumber(value: unknown, name: string): number | null {
+  if (value === null || value === undefined) return null;
+  return requiredFiniteNumber(value, name);
+}
+
+function nonnegativeInteger(value: unknown, name: string): number {
+  const parsed = requiredFiniteNumber(value, name);
+  if (!Number.isSafeInteger(parsed) || parsed < 0) {
+    throw new Error(`Invalid ${name} in shadow management review row.`);
+  }
+  return parsed;
 }
 
 function round(value: number | null, decimals = 2): number | null {
@@ -166,16 +330,42 @@ function sqlWindow(config: Config) {
 }
 
 function normalizeAggregateRow(row: Record<string, unknown>): AggregateRow {
+  const exits = nonnegativeInteger(row["exits"], "exits");
+  const wins = nonnegativeInteger(row["wins"], "wins");
+  const winPct = optionalFiniteNumber(row["win_pct"], "win_pct");
+  const reached25AfterExit = nonnegativeInteger(
+    row["reached_25_after_exit"],
+    "reached_25_after_exit",
+  );
+  const finalAboveExit = nonnegativeInteger(
+    row["final_above_exit"],
+    "final_above_exit",
+  );
+  if (
+    wins > exits ||
+    reached25AfterExit > exits ||
+    finalAboveExit > exits ||
+    (winPct !== null && (winPct < 0 || winPct > 100))
+  ) {
+    throw new Error("Invalid wins or win_pct in shadow management review row.");
+  }
+  const missedToPostExitHigh = requiredFiniteNumber(
+    row["missed_to_post_exit_high"],
+    "missed_to_post_exit_high",
+  );
+  if (missedToPostExitHigh < 0) {
+    throw new Error("Invalid missed_to_post_exit_high in shadow management review row.");
+  }
   return {
-    bucket: String(row["bucket"] ?? "unknown"),
-    exits: Number(row["exits"] ?? 0),
-    wins: Number(row["wins"] ?? 0),
-    winPct: round(finiteNumber(row["win_pct"]), 1),
-    pnl: round(finiteNumber(row["pnl"]) ?? 0, 2) ?? 0,
-    avgPnl: round(finiteNumber(row["avg_pnl"]), 2),
-    missedToPostExitHigh: round(finiteNumber(row["missed_to_post_exit_high"]) ?? 0, 2) ?? 0,
-    reached25AfterExit: Number(row["reached_25_after_exit"] ?? 0),
-    finalAboveExit: Number(row["final_above_exit"] ?? 0),
+    bucket: typeof row["bucket"] === "string" ? row["bucket"] : "unknown",
+    exits,
+    wins,
+    winPct: round(winPct, 1),
+    pnl: round(requiredFiniteNumber(row["pnl"], "pnl"), 2)!,
+    avgPnl: round(optionalFiniteNumber(row["avg_pnl"], "avg_pnl"), 2),
+    missedToPostExitHigh: round(missedToPostExitHigh, 2)!,
+    reached25AfterExit,
+    finalAboveExit,
   };
 }
 
@@ -188,6 +378,48 @@ function normalizeSymbolRow(row: Record<string, unknown>): SymbolRow {
     pnl: round(finiteNumber(row["pnl"]) ?? 0, 2) ?? 0,
     avgPnl: round(finiteNumber(row["avg_pnl"]), 2),
     missedToPostExitHigh: round(finiteNumber(row["missed_to_post_exit_high"]) ?? 0, 2) ?? 0,
+  };
+}
+
+function booleanOrNull(value: unknown): boolean | null {
+  return typeof value === "boolean" ? value : null;
+}
+
+function normalizeLeakRow(row: Record<string, unknown>): LeakRow {
+  const closedAt =
+    row["closed_at"] instanceof Date
+      ? row["closed_at"]
+      : typeof row["closed_at"] === "string"
+        ? new Date(row["closed_at"])
+        : null;
+  if (!closedAt || !Number.isFinite(closedAt.getTime())) {
+    throw new Error("Invalid closed_at in shadow management review row.");
+  }
+  const openedAt =
+    typeof row["opened_at"] === "string"
+      ? Date.parse(row["opened_at"])
+      : Number.NaN;
+  return {
+    symbol: typeof row["symbol"] === "string" ? row["symbol"] : "unknown",
+    reason: typeof row["reason"] === "string" ? row["reason"] : "unknown",
+    closedAt: closedAt.toISOString(),
+    pnl: round(finiteNumber(row["pnl"]) ?? 0, 2) ?? 0,
+    quantity: finiteNumber(row["quantity"]) ?? 0,
+    entryPrice: round(finiteNumber(row["entry_price"]), 2),
+    exitPrice: finiteNumber(row["exit_price"]) ?? 0,
+    peakPrice: round(finiteNumber(row["peak_price"]), 2),
+    postHigh: round(finiteNumber(row["post_high"]), 2),
+    highVsExitPct: round(finiteNumber(row["high_vs_exit_pct"]), 1),
+    missedToHigh: round(finiteNumber(row["missed_to_high"]) ?? 0, 2) ?? 0,
+    holdMinutes: Number.isFinite(openedAt)
+      ? round((closedAt.getTime() - openedAt) / 60_000, 1)
+      : null,
+    score: round(finiteNumber(row["score"]), 1),
+    mtfMatches: finiteNumber(row["mtf_matches"]),
+    adx: round(finiteNumber(row["adx"]), 2),
+    premiumAtRisk: round(finiteNumber(row["premium_at_risk"]), 2),
+    finalAboveExit: booleanOrNull(row["final_above_exit"]),
+    recoveredEntry: booleanOrNull(row["recovered_entry"]),
   };
 }
 
@@ -209,6 +441,7 @@ async function loadLedgerSummary(config: Config): Promise<LedgerSummary> {
       where o.account_id = $1
         and o.source = 'automation'
         and o.asset_class = 'option'
+        and lower(coalesce(o.payload->>'forwardTest', 'false')) <> 'true'
         and f.occurred_at >= $2::timestamptz
         and f.occurred_at <= $3::timestamptz
     `,
@@ -230,6 +463,18 @@ async function loadLedgerSummary(config: Config): Promise<LedgerSummary> {
 
 async function loadAggregate(config: Config, bucketSql: string): Promise<AggregateRow[]> {
   const window = sqlWindow(config);
+  const postHighSql = jsonNumberSql(
+    "o.payload",
+    "{postExitOutcome,highPrice}",
+  );
+  const reachedTwentyFiveSql = jsonBooleanSql(
+    "o.payload",
+    "{postExitOutcome,reachedTwentyFivePctGain}",
+  );
+  const finalAboveExitSql = jsonBooleanSql(
+    "o.payload",
+    "{postExitOutcome,finalAboveExit}",
+  );
   const result = await pool.query(
     `
       select ${bucketSql} as bucket,
@@ -238,14 +483,15 @@ async function loadAggregate(config: Config, bucketSql: string): Promise<Aggrega
              (count(*) filter (where f.realized_pnl > 0)::numeric / nullif(count(*), 0) * 100)::numeric(18,1) as win_pct,
              coalesce(sum(f.realized_pnl), 0)::numeric(18,2) as pnl,
              avg(f.realized_pnl)::numeric(18,2) as avg_pnl,
-             coalesce(sum(greatest(((o.payload #>> '{postExitOutcome,highPrice}')::numeric - f.price) * f.quantity * 100, 0)), 0)::numeric(18,2) as missed_to_post_exit_high,
-             count(*) filter (where (o.payload #>> '{postExitOutcome,reachedTwentyFivePctGain}')::boolean is true)::int as reached_25_after_exit,
-             count(*) filter (where (o.payload #>> '{postExitOutcome,finalAboveExit}')::boolean is true)::int as final_above_exit
+             coalesce(sum(greatest(((${postHighSql}) - f.price) * f.quantity * 100, 0)), 0)::numeric(18,2) as missed_to_post_exit_high,
+             count(*) filter (where (${reachedTwentyFiveSql}) is true)::int as reached_25_after_exit,
+             count(*) filter (where (${finalAboveExitSql}) is true)::int as final_above_exit
       from shadow_orders o
       join shadow_fills f on f.order_id = o.id
       where o.account_id = $1
         and o.source = 'automation'
         and o.asset_class = 'option'
+        and lower(coalesce(o.payload->>'forwardTest', 'false')) <> 'true'
         and o.side = 'sell'
         and o.placed_at >= $2::timestamptz
         and o.placed_at <= $3::timestamptz
@@ -259,13 +505,23 @@ async function loadAggregate(config: Config, bucketSql: string): Promise<Aggrega
 
 async function loadGreekManagementAggregate(config: Config): Promise<AggregateRow[]> {
   const window = sqlWindow(config);
+  const recommendationSql = `coalesce(
+    nullif(${jsonStringSql("o.payload", "{stop,greekManagement,recommendation}")}, ''),
+    nullif(${jsonStringSql("o.payload", "{position,lastStop,greekManagement,recommendation}")}, '')
+  )`;
+  const postHighSql = jsonNumberSql("payload", "{postExitOutcome,highPrice}");
+  const reachedTwentyFiveSql = jsonBooleanSql(
+    "payload",
+    "{postExitOutcome,reachedTwentyFivePctGain}",
+  );
+  const finalAboveExitSql = jsonBooleanSql(
+    "payload",
+    "{postExitOutcome,finalAboveExit}",
+  );
   const result = await pool.query(
     `
       with sells as (
-        select coalesce(
-                 nullif(o.payload #>> '{stop,greekManagement,recommendation}', ''),
-                 nullif(o.payload #>> '{position,lastStop,greekManagement,recommendation}', '')
-               ) as bucket,
+        select ${recommendationSql} as bucket,
                f.realized_pnl,
                f.price,
                f.quantity,
@@ -275,6 +531,7 @@ async function loadGreekManagementAggregate(config: Config): Promise<AggregateRo
         where o.account_id = $1
           and o.source = 'automation'
           and o.asset_class = 'option'
+          and lower(coalesce(o.payload->>'forwardTest', 'false')) <> 'true'
           and o.side = 'sell'
           and o.placed_at >= $2::timestamptz
           and o.placed_at <= $3::timestamptz
@@ -285,9 +542,9 @@ async function loadGreekManagementAggregate(config: Config): Promise<AggregateRo
              (count(*) filter (where realized_pnl > 0)::numeric / nullif(count(*), 0) * 100)::numeric(18,1) as win_pct,
              coalesce(sum(realized_pnl), 0)::numeric(18,2) as pnl,
              avg(realized_pnl)::numeric(18,2) as avg_pnl,
-             coalesce(sum(greatest(((payload #>> '{postExitOutcome,highPrice}')::numeric - price) * quantity * 100, 0)), 0)::numeric(18,2) as missed_to_post_exit_high,
-             count(*) filter (where (payload #>> '{postExitOutcome,reachedTwentyFivePctGain}')::boolean is true)::int as reached_25_after_exit,
-             count(*) filter (where (payload #>> '{postExitOutcome,finalAboveExit}')::boolean is true)::int as final_above_exit
+             coalesce(sum(greatest(((${postHighSql}) - price) * quantity * 100, 0)), 0)::numeric(18,2) as missed_to_post_exit_high,
+             count(*) filter (where (${reachedTwentyFiveSql}) is true)::int as reached_25_after_exit,
+             count(*) filter (where (${finalAboveExitSql}) is true)::int as final_above_exit
       from sells
       where bucket is not null
       group by 1
@@ -300,6 +557,10 @@ async function loadGreekManagementAggregate(config: Config): Promise<AggregateRo
 
 async function loadSymbols(config: Config, order: "best" | "worst"): Promise<SymbolRow[]> {
   const window = sqlWindow(config);
+  const postHighSql = jsonNumberSql(
+    "o.payload",
+    "{postExitOutcome,highPrice}",
+  );
   const result = await pool.query(
     `
       select o.symbol,
@@ -308,12 +569,13 @@ async function loadSymbols(config: Config, order: "best" | "worst"): Promise<Sym
              (count(*) filter (where f.realized_pnl > 0)::numeric / nullif(count(*), 0) * 100)::numeric(18,1) as win_pct,
              coalesce(sum(f.realized_pnl), 0)::numeric(18,2) as pnl,
              avg(f.realized_pnl)::numeric(18,2) as avg_pnl,
-             coalesce(sum(greatest(((o.payload #>> '{postExitOutcome,highPrice}')::numeric - f.price) * f.quantity * 100, 0)), 0)::numeric(18,2) as missed_to_post_exit_high
+             coalesce(sum(greatest(((${postHighSql}) - f.price) * f.quantity * 100, 0)), 0)::numeric(18,2) as missed_to_post_exit_high
       from shadow_orders o
       join shadow_fills f on f.order_id = o.id
       where o.account_id = $1
         and o.source = 'automation'
         and o.asset_class = 'option'
+        and lower(coalesce(o.payload->>'forwardTest', 'false')) <> 'true'
         and o.side = 'sell'
         and o.placed_at >= $2::timestamptz
         and o.placed_at <= $3::timestamptz
@@ -329,31 +591,37 @@ async function loadSymbols(config: Config, order: "best" | "worst"): Promise<Sym
 
 async function loadTopLeaks(config: Config): Promise<LeakRow[]> {
   const window = sqlWindow(config);
+  const reasonSql = `coalesce(
+    ${jsonStringSql("o.payload", "{reason}")},
+    ${jsonStringSql("o.payload", "{exitReason}")},
+    'unknown'
+  )`;
   const result = await pool.query(
     `
       with sells as (
         select o.symbol,
-               coalesce(o.payload->>'reason', o.payload->>'exitReason', 'unknown') as reason,
+               ${reasonSql} as reason,
                o.placed_at as closed_at,
                f.realized_pnl,
                f.quantity,
                f.price as exit_price,
-               (o.payload #>> '{position,entryPrice}')::numeric as entry_price,
-               (o.payload #>> '{position,peakPrice}')::numeric as peak_price,
-               (o.payload #>> '{postExitOutcome,highPrice}')::numeric as post_high,
-               (o.payload #>> '{postExitOutcome,highVsExitPct}')::numeric as high_vs_exit_pct,
-               (o.payload #>> '{postExitOutcome,finalAboveExit}')::boolean as final_above_exit,
-               (o.payload #>> '{postExitOutcome,recoveredEntry}')::boolean as recovered_entry,
-               (o.payload #>> '{position,signalQuality,score}')::numeric as score,
-               (o.payload #>> '{position,signalQuality,mtfMatches}')::int as mtf_matches,
-               (o.payload #>> '{position,signalQuality,adx}')::numeric as adx,
-               (o.payload #>> '{position,premiumAtRisk}')::numeric as premium_at_risk,
-               (o.payload #>> '{position,openedAt}')::timestamptz as opened_at
+               ${jsonNumberSql("o.payload", "{position,entryPrice}")} as entry_price,
+               ${jsonNumberSql("o.payload", "{position,peakPrice}")} as peak_price,
+               ${jsonNumberSql("o.payload", "{postExitOutcome,highPrice}")} as post_high,
+               ${jsonNumberSql("o.payload", "{postExitOutcome,highVsExitPct}")} as high_vs_exit_pct,
+               ${jsonBooleanSql("o.payload", "{postExitOutcome,finalAboveExit}")} as final_above_exit,
+               ${jsonBooleanSql("o.payload", "{postExitOutcome,recoveredEntry}")} as recovered_entry,
+               ${jsonNumberSql("o.payload", "{position,signalQuality,score}")} as score,
+               ${jsonNumberSql("o.payload", "{position,signalQuality,mtfMatches}")} as mtf_matches,
+               ${jsonNumberSql("o.payload", "{position,signalQuality,adx}")} as adx,
+               ${jsonNumberSql("o.payload", "{position,premiumAtRisk}")} as premium_at_risk,
+               ${jsonStringSql("o.payload", "{position,openedAt}")} as opened_at
         from shadow_orders o
         join shadow_fills f on f.order_id = o.id
         where o.account_id = $1
           and o.source = 'automation'
           and o.asset_class = 'option'
+          and lower(coalesce(o.payload->>'forwardTest', 'false')) <> 'true'
           and o.side = 'sell'
           and o.placed_at >= $2::timestamptz
           and o.placed_at <= $3::timestamptz
@@ -369,7 +637,6 @@ async function loadTopLeaks(config: Config): Promise<LeakRow[]> {
              post_high,
              high_vs_exit_pct,
              greatest((post_high - exit_price) * quantity * 100, 0)::numeric(18,2) as missed_to_high,
-             (extract(epoch from (closed_at - opened_at)) / 60)::numeric(18,1) as hold_minutes,
              score,
              mtf_matches,
              adx,
@@ -382,69 +649,92 @@ async function loadTopLeaks(config: Config): Promise<LeakRow[]> {
     `,
     [config.accountId, window.from, window.to, config.topLeaks],
   );
-  return result.rows.map((row) => ({
-    symbol: String(row.symbol),
-    reason: String(row.reason),
-    closedAt: row.closed_at instanceof Date ? row.closed_at.toISOString() : String(row.closed_at),
-    pnl: round(finiteNumber(row.pnl) ?? 0, 2) ?? 0,
-    quantity: finiteNumber(row.quantity) ?? 0,
-    entryPrice: round(finiteNumber(row.entry_price), 2),
-    exitPrice: finiteNumber(row.exit_price) ?? 0,
-    peakPrice: round(finiteNumber(row.peak_price), 2),
-    postHigh: round(finiteNumber(row.post_high), 2),
-    highVsExitPct: round(finiteNumber(row.high_vs_exit_pct), 1),
-    missedToHigh: round(finiteNumber(row.missed_to_high) ?? 0, 2) ?? 0,
-    holdMinutes: round(finiteNumber(row.hold_minutes), 1),
-    score: round(finiteNumber(row.score), 1),
-    mtfMatches: finiteNumber(row.mtf_matches),
-    adx: round(finiteNumber(row.adx), 2),
-    premiumAtRisk: round(finiteNumber(row.premium_at_risk), 2),
-    finalAboveExit: row.final_above_exit === null ? null : Boolean(row.final_above_exit),
-    recoveredEntry: row.recovered_entry === null ? null : Boolean(row.recovered_entry),
-  }));
+  return result.rows.map(normalizeLeakRow);
 }
 
-async function readSweepEvidence(config: Config): Promise<SweepEvidence[]> {
-  let entries: string[];
+async function readSweepEvidence(sweepRoot: string): Promise<SweepEvidence[]> {
+  let entries: Array<{ name: string; isDirectory(): boolean }>;
   try {
-    entries = await readdir(config.sweepRoot);
-  } catch {
-    return [];
+    entries = await readdir(sweepRoot, { withFileTypes: true });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw error;
+  }
+  if (entries.length > MAX_SWEEP_DIRECTORIES) {
+    throw new Error(
+      `Sweep root contains more than ${MAX_SWEEP_DIRECTORIES} entries: ${sweepRoot}`,
+    );
   }
 
   const evidence: SweepEvidence[] = [];
-  for (const entry of entries) {
-    const resultPath = path.join(config.sweepRoot, entry, "results.json");
+  for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
+    if (!entry.isDirectory()) continue;
+    const resultPath = path.join(sweepRoot, entry.name, "results.json");
+    let stats;
     try {
-      const parsed = JSON.parse(await readFile(resultPath, "utf8")) as JsonRecord;
-      const ranked = Array.isArray(parsed["ranked"])
-        ? (parsed["ranked"] as JsonRecord[])
-        : Array.isArray(parsed["results"])
-          ? (parsed["results"] as JsonRecord[])
-          : [];
-      const best = ranked[0] ? asRecord(ranked[0]) : {};
-      const metrics = asRecord(best["metrics"]);
-      const variant = asRecord(best["variant"]);
-      const window = asRecord(best["window"]);
-      const start = typeof window["start"] === "string" ? window["start"] : null;
-      const end = typeof window["end"] === "string" ? window["end"] : null;
-      const winRate = finiteNumber(metrics["winRate"]);
-      evidence.push({
-        reportDir: path.join(config.sweepRoot, entry),
-        window: start && end ? `${start} through ${end}` : null,
-        bestVariant: typeof variant["id"] === "string" ? variant["id"] : null,
-        bestPnl: round(finiteNumber(metrics["realizedPnl"]), 2),
-        bestProfitFactor: round(finiteNumber(metrics["profitFactor"]), 3),
-        bestTrades: finiteNumber(metrics["closedTrades"]),
-        bestWinPct: winRate === null ? null : round(winRate * 100, 1),
-        bestMaxDrawdown: round(finiteNumber(metrics["maxDrawdownAbs"]), 2),
-      });
-    } catch {
-      // Ignore incomplete or unrelated report directories.
+      stats = await lstat(resultPath);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
+      throw error;
     }
+    if (!stats.isFile() || stats.isSymbolicLink()) continue;
+    if (stats.size > MAX_SWEEP_REPORT_BYTES) {
+      throw new Error(`Sweep result exceeds ${MAX_SWEEP_REPORT_BYTES} bytes: ${resultPath}`);
+    }
+    const parsed = asRecord(JSON.parse(await readFile(resultPath, "utf8")));
+    const ranked = Array.isArray(parsed["ranked"])
+      ? (parsed["ranked"] as unknown[])
+      : [];
+    if (!ranked.length) continue;
+    const best = asRecord(ranked[0]);
+    if (best["status"] !== "succeeded" || best["eligible"] !== true) continue;
+    const metrics = asRecord(best["metrics"]);
+    const variant = asRecord(best["variant"]);
+    const bestVariant =
+      typeof variant["id"] === "string" && variant["id"].trim()
+        ? variant["id"]
+        : null;
+    const bestPnl = finiteNumber(metrics["realizedPnl"]);
+    const bestTrades = finiteNumber(metrics["closedTrades"]);
+    const profitFactor = finiteNumber(metrics["profitFactor"]);
+    const winRate = finiteNumber(metrics["winRate"]);
+    const maxDrawdown = finiteNumber(metrics["maxDrawdownAbs"]);
+    const window = asRecord(best["window"]);
+    const start = window["start"];
+    const end = window["end"];
+    if (
+      !bestVariant ||
+      bestVariant.length > 200 ||
+      bestPnl === null ||
+      bestTrades === null ||
+      !Number.isSafeInteger(bestTrades) ||
+      bestTrades < 0 ||
+      (metrics["profitFactor"] !== null &&
+        metrics["profitFactor"] !== undefined &&
+        (profitFactor === null || profitFactor < 0)) ||
+      winRate === null ||
+      winRate < 0 ||
+      winRate > 1 ||
+      maxDrawdown === null ||
+      maxDrawdown < 0 ||
+      !isCanonicalDate(start) ||
+      !isCanonicalDate(end) ||
+      start > end
+    ) {
+      throw new Error(`Invalid ranked sweep winner: ${resultPath}`);
+    }
+    evidence.push({
+      reportDir: path.join(sweepRoot, entry.name),
+      window: `${start} through ${end}`,
+      bestVariant,
+      bestPnl: round(bestPnl, 2),
+      bestProfitFactor: round(profitFactor, 3),
+      bestTrades,
+      bestWinPct: round(winRate * 100, 1),
+      bestMaxDrawdown: round(maxDrawdown, 2),
+    });
   }
   return evidence
-    .filter((item) => item.bestVariant && item.bestPnl !== null)
     .sort((left, right) => (right.bestPnl ?? 0) - (left.bestPnl ?? 0))
     .slice(0, 8);
 }
@@ -584,8 +874,12 @@ export function buildRecommendations(input: {
 
 function csvCell(value: unknown): string {
   if (value === null || value === undefined) return "";
-  const text = String(value);
-  return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+  const raw = String(value);
+  const text =
+    typeof value === "string" && /^\s*[=+\-@]/u.test(raw)
+      ? `'${raw}`
+      : raw;
+  return /[",\n\r]/u.test(text) ? `"${text.replace(/"/gu, '""')}"` : text;
 }
 
 function topLeaksCsv(rows: LeakRow[]): string {
@@ -621,10 +915,11 @@ function markdownTable<T extends Record<string, unknown>>(
 ): string {
   if (!rows.length) return "No rows.";
   return [
-    `| ${columns.map((column) => column.label).join(" | ")} |`,
+    `| ${columns.map((column) => markdownText(column.label)).join(" | ")} |`,
     `| ${columns.map(() => "---").join(" | ")} |`,
     ...rows.map(
-      (row) => `| ${columns.map((column) => csvCell(row[column.key])).join(" | ")} |`,
+      (row) =>
+        `| ${columns.map((column) => markdownText(row[column.key])).join(" | ")} |`,
     ),
   ].join("\n");
 }
@@ -634,10 +929,12 @@ function buildMarkdown(output: ReviewOutput): string {
   return [
     "# Shadow Options Management Review",
     "",
-    `- Generated: ${output.summary.generatedAt}`,
-    `- Account: ${output.summary.accountId}`,
-    `- Window: ${output.summary.window.start} through ${output.summary.window.end}`,
-    `- Report directory: ${output.summary.reportDir}`,
+    `- Generated: ${markdownText(output.summary.generatedAt)}`,
+    `- Account: ${markdownText(output.summary.accountId)}`,
+    `- Window: ${markdownText(output.summary.window.start)} through ${markdownText(
+      output.summary.window.end,
+    )}`,
+    `- Report directory: ${markdownText(output.summary.reportDir)}`,
     "",
     "## Ledger Summary",
     "",
@@ -645,7 +942,9 @@ function buildMarkdown(output: ReviewOutput): string {
     `- Buy fills: ${output.summary.ledger.buyFills}`,
     `- Sell fills: ${output.summary.ledger.sellFills}`,
     `- Symbols: ${output.summary.ledger.symbols}`,
-    `- Fill window: ${output.summary.ledger.firstFillAt} to ${output.summary.ledger.lastFillAt}`,
+    `- Fill window: ${markdownText(
+      output.summary.ledger.firstFillAt,
+    )} to ${markdownText(output.summary.ledger.lastFillAt)}`,
     `- Realized P&L: ${output.summary.ledger.realizedPnl.toFixed(2)}`,
     `- Fees: ${output.summary.ledger.fees.toFixed(2)}`,
     `- Cash delta: ${output.summary.ledger.cashDelta.toFixed(2)}`,
@@ -655,13 +954,17 @@ function buildMarkdown(output: ReviewOutput): string {
     `- Realized exit P&L: ${opportunity.realizedExitPnl.toFixed(2)}`,
     `- Post-exit high opportunity: ${opportunity.missedToPostExitHigh.toFixed(2)}`,
     `- Opportunity / realized ratio: ${opportunity.missedToRealizedRatio?.toFixed(2) ?? "n/a"}x`,
-    `- Caveat: ${opportunity.caveat}`,
+    `- Caveat: ${markdownText(opportunity.caveat)}`,
     "",
     "## Recommendations",
     "",
     ...output.recommendations.map(
       (item) =>
-        `- **${item.priority.toUpperCase()} ${item.lane}: ${item.title}** ${item.evidence} Next test: ${item.nextTest}`,
+        `- **${markdownText(item.priority.toUpperCase())} ${markdownText(
+          item.lane,
+        )}: ${markdownText(item.title)}** ${markdownText(
+          item.evidence,
+        )} Next test: ${markdownText(item.nextTest)}`,
     ),
     "",
     "## Greek Management Diagnostics",
@@ -749,6 +1052,23 @@ function buildMarkdown(output: ReviewOutput): string {
 }
 
 async function buildReview(config: Config): Promise<ReviewOutput> {
+  const exitReasonBucketSql = `coalesce(
+    ${jsonStringSql("o.payload", "{reason}")},
+    ${jsonStringSql("o.payload", "{exitReason}")},
+    'unknown'
+  )`;
+  const qualityBucketSql = `coalesce(
+    ${jsonStringSql("o.payload", "{position,signalQuality,tier}")},
+    'unknown'
+  ) || ':' || coalesce(
+    width_bucket(
+      ${jsonNumberSql("o.payload", "{position,signalQuality,score}")},
+      0,
+      100,
+      5
+    )::text,
+    'unknown'
+  )`;
   const [
     ledger,
     byMonth,
@@ -763,16 +1083,13 @@ async function buildReview(config: Config): Promise<ReviewOutput> {
     await Promise.all([
       loadLedgerSummary(config),
       loadAggregate(config, "to_char(date_trunc('month', f.occurred_at), 'YYYY-MM')"),
-      loadAggregate(config, "coalesce(o.payload->>'reason', o.payload->>'exitReason', 'unknown')"),
-      loadAggregate(
-        config,
-        "coalesce(o.payload #>> '{position,signalQuality,tier}', 'unknown') || ':' || coalesce(width_bucket((o.payload #>> '{position,signalQuality,score}')::numeric, 0, 100, 5)::text, 'unknown')",
-      ),
+      loadAggregate(config, exitReasonBucketSql),
+      loadAggregate(config, qualityBucketSql),
       loadGreekManagementAggregate(config),
       loadSymbols(config, "best"),
       loadSymbols(config, "worst"),
       loadTopLeaks(config),
-      readSweepEvidence(config),
+      readSweepEvidence(config.sweepRoot),
     ]);
 
   const realizedExitPnl = byExitReason.reduce((sum, row) => sum + row.pnl, 0);
@@ -817,24 +1134,52 @@ async function buildReview(config: Config): Promise<ReviewOutput> {
   };
 }
 
+type ReportFiles = Record<"results.json" | "top-leaks.csv" | "report.md", string>;
+
+async function assertReportDestinationAvailable(reportDir: string): Promise<void> {
+  try {
+    await lstat(reportDir);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+    throw error;
+  }
+  throw new Error(`Report destination already exists: ${reportDir}`);
+}
+
+async function publishReportFiles(reportDir: string, files: ReportFiles): Promise<void> {
+  const parent = path.dirname(reportDir);
+  await mkdir(parent, { recursive: true });
+  const temporaryDir = await mkdtemp(
+    path.join(parent, `.${path.basename(reportDir)}.tmp-`),
+  );
+  try {
+    await Promise.all(
+      Object.entries(files).map(([name, contents]) =>
+        writeFile(path.join(temporaryDir, name), contents),
+      ),
+    );
+    await rename(temporaryDir, reportDir);
+  } catch (error) {
+    await rm(temporaryDir, { recursive: true, force: true }).catch(() => {});
+    throw error;
+  }
+}
+
 async function writeReview(output: ReviewOutput): Promise<void> {
-  await mkdir(output.summary.reportDir, { recursive: true });
-  await Promise.all([
-    writeFile(
-      path.join(output.summary.reportDir, "results.json"),
-      `${JSON.stringify(output, null, 2)}\n`,
-    ),
-    writeFile(path.join(output.summary.reportDir, "top-leaks.csv"), `${topLeaksCsv(output.topLeaks)}\n`),
-    writeFile(path.join(output.summary.reportDir, "report.md"), `${buildMarkdown(output)}\n`),
-  ]);
+  await publishReportFiles(output.summary.reportDir, {
+    "results.json": `${JSON.stringify(output, null, 2)}\n`,
+    "top-leaks.csv": `${topLeaksCsv(output.topLeaks)}\n`,
+    "report.md": `${buildMarkdown(output)}\n`,
+  });
 }
 
 async function main(): Promise<void> {
   const config = readConfig();
+  await assertReportDestinationAvailable(config.reportDir);
   const output = await buildReview(config);
   await writeReview(output);
   console.log(
-    JSON.stringify(
+    jsonText(
       {
         reportDir: output.summary.reportDir,
         window: output.summary.window,
@@ -844,16 +1189,31 @@ async function main(): Promise<void> {
         missedToRealizedRatio: output.summary.opportunity.missedToRealizedRatio,
         recommendations: output.recommendations.length,
       },
-      null,
       2,
     ),
   );
 }
 
+export const __shadowOptionsManagementReviewInternalsForTests = {
+  assertReportDestinationAvailable,
+  csvCell,
+  errorMessage,
+  finiteNumber,
+  jsonBooleanSql,
+  jsonNumberSql,
+  jsonText,
+  markdownText,
+  normalizeAggregateRow,
+  normalizeLeakRow,
+  publishReportFiles,
+  readConfig,
+  readSweepEvidence,
+};
+
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   main()
     .catch((error) => {
-      console.error(error instanceof Error ? error.stack ?? error.message : String(error));
+      console.error(errorMessage(error));
       process.exitCode = 1;
     })
     .finally(async () => {

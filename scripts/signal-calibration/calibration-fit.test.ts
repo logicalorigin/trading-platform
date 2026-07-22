@@ -13,12 +13,15 @@ import { __calibrationFitInternalsForTests } from "./calibration-fit";
 
 const {
   buildReport,
+  buildRollingOriginFolds,
   fitIsotonic,
   loadDump,
   loadRequestedDumps,
   parseOptions,
+  predictIsotonic,
   renderMarkdown,
   validateDumpSet,
+  weightedMean,
   writeFileAtomically,
 } = __calibrationFitInternalsForTests;
 
@@ -30,12 +33,18 @@ const row = {
   realizedReturnPercent: 1,
   mfePercent: 2,
   maePercent: -1,
+  audit: {
+    signalAt: "2026-07-01T14:30:00.000Z",
+    outcomeExitBarAt: "2026-07-01T16:40:00.000Z",
+    mtfTimeframes: ["2m", "5m", "15m"],
+    mtfDirections: [1, 1, 1],
+  },
 };
 
 function header(overrides: Record<string, unknown> = {}) {
   return {
     header: true,
-    schemaVersion: 1,
+    schemaVersion: 2,
     runId: "run-1",
     deploymentId: "deployment-1",
     asOfDay: "2026-07-13",
@@ -101,6 +110,10 @@ function withDump(
 }
 
 test("calibration CLI rejects unknown scorer names and out-of-range thresholds", () => {
+  assert.deepEqual(
+    parseOptions(["--scorers", "expected-move-v3"]).scorers,
+    ["expected-move-v3"],
+  );
   assert.throws(
     () => parseOptions(["--scorers", "expected-move-v2,typo"]),
     /Invalid scorer "typo"/,
@@ -143,7 +156,7 @@ test("loadDump requires versioned provenance and exact timeframe identity", () =
     },
     [row],
     (inputDir) => {
-      assert.throws(() => loadDump(inputDir, "5m"), /schemaVersion 1/);
+      assert.throws(() => loadDump(inputDir, "5m"), /schemaVersion 2/);
     },
   );
   withDump(header({ resolvedTimeframe: "15m" }), [row], (inputDir) => {
@@ -248,7 +261,7 @@ test("loadRequestedDumps requires every requested timeframe", () => {
   });
 });
 
-test("reports identify in-sample output as ineligible for activation", () => {
+test("reports identify rolling-origin output as an audit, not activation evidence", () => {
   withDump(header(), [row], (inputDir) => {
     const dump = loadDump(inputDir, "5m");
     assert.ok(dump);
@@ -263,11 +276,144 @@ test("reports identify in-sample output as ineligible for activation", () => {
       },
       [dump],
     );
-    assert.equal(report.analysisMode, "descriptive_in_sample");
+    assert.equal(report.analysisMode, "rolling_origin_embargoed");
     assert.equal(report.activationEligible, false);
-    assert.match(
-      renderMarkdown(report),
-      /not score-model activation evidence/i,
+    assert.equal(report.cells[0]?.holdout.status, "insufficient_history");
+    assert.match(renderMarkdown(report), /not.*activation evidence/i);
+  });
+});
+
+test("calibration report grades only signals admitted by the Algo MTF controls", () => {
+  const misaligned = {
+    ...row,
+    symbol: "MISALIGNED",
+    audit: {
+      ...row.audit,
+      signalAt: "2026-07-01T14:35:00.000Z",
+      outcomeExitBarAt: "2026-07-01T16:45:00.000Z",
+      mtfDirections: [1, -1, 1],
+    },
+  };
+  withDump(header({ count: 2 }), [row, misaligned], (inputDir) => {
+    const dump = loadDump(inputDir, "5m");
+    assert.ok(dump);
+    const report = buildReport(
+      {
+        inputDir,
+        outputDir: inputDir,
+        timeframes: ["5m"],
+        scorers: ["observed-score"],
+        scoreThreshold: 90,
+        mfeThresholds: [10],
+      },
+      [dump],
+    );
+    assert.equal(report.cells[0]?.totalObservations, 1);
+    assert.deepEqual(report.cohort, {
+      key: "algo-control-mtf-aligned",
+      contract: "unanimous-configured-timeframes",
+      detectedObservationCount: 2,
+      admittedObservationCount: 1,
+      filteredOutObservationCount: 1,
+    });
+    assert.equal(report.dumps[0]?.detectedRows, 2);
+    assert.equal(report.dumps[0]?.admittedRows, 1);
+  });
+});
+
+test("rolling-origin folds embargo training outcomes that overlap each test window", () => {
+  const rows = Array.from({ length: 12 }, (_, index) => ({
+    ...row,
+    score: 30 + index,
+    audit: {
+      ...row.audit,
+      signalAt: new Date(
+        Date.parse("2026-07-01T00:00:00.000Z") + index * 60 * 60 * 1_000,
+      ).toISOString(),
+      outcomeExitBarAt: new Date(
+        Date.parse("2026-07-01T00:00:00.000Z") +
+          (index === 3 ? 7 : index + 2) * 60 * 60 * 1_000,
+      ).toISOString(),
+    },
+  }));
+  const folds = buildRollingOriginFolds(rows, 3);
+  assert.equal(folds.length, 3);
+  assert.deepEqual(
+    folds.map((fold) => fold.testRows.length),
+    [2, 2, 2],
+  );
+  assert.ok(
+    folds[0].embargoedRows.some(
+      (item) => item.audit?.signalAt === "2026-07-01T03:00:00.000Z",
+    ),
+    "an outcome that crosses the first test boundary must be embargoed even when nominal wall time would look old enough",
+  );
+  for (const fold of folds) {
+    const testStartMs = Date.parse(fold.testStartAt);
+    assert.ok(
+      fold.trainRows.every(
+        (item) =>
+          Date.parse(item.audit!.outcomeExitBarAt as string) < testStartMs,
+      ),
+    );
+    assert.ok(
+      fold.embargoedRows.every(
+        (item) =>
+          Date.parse(item.audit!.signalAt as string) < testStartMs &&
+          Date.parse(item.audit!.outcomeExitBarAt as string) >= testStartMs,
+      ),
+    );
+  }
+});
+
+test("held-out ordering reports magnitude, correctness, and directional return separately", () => {
+  const rows = Array.from({ length: 120 }, (_, index) => {
+    const score = 20 + (index % 8) * 10;
+    return {
+      ...row,
+      score,
+      mfePercent: score / 10,
+      realizedReturnPercent: score >= 60 ? -1 : 1,
+      audit: {
+        ...row.audit,
+        signalAt: new Date(
+          Date.parse("2026-07-01T14:30:00.000Z") + index * 60 * 60 * 1_000,
+        ).toISOString(),
+        outcomeExitBarAt: new Date(
+          Date.parse("2026-07-01T14:30:00.000Z") +
+            (index + 3) * 60 * 60 * 1_000,
+        ).toISOString(),
+      },
+    };
+  });
+  withDump(header({ count: rows.length }), rows, (inputDir) => {
+    const dump = loadDump(inputDir, "5m");
+    assert.ok(dump);
+    const report = buildReport(
+      {
+        inputDir,
+        outputDir: inputDir,
+        timeframes: ["5m"],
+        scorers: ["observed-score"],
+        scoreThreshold: 90,
+        mfeThresholds: [10],
+      },
+      [dump],
+    );
+    const holdout = report.cells[0]?.holdout;
+    assert.equal(holdout?.status, "ok");
+    assert.ok((holdout?.heldOutCount ?? 0) > 0);
+    assert.ok(
+      (holdout?.magnitudeAlignment?.scoreMfePearson ?? 0) > 0,
+      "higher scores should rank larger held-out MFE in this fixture",
+    );
+    assert.ok(
+      (holdout?.expectancyAlignment?.topBucketLiftPercent ?? 0) < 0,
+      "the same scores should be reported as directionally inverted",
+    );
+    assert.ok(
+      (holdout?.correctnessAlignment?.topBucketLiftPercentagePoints ?? 0) < 0,
+      "higher scores should be reported as less accurate in this fixture",
     );
   });
 });
@@ -299,14 +445,33 @@ test("fitIsotonic gives tied scores one weighted fitted value", () => {
         minScore: 50,
         maxScore: 50,
         count: 2,
-        calibratedMfePercent: 2,
+        calibratedTargetPercent: 2,
       },
       {
         minScore: 60,
         maxScore: 60,
         count: 1,
-        calibratedMfePercent: 4,
+        calibratedTargetPercent: 4,
       },
     ],
+  );
+});
+
+test("isotonic prediction uses the closest internal block instead of the final block", () => {
+  const fit = fitIsotonic([
+    { ...row, score: 10, mfePercent: 1 },
+    { ...row, score: 20, mfePercent: 3 },
+  ]);
+  assert.equal(predictIsotonic(fit, 14), 1);
+  assert.equal(predictIsotonic(fit, 16), 3);
+});
+
+test("fold calibration error aggregation is weighted by held-out rows", () => {
+  assert.equal(
+    weightedMean([
+      { value: 1, weight: 1 },
+      { value: 3, weight: 3 },
+    ]),
+    2.5,
   );
 });

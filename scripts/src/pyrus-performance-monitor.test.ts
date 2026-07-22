@@ -226,6 +226,40 @@ test("normal samples use compact runtime diagnostics while deep samples retain f
   assert.equal(monitor.runtimeDiagnosticsPath(true), "/diagnostics/runtime");
 });
 
+test("process discovery attributes API metrics to the live supervisor descendant", () => {
+  const selected = monitor.selectMonitoredProcesses([
+    { pid: 251, parentPid: 233, cmdline: "node ./scripts/runDevApp.mjs" },
+    { pid: 266, parentPid: 251, cmdline: "pnpm --filter @workspace/pyrus dev" },
+    { pid: 311, parentPid: 266, cmdline: "node vite --config vite.config.ts" },
+    {
+      pid: 313,
+      parentPid: 233,
+      cmdline: "pnpm --filter @workspace/ibkr-session-host dev",
+    },
+    {
+      pid: 442,
+      parentPid: 313,
+      cmdline: "node --enable-source-maps ./dist/index.mjs",
+    },
+    {
+      pid: 62055,
+      parentPid: 251,
+      cmdline: "pnpm --filter @workspace/api-server run dev",
+    },
+    {
+      pid: 62072,
+      parentPid: 62055,
+      cmdline: "node --enable-source-maps ./dist/index.mjs",
+    },
+  ]);
+
+  assert.deepEqual(selected, [
+    { pid: 251, role: "supervisor" },
+    { pid: 311, role: "web" },
+    { pid: 62072, role: "api" },
+  ]);
+});
+
 test("a malformed successful JSON response is counted once as a failure", async () => {
   const originalFetch = globalThis.fetch;
   monitor.resetEndpointStats();

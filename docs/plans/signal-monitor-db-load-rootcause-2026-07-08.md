@@ -109,7 +109,7 @@ Stage 3: minimal-fetch pass on remaining hot reads (projection + epoch timestamp
   mapFromDriverValue % should fall.
 Stage 4: eval-allocation reuse (inputBars.map etc.), ONLY behind byte-identical signal fixtures.
 Stage 5 (independent): option-chain backoff fix.
-Between each: typecheck + targeted tests green, SIGUSR2 reload, re-run BOTH profilers + per-table DB rate delta.
+Between each: typecheck + targeted tests green, managed workflow restart, re-run BOTH profilers + per-table DB rate delta.
 
 ## STAGE 2 DETAIL — gapped indicator series freezes signals (MIDD + widespread)
 Symptom: MIDD 1m signal stuck 5.9 days / 7228 bars old (bars_since_signal=7228) though the cell re-evaluates every
@@ -158,14 +158,14 @@ that fire must equal a from-scratch contiguous-history computation (we only unfr
 - targeted tests: pnpm --filter @workspace/api-server exec tsx --test src/services/signal-monitor*.test.ts
   src/services/signal-options*.test.ts  (identity preserved). 2 KNOWN pre-existing failures (MTF-default,
   position-fold golden) are from the dirty tree, not this work.
-- reload: kill -USR2 "$(pgrep -f 'runDevApp.mjs' | head -1)" ; poll http://127.0.0.1:8080/api/healthz -> 200.
+- restart: use Replit's managed workflow action; poll http://127.0.0.1:8080/api/healthz -> 200.
 - CPU profile: node <scratch>/cpuprof.mjs <apiPid> 15000   (target: (garbage collector) and _parseRowAsArray fall)
 - ALLOC profile: node <scratch>/allocprof.mjs <apiPid> 20000  (target: _parseRowAsArray % and MB/s fall)
 - per-table rate: delta of pg_stat_user_tables idx_scan / n_tup_ins over 20s (target: STA 32w->~7-10w, 133r->
   lower; events 29r->~10-14r). Note the DB is contended — heavy analytical scans (GROUP BY symbol over bar_cache)
   time out; keep probes light.
 - apiPid + ELU/pool: .pyrus-runtime/flight-recorder/api-current.json (pid, apiPressure.inputs.eventLoopUtilization,
-  dbPool*). The API restarts every few minutes (EXTERNAL Replit SIGKILLs + agent SIGUSR2 reloads, NOT a crash/OOM
+  dbPool*). At the time, the API restarted every few minutes (external Replit stops plus the now-retired agent signal reloads, NOT a crash/OOM
   loop: cgroup oom_kill=0, supervisor never health-kills). Profile a WARM process (uptime > a few min).
 
 ## PROFILING TOOLS (reusable, in the session scratchpad — copy into the repo if fable needs them)

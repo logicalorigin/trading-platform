@@ -46,6 +46,63 @@ function setsIntersect(...sets) {
   return false;
 }
 
+function processGroupIdFromProcStat(content) {
+  const end = String(content).lastIndexOf(")");
+  if (end === -1) return null;
+  const processGroupId = Number(
+    String(content)
+      .slice(end + 2)
+      .trim()
+      .split(/\s+/u)[2],
+  );
+  return Number.isSafeInteger(processGroupId) && processGroupId > 0
+    ? processGroupId
+    : null;
+}
+
+export function listenerOwnershipStatus(
+  listenerInodes,
+  holders,
+  expectedProcessGroupId,
+) {
+  if (!(listenerInodes instanceof Set) || !Array.isArray(holders)) {
+    return { owned: false, detail: "listener evidence unavailable" };
+  }
+  if (listenerInodes.size === 0) {
+    return { owned: false, detail: "no listener" };
+  }
+  const attributedInodes = new Set(
+    holders.flatMap((holder) => [...(holder.socketInodes ?? [])]),
+  );
+  if (
+    holders.length === 0 ||
+    [...listenerInodes].some((inode) => !attributedInodes.has(inode))
+  ) {
+    return { owned: false, detail: "listener ownership is incomplete" };
+  }
+  const unexpected = holders.filter(
+    (holder) => holder.processGroupId !== expectedProcessGroupId,
+  );
+  if (unexpected.length > 0) {
+    return {
+      owned: false,
+      detail: `listener owned by ${unexpected
+        .map(
+          (holder) =>
+            `${holder.pid}/pgid=${holder.processGroupId ?? "unknown"}`,
+        )
+        .join(", ")}`,
+    };
+  }
+  return {
+    owned: true,
+    detail:
+      holders.length === 1
+        ? `pid ${holders[0].pid}`
+        : `pids ${holders.map((holder) => holder.pid).join(",")}`,
+  };
+}
+
 export function holderIdentityMatches(expected, current, listeningInodes) {
   return (
     Number.isSafeInteger(expected?.pid) &&
@@ -123,9 +180,12 @@ export function createProcInspector({
 
   function readHolder(pid, socketInodes) {
     let stat;
+    let processGroupId = null;
     let command = "";
     try {
-      stat = parseProcStat(readFile(`/proc/${pid}/stat`, "utf8"));
+      const statText = readFile(`/proc/${pid}/stat`, "utf8");
+      stat = parseProcStat(statText);
+      processGroupId = processGroupIdFromProcStat(statText);
       command = readFile(`/proc/${pid}/cmdline`, "utf8");
     } catch {
       stat = null;
@@ -133,6 +193,7 @@ export function createProcInspector({
     return {
       pid,
       startTimeTicks: stat?.startTimeTicks ?? null,
+      processGroupId,
       cgroup: readCgroup(pid),
       socketInodes,
       command: safeDisplay(command.replaceAll("\0", " "), 120),
@@ -157,6 +218,11 @@ export function createProcInspector({
     return holders;
   }
 
+  function readHolderForInodes(pid, inodes) {
+    const socketInodes = socketInodesForPid(pid, inodes, readDir, readLink);
+    return socketInodes === null ? null : readHolder(pid, socketInodes);
+  }
+
   function revalidateHolder(expected, port) {
     const currentListening = listeningInodes(port);
     if (!currentListening) return false;
@@ -174,12 +240,26 @@ export function createProcInspector({
     );
   }
 
+  function portOwnerStatus(port, expectedProcessGroupId) {
+    const inodes = listeningInodes(port);
+    if (inodes === null) {
+      return { owned: false, detail: "listener evidence unavailable" };
+    }
+    return listenerOwnershipStatus(
+      inodes,
+      findHolders(inodes),
+      expectedProcessGroupId,
+    );
+  }
+
   return {
     listeningInodes,
     findHolders,
+    readHolderForInodes,
     readCgroup,
     hasPyrusWorkflowAncestry: (pid) =>
       hasPyrusWorkflowAncestry(pid, { readFile, readLink }),
+    portOwnerStatus,
     revalidateHolder,
   };
 }

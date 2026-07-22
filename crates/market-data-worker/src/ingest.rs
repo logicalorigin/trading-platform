@@ -1,12 +1,13 @@
 use std::collections::{BTreeMap, HashMap};
 use std::time::Duration;
 
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use chrono::{DateTime, NaiveDate, Utc};
 use serde_json::Value;
 use sqlx::types::Uuid;
 use sqlx::{PgPool, Postgres, Row, Transaction};
 
+use crate::jobs::{lock_job_attempt_tx, record_option_chain_generation_tx, IngestJob};
 use crate::providers::massive::OptionChainSnapshot;
 
 const DEFAULT_OPTION_CHAIN_WRITE_BATCH_SIZE: usize = 128;
@@ -113,16 +114,26 @@ pub async fn persist_option_chain_snapshots(
     underlying: &str,
     provider: &str,
     snapshots: &[OptionChainSnapshot],
+    job: Option<&IngestJob>,
 ) -> Result<usize> {
     let symbol = underlying.trim().to_uppercase();
-    let unique_snapshots = unique_option_chain_snapshots(snapshots);
-    let as_of = Utc::now();
+    if symbol.is_empty()
+        || snapshots
+            .iter()
+            .any(|snapshot| snapshot.ticker.trim().eq_ignore_ascii_case(&symbol))
+    {
+        return Err(anyhow!("invalid option-chain underlying identity"));
+    }
+    let unique_snapshots = unique_option_chain_snapshots(snapshots)?;
     let batch_size = option_chain_write_batch_size();
     let throttle_ms = option_chain_write_throttle_ms();
     let total = unique_snapshots.len();
     let mut persisted = 0usize;
 
     let mut tx = pool.begin().await?;
+    let as_of = sqlx::query_scalar::<_, DateTime<Utc>>("select now()")
+        .fetch_one(&mut *tx)
+        .await?;
     let underlying_id = ensure_instrument_tx(&mut tx, &symbol, "equity", None).await?;
 
     for batch in unique_snapshots.chunks(batch_size) {
@@ -130,7 +141,7 @@ pub async fn persist_option_chain_snapshots(
         let option_contract_ids =
             ensure_option_contracts_tx(&mut tx, underlying_id, &option_instrument_ids, batch)
                 .await?;
-        upsert_option_chain_latest_tx(
+        let affected_rows = upsert_option_chain_latest_tx(
             &mut tx,
             underlying_id,
             provider,
@@ -139,8 +150,13 @@ pub async fn persist_option_chain_snapshots(
             batch,
         )
         .await?;
+        if affected_rows != batch.len() as u64 {
+            return Err(anyhow!(
+                "option-chain persistence skipped a newer durable snapshot"
+            ));
+        }
 
-        persisted += batch.len();
+        persisted += affected_rows as usize;
         if persisted < total {
             if throttle_ms > 0 {
                 tokio::time::sleep(Duration::from_millis(throttle_ms)).await;
@@ -150,19 +166,29 @@ pub async fn persist_option_chain_snapshots(
         }
     }
 
+    if let Some(job) = job {
+        lock_job_attempt_tx(&mut tx, job).await?;
+        record_option_chain_generation_tx(&mut tx, job, as_of, persisted).await?;
+    }
     tx.commit().await?;
     Ok(persisted)
 }
 
-fn unique_option_chain_snapshots(snapshots: &[OptionChainSnapshot]) -> Vec<&OptionChainSnapshot> {
-    snapshots
-        .iter()
-        .fold(BTreeMap::new(), |mut by_ticker, snapshot| {
-            by_ticker.insert(snapshot.ticker.as_str(), snapshot);
-            by_ticker
-        })
-        .into_values()
-        .collect()
+fn unique_option_chain_snapshots(
+    snapshots: &[OptionChainSnapshot],
+) -> Result<Vec<&OptionChainSnapshot>> {
+    let mut by_ticker = BTreeMap::new();
+    for snapshot in snapshots {
+        if by_ticker
+            .insert(snapshot.ticker.as_str(), snapshot)
+            .is_some()
+        {
+            return Err(anyhow!(
+                "duplicate option identity in option-chain snapshot"
+            ));
+        }
+    }
+    Ok(by_ticker.into_values().collect())
 }
 
 async fn ensure_instrument_tx(
@@ -196,16 +222,12 @@ async fn ensure_instrument_tx(
         r#"
         update instruments
         set
-          asset_class = $2::asset_class,
-          underlying_symbol = coalesce($3, underlying_symbol),
           is_active = true,
           updated_at = now()
         where symbol = $1
-          and (
-            asset_class is distinct from $2::asset_class
-            or ($3 is not null and underlying_symbol is distinct from $3)
-            or is_active is distinct from true
-          )
+          and asset_class = $2::asset_class
+          and underlying_symbol is not distinct from $3
+          and is_active is distinct from true
         "#,
     )
     .bind(symbol)
@@ -219,11 +241,16 @@ async fn ensure_instrument_tx(
         select id
         from instruments
         where symbol = $1
+          and asset_class = $2::asset_class
+          and underlying_symbol is not distinct from $3
         "#,
     )
     .bind(symbol)
-    .fetch_one(&mut **tx)
+    .bind(asset_class)
+    .bind(underlying_symbol)
+    .fetch_optional(&mut **tx)
     .await?;
+    let row = row.ok_or_else(|| anyhow!("instrument identity collision"))?;
     Ok(row.try_get("id")?)
 }
 
@@ -282,20 +309,13 @@ async fn ensure_option_instruments_tx(
         )
         update instruments
         set
-          asset_class = 'option'::asset_class,
-          underlying_symbol = coalesce(input.underlying_symbol, instruments.underlying_symbol),
           is_active = true,
           updated_at = now()
         from input
         where instruments.symbol = input.symbol
-          and (
-            instruments.asset_class is distinct from 'option'::asset_class
-            or (
-              input.underlying_symbol is not null
-              and instruments.underlying_symbol is distinct from input.underlying_symbol
-            )
-            or instruments.is_active is distinct from true
-          )
+          and instruments.asset_class = 'option'::asset_class
+          and instruments.underlying_symbol is not distinct from input.underlying_symbol
+          and instruments.is_active is distinct from true
         "#,
     )
     .bind(&symbols)
@@ -305,14 +325,24 @@ async fn ensure_option_instruments_tx(
 
     let rows = sqlx::query(
         r#"
-        select id, symbol
+        with input as (
+          select symbol, underlying_symbol
+          from unnest($1::text[], $2::text[]) as input(symbol, underlying_symbol)
+        )
+        select instruments.id, instruments.symbol
         from instruments
-        where symbol = any($1::text[])
+        join input on instruments.symbol = input.symbol
+        where instruments.asset_class = 'option'::asset_class
+          and instruments.underlying_symbol is not distinct from input.underlying_symbol
         "#,
     )
     .bind(&symbols)
+    .bind(&underlying_symbols)
     .fetch_all(&mut **tx)
     .await?;
+    if rows.len() != symbols.len() {
+        return Err(anyhow!("instrument identity collision"));
+    }
 
     rows.into_iter()
         .map(|row| {
@@ -400,7 +430,7 @@ async fn ensure_option_contracts_tx(
           input.expiration_date,
           input.strike,
           input.contract_right::option_right,
-          input.shares_per_contract,
+          100,
           input.shares_per_contract,
           true,
           now()
@@ -446,24 +476,19 @@ async fn ensure_option_contracts_tx(
         )
         update option_contracts
         set
-          instrument_id = input.option_instrument_id,
-          underlying_instrument_id = $7::uuid,
-          expiration_date = input.expiration_date,
-          strike = input.strike,
-          "right" = input.contract_right::option_right,
-          multiplier = input.shares_per_contract,
+          multiplier = 100,
           shares_per_contract = input.shares_per_contract,
           is_active = true,
           updated_at = now()
         from input
         where option_contracts.massive_ticker = input.massive_ticker
+          and option_contracts.instrument_id = input.option_instrument_id
+          and option_contracts.underlying_instrument_id = $7::uuid
+          and option_contracts.expiration_date = input.expiration_date
+          and option_contracts.strike::float8 is not distinct from input.strike
+          and option_contracts."right" = input.contract_right::option_right
           and (
-            option_contracts.instrument_id is distinct from input.option_instrument_id
-            or option_contracts.underlying_instrument_id is distinct from $7::uuid
-            or option_contracts.expiration_date is distinct from input.expiration_date
-            or option_contracts.strike::float8 is distinct from input.strike
-            or option_contracts."right" is distinct from input.contract_right::option_right
-            or option_contracts.multiplier is distinct from input.shares_per_contract
+            option_contracts.multiplier is distinct from 100
             or option_contracts.shares_per_contract is distinct from input.shares_per_contract
             or option_contracts.is_active is distinct from true
           )
@@ -481,14 +506,48 @@ async fn ensure_option_contracts_tx(
 
     let rows = sqlx::query(
         r#"
-        select id, massive_ticker
+        with input as (
+          select
+            option_instrument_id,
+            massive_ticker,
+            expiration_date,
+            strike,
+            contract_right
+          from unnest(
+            $1::uuid[],
+            $2::text[],
+            $3::date[],
+            $4::float8[],
+            $5::text[]
+          ) as input(
+            option_instrument_id,
+            massive_ticker,
+            expiration_date,
+            strike,
+            contract_right
+          )
+        )
+        select option_contracts.id, option_contracts.massive_ticker
         from option_contracts
-        where massive_ticker = any($1::text[])
+        join input on option_contracts.massive_ticker = input.massive_ticker
+        where option_contracts.instrument_id = input.option_instrument_id
+          and option_contracts.underlying_instrument_id = $6::uuid
+          and option_contracts.expiration_date = input.expiration_date
+          and option_contracts.strike::float8 is not distinct from input.strike
+          and option_contracts."right" = input.contract_right::option_right
         "#,
     )
+    .bind(&instrument_ids)
     .bind(&massive_tickers)
+    .bind(&expiration_dates)
+    .bind(&strikes)
+    .bind(&rights)
+    .bind(underlying_instrument_id)
     .fetch_all(&mut **tx)
     .await?;
+    if rows.len() != massive_tickers.len() {
+        return Err(anyhow!("option contract identity collision"));
+    }
 
     rows.into_iter()
         .map(|row| {
@@ -506,9 +565,9 @@ async fn upsert_option_chain_latest_tx(
     as_of: DateTime<Utc>,
     option_contract_ids: &HashMap<String, Uuid>,
     snapshots: &[&OptionChainSnapshot],
-) -> Result<()> {
+) -> Result<u64> {
     if snapshots.is_empty() {
-        return Ok(());
+        return Ok(0);
     }
 
     let mut contract_ids = Vec::with_capacity(snapshots.len());
@@ -547,7 +606,7 @@ async fn upsert_option_chain_latest_tx(
     // option_chain_snapshots write path that saturated the shared Postgres I/O.
     // The monotonicity guard keeps an out-of-order/older fetch from regressing a
     // fresher row.
-    sqlx::query(
+    let result = sqlx::query(
         r#"
         with input as (
           select
@@ -662,10 +721,71 @@ async fn upsert_option_chain_latest_tx(
     .execute(&mut **tx)
     .await?;
 
-    Ok(())
+    Ok(result.rows_affected())
 }
 
 fn parse_option_expiration(snapshot: &OptionChainSnapshot) -> Result<NaiveDate> {
     NaiveDate::parse_from_str(&snapshot.expiration_date, "%Y-%m-%d")
         .with_context(|| format!("invalid expiration date for {}", snapshot.ticker))
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn option_chain_persistence_uses_database_time_and_fails_skipped_writes() {
+        let source = include_str!("ingest.rs")
+            .split("#[cfg(test)]")
+            .next()
+            .unwrap()
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+            .to_ascii_lowercase();
+
+        assert!(!source.contains("let as_of = utc::now()"));
+        assert!(source.contains("select now()"));
+        assert!(source.contains("rows_affected()"));
+        assert!(source.contains("option-chain persistence skipped"));
+        assert!(source.contains("duplicate option identity"));
+        assert!(source.contains("record_option_chain_generation_tx"));
+    }
+
+    #[test]
+    fn option_chain_persistence_rejects_immutable_identity_collisions() {
+        let source = include_str!("ingest.rs")
+            .split("#[cfg(test)]")
+            .next()
+            .unwrap()
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+            .to_ascii_lowercase();
+
+        for rewrite in [
+            "set asset_class =",
+            "underlying_symbol = coalesce",
+            "set instrument_id =",
+            "underlying_instrument_id = $7::uuid,",
+            "expiration_date = input.expiration_date,",
+            "strike = input.strike,",
+            "\"right\" = input.contract_right::option_right,",
+        ] {
+            assert!(!source.contains(rewrite), "{rewrite}");
+        }
+        for fence in [
+            "and asset_class = $2::asset_class",
+            "and underlying_symbol is not distinct from $3",
+            "and instruments.asset_class = 'option'::asset_class",
+            "and instruments.underlying_symbol is not distinct from input.underlying_symbol",
+            "and option_contracts.instrument_id = input.option_instrument_id",
+            "and option_contracts.underlying_instrument_id = $7::uuid",
+            "and option_contracts.expiration_date = input.expiration_date",
+            "and option_contracts.strike::float8 is not distinct from input.strike",
+            "and option_contracts.\"right\" = input.contract_right::option_right",
+        ] {
+            assert!(source.contains(fence), "{fence}");
+        }
+        assert!(source.contains("instrument identity collision"));
+        assert!(source.contains("option contract identity collision"));
+    }
 }

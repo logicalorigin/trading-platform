@@ -1,10 +1,7 @@
 import { pathToFileURL } from "node:url";
 import { parseArgs, stripVTControlCharacters } from "node:util";
 import { and, asc, eq, gt, inArray, ne, sql } from "drizzle-orm";
-import {
-  hasNamedOperatorCredential,
-  hasOpaqueOperatorCredential,
-} from "./operator-diagnostic";
+import { hasOpaqueOperatorCredential } from "./operator-diagnostic";
 import {
   closeDatabaseConnections,
   db,
@@ -264,18 +261,17 @@ function parseHydrationArgs(args = process.argv.slice(2)): HydrationArgs {
 function safeOutput(value: unknown, fallback: string): string {
   const withoutCredentials = String(value ?? "")
     .replace(/([a-z][a-z0-9+.-]*:\/\/)[^@\s]+@/giu, "$1[redacted]@")
-    .replace(/([a-z][a-z0-9+.-]*:\/\/[^\s?#]+)[?#][^\s]*/giu, "$1?[redacted]")
+    .replace(
+      /([a-z][a-z0-9+.-]*:\/\/[^\s?#]+)[?#][^\s]*/giu,
+      "$1?[redacted]",
+    )
     .replace(/\s+/gu, " ");
   const cleaned = stripVTControlCharacters(withoutCredentials)
     .replace(UNSAFE_OUTPUT_PATTERN, " ")
     .replace(/\s+/gu, " ")
     .trim();
   const diagnostic =
-    cleaned &&
-    !hasNamedOperatorCredential(cleaned) &&
-    !hasOpaqueOperatorCredential(cleaned)
-      ? cleaned
-      : fallback;
+    cleaned && !hasOpaqueOperatorCredential(cleaned) ? cleaned : fallback;
   if (diagnostic.length <= MAX_DIAGNOSTIC_LENGTH) return diagnostic;
   return `${diagnostic.slice(0, MAX_DIAGNOSTIC_LENGTH - 1)}…`;
 }
@@ -335,19 +331,14 @@ async function writeSyncState(input: {
     ...(input.metadata ?? {}),
     leaseFenceToken: input.writerFenceToken,
   };
-  const persistedFenceToken = sql<number>`case
-    when coalesce(${universeCatalogSyncStatesTable.metadata}->>'leaseFenceToken', '') ~ '^[1-9][0-9]*$'
-      then (${universeCatalogSyncStatesTable.metadata}->>'leaseFenceToken')::numeric
-    else 0
-  end`;
-  const rows = await db.transaction(async (tx) => {
+  await db.transaction(async (tx) => {
     input.signal?.throwIfAborted();
     await assertUniverseCatalogWriterFence({
       fenceToken: input.writerFenceToken,
       transaction: tx,
     });
     input.signal?.throwIfAborted();
-    const persistedRows = await tx
+    await tx
       .insert(universeCatalogSyncStatesTable)
       .values({
         scopeKey: input.scopeKey,
@@ -381,24 +372,9 @@ async function writeSyncState(input: {
           metadata,
           updatedAt: now,
         },
-        setWhere: sql`${persistedFenceToken} < ${input.writerFenceToken}::numeric
-          or (
-            ${persistedFenceToken} = ${input.writerFenceToken}::numeric
-            and (
-              ${universeCatalogSyncStatesTable.finishedAt} is null
-              or ${input.finishedAt !== null}
-            )
-          )`,
-      })
-      .returning({ scopeKey: universeCatalogSyncStatesTable.scopeKey });
+      });
     input.signal?.throwIfAborted();
-    return persistedRows;
   });
-  if (!rows.length) {
-    throw new Error(
-      "Universe-catalog hydration checkpoint lease was superseded.",
-    );
-  }
   input.signal?.throwIfAborted();
 }
 

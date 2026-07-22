@@ -214,8 +214,8 @@ class BenchmarkMatrixInput(BaseModel):
 class SignalMatrixSettingsInput(BaseModel):
     model_config = ConfigDict(extra="allow", allow_inf_nan=False)
 
-    timeHorizon: Annotated[int, Field(ge=2, le=40)] = 10
-    bosConfirmation: Literal["close", "wicks"] = "close"
+    timeHorizon: Annotated[int, Field(ge=2, le=40)] = 8
+    bosConfirmation: Literal["close", "wicks"] = "wicks"
     chochAtrBuffer: Annotated[float, Field(ge=0, le=20)] = 0
     chochBodyExpansionAtr: Annotated[float, Field(ge=0, le=20)] = 0
     chochVolumeGate: Annotated[float, Field(ge=0, le=20)] = 0
@@ -265,6 +265,7 @@ class SignalMatrixCellInput(BaseModel):
     symbol: Annotated[str, Field(min_length=1, max_length=32)]
     timeframe: Annotated[str, Field(min_length=1, max_length=16)]
     freshWindowBars: Annotated[int, Field(ge=0, le=200)] = 3
+    lastBarClosed: bool = False
     settings: SignalMatrixSettingsInput = Field(default_factory=SignalMatrixSettingsInput)
     bars: list[SignalMatrixBarInput] = Field(default_factory=list, max_length=5_000)
 

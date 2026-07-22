@@ -65,24 +65,34 @@ event-loop p95, then OOM.
 ## 3. Incremental evaluator parity (first real engagement Monday)
 
 - Watch: same endpoint → `signalMonitorIncrementalEval`: `seeds`/`appends` should start
-  counting at the first bar closes; `shadowMismatches` (the 1-in-500 on-mode self-check)
-  and `matrixServeMismatchCount` must stay ~0.
-- FAIL/rollback: mismatches climbing → `PYRUS_SIGNALS_INCREMENTAL_EVAL=shadow` + SIGUSR2.
-  (The 35 serve-mismatches on the 07-10 process remain unexplained — if they recur,
-  capture `lastMatrixServeMismatchCellKey` before rolling back.)
+  counting at the first bar closes. `shadowMismatches` is the 1-in-500 on-mode parity
+  self-check and must stay at 0.
+- `matrixServeMismatchCount` is retained as a legacy wire field, but it measures stored-row
+  to incoming-candidate transitions. Observe its delta, by-field counts, and latest cell as
+  stored-state churn; a nonzero value does not fail evaluator parity or trigger rollback.
+- FAIL/rollback: `shadowMismatches` climbing →
+  `PYRUS_SIGNALS_INCREMENTAL_EVAL=shadow` + SIGUSR2.
 
 ## 4. 1h/1d repopulation (the STA mixed-MTF fix)
 
-- The coarse-first backfill only runs when the producer sees aggregates (quiet-producer
-  gate), so its first real run is Monday pre-open/open.
-- Check after ~15–30 min of session:
-  `SELECT timeframe, count(DISTINCT symbol) FROM bar_cache WHERE timeframe IN ('1h','1d') GROUP BY 1`
-  — PASS: symbol counts climbing well past 3 (ratchet: each process lifetime adds more).
-- Then eyeball the STA table: 1h/1d lanes should stop showing mixed/contradictory MTF
-  alignment as their history fills.
-- Watch the provider-fetch load while the 1d group warms (2,000 symbols × 240 daily
-  bars): `resourceCaches.bars.hydration.providerFetch` rate and API pressure. Fetches
-  are concurrency-3 per group and stop recurring once rows persist.
+- Never run a cross-universe `bar_cache` count/distinct census here. The retired query
+  planned a sequential scan and sort over millions of rows and timed out after consuming
+  the shared database for 20 seconds; a `LIMIT`/row cap did not bound the predicate work.
+- Measure the exact configured producer universe through the Signal Monitor state reader
+  instead. This is the same 2,000-symbol shaping contract used by the API and is bounded
+  to the six active state lanes:
+
+  ```bash
+  pnpm --filter @workspace/api-server exec tsx -e 'import { pool } from "@workspace/db"; import { getSignalMonitorState } from "./src/services/signal-monitor.ts"; void (async () => { const snapshot = await getSignalMonitorState({ environment: "shadow" }); const rows = snapshot.states ?? []; for (const timeframe of ["1h", "1d"]) { const scoped = rows.filter((row) => row.timeframe === timeframe); console.log(JSON.stringify({ timeframe, total: scoped.length, latest: scoped.filter((row) => row.latestBarAt != null).length, direction: scoped.filter((row) => row.currentSignalDirection != null).length, trend: scoped.filter((row) => row.trendDirection != null).length })); } await pool.end(); })();'
+  ```
+
+- PASS: `1h` reaches `2000/2000/2000` for latest/direction/trend. Daily rows with
+  enough completed history converge the same way; remaining 1d trend blanks must be
+  explained by their completed-bar count rather than synthesized or counted from raw
+  cache rows.
+- Watch provider fetches and API pressure while history warms. Concurrency remains
+  bounded, but readiness work must make forward progress without a per-cycle cell cap or
+  a quiet-market starvation gate.
 
 ## 5. Deployment banner
 

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rename, rm } from "node:fs/promises";
 import { readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path, { resolve } from "node:path";
@@ -38,7 +38,28 @@ type SweepInternals = {
     results: SweepResult[];
     replayRequired?: boolean;
     replayResult?: SweepResult | null;
+    verification?: Record<string, unknown> | null;
   }): void;
+  assertReplayLedgerCompatibility(
+    replayRequired: boolean,
+    env?: NodeJS.ProcessEnv,
+  ): void;
+  buildVariantBackfillInput(input: {
+    deployment: {
+      id: string;
+      name: string;
+      symbolUniverse: string[];
+    };
+    variant: ExitPolicyVariant;
+    config: Pick<
+      SweepConfig,
+      "start" | "end" | "session" | "signalTimeframe" | "timeHorizon"
+    >;
+    commit?: boolean;
+    replay?: boolean;
+    replayRunId?: string;
+    signal?: AbortSignal;
+  }): Record<string, unknown>;
   buildVariantUniverse(): ExitPolicyVariant[];
   computeMetrics(result: unknown): SweepResult["metrics"];
   csvValue(value: unknown): string;
@@ -50,6 +71,8 @@ type SweepInternals = {
   publishReportFiles(
     reportDir: string,
     files: Record<"results.json" | "results.csv" | "report.md", string>,
+    signal?: AbortSignal,
+    renameDirectory?: (from: string, to: string) => Promise<void>,
   ): Promise<void>;
   readSweepConfig(env: NodeJS.ProcessEnv, cwd: string): SweepConfig;
   replayReportLine(result?: SweepResult | null): string;
@@ -58,6 +81,19 @@ type SweepInternals = {
     config: Pick<SweepConfig, "maxPremiumPerEntry" | "wireGreekTrailMaxAgeMs">,
   ): ExitPolicyVariant;
   safeDiagnostic(error: unknown): string;
+  runVariant(input: {
+    deployment: {
+      id: string;
+      name: string;
+      mode: "shadow";
+      symbolUniverse: string[];
+    };
+    variant: ExitPolicyVariant;
+    config: SweepConfig;
+    commit?: boolean;
+    replay?: boolean;
+    signal: AbortSignal;
+  }): Promise<SweepResult>;
   selectVariants(
     variants: ExitPolicyVariant[],
     config: Pick<SweepConfig, "families" | "variantIds" | "replayVariant">,
@@ -73,6 +109,18 @@ type SweepInternals = {
     mode: "shadow";
     symbolUniverse: string[];
   };
+  verifyReplayLedger(input: {
+    deploymentId: string;
+    runId: string;
+    window: Record<string, unknown> | null;
+    signal?: AbortSignal;
+    runtime?: {
+      query(
+        sql: string,
+        values: unknown[],
+      ): Promise<{ rows: Record<string, unknown>[] }>;
+    };
+  }): Promise<Record<string, unknown>>;
 };
 
 const barEvaluationName = "PYRUS_SIGNAL_MONITOR_BAR_EVALUATION_ENABLED";
@@ -488,6 +536,17 @@ test("terminal, JSON, CSV, and Markdown output contain hostile content", () => {
     /super-secret|query-secret|fragment|\u001b|\n|\u2028|\u202e/u,
   );
   assert.ok(diagnostic.length <= 400);
+  for (const secret of [
+    `AKIA${"A".repeat(16)}`,
+    `github_pat_${"b".repeat(40)}`,
+    `sk-${"c".repeat(32)}`,
+    `eyJ${"d".repeat(12)}.${"e".repeat(12)}.${"f".repeat(12)}`,
+  ]) {
+    assert.doesNotMatch(
+      api.safeDiagnostic(new Error(`provider rejected credential ${secret}`)),
+      new RegExp(secret, "u"),
+    );
+  }
 
   assert.equal(
     api.csvValue('=HYPERLINK("https://example.test")'),
@@ -560,6 +619,85 @@ test("report files publish atomically and never overwrite a completed run", asyn
   }
 });
 
+test("lease loss prevents variant work from becoming a failure row or report", async () => {
+  const api = requireInternals();
+  const controller = new AbortController();
+  const leaseLost = new Error("exit sweep lease lost");
+  controller.abort(leaseLost);
+  const config = api.readSweepConfig({}, "/tmp/exit-policy-lease-loss");
+
+  await assert.rejects(
+    api.runVariant({
+      deployment: {
+        id: "deployment-id",
+        name: "Pyrus Signals Options Shadow",
+        mode: "shadow",
+        symbolUniverse: ["SPY"],
+      },
+      variant: variant(),
+      config,
+      signal: controller.signal,
+    }),
+    (error) => error === leaseLost,
+  );
+
+  const root = await mkdtemp(path.join(tmpdir(), "exit-policy-lease-loss-"));
+  const reportDir = path.join(root, "report");
+  const files = {
+    get "results.json"() {
+      return "results\n";
+    },
+    get "results.csv"() {
+      return "results\n";
+    },
+    get "report.md"() {
+      return "report\n";
+    },
+  };
+  try {
+    await assert.rejects(
+      api.publishReportFiles(reportDir, files, controller.signal),
+      (error) => error === leaseLost,
+    );
+    await assert.rejects(readFile(path.join(reportDir, "report.md"), "utf8"));
+    assert.deepEqual(
+      (await readdir(root)).filter((name) => name.includes(".tmp-")),
+      [],
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("lease loss during report publication removes the renamed directory", async () => {
+  const api = requireInternals();
+  const controller = new AbortController();
+  const leaseLost = new Error("exit sweep lease lost during rename");
+  const root = await mkdtemp(path.join(tmpdir(), "exit-policy-rename-loss-"));
+  const reportDir = path.join(root, "report");
+  try {
+    await assert.rejects(
+      api.publishReportFiles(
+        reportDir,
+        {
+          "results.json": "results\n",
+          "results.csv": "results\n",
+          "report.md": "report\n",
+        },
+        controller.signal,
+        async (from, to) => {
+          await rename(from, to);
+          controller.abort(leaseLost);
+        },
+      ),
+      (error) => error === leaseLost,
+    );
+    await assert.rejects(readFile(path.join(reportDir, "report.md"), "utf8"));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("completion and replay labels fail closed without choosing partial-run policy", () => {
   const api = requireInternals();
   const failed = result("failed", {}, "failed");
@@ -596,6 +734,60 @@ test("completion and replay labels fail closed without choosing partial-run poli
       }),
     /no longer eligible/iu,
   );
+  assert.throws(
+    () =>
+      api.assertSweepCompletion({
+        results: [succeeded],
+        replayRequired: true,
+        replayResult: succeeded,
+        verification: {
+          orderCount: 4,
+          ordersWithNullSourceEventId: 0,
+          ordersWithNullSourceMetadata: 1,
+          ordersWithoutFills: 0,
+          runIdCount: 1,
+        },
+      }),
+    /Replay ledger verification failed/iu,
+  );
+  assert.throws(
+    () =>
+      api.assertSweepCompletion({
+        results: [succeeded],
+        replayRequired: true,
+        replayResult: succeeded,
+        verification: { skipped: true, reason: "missing replay window" },
+      }),
+    /Replay ledger verification failed/iu,
+  );
+  assert.doesNotThrow(() =>
+    api.assertSweepCompletion({
+      results: [succeeded],
+      replayRequired: true,
+      replayResult: succeeded,
+      verification: {
+        orderCount: 4,
+        ordersWithNullSourceEventId: 0,
+        ordersWithNullSourceMetadata: 0,
+        ordersWithoutFills: 0,
+        runIdCount: 1,
+      },
+    }),
+  );
+
+  assert.throws(
+    () =>
+      api.assertReplayLedgerCompatibility(true, {
+        PYRUS_BACKTEST_LEDGER: "own",
+      }),
+    /requires the shadow-orders ledger/iu,
+  );
+  assert.doesNotThrow(() =>
+    api.assertReplayLedgerCompatibility(true, {
+      PYRUS_BACKTEST_LEDGER: "",
+    }),
+  );
+  assert.match(scriptSource, /payload->'metadata'->>'runId' is null/);
 
   // Partial dry-run failure policy is deliberately held for user direction.
   assert.doesNotThrow(() =>
@@ -613,6 +805,55 @@ test("completion and replay labels fail closed without choosing partial-run poli
     api.replayReportLine(succeeded),
     /^Replay committed: succeeded$/u,
   );
+});
+
+test("winner replay and ledger proof share one exact run id", async () => {
+  const api = requireInternals();
+  const config = api.readSweepConfig({}, "/tmp/exit-policy-run-id");
+  const replayRunId = "signal-options-exit-sweep-exact-baseline-current-exits";
+  const backfill = api.buildVariantBackfillInput({
+    deployment: {
+      id: "deployment-id",
+      name: "Pyrus Signals Options Shadow",
+      symbolUniverse: ["SPY"],
+    },
+    variant: variant(),
+    config,
+    commit: true,
+    replay: true,
+    replayRunId,
+  });
+  assert.equal(
+    (backfill.replay as Record<string, unknown>)?.runId,
+    replayRunId,
+  );
+
+  const queries: Array<{ sql: string; values: unknown[] }> = [];
+  await api.verifyReplayLedger({
+    deploymentId: "deployment-id",
+    runId: replayRunId,
+    window: {
+      from: "2026-05-01T00:00:00.000Z",
+      to: "2026-05-02T00:00:00.000Z",
+    },
+    runtime: {
+      async query(sql, values) {
+        queries.push({ sql, values });
+        return { rows: [{ orderCount: 1 }] };
+      },
+    },
+  });
+
+  assert.match(
+    queries[0]?.sql ?? "",
+    /payload->'metadata'->>'runId'\s*=\s*\$4/u,
+  );
+  assert.deepEqual(queries[0]?.values, [
+    "deployment-id",
+    "2026-05-01T00:00:00.000Z",
+    "2026-05-02T00:00:00.000Z",
+    replayRunId,
+  ]);
 });
 
 test("the long-running lock and database finalizer use shared owned resources", () => {

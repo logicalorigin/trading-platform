@@ -33,7 +33,12 @@ function pid2IsPlatformRooted(stat, readFile) {
     const parentStat = parseProcStat(
       readFile(`/proc/${stat.ppid}/stat`, "utf8"),
     );
-    return parentName === "pid1" && parentStat?.ppid === 1;
+    if (parentName !== "pid1" || !parentStat) return false;
+    if (parentStat.ppid === 0) return true;
+    return (
+      parentStat.ppid === 1 &&
+      cmdlineBasename(readFile("/proc/1/cmdline", "utf8")) === "pid0"
+    );
   } catch {
     return false;
   }

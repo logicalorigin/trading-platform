@@ -102,3 +102,14 @@ test("wires autosave to Codex session, compaction, and turn boundaries", () => {
     assert.equal(event[0].hooks[0].timeout, 30);
   }
 });
+
+test("runs each persistence security test in its own fail-closed process", () => {
+  const rootPackage = JSON.parse(
+    readFileSync(new URL("../package.json", import.meta.url), "utf8"),
+  );
+
+  assert.equal(
+    rootPackage.scripts?.["audit:session-persistence-security"],
+    "node --test scripts/lib/redact-persisted-text.test.mjs && node --test scripts/diagnose-agent-restarts.test.mjs && node --test .agents/skills/session-handoff/scripts/write-session-handoff.test.mjs && node --test scripts/codex-autosave-handoff.test.mjs",
+  );
+});

@@ -37,7 +37,7 @@ test("CPU profiler reads the process id reported by the inspector target", () =>
   assert.equal(readInspectorProcessId({}), null);
 });
 
-test("CPU summaries weight samples by timeDeltas instead of hitCount", () => {
+test("CPU summaries exclude the pre-first-sample gap from frame attribution", () => {
   const summary = summarizeCpuProfile({
     nodes: [
       {
@@ -48,14 +48,21 @@ test("CPU summaries weight samples by timeDeltas instead of hitCount", () => {
       {
         id: 2,
         hitCount: 1,
-        callFrame: { functionName: "work", url: "file:///app.mjs", lineNumber: 9 },
+        callFrame: {
+          functionName: "work",
+          url: "file:///app.mjs",
+          lineNumber: 9,
+        },
       },
     ],
-    samples: [1, 2],
-    timeDeltas: [1_000, 9_000],
+    // V8's first delta spans profiler start -> first sample. It is not time
+    // spent in sample zero and must not make that random frame look hot.
+    samples: [2, 1, 2],
+    timeDeltas: [900_000, 1_000, 9_000],
   });
 
-  assert.equal(summary.totalSamples, 2);
+  assert.equal(summary.totalSamples, 3);
+  assert.equal(summary.initialGapDurationUs, 900_000);
   assert.equal(summary.totalDurationUs, 10_000);
   assert.equal(summary.idleDurationUs, 1_000);
   assert.equal(summary.busyDurationUs, 9_000);
@@ -81,15 +88,48 @@ test("CPU summaries reject profiles without aligned timeDeltas", () => {
   );
 });
 
+test("CPU summaries surface bounded V8 timestamp jitter without losing the profile", () => {
+  const summary = summarizeCpuProfile({
+    nodes: [
+      {
+        id: 1,
+        callFrame: {
+          functionName: "work",
+          url: "file:///app.mjs",
+          lineNumber: 9,
+        },
+      },
+    ],
+    samples: [1, 1, 1],
+    timeDeltas: [500, -17, 1_000],
+  });
+
+  assert.equal(summary.negativeJitterSampleCount, 1);
+  assert.equal(summary.negativeJitterDurationUs, 17);
+  assert.equal(summary.totalDurationUs, 1_000);
+  assert.throws(
+    () =>
+      summarizeCpuProfile({
+        nodes: [{ id: 1, callFrame: { functionName: "work" } }],
+        samples: [1, 1],
+        timeDeltas: [500, -101],
+      }),
+    /invalid timeDelta/,
+  );
+});
+
 test("CPU summary output preserves weighted microseconds for acceptance reports", () => {
-  const parsed = parseCpuProfileSummaryOutput([
-    "total samples=2 idle=1000 busy=9000 (busy%=90.0)",
-    "top self-time as % of BUSY microseconds:",
-    "  70.0%       6300  work app.mjs:10",
-    "  30.0%       2700  (garbage collector) :0",
-  ].join("\n"));
+  const parsed = parseCpuProfileSummaryOutput(
+    [
+      "total samples=2 initialGap=500000 idle=1000 busy=9000 (busy%=90.0)",
+      "top self-time as % of BUSY microseconds:",
+      "  70.0%       6300  work app.mjs:10",
+      "  30.0%       2700  (garbage collector) :0",
+    ].join("\n"),
+  );
 
   assert.equal(parsed.totalSamples, 2);
+  assert.equal(parsed.initialGapDurationUs, 500_000);
   assert.equal(parsed.idleDurationUs, 1_000);
   assert.equal(parsed.busyDurationUs, 9_000);
   assert.equal(parsed.busyPercent, 90);

@@ -15,6 +15,7 @@ import {
   compareSignalScoreModels,
   type SignalScoreCalibrationObservation,
   type SignalScoreModelKey,
+  type SignalQualityScoreBucket,
 } from "../../artifacts/api-server/src/services/signal-quality-kpis";
 
 const { scoreSignalWithModel } = __signalQualityKpisInternalsForTests;
@@ -33,15 +34,22 @@ const SCORE_MODELS = [
   "reversion-sot-v3",
   "expected-move-v1",
   "expected-move-v2",
+  "expected-move-v3",
 ] as const satisfies readonly SignalScoreModelKey[];
 
 const DEFAULT_SCORERS: SignalScoreModelKey[] = [
   "observed-score",
   "expected-move-v1",
   "expected-move-v2",
+  "expected-move-v3",
   "reversion-sot-v3",
   "balanced-sot-v2",
 ];
+const ROLLING_ORIGIN_FOLD_COUNT = 3;
+const ROLLING_ORIGIN_INITIAL_TRAIN_FRACTION = 0.5;
+const ROLLING_ORIGIN_MIN_TRAIN_COUNT = 30;
+const ROLLING_ORIGIN_MIN_TEST_COUNT = 10;
+const ROLLING_ORIGIN_MIN_HELD_OUT_COUNT = 30;
 
 const VALUE_FLAGS = [
   "--input-dir",
@@ -72,7 +80,7 @@ type DumpRow = SignalScoreCalibrationObservation & {
 
 type DumpHeader = {
   header: true;
-  schemaVersion: 1;
+  schemaVersion: 2;
   runId: string;
   deploymentId: string;
   asOfDay: string;
@@ -137,6 +145,16 @@ type Options = {
 };
 
 type ScoredRow = DumpRow & { score: number };
+type CalibrationTarget = "mfePercent" | "realizedReturnPercent";
+
+type RollingOriginFold = {
+  index: number;
+  testStartAt: string;
+  testEndAt: string;
+  trainRows: DumpRow[];
+  embargoedRows: DumpRow[];
+  testRows: DumpRow[];
+};
 
 function usage(): string {
   return [
@@ -337,9 +355,9 @@ function parseDumpHeader(
       `${filePath}: first line must be an observation dump header`,
     );
   }
-  if (header.schemaVersion !== 1) {
+  if (header.schemaVersion !== 2) {
     throw new Error(
-      `${filePath}: observation dump must use schemaVersion 1; regenerate it with signal-calibration:dump`,
+      `${filePath}: observation dump must use schemaVersion 2; regenerate it with signal-calibration:dump`,
     );
   }
   if (typeof header.runId !== "string" || !header.runId.trim()) {
@@ -486,6 +504,7 @@ function parseDumpRow(
   value: unknown,
   rowNumber: number,
   filePath: string,
+  header: DumpHeader,
 ): DumpRow {
   const row = recordValue(value);
   if (!row) {
@@ -528,9 +547,50 @@ function parseDumpRow(
       );
     }
   }
-  if (row.audit != null && !recordValue(row.audit)) {
+  const audit = recordValue(row.audit);
+  if (!audit) {
+    throw new Error(`${filePath}: row ${rowNumber} audit must be an object`);
+  }
+  if (!isTimestamp(audit.signalAt)) {
     throw new Error(
-      `${filePath}: row ${rowNumber} audit must be an object or null`,
+      `${filePath}: row ${rowNumber} audit.signalAt must be a timestamp`,
+    );
+  }
+  if (!isTimestamp(audit.outcomeExitBarAt)) {
+    throw new Error(
+      `${filePath}: row ${rowNumber} audit.outcomeExitBarAt must be a timestamp`,
+    );
+  }
+  if (Date.parse(audit.outcomeExitBarAt) <= Date.parse(audit.signalAt)) {
+    throw new Error(
+      `${filePath}: row ${rowNumber} audit.outcomeExitBarAt must be after audit.signalAt`,
+    );
+  }
+  if (
+    !Array.isArray(audit.mtfTimeframes) ||
+    !Array.isArray(audit.mtfDirections) ||
+    audit.mtfTimeframes.length !== audit.mtfDirections.length ||
+    audit.mtfTimeframes.some(
+      (timeframe) => typeof timeframe !== "string" || !timeframe.trim(),
+    ) ||
+    audit.mtfDirections.some(
+      (direction) =>
+        !Number.isInteger(direction) ||
+        (direction !== -1 && direction !== 0 && direction !== 1),
+    )
+  ) {
+    throw new Error(
+      `${filePath}: row ${rowNumber} MTF audit provenance is malformed`,
+    );
+  }
+  if (
+    audit.mtfTimeframes.length !== header.mtf.timeframes.length ||
+    audit.mtfTimeframes.some(
+      (timeframe, index) => timeframe !== header.mtf.timeframes[index],
+    )
+  ) {
+    throw new Error(
+      `${filePath}: row ${rowNumber} MTF audit timeframes do not match the header`,
     );
   }
   return row as unknown as DumpRow;
@@ -561,7 +621,12 @@ function loadDump(inputDir: string, timeframe: Timeframe): LoadedDump | null {
   // ponytail: fitting already buffers each dump; replace this with a streaming
   // reader if measured calibration artifacts outgrow the operator heap.
   const rows = rowLines.map((line, index) =>
-    parseDumpRow(parseJsonLine(line, filePath, index + 2), index + 1, filePath),
+    parseDumpRow(
+      parseJsonLine(line, filePath, index + 2),
+      index + 1,
+      filePath,
+      header,
+    ),
   );
   return {
     timeframe,
@@ -603,6 +668,22 @@ function mean(values: number[]): number | null {
   return round(values.reduce((sum, value) => sum + value, 0) / values.length);
 }
 
+function weightedMean(
+  values: Array<{ value: number | null; weight: number }>,
+): number | null {
+  const usable = values.filter(
+    (item): item is { value: number; weight: number } =>
+      item.value != null && item.weight > 0,
+  );
+  const totalWeight = usable.reduce((sum, item) => sum + item.weight, 0);
+  return totalWeight
+    ? round(
+        usable.reduce((sum, item) => sum + item.value * item.weight, 0) /
+          totalWeight,
+      )
+    : null;
+}
+
 function quantile(values: number[], q: number): number | null {
   if (!values.length) {
     return null;
@@ -625,15 +706,106 @@ function scoreRows(rows: DumpRow[], scorer: SignalScoreModelKey): ScoredRow[] {
   });
 }
 
+function signalAtMs(row: DumpRow): number {
+  return Date.parse(String(recordValue(row.audit)?.signalAt ?? ""));
+}
+
+function outcomeAtMs(row: DumpRow): number {
+  return Date.parse(String(recordValue(row.audit)?.outcomeExitBarAt ?? ""));
+}
+
+function passesAlgoMtfControls(row: DumpRow, mtf: DumpHeader["mtf"]): boolean {
+  if (!mtf.enabled || !mtf.timeframes.length) {
+    return true;
+  }
+  const audit = recordValue(row.audit);
+  const directions = Array.isArray(audit?.mtfDirections)
+    ? audit.mtfDirections
+    : [];
+  const directionSign = row.direction === "long" ? 1 : -1;
+  return (
+    directions.length === mtf.timeframes.length &&
+    directions.every((direction) => direction === directionSign)
+  );
+}
+
+function buildRollingOriginFolds(
+  rows: DumpRow[],
+  requestedFoldCount = ROLLING_ORIGIN_FOLD_COUNT,
+): RollingOriginFold[] {
+  const foldCount = Math.max(1, Math.floor(requestedFoldCount));
+  const sorted = rows
+    .slice()
+    .sort((left, right) => signalAtMs(left) - signalAtMs(right));
+  const signalTimes = [...new Set(sorted.map((item) => signalAtMs(item)))].sort(
+    (left, right) => left - right,
+  );
+  if (signalTimes.length < foldCount + 2) {
+    return [];
+  }
+
+  const initialTrainCount = Math.max(
+    1,
+    Math.floor(signalTimes.length * ROLLING_ORIGIN_INITIAL_TRAIN_FRACTION),
+  );
+  const testTimeCount = signalTimes.length - initialTrainCount;
+  if (testTimeCount < foldCount) {
+    return [];
+  }
+
+  const folds: RollingOriginFold[] = [];
+  for (let index = 0; index < foldCount; index += 1) {
+    const testStartIndex =
+      initialTrainCount + Math.floor((testTimeCount * index) / foldCount);
+    const testEndIndex =
+      initialTrainCount + Math.floor((testTimeCount * (index + 1)) / foldCount);
+    const testStartMs = signalTimes[testStartIndex];
+    const testEndExclusiveMs =
+      testEndIndex < signalTimes.length
+        ? signalTimes[testEndIndex]
+        : Number.POSITIVE_INFINITY;
+    if (!Number.isFinite(testStartMs) || testEndIndex <= testStartIndex) {
+      continue;
+    }
+
+    const trainRows = sorted.filter((item) => outcomeAtMs(item) < testStartMs);
+    const embargoedRows = sorted.filter((item) => {
+      const at = signalAtMs(item);
+      return at < testStartMs && outcomeAtMs(item) >= testStartMs;
+    });
+    const testRows = sorted.filter((item) => {
+      const at = signalAtMs(item);
+      return at >= testStartMs && at < testEndExclusiveMs;
+    });
+    if (!trainRows.length || !testRows.length) {
+      continue;
+    }
+    folds.push({
+      index: index + 1,
+      testStartAt: new Date(testStartMs).toISOString(),
+      testEndAt: new Date(
+        signalTimes[Math.max(testStartIndex, testEndIndex - 1)],
+      ).toISOString(),
+      trainRows,
+      embargoedRows,
+      testRows,
+    });
+  }
+  return folds;
+}
+
 function bucketForScore(score: number): string {
   const clamped = Math.min(100, Math.max(0, score));
   const lower = clamped >= 100 ? 90 : Math.floor(clamped / 10) * 10;
   return `${lower}-${lower + 10}`;
 }
 
-function fitIsotonic(rows: ScoredRow[]) {
+function fitIsotonic(
+  rows: ScoredRow[],
+  target: CalibrationTarget = "mfePercent",
+) {
   const sorted = rows
-    .map((row, index) => ({ score: row.score, target: row.mfePercent, index }))
+    .map((row, index) => ({ score: row.score, target: row[target], index }))
     .sort(
       (left, right) => left.score - right.score || left.index - right.index,
     );
@@ -679,8 +851,45 @@ function fitIsotonic(rows: ScoredRow[]) {
     minScore: round(block.minScore, 3),
     maxScore: round(block.maxScore, 3),
     count: block.weight,
-    calibratedMfePercent: round(block.sum / block.weight),
+    calibratedTargetPercent: round(block.sum / block.weight),
   }));
+}
+
+function predictIsotonic(
+  fit: ReturnType<typeof fitIsotonic>,
+  score: number,
+): number | null {
+  if (!fit.length) {
+    return null;
+  }
+  let closest = fit[0];
+  let closestDistance = Number.POSITIVE_INFINITY;
+  for (const block of fit) {
+    const distance =
+      score < block.minScore
+        ? block.minScore - score
+        : score > block.maxScore
+          ? score - block.maxScore
+          : 0;
+    if (distance < closestDistance) {
+      closest = block;
+      closestDistance = distance;
+    }
+  }
+  return closest.calibratedTargetPercent;
+}
+
+function isotonicMeanAbsoluteError(
+  trainRows: ScoredRow[],
+  testRows: ScoredRow[],
+  target: CalibrationTarget,
+): number | null {
+  const fit = fitIsotonic(trainRows, target);
+  const errors = testRows.flatMap((row) => {
+    const predicted = predictIsotonic(fit, row.score);
+    return predicted == null ? [] : [Math.abs(predicted - row[target])];
+  });
+  return mean(errors);
 }
 
 function quantileBuckets(rows: ScoredRow[]) {
@@ -735,24 +944,196 @@ function bigMoverMetrics(
   });
 }
 
+function modelComparison(rows: ScoredRow[], scorer: SignalScoreModelKey) {
+  return compareSignalScoreModels(rows, [scorer], {
+    minObservationCount: 1,
+    minTopBucketSignalCount: Math.max(1, Math.round(rows.length * 0.2)),
+    minLowerBaselineSignalCount: 1,
+    minPopulatedBucketCount: 1,
+    minAlignmentScore: Number.NEGATIVE_INFINITY,
+  }).models[0];
+}
+
+function buildCorrectnessAlignment(scoreBuckets: SignalQualityScoreBucket[]) {
+  const populatedBuckets = scoreBuckets.filter(
+    (bucket) =>
+      bucket.key !== "unknown" && bucket.min != null && bucket.signalCount > 0,
+  );
+  const topBucket = populatedBuckets[0] ?? null;
+  const lowerBuckets = populatedBuckets.slice(1);
+  const lowerBaselineSignalCount = lowerBuckets.reduce(
+    (sum, bucket) => sum + bucket.signalCount,
+    0,
+  );
+  const lowerBaselineCorrectnessPercent = lowerBaselineSignalCount
+    ? round(
+        lowerBuckets.reduce(
+          (sum, bucket) => sum + bucket.correctnessPercent * bucket.signalCount,
+          0,
+        ) / lowerBaselineSignalCount,
+      )
+    : null;
+  const topBucketCorrectnessPercent = topBucket?.correctnessPercent ?? null;
+  const topBucketLiftPercentagePoints =
+    topBucketCorrectnessPercent == null ||
+    lowerBaselineCorrectnessPercent == null
+      ? 0
+      : round(topBucketCorrectnessPercent - lowerBaselineCorrectnessPercent);
+
+  let monotonicPairCount = 0;
+  let inversionCount = 0;
+  let inversionSeverityPercentagePoints = 0;
+  for (
+    let higherIndex = 0;
+    higherIndex < populatedBuckets.length;
+    higherIndex += 1
+  ) {
+    for (
+      let lowerIndex = higherIndex + 1;
+      lowerIndex < populatedBuckets.length;
+      lowerIndex += 1
+    ) {
+      monotonicPairCount += 1;
+      const higherCorrectness =
+        populatedBuckets[higherIndex].correctnessPercent;
+      const lowerCorrectness = populatedBuckets[lowerIndex].correctnessPercent;
+      if (higherCorrectness < lowerCorrectness) {
+        inversionCount += 1;
+        inversionSeverityPercentagePoints +=
+          lowerCorrectness - higherCorrectness;
+      }
+    }
+  }
+
+  return {
+    populatedBucketCount: populatedBuckets.length,
+    topBucketKey: topBucket?.key ?? null,
+    topBucketSignalCount: topBucket?.signalCount ?? 0,
+    topBucketCorrectnessPercent,
+    lowerBaselineSignalCount,
+    lowerBaselineCorrectnessPercent,
+    topBucketLiftPercentagePoints,
+    monotonicPairCount,
+    inversionCount,
+    inversionSeverityPercentagePoints: round(inversionSeverityPercentagePoints),
+  };
+}
+
+function buildHoldoutAudit(input: {
+  rows: DumpRow[];
+  direction: Direction;
+  scorer: SignalScoreModelKey;
+  horizonBars: number;
+}) {
+  const folds = buildRollingOriginFolds(input.rows);
+  const heldOutRows: ScoredRow[] = [];
+  const foldResults = folds.flatMap((fold) => {
+    const trainRows = scoreRows(
+      fold.trainRows.filter((row) => row.direction === input.direction),
+      input.scorer,
+    );
+    const testRows = scoreRows(
+      fold.testRows.filter((row) => row.direction === input.direction),
+      input.scorer,
+    );
+    if (
+      trainRows.length < ROLLING_ORIGIN_MIN_TRAIN_COUNT ||
+      testRows.length < ROLLING_ORIGIN_MIN_TEST_COUNT
+    ) {
+      return [];
+    }
+    heldOutRows.push(...testRows);
+    const comparison = modelComparison(testRows, input.scorer);
+    return [
+      {
+        index: fold.index,
+        testStartAt: fold.testStartAt,
+        testEndAt: fold.testEndAt,
+        trainCount: trainRows.length,
+        embargoedCount: fold.embargoedRows.filter(
+          (row) => row.direction === input.direction,
+        ).length,
+        testCount: testRows.length,
+        magnitudeCalibrationMaePercent: isotonicMeanAbsoluteError(
+          trainRows,
+          testRows,
+          "mfePercent",
+        ),
+        directionalCalibrationMaePercent: isotonicMeanAbsoluteError(
+          trainRows,
+          testRows,
+          "realizedReturnPercent",
+        ),
+        magnitudeAlignment: comparison?.magnitudeAlignment ?? null,
+        correctnessAlignment: buildCorrectnessAlignment(
+          comparison?.scoreBuckets ?? [],
+        ),
+        expectancyAlignment: comparison?.alignment ?? null,
+      },
+    ];
+  });
+  if (
+    foldResults.length !== ROLLING_ORIGIN_FOLD_COUNT ||
+    heldOutRows.length < ROLLING_ORIGIN_MIN_HELD_OUT_COUNT
+  ) {
+    return {
+      status: "insufficient_history" as const,
+      requestedFoldCount: ROLLING_ORIGIN_FOLD_COUNT,
+      foldCount: foldResults.length,
+      heldOutCount: heldOutRows.length,
+      embargoBars: Math.max(1, Math.round(input.horizonBars)),
+      embargoPolicy: "exact_outcome_end" as const,
+      magnitudeCalibrationMaePercent: null,
+      directionalCalibrationMaePercent: null,
+      magnitudeAlignment: null,
+      correctnessAlignment: null,
+      expectancyAlignment: null,
+      folds: foldResults,
+    };
+  }
+
+  const comparison = modelComparison(heldOutRows, input.scorer);
+  return {
+    status: "ok" as const,
+    requestedFoldCount: ROLLING_ORIGIN_FOLD_COUNT,
+    foldCount: foldResults.length,
+    heldOutCount: heldOutRows.length,
+    embargoBars: Math.max(1, Math.round(input.horizonBars)),
+    embargoPolicy: "exact_outcome_end" as const,
+    magnitudeCalibrationMaePercent: weightedMean(
+      foldResults.map((fold) => ({
+        value: fold.magnitudeCalibrationMaePercent,
+        weight: fold.testCount,
+      })),
+    ),
+    directionalCalibrationMaePercent: weightedMean(
+      foldResults.map((fold) => ({
+        value: fold.directionalCalibrationMaePercent,
+        weight: fold.testCount,
+      })),
+    ),
+    magnitudeAlignment: comparison?.magnitudeAlignment ?? null,
+    correctnessAlignment: buildCorrectnessAlignment(
+      comparison?.scoreBuckets ?? [],
+    ),
+    expectancyAlignment: comparison?.alignment ?? null,
+    folds: foldResults,
+  };
+}
+
 function buildCell(input: {
   timeframe: Timeframe;
   direction: Direction;
   scorer: SignalScoreModelKey;
   rows: DumpRow[];
+  horizonBars: number;
   options: Options;
 }) {
   const directionRows = input.rows.filter(
     (row) => row.direction === input.direction,
   );
   const scored = scoreRows(directionRows, input.scorer);
-  const comparison = compareSignalScoreModels(scored, [input.scorer], {
-    minObservationCount: 1,
-    minTopBucketSignalCount: Math.max(1, Math.round(scored.length * 0.2)),
-    minLowerBaselineSignalCount: 1,
-    minPopulatedBucketCount: 1,
-    minAlignmentScore: Number.NEGATIVE_INFINITY,
-  }).models[0];
+  const comparison = modelComparison(scored, input.scorer);
   return {
     timeframe: input.timeframe,
     direction: input.direction,
@@ -767,7 +1148,16 @@ function buildCell(input: {
     isotonicFit: fitIsotonic(scored),
     quantileBuckets: quantileBuckets(scored),
     magnitudeAlignment: comparison?.magnitudeAlignment ?? null,
+    correctnessAlignment: buildCorrectnessAlignment(
+      comparison?.scoreBuckets ?? [],
+    ),
     expectancyAlignment: comparison?.alignment ?? null,
+    holdout: buildHoldoutAudit({
+      rows: input.rows,
+      direction: input.direction,
+      scorer: input.scorer,
+      horizonBars: input.horizonBars,
+    }),
   };
 }
 
@@ -780,21 +1170,51 @@ function buildReport(options: Options, dumps: LoadedDump[]) {
           timeframe: dump.timeframe,
           direction,
           scorer,
-          rows: dump.rows,
+          rows: dump.rows.filter((row) =>
+            passesAlgoMtfControls(row, dump.header.mtf),
+          ),
+          horizonBars: dump.header.outcomeHorizonBars,
           options,
         }),
       ),
     ),
   );
+  const detectedObservationCount = dumps.reduce(
+    (sum, dump) => sum + dump.rows.length,
+    0,
+  );
+  const admittedObservationCount = dumps.reduce(
+    (sum, dump) =>
+      sum +
+      dump.rows.filter((row) => passesAlgoMtfControls(row, dump.header.mtf))
+        .length,
+    0,
+  );
   return {
     generatedAt: new Date().toISOString(),
-    analysisMode: "descriptive_in_sample" as const,
+    analysisMode: "rolling_origin_embargoed" as const,
     activationEligible: false,
+    cohort: {
+      key: "algo-control-mtf-aligned" as const,
+      contract: "unanimous-configured-timeframes" as const,
+      detectedObservationCount,
+      admittedObservationCount,
+      filteredOutObservationCount:
+        detectedObservationCount - admittedObservationCount,
+    },
     limitations: [
-      "No rolling-origin temporal holdout is applied.",
-      "No forward-window embargo is applied.",
-      "Do not use this report alone to activate a score model.",
+      "The scorer formulas may have been developed on earlier overlapping research windows.",
+      "Directional correctness, signed underlying return, and MFE are separate outcomes; none is net option-trading return after spread, slippage, and execution selection.",
+      "Use an independently dated shadow run before activating a score model.",
     ],
+    validation: {
+      foldCount: ROLLING_ORIGIN_FOLD_COUNT,
+      initialTrainFraction: ROLLING_ORIGIN_INITIAL_TRAIN_FRACTION,
+      minTrainCountPerCell: ROLLING_ORIGIN_MIN_TRAIN_COUNT,
+      minTestCountPerCell: ROLLING_ORIGIN_MIN_TEST_COUNT,
+      minHeldOutCountPerCell: ROLLING_ORIGIN_MIN_HELD_OUT_COUNT,
+      embargo: "exact completed outcome-end timestamp",
+    },
     sourceRunId: source?.runId ?? null,
     deploymentId: source?.deploymentId ?? null,
     asOfDay: source?.asOfDay ?? null,
@@ -808,7 +1228,10 @@ function buildReport(options: Options, dumps: LoadedDump[]) {
       timeframe: dump.timeframe,
       path: dump.path,
       mtime: dump.mtime,
-      rows: dump.rows.length,
+      detectedRows: dump.rows.length,
+      admittedRows: dump.rows.filter((row) =>
+        passesAlgoMtfControls(row, dump.header.mtf),
+      ).length,
       deploymentId: dump.header.deploymentId,
       asOfDay: dump.header.asOfDay,
       dumpGeneratedAt: dump.header.generatedAt,
@@ -838,18 +1261,18 @@ function renderMarkdown(report: ReturnType<typeof buildReport>): string {
   lines.push(`Input dir: ${report.inputDir}`);
   lines.push("");
   lines.push(
-    "> Descriptive in-sample report only. No temporal holdout or forward-window embargo is applied; this is not score-model activation evidence.",
+    "> Cohort: signals admitted by the Algo control panel's unanimous configured-timeframe MTF gate. Rolling-origin test slices admit training rows only when their exact completed outcome-end precedes the test boundary. This is an ordering/calibration audit, not standalone score-model activation evidence.",
   );
   lines.push("");
   lines.push("## Dumps");
   lines.push("");
   lines.push(
-    "| timeframe | deployment | dump generated | rows | horizon bars | symbol coverage | timeouts | path |",
+    "| timeframe | deployment | dump generated | detected | MTF admitted | horizon bars | symbol coverage | timeouts | path |",
   );
-  lines.push("|---|---|---|---:|---:|---:|---:|---|");
+  lines.push("|---|---|---|---:|---:|---:|---:|---:|---|");
   for (const dump of report.dumps) {
     lines.push(
-      `| ${dump.timeframe} | ${dump.deploymentId} | ${dump.dumpGeneratedAt} | ${dump.rows} | ${dump.outcomeHorizonBars} | ${formatPercent(dump.symbolCoverageRatio)} | ${formatPercent(dump.timeoutRatio)} | ${dump.path} |`,
+      `| ${dump.timeframe} | ${dump.deploymentId} | ${dump.dumpGeneratedAt} | ${dump.detectedRows} | ${dump.admittedRows} | ${dump.outcomeHorizonBars} | ${formatPercent(dump.symbolCoverageRatio)} | ${formatPercent(dump.timeoutRatio)} | ${dump.path} |`,
     );
   }
   lines.push("");
@@ -870,12 +1293,31 @@ function renderMarkdown(report: ReturnType<typeof buildReport>): string {
   lines.push("## Fit Quality");
   lines.push("");
   lines.push(
-    "| timeframe | direction | scorer | n | score-MFE r | high-score MFE lift | top expectancy lift | inversions |",
+    "| timeframe | direction | scorer | n | score-MFE r | high-score MFE lift | top correctness lift (pp) | correctness inversions | top signed-return lift | signed-return inversions |",
   );
-  lines.push("|---|---|---|---:|---:|---:|---:|---:|");
+  lines.push("|---|---|---|---:|---:|---:|---:|---:|---:|---:|");
   for (const cell of report.cells) {
     lines.push(
-      `| ${cell.timeframe} | ${cell.direction} | ${cell.scorer} | ${cell.scorableCount} | ${cell.magnitudeAlignment?.scoreMfePearson ?? "n/a"} | ${cell.magnitudeAlignment?.highScoreMfeLiftPercent ?? "n/a"} | ${cell.expectancyAlignment?.topBucketLiftPercent ?? "n/a"} | ${cell.expectancyAlignment?.inversionCount ?? "n/a"} |`,
+      `| ${cell.timeframe} | ${cell.direction} | ${cell.scorer} | ${cell.scorableCount} | ${cell.magnitudeAlignment?.scoreMfePearson ?? "n/a"} | ${cell.magnitudeAlignment?.highScoreMfeLiftPercent ?? "n/a"} | ${cell.correctnessAlignment.topBucketLiftPercentagePoints} | ${cell.correctnessAlignment.inversionCount} | ${cell.expectancyAlignment?.topBucketLiftPercent ?? "n/a"} | ${cell.expectancyAlignment?.inversionCount ?? "n/a"} |`,
+    );
+  }
+  lines.push("");
+  lines.push("## Held-Out Ordering Audit");
+  lines.push("");
+  lines.push(
+    "Move magnitude, directional correctness (hit rate), and signed directional return are separate outcomes. A score can rank MFE well while ranking either directional outcome poorly; this table keeps those distinctions explicit.",
+  );
+  lines.push("");
+  lines.push(
+    "| timeframe | direction | scorer | status | folds | held out | score-MFE r | high-score MFE lift | correctness top-band lift (pp) | correctness inversions | signed-return top-band lift | signed-return inversions | MFE calibration MAE | signed-return calibration MAE |",
+  );
+  lines.push(
+    "|---|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
+  );
+  for (const cell of report.cells) {
+    const holdout = cell.holdout;
+    lines.push(
+      `| ${cell.timeframe} | ${cell.direction} | ${cell.scorer} | ${holdout.status} | ${holdout.foldCount}/${holdout.requestedFoldCount} | ${holdout.heldOutCount} | ${holdout.magnitudeAlignment?.scoreMfePearson ?? "n/a"} | ${holdout.magnitudeAlignment?.highScoreMfeLiftPercent ?? "n/a"} | ${holdout.correctnessAlignment?.topBucketLiftPercentagePoints ?? "n/a"} | ${holdout.correctnessAlignment?.inversionCount ?? "n/a"} | ${holdout.expectancyAlignment?.topBucketLiftPercent ?? "n/a"} | ${holdout.expectancyAlignment?.inversionCount ?? "n/a"} | ${holdout.magnitudeCalibrationMaePercent ?? "n/a"} | ${holdout.directionalCalibrationMaePercent ?? "n/a"} |`,
     );
   }
   return lines.join("\n") + "\n";
@@ -959,12 +1401,15 @@ async function main(): Promise<void> {
 
 export const __calibrationFitInternalsForTests = {
   buildReport,
+  buildRollingOriginFolds,
   fitIsotonic,
   loadDump,
   loadRequestedDumps,
   parseOptions,
+  predictIsotonic,
   renderMarkdown,
   validateDumpSet,
+  weightedMean,
   writeFileAtomically,
 };
 

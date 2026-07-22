@@ -1,3 +1,5 @@
+import path from "node:path";
+
 export function assertStableApiPid(expectedPid, observedPid) {
   if (!Number.isSafeInteger(expectedPid) || expectedPid <= 0) {
     throw new Error(
@@ -22,12 +24,26 @@ export function assertApiDescendsFromSupervisor(apiAncestry, supervisorPid) {
   }
 }
 
+export function parseProcCmdline(raw) {
+  if (typeof raw !== "string" || !raw.endsWith("\0")) return null;
+  const argv = raw.slice(0, -1).split("\0");
+  return argv.length > 0 && argv.every((value) => value.length > 0)
+    ? argv
+    : null;
+}
+
 export function assertApiProcessRole(identity, expectedCwd, entrypoint) {
-  const argv = String(identity?.cmdlineRaw ?? "").split("\0").filter(Boolean);
+  const argv = parseProcCmdline(identity?.cmdlineRaw) ?? [];
+  const actualEntrypoint = argv[2]
+    ? path.resolve(identity?.cwd ?? "", argv[2])
+    : null;
+  const expectedEntrypoint = path.resolve(expectedCwd, entrypoint);
   if (
     identity?.cwd !== expectedCwd ||
     !/(?:^|\/)node$/.test(argv[0] ?? "") ||
-    !argv.includes(entrypoint)
+    argv.length !== 3 ||
+    argv[1] !== "--enable-source-maps" ||
+    actualEntrypoint !== expectedEntrypoint
   ) {
     throw new Error("recorded process does not match the API role");
   }
@@ -98,13 +114,20 @@ export function calculateCounterRate(first, second) {
   const secondTotal = finite(second?.total);
   const firstAtMs = finite(first?.atMs);
   const secondAtMs = finite(second?.atMs);
-  if ([firstTotal, secondTotal, firstAtMs, secondAtMs].some((value) => value == null)) {
-    throw new Error("counter samples must contain finite totals and timestamps");
+  if (
+    [firstTotal, secondTotal, firstAtMs, secondAtMs].some(
+      (value) => value == null,
+    )
+  ) {
+    throw new Error(
+      "counter samples must contain finite totals and timestamps",
+    );
   }
   const elapsedMs = secondAtMs - firstAtMs;
   if (elapsedMs <= 0) throw new Error("counter elapsed time must be positive");
   const deltaRows = secondTotal - firstTotal;
-  if (deltaRows < 0) throw new Error("counter decreased during the capture window");
+  if (deltaRows < 0)
+    throw new Error("counter decreased during the capture window");
   return {
     elapsedMs,
     deltaRows,
@@ -198,9 +221,10 @@ export function isWithinAcceptanceWindow(timeMs, startMs, endMs) {
 }
 
 export function isRunDevSupervisorProcess(cmdlineRaw, cwd, expectedCwd) {
-  const argv = String(cmdlineRaw ?? "").split("\0").filter(Boolean);
+  const argv = parseProcCmdline(cmdlineRaw) ?? [];
   const normalizedCwd = String(expectedCwd ?? "").replace(/\/+$/, "");
   return (
+    argv.length === 2 &&
     /(?:^|\/)node$/.test(argv[0] ?? "") &&
     ((cwd === normalizedCwd && argv[1] === "./scripts/runDevApp.mjs") ||
       argv[1] === `${normalizedCwd}/scripts/runDevApp.mjs`)
@@ -282,6 +306,14 @@ export function diffRuntimeCounters(before = {}, after = {}) {
   );
 }
 
+export function classifyIncrementalAcceptanceCounters(counterDelta = {}) {
+  return {
+    parityVerdict:
+      counterDelta.incrementalShadowMismatches === 0 ? "PASS" : "FAIL",
+    storedStateChurnVerdict: "OBSERVE",
+  };
+}
+
 export function summarizeRuntimeSamples(samples) {
   const valid = samples.filter((sample) => sample?.snapshot);
   const first = valid[0]?.snapshot ?? null;
@@ -290,15 +322,33 @@ export function summarizeRuntimeSamples(samples) {
     sampleCount: valid.length,
     firstAt: valid[0]?.at ?? null,
     lastAt: valid.at(-1)?.at ?? null,
-    peakEventLoopUtilization: maxValue(valid, (sample) => sample.snapshot.api.eventLoopUtilization),
-    peakEventLoopDelayP95Ms: maxValue(valid, (sample) => sample.snapshot.api.eventLoopDelayP95Ms),
+    peakEventLoopUtilization: maxValue(
+      valid,
+      (sample) => sample.snapshot.api.eventLoopUtilization,
+    ),
+    peakEventLoopDelayP95Ms: maxValue(
+      valid,
+      (sample) => sample.snapshot.api.eventLoopDelayP95Ms,
+    ),
     peakHeapUsedMb: maxValue(valid, (sample) => sample.snapshot.api.heapUsedMb),
     peakRssMb: maxValue(valid, (sample) => sample.snapshot.api.rssMb),
-    peakDbRawWaiting: maxValue(valid, (sample) => sample.snapshot.db.rawWaiting),
-    peakDbAdmissionQueued: maxValue(valid, (sample) => sample.snapshot.db.admissionQueued),
-    peakDbTotalWaiting: maxValue(valid, (sample) => sample.snapshot.db.totalWaiting),
+    peakDbRawWaiting: maxValue(
+      valid,
+      (sample) => sample.snapshot.db.rawWaiting,
+    ),
+    peakDbAdmissionQueued: maxValue(
+      valid,
+      (sample) => sample.snapshot.db.admissionQueued,
+    ),
+    peakDbTotalWaiting: maxValue(
+      valid,
+      (sample) => sample.snapshot.db.totalWaiting,
+    ),
     peakRuntimeFetchMs: maxValue(valid, (sample) => sample.fetchDurationMs),
-    averageRuntimeFetchMs: averageValue(valid, (sample) => sample.fetchDurationMs),
+    averageRuntimeFetchMs: averageValue(
+      valid,
+      (sample) => sample.fetchDurationMs,
+    ),
     counterDelta:
       first && last ? diffRuntimeCounters(first.counters, last.counters) : {},
     first,
@@ -327,12 +377,15 @@ export function pickRuntimeAcceptanceSnapshot(runtime) {
         ]),
       )
     : [];
-  const rawWaiting = finite(runtime?.api?.resourcePressure?.inputs?.dbPoolWaiting);
+  const rawWaiting = finite(
+    runtime?.api?.resourcePressure?.inputs?.dbPoolWaiting,
+  );
   const admissionQueued = hasAdmissionLanes
     ? admissionLanes.reduce((sum, lane) => sum + (finite(lane.queued) ?? 0), 0)
     : null;
   const marketDataAdmission = streams.marketDataAdmission ?? {};
-  const scannerCoverage = marketDataAdmission.optionsFlowScanner?.coverage ?? {};
+  const scannerCoverage =
+    marketDataAdmission.optionsFlowScanner?.coverage ?? {};
   const signalMatrix = streams.signalMatrix ?? {};
 
   return {
@@ -362,7 +415,9 @@ export function pickRuntimeAcceptanceSnapshot(runtime) {
       storedBarsMissCount: finite(storedBarsCache.missCount),
       storedBarsFullReadCount: finite(storedBarsCache.fullReadCount),
       storedBarsDeltaReadCount: finite(storedBarsCache.deltaReadCount),
-      storedBarsInvalidationFullCount: finite(storedBarsCache.invalidationFullCount),
+      storedBarsInvalidationFullCount: finite(
+        storedBarsCache.invalidationFullCount,
+      ),
       storedBarsInvalidationTruncateCount: finite(
         storedBarsCache.invalidationTruncateCount,
       ),
@@ -374,7 +429,9 @@ export function pickRuntimeAcceptanceSnapshot(runtime) {
       incrementalFormingReplays: finite(incremental.formingReplays),
       incrementalShadowMismatches: finite(incremental.shadowMismatches),
       matrixServeMismatchCount: finite(incremental.matrixServeMismatchCount),
-      stockQuoteReconnectCount: finite(streams.massiveStockQuotes?.reconnectCount),
+      stockQuoteReconnectCount: finite(
+        streams.massiveStockQuotes?.reconnectCount,
+      ),
       stockAggregateReconnectCount: finite(
         streams.stockAggregates?.massiveDelayedWebSocket?.reconnectCount,
       ),
@@ -436,12 +493,18 @@ export function pickRuntimeAcceptanceSnapshot(runtime) {
 }
 
 function maxValue(values, selector) {
-  const numbers = values.map(selector).map(finite).filter((value) => value != null);
+  const numbers = values
+    .map(selector)
+    .map(finite)
+    .filter((value) => value != null);
   return numbers.length ? Math.max(...numbers) : null;
 }
 
 function averageValue(values, selector) {
-  const numbers = values.map(selector).map(finite).filter((value) => value != null);
+  const numbers = values
+    .map(selector)
+    .map(finite)
+    .filter((value) => value != null);
   return numbers.length
     ? numbers.reduce((sum, value) => sum + value, 0) / numbers.length
     : null;
@@ -459,5 +522,7 @@ function getPath(value, keys) {
 
 function pick(value, keys) {
   if (!value || typeof value !== "object") return {};
-  return Object.fromEntries(keys.filter((key) => key in value).map((key) => [key, value[key]]));
+  return Object.fromEntries(
+    keys.filter((key) => key in value).map((key) => [key, value[key]]),
+  );
 }

@@ -86,8 +86,11 @@ if (outPath) {
 
 const summary = summarizeCpuProfile(profile);
 console.log(
-  `total samples=${summary.totalSamples} idle=${summary.idleDurationUs} busy=${summary.busyDurationUs} ` +
-    `(busy%=${summary.busyPercent.toFixed(1)})`,
+  `total samples=${summary.totalSamples} initialGap=${summary.initialGapDurationUs} ` +
+    `idle=${summary.idleDurationUs} busy=${summary.busyDurationUs} ` +
+    `(busy%=${summary.busyPercent.toFixed(1)}) ` +
+    `negativeJitterSamples=${summary.negativeJitterSampleCount} ` +
+    `negativeJitterUs=${summary.negativeJitterDurationUs}`,
 );
 console.log("top self-time as % of BUSY microseconds:");
 for (const row of summary.rows.slice(0, 30)) {

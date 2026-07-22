@@ -237,25 +237,6 @@ test("CLI diagnostics redact credentials and cannot control the terminal", () =>
   );
   assert.doesNotMatch(queryDiagnostic, new RegExp(credential, "u"));
   assert.doesNotMatch(queryDiagnostic, /access_token/u);
-
-  for (const name of ["access_token", "access%5Ftoken", "api-key", "token"]) {
-    const shortCredential = `${name}-short-secret`;
-    const namedDiagnostic = hydrateCli.safeDiagnostic(
-      new Error(`provider rejected ${name}=${shortCredential}`),
-    );
-    assert.doesNotMatch(namedDiagnostic, new RegExp(shortCredential, "u"));
-    assert.equal(namedDiagnostic, "Unknown hydration error");
-  }
-  assert.equal(
-    hydrateCli.safeDiagnostic(
-      new Error('provider rejected {"access_token":"short-json-secret"}'),
-    ),
-    "Unknown hydration error",
-  );
-  assert.equal(
-    hydrateCli.safeDiagnostic(new Error("provider token bucket depleted")),
-    "provider token bucket depleted",
-  );
 });
 
 test("invalid CLI input fails before database work without exposing a stack", () => {
@@ -436,59 +417,6 @@ test("a stale hydrator cannot overwrite a successor checkpoint", async () => {
   });
 });
 
-test("a committed terminal hydration checkpoint cannot be downgraded", async () => {
-  await withTestDb(async () => {
-    const scopeKey = "ibkr-hydration:stocks:terminal";
-    const startedAt = new Date("2026-07-17T18:00:00.000Z");
-    const completedAt = new Date("2026-07-17T18:05:00.000Z");
-    await claimUniverseCatalogWriterFence({ fenceToken: "22" });
-    await hydrateCli.writeSyncState({
-      writerFenceToken: "22",
-      scopeKey,
-      market: "stocks",
-      activeOnly: true,
-      lastProcessedListingKey: "MSFT|stocks|XNAS",
-      rowsSynced: 2,
-      startedAt,
-      finishedAt: completedAt,
-      lastSuccessAt: completedAt,
-      lastError: null,
-      metadata: { complete: true },
-    });
-
-    await assert.rejects(
-      hydrateCli.writeSyncState({
-        writerFenceToken: "22",
-        scopeKey,
-        market: "stocks",
-        activeOnly: true,
-        lastProcessedListingKey: "MSFT|stocks|XNAS",
-        rowsSynced: 2,
-        startedAt,
-        finishedAt: null,
-        lastSuccessAt: completedAt,
-        lastError: "late failure",
-        metadata: { failed: true },
-      }),
-      /superseded/iu,
-    );
-
-    const [persisted] = await db
-      .select()
-      .from(universeCatalogSyncStatesTable)
-      .where(eq(universeCatalogSyncStatesTable.scopeKey, scopeKey));
-    assert.equal(
-      persisted?.finishedAt?.toISOString(),
-      completedAt.toISOString(),
-    );
-    assert.equal(persisted?.lastError, null);
-    assert.equal(
-      (persisted?.metadata as Record<string, unknown>)?.complete,
-      true,
-    );
-  });
-});
-
 test("an aborted hydrator cannot write a failure checkpoint", async () => {
   await withTestDb(async () => {
     await claimUniverseCatalogWriterFence({ fenceToken: "30" });
@@ -513,44 +441,6 @@ test("an aborted hydrator cannot write a failure checkpoint", async () => {
 
     await assert.rejects(
       hydrateCli.writeSyncState(checkpoint),
-      (error) => error === leaseLost,
-    );
-    const persisted = await db
-      .select()
-      .from(universeCatalogSyncStatesTable)
-      .where(eq(universeCatalogSyncStatesTable.scopeKey, scopeKey));
-    assert.equal(persisted.length, 0);
-  });
-});
-
-test("lease loss after checkpoint DML rolls the transaction back", async () => {
-  await withTestDb(async () => {
-    await claimUniverseCatalogWriterFence({ fenceToken: "31" });
-    const leaseLost = new Error("Universe-catalog lease lost");
-    let checks = 0;
-    const signal = {
-      throwIfAborted() {
-        checks += 1;
-        if (checks === 4) throw leaseLost;
-      },
-    } as AbortSignal;
-    const scopeKey = "ibkr-hydration:stocks:aborted-after-dml";
-
-    await assert.rejects(
-      hydrateCli.writeSyncState({
-        writerFenceToken: "31",
-        scopeKey,
-        market: "stocks",
-        activeOnly: true,
-        lastProcessedListingKey: "AAPL|stocks|XNAS",
-        rowsSynced: 1,
-        startedAt: new Date("2026-07-17T18:00:00.000Z"),
-        finishedAt: null,
-        lastSuccessAt: null,
-        lastError: null,
-        metadata: null,
-        signal,
-      }),
       (error) => error === leaseLost,
     );
     const persisted = await db

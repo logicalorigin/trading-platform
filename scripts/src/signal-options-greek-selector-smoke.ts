@@ -7,10 +7,12 @@ import {
   stripVTControlCharacters,
 } from "node:util";
 import { scoreOptionGreekCandidate } from "@workspace/backtest-core";
+import { hasOpaqueOperatorCredential } from "./operator-diagnostic";
 import {
   closeDatabaseConnections,
   pool,
   sharedAdvisoryLockHolder,
+  type AdvisoryLockLease,
 } from "@workspace/db";
 import {
   runSignalOptionsGreekSelectorSmoke,
@@ -62,9 +64,13 @@ type RawDeploymentRow = Omit<
 };
 
 type SmokeDependencies = {
-  acquireLock: (waitMs: number) => Promise<(() => Promise<void>) | null>;
+  acquireLock: (waitMs: number) => Promise<AdvisoryLockLease | null>;
   readDeployment: () => Promise<DeploymentRow>;
-  runSmoke: typeof runSignalOptionsGreekSelectorSmoke;
+  runSmoke: (
+    input: Parameters<typeof runSignalOptionsGreekSelectorSmoke>[0] & {
+      signal?: AbortSignal;
+    },
+  ) => ReturnType<typeof runSignalOptionsGreekSelectorSmoke>;
   applyGex: typeof applyGexHistoricalGreeks;
   writeReport: typeof writeReport;
   log: (message: string) => void;
@@ -482,7 +488,10 @@ function safeDiagnostic(error: unknown): string {
     .replace(UNSAFE_OUTPUT_PATTERN, " ")
     .replace(/\s+/gu, " ")
     .trim();
-  const diagnostic = cleaned || "Unknown Greek-selector smoke error";
+  const diagnostic =
+    cleaned && !hasOpaqueOperatorCredential(cleaned)
+      ? cleaned
+      : "Unknown Greek-selector smoke error";
   return diagnostic.length <= MAX_DIAGNOSTIC_LENGTH
     ? diagnostic
     : `${diagnostic.slice(0, MAX_DIAGNOSTIC_LENGTH - 1)}…`;
@@ -742,7 +751,7 @@ export function renderGreekSelectorSmokeMarkdown(
         .slice(0, 50)
         .map(
           (error) =>
-            `| ${cell(error.symbol ?? "-")} | ${cell(error.message)} |`,
+            `| ${cell(error.symbol ?? "-")} | ${cell(safeDiagnostic(error.message))} |`,
         ),
     );
   }
@@ -827,19 +836,22 @@ function applyGreekLookupToCandidate(input: {
 }) {
   const candidateWithSource = input.candidate as SmokeCandidateWithGreekSource;
   if (input.lookup.source === "gex_snapshot") {
-    const spot = input.row.underlyingPrice ?? input.lookup.spot;
+    const rowSpot = input.row.underlyingPrice;
+    const spot =
+      rowSpot != null && Number.isFinite(rowSpot) && rowSpot > 0
+        ? rowSpot
+        : input.lookup.spot;
+    if (spot == null || !Number.isFinite(spot) || spot <= 0) return;
     input.candidate.greeks = input.lookup.greeks;
-    if (spot != null && Number.isFinite(spot)) {
-      input.candidate.score = scoreOptionGreekCandidate({
-        right: input.candidate.right,
-        spot,
-        strike: input.candidate.strike,
-        entryPrice: input.candidate.entryPrice,
-        volume: input.candidate.volume,
-        hasExitPrice: input.candidate.exitPrice != null,
-        greeks: input.lookup.greeks,
-      });
-    }
+    input.candidate.score = scoreOptionGreekCandidate({
+      right: input.candidate.right,
+      spot,
+      strike: input.candidate.strike,
+      entryPrice: input.candidate.entryPrice,
+      volume: input.candidate.volume,
+      hasExitPrice: input.candidate.exitPrice != null,
+      greeks: input.lookup.greeks,
+    });
     candidateWithSource.greekSource = {
       source: "gex_snapshot",
       computedAt: input.lookup.computedAt,
@@ -859,11 +871,15 @@ async function applyGexHistoricalGreeks(
   result: SignalOptionsGreekSelectorSmokeResult,
   config: Pick<Config, "gexToleranceMs" | "progress">,
   lookupGreeks: typeof lookupHistoricalGreeks = lookupHistoricalGreeks,
+  signal?: AbortSignal,
 ) {
+  signal?.throwIfAborted();
   let lookupCount = 0;
   let matchCount = 0;
   for (const row of result.rows) {
+    signal?.throwIfAborted();
     for (const candidate of uniqueVisibleCandidates(row)) {
+      signal?.throwIfAborted();
       lookupCount += 1;
       const lookup = await lookupGreeks({
         symbol: row.symbol,
@@ -874,6 +890,7 @@ async function applyGexHistoricalGreeks(
         toleranceMs: config.gexToleranceMs,
         fallbackGreeks: candidate.greeks,
       });
+      signal?.throwIfAborted();
       if (lookup.source === "gex_snapshot") matchCount += 1;
       applyGreekLookupToCandidate({ row, candidate, lookup });
     }
@@ -891,7 +908,21 @@ async function applyGexHistoricalGreeks(
       row.selected?.pnl != null && row.legacy.pnl != null
         ? Number((row.selected.pnl - row.legacy.pnl).toFixed(2))
         : null;
+    if (row.outcome !== "closed_trade") {
+      row.outcome =
+        row.selected?.pnl != null ? "end_of_window_mark" : "unmarked";
+      row.notes = [
+        ...row.notes.filter(
+          (note) =>
+            note !== "marked_to_window_end" && note !== "missing_exit_price",
+        ),
+        row.outcome === "end_of_window_mark"
+          ? "marked_to_window_end"
+          : "missing_exit_price",
+      ];
+    }
   }
+  signal?.throwIfAborted();
   Object.assign(
     result.summary,
     summarizeGreekSelectorSmokeRows(
@@ -1040,21 +1071,33 @@ async function assertReportDestinationAvailable(
 async function writeReport(
   result: SignalOptionsGreekSelectorSmokeResult,
   reportDir: string,
+  signal?: AbortSignal,
+  renameDirectory: (from: string, to: string) => Promise<void> = rename,
 ): Promise<string> {
+  signal?.throwIfAborted();
   await assertReportDestinationAvailable(reportDir);
+  signal?.throwIfAborted();
   const parent = path.dirname(reportDir);
   await mkdir(parent, { recursive: true });
+  signal?.throwIfAborted();
   const temporaryDir = await mkdtemp(
     path.join(parent, `.${path.basename(reportDir)}.tmp-`),
   );
+  let published = false;
   try {
     await writeFile(
       path.join(temporaryDir, "report.md"),
       renderGreekSelectorSmokeMarkdown(result),
     );
-    await rename(temporaryDir, reportDir);
+    signal?.throwIfAborted();
+    await renameDirectory(temporaryDir, reportDir);
+    published = true;
+    signal?.throwIfAborted();
   } catch (error) {
-    await rm(temporaryDir, { recursive: true, force: true }).catch(() => {});
+    await rm(published ? reportDir : temporaryDir, {
+      recursive: true,
+      force: true,
+    }).catch(() => {});
     throw error;
   }
   return path.join(reportDir, "report.md");
@@ -1073,14 +1116,16 @@ async function executeSmoke(
   config: Config,
   dependencies: SmokeDependencies = defaultSmokeDependencies,
 ): Promise<string> {
-  const releaseLock = await dependencies.acquireLock(config.lockWaitMs);
-  if (!releaseLock) {
+  const lease = await dependencies.acquireLock(config.lockWaitMs);
+  if (!lease) {
     throw new Error("Signal-options worker advisory lock is already held.");
   }
 
   let failed = false;
   try {
+    lease.signal.throwIfAborted();
     const deployment = await dependencies.readDeployment();
+    lease.signal.throwIfAborted();
     const symbolUniverse = selectSymbolUniverse(
       deployment.symbolUniverse,
       config.symbols,
@@ -1097,17 +1142,24 @@ async function executeSmoke(
       riskFreeRate: config.riskFreeRate,
       dividendYield: config.dividendYield,
       progress: config.progress,
+      signal: lease.signal,
     });
+    lease.signal.throwIfAborted();
     (result.config as Record<string, unknown>)["gexToleranceMs"] =
       config.gexToleranceMs;
-    await dependencies.applyGex(result, config);
-    return await dependencies.writeReport(result, config.reportDir);
+    await dependencies.applyGex(result, config, undefined, lease.signal);
+    lease.signal.throwIfAborted();
+    return await dependencies.writeReport(
+      result,
+      config.reportDir,
+      lease.signal,
+    );
   } catch (error) {
     failed = true;
     throw error;
   } finally {
     try {
-      await releaseLock();
+      await lease();
     } catch (error) {
       if (!failed) throw error;
       try {

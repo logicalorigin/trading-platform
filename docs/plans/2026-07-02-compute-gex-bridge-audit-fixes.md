@@ -33,10 +33,10 @@ source (verdicts noted). Severities below are the *post-verification* severities
 | Rust worker build | `pnpm run build:market-data-worker` |
 | Rust worker fmt check | `pnpm run fmt:market-data-worker` |
 | Full monorepo typecheck | `pnpm run typecheck` |
-| Live reload (verify at runtime) | `kill -USR2 "$(pgrep -f 'node ./scripts/runDevApp.mjs' | head -1)"` then `curl -s localhost:8080/api/healthz`, `curl -s localhost:18768/health`, `curl -s localhost:18770/health` |
+| Runtime verification | Use Replit's managed workflow restart action, then `curl -s localhost:8080/api/healthz`, `curl -s localhost:18768/health`, `curl -s localhost:18770/health` |
 
-> The API runs a **built bundle** (`node dist/index.mjs`), so backend changes need the SIGUSR2
-> rebuild+restart to be visible at runtime (see `CLAUDE.md`). For these fixes the targeted tests +
+> The API runs a **built bundle** (`node dist/index.mjs`), so backend changes need a managed
+> workflow restart to be visible at runtime (see `CLAUDE.md`). For these fixes the targeted tests +
 > typecheck are the fast path; only reload for the live smoke checks noted per-fix.
 
 ---
@@ -96,7 +96,7 @@ def _signal_trend_direction(bars: list[SignalMatrixBarInput], basis_length: int)
 ### Verify
 - `pnpm run python-compute:test` stays green.
 - Add the differential test in **M1** (this is the real proof).
-- Optional runtime: SIGUSR2 reload, then confirm `:18770/health` 200 and no new spurious signals on short-history HTF symbols.
+- Optional runtime: managed workflow restart, then confirm `:18770/health` 200 and no new spurious signals on short-history HTF symbols.
 
 ---
 
@@ -344,6 +344,6 @@ The audit verified these are correct; keep them intact while fixing the above:
 2. **PR-2 (M2 + M3 + L1):** python-compute dispatch resilience + the unavailable-fallback. *(api-server; vitest + typecheck.)*
 3. **PR-3 (L2–L7, I1–I4):** GEX + bridge hygiene. *(rust + api-server + sidecar; build + fmt + typecheck + targeted tests.)*
 
-Post-fix, re-run the live smoke checks: SIGUSR2 reload → `:8080/api/healthz`, `:18768/health`,
+Post-fix, re-run the live smoke checks: managed workflow restart → `:8080/api/healthz`, `:18768/health`,
 `:18770/health` all 200, and (H1) confirm short-history HTF symbols no longer emit signals the JS path
 suppresses.

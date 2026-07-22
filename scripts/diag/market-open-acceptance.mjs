@@ -1,7 +1,13 @@
 #!/usr/bin/env node
 import { spawn } from "node:child_process";
 import { createReadStream } from "node:fs";
-import { mkdir, readFile, readdir, readlink, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  readFile,
+  readdir,
+  readlink,
+  writeFile,
+} from "node:fs/promises";
 import path from "node:path";
 import readline from "node:readline";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -19,6 +25,7 @@ import {
   assertSameProcessIdentity,
   assertStableApiPid,
   calculateCounterRate,
+  classifyIncrementalAcceptanceCounters,
   cleanupHeapProfiler,
   createSingleFlightRunner,
   diffRuntimeCounters,
@@ -91,10 +98,16 @@ const state = {
   steps: {},
 };
 
-console.log(`market-open acceptance capture -> ${path.relative(REPO_ROOT, outDir)}`);
+console.log(
+  `market-open acceptance capture -> ${path.relative(REPO_ROOT, outDir)}`,
+);
 
 await runStep("identity", "1. identity", captureIdentity);
-await runStep("counterBaseline", "2. runtime counter baseline", captureRuntimeSnapshot);
+await runStep(
+  "counterBaseline",
+  "2. runtime counter baseline",
+  captureRuntimeSnapshot,
+);
 state.windowStartedAt = new Date().toISOString();
 const runtimeSampler = startRuntimeSampler();
 try {
@@ -105,12 +118,20 @@ try {
   );
   await Promise.all([
     runStep("cpuProfile", "4a. CPU profile", captureCpuProfile),
-    runStep("allocationProfile", "4b. allocation profile", captureAllocationProfile),
+    runStep(
+      "allocationProfile",
+      "4b. allocation profile",
+      captureAllocationProfile,
+    ),
   ]);
 } finally {
   await runtimeSampler.stop();
 }
-await runStep("counterFinal", "5. runtime counter final", captureRuntimeSnapshot);
+await runStep(
+  "counterFinal",
+  "5. runtime counter final",
+  captureRuntimeSnapshot,
+);
 state.windowEndedAt = new Date().toISOString();
 state.runtimeSamples = runtimeSampler.samples;
 state.steps.counters = buildCounterWindowStep();
@@ -123,7 +144,10 @@ state.summaryRows = summaryRows;
 
 const reportMd = renderReport(state, summaryRows);
 await writeFile(path.join(outDir, "report.md"), reportMd);
-await writeFile(path.join(outDir, "capture.json"), `${JSON.stringify(state, null, 2)}\n`);
+await writeFile(
+  path.join(outDir, "capture.json"),
+  `${JSON.stringify(state, null, 2)}\n`,
+);
 
 console.log("");
 console.log(renderMarkdownTable(summaryRows));
@@ -164,7 +188,9 @@ async function captureIdentity() {
   const apiPid = finiteNumber(apiCurrent.pid);
   assertStableApiPid(apiPid, apiPid);
   if (!pidIsAlive(apiPid)) {
-    throw new Error(`recorded API pid is unavailable or dead: ${apiPid ?? "n-a"}`);
+    throw new Error(
+      `recorded API pid is unavailable or dead: ${apiPid ?? "n-a"}`,
+    );
   }
   const apiProcessIdentity = await readProcIdentity(apiPid);
   assertSameProcessIdentity(apiProcessIdentity, apiProcessIdentity);
@@ -172,15 +198,23 @@ async function captureIdentity() {
   const supervisors = await findRunDevSupervisors();
   const currentSupervisorPid = finiteNumber(current?.supervisor?.pid);
   const supervisorPid =
-    currentSupervisorPid && supervisors.some((item) => item.pid === currentSupervisorPid)
+    currentSupervisorPid &&
+    supervisors.some((item) => item.pid === currentSupervisorPid)
       ? currentSupervisorPid
-      : supervisors[0]?.pid ?? currentSupervisorPid ?? null;
-  const supervisorAncestry = supervisorPid ? await processAncestry(supervisorPid) : [];
-  const pid2Owned = supervisorAncestry.some((entry) => cmdlineIsPid2(entry.cmdlineRaw ?? ""));
-  const gitSha = findRecordedGitSha(apiCurrent) ?? findRecordedGitSha(current) ?? null;
+      : (supervisors[0]?.pid ?? currentSupervisorPid ?? null);
+  const supervisorAncestry = supervisorPid
+    ? await processAncestry(supervisorPid)
+    : [];
+  const pid2Owned = supervisorAncestry.some((entry) =>
+    cmdlineIsPid2(entry.cmdlineRaw ?? ""),
+  );
+  const gitSha =
+    findRecordedGitSha(apiCurrent) ?? findRecordedGitSha(current) ?? null;
 
   if (supervisors.length !== 1) {
-    throw new Error(`expected one runDevApp supervisor, found ${supervisors.length}`);
+    throw new Error(
+      `expected one runDevApp supervisor, found ${supervisors.length}`,
+    );
   }
   if (!pid2Owned) {
     throw new Error(`supervisor ${supervisorPid ?? "n-a"} is not pid2-owned`);
@@ -211,7 +245,10 @@ async function captureSymbolStateGate() {
   const first = await readSymbolStateWriteCounter();
   await sleep(SYMBOL_STATE_GATE_MS);
   const second = await readSymbolStateWriteCounter();
-  const { elapsedMs, deltaRows, rowsPerMin } = calculateCounterRate(first, second);
+  const { elapsedMs, deltaRows, rowsPerMin } = calculateCounterRate(
+    first,
+    second,
+  );
   const rounded = String(Math.round(rowsPerMin));
   return {
     first,
@@ -236,7 +273,12 @@ async function captureCpuProfile() {
 }
 
 async function runCpuProfiler(apiPid) {
-  const script = path.join(REPO_ROOT, "scripts", "diag", "cpu-profile-running-api.mjs");
+  const script = path.join(
+    REPO_ROOT,
+    "scripts",
+    "diag",
+    "cpu-profile-running-api.mjs",
+  );
   const rawProfilePath = path.join(outDir, "cpu.cpuprofile");
   const result = await runCommand(
     process.execPath,
@@ -244,7 +286,9 @@ async function runCpuProfiler(apiPid) {
     { timeoutMs: CPU_PROFILE_MS + 15_000 },
   );
   if (result.code !== 0) {
-    throw new Error(`cpu profiler exited ${result.code}: ${trimForError(result.stderr || result.stdout)}`);
+    throw new Error(
+      `cpu profiler exited ${result.code}: ${trimForError(result.stderr || result.stdout)}`,
+    );
   }
   const parsed = parseCpuProfileSummaryOutput(result.stdout);
   return {
@@ -267,7 +311,9 @@ async function captureAllocationProfile() {
   let samplingStarted = false;
   try {
     await inspector.send("HeapProfiler.enable");
-    await inspector.send("HeapProfiler.startSampling", { samplingInterval: 65_536 });
+    await inspector.send("HeapProfiler.startSampling", {
+      samplingInterval: 65_536,
+    });
     samplingStarted = true;
     await sleep(ALLOC_PROFILE_MS);
     const { profile } = await inspector.send("HeapProfiler.stopSampling");
@@ -298,7 +344,9 @@ async function captureRuntimeSnapshot() {
     signal: AbortSignal.timeout(60_000),
   });
   if (!response.ok) {
-    throw new Error(`GET ${RUNTIME_URL} -> ${response.status}: ${trimForError(await response.text())}`);
+    throw new Error(
+      `GET ${RUNTIME_URL} -> ${response.status}: ${trimForError(await response.text())}`,
+    );
   }
   const runtime = await response.json();
   return validateRuntimeAcceptanceSnapshot(
@@ -331,7 +379,10 @@ async function captureFirehoseWindow() {
   let includedEvents = 0;
   for (const file of files) {
     const rl = readline.createInterface({
-      input: createReadStream(file, { encoding: "utf8", highWaterMark: 1024 * 1024 }),
+      input: createReadStream(file, {
+        encoding: "utf8",
+        highWaterMark: 1024 * 1024,
+      }),
       crlfDelay: Infinity,
     });
     for await (const line of rl) {
@@ -349,15 +400,14 @@ async function captureFirehoseWindow() {
       if (!isWithinAcceptanceWindow(timeMs, cutoffMs, now)) continue;
       includedEvents += 1;
       const shape = sqlShape(event.sql, event.queryName);
-      const current =
-        byShape.get(shape) ?? {
-          shape,
-          count: 0,
-          totalMs: 0,
-          maxMs: 0,
-          firstAt: event.time,
-          lastAt: event.time,
-        };
+      const current = byShape.get(shape) ?? {
+        shape,
+        count: 0,
+        totalMs: 0,
+        maxMs: 0,
+        firstAt: event.time,
+        lastAt: event.time,
+      };
       const durationMs = finiteNumber(event.durationMs) ?? 0;
       current.count += 1;
       current.totalMs += durationMs;
@@ -382,7 +432,9 @@ async function captureFirehoseWindow() {
 }
 
 async function currentApiPid() {
-  const apiCurrent = await readJsonIfExists(path.join(RECORDER_DIR, "api-current.json"));
+  const apiCurrent = await readJsonIfExists(
+    path.join(RECORDER_DIR, "api-current.json"),
+  );
   assertFreshApiHeartbeat(
     apiCurrent?.updatedAt,
     Date.now(),
@@ -419,7 +471,10 @@ function startRuntimeSampler() {
         snapshot,
       });
     } catch (error) {
-      samples.push({ at: new Date().toISOString(), error: errorMessage(error) });
+      samples.push({
+        at: new Date().toISOString(),
+        error: errorMessage(error),
+      });
     }
   });
   runner.run();
@@ -477,16 +532,24 @@ async function readSymbolStateWriteCounter() {
     "  where relname = 'signal_monitor_symbol_states'",
     "), 0);",
   ].join(" ");
-  const result = await runCommand("psql", ["-AtX", "-v", "ON_ERROR_STOP=1", "-c", query], {
-    env: psqlEnvironment(databaseUrl),
-    timeoutMs: 30_000,
-  });
+  const result = await runCommand(
+    "psql",
+    ["-AtX", "-v", "ON_ERROR_STOP=1", "-c", query],
+    {
+      env: psqlEnvironment(databaseUrl),
+      timeoutMs: 30_000,
+    },
+  );
   if (result.code !== 0) {
-    throw new Error(`psql exited ${result.code}: ${trimForError(result.stderr || result.stdout)}`);
+    throw new Error(
+      `psql exited ${result.code}: ${trimForError(result.stderr || result.stdout)}`,
+    );
   }
   const total = Number(result.stdout.trim());
   if (!Number.isFinite(total)) {
-    throw new Error(`psql returned non-numeric counter: ${JSON.stringify(result.stdout.trim())}`);
+    throw new Error(
+      `psql returned non-numeric counter: ${JSON.stringify(result.stdout.trim())}`,
+    );
   }
   return { at: new Date().toISOString(), atMs: Date.now(), total };
 }
@@ -494,8 +557,11 @@ async function readSymbolStateWriteCounter() {
 async function openInspector(pid) {
   process.kill(pid, "SIGUSR1");
   await sleep(500);
-  const response = await fetch(INSPECTOR_URL, { signal: AbortSignal.timeout(5_000) });
-  if (!response.ok) throw new Error(`inspector list returned ${response.status}`);
+  const response = await fetch(INSPECTOR_URL, {
+    signal: AbortSignal.timeout(5_000),
+  });
+  if (!response.ok)
+    throw new Error(`inspector list returned ${response.status}`);
   const list = await response.json();
   const target = list.find((item) => item.webSocketDebuggerUrl);
   if (!target) throw new Error("no inspector target found on :9229");
@@ -538,7 +604,8 @@ async function connectCdp(url) {
     msg.error ? reject(new Error(msg.error.message)) : resolve(msg.result);
   });
   ws.addEventListener("close", () => {
-    for (const { reject } of pending.values()) reject(new Error("inspector websocket closed"));
+    for (const { reject } of pending.values())
+      reject(new Error("inspector websocket closed"));
     pending.clear();
   });
   try {
@@ -625,7 +692,8 @@ function aggregateHeapProfile(profile) {
     .reduce((sum, row) => sum + row.selfSizeBytes, 0);
   return {
     totalBytes,
-    parseRowAsArrayPercent: totalBytes > 0 ? (parseRowBytes / totalBytes) * 100 : null,
+    parseRowAsArrayPercent:
+      totalBytes > 0 ? (parseRowBytes / totalBytes) * 100 : null,
     rows,
   };
 }
@@ -636,12 +704,17 @@ function deriveFirehoseMetrics(rows) {
     (row) => /bar_cache/i.test(row.shape) && /\bselect\b/i.test(row.shape),
   );
   const executionEventReadRows = rows.filter(
-    (row) => /execution_events/i.test(row.shape) && /\bselect\b/i.test(row.shape),
+    (row) =>
+      /execution_events/i.test(row.shape) && /\bselect\b/i.test(row.shape),
   );
   return {
     authSessionsMaxSec: maxSeconds(authRows.map((row) => row.maxMs)),
-    barCacheSelectTotalSec: sumSeconds(barCacheSelectRows.map((row) => row.totalMs)),
-    executionEventsReadMaxSec: maxSeconds(executionEventReadRows.map((row) => row.maxMs)),
+    barCacheSelectTotalSec: sumSeconds(
+      barCacheSelectRows.map((row) => row.totalMs),
+    ),
+    executionEventsReadMaxSec: maxSeconds(
+      executionEventReadRows.map((row) => row.maxMs),
+    ),
   };
 }
 
@@ -661,6 +734,8 @@ function buildSummaryRows(reportState) {
     hitCount: counterDelta.storedBarsHitCount,
     deltaReadCount: counterDelta.storedBarsDeltaReadCount,
   };
+  const incrementalAcceptance =
+    classifyIncrementalAcceptanceCounters(counterDelta);
 
   return [
     {
@@ -674,7 +749,10 @@ function buildSummaryRows(reportState) {
       metric: "_parseRowAsArray allocation %",
       baseline: `${BASELINES.parseRowAllocPercent}%`,
       captured: formatMaybePercent(alloc?.parseRowAsArrayPercent),
-      verdict: compareLower(alloc?.parseRowAsArrayPercent, BASELINES.parseRowAllocPercent),
+      verdict: compareLower(
+        alloc?.parseRowAsArrayPercent,
+        BASELINES.parseRowAllocPercent,
+      ),
       notes: "20s HeapProfiler sampling",
     },
     {
@@ -695,21 +773,31 @@ function buildSummaryRows(reportState) {
       metric: "DB pool waiters",
       baseline: `${BASELINES.dbWaitersRange[0]}-${BASELINES.dbWaitersRange[1]}`,
       captured: formatMaybeNumber(dbWaiters, 0),
-      verdict: compareLowerRange(dbWaiters, BASELINES.dbWaitersRange[0], BASELINES.dbWaitersRange[1]),
+      verdict: compareLowerRange(
+        dbWaiters,
+        BASELINES.dbWaitersRange[0],
+        BASELINES.dbWaitersRange[1],
+      ),
       notes: "5s peak of raw pool + admission queue",
     },
     {
       metric: "auth_sessions max queue",
       baseline: `${BASELINES.authSessionsMaxSec}s`,
       captured: formatMaybeSeconds(firehoseMetrics.authSessionsMaxSec),
-      verdict: compareLower(firehoseMetrics.authSessionsMaxSec, BASELINES.authSessionsMaxSec),
+      verdict: compareLower(
+        firehoseMetrics.authSessionsMaxSec,
+        BASELINES.authSessionsMaxSec,
+      ),
       notes: "exact acceptance-window slow-query firehose",
     },
     {
       metric: "bar_cache SELECT total",
       baseline: `${BASELINES.barCacheSelectTotalSec}s`,
       captured: formatMaybeSeconds(firehoseMetrics.barCacheSelectTotalSec),
-      verdict: compareLower(firehoseMetrics.barCacheSelectTotalSec, BASELINES.barCacheSelectTotalSec),
+      verdict: compareLower(
+        firehoseMetrics.barCacheSelectTotalSec,
+        BASELINES.barCacheSelectTotalSec,
+      ),
       notes: "exact acceptance-window slow-query firehose",
     },
     {
@@ -743,18 +831,20 @@ function buildSummaryRows(reportState) {
       notes: "end-of-window resident cache",
     },
     {
-      metric: "incremental mismatches",
-      baseline: "0 shadow / 0 serve",
-      captured: `${formatMaybeNumber(
-        counterDelta.incrementalShadowMismatches,
-        0,
-      )} / ${formatMaybeNumber(counterDelta.matrixServeMismatchCount, 0)}`,
-      verdict:
-        counterDelta.incrementalShadowMismatches === 0 &&
-        counterDelta.matrixServeMismatchCount === 0
-          ? "PASS"
-          : "FAIL",
-      notes: incremental?.lastMatrixServeMismatchCellKey ?? "exact-window counter delta",
+      metric: "incremental evaluator parity",
+      baseline: "0 shadow mismatches",
+      captured: formatMaybeNumber(counterDelta.incrementalShadowMismatches, 0),
+      verdict: incrementalAcceptance.parityVerdict,
+      notes: "exact-window incremental-vs-from-scratch checks",
+    },
+    {
+      metric: "stored-state transition churn",
+      baseline: "observational",
+      captured: formatMaybeNumber(counterDelta.matrixServeMismatchCount, 0),
+      verdict: incrementalAcceptance.storedStateChurnVerdict,
+      notes: incremental?.lastMatrixServeMismatchCellKey
+        ? `latest cell: ${incremental.lastMatrixServeMismatchCellKey}`
+        : "legacy matrixServeMismatchCount wire field",
     },
     {
       metric: "matrix SSE / scanner progress",
@@ -770,7 +860,10 @@ function buildSummaryRows(reportState) {
       metric: "execution_events read max",
       baseline: `~${BASELINES.executionEventsReadMaxSec}s`,
       captured: formatMaybeSeconds(firehoseMetrics.executionEventsReadMaxSec),
-      verdict: compareLower(firehoseMetrics.executionEventsReadMaxSec, BASELINES.executionEventsReadMaxSec),
+      verdict: compareLower(
+        firehoseMetrics.executionEventsReadMaxSec,
+        BASELINES.executionEventsReadMaxSec,
+      ),
       notes: "exact acceptance-window slow-query firehose",
     },
   ];
@@ -801,7 +894,9 @@ function renderReport(reportState, summaryRows) {
     "",
     renderMarkdownTable(summaryRows),
     "",
-    gate?.verdictLine ? `## BUS-3B Gate\n\n${gate.verdictLine}\n` : "## BUS-3B Gate\n\nunavailable\n",
+    gate?.verdictLine
+      ? `## BUS-3B Gate\n\n${gate.verdictLine}\n`
+      : "## BUS-3B Gate\n\nunavailable\n",
     "## Identity",
     "",
     identity
@@ -818,7 +913,9 @@ function renderReport(reportState, summaryRows) {
     "",
     "## CPU Top Self-Time",
     "",
-    cpu?.rawProfilePath ? `Raw profile: ${cpu.rawProfilePath}` : "Raw profile: unavailable",
+    cpu?.rawProfilePath
+      ? `Raw profile: ${cpu.rawProfilePath}`
+      : "Raw profile: unavailable",
     "",
     cpu?.topRows?.length
       ? renderRows(cpu.topRows, ["percent", "durationUs", "frame"])
@@ -833,8 +930,13 @@ function renderReport(reportState, summaryRows) {
     alloc
       ? renderKeyValues({
           "allocated MB/s": formatMaybeNumber(alloc.mbPerSec, 2),
-          "total allocated MB": formatMaybeNumber(bytesToMb(alloc.totalAllocatedBytes), 2),
-          "_parseRowAsArray allocation": formatMaybePercent(alloc.parseRowAsArrayPercent),
+          "total allocated MB": formatMaybeNumber(
+            bytesToMb(alloc.totalAllocatedBytes),
+            2,
+          ),
+          "_parseRowAsArray allocation": formatMaybePercent(
+            alloc.parseRowAsArrayPercent,
+          ),
           "old_space used": formatMaybeMb(alloc.oldSpaceUsedMb),
         })
       : "unavailable",
@@ -868,7 +970,9 @@ function renderReport(reportState, summaryRows) {
         )
       : "No api-db-query-slow events in the acceptance window.",
     "",
-    unavailable.length ? ["## Unavailable", "", ...unavailable, ""].join("\n") : "",
+    unavailable.length
+      ? ["## Unavailable", "", ...unavailable, ""].join("\n")
+      : "",
   ]
     .filter((part) => part !== "")
     .join("\n");
@@ -892,7 +996,10 @@ function renderRows(rows, keys) {
 }
 
 function renderTable(headers, body) {
-  const escapeCell = (value) => String(value ?? "n-a").replace(/\|/g, "\\|").replace(/\n/g, " ");
+  const escapeCell = (value) =>
+    String(value ?? "n-a")
+      .replace(/\|/g, "\\|")
+      .replace(/\n/g, " ");
   return [
     `| ${headers.map(escapeCell).join(" | ")} |`,
     `| ${headers.map(() => "---").join(" | ")} |`,
@@ -920,7 +1027,9 @@ function parseArgs(argv) {
       parsed.out = value;
       i += 1;
     } else if (arg === "-h" || arg === "--help") {
-      console.log("usage: node scripts/diag/market-open-acceptance.mjs [--out <dir>]");
+      console.log(
+        "usage: node scripts/diag/market-open-acceptance.mjs [--out <dir>]",
+      );
       process.exit(0);
     } else {
       throw new Error(`unknown argument: ${arg}`);
@@ -996,7 +1105,10 @@ async function readProcIdentity(pid) {
     ]);
     const end = content.lastIndexOf(")");
     if (end === -1 || !cmdlineRaw) return null;
-    const fields = content.slice(end + 2).trim().split(/\s+/);
+    const fields = content
+      .slice(end + 2)
+      .trim()
+      .split(/\s+/);
     const startTimeTicks = fields[19];
     return startTimeTicks ? { pid, startTimeTicks, cmdlineRaw, cwd } : null;
   } catch {
@@ -1009,7 +1121,10 @@ async function readProcPpid(pid) {
     const content = await readFile(`/proc/${pid}/stat`, "utf8");
     const end = content.lastIndexOf(")");
     if (end === -1) return null;
-    const fields = content.slice(end + 2).trim().split(/\s+/);
+    const fields = content
+      .slice(end + 2)
+      .trim()
+      .split(/\s+/);
     const ppid = Number(fields[1]);
     return Number.isFinite(ppid) ? ppid : null;
   } catch {
@@ -1049,7 +1164,8 @@ function findRecordedGitSha(value) {
       }
       return;
     }
-    for (const [childKey, childValue] of Object.entries(node)) visit(childValue, childKey);
+    for (const [childKey, childValue] of Object.entries(node))
+      visit(childValue, childKey);
   };
   visit(value);
   return found;
@@ -1117,7 +1233,9 @@ function formatCallFrame(callFrame) {
   const fn = callFrame?.functionName || "(anonymous)";
   const url = callFrame?.url ? path.basename(callFrame.url) : "";
   const line =
-    callFrame && Number.isFinite(callFrame.lineNumber) ? `:${callFrame.lineNumber + 1}` : "";
+    callFrame && Number.isFinite(callFrame.lineNumber)
+      ? `:${callFrame.lineNumber + 1}`
+      : "";
   return `${fn} ${url}${line}`.trim();
 }
 
@@ -1160,7 +1278,10 @@ function compareStoredBars(storedBarsCache) {
   const hit = finiteNumber(storedBarsCache.hitCount);
   const delta = finiteNumber(storedBarsCache.deltaReadCount);
   if (hit === null && delta === null) return "n-a";
-  if ((hit ?? 0) > BASELINES.storedBarsHitCount || (delta ?? 0) > BASELINES.storedBarsDeltaReadCount) {
+  if (
+    (hit ?? 0) > BASELINES.storedBarsHitCount ||
+    (delta ?? 0) > BASELINES.storedBarsDeltaReadCount
+  ) {
     return "BETTER";
   }
   return "WORSE";
@@ -1184,7 +1305,9 @@ function maxSeconds(values) {
 }
 
 function sumSeconds(values) {
-  return values.reduce((sum, value) => sum + (finiteNumber(value) ?? 0), 0) / 1000;
+  return (
+    values.reduce((sum, value) => sum + (finiteNumber(value) ?? 0), 0) / 1000
+  );
 }
 
 function formatMaybePercent(value) {
@@ -1230,11 +1353,17 @@ function maxIso(left, right) {
 }
 
 function utcStamp() {
-  return new Date().toISOString().replace(/\.\d{3}Z$/, "Z").replace(/[:]/g, "-");
+  return new Date()
+    .toISOString()
+    .replace(/\.\d{3}Z$/, "Z")
+    .replace(/[:]/g, "-");
 }
 
 function trimForError(value) {
-  return String(value ?? "").replace(/\s+/g, " ").trim().slice(0, 500);
+  return String(value ?? "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 500);
 }
 
 function errorMessage(error) {

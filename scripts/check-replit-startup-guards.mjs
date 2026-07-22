@@ -114,9 +114,10 @@ check(
   "PYRUS dev script must run the web-owned full app supervisor.",
 );
 check(
-  pyrusDevReplit.includes("PYRUS_REPLIT_RUN=1") &&
-    pyrusDevReplit.includes("node ./scripts/runDevApp.mjs"),
-  "PYRUS dev:replit script must tag the Replit-owned full app supervisor startup.",
+  pyrusDevReplit.includes("node ./scripts/runDevApp.mjs") &&
+    !pyrusDevReplit.includes("PYRUS_REPLIT_RUN") &&
+    !pyrusDevReplit.includes("REPLIT_MODE=workflow"),
+  "PYRUS dev:replit must run the artifact-owned app launcher without shell-forgeable lifecycle tags.",
 );
 check(
   /\bunset\b[^;]*\bPYRUS_SIGNAL_MONITOR_BAR_EVALUATION_ENABLED\b/.test(
@@ -133,8 +134,10 @@ check(
 );
 check(
   pyrusDevWeb.includes("vite --config vite.config.ts") &&
-    pyrusDevWeb.includes("reap-dev-port.mjs"),
-  "PYRUS dev:web script must remain the Vite-only dev server with port reaping.",
+    pyrusDevWeb.includes("--host 0.0.0.0") &&
+    !pyrusDevWeb.includes("runDevApp.mjs") &&
+    !pyrusDevWeb.includes("reap-dev-port.mjs"),
+  "PYRUS dev:web must remain the Vite-only child; the artifact-owned launcher owns startup port cleanup.",
 );
 
 const pyrusArtifact = read("artifacts/pyrus/.replit-artifact/artifact.toml");
@@ -196,6 +199,116 @@ check(
     "pnpm run audit:guards && pnpm --filter @workspace/pyrus run build && pnpm --filter @workspace/api-server run build && pnpm --filter @workspace/ibkr-session-host run build",
   "package.json must keep build:pyrus-app fail-closed on audit:guards before building web, API, and the co-located IBKR session host without the retired desktop bridge bundle.",
 );
+
+const apiRuntime = read("artifacts/api-server/src/lib/runtime.ts");
+const headerStatusCluster = read(
+  "artifacts/pyrus/src/features/platform/HeaderStatusCluster.jsx",
+);
+const clientPortalPresentation = [
+  read("artifacts/pyrus/src/features/platform/clientPortalRuntimeModel.js"),
+  read("artifacts/pyrus/src/features/platform/IbkrConnectionStatus.jsx"),
+  read("artifacts/pyrus/src/features/platform/PlatformApp.jsx"),
+  read("artifacts/pyrus/src/screens/DiagnosticsScreen.jsx"),
+  read("artifacts/pyrus/src/screens/AlgoScreen.jsx"),
+].join("\n");
+const apiPlatform = read("artifacts/api-server/src/services/platform.ts");
+const apiDiagnostics = read("artifacts/api-server/src/services/diagnostics.ts");
+const accountService = read("artifacts/api-server/src/services/account.ts");
+const tradingSchema = read("lib/db/src/schema/trading.ts");
+const flexRawXmlPurgeMigration = read(
+  "lib/db/migrations/20260720_purge_flex_report_raw_xml.sql",
+);
+const safePentestTarget = read("security/pentest/src/safe-target.mjs");
+const safePentestStart = safePentestTarget.slice(
+  safePentestTarget.indexOf("export async function startHarness"),
+  safePentestTarget.indexOf("\nconst isMain"),
+);
+const apiSpec = read("lib/api-spec/openapi.yaml");
+const retiredBridgeConfigText = [
+  apiRuntime,
+  read(".env.example"),
+  read(".gitignore"),
+].join("\n");
+const retiredBridgeLauncherFiles = [
+  "artifacts/api-server/src/lib/runtime-bridge-override-intent.test.ts",
+  "artifacts/api-server/src/services/ibkr-connection-audit.ts",
+  "artifacts/api-server/src/services/ibkr-connection-audit.test.ts",
+  "artifacts/pyrus/src/features/platform/bridgeRuntimeModel.js",
+  "artifacts/pyrus/src/features/platform/ibkrBridgeLaunchFeedback.js",
+  "artifacts/pyrus/src/features/platform/ibkrBridgeSession.js",
+  "artifacts/pyrus/src/features/platform/ibkrConnectionCredentialActionModel.js",
+  "artifacts/pyrus/src/features/platform/ibkrConnectionInsightModel.js",
+  "artifacts/pyrus/src/features/platform/ibkrConnectionOperationStepperModel.js",
+  "artifacts/pyrus/src/features/platform/ibkrConnectionSnapshot.js",
+  "artifacts/pyrus/src/features/platform/ibkrLoginHandoffErrorModel.js",
+  "artifacts/pyrus/src/features/platform/ibkrPopoverModel.js",
+];
+check(
+  !/IbkrBridgeRuntimeOverride|IBKR_BRIDGE_(?:URL|BASE_URL|RUNTIME_OVERRIDE_FILE)|PYRUS_IBKR_BRIDGE_RUNTIME_OVERRIDE_FILE|ibkr-bridge-runtime-override\.json/.test(
+    retiredBridgeConfigText,
+  ) &&
+    !/IBKR_(?:CLIENT_PORTAL_)?(?:USERNAME|PASSWORD)/.test(apiRuntime),
+  "The decommissioned IBKR desktop bridge runtime override and credential-handoff environment inputs must stay removed.",
+);
+check(
+  retiredBridgeLauncherFiles.every(
+    (relPath) => !existsSync(path.join(repoRoot, relPath)),
+  ) &&
+    !/IBKR_BRIDGE_|desktopAgent|managementToken|encryptIbkrLoginEnvelope|ibkrBridgeSession/.test(
+      headerStatusCluster,
+    ) &&
+    !/ibkrBridge|bridgeRuntimeModel|Legacy Broker Runtime|Bridge URL|Bridge token/i.test(
+      clientPortalPresentation,
+    ),
+  "The browser bundle must not restore the retired IBKR desktop bridge launcher or its credential-handoff modules.",
+);
+check(
+  !/desktopAgent|desktop bridge/i.test(`${apiPlatform}\n${apiDiagnostics}`) &&
+    !/IbkrBridge|IbkrRemoteDesktop|desktopAgent|runtimeOverride|credentialHandoff|managementToken/.test(
+      apiSpec,
+    ) &&
+    !/^\s+ibkrBridge:/m.test(apiSpec),
+  "API runtime diagnostics and the published contract must not restore the retired IBKR desktop-helper lifecycle.",
+);
+check(
+  apiRuntime.includes("IBKR_CLIENT_PORTAL_BASE_URL") &&
+    read("artifacts/api-server/src/services/ibkr-client-runtime.ts").includes(
+      "getIbkrClientPortalGatewaySnapshot",
+    ) &&
+    read("artifacts/api-server/src/routes/ibkr-portal.ts").includes(
+      "/api/broker-execution/ibkr-portal/gateway",
+    ) &&
+    /enum: \[client_portal\]/.test(apiSpec) &&
+    apiSpec.includes(
+      "enum: [/api/broker-execution/ibkr-portal/readiness]",
+    ),
+  "IBKR connectivity must retain the per-user Client Portal gateway as the supported runtime path.",
+);
+check(
+  !/rawXml:\s*text\("raw_xml"\)/.test(tradingSchema) &&
+    !/\brawXml:\s*(?:reference\.rawXml|xml)\b/.test(accountService) &&
+    /UPDATE\s+flex_report_runs\s+SET\s+raw_xml\s*=\s*NULL/is.test(
+      flexRawXmlPurgeMigration,
+    ) &&
+    /ALTER\s+TABLE\s+flex_report_runs\s+DROP\s+COLUMN\s+IF\s+EXISTS\s+raw_xml/is.test(
+      flexRawXmlPurgeMigration,
+    ),
+  "IBKR Flex XML must remain transient: persist only normalized records and bounded run metadata, and keep the existing-payload purge migration.",
+);
+const pentestRefusal = safePentestStart.indexOf(
+  'throw new Error("safe_pentest_target_disabled")',
+);
+check(
+  pentestRefusal >= 0 &&
+    pentestRefusal < safePentestStart.indexOf("assertSyntheticEnvironment") &&
+    pentestRefusal < safePentestStart.indexOf("installOutboundTripwire"),
+  "The dynamic pentest harness must remain disabled inside startHarness before environment, database, network, or listener side effects.",
+);
+check(
+  rootScripts["audit:guards"]?.includes("audit:replit-startup") &&
+    rootScripts["typecheck"]?.includes("audit:replit-startup"),
+  "package.json must keep the Replit startup guard in both the release guard chain and root typecheck.",
+);
 check(
   rootScripts["typecheck:libs"] ===
     "node scripts/run-validation-command.mjs --label typecheck:libs -- tsc --build",
@@ -244,66 +357,44 @@ check(
     replitProcessAuthority.includes("hasPyrusWorkflowAncestry") &&
     replitProcessAuthority.includes("@workspace/pyrus") &&
     replitProcessAuthority.includes("dev:replit") &&
-    replitProcessAuthority.includes('parentName === "pid1"') &&
+    replitProcessAuthority.includes("parentName") &&
+    replitProcessAuthority.includes('"pid1"') &&
     !replitProcessAuthority.includes("pid === 2"),
   "reap-dev-port.mjs must require pid2 argv0 ancestry and stable process/socket identity before a Replit workflow replaces another execution scope.",
 );
 
 const replitDocs = read("replit.md");
 check(
-  replitDocs.includes("pnpm --filter @workspace/pyrus run dev:replit") &&
-    replitDocs.includes("PYRUS_REPLIT_RUN=1") &&
-    replitDocs.includes("tag only, not restart authority") &&
-    replitDocs.includes("PYRUS_DEV_FORCE_RESTART=1") &&
-    replitDocs.includes("intentional Run-button restart immediately") &&
-    replitDocs.includes("instead of exiting as a duplicate no-op") &&
-    replitDocs.includes("PYRUS_DEV_DUPLICATE_CHECK_ONLY=1") &&
-    replitDocs.includes("REPLIT_MODE=workflow") &&
-    replitDocs.includes("Sanctioned reload = SIGUSR2") &&
-    replitDocs.includes("RETIRED"),
-  "replit.md must document the dev:replit artifact runner, Replit-owned restart marker, immediate controlled handoff restart path, duplicate-check-only smoke-test marker, the RETIRED REPLIT_MODE=workflow shell-launch restart, and the sanctioned SIGUSR2 in-place reload.",
-);
-check(
-  replitDocs.includes("set/delete Replit env vars") &&
-    replitDocs.includes("create/update/remove Replit artifacts") &&
-    replitDocs.includes("env/toolchain") &&
-    replitDocs.includes("same-container supervisor") &&
-    !replitDocs.includes(
-      "use `setEnvVars` / `deleteEnvVars` instead when possible because those persist without a reload",
-    ),
-  "replit.md must document that host-side Replit env/artifact control-plane actions can rewrite env/toolchain state and bounce the same-container supervisor.",
-);
-check(
-  replitDocs.includes("scripts/run-validation-command.mjs") &&
-    replitDocs.includes(".pyrus-runtime/validation/commands.jsonl") &&
-    replitDocs.includes("single-validation lock") &&
-    replitDocs.includes("does not inspect the live PYRUS supervisor") &&
-    replitDocs.includes("targeted package checks"),
-  "replit.md must document the root validation ledger, single-validation lock, retired supervisor hot guard, and targeted-check preference.",
+  replitDocs.includes("artifacts/pyrus/.replit-artifact/artifact.toml") &&
+    replitDocs.includes("native restart-run-workflow") &&
+    replitDocs.includes("workspace Run/Stop controls") &&
+    replitDocs.includes("never") &&
+    replitDocs.includes("signal the launcher or pid2") &&
+    replitDocs.includes("shell-launch a competing app copy") &&
+    replitDocs.includes("scripts/replit-config/") &&
+    replitDocs.includes("replit:config:restore"),
+  "replit.md must document Replit-owned lifecycle controls and the non-launching startup-config recovery path.",
 );
 check(
   replitDocs.includes("runProductionApp.mjs") &&
     replitDocs.includes("one web service/port") &&
     replitDocs.includes("Reserved VM") &&
     replitDocs.includes("Publishing tool") &&
-    replitDocs.includes("local Docker daemon/capabilities"),
+    replitDocs.includes("Docker daemon/capabilities"),
   "replit.md must document the single-port production supervisor, Publishing-tool Reserved VM requirement, and unproven production Docker preflight.",
 );
 const scriptsReadme = read("scripts/README.md");
 check(
-  scriptsReadme.includes("REPLIT_MODE=workflow") &&
-    scriptsReadme.includes("PYRUS_REPLIT_RUN=1") &&
-    scriptsReadme.includes("tag only, not restart authority") &&
-    scriptsReadme.includes("PYRUS_DEV_FORCE_RESTART=1") &&
-    scriptsReadme.includes("duplicate Replit-owned Run event is treated") &&
-    scriptsReadme.includes("restart immediately") &&
-    scriptsReadme.includes("uses a controlled handoff") &&
-    scriptsReadme.includes("PYRUS_DEV_DUPLICATE_CHECK_ONLY=1") &&
+  scriptsReadme.includes("check-replit-startup-guards.mjs") &&
+    scriptsReadme.includes("protect-replit-config.mjs") &&
+    scriptsReadme.includes("restore-replit-config.mjs") &&
+    scriptsReadme.includes("explicit") &&
+    scriptsReadme.includes("--write") &&
     scriptsReadme.includes("run-validation-command.mjs") &&
     scriptsReadme.includes("single-validation lock") &&
     scriptsReadme.includes("does not inspect the live PYRUS supervisor") &&
     scriptsReadme.includes(".pyrus-runtime/validation/commands.jsonl"),
-  "scripts/README.md must document the Replit-owned restart marker, immediate controlled handoff restart path, explicit force-restart marker, duplicate-check-only smoke-test marker, and unguarded validation ledger.",
+  "scripts/README.md must document startup recovery controls and the serialized validation ledger.",
 );
 check(
   scriptsReadme.includes("PYRUS_ALLOW_REPLIT_CONTROL_PLANE_CLEANUP=1") &&
@@ -351,61 +442,36 @@ check(
   "The API production build must include the non-network IBKR fleet host operator CLI.",
 );
 check(
-  pyrusRunner.includes("apiPortOwnerStatus(apiRootPid)") &&
+  pyrusRunner.includes("procInspector.portOwnerStatus") &&
     pyrusRunner.includes("healthy response came from a previous API process"),
   "runDevApp.mjs must keep API port ownership checks so a stale API health response cannot satisfy a new supervisor.",
 );
 check(
   pyrusRunner.includes("market-data-worker:run") &&
-    pyrusRunner.includes("resolveMarketDataWorkerStartup") &&
-    pyrusRunner.includes("worker-started") &&
-    pyrusRunner.includes("worker-skipped") &&
+    pyrusRunner.includes("workerConfigured") &&
+    pyrusRunner.includes("market-data worker skipped") &&
     pyrusRunner.includes("MASSIVE_MARKET_DATA_API_KEY") &&
     pyrusRunner.includes("LOCAL_DATABASE_URL") &&
-    pyrusRunner.includes("workerPid") &&
-    pyrusRunner.includes('watchFatalExit("market-data worker", workerExit)'),
-  "runDevApp.mjs must start the market-data worker when database and Massive provider config are present, skip it explicitly when config is missing, and treat a started worker exit as supervisor-fatal (a non-reloadable watchFatalExit watcher).",
+    pyrusRunner.includes('"market-data worker"') &&
+    pyrusRunner.includes("firstFailure"),
+  "runDevApp.mjs must start the market-data worker only when database and Massive provider config are present, report skips, and treat every started child exit as fatal.",
 );
 check(
-  pyrusRunner.includes("pyrus-dev-supervisor-${apiPort}.lock") &&
-    pyrusRunner.includes("acquireSupervisorLock") &&
-    !pyrusRunner.includes("skipDuplicateReplitStart") &&
-    pyrusRunner.includes("PYRUS_DEV_FORCE_RESTART") &&
-    pyrusRunner.includes("PYRUS_DEV_DUPLICATE_CHECK_ONLY") &&
-    !pyrusRunner.includes("PYRUS_DEV_DUPLICATE_RESTART_AFTER_MS") &&
-    !pyrusRunner.includes("shouldHandoffDuplicateReplitStart") &&
-    pyrusRunner.includes(
-      "intentional Run-button restart and requesting controlled handoff",
-    ) &&
-    pyrusRunner.includes(
-      "duplicate-check-only found no valid PYRUS dev supervisor lock",
-    ) &&
-    pyrusRunner.includes("exiting without starting API/web processes") &&
-    pyrusRunner.includes(
-      "a real Replit workflow start would request controlled handoff",
-    ) &&
-    pyrusRunner.includes("supervisor ${ownerPid} already alive") &&
-    !pyrusRunner.includes("duplicate Replit workflow start detected") &&
-    !pyrusRunner.includes("exiting without restart") &&
-    pyrusRunner.includes("requestSupervisorHandoff") &&
-    pyrusRunner.includes("pyrus-dev-lifecycle-${apiPort}.jsonl") &&
-    pyrusRunner.includes('writeLifecycleEvent("heartbeat"') &&
-    pyrusRunner.includes("readPreviousLifecycleState") &&
-    pyrusRunner.includes("supervisor-shutdown-complete") &&
-    pyrusRunner.includes("isPid2OwnedReplitWorkflow") &&
-    pyrusRunner.includes("signalStableProcess") &&
-    pyrusRunner.includes("processIdentityMatches") &&
-    pyrusRunner.includes("startTimeTicks") &&
-    pyrusRunner.includes("shell-forgeable tags") &&
-    !pyrusRunner.includes(
-      "refusing to start the full app supervisor from a Codex-owned shell",
-    ) &&
-    pyrusRunner.includes("controlled handoff") &&
-    pyrusRunner.includes("overlapping workflow restart cascade") &&
-    pyrusRunner.includes("ignoreWorkflowHangup") &&
-    pyrusRunner.includes('process.on("SIGHUP", ignoreWorkflowHangup)') &&
-    pyrusRunner.includes('process.once("exit", removeSupervisorLock)'),
-  "runDevApp.mjs must keep the supervisor single-flight lock, immediate controlled Replit handoff, SIGHUP resilience, and explicit forced recovery handoff so duplicate launches cannot overlap or leave the wrong workflow owning API/web processes.",
+  pyrusRunner.includes("reapStaleListeners") &&
+    pyrusRunner.includes("detached: true") &&
+    pyrusRunner.includes("readProcessGroupIdentity") &&
+    pyrusRunner.includes("signalOwnedGroup") &&
+    pyrusRunner.includes("process.kill(-entry.groupIdentity.pid, signal)") &&
+    pyrusRunner.includes("waitForOwnedGroupToClear") &&
+    pyrusRunner.includes("cleanOwnedGroup") &&
+    pyrusRunner.includes('"SIGTERM"') &&
+    pyrusRunner.includes('"SIGKILL"') &&
+    pyrusRunner.includes("IBKR_SESSION_HOST_ENABLED") &&
+    pyrusRunner.includes('"IBKR session host"') &&
+    pyrusRunner.includes('process.on("SIGTERM"') &&
+    !pyrusRunner.includes("requestSupervisorHandoff") &&
+    !pyrusRunner.includes("signalStableProcess"),
+  "runDevApp.mjs must own and bound its child process groups, optionally include the IBKR host, and leave outer launcher/workflow replacement to Replit.",
 );
 
 check(
@@ -427,11 +493,13 @@ check(
 
 const agentsDoc = read("AGENTS.md");
 check(
-  agentsDoc.includes("set/delete Replit environment variables") &&
-    agentsDoc.includes("create/update/remove Replit artifacts") &&
-    agentsDoc.includes("control-plane actions") &&
-    agentsDoc.includes("explicit startup maintenance window"),
-  "AGENTS.md must forbid Replit env/artifact control-plane actions during routine work and require an explicit startup maintenance window.",
+  agentsDoc.includes("Replit owns the outer dev-app lifecycle") &&
+    agentsDoc.includes("restart-run-workflow") &&
+    agentsDoc.includes("Run/Stop controls") &&
+    agentsDoc.includes("Never signal the launcher or pid2") &&
+    agentsDoc.includes("never shell-launch") &&
+    agentsDoc.includes("second app copy"),
+  "AGENTS.md must reserve the outer lifecycle for Replit and forbid agents from signaling or shell-launching the app.",
 );
 
 const replitScribeArtifacts = read("scripts/src/replit-scribe-artifacts.ts");

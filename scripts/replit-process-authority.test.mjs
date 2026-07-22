@@ -41,6 +41,7 @@ test("pid2 authority follows argv0 ancestry rather than numeric PID 2", () => {
     "/proc/23/cmdline": "/opt/replit/pid2\0--pooled-fd=4\0",
     "/proc/13/stat": procStat(13, "pid1", 1),
     "/proc/13/cmdline": "/opt/replit/pid1\0",
+    "/proc/1/cmdline": "/opt/replit/pid0\0",
   };
   const readFile = fixtureReader(entries);
   const readLink = fixtureReader(entries);
@@ -62,6 +63,29 @@ test("pid2 authority follows argv0 ancestry rather than numeric PID 2", () => {
   );
 });
 
+test("pid2 authority accepts a pid1 namespace root with PPID 0", () => {
+  const entries = {
+    "/proc/100/stat": procStat(100, "node child", 50),
+    "/proc/100/cmdline": "node\0child.mjs\0",
+    "/proc/100/cgroup": "0::/workflow.scope\n",
+    "/proc/100/cwd": "/workspace/artifacts/pyrus",
+    "/proc/50/stat": procStat(50, "node supervisor", 28),
+    "/proc/50/cmdline":
+      "node\0/opt/pnpm\0--filter\0@workspace/pyrus\0run\0dev:replit\0",
+    "/proc/50/cgroup": "0::/workflow.scope\n",
+    "/proc/50/cwd": "/workspace/artifacts/pyrus",
+    "/proc/28/stat": procStat(28, "node", 13),
+    "/proc/28/cmdline": "/opt/replit/pid2\0--pooled-fd=4\0",
+    "/proc/13/stat": procStat(13, "pid1", 0),
+    "/proc/13/cmdline": "/opt/replit/pid1\0",
+  };
+  const readFile = fixtureReader(entries);
+  const readLink = fixtureReader(entries);
+
+  assert.equal(ancestryReachesPid2(100, { readFile }), true);
+  assert.equal(hasPyrusWorkflowAncestry(100, { readFile, readLink }), true);
+});
+
 test("pid2 ancestry does not authorize an ordinary shell execution scope", () => {
   const entries = {
     "/proc/100/stat": procStat(100, "node child", 50),
@@ -76,6 +100,7 @@ test("pid2 ancestry does not authorize an ordinary shell execution scope", () =>
     "/proc/23/cmdline": "pid2\0--pooled-fd=4\0",
     "/proc/13/stat": procStat(13, "pid1", 1),
     "/proc/13/cmdline": "/opt/replit/pid1\0",
+    "/proc/1/cmdline": "/opt/replit/pid0\0",
   };
   const readFile = fixtureReader(entries);
   const readLink = fixtureReader(entries);
@@ -120,6 +145,29 @@ test("pid2 authority fails closed for spoofed numeric PID 2 loops and missing pr
       readFile: fixtureReader({
         "/proc/30/stat": procStat(30, "fake pid2", 10),
         "/proc/30/cmdline": "pid2\0--forged\0",
+      }),
+    }),
+    false,
+  );
+  assert.equal(
+    ancestryReachesPid2(30, {
+      readFile: fixtureReader({
+        "/proc/30/stat": procStat(30, "fake pid2", 10),
+        "/proc/30/cmdline": "pid2\0--forged\0",
+        "/proc/10/stat": procStat(10, "fake pid1", 7),
+        "/proc/10/cmdline": "pid1\0--forged\0",
+      }),
+    }),
+    false,
+  );
+  assert.equal(
+    ancestryReachesPid2(30, {
+      readFile: fixtureReader({
+        "/proc/30/stat": procStat(30, "fake pid2", 10),
+        "/proc/30/cmdline": "pid2\0--forged\0",
+        "/proc/10/stat": procStat(10, "fake pid1", 1),
+        "/proc/10/cmdline": "pid1\0--forged\0",
+        "/proc/1/cmdline": "init\0",
       }),
     }),
     false,

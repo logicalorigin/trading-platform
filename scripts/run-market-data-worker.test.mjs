@@ -7,6 +7,7 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { constants as osConstants, tmpdir } from "node:os";
@@ -15,6 +16,9 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import {
+  assertFileIdentity,
+  captureExecutableIdentity,
+  resolveCommandExecutable,
   resolveMarketDataWorkerCommand,
   runMarketDataWorker,
 } from "./run-market-data-worker.mjs";
@@ -27,6 +31,19 @@ import {
 const scriptPath = fileURLToPath(
   new URL("./run-market-data-worker.mjs", import.meta.url),
 );
+
+function fakeExecutable(realpath) {
+  return {
+    realpath,
+    dev: "1",
+    ino: "1",
+    mode: "33261",
+    size: "1",
+    mtimeNs: "1",
+    ctimeNs: "1",
+    executable: true,
+  };
+}
 
 function waitForExit(child) {
   return new Promise((resolve, reject) => {
@@ -89,26 +106,76 @@ test("market-data runner is safe to import for focused tests", async () => {
 });
 
 test("market-data command selection is strict and preserves cargo arguments", () => {
-  assert.deepEqual(
-    resolveMarketDataWorkerCommand(["build", "--release"], {
-      hasCommand: (command) => command === "cargo",
-    }),
-    { command: "cargo", commandArgs: ["build", "--release"] },
-  );
-  const fallback = resolveMarketDataWorkerCommand(["run", "a'b"], {
-    hasCommand: (command) => command === "nix-shell",
+  const cargo = fakeExecutable("/tools/cargo");
+  const direct = resolveMarketDataWorkerCommand(["build", "--release"], {
+    resolveExecutable: (command) => (command === "cargo" ? cargo : null),
   });
-  assert.equal(fallback.command, "nix-shell");
+  assert.equal(direct.command, cargo.realpath);
+  assert.deepEqual(direct.commandArgs, ["build", "--release"]);
+  assert.deepEqual(direct.executableIdentity, cargo);
+  assert.equal(direct.identityScope, "cargo");
+  const nixShell = {
+    ...fakeExecutable("/nix/store/example/bin/nix"),
+    invocationPath: "/tools/nix-shell",
+  };
+  const fallback = resolveMarketDataWorkerCommand(["run", "a'b"], {
+    resolveExecutable: (command) =>
+      command === "nix-shell" ? nixShell : null,
+  });
+  assert.equal(fallback.command, nixShell.invocationPath);
   assert.equal(fallback.commandArgs.at(-1), `'cargo' 'run' 'a'\\''b'`);
+  assert.equal(fallback.identityScope, "nix-shell");
   assert.throws(
-    () => resolveMarketDataWorkerCommand([], { hasCommand: () => true }),
+    () =>
+      resolveMarketDataWorkerCommand([], {
+        resolveExecutable: () => cargo,
+      }),
     /usage/i,
   );
   assert.throws(
     () =>
-      resolveMarketDataWorkerCommand(["build"], { hasCommand: () => false }),
+      resolveMarketDataWorkerCommand(["build"], {
+        resolveExecutable: () => null,
+      }),
     /neither cargo nor nix-shell/i,
   );
+});
+
+test("command resolution preserves a symlink invocation path while pinning its target", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "market-data-command-"));
+  const target = path.join(root, "nix");
+  const command = path.join(root, "nix-shell");
+  try {
+    writeFileSync(target, "#!/bin/sh\nexit 0\n");
+    chmodSync(target, 0o755);
+    symlinkSync(target, command);
+
+    const identity = resolveCommandExecutable("nix-shell", {
+      cwd: root,
+      env: { PATH: root },
+    });
+
+    assert.equal(identity?.invocationPath, command);
+    assert.equal(identity?.realpath, target);
+    assertFileIdentity(identity);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("captured executable identity fails closed after in-place drift", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "market-data-identity-"));
+  const executable = path.join(root, "cargo");
+  try {
+    writeFileSync(executable, "#!/bin/sh\nexit 0\n");
+    chmodSync(executable, 0o755);
+    const identity = captureExecutableIdentity(executable);
+    assertFileIdentity(identity);
+    writeFileSync(executable, "#!/bin/sh\nexit 123\n");
+    assert.throws(() => assertFileIdentity(identity), /drifted/i);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("spawn failure removes every wrapper signal listener", async () => {
@@ -120,8 +187,10 @@ test("spawn failure removes every wrapper signal listener", async () => {
   );
   const messages = [];
   const outcome = await runMarketDataWorker(["build"], {
+    assertIdentity: () => {},
     error: (message) => messages.push(message),
-    hasCommand: (command) => command === "cargo",
+    resolveExecutable: (command) =>
+      command === "cargo" ? fakeExecutable("/tools/cargo") : null,
     shutdownGraceMs: 100,
     spawnChild() {
       const error = new Error("injected spawn failure");

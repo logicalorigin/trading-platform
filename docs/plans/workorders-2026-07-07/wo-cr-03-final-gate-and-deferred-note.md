@@ -16,9 +16,8 @@ Read the "Ownership + tree rules" section of
 verbatim (authoritative live-dirty skip rule, explicit-path staging, no `-A`/`.`/stash/reset).
 This WO edits at most ONE new file (the deferred-items note) — everything else is verification;
 its commit stages exactly `git add -- docs/plans/2026-07-08-code-reduction-deferred.md` and
-nothing else. This WO additionally AUTHORIZES exactly one runtime action: the in-place SIGUSR2
-API reload described below (owner-sanctioned in CLAUDE.md). Never shell-launch a supervisor;
-never restart the workflow any other way.
+nothing else. This WO additionally authorizes one Replit-managed workflow
+restart described below. Never signal or shell-launch a supervisor.
 
 ## Tasks
 
@@ -40,7 +39,7 @@ never restart the workflow any other way.
 kit assets" (index.html /brand/ favicon, predates this lane).
 
 **T3 — runtime gate (authorized).**
-- `kill -USR2 "$(pgrep -f 'node ./scripts/runDevApp.mjs' | head -1)"`
+- Use Replit's managed workflow restart action.
 - Poll `http://127.0.0.1:8080/api/healthz` until 200 (≤60s).
 - `curl -sf -o /dev/null -w "%{http_code}" "https://$REPLIT_DEV_DOMAIN/api/healthz"` → 200.
 - `pnpm shot "http://127.0.0.1:18747/?screen=market" --out /tmp/market-final.png --wait 9000 --json`

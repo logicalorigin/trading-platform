@@ -4,7 +4,7 @@
 // full-pipeline golden fixture that drives run_signal_matrix end to end
 // (trend direction, bar aggregation, CHoCH/BOS loop, filter gates, snapshot).
 // Run from the repo root:
-//   pnpm --filter @workspace/api-server exec tsx python/pyrus_compute/tests/fixtures/generate-directional-features-parity.mts
+//   pnpm --filter @workspace/api-server exec tsx ../../python/pyrus_compute/tests/fixtures/generate-directional-features-parity.mts
 // The bars are produced by a seeded LCG so the fixtures are fully deterministic.
 import { writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -14,6 +14,7 @@ import {
   aggregatePyrusSignalsBarsForTimeframe,
   buildPyrusSignalsDirectionalFeatures,
   evaluatePyrusSignalsSignals,
+  resolvePyrusSignalsSignalSettings,
   resolvePyrusSignalsTrendDirection,
   type PyrusSignalsBar,
   type PyrusSignalsSignalSettings,
@@ -82,43 +83,11 @@ console.log(`wrote ${outPath} (${bars.length} bars, ${cases.length} cases)`);
 // signal — a bullish default on the Python side emits a signal JS suppresses.
 // ---------------------------------------------------------------------------
 
-// Defaults mirror python/pyrus_compute/src/pyrus_compute/models.py
-// SignalMatrixSettingsInput so both sides always evaluate identical settings.
+// Resolve from the TypeScript source of truth so the fixture cannot silently
+// bless a hand-copied default that diverges from production.
 const fullSettings = (
   overrides: Partial<PyrusSignalsSignalSettings> = {},
-): PyrusSignalsSignalSettings => ({
-  timeHorizon: 10,
-  bosConfirmation: "close",
-  chochAtrBuffer: 0,
-  chochBodyExpansionAtr: 0,
-  chochVolumeGate: 0,
-  basisLength: 80,
-  atrLength: 14,
-  atrSmoothing: 21,
-  volatilityMultiplier: 2,
-  wireSpread: 0.5,
-  shadowLength: 20,
-  shadowStdDev: 2,
-  adxLength: 14,
-  volumeMaLength: 20,
-  mtf1: "1h",
-  mtf2: "4h",
-  mtf3: "D",
-  signalFiltersEnabled: false,
-  requireMtf1: false,
-  requireMtf2: false,
-  requireMtf3: false,
-  requireAdx: false,
-  adxMin: 20,
-  requireVolScoreRange: false,
-  volScoreMin: 2,
-  volScoreMax: 10,
-  restrictToSelectedSessions: false,
-  sessions: [],
-  waitForBarClose: false,
-  signalOffsetAtr: 3,
-  ...overrides,
-});
+): PyrusSignalsSignalSettings => resolvePyrusSignalsSignalSettings(overrides);
 
 // Port of tests/test_signal_matrix_directional_features.py
 // _forming_bar_breakout_series: a mild downtrend with one clear swing high at
@@ -169,15 +138,27 @@ const pipelineCaseInputs: Array<{
   symbol: string;
   timeframe: string;
   bars: PyrusSignalsBar[];
+  lastBarClosed: boolean;
   settings: PyrusSignalsSignalSettings;
 }> = [
   {
-    // Filters disabled: the breakout emits in both runtimes; filterState still
-    // records mtfDirections, pinning the data-starved directions themselves.
-    name: "breakout-filters-off",
+    // Filters are enabled but every optional gate is disabled, so this proves
+    // the enabled pipeline can emit while still pinning data-starved MTFs.
+    name: "breakout-filters-enabled",
     symbol: "PARITY1",
     timeframe: "5m",
     bars: breakoutBars,
+    lastBarClosed: true,
+    settings: fullSettings({ signalFiltersEnabled: true }),
+  },
+  {
+    // The same live-edge breakout without a provider closure proof must remain
+    // provisional under the production waitForBarClose default.
+    name: "breakout-forming-bar-waits-for-close",
+    symbol: "PARITY4",
+    timeframe: "5m",
+    bars: breakoutBars,
+    lastBarClosed: false,
     settings: fullSettings(),
   },
   {
@@ -187,6 +168,7 @@ const pipelineCaseInputs: Array<{
     symbol: "PARITY2",
     timeframe: "5m",
     bars: breakoutBars,
+    lastBarClosed: true,
     settings: fullSettings({ signalFiltersEnabled: true, requireMtf3: true }),
   },
   {
@@ -197,6 +179,7 @@ const pipelineCaseInputs: Array<{
     symbol: "PARITY3",
     timeframe: "5m",
     bars: randomWalkBars,
+    lastBarClosed: true,
     settings: fullSettings({
       signalFiltersEnabled: true,
       basisLength: 10,
@@ -210,13 +193,38 @@ const pipelineCaseInputs: Array<{
   },
 ];
 
+const normalizedDirection = (value: number): 1 | -1 | null =>
+  value === 1 ? 1 : value === -1 ? -1 : null;
+
+const finiteRounded = (value: number, digits = 1): number | null => {
+  if (!Number.isFinite(value)) return null;
+  const factor = 10 ** digits;
+  return Math.round(value * factor) / factor;
+};
+
+const resolveTrendAgeBars = (
+  directions: number[],
+  currentDirection: 1 | -1 | null,
+): number | null => {
+  if (!directions.length || currentDirection == null) return null;
+  const lastIndex = directions.length - 1;
+  let flipIndex = 0;
+  for (let index = lastIndex - 1; index >= 0; index -= 1) {
+    const direction = normalizedDirection(directions[index]);
+    if (direction != null && direction !== currentDirection) {
+      flipIndex = index + 1;
+      break;
+    }
+  }
+  return Math.max(0, lastIndex - flipIndex);
+};
+
 const pipelineCases = pipelineCaseInputs.map((caseInput) => {
   const evaluation = evaluatePyrusSignalsSignals({
-    // Mirrors the API matrix path (signal-monitor completed bars): provisional
-    // signals included, so the live-edge CHoCH is actionable in both runtimes.
     chartBars: caseInput.bars,
     settings: caseInput.settings,
-    includeProvisionalSignals: true,
+    includeProvisionalSignals: !caseInput.settings.waitForBarClose,
+    lastBarClosed: caseInput.lastBarClosed,
   });
   const lastSignal = evaluation.signalEvents.at(-1) ?? null;
 
@@ -229,6 +237,15 @@ const pipelineCases = pipelineCaseInputs.map((caseInput) => {
       : lastTrend === 1 || lastTrend === -1
         ? lastTrend
         : null;
+  const trendAgeBars = resolveTrendAgeBars(
+    evaluation.regimeDirection,
+    currentDirection,
+  );
+  const adx = finiteRounded(evaluation.adx[lastIndex]);
+  const volatilityScore = finiteRounded(
+    evaluation.volatilityScore[lastIndex],
+    0,
+  );
   const snapshotMtf = (
     [
       [caseInput.settings.mtf1, caseInput.settings.requireMtf1],
@@ -252,25 +269,28 @@ const pipelineCases = pipelineCaseInputs.map((caseInput) => {
     name: caseInput.name,
     symbol: caseInput.symbol,
     timeframe: caseInput.timeframe,
+    lastBarClosed: caseInput.lastBarClosed,
     settings: caseInput.settings,
     bars: caseInput.bars,
     expected: {
       status: "ok",
-      signal:
-        lastSignal === null
-          ? null
-          : {
-              eventType: lastSignal.eventType,
-              direction: lastSignal.direction,
-              barIndex: lastSignal.barIndex,
-              time: lastSignal.time,
-              price: lastSignal.price,
-              close: lastSignal.close,
-              filterState: lastSignal.filterState,
-            },
+      signal: lastSignal,
       snapshot: {
         trendDirection: currentDirection,
+        trendAgeBars,
+        trendAgeBucket:
+          trendAgeBars == null
+            ? null
+            : trendAgeBars > 50
+              ? "old"
+              : trendAgeBars > 20
+                ? "mature"
+                : "new",
+        adx,
+        strength: adx == null ? null : adx >= 25 ? "strong" : "weak",
+        volatilityScore,
         mtf: snapshotMtf,
+        filterState: lastSignal?.filterState ?? null,
       },
     },
   };

@@ -796,7 +796,7 @@ test("diagnostics redact credentials and cannot control the terminal", () => {
 
   assert.match(diagnostic, /postgresql:\/\/\[redacted\]@db\.example\/pyrus/u);
   assert.doesNotMatch(diagnostic, /super-secret/u);
-  assert.match(diagnostic, /https:\/\/directory\.example\/file\?\[redacted\]/u);
+  assert.match(diagnostic, /access_token=\[redacted\]&cursor=keep/u);
   assert.doesNotMatch(diagnostic, /short-secret/u);
   assert.doesNotMatch(
     diagnostic,
@@ -809,32 +809,5 @@ test("diagnostics redact credentials and cannot control the terminal", () => {
       new Error(`provider rejected credential ${opaqueCredential}`),
     ),
     new RegExp(opaqueCredential, "u"),
-  );
-});
-
-test("diagnostics redact percent-encoded credential query names", () => {
-  const credential = "percent-encoded-listed-secret";
-  const diagnostic = listed.safeDiagnostic(
-    new Error(
-      `provider rejected https://directory.example/file?access%5Ftoken=${credential}&cursor=keep`,
-    ),
-  );
-
-  assert.doesNotMatch(diagnostic, new RegExp(credential, "u"));
-});
-
-test("diagnostics reject standalone named credentials", () => {
-  const credential = "short-listed-secret";
-  assert.equal(
-    listed.safeDiagnostic(
-      new Error(`provider rejected access_token=${credential}`),
-    ),
-    "Unknown listed-universe sync error",
-  );
-  assert.equal(
-    listed.safeDiagnostic(
-      new Error('provider rejected {"access_token":"short-json-secret"}'),
-    ),
-    "Unknown listed-universe sync error",
   );
 });

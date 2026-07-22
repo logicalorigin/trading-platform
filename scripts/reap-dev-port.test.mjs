@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   createProcInspector,
   holderIdentityMatches,
+  listenerOwnershipStatus,
   parsePort,
   reapPort,
   safeDisplay,
@@ -16,6 +17,15 @@ const holder = {
   socketInodes: new Set(["123"]),
   command: "node server.mjs",
 };
+
+function procStat(pid, command, ppid, startTimeTicks = "1000") {
+  const fields = Array(20).fill("0");
+  fields[0] = "S";
+  fields[1] = String(ppid);
+  fields[2] = String(pid);
+  fields[19] = startTimeTicks;
+  return `${pid} (${command}) ${fields.join(" ")}`;
+}
 
 function makeHarness({
   holderCgroup = "scope-a",
@@ -96,6 +106,70 @@ test("proc listener inspection permits an absent address family but not unreadab
     },
   }).listeningInodes(8080);
   assert.equal(unavailable, null);
+});
+
+test("proc listener inspection can bind every listener inode to one expected PID", () => {
+  const proc = createProcInspector({
+    readFile(file) {
+      if (file === "/proc/200/stat") {
+        return procStat(200, "node server", 1);
+      }
+      if (file === "/proc/200/cmdline") return "node\0server.mjs\0";
+      if (file === "/proc/200/cgroup") return "scope-a\n";
+      throw new Error(`unexpected file: ${file}`);
+    },
+    readDir(directory) {
+      assert.equal(directory, "/proc/200/fd");
+      return ["3", "4"];
+    },
+    readLink(file) {
+      return file.endsWith("/3") ? "socket:[123]" : "socket:[456]";
+    },
+  });
+
+  const current = proc.readHolderForInodes(200, new Set(["123", "456"]));
+  assert.deepEqual(current?.socketInodes, new Set(["123", "456"]));
+  assert.equal(current?.pid, 200);
+  assert.equal(current?.processGroupId, 200);
+  assert.equal(current?.startTimeTicks, "1000");
+  assert.equal(current?.cgroup, "scope-a");
+});
+
+test("listener ownership fails closed unless every socket belongs to the expected process group", () => {
+  const expected = {
+    ...holder,
+    processGroupId: 200,
+  };
+  assert.deepEqual(
+    listenerOwnershipStatus(new Set(["123"]), [expected], 200),
+    { owned: true, detail: "pid 200" },
+  );
+  assert.deepEqual(
+    listenerOwnershipStatus(
+      new Set(["123", "456"]),
+      [expected],
+      200,
+    ),
+    {
+      owned: false,
+      detail: "listener ownership is incomplete",
+    },
+  );
+  assert.deepEqual(
+    listenerOwnershipStatus(
+      new Set(["123"]),
+      [{ ...expected, processGroupId: 201 }],
+      200,
+    ),
+    {
+      owned: false,
+      detail: "listener owned by 200/pgid=201",
+    },
+  );
+  assert.deepEqual(listenerOwnershipStatus(null, [], 200), {
+    owned: false,
+    detail: "listener evidence unavailable",
+  });
 });
 
 test("reap-dev-port permits stable same-scope holders and bounds escalation", () => {

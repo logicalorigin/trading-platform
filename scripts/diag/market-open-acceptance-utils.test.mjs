@@ -12,11 +12,13 @@ import {
   assertSameProcessIdentity,
   assertStableApiPid,
   calculateCounterRate,
+  classifyIncrementalAcceptanceCounters,
   cleanupHeapProfiler,
   createSingleFlightRunner,
   diffRuntimeCounters,
   isWithinAcceptanceWindow,
   isRunDevSupervisorProcess,
+  parseProcCmdline,
   pickRuntimeAcceptanceSnapshot,
   psqlEnvironment,
   summarizeRuntimeSamples,
@@ -51,9 +53,15 @@ function runtime(overrides = {}) {
             hitCount: 7,
             deltaReadCount: 5,
           },
-          storedBarsDelta: { deltaReads: 5, gapFallbacks: 1, shadowMismatches: 0 },
+          storedBarsDelta: {
+            deltaReads: 5,
+            gapFallbacks: 1,
+            shadowMismatches: 0,
+          },
         },
-        signalMonitorResidentBars: { completedBarsCache: { entries: 2, bars: 40 } },
+        signalMonitorResidentBars: {
+          completedBarsCache: { entries: 2, bars: 40 },
+        },
         signalMonitorIncrementalEval: {
           seeds: 2,
           appends: 3,
@@ -101,7 +109,27 @@ test("runtime counter deltas are scoped to the captured window", () => {
   const delta = diffRuntimeCounters(before.counters, after.counters);
   assert.equal(delta.storedBarsHitCount, 10);
   assert.equal(delta.incrementalAppends, 5);
-  assert.equal(diffRuntimeCounters({ missing: null }, { missing: null }).missing, null);
+  assert.equal(
+    diffRuntimeCounters({ missing: null }, { missing: null }).missing,
+    null,
+  );
+});
+
+test("incremental acceptance treats stored-state transitions as observational churn", () => {
+  assert.deepEqual(
+    classifyIncrementalAcceptanceCounters({
+      incrementalShadowMismatches: 0,
+      matrixServeMismatchCount: 12,
+    }),
+    { parityVerdict: "PASS", storedStateChurnVerdict: "OBSERVE" },
+  );
+  assert.equal(
+    classifyIncrementalAcceptanceCounters({
+      incrementalShadowMismatches: 1,
+      matrixServeMismatchCount: 0,
+    }).parityVerdict,
+    "FAIL",
+  );
 });
 
 test("runtime sample summaries preserve peaks and exact-window deltas", () => {
@@ -135,7 +163,11 @@ test("acceptance fails closed on PID changes and required phase failures", () =>
   }
   assert.deepEqual(
     acceptanceFailedStepKeys(
-      { identity: { ok: true }, cpuProfile: { ok: false }, counters: { ok: true } },
+      {
+        identity: { ok: true },
+        cpuProfile: { ok: false },
+        counters: { ok: true },
+      },
       ["identity", "cpuProfile", "counters", "allocationProfile"],
     ),
     ["cpuProfile", "allocationProfile"],
@@ -207,6 +239,30 @@ test("supervisor discovery requires the canonical Node script argument", () => {
     ),
     false,
   );
+  assert.equal(
+    isRunDevSupervisorProcess(
+      "node\0./scripts/runDevApp.mjs\0--extra\0",
+      "/workspace/artifacts/pyrus",
+      "/workspace/artifacts/pyrus",
+    ),
+    false,
+  );
+});
+
+test("proc cmdline parsing removes one terminal NUL and rejects empty argv", () => {
+  assert.deepEqual(parseProcCmdline("node\0script.mjs\0"), [
+    "node",
+    "script.mjs",
+  ]);
+  for (const raw of [
+    "node\0script.mjs",
+    "node\0\0script.mjs\0",
+    "node\0script.mjs\0\0",
+    "\0",
+    "",
+  ]) {
+    assert.equal(parseProcCmdline(raw), null);
+  }
 });
 
 test("psql receives its connection string outside the process arguments", () => {
@@ -247,7 +303,10 @@ test("command termination and protocol waits have hard deadlines", async () => {
   assert.deepEqual(signals, ["SIGTERM", "SIGKILL"]);
   assert.equal(forceKillObserved, true);
 
-  await assert.rejects(withTimeout(new Promise(() => {}), 5, "CDP reply"), /CDP reply timed out/);
+  await assert.rejects(
+    withTimeout(new Promise(() => {}), 5, "CDP reply"),
+    /CDP reply timed out/,
+  );
   assert.equal(await withTimeout(Promise.resolve("ok"), 5, "CDP reply"), "ok");
 });
 
@@ -263,7 +322,10 @@ test("runtime snapshots fail closed when acceptance metrics are absent", () => {
 
 test("runtime sampling fails closed on missing or failed interval probes", () => {
   assert.doesNotThrow(() => assertRuntimeSamplesComplete([{ snapshot: {} }]));
-  assert.throws(() => assertRuntimeSamplesComplete([]), /no runtime interval samples/);
+  assert.throws(
+    () => assertRuntimeSamplesComplete([]),
+    /no runtime interval samples/,
+  );
   assert.throws(
     () => assertRuntimeSamplesComplete([{ error: "request timed out" }]),
     /runtime interval sampling failed/,
@@ -315,15 +377,69 @@ test("process fingerprints reject PID reuse before profiling", () => {
   const expected = {
     pid: 301,
     startTimeTicks: "12345",
-    cmdlineRaw: "node\0./dist/index.mjs\0",
+    cmdlineRaw: "node\0--enable-source-maps\0./dist/index.mjs\0",
     cwd: "/workspace",
   };
-  assert.doesNotThrow(() => assertSameProcessIdentity(expected, { ...expected }));
+  assert.doesNotThrow(() =>
+    assertSameProcessIdentity(expected, { ...expected }),
+  );
   assert.doesNotThrow(() =>
     assertApiProcessRole(expected, "/workspace", "./dist/index.mjs"),
   );
   assert.doesNotThrow(() =>
-    assertFreshApiHeartbeat("2026-07-13T13:30:00.000Z", Date.parse("2026-07-13T13:30:10.000Z"), 15_000),
+    assertApiProcessRole(
+      {
+        ...expected,
+        cmdlineRaw:
+          "node\0--enable-source-maps\0/workspace/dist/index.mjs\0",
+      },
+      "/workspace",
+      "./dist/index.mjs",
+    ),
+  );
+  assert.throws(
+    () =>
+      assertApiProcessRole(
+        {
+          ...expected,
+          cmdlineRaw:
+            "node\0--enable-source-maps\0/workspace-other/dist/index.mjs\0",
+        },
+        "/workspace",
+        "./dist/index.mjs",
+      ),
+    /does not match the API role/,
+  );
+  assert.throws(
+    () =>
+      assertApiProcessRole(
+        {
+          ...expected,
+          cmdlineRaw: "node\0evil.mjs\0./dist/index.mjs\0",
+        },
+        "/workspace",
+        "./dist/index.mjs",
+      ),
+    /does not match the API role/,
+  );
+  assert.throws(
+    () =>
+      assertApiProcessRole(
+        {
+          ...expected,
+          cmdlineRaw: "node\0\0--enable-source-maps\0./dist/index.mjs\0",
+        },
+        "/workspace",
+        "./dist/index.mjs",
+      ),
+    /does not match the API role/,
+  );
+  assert.doesNotThrow(() =>
+    assertFreshApiHeartbeat(
+      "2026-07-13T13:30:00.000Z",
+      Date.parse("2026-07-13T13:30:10.000Z"),
+      15_000,
+    ),
   );
   assert.throws(
     () =>

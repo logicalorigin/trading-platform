@@ -3,6 +3,7 @@ import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { pathToFileURL } from "node:url";
 import { stripVTControlCharacters } from "node:util";
+import { hasOpaqueOperatorCredential } from "./operator-diagnostic";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -48,6 +49,10 @@ type DeploymentRow = {
 
 type RunSignalOptionsShadowBackfill =
   typeof import("../../artifacts/api-server/src/services/signal-options-automation").runSignalOptionsShadowBackfill;
+type AdvisoryLockLease = import("@workspace/db").AdvisoryLockLease;
+type ShadowBackfillInput = Parameters<RunSignalOptionsShadowBackfill>[0] & {
+  signal?: AbortSignal;
+};
 
 type SweepRuntime = {
   pool: typeof import("@workspace/db").pool;
@@ -147,7 +152,10 @@ function safeDiagnostic(error: unknown): string {
     .replace(UNSAFE_OUTPUT_PATTERN, " ")
     .replace(/\s+/gu, " ")
     .trim();
-  const diagnostic = cleaned || "Unknown sweep error";
+  const diagnostic =
+    cleaned && !hasOpaqueOperatorCredential(cleaned)
+      ? cleaned
+      : "Unknown sweep error";
   return diagnostic.length <= MAX_DIAGNOSTIC_LENGTH
     ? diagnostic
     : `${diagnostic.slice(0, MAX_DIAGNOSTIC_LENGTH - 1)}…`;
@@ -842,14 +850,18 @@ type RunVariantInput = {
   config: SweepConfig;
   commit: boolean;
   replay: boolean;
+  replayRunId?: string;
+  signal: AbortSignal;
 };
 
 function buildVariantBackfillInput(
   input: RunVariantInput,
-): Parameters<RunSignalOptionsShadowBackfill>[0] {
+): ShadowBackfillInput {
   const replay = input.replay
     ? {
-        runId: `pyrus-signals-sweep-${slug()}-${input.variant.id}`,
+        runId:
+          input.replayRunId ??
+          `pyrus-signals-sweep-${slug()}-${input.variant.id}`,
         marketDate: input.config.start,
         deploymentId: input.deployment.id,
         deploymentName: input.deployment.name,
@@ -869,6 +881,7 @@ function buildVariantBackfillInput(
     signalTimeframe: input.config.signalTimeframe,
     pyrusSignalsSettingsPatch: input.variant.pyrusSignalsSettingsPatch,
     profilePatch: input.variant.profilePatch,
+    signal: input.signal,
   };
 }
 
@@ -878,9 +891,11 @@ async function runVariant(
 ): Promise<SweepResult> {
   const started = new Date();
   try {
+    input.signal.throwIfAborted();
     const result = await runtime.runSignalOptionsShadowBackfill(
       buildVariantBackfillInput(input),
     );
+    input.signal.throwIfAborted();
     const finished = new Date();
     const metrics = computeSweepMetrics(result);
     return {
@@ -897,6 +912,9 @@ async function runVariant(
       error: null,
     };
   } catch (error) {
+    if (input.signal.aborted) {
+      input.signal.throwIfAborted();
+    }
     const finished = new Date();
     return {
       variant: input.variant,
@@ -974,21 +992,32 @@ async function assertReportDestinationAvailable(
 async function publishReportFiles(
   reportDir: string,
   files: ReportFiles,
+  signal?: AbortSignal,
+  renameDirectory: (from: string, to: string) => Promise<void> = rename,
 ): Promise<void> {
+  signal?.throwIfAborted();
   const parent = path.dirname(reportDir);
   await mkdir(parent, { recursive: true });
+  signal?.throwIfAborted();
   const temporaryDir = await mkdtemp(
     path.join(parent, `.${path.basename(reportDir)}.tmp-`),
   );
+  let published = false;
   try {
     await Promise.all(
       Object.entries(files).map(([name, contents]) =>
         writeFile(path.join(temporaryDir, name), contents),
       ),
     );
-    await rename(temporaryDir, reportDir);
+    signal?.throwIfAborted();
+    await renameDirectory(temporaryDir, reportDir);
+    published = true;
+    signal?.throwIfAborted();
   } catch (error) {
-    await rm(temporaryDir, { recursive: true, force: true }).catch(() => {});
+    await rm(published ? reportDir : temporaryDir, {
+      recursive: true,
+      force: true,
+    }).catch(() => {});
     throw error;
   }
 }
@@ -1025,7 +1054,9 @@ async function writeReports(input: {
   ranked: SweepResult[];
   replayResult?: SweepResult | null;
   verification?: JsonRecord | null;
+  signal?: AbortSignal;
 }) {
+  input.signal?.throwIfAborted();
   const rows = reportRows(input.results);
   const headers = Object.keys(
     rows[0] ?? {
@@ -1097,11 +1128,15 @@ async function writeReports(input: {
       : "",
   ].join("\n");
 
-  await publishReportFiles(input.reportDir, {
-    "results.json": `${jsonText(input, 2)}\n`,
-    "results.csv": `${csv}\n`,
-    "report.md": `${markdown}\n`,
-  });
+  await publishReportFiles(
+    input.reportDir,
+    {
+      "results.json": `${jsonText(input, 2)}\n`,
+      "results.csv": `${csv}\n`,
+      "report.md": `${markdown}\n`,
+    },
+    input.signal,
+  );
 }
 
 function replayReportLine(result?: SweepResult | null): string {
@@ -1127,11 +1162,14 @@ function replayLedgerMode(
 
 async function verifyReplayLedger(input: {
   deploymentId: string;
+  runId: string;
   window: JsonRecord | null;
   ledgerMode: ReplayLedgerMode;
   serviceCompleted: boolean;
   runtime: Pick<SweepRuntime, "pool">;
+  signal?: AbortSignal;
 }) {
+  input.signal?.throwIfAborted();
   if (!input.serviceCompleted) {
     return {
       ledgerMode: input.ledgerMode,
@@ -1172,6 +1210,7 @@ async function verifyReplayLedger(input: {
             or o.payload->>'sourceDeploymentId' = $1
             or o.payload->'metadata'->>'positionKey' like ('signal_options_replay:%:' || $1 || ':%')
           )
+          and o.payload->'metadata'->>'runId' = $4
       )
       select
         count(*)::int as "orderCount",
@@ -1189,8 +1228,9 @@ async function verifyReplayLedger(input: {
         array_remove(array_agg(distinct payload->'metadata'->>'runId'), null) as "runIds"
       from replay_orders
     `,
-    [input.deploymentId, from, to],
+    [input.deploymentId, from, to, input.runId],
   );
+  input.signal?.throwIfAborted();
   return { ledgerMode: "shadow_orders", ...(result.rows[0] ?? {}) };
 }
 
@@ -1253,19 +1293,18 @@ async function main() {
   await assertReportDestinationAvailable(config.reportDir);
   enableHistoricalBarEvaluation();
   let runtime: SweepRuntime | null = null;
-  let releaseLock: (() => Promise<void>) | null = null;
+  let lease: AdvisoryLockLease | null = null;
   let failed = false;
 
   try {
     runtime = await loadSweepRuntime();
-    releaseLock = await acquireSignalOptionsWorkerLock(
-      config.lockWaitMs,
-      runtime,
-    );
-    if (!releaseLock) {
+    lease = await acquireSignalOptionsWorkerLock(config.lockWaitMs, runtime);
+    if (!lease) {
       throw new Error("Signal-options worker advisory lock is already held.");
     }
+    lease.signal.throwIfAborted();
     const deployment = await readSignalOptionsDeployment(runtime);
+    lease.signal.throwIfAborted();
     const stageA = config.smoke
       ? buildStageAVariants().slice(0, 2)
       : buildStageAVariants();
@@ -1288,13 +1327,22 @@ async function main() {
 
     const initialVariants = config.mtfSweep ? mtfVariants : stageA;
     for (const variant of initialVariants) {
+      lease.signal.throwIfAborted();
       console.log(`dry-run ${variant.id}`);
       results.push(
         await runVariant(
-          { deployment, variant, config, commit: false, replay: false },
+          {
+            deployment,
+            variant,
+            config,
+            commit: false,
+            replay: false,
+            signal: lease.signal,
+          },
           runtime,
         ),
       );
+      lease.signal.throwIfAborted();
     }
 
     let ranked = rankSweepResults(results);
@@ -1315,20 +1363,31 @@ async function main() {
           ranked,
           replayResult: null,
           verification: null,
+          signal: lease.signal,
         });
+        lease.signal.throwIfAborted();
         throw new Error(
           "Fewer than two eligible Stage A horizons; refusing Stage B.",
         );
       }
 
       for (const variant of buildStageBVariants(topHorizons)) {
+        lease.signal.throwIfAborted();
         console.log(`dry-run ${variant.id}`);
         results.push(
           await runVariant(
-            { deployment, variant, config, commit: false, replay: false },
+            {
+              deployment,
+              variant,
+              config,
+              commit: false,
+              replay: false,
+              signal: lease.signal,
+            },
             runtime,
           ),
         );
+        lease.signal.throwIfAborted();
       }
       ranked = rankSweepResults(results);
     }
@@ -1337,7 +1396,9 @@ async function main() {
     let verification: JsonRecord | null = null;
     const winner = ranked[0] ?? null;
     if (winner && config.replayWinner) {
+      lease.signal.throwIfAborted();
       console.log(`replay ${winner.variant.id}`);
+      const replayRunId = `pyrus-signals-sweep-${slug()}-${winner.variant.id}`;
       replayResult = await runVariant(
         {
           deployment,
@@ -1345,16 +1406,22 @@ async function main() {
           config,
           commit: true,
           replay: true,
+          replayRunId,
+          signal: lease.signal,
         },
         runtime,
       );
+      lease.signal.throwIfAborted();
       verification = await verifyReplayLedger({
         deploymentId: deployment.id,
+        runId: replayRunId,
         window: replayResult.window,
         ledgerMode: replayLedgerMode(),
         serviceCompleted: replayResult.status === "succeeded",
         runtime,
+        signal: lease.signal,
       });
+      lease.signal.throwIfAborted();
     }
 
     await writeReports({
@@ -1365,7 +1432,9 @@ async function main() {
       ranked,
       replayResult,
       verification,
+      signal: lease.signal,
     });
+    lease.signal.throwIfAborted();
     assertSweepCompletion({
       results,
       replayRequired: config.replayWinner,
@@ -1391,9 +1460,9 @@ async function main() {
     throw error;
   } finally {
     const cleanupErrors: unknown[] = [];
-    if (releaseLock) {
+    if (lease) {
       try {
-        await releaseLock();
+        await lease();
       } catch (error) {
         cleanupErrors.push(error);
       }
@@ -1434,6 +1503,7 @@ export const __pyrusSignalsOptionsSweepInternalsForTests = {
   replayLedgerMode,
   replayReportLine,
   resolveSweepEligibility,
+  runVariant,
   safeDiagnostic,
   selectSweepSymbolUniverse,
   validateSweepDeployment,

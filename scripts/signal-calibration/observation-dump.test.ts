@@ -22,6 +22,12 @@ const row = {
   realizedReturnPercent: 1,
   mfePercent: 2,
   maePercent: -1,
+  audit: {
+    signalAt: "2026-07-13T14:30:00.000Z",
+    outcomeExitBarAt: "2026-07-13T16:40:00.000Z",
+    mtfTimeframes: ["2m", "5m", "15m"],
+    mtfDirections: [1, 1, 1],
+  },
 };
 
 function response(input?: {
@@ -183,7 +189,7 @@ test("dumpTimeframe atomically publishes versioned provenance after validation",
     const lines = readFileSync(finalPath, "utf8").trim().split("\n");
     const header = JSON.parse(lines[0]);
     assert.equal(result.lineCount, 2);
-    assert.equal(header.schemaVersion, 1);
+    assert.equal(header.schemaVersion, 2);
     assert.equal(typeof header.runId, "string");
     assert.equal(header.deploymentId, "deployment-1");
     assert.equal(header.asOfDay, "2026-07-13");
@@ -214,6 +220,73 @@ test("dumpTimeframe refuses service/header horizon drift", async () => {
         return response({ outcomeHorizonBars: 52 });
       }),
       /dump horizon 26.*settings horizon 52/i,
+    );
+    assert.equal(readFileSync(finalPath, "utf8"), "known-good\n");
+  } finally {
+    rmSync(outputDir, { recursive: true, force: true });
+  }
+});
+
+test("dumpTimeframe refuses observations without exact outcome-end provenance", async () => {
+  const outputDir = mkdtempSync(
+    path.join(os.tmpdir(), "pyrus-observation-dump-"),
+  );
+  const finalPath = path.join(outputDir, "observations-5m.jsonl");
+  writeFileSync(finalPath, "known-good\n");
+  try {
+    await assert.rejects(
+      dumpTimeframe(options(outputDir), "5m", async () => {
+        const incompleteRow = {
+          ...row,
+          audit: { signalAt: row.audit.signalAt },
+        };
+        writeFileSync(
+          process.env.SIGNAL_QUALITY_OBSERVATION_DUMP_PATH!,
+          `${JSON.stringify({
+            header: true,
+            resolvedTimeframe: "5m",
+            outcomeHorizonBars: 26,
+            count: 1,
+          })}\n${JSON.stringify(incompleteRow)}\n`,
+        );
+        return response();
+      }),
+      /audit\.outcomeExitBarAt/i,
+    );
+    assert.equal(readFileSync(finalPath, "utf8"), "known-good\n");
+  } finally {
+    rmSync(outputDir, { recursive: true, force: true });
+  }
+});
+
+test("dumpTimeframe refuses observations without exact MTF gate provenance", async () => {
+  const outputDir = mkdtempSync(
+    path.join(os.tmpdir(), "pyrus-observation-dump-"),
+  );
+  const finalPath = path.join(outputDir, "observations-5m.jsonl");
+  writeFileSync(finalPath, "known-good\n");
+  try {
+    await assert.rejects(
+      dumpTimeframe(options(outputDir), "5m", async () => {
+        const incompleteRow = {
+          ...row,
+          audit: {
+            signalAt: row.audit.signalAt,
+            outcomeExitBarAt: row.audit.outcomeExitBarAt,
+          },
+        };
+        writeFileSync(
+          process.env.SIGNAL_QUALITY_OBSERVATION_DUMP_PATH!,
+          `${JSON.stringify({
+            header: true,
+            resolvedTimeframe: "5m",
+            outcomeHorizonBars: 26,
+            count: 1,
+          })}\n${JSON.stringify(incompleteRow)}\n`,
+        );
+        return response();
+      }),
+      /MTF.*provenance/i,
     );
     assert.equal(readFileSync(finalPath, "utf8"), "known-good\n");
   } finally {

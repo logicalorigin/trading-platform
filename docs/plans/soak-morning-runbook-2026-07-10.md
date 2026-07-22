@@ -11,8 +11,8 @@ Owner: whichever session picks up in the morning (context: session e2aac502 stag
    tr '\0' '\n' < /proc/$APIPID/environ | grep -E "INCREMENTAL_EVAL|STORED_BARS_DELTA"
    ```
    Expect `PYRUS_SIGNALS_INCREMENTAL_EVAL=shadow` and `PYRUS_SIGNALS_STORED_BARS_DELTA=shadow`.
-   If missing: `kill -USR2 "$(pgrep -f 'node ./scripts/runDevApp.mjs' | head -1)"` (supervisor cwd is
-   `artifacts/pyrus/`), poll healthz 200, re-check env.
+   If missing, use Replit's managed workflow restart action, poll healthz 200,
+   and re-check the environment.
 2. **Confirm the counters are visible** (both live under marketDataStreams in
    `GET /api/diagnostics/runtime`): `signalMonitorIncrementalEval.mode == "shadow"` and
    `signalMonitorLocalBars.storedBarsDelta.mode == "shadow"` (field name per WO-F1-DELTA).

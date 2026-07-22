@@ -16,6 +16,8 @@
     "db:accounts:recover": "tsx ./src/account-data-recovery.ts",
     "shadow:massive-options-audit": "tsx ./src/shadow-massive-options-audit.ts",
     "shadow:management-review": "tsx ./src/shadow-options-management-review.ts",
+    "shadow:stop-election-audit": "tsx ./src/audit-shadow-stop-election-raw-tape.ts",
+    "shadow:ledger-correction:2026-07-15": "tsx ./src/correct-shadow-ledger-2026-07-15.ts",
     "signal-options:apply-tuned-profile": "tsx ./src/apply-signal-options-tuned-profile.ts",
     "signal-options:exit-policy-sweep": "tsx ./src/signal-options-exit-policy-sweep.ts",
     "pyrus-signals:signal-options-sweep": "tsx ./src/pyrus-signals-options-sweep.ts",

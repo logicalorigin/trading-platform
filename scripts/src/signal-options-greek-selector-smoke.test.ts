@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rename, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path, { resolve } from "node:path";
 import test from "node:test";
@@ -39,6 +39,10 @@ type DeploymentRow = {
   symbolUniverse: string[];
 };
 
+type AdvisoryLease = (() => Promise<void>) & {
+  readonly signal: AbortSignal;
+};
+
 type SmokeInternals = {
   applyGexHistoricalGreeks: (
     result: SignalOptionsGreekSelectorSmokeResult,
@@ -46,13 +50,14 @@ type SmokeInternals = {
     lookup?: (input: {
       strike: number;
     }) => Promise<HistoricalGreeksLookupResult>,
+    signal?: AbortSignal,
   ) => Promise<void>;
   assertReportDestinationAvailable: (reportDir: string) => Promise<void>;
   enableHistoricalBarEvaluation: (env?: NodeJS.ProcessEnv) => void;
   executeSmoke: (
     config: Config,
     dependencies: {
-      acquireLock: (waitMs: number) => Promise<(() => Promise<void>) | null>;
+      acquireLock: (waitMs: number) => Promise<AdvisoryLease | null>;
       readDeployment: () => Promise<DeploymentRow>;
       runSmoke: (
         input: Record<string, unknown>,
@@ -64,6 +69,7 @@ type SmokeInternals = {
       writeReport: (
         result: SignalOptionsGreekSelectorSmokeResult,
         reportDir: string,
+        signal?: AbortSignal,
       ) => Promise<string>;
       log: (message: string) => void;
     },
@@ -82,6 +88,8 @@ type SmokeInternals = {
   writeReport: (
     result: SignalOptionsGreekSelectorSmokeResult,
     reportDir: string,
+    signal?: AbortSignal,
+    renameDirectory?: (from: string, to: string) => Promise<void>,
   ) => Promise<string>;
 };
 
@@ -97,6 +105,13 @@ const scriptPath = resolve(
 );
 const scriptsRoot = resolve(import.meta.dirname, "..");
 const DEPLOYMENT_ID = "00000000-0000-4000-8000-000000000001";
+
+function advisoryLease(
+  controller = new AbortController(),
+  release: () => Promise<void> = async () => {},
+): AdvisoryLease {
+  return Object.assign(release, { signal: controller.signal });
+}
 const SCRIPT_ENV_NAMES = [
   "PYRUS_SIGNAL_MONITOR_BAR_EVALUATION_ENABLED",
   "SIGNAL_MONITOR_BAR_EVALUATION_ENABLED",
@@ -497,7 +512,7 @@ test("GEX provenance applies once per visible candidate and preserves visible re
   const high = sampleCandidate({
     ticker: "HIGH",
     strike: 101,
-    score: sampleScore(90),
+    score: sampleScore(-100),
     pnl: 125,
   });
   const result = sampleResult();
@@ -525,7 +540,7 @@ test("GEX provenance applies once per visible candidate and preserves visible re
           ageMs: 60_000,
           toleranceMs: 1_800_000,
           sourceStatus: "partial",
-          spot: null,
+          spot: 100,
           option: {
             expirationDate: high.expirationDate,
             strike: high.strike,
@@ -545,6 +560,7 @@ test("GEX provenance applies once per visible candidate and preserves visible re
   );
 
   assert.deepEqual(calls, [100, 101]);
+  assert.ok(high.score.total > low.score.total);
   assert.equal(result.rows[0].selected?.ticker, "HIGH");
   assert.equal(result.rows[0].pnlDelta, 175);
   assert.equal(result.summary.totalSelectedPnl, 125);
@@ -555,8 +571,156 @@ test("GEX provenance applies once per visible candidate and preserves visible re
   assert.match(report, /Selected rows with gex_snapshot greeks \| 1/);
 });
 
+test("GEX matches without a positive spot retain Black-Scholes scoring and provenance", async () => {
+  assert.ok(smoke, "Greek-selector smoke test internals are unavailable");
+  const candidate = sampleCandidate({
+    ticker: "NO-SPOT",
+    strike: 101,
+    score: sampleScore(10),
+  });
+  const originalGreeks = structuredClone(candidate.greeks);
+  const result = sampleResult();
+  result.rows[0] = {
+    ...result.rows[0],
+    underlyingPrice: null,
+    selected: candidate,
+    topCandidates: [candidate],
+  };
+
+  await smoke.applyGexHistoricalGreeks(
+    result,
+    { gexToleranceMs: 1_800_000, progress: false },
+    async () => ({
+      source: "gex_snapshot",
+      greeks: { ...candidate.greeks, delta: 0.9 },
+      snapshotId: "snapshot-without-spot",
+      symbol: "SPY",
+      computedAt: "2026-05-29T13:31:00.000Z",
+      ageMs: 60_000,
+      toleranceMs: 1_800_000,
+      sourceStatus: "partial",
+      spot: null,
+      option: {
+        expirationDate: candidate.expirationDate,
+        strike: candidate.strike,
+        right: candidate.right,
+        ticker: candidate.ticker,
+        updatedAt: null,
+      },
+    }),
+  );
+
+  assert.deepEqual(candidate.greeks, originalGreeks);
+  assert.equal(candidate.score.total, 10);
+  const report = smokeModule.renderGreekSelectorSmokeMarkdown(result);
+  assert.match(report, /Visible candidates with gex_snapshot greeks \| 0/);
+  assert.match(report, /Selected rows with gex_snapshot greeks \| 0/);
+});
+
+test("GEX reranking refreshes a non-closed row from marked to unmarked", async () => {
+  assert.ok(smoke, "Greek-selector smoke test internals are unavailable");
+  const marked = sampleCandidate({
+    ticker: "MARKED",
+    strike: 100,
+    score: sampleScore(10),
+  });
+  const unmarked = sampleCandidate({
+    ticker: "UNMARKED",
+    strike: 101,
+    exitAt: null,
+    exitPrice: null,
+    pnl: null,
+    score: sampleScore(-100),
+  });
+  const result = sampleResult();
+  result.rows[0] = {
+    ...result.rows[0],
+    underlyingPrice: null,
+    outcome: "end_of_window_mark",
+    legacy: { ...result.rows[0].legacy, closedAt: null },
+    selected: marked,
+    topCandidates: [marked, unmarked],
+    notes: ["candidate_cap_12", "marked_to_window_end"],
+  };
+
+  await smoke.applyGexHistoricalGreeks(
+    result,
+    { gexToleranceMs: 1_800_000, progress: false },
+    async (input) =>
+      input.strike === 101
+        ? {
+            source: "gex_snapshot",
+            greeks: unmarked.greeks,
+            snapshotId: "snapshot-unmarked",
+            symbol: "SPY",
+            computedAt: "2026-05-29T13:31:00.000Z",
+            ageMs: 60_000,
+            toleranceMs: 1_800_000,
+            sourceStatus: "partial",
+            spot: 100,
+            option: {
+              expirationDate: unmarked.expirationDate,
+              strike: unmarked.strike,
+              right: unmarked.right,
+              ticker: unmarked.ticker,
+              updatedAt: null,
+            },
+          }
+        : {
+            source: "bs_reconstruction",
+            greeks: marked.greeks,
+            reason: "missing_gex_snapshot",
+            toleranceMs: 1_800_000,
+          },
+  );
+
+  assert.equal(result.rows[0].selected?.ticker, "UNMARKED");
+  assert.equal(result.rows[0].pnlDelta, null);
+  assert.equal(result.rows[0].outcome, "unmarked");
+  assert.deepEqual(result.rows[0].notes, [
+    "candidate_cap_12",
+    "missing_exit_price",
+  ]);
+  assert.equal(result.summary.rowsWithMarkedPnl, 0);
+  assert.equal(result.summary.totalSelectedMarkedPnl, 0);
+});
+
+test("lease loss between GEX lookups stops the next candidate", async () => {
+  assert.ok(smoke, "Greek-selector smoke test internals are unavailable");
+  const controller = new AbortController();
+  const leaseLost = new Error("Greek-selector lease lost");
+  const result = sampleResult();
+  result.rows[0].topCandidates = [
+    sampleCandidate({ ticker: "FIRST", strike: 100 }),
+    sampleCandidate({ ticker: "SECOND", strike: 101 }),
+  ];
+  result.rows[0].selected = result.rows[0].topCandidates[0];
+  const calls: number[] = [];
+
+  await assert.rejects(
+    smoke.applyGexHistoricalGreeks(
+      result,
+      { gexToleranceMs: 1_800_000, progress: false },
+      async (input) => {
+        calls.push(input.strike);
+        controller.abort(leaseLost);
+        return {
+          source: "bs_reconstruction",
+          greeks: null,
+          reason: "missing_gex_snapshot",
+          toleranceMs: 1_800_000,
+        };
+      },
+      controller.signal,
+    ),
+    (error) => error === leaseLost,
+  );
+  assert.deepEqual(calls, [100]);
+});
+
 test("Markdown rendering contains untrusted deployment, note, and error text", () => {
   const result = sampleResult();
+  const opaqueCredential = `AKIA${"A".repeat(16)}`;
   result.deployment.name =
     "<script>alert(1)</script> | [click](javascript:boom)";
   result.rows[0].notes = ["<img src=x onerror=boom> | note"];
@@ -565,6 +729,10 @@ test("Markdown rendering contains untrusted deployment, note, and error text", (
     {
       symbol: "SPY|BAD",
       message: "\u001b[31m<script>boom</script> [x](javascript:boom)",
+    },
+    {
+      symbol: "QQQ",
+      message: `provider rejected credential ${opaqueCredential}`,
     },
   ];
   (result.config as Record<string, unknown>)["gexToleranceMs"] = 1_800_000;
@@ -576,6 +744,7 @@ test("Markdown rendering contains untrusted deployment, note, and error text", (
   assert.doesNotMatch(report, /<script>|<img|\u001b|\[click\]\(javascript:/u);
   assert.match(report, /&lt;script&gt;/u);
   assert.match(report, /SPY\\\|BAD/u);
+  assert.doesNotMatch(report, new RegExp(opaqueCredential, "u"));
 
   const uncapped = sampleResult();
   uncapped.config.maxSignals = null;
@@ -608,6 +777,35 @@ test("report publication is atomic and refuses to overwrite completed evidence",
   );
 });
 
+test("lease loss during report rename removes the published directory", async (t) => {
+  assert.ok(smoke, "Greek-selector smoke test internals are unavailable");
+  const parent = await mkdtemp(
+    path.join(tmpdir(), "greek-selector-rename-loss-"),
+  );
+  t.after(() => rm(parent, { recursive: true, force: true }));
+  const reportDir = path.join(parent, "run-1");
+  const controller = new AbortController();
+  const leaseLost = new Error("Greek-selector lease lost during rename");
+
+  await assert.rejects(
+    smoke.writeReport(
+      sampleResult(),
+      reportDir,
+      controller.signal,
+      async (from, to) => {
+        await rename(from, to);
+        controller.abort(leaseLost);
+      },
+    ),
+    (error) => error === leaseLost,
+  );
+  await assert.rejects(readFile(path.join(reportDir, "report.md"), "utf8"));
+  assert.deepEqual(
+    (await readdir(parent)).filter((name) => name.includes(".tmp-")),
+    [],
+  );
+});
+
 test("execution preserves service scope and the primary failure during lock cleanup", async () => {
   assert.ok(smoke, "Greek-selector smoke test internals are unavailable");
   const config = smoke.readConfig(
@@ -616,13 +814,15 @@ test("execution preserves service scope and the primary failure during lock clea
     "/tmp/greek-smoke-cwd",
   );
   const captured: Record<string, unknown>[] = [];
+  const controller = new AbortController();
   let released = 0;
   let applied = 0;
   let written = 0;
   const reportPath = await smoke.executeSmoke(config, {
-    acquireLock: async () => async () => {
-      released += 1;
-    },
+    acquireLock: async () =>
+      advisoryLease(controller, async () => {
+        released += 1;
+      }),
     readDeployment: async () => smoke.validateDeployment(validDeployment()),
     runSmoke: async (input) => {
       captured.push(input);
@@ -654,15 +854,17 @@ test("execution preserves service scope and the primary failure during lock clea
       riskFreeRate: 0.05,
       dividendYield: 0,
       progress: true,
+      signal: controller.signal,
     },
   ]);
 
   const logs: string[] = [];
   await assert.rejects(
     smoke.executeSmoke(config, {
-      acquireLock: async () => async () => {
-        throw new Error("secondary cleanup secret");
-      },
+      acquireLock: async () =>
+        advisoryLease(new AbortController(), async () => {
+          throw new Error("secondary cleanup secret");
+        }),
       readDeployment: async () => smoke.validateDeployment(validDeployment()),
       runSmoke: async () => {
         throw new Error("primary smoke failure");
@@ -676,6 +878,57 @@ test("execution preserves service scope and the primary failure during lock clea
   assert.deepEqual(logs, ["Signal-options worker lock cleanup failed."]);
 });
 
+test("lease loss stops the next smoke phase and final report publication", async () => {
+  assert.ok(smoke, "Greek-selector smoke test internals are unavailable");
+  const config = smoke.readConfig(
+    ["--report-dir=reports/lease-loss"],
+    {},
+    "/tmp/greek-smoke-cwd",
+  );
+
+  for (const abortAfter of ["smoke", "gex"] as const) {
+    const controller = new AbortController();
+    const leaseLost = new Error(`lease lost after ${abortAfter}`);
+    const calls: string[] = [];
+
+    await assert.rejects(
+      smoke.executeSmoke(config, {
+        acquireLock: async () =>
+          advisoryLease(controller, async () => {
+            calls.push("release");
+          }),
+        readDeployment: async () => {
+          calls.push("deployment");
+          return smoke.validateDeployment(validDeployment());
+        },
+        runSmoke: async (input) => {
+          calls.push("smoke");
+          assert.equal(input["signal"], controller.signal);
+          if (abortAfter === "smoke") controller.abort(leaseLost);
+          return sampleResult();
+        },
+        applyGex: async () => {
+          calls.push("gex");
+          if (abortAfter === "gex") controller.abort(leaseLost);
+        },
+        writeReport: async () => {
+          calls.push("report");
+          return "should-not-publish";
+        },
+        log: () => {},
+      }),
+      (error) => error === leaseLost,
+    );
+
+    assert.deepEqual(
+      calls,
+      abortAfter === "smoke"
+        ? ["deployment", "smoke", "release"]
+        : ["deployment", "smoke", "gex", "release"],
+    );
+  }
+});
+
 test("operator diagnostics are bounded, credential-redacted, and terminal-safe", async () => {
   assert.ok(smoke, "Greek-selector smoke test internals are unavailable");
   const diagnostic = smoke.safeDiagnostic(
@@ -686,6 +939,13 @@ test("operator diagnostics are bounded, credential-redacted, and terminal-safe",
   assert.ok(diagnostic.length <= 400);
   assert.doesNotMatch(diagnostic, /secret|\u001b|token=/u);
   assert.match(diagnostic, /\[redacted\]/u);
+  const opaqueCredential = `github_pat_${"a".repeat(40)}`;
+  assert.doesNotMatch(
+    smoke.safeDiagnostic(
+      new Error(`provider rejected credential ${opaqueCredential}`),
+    ),
+    new RegExp(opaqueCredential, "u"),
+  );
 
   const source = await readFile(scriptPath, "utf8");
   assert.match(source, /sharedAdvisoryLockHolder\.acquire/u);

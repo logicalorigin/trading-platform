@@ -1,10 +1,15 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import {
+  existsSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
+  rmSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs";
+import { fileURLToPath } from "node:url";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -184,4 +189,55 @@ test("publication policy enforces the configured context ceiling", () => {
     limitBytes: 1_024,
   });
   assert.match(result.failures.join("\n"), /above the 1024-byte release ceiling/);
+});
+
+test("workspace build and typecheck fail closed on the publication context audit", () => {
+  const repoRoot = path.resolve(
+    path.dirname(fileURLToPath(import.meta.url)),
+    "..",
+  );
+  const rootPackage = JSON.parse(
+    readFileSync(path.join(repoRoot, "package.json"), "utf8"),
+  );
+  const scripts = rootPackage.scripts ?? {};
+
+  assert.equal(
+    scripts["audit:publish-context"],
+    "node scripts/check-publish-context.mjs",
+  );
+  assert.equal(
+    scripts["audit:guards"]?.startsWith(
+      "pnpm run audit:publish-context && ",
+    ),
+    true,
+  );
+  assert.equal(
+    scripts.typecheck?.startsWith("pnpm run audit:publish-context && "),
+    true,
+  );
+  assert.equal(
+    scripts["build:pyrus-app"]?.startsWith("pnpm run audit:guards && "),
+    true,
+  );
+  const checkerPath = path.join(repoRoot, "scripts/check-publish-context.mjs");
+  assert.equal(
+    existsSync(checkerPath),
+    true,
+  );
+  const foreignCwd = mkdtempSync(
+    path.join(os.tmpdir(), "publish-context-cwd-"),
+  );
+  try {
+    const check = spawnSync(process.execPath, [checkerPath], {
+      cwd: foreignCwd,
+      encoding: "utf8",
+    });
+    assert.equal(check.status, 0, check.stderr);
+    assert.match(
+      check.stdout,
+      /^\[check-publish-context\] \d+ bytes across \d+ files$/m,
+    );
+  } finally {
+    rmSync(foreignCwd, { force: true, recursive: true });
+  }
 });

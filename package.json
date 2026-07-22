@@ -11,7 +11,6 @@
     "deadcode": "PORT=18747 BASE_PATH=/ knip --include files,dependencies,catalog --no-config-hints",
     "deadcode:prod": "PORT=18747 BASE_PATH=/ knip --production --include files,exports,types,duplicates --no-config-hints --workspace @workspace/pyrus --workspace @workspace/api-server --workspace @workspace/backtest-worker --workspace @workspace/mcp-server --workspace @workspace/api-client-react --workspace @workspace/account-math --workspace @workspace/api-zod --workspace @workspace/api-spec --workspace @workspace/db --workspace @workspace/market-calendar --workspace @workspace/backtest-core --workspace @workspace/pyrus-signals-core --workspace @workspace/ibkr-contracts",
     "diagnose:agent-restarts": "node scripts/diagnose-agent-restarts.mjs",
-    "diagnose:replit-restarts": "node scripts/inspect-replit-flight-recorder.mjs",
     "ibkr:capsule:density": "node scripts/ibkr-capsule-density.mjs",
     "ibkr:capsule:release": "node scripts/ibkr-capsule-release.mjs",
     "shot": "node scripts/headless-shot.mjs",
@@ -20,10 +19,11 @@
     "audit:canonical-signal-env": "node scripts/check-canonical-signal-env.mjs",
     "audit:env": "node scripts/check-env-example.mjs",
     "audit:markdown-paths": "node scripts/check-markdown-paths.mjs",
+    "audit:publish-context": "node scripts/check-publish-context.mjs",
     "audit:replit-startup": "node scripts/check-replit-startup-guards.mjs",
     "audit:retired-alert-tier": "node scripts/check-retired-alert-tier-references.mjs",
     "audit:session-persistence-security": "node --test scripts/lib/redact-persisted-text.test.mjs && node --test scripts/diagnose-agent-restarts.test.mjs && node --test .agents/skills/session-handoff/scripts/write-session-handoff.test.mjs && node --test scripts/codex-autosave-handoff.test.mjs",
-    "audit:guards": "pnpm run audit:replit-startup && pnpm run audit:env && pnpm run audit:markdown-paths && pnpm run audit:branding && pnpm run audit:canonical-signal-env && pnpm run audit:retired-alert-tier && pnpm run audit:api-codegen && pnpm run audit:session-persistence-security",
+    "audit:guards": "pnpm run audit:publish-context && pnpm run audit:replit-startup && pnpm run audit:env && pnpm run audit:markdown-paths && pnpm run audit:branding && pnpm run audit:canonical-signal-env && pnpm run audit:retired-alert-tier && pnpm run audit:api-codegen && pnpm run audit:session-persistence-security",
     "replit:config:lock": "node scripts/protect-replit-config.mjs lock",
     "replit:config:unlock": "node scripts/protect-replit-config.mjs unlock",
     "replit:config:status": "node scripts/protect-replit-config.mjs status",
@@ -45,7 +45,7 @@
     "python-compute:typecheck": "node scripts/run-python-compute.mjs typecheck",
     "python-compute:test": "node scripts/run-python-compute.mjs test",
     "typecheck:libs": "node scripts/run-validation-command.mjs --label typecheck:libs -- tsc --build",
-    "typecheck": "pnpm run audit:replit-startup && pnpm run typecheck:libs && pnpm -r --workspace-concurrency=1 --filter \"./artifacts/**\" --filter \"./scripts\" --if-present run typecheck"
+    "typecheck": "pnpm run audit:publish-context && pnpm run audit:replit-startup && pnpm run typecheck:libs && pnpm -r --workspace-concurrency=1 --filter \"./artifacts/**\" --filter \"./scripts\" --if-present run typecheck"
   },
   "private": true,
   "devDependencies": {
